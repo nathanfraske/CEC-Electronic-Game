@@ -236,7 +236,11 @@ export class Board {
     }
 
     for (const [id, node] of this.nodes) {
-      node.update(electrical?.get(id) ?? ZERO_ELECTRICAL, this.phase);
+      node.update(
+        electrical?.get(id) ?? ZERO_ELECTRICAL,
+        this.phase,
+        this.selected.has(id),
+      );
     }
 
     this.growSamples(snap.state.length);
@@ -738,6 +742,7 @@ class ComponentNode {
   private readonly glyph = new Graphics();
   private readonly label: Text;
   private readonly value: Text | null;
+  private readonly meter: Text;
   private readonly pinPositions: { x: number; y: number }[] = [];
   private readonly wPx: number;
   private readonly hPx: number;
@@ -787,6 +792,20 @@ class ComponentNode {
       this.value = null;
     }
 
+    // Live "across / through" readout, shown only while the part is selected.
+    this.meter = new Text({
+      text: "",
+      style: {
+        fill: PALETTE.dim,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 10,
+        fontWeight: "500",
+      },
+    });
+    this.meter.anchor.set(0.5);
+    this.meter.visible = false;
+    this.view.addChild(this.meter);
+
     this.layoutLabels();
     // pin dots
     for (const p of this.pinPositions) {
@@ -810,7 +829,7 @@ class ComponentNode {
     this.view.position.set(p.x, p.y);
   }
 
-  update(electrical: ElectricalState, phase: number): void {
+  update(electrical: ElectricalState, phase: number, selected: boolean): void {
     const g = this.glyph;
     g.clear();
     drawGlyph(g, {
@@ -826,6 +845,18 @@ class ComponentNode {
     for (const p of this.pinPositions) {
       g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
       g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    }
+    // While selected, show the live voltage *across* the part and the current
+    // *through* it — the two quantities words can't make intuitive.
+    if (selected && isSymbol(this.kindTag)) {
+      this.meter.text =
+        fmtSI(electrical.vAcross, "V") +
+        "  ·  " +
+        fmtSI(electrical.current, "A");
+      this.meter.position.set(this.wPx / 2, -34);
+      this.meter.visible = true;
+    } else {
+      this.meter.visible = false;
     }
   }
 
@@ -851,4 +882,29 @@ function distToSegment(
   const cx = ax + t * dx;
   const cy = ay + t * dy;
   return Math.hypot(px - cx, py - cy);
+}
+
+/** Format a live measurement in engineering notation, e.g. 0.00167 A → "1.67 mA". */
+function fmtSI(value: number, unit: string): string {
+  const a = Math.abs(value);
+  if (a < 1e-12) return "0 " + unit;
+  const steps: [number, string][] = [
+    [1, ""],
+    [1e-3, "m"],
+    [1e-6, "µ"],
+    [1e-9, "n"],
+  ];
+  let scale = 1;
+  let prefix = "";
+  for (const [s, p] of steps) {
+    if (a >= s) {
+      scale = s;
+      prefix = p;
+      break;
+    }
+  }
+  const v = value / scale;
+  const mag = Math.abs(v);
+  const s = mag >= 100 ? v.toFixed(0) : mag >= 10 ? v.toFixed(1) : v.toFixed(2);
+  return s + " " + prefix + unit;
 }

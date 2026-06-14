@@ -71,7 +71,8 @@ export const EXAMPLES: ExampleSpec[] = [
     name: "Voltage Divider",
     blurb:
       "Two resistors in series across a 5 V source. The middle node sits at a fraction of the supply set by the ratio R2 / (R1 + R2).",
-    watch: "the mid node settles to 3.33 V (R1 = 1 kΩ, R2 = 2 kΩ).",
+    watch:
+      "the mid node hold at 3.33 V — R2 to ground is what lets current flow and drop the rest across R1.",
     build() {
       const g = new BoardGraph();
       const v = comp(g, "V", 3, 8, 5);
@@ -115,7 +116,8 @@ export const EXAMPLES: ExampleSpec[] = [
     name: "RC Charge",
     blurb:
       "A 5 V source charges a capacitor through a resistor. The capacitor voltage rises on the classic exponential curve, not in a straight line.",
-    watch: "V(cap) climb toward 5 V with a time constant τ = R·C = 1 ms.",
+    watch:
+      "the current fall to zero as V(cap) reaches the rail — a charged capacitor is an open, not a short.",
     build() {
       const g = new BoardGraph();
       const v = comp(g, "V", 3, 7, 5);
@@ -159,7 +161,8 @@ export const EXAMPLES: ExampleSpec[] = [
     name: "RL Current Rise",
     blurb:
       "A 5 V source drives current through a resistor and an inductor. The inductor resists sudden change, so the current ramps up instead of jumping.",
-    watch: "the current ease up to 50 mA (τ = L/R = 1 ms, I = V/R).",
+    watch:
+      "the current ease up to 50 mA instead of jumping — the inductor fights the sudden change.",
     build() {
       const g = new BoardGraph();
       const v = comp(g, "V", 3, 7, 5);
