@@ -1,0 +1,935 @@
+/* SPDX-License-Identifier: Apache-2.0 */
+/*
+ * Critical Error Computing — design system.
+ * Palette, fonts, and motifs mirror criticalerrorcomputing.com: a dark
+ * blue-violet bench-instrument HUD with a vivid rose accent, monospace
+ * telemetry, wide-tracked condensed headers, faint grids, and neon glows.
+ */
+
+/* Fonts — self-hosted (latin subset, woff2) to drop the runtime Google Fonts
+ * CDN dependency. Files live in web/public/fonts/. Saira ships one variable
+ * latin instance that covers 400–700; the condensed display face and the mono
+ * telemetry face ship one file per weight. `swap` keeps text visible while the
+ * face loads. */
+@font-face {
+  font-family: "Saira";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/fonts/saira-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/saira-condensed-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/saira-condensed-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/saira-condensed-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Saira Condensed";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/saira-condensed-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/ibm-plex-mono-600.woff2") format("woff2");
+}
+
+:root {
+  /* Surfaces (OKLCH, blue-violet hue 285) */
+  --bg: oklch(0.135 0.022 285);
+  --bg-2: oklch(0.165 0.028 285);
+  --surface: oklch(0.205 0.034 285);
+  --surface-2: oklch(0.245 0.04 285);
+  --border: oklch(0.32 0.045 285);
+  --border-bright: oklch(0.42 0.06 285);
+
+  /* Text */
+  --faint: oklch(0.55 0.025 285);
+  --dim: oklch(0.74 0.02 285);
+  --text: oklch(0.97 0.004 285);
+
+  /* Signals */
+  --accent: oklch(0.64 0.255 350);
+  --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+  --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+  --violet: oklch(0.62 0.2 292);
+  --cyan: oklch(0.82 0.13 215);
+  --bronze: oklch(0.74 0.085 72);
+  --ok: oklch(0.8 0.17 150);
+  --warn: oklch(0.78 0.16 75);
+  --bad: oklch(0.6 0.24 25);
+
+  /* Type */
+  --font-body: "Saira", system-ui, sans-serif;
+  --font-display: "Saira Condensed", "Arial Narrow", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Derived motifs — built only from the tokens above so the palette stays the
+   * single source of truth. */
+  --grid-line: oklch(0.5 0.05 285 / 0.05);
+  --grid-line-strong: oklch(0.5 0.05 285 / 0.09);
+  --hairline: oklch(0 0 0 / 0.45);
+  --radius: 3px;
+  --radius-sm: 2px;
+  --ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --glow-accent: 0 0 18px -6px var(--accent);
+  --inset-deep:
+    inset 0 0 0 1px var(--hairline), inset 0 0 60px -20px oklch(0 0 0 / 0.8);
+
+  color-scheme: dark;
+  color: var(--text);
+  background: var(--bg);
+  font-family: var(--font-body);
+  font-size: 16px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::selection {
+  background: var(--accent-line);
+  color: var(--text);
+}
+
+body {
+  margin: 0;
+  min-height: 100svh;
+  background:
+    radial-gradient(
+      120% 80% at 50% -10%,
+      color-mix(in oklch, var(--violet) 12%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      90% 70% at 50% 120%,
+      color-mix(in oklch, var(--accent) 6%, transparent),
+      transparent 55%
+    ),
+    linear-gradient(to right, var(--grid-line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--grid-line) 1px, transparent 1px), var(--bg);
+  background-size:
+    100% 100%,
+    100% 100%,
+    34px 34px,
+    34px 34px;
+}
+
+/* Layout shell ------------------------------------------------------------ */
+
+#app {
+  height: 100svh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr) 300px;
+  min-height: 0;
+}
+
+/* Header ------------------------------------------------------------------ */
+
+.hud-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-2), transparent);
+}
+
+/* Hairline of accent light riding the header's bottom edge. */
+.hud-header::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent-line) 18%,
+    color-mix(in oklch, var(--accent) 55%, transparent) 50%,
+    var(--accent-line) 82%,
+    transparent
+  );
+  opacity: 0.7;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  color: var(--accent);
+  border: 1px solid var(--accent-line);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 0 18px -4px var(--accent);
+  font-size: 16px;
+  animation: brand-pulse 4.5s var(--ease) infinite;
+}
+
+@keyframes brand-pulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      0 0 18px -4px var(--accent);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px var(--accent-line),
+      0 0 26px -2px var(--accent);
+  }
+}
+
+.brand-text {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 21px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: 0 0 24px color-mix(in oklch, var(--violet) 35%, transparent);
+}
+
+.brand-sub {
+  margin-left: 8px;
+  color: var(--accent);
+  font-weight: 500;
+  text-shadow: 0 0 16px color-mix(in oklch, var(--accent) 45%, transparent);
+}
+
+.header-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Chips and readouts ------------------------------------------------------ */
+
+.chip {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--dim);
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  white-space: nowrap;
+}
+
+/* Status chips read as lit indicators: tinted fill, a faint outer glow, and a
+ * leading LED that breathes while the core reports that state. */
+.chip-ok,
+.chip-warn {
+  position: relative;
+  padding-left: 18px;
+}
+
+.chip-ok::before,
+.chip-warn::before {
+  content: "";
+  position: absolute;
+  left: 8px;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 50%;
+  background: currentcolor;
+  box-shadow: 0 0 7px 0 currentcolor;
+  animation: led-breathe 2s ease-in-out infinite;
+}
+
+.chip-ok {
+  color: var(--ok);
+  border-color: color-mix(in oklch, var(--ok) 45%, transparent);
+  background: color-mix(in oklch, var(--ok) 9%, var(--surface));
+}
+
+.chip-warn {
+  color: var(--warn);
+  border-color: color-mix(in oklch, var(--warn) 45%, transparent);
+  background: color-mix(in oklch, var(--warn) 9%, var(--surface));
+}
+
+@keyframes led-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* Panels ------------------------------------------------------------------ */
+
+.panel {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: linear-gradient(180deg, var(--bg-2), var(--bg));
+}
+
+.panel + .panel {
+  border-left: 1px solid var(--border);
+}
+
+.panel-title {
+  position: relative;
+  margin: 0;
+  padding: 14px 16px 10px;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+}
+
+/* A short accent tick anchors each panel header like a labelled rack slot. */
+.panel-title::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 14px;
+  bottom: 11px;
+  width: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 8px -1px var(--accent);
+}
+
+.panel-note {
+  margin: 0;
+  padding: 10px 16px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--faint);
+  border-bottom: 1px solid var(--border);
+}
+
+.sub-title {
+  margin: 4px 0 0;
+  padding: 12px 16px 8px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Component bin ----------------------------------------------------------- */
+
+.scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 9px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 6px;
+  background-clip: content-box;
+  background-color: var(--border);
+}
+
+.scroll::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-bright);
+}
+
+.part-list,
+.chan-list {
+  list-style: none;
+  margin: 0;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.part {
+  --c: var(--bronze);
+  position: relative;
+  display: grid;
+  grid-template-columns: 38px 1fr auto;
+  align-items: center;
+  gap: 11px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-left: 2px solid color-mix(in oklch, var(--c) 70%, var(--border));
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  cursor: grab;
+  transition:
+    border-color 0.16s var(--ease),
+    background 0.16s var(--ease),
+    box-shadow 0.16s var(--ease),
+    transform 0.06s var(--ease);
+}
+
+.part:hover {
+  border-color: var(--border-bright);
+  border-left-color: var(--c);
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    -7px 0 16px -12px var(--c),
+    0 6px 18px -14px oklch(0 0 0 / 0.9);
+}
+
+.part:hover .part-glyph {
+  border-color: var(--c);
+  box-shadow: 0 0 12px -4px var(--c);
+}
+
+.part:active {
+  transform: translateY(1px);
+  cursor: grabbing;
+}
+
+.part:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 14px -4px var(--accent);
+}
+
+.part-glyph {
+  display: grid;
+  place-items: center;
+  height: 30px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--c);
+  border: 1px solid color-mix(in oklch, var(--c) 40%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in oklch, var(--c) 9%, transparent);
+  text-shadow: 0 0 10px color-mix(in oklch, var(--c) 50%, transparent);
+  transition:
+    border-color 0.16s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+
+.part-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.part-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.part-desc {
+  font-size: 11px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.part-tier {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+/* Board ------------------------------------------------------------------- */
+
+.board {
+  position: relative;
+  padding: 12px;
+}
+
+.board-frame {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--border-bright);
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow:
+    var(--inset-deep),
+    0 0 0 1px var(--bg),
+    0 0 24px -10px color-mix(in oklch, var(--violet) 40%, transparent);
+}
+
+.board-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Scope glass: a CRT-style vignette plus a slow scanline sweep, layered above
+ * the PixiJS canvas but below the overlay labels. Non-interactive. */
+.board-frame::before,
+.board-frame::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.board-frame::before {
+  z-index: 1;
+  background:
+    radial-gradient(
+      130% 110% at 50% 0%,
+      transparent 62%,
+      oklch(0 0 0 / 0.28) 100%
+    ),
+    repeating-linear-gradient(
+      0deg,
+      oklch(0 0 0 / 0.16) 0,
+      oklch(0 0 0 / 0.16) 1px,
+      transparent 1px,
+      transparent 3px
+    );
+  mix-blend-mode: multiply;
+  opacity: 0.5;
+}
+
+.board-frame::after {
+  z-index: 2;
+  background: linear-gradient(
+    180deg,
+    transparent,
+    color-mix(in oklch, var(--cyan) 22%, transparent) 50%,
+    transparent
+  );
+  height: 36%;
+  inset: -36% 0 auto 0;
+  opacity: 0.18;
+  animation: scope-sweep 7s linear infinite;
+}
+
+@keyframes scope-sweep {
+  0% {
+    transform: translateY(0);
+  }
+  100% {
+    transform: translateY(380%);
+  }
+}
+
+.board-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+/* Registration ticks in the live corners, like a bench scope's graticule. */
+.board-overlay::before,
+.board-overlay::after {
+  content: "";
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border: 1px solid var(--border-bright);
+  opacity: 0.7;
+}
+
+.board-overlay::before {
+  left: 10px;
+  bottom: 10px;
+  border-right: none;
+  border-top: none;
+}
+
+.board-overlay::after {
+  right: 10px;
+  bottom: 10px;
+  border-left: none;
+  border-top: none;
+}
+
+.scope-tag {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+  background: oklch(0.135 0.022 285 / 0.72);
+  backdrop-filter: blur(2px);
+  padding: 3px 7px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 0 0 1px oklch(0 0 0 / 0.3);
+}
+
+/* Telemetry --------------------------------------------------------------- */
+
+.readout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.16s var(--ease);
+}
+
+.readout:hover {
+  background: color-mix(in oklch, var(--surface) 55%, transparent);
+}
+
+.readout-k {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.readout-v {
+  font-size: 13px;
+  color: var(--text);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.ok {
+  color: var(--ok);
+  text-shadow: 0 0 12px color-mix(in oklch, var(--ok) 45%, transparent);
+}
+
+.chan {
+  --c: var(--accent);
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: 4px 9px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  transition:
+    border-color 0.16s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+
+.chan:hover {
+  border-color: color-mix(in oklch, var(--c) 45%, var(--border));
+  box-shadow: 0 0 0 1px color-mix(in oklch, var(--c) 16%, transparent);
+}
+
+.chan-dot {
+  grid-row: 1 / 3;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow:
+    0 0 0 2px color-mix(in oklch, var(--c) 18%, transparent),
+    0 0 9px 0 var(--c);
+}
+
+.chan-name {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--dim);
+}
+
+.chan-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--text);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+.chan-bar {
+  position: relative;
+  grid-column: 2 / 4;
+  height: 4px;
+  border-radius: 2px;
+  background: oklch(0 0 0 / 0.45);
+  box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.4);
+  overflow: hidden;
+}
+
+.chan-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--c) 70%, transparent),
+    var(--c)
+  );
+  box-shadow: 0 0 8px -1px var(--c);
+  transition: width 0.12s var(--ease);
+}
+
+/* Footer / transport ------------------------------------------------------ */
+
+.hud-footer {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 11px 20px;
+  border-top: 1px solid var(--border);
+  background: linear-gradient(0deg, var(--bg-2), transparent);
+}
+
+/* Matching accent hairline along the footer's top edge. */
+.hud-footer::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -1px;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent-line) 22%,
+    var(--accent-line) 78%,
+    transparent
+  );
+  opacity: 0.5;
+}
+
+.transport,
+.speed,
+.footer-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.footer-meta {
+  margin-left: auto;
+}
+
+.speed-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--faint);
+  margin-right: 2px;
+}
+
+.btn {
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text);
+  padding: 8px 14px;
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  cursor: pointer;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    box-shadow 0.15s var(--ease),
+    color 0.15s var(--ease),
+    transform 0.06s var(--ease);
+}
+
+.btn:hover {
+  background: linear-gradient(180deg, var(--surface-2), var(--surface-2));
+  border-color: var(--dim);
+  box-shadow: 0 0 0 1px var(--accent-soft);
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 12px -2px var(--accent);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--faint);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+  opacity: 0.55;
+  transform: none;
+}
+
+.btn-accent {
+  color: var(--bg);
+  background: linear-gradient(
+    180deg,
+    color-mix(in oklch, var(--accent) 92%, white),
+    var(--accent)
+  );
+  border-color: var(--accent);
+  box-shadow: var(--glow-accent);
+}
+
+.btn-accent:hover {
+  background: color-mix(in oklch, var(--accent) 88%, white);
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 1px var(--accent-soft),
+    0 0 22px -5px var(--accent);
+}
+
+.btn-accent:disabled {
+  color: var(--dim);
+  background: color-mix(in oklch, var(--accent) 22%, var(--surface));
+  border-color: color-mix(in oklch, var(--accent) 30%, var(--border));
+}
+
+.btn-ghost {
+  font-family: var(--font-mono);
+  letter-spacing: 0.08em;
+  padding: 7px 11px;
+  color: var(--dim);
+  background: var(--surface);
+}
+
+.btn-ghost:hover {
+  color: var(--text);
+}
+
+.btn-ghost.is-active {
+  color: var(--accent);
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  box-shadow:
+    inset 0 0 12px -6px var(--accent),
+    0 0 10px -4px var(--accent);
+}
+
+.btn-ghost.is-active:hover {
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 60%, transparent);
+}
+
+/* Responsive -------------------------------------------------------------- */
+
+@media (max-width: 920px) {
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-auto-rows: minmax(160px, auto);
+  }
+
+  .panel + .panel {
+    border-left: none;
+    border-top: 1px solid var(--border);
+  }
+
+  .board-frame {
+    min-height: 320px;
+  }
+}
+
+/* Reduced motion ---------------------------------------------------------- */
+/* Honor the OS setting: drop the ambient animations (scope sweep, pulses) but
+ * keep the static texture and instant state transitions for legibility. */
+@media (prefers-reduced-motion: reduce) {
+  .board-frame::after,
+  .brand-mark,
+  .chip-ok::before,
+  .chip-warn::before {
+    animation: none;
+  }
+
+  .board-frame::after {
+    display: none;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

@@ -1,0 +1,15 @@
+[workspace]
+resolver = "2"
+members = ["crates/sim-core", "crates/sim-protocol", "crates/sim-wasm"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2021"
+license = "Apache-2.0"
+authors = ["Critical Error Computing"]
+repository = "https://github.com/nathanfraske/cec-electronic-game"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
