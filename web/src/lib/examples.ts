@@ -74,6 +74,39 @@ const at = (p: BuildProgress, kind: string): number => p.count[kind] ?? 0;
 
 export const EXAMPLES: ExampleSpec[] = [
   {
+    id: "primer",
+    name: "Voltage & Current",
+    blurb:
+      "The simplest loop there is: a source pushing current through one resistor. A first look at what voltage and current actually are.",
+    watch:
+      "the arrows flowing along the wire — that's current — and the wire's colour, its voltage, dropping from the rail to ground across the resistor.",
+    build() {
+      const g = new BoardGraph();
+      const v = comp(g, "V", 3, 7, 5);
+      const r = comp(g, "R", 8, 7, 1000);
+      wire(g, v, 0, r, 0); // V+ → R.A
+      wire(g, r, 1, v, 1); // R.B → V−
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "A source is a pump — it pushes on the charges, creating a voltage: an electrical 'pressure'.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Resistor (R).",
+        why: "Something for the current to flow through; the resistor sets how much.",
+        done: (p) => at(p, "R") >= 1,
+      },
+      {
+        do: "Wire them into a loop: V+ → R → V−.",
+        why: "Current only flows in a complete loop. The moving arrows ARE the current; the wire's colour is the voltage.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
     id: "divider",
     name: "Voltage Divider",
     blurb:

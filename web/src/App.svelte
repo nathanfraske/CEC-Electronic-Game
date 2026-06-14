@@ -135,6 +135,7 @@
   let demo = $state<{ label: string; on: string; off: string } | null>(null);
   let demoOn = $state(true);
   let demoExRef: ExampleSpec | null = null;
+  let showIntro = $state(true);
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
@@ -254,6 +255,11 @@
         },
         { running: false, ticksPerFrame: tpf },
       );
+
+      // Open with the primer so the very first thing you see is current flowing
+      // through a voltage-coloured wire — a demonstration of the two primitives.
+      const primer = EXAMPLES.find((e) => e.id === "primer");
+      if (primer) loadExample(primer);
     })();
 
     return () => {
@@ -302,6 +308,7 @@
   function clearBoard(): void {
     board?.clear();
     demo = null;
+    showIntro = false;
   }
   function undoAction(): void {
     board?.undo();
@@ -342,7 +349,8 @@
     buildTarget = graphShape(g);
     placeKind = "V";
     setMode("place");
-    leftTab = "examples";
+    leftTab = "parts";
+    showIntro = false;
   }
   function exitBuild(): void {
     buildEx = null;
@@ -467,43 +475,6 @@
           </li>
         {/each}
       </ul>
-    {:else if buildEx}
-      {@const ex = buildEx}
-      <div class="guided">
-        <div class="guided-head">
-          <span class="guided-title">Build · {ex.name}</span>
-          <button class="btn btn-ghost" onclick={exitBuild}>Exit</button>
-        </div>
-        <ol class="guided-steps">
-          {#each ex.steps as step, i (i)}
-            <li
-              class="gstep {i < buildStep
-                ? 'is-done'
-                : i === buildStep
-                  ? 'is-current'
-                  : ''}"
-            >
-              <span class="gstep-do">{step.do}</span>
-              {#if i === buildStep && !buildDone}
-                <span class="gstep-why">{step.why}</span>
-              {/if}
-            </li>
-          {/each}
-        </ol>
-        {#if buildDone}
-          <p class="guided-done">
-            ✓ Loop closed — current flows. Switch to Measure and probe two
-            points, or select a part to read V across and I through.
-          </p>
-        {:else}
-          <p class="guided-open">
-            Open loop — no current can flow until you close it back to ground.
-          </p>
-        {/if}
-        <button class="btn btn-ghost guided-solution" onclick={showSolution}>
-          Show solution
-        </button>
-      </div>
     {:else}
       <p class="panel-note">
         Watch a worked circuit run, or build it yourself step by step.
@@ -594,6 +565,63 @@
           {partCount} parts · {wireCount} wires · {selCount} sel
         </span>
       </div>
+
+      {#if buildEx}
+        {@const ex = buildEx}
+        <div class="guided-overlay">
+          <div class="guided-head">
+            <span class="guided-title">Build · {ex.name}</span>
+            <button class="btn btn-ghost" onclick={exitBuild}>Exit</button>
+          </div>
+          <ol class="guided-steps">
+            {#each ex.steps as step, i (i)}
+              <li
+                class="gstep {i < buildStep
+                  ? 'is-done'
+                  : i === buildStep
+                    ? 'is-current'
+                    : ''}"
+              >
+                <span class="gstep-do">{step.do}</span>
+                {#if i === buildStep && !buildDone}
+                  <span class="gstep-why">{step.why}</span>
+                {/if}
+              </li>
+            {/each}
+          </ol>
+          {#if buildDone}
+            <p class="guided-done">
+              ✓ Loop closed — current flows. Probe it in Measure, or select a
+              part.
+            </p>
+          {:else}
+            <p class="guided-open">
+              Open loop — no current flows until you close it to ground.
+            </p>
+          {/if}
+          <button class="btn btn-ghost guided-solution" onclick={showSolution}>
+            Show solution
+          </button>
+        </div>
+      {/if}
+
+      {#if showIntro}
+        <div class="intro-banner">
+          <p>
+            <strong>This is electricity.</strong> The arrows flowing along the
+            wire are <span class="hl hl-cur">current</span> — charge in motion.
+            The wire's colour is its <span class="hl hl-volt">voltage</span>,
+            the pressure that drives them (amber = high, grey = ground). Press
+            <strong>▶ Run</strong>, switch to <strong>Measure</strong> to probe,
+            or <strong>Clear</strong> to build your own.
+          </p>
+          <button
+            class="intro-x"
+            onclick={() => (showIntro = false)}
+            aria-label="Dismiss intro">×</button
+          >
+        </div>
+      {/if}
     </div>
   </main>
 
@@ -790,10 +818,6 @@
   }
 
   /* Guided build: an ordered, auto-advancing checklist. */
-  .guided {
-    overflow-y: auto;
-    padding: 12px;
-  }
   .guided-head {
     display: flex;
     align-items: center;
@@ -879,6 +903,73 @@
   }
   .guided-solution {
     margin-top: 6px;
+  }
+
+  /* Board overlays: the guide floats over the canvas (so Parts stays visible in
+     the left panel), and the primer intro banner explains V and I up front. */
+  .guided-overlay {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    width: 258px;
+    max-height: calc(100% - 24px);
+    overflow-y: auto;
+    padding: 12px;
+    background: oklch(0.165 0.028 285 / 0.92);
+    border: 1px solid var(--border-bright);
+    border-radius: 4px;
+    box-shadow: 0 10px 30px -12px #000;
+    backdrop-filter: blur(3px);
+  }
+  .intro-banner {
+    position: absolute;
+    left: 12px;
+    bottom: 12px;
+    max-width: 56%;
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    padding: 12px 14px;
+    background: oklch(0.165 0.028 285 / 0.94);
+    border: 1px solid var(--accent-line);
+    border-radius: 4px;
+    box-shadow: 0 0 24px -8px var(--accent);
+    backdrop-filter: blur(3px);
+  }
+  .intro-banner p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dim);
+  }
+  .intro-banner strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .hl {
+    font-weight: 600;
+  }
+  .hl-cur {
+    color: var(--cyan);
+  }
+  .hl-volt {
+    color: var(--warn);
+  }
+  .intro-x {
+    flex-shrink: 0;
+    width: 24px;
+    height: 24px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--dim);
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .intro-x:hover {
+    color: var(--text);
+    border-color: var(--dim);
   }
 
   /* Transport: step buttons + the timeline scrubber. */
