@@ -23,12 +23,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~All verification gates green from a clean checkout (fmt, clippy, test, build:wasm, check, lint, build).~~
 - ~~Write the game design document (docs/game-design.md): pillars, fidelity-as-progression loop, tech tree, challenge/grading model, milestones M0–M5.~~
 
+### Done — parallel agent panel (M1 + M2 + polish), integrated
+- ~~M2 (Lane A): replace placeholder dynamics with a real deterministic analog engine — backward-Euler companion models via Modified Nodal Analysis, bounded dense solve. Circuit: RC charge (V → R → C → gnd). `state()` = [v(n1), v(cap), i(src), v(rail)].~~
+- ~~M2: committed determinism golden `golden_snapshot_hash_is_stable` (seed 42, 1000 steps → 0x92349dbbbf5a8293); kept `run_is_reproducible`; added monotonic-charge, closed-form, and seed→rail tests.~~
+- ~~M1 (Lane B): interactive board — TS board model (`web/src/lib/graph.ts`), drag-from-bin placement, click-drag wiring, move/delete, Select/Place/Wire mode toggle, and a renderer + telemetry generalized to a variable-length state vector.~~
+- ~~Polish (Lane C): self-host the fonts (dropped the Google CDN), CRT/scanline scope frame, full button/chip/telemetry state matrices, neon glows, prefers-reduced-motion.~~
+- ~~Integrate the three worktree branches into the feature branch (disjoint files → clean cherry-pick); rebuild wasm; full gate suite green; align telemetry labels to the core's state layout.~~
+
 ### Open / Next
-- [ ] Replace the placeholder `Sim` dynamics with the real mixed-signal engine: continuous-time analog solver, event-driven digital engine, behavioral MCU emulator, meeting at the pins (docs/architecture.md).
-- [ ] Promote the ignored `print_golden` test into a committed golden once real dynamics land (docs/determinism.md).
+- [ ] **Wire the board graph into the solver.** Today the interactive board (`graph.ts`) and the analog core are independent — the sim runs a fixed RC circuit regardless of what you place. Compile the placed components + wires into a netlist the core actually solves.
+- [ ] Generalize the analog engine beyond the fixed RC: stamp arbitrary R/C/L/sources from the netlist; add nonlinear devices (diode) with a capped Newton solve.
+- [ ] Add the event-driven digital engine and the behavioral MCU emulator; meet the analog domain at the pins (docs/architecture.md).
+- [ ] First graded challenge: "V(cap) reaches 90% of V(rail) within N ticks", verified by measurement + deterministic replay.
 - [ ] sim-protocol: design the real snapshot/command wire schema; choose a serialization deliberately and record an ADR.
-- [ ] Web: implement drag-from-bin component placement and a real board graph (nodes, pins, wires).
 - [ ] Web: implement rewind via sparse keyframes wired to the transport controls.
 - [ ] Re-enable `wasm-opt` once binaryen is provisioned in the build image.
-- [ ] Self-host the Saira / Saira Condensed / IBM Plex Mono fonts instead of the Google Fonts CDN.
 - [ ] Open the bootstrap pull request against `main`; recommend branch protection requiring the `rust-core` and `web-build` checks.
+
+Superseded earlier items (tombstoned):
+- ~~Replace the placeholder dynamics with the real analog solver~~ → analog RC done (Lane A); digital + MCU still open above.
+- ~~Promote `print_golden` into a committed golden~~ → done (Lane A).
+- ~~Web: drag-from-bin placement + real board graph~~ → done (Lane B).
+- ~~Self-host the fonts~~ → done (Lane C).

@@ -82,10 +82,11 @@
     },
   ];
 
-  // Labels for the telemetry channels. The state vector is variable length
-  // (the core may grow or shrink it), so labels cycle and we always iterate
-  // over the live snapshot length rather than a fixed channel count.
-  const CHANNEL_LABELS = ["RAIL A", "RAIL B", "NODE C", "NODE D"];
+  // Labels for the telemetry channels, matching the analog core's state layout
+  // (sim-core exposes [ v(n1), v(cap), i(src), v(rail) ] for the RC circuit).
+  // The vector is variable length, so we iterate the live snapshot length and
+  // fall back to a generic node label for any extra channels the core exposes.
+  const CHANNEL_LABELS = ["V(n1)", "V(cap)", "I(src)", "V(rail)"];
   const CHANNEL_COLORS = [
     "var(--accent)",
     "var(--cyan)",

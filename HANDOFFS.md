@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — Parallel panel landed: M1 + M2 + design polish
+
+**State:** 🟢 Green. Three parallel agents (isolated git worktrees) integrated
+cleanly into this branch; the full gate suite passes on the integrated tree.
+
+### What changed since the bootstrap
+- **M2 — analog core (Lane A).** `crates/sim-core` now runs a real deterministic
+  analog engine: backward-Euler companion models assembled by Modified Nodal
+  Analysis, solved each fixed tick by a bounded dense Gaussian elimination
+  (fixed order, partial pivot). Circuit = RC charge (V → R → C → gnd).
+  `state()` = `[v(n1), v(cap), i(src), v(rail)]` (volts/amps). Committed golden
+  `0x92349dbbbf5a8293` (seed 42, 1000 steps). `sim-wasm` adds `cap_voltage()`;
+  all prior method names unchanged.
+- **M1 — interactive board (Lane B).** `web/src/lib/graph.ts` (board model) plus
+  a rewritten `board.ts` (PixiJS scene + input). Drag a part from the bin to
+  place it, click-drag pin→pin to wire, drag to move, right-click to delete,
+  Select/Place/Wire mode toggle + Clear. Renderer & telemetry iterate the live
+  `state().length` (no hardcoded channel count).
+- **Polish (Lane C).** Fonts self-hosted under `web/public/fonts/` (Google CDN
+  removed); CRT/scanline scope frame, full button/chip/telemetry state matrices,
+  neon glows, `prefers-reduced-motion`. Token values unchanged.
+
+### ⚠️ Important seam for the next agent
+The interactive board and the simulator are **not yet connected.** The core
+solves a *fixed* RC circuit; placing/wiring parts builds a `BoardGraph` that is
+**not yet fed to the solver.** The top backlog item is to compile the board
+graph into a netlist the core solves (see `TODOS.md`).
+
+### Integration mechanics (FYI)
+Each lane worked in an isolated worktree branched from the bootstrap base and was
+cherry-picked here (the lanes touched disjoint files, so no conflicts). The
+ephemeral worktrees under `.claude/worktrees/` are gitignored and were removed
+after integration.
+
+How to verify is unchanged (see CLAUDE.md). Branch `claude/kind-turing-hdelb3`; no PR opened.
+
+---
+
 ## 2026-06-14 — Repository bootstrap + first design pass
 
 **State:** 🟢 Green. Every verification gate passes from a clean checkout.
