@@ -37,6 +37,14 @@ import {
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode = "select" | "place" | "wire" | "measure";
 
+/** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
+interface ProbePoint {
+  node: number;
+  x: number;
+  y: number;
+  ref: PinRef | null;
+}
+
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
 const PIN_R = 4.5;
@@ -119,9 +127,10 @@ export class Board {
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
 
-  // Probe (measure mode): two leads reading the voltage between two pins.
-  private probeA: PinRef | null = null;
-  private probeB: PinRef | null = null;
+  // Probe (measure mode): two draggable DMM leads that snap to a pin or trace.
+  private probeA: ProbePoint | null = null;
+  private probeB: ProbePoint | null = null;
+  private draggingProbe: "A" | "B" | null = null;
   private probeNodes: Map<number, [number, number]> | null = null;
   private lastState: Float64Array = new Float64Array();
   private electrical: Map<number, ElectricalState> | undefined;
@@ -493,31 +502,94 @@ export class Board {
 
   // --- probe (measure mode) -----------------------------------------------
 
-  private setProbe(pin: PinRef): void {
-    // First click sets the red (+) lead; second sets the steel (−) reference;
-    // a third starts over. Moving the − lead is how "voltage across" is taught.
-    if (!this.probeA || this.probeB) {
-      this.probeA = pin;
-      this.probeB = null;
-    } else {
-      this.probeB = pin;
+  /** Press in measure mode: grab a nearby lead to drag, or drop the next lead. */
+  private measurePress(wx: number, wy: number): boolean {
+    const grab = this.probeLeadAt(wx, wy);
+    if (grab) {
+      this.draggingProbe = grab;
+      return true;
     }
+    const target = this.snapProbe(wx, wy);
+    if (!target) return false;
+    if (!this.probeA) this.probeA = target;
+    else if (!this.probeB) this.probeB = target;
+    else this.probeA = target;
+    return true;
   }
 
   private clearProbe(): void {
     this.probeA = null;
     this.probeB = null;
+    this.draggingProbe = null;
     this.probeLayer.clear();
     this.probeText.visible = false;
   }
 
-  private pinVoltage(ref: PinRef | null): number | null {
-    if (!ref) return null;
+  private nodeVoltage(node: number): number | null {
+    if (node < 0 || node >= this.lastState.length) return null;
+    return this.lastState[node] ?? 0;
+  }
+
+  private pinNode(ref: PinRef): number | null {
     const nodes = this.probeNodes?.get(ref.componentId);
     if (!nodes) return null;
-    const node = nodes[ref.pinIndex];
-    if (node === undefined) return null;
-    return this.lastState[node] ?? 0;
+    return nodes[ref.pinIndex] ?? null;
+  }
+
+  private pinVoltage(ref: PinRef): number | null {
+    const node = this.pinNode(ref);
+    return node === null ? null : this.nodeVoltage(node);
+  }
+
+  /** Snap a world point to the nearest pin or trace, resolving its net node. */
+  private snapProbe(wx: number, wy: number): ProbePoint | null {
+    const pin = this.pinHitTest(wx, wy);
+    if (pin) {
+      const cell = this.graph.pinRefCell(pin);
+      const node = this.pinNode(pin);
+      if (cell && node !== null) {
+        const p = this.cellToWorld(cell);
+        return { node, x: p.x, y: p.y, ref: pin };
+      }
+    }
+    const wireId = this.wireHitTest(wx, wy);
+    if (wireId !== null) {
+      const w = this.graph.wires.get(wireId);
+      const node = w ? this.pinNode(w.from) : null;
+      const a = w ? this.graph.pinRefCell(w.from) : null;
+      const b = w ? this.graph.pinRefCell(w.to) : null;
+      if (w && node !== null && a && b) {
+        const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+        const cp = closestOnPolyline(route, wx, wy);
+        return { node, x: cp.x, y: cp.y, ref: null };
+      }
+    }
+    return null;
+  }
+
+  /** A lead's live position, following its pin if it is attached to one. */
+  private leadPos(p: ProbePoint): { x: number; y: number; node: number } {
+    if (p.ref) {
+      const cell = this.graph.pinRefCell(p.ref);
+      if (cell) {
+        const w = this.cellToWorld(cell);
+        return { x: w.x, y: w.y, node: this.pinNode(p.ref) ?? p.node };
+      }
+    }
+    return { x: p.x, y: p.y, node: p.node };
+  }
+
+  private probeLeadAt(wx: number, wy: number): "A" | "B" | null {
+    const r2 = 16 * 16;
+    if (this.probeB) {
+      const lp = this.leadPos(this.probeB);
+      if ((lp.x - wx) ** 2 + (lp.y - wy) ** 2 <= r2) return "B";
+    }
+    if (this.probeA) {
+      const lp = this.leadPos(this.probeA);
+      if ((lp.x - wx) ** 2 + (lp.y - wy) ** 2 <= r2) return "A";
+    }
+    return null;
   }
 
   /** Draw one DMM lead: a wire to a handle knob, a metal needle tip, a ring. */
@@ -538,37 +610,30 @@ export class Board {
   private drawProbe(): void {
     const g = this.probeLayer;
     g.clear();
-    if (this.mode !== "measure" || !this.probeA) {
+    if (this.mode !== "measure") {
       this.probeText.visible = false;
       return;
     }
-    const cellA = this.graph.pinRefCell(this.probeA);
-    if (!cellA) {
-      this.clearProbe();
-      return;
-    }
-    const pa = this.cellToWorld(cellA);
-    const vA = this.pinVoltage(this.probeA);
+    const a = this.probeA ? this.leadPos(this.probeA) : null;
+    const b = this.probeB ? this.leadPos(this.probeB) : null;
+    if (a) this.drawLead(a.x, a.y, PROBE_PLUS);
+    if (b) this.drawLead(b.x, b.y, PROBE_MINUS);
 
-    if (this.probeB) {
-      const cellB = this.graph.pinRefCell(this.probeB);
-      if (!cellB) {
-        this.probeB = null;
-        return;
-      }
-      const pb = this.cellToWorld(cellB);
-      const vB = this.pinVoltage(this.probeB);
-      this.drawLead(pa.x, pa.y, PROBE_PLUS);
-      this.drawLead(pb.x, pb.y, PROBE_MINUS);
-      this.probeText.text = "ΔV " + fmtSI((vA ?? 0) - (vB ?? 0), "V");
-      this.probeText.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 - 16);
-    } else {
-      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+    if (a && b) {
+      const va = this.nodeVoltage(a.node) ?? 0;
+      const vb = this.nodeVoltage(b.node) ?? 0;
+      this.probeText.text = "ΔV " + fmtSI(va - vb, "V");
+      this.probeText.position.set((a.x + b.x) / 2, (a.y + b.y) / 2 - 16);
+      this.probeText.visible = true;
+    } else if (a) {
+      const va = this.nodeVoltage(a.node);
       this.probeText.text =
-        vA === null ? "no reading" : fmtSI(vA, "V") + " vs GND";
-      this.probeText.position.set(pa.x, pa.y - 18);
+        va === null ? "no reading" : fmtSI(va, "V") + " vs GND";
+      this.probeText.position.set(a.x, a.y - 18);
+      this.probeText.visible = true;
+    } else {
+      this.probeText.visible = false;
     }
-    this.probeText.visible = true;
   }
 
   // --- input handlers -----------------------------------------------------
@@ -584,10 +649,8 @@ export class Board {
       return;
     }
     if (this.mode === "measure") {
-      const pin = this.pinHitTest(wp.x, wp.y);
-      if (pin) this.setProbe(pin);
-      else if (!additive)
-        this.panning = { lastX: e.global.x, lastY: e.global.y };
+      if (this.measurePress(wp.x, wp.y)) return;
+      if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
 
@@ -641,6 +704,18 @@ export class Board {
     const wp = this.screenToWorld(e.global.x, e.global.y);
     this.pointer.copyFrom(wp);
 
+    if (this.draggingProbe) {
+      const target = this.snapProbe(wp.x, wp.y) ?? {
+        node: -1,
+        x: wp.x,
+        y: wp.y,
+        ref: null,
+      };
+      if (this.draggingProbe === "A") this.probeA = target;
+      else this.probeB = target;
+      return;
+    }
+
     if (this.panning) {
       this.world.position.x += e.global.x - this.panning.lastX;
       this.world.position.y += e.global.y - this.panning.lastY;
@@ -671,6 +746,10 @@ export class Board {
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
+    if (this.draggingProbe) {
+      this.draggingProbe = null;
+      return;
+    }
     if (this.panning) {
       this.panning = null;
       return;
@@ -1176,6 +1255,33 @@ function distToSegment(
   const cx = ax + t * dx;
   const cy = ay + t * dy;
   return Math.hypot(px - cx, py - cy);
+}
+
+/** Closest point on a polyline to (px,py). */
+function closestOnPolyline(
+  pts: Point[],
+  px: number,
+  py: number,
+): { x: number; y: number } {
+  let best = { x: pts[0]?.x ?? px, y: pts[0]?.y ?? py };
+  let bestD = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p0 = pts[i]!;
+    const p1 = pts[i + 1]!;
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 === 0 ? 0 : ((px - p0.x) * dx + (py - p0.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = p0.x + t * dx;
+    const cy = p0.y + t * dy;
+    const d = (px - cx) ** 2 + (py - cy) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = { x: cx, y: cy };
+    }
+  }
+  return best;
 }
 
 /** Format a live measurement in engineering notation, e.g. 0.00167 A → "1.67 mA". */
