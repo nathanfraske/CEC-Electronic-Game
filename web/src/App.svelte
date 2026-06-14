@@ -6,17 +6,32 @@
     createSimulation,
     runLoop,
     type Snapshot,
-    type LoopControls,
+    type PlaybackControls,
   } from "./sim/loop";
   import { Board, type Mode } from "./lib/board";
-  import type { BoardGraph } from "./lib/graph";
+  import { BoardGraph } from "./lib/graph";
+  import { EXAMPLES, type ExampleSpec } from "./lib/examples";
+  import {
+    buildNetlist,
+    electricalMap,
+    graphShape,
+    type BuiltNetlist,
+  } from "./lib/netlist";
+  import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
   const SPEEDS = [1, 4, 16, 64];
 
-  // The component bin previews the tech-tree progression described in the
-  // README: idealized Tier I parts give way to real parts that cost something.
+  // The component bin. The four ideal primitives (V/R/C/L) come first and are the
+  // parts the solver simulates today; the rest preview later tech-tree tiers.
   const PARTS = [
+    {
+      tag: "V",
+      name: "Voltage Source",
+      desc: "Ideal fixed DC rail",
+      tier: "I",
+      color: "var(--warn)",
+    },
     {
       tag: "R",
       name: "Resistor",
@@ -42,7 +57,7 @@
       tag: "D",
       name: "Diode",
       desc: "One-way conduction",
-      tier: "I",
+      tier: "II",
       color: "var(--warn)",
     },
     {
@@ -82,11 +97,8 @@
     },
   ];
 
-  // Labels for the telemetry channels, matching the analog core's state layout
-  // (sim-core exposes [ v(n1), v(cap), i(src), v(rail) ] for the RC circuit).
-  // The vector is variable length, so we iterate the live snapshot length and
-  // fall back to a generic node label for any extra channels the core exposes.
-  const CHANNEL_LABELS = ["V(n1)", "V(cap)", "I(src)", "V(rail)"];
+  // The state vector is node voltages (index 0 is ground); channels are labelled
+  // by node index and iterate the live snapshot length.
   const CHANNEL_COLORS = [
     "var(--accent)",
     "var(--cyan)",
@@ -99,28 +111,40 @@
     { id: "select", label: "Select" },
     { id: "place", label: "Place" },
     { id: "wire", label: "Wire" },
+    { id: "measure", label: "Measure" },
   ];
 
   let frameEl: HTMLDivElement;
   let canvasEl: HTMLCanvasElement;
 
   let tick = $state(0n);
+  let liveTick = $state(0n);
   let hash = $state(0n);
   let proto = $state(0);
   let channels = $state<number[]>([]);
-  let running = $state(true);
+  let running = $state(false);
   let tpf = $state(1);
   let ready = $state(false);
   let mode = $state<Mode>("select");
-  let placeKind = $state(PARTS[0]?.tag ?? "R");
+  let placeKind = $state(PARTS[0]?.tag ?? "V");
+  let leftTab = $state<"parts" | "examples">("parts");
+  let buildEx = $state<ExampleSpec | null>(null);
+  let buildStep = $state(0);
+  let buildDone = $state(false);
+  let buildTarget = "";
+  let demo = $state<{ label: string; on: string; off: string } | null>(null);
+  let demoOn = $state(true);
+  let demoExRef: ExampleSpec | null = null;
   let partCount = $state(0);
   let wireCount = $state(0);
+  let selCount = $state(0);
+  let canUndo = $state(false);
+  let scrubFrac = $state(0);
 
   let board: Board | undefined;
-  let controls: LoopControls | undefined;
+  let controls: PlaybackControls | undefined;
 
-  const channelLabel = (i: number): string =>
-    CHANNEL_LABELS[i] ?? `NODE ${i + 1}`;
+  const channelLabel = (i: number): string => (i === 0 ? "GND" : `Node ${i}`);
   const channelColor = (i: number): string =>
     CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
 
@@ -128,10 +152,23 @@
     let app: Application | undefined;
     let disposed = false;
 
+    const onKey = (e: KeyboardEvent): void => {
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      if (e.key === "Delete" || e.key === "Backspace") {
+        board?.deleteSelection();
+        e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
+        board?.undo();
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+
     void (async () => {
       const a = new Application();
-      // Render into the canvas Svelte owns, rather than appending a node, so
-      // the Svelte runtime stays the single source of truth for the DOM.
+      // Render into the canvas Svelte owns, rather than appending a node, so the
+      // Svelte runtime stays the single source of truth for the DOM.
       await a.init({
         canvas: canvasEl,
         resizeTo: frameEl,
@@ -143,33 +180,83 @@
         return;
       }
       app = a;
+
+      const sim = await createSimulation(SEED);
+      proto = sim.protocolVersion();
+
+      // Compile the board into a netlist and install it whenever the topology or
+      // a value changes. Pure moves leave the signature unchanged, so dragging a
+      // part around never resets the running simulation.
+      let netlist: BuiltNetlist | null = null;
+      let netlistSig = "";
+      const rebuildNetlist = (graph: BoardGraph): void => {
+        const nl = buildNetlist(graph);
+        const sig = nl ? nl.sig : graph.components.size > 0 ? "empty" : "demo";
+        if (sig === netlistSig) return;
+        netlistSig = sig;
+        netlist = nl;
+        board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
+        if (nl) {
+          sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values);
+          controls?.resync();
+        } else if (graph.components.size > 0) {
+          // Parts placed but no voltage source to reference: install a quiet
+          // ground-only circuit so the readouts go flat rather than stale.
+          sim.setNetlist(
+            1,
+            new Uint8Array(),
+            new Uint32Array(),
+            new Uint32Array(),
+            new Float64Array(),
+          );
+          controls?.resync();
+        }
+        // else: empty board — keep the built-in demo circuit running.
+      };
+
       const b = new Board(a, {
         onChange: (graph: BoardGraph) => {
           partCount = graph.components.size;
           wireCount = graph.wires.size;
+          canUndo = b.canUndo();
+          rebuildNetlist(graph);
+          advanceBuild(graph);
+        },
+        onSelect: (sel) => {
+          selCount = sel.components + sel.wires;
         },
       });
       board = b;
       b.setMode(mode);
-
-      const sim = await createSimulation(SEED);
-      proto = sim.protocolVersion();
       ready = true;
 
+      // Paused by default: the player presses Run, or steps tick by tick.
       controls = runLoop(
         sim,
         (snap: Snapshot) => {
-          b.update(snap);
-          tick = snap.tick;
+          // Attribute per-element current and per-net voltage to each component
+          // so the glyphs animate with what is actually happening to them.
+          const electrical: Map<number, ElectricalState> | undefined =
+            netlist && snap.elementCurrents
+              ? electricalMap(netlist, snap.state, snap.elementCurrents)
+              : undefined;
+          b.update(snap, electrical);
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
+          const st = controls?.status();
+          if (st) {
+            tick = st.tick;
+            liveTick = st.liveTick;
+            scrubFrac = st.live > 0 ? st.cursor / st.live : 0;
+          }
         },
-        tpf,
+        { running: false, ticksPerFrame: tpf },
       );
     })();
 
     return () => {
       disposed = true;
+      window.removeEventListener("keydown", onKey);
       controls?.stop();
       controls = undefined;
       board?.destroy();
@@ -178,32 +265,111 @@
     };
   });
 
-  function toggleRun(): void {
-    if (!controls) return;
-    if (running) controls.pause();
-    else controls.resume();
-    running = controls.isRunning();
+  function syncRunning(): void {
+    running = controls?.isRunning() ?? false;
   }
-
-  function stepOnce(): void {
-    if (!controls) return;
-    controls.pause();
-    running = false;
-    controls.stepOnce();
+  function togglePlay(): void {
+    controls?.toggle();
+    syncRunning();
   }
-
+  function stepFwd(): void {
+    controls?.stepForward();
+    syncRunning();
+  }
+  function stepBack(): void {
+    controls?.stepBack();
+    syncRunning();
+  }
+  function onScrub(e: Event): void {
+    const el = e.currentTarget as HTMLInputElement;
+    controls?.seekFraction(Number(el.value) / 1000);
+    syncRunning();
+  }
   function setSpeed(n: number): void {
     tpf = n;
     controls?.setTicksPerFrame(n);
   }
-
   function setMode(m: Mode): void {
     mode = m;
     board?.setMode(m);
   }
-
   function clearBoard(): void {
     board?.clear();
+    demo = null;
+  }
+  function undoAction(): void {
+    board?.undo();
+  }
+  function deleteSelection(): void {
+    board?.deleteSelection();
+  }
+  function resetView(): void {
+    board?.resetView();
+  }
+  function loadExample(ex: ExampleSpec): void {
+    board?.loadGraph(ex.build());
+    controls?.resume();
+    syncRunning();
+    setMode("select");
+    demoExRef = ex.demo ? ex : null;
+    demo = ex.demo
+      ? { label: ex.demo.label, on: ex.demo.on, off: ex.demo.off }
+      : null;
+    demoOn = true;
+  }
+  function toggleDemo(): void {
+    const ex = demoExRef;
+    if (!ex?.demo) return;
+    demoOn = !demoOn;
+    board?.loadGraph(demoOn ? ex.build() : ex.demo.alt());
+    controls?.resume();
+    syncRunning();
+  }
+  function startBuild(ex: ExampleSpec): void {
+    board?.clear();
+    demo = null;
+    buildEx = ex;
+    buildStep = 0;
+    buildDone = false;
+    const g = new BoardGraph();
+    g.restore(ex.build());
+    buildTarget = graphShape(g);
+    placeKind = "V";
+    setMode("place");
+    leftTab = "examples";
+  }
+  function exitBuild(): void {
+    buildEx = null;
+  }
+  function showSolution(): void {
+    const ex = buildEx;
+    if (!ex) return;
+    board?.loadGraph(ex.build());
+    controls?.resume();
+    syncRunning();
+    buildEx = null;
+  }
+  // Advance the guided build as the player places parts and draws wires.
+  function advanceBuild(graph: BoardGraph): void {
+    const ex = buildEx;
+    if (!ex) return;
+    const count: Record<string, number> = {};
+    for (const c of graph.components.values()) {
+      count[c.kind] = (count[c.kind] ?? 0) + 1;
+    }
+    const progress = {
+      count,
+      wires: graph.wires.size,
+      complete: graphShape(graph) === buildTarget,
+    };
+    while (buildStep < ex.steps.length && ex.steps[buildStep]?.done(progress)) {
+      buildStep++;
+    }
+    if (progress.complete || buildStep >= ex.steps.length) {
+      buildDone = true;
+      controls?.resume();
+      syncRunning();
+    }
   }
 
   // --- placement via drag-and-drop from the bin ---------------------------
@@ -213,25 +379,21 @@
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
     placeKind = tag;
   }
-
   function onBoardDragOver(e: DragEvent): void {
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
   }
-
   function onBoardDrop(e: DragEvent): void {
     e.preventDefault();
     const tag = e.dataTransfer?.getData("text/plain") || placeKind;
     dropAt(tag, e.clientX, e.clientY);
   }
-
-  // In Place mode a plain click drops the currently selected part, so the board
-  // is usable without a pointer that supports drag.
+  // In Place mode a plain click drops the selected part, so the board is usable
+  // without a pointer that supports drag.
   function onBoardClick(e: MouseEvent): void {
     if (mode !== "place" || !board) return;
     dropAt(placeKind, e.clientX, e.clientY);
   }
-
   function dropAt(tag: string, clientX: number, clientY: number): void {
     if (!board) return;
     const rect = canvasEl.getBoundingClientRect();
@@ -262,35 +424,104 @@
 
 <div class="workspace">
   <aside class="panel bin">
-    <h2 class="panel-title">Component Bin</h2>
-    <p class="panel-note">
-      Drag a part onto the board to place it. Tier I parts are idealized and
-      simply work; progress trades them for real parts that behave like the
-      bench.
-    </p>
-    <ul class="part-list scroll">
-      {#each PARTS as part (part.name)}
-        <!-- Bin rows are draggable affordances; selection is also reachable via
-             the Mode toolbar + click-to-place, so the click is a convenience. -->
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <li
-          class="part {placeKind === part.tag ? 'is-selected' : ''}"
-          style="--c: {part.color}"
-          draggable="true"
-          ondragstart={(e) => onPartDragStart(e, part.tag)}
-          onclick={() => (placeKind = part.tag)}
-          title="Drag onto the board, or select then click in Place mode"
-        >
-          <span class="part-glyph">{part.tag}</span>
-          <span class="part-body">
-            <span class="part-name">{part.name}</span>
-            <span class="part-desc">{part.desc}</span>
-          </span>
-          <span class="part-tier">{part.tier}</span>
-        </li>
-      {/each}
-    </ul>
+    <div class="bin-tabs">
+      <button
+        class="tab {leftTab === 'parts' ? 'is-active' : ''}"
+        onclick={() => (leftTab = "parts")}>Parts</button
+      >
+      <button
+        class="tab {leftTab === 'examples' ? 'is-active' : ''}"
+        onclick={() => (leftTab = "examples")}>Examples</button
+      >
+    </div>
+    {#if leftTab === "parts"}
+      <p class="panel-note">
+        Drag a part onto the board, or pick Place mode and click. Scroll to
+        zoom, drag empty space to pan. V / R / C / L are ideal and simulate
+        today.
+      </p>
+      <ul class="part-list scroll">
+        {#each PARTS as part (part.name)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <li
+            class="part {placeKind === part.tag ? 'is-selected' : ''}"
+            style="--c: {part.color}"
+            draggable="true"
+            ondragstart={(e) => onPartDragStart(e, part.tag)}
+            onclick={() => (placeKind = part.tag)}
+            title="Drag onto the board, or select then click in Place mode"
+          >
+            <span class="part-glyph">{part.tag}</span>
+            <span class="part-body">
+              <span class="part-name">{part.name}</span>
+              <span class="part-desc">{part.desc}</span>
+            </span>
+            <span class="part-tier">{part.tier}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else if buildEx}
+      {@const ex = buildEx}
+      <div class="guided">
+        <div class="guided-head">
+          <span class="guided-title">Build · {ex.name}</span>
+          <button class="btn btn-ghost" onclick={exitBuild}>Exit</button>
+        </div>
+        <ol class="guided-steps">
+          {#each ex.steps as step, i (i)}
+            <li
+              class="gstep {i < buildStep
+                ? 'is-done'
+                : i === buildStep
+                  ? 'is-current'
+                  : ''}"
+            >
+              <span class="gstep-do">{step.do}</span>
+              {#if i === buildStep && !buildDone}
+                <span class="gstep-why">{step.why}</span>
+              {/if}
+            </li>
+          {/each}
+        </ol>
+        {#if buildDone}
+          <p class="guided-done">
+            ✓ Loop closed — current flows. Switch to Measure and probe two
+            points, or select a part to read V across and I through.
+          </p>
+        {:else}
+          <p class="guided-open">
+            Open loop — no current can flow until you close it back to ground.
+          </p>
+        {/if}
+        <button class="btn btn-ghost guided-solution" onclick={showSolution}>
+          Show solution
+        </button>
+      </div>
+    {:else}
+      <p class="panel-note">
+        Watch a worked circuit run, or build it yourself step by step.
+      </p>
+      <ul class="example-list scroll">
+        {#each EXAMPLES as ex (ex.id)}
+          <li class="example">
+            <div class="example-head">
+              <span class="example-name">{ex.name}</span>
+              <span class="example-actions">
+                <button class="btn btn-ghost" onclick={() => loadExample(ex)}>
+                  Watch
+                </button>
+                <button class="btn btn-ghost" onclick={() => startBuild(ex)}>
+                  Build
+                </button>
+              </span>
+            </div>
+            <p class="example-blurb">{ex.blurb}</p>
+            <p class="example-watch">Watch · {ex.watch}</p>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </aside>
 
   <main class="panel board">
@@ -305,17 +536,39 @@
           {m.label}
         </button>
       {/each}
+      {#if demo}
+        <button
+          class="btn btn-ghost demo-btn {demoOn ? 'is-active' : ''}"
+          onclick={toggleDemo}
+          title={demoOn ? demo.on : demo.off}
+        >
+          {demo.label}: {demoOn ? "ON" : "OFF"}
+        </button>
+      {/if}
+      <span class="tool-spacer"></span>
       <button
-        class="btn btn-ghost clear-btn"
-        onclick={clearBoard}
-        disabled={!ready}
+        class="btn btn-ghost"
+        onclick={undoAction}
+        disabled={!ready || !canUndo}
+        title="Undo (Ctrl+Z)"
       >
+        Undo
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={deleteSelection}
+        disabled={!ready || selCount === 0}
+        title="Delete selected (Del)"
+      >
+        Delete
+      </button>
+      <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
+        Reset View
+      </button>
+      <button class="btn btn-ghost" onclick={clearBoard} disabled={!ready}>
         Clear
       </button>
     </div>
-    <!-- The drop target is the frame around the canvas Svelte owns; the drop
-         handler computes canvas-local coordinates and asks the renderer to
-         place a node. No DOM nodes are appended — placement lives in the GPU. -->
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -331,7 +584,9 @@
       <canvas class="board-canvas" bind:this={canvasEl}></canvas>
       <div class="board-overlay">
         <span class="scope-tag">Board · {mode.toUpperCase()}</span>
-        <span class="scope-tag">{partCount} parts · {wireCount} wires</span>
+        <span class="scope-tag">
+          {partCount} parts · {wireCount} wires · {selCount} sel
+        </span>
       </div>
     </div>
   </main>
@@ -348,7 +603,7 @@
     </div>
     <div class="readout">
       <span class="readout-k">Tick</span>
-      <span class="readout-v mono">{tick}</span>
+      <span class="readout-v mono">{tick} / {liveTick}</span>
     </div>
 
     <h3 class="sub-title">Channels · {channels.length}</h3>
@@ -369,38 +624,60 @@
 
 <div class="hud-footer">
   <div class="transport">
-    <button class="btn btn-accent" onclick={toggleRun} disabled={!ready}>
+    <button class="btn btn-accent" onclick={togglePlay} disabled={!ready}>
       {running ? "❚❚ Pause" : "▶ Run"}
     </button>
-    <button class="btn" onclick={stepOnce} disabled={!ready}>▷ Step</button>
+    <button
+      class="btn step"
+      onclick={stepBack}
+      disabled={!ready}
+      title="Step back one tick">◀</button
+    >
+    <button
+      class="btn step"
+      onclick={stepFwd}
+      disabled={!ready}
+      title="Step forward one tick">▶</button
+    >
   </div>
+
+  <div class="scrubber">
+    <input
+      class="scrub"
+      type="range"
+      min="0"
+      max="1000"
+      value={Math.round(scrubFrac * 1000)}
+      oninput={onScrub}
+      disabled={!ready}
+      aria-label="Timeline position"
+    />
+    <span class="scrub-read mono">t {tick} / {liveTick}</span>
+  </div>
+
   <div class="speed">
     <span class="speed-label">Speed</span>
     {#each SPEEDS as s (s)}
       <button
         class="btn btn-ghost {tpf === s ? 'is-active' : ''}"
         onclick={() => setSpeed(s)}
+        disabled={!ready}
       >
         {s}×
       </button>
     {/each}
   </div>
-  <div class="footer-meta">
-    <span class="chip mono">Seed {SEED}</span>
-    <span class="chip mono">{tpf} tick/frame</span>
-  </div>
 </div>
 
 <style>
-  /* Board interaction toolbar — sits above the canvas frame. Uses the existing
-     .btn / .btn-ghost classes for buttons; only the layout strip is new here. */
+  /* Board interaction toolbar — sits above the canvas frame. */
   .board-tools {
     display: flex;
     align-items: center;
     gap: 8px;
     padding: 0 0 10px;
+    flex-wrap: wrap;
   }
-
   .tool-label {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -409,23 +686,250 @@
     color: var(--faint);
     margin-right: 2px;
   }
-
-  .clear-btn {
-    margin-left: auto;
+  .tool-spacer {
+    flex: 1;
   }
 
   .part {
     user-select: none;
   }
-
   .part.is-selected {
     border-color: var(--c);
     box-shadow: 0 0 0 1px color-mix(in oklch, var(--c) 40%, transparent);
   }
 
-  /* The board panel stacks the toolbar over the canvas frame. */
   .board {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Left-panel tabs (Parts / Examples) and the example cards. */
+  .bin-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 7px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s,
+      background 0.15s;
+  }
+  .tab.is-active {
+    color: var(--accent);
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+  }
+  .example-list {
+    list-style: none;
+    margin: 0;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .example {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 10px 11px;
+  }
+  .example-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .example-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+  .example-blurb {
+    margin: 7px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--faint);
+  }
+  .example-watch {
+    margin: 6px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ok);
+  }
+  .example-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* Guided build: an ordered, auto-advancing checklist. */
+  .guided {
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .guided-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .guided-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    color: var(--text);
+  }
+  .guided-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    counter-reset: step;
+  }
+  .gstep {
+    position: relative;
+    padding: 8px 10px 8px 34px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--faint);
+    counter-increment: step;
+  }
+  .gstep::before {
+    content: counter(step);
+    position: absolute;
+    left: 9px;
+    top: 8px;
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    color: var(--dim);
+  }
+  .gstep-do {
+    display: block;
+    font-size: 12.5px;
+  }
+  .gstep.is-current {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+  .gstep.is-current::before {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .gstep.is-done::before {
+    content: "✓";
+    border-color: color-mix(in oklch, var(--ok) 50%, transparent);
+    color: var(--ok);
+  }
+  .gstep-why {
+    display: block;
+    margin-top: 4px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--dim);
+  }
+  .guided-done {
+    margin: 10px 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ok);
+  }
+  .guided-open {
+    margin: 10px 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--warn);
+  }
+  .guided-solution {
+    margin-top: 6px;
+  }
+
+  /* Transport: step buttons + the timeline scrubber. */
+  .step {
+    font-family: var(--font-mono);
+    padding: 8px 11px;
+    min-width: 38px;
+  }
+  .scrubber {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 180px;
+  }
+  .scrub-read {
+    font-size: 11px;
+    color: var(--dim);
+    white-space: nowrap;
+  }
+  .scrub {
+    flex: 1;
+    height: 22px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: transparent;
+    cursor: pointer;
+    min-width: 120px;
+  }
+  .scrub:focus {
+    outline: none;
+  }
+  .scrub::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-2);
+  }
+  .scrub::-moz-range-track {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--surface-2);
+  }
+  .scrub::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 10px -2px var(--accent);
+  }
+  .scrub::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 2px solid var(--bg);
+    box-shadow: 0 0 10px -2px var(--accent);
+  }
+  .scrub:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
 </style>

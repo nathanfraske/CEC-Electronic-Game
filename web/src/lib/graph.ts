@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // Board model: the pure data layer for the interactive board (M1). Holds placed
-// components, their pins, and the wires that join pins into nets. No PixiJS or
-// DOM here — this is presentation-free state so the renderer and the (future)
-// simulation engine can both read it. Grid snapping and the CEC palette mirror
-// live here as plain values for the GPU layer.
+// components, their pins, the wires that join pins into nets, and each part's
+// ideal value. No PixiJS or DOM here — this is presentation-free state so the
+// renderer and the simulation netlist builder can both read it. Grid snapping
+// and the CEC palette mirror live here as plain values for the GPU layer.
 
 /** Logical grid cell. The board is an integer lattice; geometry is derived. */
 export interface Cell {
@@ -32,6 +32,12 @@ export interface PartKind {
   /** Footprint in cells, used to size the rendered node body. */
   w: number;
   h: number;
+  /** Default ideal value (volts / ohms / farads / henries). 0 if not electrical. */
+  defaultValue: number;
+  /** SI unit symbol for the value ("V", "Ω", "F", "H"); "" if none. */
+  unit: string;
+  /** True for the four ideal primitives the solver understands today. */
+  ideal: boolean;
 }
 
 /** A placed component instance on the board. */
@@ -41,6 +47,8 @@ export interface Component {
   kind: string;
   /** Anchor cell (top-left of footprint) after snapping. */
   cell: Cell;
+  /** Ideal value (volts / ohms / farads / henries). */
+  value: number;
 }
 
 /** Fully-qualified address of a pin on a placed component. */
@@ -54,6 +62,14 @@ export interface Wire {
   id: number;
   from: PinRef;
   to: PinRef;
+}
+
+/** A serialized copy of the whole graph, used for undo/redo. */
+export interface GraphSnapshot {
+  components: Component[];
+  wires: Wire[];
+  nextComponentId: number;
+  nextWireId: number;
 }
 
 /**
@@ -78,40 +94,61 @@ export type PaletteKey = keyof typeof PALETTE;
  * Pin templates per part tag. Two-terminal passives get a left/right pin pair;
  * the active/digital parts get a small, readable pinout. Footprints are sized so
  * pins land on grid intersections. These mirror the tech-tree bin in App.svelte.
+ *
+ * The four ideal primitives (V, R, C, L) carry default values and are the parts
+ * the solver simulates today; the rest are placeholders for later tiers.
  */
 export const PART_KINDS: Record<string, PartKind> = {
-  R: kind("R", "Resistor", "bronze", twoPin("A", "B")),
-  C: kind("C", "Capacitor", "cyan", twoPin("+", "−")),
-  L: kind("L", "Inductor", "violet", twoPin("A", "B")),
-  D: kind("D", "Diode", "warn", twoPin("A", "K")),
-  Q: kind("Q", "NPN Transistor", "accent", [
-    pin("B", 0, 1),
-    pin("C", 2, 0),
-    pin("E", 2, 2),
-  ]),
-  "&": kind("&", "Logic Gate", "ok", [
-    pin("A", 0, 0),
-    pin("B", 0, 2),
-    pin("Y", 2, 1),
-  ]),
-  FF: kind("FF", "D Flip-Flop", "cyan", [
-    pin("D", 0, 0),
-    pin("CLK", 0, 2),
-    pin("Q", 2, 0),
-    pin("Q̅", 2, 2),
-  ]),
-  FP: kind("FP", "FPGA Fabric", "violet", [
-    pin("0", 0, 0),
-    pin("1", 0, 2),
-    pin("2", 2, 0),
-    pin("3", 2, 2),
-  ]),
-  uC: kind("uC", "Microcontroller", "accent", [
-    pin("RX", 0, 0),
-    pin("TX", 0, 2),
-    pin("IO", 2, 0),
-    pin("CLK", 2, 2),
-  ]),
+  V: kind("V", "Voltage Source", "warn", twoPin("+", "−"), 5, "V", true),
+  R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
+  C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
+  L: kind("L", "Inductor", "violet", twoPin("A", "B"), 1e-3, "H", true),
+  D: kind("D", "Diode", "warn", twoPin("A", "K"), 0, "", false),
+  Q: kind(
+    "Q",
+    "NPN Transistor",
+    "accent",
+    [pin("B", 0, 1), pin("C", 2, 0), pin("E", 2, 2)],
+    0,
+    "",
+    false,
+  ),
+  "&": kind(
+    "&",
+    "Logic Gate",
+    "ok",
+    [pin("A", 0, 0), pin("B", 0, 2), pin("Y", 2, 1)],
+    0,
+    "",
+    false,
+  ),
+  FF: kind(
+    "FF",
+    "D Flip-Flop",
+    "cyan",
+    [pin("D", 0, 0), pin("CLK", 0, 2), pin("Q", 2, 0), pin("Q̅", 2, 2)],
+    0,
+    "",
+    false,
+  ),
+  FP: kind(
+    "FP",
+    "FPGA Fabric",
+    "violet",
+    [pin("0", 0, 0), pin("1", 0, 2), pin("2", 2, 0), pin("3", 2, 2)],
+    0,
+    "",
+    false,
+  ),
+  uC: kind(
+    "uC",
+    "Microcontroller",
+    "accent",
+    [pin("RX", 0, 0), pin("TX", 0, 2), pin("IO", 2, 0), pin("CLK", 2, 2)],
+    0,
+    "",
+    false,
+  ),
 };
 
 function pin(label: string, dx: number, dy: number): Pin {
@@ -127,18 +164,56 @@ function kind(
   name: string,
   colorKey: PaletteKey,
   pins: Pin[],
+  defaultValue: number,
+  unit: string,
+  ideal: boolean,
 ): PartKind {
   // Re-index pins so each carries its own ordinal, and derive the footprint
   // from the furthest pin offset (+1 cell of slack on each axis).
   const indexed = pins.map((p, i) => ({ ...p, index: i }));
   const w = indexed.reduce((m, p) => Math.max(m, p.dx), 0) + 1;
   const h = indexed.reduce((m, p) => Math.max(m, p.dy), 0) + 1;
-  return { tag, name, colorKey, pins: indexed, w, h };
+  return {
+    tag,
+    name,
+    colorKey,
+    pins: indexed,
+    w,
+    h,
+    defaultValue,
+    unit,
+    ideal,
+  };
 }
 
 /** Snap a continuous coordinate to the nearest cell index for the given pitch. */
 export function snap(value: number, pitch: number): number {
   return Math.round(value / pitch);
+}
+
+/** Format an ideal value in engineering notation, e.g. 1000 Ω -> "1 kΩ". */
+export function formatValue(value: number, unit: string): string {
+  if (!unit) return "";
+  if (value === 0) return "0 " + unit;
+  const prefixes: [number, string][] = [
+    [1e9, "G"],
+    [1e6, "M"],
+    [1e3, "k"],
+    [1, ""],
+    [1e-3, "m"],
+    [1e-6, "µ"],
+    [1e-9, "n"],
+    [1e-12, "p"],
+  ];
+  const abs = Math.abs(value);
+  for (const [scale, p] of prefixes) {
+    if (abs >= scale) {
+      const v = value / scale;
+      const s = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
+      return s.replace(/\.?0+$/, "") + " " + p + unit;
+    }
+  }
+  return value.toExponential(1) + " " + unit;
 }
 
 /**
@@ -155,8 +230,14 @@ export class BoardGraph {
 
   /** Place a new component of `kind` anchored at the given (already-snapped) cell. */
   place(kind: string, cell: Cell): Component | undefined {
-    if (!(kind in PART_KINDS)) return undefined;
-    const component: Component = { id: this.nextComponentId++, kind, cell };
+    const template = PART_KINDS[kind];
+    if (!template) return undefined;
+    const component: Component = {
+      id: this.nextComponentId++,
+      kind,
+      cell,
+      value: template.defaultValue,
+    };
     this.components.set(component.id, component);
     return component;
   }
@@ -227,6 +308,37 @@ export class BoardGraph {
     this.wires.clear();
     this.nextComponentId = 1;
     this.nextWireId = 1;
+  }
+
+  /** Deep-copy the whole graph (for the undo stack). */
+  serialize(): GraphSnapshot {
+    return {
+      components: [...this.components.values()].map((c) => ({
+        ...c,
+        cell: { ...c.cell },
+      })),
+      wires: [...this.wires.values()].map((w) => ({
+        id: w.id,
+        from: { ...w.from },
+        to: { ...w.to },
+      })),
+      nextComponentId: this.nextComponentId,
+      nextWireId: this.nextWireId,
+    };
+  }
+
+  /** Replace the graph contents from a serialized snapshot. */
+  restore(s: GraphSnapshot): void {
+    this.components.clear();
+    this.wires.clear();
+    for (const c of s.components) {
+      this.components.set(c.id, { ...c, cell: { ...c.cell } });
+    }
+    for (const w of s.wires) {
+      this.wires.set(w.id, { id: w.id, from: { ...w.from }, to: { ...w.to } });
+    }
+    this.nextComponentId = s.nextComponentId;
+    this.nextWireId = s.nextWireId;
   }
 }
 

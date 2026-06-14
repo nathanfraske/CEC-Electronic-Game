@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
-// PixiJS board renderer. Draws the bench grid, the placed components and the
-// wires between their pins, plus a small live scope widget. It also owns board
-// interaction (place / wire / delete) entirely inside the canvas Svelte owns —
-// it never appends DOM nodes. Presentation + input only: it reads simulation
-// snapshots and mutates the BoardGraph model, but never drives the core.
+// PixiJS board renderer + interaction. A transformable `world` container holds
+// the grid, wires, components and selection (so the view can zoom and pan); a
+// screen-space overlay holds the scope. It owns place / wire / move / select /
+// delete / undo, all inside the canvas Svelte owns — it never appends DOM
+// nodes. Presentation + input only: it reads simulation snapshots and mutates
+// the BoardGraph, but never drives the core.
 
 import {
   Application,
@@ -19,18 +20,33 @@ import {
   BoardGraph,
   PALETTE,
   snap,
+  formatValue,
   type Component,
   type PinRef,
   type Cell,
+  type GraphSnapshot,
 } from "./graph";
+import {
+  drawGlyph,
+  isSymbol,
+  ZERO_ELECTRICAL,
+  type ElectricalState,
+} from "./glyphs";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
-export type Mode = "select" | "place" | "wire";
+export type Mode = "select" | "place" | "wire" | "measure";
 
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
 const PIN_R = 4.5;
 const MAX_SAMPLES = 240;
+const MIN_SCALE = 0.35;
+const MAX_SCALE = 3.5;
+const UNDO_LIMIT = 60;
+
+// Multimeter lead colours: red "+" and steel "−", like a real DMM.
+const PROBE_PLUS = 0xe0533a;
+const PROBE_MINUS = 0x7c90a4;
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
@@ -45,62 +61,94 @@ const CHANNEL_COLORS = [
 export interface BoardCallbacks {
   /** Fired after the model changes so the HUD can reflect counts, etc. */
   onChange?: (graph: BoardGraph) => void;
+  /** Fired when the selection changes. */
+  onSelect?: (sel: { components: number; wires: number }) => void;
 }
 
 export class Board {
+  private readonly world = new Container();
   private readonly grid = new Graphics();
   private readonly wireLayer = new Graphics();
+  private readonly selectionLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
+  private readonly probeLayer = new Graphics();
+  private readonly probeText = new Text({
+    text: "",
+    style: {
+      fill: PALETTE.accent,
+      fontFamily: "IBM Plex Mono, monospace",
+      fontSize: 12,
+      fontWeight: "600",
+    },
+  });
   private readonly scope = new Container();
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
 
   private readonly graph = new BoardGraph();
   private readonly nodes = new Map<number, ComponentNode>();
-  /** Per-channel ring buffers for the scope; grown to match snapshot length. */
+  private readonly selected = new Set<number>();
+  private readonly selectedWires = new Set<number>();
   private samples: number[][] = [];
 
   private w = 0;
   private h = 0;
   private mode: Mode = "select";
+  private viewportDirty = true;
+  private phase = 0;
+  private lastTime = 0;
 
-  // Drag state for placing/moving a component.
+  // Interaction state.
   private dragging: {
-    id: number;
-    offsetCol: number;
-    offsetRow: number;
+    ids: number[];
+    grab: Cell;
+    origins: Map<number, Cell>;
+    moved: boolean;
   } | null = null;
-  // Drag state for drawing a wire from a starting pin.
   private wiring: { from: PinRef } | null = null;
+  private panning: { lastX: number; lastY: number } | null = null;
+  private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
+  private readonly undoStack: GraphSnapshot[] = [];
+
+  // Probe (measure mode): two leads reading the voltage between two pins.
+  private probeA: PinRef | null = null;
+  private probeB: PinRef | null = null;
+  private probeNodes: Map<number, [number, number]> | null = null;
+  private lastState: Float64Array = new Float64Array();
 
   constructor(
     private readonly app: Application,
     private readonly cb: BoardCallbacks = {},
   ) {
-    app.stage.addChild(this.grid);
-    app.stage.addChild(this.wireLayer);
-    app.stage.addChild(this.componentLayer);
-    app.stage.addChild(this.pendingWire);
+    this.world.addChild(this.grid);
+    this.world.addChild(this.wireLayer);
+    this.world.addChild(this.selectionLayer);
+    this.world.addChild(this.componentLayer);
+    this.world.addChild(this.pendingWire);
+    this.world.addChild(this.probeLayer);
+    this.world.addChild(this.probeText);
+    this.probeText.anchor.set(0.5);
+    this.probeText.visible = false;
+    app.stage.addChild(this.world);
     this.scope.addChild(this.scopeFrame);
     this.scope.addChild(this.scopeTraces);
     app.stage.addChild(this.scope);
 
-    // The stage is the single interactive surface; per-node hit testing is done
-    // against rendered geometry. This keeps all input inside the canvas.
     app.stage.eventMode = "static";
     app.stage.hitArea = new Rectangle(
       0,
       0,
-      this.app.screen.width,
-      this.app.screen.height,
+      app.screen.width,
+      app.screen.height,
     );
     app.stage.on("pointerdown", this.onPointerDown);
     app.stage.on("pointermove", this.onPointerMove);
     app.stage.on("pointerup", this.onPointerUp);
     app.stage.on("pointerupoutside", this.onPointerUp);
     app.stage.on("rightdown", this.onRightDown);
+    app.canvas.addEventListener("wheel", this.onWheel, { passive: false });
 
     this.drawGrid();
   }
@@ -110,21 +158,26 @@ export class Board {
   setMode(mode: Mode): void {
     this.mode = mode;
     if (mode !== "wire") this.cancelWiring();
+    if (mode !== "measure") this.clearProbe();
     this.app.stage.cursor = mode === "place" ? "copy" : "default";
   }
 
-  /**
-   * Place a component at a screen-space point (e.g. a drop from the HUD bin).
-   * Coordinates are snapped to the grid. Returns the new component, if created.
-   */
+  /** Supply the pin→net mapping so the probe can read net voltages. */
+  setProbeNodes(map: Map<number, [number, number]> | null): void {
+    this.probeNodes = map;
+    this.clearProbe();
+  }
+
   placeAt(
     kind: string,
     screenX: number,
     screenY: number,
   ): Component | undefined {
     const cell = this.screenToCell(screenX, screenY);
+    const before = this.graph.serialize();
     const c = this.graph.place(kind, cell);
     if (c) {
+      this.pushUndo(before);
       this.addNode(c);
       this.redrawWires();
       this.cb.onChange?.(this.graph);
@@ -132,22 +185,96 @@ export class Board {
     return c;
   }
 
-  /** Remove everything from the board. */
   clear(): void {
+    if (this.graph.components.size === 0 && this.graph.wires.size === 0) return;
+    this.pushUndo(this.graph.serialize());
     this.graph.clear();
-    for (const node of this.nodes.values()) node.destroy();
-    this.nodes.clear();
+    this.rebuildNodes();
+    this.clearSelection();
     this.redrawWires();
     this.cb.onChange?.(this.graph);
   }
 
-  /** Once-per-frame snapshot read. Generalized to a variable-length state. */
-  update(snap: Snapshot): void {
+  /** Delete the current selection (components + wires). */
+  deleteSelection(): void {
+    if (this.selected.size === 0 && this.selectedWires.size === 0) return;
+    this.pushUndo(this.graph.serialize());
+    for (const id of this.selected) this.graph.removeComponent(id);
+    for (const id of this.selectedWires) this.graph.removeWire(id);
+    this.rebuildNodes();
+    this.clearSelection();
+    this.redrawWires();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /** Undo the last mutating action. */
+  undo(): void {
+    const snapshot = this.undoStack.pop();
+    if (!snapshot) return;
+    this.graph.restore(snapshot);
+    this.rebuildNodes();
+    this.clearSelection();
+    this.redrawWires();
+    this.cb.onChange?.(this.graph);
+  }
+
+  canUndo(): boolean {
+    return this.undoStack.length > 0;
+  }
+
+  /** Replace the whole board with a prebuilt graph (e.g. a worked example). */
+  loadGraph(snapshot: GraphSnapshot): void {
+    this.pushUndo(this.graph.serialize());
+    this.graph.restore(snapshot);
+    this.rebuildNodes();
+    this.clearSelection();
+    this.redrawWires();
+    this.resetView();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /** Reset zoom and pan to the identity view. */
+  resetView(): void {
+    this.world.scale.set(1);
+    this.world.position.set(0, 0);
+    this.viewportDirty = true;
+  }
+
+  /**
+   * Once-per-frame snapshot read. Generalized to a variable-length state. The
+   * optional `electrical` map carries per-component current/voltage from the
+   * solver to drive the glyph animations (absent until the netlist is wired).
+   */
+  update(snap: Snapshot, electrical?: Map<number, ElectricalState>): void {
+    const now = performance.now();
+    const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
+    this.lastTime = now;
+    this.phase += dt;
+
     if (this.app.screen.width !== this.w || this.app.screen.height !== this.h) {
-      this.drawGrid();
+      this.viewportDirty = true;
       this.layoutScope();
-      this.app.stage.hitArea = new Rectangle(0, 0, this.w, this.h);
+      this.app.stage.hitArea = new Rectangle(
+        0,
+        0,
+        this.app.screen.width,
+        this.app.screen.height,
+      );
     }
+    if (this.viewportDirty) {
+      this.drawGrid();
+      this.viewportDirty = false;
+    }
+
+    this.lastState = snap.state;
+    for (const [id, node] of this.nodes) {
+      node.update(
+        electrical?.get(id) ?? ZERO_ELECTRICAL,
+        this.phase,
+        this.selected.has(id),
+      );
+    }
+
     this.growSamples(snap.state.length);
     for (let c = 0; c < this.samples.length; c++) {
       const buf = this.samples[c];
@@ -156,6 +283,7 @@ export class Board {
       if (buf.length > MAX_SAMPLES) buf.shift();
     }
     this.drawScope();
+    this.drawProbe();
   }
 
   destroy(): void {
@@ -164,36 +292,69 @@ export class Board {
     this.app.stage.off("pointerup", this.onPointerUp);
     this.app.stage.off("pointerupoutside", this.onPointerUp);
     this.app.stage.off("rightdown", this.onRightDown);
+    this.app.canvas.removeEventListener("wheel", this.onWheel);
     for (const node of this.nodes.values()) node.destroy();
     this.nodes.clear();
-    this.grid.destroy();
-    this.wireLayer.destroy();
-    this.pendingWire.destroy();
-    this.componentLayer.destroy({ children: true });
+    this.world.destroy({ children: true });
     this.scope.destroy({ children: true });
+  }
+
+  // --- viewport -----------------------------------------------------------
+
+  private readonly onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+    const rect = this.app.canvas.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const factor = Math.exp(-e.deltaY * 0.0012);
+    const cur = this.world.scale.x;
+    const next = Math.max(MIN_SCALE, Math.min(MAX_SCALE, cur * factor));
+    // Keep the world point under the cursor fixed while zooming.
+    const wx = (sx - this.world.position.x) / cur;
+    const wy = (sy - this.world.position.y) / cur;
+    this.world.scale.set(next);
+    this.world.position.set(sx - next * wx, sy - next * wy);
+    this.viewportDirty = true;
+  };
+
+  private screenToWorld(sx: number, sy: number): Point {
+    const s = this.world.scale.x;
+    return new Point(
+      (sx - this.world.position.x) / s,
+      (sy - this.world.position.y) / s,
+    );
   }
 
   // --- geometry helpers ---------------------------------------------------
 
-  private screenToCell(x: number, y: number): Cell {
-    return { col: snap(x, PITCH), row: snap(y, PITCH) };
+  private screenToCell(sx: number, sy: number): Cell {
+    const w = this.screenToWorld(sx, sy);
+    return { col: snap(w.x, PITCH), row: snap(w.y, PITCH) };
   }
 
-  private cellToScreen(cell: Cell): Point {
+  private cellToWorld(cell: Cell): Point {
     return new Point(cell.col * PITCH, cell.row * PITCH);
   }
 
-  /** Find the pin nearest to a screen point within a small radius, if any. */
-  private pinHitTest(x: number, y: number): PinRef | null {
-    const r2 = (PIN_R * 2.4) ** 2;
+  /** Bounding box of a placed component, in world coordinates. */
+  private componentBox(c: Component): Rectangle {
+    const kind = this.graph.kindOf(c);
+    const o = this.cellToWorld(c.cell);
+    const wpx = ((kind?.w ?? 1) - 1) * PITCH;
+    const hpx = ((kind?.h ?? 1) - 1) * PITCH;
+    return new Rectangle(o.x - 14, o.y - 16, wpx + 28, hpx + 32);
+  }
+
+  private pinHitTest(wx: number, wy: number): PinRef | null {
+    const r2 = (PIN_R * 2.6) ** 2;
     let best: PinRef | null = null;
     let bestD = r2;
     for (const c of this.graph.components.values()) {
       const kind = this.graph.kindOf(c);
       if (!kind) continue;
       for (const p of kind.pins) {
-        const pos = this.cellToScreen(this.graph.pinCell(c, p));
-        const d = (pos.x - x) ** 2 + (pos.y - y) ** 2;
+        const pos = this.cellToWorld(this.graph.pinCell(c, p));
+        const d = (pos.x - wx) ** 2 + (pos.y - wy) ** 2;
         if (d <= bestD) {
           bestD = d;
           best = { componentId: c.id, pinIndex: p.index };
@@ -203,88 +364,297 @@ export class Board {
     return best;
   }
 
-  /** Find the topmost component whose body contains a screen point, if any. */
-  private bodyHitTest(x: number, y: number): Component | null {
+  private bodyHitTest(wx: number, wy: number): Component | null {
     let best: Component | null = null;
     for (const c of this.graph.components.values()) {
-      const kind = this.graph.kindOf(c);
-      if (!kind) continue;
-      const o = this.cellToScreen(c.cell);
-      const w = (kind.w - 1) * PITCH;
-      const h = (kind.h - 1) * PITCH;
-      if (
-        x >= o.x - 12 &&
-        x <= o.x + w + 12 &&
-        y >= o.y - 12 &&
-        y <= o.y + h + 12
-      ) {
-        best = c; // later components are on top
-      }
+      const box = this.componentBox(c);
+      if (box.contains(wx, wy)) best = c; // later components are on top
     }
     return best;
+  }
+
+  private wireHitTest(wx: number, wy: number): number | null {
+    const tol = 7;
+    let best: number | null = null;
+    for (const w of this.graph.wires.values()) {
+      const a = this.graph.pinRefCell(w.from);
+      const b = this.graph.pinRefCell(w.to);
+      if (!a || !b) continue;
+      const pa = this.cellToWorld(a);
+      const pb = this.cellToWorld(b);
+      if (distToSegment(wx, wy, pa.x, pa.y, pb.x, pb.y) <= tol) best = w.id;
+    }
+    return best;
+  }
+
+  // --- selection ----------------------------------------------------------
+
+  private clearSelection(): void {
+    this.selected.clear();
+    this.selectedWires.clear();
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private emitSelect(): void {
+    this.cb.onSelect?.({
+      components: this.selected.size,
+      wires: this.selectedWires.size,
+    });
+  }
+
+  private selectComponent(id: number, additive: boolean): void {
+    if (additive) {
+      if (this.selected.has(id)) this.selected.delete(id);
+      else this.selected.add(id);
+    } else {
+      this.selected.clear();
+      this.selectedWires.clear();
+      this.selected.add(id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private selectWire(id: number, additive: boolean): void {
+    if (additive) {
+      if (this.selectedWires.has(id)) this.selectedWires.delete(id);
+      else this.selectedWires.add(id);
+    } else {
+      this.selected.clear();
+      this.selectedWires.clear();
+      this.selectedWires.add(id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private redrawSelection(): void {
+    const g = this.selectionLayer;
+    g.clear();
+    for (const id of this.selected) {
+      const c = this.graph.components.get(id);
+      if (!c) continue;
+      const box = this.componentBox(c);
+      g.roundRect(box.x, box.y, box.width, box.height, 5);
+      g.fill({ color: PALETTE.accent, alpha: 0.08 });
+      g.roundRect(box.x, box.y, box.width, box.height, 5);
+      g.stroke({ width: 1.5, color: PALETTE.accent, alpha: 0.9 });
+    }
+    for (const id of this.selectedWires) {
+      const w = this.graph.wires.get(id);
+      if (!w) continue;
+      const a = this.graph.pinRefCell(w.from);
+      const b = this.graph.pinRefCell(w.to);
+      if (!a || !b) continue;
+      const pa = this.cellToWorld(a);
+      const pb = this.cellToWorld(b);
+      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
+      g.stroke({ width: 5, color: PALETTE.accent, alpha: 0.5 });
+    }
+  }
+
+  // --- probe (measure mode) -----------------------------------------------
+
+  private setProbe(pin: PinRef): void {
+    // First click sets the red (+) lead; second sets the steel (−) reference;
+    // a third starts over. Moving the − lead is how "voltage across" is taught.
+    if (!this.probeA || this.probeB) {
+      this.probeA = pin;
+      this.probeB = null;
+    } else {
+      this.probeB = pin;
+    }
+  }
+
+  private clearProbe(): void {
+    this.probeA = null;
+    this.probeB = null;
+    this.probeLayer.clear();
+    this.probeText.visible = false;
+  }
+
+  private pinVoltage(ref: PinRef | null): number | null {
+    if (!ref) return null;
+    const nodes = this.probeNodes?.get(ref.componentId);
+    if (!nodes) return null;
+    const node = nodes[ref.pinIndex];
+    if (node === undefined) return null;
+    return this.lastState[node] ?? 0;
+  }
+
+  /** Draw one DMM lead: a wire to a handle knob, a metal needle tip, a ring. */
+  private drawLead(x: number, y: number, color: number): void {
+    const g = this.probeLayer;
+    const hx = x - 18;
+    const hy = y - 26;
+    g.moveTo(hx, hy).lineTo(x, y);
+    g.stroke({ width: 3.5, color: 0x141019, alpha: 0.9 });
+    g.moveTo(hx, hy).lineTo(x, y);
+    g.stroke({ width: 1.6, color, alpha: 0.95 });
+    g.poly([x, y, x - 8, y - 10, x - 3, y - 12]).fill({ color: 0xcdd8e2 });
+    g.circle(hx, hy, 4.5).fill({ color });
+    g.circle(hx, hy, 4.5).stroke({ width: 1, color: 0x0d0b16, alpha: 0.7 });
+    g.circle(x, y, PIN_R + 3).stroke({ width: 2, color });
+  }
+
+  private drawProbe(): void {
+    const g = this.probeLayer;
+    g.clear();
+    if (this.mode !== "measure" || !this.probeA) {
+      this.probeText.visible = false;
+      return;
+    }
+    const cellA = this.graph.pinRefCell(this.probeA);
+    if (!cellA) {
+      this.clearProbe();
+      return;
+    }
+    const pa = this.cellToWorld(cellA);
+    const vA = this.pinVoltage(this.probeA);
+
+    if (this.probeB) {
+      const cellB = this.graph.pinRefCell(this.probeB);
+      if (!cellB) {
+        this.probeB = null;
+        return;
+      }
+      const pb = this.cellToWorld(cellB);
+      const vB = this.pinVoltage(this.probeB);
+      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+      this.drawLead(pb.x, pb.y, PROBE_MINUS);
+      this.probeText.text = "ΔV " + fmtSI((vA ?? 0) - (vB ?? 0), "V");
+      this.probeText.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 - 16);
+    } else {
+      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+      this.probeText.text =
+        vA === null ? "no reading" : fmtSI(vA, "V") + " vs GND";
+      this.probeText.position.set(pa.x, pa.y - 18);
+    }
+    this.probeText.visible = true;
   }
 
   // --- input handlers -----------------------------------------------------
 
   private readonly onPointerDown = (e: FederatedPointerEvent): void => {
-    const { x, y } = e.global;
-    this.pointer.set(x, y);
+    const wp = this.screenToWorld(e.global.x, e.global.y);
+    this.pointer.copyFrom(wp);
+    const additive = e.shiftKey || e.ctrlKey || e.metaKey;
 
-    if (this.mode === "place") return; // placement is driven by HUD drops
-
-    const pin = this.pinHitTest(x, y);
-    if (this.mode === "wire") {
-      if (pin) this.wiring = { from: pin };
+    // Middle button always pans.
+    if (e.button === 1) {
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
+    if (this.mode === "measure") {
+      const pin = this.pinHitTest(wp.x, wp.y);
+      if (pin) this.setProbe(pin);
+      else if (!additive)
+        this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
 
-    // select mode: start a wire if a pin was grabbed, else drag the body.
-    if (pin) {
+    if (this.mode === "place") return; // placement driven by HUD drop/click
+
+    const pin = this.pinHitTest(wp.x, wp.y);
+    if (pin && (this.mode === "wire" || this.mode === "select")) {
       this.wiring = { from: pin };
       return;
     }
-    const body = this.bodyHitTest(x, y);
+
+    const body = this.bodyHitTest(wp.x, wp.y);
     if (body) {
-      const cell = this.screenToCell(x, y);
-      this.dragging = {
-        id: body.id,
-        offsetCol: cell.col - body.cell.col,
-        offsetRow: cell.row - body.cell.row,
-      };
-    }
-  };
-
-  private readonly onPointerMove = (e: FederatedPointerEvent): void => {
-    const { x, y } = e.global;
-    this.pointer.set(x, y);
-
-    if (this.dragging) {
-      const cell = this.screenToCell(x, y);
-      this.graph.move(this.dragging.id, {
-        col: cell.col - this.dragging.offsetCol,
-        row: cell.row - this.dragging.offsetRow,
-      });
-      this.nodes.get(this.dragging.id)?.reposition();
-      this.redrawWires();
+      if (additive) {
+        this.selectComponent(body.id, true);
+        return;
+      }
+      if (!this.selected.has(body.id)) this.selectComponent(body.id, false);
+      this.beginDrag(body, wp);
       return;
     }
-    if (this.wiring) {
-      this.drawPendingWire();
+
+    const wireId = this.wireHitTest(wp.x, wp.y);
+    if (wireId !== null) {
+      this.selectWire(wireId, additive);
+      return;
     }
+
+    // Empty space: clear selection (unless additive) and begin panning.
+    if (!additive) this.clearSelection();
+    this.panning = { lastX: e.global.x, lastY: e.global.y };
+  };
+
+  private beginDrag(body: Component, wp: Point): void {
+    const ids = this.selected.has(body.id) ? [...this.selected] : [body.id];
+    const origins = new Map<number, Cell>();
+    for (const id of ids) {
+      const c = this.graph.components.get(id);
+      if (c) origins.set(id, { ...c.cell });
+    }
+    this.dragging = {
+      ids,
+      grab: { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
+      origins,
+      moved: false,
+    };
+    this.pendingUndo = this.graph.serialize();
+  }
+
+  private readonly onPointerMove = (e: FederatedPointerEvent): void => {
+    const wp = this.screenToWorld(e.global.x, e.global.y);
+    this.pointer.copyFrom(wp);
+
+    if (this.panning) {
+      this.world.position.x += e.global.x - this.panning.lastX;
+      this.world.position.y += e.global.y - this.panning.lastY;
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      this.viewportDirty = true;
+      this.drawGrid();
+      this.viewportDirty = false;
+      return;
+    }
+
+    if (this.dragging) {
+      const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
+      const dc = cell.col - this.dragging.grab.col;
+      const dr = cell.row - this.dragging.grab.row;
+      if (dc !== 0 || dr !== 0) this.dragging.moved = true;
+      for (const id of this.dragging.ids) {
+        const o = this.dragging.origins.get(id);
+        if (!o) continue;
+        this.graph.move(id, { col: o.col + dc, row: o.row + dr });
+        this.nodes.get(id)?.reposition();
+      }
+      this.redrawWires();
+      this.redrawSelection();
+      return;
+    }
+
+    if (this.wiring) this.drawPendingWire();
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
-    const { x, y } = e.global;
+    if (this.panning) {
+      this.panning = null;
+      return;
+    }
     if (this.dragging) {
+      if (this.dragging.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        this.cb.onChange?.(this.graph);
+      }
       this.dragging = null;
-      this.cb.onChange?.(this.graph);
+      this.pendingUndo = null;
       return;
     }
     if (this.wiring) {
-      const target = this.pinHitTest(x, y);
+      const wp = this.screenToWorld(e.global.x, e.global.y);
+      const target = this.pinHitTest(wp.x, wp.y);
       if (target) {
+        const before = this.graph.serialize();
         const wire = this.graph.connect(this.wiring.from, target);
         if (wire) {
+          this.pushUndo(before);
           this.redrawWires();
           this.cb.onChange?.(this.graph);
         }
@@ -295,52 +665,60 @@ export class Board {
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
     e.preventDefault?.();
-    const { x, y } = e.global;
-    // Right-click deletes: a pin's wires first, otherwise the body under cursor.
-    const wireId = this.wireHitTest(x, y);
+    const wp = this.screenToWorld(e.global.x, e.global.y);
+    const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
+      this.pushUndo(this.graph.serialize());
       this.graph.removeWire(wireId);
+      this.selectedWires.delete(wireId);
       this.redrawWires();
+      this.redrawSelection();
       this.cb.onChange?.(this.graph);
       return;
     }
-    const body = this.bodyHitTest(x, y);
+    const body = this.bodyHitTest(wp.x, wp.y);
     if (body) {
+      this.pushUndo(this.graph.serialize());
       this.graph.removeComponent(body.id);
       this.nodes.get(body.id)?.destroy();
       this.nodes.delete(body.id);
+      this.selected.delete(body.id);
       this.redrawWires();
+      this.redrawSelection();
       this.cb.onChange?.(this.graph);
     }
   };
-
-  /** Distance-to-segment hit test against drawn wires; returns a wire id. */
-  private wireHitTest(x: number, y: number): number | null {
-    const tol = 7;
-    for (const w of this.graph.wires.values()) {
-      const a = this.graph.pinRefCell(w.from);
-      const b = this.graph.pinRefCell(w.to);
-      if (!a || !b) continue;
-      const pa = this.cellToScreen(a);
-      const pb = this.cellToScreen(b);
-      if (distToSegment(x, y, pa.x, pa.y, pb.x, pb.y) <= tol) return w.id;
-    }
-    return null;
-  }
 
   private cancelWiring(): void {
     this.wiring = null;
     this.pendingWire.clear();
   }
 
+  // --- undo ---------------------------------------------------------------
+
+  private pushUndo(before: GraphSnapshot): void {
+    this.undoStack.push(before);
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+  }
+
+  private commitUndo(before: GraphSnapshot): void {
+    this.pushUndo(before);
+  }
+
   // --- drawing ------------------------------------------------------------
 
   private addNode(c: Component): void {
     const node = new ComponentNode(c, this.graph, () =>
-      this.cellToScreen(c.cell),
+      this.cellToWorld(c.cell),
     );
     this.nodes.set(c.id, node);
     this.componentLayer.addChild(node.view);
+  }
+
+  private rebuildNodes(): void {
+    for (const node of this.nodes.values()) node.destroy();
+    this.nodes.clear();
+    for (const c of this.graph.components.values()) this.addNode(c);
   }
 
   private redrawWires(): void {
@@ -350,9 +728,8 @@ export class Board {
       const a = this.graph.pinRefCell(w.from);
       const b = this.graph.pinRefCell(w.to);
       if (!a || !b) continue;
-      const pa = this.cellToScreen(a);
-      const pb = this.cellToScreen(b);
-      // Glow underlay then a bright core for the neon polyline look.
+      const pa = this.cellToWorld(a);
+      const pb = this.cellToWorld(b);
       g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
       g.stroke({ width: 6, color: PALETTE.cyan, alpha: 0.14 });
       g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
@@ -366,10 +743,10 @@ export class Board {
     if (!this.wiring) return;
     const start = this.graph.pinRefCell(this.wiring.from);
     if (!start) return;
-    const ps = this.cellToScreen(start);
+    const ps = this.cellToWorld(start);
     const snapTo = this.pinHitTest(this.pointer.x, this.pointer.y);
     const end = snapTo
-      ? this.cellToScreen(this.graph.pinRefCell(snapTo) ?? start)
+      ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
       : this.pointer;
     g.moveTo(ps.x, ps.y).lineTo(end.x, end.y);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
@@ -385,22 +762,32 @@ export class Board {
   }
 
   private drawGrid(): void {
-    const w = (this.w = this.app.screen.width);
-    const h = (this.h = this.app.screen.height);
+    this.w = this.app.screen.width;
+    this.h = this.app.screen.height;
     const g = this.grid;
     g.clear();
+    const tl = this.screenToWorld(0, 0);
+    const br = this.screenToWorld(this.w, this.h);
+    const x0 = Math.floor(tl.x / PITCH) * PITCH;
+    const y0 = Math.floor(tl.y / PITCH) * PITCH;
 
-    for (let x = 0; x <= w; x += PITCH) g.moveTo(x, 0).lineTo(x, h);
-    for (let y = 0; y <= h; y += PITCH) g.moveTo(0, y).lineTo(w, y);
-    g.stroke({ width: 1, color: 0x2a2640, alpha: 0.35 });
+    for (let x = x0; x <= br.x; x += PITCH) g.moveTo(x, tl.y).lineTo(x, br.y);
+    for (let y = y0; y <= br.y; y += PITCH) g.moveTo(tl.x, y).lineTo(br.x, y);
+    g.stroke({ width: 1 / this.world.scale.x, color: 0x2a2640, alpha: 0.35 });
 
     const major = PITCH * 4;
-    for (let x = 0; x <= w; x += major) g.moveTo(x, 0).lineTo(x, h);
-    for (let y = 0; y <= h; y += major) g.moveTo(0, y).lineTo(w, y);
-    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.5 });
+    const mx0 = Math.floor(tl.x / major) * major;
+    const my0 = Math.floor(tl.y / major) * major;
+    for (let x = mx0; x <= br.x; x += major) g.moveTo(x, tl.y).lineTo(x, br.y);
+    for (let y = my0; y <= br.y; y += major) g.moveTo(tl.x, y).lineTo(br.x, y);
+    g.stroke({
+      width: 1 / this.world.scale.x,
+      color: PALETTE.border,
+      alpha: 0.5,
+    });
   }
 
-  // --- scope widget (variable-length state) -------------------------------
+  // --- scope widget (screen-space overlay) --------------------------------
 
   private growSamples(len: number): void {
     while (this.samples.length < len) this.samples.push([]);
@@ -467,35 +854,95 @@ export class Board {
 }
 
 /**
- * The rendered view for one placed component: a body card, a label, and pin
- * dots. It draws into its own Container at the component's screen position; the
- * Board repositions it on drag. No interactivity lives here — the Board hit
- * tests against geometry so all input stays on one surface.
+ * The rendered view for one placed component: an animated glyph, a tag label and
+ * (for the ideal primitives) a value readout. The Board repositions it on drag
+ * and ticks it each frame with the element's electrical state.
  */
 class ComponentNode {
   readonly view = new Container();
-  private readonly body = new Graphics();
-  private readonly pins = new Graphics();
+  private readonly glyph = new Graphics();
   private readonly label: Text;
+  private readonly value: Text | null;
+  private readonly meter: Text;
+  private readonly pinPositions: { x: number; y: number }[] = [];
+  private readonly wPx: number;
+  private readonly hPx: number;
+  private readonly color: number;
+  private readonly kindTag: string;
 
   constructor(
     private readonly component: Component,
-    private readonly graph: BoardGraph,
+    graph: BoardGraph,
     private readonly anchor: () => Point,
   ) {
-    this.view.addChild(this.body);
-    this.view.addChild(this.pins);
     const kind = graph.kindOf(component);
-    this.label = new Text(kind?.tag ?? "?", {
-      fill: kind ? PALETTE[kind.colorKey] : PALETTE.dim,
-      fontFamily: "IBM Plex Mono, monospace",
-      fontSize: 12,
-      fontWeight: "600",
+    this.color = kind ? PALETTE[kind.colorKey] : PALETTE.dim;
+    this.kindTag = kind?.tag ?? "?";
+    this.wPx = ((kind?.w ?? 1) - 1) * PITCH;
+    this.hPx = ((kind?.h ?? 1) - 1) * PITCH;
+    for (const p of kind?.pins ?? []) {
+      this.pinPositions.push({ x: p.dx * PITCH, y: p.dy * PITCH });
+    }
+
+    this.view.addChild(this.glyph);
+    const symbol = isSymbol(this.kindTag);
+    this.label = new Text({
+      text: this.kindTag,
+      style: {
+        fill: this.color,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: symbol ? 10 : 12,
+        fontWeight: "600",
+      },
     });
     this.label.anchor.set(0.5);
     this.view.addChild(this.label);
-    this.draw();
+
+    if (symbol && kind?.unit) {
+      this.value = new Text({
+        text: formatValue(component.value, kind.unit),
+        style: {
+          fill: PALETTE.dim,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+        },
+      });
+      this.value.anchor.set(0.5);
+      this.view.addChild(this.value);
+    } else {
+      this.value = null;
+    }
+
+    // Live "across / through" readout, shown only while the part is selected.
+    this.meter = new Text({
+      text: "",
+      style: {
+        fill: PALETTE.dim,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 10,
+        fontWeight: "500",
+      },
+    });
+    this.meter.anchor.set(0.5);
+    this.meter.visible = false;
+    this.view.addChild(this.meter);
+
+    this.layoutLabels();
+    // pin dots
+    for (const p of this.pinPositions) {
+      this.glyph.circle(p.x, p.y, PIN_R);
+    }
     this.reposition();
+  }
+
+  private layoutLabels(): void {
+    if (isSymbol(this.kindTag)) {
+      const cx = this.wPx / 2;
+      this.label.position.set(cx, -18);
+      this.value?.position.set(cx, 18);
+    } else {
+      this.label.position.set(this.wPx / 2, this.hPx / 2);
+    }
   }
 
   reposition(): void {
@@ -503,36 +950,34 @@ class ComponentNode {
     this.view.position.set(p.x, p.y);
   }
 
-  private draw(): void {
-    const kind = this.graph.kindOf(this.component);
-    if (!kind) return;
-    const color = PALETTE[kind.colorKey];
-    const w = (kind.w - 1) * PITCH;
-    const h = (kind.h - 1) * PITCH;
-
-    const b = this.body;
-    b.clear();
-    b.roundRect(-10, -10, w + 20, h + 20, 4);
-    b.fill({ color: 0x16121f, alpha: 0.92 });
-    b.stroke({ width: 1.5, color, alpha: 0.85 });
-    // accent edge along the left, echoing the bin cards
-    b.moveTo(-10, -10).lineTo(-10, h + 10);
-    b.stroke({ width: 2, color, alpha: 0.95 });
-
-    this.label.position.set(w / 2, h / 2);
-
-    const pg = this.pins;
-    pg.clear();
-    for (const p of kind.pins) {
-      const px = p.dx * PITCH;
-      const py = p.dy * PITCH;
-      pg.circle(px, py, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-      pg.circle(px, py, PIN_R).fill({ color });
-      pg.circle(px, py, PIN_R).stroke({
-        width: 1,
-        color: 0x0d0b16,
-        alpha: 0.6,
-      });
+  update(electrical: ElectricalState, phase: number, selected: boolean): void {
+    const g = this.glyph;
+    g.clear();
+    drawGlyph(g, {
+      kind: this.kindTag,
+      pins: this.pinPositions,
+      wPx: this.wPx,
+      hPx: this.hPx,
+      color: this.color,
+      electrical,
+      phase,
+    });
+    // pin dots on top of the glyph
+    for (const p of this.pinPositions) {
+      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    }
+    // While selected, show the live voltage *across* the part and the current
+    // *through* it — the two quantities words can't make intuitive.
+    if (selected && isSymbol(this.kindTag)) {
+      this.meter.text =
+        fmtSI(electrical.vAcross, "V") +
+        "  ·  " +
+        fmtSI(electrical.current, "A");
+      this.meter.position.set(this.wPx / 2, -34);
+      this.meter.visible = true;
+    } else {
+      this.meter.visible = false;
     }
   }
 
@@ -541,7 +986,7 @@ class ComponentNode {
   }
 }
 
-/** Squared-free distance from point (px,py) to segment (ax,ay)-(bx,by). */
+/** Distance from point (px,py) to segment (ax,ay)-(bx,by). */
 function distToSegment(
   px: number,
   py: number,
@@ -558,4 +1003,29 @@ function distToSegment(
   const cx = ax + t * dx;
   const cy = ay + t * dy;
   return Math.hypot(px - cx, py - cy);
+}
+
+/** Format a live measurement in engineering notation, e.g. 0.00167 A → "1.67 mA". */
+function fmtSI(value: number, unit: string): string {
+  const a = Math.abs(value);
+  if (a < 1e-12) return "0 " + unit;
+  const steps: [number, string][] = [
+    [1, ""],
+    [1e-3, "m"],
+    [1e-6, "µ"],
+    [1e-9, "n"],
+  ];
+  let scale = 1;
+  let prefix = "";
+  for (const [s, p] of steps) {
+    if (a >= s) {
+      scale = s;
+      prefix = p;
+      break;
+    }
+  }
+  const v = value / scale;
+  const mag = Math.abs(v);
+  const s = mag >= 100 ? v.toFixed(0) : mag >= 10 ? v.toFixed(1) : v.toFixed(2);
+  return s + " " + prefix + unit;
 }

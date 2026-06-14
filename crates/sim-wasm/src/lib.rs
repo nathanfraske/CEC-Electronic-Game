@@ -6,6 +6,9 @@
 use sim_core::Sim;
 use wasm_bindgen::prelude::*;
 
+/// A deterministic analog simulation of an arbitrary ideal netlist, exposed to
+/// JavaScript. Construct it once, install a netlist with [`Simulation::set_netlist`],
+/// then `step` it once per frame and read a batched snapshot.
 #[wasm_bindgen]
 pub struct Simulation {
     inner: Sim,
@@ -13,11 +16,47 @@ pub struct Simulation {
 
 #[wasm_bindgen]
 impl Simulation {
+    /// Create a simulation pre-loaded with a small demo netlist (the classic RC
+    /// charge) so the app shows life before the user builds anything.
     #[wasm_bindgen(constructor)]
     pub fn new(seed: u32) -> Simulation {
         Simulation {
             inner: Sim::new(seed as u64),
         }
+    }
+
+    /// Replace the circuit with a netlist of ideal two-terminal elements and
+    /// reset to `t = 0`.
+    ///
+    /// The four arrays are parallel — one entry per element, in the order the
+    /// front end will index currents back from [`Simulation::element_currents`]:
+    ///
+    /// - `types[i]` — element type: `0` = DC voltage source (value = volts),
+    ///   `1` = resistor (ohms), `2` = capacitor (farads), `3` = inductor
+    ///   (henries).
+    /// - `a[i]`, `b[i]` — the two terminal node indices. Node `0` is ground
+    ///   (the reference, fixed at 0 V).
+    /// - `values[i]` — the element value in the units implied by `types[i]`.
+    ///
+    /// `node_count` is the total number of nodes including ground. Returns
+    /// `true` on success. On any length mismatch, an out-of-range node, a zero
+    /// `node_count`, or an unknown element type it fails safe (installs an empty
+    /// ground-only circuit) and returns `false` — it never throws.
+    pub fn set_netlist(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        values: &[f64],
+    ) -> bool {
+        self.inner.set_netlist(node_count, types, a, b, values)
+    }
+
+    /// Reset to `t = 0` with reactive elements discharged, keeping the same
+    /// netlist.
+    pub fn reset(&mut self) {
+        self.inner.reset();
     }
 
     /// Advance one fixed tick.
@@ -33,18 +72,24 @@ impl Simulation {
     /// Batched state snapshot for the renderer, as a `Float64Array`. Read once
     /// per frame and handed to PixiJS, never queried per component.
     ///
-    /// RC-circuit layout (see `sim_core::Sim::state`):
-    /// `[ v(n1) volts, v(n2) volts, i(Vsrc) amps, v_source volts ]`.
-    /// Index 1 is the capacitor charge curve; index 3 is its target rail.
+    /// The vector is the node voltages in volts (length `node_count`); index `0`
+    /// is ground and is always `0.0`. Variable length is expected by the scope.
     pub fn state(&self) -> Vec<f64> {
-        self.inner.state().to_vec()
+        self.inner.state()
     }
 
-    /// Capacitor node voltage `v(n2)` in volts — the primary measurement.
-    /// Additive convenience getter for a single-value readout without parsing
-    /// the full snapshot.
-    pub fn cap_voltage(&self) -> f64 {
-        self.inner.cap_voltage()
+    /// Node voltages in volts, length `node_count`; index `0` (ground) is `0.0`.
+    /// Same data as [`Simulation::state`], named for measurement readouts.
+    pub fn node_voltages(&self) -> Vec<f64> {
+        self.inner.node_voltages()
+    }
+
+    /// Current through each element in amperes, in the **same order** as
+    /// [`Simulation::set_netlist`], signed `a -> b` (positive flows from terminal
+    /// `a` to terminal `b`). One entry per element; the front end maps these back
+    /// to components by index.
+    pub fn element_currents(&self) -> Vec<f64> {
+        self.inner.element_currents()
     }
 
     /// Protocol version, checked by the front end on load.

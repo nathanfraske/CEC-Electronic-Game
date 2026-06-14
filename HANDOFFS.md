@@ -5,6 +5,66 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — Pedagogy demos: "across/through" readout, DMM probe, divider R2 toggle, concept beats
+
+**State:** 🟢 Green; pushed. A "show don't tell" layer over the board + examples:
+- **Live readout on select** (`board.ts` ComponentNode `meter`): selecting a part shows its
+  **V across · I through** — watch the RC cap's current fall to 0 (an open at DC, not a short).
+- **DMM probe** — Measure mode in `board.ts`: red (+) / steel (−) leads with needle tips and
+  handle knobs. Click two pins → live **ΔV** between them; one pin → vs GND. App passes the
+  pin→net map via `board.setProbeNodes(netlist.nodesOfComponent)`. Teaches "voltage is a
+  difference across two points / ground is just the reference you picked."
+- **Divider R2-to-ground toggle** (`examples.ts` `demo` + App `toggleDemo`): lifts/restores
+  R2's ground wire — OFF floats the output to the full rail (no current), ON divides to 3.33 V.
+- **Guided concept beat:** the Build panel shows "Open loop — no current" until you close it
+  to ground, then "Loop closed — current flows", matching the readouts that sit at 0 until then.
+
+Next demonstrative ideas: extend demos to RC/RL (short the cap / open the coil); a movable
+probe that snaps to whole nets; per-part value editing so learners can sweep R/C/L live.
+
+---
+
+## 2026-06-14 — Interactive board comes alive: viewport, scrubber, selection, solver, examples + guided build
+
+**State:** 🟢 Green (cargo fmt/clippy/test, build:wasm, web check/lint/build). Pushed to
+`claude/kind-turing-hdelb3` (ahead of `main`; no new PR opened this session).
+
+### What's new
+- **Viewport:** wheel zoom (to cursor) + pan (drag empty space / middle-drag) via a
+  transformable `world` container in `web/src/lib/board.ts`.
+- **Voltage source + values:** ideal `V` in the bin; every part carries a value + unit;
+  `graph.ts` gains serialize/restore (used by undo + examples).
+- **Time:** paused by default; a bottom **tick scrubber** (per-tick step back/forward)
+  backed by a bounded snapshot history in `loop.ts`.
+- **Editing:** click / shift+ctrl multi-select with highlight, **Delete**, **Ctrl+Z** undo
+  (undo stack in `board.ts`).
+- **Animated glyphs** (`web/src/lib/glyphs.ts`): R/C/L/V draw their schematic symbol plus a
+  state-driven animation (current flow, charge fill, field halo, source pulse).
+- **Solver wired:** `web/src/lib/netlist.ts` compiles the `BoardGraph` into the MNA netlist
+  (ground = the first voltage source's − net). `sim-core` is generalized to an arbitrary
+  ideal netlist (`set_netlist` / `node_voltages` / `element_currents`); golden
+  `0x6d055513f0613902`. Per-element current/voltage feeds the glyph animations, so placed
+  circuits and examples **simulate for real**.
+- **Examples** (`web/src/lib/examples.ts`): a Parts/Examples tab; each example offers
+  **Watch** (load + run) and **Build** (guided, auto-advancing checklist with a "why" per
+  step) — Voltage Divider, RC, RL.
+
+### Seam notes / gotchas
+- The netlist is rebuilt only when topology or a value changes (a `sig`), so dragging parts
+  never resets the sim. An empty board keeps the built-in demo RC; parts with no source go
+  quiet (ground-only netlist).
+- `state()` is now node voltages (variable length, index 0 = ground); telemetry labels are
+  node-indexed.
+- Ground convention: the net on the **first voltage source's − pin**. No dedicated GND part yet.
+- `cap_voltage()` was removed from the wasm API (it was RC-specific); nothing in web used it.
+
+### Pick up here
+- Top of `TODOS.md`: a value-editing inspector, the diode (nonlinear), the power-bus visual
+  language on wires, the digital/MCU engines, and the first graded challenge.
+- GitHub Pages still needs the owner to flip Settings → Pages → Source: GitHub Actions.
+
+---
+
 ## 2026-06-14 — PR #1 opened, Pages wired, bus visual-language reference added
 
 - **PR #1** opened (`claude/kind-turing-hdelb3` → `main`):
