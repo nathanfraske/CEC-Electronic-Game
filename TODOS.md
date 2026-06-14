@@ -41,7 +41,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~"Show don't tell" demos: live V-across / I-through readout on a selected part; a DMM probe (Measure mode, red/steel leads, needle tips) reading voltage between any two pins; a divider R2-to-ground toggle; a guided open/closed-loop concept beat.~~
 
 ### Open / Next
-- [ ] **Make it a game, not just a sim (owner-driven):** currency + XP + rewards for exploring, learning, and *shipping circuits that meet a goal*. Scale the reward with realism (ideal → real parts) and with a working product. This is the fun spine the README gestures at — challenges become graded "products" that pay out.
+- [ ] **Make it a game, not just a sim (owner-driven).** Full brainstorm + backlog in `docs/game-rewards.md`. Core rule: the sim is the only judge — a reward is a number off a deterministic graded replay. Two currencies: **Credits** (spend) + **Lux** (earned only by understanding; **Lux gates the tech tree** = the anti-grind firewall). MVP order: (1) contract + spec-sheet grader (generalize the RC challenge); (2) Credits + "Ship It" juice (replay the winning run); (3) realism multiplier with one real 5% resistor (the pillar, made playable); (4) par score + replay-verified leaderboard; (5) predict-then-reveal + first Lux.
 - [ ] Per-component **value editing** (click a part → set R/C/L/V); the model already carries values + units, expose a small inspector.
 - [ ] Extend the "show don't tell" demos to RC/RL (short the cap to watch it discharge; open the coil for back-EMF); make the probe a movable meter that snaps to whole nets.
 - [ ] Nonlinear devices: diode (then BJT) with a capped Newton solve in sim-core.
