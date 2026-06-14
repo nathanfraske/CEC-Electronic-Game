@@ -86,12 +86,16 @@ export class Board {
   private readonly scope = new Container();
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
+  private readonly scopeLabels: Text[] = [];
 
   private readonly graph = new BoardGraph();
   private readonly nodes = new Map<number, ComponentNode>();
   private readonly selected = new Set<number>();
   private readonly selectedWires = new Set<number>();
-  private samples: number[][] = [];
+  // Per-tick scope history (one entry per simulated tick, not per render frame)
+  // so the scope freezes when paused and aligns to the timeline.
+  private scopeSamples: { tick: number; values: number[] }[] = [];
+  private scopeCursor = 0;
 
   private w = 0;
   private h = 0;
@@ -136,6 +140,19 @@ export class Board {
     app.stage.addChild(this.world);
     this.scope.addChild(this.scopeFrame);
     this.scope.addChild(this.scopeTraces);
+    for (let i = 0; i < 4; i++) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.dim,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+        },
+      });
+      t.visible = false;
+      this.scopeLabels.push(t);
+      this.scope.addChild(t);
+    }
     app.stage.addChild(this.scope);
 
     app.stage.eventMode = "static";
@@ -279,13 +296,7 @@ export class Board {
       );
     }
 
-    this.growSamples(snap.state.length);
-    for (let c = 0; c < this.samples.length; c++) {
-      const buf = this.samples[c];
-      if (!buf) continue;
-      buf.push(snap.state[c] ?? 0);
-      if (buf.length > MAX_SAMPLES) buf.shift();
-    }
+    this.recordScope(snap);
     this.drawScope();
     this.drawProbe();
   }
@@ -848,14 +859,30 @@ export class Board {
 
   // --- scope widget (screen-space overlay) --------------------------------
 
-  private growSamples(len: number): void {
-    while (this.samples.length < len) this.samples.push([]);
-    if (this.samples.length > len) this.samples.length = len;
+  /** Record one scope sample per advancing tick; track the displayed cursor. */
+  private recordScope(snap: Snapshot): void {
+    const tick = Number(snap.tick);
+    const last = this.scopeSamples[this.scopeSamples.length - 1];
+    if (!last || tick > last.tick) {
+      this.scopeSamples.push({ tick, values: Array.from(snap.state) });
+      if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
+    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
+      // Scrubbed before the retained window (or the run was reset): start over.
+      this.scopeSamples = [{ tick, values: Array.from(snap.state) }];
+    }
+    let idx = this.scopeSamples.length - 1;
+    for (let i = this.scopeSamples.length - 1; i >= 0; i--) {
+      if (this.scopeSamples[i]!.tick <= tick) {
+        idx = i;
+        break;
+      }
+    }
+    this.scopeCursor = idx;
   }
 
   private scopeRect(): Rectangle {
-    const sw = Math.min(280, Math.max(160, this.w * 0.32));
-    const sh = Math.min(150, Math.max(90, this.h * 0.28));
+    const sw = Math.min(300, Math.max(190, this.w * 0.34));
+    const sh = Math.min(160, Math.max(96, this.h * 0.28));
     const pad = 12;
     return new Rectangle(this.w - sw - pad, this.h - sh - pad, sw, sh);
   }
@@ -865,50 +892,82 @@ export class Board {
     const g = this.scopeFrame;
     g.clear();
     g.roundRect(r.x, r.y, r.width, r.height, 3);
-    g.fill({ color: 0x0d0b16, alpha: 0.72 });
-    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.8 });
-    g.moveTo(r.x, r.y + r.height / 2).lineTo(r.x + r.width, r.y + r.height / 2);
-    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.45 });
+    g.fill({ color: 0x0d0b16, alpha: 0.8 });
+    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.85 });
   }
 
+  private scopeLabel(i: number, text: string, x: number, y: number): void {
+    const t = this.scopeLabels[i];
+    if (!t) return;
+    t.text = text;
+    t.position.set(x, y);
+    t.visible = true;
+  }
+
+  /** Scope: node voltages vs tick, numbered, frozen when paused, with a cursor. */
   private drawScope(): void {
     const r = this.scopeRect();
     const g = this.scopeTraces;
     g.clear();
-    const pad = 8;
-    const x0 = r.x + pad;
-    const y0 = r.y + pad;
-    const iw = r.width - 2 * pad;
-    const ih = r.height - 2 * pad;
+    for (const t of this.scopeLabels) t.visible = false;
 
-    for (let c = 0; c < this.samples.length; c++) {
-      const buf = this.samples[c];
-      if (!buf || buf.length < 2) continue;
+    const samples = this.scopeSamples;
+    if (samples.length < 2) return;
 
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const v of buf) {
+    const padL = 32;
+    const padR = 8;
+    const padT = 16;
+    const padB = 14;
+    const x0 = r.x + padL;
+    const y0 = r.y + padT;
+    const iw = r.width - padL - padR;
+    const ih = r.height - padT - padB;
+
+    const chans = samples[samples.length - 1]!.values.length;
+    let lo = 0;
+    let hi = 1;
+    for (const s of samples) {
+      for (const v of s.values) {
         if (v < lo) lo = v;
         if (v > hi) hi = v;
       }
-      let range = hi - lo;
-      if (range < 1e-9) range = 1;
-
-      const color = CHANNEL_COLORS[c % CHANNEL_COLORS.length] ?? 0xffffff;
-      const trace = (): void => {
-        for (let i = 0; i < buf.length; i++) {
-          const x = x0 + (i / (MAX_SAMPLES - 1)) * iw;
-          const norm = ((buf[i] ?? 0) - lo) / range;
-          const y = y0 + (1 - norm) * ih;
-          if (i === 0) g.moveTo(x, y);
-          else g.lineTo(x, y);
-        }
-      };
-      trace();
-      g.stroke({ width: 3, color, alpha: 0.12 });
-      trace();
-      g.stroke({ width: 1.25, color, alpha: 0.92 });
     }
+    const span = hi - lo || 1;
+    const xAt = (i: number): number => x0 + (i / (MAX_SAMPLES - 1)) * iw;
+    const yAt = (v: number): number => y0 + (1 - (v - lo) / span) * ih;
+
+    if (lo < 0) {
+      const yz = yAt(0);
+      g.moveTo(x0, yz).lineTo(x0 + iw, yz);
+      g.stroke({ width: 1, color: PALETTE.border, alpha: 0.4 });
+    }
+
+    // Channel traces (skip node 0, the flat ground reference).
+    for (let c = 1; c < chans; c++) {
+      const color = CHANNEL_COLORS[(c - 1) % CHANNEL_COLORS.length] ?? 0xffffff;
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i]!.values[c] ?? 0;
+        if (i === 0) g.moveTo(xAt(i), yAt(v));
+        else g.lineTo(xAt(i), yAt(v));
+      }
+      g.stroke({ width: 1.4, color, alpha: 0.95 });
+    }
+
+    // Cursor at the displayed tick.
+    const cx = xAt(this.scopeCursor);
+    g.moveTo(cx, y0).lineTo(cx, y0 + ih);
+    g.stroke({ width: 1, color: PALETTE.accent, alpha: 0.85 });
+
+    const cur = samples[this.scopeCursor]!;
+    this.scopeLabel(0, fmtSI(hi, "V"), r.x + 4, y0 - 5);
+    this.scopeLabel(1, fmtSI(lo, "V"), r.x + 4, y0 + ih - 5);
+    this.scopeLabel(2, "SCOPE · V / tick", r.x + padL, r.y + 3);
+    this.scopeLabel(
+      3,
+      "t " + cur.tick,
+      Math.min(cx + 3, r.x + r.width - 42),
+      r.y + r.height - 12,
+    );
   }
 }
 

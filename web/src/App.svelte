@@ -20,7 +20,7 @@
   import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
-  const SPEEDS = [1, 4, 16, 64];
+  const SPEEDS = [0.25, 1, 4, 16, 64];
 
   // The component bin. The four ideal primitives (V/R/C/L) come first and are the
   // parts the solver simulates today; the rest preview later tech-tree tiers.
@@ -123,7 +123,7 @@
   let proto = $state(0);
   let channels = $state<number[]>([]);
   let running = $state(false);
-  let tpf = $state(1);
+  let tpf = $state(0.25);
   let ready = $state(false);
   let mode = $state<Mode>("select");
   let placeKind = $state(PARTS[0]?.tag ?? "V");
@@ -272,6 +272,10 @@
   }
   function togglePlay(): void {
     controls?.toggle();
+    syncRunning();
+  }
+  function restartRun(): void {
+    controls?.restart();
     syncRunning();
   }
   function stepFwd(): void {
@@ -640,6 +644,12 @@
       onclick={stepFwd}
       disabled={!ready}
       title="Step forward one tick">▶</button
+    >
+    <button
+      class="btn step"
+      onclick={restartRun}
+      disabled={!ready}
+      title="Reset run to t=0">↺</button
     >
   </div>
 

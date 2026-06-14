@@ -82,6 +82,8 @@ export interface PlaybackControls {
   status(): PlaybackStatus;
   /** Rebuild the history from the sim's current state (after a netlist change). */
   resync(): void;
+  /** Reset the simulation to t=0 and clear the timeline. */
+  restart(): void;
 }
 
 export interface LoopOptions {
@@ -98,7 +100,10 @@ export function runLoop(
   opts: LoopOptions = {},
 ): PlaybackControls {
   let running = opts.running ?? false;
-  let tpf = Math.max(1, Math.floor(opts.ticksPerFrame ?? 1));
+  // Fractional ticks-per-frame: a value < 1 advances slowly (one tick every few
+  // frames) via an accumulator, so "watch speed" can go well below 1.
+  let tpf = Math.max(0.01, opts.ticksPerFrame ?? 0.25);
+  let acc = 0;
   const cap = Math.max(2, opts.historyCap ?? 1200);
   let raf = 0;
 
@@ -123,7 +128,11 @@ export function runLoop(
 
   const frame = (): void => {
     if (running) {
-      for (let i = 0; i < tpf; i++) {
+      acc += tpf;
+      let steps = Math.floor(acc);
+      acc -= steps;
+      if (steps > 256) steps = 256; // never freeze on a long frame
+      for (let i = 0; i < steps; i++) {
         sim.step();
         record();
       }
@@ -171,7 +180,7 @@ export function runLoop(
       show();
     },
     setTicksPerFrame: (n: number) => {
-      tpf = Math.max(1, Math.floor(n));
+      tpf = Math.max(0.01, n);
     },
     isRunning: () => running,
     status: () => ({
@@ -184,6 +193,13 @@ export function runLoop(
       history.length = 0;
       history.push(sim.snapshot());
       cursor = 0;
+    },
+    restart: () => {
+      sim.reset();
+      history.length = 0;
+      history.push(sim.snapshot());
+      cursor = 0;
+      acc = 0;
     },
   };
 }
