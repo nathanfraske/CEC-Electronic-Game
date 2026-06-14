@@ -30,19 +30,30 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Polish (Lane C): self-host the fonts (dropped the Google CDN), CRT/scanline scope frame, full button/chip/telemetry state matrices, neon glows, prefers-reduced-motion.~~
 - ~~Integrate the three worktree branches into the feature branch (disjoint files → clean cherry-pick); rebuild wasm; full gate suite green; align telemetry labels to the core's state layout.~~
 
+### Done — interactive features + solver integration (session 3)
+- ~~Zoom + pan viewport (wheel zoom to cursor, drag-empty / middle-drag pan); grid redraws across the visible region.~~
+- ~~Ideal fixed voltage source added to the bin; parts carry value + unit; graph gains serialize/restore.~~
+- ~~Simulation paused by default; bottom timeline scrubber with per-tick step back/forward, backed by a bounded snapshot history.~~
+- ~~Selection: click + shift/ctrl multi-select with highlight; Delete removes selection; Ctrl+Z undo.~~
+- ~~Animated component glyphs (R zigzag + flow/heat, C plates + charge, L coil + field halo, V battery + pulse) driven by real per-element current/voltage.~~
+- ~~Wire the board graph into the solver: `netlist.ts` compiles BoardGraph → MNA netlist (ground = first source's − net); sim-core generalized to an arbitrary ideal netlist (Lane A); new golden `0x6d055513f0613902`.~~
+- ~~Examples panel: Watch (load + run) and guided Build (auto-advancing checklist with a per-step "why") for Voltage Divider, RC, RL.~~
+
 ### Open / Next
-- [ ] **Wire the board graph into the solver.** Today the interactive board (`graph.ts`) and the analog core are independent — the sim runs a fixed RC circuit regardless of what you place. Compile the placed components + wires into a netlist the core actually solves.
-- [ ] Generalize the analog engine beyond the fixed RC: stamp arbitrary R/C/L/sources from the netlist; add nonlinear devices (diode) with a capped Newton solve.
-- [ ] **Implement the power-bus visual language** (`docs/ui/visual-language.md`, ref `docs/ui/dc-bus-reference.html`): net voltage as belt height + rail color + number; branch current as flow (chevrons) + thickness + number; KCL at taps; real IR-drop sag. Add rail tokens (`--r12/--r5/--r33/--gnd`) to `app.css`; port the SVG encoding to the PixiJS renderer.
+- [ ] Per-component **value editing** (click a part → set R/C/L/V); the model already carries values + units, expose a small inspector.
+- [ ] Nonlinear devices: diode (then BJT) with a capped Newton solve in sim-core.
+- [ ] **Power-bus visual language on wires/nets** (`docs/ui/visual-language.md`, ref `docs/ui/dc-bus-reference.html`): net voltage as level + color + number; branch current as flow + thickness + number; KCL at taps; IR-drop sag. Add rail tokens (`--r12/--r5/--r33/--gnd`) to `app.css`.
 - [ ] Add the event-driven digital engine and the behavioral MCU emulator; meet the analog domain at the pins (docs/architecture.md).
-- [ ] First graded challenge: "V(cap) reaches 90% of V(rail) within N ticks", verified by measurement + deterministic replay.
+- [ ] First graded challenge: "V(cap) reaches 90% of the rail within N ticks", verified by measurement + deterministic replay.
 - [ ] sim-protocol: design the real snapshot/command wire schema; choose a serialization deliberately and record an ADR.
-- [ ] Web: implement rewind via sparse keyframes wired to the transport controls.
+- [ ] Deep rewind via sparse keyframes (the scrubber currently replays a bounded snapshot history; keyframes give unbounded exact rewind).
 - [ ] Re-enable `wasm-opt` once binaryen is provisioned in the build image.
-- [ ] Open the bootstrap pull request against `main`; recommend branch protection requiring the `rust-core` and `web-build` checks.
+- [ ] GitHub Pages: still needs the owner to set Settings → Pages → Source: GitHub Actions, then the `pages` workflow deploys.
 
 Superseded earlier items (tombstoned):
-- ~~Replace the placeholder dynamics with the real analog solver~~ → analog RC done (Lane A); digital + MCU still open above.
-- ~~Promote `print_golden` into a committed golden~~ → done (Lane A).
+- ~~Replace the placeholder dynamics with the real analog solver~~ → done (Lane A; arbitrary netlist).
+- ~~Wire the board graph into the solver~~ → done (`netlist.ts` + integration).
+- ~~Promote `print_golden` into a committed golden~~ → done.
 - ~~Web: drag-from-bin placement + real board graph~~ → done (Lane B).
 - ~~Self-host the fonts~~ → done (Lane C).
+- ~~Web: rewind via the transport~~ → snapshot-history scrubber done; keyframe rewind still open above.
