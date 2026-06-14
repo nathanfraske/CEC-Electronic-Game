@@ -70,6 +70,8 @@ export class Board {
   private readonly world = new Container();
   private readonly grid = new Graphics();
   private readonly wireLayer = new Graphics();
+  private readonly groundLayer = new Graphics();
+  private readonly groundLabels: Text[] = [];
   private readonly selectionLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
@@ -130,6 +132,7 @@ export class Board {
   ) {
     this.world.addChild(this.grid);
     this.world.addChild(this.wireLayer);
+    this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
     this.world.addChild(this.pendingWire);
@@ -137,6 +140,20 @@ export class Board {
     this.world.addChild(this.probeText);
     this.probeText.anchor.set(0.5);
     this.probeText.visible = false;
+    for (let i = 0; i < 4; i++) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: 0x9c93b8,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+        },
+      });
+      t.anchor.set(0.5, 0);
+      t.visible = false;
+      this.groundLabels.push(t);
+      this.world.addChild(t);
+    }
     app.stage.addChild(this.world);
     this.scope.addChild(this.scopeFrame);
     this.scope.addChild(this.scopeTraces);
@@ -288,6 +305,7 @@ export class Board {
     this.lastState = snap.state;
     this.electrical = electrical;
     this.redrawWires();
+    this.drawGround();
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
@@ -804,6 +822,43 @@ export class Board {
     const eb = this.electrical?.get(w.to.componentId);
     if (eb) return -(eb.current * (w.to.pinIndex === 1 ? 1 : -1));
     return 0;
+  }
+
+  /** Draw a schematic ground symbol + "GND 0 V" at every node-0 source pin. */
+  private drawGround(): void {
+    const g = this.groundLayer;
+    g.clear();
+    for (const t of this.groundLabels) t.visible = false;
+    if (!this.probeNodes) return;
+    let li = 0;
+    for (const c of this.graph.components.values()) {
+      if (c.kind !== "V") continue;
+      const nodes = this.probeNodes.get(c.id);
+      const kind = this.graph.kindOf(c);
+      if (!nodes || !kind) continue;
+      for (const p of kind.pins) {
+        if (nodes[p.index] !== 0) continue;
+        const pos = this.cellToWorld(this.graph.pinCell(c, p));
+        this.drawGroundSymbol(g, pos.x, pos.y);
+        const t = this.groundLabels[li];
+        if (t) {
+          li++;
+          t.text = "GND 0 V";
+          t.position.set(pos.x, pos.y + 26);
+          t.visible = true;
+        }
+      }
+    }
+  }
+
+  private drawGroundSymbol(g: Graphics, x: number, y: number): void {
+    g.moveTo(x, y).lineTo(x, y + 10);
+    const ws = [9, 6, 3];
+    const ys = [14, 18, 22];
+    for (let i = 0; i < 3; i++) {
+      g.moveTo(x - ws[i]!, y + ys[i]!).lineTo(x + ws[i]!, y + ys[i]!);
+    }
+    g.stroke({ width: 2, color: 0x6b6488, alpha: 0.95 });
   }
 
   private drawPendingWire(): void {
