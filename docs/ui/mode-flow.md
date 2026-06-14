@@ -72,20 +72,26 @@ RESISTOR · click to drop · Esc to cancel`, `Click a pin to start a wire`).
 
 ## Migration — smallest path first
 
-**Phase 0 — collapse to two states (small, high payoff)**
-1. Replace the 4-button control with **Build (default) + Measure toggle**; keep
-   the `Mode` type internally but only set `select`/`measure`.
-2. Add `armedPart: string | null` in `App.svelte` (reuse the active-part state);
-   clicking a bin row arms it, Esc/right-click clears it.
-3. In `board.ts onPointerDown`, replace the `place` early-return with: *if armed
-   and over empty cell → place + stay armed*. Wire/move/select/pan already run in
-   the `select` path.
-4. Wire Esc: disarm → cancel wiring → clear selection.
+**Phase 0 — collapse to two states (small, high payoff) — ✅ SHIPPED 2026-06-14**
+1. ✅ Replaced the 4-button control with **Build (default) + Measure toggle**; the
+   `Mode` type keeps `place`/`wire` internally but App only ever sets
+   `select`/`measure`.
+2. ✅ Added `armedPart: string | null` in `App.svelte`; clicking a bin row toggles
+   the arm, Esc/right-click clears it (`board.setArmed`, `onArm` callback mirrors a
+   board-side disarm back into the HUD).
+3. ✅ In `board.ts onPointerDown`, the `place` early-return is gone; an empty-cell
+   press with a part armed drops it and stays armed (`placeCell`). Wire / move /
+   select / pan all run in the `select` path as before.
+4. ✅ Esc wired (App `onKey`): disarm → else `board.escape()` (cancel wiring →
+   clear selection). A one-line contextual **hint** + an **armed-part chip** (with
+   ×) were added for discoverability since the mode buttons are gone.
 
-*After Phase 0 it already feels modeless.*
+*After Phase 0 it already feels modeless.* Cursor is per-context (`copy` armed,
+`crosshair` measuring, else default).
 
-**Phase 1 — feedback:** ghost preview, pin hover highlight + per-context cursor,
-contextual hint line, armed-part chip.
+**Phase 1 — feedback (remaining):** ghost preview that snaps to the grid cell
+under the cursor; pin hover highlight + snap-ring. (Per-context cursor, contextual
+hint line, and armed-part chip already shipped in Phase 0.)
 
 **Phase 2 — speed:** click→click + chained wiring, `1`–`9` hotbar + `Q` pipette,
 Shift-drag box-select, Space-pan. (`R` rotate already shipped.)

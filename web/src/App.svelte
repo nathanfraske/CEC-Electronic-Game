@@ -107,13 +107,6 @@
     "var(--warn)",
     "var(--bronze)",
   ];
-  const MODES: { id: Mode; label: string }[] = [
-    { id: "select", label: "Select" },
-    { id: "place", label: "Place" },
-    { id: "wire", label: "Wire" },
-    { id: "measure", label: "Measure" },
-  ];
-
   let frameEl: HTMLDivElement;
   let canvasEl: HTMLCanvasElement;
 
@@ -126,7 +119,10 @@
   let tpf = $state(0.1);
   let ready = $state(false);
   let mode = $state<Mode>("select");
-  let placeKind = $state(PARTS[0]?.tag ?? "V");
+  // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
+  let armedPart = $state<string | null>(null);
+  // Fallback kind for native drag-and-drop from the bin (set on dragstart).
+  let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
   let buildEx = $state<ExampleSpec | null>(null);
   let buildStep = $state(0);
@@ -148,6 +144,18 @@
   const channelLabel = (i: number): string => (i === 0 ? "GND" : `Node ${i}`);
   const channelColor = (i: number): string =>
     CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
+  const partName = (tag: string): string =>
+    PARTS.find((p) => p.tag === tag)?.name ?? tag;
+
+  // One-line contextual hint that replaces the old mode buttons: it tells you
+  // what a click will do right now, so the modeless board stays learnable.
+  const hint = $derived(
+    mode === "measure"
+      ? "MEASURE · click two points to read ΔV"
+      : armedPart
+        ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
+        : "BUILD · click a part to arm, then click to place · drag a pin to wire",
+  );
 
   onMount(() => {
     let app: Application | undefined;
@@ -164,6 +172,11 @@
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
         board?.rotateSelection();
+        e.preventDefault();
+      } else if (e.key === "Escape") {
+        // Universal cancel: disarm first, otherwise cancel a wire / clear selection.
+        if (armedPart) arm(null);
+        else board?.escape();
         e.preventDefault();
       }
     };
@@ -230,6 +243,10 @@
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
+        },
+        onArm: (kind) => {
+          // The board disarmed itself (right-click) — mirror it into the HUD.
+          armedPart = kind;
         },
       });
       board = b;
@@ -308,6 +325,23 @@
     mode = m;
     board?.setMode(m);
   }
+  // Arm / disarm a part for placement. Arming while measuring drops you back into
+  // Build so the click actually places.
+  function arm(tag: string | null): void {
+    armedPart = tag;
+    if (tag && mode === "measure") setMode("select");
+    board?.setArmed(tag);
+  }
+  function toggleArm(tag: string): void {
+    arm(armedPart === tag ? null : tag);
+  }
+  function enterBuild(): void {
+    setMode("select");
+  }
+  function enterMeasure(): void {
+    arm(null);
+    setMode("measure");
+  }
   function clearBoard(): void {
     board?.clear();
     demo = null;
@@ -331,6 +365,7 @@
     // banner / transport invites you to press Run).
     controls?.pause();
     syncRunning();
+    arm(null);
     setMode("select");
     demoExRef = ex.demo ? ex : null;
     demo = ex.demo
@@ -355,8 +390,8 @@
     const g = new BoardGraph();
     g.restore(ex.build());
     buildTarget = graphShape(g);
-    placeKind = "V";
-    setMode("place");
+    setMode("select");
+    arm("V");
     leftTab = "parts";
     showIntro = false;
   }
@@ -399,7 +434,7 @@
   function onPartDragStart(e: DragEvent, tag: string): void {
     e.dataTransfer?.setData("text/plain", tag);
     if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
-    placeKind = tag;
+    dragKind = tag;
   }
   function onBoardDragOver(e: DragEvent): void {
     e.preventDefault();
@@ -407,14 +442,8 @@
   }
   function onBoardDrop(e: DragEvent): void {
     e.preventDefault();
-    const tag = e.dataTransfer?.getData("text/plain") || placeKind;
+    const tag = e.dataTransfer?.getData("text/plain") || dragKind;
     dropAt(tag, e.clientX, e.clientY);
-  }
-  // In Place mode a plain click drops the selected part, so the board is usable
-  // without a pointer that supports drag.
-  function onBoardClick(e: MouseEvent): void {
-    if (mode !== "place" || !board) return;
-    dropAt(placeKind, e.clientX, e.clientY);
   }
   function dropAt(tag: string, clientX: number, clientY: number): void {
     if (!board) return;
@@ -458,21 +487,21 @@
     </div>
     {#if leftTab === "parts"}
       <p class="panel-note">
-        Drag a part onto the board, or pick Place mode and click. Scroll to
-        zoom, drag empty space to pan. V / R / C / L are ideal and simulate
-        today.
+        Click a part to arm it, then click the board to drop (click again or Esc
+        to disarm) — or drag it on. Scroll to zoom, drag empty space to pan. V /
+        R / C / L are ideal and simulate today.
       </p>
       <ul class="part-list scroll">
         {#each PARTS as part (part.name)}
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
           <li
-            class="part {placeKind === part.tag ? 'is-selected' : ''}"
+            class="part {armedPart === part.tag ? 'is-selected' : ''}"
             style="--c: {part.color}"
             draggable="true"
             ondragstart={(e) => onPartDragStart(e, part.tag)}
-            onclick={() => (placeKind = part.tag)}
-            title="Drag onto the board, or select then click in Place mode"
+            onclick={() => toggleArm(part.tag)}
+            title="Click to arm for placement, or drag onto the board"
           >
             <span class="part-glyph">{part.tag}</span>
             <span class="part-body">
@@ -511,16 +540,31 @@
 
   <main class="panel board">
     <div class="board-tools">
-      <span class="tool-label">Mode</span>
-      {#each MODES as m (m.id)}
-        <button
-          class="btn btn-ghost {mode === m.id ? 'is-active' : ''}"
-          onclick={() => setMode(m.id)}
-          disabled={!ready}
-        >
-          {m.label}
-        </button>
-      {/each}
+      <span class="tool-label">Tool</span>
+      <button
+        class="btn btn-ghost {mode === 'select' ? 'is-active' : ''}"
+        onclick={enterBuild}
+        disabled={!ready}
+        title="Build: place parts and wire pins"
+      >
+        Build
+      </button>
+      <button
+        class="btn btn-ghost {mode === 'measure' ? 'is-active' : ''}"
+        onclick={enterMeasure}
+        disabled={!ready}
+        title="Measure: probe voltage between two points (M)"
+      >
+        Measure
+      </button>
+      {#if armedPart}
+        <span class="armed-chip" title="Armed for placement">
+          {partName(armedPart)}
+          <button class="armed-x" onclick={() => arm(null)} aria-label="Disarm"
+            >×</button
+          >
+        </span>
+      {/if}
       {#if demo}
         <button
           class="btn btn-ghost demo-btn {demoOn ? 'is-active' : ''}"
@@ -562,8 +606,6 @@
         Clear
       </button>
     </div>
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
       class="board-frame"
       bind:this={frameEl}
@@ -571,12 +613,11 @@
       aria-label="Circuit board"
       ondragover={onBoardDragOver}
       ondrop={onBoardDrop}
-      onclick={onBoardClick}
       oncontextmenu={(e) => e.preventDefault()}
     >
       <canvas class="board-canvas" bind:this={canvasEl}></canvas>
       <div class="board-overlay">
-        <span class="scope-tag">Board · {mode.toUpperCase()}</span>
+        <span class="scope-tag">{hint}</span>
         <span class="scope-tag">
           {partCount} parts · {wireCount} wires · {selCount} sel
         </span>
@@ -744,6 +785,37 @@
   }
   .tool-spacer {
     flex: 1;
+  }
+  /* The armed-part chip: shows what a board click will drop, with an × to disarm. */
+  .armed-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 4px 3px 10px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    background: var(--accent-soft);
+  }
+  .armed-x {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+    color: var(--dim);
+    font-size: 13px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .armed-x:hover {
+    color: var(--text);
+    border-color: var(--accent);
   }
 
   .part {
