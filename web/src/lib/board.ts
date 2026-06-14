@@ -34,7 +34,7 @@ import {
 } from "./glyphs";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
-export type Mode = "select" | "place" | "wire";
+export type Mode = "select" | "place" | "wire" | "measure";
 
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
@@ -43,6 +43,10 @@ const MAX_SAMPLES = 240;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
+
+// Multimeter lead colours: red "+" and steel "−", like a real DMM.
+const PROBE_PLUS = 0xe0533a;
+const PROBE_MINUS = 0x7c90a4;
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
@@ -68,6 +72,16 @@ export class Board {
   private readonly selectionLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
+  private readonly probeLayer = new Graphics();
+  private readonly probeText = new Text({
+    text: "",
+    style: {
+      fill: PALETTE.accent,
+      fontFamily: "IBM Plex Mono, monospace",
+      fontSize: 12,
+      fontWeight: "600",
+    },
+  });
   private readonly scope = new Container();
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
@@ -98,6 +112,12 @@ export class Board {
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
 
+  // Probe (measure mode): two leads reading the voltage between two pins.
+  private probeA: PinRef | null = null;
+  private probeB: PinRef | null = null;
+  private probeNodes: Map<number, [number, number]> | null = null;
+  private lastState: Float64Array = new Float64Array();
+
   constructor(
     private readonly app: Application,
     private readonly cb: BoardCallbacks = {},
@@ -107,6 +127,10 @@ export class Board {
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
     this.world.addChild(this.pendingWire);
+    this.world.addChild(this.probeLayer);
+    this.world.addChild(this.probeText);
+    this.probeText.anchor.set(0.5);
+    this.probeText.visible = false;
     app.stage.addChild(this.world);
     this.scope.addChild(this.scopeFrame);
     this.scope.addChild(this.scopeTraces);
@@ -134,7 +158,14 @@ export class Board {
   setMode(mode: Mode): void {
     this.mode = mode;
     if (mode !== "wire") this.cancelWiring();
+    if (mode !== "measure") this.clearProbe();
     this.app.stage.cursor = mode === "place" ? "copy" : "default";
+  }
+
+  /** Supply the pin→net mapping so the probe can read net voltages. */
+  setProbeNodes(map: Map<number, [number, number]> | null): void {
+    this.probeNodes = map;
+    this.clearProbe();
   }
 
   placeAt(
@@ -235,6 +266,7 @@ export class Board {
       this.viewportDirty = false;
     }
 
+    this.lastState = snap.state;
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
@@ -251,6 +283,7 @@ export class Board {
       if (buf.length > MAX_SAMPLES) buf.shift();
     }
     this.drawScope();
+    this.drawProbe();
   }
 
   destroy(): void {
@@ -421,6 +454,86 @@ export class Board {
     }
   }
 
+  // --- probe (measure mode) -----------------------------------------------
+
+  private setProbe(pin: PinRef): void {
+    // First click sets the red (+) lead; second sets the steel (−) reference;
+    // a third starts over. Moving the − lead is how "voltage across" is taught.
+    if (!this.probeA || this.probeB) {
+      this.probeA = pin;
+      this.probeB = null;
+    } else {
+      this.probeB = pin;
+    }
+  }
+
+  private clearProbe(): void {
+    this.probeA = null;
+    this.probeB = null;
+    this.probeLayer.clear();
+    this.probeText.visible = false;
+  }
+
+  private pinVoltage(ref: PinRef | null): number | null {
+    if (!ref) return null;
+    const nodes = this.probeNodes?.get(ref.componentId);
+    if (!nodes) return null;
+    const node = nodes[ref.pinIndex];
+    if (node === undefined) return null;
+    return this.lastState[node] ?? 0;
+  }
+
+  /** Draw one DMM lead: a wire to a handle knob, a metal needle tip, a ring. */
+  private drawLead(x: number, y: number, color: number): void {
+    const g = this.probeLayer;
+    const hx = x - 18;
+    const hy = y - 26;
+    g.moveTo(hx, hy).lineTo(x, y);
+    g.stroke({ width: 3.5, color: 0x141019, alpha: 0.9 });
+    g.moveTo(hx, hy).lineTo(x, y);
+    g.stroke({ width: 1.6, color, alpha: 0.95 });
+    g.poly([x, y, x - 8, y - 10, x - 3, y - 12]).fill({ color: 0xcdd8e2 });
+    g.circle(hx, hy, 4.5).fill({ color });
+    g.circle(hx, hy, 4.5).stroke({ width: 1, color: 0x0d0b16, alpha: 0.7 });
+    g.circle(x, y, PIN_R + 3).stroke({ width: 2, color });
+  }
+
+  private drawProbe(): void {
+    const g = this.probeLayer;
+    g.clear();
+    if (this.mode !== "measure" || !this.probeA) {
+      this.probeText.visible = false;
+      return;
+    }
+    const cellA = this.graph.pinRefCell(this.probeA);
+    if (!cellA) {
+      this.clearProbe();
+      return;
+    }
+    const pa = this.cellToWorld(cellA);
+    const vA = this.pinVoltage(this.probeA);
+
+    if (this.probeB) {
+      const cellB = this.graph.pinRefCell(this.probeB);
+      if (!cellB) {
+        this.probeB = null;
+        return;
+      }
+      const pb = this.cellToWorld(cellB);
+      const vB = this.pinVoltage(this.probeB);
+      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+      this.drawLead(pb.x, pb.y, PROBE_MINUS);
+      this.probeText.text = "ΔV " + fmtSI((vA ?? 0) - (vB ?? 0), "V");
+      this.probeText.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 - 16);
+    } else {
+      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+      this.probeText.text =
+        vA === null ? "no reading" : fmtSI(vA, "V") + " vs GND";
+      this.probeText.position.set(pa.x, pa.y - 18);
+    }
+    this.probeText.visible = true;
+  }
+
   // --- input handlers -----------------------------------------------------
 
   private readonly onPointerDown = (e: FederatedPointerEvent): void => {
@@ -433,6 +546,14 @@ export class Board {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
+    if (this.mode === "measure") {
+      const pin = this.pinHitTest(wp.x, wp.y);
+      if (pin) this.setProbe(pin);
+      else if (!additive)
+        this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
+
     if (this.mode === "place") return; // placement driven by HUD drop/click
 
     const pin = this.pinHitTest(wp.x, wp.y);

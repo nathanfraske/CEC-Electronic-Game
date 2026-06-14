@@ -35,6 +35,13 @@ export interface ExampleSpec {
   build(): GraphSnapshot;
   /** Ordered guided-build steps for "Build". */
   steps: BuildStep[];
+  /** Optional one-toggle demo (e.g. lift a part from ground to show its effect). */
+  demo?: {
+    label: string;
+    on: string;
+    off: string;
+    alt(): GraphSnapshot;
+  };
 }
 
 function comp(
@@ -110,6 +117,21 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => p.complete,
       },
     ],
+    demo: {
+      label: "R2 → ground",
+      on: "R2 grounded — current flows and the divider splits the voltage.",
+      off: "R2 lifted from ground — no current path, so the output floats up to the full rail.",
+      alt() {
+        const g = new BoardGraph();
+        const v = comp(g, "V", 3, 8, 5);
+        const r1 = comp(g, "R", 8, 5, 1000);
+        const r2 = comp(g, "R", 8, 9, 2000);
+        wire(g, v, 0, r1, 0);
+        wire(g, r1, 1, r2, 0);
+        // R2.B intentionally left unconnected — lifted from ground.
+        return g.serialize();
+      },
+    },
   },
   {
     id: "rc",

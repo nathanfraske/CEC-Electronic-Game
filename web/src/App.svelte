@@ -111,6 +111,7 @@
     { id: "select", label: "Select" },
     { id: "place", label: "Place" },
     { id: "wire", label: "Wire" },
+    { id: "measure", label: "Measure" },
   ];
 
   let frameEl: HTMLDivElement;
@@ -131,6 +132,9 @@
   let buildStep = $state(0);
   let buildDone = $state(false);
   let buildTarget = "";
+  let demo = $state<{ label: string; on: string; off: string } | null>(null);
+  let demoOn = $state(true);
+  let demoExRef: ExampleSpec | null = null;
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
@@ -191,6 +195,7 @@
         if (sig === netlistSig) return;
         netlistSig = sig;
         netlist = nl;
+        board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
         if (nl) {
           sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values);
           controls?.resync();
@@ -290,6 +295,7 @@
   }
   function clearBoard(): void {
     board?.clear();
+    demo = null;
   }
   function undoAction(): void {
     board?.undo();
@@ -305,9 +311,23 @@
     controls?.resume();
     syncRunning();
     setMode("select");
+    demoExRef = ex.demo ? ex : null;
+    demo = ex.demo
+      ? { label: ex.demo.label, on: ex.demo.on, off: ex.demo.off }
+      : null;
+    demoOn = true;
+  }
+  function toggleDemo(): void {
+    const ex = demoExRef;
+    if (!ex?.demo) return;
+    demoOn = !demoOn;
+    board?.loadGraph(demoOn ? ex.build() : ex.demo.alt());
+    controls?.resume();
+    syncRunning();
   }
   function startBuild(ex: ExampleSpec): void {
     board?.clear();
+    demo = null;
     buildEx = ex;
     buildStep = 0;
     buildDone = false;
@@ -466,7 +486,12 @@
         </ol>
         {#if buildDone}
           <p class="guided-done">
-            ✓ You built it — it's running. Tweak a part, or scrub the timeline.
+            ✓ Loop closed — current flows. Switch to Measure and probe two
+            points, or select a part to read V across and I through.
+          </p>
+        {:else}
+          <p class="guided-open">
+            Open loop — no current can flow until you close it back to ground.
           </p>
         {/if}
         <button class="btn btn-ghost guided-solution" onclick={showSolution}>
@@ -511,6 +536,15 @@
           {m.label}
         </button>
       {/each}
+      {#if demo}
+        <button
+          class="btn btn-ghost demo-btn {demoOn ? 'is-active' : ''}"
+          onclick={toggleDemo}
+          title={demoOn ? demo.on : demo.off}
+        >
+          {demo.label}: {demoOn ? "ON" : "OFF"}
+        </button>
+      {/if}
       <span class="tool-spacer"></span>
       <button
         class="btn btn-ghost"
@@ -824,6 +858,12 @@
     font-family: var(--font-mono);
     font-size: 11.5px;
     color: var(--ok);
+  }
+  .guided-open {
+    margin: 10px 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--warn);
   }
   .guided-solution {
     margin-top: 6px;
