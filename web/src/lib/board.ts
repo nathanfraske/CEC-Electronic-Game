@@ -191,6 +191,17 @@ export class Board {
     return this.undoStack.length > 0;
   }
 
+  /** Replace the whole board with a prebuilt graph (e.g. a worked example). */
+  loadGraph(snapshot: GraphSnapshot): void {
+    this.pushUndo(this.graph.serialize());
+    this.graph.restore(snapshot);
+    this.rebuildNodes();
+    this.clearSelection();
+    this.redrawWires();
+    this.resetView();
+    this.cb.onChange?.(this.graph);
+  }
+
   /** Reset zoom and pan to the identity view. */
   resetView(): void {
     this.world.scale.set(1);

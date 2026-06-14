@@ -10,6 +10,7 @@
   } from "./sim/loop";
   import { Board, type Mode } from "./lib/board";
   import type { BoardGraph } from "./lib/graph";
+  import { EXAMPLES, type ExampleSpec } from "./lib/examples";
 
   const SEED = 1337;
   const SPEEDS = [1, 4, 16, 64];
@@ -120,6 +121,7 @@
   let ready = $state(false);
   let mode = $state<Mode>("select");
   let placeKind = $state(PARTS[0]?.tag ?? "V");
+  let leftTab = $state<"parts" | "examples">("parts");
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
@@ -252,6 +254,12 @@
   function resetView(): void {
     board?.resetView();
   }
+  function loadExample(ex: ExampleSpec): void {
+    board?.loadGraph(ex.build());
+    controls?.resume();
+    syncRunning();
+    setMode("select");
+  }
 
   // --- placement via drag-and-drop from the bin ---------------------------
 
@@ -305,32 +313,62 @@
 
 <div class="workspace">
   <aside class="panel bin">
-    <h2 class="panel-title">Component Bin</h2>
-    <p class="panel-note">
-      Drag a part onto the board, or pick Place mode and click. Scroll to zoom,
-      drag empty space to pan. V / R / C / L are ideal and simulate today.
-    </p>
-    <ul class="part-list scroll">
-      {#each PARTS as part (part.name)}
-        <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-        <li
-          class="part {placeKind === part.tag ? 'is-selected' : ''}"
-          style="--c: {part.color}"
-          draggable="true"
-          ondragstart={(e) => onPartDragStart(e, part.tag)}
-          onclick={() => (placeKind = part.tag)}
-          title="Drag onto the board, or select then click in Place mode"
-        >
-          <span class="part-glyph">{part.tag}</span>
-          <span class="part-body">
-            <span class="part-name">{part.name}</span>
-            <span class="part-desc">{part.desc}</span>
-          </span>
-          <span class="part-tier">{part.tier}</span>
-        </li>
-      {/each}
-    </ul>
+    <div class="bin-tabs">
+      <button
+        class="tab {leftTab === 'parts' ? 'is-active' : ''}"
+        onclick={() => (leftTab = "parts")}>Parts</button
+      >
+      <button
+        class="tab {leftTab === 'examples' ? 'is-active' : ''}"
+        onclick={() => (leftTab = "examples")}>Examples</button
+      >
+    </div>
+    {#if leftTab === "parts"}
+      <p class="panel-note">
+        Drag a part onto the board, or pick Place mode and click. Scroll to
+        zoom, drag empty space to pan. V / R / C / L are ideal and simulate
+        today.
+      </p>
+      <ul class="part-list scroll">
+        {#each PARTS as part (part.name)}
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <li
+            class="part {placeKind === part.tag ? 'is-selected' : ''}"
+            style="--c: {part.color}"
+            draggable="true"
+            ondragstart={(e) => onPartDragStart(e, part.tag)}
+            onclick={() => (placeKind = part.tag)}
+            title="Drag onto the board, or select then click in Place mode"
+          >
+            <span class="part-glyph">{part.tag}</span>
+            <span class="part-body">
+              <span class="part-name">{part.name}</span>
+              <span class="part-desc">{part.desc}</span>
+            </span>
+            <span class="part-tier">{part.tier}</span>
+          </li>
+        {/each}
+      </ul>
+    {:else}
+      <p class="panel-note">
+        Worked examples: load a small circuit, watch it run, then tweak it.
+      </p>
+      <ul class="example-list scroll">
+        {#each EXAMPLES as ex (ex.id)}
+          <li class="example">
+            <div class="example-head">
+              <span class="example-name">{ex.name}</span>
+              <button class="btn btn-ghost" onclick={() => loadExample(ex)}>
+                Load
+              </button>
+            </div>
+            <p class="example-blurb">{ex.blurb}</p>
+            <p class="example-watch">Watch · {ex.watch}</p>
+          </li>
+        {/each}
+      </ul>
+    {/if}
   </aside>
 
   <main class="panel board">
@@ -501,6 +539,76 @@
   .board {
     display: flex;
     flex-direction: column;
+  }
+
+  /* Left-panel tabs (Parts / Examples) and the example cards. */
+  .bin-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab {
+    flex: 1;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 7px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    cursor: pointer;
+    transition:
+      color 0.15s,
+      border-color 0.15s,
+      background 0.15s;
+  }
+  .tab.is-active {
+    color: var(--accent);
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+  }
+  .example-list {
+    list-style: none;
+    margin: 0;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .example {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 10px 11px;
+  }
+  .example-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .example-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+  .example-blurb {
+    margin: 7px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--faint);
+  }
+  .example-watch {
+    margin: 6px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ok);
   }
 
   /* Transport: step buttons + the timeline scrubber. */
