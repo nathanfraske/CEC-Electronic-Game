@@ -32,8 +32,19 @@ impl Simulation {
 
     /// Batched state snapshot for the renderer, as a `Float64Array`. Read once
     /// per frame and handed to PixiJS, never queried per component.
+    ///
+    /// RC-circuit layout (see `sim_core::Sim::state`):
+    /// `[ v(n1) volts, v(n2) volts, i(Vsrc) amps, v_source volts ]`.
+    /// Index 1 is the capacitor charge curve; index 3 is its target rail.
     pub fn state(&self) -> Vec<f64> {
         self.inner.state().to_vec()
+    }
+
+    /// Capacitor node voltage `v(n2)` in volts — the primary measurement.
+    /// Additive convenience getter for a single-value readout without parsing
+    /// the full snapshot.
+    pub fn cap_voltage(&self) -> f64 {
+        self.inner.cap_voltage()
     }
 
     /// Protocol version, checked by the front end on load.
