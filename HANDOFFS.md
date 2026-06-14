@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — Playtest overhaul: belts, scope, primer, probes, ground, reset/speed
+
+**State:** 🟢 Green; pushed. A large pass on the look + feel from hands-on feedback
+("think Factorio with belts, but electricity"):
+- **HiDPI** rendering (devicePixelRatio + autoDensity) — no more blur.
+- **Belts:** traces route at 90° (`wireRoute`), are coloured by net voltage
+  (`voltageColor`), and carry flow chevrons whose direction + density track the
+  current (`redrawWires`, redrawn each frame off the live snapshot).
+- **Scope** rewritten: per-tick samples (freezes on pause, scrubs with the
+  timeline), a cursor line, numbered V axis + tick label.
+- **Reset Run** (↺) + `loop.restart()`; **fractional** ticks-per-frame and a much
+  slower default (0.25×).
+- **Ground** symbol + "GND 0 V" at the source's node-0 pin (`drawGround`).
+- **Panel** unified: the guided panel floats over the board (`.guided-overlay`)
+  so the Parts bin stays visible; a **"Voltage & Current" primer** opens running
+  (the first thing you see is current flowing) with a dismissible intro banner.
+- **Probes** are now draggable leads that snap to a **pin or a trace**
+  (`ProbePoint`, `snapProbe`, `measurePress`); a pin-attached lead follows the part.
+
+### Still outstanding from that feedback
+- **Component rotation** (R hotkey) — see `TODOS.md`. Needs a `rot` field + rotated
+  `pinCell` + axis-aware glyph drawing. The one item not yet done.
+
+---
+
 ## 2026-06-14 — Pedagogy demos: "across/through" readout, DMM probe, divider R2 toggle, concept beats
 
 **State:** 🟢 Green; pushed. A "show don't tell" layer over the board + examples:
