@@ -10,6 +10,9 @@
 /web/dist
 .pnpm-store
 
+# Agent worktrees (ephemeral; created by Claude Code parallel agents)
+/.claude/worktrees
+
 # Misc
 *.log
 .DS_Store
