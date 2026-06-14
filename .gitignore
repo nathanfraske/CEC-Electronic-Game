@@ -1,0 +1,17 @@
+# Rust
+/target
+**/*.rs.bk
+
+# Generated WebAssembly package (rebuilt from crates/sim-wasm)
+/web/src/wasm
+
+# Node
+**/node_modules
+/web/dist
+.pnpm-store
+
+# Misc
+*.log
+.DS_Store
+.idea
+.vscode

@@ -1,0 +1,13 @@
+{
+  "name": "cec-electronic-game",
+  "private": true,
+  "packageManager": "pnpm@10.33.0",
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "dev": "pnpm run build:wasm && pnpm -C web dev",
+    "build": "pnpm run build:wasm && pnpm -C web build",
+    "check": "pnpm -C web check",
+    "lint": "pnpm -C web lint",
+    "format": "pnpm -C web format"
+  }
+}

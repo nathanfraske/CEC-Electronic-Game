@@ -1,0 +1,20 @@
+[package]
+name = "sim-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+sim-core = { path = "../sim-core" }
+sim-protocol = { path = "../sim-protocol" }
+
+# wasm-opt (from binaryen) is disabled so the build does not require fetching a
+# binaryen release at build time, which keeps `build:wasm` working in sandboxes
+# and offline CI. Re-enable for size-optimized production bundles once binaryen
+# is provisioned in the build image.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = false
