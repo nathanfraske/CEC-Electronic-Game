@@ -48,9 +48,10 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Ground symbol + "GND 0 V" drawn at the source's ground pin.~~
 - ~~Panel unified: the guide floats over the board so the Parts bin stays visible; a "Voltage & Current" primer that opens running so the first thing you see is current flowing through a voltage-coloured wire (+ a dismissible intro banner naming both primitives).~~
 - ~~Live "V across / I through" readout on a selected part; draggable DMM probes that snap to a pin or a trace.~~
+- ~~Component rotation (R hotkey + Rotate button): `rot` on the component, rotated `pinCell`, rotated glyph with upright labels; connectivity unchanged so the sim isn't reset. Watch now starts paused.~~
 
 ### Open / Next
-- [ ] **Component rotation** (0/90/180/270): an `R` hotkey + button. Needs `rot` on the component + a rotated `pinCell`, and glyphs drawn along the pin axis (or a rotated glyph sub-container with upright labels). The one playtest item still outstanding.
+- [ ] **Less clunky Select/Place/Wire flow** — collapse into one contextual "Build" mode + an armed-part state (ghost preview, place-and-repeat, click→click chained wiring), keep Measure as a tool. Factorio-style. Full design + phased plan in `docs/ui/mode-flow.md`; **Phase 0 is small** (mostly deletes the mode buttons).
 - [ ] **Make it a game, not just a sim (owner-driven).** Full brainstorm + backlog in `docs/game-rewards.md`. Core rule: the sim is the only judge — a reward is a number off a deterministic graded replay. Two currencies: **Credits** (spend) + **Lux** (earned only by understanding; **Lux gates the tech tree** = the anti-grind firewall). MVP order: (1) contract + spec-sheet grader (generalize the RC challenge); (2) Credits + "Ship It" juice (replay the winning run); (3) realism multiplier with one real 5% resistor (the pillar, made playable); (4) par score + replay-verified leaderboard; (5) predict-then-reveal + first Lux.
 - [ ] Per-component **value editing** (click a part → set R/C/L/V); the model already carries values + units, expose a small inspector.
 - [ ] Extend the "show don't tell" demos to RC/RL (short the cap to watch it discharge; open the coil for back-EMF); make the probe a movable meter that snaps to whole nets.
