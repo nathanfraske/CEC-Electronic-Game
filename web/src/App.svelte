@@ -9,11 +9,12 @@
     type PlaybackControls,
   } from "./sim/loop";
   import { Board, type Mode } from "./lib/board";
-  import type { BoardGraph } from "./lib/graph";
+  import { BoardGraph } from "./lib/graph";
   import { EXAMPLES, type ExampleSpec } from "./lib/examples";
   import {
     buildNetlist,
     electricalMap,
+    graphShape,
     type BuiltNetlist,
   } from "./lib/netlist";
   import type { ElectricalState } from "./lib/glyphs";
@@ -126,6 +127,10 @@
   let mode = $state<Mode>("select");
   let placeKind = $state(PARTS[0]?.tag ?? "V");
   let leftTab = $state<"parts" | "examples">("parts");
+  let buildEx = $state<ExampleSpec | null>(null);
+  let buildStep = $state(0);
+  let buildDone = $state(false);
+  let buildTarget = "";
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
@@ -210,6 +215,7 @@
           wireCount = graph.wires.size;
           canUndo = b.canUndo();
           rebuildNetlist(graph);
+          advanceBuild(graph);
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
@@ -299,6 +305,51 @@
     controls?.resume();
     syncRunning();
     setMode("select");
+  }
+  function startBuild(ex: ExampleSpec): void {
+    board?.clear();
+    buildEx = ex;
+    buildStep = 0;
+    buildDone = false;
+    const g = new BoardGraph();
+    g.restore(ex.build());
+    buildTarget = graphShape(g);
+    placeKind = "V";
+    setMode("place");
+    leftTab = "examples";
+  }
+  function exitBuild(): void {
+    buildEx = null;
+  }
+  function showSolution(): void {
+    const ex = buildEx;
+    if (!ex) return;
+    board?.loadGraph(ex.build());
+    controls?.resume();
+    syncRunning();
+    buildEx = null;
+  }
+  // Advance the guided build as the player places parts and draws wires.
+  function advanceBuild(graph: BoardGraph): void {
+    const ex = buildEx;
+    if (!ex) return;
+    const count: Record<string, number> = {};
+    for (const c of graph.components.values()) {
+      count[c.kind] = (count[c.kind] ?? 0) + 1;
+    }
+    const progress = {
+      count,
+      wires: graph.wires.size,
+      complete: graphShape(graph) === buildTarget,
+    };
+    while (buildStep < ex.steps.length && ex.steps[buildStep]?.done(progress)) {
+      buildStep++;
+    }
+    if (progress.complete || buildStep >= ex.steps.length) {
+      buildDone = true;
+      controls?.resume();
+      syncRunning();
+    }
   }
 
   // --- placement via drag-and-drop from the bin ---------------------------
@@ -390,18 +441,55 @@
           </li>
         {/each}
       </ul>
+    {:else if buildEx}
+      {@const ex = buildEx}
+      <div class="guided">
+        <div class="guided-head">
+          <span class="guided-title">Build · {ex.name}</span>
+          <button class="btn btn-ghost" onclick={exitBuild}>Exit</button>
+        </div>
+        <ol class="guided-steps">
+          {#each ex.steps as step, i (i)}
+            <li
+              class="gstep {i < buildStep
+                ? 'is-done'
+                : i === buildStep
+                  ? 'is-current'
+                  : ''}"
+            >
+              <span class="gstep-do">{step.do}</span>
+              {#if i === buildStep && !buildDone}
+                <span class="gstep-why">{step.why}</span>
+              {/if}
+            </li>
+          {/each}
+        </ol>
+        {#if buildDone}
+          <p class="guided-done">
+            ✓ You built it — it's running. Tweak a part, or scrub the timeline.
+          </p>
+        {/if}
+        <button class="btn btn-ghost guided-solution" onclick={showSolution}>
+          Show solution
+        </button>
+      </div>
     {:else}
       <p class="panel-note">
-        Worked examples: load a small circuit, watch it run, then tweak it.
+        Watch a worked circuit run, or build it yourself step by step.
       </p>
       <ul class="example-list scroll">
         {#each EXAMPLES as ex (ex.id)}
           <li class="example">
             <div class="example-head">
               <span class="example-name">{ex.name}</span>
-              <button class="btn btn-ghost" onclick={() => loadExample(ex)}>
-                Load
-              </button>
+              <span class="example-actions">
+                <button class="btn btn-ghost" onclick={() => loadExample(ex)}>
+                  Watch
+                </button>
+                <button class="btn btn-ghost" onclick={() => startBuild(ex)}>
+                  Build
+                </button>
+              </span>
             </div>
             <p class="example-blurb">{ex.blurb}</p>
             <p class="example-watch">Watch · {ex.watch}</p>
@@ -649,6 +737,96 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--ok);
+  }
+  .example-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  /* Guided build: an ordered, auto-advancing checklist. */
+  .guided {
+    overflow-y: auto;
+    padding: 12px;
+  }
+  .guided-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+  .guided-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 14px;
+    letter-spacing: 0.06em;
+    color: var(--text);
+  }
+  .guided-steps {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    counter-reset: step;
+  }
+  .gstep {
+    position: relative;
+    padding: 8px 10px 8px 34px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--faint);
+    counter-increment: step;
+  }
+  .gstep::before {
+    content: counter(step);
+    position: absolute;
+    left: 9px;
+    top: 8px;
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    color: var(--dim);
+  }
+  .gstep-do {
+    display: block;
+    font-size: 12.5px;
+  }
+  .gstep.is-current {
+    border-color: var(--accent-line);
+    background: var(--accent-soft);
+    color: var(--text);
+  }
+  .gstep.is-current::before {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .gstep.is-done::before {
+    content: "✓";
+    border-color: color-mix(in oklch, var(--ok) 50%, transparent);
+    color: var(--ok);
+  }
+  .gstep-why {
+    display: block;
+    margin-top: 4px;
+    font-size: 11.5px;
+    line-height: 1.45;
+    color: var(--dim);
+  }
+  .guided-done {
+    margin: 10px 0;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--ok);
+  }
+  .guided-solution {
+    margin-top: 6px;
   }
 
   /* Transport: step buttons + the timeline scrubber. */

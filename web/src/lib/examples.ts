@@ -1,10 +1,28 @@
 // SPDX-License-Identifier: Apache-2.0
-// Worked examples: small, prebuilt circuits the player can load to see a working
-// board before building their own. Each is just a BoardGraph (parts + wires +
-// ideal values) serialized to a snapshot — the board, the solver, and the
-// animations do the rest. Keep this list short and the blurbs plain.
+// Worked examples: small, prebuilt circuits the player can either watch run or
+// build themselves step by step. Each is a BoardGraph (parts + wires + ideal
+// values) serialized to a snapshot, plus a short ordered build script. The
+// board, the solver, and the animations do the rest. Keep the lists short and
+// the language plain.
 
 import { BoardGraph, type Component, type GraphSnapshot } from "./graph";
+
+/** Live progress passed to a build step's completion check. */
+export interface BuildProgress {
+  /** Count of placed components by kind tag. */
+  count: Record<string, number>;
+  /** Number of wires on the board. */
+  wires: number;
+  /** True once the board's topology matches the example's target shape. */
+  complete: boolean;
+}
+
+/** One guided step: what to do, why it matters, and when it's satisfied. */
+export interface BuildStep {
+  do: string;
+  why: string;
+  done(p: BuildProgress): boolean;
+}
 
 export interface ExampleSpec {
   id: string;
@@ -13,7 +31,10 @@ export interface ExampleSpec {
   blurb: string;
   /** A concrete thing to watch once it runs. */
   watch: string;
+  /** The finished circuit, for "Watch" and for the build's target shape. */
   build(): GraphSnapshot;
+  /** Ordered guided-build steps for "Build". */
+  steps: BuildStep[];
 }
 
 function comp(
@@ -42,6 +63,8 @@ function wire(
   );
 }
 
+const at = (p: BuildProgress, kind: string): number => p.count[kind] ?? 0;
+
 export const EXAMPLES: ExampleSpec[] = [
   {
     id: "divider",
@@ -59,6 +82,33 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, r2, 1, v, 1); // R2.B → V−
       return g.serialize();
     },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "Every circuit starts with a source — the push that drives current around the loop.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place two Resistors (R).",
+        why: "Two resistors in series will share the source voltage between them.",
+        done: (p) => at(p, "R") >= 2,
+      },
+      {
+        do: "Wire the source + pin to the first resistor.",
+        why: "Current leaves the source's + terminal and enters the top of the divider.",
+        done: (p) => p.wires >= 1,
+      },
+      {
+        do: "Wire the two resistors together in series.",
+        why: "Their junction is the divider's output — the node whose voltage you're setting.",
+        done: (p) => p.wires >= 2,
+      },
+      {
+        do: "Close the loop back to the source − pin.",
+        why: "Current must return to the source; its − pin is your 0 V ground reference.",
+        done: (p) => p.complete,
+      },
+    ],
   },
   {
     id: "rc",
@@ -76,6 +126,33 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, c, 1, v, 1); // C.− → V−
       return g.serialize();
     },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "The source provides the voltage that will charge the capacitor.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Resistor (R).",
+        why: "The resistor limits the current, setting how fast the capacitor charges.",
+        done: (p) => at(p, "R") >= 1,
+      },
+      {
+        do: "Place a Capacitor (C).",
+        why: "The capacitor stores charge; its voltage can't change instantly.",
+        done: (p) => at(p, "C") >= 1,
+      },
+      {
+        do: "Wire source + → resistor → capacitor.",
+        why: "Current flows through R to pile charge onto C — that's the RC path.",
+        done: (p) => p.wires >= 2,
+      },
+      {
+        do: "Close the loop back to the source −.",
+        why: "Completing the loop lets current flow and the capacitor charge on its curve.",
+        done: (p) => p.complete,
+      },
+    ],
   },
   {
     id: "rl",
@@ -93,5 +170,32 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, l, 1, v, 1); // L.B → V−
       return g.serialize();
     },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "The source drives the current through the coil.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Resistor (R).",
+        why: "The resistor sets the final current (I = V/R) and the time constant.",
+        done: (p) => at(p, "R") >= 1,
+      },
+      {
+        do: "Place an Inductor (L).",
+        why: "The inductor opposes sudden change, so the current ramps instead of jumping.",
+        done: (p) => at(p, "L") >= 1,
+      },
+      {
+        do: "Wire source + → resistor → inductor.",
+        why: "Current flows through the resistor and the coil in series.",
+        done: (p) => p.wires >= 2,
+      },
+      {
+        do: "Close the loop back to the source −.",
+        why: "Closing the loop lets current build up through the inductor.",
+        done: (p) => p.complete,
+      },
+    ],
   },
 ];

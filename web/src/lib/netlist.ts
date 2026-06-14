@@ -127,6 +127,17 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
 }
 
 /**
+ * A coarse topology signature (sorted element types + node count), used by the
+ * guided build to recognise when the player's circuit matches the target shape,
+ * independent of node numbering and component values.
+ */
+export function graphShape(graph: BoardGraph): string {
+  const nl = buildNetlist(graph);
+  if (!nl) return "";
+  return [...nl.types].sort((x, y) => x - y).join(",") + "#" + nl.nodeCount;
+}
+
+/**
  * Attribute the solver's per-element current and per-net voltage back to each
  * component, so the renderer can animate each glyph with its real electrical
  * state. Built fresh per frame from one batched snapshot.
