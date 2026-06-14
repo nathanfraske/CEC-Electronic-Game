@@ -53,6 +53,8 @@ const MAX_SAMPLES = 240;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
+/** Device pixel ratio for crisp canvas Text (capped to keep textures sane). */
+const DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 
 // Multimeter lead colours: red "+" and steel "−", like a real DMM.
 const PROBE_PLUS = 0xe0533a;
@@ -149,6 +151,7 @@ export class Board {
     this.world.addChild(this.probeLayer);
     this.world.addChild(this.probeText);
     this.probeText.anchor.set(0.5);
+    this.probeText.resolution = DPR;
     this.probeText.visible = false;
     for (let i = 0; i < 4; i++) {
       const t = new Text({
@@ -160,6 +163,7 @@ export class Board {
         },
       });
       t.anchor.set(0.5, 0);
+      t.resolution = DPR;
       t.visible = false;
       this.groundLabels.push(t);
       this.world.addChild(t);
@@ -176,6 +180,7 @@ export class Board {
           fontSize: 9,
         },
       });
+      t.resolution = DPR;
       t.visible = false;
       this.scopeLabels.push(t);
       this.scope.addChild(t);
@@ -305,11 +310,16 @@ export class Board {
    * optional `electrical` map carries per-component current/voltage from the
    * solver to drive the glyph animations (absent until the netlist is wired).
    */
-  update(snap: Snapshot, electrical?: Map<number, ElectricalState>): void {
+  update(
+    snap: Snapshot,
+    electrical?: Map<number, ElectricalState>,
+    running = true,
+  ): void {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
     this.lastTime = now;
-    this.phase += dt;
+    // Freeze the flow/animation phase when time is paused.
+    if (running) this.phase += dt;
 
     if (this.app.screen.width !== this.w || this.app.screen.height !== this.h) {
       this.viewportDirty = true;
@@ -887,12 +897,15 @@ export class Board {
       g.stroke({ width: 2, color, alpha: 0.95 });
 
       const cur = this.wireCurrent(w);
-      const norm = saturate(Math.abs(cur) / 0.02);
-      if (norm > 0.02) {
+      const normC = saturate(Math.abs(cur) / 0.01);
+      if (normC > 0.02) {
+        // Density (how many chevrons) tracks the current; speed tracks voltage.
+        const normV = saturate(Math.abs(v ?? 0) / 6);
         const len = routeLength(route);
-        const n = Math.max(2, Math.round((len / 30) * (0.5 + norm)));
+        const spacing = 40 - 28 * normC;
+        const n = Math.max(1, Math.floor(len / spacing));
         const dir = cur >= 0 ? 1 : -1;
-        const speed = 0.2 + norm * 0.9;
+        const speed = 0.08 + normV * 0.6;
         for (let i = 0; i < n; i++) {
           const t = (((i / n + this.phase * speed * dir) % 1) + 1) % 1;
           const s = sampleRoute(route, t);
@@ -903,7 +916,7 @@ export class Board {
             s.dx * dir,
             s.dy * dir,
             color,
-            0.35 + 0.55 * norm,
+            0.4 + 0.5 * normC,
           );
         }
       }
@@ -1179,6 +1192,7 @@ class ComponentNode {
       },
     });
     this.label.anchor.set(0.5);
+    this.label.resolution = DPR;
     this.view.addChild(this.label);
 
     if (symbol && kind?.unit) {
@@ -1191,6 +1205,7 @@ class ComponentNode {
         },
       });
       this.value.anchor.set(0.5);
+      this.value.resolution = DPR;
       this.view.addChild(this.value);
     } else {
       this.value = null;
@@ -1207,6 +1222,7 @@ class ComponentNode {
       },
     });
     this.meter.anchor.set(0.5);
+    this.meter.resolution = DPR;
     this.meter.visible = false;
     this.view.addChild(this.meter);
 

@@ -20,7 +20,7 @@
   import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
-  const SPEEDS = [0.25, 1, 4, 16, 64];
+  const SPEEDS = [0.1, 0.25, 1, 4, 16];
 
   // The component bin. The four ideal primitives (V/R/C/L) come first and are the
   // parts the solver simulates today; the rest preview later tech-tree tiers.
@@ -123,7 +123,7 @@
   let proto = $state(0);
   let channels = $state<number[]>([]);
   let running = $state(false);
-  let tpf = $state(0.25);
+  let tpf = $state(0.1);
   let ready = $state(false);
   let mode = $state<Mode>("select");
   let placeKind = $state(PARTS[0]?.tag ?? "V");
@@ -246,7 +246,7 @@
             netlist && snap.elementCurrents
               ? electricalMap(netlist, snap.state, snap.elementCurrents)
               : undefined;
-          b.update(snap, electrical);
+          b.update(snap, electrical, controls?.isRunning() ?? false);
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
           const st = controls?.status();
