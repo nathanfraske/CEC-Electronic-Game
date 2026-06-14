@@ -24,9 +24,13 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 - **Probes** are now draggable leads that snap to a **pin or a trace**
   (`ProbePoint`, `snapProbe`, `measurePress`); a pin-attached lead follows the part.
 
-### Still outstanding from that feedback
-- **Component rotation** (R hotkey) — see `TODOS.md`. Needs a `rot` field + rotated
-  `pinCell` + axis-aware glyph drawing. The one item not yet done.
+### Now also done
+- **Component rotation** shipped (R hotkey + Rotate button): `rot` on the component,
+  rotated `pinCell`/`componentBox`, a rotated glyph sub-container with upright labels;
+  connectivity is unchanged so the sim isn't reset. **Watch starts paused** now.
+- **Mode-flow brainstorm** captured in `docs/ui/mode-flow.md` — collapse
+  Select/Place/Wire into one armed-part "Build" mode + a Measure tool (Factorio-style).
+  Phase 0 (small, mostly deletes the mode buttons) is the next UX task.
 
 ---
 

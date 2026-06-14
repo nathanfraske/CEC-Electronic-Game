@@ -20,7 +20,7 @@
   import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
-  const SPEEDS = [0.25, 1, 4, 16, 64];
+  const SPEEDS = [0.1, 0.25, 1, 4, 16];
 
   // The component bin. The four ideal primitives (V/R/C/L) come first and are the
   // parts the solver simulates today; the rest preview later tech-tree tiers.
@@ -123,7 +123,7 @@
   let proto = $state(0);
   let channels = $state<number[]>([]);
   let running = $state(false);
-  let tpf = $state(0.25);
+  let tpf = $state(0.1);
   let ready = $state(false);
   let mode = $state<Mode>("select");
   let placeKind = $state(PARTS[0]?.tag ?? "V");
@@ -161,6 +161,9 @@
         e.preventDefault();
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
         board?.undo();
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
+        board?.rotateSelection();
         e.preventDefault();
       }
     };
@@ -243,7 +246,7 @@
             netlist && snap.elementCurrents
               ? electricalMap(netlist, snap.state, snap.elementCurrents)
               : undefined;
-          b.update(snap, electrical);
+          b.update(snap, electrical, controls?.isRunning() ?? false);
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
           const st = controls?.status();
@@ -316,12 +319,17 @@
   function deleteSelection(): void {
     board?.deleteSelection();
   }
+  function rotateSel(): void {
+    board?.rotateSelection();
+  }
   function resetView(): void {
     board?.resetView();
   }
   function loadExample(ex: ExampleSpec): void {
     board?.loadGraph(ex.build());
-    controls?.resume();
+    // Start paused so you can take in the circuit before it runs (the intro
+    // banner / transport invites you to press Run).
+    controls?.pause();
     syncRunning();
     setMode("select");
     demoExRef = ex.demo ? ex : null;
@@ -538,6 +546,14 @@
         title="Delete selected (Del)"
       >
         Delete
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={rotateSel}
+        disabled={!ready || selCount === 0}
+        title="Rotate selected (R)"
+      >
+        Rotate
       </button>
       <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
         Reset View
