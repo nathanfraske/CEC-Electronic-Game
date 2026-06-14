@@ -21,6 +21,16 @@ export interface SimHandle {
   step(): void;
   snapshot(): Snapshot;
   protocolVersion(): number;
+  /** Install a netlist of ideal elements and reset to t=0. */
+  setNetlist(
+    nodeCount: number,
+    types: Uint8Array,
+    a: Uint32Array,
+    b: Uint32Array,
+    values: Float64Array,
+  ): boolean;
+  /** Reset to t=0 keeping the installed netlist. */
+  reset(): void;
 }
 
 export async function createSimulation(seed: number): Promise<SimHandle> {
@@ -33,8 +43,12 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       tick: sim.tick(),
       snapshotHash: sim.snapshot_hash(),
       state: sim.state(),
+      elementCurrents: sim.element_currents(),
     }),
     protocolVersion: () => sim.protocol_version(),
+    setNetlist: (nodeCount, types, a, b, values) =>
+      sim.set_netlist(nodeCount, types, a, b, values),
+    reset: () => sim.reset(),
   };
 }
 
@@ -66,6 +80,8 @@ export interface PlaybackControls {
   setTicksPerFrame(n: number): void;
   isRunning(): boolean;
   status(): PlaybackStatus;
+  /** Rebuild the history from the sim's current state (after a netlist change). */
+  resync(): void;
 }
 
 export interface LoopOptions {
@@ -164,5 +180,10 @@ export function runLoop(
       tick: history[cursor]?.tick ?? 0n,
       liveTick: history[live()]?.tick ?? 0n,
     }),
+    resync: () => {
+      history.length = 0;
+      history.push(sim.snapshot());
+      cursor = 0;
+    },
   };
 }

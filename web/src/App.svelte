@@ -11,6 +11,12 @@
   import { Board, type Mode } from "./lib/board";
   import type { BoardGraph } from "./lib/graph";
   import { EXAMPLES, type ExampleSpec } from "./lib/examples";
+  import {
+    buildNetlist,
+    electricalMap,
+    type BuiltNetlist,
+  } from "./lib/netlist";
+  import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
   const SPEEDS = [1, 4, 16, 64];
@@ -90,10 +96,8 @@
     },
   ];
 
-  // Telemetry channel labels match the analog core's default state layout; the
-  // vector is variable length, so we iterate the live snapshot and fall back to
-  // a generic node label for any extra channels the core exposes.
-  const CHANNEL_LABELS = ["V(n1)", "V(cap)", "I(src)", "V(rail)"];
+  // The state vector is node voltages (index 0 is ground); channels are labelled
+  // by node index and iterate the live snapshot length.
   const CHANNEL_COLORS = [
     "var(--accent)",
     "var(--cyan)",
@@ -131,8 +135,7 @@
   let board: Board | undefined;
   let controls: PlaybackControls | undefined;
 
-  const channelLabel = (i: number): string =>
-    CHANNEL_LABELS[i] ?? `NODE ${i + 1}`;
+  const channelLabel = (i: number): string => (i === 0 ? "GND" : `Node ${i}`);
   const channelColor = (i: number): string =>
     CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
 
@@ -168,11 +171,45 @@
         return;
       }
       app = a;
+
+      const sim = await createSimulation(SEED);
+      proto = sim.protocolVersion();
+
+      // Compile the board into a netlist and install it whenever the topology or
+      // a value changes. Pure moves leave the signature unchanged, so dragging a
+      // part around never resets the running simulation.
+      let netlist: BuiltNetlist | null = null;
+      let netlistSig = "";
+      const rebuildNetlist = (graph: BoardGraph): void => {
+        const nl = buildNetlist(graph);
+        const sig = nl ? nl.sig : graph.components.size > 0 ? "empty" : "demo";
+        if (sig === netlistSig) return;
+        netlistSig = sig;
+        netlist = nl;
+        if (nl) {
+          sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values);
+          controls?.resync();
+        } else if (graph.components.size > 0) {
+          // Parts placed but no voltage source to reference: install a quiet
+          // ground-only circuit so the readouts go flat rather than stale.
+          sim.setNetlist(
+            1,
+            new Uint8Array(),
+            new Uint32Array(),
+            new Uint32Array(),
+            new Float64Array(),
+          );
+          controls?.resync();
+        }
+        // else: empty board — keep the built-in demo circuit running.
+      };
+
       const b = new Board(a, {
         onChange: (graph: BoardGraph) => {
           partCount = graph.components.size;
           wireCount = graph.wires.size;
           canUndo = b.canUndo();
+          rebuildNetlist(graph);
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
@@ -180,16 +217,19 @@
       });
       board = b;
       b.setMode(mode);
-
-      const sim = await createSimulation(SEED);
-      proto = sim.protocolVersion();
       ready = true;
 
       // Paused by default: the player presses Run, or steps tick by tick.
       controls = runLoop(
         sim,
         (snap: Snapshot) => {
-          b.update(snap);
+          // Attribute per-element current and per-net voltage to each component
+          // so the glyphs animate with what is actually happening to them.
+          const electrical: Map<number, ElectricalState> | undefined =
+            netlist && snap.elementCurrents
+              ? electricalMap(netlist, snap.state, snap.elementCurrents)
+              : undefined;
+          b.update(snap, electrical);
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
           const st = controls?.status();
