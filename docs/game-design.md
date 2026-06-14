@@ -98,6 +98,22 @@ uppercase headers, faint grids, and neon glows. The current shell establishes
 the frame — component bin (left), board/scope (center), telemetry (right),
 transport (bottom). See `CLAUDE.md` for the tokens.
 
+## Showing voltage and current
+
+Voltage and current are different kinds of thing and must read differently — the
+canonical encoding lives in `docs/ui/visual-language.md`, with an interactive
+reference at `docs/ui/dc-bus-reference.html` (draft).
+
+- **Voltage is a property of the net:** a shared *level* — belt height + rail
+  color + number — uniform along a net and sagging only under load (IR drop).
+- **Current is flow along the conductor:** direction + speed + density + belt
+  thickness + number, dividing at every tap (KCL).
+- **Color is identity, not magnitude;** ground is the 0 V reference.
+
+This is exactly what the analog core yields (node voltages + branch currents),
+so the renderer can drive it directly once the board graph is compiled into a
+netlist.
+
 ## Milestones
 
 - **M0 — Foundation (done).** Deterministic placeholder core to wasm, CEC-styled

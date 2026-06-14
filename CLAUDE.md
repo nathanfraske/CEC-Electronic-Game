@@ -53,6 +53,11 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
   tracking), `IBM Plex Mono` (telemetry/data).
 - **Motifs:** faint grids, neon glows, small radii (2–4px), uppercase tracked
   labels. Use the CSS custom properties — do not hardcode colors.
+- **Power-bus visual language** (how voltage vs current are shown): spec in
+  `docs/ui/visual-language.md`, interactive reference `docs/ui/dc-bus-reference.html`.
+  Voltage = net level (height + rail color + number); current = flow + thickness
+  + number; KCL at taps; IR-drop sag. Rail identity: +12V `#d8a24a`, +5V
+  `#46d2e6`, +3.3V `#9a78ff`, GND `#6b6488`. Draft, not final.
 
 ## Where things live
 

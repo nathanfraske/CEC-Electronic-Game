@@ -5,6 +5,21 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — PR #1 opened, Pages wired, bus visual-language reference added
+
+- **PR #1** opened (`claude/kind-turing-hdelb3` → `main`):
+  https://github.com/nathanfraske/CEC-Electronic-Game/pull/1
+- **GitHub Pages** deploy added (`.github/workflows/pages.yml` + env-driven Vite
+  `base`). After merge and enabling Pages (Settings → Pages → Source: GitHub
+  Actions), the site deploys to https://nathanfraske.github.io/CEC-Electronic-Game/.
+- **Bus visual language**: the owner provided a draft reference for showing
+  voltage and current — `docs/ui/dc-bus-reference.html` (interactive) distilled
+  into `docs/ui/visual-language.md`. Voltage = net level (height + rail color +
+  number); current = flow + thickness + number; KCL at taps; IR-drop sag. Draft,
+  not final. Implement in the PixiJS renderer once the board graph feeds the solver.
+
+---
+
 ## 2026-06-14 — Parallel panel landed: M1 + M2 + design polish
 
 **State:** 🟢 Green. Three parallel agents (isolated git worktrees) integrated
