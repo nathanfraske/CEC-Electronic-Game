@@ -49,6 +49,8 @@ export interface Component {
   cell: Cell;
   /** Ideal value (volts / ohms / farads / henries). */
   value: number;
+  /** Orientation in 90° clockwise steps (0..3). */
+  rot: number;
 }
 
 /** Fully-qualified address of a pin on a placed component. */
@@ -191,6 +193,23 @@ export function snap(value: number, pitch: number): number {
   return Math.round(value / pitch);
 }
 
+/** Rotate an (dx,dy) offset by `rot` 90° clockwise steps: (x,y) → (−y,x). */
+export function rotateOffset(
+  dx: number,
+  dy: number,
+  rot: number,
+): { col: number; row: number } {
+  let x = dx;
+  let y = dy;
+  const k = ((rot % 4) + 4) % 4;
+  for (let i = 0; i < k; i++) {
+    const t = x;
+    x = -y;
+    y = t;
+  }
+  return { col: x, row: y };
+}
+
 /** Format an ideal value in engineering notation, e.g. 1000 Ω -> "1 kΩ". */
 export function formatValue(value: number, unit: string): string {
   if (!unit) return "";
@@ -237,6 +256,7 @@ export class BoardGraph {
       kind,
       cell,
       value: template.defaultValue,
+      rot: 0,
     };
     this.components.set(component.id, component);
     return component;
@@ -285,11 +305,12 @@ export class BoardGraph {
     this.wires.delete(id);
   }
 
-  /** Absolute cell of a pin (anchor + pin offset). */
+  /** Absolute cell of a pin (anchor + rotated pin offset). */
   pinCell(component: Component, pin: Pin): Cell {
+    const r = rotateOffset(pin.dx, pin.dy, component.rot);
     return {
-      col: component.cell.col + pin.dx,
-      row: component.cell.row + pin.dy,
+      col: component.cell.col + r.col,
+      row: component.cell.row + r.row,
     };
   }
 

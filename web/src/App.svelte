@@ -162,6 +162,9 @@
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
         board?.undo();
         e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
+        board?.rotateSelection();
+        e.preventDefault();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -316,12 +319,17 @@
   function deleteSelection(): void {
     board?.deleteSelection();
   }
+  function rotateSel(): void {
+    board?.rotateSelection();
+  }
   function resetView(): void {
     board?.resetView();
   }
   function loadExample(ex: ExampleSpec): void {
     board?.loadGraph(ex.build());
-    controls?.resume();
+    // Start paused so you can take in the circuit before it runs (the intro
+    // banner / transport invites you to press Run).
+    controls?.pause();
     syncRunning();
     setMode("select");
     demoExRef = ex.demo ? ex : null;
@@ -538,6 +546,14 @@
         title="Delete selected (Del)"
       >
         Delete
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={rotateSel}
+        disabled={!ready || selCount === 0}
+        title="Rotate selected (R)"
+      >
+        Rotate
       </button>
       <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
         Reset View

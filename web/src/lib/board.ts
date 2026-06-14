@@ -21,6 +21,7 @@ import {
   PALETTE,
   snap,
   formatValue,
+  rotateOffset,
   type Component,
   type PinRef,
   type Cell,
@@ -252,6 +253,20 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
+  /** Rotate the selected components 90° clockwise (connectivity is unchanged). */
+  rotateSelection(): void {
+    if (this.selected.size === 0) return;
+    this.pushUndo(this.graph.serialize());
+    for (const id of this.selected) {
+      const c = this.graph.components.get(id);
+      if (c) c.rot = (c.rot + 1) % 4;
+      this.nodes.get(id)?.reposition();
+    }
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+  }
+
   /** Undo the last mutating action. */
   undo(): void {
     const snapshot = this.undoStack.pop();
@@ -382,9 +397,23 @@ export class Board {
   private componentBox(c: Component): Rectangle {
     const kind = this.graph.kindOf(c);
     const o = this.cellToWorld(c.cell);
-    const wpx = ((kind?.w ?? 1) - 1) * PITCH;
-    const hpx = ((kind?.h ?? 1) - 1) * PITCH;
-    return new Rectangle(o.x - 14, o.y - 16, wpx + 28, hpx + 32);
+    let minx = 0;
+    let miny = 0;
+    let maxx = 0;
+    let maxy = 0;
+    for (const p of kind?.pins ?? []) {
+      const r = rotateOffset(p.dx, p.dy, c.rot);
+      minx = Math.min(minx, r.col);
+      miny = Math.min(miny, r.row);
+      maxx = Math.max(maxx, r.col);
+      maxy = Math.max(maxy, r.row);
+    }
+    return new Rectangle(
+      o.x + minx * PITCH - 14,
+      o.y + miny * PITCH - 16,
+      (maxx - minx) * PITCH + 28,
+      (maxy - miny) * PITCH + 32,
+    );
   }
 
   private pinHitTest(wx: number, wy: number): PinRef | null {
@@ -1112,6 +1141,7 @@ export class Board {
  */
 class ComponentNode {
   readonly view = new Container();
+  private readonly glyphHolder = new Container();
   private readonly glyph = new Graphics();
   private readonly label: Text;
   private readonly value: Text | null;
@@ -1136,7 +1166,8 @@ class ComponentNode {
       this.pinPositions.push({ x: p.dx * PITCH, y: p.dy * PITCH });
     }
 
-    this.view.addChild(this.glyph);
+    this.glyphHolder.addChild(this.glyph);
+    this.view.addChild(this.glyphHolder);
     const symbol = isSymbol(this.kindTag);
     this.label = new Text({
       text: this.kindTag,
@@ -1189,9 +1220,13 @@ class ComponentNode {
 
   private layoutLabels(): void {
     if (isSymbol(this.kindTag)) {
-      const cx = this.wPx / 2;
-      this.label.position.set(cx, -18);
-      this.value?.position.set(cx, 18);
+      const p1 = this.pinPositions[1] ?? { x: this.wPx, y: 0 };
+      const r = rotPx(p1.x, p1.y, this.component.rot);
+      const cx = r.x / 2;
+      const cy = r.y / 2;
+      this.label.position.set(cx, cy - 18);
+      this.value?.position.set(cx, cy + 18);
+      this.meter.position.set(cx, cy - 34);
     } else {
       this.label.position.set(this.wPx / 2, this.hPx / 2);
     }
@@ -1200,6 +1235,8 @@ class ComponentNode {
   reposition(): void {
     const p = this.anchor();
     this.view.position.set(p.x, p.y);
+    this.glyphHolder.rotation = (this.component.rot * Math.PI) / 2;
+    this.layoutLabels();
   }
 
   update(electrical: ElectricalState, phase: number, selected: boolean): void {
@@ -1226,7 +1263,6 @@ class ComponentNode {
         fmtSI(electrical.vAcross, "V") +
         "  ·  " +
         fmtSI(electrical.current, "A");
-      this.meter.position.set(this.wPx / 2, -34);
       this.meter.visible = true;
     } else {
       this.meter.visible = false;
@@ -1255,6 +1291,19 @@ function distToSegment(
   const cx = ax + t * dx;
   const cy = ay + t * dy;
   return Math.hypot(px - cx, py - cy);
+}
+
+/** Rotate a pixel offset by `rot` 90° clockwise steps: (x,y) → (−y,x). */
+function rotPx(x: number, y: number, rot: number): { x: number; y: number } {
+  let rx = x;
+  let ry = y;
+  const k = ((rot % 4) + 4) % 4;
+  for (let i = 0; i < k; i++) {
+    const t = rx;
+    rx = -ry;
+    ry = t;
+  }
+  return { x: rx, y: ry };
 }
 
 /** Closest point on a polyline to (px,py). */
