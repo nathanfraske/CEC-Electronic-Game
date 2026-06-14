@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — Pedagogy demos: "across/through" readout, DMM probe, divider R2 toggle, concept beats
+
+**State:** 🟢 Green; pushed. A "show don't tell" layer over the board + examples:
+- **Live readout on select** (`board.ts` ComponentNode `meter`): selecting a part shows its
+  **V across · I through** — watch the RC cap's current fall to 0 (an open at DC, not a short).
+- **DMM probe** — Measure mode in `board.ts`: red (+) / steel (−) leads with needle tips and
+  handle knobs. Click two pins → live **ΔV** between them; one pin → vs GND. App passes the
+  pin→net map via `board.setProbeNodes(netlist.nodesOfComponent)`. Teaches "voltage is a
+  difference across two points / ground is just the reference you picked."
+- **Divider R2-to-ground toggle** (`examples.ts` `demo` + App `toggleDemo`): lifts/restores
+  R2's ground wire — OFF floats the output to the full rail (no current), ON divides to 3.33 V.
+- **Guided concept beat:** the Build panel shows "Open loop — no current" until you close it
+  to ground, then "Loop closed — current flows", matching the readouts that sit at 0 until then.
+
+Next demonstrative ideas: extend demos to RC/RL (short the cap / open the coil); a movable
+probe that snaps to whole nets; per-part value editing so learners can sweep R/C/L live.
+
+---
+
 ## 2026-06-14 — Interactive board comes alive: viewport, scrubber, selection, solver, examples + guided build
 
 **State:** 🟢 Green (cargo fmt/clippy/test, build:wasm, web check/lint/build). Pushed to
