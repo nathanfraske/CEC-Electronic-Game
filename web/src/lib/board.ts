@@ -24,6 +24,7 @@ import {
   type Component,
   type PinRef,
   type Cell,
+  type Wire,
   type GraphSnapshot,
 } from "./graph";
 import {
@@ -35,6 +36,14 @@ import {
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode = "select" | "place" | "wire" | "measure";
+
+/** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
+interface ProbePoint {
+  node: number;
+  x: number;
+  y: number;
+  ref: PinRef | null;
+}
 
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
@@ -69,6 +78,8 @@ export class Board {
   private readonly world = new Container();
   private readonly grid = new Graphics();
   private readonly wireLayer = new Graphics();
+  private readonly groundLayer = new Graphics();
+  private readonly groundLabels: Text[] = [];
   private readonly selectionLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
@@ -85,12 +96,16 @@ export class Board {
   private readonly scope = new Container();
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
+  private readonly scopeLabels: Text[] = [];
 
   private readonly graph = new BoardGraph();
   private readonly nodes = new Map<number, ComponentNode>();
   private readonly selected = new Set<number>();
   private readonly selectedWires = new Set<number>();
-  private samples: number[][] = [];
+  // Per-tick scope history (one entry per simulated tick, not per render frame)
+  // so the scope freezes when paused and aligns to the timeline.
+  private scopeSamples: { tick: number; values: number[] }[] = [];
+  private scopeCursor = 0;
 
   private w = 0;
   private h = 0;
@@ -112,11 +127,13 @@ export class Board {
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
 
-  // Probe (measure mode): two leads reading the voltage between two pins.
-  private probeA: PinRef | null = null;
-  private probeB: PinRef | null = null;
+  // Probe (measure mode): two draggable DMM leads that snap to a pin or trace.
+  private probeA: ProbePoint | null = null;
+  private probeB: ProbePoint | null = null;
+  private draggingProbe: "A" | "B" | null = null;
   private probeNodes: Map<number, [number, number]> | null = null;
   private lastState: Float64Array = new Float64Array();
+  private electrical: Map<number, ElectricalState> | undefined;
 
   constructor(
     private readonly app: Application,
@@ -124,6 +141,7 @@ export class Board {
   ) {
     this.world.addChild(this.grid);
     this.world.addChild(this.wireLayer);
+    this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
     this.world.addChild(this.pendingWire);
@@ -131,9 +149,36 @@ export class Board {
     this.world.addChild(this.probeText);
     this.probeText.anchor.set(0.5);
     this.probeText.visible = false;
+    for (let i = 0; i < 4; i++) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: 0x9c93b8,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+        },
+      });
+      t.anchor.set(0.5, 0);
+      t.visible = false;
+      this.groundLabels.push(t);
+      this.world.addChild(t);
+    }
     app.stage.addChild(this.world);
     this.scope.addChild(this.scopeFrame);
     this.scope.addChild(this.scopeTraces);
+    for (let i = 0; i < 4; i++) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.dim,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+        },
+      });
+      t.visible = false;
+      this.scopeLabels.push(t);
+      this.scope.addChild(t);
+    }
     app.stage.addChild(this.scope);
 
     app.stage.eventMode = "static";
@@ -267,6 +312,9 @@ export class Board {
     }
 
     this.lastState = snap.state;
+    this.electrical = electrical;
+    this.redrawWires();
+    this.drawGround();
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
@@ -275,13 +323,7 @@ export class Board {
       );
     }
 
-    this.growSamples(snap.state.length);
-    for (let c = 0; c < this.samples.length; c++) {
-      const buf = this.samples[c];
-      if (!buf) continue;
-      buf.push(snap.state[c] ?? 0);
-      if (buf.length > MAX_SAMPLES) buf.shift();
-    }
+    this.recordScope(snap);
     this.drawScope();
     this.drawProbe();
   }
@@ -380,9 +422,15 @@ export class Board {
       const a = this.graph.pinRefCell(w.from);
       const b = this.graph.pinRefCell(w.to);
       if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      if (distToSegment(wx, wy, pa.x, pa.y, pb.x, pb.y) <= tol) best = w.id;
+      const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+      for (let i = 0; i + 1 < route.length; i++) {
+        const p0 = route[i]!;
+        const p1 = route[i + 1]!;
+        if (distToSegment(wx, wy, p0.x, p0.y, p1.x, p1.y) <= tol) {
+          best = w.id;
+          break;
+        }
+      }
     }
     return best;
   }
@@ -447,40 +495,101 @@ export class Board {
       const a = this.graph.pinRefCell(w.from);
       const b = this.graph.pinRefCell(w.to);
       if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
+      polyline(g, this.wireRoute(this.cellToWorld(a), this.cellToWorld(b)));
       g.stroke({ width: 5, color: PALETTE.accent, alpha: 0.5 });
     }
   }
 
   // --- probe (measure mode) -----------------------------------------------
 
-  private setProbe(pin: PinRef): void {
-    // First click sets the red (+) lead; second sets the steel (−) reference;
-    // a third starts over. Moving the − lead is how "voltage across" is taught.
-    if (!this.probeA || this.probeB) {
-      this.probeA = pin;
-      this.probeB = null;
-    } else {
-      this.probeB = pin;
+  /** Press in measure mode: grab a nearby lead to drag, or drop the next lead. */
+  private measurePress(wx: number, wy: number): boolean {
+    const grab = this.probeLeadAt(wx, wy);
+    if (grab) {
+      this.draggingProbe = grab;
+      return true;
     }
+    const target = this.snapProbe(wx, wy);
+    if (!target) return false;
+    if (!this.probeA) this.probeA = target;
+    else if (!this.probeB) this.probeB = target;
+    else this.probeA = target;
+    return true;
   }
 
   private clearProbe(): void {
     this.probeA = null;
     this.probeB = null;
+    this.draggingProbe = null;
     this.probeLayer.clear();
     this.probeText.visible = false;
   }
 
-  private pinVoltage(ref: PinRef | null): number | null {
-    if (!ref) return null;
+  private nodeVoltage(node: number): number | null {
+    if (node < 0 || node >= this.lastState.length) return null;
+    return this.lastState[node] ?? 0;
+  }
+
+  private pinNode(ref: PinRef): number | null {
     const nodes = this.probeNodes?.get(ref.componentId);
     if (!nodes) return null;
-    const node = nodes[ref.pinIndex];
-    if (node === undefined) return null;
-    return this.lastState[node] ?? 0;
+    return nodes[ref.pinIndex] ?? null;
+  }
+
+  private pinVoltage(ref: PinRef): number | null {
+    const node = this.pinNode(ref);
+    return node === null ? null : this.nodeVoltage(node);
+  }
+
+  /** Snap a world point to the nearest pin or trace, resolving its net node. */
+  private snapProbe(wx: number, wy: number): ProbePoint | null {
+    const pin = this.pinHitTest(wx, wy);
+    if (pin) {
+      const cell = this.graph.pinRefCell(pin);
+      const node = this.pinNode(pin);
+      if (cell && node !== null) {
+        const p = this.cellToWorld(cell);
+        return { node, x: p.x, y: p.y, ref: pin };
+      }
+    }
+    const wireId = this.wireHitTest(wx, wy);
+    if (wireId !== null) {
+      const w = this.graph.wires.get(wireId);
+      const node = w ? this.pinNode(w.from) : null;
+      const a = w ? this.graph.pinRefCell(w.from) : null;
+      const b = w ? this.graph.pinRefCell(w.to) : null;
+      if (w && node !== null && a && b) {
+        const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+        const cp = closestOnPolyline(route, wx, wy);
+        return { node, x: cp.x, y: cp.y, ref: null };
+      }
+    }
+    return null;
+  }
+
+  /** A lead's live position, following its pin if it is attached to one. */
+  private leadPos(p: ProbePoint): { x: number; y: number; node: number } {
+    if (p.ref) {
+      const cell = this.graph.pinRefCell(p.ref);
+      if (cell) {
+        const w = this.cellToWorld(cell);
+        return { x: w.x, y: w.y, node: this.pinNode(p.ref) ?? p.node };
+      }
+    }
+    return { x: p.x, y: p.y, node: p.node };
+  }
+
+  private probeLeadAt(wx: number, wy: number): "A" | "B" | null {
+    const r2 = 16 * 16;
+    if (this.probeB) {
+      const lp = this.leadPos(this.probeB);
+      if ((lp.x - wx) ** 2 + (lp.y - wy) ** 2 <= r2) return "B";
+    }
+    if (this.probeA) {
+      const lp = this.leadPos(this.probeA);
+      if ((lp.x - wx) ** 2 + (lp.y - wy) ** 2 <= r2) return "A";
+    }
+    return null;
   }
 
   /** Draw one DMM lead: a wire to a handle knob, a metal needle tip, a ring. */
@@ -501,37 +610,30 @@ export class Board {
   private drawProbe(): void {
     const g = this.probeLayer;
     g.clear();
-    if (this.mode !== "measure" || !this.probeA) {
+    if (this.mode !== "measure") {
       this.probeText.visible = false;
       return;
     }
-    const cellA = this.graph.pinRefCell(this.probeA);
-    if (!cellA) {
-      this.clearProbe();
-      return;
-    }
-    const pa = this.cellToWorld(cellA);
-    const vA = this.pinVoltage(this.probeA);
+    const a = this.probeA ? this.leadPos(this.probeA) : null;
+    const b = this.probeB ? this.leadPos(this.probeB) : null;
+    if (a) this.drawLead(a.x, a.y, PROBE_PLUS);
+    if (b) this.drawLead(b.x, b.y, PROBE_MINUS);
 
-    if (this.probeB) {
-      const cellB = this.graph.pinRefCell(this.probeB);
-      if (!cellB) {
-        this.probeB = null;
-        return;
-      }
-      const pb = this.cellToWorld(cellB);
-      const vB = this.pinVoltage(this.probeB);
-      this.drawLead(pa.x, pa.y, PROBE_PLUS);
-      this.drawLead(pb.x, pb.y, PROBE_MINUS);
-      this.probeText.text = "ΔV " + fmtSI((vA ?? 0) - (vB ?? 0), "V");
-      this.probeText.position.set((pa.x + pb.x) / 2, (pa.y + pb.y) / 2 - 16);
-    } else {
-      this.drawLead(pa.x, pa.y, PROBE_PLUS);
+    if (a && b) {
+      const va = this.nodeVoltage(a.node) ?? 0;
+      const vb = this.nodeVoltage(b.node) ?? 0;
+      this.probeText.text = "ΔV " + fmtSI(va - vb, "V");
+      this.probeText.position.set((a.x + b.x) / 2, (a.y + b.y) / 2 - 16);
+      this.probeText.visible = true;
+    } else if (a) {
+      const va = this.nodeVoltage(a.node);
       this.probeText.text =
-        vA === null ? "no reading" : fmtSI(vA, "V") + " vs GND";
-      this.probeText.position.set(pa.x, pa.y - 18);
+        va === null ? "no reading" : fmtSI(va, "V") + " vs GND";
+      this.probeText.position.set(a.x, a.y - 18);
+      this.probeText.visible = true;
+    } else {
+      this.probeText.visible = false;
     }
-    this.probeText.visible = true;
   }
 
   // --- input handlers -----------------------------------------------------
@@ -547,10 +649,8 @@ export class Board {
       return;
     }
     if (this.mode === "measure") {
-      const pin = this.pinHitTest(wp.x, wp.y);
-      if (pin) this.setProbe(pin);
-      else if (!additive)
-        this.panning = { lastX: e.global.x, lastY: e.global.y };
+      if (this.measurePress(wp.x, wp.y)) return;
+      if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
 
@@ -604,6 +704,18 @@ export class Board {
     const wp = this.screenToWorld(e.global.x, e.global.y);
     this.pointer.copyFrom(wp);
 
+    if (this.draggingProbe) {
+      const target = this.snapProbe(wp.x, wp.y) ?? {
+        node: -1,
+        x: wp.x,
+        y: wp.y,
+        ref: null,
+      };
+      if (this.draggingProbe === "A") this.probeA = target;
+      else this.probeB = target;
+      return;
+    }
+
     if (this.panning) {
       this.world.position.x += e.global.x - this.panning.lastX;
       this.world.position.y += e.global.y - this.panning.lastY;
@@ -634,6 +746,10 @@ export class Board {
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
+    if (this.draggingProbe) {
+      this.draggingProbe = null;
+      return;
+    }
     if (this.panning) {
       this.panning = null;
       return;
@@ -721,20 +837,107 @@ export class Board {
     for (const c of this.graph.components.values()) this.addNode(c);
   }
 
+  /**
+   * Orthogonal "belts": each trace routes at 90°, colours by its net voltage,
+   * and carries flow chevrons whose direction + density track the current —
+   * Factorio belts, but electricity. Redrawn every frame so it stays live.
+   */
   private redrawWires(): void {
     const g = this.wireLayer;
     g.clear();
     for (const w of this.graph.wires.values()) {
-      const a = this.graph.pinRefCell(w.from);
-      const b = this.graph.pinRefCell(w.to);
-      if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
-      g.stroke({ width: 6, color: PALETTE.cyan, alpha: 0.14 });
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
-      g.stroke({ width: 1.8, color: PALETTE.cyan, alpha: 0.95 });
+      const ca = this.graph.pinRefCell(w.from);
+      const cb = this.graph.pinRefCell(w.to);
+      if (!ca || !cb) continue;
+      const route = this.wireRoute(this.cellToWorld(ca), this.cellToWorld(cb));
+      const v = this.pinVoltage(w.from);
+      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      polyline(g, route);
+      g.stroke({ width: 6, color, alpha: 0.16 });
+      polyline(g, route);
+      g.stroke({ width: 2, color, alpha: 0.95 });
+
+      const cur = this.wireCurrent(w);
+      const norm = saturate(Math.abs(cur) / 0.02);
+      if (norm > 0.02) {
+        const len = routeLength(route);
+        const n = Math.max(2, Math.round((len / 30) * (0.5 + norm)));
+        const dir = cur >= 0 ? 1 : -1;
+        const speed = 0.2 + norm * 0.9;
+        for (let i = 0; i < n; i++) {
+          const t = (((i / n + this.phase * speed * dir) % 1) + 1) % 1;
+          const s = sampleRoute(route, t);
+          drawChevron(
+            g,
+            s.x,
+            s.y,
+            s.dx * dir,
+            s.dy * dir,
+            color,
+            0.35 + 0.55 * norm,
+          );
+        }
+      }
     }
+  }
+
+  /** A 90° (Manhattan) route between two pins: leave along the dominant axis. */
+  private wireRoute(pa: Point, pb: Point): Point[] {
+    const dx = pb.x - pa.x;
+    const dy = pb.y - pa.y;
+    if (Math.abs(dx) < 1 || Math.abs(dy) < 1) return [pa, pb];
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const mx = pa.x + dx / 2;
+      return [pa, new Point(mx, pa.y), new Point(mx, pb.y), pb];
+    }
+    const my = pa.y + dy / 2;
+    return [pa, new Point(pa.x, my), new Point(pb.x, my), pb];
+  }
+
+  /** Signed current along the wire from→to, from whichever end is an element. */
+  private wireCurrent(w: Wire): number {
+    const ea = this.electrical?.get(w.from.componentId);
+    if (ea) return ea.current * (w.from.pinIndex === 1 ? 1 : -1);
+    const eb = this.electrical?.get(w.to.componentId);
+    if (eb) return -(eb.current * (w.to.pinIndex === 1 ? 1 : -1));
+    return 0;
+  }
+
+  /** Draw a schematic ground symbol + "GND 0 V" at every node-0 source pin. */
+  private drawGround(): void {
+    const g = this.groundLayer;
+    g.clear();
+    for (const t of this.groundLabels) t.visible = false;
+    if (!this.probeNodes) return;
+    let li = 0;
+    for (const c of this.graph.components.values()) {
+      if (c.kind !== "V") continue;
+      const nodes = this.probeNodes.get(c.id);
+      const kind = this.graph.kindOf(c);
+      if (!nodes || !kind) continue;
+      for (const p of kind.pins) {
+        if (nodes[p.index] !== 0) continue;
+        const pos = this.cellToWorld(this.graph.pinCell(c, p));
+        this.drawGroundSymbol(g, pos.x, pos.y);
+        const t = this.groundLabels[li];
+        if (t) {
+          li++;
+          t.text = "GND 0 V";
+          t.position.set(pos.x, pos.y + 26);
+          t.visible = true;
+        }
+      }
+    }
+  }
+
+  private drawGroundSymbol(g: Graphics, x: number, y: number): void {
+    g.moveTo(x, y).lineTo(x, y + 10);
+    const ws = [9, 6, 3];
+    const ys = [14, 18, 22];
+    for (let i = 0; i < 3; i++) {
+      g.moveTo(x - ws[i]!, y + ys[i]!).lineTo(x + ws[i]!, y + ys[i]!);
+    }
+    g.stroke({ width: 2, color: 0x6b6488, alpha: 0.95 });
   }
 
   private drawPendingWire(): void {
@@ -748,9 +951,10 @@ export class Board {
     const end = snapTo
       ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
       : this.pointer;
-    g.moveTo(ps.x, ps.y).lineTo(end.x, end.y);
+    const route = this.wireRoute(ps, end);
+    polyline(g, route);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
-    g.moveTo(ps.x, ps.y).lineTo(end.x, end.y);
+    polyline(g, route);
     g.stroke({ width: 1.6, color: PALETTE.accent, alpha: 0.9 });
     if (snapTo) {
       g.circle(end.x, end.y, PIN_R + 2).stroke({
@@ -789,14 +993,30 @@ export class Board {
 
   // --- scope widget (screen-space overlay) --------------------------------
 
-  private growSamples(len: number): void {
-    while (this.samples.length < len) this.samples.push([]);
-    if (this.samples.length > len) this.samples.length = len;
+  /** Record one scope sample per advancing tick; track the displayed cursor. */
+  private recordScope(snap: Snapshot): void {
+    const tick = Number(snap.tick);
+    const last = this.scopeSamples[this.scopeSamples.length - 1];
+    if (!last || tick > last.tick) {
+      this.scopeSamples.push({ tick, values: Array.from(snap.state) });
+      if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
+    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
+      // Scrubbed before the retained window (or the run was reset): start over.
+      this.scopeSamples = [{ tick, values: Array.from(snap.state) }];
+    }
+    let idx = this.scopeSamples.length - 1;
+    for (let i = this.scopeSamples.length - 1; i >= 0; i--) {
+      if (this.scopeSamples[i]!.tick <= tick) {
+        idx = i;
+        break;
+      }
+    }
+    this.scopeCursor = idx;
   }
 
   private scopeRect(): Rectangle {
-    const sw = Math.min(280, Math.max(160, this.w * 0.32));
-    const sh = Math.min(150, Math.max(90, this.h * 0.28));
+    const sw = Math.min(300, Math.max(190, this.w * 0.34));
+    const sh = Math.min(160, Math.max(96, this.h * 0.28));
     const pad = 12;
     return new Rectangle(this.w - sw - pad, this.h - sh - pad, sw, sh);
   }
@@ -806,50 +1026,82 @@ export class Board {
     const g = this.scopeFrame;
     g.clear();
     g.roundRect(r.x, r.y, r.width, r.height, 3);
-    g.fill({ color: 0x0d0b16, alpha: 0.72 });
-    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.8 });
-    g.moveTo(r.x, r.y + r.height / 2).lineTo(r.x + r.width, r.y + r.height / 2);
-    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.45 });
+    g.fill({ color: 0x0d0b16, alpha: 0.8 });
+    g.stroke({ width: 1, color: PALETTE.border, alpha: 0.85 });
   }
 
+  private scopeLabel(i: number, text: string, x: number, y: number): void {
+    const t = this.scopeLabels[i];
+    if (!t) return;
+    t.text = text;
+    t.position.set(x, y);
+    t.visible = true;
+  }
+
+  /** Scope: node voltages vs tick, numbered, frozen when paused, with a cursor. */
   private drawScope(): void {
     const r = this.scopeRect();
     const g = this.scopeTraces;
     g.clear();
-    const pad = 8;
-    const x0 = r.x + pad;
-    const y0 = r.y + pad;
-    const iw = r.width - 2 * pad;
-    const ih = r.height - 2 * pad;
+    for (const t of this.scopeLabels) t.visible = false;
 
-    for (let c = 0; c < this.samples.length; c++) {
-      const buf = this.samples[c];
-      if (!buf || buf.length < 2) continue;
+    const samples = this.scopeSamples;
+    if (samples.length < 2) return;
 
-      let lo = Infinity;
-      let hi = -Infinity;
-      for (const v of buf) {
+    const padL = 32;
+    const padR = 8;
+    const padT = 16;
+    const padB = 14;
+    const x0 = r.x + padL;
+    const y0 = r.y + padT;
+    const iw = r.width - padL - padR;
+    const ih = r.height - padT - padB;
+
+    const chans = samples[samples.length - 1]!.values.length;
+    let lo = 0;
+    let hi = 1;
+    for (const s of samples) {
+      for (const v of s.values) {
         if (v < lo) lo = v;
         if (v > hi) hi = v;
       }
-      let range = hi - lo;
-      if (range < 1e-9) range = 1;
-
-      const color = CHANNEL_COLORS[c % CHANNEL_COLORS.length] ?? 0xffffff;
-      const trace = (): void => {
-        for (let i = 0; i < buf.length; i++) {
-          const x = x0 + (i / (MAX_SAMPLES - 1)) * iw;
-          const norm = ((buf[i] ?? 0) - lo) / range;
-          const y = y0 + (1 - norm) * ih;
-          if (i === 0) g.moveTo(x, y);
-          else g.lineTo(x, y);
-        }
-      };
-      trace();
-      g.stroke({ width: 3, color, alpha: 0.12 });
-      trace();
-      g.stroke({ width: 1.25, color, alpha: 0.92 });
     }
+    const span = hi - lo || 1;
+    const xAt = (i: number): number => x0 + (i / (MAX_SAMPLES - 1)) * iw;
+    const yAt = (v: number): number => y0 + (1 - (v - lo) / span) * ih;
+
+    if (lo < 0) {
+      const yz = yAt(0);
+      g.moveTo(x0, yz).lineTo(x0 + iw, yz);
+      g.stroke({ width: 1, color: PALETTE.border, alpha: 0.4 });
+    }
+
+    // Channel traces (skip node 0, the flat ground reference).
+    for (let c = 1; c < chans; c++) {
+      const color = CHANNEL_COLORS[(c - 1) % CHANNEL_COLORS.length] ?? 0xffffff;
+      for (let i = 0; i < samples.length; i++) {
+        const v = samples[i]!.values[c] ?? 0;
+        if (i === 0) g.moveTo(xAt(i), yAt(v));
+        else g.lineTo(xAt(i), yAt(v));
+      }
+      g.stroke({ width: 1.4, color, alpha: 0.95 });
+    }
+
+    // Cursor at the displayed tick.
+    const cx = xAt(this.scopeCursor);
+    g.moveTo(cx, y0).lineTo(cx, y0 + ih);
+    g.stroke({ width: 1, color: PALETTE.accent, alpha: 0.85 });
+
+    const cur = samples[this.scopeCursor]!;
+    this.scopeLabel(0, fmtSI(hi, "V"), r.x + 4, y0 - 5);
+    this.scopeLabel(1, fmtSI(lo, "V"), r.x + 4, y0 + ih - 5);
+    this.scopeLabel(2, "SCOPE · V / tick", r.x + padL, r.y + 3);
+    this.scopeLabel(
+      3,
+      "t " + cur.tick,
+      Math.min(cx + 3, r.x + r.width - 42),
+      r.y + r.height - 12,
+    );
   }
 }
 
@@ -1005,6 +1257,33 @@ function distToSegment(
   return Math.hypot(px - cx, py - cy);
 }
 
+/** Closest point on a polyline to (px,py). */
+function closestOnPolyline(
+  pts: Point[],
+  px: number,
+  py: number,
+): { x: number; y: number } {
+  let best = { x: pts[0]?.x ?? px, y: pts[0]?.y ?? py };
+  let bestD = Infinity;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p0 = pts[i]!;
+    const p1 = pts[i + 1]!;
+    const dx = p1.x - p0.x;
+    const dy = p1.y - p0.y;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 === 0 ? 0 : ((px - p0.x) * dx + (py - p0.y) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = p0.x + t * dx;
+    const cy = p0.y + t * dy;
+    const d = (px - cx) ** 2 + (py - cy) ** 2;
+    if (d < bestD) {
+      bestD = d;
+      best = { x: cx, y: cy };
+    }
+  }
+  return best;
+}
+
 /** Format a live measurement in engineering notation, e.g. 0.00167 A → "1.67 mA". */
 function fmtSI(value: number, unit: string): string {
   const a = Math.abs(value);
@@ -1028,4 +1307,117 @@ function fmtSI(value: number, unit: string): string {
   const mag = Math.abs(v);
   const s = mag >= 100 ? v.toFixed(0) : mag >= 10 ? v.toFixed(1) : v.toFixed(2);
   return s + " " + prefix + unit;
+}
+
+// --- trace ("belt") geometry + colour ---------------------------------------
+
+interface RouteSample {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+}
+
+function saturate(x: number): number {
+  return x / (1 + x);
+}
+
+function polyline(g: Graphics, pts: Point[]): void {
+  if (pts.length < 2) return;
+  g.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+}
+
+function routeLength(pts: Point[]): number {
+  let len = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    len += Math.hypot(pts[i + 1]!.x - pts[i]!.x, pts[i + 1]!.y - pts[i]!.y);
+  }
+  return len;
+}
+
+/** Position + unit direction at fraction `t` of a polyline's arc length. */
+function sampleRoute(pts: Point[], t: number): RouteSample {
+  let target = t * routeLength(pts);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p0 = pts[i]!;
+    const p1 = pts[i + 1]!;
+    const seg = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    if (seg <= 0) continue;
+    if (target <= seg) {
+      const f = target / seg;
+      return {
+        x: p0.x + (p1.x - p0.x) * f,
+        y: p0.y + (p1.y - p0.y) * f,
+        dx: (p1.x - p0.x) / seg,
+        dy: (p1.y - p0.y) / seg,
+      };
+    }
+    target -= seg;
+  }
+  const last = pts[pts.length - 1]!;
+  const prev = pts[pts.length - 2] ?? last;
+  const dl = Math.hypot(last.x - prev.x, last.y - prev.y) || 1;
+  return {
+    x: last.x,
+    y: last.y,
+    dx: (last.x - prev.x) / dl,
+    dy: (last.y - prev.y) / dl,
+  };
+}
+
+/** A flow chevron (arrowhead) at (x,y) pointing along (dx,dy). */
+function drawChevron(
+  g: Graphics,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  color: number,
+  alpha: number,
+): void {
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+  const s = 4;
+  const bx = x - ux * s;
+  const by = y - uy * s;
+  g.moveTo(bx + px * s, by + py * s)
+    .lineTo(x, y)
+    .lineTo(bx - px * s, by - py * s);
+  g.stroke({ width: 2, color, alpha });
+}
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const gg = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (gg << 8) | bl;
+}
+
+/** Map a net voltage to a colour: GND grey-violet → violet → cyan → amber. */
+function voltageColor(v: number): number {
+  const stops: [number, number][] = [
+    [0, 0x6b6488],
+    [2, 0x9a78ff],
+    [5, 0x46d2e6],
+    [12, 0xd8a24a],
+  ];
+  const cv = Math.max(0, Math.min(12, v));
+  for (let i = 0; i + 1 < stops.length; i++) {
+    const s0 = stops[i]!;
+    const s1 = stops[i + 1]!;
+    if (cv <= s1[0]) {
+      return lerpColor(s0[1], s1[1], (cv - s0[0]) / (s1[0] - s0[0] || 1));
+    }
+  }
+  return stops[stops.length - 1]![1];
 }

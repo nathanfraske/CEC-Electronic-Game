@@ -40,8 +40,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Examples panel: Watch (load + run) and guided Build (auto-advancing checklist with a per-step "why") for Voltage Divider, RC, RL.~~
 - ~~"Show don't tell" demos: live V-across / I-through readout on a selected part; a DMM probe (Measure mode, red/steel leads, needle tips) reading voltage between any two pins; a divider R2-to-ground toggle; a guided open/closed-loop concept beat.~~
 
+### Done — UX/visual overhaul (session 5, from playtest feedback)
+- ~~HiDPI crispness (devicePixelRatio + autoDensity) — fixes the blur.~~
+- ~~"Factorio belts": orthogonal 90° trace routing, voltage-coloured wires, current flowing as directional chevrons (density/speed/direction track the current).~~
+- ~~Scope fixed: per-tick sampling (freezes on pause, scrubs with the timeline), cursor line, numbered V axis + tick label; skips the flat ground node.~~
+- ~~Reset Run (↺) + loop.restart(); fractional ticks-per-frame with a much slower default (0.25×).~~
+- ~~Ground symbol + "GND 0 V" drawn at the source's ground pin.~~
+- ~~Panel unified: the guide floats over the board so the Parts bin stays visible; a "Voltage & Current" primer that opens running so the first thing you see is current flowing through a voltage-coloured wire (+ a dismissible intro banner naming both primitives).~~
+- ~~Live "V across / I through" readout on a selected part; draggable DMM probes that snap to a pin or a trace.~~
+
 ### Open / Next
-- [ ] **Make it a game, not just a sim (owner-driven):** currency + XP + rewards for exploring, learning, and *shipping circuits that meet a goal*. Scale the reward with realism (ideal → real parts) and with a working product. This is the fun spine the README gestures at — challenges become graded "products" that pay out.
+- [ ] **Component rotation** (0/90/180/270): an `R` hotkey + button. Needs `rot` on the component + a rotated `pinCell`, and glyphs drawn along the pin axis (or a rotated glyph sub-container with upright labels). The one playtest item still outstanding.
+- [ ] **Make it a game, not just a sim (owner-driven).** Full brainstorm + backlog in `docs/game-rewards.md`. Core rule: the sim is the only judge — a reward is a number off a deterministic graded replay. Two currencies: **Credits** (spend) + **Lux** (earned only by understanding; **Lux gates the tech tree** = the anti-grind firewall). MVP order: (1) contract + spec-sheet grader (generalize the RC challenge); (2) Credits + "Ship It" juice (replay the winning run); (3) realism multiplier with one real 5% resistor (the pillar, made playable); (4) par score + replay-verified leaderboard; (5) predict-then-reveal + first Lux.
 - [ ] Per-component **value editing** (click a part → set R/C/L/V); the model already carries values + units, expose a small inspector.
 - [ ] Extend the "show don't tell" demos to RC/RL (short the cap to watch it discharge; open the coil for back-EMF); make the probe a movable meter that snaps to whole nets.
 - [ ] Nonlinear devices: diode (then BJT) with a capped Newton solve in sim-core.
