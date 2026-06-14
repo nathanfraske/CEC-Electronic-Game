@@ -21,6 +21,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Seed docs: architecture, determinism, ADR-0001. README/NOTICE/CONTRIBUTING with placeholders filled.~~
 - ~~SessionStart hook: self-heal the wasm toolchain on ephemeral containers + surface the agent handoff docs.~~
 - ~~All verification gates green from a clean checkout (fmt, clippy, test, build:wasm, check, lint, build).~~
+- ~~Write the game design document (docs/game-design.md): pillars, fidelity-as-progression loop, tech tree, challenge/grading model, milestones M0–M5.~~
 
 ### Open / Next
 - [ ] Replace the placeholder `Sim` dynamics with the real mixed-signal engine: continuous-time analog solver, event-driven digital engine, behavioral MCU emulator, meeting at the pins (docs/architecture.md).

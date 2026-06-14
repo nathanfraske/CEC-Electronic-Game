@@ -25,7 +25,8 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 - **Design system** mirrored from criticalerrorcomputing.com — tokens in
   `web/src/app.css`, hex mirrors in `web/src/lib/board.ts`.
 - **CI** `.github/workflows/ci.yml` (`rust-core`, `web-build`).
-- **Docs** `docs/architecture.md`, `docs/determinism.md`, `docs/adr/0001-tech-stack.md`.
+- **Docs** `docs/architecture.md`, `docs/determinism.md`, `docs/adr/0001-tech-stack.md`,
+  and `docs/game-design.md` (pillars, tech tree, challenge/grading, milestones M0–M5).
   Legal: `LICENSE` (canonical Apache-2.0), `NOTICE`, `README.md`, `CONTRIBUTING.md`.
 - **Self-heal hook** `.claude/hooks/` + `.claude/settings.json` — installs the
   wasm toolchain on ephemeral containers and surfaces these docs at session start.
