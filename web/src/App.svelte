@@ -174,6 +174,8 @@
         resizeTo: frameEl,
         background: "#0d0b16",
         antialias: true,
+        resolution: window.devicePixelRatio || 1,
+        autoDensity: true,
       });
       if (disposed) {
         a.destroy({ removeView: false });

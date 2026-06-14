@@ -24,6 +24,7 @@ import {
   type Component,
   type PinRef,
   type Cell,
+  type Wire,
   type GraphSnapshot,
 } from "./graph";
 import {
@@ -117,6 +118,7 @@ export class Board {
   private probeB: PinRef | null = null;
   private probeNodes: Map<number, [number, number]> | null = null;
   private lastState: Float64Array = new Float64Array();
+  private electrical: Map<number, ElectricalState> | undefined;
 
   constructor(
     private readonly app: Application,
@@ -267,6 +269,8 @@ export class Board {
     }
 
     this.lastState = snap.state;
+    this.electrical = electrical;
+    this.redrawWires();
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
@@ -380,9 +384,15 @@ export class Board {
       const a = this.graph.pinRefCell(w.from);
       const b = this.graph.pinRefCell(w.to);
       if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      if (distToSegment(wx, wy, pa.x, pa.y, pb.x, pb.y) <= tol) best = w.id;
+      const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+      for (let i = 0; i + 1 < route.length; i++) {
+        const p0 = route[i]!;
+        const p1 = route[i + 1]!;
+        if (distToSegment(wx, wy, p0.x, p0.y, p1.x, p1.y) <= tol) {
+          best = w.id;
+          break;
+        }
+      }
     }
     return best;
   }
@@ -447,9 +457,7 @@ export class Board {
       const a = this.graph.pinRefCell(w.from);
       const b = this.graph.pinRefCell(w.to);
       if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
+      polyline(g, this.wireRoute(this.cellToWorld(a), this.cellToWorld(b)));
       g.stroke({ width: 5, color: PALETTE.accent, alpha: 0.5 });
     }
   }
@@ -721,20 +729,70 @@ export class Board {
     for (const c of this.graph.components.values()) this.addNode(c);
   }
 
+  /**
+   * Orthogonal "belts": each trace routes at 90°, colours by its net voltage,
+   * and carries flow chevrons whose direction + density track the current —
+   * Factorio belts, but electricity. Redrawn every frame so it stays live.
+   */
   private redrawWires(): void {
     const g = this.wireLayer;
     g.clear();
     for (const w of this.graph.wires.values()) {
-      const a = this.graph.pinRefCell(w.from);
-      const b = this.graph.pinRefCell(w.to);
-      if (!a || !b) continue;
-      const pa = this.cellToWorld(a);
-      const pb = this.cellToWorld(b);
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
-      g.stroke({ width: 6, color: PALETTE.cyan, alpha: 0.14 });
-      g.moveTo(pa.x, pa.y).lineTo(pb.x, pb.y);
-      g.stroke({ width: 1.8, color: PALETTE.cyan, alpha: 0.95 });
+      const ca = this.graph.pinRefCell(w.from);
+      const cb = this.graph.pinRefCell(w.to);
+      if (!ca || !cb) continue;
+      const route = this.wireRoute(this.cellToWorld(ca), this.cellToWorld(cb));
+      const v = this.pinVoltage(w.from);
+      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      polyline(g, route);
+      g.stroke({ width: 6, color, alpha: 0.16 });
+      polyline(g, route);
+      g.stroke({ width: 2, color, alpha: 0.95 });
+
+      const cur = this.wireCurrent(w);
+      const norm = saturate(Math.abs(cur) / 0.02);
+      if (norm > 0.02) {
+        const len = routeLength(route);
+        const n = Math.max(2, Math.round((len / 30) * (0.5 + norm)));
+        const dir = cur >= 0 ? 1 : -1;
+        const speed = 0.2 + norm * 0.9;
+        for (let i = 0; i < n; i++) {
+          const t = (((i / n + this.phase * speed * dir) % 1) + 1) % 1;
+          const s = sampleRoute(route, t);
+          drawChevron(
+            g,
+            s.x,
+            s.y,
+            s.dx * dir,
+            s.dy * dir,
+            color,
+            0.35 + 0.55 * norm,
+          );
+        }
+      }
     }
+  }
+
+  /** A 90° (Manhattan) route between two pins: leave along the dominant axis. */
+  private wireRoute(pa: Point, pb: Point): Point[] {
+    const dx = pb.x - pa.x;
+    const dy = pb.y - pa.y;
+    if (Math.abs(dx) < 1 || Math.abs(dy) < 1) return [pa, pb];
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const mx = pa.x + dx / 2;
+      return [pa, new Point(mx, pa.y), new Point(mx, pb.y), pb];
+    }
+    const my = pa.y + dy / 2;
+    return [pa, new Point(pa.x, my), new Point(pb.x, my), pb];
+  }
+
+  /** Signed current along the wire from→to, from whichever end is an element. */
+  private wireCurrent(w: Wire): number {
+    const ea = this.electrical?.get(w.from.componentId);
+    if (ea) return ea.current * (w.from.pinIndex === 1 ? 1 : -1);
+    const eb = this.electrical?.get(w.to.componentId);
+    if (eb) return -(eb.current * (w.to.pinIndex === 1 ? 1 : -1));
+    return 0;
   }
 
   private drawPendingWire(): void {
@@ -748,9 +806,10 @@ export class Board {
     const end = snapTo
       ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
       : this.pointer;
-    g.moveTo(ps.x, ps.y).lineTo(end.x, end.y);
+    const route = this.wireRoute(ps, end);
+    polyline(g, route);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
-    g.moveTo(ps.x, ps.y).lineTo(end.x, end.y);
+    polyline(g, route);
     g.stroke({ width: 1.6, color: PALETTE.accent, alpha: 0.9 });
     if (snapTo) {
       g.circle(end.x, end.y, PIN_R + 2).stroke({
@@ -1028,4 +1087,117 @@ function fmtSI(value: number, unit: string): string {
   const mag = Math.abs(v);
   const s = mag >= 100 ? v.toFixed(0) : mag >= 10 ? v.toFixed(1) : v.toFixed(2);
   return s + " " + prefix + unit;
+}
+
+// --- trace ("belt") geometry + colour ---------------------------------------
+
+interface RouteSample {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+}
+
+function saturate(x: number): number {
+  return x / (1 + x);
+}
+
+function polyline(g: Graphics, pts: Point[]): void {
+  if (pts.length < 2) return;
+  g.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+}
+
+function routeLength(pts: Point[]): number {
+  let len = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    len += Math.hypot(pts[i + 1]!.x - pts[i]!.x, pts[i + 1]!.y - pts[i]!.y);
+  }
+  return len;
+}
+
+/** Position + unit direction at fraction `t` of a polyline's arc length. */
+function sampleRoute(pts: Point[], t: number): RouteSample {
+  let target = t * routeLength(pts);
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const p0 = pts[i]!;
+    const p1 = pts[i + 1]!;
+    const seg = Math.hypot(p1.x - p0.x, p1.y - p0.y);
+    if (seg <= 0) continue;
+    if (target <= seg) {
+      const f = target / seg;
+      return {
+        x: p0.x + (p1.x - p0.x) * f,
+        y: p0.y + (p1.y - p0.y) * f,
+        dx: (p1.x - p0.x) / seg,
+        dy: (p1.y - p0.y) / seg,
+      };
+    }
+    target -= seg;
+  }
+  const last = pts[pts.length - 1]!;
+  const prev = pts[pts.length - 2] ?? last;
+  const dl = Math.hypot(last.x - prev.x, last.y - prev.y) || 1;
+  return {
+    x: last.x,
+    y: last.y,
+    dx: (last.x - prev.x) / dl,
+    dy: (last.y - prev.y) / dl,
+  };
+}
+
+/** A flow chevron (arrowhead) at (x,y) pointing along (dx,dy). */
+function drawChevron(
+  g: Graphics,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  color: number,
+  alpha: number,
+): void {
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  const px = -uy;
+  const py = ux;
+  const s = 4;
+  const bx = x - ux * s;
+  const by = y - uy * s;
+  g.moveTo(bx + px * s, by + py * s)
+    .lineTo(x, y)
+    .lineTo(bx - px * s, by - py * s);
+  g.stroke({ width: 2, color, alpha });
+}
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const gg = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (gg << 8) | bl;
+}
+
+/** Map a net voltage to a colour: GND grey-violet → violet → cyan → amber. */
+function voltageColor(v: number): number {
+  const stops: [number, number][] = [
+    [0, 0x6b6488],
+    [2, 0x9a78ff],
+    [5, 0x46d2e6],
+    [12, 0xd8a24a],
+  ];
+  const cv = Math.max(0, Math.min(12, v));
+  for (let i = 0; i + 1 < stops.length; i++) {
+    const s0 = stops[i]!;
+    const s1 = stops[i + 1]!;
+    if (cv <= s1[0]) {
+      return lerpColor(s0[1], s1[1], (cv - s0[0]) / (s1[0] - s0[0] || 1));
+    }
+  }
+  return stops[stops.length - 1]![1];
 }
