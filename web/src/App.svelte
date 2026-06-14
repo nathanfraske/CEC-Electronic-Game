@@ -8,7 +8,8 @@
     type Snapshot,
     type LoopControls,
   } from "./sim/loop";
-  import { Board } from "./lib/board";
+  import { Board, type Mode } from "./lib/board";
+  import type { BoardGraph } from "./lib/graph";
 
   const SEED = 1337;
   const SPEEDS = [1, 4, 16, 64];
@@ -81,11 +82,22 @@
     },
   ];
 
-  const CHANNELS = [
-    { label: "RAIL A", color: "var(--accent)" },
-    { label: "RAIL B", color: "var(--cyan)" },
-    { label: "NODE C", color: "var(--violet)" },
-    { label: "NODE D", color: "var(--ok)" },
+  // Labels for the telemetry channels. The state vector is variable length
+  // (the core may grow or shrink it), so labels cycle and we always iterate
+  // over the live snapshot length rather than a fixed channel count.
+  const CHANNEL_LABELS = ["RAIL A", "RAIL B", "NODE C", "NODE D"];
+  const CHANNEL_COLORS = [
+    "var(--accent)",
+    "var(--cyan)",
+    "var(--violet)",
+    "var(--ok)",
+    "var(--warn)",
+    "var(--bronze)",
+  ];
+  const MODES: { id: Mode; label: string }[] = [
+    { id: "select", label: "Select" },
+    { id: "place", label: "Place" },
+    { id: "wire", label: "Wire" },
   ];
 
   let frameEl: HTMLDivElement;
@@ -94,16 +106,25 @@
   let tick = $state(0n);
   let hash = $state(0n);
   let proto = $state(0);
-  let channels = $state<number[]>([0, 0, 0, 0]);
+  let channels = $state<number[]>([]);
   let running = $state(true);
   let tpf = $state(1);
   let ready = $state(false);
+  let mode = $state<Mode>("select");
+  let placeKind = $state(PARTS[0]?.tag ?? "R");
+  let partCount = $state(0);
+  let wireCount = $state(0);
 
+  let board: Board | undefined;
   let controls: LoopControls | undefined;
+
+  const channelLabel = (i: number): string =>
+    CHANNEL_LABELS[i] ?? `NODE ${i + 1}`;
+  const channelColor = (i: number): string =>
+    CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
 
   onMount(() => {
     let app: Application | undefined;
-    let board: Board | undefined;
     let disposed = false;
 
     void (async () => {
@@ -121,7 +142,14 @@
         return;
       }
       app = a;
-      board = new Board(a);
+      const b = new Board(a, {
+        onChange: (graph: BoardGraph) => {
+          partCount = graph.components.size;
+          wireCount = graph.wires.size;
+        },
+      });
+      board = b;
+      b.setMode(mode);
 
       const sim = await createSimulation(SEED);
       proto = sim.protocolVersion();
@@ -130,7 +158,7 @@
       controls = runLoop(
         sim,
         (snap: Snapshot) => {
-          board?.update(snap);
+          b.update(snap);
           tick = snap.tick;
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
@@ -143,6 +171,8 @@
       disposed = true;
       controls?.stop();
       controls = undefined;
+      board?.destroy();
+      board = undefined;
       app?.destroy({ removeView: false });
     };
   });
@@ -164,6 +194,47 @@
   function setSpeed(n: number): void {
     tpf = n;
     controls?.setTicksPerFrame(n);
+  }
+
+  function setMode(m: Mode): void {
+    mode = m;
+    board?.setMode(m);
+  }
+
+  function clearBoard(): void {
+    board?.clear();
+  }
+
+  // --- placement via drag-and-drop from the bin ---------------------------
+
+  function onPartDragStart(e: DragEvent, tag: string): void {
+    e.dataTransfer?.setData("text/plain", tag);
+    if (e.dataTransfer) e.dataTransfer.effectAllowed = "copy";
+    placeKind = tag;
+  }
+
+  function onBoardDragOver(e: DragEvent): void {
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }
+
+  function onBoardDrop(e: DragEvent): void {
+    e.preventDefault();
+    const tag = e.dataTransfer?.getData("text/plain") || placeKind;
+    dropAt(tag, e.clientX, e.clientY);
+  }
+
+  // In Place mode a plain click drops the currently selected part, so the board
+  // is usable without a pointer that supports drag.
+  function onBoardClick(e: MouseEvent): void {
+    if (mode !== "place" || !board) return;
+    dropAt(placeKind, e.clientX, e.clientY);
+  }
+
+  function dropAt(tag: string, clientX: number, clientY: number): void {
+    if (!board) return;
+    const rect = canvasEl.getBoundingClientRect();
+    board.placeAt(tag, clientX - rect.left, clientY - rect.top);
   }
 
   const hex = (b: bigint): string => "0x" + b.toString(16).padStart(16, "0");
@@ -192,12 +263,24 @@
   <aside class="panel bin">
     <h2 class="panel-title">Component Bin</h2>
     <p class="panel-note">
-      Tier I parts are idealized and simply work. Progress trades them for real
-      parts that cost something and behave like the bench.
+      Drag a part onto the board to place it. Tier I parts are idealized and
+      simply work; progress trades them for real parts that behave like the
+      bench.
     </p>
     <ul class="part-list scroll">
       {#each PARTS as part (part.name)}
-        <li class="part" style="--c: {part.color}">
+        <!-- Bin rows are draggable affordances; selection is also reachable via
+             the Mode toolbar + click-to-place, so the click is a convenience. -->
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <li
+          class="part {placeKind === part.tag ? 'is-selected' : ''}"
+          style="--c: {part.color}"
+          draggable="true"
+          ondragstart={(e) => onPartDragStart(e, part.tag)}
+          onclick={() => (placeKind = part.tag)}
+          title="Drag onto the board, or select then click in Place mode"
+        >
           <span class="part-glyph">{part.tag}</span>
           <span class="part-body">
             <span class="part-name">{part.name}</span>
@@ -210,11 +293,44 @@
   </aside>
 
   <main class="panel board">
-    <div class="board-frame" bind:this={frameEl}>
+    <div class="board-tools">
+      <span class="tool-label">Mode</span>
+      {#each MODES as m (m.id)}
+        <button
+          class="btn btn-ghost {mode === m.id ? 'is-active' : ''}"
+          onclick={() => setMode(m.id)}
+          disabled={!ready}
+        >
+          {m.label}
+        </button>
+      {/each}
+      <button
+        class="btn btn-ghost clear-btn"
+        onclick={clearBoard}
+        disabled={!ready}
+      >
+        Clear
+      </button>
+    </div>
+    <!-- The drop target is the frame around the canvas Svelte owns; the drop
+         handler computes canvas-local coordinates and asks the renderer to
+         place a node. No DOM nodes are appended — placement lives in the GPU. -->
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="board-frame"
+      bind:this={frameEl}
+      role="application"
+      aria-label="Circuit board"
+      ondragover={onBoardDragOver}
+      ondrop={onBoardDrop}
+      onclick={onBoardClick}
+      oncontextmenu={(e) => e.preventDefault()}
+    >
       <canvas class="board-canvas" bind:this={canvasEl}></canvas>
       <div class="board-overlay">
-        <span class="scope-tag">Signal Trace · {SPEEDS.length}-Bus</span>
-        <span class="scope-tag">Fixed-Step · Auto-Range</span>
+        <span class="scope-tag">Board · {mode.toUpperCase()}</span>
+        <span class="scope-tag">{partCount} parts · {wireCount} wires</span>
       </div>
     </div>
   </main>
@@ -234,16 +350,15 @@
       <span class="readout-v mono">{tick}</span>
     </div>
 
-    <h3 class="sub-title">Channels</h3>
+    <h3 class="sub-title">Channels · {channels.length}</h3>
     <ul class="chan-list scroll">
-      {#each CHANNELS as ch, i (ch.label)}
-        <li class="chan" style="--c: {ch.color}">
+      {#each channels as v, i (i)}
+        <li class="chan" style="--c: {channelColor(i)}">
           <span class="chan-dot"></span>
-          <span class="chan-name">{ch.label}</span>
-          <span class="chan-val mono">{fmt(channels[i] ?? 0)}</span>
+          <span class="chan-name">{channelLabel(i)}</span>
+          <span class="chan-val mono">{fmt(v)}</span>
           <span class="chan-bar">
-            <span class="chan-fill" style="width: {barWidth(channels[i] ?? 0)}%"
-            ></span>
+            <span class="chan-fill" style="width: {barWidth(v)}%"></span>
           </span>
         </li>
       {/each}
@@ -274,3 +389,42 @@
     <span class="chip mono">{tpf} tick/frame</span>
   </div>
 </div>
+
+<style>
+  /* Board interaction toolbar — sits above the canvas frame. Uses the existing
+     .btn / .btn-ghost classes for buttons; only the layout strip is new here. */
+  .board-tools {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 0 10px;
+  }
+
+  .tool-label {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-right: 2px;
+  }
+
+  .clear-btn {
+    margin-left: auto;
+  }
+
+  .part {
+    user-select: none;
+  }
+
+  .part.is-selected {
+    border-color: var(--c);
+    box-shadow: 0 0 0 1px color-mix(in oklch, var(--c) 40%, transparent);
+  }
+
+  /* The board panel stacks the toolbar over the canvas frame. */
+  .board {
+    display: flex;
+    flex-direction: column;
+  }
+</style>
