@@ -360,16 +360,18 @@ export const EXAMPLES: ExampleSpec[] = [
       "the switch flick on/off, the inductor scoop a 'bucket' of energy each cycle and the diode hand it on when the switch opens — the output settles near 4 V = 10 V × 40%.",
     build() {
       // Vin+ → SW → (switch node) → L → OUT; the freewheel diode catches the
-      // node when the switch opens; C + R load smooth and draw the output. Vin /
-      // C / R / D are placed vertical so the rails read top-to-bottom.
+      // node when the switch opens; C + R load smooth and draw the output. The
+      // forward path SW→L runs straight along the top rail; Vin / D / C / R are
+      // placed vertical so each rail reads top-to-bottom, and the freewheel diode
+      // drops straight to the ground directly beneath the switch node.
       const g = new BoardGraph();
-      const vin = comp(g, "V", 1, 1, 10, 1); // vertical, + at top
-      const sw = comp(g, "SW", 4, 1, 0.4); // 40% duty
-      const l = comp(g, "L", 12, 1, 1e-3);
-      const d = comp(g, "D", 8, 4, 0, 3); // freewheel: anode low, cathode up
-      const c = comp(g, "C", 12, 3, 22e-6, 1);
-      const r = comp(g, "R", 14, 3, 100, 1);
-      const gnd = comp(g, "GND", 8, 6, 0);
+      const vin = comp(g, "V", 0, 0, 10, 1); // vertical, + at top
+      const sw = comp(g, "SW", 2, 0, 0.4); // 40% duty
+      const d = comp(g, "D", 6, 2, 0, 3); // freewheel: anode low, cathode up
+      const l = comp(g, "L", 10, 0, 1e-3);
+      const c = comp(g, "C", 14, 0, 22e-6, 1);
+      const r = comp(g, "R", 16, 0, 100, 1);
+      const gnd = comp(g, "GND", 6, 5, 0); // directly below the freewheel diode
       wire(g, vin, 0, sw, 0); // Vin+ → SW.A
       wire(g, sw, 1, l, 0); // SW.B → L.A (the switch node)
       wire(g, sw, 1, d, 1); // SW.B → D.K (freewheel cathode)
@@ -484,12 +486,15 @@ export const EXAMPLES: ExampleSpec[] = [
       // ≈ 4.4 V (5 V peak − ~0.6 V diode drop). The EC expands to an ideal 100 µF
       // cap in series with a 0.5 Ω ESR; the tall refill spikes (≫ the ~4.4 mA load)
       // push a small IR drop across that ESR — visible ripple the ideal cap lacks.
+      // The rectified output runs along the top rail; the load R and the reservoir
+      // EC hang as vertical rungs down to the ground rail, the electrolytic dropping
+      // straight to GND so its smoothing path reads cleanly top-to-bottom.
       const g = new BoardGraph();
       const d = comp(g, "D", 2, 0, 0);
-      const r = comp(g, "R", 6, 0, 1000);
-      const ec = comp(g, "EC", 10, 0, 100e-6);
+      const r = comp(g, "R", 8, 0, 1000, 1); // vertical load rung
+      const ec = comp(g, "EC", 12, 0, 100e-6, 1); // vertical reservoir rung
       const ac = comp(g, "AC", 2, 6, 200);
-      const gnd = comp(g, "GND", 12, 6, 0);
+      const gnd = comp(g, "GND", 12, 6, 0); // straight below the electrolytic
       wire(g, ac, 0, d, 0); // AC+ → D.A (anode)
       wire(g, d, 1, r, 0); // D.K → R.A (the rectified output)
       wire(g, d, 1, ec, 0); // D.K → EC.+ (reservoir electrolytic ∥ the load)
@@ -525,11 +530,13 @@ export const EXAMPLES: ExampleSpec[] = [
       off: "Electrolytic lifted — back to the bare rectifier's positive humps, dropping to zero between each one.",
       alt() {
         // Omit the reservoir electrolytic, returning to the bare half-wave rectifier.
+        // The load R and GND keep the main build's cells, so toggling the
+        // electrolytic only adds/removes it — nothing else jumps.
         const g = new BoardGraph();
         const d = comp(g, "D", 2, 0, 0);
-        const r = comp(g, "R", 6, 0, 1000);
+        const r = comp(g, "R", 8, 0, 1000, 1); // vertical load rung (unchanged cell)
         const ac = comp(g, "AC", 2, 6, 200);
-        const gnd = comp(g, "GND", 8, 6, 0);
+        const gnd = comp(g, "GND", 12, 6, 0);
         wire(g, ac, 0, d, 0);
         wire(g, d, 1, r, 0);
         wire(g, r, 1, gnd, 0);
@@ -556,13 +563,15 @@ export const EXAMPLES: ExampleSpec[] = [
       // ripple. Rpd = 100 Ω ≪ R so the off-state pulls X near 0 V without much
       // skew. Steady state: V(OUT) ≈ duty × Vin ≈ 3 V (a touch high, ~3.2 V,
       // since the 100 Ω pull-down can't reach a perfect 0 V), small 10 kHz ripple.
+      // Vin feeds SW along the top rail; the pull-down hangs straight down through
+      // node X to ground, while R carries the chopped square on to the output cap.
       const g = new BoardGraph();
-      const sw = comp(g, "SW", 6, 0, 0.3); // 30% duty
-      const r = comp(g, "R", 10, 0, 1000);
-      const vin = comp(g, "V", 2, 6, 10);
-      const rpd = comp(g, "R", 6, 3, 100, 1); // vertical pull-down on X
-      const c = comp(g, "C", 12, 3, 1e-6, 1); // vertical output cap
-      const gnd = comp(g, "GND", 12, 6, 0);
+      const vin = comp(g, "V", 0, 0, 10, 1); // vertical, + at top
+      const sw = comp(g, "SW", 2, 0, 0.3); // 30% duty
+      const rpd = comp(g, "R", 4, 2, 100, 1); // vertical pull-down, in-line under X
+      const r = comp(g, "R", 6, 0, 1000);
+      const c = comp(g, "C", 10, 0, 1e-6, 1); // vertical output cap
+      const gnd = comp(g, "GND", 4, 6, 0); // below the pull-down / node X
       wire(g, vin, 0, sw, 0); // Vin+ → SW.A (left rail)
       wire(g, sw, 1, r, 0); // SW.B → R.A (the chopped node X)
       wire(g, sw, 1, rpd, 0); // SW.B → Rpd.A (pull X to ground when open)
@@ -609,7 +618,7 @@ export const EXAMPLES: ExampleSpec[] = [
       const r = comp(g, "R", 2, 0, 1000);
       const d = comp(g, "D", 6, 0, 0); // anode A → cathode K (value unused)
       const v = comp(g, "V", 2, 6, 5);
-      const gnd = comp(g, "GND", 6, 6, 0);
+      const gnd = comp(g, "GND", 8, 6, 0); // below D.K so the clamp drops straight
       wire(g, v, 0, r, 0); // V+ → R.A (left rail)
       wire(g, r, 1, d, 0); // R.B → D.A (the clamped node N)
       wire(g, d, 1, gnd, 0); // D.K → GND (clamp to 0 V reference)
@@ -647,7 +656,7 @@ export const EXAMPLES: ExampleSpec[] = [
         const r = comp(g, "R", 2, 0, 1000);
         const d = comp(g, "D", 6, 0, 0);
         const v = comp(g, "V", 2, 6, 5);
-        const gnd = comp(g, "GND", 6, 6, 0);
+        const gnd = comp(g, "GND", 8, 6, 0); // same cell as the main build
         wire(g, v, 0, r, 0);
         wire(g, r, 1, d, 0); // R.B → D.A keeps the node fed
         wire(g, v, 1, gnd, 0); // V− → GND keeps the reference
@@ -755,15 +764,17 @@ export const EXAMPLES: ExampleSpec[] = [
     build() {
       // V → R → node N; the Zener shunts N to ground (cathode K at N, anode A at
       // GND), so N reverse-biases it and is clamped at Vz. Mirrors the sim-core
-      // `zener_clamps_reverse_voltage` test exactly.
+      // `zener_clamps_reverse_voltage` test exactly. The Zener is drawn vertically,
+      // cathode-up (rot 3): R feeds the cathode along the top rail and the anode
+      // drops straight to ground — the textbook shunt-reference orientation.
       //   nets: N1 = V+ = R.A ; N = R.B = ZD.K ; GND(0) = ZD.A = V−.
       // Hand-check: the Zener holds N ≈ Vz = 5.1 V, so I = (12 − 5.1)/1kΩ ≈ 6.9 mA
       // flows through R and sinks into the Zener (KCL). Nonlinear → Newton solve.
       const g = new BoardGraph();
       const r = comp(g, "R", 2, 0, 1000);
-      const zd = comp(g, "ZD", 6, 0, 5.1); // value = breakdown voltage Vz
+      const zd = comp(g, "ZD", 6, 2, 5.1, 3); // value = Vz; vertical, cathode up
       const v = comp(g, "V", 2, 6, 12);
-      const gnd = comp(g, "GND", 8, 6, 0);
+      const gnd = comp(g, "GND", 6, 6, 0); // directly below the Zener's anode
       wire(g, v, 0, r, 0); // V+ → R.A (left rail)
       wire(g, r, 1, zd, 1); // R.B → ZD.K (the regulated node N)
       wire(g, zd, 0, gnd, 0); // ZD.A → GND (Zener shunts the excess to 0 V)
@@ -1298,7 +1309,7 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "AC") >= 1 && at(p, "R") >= 1,
       },
       {
-        do: "Insert a Diode (D) between the source and the load — anode to the source, cathode to the load. Run.",
+        do: "Drop a Diode (D) right onto the wire between the source and the load — it splices itself in-line, anode toward the source, cathode toward the load. Run.",
         why: "The diode only lets current through one way, so it passes the up-swings and blocks the down-swings — watch the output become positive humps with the bottoms cut off. The current pulses one direction only.",
         done: (p) => p.complete,
       },
@@ -1344,12 +1355,15 @@ export const EXAMPLES: ExampleSpec[] = [
       // AC = 200 Hz (5 ms period), R = 1 kΩ, C = 22 µF → load time constant
       // R·C = 22 ms ≫ the period, so the cap holds well between humps (strong
       // smoothing, a few hundred mV of ripple on a ~4 V rail).
+      // The rectified output runs along the top rail; the load R and the reservoir
+      // cap hang as vertical rungs down to the ground rail, the cap dropping straight
+      // to GND so the smoothing path reads cleanly top-to-bottom.
       const g = new BoardGraph();
       const d = comp(g, "D", 2, 0, 0);
-      const r = comp(g, "R", 6, 0, 1000);
-      const c = comp(g, "C", 10, 0, 22e-6);
+      const r = comp(g, "R", 8, 0, 1000, 1); // vertical load rung
+      const c = comp(g, "C", 12, 0, 22e-6, 1); // vertical reservoir rung
       const ac = comp(g, "AC", 2, 6, 200);
-      const gnd = comp(g, "GND", 12, 6, 0);
+      const gnd = comp(g, "GND", 12, 6, 0); // straight below the reservoir cap
       wire(g, ac, 0, d, 0); // AC+ → D.A (anode)
       wire(g, d, 1, r, 0); // D.K → R.A (the rectified output)
       wire(g, d, 1, c, 0); // D.K → C.+ (reservoir cap ∥ the load)
@@ -1384,12 +1398,14 @@ export const EXAMPLES: ExampleSpec[] = [
       on: "Cap in place — it bridges the gaps into a nearly flat DC rail with a little ripple.",
       off: "Cap lifted — back to the bare rectifier's positive humps, dropping to zero between each one.",
       alt() {
-        // Omit the reservoir cap, returning to the bare half-wave rectifier.
+        // Omit the reservoir cap, returning to the bare half-wave rectifier. The
+        // load R and GND keep the main build's cells, so toggling the cap only
+        // adds/removes it — nothing else jumps.
         const g = new BoardGraph();
         const d = comp(g, "D", 2, 0, 0);
-        const r = comp(g, "R", 6, 0, 1000);
+        const r = comp(g, "R", 8, 0, 1000, 1); // vertical load rung (unchanged cell)
         const ac = comp(g, "AC", 2, 6, 200);
-        const gnd = comp(g, "GND", 8, 6, 0);
+        const gnd = comp(g, "GND", 12, 6, 0);
         wire(g, ac, 0, d, 0);
         wire(g, d, 1, r, 0);
         wire(g, r, 1, gnd, 0);
