@@ -16,6 +16,16 @@ Status: **design ideation. No code.** Where I extend or push back on the existin
 docs I say so. Everything here is implemented *later*; this is the spec to build
 against.
 
+> **Owner decision (2026-06-15).** The standard library of ICs is a **curated
+> pool of fixed-function buildings** (Tier A black boxes), shipped as **unlockable
+> libraries** as the player progresses — a 74xx logic chip does exactly what a
+> 74xx logic chip does; you place it, you don't define it. The
+> "**seal a sub-circuit into a chip**" mechanic (Tier C below) is **not** how the
+> general IC works — it is specifically the **FPGA**: a distinct, advanced,
+> *reprogrammable* building whose recipe is whatever circuit the player builds and
+> seals into it. Read Tier C and §4.3 through that lens: they describe the FPGA,
+> not the everyday chip. The everyday catalogue is Tier A + Tier B.
+
 Grounding (read these first; this doc assumes them):
 
 - `crates/sim-core/src/lib.rs` — the element model. Eight two-terminal element
