@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Scope/telemetry upgrade + value-picker design; solver upgrade in flight
+
+**State:** 🟢 Green (web check/lint/build; Rust unchanged this batch). Scope panel
+on the branch.
+
+- **Scope/telemetry**: the scope can **Expand** (~60% of the board) from a
+  telemetry button; each node has a **show/hide** checkbox and a **rename** input
+  in the telemetry panel; the scope autoscales to visible traces and draws a
+  coloured **legend** of node names. `board.ts`: `setNodeLabel` / `setNodeHidden`
+  / `toggleScopeExpanded` + a `scopeLegend` Text pool + `nodeName()`. `App.svelte`:
+  per-node controls (node 0 / GND stays fixed).
+
+### In flight (background agents)
+- **Solver upgrade → nonlinear Newton engine** (`sim-core` only): a deterministic
+  Newton–Raphson outer loop that engages only when a nonlinear element is present
+  (linear netlists keep the existing fast-path so the golden stays bit-identical),
+  with the **diode** as the first nonlinear element. Cherry-pick when it lands;
+  review determinism (golden `0xeaac…` must be unchanged) carefully.
+- **Value picker** design is in `docs/ui/value-picker.md` (recommended: an
+  Inspector with curated chips + ▲▼ stepper + "More values ▸" decade×significand;
+  E24 R / E6 C·L). Build the Inspector next.
+
+### Backlog (owner)
+- **Buck converter demo** — fully-animated, energy moved in "buckets" to a new
+  voltage. Needs switching (switch/MOSFET + diode + L + C) → follows the solver
+  upgrade + a switch part. Fun, lower priority.
+
+---
+
 ## 2026-06-15 — KCL-aware belt flow, finer ΔT, readable example layouts + new examples
 
 **State:** 🟢 Green (fmt/clippy/test incl. new golden, build:wasm, web
