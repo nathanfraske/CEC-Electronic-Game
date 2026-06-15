@@ -9,7 +9,12 @@
     type Snapshot,
     type PlaybackControls,
   } from "./sim/loop";
-  import { Board, type Mode, type SelectedPart } from "./lib/board";
+  import {
+    Board,
+    type Mode,
+    type SelectedPart,
+    type AnchorRect,
+  } from "./lib/board";
   import { BoardGraph, formatValue, PART_KINDS } from "./lib/graph";
   import {
     hasValue,
@@ -186,9 +191,11 @@
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
-  // The lone selected part (for the value inspector) + its "more values" toggle.
+  // The lone selected part (for the value inspector) + its "more values" toggle,
+  // and its on-screen anchor rect for the floating popover.
   let selPart = $state<SelectedPart | null>(null);
   let showMore = $state(false);
+  let anchor = $state<AnchorRect | null>(null);
   let canUndo = $state(false);
   let scrubFrac = $state(0);
   // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
@@ -219,6 +226,27 @@
 
   // The displayed tick as a wall-clock duration of simulated time (tick × DT).
   const simSeconds = $derived(Number(tick) * DT_SECONDS);
+
+  // Position the value popover above the selected part, flipping below near the
+  // top edge and clamping left into the board frame; the caret tracks the part.
+  const POP_W = 268;
+  const popPos = $derived.by(() => {
+    if (!anchor || !frameEl) return null;
+    const m = 8;
+    const fw = frameEl.clientWidth;
+    const fh = frameEl.clientHeight;
+    let left = anchor.x + anchor.width / 2 - POP_W / 2;
+    left = Math.max(m, Math.min(fw - POP_W - m, left));
+    const below = anchor.y < 150; // too little room above → drop below the part
+    const caretLeft = anchor.x + anchor.width / 2 - left;
+    return {
+      left,
+      top: below ? anchor.y + anchor.height + 10 : null,
+      bottom: below ? null : fh - anchor.y + 10,
+      below,
+      caretLeft: Math.max(14, Math.min(POP_W - 14, caretLeft)),
+    };
+  });
 
   onMount(() => {
     let app: Application | undefined;
@@ -332,6 +360,9 @@
         onArm: (kind) => {
           // The board disarmed itself (right-click) — mirror it into the HUD.
           armedPart = kind;
+        },
+        onAnchor: (rect) => {
+          anchor = rect;
         },
       });
       board = b;
@@ -840,76 +871,83 @@
           >
         </div>
       {/if}
+
+      {#if popPos && selPart && hasValue(selPart.kind)}
+        {@const kind = selPart.kind}
+        {@const cd = valueDecade(kind, selPart.value)}
+        <div
+          class="value-pop {popPos.below ? 'below' : 'above'}"
+          style="left: {popPos.left}px; {popPos.top !== null
+            ? `top: ${popPos.top}px;`
+            : `bottom: ${popPos.bottom}px;`}"
+        >
+          <div class="insp-head">
+            <span class="insp-kind">{partName(kind)}</span>
+            <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
+          </div>
+          <div class="insp-row">
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepVal(-1)}
+              title="Next smaller standard value">−</button
+            >
+            <div class="insp-chips">
+              {#each chipsOf(kind) as v (v)}
+                <button
+                  class="chip-val {selPart.value === v ? 'is-active' : ''}"
+                  onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+                >
+              {/each}
+            </div>
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepVal(1)}
+              title="Next larger standard value">+</button
+            >
+          </div>
+          <button class="insp-more" onclick={() => (showMore = !showMore)}>
+            {showMore ? "▾ fewer" : "▸ more values"}
+          </button>
+          {#if showMore && isESeries(kind)}
+            <div class="insp-sub">decade</div>
+            <div class="insp-chips wrap">
+              {#each decadesOf(kind) as d (d)}
+                <button
+                  class="chip-val sm {cd === d ? 'is-active' : ''}"
+                  onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
+                >
+              {/each}
+            </div>
+            <div class="insp-sub">significand (E-series)</div>
+            <div class="insp-chips wrap">
+              {#each significandsOf(kind) as s (s)}
+                <button
+                  class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
+                    ? 'is-active'
+                    : ''}"
+                  onclick={() => setSig(s)}>{s.toFixed(1)}</button
+                >
+              {/each}
+            </div>
+          {:else if showMore}
+            <div class="insp-chips wrap">
+              {#each standardValues(kind) as v (v)}
+                <button
+                  class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
+                  onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+                >
+              {/each}
+            </div>
+          {/if}
+          <span class="value-pop-caret" style="left: {popPos.caretLeft}px"
+          ></span>
+        </div>
+      {/if}
     </div>
   </main>
 
   <aside class="panel telemetry">
     <h2 class="panel-title">Telemetry</h2>
-
-    {#if selPart && hasValue(selPart.kind)}
-      {@const kind = selPart.kind}
-      {@const cd = valueDecade(kind, selPart.value)}
-      <div class="inspector">
-        <div class="insp-head">
-          <span class="insp-kind">{partName(kind)}</span>
-          <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
-        </div>
-        <div class="insp-row">
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepVal(-1)}
-            title="Next smaller standard value">−</button
-          >
-          <div class="insp-chips">
-            {#each chipsOf(kind) as v (v)}
-              <button
-                class="chip-val {selPart.value === v ? 'is-active' : ''}"
-                onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-              >
-            {/each}
-          </div>
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepVal(1)}
-            title="Next larger standard value">+</button
-          >
-        </div>
-        <button class="insp-more" onclick={() => (showMore = !showMore)}>
-          {showMore ? "▾ fewer" : "▸ more values"}
-        </button>
-        {#if showMore && isESeries(kind)}
-          <div class="insp-sub">decade</div>
-          <div class="insp-chips wrap">
-            {#each decadesOf(kind) as d (d)}
-              <button
-                class="chip-val sm {cd === d ? 'is-active' : ''}"
-                onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
-              >
-            {/each}
-          </div>
-          <div class="insp-sub">significand (E-series)</div>
-          <div class="insp-chips wrap">
-            {#each significandsOf(kind) as s (s)}
-              <button
-                class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
-                  ? 'is-active'
-                  : ''}"
-                onclick={() => setSig(s)}>{s.toFixed(1)}</button
-              >
-            {/each}
-          </div>
-        {:else if showMore}
-          <div class="insp-chips wrap">
-            {#each standardValues(kind) as v (v)}
-              <button
-                class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
-                onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-              >
-            {/each}
-          </div>
-        {/if}
-      </div>
-    {/if}
 
     <div class="readout">
       <span class="readout-k">Snapshot</span>
@@ -1165,13 +1203,37 @@
     background: var(--surface);
   }
 
-  /* Value inspector: a compact standard-value picker for the selected part. */
-  .inspector {
-    margin-bottom: 14px;
+  /* Value picker: a floating popover anchored above the selected part. */
+  .value-pop {
+    position: absolute;
+    z-index: 5;
+    width: 268px;
+    max-height: 340px;
+    overflow-y: auto;
     padding: 10px 11px;
-    border: 1px solid var(--accent-line);
-    border-radius: 4px;
-    background: var(--accent-soft);
+    border: 1px solid var(--border-bright);
+    border-radius: 5px;
+    background: oklch(0.165 0.028 285 / 0.96);
+    box-shadow: 0 12px 34px -12px #000;
+    backdrop-filter: blur(4px);
+  }
+  .value-pop-caret {
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    transform: translateX(-50%) rotate(45deg);
+    background: oklch(0.165 0.028 285 / 0.96);
+    border: 1px solid var(--border-bright);
+  }
+  .value-pop.above .value-pop-caret {
+    bottom: -6px;
+    border-top: none;
+    border-left: none;
+  }
+  .value-pop.below .value-pop-caret {
+    top: -6px;
+    border-bottom: none;
+    border-right: none;
   }
   .insp-head {
     display: flex;

@@ -90,6 +90,15 @@ export interface SelectedPart {
   value: number;
 }
 
+/** Screen-space (CSS px, canvas-relative) rect of the lone selected part, for
+ * anchoring a floating HUD popover above it. */
+export interface AnchorRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export interface BoardCallbacks {
   /** Fired after the model changes so the HUD can reflect counts, etc. */
   onChange?: (graph: BoardGraph) => void;
@@ -102,6 +111,8 @@ export interface BoardCallbacks {
   }) => void;
   /** Fired when the board itself changes the armed part (e.g. right-click disarm). */
   onArm?: (kind: string | null) => void;
+  /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
+  onAnchor?: (rect: AnchorRect | null) => void;
 }
 
 export class Board {
@@ -157,6 +168,7 @@ export class Board {
   private realPhase = 0;
   private lastTime = 0;
   private textRes = DPR;
+  private lastAnchorKey = ""; // change-detect the popover anchor rect
 
   // Interaction state.
   private dragging: {
@@ -502,6 +514,7 @@ export class Board {
     this.recordScope(snap);
     this.drawScope();
     this.drawProbe();
+    this.emitAnchor();
   }
 
   destroy(): void {
@@ -664,6 +677,39 @@ export class Board {
       wires: this.selectedWires.size,
       single,
     });
+  }
+
+  /** Project the lone selected part's box to screen space for the value popover. */
+  private emitAnchor(): void {
+    let rect: AnchorRect | null = null;
+    const busy =
+      this.dragging || this.panning || this.wiring || this.draggingProbe;
+    if (
+      this.selected.size === 1 &&
+      this.selectedWires.size === 0 &&
+      this.mode !== "measure" &&
+      !busy
+    ) {
+      const id = [...this.selected][0]!;
+      const c = this.graph.components.get(id);
+      if (c) {
+        const box = this.componentBox(c);
+        const s = this.world.scale.x;
+        rect = {
+          x: this.world.position.x + box.x * s,
+          y: this.world.position.y + box.y * s,
+          width: box.width * s,
+          height: box.height * s,
+        };
+      }
+    }
+    const key = rect
+      ? `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)},${Math.round(rect.height)}`
+      : "null";
+    if (key !== this.lastAnchorKey) {
+      this.lastAnchorKey = key;
+      this.cb.onAnchor?.(rect);
+    }
   }
 
   /** Set a placed component's value (from the inspector); rebuilds the netlist. */
