@@ -83,11 +83,23 @@ const CHANNEL_COLORS = [
   PALETTE.bronze,
 ];
 
+/** The lone selected component, surfaced so the HUD can show a value inspector. */
+export interface SelectedPart {
+  id: number;
+  kind: string;
+  value: number;
+}
+
 export interface BoardCallbacks {
   /** Fired after the model changes so the HUD can reflect counts, etc. */
   onChange?: (graph: BoardGraph) => void;
-  /** Fired when the selection changes. */
-  onSelect?: (sel: { components: number; wires: number }) => void;
+  /** Fired when the selection changes; `single` is set iff exactly one part (and
+   * no wires) is selected, so an inspector can edit its value. */
+  onSelect?: (sel: {
+    components: number;
+    wires: number;
+    single?: SelectedPart;
+  }) => void;
   /** Fired when the board itself changes the armed part (e.g. right-click disarm). */
   onArm?: (kind: string | null) => void;
 }
@@ -629,10 +641,28 @@ export class Board {
   }
 
   private emitSelect(): void {
+    let single: SelectedPart | undefined;
+    if (this.selected.size === 1 && this.selectedWires.size === 0) {
+      const id = [...this.selected][0]!;
+      const c = this.graph.components.get(id);
+      if (c) single = { id: c.id, kind: c.kind, value: c.value };
+    }
     this.cb.onSelect?.({
       components: this.selected.size,
       wires: this.selectedWires.size,
+      single,
     });
+  }
+
+  /** Set a placed component's value (from the inspector); rebuilds the netlist. */
+  setComponentValue(id: number, value: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || c.value === value) return;
+    this.pushUndo(this.graph.serialize());
+    c.value = value;
+    this.nodes.get(id)?.setValue(value);
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed value
   }
 
   private selectComponent(id: number, additive: boolean): void {
@@ -1499,6 +1529,7 @@ class ComponentNode {
   private readonly hPx: number;
   private readonly color: number;
   private readonly kindTag: string;
+  private readonly unit: string;
 
   constructor(
     private readonly component: Component,
@@ -1508,6 +1539,7 @@ class ComponentNode {
     const kind = graph.kindOf(component);
     this.color = kind ? PALETTE[kind.colorKey] : PALETTE.dim;
     this.kindTag = kind?.tag ?? "?";
+    this.unit = kind?.unit ?? "";
     this.wPx = ((kind?.w ?? 1) - 1) * PITCH;
     this.hPx = ((kind?.h ?? 1) - 1) * PITCH;
     for (const p of kind?.pins ?? []) {
@@ -1595,6 +1627,11 @@ class ComponentNode {
     this.label.resolution = r;
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
+  }
+
+  /** Refresh the on-board value label after an inspector edit. */
+  setValue(value: number): void {
+    if (this.value) this.value.text = formatValue(value, this.unit);
   }
 
   update(electrical: ElectricalState, phase: number, selected: boolean): void {
