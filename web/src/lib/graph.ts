@@ -148,8 +148,17 @@ export interface NetLabel {
   id: number;
   /** The displayed name; also the alias key (same name ⇒ same net). */
   name: string;
-  /** Where the label attaches: a component pin or a junction. */
+  /** The net the label names, addressed by an endpoint on it: a pin, a junction,
+   * or — for a label dropped on a bare trace — that wire's `from` endpoint (which
+   * shares the wire's net). All the netlist/union machinery keys off this. */
   at: Endpoint;
+  /**
+   * Optional draw position (grid cell) overriding the anchor's: set when the label
+   * sits on a wire trace rather than at a pin/junction, so the pill is drawn at the
+   * clicked point along the trace while `at` still resolves its net. Absent for a
+   * label that lives at its endpoint.
+   */
+  pos?: Cell;
 }
 
 /**
@@ -874,7 +883,7 @@ export class BoardGraph {
    * stale endpoint, an empty name, or a duplicate label already on that exact
    * endpoint (one label per point). Returns the new label, or undefined.
    */
-  addNetLabel(at: Endpoint, name: string): NetLabel | undefined {
+  addNetLabel(at: Endpoint, name: string, pos?: Cell): NetLabel | undefined {
     const n = name.trim();
     if (!n) return undefined;
     if (!this.endpointExists(at)) return undefined;
@@ -886,6 +895,7 @@ export class BoardGraph {
       id: this.nextNetLabelId++,
       name: n,
       at: { ...at },
+      ...(pos ? { pos: { ...pos } } : {}),
     };
     this.netLabels.set(label.id, label);
     return label;
@@ -956,6 +966,7 @@ export class BoardGraph {
         id: l.id,
         name: l.name,
         at: { ...l.at },
+        ...(l.pos ? { pos: { ...l.pos } } : {}),
       })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
@@ -979,7 +990,12 @@ export class BoardGraph {
     // Net labels are absent in older snapshots (treated as none), exactly like
     // the junction legacy handling above.
     for (const l of s.netLabels ?? []) {
-      this.netLabels.set(l.id, { id: l.id, name: l.name, at: { ...l.at } });
+      this.netLabels.set(l.id, {
+        id: l.id,
+        name: l.name,
+        at: { ...l.at },
+        ...(l.pos ? { pos: { ...l.pos } } : {}),
+      });
     }
     for (const w of s.wires) {
       // Tolerate legacy snapshots: a wire may carry the new ordered `waypoints`

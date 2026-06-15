@@ -477,7 +477,7 @@
         : mode === "junction"
           ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
           : mode === "label"
-            ? "LABEL · click a pin or junction to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
+            ? "LABEL · click a pin, junction, or trace to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
             : armedPart
               ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
               : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
@@ -1294,7 +1294,7 @@
         class="btn btn-ghost {mode === 'label' ? 'is-active' : ''}"
         onclick={enterLabel}
         disabled={!ready}
-        title="Label: click a pin or junction to name its net — same name elsewhere = same net, no wire (L)"
+        title="Label: click a pin, junction, or trace to name its net — same name elsewhere = same net, no wire (L)"
       >
         Label <kbd class="hk">L</kbd>
       </button>

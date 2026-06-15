@@ -8,6 +8,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Persistence — localStorage for board + progress (owner, 2026-06-15)
+- [ ] **Persist board state across refreshes.** Serialize the `BoardGraph` (the
+  existing `serialize()`/`restore()` already exist) to **`localStorage`** on change
+  (debounced) and restore it on load. Use localStorage, NOT cookies (cookies hit the
+  server every request + 4 KB cap; this is client-only state). Guard against a
+  corrupt/old blob (try/catch → fall back to the demo).
+- [ ] **Persist progress/tutorial state.** A small versioned settings blob (e.g.
+  `seenConcepts`, `explainAsYouGo`, completed examples/contracts, first-run done) in
+  localStorage, ready for the onboarding (§ above) and the progression to write to.
+- [ ] **Reset-progress button** (for testing + for players): clears the persisted
+  board + progress + re-opens the cold open. Put it somewhere unobtrusive (settings /
+  a debug corner). Pairs with "restart onboarding" from §10.3 of the onboarding doc.
+
 ### Absolute-beginner onboarding / first-run (owner-driven; brainstorm in flight)
 Design doc being written at **`docs/ui/onboarding-first-run.md`** (agent, 2026-06-15).
 Brief: get someone who knows NOTHING about electronics rolling — how do you wire
