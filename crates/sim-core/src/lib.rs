@@ -66,9 +66,10 @@ fn fnv1a(bytes: &[u8]) -> u64 {
     h
 }
 
-/// Fixed integration step, in seconds (10 microseconds). The step sets fidelity
-/// and is independent of the presentation speed. See `docs/determinism.md`.
-const DT: f64 = 10.0e-6;
+/// Fixed integration step, in seconds (2 microseconds). The step sets fidelity
+/// and is independent of the presentation speed; finer = smoother dynamics at a
+/// proportionally higher tick rate. See `docs/determinism.md`.
+const DT: f64 = 2.0e-6;
 
 // --- Element-type encoding ----------------------------------------------------
 
@@ -796,9 +797,9 @@ mod tests {
     //   E1: resistor,          a=1 b=2, value = 1 kohm
     //   E2: capacitor,         a=2 b=0, value = 1 uF
     //
-    // Run GOLDEN_STEPS fixed steps (dt = 10 us) from GOLDEN_SEED and hash. The
+    // Run GOLDEN_STEPS fixed steps (dt = 2 us) from GOLDEN_SEED and hash. The
     // capacitor node (node 2) charges along V * (1 - exp(-t/RC)).
-    const GOLDEN_HASH: u64 = 0x6d05_5513_f061_3902;
+    const GOLDEN_HASH: u64 = 0xeaac_3764_99e4_fa24;
     const GOLDEN_STEPS: usize = 1000;
     const GOLDEN_SEED: u64 = 42;
 
@@ -899,7 +900,8 @@ mod tests {
         let mut sim = rc_netlist(v, 1_000.0, 1.0e-6);
         let mut prev = sim.node_voltages()[2];
         assert_eq!(prev, 0.0, "capacitor starts discharged");
-        for _ in 0..3000 {
+        // ~30 ms = 30 RC of physical time, independent of DT (15000 * 2 us).
+        for _ in 0..15000 {
             sim.step();
             let cur = sim.node_voltages()[2];
             assert!(cur >= prev - 1e-12, "monotonic non-decreasing charge");
