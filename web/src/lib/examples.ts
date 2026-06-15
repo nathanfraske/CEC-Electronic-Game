@@ -2249,6 +2249,97 @@ export const EXAMPLES: ExampleSpec[] = [
     },
   },
   {
+    id: "phase-shift",
+    name: "RC Phase-Shift Network",
+    blurb:
+      "Three identical high-pass RC sections in a chain — the feedback network at the heart of an RC phase-shift oscillator. Each section twists the phase forward, and at one special frequency, f = 1/(2πRC√6) ≈ 138 Hz for these parts, the three together add up to exactly 180°: a clean inversion. The price is attenuation — the same network shrinks the signal to 1/29 of the input, which is precisely the gain an amplifier must supply to turn this passive network into a self-sustaining oscillator.",
+    watch:
+      "input and output on the scope. At 138 Hz the output is the mirror image of the input — flipped upside down, the 180° shift — but only ~1/29 the size. The taps between sit near 56° and 112°: the three sections do NOT split the shift into tidy 60° steps, because each one loads the section before it.",
+    build() {
+      // Three cascaded high-pass sections: series C (0.1 µF), shunt R (4.7 kΩ),
+      // output at the last resistor. At f = 1/(2πRC√6) = 138.24 Hz the chain's total
+      // phase is exactly 180° and its gain is 1/29 — the classic phase-shift
+      // oscillator feedback network. Verified node phases at 138 Hz (relative to the
+      // input): node1 ≈ 56°, node2 ≈ 112°, node3 = 180° (the output, inverted).
+      //   nets: N0 = AC.+ = C1.+ ; N1 = C1.− = R1.A = C2.+ ;
+      //         N2 = C2.− = R2.A = C3.+ ; N3 = C3.− = R3.A (output) ;
+      //         GND(0) = R1.B = R2.B = R3.B = AC.−.
+      const g = new BoardGraph();
+      const c1 = comp(g, "C", 2, 0, 0.1e-6);
+      const r1 = comp(g, "R", 4, 0, 4700, 1); // vertical shunt rung
+      const c2 = comp(g, "C", 6, 0, 0.1e-6);
+      const r2 = comp(g, "R", 8, 0, 4700, 1);
+      const c3 = comp(g, "C", 10, 0, 0.1e-6);
+      const r3 = comp(g, "R", 12, 0, 4700, 1);
+      const ac = comp(g, "AC", 0, 6, 138); // f where the total shift is 180°
+      ac.amp = 12;
+      const gnd = comp(g, "GND", 4, 6, 0);
+      wire(g, ac, 0, c1, 0); // AC+ → C1.+
+      wire(g, c1, 1, r1, 0); // C1.− → R1.A (node 1)
+      wire(g, r1, 1, gnd, 0); // R1.B → GND
+      wire(g, r1, 0, c2, 0); // node 1 → C2.+
+      wire(g, c2, 1, r2, 0); // C2.− → R2.A (node 2)
+      wire(g, r2, 1, gnd, 0); // R2.B → GND
+      wire(g, r2, 0, c3, 0); // node 2 → C3.+
+      wire(g, c3, 1, r3, 0); // C3.− → R3.A (node 3 = output)
+      wire(g, r3, 1, gnd, 0); // R3.B → GND
+      wire(g, ac, 1, gnd, 0); // AC− → GND (reference)
+      // Name the taps with their true phases so the scope reads honestly.
+      g.addNetLabel({ componentId: ac.id, pinIndex: 0 }, "V(in)");
+      g.addNetLabel({ componentId: r1.id, pinIndex: 0 }, "V(56°)");
+      g.addNetLabel({ componentId: r2.id, pinIndex: 0 }, "V(112°)");
+      g.addNetLabel({ componentId: r3.id, pinIndex: 0 }, "V(180°)");
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place an AC Source (AC), then three Capacitors (C) and three Resistors (R).",
+        why: "Three identical RC sections, chained — each one a little high-pass filter that also nudges the phase forward.",
+        done: (p) => at(p, "AC") >= 1 && at(p, "C") >= 3 && at(p, "R") >= 3,
+      },
+      {
+        do: "Wire three high-pass sections in series — each a series C into a shunt R to ground — taking the output from the last resistor. Run at 138 Hz.",
+        why: "Each section adds its own phase twist; stacked three deep at this frequency they sum to a full 180°. Watch the output come out upside-down — inverted — versus the input.",
+        done: (p) => p.complete,
+      },
+      {
+        do: "Compare the output with the input, and glance at the two middle taps.",
+        why: "The output is a clean inversion (180°) but only ~1/29 the amplitude — that 29× loss is why a phase-shift oscillator pairs this network with a ×29 amplifier. The middle taps sit near 56° and 112°, not 60°/120°: the sections load each other, so the steps aren't equal.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Detune to 1 kHz",
+      on: "138 Hz — the magic frequency where the three sections sum to exactly 180°, a clean inversion.",
+      off: "1 kHz — far above it, the chain manages only ~78° total: the output is no longer inverted, just nudged. The 180° happens at one frequency.",
+      alt() {
+        const g = new BoardGraph();
+        const c1 = comp(g, "C", 2, 0, 0.1e-6);
+        const r1 = comp(g, "R", 4, 0, 4700, 1);
+        const c2 = comp(g, "C", 6, 0, 0.1e-6);
+        const r2 = comp(g, "R", 8, 0, 4700, 1);
+        const c3 = comp(g, "C", 10, 0, 0.1e-6);
+        const r3 = comp(g, "R", 12, 0, 4700, 1);
+        const ac = comp(g, "AC", 0, 6, 1000); // detuned well above the 180° point
+        ac.amp = 12;
+        const gnd = comp(g, "GND", 4, 6, 0);
+        wire(g, ac, 0, c1, 0);
+        wire(g, c1, 1, r1, 0);
+        wire(g, r1, 1, gnd, 0);
+        wire(g, r1, 0, c2, 0);
+        wire(g, c2, 1, r2, 0);
+        wire(g, r2, 1, gnd, 0);
+        wire(g, r2, 0, c3, 0);
+        wire(g, c3, 1, r3, 0);
+        wire(g, r3, 1, gnd, 0);
+        wire(g, ac, 1, gnd, 0);
+        g.addNetLabel({ componentId: ac.id, pinIndex: 0 }, "V(in)");
+        g.addNetLabel({ componentId: r3.id, pinIndex: 0 }, "V(out)");
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "ac-resonance",
     name: "Series RLC Resonance",
     blurb:
@@ -2674,6 +2765,7 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "ac-ind": "Reactance",
   "ac-lowpass": "Filters",
   "ac-highpass": "Filters",
+  "phase-shift": "Filters",
   "ac-resonance": "Resonance",
   "ac-rectifier": "Rectification",
   "ac-supply": "Rectification",
