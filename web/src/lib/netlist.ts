@@ -64,14 +64,29 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     );
   }
 
-  // Ground (node 0): an explicit GND part's net wins if one is placed; this is
-  // what lets a current-source-only loop simulate (no voltage source to borrow a
-  // reference from). Otherwise fall back to the first voltage source's "−" pin
-  // (index 1), preserving the original behaviour for V-driven circuits.
+  // How many pins share each net, so we can tell a ground that's actually wired
+  // into the circuit from one just sitting on the board.
+  const netSize = new Map<string, number>();
+  for (const c of sorted) {
+    const kind = graph.kindOf(c);
+    if (!kind) continue;
+    for (const p of kind.pins) {
+      const r = find(key(c.id, p.index));
+      netSize.set(r, (netSize.get(r) ?? 0) + 1);
+    }
+  }
+
+  // Ground (node 0): a *connected* explicit GND part's net wins if one is placed
+  // — this is what lets a current-source-only loop simulate (no voltage source to
+  // borrow a reference from). A GND floating on the board with nothing wired to it
+  // is ignored, so it can't make a disconnected circuit falsely "solve". Otherwise
+  // fall back to the first voltage source's "−" pin (index 1).
   let groundRoot: string | null = null;
   for (const c of sorted) {
-    if (c.kind === "GND") {
-      groundRoot = find(key(c.id, 0)); // GND is a 1-pin part
+    if (c.kind !== "GND") continue;
+    const r = find(key(c.id, 0)); // GND is a 1-pin part
+    if ((netSize.get(r) ?? 0) > 1) {
+      groundRoot = r; // wired to at least one other pin
       break;
     }
   }

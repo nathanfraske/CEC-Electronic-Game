@@ -550,6 +550,11 @@ export class Board {
   private componentBox(c: Component): Rectangle {
     const kind = this.graph.kindOf(c);
     const o = this.cellToWorld(c.cell);
+    // Single-pin parts (e.g. GND) draw their symbol around/below the lone pin and
+    // are otherwise a tiny, fiddly target — give them a generous square grab box.
+    if ((kind?.pins.length ?? 0) <= 1) {
+      return new Rectangle(o.x - 18, o.y - 18, 36, 48);
+    }
     let minx = 0;
     let miny = 0;
     let maxx = 0;
