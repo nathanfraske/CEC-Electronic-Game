@@ -356,8 +356,8 @@
   const hint = $derived(
     mode === "measure"
       ? probeMode === "A"
-        ? "PROBE · click a part/wire for its current AND voltage at once (a real meter needs separate ports for each)"
-        : "VOLTMETER · click two points to read ΔV (one point = vs GND)"
+        ? "AMMETER · click a part/wire to clamp it and read the current through it (the voltmeter stays put — both can be live)"
+        : "VOLTMETER · click two points to read ΔV (one point = vs GND) · the ammeter stays put alongside it"
       : mode === "junction"
         ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
         : armedPart
@@ -1073,12 +1073,14 @@
           <button
             class="btn btn-ghost {probeMode === 'V' ? 'is-active' : ''}"
             onclick={() => setProbeMode("V")}
-            title="Voltmeter — ΔV between two points">V</button
+            title="Voltmeter — click two points for ΔV (coexists with the ammeter)"
+            >V</button
           >
           <button
             class="btn btn-ghost {probeMode === 'A' ? 'is-active' : ''}"
             onclick={() => setProbeMode("A")}
-            title="Probe — a part/wire's current + voltage together">A</button
+            title="Ammeter — click a part/wire for the current through it (coexists with the voltmeter)"
+            >A</button
           >
         </span>
       {/if}
