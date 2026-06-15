@@ -25,7 +25,22 @@ const TYPE_OF: Record<string, number> = {
   AC: 7, // sinusoidal voltage source; value = frequency (Hz)
   SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
   LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)
+  ZD: 10, // Zener diode (nonlinear; reverse breakdown clamps at value = Vz)
+  // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
+  // element type — it expands below into an ideal capacitor (type 2) in series
+  // with an ESR resistor (type 1) sharing a private internal node.
 };
+
+// Element types the EC (electrolytic cap) expansion stamps directly.
+const ELEM_RESISTOR = 1;
+const ELEM_CAPACITOR = 2;
+
+// Electrolytic-cap parasitic series resistance (ESR), in ohms. A real bulk
+// electrolytic has a few hundred mΩ of ESR; we model a fixed, small 0.5 Ω so the
+// honest "a real cap can't perfectly flatten ripple" lesson is visible without
+// dominating the operating point. Kept a fixed constant (not a function of C) for
+// simplicity — see docs/parts-catalog-ideation.md §2.1.
+const EC_ESR_OHMS = 0.5;
 
 export interface BuiltNetlist {
   nodeCount: number;
@@ -132,6 +147,18 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const r = find(endpointKey({ junctionId: j.id }));
     if (!nodeIndex.has(r)) nodeIndex.set(r, next++);
   }
+  // Each electrolytic cap (EC) is modelled honestly as an ideal cap in series
+  // with its ESR, which needs one PRIVATE internal node between the two. Allocate
+  // those after every pin/junction node — in sorted-component-id order so the
+  // numbering is deterministic and unaffected by pure moves — and bump nodeCount.
+  // ecInternal: EC component id → its internal node index.
+  const ecInternal = new Map<number, number>();
+  for (const c of sorted) {
+    if (c.kind !== "EC") continue;
+    const kind = graph.kindOf(c);
+    if (!kind || kind.pins.length < 2) continue;
+    ecInternal.set(c.id, next++);
+  }
   const nodeCount = next;
 
   const types: number[] = [];
@@ -141,12 +168,35 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   const elemOfComponent = new Map<number, number>();
   const nodesOfComponent = new Map<number, [number, number]>();
   for (const c of sorted) {
-    const t = TYPE_OF[c.kind];
-    if (t === undefined) continue;
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
     const na = nodeIndex.get(find(key(c.id, 0))) ?? 0;
     const nb = nodeIndex.get(find(key(c.id, 1))) ?? 0;
+
+    // Electrolytic cap: expand into TWO elements on a shared internal node —
+    // an ideal capacitor (+pin → internal, value = C) and the ESR resistor
+    // (internal → −pin). The cap element carries the series current, so it is the
+    // one mapped for the glyph/inspector; vAcross is read across the whole part
+    // (+pin → −pin) via nodesOfComponent so it includes the ESR drop.
+    if (c.kind === "EC") {
+      const mid = ecInternal.get(c.id);
+      if (mid === undefined) continue; // 1-pin guard rejected it above
+      const capIdx = types.length;
+      types.push(ELEM_CAPACITOR);
+      aArr.push(na);
+      bArr.push(mid);
+      values.push(c.value); // capacitance
+      types.push(ELEM_RESISTOR);
+      aArr.push(mid);
+      bArr.push(nb);
+      values.push(EC_ESR_OHMS); // parasitic series resistance
+      elemOfComponent.set(c.id, capIdx); // series current = the cap's current
+      nodesOfComponent.set(c.id, [na, nb]); // V across the whole part
+      continue;
+    }
+
+    const t = TYPE_OF[c.kind];
+    if (t === undefined) continue;
     const idx = types.length;
     types.push(t);
     aArr.push(na);
@@ -174,13 +224,24 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     parent2[f2(x)] = f2(y);
   };
   for (const c of sorted) {
-    const t = TYPE_OF[c.kind];
-    if (t === undefined || t === 4) continue; // skip non-elements and I sources
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
     const na = nodeIndex.get(find(key(c.id, 0)));
     const nb = nodeIndex.get(find(key(c.id, 1)));
-    if (na !== undefined && nb !== undefined) u2(na, nb);
+    if (na === undefined || nb === undefined) continue;
+    // An EC is a cap+ESR series path between its two pins: it ties na↔nb (through
+    // its internal node) for the return-path test, like any other passive element.
+    if (c.kind === "EC") {
+      const mid = ecInternal.get(c.id);
+      if (mid !== undefined) {
+        u2(na, mid);
+        u2(mid, nb);
+      }
+      continue;
+    }
+    const t = TYPE_OF[c.kind];
+    if (t === undefined || t === 4) continue; // skip non-elements and I sources
+    u2(na, nb);
   }
   const floatingSources: number[] = [];
   for (const c of sorted) {

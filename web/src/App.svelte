@@ -7,6 +7,7 @@
     runLoop,
     DT_SECONDS,
     type Snapshot,
+    type SubFrameSample,
     type PlaybackControls,
   } from "./sim/loop";
   import {
@@ -95,6 +96,13 @@
       color: "var(--cyan)",
     },
     {
+      tag: "EC",
+      name: "Electrolytic Cap",
+      desc: "Bulk storage + ESR",
+      tier: "II",
+      color: "var(--cyan)",
+    },
+    {
       tag: "L",
       name: "Inductor",
       desc: "Stored current, saturation",
@@ -135,6 +143,13 @@
       desc: "Lights with current",
       tier: "II",
       color: "var(--accent)",
+    },
+    {
+      tag: "ZD",
+      name: "Zener Diode",
+      desc: "Clamps at Vz (reverse)",
+      tier: "II",
+      color: "var(--bronze)",
     },
     {
       tag: "SW",
@@ -332,6 +347,15 @@
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
         board?.rotateSelection();
         e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
+        enterBuild(); // b = Build (place + select)
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "w" || e.key === "W")) {
+        enterWire(); // w = Wire
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "m" || e.key === "M")) {
+        enterMeasure(); // m = Measure
+        e.preventDefault();
       } else if (e.key === "Escape") {
         // Universal cancel: disarm first, otherwise cancel a wire / clear selection.
         if (armedPart) arm(null);
@@ -449,14 +473,19 @@
       // Paused by default: the player presses Run, or steps tick by tick.
       controls = runLoop(
         sim,
-        (snap: Snapshot) => {
+        (snap: Snapshot, scopeBatch?: SubFrameSample[]) => {
           // Attribute per-element current and per-net voltage to each component
           // so the glyphs animate with what is actually happening to them.
           const electrical: Map<number, ElectricalState> | undefined =
             netlist && snap.elementCurrents
               ? electricalMap(netlist, snap.state, snap.elementCurrents)
               : undefined;
-          b.update(snap, electrical, controls?.isRunning() ?? false);
+          b.update(
+            snap,
+            electrical,
+            controls?.isRunning() ?? false,
+            scopeBatch,
+          );
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             selElectrical = e;
@@ -580,6 +609,10 @@
   }
   function enterBuild(): void {
     setMode("select");
+  }
+  function enterWire(): void {
+    arm(null);
+    setMode("wire");
   }
   function enterMeasure(): void {
     arm(null);
@@ -755,7 +788,7 @@
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (click again or Esc
         to disarm) — or drag it on. Scroll to zoom, drag empty space to pan. V /
-        R / C / L / I / D / SD / LED / SW and GND all simulate today.
+        R / C / EC / L / I / D / SD / LED / ZD / SW and GND all simulate today.
       </p>
       <ul class="part-list scroll">
         {#each PARTS as part (part.name)}
@@ -831,17 +864,25 @@
         class="btn btn-ghost {mode === 'select' ? 'is-active' : ''}"
         onclick={enterBuild}
         disabled={!ready}
-        title="Build: place parts and wire pins"
+        title="Build: place and arrange parts (B)"
       >
-        Build
+        Build <kbd class="hk">B</kbd>
+      </button>
+      <button
+        class="btn btn-ghost {mode === 'wire' ? 'is-active' : ''}"
+        onclick={enterWire}
+        disabled={!ready}
+        title="Wire: drag pin to pin; end on a trace to drop a junction (W)"
+      >
+        Wire <kbd class="hk">W</kbd>
       </button>
       <button
         class="btn btn-ghost {mode === 'measure' ? 'is-active' : ''}"
         onclick={enterMeasure}
         disabled={!ready}
-        title="Measure: probe voltage between two points, or current through a part"
+        title="Measure: probe voltage between two points, or current through a part (M)"
       >
-        Measure
+        Measure <kbd class="hk">M</kbd>
       </button>
       {#if mode === "measure"}
         <span class="meter-toggle">
@@ -895,9 +936,9 @@
         class="btn btn-ghost"
         onclick={undoAction}
         disabled={!ready || !canUndo}
-        title="Undo (Ctrl+Z)"
+        title="Undo (Ctrl/Cmd+Z)"
       >
-        Undo
+        Undo <kbd class="hk">⌘Z</kbd>
       </button>
       <button
         class="btn btn-ghost"
@@ -905,7 +946,7 @@
         disabled={!ready || selCount === 0}
         title="Delete selected (Del)"
       >
-        Delete
+        Delete <kbd class="hk">Del</kbd>
       </button>
       <button
         class="btn btn-ghost"
@@ -913,7 +954,7 @@
         disabled={!ready || selCount === 0}
         title="Rotate selected (R)"
       >
-        Rotate
+        Rotate <kbd class="hk">R</kbd>
       </button>
       <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
         Reset View
@@ -1284,19 +1325,19 @@
 <div class="hud-footer">
   <div class="transport">
     <button class="btn btn-accent" onclick={togglePlay} disabled={!ready}>
-      {running ? "❚❚ Pause" : "▶ Run"}
+      {running ? "❚❚ Pause" : "▶ Run"} <kbd class="hk">Space</kbd>
     </button>
     <button
       class="btn step"
       onclick={stepBack}
       disabled={!ready}
-      title="Step back one tick">◀</button
+      title="Step back one tick (,)">◀ <kbd class="hk">,</kbd></button
     >
     <button
       class="btn step"
       onclick={stepFwd}
       disabled={!ready}
-      title="Step forward one tick">▶</button
+      title="Step forward one tick (.)">▶ <kbd class="hk">.</kbd></button
     >
     <button
       class="btn step"
@@ -1370,6 +1411,21 @@
   }
   .tool-spacer {
     flex: 1;
+  }
+  /* Hotkey badge shown on every button that has a keyboard shortcut. */
+  .hk {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 0 4px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    line-height: 14px;
+    letter-spacing: 0.04em;
+    color: var(--faint);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    vertical-align: middle;
+    opacity: 0.85;
   }
   /* Voltmeter / ammeter function toggle, shown while measuring. */
   .meter-toggle {

@@ -8,6 +8,33 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — Zener (`ZD`) + electrolytic-cap (`EC`) web/UI integration
+- ~~**Zener diode (`ZD`, sim type 10) + electrolytic cap with ESR (`EC`, netlist
+  expansion, no new sim type) wired through the whole web layer** (crates
+  untouched; Zener `ELEM_ZENER = 10` was already committed, golden
+  `0xeaac376499e4fa24` unchanged). **ZD:** `netlist.ts TYPE_OF ZD:10`; `graph.ts
+  PART_KINDS` (bronze, `twoPin("A","K")`, `value` = Vz, default 5.1 V) + App bin +
+  `values.ts` curated Vz chips (3.3/4.7/5.1/6.2/9.1/12 …); `glyphs.ts` schematic
+  (triangle + Z-bent cathode bar, forward glow + cyan breakdown bloom) + factory
+  (check-valve + side spillway/weir that opens on reverse breakdown);
+  `partInfo.ts` (forward ~0.7 V diode / reverse blocks until Vz then clamps; Vz +
+  power rows). **EC:** modelled honestly as an ideal cap **in series with a fixed
+  0.5 Ω ESR**, built in `buildNetlist` — each `EC` allocates one internal node
+  (after pin/junction nodes, bumps `nodeCount`, deterministic by sorted id) and
+  emits TWO elements (capacitor `+`→internal, resistor=ESR internal→`−`);
+  `elemOfComponent[EC]`→the cap (series current), `nodesOfComponent[EC]`=[+pin,−pin]
+  (V across whole part); folded into the topology `sig` so pure moves don't reset.
+  `graph.ts PART_KINDS` (cyan, polarized `twoPin("+","−")`, `value` = C, default
+  100 µF) + bin + `values.ts` (10 µF…1000 µF); `glyphs.ts` schematic (curved + straight
+  plate, "+" mark, charge fill) + factory (ribbed pressure tank, ESR throat at
+  inlet); `partInfo.ts` (C + ESR; energy ½CV² + ESR rows). Three `examples.ts`
+  builds: **Zener Shunt Reference** (12 V→1 kΩ→ZD→GND clamps ≈5.1 V, ~6.9 mA) and
+  **Two LEDs in Series** (9 V→270 Ω→LED→LED→GND, ~19 mA, drops add) under Diodes;
+  **Electrolytic Decoupling** (200 Hz AC→D→load∥EC, ripple + ESR can't perfectly
+  flatten) under Capacitors & Inductors. All glyph motion rides the bounded
+  `o.phase` clock — magnitude is fill/brightness/density/thickness, never speed.
+  Full gate set green (44 sim-core tests, golden unchanged).~~
+
 ### Done — Schottky + LED web/UI integration (sim types 8/9)
 - ~~**Schottky (`SD`) + LED (`LED`) wired through the whole web layer** on top of
   the finished sim-core diode family (`ELEM_SCHOTTKY = 8`, `ELEM_LED = 9`; crates

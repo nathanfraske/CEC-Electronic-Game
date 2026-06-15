@@ -169,6 +169,18 @@ export const PART_KINDS: Record<string, PartKind> = {
   AC: kind("AC", "AC Source", "accent", twoPin("+", "−"), 500, "Hz", true),
   R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
+  // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
+  // is the capacitance (F); the ESR is fixed in the netlist. Pins are polarized
+  // (+ / −). In `buildNetlist` it expands to an ideal C in series with the ESR R.
+  EC: kind(
+    "EC",
+    "Electrolytic Cap",
+    "cyan",
+    twoPin("+", "−"),
+    100e-6,
+    "F",
+    true,
+  ),
   L: kind("L", "Inductor", "violet", twoPin("A", "B"), 1e-3, "H", true),
   // Ideal DC current source: arrow points a -> b, default 10 mA. Its dual is V.
   I: kind("I", "Current Source", "warn", twoPin("A", "B"), 1e-2, "A", true),
@@ -183,6 +195,11 @@ export const PART_KINDS: Record<string, PartKind> = {
   // LED: a diode that emits light; ~1.9 V drop, brightness tracks forward current.
   // The vivid accent rose is the "emitting" hue.
   LED: kind("LED", "LED", "accent", twoPin("A", "K"), 0, "", true),
+  // Zener: a diode whose REVERSE breakdown is the feature — once reverse-biased to
+  // its `value` (Vz, in volts) it conducts hard and clamps the node, the basis of a
+  // shunt voltage reference. Forward it is an ordinary ~0.7 V diode. Bronze keeps
+  // it in the silicon-junction family while reading apart from the plain diode.
+  ZD: kind("ZD", "Zener Diode", "bronze", twoPin("A", "K"), 5.1, "V", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
   Q: kind(

@@ -15,7 +15,7 @@ import {
   Point,
   type FederatedPointerEvent,
 } from "pixi.js";
-import type { Snapshot } from "../sim/loop";
+import type { Snapshot, SubFrameSample } from "../sim/loop";
 import {
   BoardGraph,
   PALETTE,
@@ -98,22 +98,52 @@ const PROBE_PLUS = 0xe0533a;
 const PROBE_MINUS = 0x7c90a4;
 
 // The belt carries two layers: charge carriers (voltage-coloured chevrons) and
-// the energy they deliver (warm-orange dots). `*_RATE` set how far each advances
-// per unit of the bounded visual phase, so with FLOW_HZ both recirculate in the
-// readable band. Crucially the phase step uses only the SIGN of current / of power
-// v·i (see the saturating factors below) — not their magnitude — so the belts move
+// the energy they deliver (warm-orange dots). `*_PX_RATE` are belt speeds in
+// PIXELS per unit of the bounded visual phase — crucially NOT a route *fraction*
+// per unit, which is what made the flow run faster on longer traces (pixel speed
+// = routeLength × fraction-rate). The per-wire offsets are stored in pixels and
+// advanced by `dir · flowDelta · *_PX_RATE`, so a long and a short trace carrying
+// the same current glide at the same on-screen speed. With FLOW_HZ (~0.6) these
+// rates land the carriers around ~60 px/s — a calm, readable glide that matches
+// the old feel on a ~100px wire, now length-independent.
+//
+// Crucially the advance uses only the SIGN of current / of power v·i (see the
+// saturating direction factors below) — never their magnitude — so the belts move
 // at a constant calm rate while still: carriers reverse on AC (signed current
 // flips each half-cycle) and energy streams steadily to a resistive load (v·i sign
 // stays positive). Magnitude is shown by thickness + density + alpha, never speed.
 const ENERGY_COLOR = 0xff8a3d;
-const CARRIER_RATE = 1.0;
-const ENERGY_RATE = 1.1; // slightly faster so the two layers stay distinguishable
+const CARRIER_PX_RATE = 100; // px advanced per phase-unit ⇒ ~60 px/s at FLOW_HZ
+const ENERGY_PX_RATE = 110; // slightly faster so the two layers stay distinguishable
 const I_REF = 0.01; // 10 mA — same reference the thickness/density use
 const V_REF = 6; // ~one rail; net voltage above this saturates the energy layer
 // Saturate the direction factor: any current/power past this small fraction of the
 // reference moves at full constant speed; smaller values ramp smoothly so an AC
 // zero-crossing eases through zero instead of snapping (it never sets the rate).
 const FLOW_DIR_SAT = 0.05;
+// Largest belt advance allowed in a single frame, in pixels. On AC the direction
+// reverses each half-cycle; at high tps a frame can otherwise span many cycles and
+// the eased reversal would still read as a hard jump. Clamping the per-frame pixel
+// delta keeps the reversal a smooth back-and-forth slosh at any ticks-per-second
+// without affecting the steady DC stream (whose per-frame delta stays well under).
+const MAX_FLOW_PX_PER_FRAME = 14;
+// Belt thickness range (px): a near-zero current reads as a thin hair, a current
+// at/above the saturation reference as a bold bus. Wider than before so amperage
+// is legible at a glance (saturating normalization keeps a huge current bounded).
+const BELT_WIDTH_MIN = 1.4;
+const BELT_WIDTH_MAX = 7.0;
+// Chevron (arrowhead) half-size range (px): scales with current so more amps draw
+// visibly bigger arrows, bounded by the same saturating normalization.
+const CHEVRON_SIZE_MIN = 3.0;
+const CHEVRON_SIZE_MAX = 6.5;
+// Carrier chevron spacing range (px): denser for more current (constant
+// arrows-per-pixel at a given current, so equal-current segments match regardless
+// of length). Placed at absolute arc-length so density never depends on length.
+const CARRIER_SPACING_MAX = 46; // sparse at low current
+const CARRIER_SPACING_MIN = 16; // dense at high current
+const ENERGY_SPACING = 34; // energy-dot spacing in px (absolute arc-length)
+// Safety cap on dots per belt so a very long trace can't spawn unbounded graphics.
+const MAX_BELT_DOTS = 64;
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
@@ -217,7 +247,8 @@ export class Board {
   // animation so it integrates exactly once per frame (drag-driven redraws, which
   // also call redrawWires, leave it zero and just reposition the dots).
   private flowDelta = 0;
-  // Per-wire integrated offsets [0,1) for the two belt layers. Carriers integrate
+  // Per-wire integrated offsets in PIXELS (arc-length) for the two belt layers, so
+  // flow speed is constant in pixels regardless of trace length. Carriers integrate
   // signed current (stream on DC, slosh on AC); energy integrates signed power v·i
   // (streams to the load on a resistor, sloshes on a reactive part). Keyed by wire.
   private carrierOffset = new Map<number, number>();
@@ -537,11 +568,15 @@ export class Board {
    * Once-per-frame snapshot read. Generalized to a variable-length state. The
    * optional `electrical` map carries per-component current/voltage from the
    * solver to drive the glyph animations (absent until the netlist is wired).
+   * The optional `scopeBatch` carries every tick stepped this frame (already read,
+   * downsampled in the loop) so the scope charts at sub-frame resolution instead
+   * of aliasing AC at high ticks-per-second — pure JS routing, no wasm crossing.
    */
   update(
     snap: Snapshot,
     electrical?: Map<number, ElectricalState>,
     running = true,
+    scopeBatch?: SubFrameSample[],
   ): void {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
@@ -591,7 +626,7 @@ export class Board {
       );
     }
 
-    this.recordScope(snap);
+    this.recordScope(snap, scopeBatch);
     this.drawScope();
     this.drawProbe();
     this.emitAnchor();
@@ -1485,14 +1520,17 @@ export class Board {
       const color = v === null ? PALETTE.cyan : voltageColor(v);
 
       const cur = currents.get(w.id) ?? 0;
-      const normC = saturate(Math.abs(cur) / 0.01);
-      const width = 1.6 + 3.4 * normC; // thickness tracks the branch current
+      const normC = saturate(Math.abs(cur) / I_REF);
+      // Thickness tracks current over a wide range so amperage is legible at a
+      // glance (bounded by the saturating normC — a huge current stays on-screen).
+      const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
       polyline(g, route);
       g.stroke({ width: width + 4, color, alpha: 0.16 });
       polyline(g, route);
       g.stroke({ width, color, alpha: 0.95 });
 
       const len = routeLength(route);
+      if (len <= 0) continue;
       const iNorm = Math.max(-1, Math.min(1, cur / I_REF));
       const vNorm = Math.max(-1, Math.min(1, (v ?? 0) / V_REF));
       // Direction factors: the SIGN of current (carriers) and of power v·i (energy),
@@ -1505,47 +1543,47 @@ export class Board {
         Math.min(1, (vNorm * iNorm) / FLOW_DIR_SAT),
       );
 
-      // Carriers (charge): chevrons that stream on DC and slosh on AC. The offset
-      // advances by the signed *direction* (not magnitude) at the constant belt
-      // rate; the arrowhead points the way it is moving.
+      // Carriers (charge): chevrons that stream on DC and slosh on AC. The offset is
+      // an ABSOLUTE arc-length in pixels, advanced by `dir · flowDelta · PX_RATE`, so
+      // pixel speed = constant (independent of trace length) — the root-cause fix.
+      // The per-frame delta is clamped so an AC reversal at high tps eases instead of
+      // jumping. Arrow size grows with current; spacing shrinks with current (so the
+      // arrows-per-pixel is constant for equal current, matching across lengths).
       if (normC > 0.02) {
-        let co =
-          (this.carrierOffset.get(w.id) ?? 0) + carrierDir * fd * CARRIER_RATE;
-        co = ((co % 1) + 1) % 1;
+        const co = advanceBeltOffset(
+          this.carrierOffset.get(w.id) ?? 0,
+          carrierDir * fd * CARRIER_PX_RATE,
+          len,
+        );
         this.carrierOffset.set(w.id, co);
-        const spacing = 40 - 28 * normC;
-        const n = Math.min(14, Math.max(1, Math.floor(len / spacing)));
+        const spacing =
+          CARRIER_SPACING_MAX -
+          (CARRIER_SPACING_MAX - CARRIER_SPACING_MIN) * normC;
+        const size =
+          CHEVRON_SIZE_MIN + (CHEVRON_SIZE_MAX - CHEVRON_SIZE_MIN) * normC;
+        const alpha = 0.32 + 0.42 * normC;
         const dir = cur >= 0 ? 1 : -1;
-        for (let i = 0; i < n; i++) {
-          const t = (i / n + co) % 1;
-          const s = sampleRoute(route, t);
-          drawChevron(
-            g,
-            s.x,
-            s.y,
-            s.dx * dir,
-            s.dy * dir,
-            color,
-            0.32 + 0.42 * normC,
-          );
+        for (const d of beltDots(len, spacing, co)) {
+          const s = sampleRouteAt(route, d);
+          drawChevron(g, s.x, s.y, s.dx * dir, s.dy * dir, color, alpha, size);
         }
       }
 
       // Energy (power): warm-orange dots. Travel follows the *sign* of power v·i at
-      // the constant belt rate, so on a resistor (v,i reverse together → product
-      // stays positive) they stream steadily to the load even while the carriers
-      // slosh; on a reactive part the sign alternates and they slosh in and back
-      // out. Density/alpha still encode how much power (|v·i|).
+      // the constant belt rate (also pixel-based), so on a resistor (v,i reverse
+      // together → product stays positive) they stream steadily to the load even
+      // while the carriers slosh; on a reactive part the sign alternates and they
+      // slosh in and back out. Density/alpha still encode how much power (|v·i|).
       const pNorm = Math.abs(vNorm * iNorm);
       if (pNorm > 0.012) {
-        let eo =
-          (this.energyOffset.get(w.id) ?? 0) + energyDir * fd * ENERGY_RATE;
-        eo = ((eo % 1) + 1) % 1;
+        const eo = advanceBeltOffset(
+          this.energyOffset.get(w.id) ?? 0,
+          energyDir * fd * ENERGY_PX_RATE,
+          len,
+        );
         this.energyOffset.set(w.id, eo);
-        const m = Math.min(10, Math.max(1, Math.floor(len / 34)));
-        for (let j = 0; j < m; j++) {
-          const t = (j / m + eo) % 1;
-          const s = sampleRoute(route, t);
+        for (const d of beltDots(len, ENERGY_SPACING, eo)) {
+          const s = sampleRouteAt(route, d);
           g.circle(s.x, s.y, 2.4).fill({
             color: ENERGY_COLOR,
             alpha: 0.5 + 0.4 * pNorm,
@@ -1840,16 +1878,20 @@ export class Board {
 
   // --- scope widget (screen-space overlay) --------------------------------
 
-  /** Record one scope sample per advancing tick; track the displayed cursor. */
-  private recordScope(snap: Snapshot): void {
+  /**
+   * Record scope samples and track the displayed cursor. When the frame stepped
+   * several ticks, `batch` carries each one (downsampled in the loop) so the scope
+   * records at sub-frame resolution and AC charts cleanly at high ticks-per-second
+   * instead of aliasing on one-sample-per-frame. Paused/scrubbing frames pass no
+   * batch and record the single displayed snapshot. Either way the cursor is set
+   * to the displayed tick afterward.
+   */
+  private recordScope(snap: Snapshot, batch?: SubFrameSample[]): void {
     const tick = Number(snap.tick);
-    const last = this.scopeSamples[this.scopeSamples.length - 1];
-    if (!last || tick > last.tick) {
-      this.scopeSamples.push({ tick, values: Array.from(snap.state) });
-      if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
-    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
-      // Scrubbed before the retained window (or the run was reset): start over.
-      this.scopeSamples = [{ tick, values: Array.from(snap.state) }];
+    if (batch && batch.length > 0) {
+      for (const s of batch) this.pushScopeSample(s.tick, s.state);
+    } else {
+      this.pushScopeSample(tick, snap.state);
     }
     let idx = this.scopeSamples.length - 1;
     for (let i = this.scopeSamples.length - 1; i >= 0; i--) {
@@ -1859,6 +1901,19 @@ export class Board {
       }
     }
     this.scopeCursor = idx;
+  }
+
+  /** Append one scope sample for an advancing tick (or restart the window if the
+   * timeline jumped before it, e.g. a scrub-back or reset). */
+  private pushScopeSample(tick: number, state: ArrayLike<number>): void {
+    const last = this.scopeSamples[this.scopeSamples.length - 1];
+    if (!last || tick > last.tick) {
+      this.scopeSamples.push({ tick, values: Array.from(state) });
+      if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
+    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
+      // Scrubbed before the retained window (or the run was reset): start over.
+      this.scopeSamples = [{ tick, values: Array.from(state) }];
+    }
   }
 
   private scopeRect(): Rectangle {
@@ -2254,9 +2309,51 @@ function routeLength(pts: Point[]): number {
   return len;
 }
 
+/**
+ * Advance a belt's absolute arc-length offset (pixels) by `delta`, clamping the
+ * per-frame step so an AC reversal at high tps stays a smooth slosh instead of a
+ * jump, then wrap into `[0, len)`. Pixel speed is `|delta|` and is independent of
+ * `len`, so equal-current traces flow at the same on-screen speed at any length.
+ */
+function advanceBeltOffset(offset: number, delta: number, len: number): number {
+  const step = Math.max(
+    -MAX_FLOW_PX_PER_FRAME,
+    Math.min(MAX_FLOW_PX_PER_FRAME, delta),
+  );
+  const next = offset + step;
+  return ((next % len) + len) % len;
+}
+
+/**
+ * Absolute arc-length positions (px) of belt dots along a trace of length `len`,
+ * at the given pixel `spacing` and arc-length `offset`. Spacing is the spacing the
+ * current asks for, so equal-current segments draw the same arrows-per-pixel at any
+ * length (constant density). If that would exceed `MAX_BELT_DOTS` (a very long, high-
+ * current trace) the spacing is stretched to spread exactly the cap evenly over the
+ * whole belt — density degrades gracefully instead of leaving the tail bare, and the
+ * graphics count stays bounded. Positions wrap through `offset` so the belt scrolls.
+ */
+function beltDots(len: number, spacing: number, offset: number): number[] {
+  const want = Math.max(1, Math.ceil(len / spacing));
+  const n = Math.min(MAX_BELT_DOTS, want);
+  const step = n >= want ? spacing : len / n; // stretch only when capped
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) out.push((i * step + offset) % len);
+  return out;
+}
+
 /** Position + unit direction at fraction `t` of a polyline's arc length. */
 function sampleRoute(pts: Point[], t: number): RouteSample {
-  let target = t * routeLength(pts);
+  return sampleRouteAt(pts, t * routeLength(pts));
+}
+
+/**
+ * Position + unit direction at an absolute arc-length `dist` (in pixels) along a
+ * polyline. Belt dots are placed by absolute distance — not a route fraction — so
+ * a given current draws the same on-screen spacing and speed at every trace length.
+ */
+function sampleRouteAt(pts: Point[], dist: number): RouteSample {
+  let target = dist;
   for (let i = 0; i + 1 < pts.length; i++) {
     const p0 = pts[i]!;
     const p1 = pts[i + 1]!;
@@ -2284,7 +2381,12 @@ function sampleRoute(pts: Point[], t: number): RouteSample {
   };
 }
 
-/** A flow chevron (arrowhead) at (x,y) pointing along (dx,dy). */
+/**
+ * A flow chevron (arrowhead) at (x,y) pointing along (dx,dy). `size` is the
+ * arrowhead half-length in pixels — it scales with current so amperage reads as
+ * bigger arrows (never as faster ones); the stroke width tracks it so the glyph
+ * stays proportioned. Defaults preserve the previous fixed size.
+ */
 function drawChevron(
   g: Graphics,
   x: number,
@@ -2293,19 +2395,20 @@ function drawChevron(
   dy: number,
   color: number,
   alpha: number,
+  size = 4,
 ): void {
   const len = Math.hypot(dx, dy) || 1;
   const ux = dx / len;
   const uy = dy / len;
   const px = -uy;
   const py = ux;
-  const s = 4;
+  const s = size;
   const bx = x - ux * s;
   const by = y - uy * s;
   g.moveTo(bx + px * s, by + py * s)
     .lineTo(x, y)
     .lineTo(bx - px * s, by - py * s);
-  g.stroke({ width: 2, color, alpha });
+  g.stroke({ width: Math.max(2, s * 0.5), color, alpha });
 }
 
 function lerpColor(a: number, b: number, t: number): number {
