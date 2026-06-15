@@ -739,6 +739,105 @@ function drawPM(g: Graphics, o: GlyphOpts): void {
   mosfetSchematic(g, o, false);
 }
 
+// --- BJT (3-terminal bipolar) -------------------------------------------------
+// Pins are ordered C, E, B: pin 0 = Collector (top), pin 1 = Emitter (bottom),
+// pin 2 = Base (left). `electrical.current` is Ic oriented a→b = collector→emitter;
+// `electrical.vAcross` is Vce. The schematic draws the standard BJT symbol — a
+// vertical base bar with the collector and emitter leads springing off it at an
+// angle, and the emitter carrying the polarity arrow (out of the base for NPN,
+// into it for PNP). The collector→emitter conduction is animated: magnitude rides
+// density + alpha + glow (never speed), and it visibly chokes off in cutoff.
+//
+// `npn` flips the emitter arrow (NPN points *out* away from the base, PNP points
+// *in* toward it) — the one mark that distinguishes the two polarities.
+function bjtSchematic(g: Graphics, o: GlyphOpts, npn: boolean): void {
+  const c = o.pins[0];
+  const e = o.pins[1];
+  const base = o.pins[2];
+  if (!c || !e || !base) return;
+  // The base bar is a short vertical line; the collector and emitter leads meet it
+  // at a single junction point partway up the bar, springing away toward their pins.
+  const barx = (Math.min(c.x, e.x) + base.x) / 2 + 4; // base bar x, set off from the base pin
+  const topY = Math.min(c.y, e.y) + 6;
+  const botY = Math.max(c.y, e.y) - 6;
+  const midY = (topY + botY) / 2;
+  const barH = 7; // half-height of the base bar
+  const jx = barx; // the bar is at the junction x
+  const jTop = midY - barH;
+  const jBot = midY + barH;
+
+  // |Ic| drives the conduction; its sign the flow direction. Cutoff (≈0 current)
+  // reads as a dim, choked device.
+  const cond = norm(o.electrical.current, CUR_SCALE);
+  const on = cond > 0.03;
+  if (on) {
+    g.roundRect(barx - 3, topY - 4, c.x - barx + 8, botY - topY + 8, 4).fill({
+      color: o.color,
+      alpha: 0.16 * cond,
+    });
+  }
+
+  // Base lead in to the middle of the bar.
+  g.moveTo(base.x, base.y)
+    .lineTo(barx - 5, base.y)
+    .lineTo(barx - 5, midY);
+  g.moveTo(barx - 5, midY).lineTo(jx, midY);
+  // Collector lead: from its pin down to a spur, then angling in to the bar's top.
+  g.moveTo(c.x, c.y).lineTo(c.x, topY).lineTo(jx, jTop);
+  // Emitter lead: from the bar's bottom angling out to its pin's spur, then down.
+  g.moveTo(jx, jBot).lineTo(e.x, botY).lineTo(e.x, e.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The base bar itself — the thick vertical electrode the leads spring off.
+  g.moveTo(barx, midY - barH).lineTo(barx, midY + barH);
+  g.stroke({ width: 2.8, color: o.color, alpha: 0.95 });
+
+  // The emitter arrow — the polarity mark. NPN points OUT (away from the bar,
+  // toward the emitter pin); PNP points IN (toward the bar). It sits on the
+  // emitter lead just off the bar.
+  const ah = 3.4;
+  // A point a short way along the emitter lead from the junction (jx,jBot) toward
+  // the emitter spur (e.x, botY).
+  const ex = e.x;
+  const ey = botY;
+  const dx = ex - jx;
+  const dy = ey - jBot;
+  const len = Math.hypot(dx, dy) || 1;
+  const ux = dx / len;
+  const uy = dy / len;
+  if (npn) {
+    // Arrowhead near the emitter end, pointing OUT along the lead (away from bar).
+    const px = jx + dx * 0.62;
+    const py = jBot + dy * 0.62;
+    g.moveTo(px, py)
+      .lineTo(px - ah * ux + ah * uy, py - ah * uy - ah * ux)
+      .moveTo(px, py)
+      .lineTo(px - ah * ux - ah * uy, py - ah * uy + ah * ux);
+  } else {
+    // Arrowhead near the bar, pointing IN toward the bar (back up the lead).
+    const px = jx + dx * 0.38;
+    const py = jBot + dy * 0.38;
+    g.moveTo(px, py)
+      .lineTo(px + ah * ux + ah * uy, py + ah * uy - ah * ux)
+      .moveTo(px, py)
+      .lineTo(px + ah * ux - ah * uy, py + ah * uy + ah * ux);
+  }
+  g.stroke({ width: 2, color: o.color, alpha: 0.9 });
+
+  // The collector→emitter conduction belt: flowing dots along the C and E leads,
+  // fed the SIGNED collector current so it reverses with Ic and vanishes in cutoff.
+  flow(g, c.x, topY, jx, jTop, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, jx, jBot, e.x, botY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawQ(g: Graphics, o: GlyphOpts): void {
+  bjtSchematic(g, o, true);
+}
+
+function drawQP(g: Graphics, o: GlyphOpts): void {
+  bjtSchematic(g, o, false);
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -1189,6 +1288,97 @@ function drawFPM(g: Graphics, o: GlyphOpts): void {
   mosfetFactory(g, o, false);
 }
 
+// The BJT as a Factorio current-gain assembler / valve: a THIN base control belt
+// (from pin 2) trickles in a small metering current that throws open a FAT
+// collector→emitter MAIN belt (pin 0 → pin 1). The main belt's thickness + flow
+// density track |Ic| — and crucially they dwarf the thin base belt, the visible
+// "small base current commands a large collector current" lesson. The valve chokes
+// shut when the base isn't driven. All motion rides the bounded `o.phase` clock —
+// magnitude is width/density/alpha, never speed. `npn` flips a small intake marker
+// so the two polarities read apart.
+function bjtFactory(g: Graphics, o: GlyphOpts, npn: boolean): void {
+  const c = o.pins[0];
+  const e = o.pins[1];
+  const base = o.pins[2];
+  if (!c || !e || !base) return;
+  const mx = (c.x + e.x) / 2;
+  const hw = 11;
+  const topY = Math.min(c.y, e.y) + 6;
+  const botY = Math.max(c.y, e.y) - 6;
+  const my = (topY + botY) / 2;
+
+  // |Ic| drives the main belt; near-zero current = choked valve. The base's job is
+  // shown by a thin metering trickle that's always running on the bounded clock.
+  const cond = norm(o.electrical.current, CUR_SCALE);
+  const open = cond; // 0 = shut, 1 = wide open
+  // The recovered base drive: a small fraction of the collector current (Ic ≈
+  // β·Ib), so the base belt reads as a thin trickle next to the fat main belt.
+  const baseDrive = 0.15 + 0.25 * open;
+
+  // Collector lead in at the top, emitter lead out at the bottom, base lead from
+  // the left into the control box.
+  g.moveTo(c.x, c.y).lineTo(c.x, topY);
+  g.moveTo(e.x, e.y).lineTo(e.x, botY);
+  g.moveTo(base.x, base.y).lineTo(mx - hw, base.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The assembler body.
+  fBox(g, mx, my, hw, (botY - topY) / 2 + 2, o.color);
+
+  // The FAT main belt down the middle: its width grows with how far the valve is
+  // open (a thin choked throat in cutoff, a wide channel when conducting).
+  const beltW = 2 + 8 * open;
+  if (open > 0.02) {
+    g.roundRect(mx - beltW / 2, topY, beltW, botY - topY, 2).fill({
+      color: o.color,
+      alpha: 0.22 + 0.3 * open,
+    });
+  } else {
+    // choked shut: just a hairline throat
+    g.moveTo(mx, topY).lineTo(mx, botY).stroke({
+      width: 1.4,
+      color: 0x9c93b8,
+      alpha: 0.6,
+    });
+  }
+
+  // The base metering gate on the left wall: a small sluice that lifts a touch with
+  // the base drive — its modest motion against the fat belt is the gain lesson.
+  const lift = 3 * baseDrive;
+  g.moveTo(mx - hw + 1, my + 3)
+    .lineTo(mx - hw + 5, my + 3 - lift)
+    .stroke({ width: 1.6, color: o.color, alpha: 0.5 + 0.4 * open });
+  // The THIN base control belt: a couple of dots trickling in along the base lead.
+  // The base belt always ticks on the bounded clock (it's the metering signal),
+  // and stays sparse/dim — a small current commanding the large main belt.
+  for (let i = 0; i < 2; i++) {
+    const t = (((i / 2 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+    g.circle(base.x + (mx - hw - base.x) * t, base.y, 1.3).fill({
+      color: o.color,
+      alpha: 0.35 + 0.2 * baseDrive,
+    });
+  }
+
+  // A small intake marker that differs by polarity (NPN sinks from the top
+  // collector rail, PNP sources from it) — a faint cue, not load-bearing.
+  g.circle(mx, npn ? topY + 2 : botY - 2, 1.6).fill({
+    color: o.color,
+    alpha: 0.5,
+  });
+
+  // The main collector→emitter flow, signed so it reverses with Ic and dies in
+  // cutoff — the fat belt that the thin base trickle commands.
+  flow(g, mx, topY, mx, botY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawFQ(g: Graphics, o: GlyphOpts): void {
+  bjtFactory(g, o, true);
+}
+
+function drawFQP(g: Graphics, o: GlyphOpts): void {
+  bjtFactory(g, o, false);
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -1223,6 +1413,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   SW: drawSW,
   NM: drawNM,
   PM: drawPM,
+  Q: drawQ,
+  QP: drawQP,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -1241,6 +1433,8 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   SW: drawFSW,
   NM: drawFNM,
   PM: drawFPM,
+  Q: drawFQ,
+  QP: drawFQP,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */

@@ -967,6 +967,195 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  // ── BJT (bipolar transistor) track ──────────────────────────────────────
+  // The NPN is kind "Q", the PNP "QP"; both are 3-pin parts ordered C, E, B —
+  // pin 0 = Collector, pin 1 = Emitter, pin 2 = Base — matching the Ebers-Moll
+  // core (main current a→b = collector→emitter, β ≈ 100). A small base current
+  // controls a much larger collector current; the base-emitter junction has to
+  // clear its ~0.6–0.7 V knee before any of it flows.
+  {
+    id: "bjt-switch",
+    name: "Transistor as a Switch",
+    blurb:
+      "A small base current switches a much larger load current. A logic source drives the NPN's base through a base resistor; that tiny base current (β ≈ 100 times smaller than the load) is enough to turn the transistor full on, completing the loop so the LED lights. Drop the base drive to 0 V and the transistor cuts off — no base current, no collector current, the LED dark. The β-makes-a-switch idea: a milliamp of base commands tens of milliamps of load.",
+    watch:
+      "the LED light while the base is driven high and the NPN pulls its collector down near 0 V (a closed switch, saturated). Flip the base low and watch it snap off — cutoff, no current. The base resistor passes only a fraction of a milliamp, yet it controls the whole ~18 mA load.",
+    build() {
+      // VDD → R (LED current-limit) → LED → NPN.collector ; NPN.emitter → GND ; a
+      // base source Vb drives the base through RB. Base HIGH (5 V) → Ib ≈
+      // (5 − 0.7)/10k ≈ 0.43 mA, and β·Ib ≈ 43 mA far exceeds what the LED branch
+      // can pass, so the NPN saturates: the LED lights at ~18 mA and the collector
+      // bottoms out near 0.1 V (a closed switch). The LED makes the loop nonlinear;
+      // the NPN adds the Ebers-Moll Newton path.
+      //   nets: N1 = VDD+ = R.A ; N2 = R.B = LED.A ; N3 = LED.K = Q.collector ;
+      //         GND(0) = Q.emitter = VDD− = Vb− ; NB = RB.B = Q.base ; NG = Vb+ = RB.A.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // vertical 5 V rail, + at top
+      const r = comp(g, "R", 2, 0, 150); // LED current-limit
+      const led = comp(g, "LED", 6, 0, 0); // the switched load
+      const q = comp(g, "Q", 10, 0, 0, 0); // low-side NPN switch (C top, E bottom)
+      const rb = comp(g, "R", 6, 4, 10000); // base resistor (sets the base current)
+      const vb = comp(g, "V", 2, 6, 5); // the base drive (HIGH = on)
+      const gnd = comp(g, "GND", 10, 6, 0);
+      wire(g, vdd, 0, r, 0); // VDD+ → R.A
+      wire(g, r, 1, led, 0); // R.B → LED.A
+      wire(g, led, 1, q, 0); // LED.K → Q.collector (pin 0)
+      wire(g, q, 1, gnd, 0); // Q.emitter (pin 1) → GND
+      wire(g, vb, 0, rb, 0); // Vb+ → RB.A
+      wire(g, rb, 1, q, 2); // RB.B → Q.base (pin 2)
+      wire(g, vb, 1, gnd, 0); // Vb− → GND
+      wire(g, vdd, 1, gnd, 0); // VDD− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V), a series Resistor (R, ~150 Ω), and an LED — the load that will switch.",
+        why: "This is the load branch the transistor will make or break. The resistor limits the LED current once the loop is completed.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Place an NPN Transistor (Q) below the LED, a base Resistor (R, ~10 kΩ), a second Voltage Source (V) for the base drive, and a Ground. Wire VDD+ → R → LED → COLLECTOR, EMITTER → GND, base drive → base resistor → BASE, and both source −'s → GND. Set the base drive to 5 V and press Run.",
+        why: "The base resistor passes a small base current — under half a milliamp — once the base-emitter junction clears ~0.7 V. With β ≈ 100 that's enough to turn the transistor full on: watch the LED light and the collector drop near 0 V (saturated, a closed switch) while ~18 mA flows. The base current is a fraction of the load.",
+        done: (p) => at(p, "Q") >= 1 && at(p, "V") >= 2 && p.complete,
+      },
+      {
+        do: "Select the base-drive source and set it to 0 V (or use the toggle below).",
+        why: "Now the base sits at 0 V: the base-emitter junction is below its knee, no base current flows, so no collector current can flow either — cutoff. The LED goes dark. A milliamp of base commanded the whole load, and removing it shuts everything off.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Base high / low",
+      on: "Base HIGH (5 V) — a small base current turns the NPN full on, the loop closes and the LED lights.",
+      off: "Base LOW (0 V) — below the ~0.7 V knee, no base current: the transistor cuts off, the LED is dark.",
+      alt() {
+        // Same board, but the base drive is 0 V: Vbe < knee → cutoff, LED off.
+        const g = new BoardGraph();
+        const vdd = comp(g, "V", 0, 0, 5, 1);
+        const r = comp(g, "R", 2, 0, 150);
+        const led = comp(g, "LED", 6, 0, 0);
+        const q = comp(g, "Q", 10, 0, 0, 0);
+        const rb = comp(g, "R", 6, 4, 10000);
+        const vb = comp(g, "V", 2, 6, 0); // base driven LOW
+        const gnd = comp(g, "GND", 10, 6, 0);
+        wire(g, vdd, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, q, 0);
+        wire(g, q, 1, gnd, 0);
+        wire(g, vb, 0, rb, 0);
+        wire(g, rb, 1, q, 2);
+        wire(g, vb, 1, gnd, 0);
+        wire(g, vdd, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "bjt-ce-amp",
+    name: "Common-Emitter Amplifier",
+    blurb:
+      "An NPN biased in its active region, with a collector resistor, makes a voltage amplifier. A bias current into the base sets a steady collector current (Ic ≈ β·Ib); the collector resistor turns that current into a voltage, parking the collector partway down the rail. Nudge the base a little and the collector swings much harder — and inverts: more base drive means more collector current, which pulls the collector down. That gain is what a transistor is for.",
+    watch:
+      "the collector settle around 6 V — partway down the 12 V rail, not slammed to either end — because the NPN is steadily sinking ~1.3 mA through the 4.7 kΩ collector resistor. Nudge the base bias up a little and watch the collector swing down much further: a small base change, a large inverted collector change. That ratio is the voltage gain.",
+    build() {
+      // The textbook common-emitter stage, biased in the active region:
+      //   VCC(12 V) → RC(4.7 kΩ) → Q.collector (the output) ; Q.emitter → GND ;
+      //   base bias Vbb(2 V) → RB(100 kΩ) → Q.base ; all −'s → GND.
+      //   nets: N1 = VCC+ = RC.A ; OUT = RC.B = Q.collector ;
+      //         GND(0) = Q.emitter = VCC− = Vbb− ; NB = RB.B = Q.base ; NG = Vbb+ = RB.A.
+      // Hand-check: Ib ≈ (Vbb − Vbe)/RB ≈ (2 − 0.7)/100k ≈ 13 µA, so with β ≈ 100,
+      // Ic ≈ β·Ib ≈ 1.3 mA and Vce = 12 − Ic·4.7k ≈ 12 − 6.1 ≈ 5.9 V — the
+      // collector parks mid-rail, the bias point an amplifier swings around. The
+      // small-signal gain is −gm·RC with gm = Ic/Vt ≈ 0.05 S, so ≈ −235 (inverting),
+      // limited in practice by the headroom. Nonlinear → the BJT Newton path runs.
+      const g = new BoardGraph();
+      const vcc = comp(g, "V", 0, 0, 12, 1); // vertical 12 V rail, + at top
+      const rc = comp(g, "R", 2, 0, 4700); // collector resistor (the load)
+      const q = comp(g, "Q", 6, 0, 0, 0); // common-emitter device
+      const rb = comp(g, "R", 6, 4, 100000); // base bias resistor
+      const vbb = comp(g, "V", 10, 6, 2); // the base bias (2 V → active region)
+      const gnd = comp(g, "GND", 6, 8, 0);
+      wire(g, vcc, 0, rc, 0); // VCC+ → RC.A
+      wire(g, rc, 1, q, 0); // RC.B → Q.collector (pin 0) — the output node
+      wire(g, q, 1, gnd, 0); // Q.emitter (pin 1) → GND
+      wire(g, vbb, 0, rb, 0); // Vbb+ → RB.A
+      wire(g, rb, 1, q, 2); // RB.B → Q.base (pin 2)
+      wire(g, vbb, 1, gnd, 0); // Vbb− → GND
+      wire(g, vcc, 1, gnd, 0); // VCC− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 12 V) for the rail and a collector Resistor (R, ~4.7 kΩ).",
+        why: "The collector resistor is what converts the transistor's collector current back into an output voltage — no collector load, no voltage gain.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place an NPN Transistor (Q), a base Resistor (R, ~100 kΩ), a second Voltage Source (V) for the base bias, and a Ground. Wire VCC+ → RC → COLLECTOR, EMITTER → GND, base bias → base resistor → BASE, and both source −'s → GND. Set the base bias to ~2 V and press Run.",
+        why: "The base resistor trickles ~13 µA into the base; with β ≈ 100 that sets ~1.3 mA of collector current. Watch the collector settle around 6 V — pulled partway down the rail because the transistor is steadily sinking that current through RC. That mid-rail point is the bias an amplifier swings around.",
+        done: (p) => at(p, "Q") >= 1 && at(p, "V") >= 2 && p.complete,
+      },
+      {
+        do: "Select the base-bias source and nudge its voltage up a little, then back down.",
+        why: "A small base change moves the base current, β multiplies it into a much larger collector-current change, and RC turns that into a big, inverted voltage swing at the collector — the gain is roughly −gm·RC. A little push on the base, a big swing at the collector: that's amplification.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "bjt-mirror",
+    name: "Current Mirror",
+    blurb:
+      "Two matched NPNs sharing one base node copy a current. The left transistor is diode-connected (its base tied to its collector) so a reference resistor sets a known current through it; because the two transistors share the same base-emitter voltage and are identical, the right transistor is forced to carry that same current — mirrored into its own branch, almost regardless of its load. It's the workhorse bias block of every analog chip, and the moment where matching matters.",
+    watch:
+      "both branches carry the same current. The reference branch sets ~0.9 mA through its resistor; watch the output branch mirror it — the same ~0.9 mA — so its collector node sits at the same height. The shared base node settles at one diode drop (~0.7 V), the Vbe both transistors obey.",
+    build() {
+      // A two-NPN current mirror. The reference NPN is diode-connected (base tied
+      // to its own collector) so Rref sets Iref; the shared base node forces the
+      // output NPN to the same Vbe, mirroring the current into the Rload branch.
+      //   ref:  N1 = VCC+ = Rref.A = Rload.A ; REF = Rref.B = Q1.collector = Q1.base
+      //         = Q2.base ; GND(0) = Q1.emitter = Q2.emitter = VCC−.
+      //   out:  OUT = Rload.B = Q2.collector.
+      // Hand-check: Iref ≈ (VCC − Vbe)/Rref ≈ (5 − 0.7)/4.7k ≈ 0.91 mA. Matched
+      // transistors share Vbe, so Iout ≈ Iref ≈ 0.91 mA and OUT ≈ 5 − Iout·4.7k ≈
+      // 0.7 V. (A little base current is skimmed off the reference — the classic
+      // mirror error — so Iout is a hair under Iref.) Nonlinear → the BJT Newton path.
+      const g = new BoardGraph();
+      const vcc = comp(g, "V", 0, 0, 5, 1); // vertical 5 V rail, + at top
+      const rref = comp(g, "R", 2, 0, 4700); // reference resistor (sets Iref)
+      const rload = comp(g, "R", 8, 0, 4700); // output-branch load resistor
+      const q1 = comp(g, "Q", 4, 4, 0, 0); // reference NPN (diode-connected)
+      const q2 = comp(g, "Q", 8, 4, 0, 0); // output NPN (mirrors Iref)
+      const gnd = comp(g, "GND", 6, 8, 0);
+      wire(g, vcc, 0, rref, 0); // VCC+ → Rref.A
+      wire(g, vcc, 0, rload, 0); // VCC+ → Rload.A (same rail)
+      wire(g, rref, 1, q1, 0); // Rref.B → Q1.collector (pin 0) = REF node
+      wire(g, q1, 2, q1, 0); // Q1.base (pin 2) → Q1.collector (diode-connected)
+      wire(g, q1, 2, q2, 2); // Q1.base → Q2.base (the shared mirror node)
+      wire(g, rload, 1, q2, 0); // Rload.B → Q2.collector (pin 0) = OUT node
+      wire(g, q1, 1, gnd, 0); // Q1.emitter (pin 1) → GND
+      wire(g, q2, 1, gnd, 0); // Q2.emitter (pin 1) → GND
+      wire(g, vcc, 1, gnd, 0); // VCC− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V) and a reference Resistor (R, ~4.7 kΩ).",
+        why: "The reference resistor is what sets the current we're going to copy — (VCC − 0.7 V)/R, about 0.9 mA.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place the reference NPN (Q) and wire it diode-connected: Rref → its COLLECTOR, its BASE tied to that same collector, its EMITTER → GND, and VCC− → GND. Run.",
+        why: "Tying the base to the collector turns the transistor into a diode that the resistor drives — it pins the shared base node at one Vbe (~0.7 V) and sets the reference current. This is the template the second transistor will copy.",
+        done: (p) => at(p, "Q") >= 1 && at(p, "R") >= 1 && p.wires >= 4,
+      },
+      {
+        do: "Place the output NPN (Q) and a load Resistor (R, ~4.7 kΩ): VCC → Rload → its COLLECTOR, its EMITTER → GND, and its BASE wired to the FIRST transistor's base (the shared node). Run again.",
+        why: "Both transistors now share the same Vbe — and being matched, the same Vbe means the same current. Watch the output branch carry the same ~0.9 mA as the reference, mirrored across with no direct connection but the shared base. Matching is everything: if the two devices differ, so do the currents.",
+        done: (p) => at(p, "Q") >= 2 && at(p, "R") >= 2 && p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -1574,6 +1763,9 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "pwm-average": "Power & Switching",
   "mosfet-switch": "Power & Switching",
   "mosfet-cs-amp": "Power & Switching",
+  "bjt-switch": "Power & Switching",
+  "bjt-ce-amp": "Power & Switching",
+  "bjt-mirror": "Power & Switching",
   "ac-resistor": "AC Fundamentals",
   "ac-rms": "AC Fundamentals",
   "ac-cap": "Reactance",

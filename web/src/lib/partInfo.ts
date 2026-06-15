@@ -67,6 +67,25 @@ function mosfetRegion(e: ElectricalState): "cutoff" | "triode" | "saturation" {
   return Math.abs(e.vAcross) >= vov ? "saturation" : "triode";
 }
 
+// BJT forward current gain, mirrored from crates/sim-core/src/lib.rs (BJT_BF).
+// The base node isn't exposed to the inspector, so Ib is unknown directly; but in
+// the active region Ic ≈ β·Ib, so the recovered base current is Ic/β — enough to
+// state the gain that turned a small base current into the measured Ic.
+const BJT_BF = 100; // β
+
+/**
+ * The operating region named from what the inspector can see: the collector
+ * current Ic and the collector-emitter voltage Vce. Cutoff = no collector current
+ * (the base-emitter junction is below its ~0.6 V knee). Otherwise a small |Vce|
+ * (the device bottomed out, both junctions on) is saturation; a larger |Vce| with
+ * current flowing is the forward-active region where the current gain lives. The
+ * ~0.3 V corner mirrors the small Vce_sat the Ebers-Moll core settles at.
+ */
+function bjtRegion(e: ElectricalState): "cutoff" | "active" | "saturation" {
+  if (Math.abs(e.current) < 1e-9) return "cutoff";
+  return Math.abs(e.vAcross) < 0.3 ? "saturation" : "active";
+}
+
 export const PART_INFO: Record<string, PartInfo> = {
   R: {
     name: "Resistor",
@@ -279,6 +298,77 @@ export const PART_INFO: Record<string, PartInfo> = {
           value: f(Math.abs(e.vAcross * e.current), "W"),
         },
       ];
+    },
+  },
+  Q: {
+    name: "NPN Transistor",
+    equation: "Ic ≈ β·Ib (active) · β ≈ 100",
+    headline: (e) => {
+      const region = bjtRegion(e);
+      if (region === "cutoff")
+        return `Cutoff · off · Vce = ${f(e.vAcross, "V")}`;
+      const word = region === "saturation" ? "Saturation" : "Active";
+      return `${word} · Vce = ${f(e.vAcross, "V")} @ Ic = ${f(e.current, "A")}`;
+    },
+    plain: () =>
+      "An NPN bipolar transistor is a current-controlled valve: a small current into the base controls a much larger current from the collector to the emitter. The base-emitter junction is a diode — it has to be forward-biased past its ~0.6–0.7 V knee before anything happens at all. Below that the transistor is off (cutoff, no collector current). Once the base conducts, the device enters the forward-active region, where the collector current is the base current multiplied by the current gain β (beta, around 100 here): Ic ≈ β·Ib. That multiplication is the whole point — a tiny base current commands a collector current a hundred times bigger, which makes the BJT both an amplifier and a switch. Drive the base hard enough that the collector can't supply β·Ib (the load resistor runs out of voltage) and it saturates: both junctions conduct, the collector-emitter voltage collapses to a few tenths of a volt, and it's a closed switch. Conventional current flows collector → emitter.",
+    derived: (e) => {
+      const region = bjtRegion(e);
+      const ic = Math.abs(e.current);
+      const rows: DerivedRow[] = [
+        { label: "Collector current Ic", value: f(e.current, "A") },
+      ];
+      // The base node isn't exposed, so recover Ib from the gain in the active
+      // region (Ic ≈ β·Ib). In saturation/cutoff that relation no longer sets the
+      // current, so just state β rather than a misleading recovered Ib.
+      if (region === "active") {
+        rows.push({ label: "β = Ic/Ib", value: String(BJT_BF) });
+        rows.push({
+          label: "Base current Ib ≈ Ic/β",
+          value: f(ic / BJT_BF, "A"),
+        });
+      } else {
+        rows.push({ label: "Gain β (active region)", value: String(BJT_BF) });
+      }
+      rows.push({
+        label: "Power Vce·Ic",
+        value: f(Math.abs(e.vAcross * e.current), "W"),
+      });
+      return rows;
+    },
+  },
+  QP: {
+    name: "PNP Transistor",
+    equation: "Ic ≈ β·Ib (active) · β ≈ 100 · signs flipped",
+    headline: (e) => {
+      const region = bjtRegion(e);
+      if (region === "cutoff")
+        return `Cutoff · off · Vce = ${f(e.vAcross, "V")}`;
+      const word = region === "saturation" ? "Saturation" : "Active";
+      return `${word} · Vce = ${f(e.vAcross, "V")} @ Ic = ${f(e.current, "A")}`;
+    },
+    plain: () =>
+      "A PNP bipolar transistor is the polarity mirror of the NPN, and the natural high-side partner: it turns on when its base is pulled below the emitter by about 0.6–0.7 V (the emitter-base junction forward-biases), and current then flows emitter → collector — the opposite direction to the NPN. Tie the emitter to the positive rail and a small current pulled out of the base switches a much larger current down to the load. The same three regions apply — cutoff when the base sits at the rail, the forward-active region where the gain Ic ≈ β·Ib (β ≈ 100) holds, and saturation when it's driven hard and the collector-emitter voltage collapses — just with every voltage and current sign flipped relative to the NPN. The current gain, and the small base current that commands a large collector current, are exactly the same idea.",
+    derived: (e) => {
+      const region = bjtRegion(e);
+      const ic = Math.abs(e.current);
+      const rows: DerivedRow[] = [
+        { label: "Collector current Ic", value: f(e.current, "A") },
+      ];
+      if (region === "active") {
+        rows.push({ label: "β = Ic/Ib", value: String(BJT_BF) });
+        rows.push({
+          label: "Base current Ib ≈ Ic/β",
+          value: f(ic / BJT_BF, "A"),
+        });
+      } else {
+        rows.push({ label: "Gain β (active region)", value: String(BJT_BF) });
+      }
+      rows.push({
+        label: "Power Vce·Ic",
+        value: f(Math.abs(e.vAcross * e.current), "W"),
+      });
+      return rows;
     },
   },
   GND: {

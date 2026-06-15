@@ -180,7 +180,14 @@
     {
       tag: "Q",
       name: "NPN Transistor",
-      desc: "Gain, switching",
+      desc: "Ib controls Ic (β≈100)",
+      tier: "II",
+      color: "var(--accent)",
+    },
+    {
+      tag: "QP",
+      name: "PNP Transistor",
+      desc: "High-side current gain",
       tier: "II",
       color: "var(--accent)",
     },
@@ -241,6 +248,7 @@
     NM: "Active & Switching",
     PM: "Active & Switching",
     Q: "Active & Switching",
+    QP: "Active & Switching",
     "&": "Logic & ICs",
     FF: "Logic & ICs",
     FP: "Logic & ICs",

@@ -34,13 +34,26 @@ const TYPE_OF: Record<string, number> = {
   // leaves c = 0 (ground), where the core ignores it.
   NM: 11, // N-channel MOSFET (conducts when Vgs > +VTO ≈ 2 V)
   PM: 12, // P-channel MOSFET (the high-side mirror; conducts when Vgs < −|VTO|)
+  // The 3-terminal BJT family (Ebers-Moll, Newton solve). Pins are ordered C, E,
+  // B so the pin→terminal map matches the core exactly: pin 0 → a = Collector,
+  // pin 1 → b = Emitter, pin 2 → c = Base. Like the MOSFETs they stamp their
+  // third pin's node into the `c` array below (the base); the main current is
+  // Ic, oriented a→b = collector→emitter. A small base current controls a much
+  // larger collector current (Ic ≈ β·Ib in the active region).
+  Q: 13, // NPN BJT (conducts when the base is ~0.6–0.7 V above the emitter)
+  QP: 14, // PNP BJT (the mirror; conducts when the base is below the emitter)
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
 };
 
-/** Element types that carry a third (control/gate) terminal `c`: the MOSFETs. */
-const THREE_PIN_TYPES = new Set<number>([11, 12]);
+/**
+ * Element types that carry a third (control) terminal `c`: the MOSFETs (gate)
+ * and the BJTs (base). For all of them pin 2 → c, and that pin's node is the one
+ * stamped into the `c` array; every two-terminal element leaves c = 0 (ground),
+ * where the core ignores it.
+ */
+const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14]);
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
@@ -60,10 +73,10 @@ export interface BuiltNetlist {
   b: Uint32Array;
   /**
    * Control-terminal node per element, parallel to `a`/`b`: for a 3-pin device
-   * (a MOSFET) it is the node of its third pin (the gate); for every 2-pin
-   * element it is `0` (ground), which the core ignores. Pin→terminal convention
-   * matches the core exactly: pin 0 → a (drain), pin 1 → b (source), pin 2 → c
-   * (gate).
+   * (a MOSFET or a BJT) it is the node of its third pin (the gate / the base);
+   * for every 2-pin element it is `0` (ground), which the core ignores.
+   * Pin→terminal convention matches the core exactly: pin 0 → a (drain /
+   * collector), pin 1 → b (source / emitter), pin 2 → c (gate / base).
    */
   c: Uint32Array;
   values: Float64Array;
@@ -222,8 +235,9 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   const aArr: number[] = [];
   const bArr: number[] = [];
   // The control terminal, parallel to a/b. Pushed in lockstep with every element
-  // stamp so the arrays stay aligned; 0 (ground) for everything except a MOSFET,
-  // whose entry holds its gate node (pin 2). The core ignores c for 2-pin types.
+  // stamp so the arrays stay aligned; 0 (ground) for everything except a 3-pin
+  // device (a MOSFET or a BJT), whose entry holds its control node (pin 2 — the
+  // gate / the base). The core ignores c for 2-pin types.
   const cArr: number[] = [];
   const values: number[] = [];
   const elemOfComponent = new Map<number, number>();
@@ -260,12 +274,15 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
 
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
-    // The third terminal: a 3-pin device (a MOSFET, pins ordered D, S, G) stamps
-    // its GATE node — pin 2 → c. A 2-pin part has no third pin, so c = 0 (ground),
+    // The third terminal: a 3-pin device stamps its control node — pin 2 → c. For
+    // a MOSFET (pins ordered D, S, G) that is the GATE; for a BJT (pins ordered C,
+    // E, B) that is the BASE. A 2-pin part has no third pin, so c = 0 (ground),
     // which the core ignores. Guard on the actual pin count so only true 3-pin
-    // kinds take the gate path. (elemOfComponent maps to this element, whose
-    // current is Id oriented a→b = drain→source; nodesOfComponent = [drain, source]
-    // so vAcross reads Vds.)
+    // kinds take the control path. (elemOfComponent maps to this element: for a
+    // MOSFET its current is Id oriented a→b = drain→source and nodesOfComponent =
+    // [drain, source] so vAcross reads Vds; for a BJT its current is Ic oriented
+    // a→b = collector→emitter and nodesOfComponent = [collector, emitter] so
+    // vAcross reads Vce.)
     const nc =
       THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
@@ -316,10 +333,11 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const t = TYPE_OF[c.kind];
     if (t === undefined || t === 4) continue; // skip non-elements and I sources
     u2(na, nb);
-    // A MOSFET also pulls its gate net (pin 2 → c) into the same component: all
-    // three of its nodes participate in the topology, so a return path can run
-    // through the gate net too. (The gate draws no DC current in the model, but
-    // for the *connectivity* test it is still a real wired terminal.)
+    // A 3-pin device also pulls its control net (pin 2 → c — a MOSFET's gate or a
+    // BJT's base) into the same component: all three of its nodes participate in
+    // the topology, so a return path can run through that net too. (A MOSFET gate
+    // draws no DC current and a BJT base draws only a small one, but for the
+    // *connectivity* test the control terminal is still a real wired terminal.)
     if (THREE_PIN_TYPES.has(t) && kind.pins.length >= 3) {
       const ncc = nodeIndex.get(find(key(c.id, 2)));
       if (ncc !== undefined) u2(na, ncc);
@@ -348,9 +366,10 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     .join(",");
 
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
-  // a MOSFET's gate to a different net is recognised as a topology change and the
-  // sim is rebuilt — while a pure move (which never changes any node) still leaves
-  // the whole signature, c included, unchanged.
+  // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
+  // different net is recognised as a topology change and the sim is rebuilt —
+  // while a pure move (which never changes any node) still leaves the whole
+  // signature, c included, unchanged.
   const sig =
     nodeCount +
     "|" +
