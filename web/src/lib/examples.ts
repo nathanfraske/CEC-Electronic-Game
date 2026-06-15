@@ -97,7 +97,7 @@ export const EXAMPLES: ExampleSpec[] = [
     steps: [
       {
         do: "Place a Voltage Source (V).",
-        why: "A source is a pump — it pushes on the charges, creating a voltage: an electrical 'pressure'.",
+        why: "A source is a pump — it pushes on the charges, creating a voltage: an electrical 'pressure'. Nothing flows yet: there's no loop for current to take.",
         done: (p) => at(p, "V") >= 1,
       },
       {
@@ -106,8 +106,8 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "R") >= 1,
       },
       {
-        do: "Wire them into a loop: V+ → R → V−.",
-        why: "Current only flows in a complete loop. The moving arrows ARE the current; the wire's colour is the voltage.",
+        do: "Wire them into a loop: V+ → R → V−, then press Run.",
+        why: "Current only flows in a complete loop. Watch the arrows start moving — that IS the current — and the wire's colour drop from rail to grey across R: that's the voltage falling.",
         done: (p) => p.complete,
       },
     ],
@@ -139,23 +139,18 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "V") >= 1,
       },
       {
-        do: "Place two Resistors (R).",
-        why: "Two resistors in series will share the source voltage between them.",
+        do: "Place two Resistors (R) stacked in a column.",
+        why: "Stacked in series they'll share the source voltage; the joint between them is the tap you're setting.",
         done: (p) => at(p, "R") >= 2,
       },
       {
-        do: "Wire the source + pin to the first resistor.",
-        why: "Current leaves the source's + terminal and enters the top of the divider.",
-        done: (p) => p.wires >= 1,
-      },
-      {
-        do: "Wire the two resistors together in series.",
-        why: "Their junction is the divider's output — the node whose voltage you're setting.",
+        do: "Wire the chain: V+ → top R → bottom R, joint left open for now.",
+        why: "Current leaves V+, enters the top resistor, and lands on the middle joint — but until the bottom reaches ground there's no loop, so nothing flows yet.",
         done: (p) => p.wires >= 2,
       },
       {
-        do: "Close the loop back to the source − pin.",
-        why: "Current must return to the source; its − pin is your 0 V ground reference.",
+        do: "Ground the bottom of the chain, close to V−, and press Run.",
+        why: "Now the loop is complete: watch current flow and the middle tap settle at 3.33 V — R2 to ground is exactly what lets the rest drop across R1.",
         done: (p) => p.complete,
       },
     ],
@@ -214,13 +209,13 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "C") >= 1,
       },
       {
-        do: "Wire source + → resistor → capacitor.",
-        why: "Current flows through R to pile charge onto C — that's the RC path.",
+        do: "Wire source + → resistor → capacitor (cap node still off ground).",
+        why: "This stages the RC path: current will flow through R to pile charge onto C — but the loop isn't closed yet, so it sits idle.",
         done: (p) => p.wires >= 2,
       },
       {
-        do: "Close the loop back to the source −.",
-        why: "Completing the loop lets current flow and the capacitor charge on its curve.",
+        do: "Close the loop: cap → ground → source −, then press Run.",
+        why: "Watch the cap voltage ramp up on its curve — fast at first, then easing in — while the current fades to zero. A charged cap is an open, not a short.",
         done: (p) => p.complete,
       },
     ],
@@ -262,13 +257,13 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "L") >= 1,
       },
       {
-        do: "Wire source + → resistor → inductor.",
-        why: "Current flows through the resistor and the coil in series.",
+        do: "Wire source + → resistor → inductor (coil end still off ground).",
+        why: "This stages the series path through R and the coil — but the loop is open, so no current builds yet.",
         done: (p) => p.wires >= 2,
       },
       {
-        do: "Close the loop back to the source −.",
-        why: "Closing the loop lets current build up through the inductor.",
+        do: "Close the loop back to the source −, then press Run.",
+        why: "Watch the current ease up to 50 mA instead of snapping there — the coil fights the sudden change, then relaxes once the current is steady.",
         done: (p) => p.complete,
       },
     ],
@@ -299,23 +294,18 @@ export const EXAMPLES: ExampleSpec[] = [
     steps: [
       {
         do: "Place a Voltage Source (V).",
-        why: "One source will drive both resistors at the same time.",
+        why: "One source will drive every resistor we hang across it at the same time.",
         done: (p) => at(p, "V") >= 1,
       },
       {
-        do: "Place two Resistors (R).",
-        why: "In parallel, each resistor sees the full source voltage.",
-        done: (p) => at(p, "R") >= 2,
+        do: "Place ONE Resistor (R) and a Ground (GND); wire it across the source, then press Run.",
+        why: "A single branch first: watch its current flow and the whole supply rail carry just that one branch's draw (2.5 mA through 2 kΩ).",
+        done: (p) => at(p, "R") >= 1 && at(p, "GND") >= 1 && p.wires >= 3,
       },
       {
-        do: "Wire both resistors across the source (+ rail to − rail).",
-        why: "Equal voltage across each means their currents add up in the shared rail.",
-        done: (p) => p.wires >= 4,
-      },
-      {
-        do: "Add a Ground (GND) on the − rail.",
-        why: "Ground is the 0 V reference the node voltages are measured against.",
-        done: (p) => p.complete,
+        do: "Place a second Resistor (R) and wire it across the same two rails.",
+        why: "Both now see the full rail, so their currents add (KCL). Run again and watch the rail thicken toward the source as the sum builds, then split at each tap.",
+        done: (p) => at(p, "R") >= 2 && p.complete,
       },
     ],
   },
@@ -355,8 +345,8 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "GND") >= 1,
       },
       {
-        do: "Wire the source across the resistor, GND on one rail.",
-        why: "The forced current runs through R, and V = I·R appears across it.",
+        do: "Wire the source across the resistor with GND on one rail, then press Run.",
+        why: "Watch the current pin at exactly 5 mA while 5 V develops across R (5 mA × 1 kΩ) — push a bigger resistor in later and the current won't budge; only the voltage climbs.",
         done: (p) => p.complete,
       },
     ],
@@ -394,27 +384,26 @@ export const EXAMPLES: ExampleSpec[] = [
     steps: [
       {
         do: "Place a Voltage Source (V) — the 10 V input rail.",
-        why: "The buck steps this rail down to a lower, steady output.",
+        why: "The buck steps this rail down to a lower, steady output. We'll build it one part at a time and run it after each, so you SEE what each part does.",
         done: (p) => at(p, "V") >= 1,
       },
       {
-        do: "Place a Switch (SW) — the chopper.",
-        why: "Rapidly switching the rail on and off is how a buck moves energy in packets without wasting it as heat.",
-        done: (p) => at(p, "SW") >= 1,
+        do: "Build the forward path first: Switch (SW) → Inductor (L) → load Resistor (R) → Ground, and Vin− → Ground. Then press Run.",
+        why: "Watch the switch flick on and off and the inductor current sawtooth up while it's on — but when the switch opens, the coil's current has nowhere to go, so the switch node spikes and the current goes ragged. That missing piece is the whole point of the next step.",
+        done: (p) =>
+          at(p, "SW") >= 1 &&
+          at(p, "L") >= 1 &&
+          at(p, "R") >= 1 &&
+          p.wires >= 5,
       },
       {
-        do: "Place an Inductor (L) and a Diode (D).",
-        why: "L is the 'bucket' that scoops energy while the switch is on; D hands it to the output when the switch opens.",
-        done: (p) => at(p, "L") >= 1 && at(p, "D") >= 1,
+        do: "Add the freewheel Diode (D): cathode to the switch node, anode to ground. Run again.",
+        why: "Now when the switch opens the diode catches the coil's current and lets it freewheel to ground. Watch the spike vanish and the inductor current settle into a clean, steady sawtooth — the 'bucket' of energy is handed on instead of slamming shut.",
+        done: (p) => at(p, "D") >= 1 && p.wires >= 7,
       },
       {
-        do: "Place the output Capacitor (C) and a load Resistor (R).",
-        why: "C smooths the pulses into a steady voltage; R is what you're powering.",
-        done: (p) => at(p, "C") >= 1 && at(p, "R") >= 1,
-      },
-      {
-        do: "Add a Ground (GND) and wire the buck up.",
-        why: "Switch → inductor → output, with the diode and ground completing the freewheel path. Watch it settle to Vin × duty.",
+        do: "Add the output Capacitor (C) across the output to ground. Run once more.",
+        why: "The cap soaks up the sawtooth ripple. Watch the output stop wobbling and settle to a steady ≈ 4 V — that's 10 V × the 40% duty cycle. You've built a buck.",
         done: (p) => p.complete,
       },
     ],
@@ -466,13 +455,13 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "L") >= 1 && at(p, "C") >= 1,
       },
       {
-        do: "Wire one series loop: V+ → R → L → C → V−.",
-        why: "A single loop forces one shared current through all three; L and C set the pitch, R the decay.",
+        do: "Wire one series loop: V+ → R → L → C → V− (cap still off ground).",
+        why: "A single loop forces one shared current through all three; L and C will set the pitch, R the decay. It stays quiet until the loop reaches ground.",
         done: (p) => p.wires >= 4,
       },
       {
-        do: "Add a Ground (GND) on the bottom rail.",
-        why: "Ground is the 0 V reference the ringing cap voltage is measured against.",
+        do: "Add a Ground (GND) to close the loop, then press Run.",
+        why: "Watch the scope draw a damped sine: V(cap) overshoots 5 V, swings back, and rings down over a few cycles as the small resistance bleeds the energy away.",
         done: (p) => p.complete,
       },
     ],
@@ -517,24 +506,14 @@ export const EXAMPLES: ExampleSpec[] = [
         done: (p) => at(p, "V") >= 1,
       },
       {
-        do: "Place a Switch (SW) and set a 30% duty.",
-        why: "On 30% of the time, off 70%: the rail spends most of each cycle disconnected, so its average drops.",
-        done: (p) => at(p, "SW") >= 1,
+        do: "Place a Switch (SW, 30% duty) and a pull-down Resistor (R) with a Ground. Wire Vin+ → SW → node → R → GND, and Vin− → GND. Then press Run.",
+        why: "On 30% of the time, off 70%. With the pull-down yanking the node low whenever the switch opens, watch that node slam cleanly between 10 V and 0 V — a square wave, not yet smoothed.",
+        done: (p) => at(p, "SW") >= 1 && at(p, "R") >= 1 && p.wires >= 4,
       },
       {
-        do: "Place two Resistors (R) and a Capacitor (C).",
-        why: "One resistor pulls the switch node down when it opens; the other plus the cap form the smoothing low-pass.",
-        done: (p) => at(p, "R") >= 2 && at(p, "C") >= 1,
-      },
-      {
-        do: "Wire SW → node, pull-down to ground, then R → C to the output.",
-        why: "The switch node becomes a clean square wave; the RC averages it to a steady level.",
-        done: (p) => p.wires >= 5,
-      },
-      {
-        do: "Add a Ground (GND) and finish the rails.",
-        why: "Ground references the output and completes the pull-down path. Watch it settle near duty × Vin.",
-        done: (p) => p.complete,
+        do: "Add the smoothing low-pass: a second Resistor (R) from the node into a Capacitor (C) to ground. Run again.",
+        why: "The RC averages the choppy square wave. Watch the output stop slamming and hold near 3 V (30% of 10 V) with just a little ripple riding on top.",
+        done: (p) => at(p, "R") >= 2 && at(p, "C") >= 1 && p.complete,
       },
     ],
   },
@@ -566,28 +545,23 @@ export const EXAMPLES: ExampleSpec[] = [
     },
     steps: [
       {
-        do: "Place a Voltage Source (V).",
-        why: "The 5 V rail is what tries to drive the node high.",
-        done: (p) => at(p, "V") >= 1,
+        do: "Place a Voltage Source (V) and a Resistor (R).",
+        why: "The 5 V rail tries to drive the node high; R limits the current into the diode so the clamp can't draw an unbounded spike.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
       },
       {
-        do: "Place a Resistor (R).",
-        why: "It limits the current into the diode so the clamp can't draw an unbounded spike.",
-        done: (p) => at(p, "R") >= 1,
+        do: "Place a Diode (D) and a Ground (GND). Wire V+ → R → node → diode anode, and V− → GND — but leave the diode's cathode OPEN. Then press Run.",
+        why: "With the diode's far end dangling, no current flows through it: watch the node float all the way up to the full 5 V rail. Nothing is holding it back yet.",
+        done: (p) =>
+          at(p, "V") >= 1 &&
+          at(p, "R") >= 1 &&
+          at(p, "D") >= 1 &&
+          at(p, "GND") >= 1 &&
+          p.wires >= 3,
       },
       {
-        do: "Place a Diode (D).",
-        why: "The diode is a one-way valve with a ~0.6 V threshold — that threshold is the clamp level.",
-        done: (p) => at(p, "D") >= 1,
-      },
-      {
-        do: "Wire V+ → R → node, then the diode from the node down to ground.",
-        why: "The diode shunts everything above its forward drop to ground, pinning the node there.",
-        done: (p) => p.wires >= 3,
-      },
-      {
-        do: "Add a Ground (GND) for the diode's cathode and the reference.",
-        why: "Ground is both the clamp target and the 0 V the node is measured against.",
+        do: "Now wire the diode's cathode down to ground, and Run again.",
+        why: "The diode is a one-way valve: above ~0.6 V it conducts hard and shunts the rest to ground. Watch the node snap down from 5 V and pin near 0.6 V while ~4.4 mA flows.",
         done: (p) => p.complete,
       },
     ],
