@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Parts blitz: transistors, varistor, net labels, AC amplitude (#37–#46)
+
+**State:** 🟢 Green. Golden `0xeaac376499e4fa24` unchanged throughout (verified via
+`print_golden` on every sim-core change); 66 sim-core tests. A sustained autonomous
+push toward "the whole parts selection + ICs + examples". Sim primitives land one
+at a time on `lib.rs` (each golden-verified by me, then shipped), web wiring and
+examples follow; the PR list on `main` is the running record.
+
+**Shipped since the MOSFET batch (all on `main`):**
+- **Multi-terminal infra + MOSFET** (#37/#38): `Element` gained a 3rd terminal
+  `c`; `set_netlist` + sim-wasm + `loop.ts` carry it (trailing-optional). `ELEM_NMOS=11`,
+  `ELEM_PMOS=12` (level-1 square-law VCCS companion). Placeable, examples.
+- **BJT NPN/PNP** (#40/#43): `ELEM_NPN=13`, `ELEM_PNP=14` (Ebers-Moll, two coupled
+  diode junctions reusing `pnjlim`; a=C, b=E, c=B). Placeable (`Q`/`QP`), examples
+  (switch, common-emitter, current mirror).
+- **Varistor (MOV)** (#42/#46): `ELEM_VARISTOR=16` (symmetric clamp, Zener-style
+  dual-junction limiting). Placeable (`MOV`, new **Protection** category), surge example.
+- **Net labels** (#41): KiCad-style names + global aliases. `NetLabel{id,name,at:Endpoint}`,
+  second union-find pass in `buildNetlist` collapses same-named labels onto one node,
+  `nodeNames` surfaced in scope/telemetry, **Label tool** + `L` hotkey + inline editor.
+- **Tunable AC amplitude** (#44): a 2nd per-element scalar **`aux`** threaded
+  sim-core→wasm→loop→netlist (mirrors `c`); AC source EMF uses it (default 5 V);
+  `Component.amp` + inspector chips (1/2/3.3/5/9/12 V).
+- Fixes: scope ↔ telemetry **node-color alignment** (#45, ground muted, palette
+  from node 1); independent coexisting ammeter+voltmeter (#39); junction-tool ghost.
+
+**In flight:** **op-amp** sim-core (`ELEM_OPAMP=15`, smooth-clamped transconductance
+VCCS, 3-terminal a=OUT/b=IN−/c=IN+, must converge in feedback) on `lib.rs`;
+**manual switch** web (`MSW`, reuses `ELEM_SWITCH=6` at value 0/1 + click-toggle) on the web.
+
+### Pick up here (remaining parts, then ICs)
+- After op-amp sim → op-amp web. Then 2-terminal parts (thermistor, fuse, LDR — P7
+  thermal/light state) and **7-seg** (multi-terminal + P8).
+- **Relay + transformer** need a **4th terminal `d`** (a boundary bump like `c`) —
+  4 nodes (2 coil/primary + 2 contact/secondary). Sequence that on `lib.rs`.
+- Then the **preliminary ICs** (ic-buildings §5: gates → flip-flop → counters → 555
+  → linear regulator) as behavioral buildings + examples.
+- Element-type registry so far: 0–7 base, 8 Schottky, 9 LED, 10 Zener, 11 NMOS,
+  12 PMOS, 13 NPN, 14 PNP, 15 op-amp (in flight), 16 varistor. Next free: 17.
+
+---
+
 ## 2026-06-15 — MOSFET (NMOS/PMOS) web/UI integration (sim types 11 & 12)
 
 **State:** 🟢 Green. **crates/ untouched** — built on the committed sim-core
