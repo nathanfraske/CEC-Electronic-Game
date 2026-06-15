@@ -224,6 +224,15 @@ export const PALETTE = {
   bad: 0xe0533a,
   dim: 0x9c93b8,
   border: 0x3b3560,
+  // Power-bus / signal-path identities (docs/ui/visual-language.md, CLAUDE.md):
+  // the colour code the construction-detail drawers use for live signal paths —
+  // + input / +5 V rail (cyan), − input / +12 V rail (amber), op-amp output
+  // (rose), and the GND rail (muted violet-grey). These mirror the owner mockups'
+  // --pos/--neg/--out/--rail tokens so the detail views recolour from one source.
+  pos: 0x46d2e6,
+  neg: 0xd8a24a,
+  out: 0xf5247a,
+  rail: 0x6b6488,
 } as const;
 
 export type PaletteKey = keyof typeof PALETTE;

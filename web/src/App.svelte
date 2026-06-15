@@ -50,9 +50,10 @@
   } from "./lib/netlist";
   import { ZERO_ELECTRICAL, type ElectricalState } from "./lib/glyphs";
   import { pinoutOf } from "./lib/pinout";
+  import { hasDetail } from "./lib/detailDrawers";
   import { partInfo } from "./lib/partInfo";
   import { CALCS } from "./lib/calc";
-  import { InfoDiagram } from "./lib/infoDiagram";
+  import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
 
   const SEED = 1337;
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
@@ -410,6 +411,26 @@
   let infoTab = $state<"info" | "calc">("info");
   let selElectrical = $state<ElectricalState | null>(null);
   let infoDiagram: InfoDiagram | undefined;
+  // The diagram picture: the schematic symbol, or the construction-internals
+  // ("what's happening inside") view. Defaults to the detail view; the toggle
+  // below flips it, and it snaps back to detail when a fresh detail-capable part
+  // is selected (see the $effect). Falls back to schematic for kinds with no
+  // detail drawer — `diagramHasDetail` gates the toggle's visibility.
+  let diagramMode = $state<DiagramMode>("detail");
+  // Whether the current selection has a construction-detail drawer (so the
+  // symbol⇄inside toggle is worth showing). Pure read of the kind.
+  const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
+  // The mode the diagram should actually render in: the user's choice when the
+  // part has a detail view, else forced to schematic so nothing is ever blank.
+  const effectiveDiagramMode = $derived<DiagramMode>(
+    diagramHasDetail ? diagramMode : "schematic",
+  );
+  // Selecting a different part defaults the view back to its internals when it has
+  // them — so double-clicking an op-amp opens straight to "what's happening inside."
+  $effect(() => {
+    const kind = selPart?.kind;
+    if (kind && hasDetail(kind)) diagramMode = "detail";
+  });
   // Calculator inputs, seeded from each calc's presets.
   const initialCalc: Record<string, Record<string, number>> = {};
   for (const c of CALCS) {
@@ -744,7 +765,17 @@
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             selElectrical = e;
-            if (infoOpen) infoDiagram?.setState(selPart.kind, e, selPart.value);
+            if (infoOpen) {
+              // Keep the picture (symbol vs internals) and the live state current
+              // every frame, so a mode flip or a re-mounted canvas is always right.
+              infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setState(
+                selPart.kind,
+                e,
+                selPart.value,
+                selPart.wiper,
+              );
+            }
           } else {
             selElectrical = null;
           }
@@ -1766,7 +1797,42 @@
                 {@const info = partInfo(selPart.kind)}
                 {#if info}
                   {@const e = selElectrical ?? ZERO_ELECTRICAL}
-                  <div class="info-diagram">
+                  {#if diagramHasDetail}
+                    <!-- Symbol ⇄ Inside: flip the hero diagram between the
+                         schematic symbol you'll meet on a datasheet and the live
+                         construction-internals view (what's happening inside, in
+                         real time). Only shown for parts that have a detail
+                         drawer; others stay on the symbol. -->
+                    <div
+                      class="diagram-toggle"
+                      role="group"
+                      aria-label="Diagram view"
+                    >
+                      <button
+                        class="seg {effectiveDiagramMode === 'detail'
+                          ? 'is-active'
+                          : ''}"
+                        onclick={() => (diagramMode = "detail")}
+                        title="Show what's happening inside the part, live"
+                      >
+                        Inside
+                      </button>
+                      <button
+                        class="seg {effectiveDiagramMode === 'schematic'
+                          ? 'is-active'
+                          : ''}"
+                        onclick={() => (diagramMode = "schematic")}
+                        title="Show the schematic symbol"
+                      >
+                        Symbol
+                      </button>
+                    </div>
+                  {/if}
+                  <div
+                    class="info-diagram {effectiveDiagramMode === 'detail'
+                      ? 'is-detail'
+                      : ''}"
+                  >
                     <canvas use:infoDiagramAction></canvas>
                   </div>
                   {@const po = pinoutOf(selPart.kind, selPart.rot)}
@@ -2457,6 +2523,41 @@
     overflow-y: auto;
     padding: 14px;
   }
+  /* Symbol ⇄ Inside segmented control above the hero diagram. */
+  .diagram-toggle {
+    display: flex;
+    gap: 0;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    width: fit-content;
+  }
+  .diagram-toggle .seg {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 5px 12px;
+    background: var(--surface);
+    border: none;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      background 0.12s;
+  }
+  .diagram-toggle .seg:last-child {
+    border-right: none;
+  }
+  .diagram-toggle .seg:hover {
+    color: var(--text);
+  }
+  .diagram-toggle .seg.is-active {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
   .info-diagram {
     height: 170px;
     border: 1px solid var(--border);
@@ -2464,6 +2565,10 @@
     overflow: hidden;
     margin-bottom: 12px;
     background: #120f1c;
+  }
+  /* The construction-internals view is the headline visual — give it more room. */
+  .info-diagram.is-detail {
+    height: 230px;
   }
   .info-diagram canvas {
     width: 100%;
