@@ -170,6 +170,8 @@
   let mode = $state<Mode>("select");
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
   let armedPart = $state<string | null>(null);
+  // The multimeter function in Measure mode: voltmeter or ammeter.
+  let probeMode = $state<"V" | "A">("V");
   // Fallback kind for native drag-and-drop from the bin (set on dragstart).
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
@@ -207,7 +209,9 @@
   // what a click will do right now, so the modeless board stays learnable.
   const hint = $derived(
     mode === "measure"
-      ? "MEASURE · click two points to read ΔV"
+      ? probeMode === "A"
+        ? "AMMETER · click a part or wire to read the current through it"
+        : "VOLTMETER · click two points to read ΔV (one point = vs GND)"
       : armedPart
         ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
         : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
@@ -466,6 +470,10 @@
     arm(null);
     setMode("measure");
   }
+  function setProbeMode(m: "V" | "A"): void {
+    probeMode = m;
+    board?.setProbeMode(m);
+  }
   function clearBoard(): void {
     board?.clear();
     demo = null;
@@ -529,6 +537,10 @@
     arm("V");
     leftTab = "parts";
     showIntro = false;
+    // Run the sim throughout the build so each part you add comes alive as soon
+    // as it's in a working sub-circuit (the netlist rebuilds on every change).
+    controls?.resume();
+    syncRunning();
   }
   function exitBuild(): void {
     buildEx = null;
@@ -688,10 +700,24 @@
         class="btn btn-ghost {mode === 'measure' ? 'is-active' : ''}"
         onclick={enterMeasure}
         disabled={!ready}
-        title="Measure: probe voltage between two points (M)"
+        title="Measure: probe voltage between two points, or current through a part"
       >
         Measure
       </button>
+      {#if mode === "measure"}
+        <span class="meter-toggle">
+          <button
+            class="btn btn-ghost {probeMode === 'V' ? 'is-active' : ''}"
+            onclick={() => setProbeMode("V")}
+            title="Voltmeter — ΔV between two points">V</button
+          >
+          <button
+            class="btn btn-ghost {probeMode === 'A' ? 'is-active' : ''}"
+            onclick={() => setProbeMode("A")}
+            title="Ammeter — current through a part/wire">A</button
+          >
+        </span>
+      {/if}
       {#if armedPart}
         <span class="armed-chip" title="Armed for placement">
           {partName(armedPart)}
@@ -1021,6 +1047,15 @@
   }
   .tool-spacer {
     flex: 1;
+  }
+  /* Voltmeter / ammeter function toggle, shown while measuring. */
+  .meter-toggle {
+    display: inline-flex;
+    gap: 4px;
+  }
+  .meter-toggle .btn {
+    min-width: 30px;
+    padding: 6px 9px;
   }
   /* The armed-part chip: shows what a board click will drop, with an × to disarm. */
   .armed-chip {
