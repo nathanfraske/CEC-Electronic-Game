@@ -169,6 +169,12 @@ export interface NetLabel {
    * label that lives at its endpoint.
    */
   pos?: Cell;
+  /**
+   * Optional draggable offset (world px) of the tag pill from its anchor point
+   * (`pos ?? endpointCell(at)`). Lets a label be moved KiCad-style while the dot +
+   * leader stay pinned to what it names. Absent ⇒ the default up-and-right offset.
+   */
+  tagOff?: { dx: number; dy: number };
 }
 
 /**
@@ -996,6 +1002,18 @@ export class BoardGraph {
   }
 
   /**
+   * Move a net label's tag pill to a world-px offset from its anchor (KiCad-style:
+   * the dot + leader stay pinned to what the label names; only the pill moves). A
+   * (near-)default offset clears the override so it snaps back to the tidy default.
+   */
+  moveNetLabel(id: number, dx: number, dy: number): void {
+    const l = this.netLabels.get(id);
+    if (!l) return;
+    if (Math.abs(dx - 12) < 4 && Math.abs(dy + 18) < 4) delete l.tagOff;
+    else l.tagOff = { dx, dy };
+  }
+
+  /**
    * Rename a net label. An empty name removes it (an unnamed label means nothing,
    * and clears the alias). Removing may strand a label-only junction, so prune.
    */
@@ -1062,6 +1080,7 @@ export class BoardGraph {
         name: l.name,
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
+        ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
       })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
@@ -1094,6 +1113,7 @@ export class BoardGraph {
         name: l.name,
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
+        ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
       });
     }
     for (const w of s.wires) {

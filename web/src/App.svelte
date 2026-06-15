@@ -860,6 +860,12 @@
           // part/wire) — mirror it so the toolbar selector follows.
           mode = m;
         },
+        onPersist: (graph) => {
+          // A cosmetic change (e.g. a net label dragged): save it + refresh undo,
+          // but don't rebuild the netlist or rewind the running sim.
+          canUndo = b.canUndo();
+          saveBoardDebounced(graph.serialize());
+        },
         onAnchor: (rect) => {
           anchor = rect;
         },
