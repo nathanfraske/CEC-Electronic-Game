@@ -41,6 +41,17 @@
 //! | 12   | PMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
 //! | 13   | NPN BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
 //! | 14   | PNP BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
+//! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
+//!
+//! Type 16 is the **varistor** (metal-oxide varistor, MOV): a two-terminal
+//! *symmetric* voltage clamp — very high resistance (tiny leakage) while `|V| < Vc`,
+//! then it conducts hard above `+/-Vc`, pinning the node near the clamp voltage (a
+//! surge clamp). It is the symmetric cousin of the Zener: where the Zener has one
+//! forward junction plus one reverse-breakdown junction, the varistor is **two**
+//! oppositely-facing breakdown junctions about `0`, so it clamps both polarities.
+//! It reuses the diode exponential and the [`pnjlim`] limiter (one limited
+//! breakdown voltage each for the positive and negative junction) and adds no
+//! branch unknown (see [`varistor_eval`]).
 //!
 //! Types 5, 8, 9, and 10 are the **diode family**: one set of Newton-companion
 //! routines parameterised by a [`DiodeModel`] (saturation current + thermal
@@ -290,6 +301,20 @@ pub const ELEM_NPN: u8 = 13;
 /// **unused** for now.
 pub const ELEM_PNP: u8 = 14;
 
+/// **Varistor** (metal-oxide varistor, MOV). A two-terminal *symmetric* voltage
+/// clamp, oriented `a -> b`: with `V = V(a) - V(b)`, it draws only a tiny leakage
+/// while `|V| < Vc`, then conducts hard once `|V|` exceeds the clamp voltage,
+/// pinning the node near `+/-Vc` — a surge clamp. Its `value` is the **clamp
+/// voltage `Vc`** in volts (clamped to [`MOV_VC_MIN`]). The symmetric cousin of the
+/// [`ELEM_ZENER`]: it is **two** oppositely-facing breakdown junctions about `0`
+/// (positive breakdown variable `up = V - Vc`, negative `un = -V - Vc`), reusing the
+/// diode exponential and the [`pnjlim`] limiter on each, solved on the same Newton
+/// path. Like a diode it adds **no** branch unknown — it stamps a conductance and an
+/// equivalent current into the KCL rows. The model constants are the fixed
+/// [`MOV_IK`] (knee current at exactly `|V| = Vc`) and [`MOV_VTH`] (clamp sharpness).
+/// See [`varistor_eval`].
+pub const ELEM_VARISTOR: u8 = 16;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
@@ -343,6 +368,21 @@ const ZENER_VTH_BR: f64 = 0.02;
 /// Floor on a Zener's breakdown voltage, in volts, so `value <= 0` can't produce a
 /// degenerate or back-to-front device.
 const ZENER_VZ_MIN: f64 = 0.5;
+
+// --- Varistor (MOV) model constants -------------------------------------------
+
+/// **Varistor** knee current, in amperes — the current at exactly `|V| = Vc`,
+/// where one of the two breakdown junctions reaches `exp(0) = 1`. Calibrates where
+/// the symmetric clamp "turns on". Fixed for determinism.
+const MOV_IK: f64 = 1.0e-3;
+/// **Varistor** clamp sharpness (each breakdown junction's effective thermal
+/// voltage), in volts. Smaller = a harder clamp; large enough to keep Newton well
+/// conditioned. The positive-side current is `MOV_IK * exp((V - Vc) / MOV_VTH)` and
+/// the negative side its mirror, so a smaller `MOV_VTH` pins `|V|` closer to `Vc`.
+const MOV_VTH: f64 = 0.05;
+/// Floor on a varistor's clamp voltage, in volts, so `value <= 0` can't produce a
+/// degenerate device that conducts at every bias.
+const MOV_VC_MIN: f64 = 1.0;
 
 // --- MOSFET (level-1 square-law) model constants ------------------------------
 
@@ -462,12 +502,21 @@ fn is_bjt(kind: u8) -> bool {
     matches!(kind, ELEM_NPN | ELEM_PNP)
 }
 
+/// True for the varistor (MOV). Like [`is_diode`], it centralises the membership
+/// test so the nonlinear split, the companion collection, and the current commit
+/// share one definition. A single-kind family today, but the helper keeps the
+/// guarded paths reading uniformly with the other device families.
+#[inline]
+fn is_varistor(kind: u8) -> bool {
+    kind == ELEM_VARISTOR
+}
+
 /// True for every nonlinear element (any device that drives the Newton outer
-/// loop): the diode family, the MOSFET family, or the BJT family. The single
-/// switch that selects the Newton path over the linear fast path.
+/// loop): the diode family, the MOSFET family, the BJT family, or the varistor.
+/// The single switch that selects the Newton path over the linear fast path.
 #[inline]
 fn is_nonlinear(kind: u8) -> bool {
-    is_diode(kind) || is_mosfet(kind) || is_bjt(kind)
+    is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind)
 }
 
 // --- Newton outer-loop constants ----------------------------------------------
@@ -526,6 +575,12 @@ type MosfetMap = (usize, Option<usize>, Option<usize>, Option<usize>);
 /// [`MosfetMap`] (the three terminals a/b/c = collector/emitter/base); aliased so
 /// the collection and the `newton_iterate` signature stay readable.
 type BjtMap = (usize, Option<usize>, Option<usize>, Option<usize>);
+
+/// A varistor's terminal map for the Newton companion: `(element_index, a_mna,
+/// b_mna)`, each MNA index `None` for ground. The same two-terminal shape as
+/// [`DiodeMap`] (oriented `a -> b`); aliased so the collection and the
+/// `newton_iterate` signature stay readable.
+type VaristorMap = (usize, Option<usize>, Option<usize>);
 
 /// Solve `A x = b` for a dense, row-major `n x n` system by Gaussian elimination
 /// with partial pivoting. Vec-backed so the dimension can vary per netlist, but
@@ -811,6 +866,50 @@ fn bjt_eval(vbe: f64, vbc: f64, is: f64, vt: f64, bf: f64, br: f64) -> BjtOp {
     }
 }
 
+// --- Varistor (MOV, symmetric clamp) device -----------------------------------
+
+/// One of a varistor's two oppositely-facing breakdown junctions, expressed as an
+/// ordinary forward junction (knee current [`MOV_IK`] at its breakdown variable
+/// `= 0`, sharpness [`MOV_VTH`]) so the shared [`pnjlim`]/[`diode_vcrit`] limiter can
+/// damp it — the symmetric analogue of [`zener_breakdown_model`]. No breakdown of
+/// its own (`vz = INFINITY`). Pure constant fold.
+#[inline]
+fn varistor_breakdown_model() -> DiodeModel {
+    DiodeModel {
+        is: MOV_IK,
+        vth: MOV_VTH,
+        vz: f64::INFINITY,
+    }
+}
+
+/// Evaluate the symmetric varistor (MOV) at terminal voltage `v = V(a) - V(b)` and
+/// clamp voltage `vc`, returning `(i, g)` with the device current `i` (oriented
+/// `a -> b`) and its small-signal conductance `g = di/dv`.
+///
+/// The model is two oppositely-facing breakdown exponentials about `0` — the
+/// symmetric cousin of the Zener's forward + reverse pair. With the positive
+/// breakdown variable `up = v - Vc` and the negative `un = -v - Vc`:
+///
+/// - `i = MOV_IK * (exp(up/MOV_VTH) - exp(un/MOV_VTH))`
+/// - `g = (MOV_IK/MOV_VTH) * (exp(up/MOV_VTH) + exp(un/MOV_VTH))`
+///
+/// At `v = 0` both terms are `exp(-Vc/MOV_VTH) ≈ 0`, so the leakage is negligible;
+/// at `v = +Vc` the first term is exactly `MOV_IK` and the device starts conducting
+/// hard, pinning the node near `+Vc`; for `v < -Vc` the second term dominates and it
+/// clamps near `-Vc`. The two breakdown variables are expected to already be clamped
+/// by [`pnjlim`] (via [`varistor_breakdown_model`]), so the exponentials are bounded
+/// and never overflow. Pure, branch-free `f64` for determinism.
+#[inline]
+fn varistor_eval(v: f64, vc: f64) -> (f64, f64) {
+    let up = v - vc;
+    let un = -v - vc;
+    let ep = (up / MOV_VTH).exp();
+    let en = (un / MOV_VTH).exp();
+    let i = MOV_IK * (ep - en);
+    let g = (MOV_IK / MOV_VTH) * (ep + en);
+    (i, g)
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -867,6 +966,14 @@ pub struct Sim {
     /// companion of [`Sim::bjt_vbe`] for the second (base-collector) junction; same
     /// role and indexing.
     bjt_vbc: Vec<f64>,
+    /// Per-element varistor terminal voltage `V = V(a) - V(b)` carried as the
+    /// previous Newton iterate. Seeds the iterate and gives [`pnjlim`] its
+    /// previous-iterate reference for **both** symmetric breakdown junctions (the
+    /// positive `up = V - Vc` and the negative `un = -V - Vc` are derived from this
+    /// single `V`) — the symmetric analogue of [`Sim::diode_vd`]. Only varistor
+    /// entries are meaningful; others stay `0.0`. Indexed in lockstep with
+    /// `elements`.
+    varistor_v: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -915,6 +1022,7 @@ impl Sim {
             mosfet_vds: Vec::new(),
             bjt_vbe: Vec::new(),
             bjt_vbc: Vec::new(),
+            varistor_v: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -993,6 +1101,7 @@ impl Sim {
                     | ELEM_PMOS
                     | ELEM_NPN
                     | ELEM_PNP
+                    | ELEM_VARISTOR
             ) {
                 self.install_empty();
                 return false;
@@ -1054,6 +1163,7 @@ impl Sim {
         self.mosfet_vds = vec![0.0; elements.len()];
         self.bjt_vbe = vec![0.0; elements.len()];
         self.bjt_vbc = vec![0.0; elements.len()];
+        self.varistor_v = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -1083,6 +1193,9 @@ impl Sim {
             *v = 0.0;
         }
         for v in &mut self.bjt_vbc {
+            *v = 0.0;
+        }
+        for v in &mut self.varistor_v {
             *v = 0.0;
         }
         for v in &mut self.node_v {
@@ -1533,10 +1646,24 @@ impl Sim {
     /// node-voltage / limiter-inactive convergence gates as the diodes with its own
     /// mA-scale current-residual test alongside the MOSFET's.
     ///
-    /// Determinism: fixed element/diode/mosfet/bjt order, fixed assembly and solve
-    /// order, pure `f64`, no hashed iteration. The iteration count is
+    /// Varistors ride it as well: the `varistors` slice lists, in ascending element
+    /// order, each device as `(element_index, a_mna, b_mna)` with `None` for a
+    /// grounded terminal — the same two-terminal stamp as a diode. Each carries a
+    /// single terminal-voltage iterate in `self.varistor_v` from which **both**
+    /// symmetric breakdown junctions are derived (`up = V - Vc`, `un = -V - Vc`),
+    /// each limited by the shared [`pnjlim`] and composed back into one consistent
+    /// `V` (mirroring the Zener's forward/breakdown composition). It folds into the
+    /// same node-voltage / limiter-inactive gates with its own mA-scale
+    /// current-residual test alongside the MOSFET's and BJT's.
+    ///
+    /// Determinism: fixed element/diode/mosfet/bjt/varistor order, fixed assembly
+    /// and solve order, pure `f64`, no hashed iteration. The iteration count is
     /// data-dependent but bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the
     /// last iterate is kept (a defined, finite outcome).
+    // One companion-map slice per nonlinear device family (diode/MOSFET/BJT/
+    // varistor) plus the shared linear base; grouping them into a struct would only
+    // move the same fields around without clarifying this single private call site.
+    #[allow(clippy::too_many_arguments)]
     fn newton_iterate(
         &mut self,
         n: usize,
@@ -1545,6 +1672,7 @@ impl Sim {
         diodes: &[DiodeMap],
         mosfets: &[MosfetMap],
         bjts: &[BjtMap],
+        varistors: &[VaristorMap],
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -1564,6 +1692,31 @@ impl Sim {
                 let (id, gd) = diode_eval(vd, diode_model(el.kind, el.value));
                 let g = gd + GMIN;
                 let ieq = id - g * vd;
+                if let Some(r) = ia {
+                    mat[r * n + r] += g;
+                    rhs[r] -= ieq;
+                }
+                if let Some(r) = ib {
+                    mat[r * n + r] += g;
+                    rhs[r] += ieq;
+                }
+                if let (Some(r), Some(c)) = (ia, ib) {
+                    mat[r * n + c] -= g;
+                    mat[c * n + r] -= g;
+                }
+            }
+
+            // Stamp each varistor's companion at its current terminal voltage —
+            // the same two-terminal pattern as a diode, since the symmetric clamp
+            // also adds no branch unknown. g = di/dv and Ieq = i(v*) - g*v* (plus
+            // GMIN for a finite slope below the clamp).
+            for &(ei, ia, ib) in varistors {
+                let v = self.varistor_v[ei];
+                let el = self.elements[ei];
+                let vc = el.value.max(MOV_VC_MIN);
+                let (iv, gv) = varistor_eval(v, vc);
+                let g = gv + GMIN;
+                let ieq = iv - g * v;
                 if let Some(r) = ia {
                     mat[r * n + r] += g;
                     rhs[r] -= ieq;
@@ -1820,6 +1973,51 @@ impl Sim {
                 self.bjt_vbc[ei] = vbc_new;
             }
 
+            // Update each varistor's terminal voltage by limiting **both** symmetric
+            // breakdown junctions with the shared pn-junction limiter, then composing
+            // the two limited values into one consistent `V` — the symmetric mirror
+            // of the Zener's forward-then-breakdown composition. The positive junction
+            // lives in `up = V - Vc` and the negative in `un = -V - Vc`; both are
+            // ordinary forward exponentials (knee current MOV_IK), so each rides the
+            // proven `pnjlim`. First limit the positive junction (caps a big positive
+            // swing) to get `V_p`, then limit the negative junction in `un` from that
+            // `V_p` (caps a big negative swing); when neither limiter acts both pass
+            // through and `v_new == v_raw`, so sub-clamp operation is unaffected. The
+            // limiter-inactive gaps fold into the same `max_vd_gap` gate as the
+            // diodes/FETs/BJTs, and the device current is tracked with the same
+            // mA-scale absolute + relative residual as the MOSFET (the diode's sub-pA
+            // tolerance does not fit a mA-scale clamp current). V = V(a) - V(b) at the
+            // fresh solve.
+            let mut converged_mov_i = true;
+            for &(ei, ia, ib) in varistors {
+                let va = ia.map(|r| x[r]).unwrap_or(0.0);
+                let vb = ib.map(|r| x[r]).unwrap_or(0.0);
+                let v_raw = va - vb;
+                let v_old = self.varistor_v[ei];
+                let el = self.elements[ei];
+                let vc = el.value.max(MOV_VC_MIN);
+                let bm = varistor_breakdown_model();
+                // Positive breakdown junction: limit up = V - Vc, recover V_p.
+                let up_new = pnjlim(v_raw - vc, v_old - vc, bm);
+                let v_p = up_new + vc;
+                // Negative breakdown junction: limit un = -V - Vc from V_p, recover V.
+                let un_new = pnjlim(-v_p - vc, -v_old - vc, bm);
+                let v_new = -un_new - vc;
+                let gap = (v_raw - v_new).abs();
+                if gap > max_vd_gap {
+                    max_vd_gap = gap;
+                }
+                // Device-current residual across the limited step.
+                let (i_old, _) = varistor_eval(v_old, vc);
+                let (i_new, _) = varistor_eval(v_new, vc);
+                let di = (i_new - i_old).abs();
+                let tol = NEWTON_I_ABSTOL + NEWTON_RELTOL * i_new.abs().max(i_old.abs());
+                if di > tol {
+                    converged_mov_i = false;
+                }
+                self.varistor_v[ei] = v_new;
+            }
+
             // Node-voltage update test (absolute + relative), over node rows only.
             let mut converged_v = true;
             for r in 0..(self.node_count - 1) {
@@ -1836,8 +2034,16 @@ impl Sim {
             let converged_limit = max_vd_gap <= NEWTON_V_ABSTOL;
 
             // Require all the tests, and at least one full iteration, so a stale
-            // seed cannot report convergence before a fresh solve.
-            if converged_v && converged_i && converged_mos_i && converged_bjt_i && converged_limit {
+            // seed cannot report convergence before a fresh solve. `converged_mov_i`
+            // is vacuously true with no varistor present, so this gate is unchanged
+            // for every diode/MOSFET/BJT netlist (golden untouched).
+            if converged_v
+                && converged_i
+                && converged_mos_i
+                && converged_bjt_i
+                && converged_mov_i
+                && converged_limit
+            {
                 // Recompute node voltages from the limited junctions on the next
                 // pass would be a no-op (already converged); commit and stop.
                 self.node_v[0] = 0.0;
@@ -1880,13 +2086,14 @@ impl Sim {
             return;
         }
 
-        // Stamp the fixed linear part once and collect the diode, MOSFET, and BJT
-        // maps.
+        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT, and
+        // varistor maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
         let mut bjts: Vec<BjtMap> = Vec::new();
+        let mut varistors: Vec<VaristorMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -1965,11 +2172,14 @@ impl Sim {
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
+                ELEM_VARISTOR => varistors.push((i, ia, ib)),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts);
+        let x = self.newton_iterate(
+            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors,
+        );
 
         // Commit per-element currents (oriented a -> b) at the operating point.
         for (i, e) in self.elements.iter().enumerate() {
@@ -1994,6 +2204,9 @@ impl Sim {
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
                 ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                // The varistor current is the symmetric clamp current at its committed
+                // terminal voltage iterate, oriented a -> b.
+                ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
                 _ => 0.0,
             };
         }
@@ -2014,12 +2227,14 @@ impl Sim {
             return Vec::new();
         }
 
-        // Stamp the fixed linear part once and collect the diode and MOSFET maps.
+        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT, and
+        // varistor maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
         let mut bjts: Vec<BjtMap> = Vec::new();
+        let mut varistors: Vec<VaristorMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -2128,11 +2343,14 @@ impl Sim {
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
+                ELEM_VARISTOR => varistors.push((i, ia, ib)),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts);
+        let x = self.newton_iterate(
+            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors,
+        );
 
         // Commit per-element currents (oriented a -> b) while `reactive_state`
         // still holds the previous-step values (capacitor history term).
@@ -2162,6 +2380,9 @@ impl Sim {
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
                 ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                // The varistor current is the symmetric clamp current at its committed
+                // terminal voltage iterate, oriented a -> b.
+                ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
                 _ => 0.0,
             };
         }
@@ -2278,6 +2499,8 @@ impl Sim {
     /// - Current source: its set `value` (forced, oriented `a -> b`).
     /// - Switch: `G(tick) * (V(a) - V(b))`, the tick-determined conductance times
     ///   the terminal voltage (large while closed, ~0 while open).
+    /// - Varistor (MOV): the symmetric clamp current at its terminal voltage —
+    ///   tiny while `|V| < Vc`, large and signed once `|V|` exceeds the clamp.
     pub fn element_currents(&self) -> Vec<f64> {
         self.currents.clone()
     }
@@ -3255,6 +3478,246 @@ mod tests {
             "diode clamps the divider midpoint into the knee: got {}",
             v[2]
         );
+    }
+
+    // --- Nonlinear: varistor (MOV, symmetric clamp) ---------------------------
+    //
+    // The varistor (type 16) is the symmetric cousin of the Zener: it clamps both
+    // polarities, conducting hard once |V| exceeds the clamp voltage Vc. It rides
+    // the same deterministic Newton loop (with dual-junction `pnjlim` limiting), so
+    // these tests assert the clamped operating point against an independent scalar
+    // reference and guard the replay invariant.
+
+    /// The symmetric varistor current at terminal voltage `v` and clamp `vc`,
+    /// evaluated independently of the solver from the same closed form
+    /// (`MOV_IK*(exp((v-vc)/MOV_VTH) - exp((-v-vc)/MOV_VTH))`), so the core is
+    /// checked against the model rather than a fitted constant.
+    fn varistor_current_ref(v: f64, vc: f64) -> f64 {
+        MOV_IK * (((v - vc) / MOV_VTH).exp() - ((-v - vc) / MOV_VTH).exp())
+    }
+
+    /// The implicit-function solution of a varistor in series with a resistor from
+    /// a source: the clamp node voltage `V` (across the varistor, cathode at ground)
+    /// satisfies `(Vsrc - V)/R = I_mov(V)`. Newton-solve it on the scalar equation to
+    /// get an independent reference for the clamped node, so the core's result is
+    /// checked against physics. Returns the node voltage `V`.
+    fn series_varistor_reference(vsrc: f64, r: f64, vc: f64) -> f64 {
+        // f(V) = (Vsrc - V)/R - I_mov(V) = 0. The conductance of I_mov is
+        // (MOV_IK/MOV_VTH)*(exp((V-vc)/MOV_VTH) + exp((-V-vc)/MOV_VTH)), so
+        // f'(V) = -1/R - g_mov(V). Start from the supply scaled toward the clamp.
+        let mut v = vc.copysign(vsrc); // seed near the expected clamp polarity
+        for _ in 0..200 {
+            let ep = ((v - vc) / MOV_VTH).exp();
+            let en = ((-v - vc) / MOV_VTH).exp();
+            let i_mov = MOV_IK * (ep - en);
+            let g_mov = (MOV_IK / MOV_VTH) * (ep + en);
+            let f = (vsrc - v) / r - i_mov;
+            let df = -1.0 / r - g_mov;
+            v -= f / df;
+        }
+        v
+    }
+
+    /// A varistor clamps a positive surge: a supply well above Vc through a series
+    /// resistor pins the varistor node near +Vc (far below the supply), the varistor
+    /// sinking the excess. Layout: source 1->0 (12 V), R 1->2, varistor anode=node 2
+    /// -> cathode=ground. Vc = 5 V. Hand-checked against the independent scalar
+    /// reference to ~1e-6.
+    #[test]
+    fn varistor_clamps_positive_surge() {
+        let vc = 5.0;
+        let vsrc = 12.0;
+        let r = 100.0;
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_VARISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vsrc, r, vc],
+        );
+        let v = sim.node_voltages();
+        // The node pins near +Vc, well below the 12 V supply.
+        assert!(
+            (vc..=vc + 0.4).contains(&v[2]),
+            "varistor clamps the node near +Vc (≈5 V): got {}",
+            v[2]
+        );
+        assert!(v[2] < vsrc - 5.0, "clamped far below the supply");
+        // Hand-check the clamped operating point against the scalar reference.
+        let v_ref = series_varistor_reference(vsrc, r, vc);
+        assert!(
+            (v[2] - v_ref).abs() < 1e-6,
+            "clamp node matches the scalar reference: got {}, want {}",
+            v[2],
+            v_ref
+        );
+        // The varistor sinks the excess current (positive a -> b, into ground), and
+        // KCL holds in the series loop with the resistor.
+        let c = sim.element_currents();
+        let i_r = (v[1] - v[2]) / r;
+        assert!(c[2] > 0.0, "varistor conducts on the positive surge (a->b)");
+        assert!(
+            (c[2] - i_r).abs() < 1e-6,
+            "KCL: varistor carries the resistor's current ({} vs {})",
+            c[2],
+            i_r
+        );
+        // The committed current also matches the independent model evaluation.
+        assert!(
+            (c[2] - varistor_current_ref(v[2], vc)).abs() < 1e-6,
+            "committed varistor current matches the scalar model"
+        );
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+    }
+
+    /// A varistor clamps a negative surge symmetrically: a supply well below -Vc
+    /// through a series resistor pins the varistor node near -Vc. Same layout as the
+    /// positive case but a negative supply, exercising the negative breakdown
+    /// junction. Hand-checked against the scalar reference.
+    #[test]
+    fn varistor_clamps_negative_surge() {
+        let vc = 5.0;
+        let vsrc = -12.0;
+        let r = 100.0;
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_VARISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vsrc, r, vc],
+        );
+        let v = sim.node_voltages();
+        // The node pins near -Vc, well above (less negative than) the -12 V supply.
+        assert!(
+            (-vc - 0.4..=-vc).contains(&v[2]),
+            "varistor clamps the node near -Vc (≈-5 V): got {}",
+            v[2]
+        );
+        assert!(v[2] > vsrc + 5.0, "clamped far above the negative supply");
+        let v_ref = series_varistor_reference(vsrc, r, vc);
+        assert!(
+            (v[2] - v_ref).abs() < 1e-6,
+            "negative clamp matches the scalar reference: got {}, want {}",
+            v[2],
+            v_ref
+        );
+        // The varistor now conducts the other way (negative a -> b current).
+        let c = sim.element_currents();
+        let i_r = (v[1] - v[2]) / r;
+        assert!(c[2] < 0.0, "varistor conducts on the negative surge (b->a)");
+        assert!(
+            (c[2] - i_r).abs() < 1e-6,
+            "KCL: varistor carries the resistor's current ({} vs {})",
+            c[2],
+            i_r
+        );
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+    }
+
+    /// Below the clamp the varistor passes only a tiny leakage and does not pull the
+    /// node down: a divider whose midpoint sits well under Vc is essentially
+    /// undisturbed (unlike a diode, which would clamp at its knee). Layout: source
+    /// 1->0 = 6 V, R1 1->2 = 1k, R2 2->0 = 1k (midpoint 3 V), varistor 2->0 in
+    /// parallel with R2. Vc = 18 V (the default), far above 3 V.
+    #[test]
+    fn varistor_passes_little_below_clamp() {
+        let vc = 18.0;
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_VARISTOR],
+            &[1, 1, 2, 2],
+            &[0, 2, 0, 0],
+            &[6.0, 1_000.0, 1_000.0, vc],
+        );
+        let v = sim.node_voltages();
+        // The midpoint stays at the undisturbed 3 V divider value: the varistor is
+        // effectively open this far below its clamp.
+        assert!(
+            (v[2] - 3.0).abs() < 1e-3,
+            "below Vc the varistor leaves the divider near 3 V: got {}",
+            v[2]
+        );
+        // Its leakage current is negligible (sub-microamp), confirming no clamping.
+        let c = sim.element_currents();
+        assert!(
+            c[3].abs() < 1e-6,
+            "varistor leakage below Vc is negligible: got {}",
+            c[3]
+        );
+        // And it matches the independent model evaluation at this bias.
+        assert!(
+            (c[3] - varistor_current_ref(v[2], vc)).abs() < 1e-9,
+            "tiny leakage matches the scalar model"
+        );
+    }
+
+    /// `set_netlist` accepts the varistor element type (type 16) and marks the
+    /// netlist nonlinear (it drives the Newton path — checked indirectly by the
+    /// clamp working); a malformed netlist containing a varistor still fails safe
+    /// through the same validation as any other element.
+    #[test]
+    fn varistor_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // A bare varistor across a source installs fine.
+        let ok = sim.set_netlist(
+            2,
+            &[ELEM_VSOURCE, ELEM_VARISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 18.0],
+        );
+        assert!(ok, "valid varistor netlist installs");
+        assert_eq!(sim.element_count(), 2);
+        assert_eq!(
+            sim.element_at(1).kind,
+            ELEM_VARISTOR,
+            "varistor stored as type 16"
+        );
+        // It engages the nonlinear Newton path: a supply above Vc is clamped (a
+        // linear single-pass solve could not produce this), so the device really is
+        // marked nonlinear and solved on the Newton loop.
+        let clamped = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_VARISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[12.0, 100.0, 5.0],
+        );
+        assert!(
+            clamped.node_voltages()[2] < 6.0,
+            "a varistor netlist is solved nonlinearly (clamps below the rail)"
+        );
+        // Out-of-range node on a varistor is still rejected (fail-safe).
+        let bad = sim.set_netlist(2, &[ELEM_VARISTOR], &[9], &[0], &[0], &[18.0]);
+        assert!(!bad, "out-of-range varistor node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    /// Replay invariant for a varistor circuit: the Newton loop (with its symmetric
+    /// dual-junction limiting) is deterministic, so a fixed netlist stepped a fixed
+    /// number of times reproduces its snapshot-hash stream exactly. This is the
+    /// varistor analogue of `zener_run_is_reproducible` and guards the new breakdown
+    /// branch + iterate state against nondeterminism.
+    #[test]
+    fn varistor_run_is_reproducible() {
+        let run = || {
+            // source 1->0; R 1->2; varistor 2->0; cap 2->0 (a clamped load node).
+            let mut sim = build(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_VARISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2, 2],
+                &[0, 2, 0, 0],
+                &[24.0, 100.0, 12.0, 1.0e-6],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "varistor circuit must reproduce exactly");
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
