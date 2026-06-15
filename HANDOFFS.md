@@ -17,12 +17,14 @@ on the branch.
   / `toggleScopeExpanded` + a `scopeLegend` Text pool + `nodeName()`. `App.svelte`:
   per-node controls (node 0 / GND stays fixed).
 
-### In flight (background agents)
-- **Solver upgrade → nonlinear Newton engine** (`sim-core` only): a deterministic
-  Newton–Raphson outer loop that engages only when a nonlinear element is present
-  (linear netlists keep the existing fast-path so the golden stays bit-identical),
-  with the **diode** as the first nonlinear element. Cherry-pick when it lands;
-  review determinism (golden `0xeaac…` must be unchanged) carefully.
+### Landed / in flight
+- **Solver upgrade → nonlinear Newton engine** — ✅ merged into the branch.
+  Deterministic Newton–Raphson loop, engaged only when a nonlinear element is
+  present; the linear fast-path is byte-identical so the golden `0xeaac…` is
+  unchanged. **Diode** (type 5: Shockley + `gmin` + `pnjlim` limiting, 100-iter
+  cap) is the first nonlinear element. 25 sim-core tests pass incl.
+  `diode_run_is_reproducible`. Next: wire the diode into the web (netlist
+  `TYPE_OF D:5`, `drawD` glyph, bin) so it's placeable.
 - **Value picker** design is in `docs/ui/value-picker.md` (recommended: an
   Inspector with curated chips + ▲▼ stepper + "More values ▸" decade×significand;
   E24 R / E6 C·L). Build the Inspector next.
