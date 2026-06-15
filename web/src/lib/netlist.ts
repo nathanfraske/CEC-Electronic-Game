@@ -505,6 +505,19 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const nb = nodeIndex.get(find(key(c.id, 1)));
     if (na !== undefined && nb !== undefined && f2(na) !== f2(nb)) {
       floatingSources.push(c.id);
+      // Force the dead branch to read 0. An ideal current source with no return
+      // path makes the MNA system singular (KCL can't balance at the orphaned
+      // node), and the solver's deterministic zero-pivot fallback then reports a
+      // confident-looking phantom — the full forced current "flowing" through a
+      // branch that can't carry it, plus a huge IR voltage. A current that cannot
+      // circulate is physically 0, so we zero the source's injection: the readout
+      // becomes an honest 0 mA / 0 V and the `floatingSources` warning banner
+      // explains *why* (incomplete loop). The moment the loop is closed the source
+      // drops out of this set and its real value is restored. Zeroed before the
+      // signature below, so "floating at any set current" is one state (all such
+      // currents solve identically to 0) and closing the loop still rebuilds.
+      const idx = elemOfComponent.get(c.id);
+      if (idx !== undefined) values[idx] = 0;
     }
   }
 

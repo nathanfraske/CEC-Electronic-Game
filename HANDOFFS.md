@@ -5,6 +5,119 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 (pm) — QoL batch (partial) + scope time window
+
+**State:** 🟢 Green (full CI suite passed). Branch pushed. Shipped from the owner's
+QoL batch:
+- **Pan yields to Build on a grab** — clicking a part/wire in Pan switches to
+  Build/Select and grabs it (move/reshape); empty still pans. New `onMode` callback.
+- **R rotates the ghost** whenever a part is armed (was rotating a leftover selection).
+- **Scope selectable time window** — decimated spans 0.48 ms/4.8 ms/48 ms/0.48 s (base
+  = old behaviour), ⏱ button cycles, duration labelled. Fits a full low-f AC cycle.
+- **Open-loop current-source fix re-verified** (harness: open 0 mA/0 V, closed 10 mA).
+
+**Deferred (interaction-model changes — analysis in TODOS "QoL / fixes batch"):**
+drop-on-track segment split (#4), delete-only-segment-to-junction (#5), KiCad
+click-to-continue wiring (#6 — needs `onPointerDown` reworked to complete-while-wiring).
+Plus the still-pending **onboarding** (pull-based; `docs/ui/onboarding-first-run.md`)
+and the **digital scheduler** (Phase 1+, the dedicated session; `logic-…-nets.md` §6).
+
+---
+
+## 2026-06-15 (later) — Logic-family decision + Phase 0, marquee/copy-paste, factory internals
+
+**State:** 🟢 Green. sim-core 88 tests pass, golden `0xeaac…fa24` **unchanged**; all
+web gates pass. Branch `claude/kind-turing-hdelb3` (pushed).
+
+**Shipped this batch:**
+- **Marquee select + copy/paste/cut** (`board.ts`/`App.svelte`): Select-mode empty
+  drag rubber-bands a box (shift = additive); `Ctrl/Cmd-C/V/X` copy/paste/cut an
+  in-memory fragment (components + internal wires + net labels), paste with fresh ids
+  at a growing offset. Group drag already worked.
+- **Logic-gate analog/digital architecture — DECIDED + Phase 0.** Owner chose the
+  **full separated digital domain** (families + driver/receiver boundary + a
+  deterministic event scheduler + level-bearing hash) **now**, with a **legacy-ideal
+  default** (existing circuits identical; only gate/DFF goldens regenerate when the
+  scheduler lands; future digital parts are golden-additive). Decision + concrete
+  build order recorded in **`docs/ui/logic-analog-digital-nets.md` §6**.
+  - **Phase 0 landed (golden-stable):** `LogicFamily { v_ih_frac, v_ol/v_oh_frac,
+    g_ol, g_oh }` + `LEGACY` const reproducing the original gate exactly;
+    `gate_target_level` routes through `LEGACY.reads_high`/`.drive`. Byte-identical,
+    golden unchanged, `legacy_family_matches_original_gate` guards it.
+- **Live construction-detail ("factory internals") views** integrated from a worktree
+  agent: `web/src/lib/detailDrawers.ts` (new) — animated op-amp/diode/LED/Schottky/
+  Zener/resistor internals driven by live `ElectricalState`; `InfoDiagram` detail mode
+  + `DETAIL ?? schematic` fallback; a **Symbol⇄Inside** toggle (defaults to Inside).
+  Composed with info-panel Phase 1: drawer = toggle → diagram → pinout → equation.
+- **Earlier this session (already pushed):** pan-regression + label-ghost fixes,
+  open-loop current-source zeroing, POT non-bug (answered), phase-shift example,
+  info-panel Phase 1 (double-click/`I`/ⓘ + pinout).
+
+### Pick up here — the digital domain (the big, risky part; do it fresh)
+The determinism-critical work remains: **Phase 1** receiver/driver split + in-core net
+classification (analog / pure-digital / boundary), **Phase 2** the **deterministic
+event scheduler** (integer-tick buckets, enum `Level{Low,High,Z,X}`, element-index
+order, one-tick-delay feedback) + fold digital net levels into `fnv1a` → **regenerate
+gate/DFF goldens** (the one deliberate break), **Phase 3** boundary threading to web
+(family chip, noise-margin readout) + surface XNOR(5)/BUF(7) (the `GATE_AUX` gap),
+**Phase 4** open-drain/Z/wired-AND + level-shifter. The acceptance bar + exact design
+are in `logic-analog-digital-nets.md` §6. Do this with full budget — never land a
+half-built scheduler. Also still queued: **onboarding** (pull-based, no levels;
+`docs/ui/onboarding-first-run.md`), more parts/ICs.
+
+---
+
+## 2026-06-15 — Editor fixes, open-loop source, phase-shift example, info-panel Phase 1
+
+**State:** 🟢 Green. All web gates pass (`check`/`lint`/`build`); sim-core untouched
+this batch, golden `0xeaac376499e4fa24` unchanged. Branch `claude/kind-turing-hdelb3`.
+
+**Shipped (pushed to the feature branch):**
+- **Pan regression fix.** The pan tool (Esc default) no longer blanket-grabs
+  pointerdown: a pin/junction press starts a wire, a wire press reshapes, an armed
+  click places, and only a body / empty drag pans. `arm()` leaves pan for select.
+  (board.ts onPointerDown pin/junction now accept `"pan"`; body-press in pan falls
+  through to pan unless additive.)
+- **Label ghost fix.** onPointerMove now refreshes the ghost in `label` mode too
+  (was only `armed`/`junction`), so the name-pill preview tracks the cursor + snaps.
+- **Open-loop current source.** `buildNetlist` now zeroes the forced current of any
+  `floatingSources` (a current source whose loop isn't closed) so the dead branch
+  reads an honest **0 mA / 0 V** instead of the singular-matrix phantom (10 kV/10 mA).
+  Closing the loop restores the real value. Verified via the wasm solver.
+- **POT B-terminal — NOT a bug (answered).** Reproduced through the real solver:
+  a properly-wired W→B leg conducts (B→R10k→GND reads 0.31 mA); the user's `~0`
+  reading reproduces *exactly* the **B-floating** case (rheostat mode = legitimate).
+  No code change; it was a wiring near-miss. (POT expansion in netlist.ts is correct.)
+- **Phase-shift example** (`phase-shift`, **Filters**). The user's 3-stage RC ladder
+  (4.7 kΩ / 0.1 µF) mislabeled 60/120/180 at 1 kHz; corrected to **138 Hz**
+  (= 1/(2πRC√6)) with honest 56°/112°/180° tap labels + the 1/29 attenuation lesson,
+  and a detune-to-1 kHz demo. Verified end-to-end (transient sim: −180.0°, 1/29.1).
+- **Component info panel — Phase 1** (per `docs/ui/component-info-panel.md`):
+  - **Double-click a part** opens its info drawer (new `onInspect` board callback;
+    works from Select + Pan; first click selects/toggles, second opens info and is
+    swallowed — MSW carve-out handled). **`I`** hotkey toggles it; **ⓘ chip** on the
+    value popover is the third door. **Esc closes the drawer first** (then disarm/clear).
+  - **Pinout** (`web/src/lib/pinout.ts`): lays out `PART_KINDS.pins` rotated to the
+    placed part (SelectedPart gains `rot`) → SVG body + legs + dots with DOM labels
+    and per-leg glosses (anode/cathode, D/G/S, electrolytic polarity, transformer
+    P/S, …). Pure reference; no live state, no sim, no golden.
+
+**Reusable harness (not committed):** a Node script under `web/src/lib/_repro.ts`
+(deleted after each use) imports `graph.ts`/`netlist.ts`/`examples.ts` + the built
+wasm and runs real sims — drive it with `node --loader /tmp/tsresolve.mjs …` (a tiny
+extensionless-`.ts` resolver). Invaluable for verifying circuits/netlists end-to-end.
+Used to settle the POT, the open-loop source, and the phase-shift example.
+
+### Pick up here (the remaining queue)
+- **Info panel Phase 2** — `DETAIL_DRAWERS` construction cutaways (cap spiral / MLCC
+  stack / LED lamp first) + static ratings block. Big; see the doc §3–4.
+- **Onboarding** (pull-based, no levels) per `docs/ui/onboarding-first-run.md`.
+- **Copy/paste + marquee select + group drag** (TODOS top entry).
+- Remaining parts/ICs (relay, programmable load, ferrite, fuse/thermistor/LDR/…,
+  counter/555/regulator/comparator/DAC/ADC/H-bridge/memory/MCU/FPGA).
+
+---
+
 ## 2026-06-15 — Op-amp shipped end-to-end + scope autoscale (#47–#50)
 
 **State:** 🟢 Green. Golden `0xeaac376499e4fa24` unchanged; 72 sim-core tests. The

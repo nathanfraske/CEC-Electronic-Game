@@ -8,7 +8,111 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
-### Persistence — localStorage for board + progress (owner, 2026-06-15)
+### QoL / fixes batch (owner, 2026-06-15 pm)
+- ~~**Pan yields to Build on a grab**: clicking a component or wire in Pan switches
+  to Build/Select and grabs it (move/reshape); empty still pans. `onMode` callback.~~
+- ~~**R rotates the ghost when a part is armed** (was rotating a leftover selection).~~
+- ~~**Open-loop current-source fix verified** (re-ran harness: open = 0 mA/0 V, closed
+  = 10 mA/10 kV). Residual: a return path that's topologically present but DC-broken
+  by *value* (open switch / lone cap) isn't caught by the topology-only union-find —
+  needs the value-aware singular detection already on the backlog.~~
+- [ ] **Drop a component onto existing track(s) should split/remove the spanned
+  segment**, not leave it shorting the pins (e.g. a Transformer across dual tracks —
+  the wire between the corner pins must be cut so the part bridges them, not the wire).
+  *Analysis:* `placeCell` needs a post-place pass that, for each placed pin landing on
+  an existing wire's route, splits that wire at the pin (reuse `junctionOnWire`/the
+  split path) and removes any wire segment that runs **between** two of the new part's
+  own pins (that's the short). Medium-complex; touches `placeCell` + graph split.
+- [ ] **Delete on a wire deletes only the segment up to the nearest junction(s)** on
+  that run, not the whole pin-to-pin wire. *Analysis:* wires already SPLIT at junctions
+  (`junctionOnWire`), so a junction-bounded segment is its own wire object and deletes
+  alone — the gap is deleting a single **segment between waypoints/corners** of one
+  multi-bend wire object: needs `deleteSelection` (or a wire-segment delete) to split
+  the wire at the clicked segment and drop only that piece. Medium-complex.
+- [ ] **Wiring auto-complete with a junction (KiCad continue)**: while drawing a wire,
+  clicking an existing trace drops a junction, ends the wire there, and **continues** a
+  new wire from it. *Analysis:* the current model is **drag-per-wire** (press a pin →
+  drag → release completes in `onPointerUp`; `finishWireOnWire` then `cancelWiring`).
+  KiCad continue needs (a) `finishWireOnWire` to RETURN the new junction and the
+  up-handler to set `this.wiring = {from:{junctionId}}` instead of cancelling, AND
+  (b) `onPointerDown` reworked so a press **while already wiring** COMPLETES at the
+  target (pin/wire/junction) instead of overwriting `this.wiring` with a new start —
+  i.e. a click-to-place mode. The (b) rework is the real work; do it deliberately.
+- ~~**Scope time window**: selectable, decimated span (0.48 ms/4.8 ms/48 ms/0.48 s);
+  base span = old per-tick behaviour; ⏱ button cycles it, duration labelled on scope.~~
+
+### Shipped this session (editor fixes + phase-shift + info-panel P1)
+- ~~**Pan tool regression**: the Esc-default pan no longer blanket-grabs pointerdown —
+  pin/junction press starts a wire, wire press reshapes, armed click places; only a
+  body/empty drag pans. `arm()` leaves pan for select. (board.ts + App.svelte.)~~
+- ~~**Label ghost**: onPointerMove now refreshes the ghost in `label` mode, so the
+  name-pill preview follows the cursor + snaps (was only `armed`/`junction`).~~
+- ~~**Open-loop current source** zeroed (see deeper-#2 tombstone below).~~
+- ~~**POT B-terminal investigation**: NOT a bug — a properly-wired W→B leg conducts
+  (verified 0.31 mA via the wasm solver); the user's ~0 reading reproduces the
+  B-floating (rheostat) case exactly. Wiring near-miss, no code change.~~
+- ~~**Phase-shift example** (`phase-shift`, Filters): corrected to 138 Hz
+  (= 1/(2πRC√6)) with honest 56°/112°/180° tap labels + the 1/29 attenuation lesson +
+  a detune-to-1 kHz demo. Verified end-to-end (transient sim: −180.0°, 1/29.1).~~
+
+### Logic gates: separated analog/digital domain — DECIDED, building (owner, 2026-06-15)
+**Decision (doc §6):** build the **full** separated digital domain NOW (families +
+driver/receiver boundary + deterministic event scheduler + level-bearing hash), with
+a **legacy-ideal default** (existing circuits identical; only gate/DFF goldens regen
+when the scheduler lands; future digital parts golden-additive). Owner: lowest risk
+of a future re-break.
+- ~~**Phase 0 — family substrate (golden-stable).** `LogicFamily`{v_ih/v_ol/v_oh
+  frac, g_ol/g_oh} + `LEGACY` const reproducing the original gate exactly;
+  `gate_target_level` routes through `LEGACY.reads_high`/`.drive`. Byte-identical,
+  88 tests pass, golden unchanged; `legacy_family_matches_original_gate` guards it.~~
+- [ ] **Phase 1** — receiver/driver split + in-core net classification (analog /
+  pure-digital / boundary). Still LEGACY, still golden-stable.
+- [ ] **Phase 2** — the deterministic **event scheduler** (integer-tick buckets, enum
+  `Level{Low,High,Z,X}`, element-index order, one-tick-delay feedback) + fold digital
+  net levels into `fnv1a`. **Regenerate gate/DFF goldens** (the one deliberate break).
+  Extend to the DFF. Per-family `*_run_is_reproducible` + mixed-rail + open-drain tests.
+- [ ] **Phase 3** — boundary threading to web (family value-chip, noise-margin /
+  forbidden-band readouts) + surface **XNOR(5)/BUF(7)** (the `GATE_AUX` gap).
+- [ ] **Phase 4** — open-drain / Z / wired-AND + a first-class **level-shifter** part
+  (golden-additive).
+- The acceptance bar + exact design are in `logic-analog-digital-nets.md` §6. Do the
+  scheduler with full budget — never land a half-built non-deterministic engine.
+
+<details><summary>Original brainstorm summary (superseded by the §6 decision)</summary>
+Brainstorm doc **written** at **`docs/ui/logic-analog-digital-nets.md`** (agent).
+Recommends a 4-phase path: **(0)** add a `const` logic-family descriptor defaulted to
+a legacy-ideal family that reproduces today's numbers *exactly* (golden untouched —
+same trick as the AC `aux`/4th-terminal `d`); **(1)** opt-in real families with honest
+`V_IL/IH/OL/OH` + asymmetric pull-up/down + open-drain (a deliberate golden regen);
+**(2)** noise-margin/forbidden-band warnings + a first-class **level-shifter** part
+(mostly presentation); **(3)** only when digital gets big, a separate deterministic
+event scheduler (the architecture doc's target; the one hash-changing, risky step).
+Includes a debug/validation plan (per-family threshold tests, mixed-rail, open-drain,
+reproducibility, a legacy-equivalence golden guard). Decide direction before Phase 1.
+- [ ] **Latent bug the agent flagged:** XNOR/BUF exist in sim-core `gate_logic` but
+  aren't wired in `GATE_AUX` (web), so they're unreachable as placed parts. Verify +
+  wire them (or confirm intentional). Cheap; do alongside Phase 0/1.
+Owner: the gates (`ELEM_GATE=17`) currently can't handle logic-high being anything
+but their set HIGH value and low being exactly 0 — no V_IL/V_IH vs V_OL/V_OH, no
+noise margin, no mixed-rail interfacing (a 3.3 V part driving a 5 V part), no notion
+of a divided/pulled input. Likely endgame: a **separated analog vs digital net
+system with boundary/barrier elements** (or a per-gate logic-family descriptor under
+the single analog solve). Must stay **golden-stable** (any sim-core behaviour change
+⇒ regenerate the golden + justify) and keep the coarse JS↔wasm boundary. Doc must
+include a **debug/validation plan** (deterministic sim-core tests across families +
+mixed-rail interface cases). Decide direction after reading the doc.
+</details>
+
+### Editor: copy/paste + marquee select + group drag (owner, 2026-06-15)
+- ~~**Box / marquee select** (Select-mode empty drag; shift = additive): rubber-band
+  rect selects components whose centre is inside + wires with both ends inside +
+  junctions inside. `board.ts` marquee layer + `finalizeMarquee`.~~
+- ~~**Group drag**: already worked — `beginDrag` grabs the whole selection; internal
+  wires re-route via their pins. (No change needed.)~~
+- ~~**Copy/paste/cut** (⌘/Ctrl-C / -V / -X): in-memory `ClipboardSnippet` (components +
+  internal wires + net labels on their pins); paste with fresh ids at a growing offset,
+  remapped onto the new ids, re-selects the group. Cut = copy + delete. Same-named
+  labels still alias by design. Validated through the harness.~~
 - ~~**Persist board state across refreshes.** `lib/storage.ts` saves the
   `BoardGraph.serialize()` to localStorage (debounced 400 ms) on every edit and
   restores it on load (falls back to the primer only on a true first visit). Guarded
@@ -46,12 +150,12 @@ things up, what am I looking at, what am I trying to read, the minimum mental mo
 Full design in **`docs/ui/component-info-panel.md`** (ideation, brainstormed
 2026-06-15). Make rich component info reachable without breaking build flow.
 Owner-approved direction + defaults:
-- [ ] **Phase 1** — open the info drawer on **double-click** a component (+ an `I`
-  hotkey on the selection, + an `ⓘ` chip on the value popover); reuse the existing
-  right-side `.info-drawer`; **click-away does NOT close it** (persistent instrument
-  panel that re-targets as you select); Esc/×/`I` dismiss. Add the **oriented,
-  labelled pinout** (built from `PART_KINDS.pins` + `selPart.rot`). Suppress the 2nd
-  click of a double on the manual switch so double-click stays universal.
+- ~~**Phase 1** — open the info drawer on **double-click** a component (`onInspect`
+  board callback; works from Select + Pan), + an `I` hotkey toggle, + an `ⓘ` chip on
+  the value popover. Reuse the right-side `.info-drawer`; Esc closes the drawer first.
+  **Oriented labelled pinout** shipped (`web/src/lib/pinout.ts`: `PART_KINDS.pins`
+  rotated by `selPart.rot` → SVG body+legs+dots + DOM labels + per-leg glosses).
+  MSW 2nd-click-of-a-double suppressed so double-click stays universal.~~ (shipped)
 - [ ] **Phase 2** — the **construction cutaways**: a third `DETAIL_DRAWERS` map
   (Pixi-drawn, parallel to `DRAWERS`/`FACTORY_DRAWERS`, hosted by a new "detail mode"
   on `InfoDiagram`, `DETAIL ?? schematic` fallback) + an in-panel schematic⇄cutaway
@@ -365,7 +469,7 @@ Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate 
 - ~~**LED** wired up with a current-limiting example (and a Schottky added alongside); see the 2026-06-15 Schottky+LED entry above.~~ Still open: other nonlinear parts (Zener, BJT/MOSFET) on the Newton engine.
 - ~~**1-pin part hit box** (GND): `componentBox` now returns a generous 36×48 grab box for 1-pin parts, so GND is easy to click + drag.~~
 - ~~**Floating GND no longer falsely grounds**: `buildNetlist` only accepts a GND as the reference if its net is wired to ≥1 other pin (net size > 1); a GND sitting unconnected on the board is ignored, so a disconnected circuit no longer falsely "solves" (was reading 10 V·10 mA on an open I→R chain).~~
-- [ ] **Dangling current-source affordance (deeper #2)**: even with a *connected* ground, an ideal current source whose forced current has no return loop yields a singular solve (degenerate → misleading reading), whereas a V source just shows 0 current. Detect the singular/no-DC-path case (or a current source with no current loop) and surface "incomplete circuit" instead of garbage. Needs proper topology / singularity detection (likely a `sim-core` "singular" signal + an App hint).
+- ~~**Dangling current-source affordance (deeper #2)**: an ideal current source whose forced current has no return loop made the MNA system singular → the deterministic zero-pivot fallback reported a phantom (full current "flowing" + huge IR voltage). `buildNetlist` now **zeroes the forced current** of every detected `floatingSources` member so the dead branch reads an honest 0 mA / 0 V (the amber "no return path" banner explains why); closing the loop restores the real value. Verified through the wasm solver (open: 0 mA; closed: 10 mA / 10 kV). Web-only, golden-safe.~~
 - ~~**Value Inspector** shipped (`web/src/lib/values.ts` + board `setComponentValue`/`onSelect.single` + App): select one part → curated value chips + −/+ standard-value stepper + a "more values" decade×significand picker (E24 R / E6 C·L; curated lists for V/I and SW duty). Every valued part (V/R/C/L/I/SW) is now configurable; edits rebuild the netlist live.~~
 - [ ] **Buck converter demo** (owner, "fun, less important"): a fully-animated buck converter showing energy moved in "buckets" to a new voltage — needs switching (switch/MOSFET + diode + L + C), so it follows the solver upgrade + a switch part.
 

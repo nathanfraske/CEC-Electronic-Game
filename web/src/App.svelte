@@ -48,10 +48,16 @@
     graphShape,
     type BuiltNetlist,
   } from "./lib/netlist";
-  import { ZERO_ELECTRICAL, type ElectricalState } from "./lib/glyphs";
+  import {
+    ZERO_ELECTRICAL,
+    hasFactory,
+    type ElectricalState,
+  } from "./lib/glyphs";
+  import { pinoutOf } from "./lib/pinout";
+  import { hasDetail } from "./lib/detailDrawers";
   import { partInfo } from "./lib/partInfo";
   import { CALCS } from "./lib/calc";
-  import { InfoDiagram } from "./lib/infoDiagram";
+  import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
 
   const SEED = 1337;
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
@@ -409,6 +415,33 @@
   let infoTab = $state<"info" | "calc">("info");
   let selElectrical = $state<ElectricalState | null>(null);
   let infoDiagram: InfoDiagram | undefined;
+  // The diagram picture: the schematic symbol, or the construction-internals
+  // ("what's happening inside") view. Defaults to the detail view; the toggle
+  // below flips it, and it snaps back to detail when a fresh detail-capable part
+  // is selected (see the $effect). Falls back to schematic for kinds with no
+  // detail drawer — `diagramHasDetail` gates the toggle's visibility.
+  let diagramMode = $state<DiagramMode>("reality");
+  // Which tiers the current selection actually has distinct art for (a pure read of
+  // the kind). The schematic tier always exists; the others gate their toggle button.
+  const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
+  const diagramHasFactory = $derived(
+    selPart ? hasFactory(selPart.kind) : false,
+  );
+  // The tier the diagram should actually render in: the user's choice when that
+  // tier's art exists, else clamped outward to schematic so nothing is ever blank.
+  const effectiveDiagramMode = $derived<DiagramMode>(
+    diagramMode === "reality" && !diagramHasDetail
+      ? "schematic"
+      : diagramMode === "analogy" && !diagramHasFactory
+        ? "schematic"
+        : diagramMode,
+  );
+  // Selecting a different part defaults the view to its reality internals when it has
+  // them — so double-clicking an op-amp opens straight to "what's happening inside."
+  $effect(() => {
+    const kind = selPart?.kind;
+    if (kind) diagramMode = hasDetail(kind) ? "reality" : "schematic";
+  });
   // Calculator inputs, seeded from each calc's presets.
   const initialCalc: Record<string, Record<string, number>> = {};
   for (const c of CALCS) {
@@ -524,10 +557,21 @@
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
         board?.undo();
         e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+        board?.copySelection(); // copy the selected fragment to the clipboard
+        e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "x" || e.key === "X")) {
+        board?.cutSelection(); // cut = copy + delete
+        e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        board?.paste(); // paste with fresh ids, offset, and re-selected
+        e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
-        // R rotates the *placement* of an armed part when nothing is selected, so
-        // the ghost (and the drop) turn; otherwise it rotates the selection.
-        if (armedPart && selCount === 0) board?.rotateArmed();
+        // R rotates the *placement* of an armed part whenever one is armed — the
+        // ghost (and the drop) turn — so it never rotates a leftover selection
+        // out from under you while you're lining up a new part. Only with nothing
+        // armed does R rotate the current selection.
+        if (armedPart) board?.rotateArmed();
         else board?.rotateSelection();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
@@ -546,15 +590,24 @@
         enterMeasure(); // m = Measure
         e.preventDefault();
       } else if (e.key === "Escape") {
-        // Universal cancel that lands on the neutral Pan tool: disarm a part, cancel
-        // any in-progress wire / open label editor / selection, then switch to
-        // panning so Escape always leaves you in a safe "just navigate" state.
-        if (armedPart) arm(null);
-        board?.escape();
-        setMode("pan");
+        // Universal cancel, in order of least-destructive first: a first Esc just
+        // closes the open info drawer (without dropping your armed part or
+        // selection). Otherwise it disarms a part, cancels any in-progress wire /
+        // open label editor / selection, then switches to the neutral Pan tool so
+        // Escape always leaves you in a safe "just navigate" state.
+        if (infoOpen) {
+          infoOpen = false;
+        } else {
+          if (armedPart) arm(null);
+          board?.escape();
+          setMode("pan");
+        }
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "h" || e.key === "H")) {
         setMode("pan"); // H = the hand / pan tool
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "i" || e.key === "I")) {
+        infoOpen = !infoOpen; // I = toggle the deep info panel for the selection
         e.preventDefault();
       } else if (e.key === " ") {
         togglePlay(); // spacebar = play / pause
@@ -683,8 +736,21 @@
           // The board disarmed itself (right-click) — mirror it into the HUD.
           armedPart = kind;
         },
+        onMode: (m) => {
+          // The board switched its own tool (Pan yields to Build when you grab a
+          // part/wire) — mirror it so the toolbar selector follows.
+          mode = m;
+        },
         onAnchor: (rect) => {
           anchor = rect;
+        },
+        onInspect: () => {
+          // Double-click on a part: the board already made it the lone selection
+          // (onSelect fired first). Open the deep info drawer and land straight on
+          // the reality internals when the part has them — even if it was already
+          // selected, so a double-click always re-asserts the "what's inside" view.
+          infoOpen = true;
+          if (selPart && hasDetail(selPart.kind)) diagramMode = "reality";
         },
         onLabelEdit: (req) => {
           if (req) {
@@ -720,7 +786,17 @@
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             selElectrical = e;
-            if (infoOpen) infoDiagram?.setState(selPart.kind, e, selPart.value);
+            if (infoOpen) {
+              // Keep the picture (symbol vs internals) and the live state current
+              // every frame, so a mode flip or a re-mounted canvas is always right.
+              infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setState(
+                selPart.kind,
+                e,
+                selPart.value,
+                selPart.wiper,
+              );
+            }
           } else {
             selElectrical = null;
           }
@@ -881,7 +957,16 @@
   // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
     armedPart = tag;
-    if (tag && (mode === "measure" || mode === "junction" || mode === "label"))
+    // Arming a part is an intent to build, so leave any non-building tool —
+    // including the neutral pan (Esc) default — and drop into select so the very
+    // next click drops the part.
+    if (
+      tag &&
+      (mode === "measure" ||
+        mode === "junction" ||
+        mode === "label" ||
+        mode === "pan")
+    )
       setMode("select");
     board?.setArmed(tag);
   }
@@ -1002,6 +1087,10 @@
   }
   function toggleScope(): void {
     scopeBig = board?.toggleScopeExpanded() ?? false;
+  }
+  let scopeSpan = $state("480 µs");
+  function cycleSpan(): void {
+    scopeSpan = board?.cycleScopeSpan() ?? scopeSpan;
   }
   function toggleNode(i: number, visible: boolean): void {
     nodeVisible[i] = visible;
@@ -1564,6 +1653,12 @@
           <div class="insp-head">
             <span class="insp-kind">{partName(kind)}</span>
             <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
+            <button
+              class="insp-info"
+              title="More about this part — pinout & details (I)"
+              aria-label="Open the info panel for this part"
+              onclick={() => (infoOpen = true)}>ⓘ</button
+            >
           </div>
           {#if selElectrical}
             <div class="insp-meter mono">
@@ -1727,9 +1822,114 @@
                 {@const info = partInfo(selPart.kind)}
                 {#if info}
                   {@const e = selElectrical ?? ZERO_ELECTRICAL}
-                  <div class="info-diagram">
+                  {#if diagramHasDetail || diagramHasFactory}
+                    <!-- The 3-tier view selector: Symbol (datasheet schematic) →
+                         Factory (the machine-metaphor analogy) → Real (the live
+                         construction-internals, "as close to reality as possible").
+                         A tier's button only appears when that kind has its own art;
+                         the diagram clamps outward to the symbol otherwise. -->
+                    <div
+                      class="diagram-toggle"
+                      role="group"
+                      aria-label="Component view tier"
+                    >
+                      <button
+                        class="seg {effectiveDiagramMode === 'schematic'
+                          ? 'is-active'
+                          : ''}"
+                        onclick={() => (diagramMode = "schematic")}
+                        title="Schematic — the symbol you'll meet on a datasheet"
+                      >
+                        Symbol
+                      </button>
+                      {#if diagramHasFactory}
+                        <button
+                          class="seg {effectiveDiagramMode === 'analogy'
+                            ? 'is-active'
+                            : ''}"
+                          onclick={() => (diagramMode = "analogy")}
+                          title="Factory — the machine-metaphor analogy"
+                        >
+                          Factory
+                        </button>
+                      {/if}
+                      {#if diagramHasDetail}
+                        <button
+                          class="seg {effectiveDiagramMode === 'reality'
+                            ? 'is-active'
+                            : ''}"
+                          onclick={() => (diagramMode = "reality")}
+                          title="Real — a zoomed-in view of what's happening inside, live"
+                        >
+                          Real
+                        </button>
+                      {/if}
+                    </div>
+                  {/if}
+                  <div
+                    class="info-diagram {effectiveDiagramMode === 'reality'
+                      ? 'is-detail'
+                      : ''}"
+                  >
                     <canvas use:infoDiagramAction></canvas>
                   </div>
+                  {@const po = pinoutOf(selPart.kind, selPart.rot)}
+                  {#if po}
+                    <div class="pinout-wrap">
+                      <div class="pinout-cap">Pinout</div>
+                      <div
+                        class="pinout"
+                        style="width: {po.width}px; height: {po.height}px;"
+                      >
+                        <svg
+                          width={po.width}
+                          height={po.height}
+                          viewBox="0 0 {po.width} {po.height}"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="pinout-body"
+                            x={po.body.x}
+                            y={po.body.y}
+                            width={po.body.w}
+                            height={po.body.h}
+                            rx="4"
+                          />
+                          {#each po.pins as p (p.label)}
+                            <line
+                              class="pinout-leg"
+                              x1={po.body.x + po.body.w / 2}
+                              y1={po.body.y + po.body.h / 2}
+                              x2={p.x}
+                              y2={p.y}
+                            />
+                          {/each}
+                          {#each po.pins as p (p.label)}
+                            <circle
+                              class="pinout-dot"
+                              cx={p.x}
+                              cy={p.y}
+                              r="4.5"
+                              style="fill: {po.color}"
+                            />
+                          {/each}
+                        </svg>
+                        {#each po.pins as p (p.label)}
+                          <div
+                            class="pinout-label"
+                            style="left: {p.lx}px; top: {p.ly}px; transform: translate({p.tx}, {p.ty});"
+                          >
+                            <span class="pinout-name" style="color: {po.color}"
+                              >{p.label}</span
+                            >
+                            {#if p.gloss}<span class="pinout-gloss"
+                                >{p.gloss}</span
+                              >{/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
                   <div class="info-eq mono">{info.equation}</div>
                   <p class="info-plain">{info.plain()}</p>
                   <div class="info-live">
@@ -1757,43 +1957,6 @@
                   live "right now" readout of its numbers.
                 </p>
               {/if}
-
-              <section class="belt-note">
-                <h3 class="belt-title">The belt — carriers &amp; energy</h3>
-                <div class="belt-legend">
-                  <span class="belt-key"
-                    ><b class="belt-carrier">›</b> carriers · charge</span
-                  >
-                  <span class="belt-key"
-                    ><b class="belt-energy">●</b> energy · power</span
-                  >
-                </div>
-                <p class="info-plain">
-                  Two things ride every wire. The <b>carriers</b> are the arrow
-                  chevrons, coloured by the net's voltage — they move the way
-                  the current flows. On <b>DC</b> they stream one way; on
-                  <b>AC</b> they slosh back and forth in place, because the current
-                  reverses every half-cycle. Net charge barely travels.
-                </p>
-                <p class="info-plain">
-                  The orange dots are <b>energy</b> — power,
-                  <span class="mono">P = V·I</span>, carried to the load. Here's
-                  the surprise: on AC's negative half-cycle <b>both</b> the
-                  voltage and the current go negative, yet the energy still
-                  flows
-                  <b>forward</b>. Power is their <i>product</i>, and negative ×
-                  negative is <b>positive</b> — so
-                  <span class="mono">P = V·I ≥ 0</span> the whole cycle through a
-                  resistor. The carriers slosh, but the energy is never not being
-                  delivered.
-                </p>
-                <p class="info-plain">
-                  In a capacitor or inductor the voltage and current sit a
-                  quarter-cycle apart, so <span class="mono">V·I</span> swings both
-                  ways — the energy sloshes in and back out, delivering nothing on
-                  average. That's reactive power.
-                </p>
-              </section>
             {:else}
               {#each CALCS as c (c.id)}
                 {@const r = c.compute(calcVals[c.id] ?? {})}
@@ -1858,14 +2021,24 @@
 
     <h3 class="sub-title nodes-head">
       <span>Nodes · {channels.length}</span>
-      <button
-        class="btn btn-ghost scope-expand"
-        onclick={toggleScope}
-        disabled={!ready}
-        title="Resize the scope on the board"
-      >
-        {scopeBig ? "Shrink scope" : "Expand scope"}
-      </button>
+      <span class="scope-ctl">
+        <button
+          class="btn btn-ghost scope-expand"
+          onclick={cycleSpan}
+          disabled={!ready}
+          title="Scope time window — click to cycle (decimated, so a full AC cycle fits)"
+        >
+          ⏱ {scopeSpan}
+        </button>
+        <button
+          class="btn btn-ghost scope-expand"
+          onclick={toggleScope}
+          disabled={!ready}
+          title="Resize the scope on the board"
+        >
+          {scopeBig ? "Shrink scope" : "Expand scope"}
+        </button>
+      </span>
     </h3>
     <ul class="chan-list scroll">
       {#each channels as v, i (i)}
@@ -1897,6 +2070,40 @@
         </li>
       {/each}
     </ul>
+    <!-- The carriers-vs-energy primer lives here now (general "how to read the
+         board animation"), not in the per-component info panel. Collapsed by
+         default so it's available without crowding the readings. -->
+    <details class="board-legend">
+      <summary>Reading the board — carriers &amp; energy</summary>
+      <div class="belt-legend">
+        <span class="belt-key"
+          ><b class="belt-carrier">›</b> carriers · charge</span
+        >
+        <span class="belt-key"><b class="belt-energy">●</b> energy · power</span
+        >
+      </div>
+      <p class="info-plain">
+        Two things ride every wire. The <b>carriers</b> are the arrow chevrons,
+        coloured by the net's voltage — they move the way the current flows. On
+        <b>DC</b> they stream one way; on <b>AC</b> they slosh back and forth in place,
+        because the current reverses every half-cycle. Net charge barely travels.
+      </p>
+      <p class="info-plain">
+        The orange dots are <b>energy</b> — power,
+        <span class="mono">P = V·I</span>, carried to the load. Here's the
+        surprise: on AC's negative half-cycle
+        <b>both</b> the voltage and the current go negative, yet the energy
+        still flows <b>forward</b>. Power is their <i>product</i>, and negative
+        × negative is <b>positive</b> — so <span class="mono">P = V·I ≥ 0</span> the
+        whole cycle through a resistor. The carriers slosh, but the energy is never
+        not being delivered.
+      </p>
+      <p class="info-plain">
+        In a capacitor or inductor the voltage and current sit a quarter-cycle
+        apart, so <span class="mono">V·I</span> swings both ways — the energy sloshes
+        in and back out, delivering nothing on average. That's reactive power.
+      </p>
+    </details>
   </aside>
 </div>
 
@@ -2107,6 +2314,10 @@
     justify-content: space-between;
     gap: 8px;
   }
+  .scope-ctl {
+    display: flex;
+    gap: 6px;
+  }
   .scope-expand {
     font-size: 10px;
     padding: 3px 8px;
@@ -2182,8 +2393,23 @@
   .insp-head {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 8px;
+  }
+  /* The "tell me more" door on the value popover → opens the deep info drawer. */
+  .insp-info {
+    margin-left: auto;
+    align-self: center;
+    background: none;
+    border: none;
+    padding: 0 2px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .insp-info:hover {
+    color: var(--cyan);
   }
   .insp-kind {
     font-family: var(--font-display);
@@ -2346,6 +2572,41 @@
     overflow-y: auto;
     padding: 14px;
   }
+  /* Symbol ⇄ Inside segmented control above the hero diagram. */
+  .diagram-toggle {
+    display: flex;
+    gap: 0;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+    width: fit-content;
+  }
+  .diagram-toggle .seg {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 5px 12px;
+    background: var(--surface);
+    border: none;
+    border-right: 1px solid var(--border);
+    cursor: pointer;
+    transition:
+      color 0.12s,
+      background 0.12s;
+  }
+  .diagram-toggle .seg:last-child {
+    border-right: none;
+  }
+  .diagram-toggle .seg:hover {
+    color: var(--text);
+  }
+  .diagram-toggle .seg.is-active {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
   .info-diagram {
     height: 170px;
     border: 1px solid var(--border);
@@ -2354,10 +2615,71 @@
     margin-bottom: 12px;
     background: #120f1c;
   }
+  /* The construction-internals view is the headline visual — give it more room. */
+  .info-diagram.is-detail {
+    height: 230px;
+  }
   .info-diagram canvas {
     width: 100%;
     height: 100%;
     display: block;
+  }
+  /* Pinout: an oriented terminal map. The SVG draws the package body, legs and
+     dots; the labels are DOM text positioned over it (so they stay selectable and
+     screen-reader legible). Centred, with the diagram sized to its content. */
+  .pinout-wrap {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #120f1c;
+    padding: 6px 8px 10px;
+  }
+  .pinout-cap {
+    font-family: var(--font-display);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 2px;
+  }
+  .pinout {
+    position: relative;
+    margin: 0 auto;
+  }
+  .pinout svg {
+    position: absolute;
+    inset: 0;
+  }
+  .pinout-body {
+    fill: var(--surface-2);
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+  }
+  .pinout-leg {
+    stroke: var(--border-bright);
+    stroke-width: 2;
+  }
+  .pinout-dot {
+    stroke: #120f1c;
+    stroke-width: 1.5;
+  }
+  .pinout-label {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .pinout-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pinout-gloss {
+    font-size: 9.5px;
+    color: var(--dim);
+    letter-spacing: 0.01em;
   }
   .info-eq {
     font-size: 15px;
@@ -2413,18 +2735,28 @@
     color: var(--dim);
   }
   /* Always-on explainer for the two belt layers (carriers vs energy). */
-  .belt-note {
-    margin-top: 14px;
-    padding-top: 12px;
+  /* The carriers-vs-energy primer, now a collapsible legend at the foot of the
+     telemetry panel (moved out of the per-component info panel). */
+  .board-legend {
+    margin-top: 12px;
+    padding-top: 10px;
     border-top: 1px solid var(--border);
   }
-  .belt-title {
+  .board-legend > summary {
     font-family: var(--font-display);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 12px;
+    font-size: 11px;
+    color: var(--dim);
+    cursor: pointer;
+    margin-bottom: 8px;
+    list-style: revert;
+  }
+  .board-legend > summary:hover {
     color: var(--text);
-    margin: 0 0 8px;
+  }
+  .board-legend .info-plain:last-child {
+    margin-bottom: 0;
   }
   .belt-legend {
     display: flex;
@@ -2448,9 +2780,6 @@
     color: var(--energy);
     font-size: 12px;
     line-height: 1;
-  }
-  .belt-note .info-plain:last-child {
-    margin-bottom: 0;
   }
   .calc-card {
     border: 1px solid var(--border);

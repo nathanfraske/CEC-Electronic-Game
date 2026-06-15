@@ -66,6 +66,14 @@ const PIN_R = 4.5;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
+// Fixed integration step (s) — the determinism contract's dt. Display-only here
+// (ticks → seconds for the scope's time-window label); never feeds the sim.
+const DT_SECONDS = 2e-6;
+// Selectable scope time windows, in ticks: 0.48 ms / 4.8 ms / 48 ms / 0.48 s. The
+// first equals the original fixed window, so the default changes nothing; the
+// longer spans are *decimated* down to ~MAX_SAMPLES points so a low-frequency AC
+// cycle (which the short window can't fit) becomes visible without a huge buffer.
+const SCOPE_SPAN_TICKS = [240, 2400, 24000, 240000];
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
@@ -172,12 +180,34 @@ export interface SelectedPart {
   id: number;
   kind: string;
   value: number;
+  /** Orientation in 90° CW steps (0..3), so the info-panel pinout can be drawn
+   * matching the way the part actually points on the board. */
+  rot: number;
   /** An AC source's peak amplitude in volts (its second scalar, beside `value` =
    * frequency). Undefined for kinds that have no amplitude. */
   amp?: number;
   /** A potentiometer's wiper position in [0,1] (its second scalar, beside `value` =
    * total resistance). Undefined for kinds with no wiper. */
   wiper?: number;
+}
+
+/** A relocatable copy of a board fragment: the selected components (with their
+ * placement + scalars), the wires whose *both* ends are pins of those components
+ * (their internal traces), and any net labels pinned to those pins. Coordinates are
+ * absolute cells; paste re-anchors them with a growing offset. In-memory only. */
+interface ClipboardSnippet {
+  comps: {
+    oldId: number;
+    kind: string;
+    col: number;
+    row: number;
+    value: number;
+    rot: number;
+    amp?: number;
+    wiper?: number;
+  }[];
+  wires: { aId: number; aPin: number; bId: number; bPin: number }[];
+  labels: { compId: number; pin: number; name: string }[];
 }
 
 /** Screen-space (CSS px, canvas-relative) rect of the lone selected part, for
@@ -201,8 +231,15 @@ export interface BoardCallbacks {
   }) => void;
   /** Fired when the board itself changes the armed part (e.g. right-click disarm). */
   onArm?: (kind: string | null) => void;
+  /** Fired when the board changes its own mode (e.g. the Pan tool yields to Build
+   * when you grab a part/wire), so the HUD's tool selector follows. */
+  onMode?: (mode: Mode) => void;
   /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
   onAnchor?: (rect: AnchorRect | null) => void;
+  /** Open the deep info panel for a component — fired by a double-click on its body
+   * (the part is also made the lone selection first, so the panel and the board
+   * agree on which part). The HUD decides what "open" means (sets `infoOpen`). */
+  onInspect?: (id: number) => void;
   /**
    * Open the inline net-label name editor. Fired when a label-mode click lands on
    * a pin/junction (or an existing tag): the HUD shows a small input seeded with
@@ -227,6 +264,7 @@ export class Board {
   private readonly groundLayer = new Graphics();
   private readonly groundLabels: Text[] = [];
   private readonly selectionLayer = new Graphics();
+  private readonly marqueeLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
   // Translucent placement preview ("ghost") of the armed part at the snapped
@@ -293,6 +331,8 @@ export class Board {
   private readonly nodeLabels = new Map<number, string>();
   private readonly nodeHidden = new Set<number>();
   private scopeExpanded = false;
+  // Index into SCOPE_SPAN_TICKS — the visible scope time window (decimated record).
+  private scopeSpanIdx = 0;
   // Net names per node from the netlist's net labels (e.g. node 3 → "VCC"): the
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
@@ -364,7 +404,25 @@ export class Board {
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
+  // Last component-body press (id + time), so a second press on the same body
+  // within DOUBLE_CLICK_MS is recognised as a double-click → open its info panel.
+  private lastBodyTap: { id: number; t: number } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
+  // Marquee (rubber-band) selection: a drag on empty space in Select mode sweeps a
+  // box; on release every component inside it (and every wire wholly inside) is
+  // selected. World coords; `additive` keeps the prior selection (shift-drag).
+  private marquee: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    additive: boolean;
+  } | null = null;
+  // In-memory copy/paste clipboard: a relocatable snippet of the board (components
+  // + their internal wires + net labels on their pins). `pasteSeq` grows the paste
+  // offset so repeated pastes fan out instead of stacking exactly.
+  private clipboard: ClipboardSnippet | null = null;
+  private pasteSeq = 0;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
@@ -398,6 +456,10 @@ export class Board {
     this.netLabelLayer.addChild(this.netLabelGfx);
     this.netLabelLayer.eventMode = "none";
     this.world.addChild(this.netLabelLayer);
+    // The marquee rubber-band rides above everything but the ghost/probe overlays;
+    // non-interactive and hidden until a select-mode empty drag begins.
+    this.marqueeLayer.eventMode = "none";
+    this.world.addChild(this.marqueeLayer);
     // The ghost rides above the components so the preview is never occluded, and
     // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
     this.ghostLayer.addChild(this.ghostGlyph);
@@ -725,6 +787,22 @@ export class Board {
     this.scopeExpanded = !this.scopeExpanded;
     this.layoutScope();
     return this.scopeExpanded;
+  }
+
+  /** Advance the scope's visible time window to the next preset (wrapping) and clear
+   * the trace so it refills at the new decimation. Returns the new span's label. */
+  cycleScopeSpan(): string {
+    this.scopeSpanIdx = (this.scopeSpanIdx + 1) % SCOPE_SPAN_TICKS.length;
+    this.clearScope();
+    return this.scopeSpanLabel();
+  }
+
+  /** Human label for the current scope time window (e.g. "4.8 ms"). */
+  scopeSpanLabel(): string {
+    const s = SCOPE_SPAN_TICKS[this.scopeSpanIdx]! * DT_SECONDS;
+    if (s < 1e-3) return `${(s * 1e6).toFixed(0)} µs`;
+    if (s < 1) return `${(s * 1e3).toFixed(s * 1e3 < 10 ? 1 : 0)} ms`;
+    return `${s.toFixed(2)} s`;
   }
 
   /**
@@ -1280,6 +1358,7 @@ export class Board {
           id: c.id,
           kind: c.kind,
           value: c.value,
+          rot: c.rot,
           amp: c.amp,
           wiper: c.wiper,
         };
@@ -1806,12 +1885,11 @@ export class Board {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
-    // Pan tool: left-drag pans the view (the neutral navigation tool Esc lands on).
-    // No placing/selecting — just grab and move, like holding the middle button.
-    if (this.mode === "pan") {
-      this.panning = { lastX: e.global.x, lastY: e.global.y };
-      return;
-    }
+    // Pan tool: the neutral navigation tool Esc lands on. It does NOT blanket-grab
+    // — dragging a PART BODY or empty space pans, but the build flow still works:
+    // starting a wire from a pin/junction, reshaping a trace, and dropping an armed
+    // part all fall through to their normal handlers below (which now also accept
+    // "pan"). Only an outright body/empty drag reaches the pan at the very end.
     if (this.mode === "measure") {
       if (this.measurePress(wp.x, wp.y)) return;
       if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
@@ -1876,7 +1954,10 @@ export class Board {
     }
 
     const pin = this.pinHitTest(wp.x, wp.y);
-    if (pin && (this.mode === "wire" || this.mode === "select")) {
+    if (
+      pin &&
+      (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
+    ) {
       this.wiring = { from: pin };
       return;
     }
@@ -1891,7 +1972,11 @@ export class Board {
         this.selectJunction(jid, true);
         return;
       }
-      if (this.mode === "wire" || this.mode === "select") {
+      if (
+        this.mode === "wire" ||
+        this.mode === "select" ||
+        this.mode === "pan"
+      ) {
         const now = performance.now();
         const dbl =
           this.lastJunctionTap !== null &&
@@ -1912,8 +1997,34 @@ export class Board {
       }
     }
 
+    // In pan mode a body press is NOT a grab — it falls through to the empty-space
+    // branch below and pans, so the hand tool never accidentally drags a part.
+    // (Shift/ctrl still selects so multi-select works from any tool.)
     const body = this.bodyHitTest(wp.x, wp.y);
-    if (body) {
+    // Double-click a component body opens its info panel — works from Select and Pan
+    // alike, before the mode-specific handling below. The first click selects (and,
+    // for a manual switch, toggles) as usual; the second click within the window
+    // makes it the lone selection, opens info, and is swallowed here (no drag, and
+    // no second MSW flip), so double-click is a clean, universal "inspect" gesture.
+    if (body && !additive) {
+      const now = performance.now();
+      const dbl =
+        this.lastBodyTap !== null &&
+        this.lastBodyTap.id === body.id &&
+        now - this.lastBodyTap.t < DOUBLE_CLICK_MS;
+      if (dbl) {
+        this.lastBodyTap = null;
+        this.selectComponent(body.id, false);
+        this.cb.onInspect?.(body.id);
+        return;
+      }
+      this.lastBodyTap = { id: body.id, t: now };
+    }
+    // Pan tool yields to direct manipulation: a plain click on a part grabs it and
+    // switches to Build/Select so you can move it (the toolbar follows via onMode).
+    // Empty space still pans; this only fires when actually over a body.
+    if (body && this.mode === "pan" && !additive) this.yieldPanToSelect();
+    if (body && (this.mode !== "pan" || additive)) {
       if (additive) {
         this.selectComponent(body.id, true);
         return;
@@ -1925,6 +2036,9 @@ export class Board {
 
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
+      // Same yield for wires: clicking a trace in Pan switches to Build and grabs
+      // the segment to reshape (KiCad-style), rather than just panning the view.
+      if (this.mode === "pan" && !additive) this.yieldPanToSelect();
       this.selectWire(wireId, additive);
       // A non-additive press also arms a segment-drag: grab THIS segment of the
       // trace and drag it perpendicular (KiCad-style), the endpoints staying put.
@@ -1948,7 +2062,7 @@ export class Board {
     }
 
     // Empty space. With a part armed, drop it here and stay armed — Factorio-style
-    // place-and-repeat. Otherwise clear the selection and begin a pan.
+    // place-and-repeat.
     if (this.armed && !additive) {
       this.placeCell(
         this.armed,
@@ -1957,9 +2071,25 @@ export class Board {
       );
       return;
     }
+    // In Select mode an empty drag rubber-bands a marquee selection (a plain drag
+    // clears first; shift-drag adds to the current selection). In every other tool —
+    // notably the neutral Pan — an empty drag pans the view instead.
+    if (this.mode === "select") {
+      if (!additive) this.clearSelection();
+      this.marquee = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y, additive };
+      this.drawMarquee();
+      return;
+    }
     if (!additive) this.clearSelection();
     this.panning = { lastX: e.global.x, lastY: e.global.y };
   };
+
+  /** Leave the Pan tool for Build/Select (and tell the HUD), used when a Pan-mode
+   * click lands directly on a part or wire so it grabs instead of panning. */
+  private yieldPanToSelect(): void {
+    this.setMode("select");
+    this.cb.onMode?.("select");
+  }
 
   private beginDrag(body: Component, wp: Point): void {
     const ids = this.selected.has(body.id) ? [...this.selected] : [body.id];
@@ -1977,9 +2107,181 @@ export class Board {
     this.pendingUndo = this.graph.serialize();
   }
 
+  // --- marquee selection --------------------------------------------------
+
+  /** Redraw the rubber-band rectangle for the in-progress marquee. */
+  private drawMarquee(): void {
+    const m = this.marquee;
+    const g = this.marqueeLayer;
+    g.clear();
+    if (!m) return;
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0);
+    const h = Math.abs(m.y1 - m.y0);
+    g.rect(x, y, w, h).fill({ color: PALETTE.accent, alpha: 0.08 });
+    g.rect(x, y, w, h).stroke({ width: 1, color: PALETTE.accent, alpha: 0.7 });
+  }
+
+  /** Pick everything the marquee box encloses: a component whose grab-box centre
+   * is inside, a wire whose *both* endpoints are inside, and a junction inside. A
+   * box too small to be a real sweep is treated as a plain click (no-op — the press
+   * already cleared the selection unless it was additive). */
+  private finalizeMarquee(): void {
+    const m = this.marquee;
+    if (!m) return;
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0);
+    const h = Math.abs(m.y1 - m.y0);
+    if (w < 3 && h < 3) return;
+    const inside = (px: number, py: number): boolean =>
+      px >= x && px <= x + w && py >= y && py <= y + h;
+    for (const c of this.graph.components.values()) {
+      const box = this.componentBox(c);
+      if (inside(box.x + box.width / 2, box.y + box.height / 2)) {
+        this.selected.add(c.id);
+      }
+    }
+    for (const wire of this.graph.wires.values()) {
+      const a = this.graph.endpointCell(wire.from);
+      const b = this.graph.endpointCell(wire.to);
+      if (!a || !b) continue;
+      const pa = this.cellToWorld(a);
+      const pb = this.cellToWorld(b);
+      if (inside(pa.x, pa.y) && inside(pb.x, pb.y))
+        this.selectedWires.add(wire.id);
+    }
+    for (const j of this.graph.junctions.values()) {
+      const p = this.cellToWorld(j.cell);
+      if (inside(p.x, p.y)) this.selectedJunctions.add(j.id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  // --- copy / paste -------------------------------------------------------
+
+  /** Copy the selected components, their *internal* wires (both ends on selected
+   * components), and the net labels pinned to their pins into the in-memory
+   * clipboard. (Junction-anchored wires/labels are skipped — v1 copies part
+   * fragments.) Same-named labels still alias their nets on paste, by design. */
+  copySelection(): void {
+    if (this.selected.size === 0) return;
+    const sel = new Set(this.selected);
+    const comps: ClipboardSnippet["comps"] = [];
+    for (const id of sel) {
+      const c = this.graph.components.get(id);
+      if (!c) continue;
+      comps.push({
+        oldId: id,
+        kind: c.kind,
+        col: c.cell.col,
+        row: c.cell.row,
+        value: c.value,
+        rot: c.rot,
+        amp: c.amp,
+        wiper: c.wiper,
+      });
+    }
+    if (comps.length === 0) return;
+    const wires: ClipboardSnippet["wires"] = [];
+    for (const w of this.graph.wires.values()) {
+      if (isJunctionRef(w.from) || isJunctionRef(w.to)) continue;
+      if (sel.has(w.from.componentId) && sel.has(w.to.componentId)) {
+        wires.push({
+          aId: w.from.componentId,
+          aPin: w.from.pinIndex,
+          bId: w.to.componentId,
+          bPin: w.to.pinIndex,
+        });
+      }
+    }
+    const labels: ClipboardSnippet["labels"] = [];
+    for (const l of this.graph.netLabels.values()) {
+      if (isJunctionRef(l.at)) continue;
+      if (sel.has(l.at.componentId)) {
+        labels.push({
+          compId: l.at.componentId,
+          pin: l.at.pinIndex,
+          name: l.name,
+        });
+      }
+    }
+    this.clipboard = { comps, wires, labels };
+    this.pasteSeq = 0;
+  }
+
+  /** Cut: copy the selection, then delete it. */
+  cutSelection(): void {
+    if (this.selected.size === 0) return;
+    this.copySelection();
+    this.deleteSelection();
+  }
+
+  /** Paste the clipboard fragment with fresh ids, offset a little from the source
+   * (and a little further on each repeat so copies fan out instead of stacking),
+   * remap the internal wires + labels onto the new ids, and select the new group. */
+  paste(): void {
+    const clip = this.clipboard;
+    if (!clip || clip.comps.length === 0) return;
+    this.pushUndo(this.graph.serialize());
+    this.pasteSeq += 1;
+    const off = 2 * this.pasteSeq;
+    const map = new Map<number, number>();
+    for (const cc of clip.comps) {
+      const nc = this.graph.place(cc.kind, {
+        col: cc.col + off,
+        row: cc.row + off,
+      });
+      if (!nc) continue;
+      nc.value = cc.value;
+      nc.rot = cc.rot;
+      if (cc.amp !== undefined) nc.amp = cc.amp;
+      if (cc.wiper !== undefined) nc.wiper = cc.wiper;
+      map.set(cc.oldId, nc.id);
+    }
+    for (const w of clip.wires) {
+      const na = map.get(w.aId);
+      const nb = map.get(w.bId);
+      if (na === undefined || nb === undefined) continue;
+      this.graph.connect(
+        { componentId: na, pinIndex: w.aPin },
+        { componentId: nb, pinIndex: w.bPin },
+      );
+    }
+    for (const l of clip.labels) {
+      const nid = map.get(l.compId);
+      if (nid === undefined) continue;
+      this.graph.addNetLabel({ componentId: nid, pinIndex: l.pin }, l.name);
+    }
+    this.selected.clear();
+    this.selectedWires.clear();
+    this.selectedJunctions.clear();
+    this.selectedLabels.clear();
+    for (const id of map.values()) this.selected.add(id);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.emitSelect();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /** Whether the clipboard holds anything to paste (for HUD enablement). */
+  hasClipboard(): boolean {
+    return this.clipboard !== null && this.clipboard.comps.length > 0;
+  }
+
   private readonly onPointerMove = (e: FederatedPointerEvent): void => {
     const wp = this.screenToWorld(e.global.x, e.global.y);
     this.pointer.copyFrom(wp);
+
+    if (this.marquee) {
+      this.marquee.x1 = wp.x;
+      this.marquee.y1 = wp.y;
+      this.drawMarquee();
+      return;
+    }
 
     if (this.draggingProbe) {
       const target = this.snapProbe(wp.x, wp.y) ?? {
@@ -2047,11 +2349,20 @@ export class Board {
     }
 
     if (this.wiring) this.drawPendingWire();
-    // Idle hover: keep the placement / junction ghost glued to the snapped cell.
-    if (this.armed || this.mode === "junction") this.updateGhost();
+    // Idle hover: keep the placement / junction / label ghost glued to the cursor
+    // (snapped to the cell or the endpoint a click would attach to). Every tool
+    // that draws a ghost must refresh here or its preview freezes in place.
+    if (this.armed || this.mode === "junction" || this.mode === "label")
+      this.updateGhost();
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
+    if (this.marquee) {
+      this.finalizeMarquee();
+      this.marquee = null;
+      this.marqueeLayer.clear();
+      return;
+    }
     if (this.draggingProbe) {
       this.draggingProbe = null;
       return;
@@ -2886,10 +3197,17 @@ export class Board {
    * timeline jumped before it, e.g. a scrub-back or reset). */
   private pushScopeSample(tick: number, state: ArrayLike<number>): void {
     const last = this.scopeSamples[this.scopeSamples.length - 1];
-    if (!last || tick > last.tick) {
+    // Decimate: keep one point per `stride` ticks so a long span still fits in
+    // ~MAX_SAMPLES points. At the base span stride = 1, so this is exactly the old
+    // per-tick behaviour; wider spans skip the in-between ticks.
+    const stride = Math.max(
+      1,
+      Math.floor(SCOPE_SPAN_TICKS[this.scopeSpanIdx]! / MAX_SAMPLES),
+    );
+    if (!last || tick >= last.tick + stride) {
       this.scopeSamples.push({ tick, values: Array.from(state) });
       if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
-    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
+    } else if (tick < (this.scopeSamples[0]?.tick ?? 0)) {
       // Scrubbed before the retained window (or the run was reset): start over.
       this.scopeSamples = [{ tick, values: Array.from(state) }];
     }
@@ -3011,6 +3329,14 @@ export class Board {
       "t " + cur.tick,
       Math.min(cx + 3, r.x + r.width - 42),
       r.y + r.height - 12,
+    );
+    // The visible time window (decimated span), bottom-left, so a long window reads
+    // as deliberate rather than a stretched trace.
+    this.scopeLabel(
+      3,
+      "◄ " + this.scopeSpanLabel() + " ►",
+      r.x + padL,
+      y0 + ih + 2,
     );
 
     // Legend along the top: a coloured dot + (custom) name per visible node.

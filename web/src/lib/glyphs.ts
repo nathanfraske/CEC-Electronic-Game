@@ -2358,11 +2358,29 @@ export function isSymbol(kind: string): boolean {
   return kind in DRAWERS;
 }
 
-/** Draw a component's glyph + state animation into the (pre-cleared) Graphics,
- * in the active style (schematic symbols, or the Factory machine lens). */
-export function drawGlyph(g: Graphics, o: GlyphOpts): void {
-  const map = currentStyle === "factory" ? FACTORY_DRAWERS : DRAWERS;
+/** Draw a component's glyph + state animation into the (pre-cleared) Graphics, in
+ * an **explicit** style, independent of the global board lens — used by the info
+ * diagram's tier selector so previewing the Factory (analogy) tier never flips the
+ * board itself. Falls back to the schematic drawer, then a generic card. */
+export function drawGlyphIn(
+  g: Graphics,
+  o: GlyphOpts,
+  style: GlyphStyle,
+): void {
+  const map = style === "factory" ? FACTORY_DRAWERS : DRAWERS;
   const drawer = map[o.kind] ?? DRAWERS[o.kind];
   if (drawer) drawer(g, o);
   else drawCard(g, o);
+}
+
+/** Whether the kind has dedicated Factory (analogy) art (vs. falling back to the
+ * schematic symbol). Lets the info panel show the Factory tier only when it differs. */
+export function hasFactory(kind: string): boolean {
+  return kind in FACTORY_DRAWERS;
+}
+
+/** Draw a component's glyph + state animation into the (pre-cleared) Graphics,
+ * in the active board style (schematic symbols, or the Factory machine lens). */
+export function drawGlyph(g: Graphics, o: GlyphOpts): void {
+  drawGlyphIn(g, o, currentStyle);
 }
