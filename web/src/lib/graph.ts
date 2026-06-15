@@ -117,7 +117,10 @@ export const PART_KINDS: Record<string, PartKind> = {
   // Explicit ground reference: a single pin whose net becomes node 0. Not a
   // solver element (1 pin, absent from TYPE_OF) — it only anchors the reference.
   GND: kind("GND", "Ground", "dim", onePin("⏚"), 0, "", true),
-  D: kind("D", "Diode", "warn", twoPin("A", "K"), 0, "", false),
+  // Diode: nonlinear (Shockley); anode A -> cathode K. Engages the Newton solve.
+  D: kind("D", "Diode", "warn", twoPin("A", "K"), 0, "", true),
+  // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
+  SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
   Q: kind(
     "Q",
     "NPN Transistor",

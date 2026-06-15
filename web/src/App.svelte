@@ -79,6 +79,13 @@
       color: "var(--warn)",
     },
     {
+      tag: "SW",
+      name: "Switch",
+      desc: "Clock-driven (PWM)",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
       tag: "Q",
       name: "NPN Transistor",
       desc: "Gain, switching",
@@ -543,7 +550,7 @@
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (click again or Esc
         to disarm) — or drag it on. Scroll to zoom, drag empty space to pan. V /
-        R / C / L are ideal and simulate today.
+        R / C / L / I / D / SW and GND all simulate today.
       </p>
       <ul class="part-list scroll">
         {#each PARTS as part (part.name)}
