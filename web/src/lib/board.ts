@@ -43,7 +43,13 @@ import {
 import { hasValue } from "./values";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
-export type Mode = "select" | "place" | "wire" | "measure" | "junction";
+export type Mode =
+  | "select"
+  | "place"
+  | "wire"
+  | "measure"
+  | "junction"
+  | "label";
 
 /** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
 interface ProbePoint {
@@ -190,6 +196,21 @@ export interface BoardCallbacks {
   onArm?: (kind: string | null) => void;
   /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
   onAnchor?: (rect: AnchorRect | null) => void;
+  /**
+   * Open the inline net-label name editor. Fired when a label-mode click lands on
+   * a pin/junction (or an existing tag): the HUD shows a small input seeded with
+   * `initial` at `rect`, and on commit calls back `addLabel`/`renameLabel`. `id` is
+   * the existing label id when editing one, else null (a new label to create at
+   * `at`). A null payload closes the editor. The endpoint `at` is plain data.
+   */
+  onLabelEdit?: (
+    req: {
+      id: number | null;
+      at: Endpoint;
+      initial: string;
+      rect: AnchorRect;
+    } | null,
+  ) => void;
 }
 
 export class Board {
@@ -206,6 +227,12 @@ export class Board {
   // and it rotates the held part's glyph in place via the holder's rotation.
   private readonly ghostLayer = new Container();
   private readonly ghostGlyph = new Graphics();
+  // Net-label name tags ("VCC" etc.): a Graphics for each tag's pill background +
+  // leader, plus a growable pool of Text for the names. Drawn in the world so they
+  // pan/zoom with the board; pooled like the scope legend so re-layout is cheap.
+  private readonly netLabelLayer = new Container();
+  private readonly netLabelGfx = new Graphics();
+  private readonly netLabelTexts: Text[] = [];
   private readonly probeLayer = new Graphics();
   private readonly probeText = new Text({
     text: "",
@@ -238,6 +265,14 @@ export class Board {
   private readonly selected = new Set<number>();
   private readonly selectedWires = new Set<number>();
   private readonly selectedJunctions = new Set<number>();
+  private readonly selectedLabels = new Set<number>();
+  // The net label whose name is being edited in the HUD input right now (its tag
+  // text is hidden on the board meanwhile). Null when no editor is open.
+  private editingLabelId: number | null = null;
+  // The pending label edit: the endpoint to attach to and the existing label id
+  // (null ⇒ create a new one on commit). Set when the HUD editor opens; consumed
+  // by commitLabel / cleared by cancelLabelEdit.
+  private pendingLabel: { id: number | null; at: Endpoint } | null = null;
   // Per-tick scope history (one entry per simulated tick, not per render frame)
   // so the scope freezes when paused and aligns to the timeline.
   private scopeSamples: { tick: number; values: number[] }[] = [];
@@ -247,6 +282,10 @@ export class Board {
   private readonly nodeLabels = new Map<number, string>();
   private readonly nodeHidden = new Set<number>();
   private scopeExpanded = false;
+  // Net names per node from the netlist's net labels (e.g. node 3 → "VCC"): the
+  // display name for a labelled net, used when the node has no explicit telemetry
+  // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
+  private netNames = new Map<number, string>();
 
   private w = 0;
   private h = 0;
@@ -342,6 +381,12 @@ export class Board {
     this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
+    // Net-label tags ride above the components so the name is never occluded, and
+    // below the ghost / pending-wire / probe overlays. Non-interactive (hit-testing
+    // is by endpoint, not the tag glyph).
+    this.netLabelLayer.addChild(this.netLabelGfx);
+    this.netLabelLayer.eventMode = "none";
+    this.world.addChild(this.netLabelLayer);
     // The ghost rides above the components so the preview is never occluded, and
     // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
     this.ghostLayer.addChild(this.ghostGlyph);
@@ -435,6 +480,7 @@ export class Board {
     this.mode = mode;
     if (mode !== "wire") this.cancelWiring();
     if (mode !== "measure") this.clearProbe();
+    if (mode !== "label") this.endLabelEdit();
     this.updateCursor();
     this.updateGhost();
   }
@@ -460,8 +506,13 @@ export class Board {
     this.updateGhost();
   }
 
-  /** Esc: cancel an in-progress wire, otherwise clear the selection. */
+  /** Esc: cancel an open label editor, then an in-progress wire, else clear the
+   * selection. */
   escape(): void {
+    if (this.editingLabelId !== null || this.pendingLabel !== null) {
+      this.endLabelEdit();
+      return;
+    }
     if (this.wiring) {
       this.cancelWiring();
       return;
@@ -472,7 +523,9 @@ export class Board {
   private updateCursor(): void {
     this.app.stage.cursor = this.armed
       ? "copy"
-      : this.mode === "measure" || this.mode === "junction"
+      : this.mode === "measure" ||
+          this.mode === "junction" ||
+          this.mode === "label"
         ? "crosshair"
         : "default";
   }
@@ -609,9 +662,22 @@ export class Board {
     return this.scopeExpanded;
   }
 
-  /** A node's display name: its custom label, or GND / "Node i" by default. */
+  /**
+   * A node's display name, in precedence order: an explicit telemetry rename, then
+   * its net label name (e.g. `VCC` from a {@link NetLabel}), then GND / "Node i".
+   */
   private nodeName(i: number): string {
-    return this.nodeLabels.get(i) ?? (i === 0 ? "GND" : "Node " + i);
+    return (
+      this.nodeLabels.get(i) ??
+      this.netNames.get(i) ??
+      (i === 0 ? "GND" : "Node " + i)
+    );
+  }
+
+  /** Install the net-label names per node (node index → name) from the netlist,
+   * so the scope legend shows `VCC` instead of `Node 3` for a labelled net. */
+  setNetNames(map: Map<number, string> | null): void {
+    this.netNames = map ? new Map(map) : new Map();
   }
 
   placeAt(
@@ -735,8 +801,15 @@ export class Board {
   }
 
   clear(): void {
-    if (this.graph.components.size === 0 && this.graph.wires.size === 0) return;
+    if (
+      this.graph.components.size === 0 &&
+      this.graph.wires.size === 0 &&
+      this.graph.netLabels.size === 0
+    ) {
+      return;
+    }
     this.pushUndo(this.graph.serialize());
+    this.endLabelEdit();
     this.graph.clear();
     this.rebuildNodes();
     this.clearSelection();
@@ -744,16 +817,18 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
-  /** Delete the current selection (components + wires + junctions). */
+  /** Delete the current selection (components + wires + junctions + net labels). */
   deleteSelection(): void {
     if (
       this.selected.size === 0 &&
       this.selectedWires.size === 0 &&
-      this.selectedJunctions.size === 0
+      this.selectedJunctions.size === 0 &&
+      this.selectedLabels.size === 0
     ) {
       return;
     }
     this.pushUndo(this.graph.serialize());
+    for (const id of this.selectedLabels) this.graph.removeNetLabel(id);
     for (const id of this.selected) this.graph.removeComponent(id);
     for (const id of this.selectedWires) this.graph.removeWire(id);
     for (const id of this.selectedJunctions) this.graph.removeJunction(id);
@@ -805,6 +880,7 @@ export class Board {
   undo(): void {
     const snapshot = this.undoStack.pop();
     if (!snapshot) return;
+    this.endLabelEdit();
     this.graph.restore(snapshot);
     this.rebuildNodes();
     this.clearSelection();
@@ -824,6 +900,7 @@ export class Board {
   /** Replace the whole board with a prebuilt graph (e.g. a worked example). */
   loadGraph(snapshot: GraphSnapshot): void {
     this.pushUndo(this.graph.serialize());
+    this.endLabelEdit();
     this.graph.restore(snapshot);
     this.rebuildNodes();
     this.clearSelection();
@@ -894,6 +971,7 @@ export class Board {
     this.electrical = electrical;
     this.redrawWires();
     this.drawGround();
+    this.drawNetLabels();
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
@@ -955,6 +1033,7 @@ export class Board {
     this.probeText.resolution = rounded;
     this.ammText.resolution = rounded;
     for (const t of this.groundLabels) t.resolution = rounded;
+    for (const t of this.netLabelTexts) t.resolution = rounded;
     for (const node of this.nodes.values()) node.setTextRes(rounded);
   }
 
@@ -1066,21 +1145,54 @@ export class Board {
     return best;
   }
 
+  /**
+   * The net label whose tag pill is under a world point, else null. The pill sits
+   * up-and-right of the endpoint (see {@link drawNetLabels}); we test only that box,
+   * NOT the anchor dot — so a click on the pin/junction itself keeps its normal
+   * action (start a wire, select the part) rather than being shadowed by a label on
+   * it. Later labels (higher id) win, matching the draw order. Render-only geometry.
+   */
+  private labelHitTest(wx: number, wy: number): number | null {
+    let best: number | null = null;
+    for (const l of this.graph.netLabels.values()) {
+      const cell = this.graph.endpointCell(l.at);
+      if (!cell) continue;
+      const o = this.cellToWorld(cell);
+      // The pill: ~7px per mono char + padding, ~18px tall, offset (+12,−18).
+      const w = Math.max(28, l.name.length * 7 + 12);
+      const px = o.x + 12;
+      const py = o.y - 18;
+      if (
+        wx >= px - 3 &&
+        wx <= px + w + 3 &&
+        wy >= py - 3 &&
+        wy <= py + 18 + 3
+      ) {
+        best = l.id; // later (top-most) label wins
+      }
+    }
+    return best;
+  }
+
   // --- selection ----------------------------------------------------------
 
   private clearSelection(): void {
     this.selected.clear();
     this.selectedWires.clear();
     this.selectedJunctions.clear();
+    this.selectedLabels.clear();
     this.redrawSelection();
     this.emitSelect();
   }
 
   private emitSelect(): void {
     let single: SelectedPart | undefined;
-    // Junctions count as edge selections (folded into `wires`) so the inspector
-    // only opens for a lone component with nothing else picked.
-    const edges = this.selectedWires.size + this.selectedJunctions.size;
+    // Junctions and net labels count as edge selections (folded into `wires`) so
+    // the inspector only opens for a lone component with nothing else picked.
+    const edges =
+      this.selectedWires.size +
+      this.selectedJunctions.size +
+      this.selectedLabels.size;
     if (this.selected.size === 1 && edges === 0) {
       const id = [...this.selected][0]!;
       const c = this.graph.components.get(id);
@@ -1102,6 +1214,7 @@ export class Board {
       this.selected.size === 1 &&
       this.selectedWires.size === 0 &&
       this.selectedJunctions.size === 0 &&
+      this.selectedLabels.size === 0 &&
       this.mode !== "measure" &&
       !busy
     ) {
@@ -1138,6 +1251,76 @@ export class Board {
     this.emitSelect(); // refresh the inspector's displayed value
   }
 
+  /**
+   * Commit the open net-label editor with `name` (from the HUD input). For a new
+   * label (pending id null) it adds one at the pending endpoint; for an existing
+   * one it renames it (an empty name removes it — see {@link BoardGraph}). No-op if
+   * nothing meaningful changed (e.g. an empty name on a not-yet-created label), so
+   * a stray blur doesn't push an empty undo. Closes the editor either way.
+   */
+  commitLabel(name: string): void {
+    const pending = this.pendingLabel;
+    this.endLabelEdit();
+    if (!pending) return;
+    const trimmed = name.trim();
+    if (pending.id === null) {
+      if (!trimmed) return; // nothing to add (empty name on a not-yet-created label)
+      this.pushUndo(this.graph.serialize());
+      const l = this.graph.addNetLabel(pending.at, trimmed);
+      this.redrawWires();
+      if (l) this.selectLabel(l.id, false);
+      this.cb.onChange?.(this.graph);
+    } else {
+      const existing = this.graph.netLabels.get(pending.id);
+      if (existing && existing.name === trimmed) return; // unchanged
+      this.pushUndo(this.graph.serialize());
+      this.graph.renameNetLabel(pending.id, trimmed);
+      this.redrawWires();
+      this.cb.onChange?.(this.graph);
+    }
+  }
+
+  /** Cancel the open net-label editor without changing anything. */
+  cancelLabelEdit(): void {
+    this.endLabelEdit();
+  }
+
+  /** Close the inline label editor: clear the editing/pending state + tell the HUD. */
+  private endLabelEdit(): void {
+    this.editingLabelId = null;
+    this.pendingLabel = null;
+    this.cb.onLabelEdit?.(null);
+  }
+
+  /**
+   * Open the inline label editor for an endpoint. If a label already sits there,
+   * edit it; otherwise prepare to create a new one on commit. Computes the on-screen
+   * rect of the anchor cell so the HUD can position the input, and fires onLabelEdit.
+   */
+  private beginLabelEdit(at: Endpoint): void {
+    const cell = this.graph.endpointCell(at);
+    if (!cell) return;
+    const existing = this.graph.netLabelAt(at);
+    this.editingLabelId = existing?.id ?? null;
+    this.pendingLabel = { id: existing?.id ?? null, at: { ...at } };
+    if (existing) this.selectLabel(existing.id, false);
+    else this.clearSelection();
+    const o = this.cellToWorld(cell);
+    const s = this.world.scale.x;
+    const rect: AnchorRect = {
+      x: this.world.position.x + (o.x + 12) * s,
+      y: this.world.position.y + (o.y - 18) * s,
+      width: 90 * s,
+      height: 20 * s,
+    };
+    this.cb.onLabelEdit?.({
+      id: existing?.id ?? null,
+      at: { ...at },
+      initial: existing?.name ?? "",
+      rect,
+    });
+  }
+
   private selectComponent(id: number, additive: boolean): void {
     if (additive) {
       if (this.selected.has(id)) this.selected.delete(id);
@@ -1146,6 +1329,7 @@ export class Board {
       this.selected.clear();
       this.selectedWires.clear();
       this.selectedJunctions.clear();
+      this.selectedLabels.clear();
       this.selected.add(id);
     }
     this.redrawSelection();
@@ -1160,6 +1344,7 @@ export class Board {
       this.selected.clear();
       this.selectedWires.clear();
       this.selectedJunctions.clear();
+      this.selectedLabels.clear();
       this.selectedWires.add(id);
     }
     this.redrawSelection();
@@ -1174,7 +1359,23 @@ export class Board {
       this.selected.clear();
       this.selectedWires.clear();
       this.selectedJunctions.clear();
+      this.selectedLabels.clear();
       this.selectedJunctions.add(id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private selectLabel(id: number, additive: boolean): void {
+    if (additive) {
+      if (this.selectedLabels.has(id)) this.selectedLabels.delete(id);
+      else this.selectedLabels.add(id);
+    } else {
+      this.selected.clear();
+      this.selectedWires.clear();
+      this.selectedJunctions.clear();
+      this.selectedLabels.clear();
+      this.selectedLabels.add(id);
     }
     this.redrawSelection();
     this.emitSelect();
@@ -1477,6 +1678,41 @@ export class Board {
       if (this.placeJunctionAt(wp.x, wp.y)) return;
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
+    }
+
+    // Label tool: a non-additive click attaches (or edits) a net label. Precedence
+    // mirrors the natural connection points: an existing tag → edit it; otherwise a
+    // pin or a junction under the cursor → label that endpoint and open the inline
+    // name editor. Off any of those, fall through to pan. (Shift/ctrl still selects.)
+    if (this.mode === "label" && !additive) {
+      const hit = this.labelHitTest(wp.x, wp.y);
+      if (hit !== null) {
+        const l = this.graph.netLabels.get(hit);
+        if (l) this.beginLabelEdit(l.at);
+        return;
+      }
+      const pin = this.pinHitTest(wp.x, wp.y);
+      if (pin) {
+        this.beginLabelEdit(pin);
+        return;
+      }
+      const jid = this.junctionHitTest(wp.x, wp.y);
+      if (jid !== null) {
+        this.beginLabelEdit({ junctionId: jid });
+        return;
+      }
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
+
+    // In Select mode, clicking a net label's tag selects it (so Delete works and
+    // the accent ring shows); right-click deletes it in any mode (see onRightDown).
+    if (this.mode === "select") {
+      const hitLabel = this.labelHitTest(wp.x, wp.y);
+      if (hitLabel !== null) {
+        this.selectLabel(hitLabel, additive);
+        return;
+      }
     }
 
     const pin = this.pinHitTest(wp.x, wp.y);
@@ -1792,6 +2028,18 @@ export class Board {
       return;
     }
     const wp = this.screenToWorld(e.global.x, e.global.y);
+    // Net-label tags sit on top of everything, so test them first: right-click
+    // deletes the label (mirrors junction/wire delete).
+    const lid = this.labelHitTest(wp.x, wp.y);
+    if (lid !== null) {
+      this.pushUndo(this.graph.serialize());
+      this.graph.removeNetLabel(lid);
+      this.selectedLabels.delete(lid);
+      this.redrawWires();
+      this.redrawSelection();
+      this.cb.onChange?.(this.graph);
+      return;
+    }
     // Junction sits atop the wire it splits, so test it first.
     const jid = this.junctionHitTest(wp.x, wp.y);
     if (jid !== null) {
@@ -1996,6 +2244,78 @@ export class Board {
         });
       }
     }
+  }
+
+  /**
+   * Draw the net-label name tags (KiCad-style local/global labels). Each label is
+   * a small pill — name in mono on a dark backing, ringed in the net's voltage
+   * colour so it reads as part of the bus — set just above-right of its endpoint
+   * with a short leader line. Two labels sharing a name show the *same* text, which
+   * is the visible cue that they are one net (the alias). A selected label gets an
+   * accent ring + the label currently being edited is dimmed (its text lives in the
+   * HUD input). Text objects are pooled and grown on demand, like the scope legend.
+   */
+  private drawNetLabels(): void {
+    const g = this.netLabelGfx;
+    g.clear();
+    for (const t of this.netLabelTexts) t.visible = false;
+    const labels = [...this.graph.netLabels.values()].sort(
+      (p, q) => p.id - q.id,
+    );
+    let ti = 0;
+    for (const l of labels) {
+      const cell = this.graph.endpointCell(l.at);
+      if (!cell) continue;
+      const o = this.cellToWorld(cell);
+      const v = this.pinVoltage(l.at);
+      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const t = this.netLabelText(ti++);
+      const editing = this.editingLabelId === l.id;
+      t.text = l.name;
+      t.style.fill = color;
+      // Offset the pill up-and-right of the point so it clears the pin/junction dot
+      // and any wire running through it; a leader ties it back to the anchor.
+      const px = o.x + 12;
+      const py = o.y - 18;
+      const padX = 6;
+      const padY = 3;
+      const w = t.width + padX * 2;
+      const h = t.height + padY * 2;
+      t.position.set(px + padX, py + padY);
+      t.visible = !editing; // the editor shows the text while typing
+      const hot = this.selectedLabels.has(l.id);
+      // Leader from the anchor dot to the pill's near corner.
+      g.moveTo(o.x, o.y).lineTo(px, py + h / 2);
+      g.stroke({ width: 1, color, alpha: 0.6 });
+      g.roundRect(px, py, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.92 });
+      g.roundRect(px, py, w, h, 3).stroke({
+        width: hot ? 1.6 : 1,
+        color: hot ? PALETTE.accent : color,
+        alpha: hot ? 0.95 : 0.7,
+      });
+      // A small filled tick at the anchor so the labelled point reads as connected.
+      g.circle(o.x, o.y, 2.4).fill({ color });
+    }
+  }
+
+  /** Fetch (or lazily create) the pooled net-label Text at index `i`. */
+  private netLabelText(i: number): Text {
+    let t = this.netLabelTexts[i];
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.cyan,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 11,
+          fontWeight: "600",
+        },
+      });
+      t.resolution = this.textRes;
+      this.netLabelTexts[i] = t;
+      this.netLabelLayer.addChild(t);
+    }
+    return t;
   }
 
   /** A 90° (Manhattan) route between two pins: leave along the dominant axis. */

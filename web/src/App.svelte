@@ -298,6 +298,16 @@
   let selPart = $state<SelectedPart | null>(null);
   let showMore = $state(false);
   let anchor = $state<AnchorRect | null>(null);
+  // The open net-label name editor: the request from the board (existing label id
+  // or null for a new one, the endpoint, the seed text, and the on-canvas rect to
+  // anchor the inline input over). Null when no editor is open.
+  let labelEdit = $state<{
+    id: number | null;
+    initial: string;
+    rect: AnchorRect;
+  } | null>(null);
+  let labelEditValue = $state("");
+  let labelInput = $state<HTMLInputElement>();
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
   let circuitWarning = $state<string | null>(null);
@@ -341,11 +351,18 @@
   let scopeBig = $state(false);
   let nodeVisible = $state<Record<number, boolean>>({});
   let nodeNames = $state<Record<number, string>>({});
+  // Net-label names per node (node index → name, e.g. 3 → "VCC") from the netlist,
+  // shown as the node's name in the telemetry list when it has no manual rename.
+  let netNames = $state<Record<number, string>>({});
 
   let board: Board | undefined;
   let controls: PlaybackControls | undefined;
 
-  const channelLabel = (i: number): string => (i === 0 ? "GND" : `Node ${i}`);
+  // A node's default display name: its net-label name (e.g. "VCC") when it has
+  // one, else GND for node 0 / "Node i". A manual rename in the telemetry list
+  // still overrides this (it's the input's value; this is only the placeholder).
+  const channelLabel = (i: number): string =>
+    netNames[i] ?? (i === 0 ? "GND" : `Node ${i}`);
   const channelColor = (i: number): string =>
     CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
   const partName = (tag: string): string =>
@@ -360,9 +377,11 @@
         : "VOLTMETER · click two points to read ΔV (one point = vs GND) · the ammeter stays put alongside it"
       : mode === "junction"
         ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
-        : armedPart
-          ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
-          : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
+        : mode === "label"
+          ? "LABEL · click a pin or junction to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
+          : armedPart
+            ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
+            : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
   // The displayed tick as a wall-clock duration of simulated time (tick × DT).
@@ -416,6 +435,9 @@
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "j" || e.key === "J")) {
         enterJunction(); // j = Junction (tap a wire to drop a junction)
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "l" || e.key === "L")) {
+        enterLabel(); // l = Label (name a net / alias by name)
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "m" || e.key === "M")) {
         enterMeasure(); // m = Measure
@@ -487,6 +509,10 @@
         netlistSig = sig;
         netlist = nl;
         board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
+        // Surface the net-label names (node index → name) so the scope legend and
+        // the telemetry "Nodes" list can show `VCC` instead of `Node 3`.
+        board?.setNetNames(nl ? nl.nodeNames : null);
+        netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
           // Pass the control-terminal array `c` (the MOSFET gate nodes; 0 for
           // every 2-pin element). setNetlist takes it as a trailing optional arg.
@@ -531,6 +557,16 @@
         },
         onAnchor: (rect) => {
           anchor = rect;
+        },
+        onLabelEdit: (req) => {
+          if (req) {
+            labelEdit = { id: req.id, initial: req.initial, rect: req.rect };
+            labelEditValue = req.initial;
+            // Focus + select the input next tick, once it has rendered.
+            setTimeout(() => labelInput?.focus(), 0);
+          } else {
+            labelEdit = null;
+          }
         },
       });
       board = b;
@@ -668,7 +704,8 @@
   // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
     armedPart = tag;
-    if (tag && (mode === "measure" || mode === "junction")) setMode("select");
+    if (tag && (mode === "measure" || mode === "junction" || mode === "label"))
+      setMode("select");
     board?.setArmed(tag);
   }
   function toggleArm(tag: string): void {
@@ -684,6 +721,10 @@
   function enterJunction(): void {
     arm(null);
     setMode("junction");
+  }
+  function enterLabel(): void {
+    arm(null);
+    setMode("label");
   }
   function enterMeasure(): void {
     arm(null);
@@ -788,6 +829,30 @@
   function renameNode(i: number, name: string): void {
     nodeNames[i] = name;
     board?.setNodeLabel(i, name);
+  }
+  // --- net-label inline editor (Label tool) ---
+  function commitLabelEdit(): void {
+    if (!labelEdit) return;
+    board?.commitLabel(labelEditValue);
+    labelEdit = null;
+  }
+  function cancelLabelEdit(): void {
+    if (!labelEdit) return;
+    board?.cancelLabelEdit();
+    labelEdit = null;
+  }
+  function onLabelKey(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitLabelEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelLabelEdit();
+    }
+    // Swallow other keys so the board hotkeys (b/w/j/l/m, Delete, …) don't fire
+    // while typing a name. The global onKey already ignores INPUT targets, but
+    // stopping propagation here keeps it robust.
+    e.stopPropagation();
   }
   function loadExample(ex: ExampleSpec): void {
     board?.loadGraph(ex.build());
@@ -1061,6 +1126,14 @@
         Junction <kbd class="hk">J</kbd>
       </button>
       <button
+        class="btn btn-ghost {mode === 'label' ? 'is-active' : ''}"
+        onclick={enterLabel}
+        disabled={!ready}
+        title="Label: click a pin or junction to name its net — same name elsewhere = same net, no wire (L)"
+      >
+        Label <kbd class="hk">L</kbd>
+      </button>
+      <button
         class="btn btn-ghost {mode === 'measure' ? 'is-active' : ''}"
         onclick={enterMeasure}
         disabled={!ready}
@@ -1194,6 +1267,22 @@
 
       {#if circuitWarning}
         <div class="circuit-warn">⚠ {circuitWarning}</div>
+      {/if}
+
+      {#if labelEdit}
+        <input
+          bind:this={labelInput}
+          class="net-label-input mono"
+          style="left: {labelEdit.rect.x}px; top: {labelEdit.rect.y}px;"
+          bind:value={labelEditValue}
+          placeholder="net name"
+          maxlength="24"
+          spellcheck="false"
+          autocomplete="off"
+          onkeydown={onLabelKey}
+          onblur={commitLabelEdit}
+          aria-label="Net label name"
+        />
       {/if}
 
       {#if buildEx}
@@ -1506,7 +1595,7 @@
         <li class="chan" style="--c: {channelColor(i)}">
           {#if i === 0}
             <span class="chan-dot"></span>
-            <span class="chan-name">GND</span>
+            <span class="chan-name">{channelLabel(0)}</span>
           {:else}
             <input
               type="checkbox"
@@ -1706,6 +1795,31 @@
   }
   .armed-x:hover {
     color: var(--text);
+    border-color: var(--accent);
+  }
+
+  /* Inline net-label name editor: a small input floated over the board at the
+     labelled endpoint (Label tool). On-brand mono, accent focus ring. */
+  .net-label-input {
+    position: absolute;
+    z-index: 6;
+    width: 116px;
+    padding: 3px 7px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--text);
+    background: oklch(0.165 0.028 285 / 0.97);
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    box-shadow: 0 8px 22px -10px #000;
+  }
+  .net-label-input::placeholder {
+    color: var(--dim);
+    letter-spacing: 0.1em;
+  }
+  .net-label-input:focus {
+    outline: none;
     border-color: var(--accent);
   }
 
