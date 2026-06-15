@@ -1098,16 +1098,19 @@
                     <canvas use:infoDiagramAction></canvas>
                   </div>
                   <div class="info-eq mono">{info.equation}</div>
-                  <div class="info-sub mono">
-                    {info.headline(e, selPart.value)}
-                  </div>
-                  <p class="info-plain">{info.plain(e, selPart.value)}</p>
-                  {#each info.derived(e, selPart.value) as row (row.label)}
-                    <div class="info-row">
-                      <span>{row.label}</span>
-                      <span class="mono">{row.value}</span>
+                  <p class="info-plain">{info.plain()}</p>
+                  <div class="info-live">
+                    <div class="info-live-head">Right now</div>
+                    <div class="info-sub mono">
+                      {info.headline(e, selPart.value)}
                     </div>
-                  {/each}
+                    {#each info.derived(e, selPart.value) as row (row.label)}
+                      <div class="info-row">
+                        <span>{row.label}</span>
+                        <span class="mono">{row.value}</span>
+                      </div>
+                    {/each}
+                  </div>
                 {:else}
                   <p class="info-empty">
                     {partName(selPart.kind)} isn't simulated yet — no live math to
@@ -1117,10 +1120,47 @@
               {:else}
                 <p class="info-empty">
                   Select a component on the board to see what it's doing — its
-                  governing equation with the live numbers, and a plain
-                  explanation of what's happening right now.
+                  governing equation, a plain explanation of how it works, and a
+                  live "right now" readout of its numbers.
                 </p>
               {/if}
+
+              <section class="belt-note">
+                <h3 class="belt-title">The belt — carriers &amp; energy</h3>
+                <div class="belt-legend">
+                  <span class="belt-key"
+                    ><b class="belt-carrier">›</b> carriers · charge</span
+                  >
+                  <span class="belt-key"
+                    ><b class="belt-energy">●</b> energy · power</span
+                  >
+                </div>
+                <p class="info-plain">
+                  Two things ride every wire. The <b>carriers</b> are the arrow
+                  chevrons, coloured by the net's voltage — they move the way
+                  the current flows. On <b>DC</b> they stream one way; on
+                  <b>AC</b> they slosh back and forth in place, because the current
+                  reverses every half-cycle. Net charge barely travels.
+                </p>
+                <p class="info-plain">
+                  The orange dots are <b>energy</b> — power,
+                  <span class="mono">P = V·I</span>, carried to the load. Here's
+                  the surprise: on AC's negative half-cycle <b>both</b> the
+                  voltage and the current go negative, yet the energy still
+                  flows
+                  <b>forward</b>. Power is their <i>product</i>, and negative ×
+                  negative is <b>positive</b> — so
+                  <span class="mono">P = V·I ≥ 0</span> the whole cycle through a
+                  resistor. The carriers slosh, but the energy is never not being
+                  delivered.
+                </p>
+                <p class="info-plain">
+                  In a capacitor or inductor the voltage and current sit a
+                  quarter-cycle apart, so <span class="mono">V·I</span> swings both
+                  ways — the energy sloshes in and back out, delivering nothing on
+                  average. That's reactive power.
+                </p>
+              </section>
             {:else}
               {#each CALCS as c (c.id)}
                 {@const r = c.compute(calcVals[c.id] ?? {})}
@@ -1607,6 +1647,26 @@
     color: var(--text);
     margin-bottom: 10px;
   }
+  /* "Right now" section: all the live numbers grouped together so the static
+     explanation above never reflows as the readings change. */
+  .info-live {
+    margin-bottom: 12px;
+    padding: 8px 11px 5px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface);
+  }
+  .info-live-head {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 10.5px;
+    color: var(--faint);
+    margin-bottom: 7px;
+  }
+  .info-live .info-sub {
+    margin-bottom: 8px;
+  }
   .info-plain {
     margin: 0 0 12px;
     font-size: 13px;
@@ -1629,6 +1689,46 @@
     font-size: 13px;
     line-height: 1.55;
     color: var(--dim);
+  }
+  /* Always-on explainer for the two belt layers (carriers vs energy). */
+  .belt-note {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+  }
+  .belt-title {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 12px;
+    color: var(--text);
+    margin: 0 0 8px;
+  }
+  .belt-legend {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 10px;
+  }
+  .belt-key {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .belt-carrier {
+    color: var(--cyan);
+    font-size: 16px;
+    line-height: 1;
+  }
+  .belt-energy {
+    color: var(--energy);
+    font-size: 12px;
+    line-height: 1;
+  }
+  .belt-note .info-plain:last-child {
+    margin-bottom: 0;
   }
   .calc-card {
     border: 1px solid var(--border);

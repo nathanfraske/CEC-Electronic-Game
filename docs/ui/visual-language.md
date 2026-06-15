@@ -27,15 +27,21 @@ This is the canonical encoding the board renderer should follow.
 A belt carries two things at once, and they are **not the same thing** — this is
 the loop-tile idea, and it is how the board shows AC honestly.
 
+Both layers travel at a **constant, readable rate** — magnitude is carried by
+density + thickness + the number, never by speed (see *Decoupling flow rate from
+magnitude* below). What each layer integrates is a **direction**, not a
+magnitude.
+
 - **Carriers (charge)** — the voltage-coloured chevrons. Their position
-  integrates the **signed current**, so on DC they stream steadily and on AC they
-  **slosh in place** (the current reverses every half-cycle; the chevron flips and
-  walks back). Net charge transport over an AC cycle is ~zero, and you can see it.
+  integrates the **sign of the current**, so on DC they stream steadily and on AC
+  they **slosh in place** (the current reverses every half-cycle; the chevron
+  flips and walks back). Net charge transport over an AC cycle is ~zero, and you
+  can see it.
 - **Energy (power)** — warm-orange dots (`#ff8a3d`). Their travel integrates the
-  **signed power `v·i`**. On a resistor `v` and `i` reverse *together*, so the
-  product stays positive and the energy **streams steadily to the load even while
-  the carriers slosh** — the heart of why AC delivers power without net charge
-  flow. On a reactive part `v` and `i` are a quarter-cycle apart, so `v·i`
+  **sign of the power `v·i`**. On a resistor `v` and `i` reverse *together*, so
+  the product stays positive and the energy **streams steadily to the load even
+  while the carriers slosh** — the heart of why AC delivers power without net
+  charge flow. On a reactive part `v` and `i` are a quarter-cycle apart, so `v·i`
   alternates sign and the energy **sloshes in and back out** with no net delivery
   (reactive power, made visible).
 
@@ -44,9 +50,28 @@ carriers but `v≈0`, so almost no energy density — which is exactly where the
 power does and does not flow.
 
 Both layers are presentation-only phase accumulators (`carrierOffset` /
-`energyOffset` in `board.ts`), integrated off the same timeline-relative phase as
-the chevrons, so scrubbing the timeline runs them backward too. They never feed
-the simulation.
+`energyOffset` in `board.ts`); stepping or scrubbing the timeline backward runs
+them backward too. They never feed the simulation.
+
+## Decoupling flow rate from magnitude
+
+Speed must **not** encode magnitude. If chevrons sped up with current or voltage
+they became an unreadable blur on high-power circuits — and because the on-screen
+rate also scaled with playback ticks-per-second, slowing the sim didn't help.
+Both couplings are removed:
+
+- One **bounded visual flow clock** drives every animated thing (glyph flow dots,
+  belt chevrons, energy dots, breathing pulses). It advances at a fixed
+  wall-clock rate (`FLOW_HZ` in `board.ts`, ~0.6 cycles/s), **independent of V, I,
+  and tps**, so the flow always reads at the same calm pace.
+- The timeline contributes **direction only**: forward while running, and the
+  sign of the tick change while paused (so stepping/scrubbing back reverses the
+  flow, an idle pause freezes it).
+- **Magnitude** is then carried entirely by **density** (dot/chevron count),
+  **belt thickness**, and the **exact number** — the encodings this document
+  already mandates — plus the carrier/energy *sign* that gives AC its slosh.
+
+Target band: ~0.3–1.5 visual Hz across every current and every playback rate.
 
 ## Color is identity, not magnitude
 

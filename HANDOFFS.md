@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Animation-rate fix + info-panel (static prose, live section, belt note)
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,
+web check/lint/build). sim-core untouched — golden `0xeaac376499e4fa24` unchanged.
+
+- **Animation rate decoupled from magnitude + tps** (was unreadably fast on
+  high-V/I examples; lowering tps didn't help). One **bounded visual flow clock**
+  drives glyph flow dots, belt chevrons, energy dots, pulses — fixed wall-clock
+  `FLOW_HZ ≈ 0.6`, independent of V/I/tps. Timeline gives **direction only**
+  (forward running; sign of tick-change when scrubbing). Magnitude now reads as
+  density + thickness + alpha. Carrier/energy slosh preserved by integrating the
+  **saturated sign** of current / power v·i (`FLOW_DIR_SAT`), so AC still reverses
+  and resistor energy still streams. `glyphs.ts` `flow()` constant-speed +
+  density; `board.ts` `update()`/`redrawWires` rewrite. Spec in
+  `docs/ui/visual-language.md` → *Decoupling flow rate from magnitude* (~0.3–1.5
+  visual Hz across all I and tps). (Built by a worktree agent, reviewed +
+  cherry-picked.)
+- **Info panel jitter fixed:** the plain explanation embedded live numbers, so the
+  prose reflowed every frame. Prose is now **static concept text** (`partInfo.ts`
+  `plain()` no longer takes args); all changing numbers (headline relation +
+  derived rows) are grouped into a dedicated **"Right now"** section below it.
+- **Belt explainer:** always-on "carriers & energy" note in the Info tab —
+  what the two layers are, and why energy flows forward on AC's negative
+  half-cycle (P = V·I; negative × negative = positive). New `--energy` token.
+
+### Pick up here
+- **More demo pages** (capacitor, inductor, RC/RL) in the dark style; link from app.
+- Optional **toggle** for the energy layer if the belt is busy on dense boards.
+- Owner-driven backlog unchanged (contracts prototype, per-island ΔT).
+
+---
+
 ## 2026-06-15 — Interaction polish, carrier/energy belt, demo pages
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,

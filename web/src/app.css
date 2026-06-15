@@ -92,6 +92,8 @@
   --ok: oklch(0.8 0.17 150);
   --warn: oklch(0.78 0.16 75);
   --bad: oklch(0.6 0.24 25);
+  /* Energy layer on the belt — mirrors ENERGY_COLOR (0xff8a3d) in board.ts. */
+  --energy: #ff8a3d;
 
   /* Type */
   --font-body: "Saira", system-ui, sans-serif;

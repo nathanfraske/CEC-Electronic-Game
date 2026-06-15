@@ -43,6 +43,20 @@ function norm(x: number, scale: number): number {
 const CUR_SCALE = 0.02; // ~20 mA reads as a strong signal
 const V_SCALE = 6; // ~6 V reads as a strong field
 
+// Flow legibility: magnitude is carried by DENSITY (dot count) + ALPHA, never by
+// speed. `phase` is the board's bounded visual flow clock — a fixed wall-clock
+// rate, sign-tracked to the timeline — so the recirculation rate is constant and
+// readable (~0.3–1.5 visual Hz) no matter how large V/I are or how high the
+// playback tps is. Speed-carries-magnitude was the old anti-pattern: it
+// compounded with the tps-scaled phase and blew up (see docs/ui/visual-language.md).
+const FLOW_SPEED = 1.0; // constant recirculation per unit phase (NOT magnitude-scaled)
+const FLOW_DOTS_MIN = 2; // a sparse trickle even at the visibility threshold
+const FLOW_DOTS_MAX = 6; // a dense stream at full current
+// Breathing/spin clock: rides the same bounded phase so glows and rotations beat
+// at a constant ~1.3 visual Hz (0.6 phase-Hz × 2.2). Magnitude rides alpha/scale
+// amplitude, never the rate, so nothing speeds up as V/I climb.
+const PULSE_K = 2.2;
+
 /** Draw flowing dots along a straight segment to show current direction/amount. */
 function flow(
   g: Graphics,
@@ -57,10 +71,11 @@ function flow(
   const mag = norm(current, CUR_SCALE);
   if (mag < 0.02) return;
   const dir = current >= 0 ? 1 : -1;
-  const n = 4;
-  const speed = 0.15 + mag * 0.9;
+  // Magnitude → density + alpha (speed stays constant): more current packs in more
+  // dots and brightens them, but the belt always recirculates at the same calm rate.
+  const n = FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * mag);
   for (let i = 0; i < n; i++) {
-    const t = (((i / n + phase * speed * dir) % 1) + 1) % 1;
+    const t = (((i / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
     const x = ax + (bx - ax) * t;
     const y = ay + (by - ay) * t;
     g.circle(x, y, 1.7).fill({ color, alpha: 0.35 + 0.55 * mag });
@@ -76,7 +91,7 @@ function drawV(g: Graphics, o: GlyphOpts): void {
   const r = 11;
   const lit = norm(o.electrical.vAcross || 5, V_SCALE);
   // pulsing energy ring
-  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.2);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * PULSE_K);
   g.circle(mx, my, r + 5).stroke({
     width: 2,
     color: o.color,
@@ -180,7 +195,7 @@ function drawL(g: Graphics, o: GlyphOpts): void {
   const field = norm(o.electrical.current, CUR_SCALE);
   // breathing field halo
   if (field > 0.02) {
-    const s = 1 + 0.12 * Math.sin(o.phase * 3);
+    const s = 1 + 0.12 * Math.sin(o.phase * PULSE_K);
     g.ellipse((x0 + x1) / 2, a.y, ((x1 - x0) / 2) * 1.1 * s, 16 * s).fill({
       color: 0x8a95f2,
       alpha: 0.16 * field,
@@ -212,7 +227,7 @@ function drawI(g: Graphics, o: GlyphOpts): void {
   const drive = norm(o.electrical.current, CUR_SCALE);
   const dir = o.electrical.current >= 0 ? 1 : -1;
   // pulsing energy ring, like the voltage source but keyed to current
-  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.2);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * PULSE_K);
   g.circle(mx, my, r + 5).stroke({
     width: 2,
     color: o.color,
@@ -286,7 +301,7 @@ function drawAC(g: Graphics, o: GlyphOpts): void {
   // The classic AC symbol: a circle with a sine inside. A ring keyed to the
   // instantaneous output pulses; the leads carry the (reversing) current.
   const lvl = norm(o.electrical.vAcross, V_SCALE);
-  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.2);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * PULSE_K);
   g.circle(mx, my, r + 5).stroke({
     width: 2,
     color: o.color,
@@ -453,7 +468,7 @@ function generator(g: Graphics, o: GlyphOpts, drive: number): void {
   const hw = 13;
   fLeads(g, o, mx, hw);
   fBox(g, mx, my, hw, 11, o.color);
-  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.4);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * PULSE_K);
   g.circle(mx, my, 5).fill({
     color: o.color,
     alpha: 0.4 + 0.55 * drive * pulse,
@@ -530,9 +545,10 @@ function drawFL(g: Graphics, o: GlyphOpts): void {
   const hw = 13;
   fLeads(g, o, mx, hw);
   fBox(g, mx, my, hw, 12, o.color);
-  // a flywheel whose spokes spin faster with more current
+  // a flywheel: it spins at a constant calm rate; more current shows as brighter,
+  // bolder spokes (alpha below), never as a faster spin (the old speed-coupling).
   const spin = norm(o.electrical.current, CUR_SCALE);
-  const ang = o.phase * (1 + spin * 6);
+  const ang = o.phase * PULSE_K;
   g.circle(mx, my, 7).stroke({ width: 1.4, color: o.color, alpha: 0.8 });
   for (let i = 0; i < 4; i++) {
     const t = ang + (i * Math.PI) / 2;
