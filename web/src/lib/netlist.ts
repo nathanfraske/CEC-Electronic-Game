@@ -8,7 +8,8 @@
 // renderer needs to attribute per-element current and per-net voltage back to
 // each component.
 
-import { BoardGraph, endpointKey } from "./graph";
+import { BoardGraph, endpointKey, isJunctionRef } from "./graph";
+import type { Endpoint } from "./graph";
 import type { ElectricalState } from "./glyphs";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
@@ -70,6 +71,14 @@ export interface BuiltNetlist {
   elemOfComponent: Map<number, number>;
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
   nodesOfComponent: Map<number, [number, number]>;
+  /**
+   * Net-label display name per node index (into `node_voltages`): a node carrying
+   * one or more {@link NetLabel}s reports that name (e.g. `VCC`) so the scope and
+   * telemetry can show it instead of `Node 3`. Built from the labels after node
+   * numbering; when several differing names land on one node the lowest label id
+   * wins (deterministic). Nodes with no label are absent from the map.
+   */
+  nodeNames: Map<number, string>;
   /** Current-source component ids whose forced current has no return path. */
   floatingSources: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
@@ -111,6 +120,25 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   for (const j of junctions) find(endpointKey({ junctionId: j.id }));
   for (const w of graph.wires.values()) {
     union(endpointKey(w.from), endpointKey(w.to));
+  }
+
+  // Net labels — the KiCad two-flavour feature. SECOND union pass, by NAME:
+  // every label whose endpoint still exists is unioned to the first label seen
+  // with the same name, so **all labels sharing a name collapse onto one net,
+  // with no wire between them** (the global-alias payoff). Sorted by id so the
+  // representative endpoint (and thus the result) is deterministic and
+  // move-invariant. A label on an already-wired net just *names* it (flavour 1);
+  // a second label of the same name elsewhere *aliases* into it (flavour 2).
+  const labels = [...graph.netLabels.values()]
+    .filter((l) => endpointExists(graph, l.at))
+    .sort((p, q) => p.id - q.id);
+  const firstOfName = new Map<string, string>();
+  for (const l of labels) {
+    const k = endpointKey(l.at);
+    find(k); // make sure the endpoint participates even if it has no wire
+    const rep = firstOfName.get(l.name);
+    if (rep === undefined) firstOfName.set(l.name, k);
+    else union(k, rep);
   }
 
   // How many pins share each net, so we can tell a ground that's actually wired
@@ -178,6 +206,17 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     ecInternal.set(c.id, next++);
   }
   const nodeCount = next;
+
+  // Net name per node: each label maps its endpoint to a node index and names it.
+  // Same-named labels already share a node (the name union above), so they agree;
+  // when two *different* names land on one physical net the lowest label id wins
+  // (the `labels` list is sorted by id and we keep the first name set per node),
+  // which is deterministic. This is what lets the scope/telemetry show `VCC`.
+  const nodeNames = new Map<number, string>();
+  for (const l of labels) {
+    const node = nodeIndex.get(find(endpointKey(l.at)));
+    if (node !== undefined && !nodeNames.has(node)) nodeNames.set(node, l.name);
+  }
 
   const types: number[] = [];
   const aArr: number[] = [];
@@ -296,6 +335,18 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     }
   }
 
+  // Fold the net labels into the signature (each as name→node, sorted by id),
+  // so adding, renaming, or re-aliasing a label is recognised as a topology
+  // change and the sim is rebuilt — while a pure move (which changes no name and
+  // no node numbering) leaves it unchanged. Aliasing also already shifts the node
+  // assignments via the name union above, but pinning name→node here makes a
+  // rename that doesn't move a node (e.g. renaming `VCC`→`VBAT` in place) rebuild
+  // too, so the displayed name refreshes. With no labels this contributes nothing,
+  // so every label-free circuit (every existing example) keeps its exact old sig.
+  const labelSig = labels
+    .map((l) => l.name + ">" + (nodeIndex.get(find(endpointKey(l.at))) ?? -1))
+    .join(",");
+
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a MOSFET's gate to a different net is recognised as a topology change and the
   // sim is rebuilt — while a pure move (which never changes any node) still leaves
@@ -311,7 +362,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     "|" +
     cArr.join(",") +
     "|" +
-    values.join(",");
+    values.join(",") +
+    (labelSig ? "|" + labelSig : "");
 
   return {
     nodeCount,
@@ -322,9 +374,24 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     values: Float64Array.from(values),
     elemOfComponent,
     nodesOfComponent,
+    nodeNames,
     floatingSources,
     sig,
   };
+}
+
+/**
+ * Whether a wire endpoint (pin or junction) still resolves to a live component
+ * pin or junction in the graph. A local mirror of the graph's private check, used
+ * to skip net labels whose anchor was deleted. (Labels are normally pruned with
+ * their anchor, but this keeps {@link buildNetlist} robust to any stale label.)
+ */
+function endpointExists(graph: BoardGraph, e: Endpoint): boolean {
+  if (isJunctionRef(e)) return graph.junctions.has(e.junctionId);
+  const c = graph.components.get(e.componentId);
+  if (!c) return false;
+  const kind = graph.kindOf(c);
+  return !!kind && e.pinIndex >= 0 && e.pinIndex < kind.pins.length;
 }
 
 /**

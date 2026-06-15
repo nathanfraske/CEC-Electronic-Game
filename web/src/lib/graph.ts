@@ -109,6 +109,28 @@ export function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
 }
 
 /**
+ * A net label (KiCad-style): a name attached to a wire endpoint (a pin or a
+ * junction — the natural connection points). It has two roles, both realised in
+ * {@link buildNetlist}:
+ *
+ * 1. **Net name (local label):** the net it sits on is *displayed* by this name
+ *    (the scope/telemetry show `VCC` instead of `Node 3`).
+ * 2. **Alias (global label):** **any labels sharing the same `name` are the same
+ *    net, with no wire between them** — label a point `VCC` here and `VCC` there
+ *    and they are electrically one node. This is the decluttering payoff.
+ *
+ * Two labels with the same name collapse onto one net; the netlist's name
+ * union-find treats matching names as if a wire joined their endpoints.
+ */
+export interface NetLabel {
+  id: number;
+  /** The displayed name; also the alias key (same name ⇒ same net). */
+  name: string;
+  /** Where the label attaches: a component pin or a junction. */
+  at: Endpoint;
+}
+
+/**
  * A wire joins two endpoints — pins and/or junctions. Wires are the edges;
  * connected wires form a net.
  */
@@ -147,10 +169,14 @@ export interface GraphSnapshot {
   wires: LegacyWire[];
   /** Free wire-to-wire junctions. Absent in older snapshots (treated as []). */
   junctions?: Junction[];
+  /** Net labels (names + global aliases). Absent in older snapshots (treated as []). */
+  netLabels?: NetLabel[];
   nextComponentId: number;
   nextWireId: number;
   /** Next junction id. Absent in older snapshots (rederived from junctions). */
   nextJunctionId?: number;
+  /** Next net-label id. Absent in older snapshots (rederived from netLabels). */
+  nextNetLabelId?: number;
 }
 
 /**
@@ -390,9 +416,11 @@ export class BoardGraph {
   private nextComponentId = 1;
   private nextWireId = 1;
   private nextJunctionId = 1;
+  private nextNetLabelId = 1;
   readonly components = new Map<number, Component>();
   readonly wires = new Map<number, Wire>();
   readonly junctions = new Map<number, Junction>();
+  readonly netLabels = new Map<number, NetLabel>();
 
   /** Place a new component of `kind` anchored at the given (already-snapped) cell. */
   place(kind: string, cell: Cell): Component | undefined {
@@ -434,6 +462,10 @@ export class BoardGraph {
       if (endpointHasComponent(w.from, id) || endpointHasComponent(w.to, id)) {
         this.wires.delete(wid);
       }
+    }
+    // Drop any net labels pinned to this component's pins — their anchor is gone.
+    for (const [lid, l] of this.netLabels) {
+      if (endpointHasComponent(l.at, id)) this.netLabels.delete(lid);
     }
     this.pruneJunctions();
   }
@@ -628,6 +660,9 @@ export class BoardGraph {
             incident.push(w);
           }
         }
+        // A junction carrying a net label earns its keep even with <2 wires: the
+        // label is a real connection point (it can alias to another net by name).
+        if (this.junctionHasLabel(j.id)) continue;
         if (incident.length >= 2) continue;
         if (incident.length === 1) {
           // Lone wire ending on the junction is pointless — drop it too.
@@ -647,16 +682,83 @@ export class BoardGraph {
         this.wires.delete(wid);
       }
     }
+    // Drop any net labels pinned to this junction — their anchor is gone.
+    for (const [lid, l] of this.netLabels) {
+      if (junctionTouches(l.at, id)) this.netLabels.delete(lid);
+    }
     this.pruneJunctions();
+  }
+
+  /** True if any net label is attached to the given junction. */
+  private junctionHasLabel(junctionId: number): boolean {
+    for (const l of this.netLabels.values()) {
+      if (junctionTouches(l.at, junctionId)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Attach a net label with `name` at an endpoint (a pin or a junction). Rejects a
+   * stale endpoint, an empty name, or a duplicate label already on that exact
+   * endpoint (one label per point). Returns the new label, or undefined.
+   */
+  addNetLabel(at: Endpoint, name: string): NetLabel | undefined {
+    const n = name.trim();
+    if (!n) return undefined;
+    if (!this.endpointExists(at)) return undefined;
+    const atKey = endpointKey(at);
+    for (const l of this.netLabels.values()) {
+      if (endpointKey(l.at) === atKey) return undefined;
+    }
+    const label: NetLabel = {
+      id: this.nextNetLabelId++,
+      name: n,
+      at: { ...at },
+    };
+    this.netLabels.set(label.id, label);
+    return label;
+  }
+
+  /**
+   * Rename a net label. An empty name removes it (an unnamed label means nothing,
+   * and clears the alias). Removing may strand a label-only junction, so prune.
+   */
+  renameNetLabel(id: number, name: string): void {
+    const l = this.netLabels.get(id);
+    if (!l) return;
+    const n = name.trim();
+    if (!n) {
+      this.removeNetLabel(id);
+      return;
+    }
+    l.name = n;
+  }
+
+  /** Remove a net label, then tidy any junction it was the sole reason to keep. */
+  removeNetLabel(id: number): void {
+    if (!this.netLabels.delete(id)) return;
+    this.pruneJunctions();
+  }
+
+  /** The net label (if any) attached to a given endpoint, in label-id order. */
+  netLabelAt(at: Endpoint): NetLabel | undefined {
+    const atKey = endpointKey(at);
+    const sorted = [...this.netLabels.values()].sort((p, q) => p.id - q.id);
+    for (const l of sorted) {
+      if (endpointKey(l.at) === atKey) return l;
+    }
+    return undefined;
   }
 
   clear(): void {
     this.components.clear();
     this.wires.clear();
     this.junctions.clear();
+    this.netLabels.clear();
     this.nextComponentId = 1;
     this.nextWireId = 1;
     this.nextJunctionId = 1;
+    this.nextNetLabelId = 1;
   }
 
   /** Deep-copy the whole graph (for the undo stack). */
@@ -678,9 +780,15 @@ export class BoardGraph {
         id: j.id,
         cell: { ...j.cell },
       })),
+      netLabels: [...this.netLabels.values()].map((l) => ({
+        id: l.id,
+        name: l.name,
+        at: { ...l.at },
+      })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
       nextJunctionId: this.nextJunctionId,
+      nextNetLabelId: this.nextNetLabelId,
     };
   }
 
@@ -689,11 +797,17 @@ export class BoardGraph {
     this.components.clear();
     this.wires.clear();
     this.junctions.clear();
+    this.netLabels.clear();
     for (const c of s.components) {
       this.components.set(c.id, { ...c, cell: { ...c.cell } });
     }
     for (const j of s.junctions ?? []) {
       this.junctions.set(j.id, { id: j.id, cell: { ...j.cell } });
+    }
+    // Net labels are absent in older snapshots (treated as none), exactly like
+    // the junction legacy handling above.
+    for (const l of s.netLabels ?? []) {
+      this.netLabels.set(l.id, { id: l.id, name: l.name, at: { ...l.at } });
     }
     for (const w of s.wires) {
       // Tolerate legacy snapshots: a wire may carry the new ordered `waypoints`
@@ -717,6 +831,10 @@ export class BoardGraph {
     this.nextJunctionId =
       s.nextJunctionId ??
       [...this.junctions.keys()].reduce((m, id) => Math.max(m, id + 1), 1);
+    // Likewise for net labels — derive a safe next id from the restored labels.
+    this.nextNetLabelId =
+      s.nextNetLabelId ??
+      [...this.netLabels.keys()].reduce((m, id) => Math.max(m, id + 1), 1);
   }
 }
 
