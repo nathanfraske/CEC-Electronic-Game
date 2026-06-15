@@ -646,6 +646,21 @@ clocks.
   and behaviorally it is "a black box whose `f` is firmware" — the same Tier-A pin
   boundary, just with a richer authoring story. The capstone building.
 
+> **Owner decision (2026-06-15).** Yes — the top rung is **real C / Arduino-style
+> firmware**, compiled and run on an **emulated real MCU core** (the Wokwi
+> approach: a cycle-accurate AVR / Cortex-M0 emulator), stepped as a **fast
+> deterministic digital island** — a fixed cycle budget per analog tick (e.g.
+> ~32 cycles of a 16 MHz core per 2 µs tick), i.e. the per-island-ΔT / multirate
+> model. The emulator's pin behavior is a pure function of (firmware, inputs,
+> cycles), so it composes with the golden without special-casing. The lower rungs
+> (parametric → visual logic → a tiny script) keep it approachable; the firmware
+> rung gives it real depth and is the ultimate tinkering sink. The **MCU
+> (sequential software)** and the **FPGA (spatial hardware)** are the two
+> programmable capstones — the single best way to *teach* that distinction. It's a
+> large subsystem (emulated core + compile toolchain + peripherals + a debug view),
+> so it lands at Tier III against one real, simple target rather than an invented
+> one.
+
 ### 3.12 H-bridge / motor driver
 
 - **Teaches.** Driving an inductive load in both directions; the four-switch

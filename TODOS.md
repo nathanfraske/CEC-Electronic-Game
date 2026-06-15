@@ -8,6 +8,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Design ideation (no code) — ground returns + progression; MCU decision
+- ~~**`docs/game-ground-returns.md`** — tiered grounding ladder G0 ideal-star → G1 lumped return R+L → G2 paintable ground-zone (the unlocked escape hatch) → G3 loop-area/EMI (integer shoelace × di/dt, deterministic) → G4 shared-ground noise budget; rejects full multi-layer PCB. Grounding is a **bonus/multiplier axis, not pass/fail**; violations located+explained; EMI scalar stays out of the golden.~~
+- ~~**`docs/game-progression.md`** — 9-era tech-tree spine gating the ~8 sim primitives (not parts individually); unlock via credits + competency exams + discovery; the contract's **judgement part = a placeable acceptance fixture** whose pins are the harness. Exploration rewards: **Lab Notebook** codex (first time you cause a phenomenon), **Eureka boosts** (doing X discounts X's gate), **autopsy-for-Lux** (analyze a blown part), **Lux-vs-Credits** (deepen vs widen — a tinkerer can climb without shipping).~~
+- ~~**MCU decision** captured in `ic-buildings-ideation.md` §3.11: real C/Arduino firmware at the top of the ladder, run on an emulated core as a fast deterministic digital island; MCU (sequential) + FPGA (spatial) are the two programmable capstones.~~
+- [ ] **NEXT (owner-greenlit): MOSFETs + transistors** — the multi-terminal (P3) + controlled-source (P4) lift. Scope + implement next.
+
 ### Done — three board-interaction features (ghost / junction-drag / junction tool)
 - ~~**Translucent placement ghost for the armed part.** `board.ts` adds a
   non-interactive `ghostLayer`/`ghostGlyph` (above components, below pending-wire/
