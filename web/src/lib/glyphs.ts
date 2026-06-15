@@ -514,6 +514,110 @@ function drawLED(g: Graphics, o: GlyphOpts): void {
   );
 }
 
+function drawZD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const s = 8;
+  // A Zener conducts BOTH ways, but for different reasons: forward (positive
+  // a→b current) it is an ordinary diode; in reverse breakdown the current goes
+  // negative (it sinks cathode→anode) and it clamps the node. Show forward
+  // conduction with the warm diode glow, and breakdown with a cool reverse glow —
+  // each keyed to its current magnitude as alpha, never speed.
+  const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
+  if (fwd > 0.03) {
+    g.circle(mx, my, 13).fill({ color: o.color, alpha: 0.2 * fwd });
+  }
+  if (rev > 0.03) {
+    // Breakdown: a cyan "clamp" bloom around the cathode bar — the reverse spill.
+    g.circle(mx + s, my, 12).fill({ color: 0x46d2e6, alpha: 0.22 * rev });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - s, my);
+  g.moveTo(mx + s, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // triangle pointing from anode to cathode
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // The distinctive Zener cathode bar: a straight bar with the ends bent back
+  // (the "Z" flag) — top end kicks forward, bottom end kicks back.
+  const f = 4; // flag length
+  g.moveTo(mx + s + f, my - s)
+    .lineTo(mx + s, my - s)
+    .lineTo(mx + s, my + s)
+    .lineTo(mx + s - f, my + s);
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  // Forward current streams anode→cathode; in breakdown the carriers run the
+  // other way (cathode→anode), so feed `flow` the SIGNED current both legs.
+  flow(g, a.x, a.y, mx - s, my, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, mx + s, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawEC(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const gap = 5;
+  const ph = 13; // half plate height
+  // Polarized electrolytic: a straight plate (+, toward pin a) facing a CURVED
+  // plate (−, toward pin b), with a "+" mark. It stores charge exactly like the
+  // ceramic cap, so reuse the dielectric-fill animation keyed to its voltage.
+  const charge = norm(o.electrical.vAcross, V_SCALE);
+  if (charge > 0.02) {
+    g.roundRect(mx - gap, my - ph, 2 * gap, 2 * ph, 2).fill({
+      color: o.color,
+      alpha: 0.5 * charge,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - gap, my);
+  g.moveTo(mx + gap, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // the straight (+) plate
+  g.moveTo(mx - gap, my - ph).lineTo(mx - gap, my + ph);
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  // the curved (−) plate: a shallow arc bowing away from the + plate
+  g.moveTo(mx + gap, my - ph);
+  for (let i = 1; i <= 10; i++) {
+    const t = i / 10;
+    const yy = my - ph + 2 * ph * t;
+    const bow = 3 * Math.sin(t * Math.PI); // bulge outward at the middle
+    g.lineTo(mx + gap + bow, yy);
+  }
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  // the "+" polarity mark above the + plate
+  g.moveTo(mx - gap - 7, my - ph - 3)
+    .lineTo(mx - gap - 3, my - ph - 3)
+    .moveTo(mx - gap - 5, my - ph - 5)
+    .lineTo(mx - gap - 5, my - ph - 1);
+  g.stroke({ width: 1.4, color: o.color, alpha: 0.8 });
+  // charge shimmer dots between the plates (constant rate; alpha = charge)
+  if (charge > 0.05) {
+    const n = 3;
+    for (let i = 0; i < n; i++) {
+      const t = (((i / n + o.phase * 0.6) % 1) + 1) % 1;
+      g.circle(
+        mx - gap + 2 * gap * t,
+        my - ph + (2 * ph * ((i * 7) % 5)) / 5,
+        1.2,
+      ).fill({ color: 0xffffff, alpha: 0.25 * charge });
+    }
+  }
+  flow(g, a.x, a.y, mx - gap, my, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawSW(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -784,6 +888,103 @@ function drawFLED(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + hw, my, b.x, b.y, fwd, o.phase, 0x46d2e6);
 }
 
+function drawFZD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  // A check-valve that ALSO has a side spillway/weir: it passes forward like the
+  // diode gate, but once the rail drives it into reverse breakdown the weir opens
+  // and dumps the excess down to the drain — pinning the rail height (a shunt
+  // regulator). Forward current lights the gate; reverse (breakdown) current
+  // opens the spillway. Both keyed to magnitude as alpha, never speed.
+  const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // the one-way conveyor gate, lit when passing forward
+  g.poly([mx - 5, my - 6, mx + 5, my, mx - 5, my + 6]).fill({
+    color: o.color,
+    alpha: 0.3 + 0.6 * fwd,
+  });
+  // the side spillway/weir on the roof: a gate that opens (lifts) with breakdown
+  // current, with a cyan overflow pouring down to the drain.
+  const open = rev; // 0 = shut, 1 = wide open
+  const weirY = my - 11; // roof line
+  if (open > 0.03) {
+    // the lifted weir gate
+    g.moveTo(mx + 3, weirY)
+      .lineTo(mx + 9, weirY - 3 - 4 * open)
+      .stroke({ width: 1.6, color: 0x46d2e6, alpha: 0.9 });
+    // the overflow spilling down the side to the drain — constant-rate dots,
+    // density + alpha rise with how hard it's spilling.
+    const n =
+      FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * open);
+    for (let i = 0; i < n; i++) {
+      const t = (((i / n + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(mx + 9, weirY - 2 + (my + 9 - (weirY - 2)) * t, 1.6).fill({
+        color: 0x46d2e6,
+        alpha: 0.3 + 0.55 * open,
+      });
+    }
+  }
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawFEC(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const hh = 13;
+  // A big ribbed pressure tank (vs the ceramic's small buffer chest): it fills
+  // with the stored voltage, and its ESR shows as a narrow throat at the inlet
+  // where the ripple current "rubs" through. Reuse the chest-fill idea on the
+  // bounded clock; magnitude is fill height + the inlet's heat, never speed.
+  fLeads(g, o, mx, hw);
+  // the inlet throat (the ESR): a narrow neck on the + side the belt squeezes
+  // through; it warms (a faint red shimmer) with the through-current.
+  const ripple = norm(o.electrical.current, CUR_SCALE);
+  g.poly([mx - hw, my - 6, mx - hw + 5, my, mx - hw, my + 6]).fill({
+    color: o.color,
+    alpha: 0.3,
+  });
+  if (ripple > 0.03) {
+    g.circle(mx - hw + 3, my, 4).fill({
+      color: 0xe0533a,
+      alpha: 0.25 * ripple,
+    });
+  }
+  fBox(g, mx, my, hw, hh, o.color);
+  // ribs down the tank wall
+  for (let i = -1; i <= 1; i++) {
+    g.moveTo(mx + i * 7, my - hh + 3)
+      .lineTo(mx + i * 7, my + hh - 3)
+      .stroke({ width: 1, color: o.color, alpha: 0.3 });
+  }
+  // the stored charge filling the tank from the bottom
+  const charge = norm(o.electrical.vAcross, V_SCALE);
+  const fillH = 2 * (hh - 3) * charge;
+  if (fillH > 0.5) {
+    g.roundRect(mx - hw + 3, my + hh - 3 - fillH, 2 * (hw - 3), fillH, 1).fill({
+      color: o.color,
+      alpha: 0.55,
+    });
+  }
+  // the "+" polarity mark by the inlet
+  g.moveTo(mx - hw - 6, my - hh + 2)
+    .lineTo(mx - hw - 2, my - hh + 2)
+    .moveTo(mx - hw - 4, my - hh)
+    .lineTo(mx - hw - 4, my - hh + 4)
+    .stroke({ width: 1.4, color: o.color, alpha: 0.8 });
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawFSW(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -834,6 +1035,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   V: drawV,
   R: drawR,
   C: drawC,
+  EC: drawEC,
   L: drawL,
   I: drawI,
   AC: drawAC,
@@ -841,6 +1043,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   D: drawD,
   SD: drawSD,
   LED: drawLED,
+  ZD: drawZD,
   SW: drawSW,
 };
 
@@ -848,6 +1051,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   V: drawFV,
   R: drawFR,
   C: drawFC,
+  EC: drawFEC,
   L: drawFL,
   I: drawFI,
   AC: drawFAC,
@@ -855,6 +1059,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   D: drawFD,
   SD: drawFSD,
   LED: drawFLED,
+  ZD: drawFZD,
   SW: drawFSW,
 };
 

@@ -5,6 +5,66 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Zener (`ZD`) + electrolytic-cap (`EC`) web/UI integration
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 44 sim-core tests — 43 pass,
+1 ignored `print_golden`; build:wasm, web format/check/lint/build). **crates/
+untouched** — built on the committed Zener element (`ELEM_ZENER = 10`, `value` =
+Vz), golden `0xeaac376499e4fa24` unchanged. Mirrors the Schottky/LED integration
+below.
+
+Two new parts are now placeable, simulated, animated, and explained:
+
+- **Zener `ZD` (sim type 10).** `netlist.ts` `TYPE_OF ZD:10`; `graph.ts`
+  `PART_KINDS` (bronze, `twoPin("A","K")`, **`value` = breakdown voltage Vz**,
+  default 5.1 V); App bin (tier II, diode group); `values.ts` curated Vz set
+  (2.4…15 V, chips 3.3/4.7/5.1/6.2/9.1/12). **Glyphs** (`glyphs.ts`): schematic =
+  diode triangle + the **Z-bent cathode bar**, with a warm forward glow and a
+  cyan reverse-breakdown bloom (each keyed to its current magnitude as alpha);
+  factory = the check-valve gate **plus a side spillway/weir that opens on reverse
+  breakdown** and pours the excess to the drain (per parts-catalog-ideation §1).
+  `partInfo.ts`: static prose (forward = ordinary ~0.7 V diode; reverse blocks
+  until Vz then clamps the node — the shunt-reference basis); live `headline`
+  reports forward / blocking / in-breakdown + Vz, plus a power row.
+- **Electrolytic `EC` (NO new sim type — netlist expansion).** Modelled honestly
+  as an **ideal capacitor in series with a fixed 0.5 Ω ESR** (`EC_ESR_OHMS` in
+  `netlist.ts`; fixed, not a function of C). In `buildNetlist`, each `EC`
+  allocates **one internal node** (after all pin/junction nodes; bumps
+  `nodeCount`; ordered by sorted component id so it's deterministic and
+  move-invariant) and emits **two elements** — a capacitor (`+`pin → internal,
+  value = C) and a resistor=ESR (internal → `−`pin). `elemOfComponent[EC]` = the
+  **capacitor** element (its current is the series current the glyph/inspector
+  read); `nodesOfComponent[EC]` = `[+pin, −pin]` so `vAcross` spans the whole part
+  (incl. the ESR drop). The two stamps + the bumped `nodeCount` fold into the
+  topology `sig`, so pure moves still don't reset the sim; the EC also unions its
+  internal path in the floating-source check. `graph.ts` (cyan, polarized
+  `twoPin("+","−")`, **`value` = C**, default 100 µF); bin (tier II); `values.ts`
+  (10 µF…1000 µF). **Glyphs:** schematic = the polarized symbol (one **curved**
+  plate + one straight plate + a "+" mark) reusing the cap charge-fill; factory =
+  a **big ribbed pressure tank** that fills with stored voltage, ESR as a narrow
+  throat at the inlet (per parts-catalog-ideation §2.1). `partInfo.ts`: teaches
+  C + ESR (stores charge, but the series ESR drops a little on ripple surges — why
+  a real cap can't perfectly flatten ripple); derived energy ½CV² + the ESR.
+- **`examples.ts` (3 new).** **Zener Shunt Reference** (12 V → 1 kΩ → ZD→GND, node
+  clamps ≈5.1 V, ~6.9 mA shunts through the Zener — mirrors the sim-core
+  `zener_clamps_reverse_voltage` layout) and **Two LEDs in Series** (9 V → 270 Ω →
+  LED → LED → GND, drops add to ~3.8 V, ~19 mA, both light equally) under
+  **Diodes**; **Electrolytic Decoupling** (200 Hz AC → diode → load ∥ EC, ripple
+  smoothing + the ESR keeps it from being perfectly flat, with a lift-the-cap
+  demo) under **Capacitors & Inductors**. All operating points hand-checked.
+- Every glyph rides the bounded `o.phase` clock; magnitude = fill / brightness /
+  density / thickness, never speed (honours the flow-rate decoupling). `PALETTE`/
+  token colors only; SPDX headers intact.
+
+### Pick up here
+- Owner-driven: the remaining parts catalog (`docs/parts-catalog-ideation.md`) —
+  the next cheap-first wins are MOV (P1, like the Zener), then the multi-terminal
+  lift (P3: BJT/MOSFET) and controlled sources (P4). Same UI backlog as below.
+- The EC's ESR is a single fixed 0.5 Ω constant; a per-C ESR or a P2 param block
+  is the natural fidelity upgrade if/when per-device params land.
+
+---
+
 ## 2026-06-15 — Schottky + LED web/UI integration (sim types 8 & 9)
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 42 sim-core tests — 41 pass,

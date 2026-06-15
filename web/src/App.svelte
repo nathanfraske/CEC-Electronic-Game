@@ -95,6 +95,13 @@
       color: "var(--cyan)",
     },
     {
+      tag: "EC",
+      name: "Electrolytic Cap",
+      desc: "Bulk storage + ESR",
+      tier: "II",
+      color: "var(--cyan)",
+    },
+    {
       tag: "L",
       name: "Inductor",
       desc: "Stored current, saturation",
@@ -135,6 +142,13 @@
       desc: "Lights with current",
       tier: "II",
       color: "var(--accent)",
+    },
+    {
+      tag: "ZD",
+      name: "Zener Diode",
+      desc: "Clamps at Vz (reverse)",
+      tier: "II",
+      color: "var(--bronze)",
     },
     {
       tag: "SW",
@@ -768,7 +782,7 @@
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (click again or Esc
         to disarm) — or drag it on. Scroll to zoom, drag empty space to pan. V /
-        R / C / L / I / D / SD / LED / SW and GND all simulate today.
+        R / C / EC / L / I / D / SD / LED / ZD / SW and GND all simulate today.
       </p>
       <ul class="part-list scroll">
         {#each PARTS as part (part.name)}

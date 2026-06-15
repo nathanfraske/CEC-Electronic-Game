@@ -29,6 +29,10 @@ const CURATED_FULL: Record<string, number[]> = {
   SW: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9],
   // AC frequency (Hz), kept in the ~50 Hz–5 kHz band the 2 µs step resolves well.
   AC: [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000],
+  // Zener breakdown voltage Vz (V): the common standard BZX-series values.
+  ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
+  // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
+  EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 
 /** The ~6–8 common values shown as chips up front (the calm default). */
@@ -40,6 +44,9 @@ const CURATED_CHIPS: Record<string, number[]> = {
   I: [0.001, 0.005, 0.01, 0.05],
   SW: [0.25, 0.5, 0.75],
   AC: [100, 500, 1000, 2000],
+  // The classic Zener reference voltages people reach for first.
+  ZD: [3.3, 4.7, 5.1, 6.2, 9.1, 12],
+  EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 
 /** True if this part kind exposes an adjustable value at all. */

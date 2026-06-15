@@ -154,6 +154,41 @@ export const PART_INFO: Record<string, PartInfo> = {
       },
     ],
   },
+  ZD: {
+    name: "Zener Diode",
+    equation: "reverse: clamp at Vz · forward: ~0.7 V diode",
+    headline: (e, vz) => {
+      // Forward = positive a→b current dropping the silicon knee. Breakdown = it
+      // sinks current the other way (negative a→b) once reverse-biased to ~Vz.
+      if (e.current > 1e-7) return `Forward · ${f(e.vAcross, "V")} drop`;
+      if (e.current < -1e-7)
+        return `Breakdown · clamping ≈ ${f(vz, "V")} (${f(e.vAcross, "V")})`;
+      return `Blocking · Vz = ${f(vz, "V")} (${f(e.vAcross, "V")})`;
+    },
+    plain: () =>
+      "A Zener diode turns reverse breakdown into a feature. Forward-biased it is an ordinary diode, dropping the usual ~0.7 V. Reverse-biased it stays blocking — only a tiny leakage — until the reverse voltage reaches its breakdown voltage Vz, where it suddenly conducts hard and holds the node right at Vz no matter how much more the rail pushes. Fed through a series resistor (which soaks up the excess), that clamp is the simplest shunt voltage reference.",
+    derived: (e, vz) => [
+      { label: "Breakdown Vz", value: f(vz, "V") },
+      { label: "Power", value: f(Math.abs(e.vAcross * e.current), "W") },
+    ],
+  },
+  EC: {
+    name: "Electrolytic Cap",
+    equation: "i = C · dV/dt  (in series with ESR)",
+    headline: (e, C) =>
+      `${f(e.current, "A")} = ${f(C, "F")} × ${f(C > 0 ? e.current / C : 0, "V/s")}`,
+    plain: () =>
+      "An electrolytic capacitor stores a large amount of charge in a small package — the bulk-storage workhorse — but it is honest about its cost: a real parasitic series resistance (ESR) sits in series with the ideal capacitance. That ESR drops a little voltage whenever ripple current flows through it, dissipating heat and is exactly why a real cap can't perfectly flatten ripple. It is also polarized: the + terminal must stay positive.",
+    derived: (e, C) => [
+      {
+        label: "Energy ½·C·V²",
+        value: f(0.5 * C * e.vAcross * e.vAcross, "J"),
+      },
+      // The fixed parasitic series resistance modelled in buildNetlist (must match
+      // EC_ESR_OHMS in netlist.ts). The little IR drop across it rides the current.
+      { label: "ESR (parasitic)", value: f(0.5, "Ω") },
+    ],
+  },
   SW: {
     name: "Switch",
     equation: "closed for duty × period",

@@ -467,6 +467,79 @@ export const EXAMPLES: ExampleSpec[] = [
     ],
   },
   {
+    id: "ec-decoupling",
+    name: "Electrolytic Decoupling",
+    blurb:
+      "A half-wave rectified supply feeding a load, with a big electrolytic capacitor across it to smooth the ripple. The electrolytic stores charge at each hump's peak and feeds the load through the gaps — a roughly steady DC rail. But its real series resistance (ESR) drops a little voltage on every charging surge, which is exactly why a real cap can never flatten the ripple completely.",
+    watch:
+      "the output settle into a nearly steady rail (~4 V) with a shallow sawtooth ripple, instead of the bare rectifier's drop-to-zero humps. Compare with the ideal RC cap: the electrolytic's ESR adds a small extra wobble on each refill spike — a perfectly flat rail isn't free.",
+    build() {
+      // The half-wave rectifier with a bulk electrolytic (EC) across the load.
+      // Same shape as `ac-supply` but with a real-ESR electrolytic in place of the
+      // ideal ceramic, so the ESR's effect on ripple is the lesson.
+      //   nets: N1 = AC.+ = D.A ; OUT = D.K = R.A = EC.+ ;
+      //         GND(0) = R.B = EC.− = AC.−.
+      // AC = 200 Hz (5 ms period), R = 1 kΩ, EC = 100 µF → load time constant
+      // R·C = 100 ms ≫ the period, so the cap holds well between humps. Peaks reach
+      // ≈ 4.4 V (5 V peak − ~0.6 V diode drop). The EC expands to an ideal 100 µF
+      // cap in series with a 0.5 Ω ESR; the tall refill spikes (≫ the ~4.4 mA load)
+      // push a small IR drop across that ESR — visible ripple the ideal cap lacks.
+      const g = new BoardGraph();
+      const d = comp(g, "D", 2, 0, 0);
+      const r = comp(g, "R", 6, 0, 1000);
+      const ec = comp(g, "EC", 10, 0, 100e-6);
+      const ac = comp(g, "AC", 2, 6, 200);
+      const gnd = comp(g, "GND", 12, 6, 0);
+      wire(g, ac, 0, d, 0); // AC+ → D.A (anode)
+      wire(g, d, 1, r, 0); // D.K → R.A (the rectified output)
+      wire(g, d, 1, ec, 0); // D.K → EC.+ (reservoir electrolytic ∥ the load)
+      wire(g, r, 1, gnd, 0); // R.B → GND
+      wire(g, ec, 1, gnd, 0); // EC.− → GND
+      wire(g, ac, 1, gnd, 0); // AC− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Build a half-wave rectifier first: AC (200 Hz) → Diode (D) → load Resistor (R) → GND, and AC− → GND. Run.",
+        why: "Recall the lumpy positive-only humps that drop to zero between each one — usable as DC, but far too rough to power anything.",
+        done: (p) =>
+          at(p, "AC") >= 1 &&
+          at(p, "D") >= 1 &&
+          at(p, "R") >= 1 &&
+          p.wires >= 4,
+      },
+      {
+        do: "Add an Electrolytic Cap (EC) across the load (output to ground). Run again.",
+        why: "The big electrolytic charges at each peak and holds the rail up through the gaps — watch the valleys lift into a nearly steady ~4 V rail with only a shallow ripple.",
+        done: (p) => at(p, "EC") >= 1 && p.complete,
+      },
+      {
+        do: "Select the electrolytic and read its ESR row in the Info panel.",
+        why: "A real electrolytic has a small series resistance (ESR). On every charging surge that ESR drops a little voltage, so the rail can't be perfectly flat — bigger C and lower ESR both shrink the ripple, which is the whole engineering game in a power-supply filter.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Lift the electrolytic",
+      on: "Electrolytic in place — it bridges the gaps into a nearly flat DC rail with a little ripple.",
+      off: "Electrolytic lifted — back to the bare rectifier's positive humps, dropping to zero between each one.",
+      alt() {
+        // Omit the reservoir electrolytic, returning to the bare half-wave rectifier.
+        const g = new BoardGraph();
+        const d = comp(g, "D", 2, 0, 0);
+        const r = comp(g, "R", 6, 0, 1000);
+        const ac = comp(g, "AC", 2, 6, 200);
+        const gnd = comp(g, "GND", 8, 6, 0);
+        wire(g, ac, 0, d, 0);
+        wire(g, d, 1, r, 0);
+        wire(g, r, 1, gnd, 0);
+        wire(g, ac, 1, gnd, 0);
+        // EC intentionally omitted — the smoothing reservoir is lifted out.
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "pwm-average",
     name: "PWM Dimmer",
     blurb:
@@ -668,6 +741,93 @@ export const EXAMPLES: ExampleSpec[] = [
       {
         do: "Compare the two drops.",
         why: "~0.3 V vs ~0.7 V at the same current means the Schottky wastes less power — which is exactly why it's the catch diode in switching regulators.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "zener-shunt",
+    name: "Zener Shunt Reference",
+    blurb:
+      "The classic regulator: a 12 V supply feeds a resistor into a Zener diode to ground. Reverse-biased, the Zener won't conduct until the node reaches its breakdown voltage Vz — then it conducts hard and pins the node right there. The resistor soaks up the difference, so the output holds near Vz (5.1 V) even though the supply is more than double that.",
+    watch:
+      "the output node clamp at ~5.1 V, far below the 12 V rail — the Zener's breakdown voltage. The resistor drops the remaining ~6.9 V, and that ~6.9 mA shunts straight down through the Zener to ground.",
+    build() {
+      // V → R → node N; the Zener shunts N to ground (cathode K at N, anode A at
+      // GND), so N reverse-biases it and is clamped at Vz. Mirrors the sim-core
+      // `zener_clamps_reverse_voltage` test exactly.
+      //   nets: N1 = V+ = R.A ; N = R.B = ZD.K ; GND(0) = ZD.A = V−.
+      // Hand-check: the Zener holds N ≈ Vz = 5.1 V, so I = (12 − 5.1)/1kΩ ≈ 6.9 mA
+      // flows through R and sinks into the Zener (KCL). Nonlinear → Newton solve.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 1000);
+      const zd = comp(g, "ZD", 6, 0, 5.1); // value = breakdown voltage Vz
+      const v = comp(g, "V", 2, 6, 12);
+      const gnd = comp(g, "GND", 8, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, zd, 1); // R.B → ZD.K (the regulated node N)
+      wire(g, zd, 0, gnd, 0); // ZD.A → GND (Zener shunts the excess to 0 V)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 12 V) and a Resistor (R, ~1 kΩ).",
+        why: "The 12 V rail is well above the voltage we want. R is the series element that will drop the excess once the Zener starts clamping.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place a Zener Diode (ZD) and a Ground (GND). Wire V+ → R → the Zener's CATHODE, the Zener's ANODE → GND, and V− → GND. Then press Run.",
+        why: "The node reverse-biases the Zener. Below Vz it blocks, so the node would float toward 12 V — but the moment it reaches ~5.1 V the Zener conducts hard and refuses to let it climb further. Watch the node pin at Vz while the rest drops across R.",
+        done: (p) => at(p, "ZD") >= 1 && p.complete,
+      },
+      {
+        do: "Select the Zener and try a different Vz (e.g. 6.2 V or 9.1 V).",
+        why: "The regulated node tracks whatever Vz you pick — that's the whole point of a shunt reference. The supply can wander; the Zener holds the output.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "led-series",
+    name: "Two LEDs in Series",
+    blurb:
+      "Stack two LEDs in one series string off a 9 V rail through a single resistor. Forward voltage drops add, so the two LEDs together drop ~3.8 V (about 1.9 V each) — and because they share one loop they carry the exact same current, so they light equally bright.",
+    watch:
+      "both LEDs light up together at the same brightness — one current, one string. The rail splits ~1.9 V + ~1.9 V across the two LEDs and the remaining ~5.2 V across R, setting ~19 mA.",
+    build() {
+      // V → R → LED1 → LED2 → GND. Two ~1.9 V forward drops in series = ~3.8 V;
+      // with a 9 V rail and R = 270 Ω the current is (9 − 3.8)/270 ≈ 19 mA — right
+      // in the safe ~20 mA band. Both LEDs see the same series current.
+      //   nets: N1 = V+ = R.A ; N2 = R.B = LED1.A ; N3 = LED1.K = LED2.A ;
+      //         GND(0) = LED2.K = V−.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 270);
+      const led1 = comp(g, "LED", 6, 0, 0);
+      const led2 = comp(g, "LED", 10, 0, 0);
+      const v = comp(g, "V", 2, 6, 9);
+      const gnd = comp(g, "GND", 12, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, led1, 0); // R.B → LED1.A
+      wire(g, led1, 1, led2, 0); // LED1.K → LED2.A (the series joint)
+      wire(g, led2, 1, gnd, 0); // LED2.K → GND (right rail)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 9 V) and a Resistor (R, ~270 Ω).",
+        why: "One resistor will limit the current for the whole string — in a series chain there's only one current to set.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place TWO LEDs and a Ground (GND). Wire V+ → R → LED1 → LED2 → GND, and V− → GND. Then press Run.",
+        why: "Watch both LEDs light at once, equally bright — the same current runs through both. The two forward drops add (~1.9 V + ~1.9 V), so R only has to drop what's left of the 9 V rail.",
+        done: (p) => at(p, "LED") >= 2 && p.complete,
+      },
+      {
+        do: "Note why a 9 V rail (not 5 V) is needed.",
+        why: "Two LEDs need ~3.8 V just to turn on, plus headroom across R to set the current. Stack too many for the rail and none of them light — the drops have to fit under the supply.",
         done: (p) => p.complete,
       },
     ],
@@ -1264,9 +1424,12 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   rc: "Capacitors & Inductors",
   rl: "Capacitors & Inductors",
   rlc: "Capacitors & Inductors",
+  "ec-decoupling": "Capacitors & Inductors",
   "diode-clamp": "Diodes",
   "led-limit": "Diodes",
   "schottky-vs-silicon": "Diodes",
+  "led-series": "Diodes",
+  "zener-shunt": "Diodes",
   buck: "Power & Switching",
   "pwm-average": "Power & Switching",
   "ac-resistor": "AC Fundamentals",
