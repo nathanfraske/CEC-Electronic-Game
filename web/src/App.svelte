@@ -787,7 +787,7 @@
         {#each EXAMPLE_CATEGORIES as cat (cat)}
           {@const items = EXAMPLES.filter((e) => categoryOf(e.id) === cat)}
           {#if items.length > 0}
-            <details class="example-cat" open>
+            <details class="example-cat">
               <summary class="example-cat-head">
                 <span class="example-cat-name">{cat}</span>
                 <span class="example-cat-count">{items.length}</span>
