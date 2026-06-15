@@ -8,6 +8,10 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — animation-rate decoupling, info-panel jitter, belt explainer
+- ~~**Flow rate decoupled from magnitude + tps:** animations were unreadably fast at high V/I and high playback; lowering tps didn't help because magnitude still scaled in. One bounded visual flow clock (`FLOW_HZ`) now drives everything, independent of V/I/tps; timeline gives direction only (forward running / sign of tick-change on scrub); magnitude → density + thickness + alpha; carrier/energy slosh preserved via the saturated **sign** of current/power. `glyphs.ts flow()` + `board.ts update()/redrawWires`; spec in `docs/ui/visual-language.md`. Render-only, golden unchanged. (Agent-built, cherry-picked.)~~
+- ~~**Info-panel jitter:** the plain explanation embedded live numbers → prose reflowed every frame. Prose now static (`partInfo.ts plain()` arg-free); changing numbers grouped into a "Right now" section. Always-on "carriers & energy" explainer added to the Info tab (covers why energy flows forward when V and I are both negative). New `--energy` token.~~
+
 ### Done — interaction polish (#22), carrier/energy belt, demo pages
 - ~~**Fixes (#22):** flow-jitter cap (per-frame phase delta + ≤14 chevrons/wire); rotated-part labels against the rotated pin bounds; on-board meter gated to no-value parts (popover shows V·A); top selector chips wrap; **reset-on-edit** rewinds scope+clock to t=0 on any change (`App.onChange`).~~
 - ~~**Carrier/energy belt (loop-tile):** two animated layers per wire — carriers (chevrons, integrate signed current → DC stream / AC slosh) + energy (orange dots, integrate signed power v·i → steady delivery on a resistor while carriers slosh, slosh on a reactive part). Per-wire accumulators off the timeline phase, pruned on delete; `docs/ui/visual-language.md` updated. Render-only, golden unchanged.~~
