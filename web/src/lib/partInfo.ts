@@ -512,6 +512,19 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Current (A→W leg)", value: f(e.current, "A") },
     ],
   },
+  FF: {
+    name: "D Flip-Flop",
+    equation: "Q ← D on ↑CLK · Q̄ = Q′",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · clock-edge memory · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A D flip-flop is one bit of memory. On each rising edge of its clock it samples whatever is on its D input and locks that value onto its Q output (with Q̄ the complement); between edges it ignores D entirely and just holds. That 'capture on the edge, hold until the next one' is what makes synchronous digital systems possible — every register, counter, and state machine is built from flip-flops clocked together. Inputs are read against a half-rail threshold; the outputs are driven hard to the rail or ground one tick after the edge (the clock-to-output delay). Tie Q̄ back to D and it toggles on every clock — a divide-by-two, and the seed of every binary counter.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",

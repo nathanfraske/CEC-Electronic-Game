@@ -274,7 +274,7 @@
     {
       tag: "FF",
       name: "D Flip-Flop",
-      desc: "One bit of memory",
+      desc: "Latches D on the clock edge",
       tier: "II",
       color: "var(--cyan)",
     },

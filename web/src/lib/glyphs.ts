@@ -1276,6 +1276,62 @@ function drawPOT(g: Graphics, o: GlyphOpts): void {
   flow(g, x0, trackY, x1, trackY, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// --- D flip-flop (edge-triggered one-bit memory) ------------------------------
+// Pins ordered Q, D, CLK, Q̄: outputs Q (right-top) and Q̄ (right-bottom), inputs D
+// (left-top) and the edge-clocked CLK (left-bottom, drawn with the ">" edge marker).
+// The standard clocked-box symbol; `electrical.current` is the Q output drive, which
+// animates the Q output belt when it drives a load. The stored bit reads on the
+// scope at Q/Q̄.
+function drawFF(g: Graphics, o: GlyphOpts): void {
+  const q = o.pins[0];
+  const d = o.pins[1];
+  const clk = o.pins[2];
+  const qb = o.pins[3];
+  if (!q || !d || !clk || !qb) return;
+  const leftX = Math.min(d.x, clk.x) + 8;
+  const rightX = Math.max(q.x, qb.x) - 8;
+  const topY = Math.min(d.y, q.y) + 2;
+  const botY = Math.max(clk.y, qb.y) - 2;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Leads to the box edges.
+  g.moveTo(d.x, d.y).lineTo(leftX, d.y);
+  g.moveTo(clk.x, clk.y).lineTo(leftX, clk.y);
+  g.moveTo(rightX, q.y).lineTo(q.x, q.y);
+  g.moveTo(rightX, qb.y).lineTo(qb.x, qb.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The clocked box body.
+  g.roundRect(leftX, topY, rightX - leftX, botY - topY, 3).fill({
+    color: o.color,
+    alpha: 0.1 + 0.12 * drive,
+  });
+  g.roundRect(leftX, topY, rightX - leftX, botY - topY, 3).stroke({
+    width: 2.2,
+    color: o.color,
+    alpha: 0.95,
+  });
+
+  // The edge-clock marker: a ">" notch at the CLK input inside the box.
+  const cy = clk.y;
+  g.moveTo(leftX, cy - 4)
+    .lineTo(leftX + 6, cy)
+    .lineTo(leftX, cy + 4)
+    .stroke({ width: 2, color: o.color, alpha: 0.9 });
+
+  // The Q output drive belt (signed by its current); Q̄ gets a faint complement.
+  flow(g, rightX, q.y, q.x, q.y, o.electrical.current, o.phase, 0x46d2e6);
+  if (drive > 0.04) {
+    for (let i = 0; i < 2; i++) {
+      const t = (((i / 2 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(rightX + (qb.x - rightX) * t, qb.y, 1.4).fill({
+        color: 0x46d2e6,
+        alpha: 0.3,
+      });
+    }
+  }
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -2166,6 +2222,48 @@ function drawFPOT(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// The flip-flop as a Factorio single-bin store with a clocked gate: D arrives on the
+// left, a clock pulse on the bottom-left latches it, and the held bit feeds the Q /
+// Q̄ output belts on the right. The clock intake is marked with the edge ">" notch.
+function drawFFF(g: Graphics, o: GlyphOpts): void {
+  const q = o.pins[0];
+  const d = o.pins[1];
+  const clk = o.pins[2];
+  const qb = o.pins[3];
+  if (!q || !d || !clk || !qb) return;
+  const mx = (d.x + q.x) / 2;
+  const my = (d.y + clk.y) / 2;
+  const hw = 11;
+  const hh = Math.max(clk.y, qb.y) - my + 2;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Input/output leads.
+  g.moveTo(d.x, d.y).lineTo(mx - hw, d.y);
+  g.moveTo(clk.x, clk.y).lineTo(mx - hw, clk.y);
+  g.moveTo(mx + hw, q.y).lineTo(q.x, q.y);
+  g.moveTo(mx + hw, qb.y).lineTo(qb.x, qb.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The store body + the edge-clock notch on the left wall at the CLK input.
+  fBox(g, mx, my, hw, hh, o.color);
+  g.moveTo(mx - hw, clk.y - 4)
+    .lineTo(mx - hw + 5, clk.y)
+    .lineTo(mx - hw, clk.y + 4)
+    .stroke({ width: 1.6, color: o.color, alpha: 0.8 });
+
+  // The Q output belt (signed) + a faint Q̄ complement.
+  flow(g, mx + hw, q.y, q.x, q.y, o.electrical.current, o.phase, 0x46d2e6);
+  if (drive > 0.04) {
+    for (let i = 0; i < 2; i++) {
+      const t = (((i / 2 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(mx + hw + (qb.x - mx - hw) * t, qb.y, 1.4).fill({
+        color: 0x46d2e6,
+        alpha: 0.3,
+      });
+    }
+  }
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -2213,6 +2311,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOT: drawNOT,
   TR: drawTR,
   POT: drawPOT,
+  FF: drawFF,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -2244,6 +2343,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOT: drawFNOT,
   TR: drawFTR,
   POT: drawFPOT,
+  FF: drawFFF,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */

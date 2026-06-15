@@ -1756,6 +1756,132 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
+  // The D flip-flop is kind "FF", a 4-pin part ordered Q, D, CLK, Q̄ (pin 0 → Q,
+  // 1 → D, 2 → CLK, 3 → Q̄), `value` = logic rail. A PWM switch (SW) chops the rail
+  // onto a pulled-down node to make the clock.
+  {
+    id: "dff-register",
+    name: "D Flip-Flop (Clocked Memory)",
+    blurb:
+      "A flip-flop remembers one bit. It watches its D input only at the instant the clock rises — at that edge it captures D and locks it onto its Q output, then holds that value no matter what D does until the next clock edge. Drive an LED from Q and you can see the stored bit: a 1 keeps the LED lit, a 0 keeps it dark, each refreshed once per clock tick. This 'sample on the edge, hold' is the heart of every register and memory.",
+    watch:
+      "the LED hold the value of D, refreshed on each clock edge — steady, not flickering with noise, because the flip-flop only looks at D on the rising edge. Flip D low (the toggle) and at the next edge Q captures the 0 and the LED goes dark; it stays dark until D changes and another edge clocks it in.",
+    build() {
+      // D held high → on each rising clock edge Q latches 1 → the LED lights. A PWM
+      // switch chops the 5 V rail onto the pulled-down CLK node to make the clock.
+      const g = new BoardGraph();
+      const vd = comp(g, "V", 0, 0, 5, 1); // D = 1
+      const vclk = comp(g, "V", 0, 6, 5, 1); // clock rail
+      const sw = comp(g, "SW", 3, 6, 0.5); // chops the rail → square clock
+      const rpd = comp(g, "R", 6, 9, 10000); // CLK pulldown
+      const ff = comp(g, "FF", 6, 0, 5);
+      const rq = comp(g, "R", 10, 0, 330); // Q LED limit
+      const led = comp(g, "LED", 13, 0, 0);
+      const gnd = comp(g, "GND", 13, 6, 0);
+      wire(g, vd, 0, ff, 1); // D source → FF.D (pin 1)
+      wire(g, vclk, 0, sw, 0); // clock rail → SW.A
+      wire(g, sw, 1, ff, 2); // SW.B → FF.CLK (pin 2)
+      wire(g, ff, 2, rpd, 0); // CLK node → pulldown
+      wire(g, rpd, 1, gnd, 0);
+      wire(g, ff, 0, rq, 0); // FF.Q (pin 0) → R
+      wire(g, rq, 1, led, 0);
+      wire(g, led, 1, gnd, 0);
+      wire(g, vd, 1, gnd, 0);
+      wire(g, vclk, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a D Flip-Flop (FF) and a clock: a Voltage Source (V, 5 V) through a Switch (SW, 50% duty) onto a node pulled to ground by a Resistor (~10 kΩ). Wire that node to the FF's CLK.",
+        why: "The switch chops the rail into a square wave — that's the clock. Every rising edge of it is a moment the flip-flop will look at its D input.",
+        done: (p) => at(p, "FF") >= 1 && at(p, "SW") >= 1,
+      },
+      {
+        do: "Add a Voltage Source (V, 5 V) for D wired to the FF's D input, and an LED + Resistor from Q to Ground (all −'s to GND). Run.",
+        why: "With D held high, each clock edge latches a 1 onto Q and the LED lights. The flip-flop is now storing a bit, refreshed every clock tick.",
+        done: (p) => at(p, "FF") >= 1 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Select the D source and set it to 0 V (or use the toggle below).",
+        why: "At the next rising clock edge the flip-flop samples the 0 and Q drops — the LED goes dark and stays dark. It captured the new value on the edge and is holding it. That capture-and-hold is one bit of memory.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "D high / low",
+      on: "D = 1 — each clock edge latches a 1, the LED stays lit.",
+      off: "D = 0 — the next edge latches a 0, the LED goes dark and holds.",
+      alt() {
+        const g = new BoardGraph();
+        const vd = comp(g, "V", 0, 0, 0, 1); // D = 0
+        const vclk = comp(g, "V", 0, 6, 5, 1);
+        const sw = comp(g, "SW", 3, 6, 0.5);
+        const rpd = comp(g, "R", 6, 9, 10000);
+        const ff = comp(g, "FF", 6, 0, 5);
+        const rq = comp(g, "R", 10, 0, 330);
+        const led = comp(g, "LED", 13, 0, 0);
+        const gnd = comp(g, "GND", 13, 6, 0);
+        wire(g, vd, 0, ff, 1);
+        wire(g, vclk, 0, sw, 0);
+        wire(g, sw, 1, ff, 2);
+        wire(g, ff, 2, rpd, 0);
+        wire(g, rpd, 1, gnd, 0);
+        wire(g, ff, 0, rq, 0);
+        wire(g, rq, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vd, 1, gnd, 0);
+        wire(g, vclk, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "dff-toggle",
+    name: "Toggle Flip-Flop (÷2 Counter)",
+    blurb:
+      "Wire a flip-flop's Q̄ back to its own D and it becomes a toggle: every clock edge flips its state, because it keeps clocking in the opposite of what it currently holds. The result is an output that switches once per two clock edges — it divides the clock frequency by two. Chain a few and each halves the rate again: that's a binary counter, and the first thing every digital system needs to count or keep time.",
+    watch:
+      "the Q LED blink at HALF the clock's rate — one full on/off of Q for every two clock pulses. The flip-flop flips on each rising edge, and because it feeds its own complement back to D, it never settles: it counts the clock, one bit's worth.",
+    build() {
+      // Q̄ → D makes a toggle: Q flips every rising clock edge → Q runs at half the
+      // clock. The PWM-switch clock is the same as the register example.
+      const g = new BoardGraph();
+      const vclk = comp(g, "V", 0, 6, 5, 1);
+      const sw = comp(g, "SW", 3, 6, 0.5);
+      const rpd = comp(g, "R", 6, 9, 10000);
+      const ff = comp(g, "FF", 6, 0, 5);
+      const rq = comp(g, "R", 10, 0, 330);
+      const led = comp(g, "LED", 13, 0, 0);
+      const gnd = comp(g, "GND", 13, 6, 0);
+      wire(g, ff, 3, ff, 1); // Q̄ (pin 3) → D (pin 1): the toggle feedback
+      wire(g, vclk, 0, sw, 0);
+      wire(g, sw, 1, ff, 2); // clock → FF.CLK
+      wire(g, ff, 2, rpd, 0);
+      wire(g, rpd, 1, gnd, 0);
+      wire(g, ff, 0, rq, 0); // Q → LED
+      wire(g, rq, 1, led, 0);
+      wire(g, led, 1, gnd, 0);
+      wire(g, vclk, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Build the clock as before: a Voltage Source (5 V) → Switch (50% duty) → a node pulled down by a Resistor, wired to the FF's CLK.",
+        why: "Same square-wave clock. This time we'll feed the flip-flop's own output back to make it count.",
+        done: (p) => at(p, "FF") >= 1 && at(p, "SW") >= 1,
+      },
+      {
+        do: "Wire the FF's Q̄ output back to its own D input. Put an LED + Resistor from Q to Ground, and the rail −'s to GND. Run.",
+        why: "Feeding Q̄ to D means every clock edge loads the opposite of the current state, so Q flips each edge. Watch the LED blink at half the clock rate — the flip-flop is dividing the clock by two.",
+        done: (p) => at(p, "FF") >= 1 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Open the scope and compare the clock node (CLK) with Q.",
+        why: "Q makes one full cycle for every two clock cycles — a clean ÷2. That's the first bit of a binary counter; chaining more flip-flops, each clocked by the one before, counts in binary.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -2540,6 +2666,8 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "logic-inverter": "Logic & ICs",
   "logic-and": "Logic & ICs",
   "logic-half-adder": "Logic & ICs",
+  "dff-register": "Logic & ICs",
+  "dff-toggle": "Logic & ICs",
   "ac-resistor": "AC Fundamentals",
   "ac-rms": "AC Fundamentals",
   "ac-cap": "Reactance",

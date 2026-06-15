@@ -45,6 +45,16 @@
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
 //! | 18   | transformer        | turns ratio n | coupled inductors, backward-Euler (pri=a/b sec=c/d)|
+//! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
+//!
+//! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
+//! that samples its `D` input (`b`) on each rising edge of `CLK` (`c`) and presents it
+//! on `Q` (`a`), with `Q̄` (`d`) the complement. Like the gate it drives its outputs
+//! through [`GATE_GOUT`] from a value taken last tick (here the stored bit), so the
+//! per-tick stamp is constant (no Newton); the bit is latched in the commit phase, a
+//! clean one-tick clock-to-Q delay. It keeps two persistent scalars — the stored bit
+//! and the previous clock level — that are deterministic but unhashed (the `Q`/`Q̄`
+//! node voltages carry the observable state into the hash).
 //!
 //! Type 18 is the **transformer**: two magnetically **coupled inductors** — the
 //! first four-terminal element (primary `a`/`b`, secondary `c`/`d`). Its `value` is
@@ -451,6 +461,21 @@ const TRANSFORMER_K: f64 = 0.999;
 /// `dI/dt -> 0` the induced secondary voltage decays to zero). Without it an ideal
 /// coupled-inductor pair would integrate a DC step without bound.
 const TRANSFORMER_RWIND: f64 = 5.0;
+
+/// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
+/// Four terminals: output `a` = `Q`, input `b` = `D` (data), input `c` = `CLK`
+/// (clock), output `d` = `Q̄` (the complement). Its `value` is the logic-high rail,
+/// shared with the gate family (inputs thresholded at [`GATE_VTH_FRAC`] of it, the
+/// outputs driven through [`GATE_GOUT`]). On each **rising edge** of `CLK` it samples
+/// `D` into a stored bit; otherwise it holds. The outputs are driven from the
+/// **committed** bit (a constant Thévenin stamp, exactly the gate's shape, so it adds
+/// no Newton work), and the bit is updated once per step in the commit phase from the
+/// solved `CLK`/`D` — giving a clean one-tick clock-to-output delay. The stored bit
+/// and the previous clock level are persistent per-element state (like the reactive
+/// companions: deterministic, not hashed — the observable `Q`/`Q̄` voltages carry into
+/// the snapshot). Wire `Q̄ → D` for a toggle (÷2), the seed of every counter. See
+/// [`Sim::stamp_dff`].
+pub const ELEM_DFF: u8 = 19;
 
 // --- AC voltage source model constants ----------------------------------------
 
@@ -1238,6 +1263,16 @@ pub struct Sim {
     /// secondary while [`Sim::reactive_state`] carries the primary. `0.0` for every
     /// other element. One entry per element, indexed in lockstep with `elements`.
     reactive_state_b: Vec<f64>,
+    /// The D flip-flop's stored bit (`0.0` or `1.0`): the value latched at the last
+    /// rising clock edge, which drives `Q`/`Q̄` every tick until the next edge. Used
+    /// only by [`ELEM_DFF`]; `0.0` for every other element. Persistent sequential
+    /// state — deterministic but unhashed (the observable `Q`/`Q̄` voltages carry it
+    /// into the snapshot). Indexed in lockstep with `elements`.
+    ff_bit: Vec<f64>,
+    /// The D flip-flop's previous clock level as a boolean (`0.0` low / `1.0` high),
+    /// kept so the commit phase can detect a rising edge (`low -> high`). Used only by
+    /// [`ELEM_DFF`]; `0.0` elsewhere. Indexed in lockstep with `elements`.
+    ff_clk_high: Vec<f64>,
     /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
     /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
     /// previous-iterate reference, so each step starts from the converged
@@ -1327,6 +1362,8 @@ impl Sim {
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             reactive_state_b: Vec::new(),
+            ff_bit: Vec::new(),
+            ff_clk_high: Vec::new(),
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
@@ -1441,6 +1478,7 @@ impl Sim {
                     | ELEM_VARISTOR
                     | ELEM_GATE
                     | ELEM_TRANSFORMER
+                    | ELEM_DFF
             ) {
                 self.install_empty();
                 return false;
@@ -1506,6 +1544,8 @@ impl Sim {
         self.has_nonlinear = has_nonlinear;
         self.reactive_state = vec![0.0; elements.len()];
         self.reactive_state_b = vec![0.0; elements.len()];
+        self.ff_bit = vec![0.0; elements.len()];
+        self.ff_clk_high = vec![0.0; elements.len()];
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
         self.mosfet_vds = vec![0.0; elements.len()];
@@ -1531,6 +1571,12 @@ impl Sim {
             *s = 0.0;
         }
         for s in &mut self.reactive_state_b {
+            *s = 0.0;
+        }
+        for s in &mut self.ff_bit {
+            *s = 0.0;
+        }
+        for s in &mut self.ff_clk_high {
             *s = 0.0;
         }
         for vd in &mut self.diode_vd {
@@ -1783,6 +1829,11 @@ impl Sim {
                     // currents (0 at t = 0, so the device starts open).
                     self.stamp_transformer_op(&mut mat, &mut rhs, n, e, i);
                 }
+                ELEM_DFF => {
+                    // Drive Q/Q̄ from the stored bit (constant Thevenin); the bit is
+                    // latched in the commit phase, so the stamp is fixed for the solve.
+                    self.stamp_dff(&mut mat, &mut rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
                     // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
@@ -1823,6 +1874,15 @@ impl Sim {
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                // The flip-flop's Q output drive current, from the committed bit.
+                ELEM_DFF => {
+                    let vq = if self.ff_bit[i] >= 0.5 {
+                        e.value.max(0.0)
+                    } else {
+                        0.0
+                    };
+                    GATE_GOUT * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -1981,6 +2041,10 @@ impl Sim {
                     // cross-linked by the mutual inductance M.
                     self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
                 }
+                ELEM_DFF => {
+                    // Drive Q/Q̄ from the stored bit (constant Thevenin pull).
+                    self.stamp_dff(&mut mat, &mut rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
                     // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
@@ -2030,6 +2094,15 @@ impl Sim {
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                // The flip-flop's Q output drive current, from the committed bit.
+                ELEM_DFF => {
+                    let vq = if self.ff_bit[i] >= 0.5 {
+                        e.value.max(0.0)
+                    } else {
+                        0.0
+                    };
+                    GATE_GOUT * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -2673,6 +2746,10 @@ impl Sim {
                     // Both windings prime as current sources (0 at t = 0).
                     self.stamp_transformer_op(&mut base_mat, &mut base_rhs, n, e, i);
                 }
+                ELEM_DFF => {
+                    // Drive Q/Q̄ from the stored bit into the fixed Newton base.
+                    self.stamp_dff(&mut base_mat, &mut base_rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
                         base_rhs[r] -= e.value;
@@ -2773,6 +2850,15 @@ impl Sim {
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                // The flip-flop's Q output drive current, from the committed bit.
+                ELEM_DFF => {
+                    let vq = if self.ff_bit[i] >= 0.5 {
+                        e.value.max(0.0)
+                    } else {
+                        0.0
+                    };
+                    GATE_GOUT * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -2886,6 +2972,10 @@ impl Sim {
                     // base (constant across the Newton loop, like any inductor).
                     self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
                 }
+                ELEM_DFF => {
+                    // Drive Q/Q̄ from the stored bit into the fixed Newton base.
+                    self.stamp_dff(&mut base_mat, &mut base_rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
                         base_rhs[r] -= e.value;
@@ -2996,6 +3086,15 @@ impl Sim {
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                // The flip-flop's Q output drive current, from the committed bit.
+                ELEM_DFF => {
+                    let vq = if self.ff_bit[i] >= 0.5 {
+                        e.value.max(0.0)
+                    } else {
+                        0.0
+                    };
+                    GATE_GOUT * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -3116,6 +3215,34 @@ impl Sim {
         }
     }
 
+    /// Stamp the D flip-flop into an MNA system (`mat`/`rhs`, dimension `dim`): drive
+    /// `Q` (`a`) and `Q̄` (`d`) from the **committed** stored bit through [`GATE_GOUT`]
+    /// (the same constant Thevenin pull a logic gate uses), and floor the two
+    /// high-impedance inputs `D` (`b`) and `CLK` (`c`) to ground with [`GMIN`] so an
+    /// undriven input is non-singular. The bit itself is latched separately in the
+    /// commit phase (see [`Sim::step`]), so this stamp is constant for the whole solve
+    /// — no Newton work, no branch unknown. `value` is the logic-high rail.
+    fn stamp_dff(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize, e: &Element, i: usize) {
+        let vhigh = e.value.max(0.0);
+        let bit_high = self.ff_bit[i] >= 0.5;
+        let vq = if bit_high { vhigh } else { 0.0 };
+        let vqb = if bit_high { 0.0 } else { vhigh };
+        if let Some(r) = Self::node_idx(e.a) {
+            mat[r * dim + r] += GATE_GOUT;
+            rhs[r] += GATE_GOUT * vq;
+        }
+        if let Some(r) = Self::node_idx(e.d) {
+            mat[r * dim + r] += GATE_GOUT;
+            rhs[r] += GATE_GOUT * vqb;
+        }
+        if let Some(r) = Self::node_idx(e.b) {
+            mat[r * dim + r] += GMIN;
+        }
+        if let Some(r) = Self::node_idx(e.c) {
+            mat[r * dim + r] += GMIN;
+        }
+    }
+
     /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
     /// current tick: `amplitude * sin(2*pi * f * tick * dt)`, where `e.value` is
     /// the frequency `f` in hertz (clamped to `>= 0`) and the peak `amplitude` is
@@ -3180,6 +3307,18 @@ impl Sim {
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                     self.reactive_state_b[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
+                }
+                ELEM_DFF => {
+                    // Edge-triggered latch: on a rising CLK edge (low -> high) sample
+                    // D into the stored bit, using the just-solved node voltages
+                    // thresholded at half the rail. Otherwise the bit holds.
+                    let vth = GATE_VTH_FRAC * e.value.max(0.0);
+                    let clk_high = self.node_v[e.c] > vth;
+                    let was_high = self.ff_clk_high[i] >= 0.5;
+                    if clk_high && !was_high {
+                        self.ff_bit[i] = if self.node_v[e.b] > vth { 1.0 } else { 0.0 };
+                    }
+                    self.ff_clk_high[i] = if clk_high { 1.0 } else { 0.0 };
                 }
                 _ => {}
             }
@@ -5034,6 +5173,129 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "transformer circuit must reproduce exactly");
+    }
+
+    // --- D flip-flop (edge-triggered one-bit memory) --------------------------
+    //
+    // The flip-flop (type 19) samples D (b) on each rising edge of CLK (c) into a
+    // stored bit that drives Q (a) and Q̄ (d). The tests clock it with a PWM switch
+    // (a 0/5 V square wave on a pulled-down node) and read the outputs.
+
+    /// Build a flip-flop clocked by a PWM switch, holding D at the given level, and
+    /// run several clock periods; return `[Q, Q̄]`. Nodes: 0 = gnd, 1 = D, 2 = CLK,
+    /// 3 = Q, 4 = Q̄, 5 = clock rail. The switch chops the 5 V rail onto the
+    /// pulled-down CLK node, so CLK is a clean 0/5 V square wave (rising edges every
+    /// SWITCH_PERIOD_TICKS); D is held, so after a few edges Q settles to D.
+    fn dff_clocked(d_high: bool) -> [f64; 2] {
+        let vd = if d_high { 5.0 } else { 0.0 };
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_DFF
+            ],
+            &[1, 5, 5, 2, 3],
+            &[0, 0, 2, 0, 1],
+            &[0, 0, 0, 0, 2], // DFF c = CLK = node 2
+            &[0, 0, 0, 0, 4], // DFF d = Q̄ = node 4
+            &[vd, 5.0, 0.5, 1000.0, 5.0],
+            &[0.0; 5],
+        ));
+        for _ in 0..500 {
+            sim.step();
+        }
+        let v = sim.state();
+        [v[3], v[4]]
+    }
+
+    /// With D held, the flip-flop latches it on the clock edges and presents it on Q,
+    /// with Q̄ the complement.
+    #[test]
+    fn dff_latches_d_and_holds() {
+        let [q1, qb1] = dff_clocked(true);
+        assert!(q1 > 4.0, "Q high when D held high: {q1}");
+        assert!(qb1 < 1.0, "Q̄ low when Q is high: {qb1}");
+        let [q0, qb0] = dff_clocked(false);
+        assert!(q0 < 1.0, "Q low when D held low: {q0}");
+        assert!(qb0 > 4.0, "Q̄ high when Q is low: {qb0}");
+    }
+
+    /// Wiring Q̄ back to D makes a toggle (T) flip-flop: Q flips on every clock edge,
+    /// dividing the clock by two. Over a run Q must take BOTH levels (it isn't stuck).
+    #[test]
+    fn dff_toggle_divides_the_clock() {
+        // nodes: 0 = gnd, 2 = CLK, 3 = Q, 4 = Q̄, 5 = clock rail. D (b) = Q̄ = node 4.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            6,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR, ELEM_DFF],
+            &[5, 5, 2, 3],
+            &[0, 2, 0, 4], // DFF b = D = Q̄ (node 4)
+            &[0, 0, 0, 2], // DFF c = CLK = node 2
+            &[0, 0, 0, 4], // DFF d = Q̄ = node 4
+            &[5.0, 0.5, 1000.0, 5.0],
+            &[0.0; 4],
+        ));
+        let mut saw_high = false;
+        let mut saw_low = false;
+        for _ in 0..1000 {
+            sim.step();
+            let q = sim.state()[3];
+            if q > 4.0 {
+                saw_high = true;
+            }
+            if q < 1.0 {
+                saw_low = true;
+            }
+        }
+        assert!(
+            saw_high && saw_low,
+            "a toggle flip-flop's Q must oscillate (÷2): high={saw_high} low={saw_low}"
+        );
+    }
+
+    /// A four-terminal flip-flop netlist installs; an out-of-range terminal is
+    /// rejected fail-safe.
+    #[test]
+    fn dff_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(5, &[ELEM_DFF], &[1], &[2], &[3], &[4], &[5.0], &[0.0]),
+            "valid four-terminal flip-flop installs"
+        );
+        assert!(
+            !sim.set_netlist(5, &[ELEM_DFF], &[1], &[2], &[3], &[9], &[5.0], &[0.0]),
+            "out-of-range Q̄ terminal d is rejected"
+        );
+    }
+
+    /// A clocked flip-flop circuit (sequential state) reproduces bit-for-bit.
+    #[test]
+    fn dff_run_is_reproducible() {
+        let run = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                6,
+                &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR, ELEM_DFF],
+                &[5, 5, 2, 3],
+                &[0, 2, 0, 4],
+                &[0, 0, 0, 2],
+                &[0, 0, 0, 4],
+                &[5.0, 0.5, 1000.0, 5.0],
+                &[0.0; 4],
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "flip-flop circuit must reproduce exactly");
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------

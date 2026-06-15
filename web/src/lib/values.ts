@@ -44,6 +44,8 @@ const CURATED_FULL: Record<string, number[]> = {
   NOR: [1.8, 2.5, 3.3, 5, 12, 15],
   XOR: [1.8, 2.5, 3.3, 5, 12, 15],
   NOT: [1.8, 2.5, 3.3, 5, 12, 15],
+  // D flip-flop logic rail (V): the digital supply its outputs drive to.
+  FF: [1.8, 2.5, 3.3, 5, 12, 15],
   // Transformer turns ratio n = Ns/Np: step-downs (< 1) through step-ups (> 1).
   TR: [0.1, 0.2, 0.25, 0.5, 1, 2, 4, 5, 10],
   // Potentiometer total resistance (Ω): the common bench pot values.
@@ -74,6 +76,7 @@ const CURATED_CHIPS: Record<string, number[]> = {
   NOR: [3.3, 5, 12],
   XOR: [3.3, 5, 12],
   NOT: [3.3, 5, 12],
+  FF: [3.3, 5, 12],
   // The turns ratios people reach for first: ¼, ½, 1:1, ×2, ×4.
   TR: [0.25, 0.5, 1, 2, 4],
   // The pot values people reach for first.

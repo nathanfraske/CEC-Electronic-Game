@@ -64,8 +64,14 @@ the enabling primitive from the catalog's §0 / §9 roadmap):
 
 **ICs still to build** (`ic-buildings-ideation.md` §2.4 tier table, §3 entries) — all
 Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate set:
-- [ ] **D / JK flip-flop + latch** (§3.2) — one bit of clocked state; tick-grid edge
-  detect. The first **sequential** element. **Next IC rung. Low.**
+- ~~**D flip-flop** (`ELEM_DFF=19`, §3.2) — the first **sequential** element: 4-pin
+  (Q=a, D=b, CLK=c, Q̄=d), `value`=rail. Samples D on the rising CLK edge into a
+  stored bit (persistent unhashed state like the reactive companions), drives Q/Q̄
+  through `GATE_GOUT` from the committed bit (constant stamp, no Newton); one-tick
+  clk→Q delay. Edge-detect in the step commit. 4 tests (latch+hold, ÷2 toggle,
+  validate, reproduce); golden unchanged. Web: `FF` part (clocked-box glyph + edge
+  notch), partInfo, "Clocked Memory" + "Toggle (÷2 Counter)" examples. Reuses the
+  a/b/c/d boundary (no wasm change).~~ (JK/latch variants still open.)
 - [ ] **Shift register / counter / decoder / mux** (§3.3) — clocked integer state +
   **bus ports** (the §1.5 multi-bit belt renderer). **Low–med.**
 - [ ] **555 timer** (§3.4) — internal comparators + SR latch + tick-derived output;

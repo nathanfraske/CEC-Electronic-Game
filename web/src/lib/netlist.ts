@@ -80,8 +80,12 @@ const TYPE_OF: Record<string, number> = {
   NOT: 17,
   // Transformer: the first FOUR-terminal element (coupled inductors). Pins are
   // ordered primary+, primary−, secondary+, secondary− → pin 0 → a, 1 → b, 2 → c,
-  // 3 → d. `value` is the turns ratio n = Ns/Np. The only kind that uses `d`.
+  // 3 → d. `value` is the turns ratio n = Ns/Np.
   TR: 18,
+  // D flip-flop: four-terminal sequential IC. Pins ordered Q, D, CLK, Q̄ (pin 0 →
+  // a = Q output, 1 → b = D input, 2 → c = CLK input, 3 → d = Q̄ output). `value` is
+  // the logic rail. Uses `d`, so it joins FOUR_PIN_TYPES below.
+  FF: 19,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -96,12 +100,12 @@ const TYPE_OF: Record<string, number> = {
 const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
 
 /**
- * Element types that carry a **fourth** terminal `d`: today only the transformer
- * (type 18), whose pin 3 is the secondary− node. Pin 3 → d, stamped into the `d`
- * array; every element with three or fewer terminals leaves d = 0 (ground), where
- * the core ignores it.
+ * Element types that carry a **fourth** terminal `d`: the transformer (type 18,
+ * pin 3 = secondary−) and the D flip-flop (type 19, pin 3 = Q̄). Pin 3 → d, stamped
+ * into the `d` array; every element with three or fewer terminals leaves d = 0
+ * (ground), where the core ignores it.
  */
-const FOUR_PIN_TYPES = new Set<number>([18]);
+const FOUR_PIN_TYPES = new Set<number>([18, 19]);
 
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
