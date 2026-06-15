@@ -34,6 +34,7 @@
     nearestStandard,
     acAmpChips,
     stepAmp,
+    AC_MAINS_PRESETS,
   } from "./lib/values";
   import {
     EXAMPLES,
@@ -1908,14 +1909,20 @@
               <!-- The AC source's second scalar: its peak amplitude (volts),
                  presented exactly like the frequency chips above. The row above
                  sets the frequency (Hz); this one the peak voltage. -->
-              <div class="insp-sub">amplitude</div>
+              <!-- Amplitude is the PEAK; show the RMS beside it since mains and most
+                   real specs are RMS (Vpk = Vrms·√2). -->
+              <div class="insp-sub">
+                amplitude · <span class="mono"
+                  >≈ {formatValue(selAmp() / Math.SQRT2, "V")} rms</span
+                >
+              </div>
               <div class="insp-row">
                 <button
                   class="btn btn-ghost insp-step"
                   onclick={() => stepAmpVal(-1)}
                   title="Next smaller amplitude">−</button
                 >
-                <div class="insp-chips">
+                <div class="insp-chips wrap">
                   {#each acAmpChips() as v (v)}
                     <button
                       class="chip-val {selAmp() === v ? 'is-active' : ''}"
@@ -1928,6 +1935,24 @@
                   onclick={() => stepAmpVal(1)}
                   title="Next larger amplitude">+</button
                 >
+              </div>
+              <!-- One-click mains presets: set the peak amplitude AND line frequency
+                   together to emulate real US / EU line voltage. -->
+              <div class="insp-sub">mains presets</div>
+              <div class="insp-chips wrap">
+                {#each AC_MAINS_PRESETS as p (p.label)}
+                  <button
+                    class="chip-val {selAmp() === p.amp &&
+                    selPart.value === p.freq
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => {
+                      setAmp(p.amp);
+                      setVal(p.freq);
+                    }}
+                    title="Set {p.label} (peak {p.amp} V)">{p.label}</button
+                  >
+                {/each}
               </div>
             {/if}
             {#if kind === "POT"}
