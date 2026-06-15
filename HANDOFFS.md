@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Schottky + LED web/UI integration (sim types 8 & 9)
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 42 sim-core tests — 41 pass,
+1 ignored `print_golden`; build:wasm, web format/check/lint/build). **crates/
+untouched** — built on the committed sim-core diode family (`ELEM_SCHOTTKY = 8`,
+`ELEM_LED = 9`), golden `0xeaac376499e4fa24` unchanged.
+
+The two new diode-family parts are now placeable, simulated, animated, and
+explained — the web layer mirrors how the silicon diode `D` is wired:
+
+- **`netlist.ts`** — `TYPE_OF` gains `SD: 8`, `LED: 9`. An `LED` placed in
+  V→R→LED→GND maps to element type 9; a Schottky to type 8 (both `twoPin("A","K")`,
+  value unused, so they pass the 2-pin element guard in `buildNetlist`).
+- **`graph.ts` + App bin** — `PART_KINDS` gains `SD` ("Schottky Diode", **cyan**,
+  the cool low-loss variant) and `LED` ("LED", **accent** rose, the emitting hue);
+  both added to the `PARTS` bin in the diode group (tier II) next to `D`.
+- **`glyphs.ts`** — schematic + factory drawers for both, in `DRAWERS` and
+  `FACTORY_DRAWERS`. Schottky: diode triangle + the bent-flag (S) cathode bar /
+  a leaner open-throat check-valve. **LED: diode triangle + bar with two arrows
+  radiating outward, and an emit glow (layered halo + white core) whose
+  brightness = `norm(forwardCurrent, CUR_SCALE)`** — bright with current, dark when
+  reverse/off; factory twin is a gate with a roof beacon lamp. All motion rides the
+  bounded `o.phase` clock (breathe = `sin(phase·PULSE_K)`); magnitude is
+  brightness/alpha/length, **never speed** (honours the flow-rate decoupling).
+- **`partInfo.ts`** — `SD` teaches the ~0.3 V metal–semiconductor knee (large Is)
+  vs silicon's ~0.7 V + a power row; `LED` teaches the ~1.8–2 V band-gap drop, that
+  light tracks current, + a relative-brightness derived row (≈I/20 mA, presentation
+  figure). Prose stays static; live numbers only in `headline`/`derived`.
+- **`examples.ts`** — **"LED Current-Limiting"** (V 5 V → R 150 Ω → LED → GND,
+  ≈20 mA, visibly lit — the classic first contract) and **"Schottky vs Silicon"**
+  (parallel R+diode branches, reads the two forward drops side by side), both under
+  the **Diodes** category.
+
+### Pick up here
+- Owner-driven: next nonlinear parts on the Newton engine (Zener, BJT/MOSFET) and
+  the parts/IC roadmap (`docs/parts-roadmap.md`, the two ideation docs).
+- Same outstanding UI backlog as below (more demo pages; optional energy-layer
+  toggle).
+
+---
+
 ## 2026-06-15 — Animation-rate fix + info-panel (static prose, live section, belt note)
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,

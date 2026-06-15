@@ -8,6 +8,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — Schottky + LED web/UI integration (sim types 8/9)
+- ~~**Schottky (`SD`) + LED (`LED`) wired through the whole web layer** on top of
+  the finished sim-core diode family (`ELEM_SCHOTTKY = 8`, `ELEM_LED = 9`; crates
+  untouched). `netlist.ts TYPE_OF SD:8 / LED:9`; `graph.ts PART_KINDS` (SD cyan,
+  LED accent) + the App bin; `glyphs.ts` schematic + factory drawers for both
+  (Schottky triangle + bent-flag cathode bar / low-loss check-valve; LED triangle
+  + radiating arrows + **emit glow keyed to forward current** / gate-plus-beacon);
+  `partInfo.ts` SD + LED descriptors (low ~0.3 V vs ~0.7 V; ~1.9 V band-gap drop +
+  relative-brightness derived row); two `examples.ts` builds (**LED Current-
+  Limiting** ≈20 mA, **Schottky vs Silicon**) under the Diodes category. All glyph
+  motion rides the bounded `o.phase` clock — magnitude is brightness/density/alpha,
+  never speed. Full gate set green (42 sim-core tests, golden unchanged).~~
+
 ### Design ideation (no code) — parts catalog + IC buildings, owner-driven
 - ~~**`docs/parts-catalog-ideation.md`** — the discrete/analog menagerie (diode family, real caps, transistor zoo, op-amp, relays/switches, fuses/varistors/thermistors, LED/LDR/7-seg, transformer). Each part: concept, deterministic sim model, schematic symbol, Factorio building, visual-language fit, difficulty + deps. Reduces to **8 new sim primitives**; P1/P5/P6/P7/P8 are independent of the expensive multi-terminal lift (P3). Recommended first 5: per-device params → Schottky → LED → Zener → electrolytic-w/-ESR.~~
 - ~~**`docs/ic-buildings-ideation.md`** — ICs as Factorio **assemblers** (named ports + recipe). Fidelity ladder: behavioral black box → macro-model → **player-builds-then-seals-into-a-chip**. Per-IC entries (gates, 555, op-amps, regulators, ADC/DAC, memory, µC, H-bridge). First ICs: logic gates → flip-flop → counters → 555 → linear regulator. The **seal mechanic** is the keystone. Open Qs (controlled sources, the seal's hash contract) left for owners.~~
@@ -71,7 +84,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Diode + switch wired into the web**: `netlist.ts` `D:5`/`SW:6`; animated `drawD` (triangle + cathode bar, forward-conduction glow/flow) and `drawSW` (lever flicks open/closed off live `vAcross`, flow when closed); both placeable in the bin.~~
 - ~~**Clock-driven SWITCH element** (`sim-core`, type 6): time-varying linear conductance, pure function of the tick (`SWITCH_PERIOD_TICKS = 50` = 10 kHz, `value` = duty, Ron 0.01 Ω / Goff 1e-9). Golden unchanged; 31 tests incl. `switch_buck_converter_steps_down_and_is_finite` + `switch_run_is_reproducible`.~~
 - ~~**Buck Converter example**: Vin → SW → L → OUT with a freewheel diode + smoothing cap + load + GND, vertical V/C/R/D via an optional `rot` on the example `comp()` helper. Steps down 10 V → ≈4 V at 40% duty; every part animated.~~
-- [ ] **LED + a diode example** (clipper/rectifier) and other nonlinear parts (BJT/MOSFET) on the new Newton engine.
+- ~~**LED** wired up with a current-limiting example (and a Schottky added alongside); see the 2026-06-15 Schottky+LED entry above.~~ Still open: other nonlinear parts (Zener, BJT/MOSFET) on the Newton engine.
 - ~~**1-pin part hit box** (GND): `componentBox` now returns a generous 36×48 grab box for 1-pin parts, so GND is easy to click + drag.~~
 - ~~**Floating GND no longer falsely grounds**: `buildNetlist` only accepts a GND as the reference if its net is wired to ≥1 other pin (net size > 1); a GND sitting unconnected on the board is ignored, so a disconnected circuit no longer falsely "solves" (was reading 10 V·10 mA on an open I→R chain).~~
 - [ ] **Dangling current-source affordance (deeper #2)**: even with a *connected* ground, an ideal current source whose forced current has no return loop yields a singular solve (degenerate → misleading reading), whereas a V source just shows 0 current. Detect the singular/no-DC-path case (or a current source with no current loop) and surface "incomplete circuit" instead of garbage. Needs proper topology / singularity detection (likely a `sim-core` "singular" signal + an App hint).

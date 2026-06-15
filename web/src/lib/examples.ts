@@ -583,6 +583,95 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
+  {
+    id: "led-limit",
+    name: "LED Current-Limiting",
+    blurb:
+      "The classic first build: a 5 V source, a series resistor, and an LED. The resistor is what keeps the LED alive — it soaks up the rail left over after the LED's ~1.9 V drop and sets the current (and so the brightness). Pick R wrong and the LED is either dark or fried.",
+    watch:
+      "the LED light up, and the resistor's job: the rail drops ~1.9 V across the LED and the remaining ~3.1 V across R, setting ~20 mA. Watch the current and the LED's glow rise together — brightness tracks current.",
+    build() {
+      // V → R → LED → GND. R = 150 Ω with a 5 V rail and a ~1.9 V LED gives
+      // (5 − 1.9)/150 ≈ 21 mA — right in the ~10–20 mA band where a standard LED
+      // is bright but safe. The LED makes the loop nonlinear (Newton solve).
+      //   nets: N1 = V+ = R.A ; N2 = R.B = LED.A ; GND(0) = LED.K = V−.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 150);
+      const led = comp(g, "LED", 6, 0, 0); // anode A → cathode K (value unused)
+      const v = comp(g, "V", 2, 6, 5);
+      const gnd = comp(g, "GND", 8, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, led, 0); // R.B → LED.A (the LED's anode)
+      wire(g, led, 1, gnd, 0); // LED.K → GND (right rail)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V) and a Resistor (R, ~150 Ω).",
+        why: "The 5 V rail will drive the LED, but an LED has almost no resistance of its own once it conducts — without R to limit the current it would draw a destructive spike. R is the safety valve.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place an LED and a Ground (GND). Wire V+ → R → LED anode → LED cathode → GND, and V− → GND. Then press Run.",
+        why: "Watch the LED light up. The rail splits: ~1.9 V across the LED (its fixed forward drop) and the rest across R, which sets the current at ~20 mA. The glow tracks that current.",
+        done: (p) => at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Select the resistor and try a bigger value, then a smaller one.",
+        why: "Bigger R → less current → dimmer LED; smaller R → more current → brighter (and eventually too much). The LED's voltage barely moves — it's R that sets the operating point.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "schottky-vs-silicon",
+    name: "Schottky vs Silicon",
+    blurb:
+      "Two diodes, same drive, side by side: a silicon diode and a Schottky. Both pass the same current through identical resistors, but the Schottky's metal–semiconductor junction conducts at about half the voltage — ~0.3 V versus silicon's ~0.7 V.",
+    watch:
+      "the two cathode nodes: the Schottky branch sits noticeably lower than the silicon branch. Same current, less drop — that lower forward voltage is the Schottky's whole advantage (less wasted power).",
+    build() {
+      // One source feeds two parallel branches, each a 1 kΩ series R into a diode
+      // to ground — silicon on the left, Schottky on the right — so the two
+      // forward drops read off directly against each other. Both nonlinear.
+      //   left:  N1 = V+ = R1.A ; ND = R1.B = D.A ; GND(0) = D.K
+      //   right: N1 = V+ = R2.A ; NS = R2.B = SD.A ; GND(0) = SD.K = V−
+      const g = new BoardGraph();
+      const r1 = comp(g, "R", 2, 0, 1000); // silicon branch (left)
+      const d = comp(g, "D", 6, 0, 0);
+      const r2 = comp(g, "R", 2, 3, 1000); // Schottky branch (right)
+      const sd = comp(g, "SD", 6, 3, 0);
+      const v = comp(g, "V", 2, 6, 5);
+      const gnd = comp(g, "GND", 8, 6, 0);
+      wire(g, v, 0, r1, 0); // V+ → R1.A
+      wire(g, r1, 1, d, 0); // R1.B → D.A (silicon)
+      wire(g, d, 1, gnd, 0); // D.K → GND
+      wire(g, v, 0, r2, 0); // V+ → R2.A (same rail)
+      wire(g, r2, 1, sd, 0); // R2.B → SD.A (Schottky)
+      wire(g, sd, 1, gnd, 0); // SD.K → GND
+      wire(g, v, 1, gnd, 0); // V− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Build the silicon branch first: V+ → R (1 kΩ) → Diode (D) → GND, and V− → GND. Run.",
+        why: "A reference reading: note the diode's cathode parks about 0.7 V below where the resistor feeds it — that's silicon's forward drop.",
+        done: (p) =>
+          at(p, "V") >= 1 && at(p, "R") >= 1 && at(p, "D") >= 1 && p.wires >= 4,
+      },
+      {
+        do: "Add a parallel Schottky branch: V+ → a second R (1 kΩ) → Schottky Diode (SD) → GND. Run again.",
+        why: "Same rail, same resistor, same current — but watch the Schottky's node sit lower, near 0.3 V. Its large saturation current lets it conduct at half the voltage.",
+        done: (p) => at(p, "SD") >= 1 && at(p, "R") >= 2 && p.complete,
+      },
+      {
+        do: "Compare the two drops.",
+        why: "~0.3 V vs ~0.7 V at the same current means the Schottky wastes less power — which is exactly why it's the catch diode in switching regulators.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -1176,6 +1265,8 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   rl: "Capacitors & Inductors",
   rlc: "Capacitors & Inductors",
   "diode-clamp": "Diodes",
+  "led-limit": "Diodes",
+  "schottky-vs-silicon": "Diodes",
   buck: "Power & Switching",
   "pwm-average": "Power & Switching",
   "ac-resistor": "AC Fundamentals",
