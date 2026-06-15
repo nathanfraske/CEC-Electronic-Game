@@ -8,7 +8,38 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Bugs found via the full-bridge-rectifier review (2026-06-15 eve)
+- ~~**`formatValue` ate integer trailing zeros** → 470 µF shown as "47 µF", 100 Ω as
+  "1 Ω", 120 V as "12 V", 100 kΩ as "1 kΩ" (any 100–999 mantissa ending in 0, 10×
+  too small). Fixed: only strip zeros after a decimal point. Web-only.~~
+- [ ] **sim-core: a diode bridge off a transformer doesn't rectify (HARD).** The
+  user's bridge topology is CORRECT, but the sim produces a half-wave artifact (or 0 V
+  with no cap): the two diodes on one secondary terminal (the S+ pair, D10/D11) NEVER
+  conduct, while the other terminal's diode draws a huge ~3.5 A spike. Reproduced at
+  n=0.25 AND n=1.0, **with and without the smoothing cap**, and **affects the shipped
+  `tr-bridge-supply` example** (2 of its 4 diodes read 0 mA). **Ruled out:** it is NOT
+  a cap-charge lock-in (broken without the cap) and NOT fixed by a symmetric
+  common-mode reference (tested c+d→GND at 1 MΩ … 100 Ω: no effect — a conducting
+  diode at ~0.1 Ω overwhelms any sane reference). **Root cause: NOT yet pinned down.**
+  The ~3.5 A D12 spike is a numerical/transient artifact (it can't be steady — the
+  secondary's backward-Euler companion impedance is `L₂/DT ≈ 15.6 kΩ`, so steady diode
+  current must be sub-mA; 3.5 A through that would need ~55 kV). So this looks like a
+  transient symmetry-breaking / Newton-conditioning issue in the floating-secondary +
+  nonlinear-bridge interaction, not a steady-state topology or floating-node problem.
+  **Next-step investigation:** instrument the first few cycles (does it ever conduct
+  full-wave then lock?), check Newton convergence/iteration counts near diode turn-on,
+  try a DC/gmin-stepped operating point or source-stepping at startup, and consider
+  whether the diode turn-on into the high-impedance secondary needs voltage limiting.
+  **Dedicated, golden-touching sim-core effort** (on par with the digital scheduler).
+  Acceptance: all 4 diodes conduct alternately, output ≈ Vsec_pk − 2·Vf, no spurious
+  current spikes, golden regenerated deliberately. Symptoms reproduced via the harness.
+
 ### QoL / fixes batch (owner, 2026-06-15 pm)
+- ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
+  pinned to what it names. `NetLabel.tagOff` + `graph.moveNetLabel` + a lightweight
+  `onPersist` board callback (save+undo, no netlist rebuild / clock rewind). (#65)~~
+- ~~**AC mains amplitudes**: 60 Hz freq; peak chips 170/311/325 V (= 120/220/230 Vrms);
+  RMS readout beside the peak; one-tap US/EU mains presets (amp + freq). (#65)~~
 - ~~**Pan yields to Build on a grab**: clicking a component or wire in Pan switches
   to Build/Select and grabs it (move/reshape); empty still pans. `onMode` callback.~~
 - ~~**R rotates the ghost when a part is armed** (was rotating a leftover selection).~~

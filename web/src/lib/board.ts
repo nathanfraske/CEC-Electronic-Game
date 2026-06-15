@@ -275,6 +275,10 @@ export class Board {
   // cursor cell. A dedicated low-alpha layer holding one reused Graphics — no DOM,
   // and it rotates the held part's glyph in place via the holder's rotation.
   private readonly ghostLayer = new Container();
+  // The floating paste preview: a translucent glyph per clipboard component, drawn
+  // at the cursor and draggable/rotatable until a click drops the group.
+  private readonly pasteGhostLayer = new Container();
+  private readonly pasteGhostGlyphs: Graphics[] = [];
   private readonly ghostGlyph = new Graphics();
   // Net-label name tags ("VCC" etc.): a Graphics for each tag's pill background +
   // leader, plus a growable pool of Text for the names. Drawn in the world so they
@@ -443,6 +447,14 @@ export class Board {
   // offset so repeated pastes fan out instead of stacking exactly.
   private clipboard: ClipboardSnippet | null = null;
   private pasteSeq = 0;
+  // Active paste placement: the floating clipboard group following the cursor, with
+  // its own added rotation, anchored to the clipboard's top-left reference cell.
+  private pasting: {
+    snippet: ClipboardSnippet;
+    refCol: number;
+    refRow: number;
+    rot: number;
+  } | null = null;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
@@ -487,6 +499,10 @@ export class Board {
     this.ghostLayer.alpha = GHOST_ALPHA;
     this.ghostLayer.visible = false;
     this.world.addChild(this.ghostLayer);
+    this.pasteGhostLayer.eventMode = "none";
+    this.pasteGhostLayer.alpha = GHOST_ALPHA;
+    this.pasteGhostLayer.visible = false;
+    this.world.addChild(this.pasteGhostLayer);
     this.world.addChild(this.pendingWire);
     this.world.addChild(this.probeLayer);
     this.world.addChild(this.probeText);
@@ -580,6 +596,8 @@ export class Board {
 
   /** Arm a part kind: clicking empty board cells now drops it (place-and-repeat). */
   setArmed(kind: string | null): void {
+    // Arming a part and a floating paste are mutually exclusive placements.
+    if (kind !== null) this.cancelPaste();
     // Arming a fresh kind starts it at rotation 0 (R then rotates from there);
     // re-arming the same kind keeps the rotation the player dialled in.
     if (kind !== this.armed) this.armedRot = 0;
@@ -602,6 +620,10 @@ export class Board {
   /** Esc: cancel an open label editor, then an in-progress wire, else clear the
    * selection. */
   escape(): void {
+    if (this.pasting) {
+      this.cancelPaste();
+      return;
+    }
     if (this.editingLabelId !== null || this.pendingLabel !== null) {
       this.endLabelEdit();
       return;
@@ -614,25 +636,28 @@ export class Board {
   }
 
   private updateCursor(): void {
-    this.app.stage.cursor = this.armed
-      ? "copy"
-      : this.mode === "pan"
-        ? "grab"
-        : this.mode === "measure" ||
-            this.mode === "junction" ||
-            this.mode === "label"
-          ? "crosshair"
-          : "default";
+    this.app.stage.cursor =
+      this.armed || this.pasting
+        ? "copy"
+        : this.mode === "pan"
+          ? "grab"
+          : this.mode === "measure" ||
+              this.mode === "junction" ||
+              this.mode === "label"
+            ? "crosshair"
+            : "default";
   }
 
   private readonly onPointerEnter = (): void => {
     this.pointerInside = true;
     this.updateGhost();
+    this.updatePasteGhost();
   };
 
   private readonly onPointerLeave = (): void => {
     this.pointerInside = false;
     this.updateGhost();
+    this.updatePasteGhost();
   };
 
   /**
@@ -2027,6 +2052,12 @@ export class Board {
       return;
     }
 
+    // Floating paste: a left click drops the clipboard group at the cursor.
+    if (this.pasting && e.button === 0) {
+      this.commitPaste();
+      return;
+    }
+
     // Click-to-continue wiring (KiCad-style): a left press WHILE a wire is already in
     // progress completes the current segment at whatever is under the cursor — a pin
     // or existing junction finishes it; a bare trace T's in with an auto-junction and
@@ -2229,6 +2260,19 @@ export class Board {
       return;
     }
 
+    // With a part armed, a plain click PLACES it — even directly on a trace, where
+    // the drop splits the wire so the part inserts inline — rather than selecting the
+    // wire under the cursor. (Pins / junctions / bodies above keep their behaviour;
+    // shift-click still falls through so you can multi-select while armed.)
+    if (this.armed && !additive) {
+      this.placeCell(
+        this.armed,
+        { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
+        this.armedRot,
+      );
+      return;
+    }
+
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
       // Same yield for wires: clicking a trace in Pan switches to Build and grabs
@@ -2259,22 +2303,12 @@ export class Board {
       return;
     }
 
-    // Empty space. With a part armed, drop it here and stay armed — Factorio-style
-    // place-and-repeat.
-    if (this.armed && !additive) {
-      this.placeCell(
-        this.armed,
-        { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
-        this.armedRot,
-      );
-      return;
-    }
-    // In Select mode an empty drag rubber-bands a marquee selection (a plain drag
-    // clears first; shift-drag adds to the current selection). In every other tool —
-    // notably the neutral Pan — an empty drag pans the view instead.
-    if (this.mode === "select") {
-      if (!additive) this.clearSelection();
-      this.marquee = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y, additive };
+    // Empty space (armed placement handled above). A SHIFT-drag in Select mode
+    // rubber-bands a marquee that ADDS the enclosed parts to the selection; a plain
+    // drag just clears the selection and pans the view (in any tool), so the marquee
+    // never fights ordinary panning.
+    if (this.mode === "select" && additive) {
+      this.marquee = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y, additive: true };
       this.drawMarquee();
       return;
     }
@@ -2417,29 +2451,51 @@ export class Board {
     this.deleteSelection();
   }
 
-  /** Paste the clipboard fragment with fresh ids, offset a little from the source
-   * (and a little further on each repeat so copies fan out instead of stacking),
-   * remap the internal wires + labels onto the new ids, and select the new group. */
+  /** Begin a paste: float the clipboard group as a translucent ghost that tracks the
+   * cursor (rotate with R, drop on click), anchored to the clipboard's top-left cell.
+   * The actual placement + wire/label remap happens in {@link commitPaste} on click. */
   paste(): void {
     const clip = this.clipboard;
     if (!clip || clip.comps.length === 0) return;
+    // A floating paste and an armed part are mutually exclusive — clear the arm.
+    if (this.armed) {
+      this.armed = null;
+      this.cb.onArm?.(null);
+      this.updateGhost();
+    }
+    const refCol = Math.min(...clip.comps.map((c) => c.col));
+    const refRow = Math.min(...clip.comps.map((c) => c.row));
+    this.pasting = { snippet: clip, refCol, refRow, rot: 0 };
+    this.updateCursor();
+    this.updatePasteGhost();
+  }
+
+  /** Drop the floating paste group at the cursor: place each component with fresh ids
+   * at its (group-rotated) offset, remap the internal wires + labels, select the new
+   * group, and leave paste mode. */
+  private commitPaste(): void {
+    const p = this.pasting;
+    if (!p) return;
+    const anchor = {
+      col: snap(this.pointer.x, PITCH),
+      row: snap(this.pointer.y, PITCH),
+    };
     this.pushUndo(this.graph.serialize());
-    this.pasteSeq += 1;
-    const off = 2 * this.pasteSeq;
     const map = new Map<number, number>();
-    for (const cc of clip.comps) {
+    for (const cc of p.snippet.comps) {
+      const rel = rotateOffset(cc.col - p.refCol, cc.row - p.refRow, p.rot);
       const nc = this.graph.place(cc.kind, {
-        col: cc.col + off,
-        row: cc.row + off,
+        col: anchor.col + rel.col,
+        row: anchor.row + rel.row,
       });
       if (!nc) continue;
       nc.value = cc.value;
-      nc.rot = cc.rot;
+      nc.rot = (cc.rot + p.rot) % 4;
       if (cc.amp !== undefined) nc.amp = cc.amp;
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
       map.set(cc.oldId, nc.id);
     }
-    for (const w of clip.wires) {
+    for (const w of p.snippet.wires) {
       const na = map.get(w.aId);
       const nb = map.get(w.bId);
       if (na === undefined || nb === undefined) continue;
@@ -2448,7 +2504,7 @@ export class Board {
         { componentId: nb, pinIndex: w.bPin },
       );
     }
-    for (const l of clip.labels) {
+    for (const l of p.snippet.labels) {
       const nid = map.get(l.compId);
       if (nid === undefined) continue;
       this.graph.addNetLabel({ componentId: nid, pinIndex: l.pin }, l.name);
@@ -2458,11 +2514,92 @@ export class Board {
     this.selectedJunctions.clear();
     this.selectedLabels.clear();
     for (const id of map.values()) this.selected.add(id);
+    this.pasting = null;
+    this.pasteGhostLayer.visible = false;
+    this.updateCursor();
     this.rebuildNodes();
     this.redrawWires();
     this.redrawSelection();
     this.emitSelect();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** Rotate the floating paste group 90° CW. Returns true iff a paste was active
+   * (so the HUD's R hotkey can fall through to the armed-part / selection rotate). */
+  rotatePaste(): boolean {
+    if (!this.pasting) return false;
+    this.pasting.rot = (this.pasting.rot + 1) % 4;
+    this.updatePasteGhost();
+    return true;
+  }
+
+  /** Abort a floating paste without placing anything. */
+  private cancelPaste(): void {
+    if (!this.pasting) return;
+    this.pasting = null;
+    this.pasteGhostLayer.visible = false;
+    this.updateCursor();
+  }
+
+  /** Redraw the floating paste ghost: one translucent glyph per component at its
+   * group-rotated offset from the cursor. Hidden when the cursor is off-board. */
+  private updatePasteGhost(): void {
+    const p = this.pasting;
+    if (!p || !this.pointerInside) {
+      this.pasteGhostLayer.visible = false;
+      return;
+    }
+    const anchor = {
+      col: snap(this.pointer.x, PITCH),
+      row: snap(this.pointer.y, PITCH),
+    };
+    let i = 0;
+    for (const cc of p.snippet.comps) {
+      const kind = PART_KINDS[cc.kind];
+      if (!kind) continue;
+      const rel = rotateOffset(cc.col - p.refCol, cc.row - p.refRow, p.rot);
+      const o = this.cellToWorld({
+        col: anchor.col + rel.col,
+        row: anchor.row + rel.row,
+      });
+      const g = this.pasteGlyph(i++);
+      g.clear();
+      g.position.set(o.x, o.y);
+      g.rotation = (((cc.rot + p.rot) % 4) * Math.PI) / 2;
+      const color = PALETTE[kind.colorKey];
+      const pins = kind.pins.map((pp) => ({
+        x: pp.dx * PITCH,
+        y: pp.dy * PITCH,
+      }));
+      drawGlyph(g, {
+        kind: cc.kind,
+        pins,
+        wPx: (kind.w - 1) * PITCH,
+        hPx: (kind.h - 1) * PITCH,
+        color,
+        electrical: ZERO_ELECTRICAL,
+        phase: 0,
+        value: cc.value,
+        wiper: cc.wiper,
+      });
+      for (const pp of pins) g.circle(pp.x, pp.y, PIN_R).fill({ color });
+      g.visible = true;
+    }
+    for (; i < this.pasteGhostGlyphs.length; i++) {
+      this.pasteGhostGlyphs[i]!.visible = false;
+    }
+    this.pasteGhostLayer.visible = true;
+  }
+
+  /** Pooled child Graphics for the paste ghost (one per component). */
+  private pasteGlyph(i: number): Graphics {
+    let g = this.pasteGhostGlyphs[i];
+    if (!g) {
+      g = new Graphics();
+      this.pasteGhostGlyphs[i] = g;
+      this.pasteGhostLayer.addChild(g);
+    }
+    return g;
   }
 
   /** Whether the clipboard holds anything to paste (for HUD enablement). */
@@ -2478,6 +2615,11 @@ export class Board {
       this.marquee.x1 = wp.x;
       this.marquee.y1 = wp.y;
       this.drawMarquee();
+      return;
+    }
+
+    if (this.pasting) {
+      this.updatePasteGhost();
       return;
     }
 

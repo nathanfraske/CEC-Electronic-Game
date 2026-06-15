@@ -674,11 +674,12 @@
         board?.paste(); // paste with fresh ids, offset, and re-selected
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
-        // R rotates the *placement* of an armed part whenever one is armed — the
-        // ghost (and the drop) turn — so it never rotates a leftover selection
-        // out from under you while you're lining up a new part. Only with nothing
-        // armed does R rotate the current selection.
-        if (armedPart) board?.rotateArmed();
+        // R rotates, in priority: a floating paste group, then the armed-part ghost,
+        // else the current selection — so it never rotates a leftover selection out
+        // from under you while you're placing a paste or lining up a new part.
+        if (board?.rotatePaste()) {
+          // handled the floating paste
+        } else if (armedPart) board?.rotateArmed();
         else board?.rotateSelection();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
