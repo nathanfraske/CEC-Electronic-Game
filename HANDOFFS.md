@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — AC track (sine source + 9-example curriculum) + game-design ideation
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,
+web check/lint/build). Also shipped this session: the value Inspector (#13), an
+ammeter + live guided builds (#14), custom rate + progressive examples (#15), the
+value-popover (#16), the incomplete-circuit warning (#17), and collapsible
+example categories (#18).
+
+- **AC source** (`sim-core` type 7): ideal sine `5·sin(2π·f·t)`, `value` = freq,
+  deterministic, golden unchanged. Wired through netlist `AC:7` / `PART_KINDS` /
+  `drawAC` glyph / bin / inspector frequencies. **9 build-and-observe AC examples**
+  (`docs/ui/ac-curriculum.md`) under AC Fundamentals / Reactance / Filters /
+  Resonance / Rectification.
+- **Time/measure/UX this session:** ticks-per-**second** playback driven by real
+  elapsed time + a custom-rate input; an O(1) ring so the timeline reaches t=0; a
+  wall-clock "Sim time" readout (`DT_SECONDS`); the **ammeter** (Measure → V/A);
+  the **value Inspector** as a floating **popover** anchored above the part
+  (`board.onAnchor` projects to screen space); and the incomplete-circuit amber
+  warning (`netlist.floatingSources`).
+- **Design ideation (no code):** `docs/game-factory-loop.md` +
+  `docs/game-contracts-economy.md` explore the Factorio/Shapez sandbox+contracts
+  vision (owner-driven; not greenlit to build).
+
+### Pick up here
+- **Sandbox ΔT model** (TODOS): per-electrical-island adaptive ΔT + a shared
+  physical-time clock; black-boxing validated sub-circuits as a scale + ΔT lever.
+  Owner wants to steer the game direction before implementation begins.
+- **Game MVP** (if greenlit): a parametric contract generator + pin-sampling
+  grader off the deterministic replay.
+
+---
+
 ## 2026-06-15 — Buck converter: diode + PWM switch wired up, animated demo
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + the new buck/switch tests,

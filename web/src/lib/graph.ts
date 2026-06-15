@@ -109,6 +109,8 @@ export type PaletteKey = keyof typeof PALETTE;
  */
 export const PART_KINDS: Record<string, PartKind> = {
   V: kind("V", "Voltage Source", "warn", twoPin("+", "−"), 5, "V", true),
+  // Sine source (ideal, 5 V peak); `value` is the frequency in Hz.
+  AC: kind("AC", "AC Source", "accent", twoPin("+", "−"), 500, "Hz", true),
   R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   L: kind("L", "Inductor", "violet", twoPin("A", "B"), 1e-3, "H", true),

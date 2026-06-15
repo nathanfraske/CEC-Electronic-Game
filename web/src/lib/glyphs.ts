@@ -276,6 +276,40 @@ function drawGND(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+function drawAC(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const r = 11;
+  // The classic AC symbol: a circle with a sine inside. A ring keyed to the
+  // instantaneous output pulses; the leads carry the (reversing) current.
+  const lvl = norm(o.electrical.vAcross, V_SCALE);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.2);
+  g.circle(mx, my, r + 5).stroke({
+    width: 2,
+    color: o.color,
+    alpha: (0.12 + 0.4 * lvl) * (0.5 + 0.5 * pulse),
+  });
+  g.moveTo(a.x, a.y).lineTo(mx - r, my);
+  g.moveTo(mx + r, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.circle(mx, my, r).fill({ color: 0x161020, alpha: 0.95 });
+  g.circle(mx, my, r).stroke({ width: 1.6, color: o.color, alpha: 0.95 });
+  // sine wave inside the body
+  const sw = 7;
+  const amp = 4;
+  g.moveTo(mx - sw, my);
+  for (let i = 1; i <= 16; i++) {
+    const t = i / 16;
+    g.lineTo(mx - sw + 2 * sw * t, my - amp * Math.sin(t * Math.PI * 2));
+  }
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.95 });
+  flow(g, a.x, a.y, mx - r, my, o.electrical.current, o.phase, o.color);
+  flow(g, mx + r, my, b.x, b.y, o.electrical.current, o.phase, o.color);
+}
+
 function drawD(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -379,6 +413,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   C: drawC,
   L: drawL,
   I: drawI,
+  AC: drawAC,
   GND: drawGND,
   D: drawD,
   SW: drawSW,

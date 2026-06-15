@@ -22,6 +22,7 @@ const TYPE_OF: Record<string, number> = {
   I: 4,
   D: 5, // diode (nonlinear; engages the Newton solve)
   SW: 6, // clock-driven switch; value = duty cycle
+  AC: 7, // sinusoidal voltage source; value = frequency (Hz)
 };
 
 export interface BuiltNetlist {
