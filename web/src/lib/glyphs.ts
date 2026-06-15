@@ -199,6 +199,83 @@ function drawL(g: Graphics, o: GlyphOpts): void {
   flow(g, x0, a.y, x1, b.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+function drawI(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const r = 11;
+  // The current source's strength is its (forced) current, so the arrow and the
+  // halo track |current| rather than voltage. Sign sets the arrow direction:
+  // positive current is delivered a -> b (matches the sim-core stamp).
+  const drive = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  // pulsing energy ring, like the voltage source but keyed to current
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.2);
+  g.circle(mx, my, r + 5).stroke({
+    width: 2,
+    color: o.color,
+    alpha: (0.12 + 0.3 * drive) * (0.5 + 0.5 * pulse),
+  });
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - r, my);
+  g.moveTo(mx + r, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // body
+  g.circle(mx, my, r).fill({ color: 0x161020, alpha: 0.95 });
+  g.circle(mx, my, r).stroke({ width: 1.6, color: o.color, alpha: 0.95 });
+  // arrow through the circle, pointing in the conventional-current direction
+  const ax = r - 5; // arrow half-length inside the body
+  const tipX = mx + dir * ax;
+  const tailX = mx - dir * ax;
+  const head = 4;
+  g.moveTo(tailX, my).lineTo(tipX, my);
+  g.moveTo(tipX, my)
+    .lineTo(tipX - dir * head, my - head)
+    .moveTo(tipX, my)
+    .lineTo(tipX - dir * head, my + head);
+  g.stroke({
+    width: 2.2,
+    color: o.color,
+    alpha: 0.7 + 0.25 * drive,
+  });
+  flow(g, a.x, a.y, mx - r, my, o.electrical.current, o.phase, o.color);
+  flow(g, mx + r, my, b.x, b.y, o.electrical.current, o.phase, o.color);
+}
+
+function drawGND(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  if (!a) return;
+  // A single pin drops to the classic three-bar ground symbol (⏚). No current
+  // flows "through" a reference, so it has no flow animation; a faint pull keyed
+  // to how far its net sits from 0 V hints when something is wired wrong.
+  const drop = 9; // lead length down from the pin
+  const topY = a.y + drop;
+  const off = norm(o.electrical.vAcross, V_SCALE);
+  // lead
+  g.moveTo(a.x, a.y).lineTo(a.x, topY);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // three shrinking horizontal bars
+  const bars = [
+    { w: 11, y: topY },
+    { w: 7, y: topY + 4 },
+    { w: 3, y: topY + 8 },
+  ];
+  for (const bar of bars) {
+    g.moveTo(a.x - bar.w, bar.y).lineTo(a.x + bar.w, bar.y);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.9 });
+  // a soft warning glow if this "ground" is somehow not at 0 V
+  if (off > 0.05) {
+    g.circle(a.x, topY + 4, 13).stroke({
+      width: 1.5,
+      color: 0xe0533a,
+      alpha: 0.3 * off,
+    });
+  }
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -220,6 +297,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   R: drawR,
   C: drawC,
   L: drawL,
+  I: drawI,
+  GND: drawGND,
 };
 
 /** Returns true if the kind draws a schematic symbol (vs. a fallback card). */

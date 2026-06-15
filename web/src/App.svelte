@@ -22,8 +22,9 @@
   const SEED = 1337;
   const SPEEDS = [0.1, 0.25, 1, 4, 16];
 
-  // The component bin. The four ideal primitives (V/R/C/L) come first and are the
-  // parts the solver simulates today; the rest preview later tech-tree tiers.
+  // The component bin. The ideal primitives (V/R/C/L/I) plus an explicit ground
+  // come first and are the parts the solver simulates today; the rest preview
+  // later tech-tree tiers.
   const PARTS = [
     {
       tag: "V",
@@ -52,6 +53,20 @@
       desc: "Stored current, saturation",
       tier: "I",
       color: "var(--violet)",
+    },
+    {
+      tag: "I",
+      name: "Current Source",
+      desc: "Ideal fixed DC current",
+      tier: "I",
+      color: "var(--warn)",
+    },
+    {
+      tag: "GND",
+      name: "Ground",
+      desc: "0 V reference (node 0)",
+      tier: "I",
+      color: "var(--dim)",
     },
     {
       tag: "D",
@@ -154,7 +169,7 @@
       ? "MEASURE · click two points to read ΔV"
       : armedPart
         ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
-        : "BUILD · click a part to arm, then click to place · drag a pin to wire",
+        : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
   onMount(() => {
@@ -177,6 +192,27 @@
         // Universal cancel: disarm first, otherwise cancel a wire / clear selection.
         if (armedPart) arm(null);
         else board?.escape();
+        e.preventDefault();
+      } else if (e.key === " ") {
+        togglePlay(); // spacebar = play / pause
+        e.preventDefault();
+      } else if (e.key === "ArrowLeft") {
+        board?.nudge(-1, 0); // arrows nudge the selection (or pan)
+        e.preventDefault();
+      } else if (e.key === "ArrowRight") {
+        board?.nudge(1, 0);
+        e.preventDefault();
+      } else if (e.key === "ArrowUp") {
+        board?.nudge(0, -1);
+        e.preventDefault();
+      } else if (e.key === "ArrowDown") {
+        board?.nudge(0, 1);
+        e.preventDefault();
+      } else if (e.key === "," || e.key === "<") {
+        stepBack(); // , / < = step one tick back
+        e.preventDefault();
+      } else if (e.key === "." || e.key === ">") {
+        stepFwd(); // . / > = step one tick forward
         e.preventDefault();
       }
     };

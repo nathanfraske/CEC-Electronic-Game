@@ -53,8 +53,21 @@ const MAX_SAMPLES = 240;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
-/** Device pixel ratio for crisp canvas Text (capped to keep textures sane). */
-const DPR = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+/**
+ * Flow-phase advance per simulated tick. Ties the current arrows/dots to the
+ * timeline: forward when the tick advances (running or scrubbing forward),
+ * reverse when stepping/scrubbing back. Small so a single tick is a gentle nudge
+ * while a full scrub reads as fast flow.
+ */
+const TICK_FLOW = 0.03;
+/**
+ * Base Text resolution (device pixels per CSS pixel). Floored at 2 so labels are
+ * supersampled and stay sharp even on 1x displays, capped at 3 to bound texture
+ * size. The zoom factor multiplies this for crisp text when zoomed in.
+ */
+const DPR = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+/** Cap on Text resolution once multiplied by zoom, to bound texture size. */
+const MAX_TEXT_RES = 4;
 
 // Multimeter lead colours: red "+" and steel "−", like a real DMM.
 const PROBE_PLUS = 0xe0533a;
@@ -119,8 +132,13 @@ export class Board {
   // repeat). The mode buttons are gone; this is the "Place mode" replacement.
   private armed: string | null = null;
   private viewportDirty = true;
+  // `phase` is the effective animation phase used by every drawer; `realPhase`
+  // is the wall-clock part that only advances while running. The simulated tick
+  // contributes the timeline-tracking part (see `update`).
   private phase = 0;
+  private realPhase = 0;
   private lastTime = 0;
+  private textRes = DPR;
 
   // Interaction state.
   private dragging: {
@@ -130,6 +148,8 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: PinRef } | null = null;
+  // Dragging an existing wire to reshape its route (creates/moves its waypoint).
+  private wireDrag: { id: number; grab: Cell; moved: boolean } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
@@ -304,6 +324,30 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
+  /**
+   * Keyboard nudge: shift the selected components by whole cells (connectivity
+   * unchanged, so the sim isn't reset). With nothing selected, pan the view so
+   * the arrow keys always do something useful.
+   */
+  nudge(dc: number, dr: number): void {
+    if (this.selected.size > 0) {
+      this.pushUndo(this.graph.serialize());
+      for (const id of this.selected) {
+        const c = this.graph.components.get(id);
+        if (!c) continue;
+        this.graph.move(id, { col: c.cell.col + dc, row: c.cell.row + dr });
+        this.nodes.get(id)?.reposition();
+      }
+      this.redrawWires();
+      this.redrawSelection();
+      this.cb.onChange?.(this.graph);
+    } else {
+      this.world.position.x -= dc * PITCH * this.world.scale.x;
+      this.world.position.y -= dr * PITCH * this.world.scale.x;
+      this.viewportDirty = true;
+    }
+  }
+
   /** Undo the last mutating action. */
   undo(): void {
     const snapshot = this.undoStack.pop();
@@ -335,6 +379,7 @@ export class Board {
     this.world.scale.set(1);
     this.world.position.set(0, 0);
     this.viewportDirty = true;
+    this.applyTextRes();
   }
 
   /**
@@ -350,8 +395,12 @@ export class Board {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
     this.lastTime = now;
-    // Freeze the flow/animation phase when time is paused.
-    if (running) this.phase += dt;
+    if (running) this.realPhase += dt;
+    // Tie the flow phase to the simulated timeline so the arrows/dots track
+    // delta-T: they advance as the tick advances (running OR scrubbing forward)
+    // and run in reverse when stepping/scrubbing back. Real time keeps them alive
+    // smoothly while running; when paused they move only with the timeline.
+    this.phase = this.realPhase + Number(snap.tick) * TICK_FLOW;
 
     if (this.app.screen.width !== this.w || this.app.screen.height !== this.h) {
       this.viewportDirty = true;
@@ -414,7 +463,23 @@ export class Board {
     this.world.scale.set(next);
     this.world.position.set(sx - next * wx, sy - next * wy);
     this.viewportDirty = true;
+    this.applyTextRes();
   };
+
+  /**
+   * Keep world-space Text crisp: resolution = base DPR times the zoom (so text
+   * re-rasterizes sharper as you zoom in), capped and quantized to avoid churn.
+   * Screen-space scope labels keep the constant base resolution.
+   */
+  private applyTextRes(): void {
+    const r = Math.min(MAX_TEXT_RES, DPR * Math.max(1, this.world.scale.x));
+    const rounded = Math.round(r * 2) / 2; // 0.5 steps limit re-rasterization
+    if (rounded === this.textRes) return;
+    this.textRes = rounded;
+    this.probeText.resolution = rounded;
+    for (const t of this.groundLabels) t.resolution = rounded;
+    for (const node of this.nodes.values()) node.setTextRes(rounded);
+  }
 
   private screenToWorld(sx: number, sy: number): Point {
     const s = this.world.scale.x;
@@ -490,10 +555,7 @@ export class Board {
     const tol = 7;
     let best: number | null = null;
     for (const w of this.graph.wires.values()) {
-      const a = this.graph.pinRefCell(w.from);
-      const b = this.graph.pinRefCell(w.to);
-      if (!a || !b) continue;
-      const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+      const route = this.routeForWire(w);
       for (let i = 0; i + 1 < route.length; i++) {
         const p0 = route[i]!;
         const p1 = route[i + 1]!;
@@ -563,11 +625,15 @@ export class Board {
     for (const id of this.selectedWires) {
       const w = this.graph.wires.get(id);
       if (!w) continue;
-      const a = this.graph.pinRefCell(w.from);
-      const b = this.graph.pinRefCell(w.to);
-      if (!a || !b) continue;
-      polyline(g, this.wireRoute(this.cellToWorld(a), this.cellToWorld(b)));
+      const route = this.routeForWire(w);
+      if (route.length < 2) continue;
+      polyline(g, route);
       g.stroke({ width: 5, color: PALETTE.accent, alpha: 0.5 });
+      // A handle dot at the waypoint so it reads as draggable.
+      if (w.mid) {
+        const m = this.cellToWorld(w.mid);
+        g.circle(m.x, m.y, 4).fill({ color: PALETTE.accent, alpha: 0.9 });
+      }
     }
   }
 
@@ -627,10 +693,8 @@ export class Board {
     if (wireId !== null) {
       const w = this.graph.wires.get(wireId);
       const node = w ? this.pinNode(w.from) : null;
-      const a = w ? this.graph.pinRefCell(w.from) : null;
-      const b = w ? this.graph.pinRefCell(w.to) : null;
-      if (w && node !== null && a && b) {
-        const route = this.wireRoute(this.cellToWorld(a), this.cellToWorld(b));
+      const route = w ? this.routeForWire(w) : [];
+      if (w && node !== null && route.length >= 2) {
         const cp = closestOnPolyline(route, wx, wy);
         return { node, x: cp.x, y: cp.y, ref: null };
       }
@@ -745,6 +809,16 @@ export class Board {
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
       this.selectWire(wireId, additive);
+      // A non-additive press also arms a wire-drag, so dragging the belt bends
+      // it through a waypoint (drag it back onto the straight line to undo).
+      if (!additive) {
+        this.wireDrag = {
+          id: wireId,
+          grab: { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
+          moved: false,
+        };
+        this.pendingUndo = this.graph.serialize();
+      }
       return;
     }
 
@@ -793,6 +867,22 @@ export class Board {
       return;
     }
 
+    if (this.wireDrag) {
+      const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
+      if (
+        cell.col !== this.wireDrag.grab.col ||
+        cell.row !== this.wireDrag.grab.row
+      ) {
+        this.wireDrag.moved = true;
+      }
+      if (this.wireDrag.moved) {
+        this.graph.setWireMid(this.wireDrag.id, cell);
+        this.redrawWires();
+        this.redrawSelection();
+      }
+      return;
+    }
+
     if (this.panning) {
       this.world.position.x += e.global.x - this.panning.lastX;
       this.world.position.y += e.global.y - this.panning.lastY;
@@ -825,6 +915,20 @@ export class Board {
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
     if (this.draggingProbe) {
       this.draggingProbe = null;
+      return;
+    }
+    if (this.wireDrag) {
+      if (this.wireDrag.moved && this.pendingUndo) {
+        // Dropping the waypoint back on the straight pin-to-pin line straightens it.
+        const w = this.graph.wires.get(this.wireDrag.id);
+        if (w && this.midIsRedundant(w)) this.graph.clearWireMid(w.id);
+        this.commitUndo(this.pendingUndo);
+        this.redrawWires();
+        this.redrawSelection();
+        this.cb.onChange?.(this.graph);
+      }
+      this.wireDrag = null;
+      this.pendingUndo = null;
       return;
     }
     if (this.panning) {
@@ -910,6 +1014,7 @@ export class Board {
     const node = new ComponentNode(c, this.graph, () =>
       this.cellToWorld(c.cell),
     );
+    node.setTextRes(this.textRes);
     this.nodes.set(c.id, node);
     this.componentLayer.addChild(node.view);
   }
@@ -929,10 +1034,8 @@ export class Board {
     const g = this.wireLayer;
     g.clear();
     for (const w of this.graph.wires.values()) {
-      const ca = this.graph.pinRefCell(w.from);
-      const cb = this.graph.pinRefCell(w.to);
-      if (!ca || !cb) continue;
-      const route = this.wireRoute(this.cellToWorld(ca), this.cellToWorld(cb));
+      const route = this.routeForWire(w);
+      if (route.length < 2) continue;
       const v = this.pinVoltage(w.from);
       const color = v === null ? PALETTE.cyan : voltageColor(v);
       polyline(g, route);
@@ -978,6 +1081,33 @@ export class Board {
     }
     const my = pa.y + dy / 2;
     return [pa, new Point(pa.x, my), new Point(pb.x, my), pb];
+  }
+
+  /**
+   * The full orthogonal polyline for a wire: the auto L-route, or — if the wire
+   * carries a manual waypoint — two orthogonal legs bending through it. Empty if
+   * either endpoint has gone missing. This is the single source of wire geometry.
+   */
+  private routeForWire(w: Wire): Point[] {
+    const a = this.graph.pinRefCell(w.from);
+    const b = this.graph.pinRefCell(w.to);
+    if (!a || !b) return [];
+    const pa = this.cellToWorld(a);
+    const pb = this.cellToWorld(b);
+    if (!w.mid) return this.wireRoute(pa, pb);
+    const pm = this.cellToWorld(w.mid);
+    return [...this.wireRoute(pa, pm), ...this.wireRoute(pm, pb).slice(1)];
+  }
+
+  /** True if a wire's waypoint sits essentially on the straight pin-to-pin line. */
+  private midIsRedundant(w: Wire): boolean {
+    if (!w.mid) return false;
+    const a = this.graph.pinRefCell(w.from);
+    const b = this.graph.pinRefCell(w.to);
+    if (!a || !b) return false;
+    return (
+      distToSegment(w.mid.col, w.mid.row, a.col, a.row, b.col, b.row) < 0.5
+    );
   }
 
   /** Signed current along the wire from→to, from whichever end is an element. */
@@ -1297,6 +1427,13 @@ class ComponentNode {
     this.view.position.set(p.x, p.y);
     this.glyphHolder.rotation = (this.component.rot * Math.PI) / 2;
     this.layoutLabels();
+  }
+
+  /** Re-rasterize the labels at the given resolution (driven by DPR × zoom). */
+  setTextRes(r: number): void {
+    this.label.resolution = r;
+    if (this.value) this.value.resolution = r;
+    this.meter.resolution = r;
   }
 
   update(electrical: ElectricalState, phase: number, selected: boolean): void {
