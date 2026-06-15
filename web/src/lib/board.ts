@@ -480,42 +480,80 @@ export class Board {
    * it snaps to `cellToWorld(cell)` so it sits exactly where a drop would land.
    */
   private updateGhost(): void {
-    const show = this.armed !== null && this.pointerInside;
-    this.ghostLayer.visible = show;
-    if (!show || this.armed === null) {
-      this.ghostGlyph.clear();
+    const g = this.ghostGlyph;
+    // Armed-part placement ghost: the real glyph at the snapped cell.
+    if (this.armed !== null && this.pointerInside) {
+      const kind = PART_KINDS[this.armed];
+      if (kind) {
+        const cell = {
+          col: snap(this.pointer.x, PITCH),
+          row: snap(this.pointer.y, PITCH),
+        };
+        const o = this.cellToWorld(cell);
+        const color = PALETTE[kind.colorKey];
+        const pins = kind.pins.map((p) => ({
+          x: p.dx * PITCH,
+          y: p.dy * PITCH,
+        }));
+        g.clear();
+        // Rotate the glyph in place exactly like a placed component's holder
+        // does, so the preview matches the orientation it will be dropped at.
+        g.rotation = (this.armedRot * Math.PI) / 2;
+        drawGlyph(g, {
+          kind: this.armed,
+          pins,
+          wPx: (kind.w - 1) * PITCH,
+          hPx: (kind.h - 1) * PITCH,
+          color,
+          electrical: ZERO_ELECTRICAL,
+          phase: 0,
+        });
+        // Pin dots, matching the real node so the ghost reads as the same part.
+        for (const p of pins) g.circle(p.x, p.y, PIN_R).fill({ color });
+        this.ghostLayer.alpha = GHOST_ALPHA;
+        this.ghostLayer.position.set(o.x, o.y);
+        this.ghostLayer.visible = true;
+        return;
+      }
+    }
+    // Junction-placer ghost: a translucent junction snapped to the wire under the
+    // cursor (or the grid), so the tool reads as active instead of looking inert.
+    if (this.armed === null && this.mode === "junction" && this.pointerInside) {
+      const pos = this.junctionGhostPos();
+      g.clear();
+      g.rotation = 0;
+      g.circle(0, 0, JUNCTION_R + 1.5).fill({ color: 0x0d0b16, alpha: 1 });
+      g.circle(0, 0, JUNCTION_R).fill({ color: PALETTE.cyan });
+      this.ghostLayer.alpha = 0.55;
+      this.ghostLayer.position.set(pos.x, pos.y);
+      this.ghostLayer.visible = true;
       return;
     }
-    const kind = PART_KINDS[this.armed];
-    if (!kind) {
-      this.ghostLayer.visible = false;
-      this.ghostGlyph.clear();
-      return;
+    this.ghostLayer.visible = false;
+    g.clear();
+  }
+
+  /** Where the junction-placer ghost sits: snapped to the wire under the cursor
+   * (where a click would drop a junction), else the bare grid cell. */
+  private junctionGhostPos(): Point {
+    const wireId = this.wireHitTest(this.pointer.x, this.pointer.y);
+    if (wireId !== null) {
+      const w = this.graph.wires.get(wireId);
+      if (w) {
+        const route = this.routeForWire(w);
+        if (route.length >= 2) {
+          const cp = closestOnPolyline(route, this.pointer.x, this.pointer.y);
+          return this.cellToWorld({
+            col: snap(cp.x, PITCH),
+            row: snap(cp.y, PITCH),
+          });
+        }
+      }
     }
-    const cell = {
+    return this.cellToWorld({
       col: snap(this.pointer.x, PITCH),
       row: snap(this.pointer.y, PITCH),
-    };
-    const o = this.cellToWorld(cell);
-    this.ghostLayer.position.set(o.x, o.y);
-    // Rotate the glyph in place exactly like a placed component's holder does, so
-    // the preview matches the orientation the part will be dropped at.
-    this.ghostGlyph.rotation = (this.armedRot * Math.PI) / 2;
-    const color = PALETTE[kind.colorKey];
-    const pins = kind.pins.map((p) => ({ x: p.dx * PITCH, y: p.dy * PITCH }));
-    const g = this.ghostGlyph;
-    g.clear();
-    drawGlyph(g, {
-      kind: this.armed,
-      pins,
-      wPx: (kind.w - 1) * PITCH,
-      hPx: (kind.h - 1) * PITCH,
-      color,
-      electrical: ZERO_ELECTRICAL,
-      phase: 0,
     });
-    // Pin dots, matching the real node so the ghost reads as the same part.
-    for (const p of pins) g.circle(p.x, p.y, PIN_R).fill({ color });
   }
 
   /** Supply the pin→net mapping so the probe can read net voltages. */
@@ -1595,8 +1633,8 @@ export class Board {
     }
 
     if (this.wiring) this.drawPendingWire();
-    // Idle hover: keep the placement ghost glued to the snapped cursor cell.
-    if (this.armed) this.updateGhost();
+    // Idle hover: keep the placement / junction ghost glued to the snapped cell.
+    if (this.armed || this.mode === "junction") this.updateGhost();
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
