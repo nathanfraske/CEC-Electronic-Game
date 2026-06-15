@@ -556,9 +556,11 @@
         board?.paste(); // paste with fresh ids, offset, and re-selected
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
-        // R rotates the *placement* of an armed part when nothing is selected, so
-        // the ghost (and the drop) turn; otherwise it rotates the selection.
-        if (armedPart && selCount === 0) board?.rotateArmed();
+        // R rotates the *placement* of an armed part whenever one is armed — the
+        // ghost (and the drop) turn — so it never rotates a leftover selection
+        // out from under you while you're lining up a new part. Only with nothing
+        // armed does R rotate the current selection.
+        if (armedPart) board?.rotateArmed();
         else board?.rotateSelection();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
@@ -722,6 +724,11 @@
         onArm: (kind) => {
           // The board disarmed itself (right-click) — mirror it into the HUD.
           armedPart = kind;
+        },
+        onMode: (m) => {
+          // The board switched its own tool (Pan yields to Build when you grab a
+          // part/wire) — mirror it so the toolbar selector follows.
+          mode = m;
         },
         onAnchor: (rect) => {
           anchor = rect;

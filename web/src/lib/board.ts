@@ -223,6 +223,9 @@ export interface BoardCallbacks {
   }) => void;
   /** Fired when the board itself changes the armed part (e.g. right-click disarm). */
   onArm?: (kind: string | null) => void;
+  /** Fired when the board changes its own mode (e.g. the Pan tool yields to Build
+   * when you grab a part/wire), so the HUD's tool selector follows. */
+  onMode?: (mode: Mode) => void;
   /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
   onAnchor?: (rect: AnchorRect | null) => void;
   /** Open the deep info panel for a component — fired by a double-click on its body
@@ -1991,6 +1994,10 @@ export class Board {
       }
       this.lastBodyTap = { id: body.id, t: now };
     }
+    // Pan tool yields to direct manipulation: a plain click on a part grabs it and
+    // switches to Build/Select so you can move it (the toolbar follows via onMode).
+    // Empty space still pans; this only fires when actually over a body.
+    if (body && this.mode === "pan" && !additive) this.yieldPanToSelect();
     if (body && (this.mode !== "pan" || additive)) {
       if (additive) {
         this.selectComponent(body.id, true);
@@ -2003,6 +2010,9 @@ export class Board {
 
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
+      // Same yield for wires: clicking a trace in Pan switches to Build and grabs
+      // the segment to reshape (KiCad-style), rather than just panning the view.
+      if (this.mode === "pan" && !additive) this.yieldPanToSelect();
       this.selectWire(wireId, additive);
       // A non-additive press also arms a segment-drag: grab THIS segment of the
       // trace and drag it perpendicular (KiCad-style), the endpoints staying put.
@@ -2047,6 +2057,13 @@ export class Board {
     if (!additive) this.clearSelection();
     this.panning = { lastX: e.global.x, lastY: e.global.y };
   };
+
+  /** Leave the Pan tool for Build/Select (and tell the HUD), used when a Pan-mode
+   * click lands directly on a part or wire so it grabs instead of panning. */
+  private yieldPanToSelect(): void {
+    this.setMode("select");
+    this.cb.onMode?.("select");
+  }
 
   private beginDrag(body: Component, wp: Point): void {
     const ids = this.selected.has(body.id) ? [...this.selected] : [body.id];
