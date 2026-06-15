@@ -117,17 +117,34 @@ export interface Wire {
   from: Endpoint;
   to: Endpoint;
   /**
-   * Optional manual routing waypoint (a grid cell the orthogonal route bends
-   * through). Set by dragging the wire; absent means the auto L-route is used.
-   * Purely cosmetic — it never affects connectivity or the solver netlist.
+   * Ordered manual routing waypoints (interior grid cells the orthogonal route
+   * bends through, from→to). Set by dragging a trace segment; empty/absent means
+   * the auto L-route is used. Purely cosmetic — they never affect connectivity or
+   * the solver netlist. (Supersedes the legacy single `mid` waypoint, which
+   * `restore` still reads from older snapshots.)
    */
-  mid?: Cell;
+  waypoints?: Cell[];
 }
+
+/**
+ * A wire as it may appear in an OLD serialized snapshot: it might still carry a
+ * single `mid` waypoint instead of the `waypoints` array. {@link BoardGraph.restore}
+ * accepts this shape and folds a lone `mid` into a one-element `waypoints` array.
+ */
+type LegacyWire = Omit<Wire, "waypoints"> & {
+  waypoints?: Cell[];
+  mid?: Cell;
+};
 
 /** A serialized copy of the whole graph, used for undo/redo. */
 export interface GraphSnapshot {
   components: Component[];
-  wires: Wire[];
+  /**
+   * The wires. {@link BoardGraph.serialize} always writes the current
+   * {@link Wire} shape (a `waypoints` array); {@link BoardGraph.restore} also
+   * tolerates legacy wires carrying a single `mid` (see {@link LegacyWire}).
+   */
+  wires: LegacyWire[];
   /** Free wire-to-wire junctions. Absent in older snapshots (treated as []). */
   junctions?: Junction[];
   nextComponentId: number;
@@ -432,16 +449,22 @@ export class BoardGraph {
     return this.components.has(e.componentId);
   }
 
-  /** Set/update a wire's manual routing waypoint (the grid cell it bends through). */
-  setWireMid(id: number, cell: Cell): void {
+  /**
+   * Replace a wire's ordered manual routing waypoints (the interior grid cells
+   * its orthogonal route bends through). An empty array clears them, returning the
+   * wire to its auto L-route. Cells are copied so the caller can't alias them.
+   */
+  setWireWaypoints(id: number, cells: Cell[]): void {
     const w = this.wires.get(id);
-    if (w) w.mid = { ...cell };
+    if (!w) return;
+    if (cells.length === 0) delete w.waypoints;
+    else w.waypoints = cells.map((c) => ({ ...c }));
   }
 
-  /** Drop a wire's manual waypoint, returning it to the auto orthogonal route. */
-  clearWireMid(id: number): void {
+  /** Drop all of a wire's manual waypoints, returning it to the auto route. */
+  clearWireWaypoints(id: number): void {
     const w = this.wires.get(id);
-    if (w) delete w.mid;
+    if (w) delete w.waypoints;
   }
 
   /** Absolute cell of a pin (anchor + rotated pin offset). */
@@ -470,6 +493,37 @@ export class BoardGraph {
       return j ? { ...j.cell } : undefined;
     }
     return this.pinRefCell(e);
+  }
+
+  /**
+   * The pin (if any) of some *other* component sitting exactly on `cell`. Used by
+   * auto-splice at placement to decide precedence (an existing pin at the landing
+   * cell is wired to directly). `exceptComponentId` skips the part being placed so
+   * its own pin doesn't match. Returns the first such pin in component-id order.
+   */
+  pinAtCell(cell: Cell, exceptComponentId?: number): PinRef | undefined {
+    const sorted = [...this.components.values()].sort((p, q) => p.id - q.id);
+    for (const c of sorted) {
+      if (c.id === exceptComponentId) continue;
+      const k = this.kindOf(c);
+      if (!k) continue;
+      for (const p of k.pins) {
+        const pc = this.pinCell(c, p);
+        if (pc.col === cell.col && pc.row === cell.row) {
+          return { componentId: c.id, pinIndex: p.index };
+        }
+      }
+    }
+    return undefined;
+  }
+
+  /** The junction (if any) sitting exactly on `cell`, in junction-id order. */
+  junctionAtCell(cell: Cell): Junction | undefined {
+    const sorted = [...this.junctions.values()].sort((p, q) => p.id - q.id);
+    for (const j of sorted) {
+      if (j.cell.col === cell.col && j.cell.row === cell.row) return j;
+    }
+    return undefined;
   }
 
   /** Create a free junction at a grid cell and return it. */
@@ -501,26 +555,28 @@ export class BoardGraph {
     if (from !== undefined && !this.endpointExists(from)) return undefined;
     const j = this.addJunction(cell);
     const jref: JunctionRef = { junctionId: j.id };
-    // Split: keep the original wire as from→J, add a second J→to. The waypoint
-    // (if any) lies on one leg; reattach it to whichever half it still sits on.
+    // Split: keep the original wire as from→J, add a second J→to. The wire's
+    // ordered bend waypoints lie along its run; re-home those before the split
+    // point to the first half and those after it to the second.
     const origTo = target.to;
-    const origMid = target.mid;
+    const origWps = target.waypoints ?? [];
+    const a = this.endpointCell(target.from);
+    const b = this.endpointCell(origTo);
+    const splitAt = a && b ? waypointSplitIndex(origWps, a, b, cell) : 0;
+    const firstWps = origWps.slice(0, splitAt);
+    const secondWps = origWps.slice(splitAt);
     target.to = { ...jref };
-    delete target.mid;
+    if (firstWps.length > 0) target.waypoints = firstWps.map((c) => ({ ...c }));
+    else delete target.waypoints;
     const second: Wire = {
       id: this.nextWireId++,
       from: { ...jref },
       to: origTo,
+      ...(secondWps.length > 0
+        ? { waypoints: secondWps.map((c) => ({ ...c })) }
+        : {}),
     };
     this.wires.set(second.id, second);
-    if (origMid) {
-      const a = this.endpointCell(target.from);
-      const b = this.endpointCell(origTo);
-      // Put the bend back on the leg whose straight span it lies near.
-      if (a && manhattanOnLeg(origMid, a, cell)) target.mid = { ...origMid };
-      else if (b && manhattanOnLeg(origMid, cell, b))
-        second.mid = { ...origMid };
-    }
     // `target` was mutated in place (it is the same object the map holds). With an
     // incoming endpoint, tie it to the junction; without one (the place-junction
     // tool) the two split halves alone give the junction its two incident ends.
@@ -587,7 +643,9 @@ export class BoardGraph {
         id: w.id,
         from: { ...w.from },
         to: { ...w.to },
-        ...(w.mid ? { mid: { ...w.mid } } : {}),
+        ...(w.waypoints && w.waypoints.length > 0
+          ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
+          : {}),
       })),
       junctions: [...this.junctions.values()].map((j) => ({
         id: j.id,
@@ -611,11 +669,19 @@ export class BoardGraph {
       this.junctions.set(j.id, { id: j.id, cell: { ...j.cell } });
     }
     for (const w of s.wires) {
+      // Tolerate legacy snapshots: a wire may carry the new ordered `waypoints`
+      // array OR an old single `mid` (fold that lone bend into a 1-element array).
+      const wps =
+        w.waypoints && w.waypoints.length > 0
+          ? w.waypoints.map((c) => ({ ...c }))
+          : w.mid
+            ? [{ ...w.mid }]
+            : [];
       this.wires.set(w.id, {
         id: w.id,
         from: { ...w.from },
         to: { ...w.to },
-        ...(w.mid ? { mid: { ...w.mid } } : {}),
+        ...(wps.length > 0 ? { waypoints: wps } : {}),
       });
     }
     this.nextComponentId = s.nextComponentId;
@@ -642,9 +708,38 @@ function junctionTouches(e: Endpoint, junctionId: number): boolean {
 }
 
 /**
+ * Where to cut a wire's ordered waypoint list when it is split at grid cell
+ * `cell`. The route runs `from(a) → wp[0] → … → wp[n-1] → to(b)`; `cell` lies on
+ * one of those legs. Returns the split index `k` so `wp[0..k)` re-home to the
+ * first half (from→J) and `wp[k..n)` to the second (J→to). A leg is identified by
+ * the bounding-box test (each leg is one orthogonal segment), scanning in route
+ * order so the first containing leg wins. Falls back to the nearest waypoint by
+ * Manhattan distance if no leg's box contains `cell` (e.g. an off-route split).
+ */
+function waypointSplitIndex(wps: Cell[], a: Cell, b: Cell, cell: Cell): number {
+  const seq = [a, ...wps, b];
+  for (let i = 0; i + 1 < seq.length; i++) {
+    if (manhattanOnLeg(cell, seq[i]!, seq[i + 1]!)) return i;
+  }
+  // No leg box contained the cell: split before the closest waypoint so the
+  // halves stay balanced rather than dumping every bend onto one side.
+  let best = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < wps.length; i++) {
+    const d =
+      Math.abs(wps[i]!.col - cell.col) + Math.abs(wps[i]!.row - cell.row);
+    if (d < bestD) {
+      bestD = d;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
  * Is grid point `p` on the orthogonal L-route between `a` and `b`? The auto
  * route bends once, so `p` lies on it iff it shares a row or column with both
- * within the bounding box — a cheap test used to keep a split wire's waypoint on
+ * within the bounding box — a cheap test used to keep a split wire's waypoints on
  * the correct half.
  */
 function manhattanOnLeg(p: Cell, a: Cell, b: Cell): boolean {

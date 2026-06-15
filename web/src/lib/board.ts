@@ -282,8 +282,21 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: Endpoint } | null = null;
-  // Dragging an existing wire to reshape its route (creates/moves its waypoint).
-  private wireDrag: { id: number; grab: Cell; moved: boolean } | null = null;
+  // Dragging one SEGMENT of a wire to reshape its route, KiCad-style: the grabbed
+  // segment translates along its perpendicular axis while its two endpoints (pins/
+  // junctions) stay put and the bracketing segments stretch. `pts` is the working
+  // anchor list [fromCell, ...interior waypoints, toCell] with the dragged
+  // segment's two brackets already guaranteed to be *interior* (a bracket that was
+  // an endpoint had a coincident waypoint spliced in, so the endpoint stays fixed
+  // and the route just bends near it). The dragged segment lies between pts[bi] and
+  // pts[bi+1]; `axis` is its run ("h" ⇒ move it in row/Y, "v" ⇒ move it in col/X).
+  private wireDrag: {
+    id: number;
+    pts: Cell[];
+    bi: number;
+    axis: "h" | "v";
+    moved: boolean;
+  } | null = null;
   // Dragging a junction (started by a double-click on it) to a new grid cell; its
   // incident wires follow because they reference it by id. `moved` gates the undo.
   private junctionDrag: { id: number; moved: boolean } | null = null;
@@ -568,12 +581,104 @@ export class Board {
       // Drop at the requested orientation (the armed placement rotation) so the
       // part lands exactly as the ghost previewed it; addNode reads c.rot.
       c.rot = ((rot % 4) + 4) % 4;
+      // Auto-splice: if a pin landed on an existing pin / junction / trace, wire it
+      // in (splitting a trace through the pin's cell). Done before the undo push so
+      // a single undo reverts the whole drop-and-splice.
+      this.spliceOnPlace(c);
       this.pushUndo(before);
       this.addNode(c);
       this.redrawWires();
       this.cb.onChange?.(this.graph);
     }
     return c;
+  }
+
+  /**
+   * Wire a freshly-placed component into whatever its pins landed on. For each pin,
+   * by precedence at the landing cell: an existing **pin** (of another part) → wire
+   * the two together; a **junction** → wire to it; a **wire passing through** the
+   * cell mid-run (not at its own endpoint) → split that wire at the cell and tie
+   * the pin in (the `junctionOnWire` create+split path, the same as a T-junction);
+   * an empty cell → nothing. So dropping a part so a pin bridges a trace splices it
+   * in-line; if both pins land on traces, both are spliced. Reuses the junction
+   * machinery, so the result composes with undo/redo and `buildNetlist` ties the
+   * spliced pin and the two wire halves into one node. Pins are processed in order
+   * and the graph re-queried per pin, since an earlier splice can change it.
+   */
+  private spliceOnPlace(c: Component): void {
+    const kind = this.graph.kindOf(c);
+    if (!kind) return;
+    for (const p of kind.pins) {
+      const pinRef: PinRef = { componentId: c.id, pinIndex: p.index };
+      const cell = this.graph.pinCell(c, p);
+      // 1) An existing pin of another component at this exact cell → connect to it.
+      const hitPin = this.graph.pinAtCell(cell, c.id);
+      if (hitPin) {
+        this.graph.connect(pinRef, hitPin);
+        continue;
+      }
+      // 2) An existing junction at this cell → connect to it.
+      const hitJ = this.graph.junctionAtCell(cell);
+      if (hitJ) {
+        this.graph.connect(pinRef, { junctionId: hitJ.id });
+        continue;
+      }
+      // 3) A wire passing through this cell mid-run (excluding its endpoints) →
+      //    split it here and tie the pin in. Skip wires already incident to this
+      //    pin (none yet on a fresh part, but cheap insurance for re-entrancy).
+      const wireId = this.wireThroughCell(cell, pinRef);
+      if (wireId !== null) {
+        this.graph.junctionOnWire(wireId, cell, pinRef);
+      }
+      // 4) Empty cell: normal placement, nothing to splice.
+    }
+  }
+
+  /**
+   * The id of a wire whose orthogonal route passes through grid `cell` at a point
+   * that is NOT one of its own endpoint cells (those are pin/junction hits, handled
+   * by their own precedence), or null. Excludes any wire already incident to
+   * `exclude`. Used by auto-splice to find a trace to break a landed pin into.
+   */
+  private wireThroughCell(cell: Cell, exclude: Endpoint): number | null {
+    const p = this.cellToWorld(cell);
+    const excludeKey = endpointKey(exclude);
+    const tol = PITCH * 0.3; // well under half a cell: the cell must lie on the run
+    for (const w of this.graph.wires.values()) {
+      if (
+        endpointKey(w.from) === excludeKey ||
+        endpointKey(w.to) === excludeKey
+      ) {
+        continue;
+      }
+      const a = this.graph.endpointCell(w.from);
+      const b = this.graph.endpointCell(w.to);
+      if (!a || !b) continue;
+      // Skip if the cell IS one of this wire's endpoints (an endpoint coincidence
+      // is a pin/junction hit, not a mid-run split).
+      if (
+        (a.col === cell.col && a.row === cell.row) ||
+        (b.col === cell.col && b.row === cell.row)
+      ) {
+        continue;
+      }
+      const route = this.routeForWire(w);
+      for (let i = 0; i + 1 < route.length; i++) {
+        if (
+          distToSegment(
+            p.x,
+            p.y,
+            route[i]!.x,
+            route[i]!.y,
+            route[i + 1]!.x,
+            route[i + 1]!.y,
+          ) <= tol
+        ) {
+          return w.id;
+        }
+      }
+    }
+    return null;
   }
 
   clear(): void {
@@ -1035,9 +1140,9 @@ export class Board {
       if (route.length < 2) continue;
       polyline(g, route);
       g.stroke({ width: 5, color: PALETTE.accent, alpha: 0.5 });
-      // A handle dot at the waypoint so it reads as draggable.
-      if (w.mid) {
-        const m = this.cellToWorld(w.mid);
+      // A handle dot at each manual bend so the shaped route reads as draggable.
+      for (const wp of w.waypoints ?? []) {
+        const m = this.cellToWorld(wp);
         g.circle(m.x, m.y, 4).fill({ color: PALETTE.accent, alpha: 0.9 });
       }
     }
@@ -1364,15 +1469,23 @@ export class Board {
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
       this.selectWire(wireId, additive);
-      // A non-additive press also arms a wire-drag, so dragging the belt bends
-      // it through a waypoint (drag it back onto the straight line to undo).
+      // A non-additive press also arms a segment-drag: grab THIS segment of the
+      // trace and drag it perpendicular (KiCad-style), the endpoints staying put.
+      // Drag a segment back in line with its neighbours to straighten it (cleaned
+      // on drop). No-op arming if the wire has no drawable route.
       if (!additive) {
-        this.wireDrag = {
-          id: wireId,
-          grab: { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
-          moved: false,
-        };
-        this.pendingUndo = this.graph.serialize();
+        const wire = this.graph.wires.get(wireId);
+        const begun = wire ? this.beginWireSegmentDrag(wire, wp.x, wp.y) : null;
+        if (begun) {
+          this.wireDrag = {
+            id: wireId,
+            pts: begun.pts,
+            bi: begun.bi,
+            axis: begun.axis,
+            moved: false,
+          };
+          this.pendingUndo = this.graph.serialize();
+        }
       }
       return;
     }
@@ -1424,18 +1537,15 @@ export class Board {
     }
 
     if (this.wireDrag) {
-      const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
-      if (
-        cell.col !== this.wireDrag.grab.col ||
-        cell.row !== this.wireDrag.grab.row
-      ) {
-        this.wireDrag.moved = true;
-      }
-      if (this.wireDrag.moved) {
-        this.graph.setWireMid(this.wireDrag.id, cell);
-        this.redrawWires();
-        this.redrawSelection();
-      }
+      // Has the dragged segment actually shifted along its perpendicular axis?
+      const d = this.wireDrag;
+      const lo = d.pts[d.bi]!;
+      const target = d.axis === "h" ? snap(wp.y, PITCH) : snap(wp.x, PITCH);
+      const cur = d.axis === "h" ? lo.row : lo.col;
+      if (target !== cur) d.moved = true;
+      // Only reshape once the segment has truly moved, so a bare click (press +
+      // release in place) never injects redundant colinear brackets into the wire.
+      if (d.moved) this.updateWireSegmentDrag(wp.x, wp.y);
       return;
     }
 
@@ -1491,9 +1601,11 @@ export class Board {
     }
     if (this.wireDrag) {
       if (this.wireDrag.moved && this.pendingUndo) {
-        // Dropping the waypoint back on the straight pin-to-pin line straightens it.
+        // Collapse any bends that ended up colinear with their neighbours (e.g. a
+        // segment dragged back in line, or the coincident endpoint-brackets left
+        // un-offset) so the route stays minimal.
         const w = this.graph.wires.get(this.wireDrag.id);
-        if (w && this.midIsRedundant(w)) this.graph.clearWireMid(w.id);
+        if (w) this.graph.setWireWaypoints(w.id, this.cleanWaypoints(w));
         this.commitUndo(this.pendingUndo);
         this.redrawWires();
         this.redrawSelection();
@@ -1839,30 +1951,150 @@ export class Board {
   }
 
   /**
-   * The full orthogonal polyline for a wire: the auto L-route, or — if the wire
-   * carries a manual waypoint — two orthogonal legs bending through it. Empty if
-   * either endpoint has gone missing. This is the single source of wire geometry.
+   * The full orthogonal polyline for a wire: the auto L-route when it has no
+   * manual waypoints, otherwise an orthogonal leg bending through each waypoint in
+   * order (from → wp[0] → … → wp[n-1] → to). Empty if either endpoint has gone
+   * missing. This is the single source of wire geometry (draw / hit-test /
+   * selection handles / probe-snap).
    */
   private routeForWire(w: Wire): Point[] {
     const a = this.graph.endpointCell(w.from);
     const b = this.graph.endpointCell(w.to);
     if (!a || !b) return [];
-    const pa = this.cellToWorld(a);
-    const pb = this.cellToWorld(b);
-    if (!w.mid) return this.wireRoute(pa, pb);
-    const pm = this.cellToWorld(w.mid);
-    return [...this.wireRoute(pa, pm), ...this.wireRoute(pm, pb).slice(1)];
+    const wps = w.waypoints ?? [];
+    const anchors = [a, ...wps, b].map((c) => this.cellToWorld(c));
+    if (anchors.length === 2) return this.wireRoute(anchors[0]!, anchors[1]!);
+    // Chain an orthogonal leg through each consecutive anchor pair, dropping the
+    // duplicated joint between legs so the polyline is continuous.
+    const out: Point[] = [];
+    for (let i = 0; i + 1 < anchors.length; i++) {
+      const leg = this.wireRoute(anchors[i]!, anchors[i + 1]!);
+      if (i === 0) out.push(...leg);
+      else out.push(...leg.slice(1));
+    }
+    return out;
   }
 
-  /** True if a wire's waypoint sits essentially on the straight pin-to-pin line. */
-  private midIsRedundant(w: Wire): boolean {
-    if (!w.mid) return false;
+  /**
+   * Drop redundant bends from a wire's waypoint list: any waypoint that sits on
+   * the straight line between its neighbours (a colinear/straightened point) adds
+   * nothing to the orthogonal route, so it is collapsed. Run on drop so dragging a
+   * segment back into line with its neighbours cleans the route. Neighbours are the
+   * endpoints for the first/last waypoint. Returns the cleaned array (possibly
+   * empty, which clears the wire back to its auto L-route).
+   */
+  private cleanWaypoints(w: Wire): Cell[] {
     const a = this.graph.endpointCell(w.from);
     const b = this.graph.endpointCell(w.to);
-    if (!a || !b) return false;
-    return (
-      distToSegment(w.mid.col, w.mid.row, a.col, a.row, b.col, b.row) < 0.5
-    );
+    const wps = (w.waypoints ?? []).map((c) => ({ ...c }));
+    if (!a || !b || wps.length === 0) return wps;
+    const kept: Cell[] = [];
+    for (let i = 0; i < wps.length; i++) {
+      const prev = kept.length > 0 ? kept[kept.length - 1]! : a;
+      const next = i + 1 < wps.length ? wps[i + 1]! : b;
+      // Colinear with its neighbours (within half a cell) ⇒ the bend is redundant.
+      if (
+        distToSegment(
+          wps[i]!.col,
+          wps[i]!.row,
+          prev.col,
+          prev.row,
+          next.col,
+          next.row,
+        ) < 0.5
+      ) {
+        continue;
+      }
+      kept.push(wps[i]!);
+    }
+    return kept;
+  }
+
+  /**
+   * Begin a KiCad-style segment drag on wire `w` at world point (wx,wy). Picks the
+   * grabbed segment of the drawn route, materializes the route's interior corners
+   * as explicit grid waypoints (so the polyline corners become movable points), and
+   * guarantees the grabbed segment's two brackets are *interior* waypoints — if a
+   * bracket was the from/to endpoint, a coincident waypoint is spliced in so the
+   * endpoint stays fixed and the route bends near it. Returns the working state, or
+   * null if the wire has no drawable route. Only horizontal/vertical segments are
+   * grabbable (the route is orthogonal).
+   */
+  private beginWireSegmentDrag(
+    w: Wire,
+    wx: number,
+    wy: number,
+  ): { pts: Cell[]; bi: number; axis: "h" | "v" } | null {
+    const route = this.routeForWire(w);
+    if (route.length < 2) return null;
+    // Find the grabbed drawn segment.
+    let segIdx = 0;
+    let bestD = Infinity;
+    for (let i = 0; i + 1 < route.length; i++) {
+      const d = distToSegment(
+        wx,
+        wy,
+        route[i]!.x,
+        route[i]!.y,
+        route[i + 1]!.x,
+        route[i + 1]!.y,
+      );
+      if (d < bestD) {
+        bestD = d;
+        segIdx = i;
+      }
+    }
+    const s0 = route[segIdx]!;
+    const s1 = route[segIdx + 1]!;
+    // Run of the grabbed segment: horizontal (same Y) drags in row, vertical in col.
+    const axis: "h" | "v" =
+      Math.abs(s1.y - s0.y) <= Math.abs(s1.x - s0.x) ? "h" : "v";
+    // Materialize every drawn corner as a grid cell: [fromCell, ...corners, toCell].
+    // Endpoints keep their exact pin/junction cell; interior corners snap to grid
+    // (each is already an orthogonal step, so this preserves the Manhattan shape).
+    const pts: Cell[] = route.map((p, i) => {
+      if (i === 0) return { ...this.graph.endpointCell(w.from)! };
+      if (i === route.length - 1) return { ...this.graph.endpointCell(w.to)! };
+      return { col: snap(p.x, PITCH), row: snap(p.y, PITCH) };
+    });
+    let bi = segIdx;
+    // Ensure the right bracket is interior first (splice before touching the left,
+    // so the left index is unaffected). Then ensure the left bracket is interior.
+    if (bi + 1 === pts.length - 1) {
+      pts.splice(bi + 1, 0, { ...pts[bi + 1]! }); // duplicate the to-endpoint inward
+    }
+    if (bi === 0) {
+      pts.splice(1, 0, { ...pts[0]! }); // duplicate the from-endpoint inward
+      bi = 1;
+    }
+    return { pts, bi, axis };
+  }
+
+  /**
+   * Translate the dragged segment to the snapped pointer position along its
+   * perpendicular axis, moving both bracket waypoints (interior, so the endpoints
+   * stay put) and letting the neighbouring segments stretch. Writes the resulting
+   * interior waypoints to the wire and redraws. Keeps the route orthogonal.
+   */
+  private updateWireSegmentDrag(wx: number, wy: number): void {
+    const d = this.wireDrag;
+    if (!d) return;
+    const pts = d.pts;
+    const lo = pts[d.bi]!;
+    const hi = pts[d.bi + 1]!;
+    if (d.axis === "h") {
+      const row = snap(wy, PITCH);
+      lo.row = row;
+      hi.row = row;
+    } else {
+      const col = snap(wx, PITCH);
+      lo.col = col;
+      hi.col = col;
+    }
+    // Interior points are the waypoints; the two ends stay the pins/junctions.
+    this.graph.setWireWaypoints(d.id, pts.slice(1, -1));
+    this.redrawWires();
+    this.redrawSelection();
   }
 
   /**
