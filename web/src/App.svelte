@@ -374,8 +374,13 @@
   // still overrides this (it's the input's value; this is only the placeholder).
   const channelLabel = (i: number): string =>
     netNames[i] ?? (i === 0 ? "GND" : `Node ${i}`);
+  // Node colours must match the scope, which colours node c by index (c−1) and
+  // leaves ground (node 0) out. So ground gets a muted reference colour and the
+  // cycling palette starts at node 1 — node N is then the same colour in both.
   const channelColor = (i: number): string =>
-    CHANNEL_COLORS[i % CHANNEL_COLORS.length] ?? "var(--accent)";
+    i === 0
+      ? "var(--dim)"
+      : (CHANNEL_COLORS[(i - 1) % CHANNEL_COLORS.length] ?? "var(--accent)");
   const partName = (tag: string): string =>
     PARTS.find((p) => p.tag === tag)?.name ?? tag;
 
