@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 (later) — Logic-family decision + Phase 0, marquee/copy-paste, factory internals
+
+**State:** 🟢 Green. sim-core 88 tests pass, golden `0xeaac…fa24` **unchanged**; all
+web gates pass. Branch `claude/kind-turing-hdelb3` (pushed).
+
+**Shipped this batch:**
+- **Marquee select + copy/paste/cut** (`board.ts`/`App.svelte`): Select-mode empty
+  drag rubber-bands a box (shift = additive); `Ctrl/Cmd-C/V/X` copy/paste/cut an
+  in-memory fragment (components + internal wires + net labels), paste with fresh ids
+  at a growing offset. Group drag already worked.
+- **Logic-gate analog/digital architecture — DECIDED + Phase 0.** Owner chose the
+  **full separated digital domain** (families + driver/receiver boundary + a
+  deterministic event scheduler + level-bearing hash) **now**, with a **legacy-ideal
+  default** (existing circuits identical; only gate/DFF goldens regenerate when the
+  scheduler lands; future digital parts are golden-additive). Decision + concrete
+  build order recorded in **`docs/ui/logic-analog-digital-nets.md` §6**.
+  - **Phase 0 landed (golden-stable):** `LogicFamily { v_ih_frac, v_ol/v_oh_frac,
+    g_ol, g_oh }` + `LEGACY` const reproducing the original gate exactly;
+    `gate_target_level` routes through `LEGACY.reads_high`/`.drive`. Byte-identical,
+    golden unchanged, `legacy_family_matches_original_gate` guards it.
+- **Live construction-detail ("factory internals") views** integrated from a worktree
+  agent: `web/src/lib/detailDrawers.ts` (new) — animated op-amp/diode/LED/Schottky/
+  Zener/resistor internals driven by live `ElectricalState`; `InfoDiagram` detail mode
+  + `DETAIL ?? schematic` fallback; a **Symbol⇄Inside** toggle (defaults to Inside).
+  Composed with info-panel Phase 1: drawer = toggle → diagram → pinout → equation.
+- **Earlier this session (already pushed):** pan-regression + label-ghost fixes,
+  open-loop current-source zeroing, POT non-bug (answered), phase-shift example,
+  info-panel Phase 1 (double-click/`I`/ⓘ + pinout).
+
+### Pick up here — the digital domain (the big, risky part; do it fresh)
+The determinism-critical work remains: **Phase 1** receiver/driver split + in-core net
+classification (analog / pure-digital / boundary), **Phase 2** the **deterministic
+event scheduler** (integer-tick buckets, enum `Level{Low,High,Z,X}`, element-index
+order, one-tick-delay feedback) + fold digital net levels into `fnv1a` → **regenerate
+gate/DFF goldens** (the one deliberate break), **Phase 3** boundary threading to web
+(family chip, noise-margin readout) + surface XNOR(5)/BUF(7) (the `GATE_AUX` gap),
+**Phase 4** open-drain/Z/wired-AND + level-shifter. The acceptance bar + exact design
+are in `logic-analog-digital-nets.md` §6. Do this with full budget — never land a
+half-built scheduler. Also still queued: **onboarding** (pull-based, no levels;
+`docs/ui/onboarding-first-run.md`), more parts/ICs.
+
+---
+
 ## 2026-06-15 — Editor fixes, open-loop source, phase-shift example, info-panel Phase 1
 
 **State:** 🟢 Green. All web gates pass (`check`/`lint`/`build`); sim-core untouched

@@ -22,7 +22,30 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   (= 1/(2πRC√6)) with honest 56°/112°/180° tap labels + the 1/29 attenuation lesson +
   a detune-to-1 kHz demo. Verified end-to-end (transient sim: −180.0°, 1/29.1).~~
 
-### Logic gates: real logic levels / families + analog↔digital boundary (owner, 2026-06-15)
+### Logic gates: separated analog/digital domain — DECIDED, building (owner, 2026-06-15)
+**Decision (doc §6):** build the **full** separated digital domain NOW (families +
+driver/receiver boundary + deterministic event scheduler + level-bearing hash), with
+a **legacy-ideal default** (existing circuits identical; only gate/DFF goldens regen
+when the scheduler lands; future digital parts golden-additive). Owner: lowest risk
+of a future re-break.
+- ~~**Phase 0 — family substrate (golden-stable).** `LogicFamily`{v_ih/v_ol/v_oh
+  frac, g_ol/g_oh} + `LEGACY` const reproducing the original gate exactly;
+  `gate_target_level` routes through `LEGACY.reads_high`/`.drive`. Byte-identical,
+  88 tests pass, golden unchanged; `legacy_family_matches_original_gate` guards it.~~
+- [ ] **Phase 1** — receiver/driver split + in-core net classification (analog /
+  pure-digital / boundary). Still LEGACY, still golden-stable.
+- [ ] **Phase 2** — the deterministic **event scheduler** (integer-tick buckets, enum
+  `Level{Low,High,Z,X}`, element-index order, one-tick-delay feedback) + fold digital
+  net levels into `fnv1a`. **Regenerate gate/DFF goldens** (the one deliberate break).
+  Extend to the DFF. Per-family `*_run_is_reproducible` + mixed-rail + open-drain tests.
+- [ ] **Phase 3** — boundary threading to web (family value-chip, noise-margin /
+  forbidden-band readouts) + surface **XNOR(5)/BUF(7)** (the `GATE_AUX` gap).
+- [ ] **Phase 4** — open-drain / Z / wired-AND + a first-class **level-shifter** part
+  (golden-additive).
+- The acceptance bar + exact design are in `logic-analog-digital-nets.md` §6. Do the
+  scheduler with full budget — never land a half-built non-deterministic engine.
+
+<details><summary>Original brainstorm summary (superseded by the §6 decision)</summary>
 Brainstorm doc **written** at **`docs/ui/logic-analog-digital-nets.md`** (agent).
 Recommends a 4-phase path: **(0)** add a `const` logic-family descriptor defaulted to
 a legacy-ideal family that reproduces today's numbers *exactly* (golden untouched —
@@ -45,18 +68,18 @@ the single analog solve). Must stay **golden-stable** (any sim-core behaviour ch
 ⇒ regenerate the golden + justify) and keep the coarse JS↔wasm boundary. Doc must
 include a **debug/validation plan** (deterministic sim-core tests across families +
 mixed-rail interface cases). Decide direction after reading the doc.
+</details>
 
 ### Editor: copy/paste + marquee select + group drag (owner, 2026-06-15)
-- [ ] **Box / marquee select** (shift+drag, or drag on empty in Select mode): a
-  rubber-band rectangle that selects every component inside it + the wires whose
-  both ends are inside (their "internal" traces). (`mode-flow.md` had this on the
-  Phase-2 roadmap.)
-- [ ] **Group drag**: dragging any selected component moves the WHOLE selection
-  (components + their internal wires) together, connectivity preserved.
-- [ ] **Copy/paste** (⌘/Ctrl-C / -V): copy the selected components + internal wires
-  (relative coords) to an in-memory clipboard; paste with fresh ids + a small offset,
-  remapping wire endpoints to the new ids, and select the pasted group. (Net labels
-  on copied pins/traces should come along too.)
+- ~~**Box / marquee select** (Select-mode empty drag; shift = additive): rubber-band
+  rect selects components whose centre is inside + wires with both ends inside +
+  junctions inside. `board.ts` marquee layer + `finalizeMarquee`.~~
+- ~~**Group drag**: already worked — `beginDrag` grabs the whole selection; internal
+  wires re-route via their pins. (No change needed.)~~
+- ~~**Copy/paste/cut** (⌘/Ctrl-C / -V / -X): in-memory `ClipboardSnippet` (components +
+  internal wires + net labels on their pins); paste with fresh ids at a growing offset,
+  remapped onto the new ids, re-selects the group. Cut = copy + delete. Same-named
+  labels still alias by design. Validated through the harness.~~
 - ~~**Persist board state across refreshes.** `lib/storage.ts` saves the
   `BoardGraph.serialize()` to localStorage (debounced 400 ms) on every edit and
   restores it on load (falls back to the primer only on a true first visit). Guarded
