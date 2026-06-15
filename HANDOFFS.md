@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 (eve) — Merged to live (#63), 3-tier info panel, onboarding MVP
+
+**State:** 🟢 Green (all gates). **PR #63 merged to `main` → deployed to live** for
+owner review. Branch `claude/kind-turing-hdelb3` continues past the merge.
+
+**Shipped this batch:**
+- **3-tier component view** (owner's model) in the info panel: `Symbol · Factory ·
+  Real` selector (`glyphs.ts drawGlyphIn`, `InfoDiagram` modes schematic/analogy/
+  reality, outward fallback), defaults to Real; pinout + equation + "Right now" stay.
+  The carriers-vs-energy **power primer moved out** to a "Reading the board" legend in
+  the telemetry panel. Decision + reality-art framework in `component-info-panel.md`.
+  (Reality art is owner-provided per component later — each is one `DETAIL_DRAWERS` entry.)
+- **Onboarding MVP (pull-based, no levels)** — `concepts.ts` + App wiring: four
+  first-encounter cards (source/ground/loop/reading) offered the moment the board can
+  show each true, deduped via a queue + persisted `seenConcepts`; single
+  `explainAsYouGo` mute; an always-on **"?" Help handle** (mute / replay tips / re-show
+  intro). Settings load+persist via `storage.ts`. Cards hold off until the intro is
+  dismissed. See `onboarding-first-run.md` §10.
+- **Double-click info pipeline** checked: smooth (open via double-click/`I`/ⓘ, then it
+  re-targets on every single-click); double-click now always re-asserts the Real view.
+
+### Background agent in flight (integrate when it lands)
+A worktree agent is implementing the **3 deferred wiring/placement QoL fixes** (#4
+drop-on-track split, #5 delete-only-segment, #6 KiCad click-to-continue) — board.ts/
+graph.ts. When it completes: cherry-pick/merge its branch, resolve any board.ts
+conflicts, run gates, ship. (Analysis for each is in TODOS "QoL / fixes batch".)
+
+### Still open
+- **Digital scheduler** (Phase 1+, the dedicated session; `logic-…-nets.md` §6).
+- **Onboarding heavier pieces** (deferred): cold-open auto-play, the guided first-build
+  wiring affordances (pin-glow, next-edge ghost), bin-narrowing/pre-arm (§1–§3, §6).
+
+---
+
 ## 2026-06-15 (pm) — QoL batch (partial) + scope time window
 
 **State:** 🟢 Green (full CI suite passed). Branch pushed. Shipped from the owner's
