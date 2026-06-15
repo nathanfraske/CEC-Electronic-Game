@@ -60,18 +60,25 @@ const TYPE_OF: Record<string, number> = {
   // larger collector current (Ic ≈ β·Ib in the active region).
   Q: 13, // NPN BJT (conducts when the base is ~0.6–0.7 V above the emitter)
   QP: 14, // PNP BJT (the mirror; conducts when the base is below the emitter)
+  // The 3-terminal op-amp (behavioural high-gain VCCS, Newton solve). Pins are
+  // ordered OUT, IN−, IN+ so the pin→terminal map matches the core exactly: pin 0
+  // → a = Output, pin 1 → b = IN− (inverting), pin 2 → c = IN+ (non-inverting).
+  // Like the MOSFETs/BJTs it stamps its third pin's node into the `c` array (the
+  // non-inverting input); the output current it sources at `a` is `GOUT·(Vtarget −
+  // V(a))`, driving V(a) toward `Vsat·tanh(GAIN·(V(c)−V(b))/Vsat)` (`value` = Vsat).
+  OA: 15, // op-amp (nonlinear; output swings within ±Vsat = value)
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
 };
 
 /**
- * Element types that carry a third (control) terminal `c`: the MOSFETs (gate)
- * and the BJTs (base). For all of them pin 2 → c, and that pin's node is the one
- * stamped into the `c` array; every two-terminal element leaves c = 0 (ground),
- * where the core ignores it.
+ * Element types that carry a third (control) terminal `c`: the MOSFETs (gate),
+ * the BJTs (base), and the op-amp (its non-inverting input IN+). For all of them
+ * pin 2 → c, and that pin's node is the one stamped into the `c` array; every
+ * two-terminal element leaves c = 0 (ground), where the core ignores it.
  */
-const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14]);
+const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15]);
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
@@ -307,13 +314,15 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     if (t === undefined) continue;
     // The third terminal: a 3-pin device stamps its control node — pin 2 → c. For
     // a MOSFET (pins ordered D, S, G) that is the GATE; for a BJT (pins ordered C,
-    // E, B) that is the BASE. A 2-pin part has no third pin, so c = 0 (ground),
-    // which the core ignores. Guard on the actual pin count so only true 3-pin
-    // kinds take the control path. (elemOfComponent maps to this element: for a
-    // MOSFET its current is Id oriented a→b = drain→source and nodesOfComponent =
+    // E, B) that is the BASE; for an op-amp (pins ordered OUT, IN−, IN+) that is
+    // the non-inverting input IN+. A 2-pin part has no third pin, so c = 0
+    // (ground), which the core ignores. Guard on the actual pin count so only true
+    // 3-pin kinds take the control path. (elemOfComponent maps to this element: for
+    // a MOSFET its current is Id oriented a→b = drain→source and nodesOfComponent =
     // [drain, source] so vAcross reads Vds; for a BJT its current is Ic oriented
     // a→b = collector→emitter and nodesOfComponent = [collector, emitter] so
-    // vAcross reads Vce.)
+    // vAcross reads Vce; for an op-amp its current is the output drive Iout sourced
+    // at a = OUT and nodesOfComponent = [OUT, IN−], so vAcross reads V(OUT)−V(IN−).)
     const nc =
       THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)

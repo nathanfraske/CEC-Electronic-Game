@@ -209,6 +209,13 @@
       color: "var(--accent)",
     },
     {
+      tag: "OA",
+      name: "Op-Amp",
+      desc: "Huge gain · feedback or compare",
+      tier: "II",
+      color: "var(--cyan)",
+    },
+    {
       tag: "&",
       name: "Logic Gate",
       desc: "Thresholds at the pin",
@@ -269,6 +276,7 @@
     PM: "Active & Switching",
     Q: "Active & Switching",
     QP: "Active & Switching",
+    OA: "Active & Switching",
     "&": "Logic & ICs",
     FF: "Logic & ICs",
     FP: "Logic & ICs",

@@ -415,6 +415,19 @@ export const PART_INFO: Record<string, PartInfo> = {
       return rows;
     },
   },
+  OA: {
+    name: "Op-Amp",
+    equation: "Vout = Vsat·tanh(A·(V₊ − V₋)/Vsat) · A ≈ 1e5",
+    headline: (e, vsat) =>
+      `Output drive ${f(e.current, "A")} · swing ±${f(Math.max(vsat, 1), "V")}`,
+    plain: () =>
+      "An op-amp is a differential amplifier with an enormous open-loop gain — around a hundred thousand here. It looks at the tiny difference between its two inputs, the non-inverting (+) and the inverting (−), and slams its output in whatever direction nulls that difference, until it either balances or hits a supply rail (±Vsat). Two facts explain almost every op-amp circuit. First, the inputs draw essentially no current — they only sense voltage, so the output does all the work. Second, when you wrap negative feedback from the output back to the inverting input, that huge gain forces the two inputs to nearly the same voltage: the 'virtual short'. Take it on faith and the math collapses — a follower copies its input, a non-inverting amp multiplies by 1 + Rf/Rg, an inverting amp by −Rf/Rin, all set by resistor ratios rather than the op-amp itself. Remove the feedback and the same huge gain makes a comparator: the output snaps to the positive rail when + is above −, and to the negative rail when it's below. Same part, two faces — a precise analog amplifier with feedback, a decisive digital-like switch without it.",
+    derived: (e, vsat) => [
+      { label: "Output drive Iout", value: f(e.current, "A") },
+      { label: "Open-loop gain A₀", value: "≈ 100,000" },
+      { label: "Output swing", value: `±${f(Math.max(vsat, 1), "V")}` },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",

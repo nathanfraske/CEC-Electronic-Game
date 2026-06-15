@@ -33,6 +33,9 @@ const CURATED_FULL: Record<string, number[]> = {
   ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
   // Varistor clamp voltage Vc (V): common MOV ratings, a superset of the chips.
   MOV: [12, 18, 24, 36, 48, 68, 100],
+  // Op-amp saturation rail Vsat (V): the supply levels the output swings within.
+  // Common single/dual-supply rails people reach for, with 12 V the default.
+  OA: [3, 3.3, 5, 9, 12, 15, 18, 24],
   // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
   EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
@@ -50,6 +53,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   ZD: [3.3, 4.7, 5.1, 6.2, 9.1, 12],
   // The common varistor clamp voltages people reach for first.
   MOV: [12, 18, 24, 36, 48],
+  // The op-amp supply rails people reach for first.
+  OA: [3.3, 5, 9, 12, 15],
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 
