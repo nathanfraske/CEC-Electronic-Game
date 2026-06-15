@@ -843,6 +843,130 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  {
+    id: "mosfet-switch",
+    name: "MOSFET as a Switch",
+    blurb:
+      "A logic-level signal on the gate switches an LED hard on and off. The N-MOSFET sits in the low side of the load: drive the gate above its ~2 V threshold and the channel turns on, completing the loop so the LED lights; drop the gate to 0 V and the channel cuts off, so no current flows and the LED goes dark. The gate itself draws no current — a tiny control voltage commands the whole load.",
+    watch:
+      "the LED light up while the gate is high and the MOSFET pulls its drain down near 0 V (a closed switch). Flip the gate low and watch it snap off — cutoff, no current, the drain released. The gate sources nothing either way.",
+    build() {
+      // VDD → R (current limit) → LED → NMOS.drain ; NMOS.source → GND ; a second
+      // source Vg drives the gate. Gate HIGH (5 V > VTO ≈ 2 V) → the FET is on, the
+      // loop closes, the LED lights at ~18 mA and the drain sits ~0.3 V (a closed
+      // switch). The LED makes the loop nonlinear; the FET adds the Newton MOSFET.
+      //   nets: N1 = VDD+ = R.A ; N2 = R.B = LED.A ; N3 = LED.K = NM.drain ;
+      //         GND(0) = NM.source = VDD− = Vg− ; NG = Vg+ = NM.gate.
+      // Hand-check (gate high): in the on state the NMOS in triode drops ~0.3 V, so
+      // I ≈ (5 − 1.9(LED) − 0.3)/150 ≈ 18 mA — bright, safe. Gate low → cutoff, I≈0.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // vertical 5 V rail, + at top
+      const r = comp(g, "R", 2, 0, 150); // LED current-limit
+      const led = comp(g, "LED", 6, 0, 0); // the switched load
+      const nm = comp(g, "NM", 10, 0, 0, 0); // low-side switch (D top, S bottom)
+      const vg = comp(g, "V", 6, 6, 5); // the gate drive (HIGH = on)
+      const gnd = comp(g, "GND", 10, 6, 0);
+      wire(g, vdd, 0, r, 0); // VDD+ → R.A
+      wire(g, r, 1, led, 0); // R.B → LED.A
+      wire(g, led, 1, nm, 0); // LED.K → NM.drain (pin 0)
+      wire(g, nm, 1, gnd, 0); // NM.source (pin 1) → GND
+      wire(g, vg, 0, nm, 2); // Vg+ → NM.gate (pin 2)
+      wire(g, vg, 1, gnd, 0); // Vg− → GND
+      wire(g, vdd, 1, gnd, 0); // VDD− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V), a series Resistor (R, ~150 Ω), and an LED — the load that will switch.",
+        why: "This is the load branch the transistor will make or break. The resistor limits the LED current once the loop is completed.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Place an N-MOSFET (NM) below the LED, a second Voltage Source (V) for the gate, and a Ground. Wire VDD+ → R → LED → MOSFET DRAIN, MOSFET SOURCE → GND, gate source → MOSFET GATE, and both source −'s → GND. Set the gate source to 5 V and press Run.",
+        why: "The gate sits above the ~2 V threshold, so the channel turns on and completes the loop. Watch the LED light up and the MOSFET's drain drop near 0 V — a closed switch — while ~18 mA flows. Notice the gate lead carries no current of its own.",
+        done: (p) => at(p, "NM") >= 1 && at(p, "V") >= 2 && p.complete,
+      },
+      {
+        do: "Select the gate source and set it to 0 V (or use the toggle below).",
+        why: "Now Vgs is below threshold: the channel cuts off, no current can flow, and the LED goes dark. A voltage that costs nothing to hold has switched the whole load off.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Gate high / low",
+      on: "Gate HIGH (5 V) — the channel is on, the loop closes and the LED lights.",
+      off: "Gate LOW (0 V) — below threshold, the channel cuts off: no current, the LED is dark.",
+      alt() {
+        // Same board, but the gate source is 0 V: Vgs < VTO → cutoff, LED off.
+        const g = new BoardGraph();
+        const vdd = comp(g, "V", 0, 0, 5, 1);
+        const r = comp(g, "R", 2, 0, 150);
+        const led = comp(g, "LED", 6, 0, 0);
+        const nm = comp(g, "NM", 10, 0, 0, 0);
+        const vg = comp(g, "V", 6, 6, 0); // gate driven LOW
+        const gnd = comp(g, "GND", 10, 6, 0);
+        wire(g, vdd, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, nm, 0);
+        wire(g, nm, 1, gnd, 0);
+        wire(g, vg, 0, nm, 2);
+        wire(g, vg, 1, gnd, 0);
+        wire(g, vdd, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "mosfet-cs-amp",
+    name: "Common-Source Amplifier",
+    blurb:
+      "An N-MOSFET biased in saturation, with a drain resistor, makes a voltage amplifier. A small change on the gate makes a much larger, inverted change at the drain — the transconductance gm turns gate volts into drain current, and the drain resistor turns that current back into volts. This gain-from-a-controlled-current is what a transistor is for.",
+    watch:
+      "the drain settle around 3.9 V (not the 5 V rail) — the device is in saturation, sinking ~11 mA through the 100 Ω drain resistor. Nudge the gate bias up a little and the drain swings down much harder: that ratio is the voltage gain, and it inverts.",
+    build() {
+      // The textbook common-source stage, matching the sim-core
+      // `nmos_saturation_operating_point_matches_square_law` layout:
+      //   VDD(5 V) → RD(100 Ω) → NM.drain (the output) ; NM.source → GND ;
+      //   gate bias Vgg(3 V) → NM.gate ; all −'s → GND.
+      //   nets: N1 = VDD+ = RD.A ; OUT = RD.B = NM.drain ;
+      //         GND(0) = NM.source = VDD− = Vgg− ; NG = Vgg+ = NM.gate.
+      // Hand-check: Vgg = 3 V ⇒ Vov = Vgg − VTO = 1 V (saturation, Vds ≥ Vov).
+      // Id ≈ ½·KP·Vov²·(1+λ·Vds) ≈ 0.01·(1+0.02·3.9) ≈ 10.8 mA, and
+      // Vds = 5 − Id·100 ≈ 3.9 V — the drain parks well below the rail. The
+      // small-signal gain is −gm·(RD‖ro) ≈ −0.0216·98 ≈ −2.1 (inverting). Nonlinear
+      // → the MOSFET Newton path runs.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // vertical 5 V rail, + at top
+      const rd = comp(g, "R", 2, 0, 100); // drain resistor (the load)
+      const nm = comp(g, "NM", 6, 0, 0, 0); // common-source device
+      const vgg = comp(g, "V", 6, 6, 3); // the gate bias (3 V → saturation)
+      const gnd = comp(g, "GND", 6, 4, 0);
+      wire(g, vdd, 0, rd, 0); // VDD+ → RD.A
+      wire(g, rd, 1, nm, 0); // RD.B → NM.drain (pin 0) — the output node
+      wire(g, nm, 1, gnd, 0); // NM.source (pin 1) → GND
+      wire(g, vgg, 0, nm, 2); // Vgg+ → NM.gate (pin 2)
+      wire(g, vgg, 1, gnd, 0); // Vgg− → GND
+      wire(g, vdd, 1, gnd, 0); // VDD− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V) for the rail and a drain Resistor (R, ~100 Ω).",
+        why: "The drain resistor is what converts the transistor's drain current back into an output voltage — no load resistor, no voltage gain.",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place an N-MOSFET (NM), a second Voltage Source (V) for the gate bias, and a Ground. Wire VDD+ → R → MOSFET DRAIN, MOSFET SOURCE → GND, gate source → MOSFET GATE, both source −'s → GND. Set the gate bias to ~3 V and press Run.",
+        why: "A 3 V gate sits 1 V above threshold and puts the device in saturation. Watch the drain settle near 3.9 V — pulled below the rail because the transistor is steadily sinking ~11 mA through the drain resistor. That's the bias point an amplifier swings around.",
+        done: (p) => at(p, "NM") >= 1 && at(p, "V") >= 2 && p.complete,
+      },
+      {
+        do: "Select the gate source and nudge its voltage up a little, then back down.",
+        why: "A small gate change moves the drain current (gm = dId/dVgs), and the drain resistor turns that into a larger, inverted voltage swing at the output — the gain is roughly −gm·RD. A little push on the gate, a big swing at the drain: that's amplification.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -1448,6 +1572,8 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "zener-shunt": "Diodes",
   buck: "Power & Switching",
   "pwm-average": "Power & Switching",
+  "mosfet-switch": "Power & Switching",
+  "mosfet-cs-amp": "Power & Switching",
   "ac-resistor": "AC Fundamentals",
   "ac-rms": "AC Fundamentals",
   "ac-cap": "Reactance",

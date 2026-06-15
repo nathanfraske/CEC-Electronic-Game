@@ -26,10 +26,20 @@ const TYPE_OF: Record<string, number> = {
   SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
   LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)
   ZD: 10, // Zener diode (nonlinear; reverse breakdown clamps at value = Vz)
+  // The 3-terminal MOSFET family (level-1 square-law VCCS, Newton solve). Pins
+  // are ordered D, S, G so the pin→terminal map is direct: pin 0 → a = Drain,
+  // pin 1 → b = Source, pin 2 → c = Gate. They are the only kinds whose third
+  // pin's node is stamped into the `c` array below; every two-terminal element
+  // leaves c = 0 (ground), where the core ignores it.
+  NM: 11, // N-channel MOSFET (conducts when Vgs > +VTO ≈ 2 V)
+  PM: 12, // P-channel MOSFET (the high-side mirror; conducts when Vgs < −|VTO|)
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
 };
+
+/** Element types that carry a third (control/gate) terminal `c`: the MOSFETs. */
+const THREE_PIN_TYPES = new Set<number>([11, 12]);
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
@@ -47,6 +57,14 @@ export interface BuiltNetlist {
   types: Uint8Array;
   a: Uint32Array;
   b: Uint32Array;
+  /**
+   * Control-terminal node per element, parallel to `a`/`b`: for a 3-pin device
+   * (a MOSFET) it is the node of its third pin (the gate); for every 2-pin
+   * element it is `0` (ground), which the core ignores. Pin→terminal convention
+   * matches the core exactly: pin 0 → a (drain), pin 1 → b (source), pin 2 → c
+   * (gate).
+   */
+  c: Uint32Array;
   values: Float64Array;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
@@ -164,6 +182,10 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   const types: number[] = [];
   const aArr: number[] = [];
   const bArr: number[] = [];
+  // The control terminal, parallel to a/b. Pushed in lockstep with every element
+  // stamp so the arrays stay aligned; 0 (ground) for everything except a MOSFET,
+  // whose entry holds its gate node (pin 2). The core ignores c for 2-pin types.
+  const cArr: number[] = [];
   const values: number[] = [];
   const elemOfComponent = new Map<number, number>();
   const nodesOfComponent = new Map<number, [number, number]>();
@@ -185,10 +207,12 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       types.push(ELEM_CAPACITOR);
       aArr.push(na);
       bArr.push(mid);
+      cArr.push(0); // 2-terminal: no control node
       values.push(c.value); // capacitance
       types.push(ELEM_RESISTOR);
       aArr.push(mid);
       bArr.push(nb);
+      cArr.push(0); // 2-terminal: no control node
       values.push(EC_ESR_OHMS); // parasitic series resistance
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
       nodesOfComponent.set(c.id, [na, nb]); // V across the whole part
@@ -197,10 +221,21 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
 
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
+    // The third terminal: a 3-pin device (a MOSFET, pins ordered D, S, G) stamps
+    // its GATE node — pin 2 → c. A 2-pin part has no third pin, so c = 0 (ground),
+    // which the core ignores. Guard on the actual pin count so only true 3-pin
+    // kinds take the gate path. (elemOfComponent maps to this element, whose
+    // current is Id oriented a→b = drain→source; nodesOfComponent = [drain, source]
+    // so vAcross reads Vds.)
+    const nc =
+      THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
+        ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
+        : 0;
     const idx = types.length;
     types.push(t);
     aArr.push(na);
     bArr.push(nb);
+    cArr.push(nc);
     values.push(c.value);
     elemOfComponent.set(c.id, idx);
     nodesOfComponent.set(c.id, [na, nb]);
@@ -242,6 +277,14 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const t = TYPE_OF[c.kind];
     if (t === undefined || t === 4) continue; // skip non-elements and I sources
     u2(na, nb);
+    // A MOSFET also pulls its gate net (pin 2 → c) into the same component: all
+    // three of its nodes participate in the topology, so a return path can run
+    // through the gate net too. (The gate draws no DC current in the model, but
+    // for the *connectivity* test it is still a real wired terminal.)
+    if (THREE_PIN_TYPES.has(t) && kind.pins.length >= 3) {
+      const ncc = nodeIndex.get(find(key(c.id, 2)));
+      if (ncc !== undefined) u2(na, ncc);
+    }
   }
   const floatingSources: number[] = [];
   for (const c of sorted) {
@@ -253,6 +296,10 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     }
   }
 
+  // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
+  // a MOSFET's gate to a different net is recognised as a topology change and the
+  // sim is rebuilt — while a pure move (which never changes any node) still leaves
+  // the whole signature, c included, unchanged.
   const sig =
     nodeCount +
     "|" +
@@ -262,6 +309,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     "|" +
     bArr.join(",") +
     "|" +
+    cArr.join(",") +
+    "|" +
     values.join(",");
 
   return {
@@ -269,6 +318,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     types: Uint8Array.from(types),
     a: Uint32Array.from(aArr),
     b: Uint32Array.from(bArr),
+    c: Uint32Array.from(cArr),
     values: Float64Array.from(values),
     elemOfComponent,
     nodesOfComponent,

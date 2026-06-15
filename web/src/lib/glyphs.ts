@@ -646,6 +646,99 @@ function drawSW(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// --- MOSFET (3-terminal) ------------------------------------------------------
+// Pins are ordered D, S, G: pin 0 = Drain (top), pin 1 = Source (bottom),
+// pin 2 = Gate (left). `electrical.current` is Id oriented a→b = drain→source;
+// `electrical.vAcross` is Vds. The schematic draws the standard enhancement-mode
+// symbol — an insulated gate bar set off a broken channel, drain up / source down
+// — and animates the drain→source conduction: magnitude rides density + alpha +
+// glow (never speed), and the channel visibly chokes shut in cutoff.
+//
+// `nch` flips the body/channel arrow (N points *in* toward the channel, P points
+// *out*) — the one mark that distinguishes the two polarities.
+function mosfetSchematic(g: Graphics, o: GlyphOpts, nch: boolean): void {
+  const d = o.pins[0];
+  const s = o.pins[1];
+  const gate = o.pins[2];
+  if (!d || !s || !gate) return;
+  // The conduction channel runs vertically down the drain/source side; the gate
+  // plate sits to its left, with the gate lead reaching in from pin 2.
+  const chx = (d.x + s.x) / 2; // channel x (drain & source share it)
+  const topY = Math.min(d.y, s.y) + 6;
+  const botY = Math.max(d.y, s.y) - 6;
+  const midY = (topY + botY) / 2;
+  const platex = chx - 10; // the channel-side conductor (the three fingers' spine)
+  const gatex = platex - 5; // the insulated gate bar, set off by the oxide gap
+
+  // The drain current drives everything: |Id| as a 0..1 magnitude, its sign the
+  // flow direction. Cutoff (≈0 current) reads as a choked, dim channel.
+  const cond = norm(o.electrical.current, CUR_SCALE);
+  const on = cond > 0.03;
+  if (on) {
+    g.roundRect(
+      platex - 3,
+      topY - 4,
+      chx - platex + 8,
+      botY - topY + 8,
+      4,
+    ).fill({ color: o.color, alpha: 0.16 * cond });
+  }
+
+  // Drain lead (top) and source lead (bottom) in to the channel spine.
+  g.moveTo(d.x, d.y).lineTo(d.x, topY).lineTo(platex, topY);
+  g.moveTo(s.x, s.y).lineTo(s.x, botY).lineTo(platex, botY);
+  // Gate lead in to the gate bar.
+  g.moveTo(gate.x, gate.y).lineTo(gatex, gate.y).lineTo(gatex, midY);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The channel spine + the three "fingers" (the broken channel of an
+  // enhancement device): top finger to the drain, bottom to the source, middle
+  // the body. The channel narrows (the fingers shorten toward the spine) as the
+  // device chokes off — a visible cutoff cue, on the bounded clock via alpha.
+  const reach = 7 * (0.45 + 0.55 * (on ? 1 : 0.25)); // fingers retract in cutoff
+  g.moveTo(platex, topY - 1).lineTo(platex, botY + 1); // the spine
+  for (const fy of [topY, midY, botY]) {
+    g.moveTo(platex, fy).lineTo(platex + reach, fy);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.6 + 0.35 * cond });
+
+  // The insulated gate bar (the MOS "plate"), parallel to the spine across the
+  // oxide gap. This is the control electrode that draws no DC current.
+  g.moveTo(gatex, topY).lineTo(gatex, botY);
+  g.stroke({ width: 2.6, color: o.color, alpha: 0.95 });
+
+  // The body/channel arrow on the middle finger: N-channel points IN (toward the
+  // gate/channel), P-channel points OUT. This is the polarity mark.
+  const ax = platex + reach;
+  const ah = 3.2;
+  if (nch) {
+    // arrowhead at the spine end, pointing left (into the channel)
+    g.moveTo(platex, midY)
+      .lineTo(platex + ah, midY - ah)
+      .moveTo(platex, midY)
+      .lineTo(platex + ah, midY + ah);
+  } else {
+    // arrowhead at the finger tip, pointing right (out of the channel)
+    g.moveTo(ax, midY)
+      .lineTo(ax - ah, midY - ah)
+      .moveTo(ax, midY)
+      .lineTo(ax - ah, midY + ah);
+  }
+  g.stroke({ width: 2, color: o.color, alpha: 0.9 });
+
+  // The drain→source conduction belt: flowing dots down the channel spine, fed
+  // the SIGNED drain current so it reverses with Id and vanishes in cutoff.
+  flow(g, platex, topY, platex, botY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawNM(g: Graphics, o: GlyphOpts): void {
+  mosfetSchematic(g, o, true);
+}
+
+function drawPM(g: Graphics, o: GlyphOpts): void {
+  mosfetSchematic(g, o, false);
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -1013,6 +1106,89 @@ function drawFSW(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// The MOSFET as a Factorio gain-assembler / valve: a thin GATE control belt
+// (from pin 2) drives a sluice that opens a FAT drain→source MAIN belt (pin 0 →
+// pin 1). The main belt's thickness + flow density track |Id|, and it visibly
+// chokes shut below threshold (the gate sluice drops closed). All motion rides
+// the bounded `o.phase` clock — magnitude is width/density/alpha, never speed.
+// `nch` flips a small intake marker so the two polarities read apart.
+function mosfetFactory(g: Graphics, o: GlyphOpts, nch: boolean): void {
+  const d = o.pins[0];
+  const s = o.pins[1];
+  const gate = o.pins[2];
+  if (!d || !s || !gate) return;
+  const mx = (d.x + s.x) / 2;
+  const hw = 11;
+  const topY = Math.min(d.y, s.y) + 6;
+  const botY = Math.max(d.y, s.y) - 6;
+  const my = (topY + botY) / 2;
+
+  // |Id| drives the main belt; near-zero current = choked valve. The gate's job
+  // is shown by how far the sluice has lifted, keyed to the same conduction.
+  const cond = norm(o.electrical.current, CUR_SCALE);
+  const open = cond; // 0 = shut, 1 = wide open
+
+  // Drain lead in at the top, source lead out at the bottom, gate lead from the
+  // left into the control box.
+  g.moveTo(d.x, d.y).lineTo(d.x, topY);
+  g.moveTo(s.x, s.y).lineTo(s.x, botY);
+  g.moveTo(gate.x, gate.y).lineTo(mx - hw, gate.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The assembler body.
+  fBox(g, mx, my, hw, (botY - topY) / 2 + 2, o.color);
+
+  // The FAT main belt down the middle: its width grows with how far the valve is
+  // open (a thin choked throat in cutoff, a wide channel when conducting).
+  const beltW = 2 + 8 * open;
+  if (open > 0.02) {
+    g.roundRect(mx - beltW / 2, topY, beltW, botY - topY, 2).fill({
+      color: o.color,
+      alpha: 0.22 + 0.3 * open,
+    });
+  } else {
+    // choked shut: just a hairline throat
+    g.moveTo(mx, topY).lineTo(mx, botY).stroke({
+      width: 1.4,
+      color: 0x9c93b8,
+      alpha: 0.6,
+    });
+  }
+
+  // The gate sluice gate on the left wall: it lifts open with the control signal.
+  const lift = 5 * open;
+  g.moveTo(mx - hw + 1, my + 3)
+    .lineTo(mx - hw + 6, my + 3 - lift)
+    .stroke({ width: 1.8, color: o.color, alpha: 0.55 + 0.4 * open });
+  // a couple of control-belt dots running in along the gate lead (always on the
+  // bounded clock; the gate is a signal, so it ticks even at low current)
+  for (let i = 0; i < 2; i++) {
+    const t = (((i / 2 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+    g.circle(gate.x + (mx - hw - gate.x) * t, gate.y, 1.4).fill({
+      color: o.color,
+      alpha: 0.4,
+    });
+  }
+
+  // A small intake marker that differs by polarity (N draws from the top rail,
+  // P sources from it) — a faint cue, not load-bearing.
+  g.circle(mx, nch ? topY + 2 : botY - 2, 1.6).fill({
+    color: o.color,
+    alpha: 0.5,
+  });
+
+  // The main drain→source flow, signed so it reverses with Id and dies in cutoff.
+  flow(g, mx, topY, mx, botY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawFNM(g: Graphics, o: GlyphOpts): void {
+  mosfetFactory(g, o, true);
+}
+
+function drawFPM(g: Graphics, o: GlyphOpts): void {
+  mosfetFactory(g, o, false);
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -1045,6 +1221,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   LED: drawLED,
   ZD: drawZD,
   SW: drawSW,
+  NM: drawNM,
+  PM: drawPM,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -1061,6 +1239,8 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   LED: drawFLED,
   ZD: drawFZD,
   SW: drawFSW,
+  NM: drawFNM,
+  PM: drawFPM,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */

@@ -32,6 +32,41 @@ export interface PartInfo {
 const f = formatValue;
 const conducting = (e: ElectricalState): boolean => Math.abs(e.current) > 1e-7;
 
+// MOSFET level-1 square-law constants, mirrored from crates/sim-core/src/lib.rs
+// (MOS_KP, MOS_LAMBDA). The gate node isn't exposed to the inspector, so Vgs is
+// unknown; but Id and Vds are, and in saturation the square law inverts to give
+// the overdrive Vov and the transconductance gm = dId/dVgs — a useful live row.
+const MOS_KP = 0.02; // A/V^2
+const MOS_LAMBDA = 0.02; // 1/V
+
+/**
+ * Recover the saturation-region overdrive Vov and transconductance gm from the
+ * measured drain current and |Vds|, by inverting Id = ½·KP·Vov²·(1+λ·Vds).
+ * Returns zeros when there's no appreciable channel current (cutoff). This is a
+ * presentation-only derivation — the solver owns the real operating point.
+ */
+function mosfetGm(e: ElectricalState): { vov: number; gm: number } {
+  const id = Math.abs(e.current);
+  if (id < 1e-9) return { vov: 0, gm: 0 };
+  const vds = Math.abs(e.vAcross);
+  const k = MOS_KP * (1 + MOS_LAMBDA * vds);
+  const vov = Math.sqrt((2 * id) / k);
+  const gm = k * vov; // gm = KP·Vov·(1+λ·Vds)
+  return { vov, gm };
+}
+
+/**
+ * The operating region named from what the inspector can see. Cutoff = no drain
+ * current. Otherwise compare |Vds| to the recovered overdrive Vov: a saturated
+ * device has Vds ≥ Vov (the channel pinched off), a triode device Vds < Vov (the
+ * channel still ohmic). Matches the three regions in `mosfet_eval`.
+ */
+function mosfetRegion(e: ElectricalState): "cutoff" | "triode" | "saturation" {
+  if (Math.abs(e.current) < 1e-9) return "cutoff";
+  const { vov } = mosfetGm(e);
+  return Math.abs(e.vAcross) >= vov ? "saturation" : "triode";
+}
+
 export const PART_INFO: Record<string, PartInfo> = {
   R: {
     name: "Resistor",
@@ -197,6 +232,54 @@ export const PART_INFO: Record<string, PartInfo> = {
     plain: () =>
       "A clock-driven switch chops the circuit on and off at a fixed duty cycle (10 kHz here). Averaged over many cycles it delivers the duty fraction of the input — the basis of a switching regulator.",
     derived: () => [],
+  },
+  NM: {
+    name: "N-MOSFET",
+    equation: "Id = ½·KP·(Vgs − Vth)²·(1 + λ·Vds)",
+    headline: (e) => {
+      const region = mosfetRegion(e);
+      if (region === "cutoff")
+        return `Cutoff · off · Vds = ${f(e.vAcross, "V")}`;
+      const word = region === "saturation" ? "Saturation" : "Triode";
+      return `${word} · Vds = ${f(e.vAcross, "V")} @ Id = ${f(e.current, "A")}`;
+    },
+    plain: () =>
+      "An N-channel MOSFET is a voltage-controlled valve: the voltage on its insulated gate, relative to the source (Vgs), sets how much current flows from drain to source. Below a threshold of about 2 V the channel is off — cutoff, no current. Above it the channel opens, and how the device behaves depends on the drain-source voltage: with a small Vds it acts like a gate-controlled resistor (the triode region), and with a larger Vds the channel pinches off and the current levels out, set almost entirely by the gate (saturation). There the current follows a square law in the overdrive Vgs − Vth, and the transconductance gm = dId/dVgs measures the gain. Because the gate is insulated it draws no DC current at all — you steer a large drain current with a voltage that costs nothing to hold.",
+    derived: (e) => {
+      const { gm } = mosfetGm(e);
+      return [
+        { label: "Drain current Id", value: f(e.current, "A") },
+        { label: "gm = dId/dVgs", value: f(gm, "S") },
+        {
+          label: "Power Vds·Id",
+          value: f(Math.abs(e.vAcross * e.current), "W"),
+        },
+      ];
+    },
+  },
+  PM: {
+    name: "P-MOSFET",
+    equation: "Id = ½·KP·(Vgs − Vth)²·(1 + λ·Vds), Vth < 0",
+    headline: (e) => {
+      const region = mosfetRegion(e);
+      if (region === "cutoff")
+        return `Cutoff · off · Vds = ${f(e.vAcross, "V")}`;
+      const word = region === "saturation" ? "Saturation" : "Triode";
+      return `${word} · Vds = ${f(e.vAcross, "V")} @ Id = ${f(e.current, "A")}`;
+    },
+    plain: () =>
+      "A P-channel MOSFET is the mirror image of the N-channel one, and it's the natural high-side switch: it conducts when its gate is pulled below the source by more than about 2 V (a negative threshold). Tie the source to the positive rail and the device passes current to the load whenever the gate is dragged low, and blocks when the gate sits at the rail. The same three regions apply — cutoff, triode, saturation — and the same square law and transconductance gm govern it, just with the voltage signs flipped. Like the NMOS its insulated gate draws no DC current, so it holds its state for free.",
+    derived: (e) => {
+      const { gm } = mosfetGm(e);
+      return [
+        { label: "Drain current Id", value: f(e.current, "A") },
+        { label: "gm = dId/dVgs", value: f(gm, "S") },
+        {
+          label: "Power Vds·Id",
+          value: f(Math.abs(e.vAcross * e.current), "W"),
+        },
+      ];
+    },
   },
   GND: {
     name: "Ground",

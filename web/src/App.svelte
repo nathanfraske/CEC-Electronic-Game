@@ -164,6 +164,20 @@
       color: "var(--ok)",
     },
     {
+      tag: "NM",
+      name: "N-MOSFET",
+      desc: "Gate controls Id",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
+      tag: "PM",
+      name: "P-MOSFET",
+      desc: "High-side switch",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
       tag: "Q",
       name: "NPN Transistor",
       desc: "Gain, switching",
@@ -224,6 +238,8 @@
     LED: "Diodes",
     ZD: "Diodes",
     SW: "Active & Switching",
+    NM: "Active & Switching",
+    PM: "Active & Switching",
     Q: "Active & Switching",
     "&": "Logic & ICs",
     FF: "Logic & ICs",
@@ -472,7 +488,9 @@
         netlist = nl;
         board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
         if (nl) {
-          sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values);
+          // Pass the control-terminal array `c` (the MOSFET gate nodes; 0 for
+          // every 2-pin element). setNetlist takes it as a trailing optional arg.
+          sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values, nl.c);
           controls?.resync();
         } else if (graph.components.size > 0) {
           // Parts placed but no voltage source to reference: install a quiet
@@ -483,6 +501,7 @@
             new Uint32Array(),
             new Uint32Array(),
             new Float64Array(),
+            new Uint32Array(),
           );
           controls?.resync();
         }
