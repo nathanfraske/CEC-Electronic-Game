@@ -195,6 +195,37 @@
     },
   ];
 
+  // Parts bin folders. The order here is the display order; every part maps to
+  // exactly one category via its tag, so the bin stays organised (and searchable)
+  // as the catalogue grows.
+  const PART_CATEGORIES = [
+    "Sources",
+    "Passives",
+    "Diodes",
+    "Active & Switching",
+    "Logic & ICs",
+  ];
+  const PART_CAT_OF: Record<string, string> = {
+    V: "Sources",
+    AC: "Sources",
+    I: "Sources",
+    GND: "Sources",
+    R: "Passives",
+    C: "Passives",
+    EC: "Passives",
+    L: "Passives",
+    D: "Diodes",
+    SD: "Diodes",
+    LED: "Diodes",
+    ZD: "Diodes",
+    SW: "Active & Switching",
+    Q: "Active & Switching",
+    "&": "Logic & ICs",
+    FF: "Logic & ICs",
+    FP: "Logic & ICs",
+    uC: "Logic & ICs",
+  };
+
   // The state vector is node voltages (index 0 is ground); channels are labelled
   // by node index and iterate the live snapshot length.
   const CHANNEL_COLORS = [
@@ -226,6 +257,7 @@
   // Fallback kind for native drag-and-drop from the bin (set on dragstart).
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
+  let partSearch = $state("");
   let buildEx = $state<ExampleSpec | null>(null);
   let buildStep = $state(0);
   let buildDone = $state(false);
@@ -797,32 +829,73 @@
       >
     </div>
     {#if leftTab === "parts"}
+      {#snippet partRow(part: (typeof PARTS)[number])}
+        <!-- svelte-ignore a11y_click_events_have_key_events -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+        <li
+          class="part {armedPart === part.tag ? 'is-selected' : ''}"
+          style="--c: {part.color}"
+          draggable="true"
+          ondragstart={(e) => onPartDragStart(e, part.tag)}
+          onclick={() => toggleArm(part.tag)}
+          title="Click to arm for placement, or drag onto the board"
+        >
+          <span class="part-glyph">{part.tag}</span>
+          <span class="part-body">
+            <span class="part-name">{part.name}</span>
+            <span class="part-desc">{part.desc}</span>
+          </span>
+          <span class="part-tier">{part.tier}</span>
+        </li>
+      {/snippet}
       <p class="panel-note">
-        Click a part to arm it, then click the board to drop (click again or Esc
-        to disarm) — or drag it on. Scroll to zoom, drag empty space to pan. V /
-        R / C / EC / L / I / D / SD / LED / ZD / SW and GND all simulate today.
+        Click a part to arm it, then click the board to drop (Esc to disarm) —
+        or drag it on. Scroll to zoom, drag empty space to pan.
       </p>
-      <ul class="part-list scroll">
-        {#each PARTS as part (part.name)}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-          <li
-            class="part {armedPart === part.tag ? 'is-selected' : ''}"
-            style="--c: {part.color}"
-            draggable="true"
-            ondragstart={(e) => onPartDragStart(e, part.tag)}
-            onclick={() => toggleArm(part.tag)}
-            title="Click to arm for placement, or drag onto the board"
-          >
-            <span class="part-glyph">{part.tag}</span>
-            <span class="part-body">
-              <span class="part-name">{part.name}</span>
-              <span class="part-desc">{part.desc}</span>
-            </span>
-            <span class="part-tier">{part.tier}</span>
-          </li>
-        {/each}
-      </ul>
+      <input
+        class="part-search"
+        type="search"
+        placeholder="Search parts…"
+        bind:value={partSearch}
+        aria-label="Search parts"
+      />
+      {#if partSearch.trim()}
+        {@const q = partSearch.trim().toLowerCase()}
+        {@const hits = PARTS.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) ||
+            p.tag.toLowerCase().includes(q) ||
+            p.desc.toLowerCase().includes(q),
+        )}
+        {#if hits.length > 0}
+          <ul class="part-list scroll">
+            {#each hits as part (part.name)}
+              {@render partRow(part)}
+            {/each}
+          </ul>
+        {:else}
+          <p class="part-empty">No parts match “{partSearch}”.</p>
+        {/if}
+      {:else}
+        <div class="part-cats scroll">
+          {#each PART_CATEGORIES as cat (cat)}
+            {@const items = PARTS.filter((p) => PART_CAT_OF[p.tag] === cat)}
+            {#if items.length > 0}
+              <details class="part-cat" open>
+                <summary class="part-cat-head">
+                  <span class="part-cat-name">{cat}</span>
+                  <span class="part-cat-count">{items.length}</span>
+                </summary>
+                <ul class="part-list">
+                  {#each items as part (part.name)}
+                    {@render partRow(part)}
+                  {/each}
+                </ul>
+              </details>
+            {/if}
+          {/each}
+        </div>
+      {/if}
     {:else}
       <p class="panel-note">
         Pick a category and work through it — Watch a circuit run, or Build it
@@ -1969,6 +2042,77 @@
     border: 1px solid var(--border);
     border-radius: 9px;
     padding: 1px 7px;
+  }
+  /* Parts bin: search box + collapsible category folders. */
+  .part-search {
+    width: 100%;
+    margin: 0 0 8px;
+    padding: 6px 9px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+  }
+  .part-search::placeholder {
+    color: var(--faint);
+  }
+  .part-cats {
+    overflow-y: auto;
+  }
+  .part-cat {
+    border-bottom: 1px solid var(--border);
+  }
+  .part-cat-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 9px 4px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .part-cat-head::-webkit-details-marker {
+    display: none;
+  }
+  .part-cat-head::before {
+    content: "▸";
+    font-size: 10px;
+    color: var(--faint);
+    transition: transform 0.15s var(--ease);
+  }
+  .part-cat[open] > .part-cat-head {
+    color: var(--accent);
+  }
+  .part-cat[open] > .part-cat-head::before {
+    transform: rotate(90deg);
+  }
+  .part-cat-name {
+    flex: 1;
+  }
+  .part-cat-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 1px 7px;
+  }
+  .part-cat .part-list {
+    margin-bottom: 8px;
+  }
+  .part-empty {
+    font-size: 12px;
+    color: var(--dim);
+    padding: 8px 2px;
   }
   .example-list {
     list-style: none;
