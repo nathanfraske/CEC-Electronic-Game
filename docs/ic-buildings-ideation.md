@@ -805,3 +805,348 @@ you sealed.
 - **Bus-port determinism + probing.** A bus is presentation grouping over real
   per-line nets (§1.5); confirm the grouped rendering never changes which nets
   exist or how they hash.
+
+---
+
+## 5. First IC batch — concrete buildings + animation
+
+Sections 1–4 are the survey and the ladder. This section is the **shortlist to
+ship**: the *first concrete batch* of ICs, each pinned to one factory building
+and an animation precise enough to write a `FACTORY_DRAWERS` entry from. It does
+not re-derive the survey — it commits to a buildable set and obeys two settled
+facts:
+
+- **Fixed-function only, no seal.** Per the owner decision (top of this doc), the
+  everyday IC is a curated, fixed-function Tier-A black box. The seal mechanic is
+  the FPGA and is *out of scope* here. Nothing below leans on it.
+- **Determinism, read off the real hash.** `snapshot_hash` in `lib.rs` is FNV-1a
+  over **`tick` + `node_v` only** (confirmed in source: it hashes
+  `self.tick.to_le_bytes()` then each `node_v`). So the determinism test for a
+  first-batch IC is blunt and exact: **does its state live in `node_v`?** A
+  pure-digital chip carries integer/boolean state *beside* `node_v` (a new hashed
+  digital-domain field, the same way `reactive_state`/`diode_vd` are committed in
+  `step()` but here integer-exact), drives its outputs through a level the
+  digital→analog receiver picks up, and — for the very first chips that don't yet
+  stamp an analog driver — **never perturbs `node_v`, so the golden
+  `0xeaac376499e4fa24` is untouched.** The moment a chip *drives an analog node*
+  (its output stamps a Thévenin source into the MNA system — the regulator, later
+  the op-amp/DAC), it moves `node_v` and **regenerates the golden** with a
+  justification, exactly per golden rule 1. That single distinction orders the
+  whole batch.
+
+Each entry is deliberately implementation-shaped. The animation specs all ride
+the **bounded visual `phase` clock** already in `glyphs.ts` (`o.phase`, the
+`FLOW_SPEED`/`PULSE_K` constants) and reuse `flow()` for port leads, so magnitude
+is **density + thickness + alpha + the number**, never speed — the
+`visual-language.md` decoupling. *State* (which bin is lit, which way a latch
+sits, whether a rail holds) rides the discrete logic the block already computes,
+which is exactly what makes these legible without animating magnitude.
+
+### 5.0 The shared substrate every first-batch IC needs
+
+Before any single chip, three small renderer/engine capabilities are the real
+first deliverable; the chips are cheap once these land. They are called out in §1
+but here is the batch's minimum:
+
+1. **The N-port footprint + named pins** (§1.1): a rectangular body of grid cells
+   with `side`+`index` pin sites carrying a `role`+`name`. This generalizes
+   `PART_KINDS`' two-pin anchor; **pin geometry is identical across skins** (§1.2)
+   so a DIP-wired board is byte-identically wired in the factory skin.
+2. **The digital driver/receiver pin** (§2.1): an output pin drives a level
+   through a finite output resistance; an input pin reads its net voltage and
+   thresholds it against `VIL/VIH` with a defined invalid band → `X`. This is the
+   "domains meet at the pins" capability; **gates need only this.**
+3. **`VCC`/`GND` as ordinary pins** (§1.6): the IC is a load on the rail, and the
+   behavioral model **reads its own `VCC−GND` each tick and gates its outputs on
+   it** — the brownout lesson, free and identical for every chip below.
+
+A new `FACTORY_DRAWERS` entry for an IC has the same shape as the existing
+two-terminal ones — read the port `ElectricalState`s, draw a body via an
+`fBox`-style helper sized to the footprint, call `flow()` on each port lead — plus
+a **recipe animation in the middle** keyed to `o.phase` and to the chip's computed
+discrete state. Every spec below is written to drop into that shape.
+
+> **Carrier vocabulary reused (no new primitives in the renderer).** The five
+> buildings below are assembled from the *existing* `FACTORY_DRAWERS` language —
+> the **throat** (`drawFR`), **buffer chest** fill (`drawFC`), **flywheel** spin
+> (`drawFL`), **one-way conveyor gate / check-valve** (`drawFD`), **door**
+> (`drawFSW`), **generator** core (`generator`), and **drain grate** (`drawFGND`)
+> — recomposed on an N-port body. Where an entry says "sorter swing," "bucket
+> advance," or "metronome piston," that is a small new internal motif on the
+> bounded clock, not a new way to show magnitude.
+
+### 5.1 — IC #1: Logic gate (NAND/NOR first) → the **sorter / decider**
+
+1. **Why it's first.** Highest teaching value ÷ lowest sim cost in the whole
+   catalogue. It needs *only* substrate capability 2 (the driver/receiver pin) —
+   no matrix growth, integer-exact, golden-untouched. NAND and NOR are universal,
+   so this one building is the seed of every gate-built blueprint downstream. It
+   unlocks the **"Logic level / threshold"** contract (drive a clean `1` across a
+   load; watch a sagging rail turn it into `X`).
+2. **Sim model. Tier A.** Ports `A`,`B` (in, left), `Y` (out, right), `VCC` (top),
+   `GND` (bottom); NOT is single-input, wide gates fan in more left ports. Each
+   tick: threshold every input net against `VIL/VIH` → `{0,1,X}`; compute the
+   boolean (`X` on any `X` input); drive `Y` through the output resistance toward
+   the driven level *after a fixed `prop_delay` tick count*; **gate `Y` on
+   `VCC−GND`** — droop the rail and `Y` → `X`. **Determinism:** the gate's logic
+   value is integer/boolean state hashed in the digital domain; for the first
+   build, `Y` drives a *digital* receiver and **does not stamp `node_v`** → golden
+   untouched. (When gates later sink real current into an analog load, that draw
+   stamps `node_v` and is a deliberate, golden-regenerating step.) Truth table +
+   tick-grid edge = bit-identical everywhere.
+3. **Factory building.** The §1.3 **decider / sorter**, ~2×3 cells. Body shows the
+   boolean glyph (`&`, `≥1`, `=1`); NAND/NOR draw the **inversion bubble** on the
+   `Y` edge. Schematic skin: the distinctive-shape (or IEC rectangular) gate
+   symbol with numbered DIP pins — the transferable datasheet form, and the
+   **default** skin.
+4. **Animation spec.** Two input belts arrive left and feed a central **sorter
+   arm** — a short paddle (reuse the `drawFD` chevron-triangle motif) that rests
+   in one of two detents. *State, not magnitude, drives the arm:* the arm sits
+   "pass" or "block" according to the computed boolean, snapping between detents on
+   the `prop_delay` edge (a discrete flip, like `drawFSW`'s door). The `Y` lead
+   runs `flow()` at the driven level → **density/alpha show drive strength, the
+   belt's rail color + height show the logic level.** Inputs read as their own
+   belts on `A`/`B`. **Working vs idle:** when inputs are steady and `Y` settled,
+   the arm holds and only the bounded-clock chevrons recirculate (calm); on an
+   input change the arm *snaps* once — the only motion that ever encodes the chip
+   "doing something." **`X` / invalid:** the arm sits **mid-travel, jittering on
+   the `phase` clock** and `Y`'s belt drops to the dim `--warn` neutral with no
+   committed rail color — the visible "unknown." **Brownout:** when `VCC−GND` sags
+   under the family threshold, the **bubble/glyph dims and the arm goes limp to
+   mid-travel** (same as `X`) — the chip can't decide because its supply is gone.
+   The `VCC` lead (top) and `GND` lead (bottom) each carry the chip's quiescent +
+   switching draw as a thin `flow()` belt, so you see it loading the rail.
+5. **Dependencies.** Substrate 1+2+3. No analog stamp. **First to build.**
+
+### 5.2 — IC #2: D flip-flop / latch → the **clocked single-bin store**
+
+1. **Why it's first-batch.** One clocked bit, just above the gate: adds **clock
+   edge-detection on the tick grid + one state bit** and nothing else. Integer-
+   exact, golden-untouched. It is the seed of every sequential part and unlocks the
+   **"Timing closure"** contract (meet setup/hold; no glitch).
+2. **Sim model. Tier A.** Ports `D` (in), `CLK` (in, clock-port chevron glyph),
+   `Q`,`Q̄` (out), optional `SET`/`RST` (in), `VCC`/`GND`. Edge-detect `CLK`
+   against the previous tick's thresholded level; on the active edge, sample `D`'s
+   level into the stored bit; drive `Q`/`Q̄` from it through the output resistance.
+   The latch variant is level-sensitive (transparent while `CLK` high). **Setup/
+   hold** is a fixed tick window around the edge; violate it and the captured bit
+   is defined-but-`X` (the lesson). **Determinism:** one stored bit + the previous
+   `CLK` sample are integer state hashed in the digital domain; outputs drive
+   digital receivers → **`node_v` untouched, golden safe.** Clock-edge timing is a
+   pure function of the tick — the same proven family as `switch_conductance`'s
+   `(tick % period)`.
+3. **Factory building.** The §1.4 **single-bin store with a clocked gate**, ~3×3.
+   Body draws a **bistable lever** (a two-state seesaw) over one storage bin. The
+   `CLK` port gets the chevron-edge motif; schematic skin is the labeled box with
+   `CLK`/`D`/`Q`/`Q̄`.
+4. **Animation spec.** A small bin sits center; its **fill (reuse `drawFC`'s
+   charge-fill rect) shows the stored bit** — full = `1`, empty = `0`, *not* a
+   magnitude, just two levels. The `CLK` lead draws a **chevron that pulses on the
+   bounded clock**; on the **active edge** a quick **gate flap** (a one-frame
+   `drawFSW`-style door swing) lets the `D` belt's level *latch* into the bin — you
+   watch the bin snap to its new fill exactly on the edge, then **hold flat between
+   edges** (the "memory" read). `Q`/`Q̄` leads run `flow()` at the driven level
+   (complementary). **Working vs idle:** between clocks the bin holds and only the
+   `CLK` chevron beats — a held bin *is* the chip working (storing); the only event
+   is the edge flap. **Setup/hold violation:** if `D` moves inside the window, the
+   bin **fills to a jittering half-level (`X`)** on that edge and `Q` shows the dim
+   neutral — the timing lesson, seen. **Brownout:** rail sag **dumps the bin to
+   empty and freezes the lever** (a reset/`X`), the canonical "MCU/FF resets when
+   the rail browns out" from §1.6.
+5. **Dependencies.** Substrate + IC #1's threshold/receiver. Adds edge-detect +
+   one bit. **Second.**
+
+### 5.3 — IC #3: Counter / shift register (+ decoder/mux) → the **bucket line**
+
+1. **Why it's first-batch.** The sequential datapath primitive with the best
+   "watch the bit walk" payoff per sim cost. Clocked integer state array; the one
+   genuinely new renderer dependency is the **bus port** (§1.5). Still integer-
+   exact and golden-untouched. Huge teaching surface: a bit walking down a chain
+   (shift), modular counting + frequency division (counter), one-hot decode
+   (decoder), input selection (mux).
+2. **Sim model. Tier A.** Shift: `SER_IN`,`CLK`,`Q0..Qn` (bus, §1.5),`VCC`/`GND`.
+   Counter: `CLK`,`RST`,`EN`,`Q0..Qn`. Decoder: `A0..Ak` (bus in),`Y0..Y(2^k)`
+   (bus out),`EN`. Mux: `D0..D(2^k)`,`S0..Sk`,`Y`. Each active edge: shift /
+   increment / decode the integer state array; drive the output bus lines from it.
+   The counter's divide chain is a **pure function of the clock edges** — a
+   tick-derived counter, same determinism-safe pattern as the PWM switch.
+   **Determinism:** the `n`-bit integer state hashes in the digital domain;
+   per-line outputs drive digital receivers → **golden safe** until a line sinks
+   real analog current. Bus is presentation grouping over **real per-line nets**
+   (§1.5) — grouping never changes which nets exist or how they hash.
+3. **Factory building.** The §1.3 **bucket line**: a row of bins, ~ (n+2)×3 for an
+   n-bit width (or compact behind a bus port). A decoder is the **switchyard**
+   lighting exactly one output line; a mux is the **turntable** selecting one
+   input belt. Schematic skin: the labeled sequential box; the bus draws with the
+   fat multi-line "/n" motif, fanning to single belts on zoom/probe.
+4. **Animation spec.** Draw the bins as a left-to-right row, each bin's **fill =
+   its bit** (two levels, per IC #2). On each `CLK` edge the **contents advance one
+   bin** (shift: the lit bin steps right and `SER_IN`'s level enters the first bin)
+   or **the count increments** (the bin pattern updates to the new value) — *you
+   literally watch the bit walk the line*, one bin per edge, the motion carried by
+   the discrete state change and timed to the edge, never to magnitude. The output
+   **bus lead** runs one `flow()` per line (or a single fat belt whose **thickness
+   = active-line count**, with the "/n" tap label carrying the number). Decoder:
+   the **one selected `Y` line lights** (full belt), all others dark — one-hot made
+   literal. Mux: a **turntable wedge** (reuse the `drawFL` spoke motif, but its
+   angle is *set by the `S` select value*, not spinning freely) points at the
+   chosen `D` belt and routes it to `Y`. **Working vs idle:** between edges the
+   bins hold; the chip "works" by stepping on each `CLK` — a frozen pattern that
+   advances. **`RST`/`EN`:** `RST` clears all bins to empty in one frame; `EN` low
+   freezes the advance (bins hold, `CLK` chevron still beats but nothing walks).
+   **Brownout:** rail sag **scrambles the bins to jittering half-levels** and stops
+   the walk (state lost) — the digital-integrity lesson.
+5. **Dependencies.** Substrate + IC #2's clocked-bit core + **the bus-port
+   renderer (§1.5)** — the one new presentation capability this batch introduces.
+   **Third** (the bus port is its gate).
+
+### 5.4 — IC #4: 555 timer → the **metronome / pump house**
+
+1. **Why it's first-batch.** The first **"make it blink"** win and a beloved
+   contract magnet. Tier A: an internal SR latch + two comparator *thresholds*
+   evaluated at the pins, output a square wave whose period is computed from the
+   external `R`/`C` on the timing pins, with **tick-pure edge generation** — the
+   proven `switch_conductance` pattern (a closed-form `(tick)→level`, never an RNG
+   or wall-clock). Unlocks the **"Oscillator"** contract ("blink at 1 Hz ±tol").
+2. **Sim model. Tier A (first cut).** Ports `TRIG`,`THRESH`,`DISCH`,`CTRL`
+   (in/analog),`RST` (in),`OUT` (out),`VCC`/`GND` — the classic 8-pin DIP, named.
+   The internal latch toggles when the timing node crosses ⅓/⅔ `VCC`; `OUT` is a
+   tick-derived square wave at the resulting period/duty. **Honesty caveat that
+   sequences it last in the batch:** the *fully* honest 555 reads the external
+   timing cap's voltage (an analog node) to decide its thresholds — that read makes
+   the chip **observe `node_v`**, and if it also pulls the `DISCH` pin to ground
+   through a transistor it **stamps `node_v`** → golden-affecting. The **first-cut
+   Tier-A version** computes the period from the placed `R`/`C` *values* and emits
+   a tick-pure square on a digital `OUT`, leaving the analog cap cosmetic — that
+   version is golden-safe; the **Tier-B upgrade** (real RC charge/discharge between
+   thresholds, §3.4) stamps `node_v` and regenerates the golden. Ship the tick-pure
+   `OUT` first.
+3. **Factory building.** The §1.3 **metronome / pump house**, ~3×4. An internal
+   **piston / pendulum beats at the output frequency**; `OUT` emits a square-wave
+   belt — **chevrons that pulse in time, not stream** (the one place a belt's
+   chevrons gate on the chip's own clock rather than the bounded visual clock's
+   free recirculation, because the *output frequency is the lesson*). Schematic
+   skin: the labeled 8-pin box.
+4. **Animation spec.** A central **piston** rides up/down (or a pendulum swings)
+   **once per output half-period**, driven by the chip's tick-derived square state
+   — this is the rare animation tied to a *simulated* rate (the blink rate the
+   contract grades), distinct from the bounded visual clock; both coexist (the
+   piston beats at `f_out`; the port chevrons elsewhere recirculate at the calm
+   `FLOW_HZ`). On the astable build, draw the **external timing cap charging /
+   discharging between two threshold marks** (reuse `drawFC` fill ramping between a
+   ⅓ and ⅔ line) so you watch the exponential climb, hit ⅔, dump to ⅓, repeat. The
+   `OUT` belt: a block of chevrons that **appears (high) and vanishes (low)** in
+   lockstep with the piston — square-wave made visible; **duty = the fraction of
+   the cycle the chevron block is present**, magnitude/drive still on density+alpha.
+   **Working vs idle:** a *running* 555 is the piston beating + `OUT` blinking — the
+   most obviously "alive" first-batch chip. In `RST`, the piston **parks at bottom
+   and `OUT` goes dark**. **Brownout:** as `VCC` sags the **piston slows and
+   stalls** — but note this is the one chip where "slows" is honest, because the
+   blink *frequency itself* genuinely drops with the rail; the bounded-clock rule
+   is about *not encoding magnitude in speed*, and here the rate is the modeled
+   quantity, not a stand-in for current.
+5. **Dependencies.** Substrate + IC #2's latch/edge core + comparator-threshold
+   behavior + tick-derived output. Independent of the bus port. **Fourth** (after
+   the digital trio, because it introduces the threshold-read + tick-square output
+   and is the bridge toward analog-aware chips).
+
+### 5.5 — IC #5: Linear regulator (78xx) → the **rail refinery** *(first analog-touching; gated)*
+
+1. **Why it's in the batch but last.** The canonical **"raw ore → ingot"** and a
+   premier early contract magnet — **"hold 5 V ±2% to 100 mA"**, the standing-
+   production economy's bread and butter (robustness over time = income). It is
+   here because the **IC footprint dissolves the only blocker on controlled
+   sources** (§2.2): `IN`/`OUT`/`GND` are the named drive pins, so no free-floating
+   two-port gesture is needed. But it is **last and explicitly gated** because it
+   is the **first chip that drives an analog node** → it moves `node_v` and
+   **regenerates the golden**.
+2. **Sim model. Tier B.** Ports `IN` (in, left/top),`OUT` (out, right),`GND`
+   (bottom, common). A **controlled series-pass element** holding `Vout` against
+   load: a regulated voltage source with an output impedance and a **dropout
+   clamp** `Vout = min(Vset, Vin − Vdropout)`, the clamp on the proven Newton path
+   (like the diode). **Determinism:** the controlled-source stamp is linear and
+   the clamp is a bounded, fixed-threshold Newton nonlinearity — deterministic by
+   the same argument as V/R/C/L/I + the diode. **It stamps `node_v`, so it is
+   golden-affecting** — any netlist exercising it regenerates the pinned hash with
+   a justification, per golden rule 1. This is the batch's one deliberate analog
+   step.
+3. **Factory building.** The §1.3 / `game-factory-loop.md`-Tier-2 **rail refinery**,
+   ~3×3. A **wobbly input rail enters the top, a clean flat output rail leaves the
+   right**; the internal motif is a **governor / float-valve** holding the output
+   bar level while the input bar bobs. Schematic skin: the `7805`-style three-pin
+   block.
+4. **Animation spec.** Two horizontal **rail bars** drawn inside the body: the
+   **`IN` bar bobs** (its height = the noisy input voltage, which genuinely varies)
+   and the **`OUT` bar holds dead flat** at `Vset`. Between them sits a **float-
+   valve / governor**: a small paddle that **rides up and down on the bounded
+   `phase` clock to *visibly do the leveling work*** — when the input bar rises the
+   paddle nudges to throttle, keeping the output flat. The `OUT` lead runs `flow()`
+   at the load current → **belt thickness = current drawn**, height = the held
+   `Vset` (rail color = the produced rail: +5V cyan, +3.3V violet, +12V amber from
+   `visual-language.md`). **Working vs idle:** a working regulator is the **output
+   bar held flat while the input bobs and the governor fidgets** — robustness made
+   visible; with no load the governor rests and the bars sit still. **Dropout /
+   brownout (the lesson):** drive `IN` below `Vset + Vdropout` and the **output bar
+   *follows the input bar down*** (the governor bottoms out, paddle slammed open) —
+   `Vout = Vin − Vdropout`, the dropout lesson seen directly. A local decoupling cap
+   on `OUT` (the §1.6 buffer chest) visibly **rides out an input dip**, tying the
+   refinery back to the buffer-chest mechanic.
+5. **Dependencies.** Substrate + **controlled sources in the core (P4 in
+   `parts-catalog-ideation.md`)** + the one-sided dropout clamp on the Newton path.
+   **Golden-regenerating. Fifth and gated** — it ships the moment controlled
+   sources land, and it is the natural first home for them.
+
+### 5.6 Recommended first batch (ordered) + rationale
+
+1. **Logic gate (NAND/NOR → AND/OR/NOT/XOR)** — the *sorter / decider*.
+2. **D flip-flop / latch** — the *clocked single-bin store*.
+3. **Counter / shift register (+ decoder/mux)** — the *bucket line*.
+4. **555 timer** — the *metronome / pump house*.
+5. **Linear regulator (78xx)** — the *rail refinery* (gated on controlled sources).
+
+**Rationale (one paragraph).** Items 1–4 are all **Tier-A, integer-exact,
+`node_v`-free → the golden `0xeaac376499e4fa24` never moves**, and they are
+sequenced by the single renderer/engine capability each one adds: the gate needs
+only the driver/receiver pin (capability 2); the flip-flop adds clock edge-detect
++ one bit; the counter/shift line adds the bus port (§1.5), the only new
+presentation primitive in the batch; the 555 adds threshold-read + a tick-pure
+square output and is the bridge toward analog awareness. They unlock the entire
+**digital contract family** — logic-level, timing-closure, oscillator — with the
+safest possible determinism story and a clear "watch it work" animation for each
+(the snapping sorter, the latching bin, the walking bit, the beating piston). The
+regulator is deliberately **fifth and fenced off**: it is the first chip that
+*drives* an analog node, so it depends on controlled sources (P4) landing and it
+**regenerates the golden** — but it is the highest-value early *analog* contract
+("hold a rail under load"), and the IC footprint is precisely what makes its
+controlled source placeable, so it is the right first analog IC and the right
+bridge into batch two.
+
+### 5.7 Deferred to batch two (and why)
+
+- **Op-amp + op-amp blocks (integrator/active filter)** — Tier B, **controlled
+  source + rail-clamp nonlinearity, golden-affecting**, and the blocks additionally
+  want reactive feedback in the solve. Waits behind the regulator proving the
+  controlled-source path (§3.5–3.6).
+- **ADC / DAC** — Tier A but **read/drive analog nodes** (the DAC stamps a Thévenin
+  output, the ADC reads `node_v`) → golden-affecting; also want the bus port mature.
+  The analog↔digital bridge is a batch-two flagship, not a first step (§3.9).
+- **Switching regulator / buck-boost controller** — the switching netlist already
+  exists, but this needs **closed-loop control adjusting duty per tick** on top of
+  it; a Tier-C→A arc better suited once the regulator and a controller-behavior
+  pattern are proven (§3.8).
+- **Memory (register file / SRAM)** — Tier A and golden-safe, deferred only on
+  *priority*: it wants the bus port and tri-state data handling, and its payoff
+  (the datapath warehouse) lands better after the counter/shift line establishes
+  buses (§3.10).
+- **H-bridge / motor driver** — Tier-A control but the satisfying version wants the
+  inductive-load (and back-EMF controlled-source) interaction; visually a batch-two
+  showpiece (§3.12).
+- **Microcontroller** — the emulator capstone; needs the temporal-decoupling/resync
+  machinery. Explicitly the *last* building, not a first-batch chip (§3.11).
+
+**The through-line:** ship the four golden-safe digital chips first (gate →
+flip-flop → counter/shift → 555), each adding exactly one capability and one clear
+animation; then cross the analog line *once*, with the regulator, regenerating the
+golden deliberately — and everything that also drives or reads analog nodes
+(op-amp, ADC/DAC, switcher) follows it in batch two on that same proven
+controlled-source/Thévenin substrate.
