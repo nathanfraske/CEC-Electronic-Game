@@ -216,6 +216,17 @@ export class Board {
       fontWeight: "600",
     },
   });
+  // The ammeter has its own readout (in the clamp's red) so it can show at the
+  // same time as the voltmeter's ΔV rather than fighting over one label.
+  private readonly ammText = new Text({
+    text: "",
+    style: {
+      fill: PROBE_PLUS,
+      fontFamily: "IBM Plex Mono, monospace",
+      fontSize: 12,
+      fontWeight: "600",
+    },
+  });
   private readonly scope = new Container();
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
@@ -344,6 +355,10 @@ export class Board {
     this.probeText.anchor.set(0.5);
     this.probeText.resolution = DPR;
     this.probeText.visible = false;
+    this.world.addChild(this.ammText);
+    this.ammText.anchor.set(0.5);
+    this.ammText.resolution = DPR;
+    this.ammText.visible = false;
     for (let i = 0; i < 4; i++) {
       const t = new Text({
         text: "",
@@ -938,6 +953,7 @@ export class Board {
     if (rounded === this.textRes) return;
     this.textRes = rounded;
     this.probeText.resolution = rounded;
+    this.ammText.resolution = rounded;
     for (const t of this.groundLabels) t.resolution = rounded;
     for (const node of this.nodes.values()) node.setTextRes(rounded);
   }
@@ -1229,6 +1245,7 @@ export class Board {
     this.ammeter = null;
     this.probeLayer.clear();
     this.probeText.visible = false;
+    this.ammText.visible = false;
   }
 
   private nodeVoltage(node: number): number | null {
@@ -1357,17 +1374,22 @@ export class Board {
     g.clear();
     if (this.mode !== "measure") {
       this.probeText.visible = false;
+      this.ammText.visible = false;
       return;
     }
-    if (this.probeMode === "A") {
-      this.drawAmmeter(g);
-      return;
-    }
+    // The voltmeter (two leads, ΔV) and the ammeter (a clamp, current only) are
+    // independent instruments — both are drawn and read every frame, so they can
+    // be on the board at the same time. The V/A toggle only chooses which one a
+    // click places.
+    this.drawVoltmeter();
+    this.drawAmmeter(g);
+  }
+
+  private drawVoltmeter(): void {
     const a = this.probeA ? this.leadPos(this.probeA) : null;
     const b = this.probeB ? this.leadPos(this.probeB) : null;
     if (a) this.drawLead(a.x, a.y, PROBE_PLUS);
     if (b) this.drawLead(b.x, b.y, PROBE_MINUS);
-
     if (a && b) {
       const va = this.nodeVoltage(a.node) ?? 0;
       const vb = this.nodeVoltage(b.node) ?? 0;
@@ -1385,24 +1407,21 @@ export class Board {
     }
   }
 
-  /** Probe readout: a ring on the clicked part/wire showing its current AND its
-   * voltage at once (a real meter needs separate ports — a teaching note). */
+  /** Ammeter readout: a clamp ring on the clicked part/wire showing the current
+   * through it — current only (the voltmeter is its own instrument). */
   private drawAmmeter(g: Graphics): void {
     if (!this.ammeter) {
-      this.probeText.visible = false;
+      this.ammText.visible = false;
       return;
     }
     let cur = 0;
-    let volt = 0;
     let x = 0;
     let y = 0;
     let ok = false;
     if (this.ammeter.kind === "comp") {
       const c = this.graph.components.get(this.ammeter.id);
       if (c) {
-        const e = this.electrical?.get(c.id);
-        cur = e?.current ?? 0;
-        volt = e?.vAcross ?? 0;
+        cur = this.electrical?.get(c.id)?.current ?? 0;
         const box = this.componentBox(c);
         x = box.x + box.width / 2;
         y = box.y + box.height / 2;
@@ -1412,7 +1431,6 @@ export class Board {
       const w = this.graph.wires.get(this.ammeter.id);
       if (w) {
         cur = this.lastWireCurrents.get(w.id) ?? 0;
-        volt = this.pinVoltage(w.from) ?? 0;
         const route = this.routeForWire(w);
         if (route.length >= 2) {
           const m = sampleRoute(route, 0.5);
@@ -1423,14 +1441,14 @@ export class Board {
       }
     }
     if (!ok) {
-      this.probeText.visible = false;
+      this.ammText.visible = false;
       return;
     }
     g.circle(x, y, 12).fill({ color: 0x161020, alpha: 0.55 });
     g.circle(x, y, 12).stroke({ width: 2.5, color: PROBE_PLUS, alpha: 0.95 });
-    this.probeText.text = "I " + fmtSI(cur, "A") + "  ·  V " + fmtSI(volt, "V");
-    this.probeText.position.set(x, y - 22);
-    this.probeText.visible = true;
+    this.ammText.text = "I " + fmtSI(cur, "A");
+    this.ammText.position.set(x, y - 22);
+    this.ammText.visible = true;
   }
 
   // --- input handlers -----------------------------------------------------
