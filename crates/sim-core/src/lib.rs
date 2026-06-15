@@ -41,7 +41,23 @@
 //! | 12   | PMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
 //! | 13   | NPN BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
 //! | 14   | PNP BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
+//! | 15   | op-amp (nonlinear) | rail Vsat     | clamped transconductance, Newton (OUT=a IN-=b IN+=c)|
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
+//!
+//! Type 15 is the **operational amplifier**: an ideal-ish op-amp (output `a`,
+//! inverting input `b`, non-inverting input `c`) that drives its **output** toward
+//! a smooth-clamped function of its **input difference** `Vd = V(c) - V(b)`. With a
+//! huge fixed open-loop gain [`OPAMP_GAIN`] and a `tanh` saturation to its rail
+//! `Vsat` (its `value`, clamped to [`OPAMP_VSAT_MIN`]), the target output is
+//! `Vtarget = Vsat * tanh(GAIN * Vd / Vsat)`; the device sources
+//! `Iout = GOUT * (Vtarget - V(a))` into the output through a finite output
+//! conductance [`OPAMP_GOUT`] (a near-ideal but non-zero ~1 ohm output impedance for
+//! stability). The inputs draw no current (ideal). Each Newton iteration it
+//! linearises `Iout` in the three node voltages into the output row only (the inputs
+//! merely sense), reusing the diode `gmin` floor at each input so a floating input
+//! is non-singular. Like the MOSFET/BJT it adds **no** branch unknown and reads the
+//! third terminal `c`; a per-iteration step limiter on `Vd` ([`opamp_limit`]) keeps
+//! the stiff 1e5-gain linear region Newton-robust in feedback. See [`opamp_target`].
 //!
 //! Type 16 is the **varistor** (metal-oxide varistor, MOV): a two-terminal
 //! *symmetric* voltage clamp — very high resistance (tiny leakage) while `|V| < Vc`,
@@ -304,6 +320,28 @@ pub const ELEM_NPN: u8 = 13;
 /// **unused** for now.
 pub const ELEM_PNP: u8 = 14;
 
+/// **Operational amplifier** (ideal-ish, the first controlled-source primitive).
+/// Output `a`, inverting input `b` (IN-), non-inverting input `c` (IN+). Unlike the
+/// transistors (which control a current *between* two of their own terminals), the
+/// op-amp drives its **output** node toward a function of its **input difference**
+/// `Vd = V(c) - V(b)`. Its `value` is the **saturation rail magnitude `Vsat`** in
+/// volts (clamped to [`OPAMP_VSAT_MIN`]); the output swings within `+/-Vsat`.
+///
+/// The behavioural model is a smooth-clamped transconductance into a finite output
+/// conductance — a voltage source built from a stiff pull, with no branch unknown.
+/// With the fixed open-loop gain [`OPAMP_GAIN`] and output conductance
+/// [`OPAMP_GOUT`], the target output is `Vtarget = Vsat * tanh(GAIN*Vd/Vsat)` and the
+/// device injects `Iout = GOUT * (Vtarget - V(a))` at the output, so `V(a) -> Vtarget`
+/// with output impedance `1/GOUT`. The `tanh` is bounded, so `Vtarget` (and the
+/// stamp) can never explode; in saturation its slope `dT -> 0`, which correctly stops
+/// the linearisation responding once the output is clamped. The inputs draw **no**
+/// current (ideal); a [`GMIN`] is stamped at each so a floating input is non-singular.
+/// Like the MOSFET/BJT it adds **no** branch unknown and reads the third terminal `c`;
+/// each Newton iteration it linearises `Iout` into the output row only (see
+/// [`opamp_target`]), with a per-iteration step limiter on `Vd` ([`opamp_limit`])
+/// keeping the stiff high-gain linear region robust in feedback.
+pub const ELEM_OPAMP: u8 = 15;
+
 /// **Varistor** (metal-oxide varistor, MOV). A two-terminal *symmetric* voltage
 /// clamp, oriented `a -> b`: with `V = V(a) - V(b)`, it draws only a tiny leakage
 /// while `|V| < Vc`, then conducts hard once `|V|` exceeds the clamp voltage,
@@ -428,6 +466,34 @@ const BJT_BF: f64 = 100.0;
 /// contribution physical. Fixed default. Shared by both polarities.
 const BJT_BR: f64 = 2.0;
 
+// --- Op-amp (clamped transconductance) model constants ------------------------
+
+/// Op-amp open-loop voltage gain `A`, dimensionless. Huge (1e5) so that in feedback
+/// the differential input `Vd` is driven to ~0 (the "virtual short"), giving the
+/// near-ideal closed-loop gains the textbook formulas predict. It is the slope of
+/// the `tanh` at the origin, `dVtarget/dVd|_0 = OPAMP_GAIN`; the `tanh` bounds the
+/// target at `+/-Vsat`, so even this stiff gain can never make the stamp explode.
+const OPAMP_GAIN: f64 = 1.0e5;
+/// Op-amp output conductance `Gout`, in siemens — a finite ~1 ohm output impedance
+/// (`1/OPAMP_GOUT`). Near-ideal but non-zero on purpose: a finite output conductance
+/// gives the output row a real diagonal entry (well conditioned) and keeps the stiff
+/// pull `Iout = Gout*(Vtarget - V(a))` from being a singular ideal voltage source.
+const OPAMP_GOUT: f64 = 1.0;
+/// Floor on an op-amp's saturation rail `Vsat`, in volts, so `value <= 0` can't
+/// produce a degenerate device with a zero (or back-to-front) output swing. A
+/// supplied `value` below this is clamped up to it; the default 12 V passes through.
+const OPAMP_VSAT_MIN: f64 = 1.0;
+/// Maximum per-iteration change, in volts, allowed for an op-amp's differential
+/// input `Vd` — the analogue of [`pnjlim`]/[`mosfet_limit`] for the stiff high-gain
+/// transconductance. In the linear region a single Newton step on a 1e5-gain device
+/// can overshoot the rail wildly; clamping `|dVd|` keeps the iterate inside the
+/// well-behaved part of the `tanh`. The bound is a few times the linear-region width
+/// `Vsat/OPAMP_GAIN` (so the output can still traverse its full `+/-Vsat` swing in a
+/// handful of iterations) plus an absolute floor so a cold start from `Vd = 0` is not
+/// frozen. Small steps pass through unchanged, so a settled device is unaffected and
+/// this never over-iterates. See [`opamp_limit`].
+const OPAMP_VD_LIM_DELTA: f64 = 1.0e-3;
+
 /// The handful of model parameters a junction needs, so one set of Newton-companion
 /// routines ([`diode_eval`], [`diode_vcrit`], [`pnjlim`]) serves the whole diode
 /// family. `vth = n * Vt`. `vz` is the reverse **breakdown** voltage; it is
@@ -515,12 +581,21 @@ fn is_varistor(kind: u8) -> bool {
     kind == ELEM_VARISTOR
 }
 
+/// True for the operational amplifier. Like [`is_varistor`], it centralises the
+/// membership test so the nonlinear split, the companion collection, and the current
+/// commit share one definition. A single-kind family today, but the helper keeps the
+/// guarded paths reading uniformly with the other device families.
+#[inline]
+fn is_opamp(kind: u8) -> bool {
+    kind == ELEM_OPAMP
+}
+
 /// True for every nonlinear element (any device that drives the Newton outer
-/// loop): the diode family, the MOSFET family, the BJT family, or the varistor.
-/// The single switch that selects the Newton path over the linear fast path.
+/// loop): the diode family, the MOSFET family, the BJT family, the varistor, or the
+/// op-amp. The single switch that selects the Newton path over the linear fast path.
 #[inline]
 fn is_nonlinear(kind: u8) -> bool {
-    is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind)
+    is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
 }
 
 // --- Newton outer-loop constants ----------------------------------------------
@@ -592,6 +667,12 @@ type BjtMap = (usize, Option<usize>, Option<usize>, Option<usize>);
 /// [`DiodeMap`] (oriented `a -> b`); aliased so the collection and the
 /// `newton_iterate` signature stay readable.
 type VaristorMap = (usize, Option<usize>, Option<usize>);
+
+/// An op-amp's terminal map for the Newton companion: `(element_index, out_mna,
+/// inv_mna, noninv_mna)`, each MNA index `None` for ground (the three terminals
+/// a/b/c = OUT/IN-/IN+). The same shape as [`MosfetMap`]; aliased so the collection
+/// and the `newton_iterate` signature stay readable.
+type OpampMap = (usize, Option<usize>, Option<usize>, Option<usize>);
 
 /// Solve `A x = b` for a dense, row-major `n x n` system by Gaussian elimination
 /// with partial pivoting. Vec-backed so the dimension can vary per netlist, but
@@ -921,6 +1002,48 @@ fn varistor_eval(v: f64, vc: f64) -> (f64, f64) {
     (i, g)
 }
 
+// --- Op-amp (clamped transconductance) device ---------------------------------
+
+/// Evaluate the op-amp's smooth-clamped target output and its slope at the
+/// differential input `vd = V(c) - V(b)` and rail `vsat`, returning
+/// `(vtarget, dt)` with the target output voltage
+/// `Vtarget = vsat * tanh(OPAMP_GAIN * vd / vsat)` and its derivative
+/// `dT = dVtarget/dVd = OPAMP_GAIN * sech^2(OPAMP_GAIN*vd/vsat)`.
+///
+/// `sech^2 = 1 - tanh^2`, so `dT` is computed from the same `tanh` (`dT =
+/// OPAMP_GAIN*(1 - t*t)` with `t = tanh(...)`) — no second transcendental call. For a
+/// small `vd` the target is `~OPAMP_GAIN*vd` (the huge open-loop gain) and for a large
+/// `|vd|` it saturates at `+/-vsat` with `dT -> 0` (so the companion correctly stops
+/// responding once the output is clamped). The `tanh` is bounded in `[-1, 1]`, so both
+/// outputs are finite for any input and the stamp can never explode — the heart of the
+/// op-amp's Newton robustness. Pure, branch-free `f64` for determinism.
+#[inline]
+fn opamp_target(vd: f64, vsat: f64) -> (f64, f64) {
+    let t = (OPAMP_GAIN * vd / vsat).tanh();
+    let vtarget = vsat * t;
+    let dt = OPAMP_GAIN * (1.0 - t * t);
+    (vtarget, dt)
+}
+
+/// Op-amp differential-input limiting — the high-gain analogue of [`pnjlim`] /
+/// [`mosfet_limit`]. Clamp the proposed new differential input `vnew = Vd` so it
+/// cannot move more than [`OPAMP_VD_LIM_DELTA`] from the previous iterate `vold`,
+/// keeping a single Newton step on the stiff 1e5-gain transconductance from
+/// overshooting the rail in the linear region (the classic feedback Newton stress
+/// case). Small steps pass through unchanged, so a settled device is unaffected and
+/// this never over-iterates. Deterministic, pure `f64`.
+#[inline]
+fn opamp_limit(vnew: f64, vold: f64) -> f64 {
+    let delta = vnew - vold;
+    if delta > OPAMP_VD_LIM_DELTA {
+        vold + OPAMP_VD_LIM_DELTA
+    } else if delta < -OPAMP_VD_LIM_DELTA {
+        vold - OPAMP_VD_LIM_DELTA
+    } else {
+        vnew
+    }
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -985,6 +1108,12 @@ pub struct Sim {
     /// entries are meaningful; others stay `0.0`. Indexed in lockstep with
     /// `elements`.
     varistor_v: Vec<f64>,
+    /// Per-element op-amp differential input `Vd = V(c) - V(b)` carried as the
+    /// previous Newton iterate. Seeds the iterate and gives [`opamp_limit`] its
+    /// previous-iterate reference (the high-gain analogue of [`Sim::diode_vd`]). Only
+    /// op-amp entries are meaningful; others stay `0.0`. Indexed in lockstep with
+    /// `elements`.
+    opamp_vd: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -1034,6 +1163,7 @@ impl Sim {
             bjt_vbe: Vec::new(),
             bjt_vbc: Vec::new(),
             varistor_v: Vec::new(),
+            opamp_vd: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -1130,6 +1260,7 @@ impl Sim {
                     | ELEM_PMOS
                     | ELEM_NPN
                     | ELEM_PNP
+                    | ELEM_OPAMP
                     | ELEM_VARISTOR
             ) {
                 self.install_empty();
@@ -1194,6 +1325,7 @@ impl Sim {
         self.bjt_vbe = vec![0.0; elements.len()];
         self.bjt_vbc = vec![0.0; elements.len()];
         self.varistor_v = vec![0.0; elements.len()];
+        self.opamp_vd = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -1226,6 +1358,9 @@ impl Sim {
             *v = 0.0;
         }
         for v in &mut self.varistor_v {
+            *v = 0.0;
+        }
+        for v in &mut self.opamp_vd {
             *v = 0.0;
         }
         for v in &mut self.node_v {
@@ -1686,12 +1821,22 @@ impl Sim {
     /// same node-voltage / limiter-inactive gates with its own mA-scale
     /// current-residual test alongside the MOSFET's and BJT's.
     ///
-    /// Determinism: fixed element/diode/mosfet/bjt/varistor order, fixed assembly
+    /// Op-amps ride it too: the `opamps` slice lists, in ascending element order, each
+    /// device as `(element_index, out_mna, inv_mna, noninv_mna)` with `None` for a
+    /// grounded terminal. Each carries a single differential-input iterate in
+    /// `self.opamp_vd` (`Vd = V(c) - V(b)`), limited by [`opamp_limit`] (the high-gain
+    /// analogue of the junction/FET limiting) so the stiff 1e5-gain device stays
+    /// robust in feedback. The companion stamps `Iout = GOUT*(Vtarget - V(a))` into the
+    /// output row only (the inputs merely sense), and it folds into the same
+    /// node-voltage / limiter-inactive gates with its own mA-scale output-current
+    /// residual test alongside the MOSFET's, BJT's, and varistor's.
+    ///
+    /// Determinism: fixed element/diode/mosfet/bjt/varistor/opamp order, fixed assembly
     /// and solve order, pure `f64`, no hashed iteration. The iteration count is
     /// data-dependent but bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the
     /// last iterate is kept (a defined, finite outcome).
-    // One companion-map slice per nonlinear device family (diode/MOSFET/BJT/
-    // varistor) plus the shared linear base; grouping them into a struct would only
+    // One companion-map slice per nonlinear device family (diode/MOSFET/BJT/varistor/
+    // opamp) plus the shared linear base; grouping them into a struct would only
     // move the same fields around without clarifying this single private call site.
     #[allow(clippy::too_many_arguments)]
     fn newton_iterate(
@@ -1703,6 +1848,7 @@ impl Sim {
         mosfets: &[MosfetMap],
         bjts: &[BjtMap],
         varistors: &[VaristorMap],
+        opamps: &[OpampMap],
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -1869,6 +2015,60 @@ impl Sim {
                 // keeps a finite, non-singular slope. Reuses the diode `gmin` floor.
                 Self::stamp_gmin(&mut mat, n, ic, ib);
                 Self::stamp_gmin(&mut mat, n, ic, ia);
+            }
+
+            // Stamp each op-amp's companion at its current differential input. With
+            // output `a`, inverting input `b`, non-inverting input `c`, the device
+            // drives `Iout = GOUT*(Vtarget - V(a))` into the output node, where
+            // `Vtarget = Vsat*tanh(GAIN*Vd/Vsat)` and `Vd = V(c) - V(b)`. Linearising
+            // `Iout` in the node voltages (with `dT = dVtarget/dVd` from
+            // `opamp_target`) gives the partials `dIout/dV(a) = -GOUT`,
+            // `dIout/dV(c) = GOUT*dT`, `dIout/dV(b) = -GOUT*dT`, stamped into the
+            // **output row only** (the inputs merely sense, drawing no current):
+            //   row a(OUT): +GOUT at (a,a), +GOUT*dT at (a,c), -GOUT*dT at (a,b),
+            //               rhs[a] -= Ieq
+            // with the equivalent injection `Ieq = Iout - (-GOUT)*V(a)
+            // - (GOUT*dT)*V(c) - (-GOUT*dT)*V(b) = Iout + GOUT*V(a) - GOUT*dT*Vd`
+            // (the c/b terms enter only through `Vd = V(c) - V(b)`). The limited `Vd`
+            // iterate (`self.opamp_vd`) and the output node voltage from the previous
+            // iterate (`x[a]`) are the linearisation point, exactly as the diode uses
+            // its limited junction voltage. A GMIN is stamped at each input so a
+            // floating input keeps a finite, non-singular slope (the diode `gmin`
+            // floor), and `dT -> 0` in saturation makes the linearisation correctly
+            // stop responding once the output is clamped at the rail.
+            for &(ei, ia, ib, ic) in opamps {
+                let el = self.elements[ei];
+                let vsat = el.value.max(OPAMP_VSAT_MIN);
+                let vd = self.opamp_vd[ei];
+                let va = ia.map(|r| x[r]).unwrap_or(0.0);
+                let (vtarget, dt) = opamp_target(vd, vsat);
+                let iout = OPAMP_GOUT * (vtarget - va);
+                let gdt = OPAMP_GOUT * dt;
+                let ieq = iout + OPAMP_GOUT * va - gdt * vd;
+                if let Some(r) = ia {
+                    // The output current `Iout = GOUT*(Vtarget - Va)` is injected
+                    // INTO node a, so its equivalent current adds to `rhs[a]` and its
+                    // transconductance terms (∂Iout/∂Vc = +gdt, ∂Iout/∂Vb = -gdt)
+                    // stamp with the current-source sign — node a converges to
+                    // +Vtarget (not -Vtarget). `mat[a][a] += GOUT` is the output
+                    // conductance.
+                    mat[r * n + r] += OPAMP_GOUT;
+                    rhs[r] += ieq;
+                    if let Some(cc) = ic {
+                        mat[r * n + cc] -= gdt;
+                    }
+                    if let Some(bb) = ib {
+                        mat[r * n + bb] += gdt;
+                    }
+                }
+                // Ideal inputs draw no current; a GMIN floor keeps each input node
+                // non-singular (reuses the diode `gmin`).
+                if let Some(r) = ib {
+                    mat[r * n + r] += GMIN;
+                }
+                if let Some(r) = ic {
+                    mat[r * n + r] += GMIN;
+                }
             }
 
             x = solve_dense(mat, rhs, n);
@@ -2048,6 +2248,41 @@ impl Sim {
                 self.varistor_v[ei] = v_new;
             }
 
+            // Update each op-amp's differential input `Vd = V(c) - V(b)` with the
+            // op-amp step limiter, and fold its limiter gap into the same "limiter
+            // inactive" gate as the diodes/FETs/BJTs/varistors. The output-current
+            // residual is tracked with the same mA-scale absolute + relative test as
+            // the MOSFET (the diode's sub-pA tolerance does not fit a near-1-ohm
+            // output drive): the change in the target-driven output current
+            // `GOUT*Vtarget(Vd)` across the limited step measures whether the device
+            // has settled. The step limiter is what keeps the stiff 1e5-gain linear
+            // region from overshooting the rail in a single Newton step (the classic
+            // feedback Newton stress case). Vd = V(c) - V(b) at the fresh solve.
+            let mut converged_opamp_i = true;
+            for &(ei, _ia, ib, ic) in opamps {
+                let vb = ib.map(|r| x[r]).unwrap_or(0.0);
+                let vc = ic.map(|r| x[r]).unwrap_or(0.0);
+                let vd_raw = vc - vb;
+                let vd_old = self.opamp_vd[ei];
+                let vd_new = opamp_limit(vd_raw, vd_old);
+                let gap = (vd_raw - vd_new).abs();
+                if gap > max_vd_gap {
+                    max_vd_gap = gap;
+                }
+                let el = self.elements[ei];
+                let vsat = el.value.max(OPAMP_VSAT_MIN);
+                // The target-driven output current at the old vs the limited-new
+                // differential input; a settled op-amp barely moves it.
+                let i_old = OPAMP_GOUT * opamp_target(vd_old, vsat).0;
+                let i_new = OPAMP_GOUT * opamp_target(vd_new, vsat).0;
+                let di = (i_new - i_old).abs();
+                let tol = NEWTON_I_ABSTOL + NEWTON_RELTOL * i_new.abs().max(i_old.abs());
+                if di > tol {
+                    converged_opamp_i = false;
+                }
+                self.opamp_vd[ei] = vd_new;
+            }
+
             // Node-voltage update test (absolute + relative), over node rows only.
             let mut converged_v = true;
             for r in 0..(self.node_count - 1) {
@@ -2065,13 +2300,15 @@ impl Sim {
 
             // Require all the tests, and at least one full iteration, so a stale
             // seed cannot report convergence before a fresh solve. `converged_mov_i`
-            // is vacuously true with no varistor present, so this gate is unchanged
-            // for every diode/MOSFET/BJT netlist (golden untouched).
+            // and `converged_opamp_i` are vacuously true with no varistor / no op-amp
+            // present, so this gate is unchanged for every diode/MOSFET/BJT netlist
+            // (golden untouched).
             if converged_v
                 && converged_i
                 && converged_mos_i
                 && converged_bjt_i
                 && converged_mov_i
+                && converged_opamp_i
                 && converged_limit
             {
                 // Recompute node voltages from the limited junctions on the next
@@ -2116,14 +2353,15 @@ impl Sim {
             return;
         }
 
-        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT, and
-        // varistor maps.
+        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT,
+        // varistor, and op-amp maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
         let mut bjts: Vec<BjtMap> = Vec::new();
         let mut varistors: Vec<VaristorMap> = Vec::new();
+        let mut opamps: Vec<OpampMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -2203,12 +2441,13 @@ impl Sim {
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_VARISTOR => varistors.push((i, ia, ib)),
+                ELEM_OPAMP => opamps.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
         let x = self.newton_iterate(
-            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors,
+            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
         );
 
         // Commit per-element currents (oriented a -> b) at the operating point.
@@ -2237,6 +2476,16 @@ impl Sim {
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
+                // The op-amp main current is the output drive `Iout = GOUT*(Vtarget -
+                // V(a))` sourced into the output node `a`, evaluated at the committed
+                // differential-input iterate and the solved output voltage. With the
+                // a -> b sign convention this is the current the device pushes out of
+                // its `a` terminal toward the rest of the circuit.
+                ELEM_OPAMP => {
+                    let vsat = e.value.max(OPAMP_VSAT_MIN);
+                    let (vtarget, _) = opamp_target(self.opamp_vd[i], vsat);
+                    OPAMP_GOUT * (vtarget - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -2257,14 +2506,15 @@ impl Sim {
             return Vec::new();
         }
 
-        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT, and
-        // varistor maps.
+        // Stamp the fixed linear part once and collect the diode, MOSFET, BJT,
+        // varistor, and op-amp maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
         let mut bjts: Vec<BjtMap> = Vec::new();
         let mut varistors: Vec<VaristorMap> = Vec::new();
+        let mut opamps: Vec<OpampMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -2374,12 +2624,13 @@ impl Sim {
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_VARISTOR => varistors.push((i, ia, ib)),
+                ELEM_OPAMP => opamps.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
         let x = self.newton_iterate(
-            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors,
+            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
         );
 
         // Commit per-element currents (oriented a -> b) while `reactive_state`
@@ -2535,6 +2786,9 @@ impl Sim {
     ///   the terminal voltage (large while closed, ~0 while open).
     /// - Varistor (MOV): the symmetric clamp current at its terminal voltage —
     ///   tiny while `|V| < Vc`, large and signed once `|V|` exceeds the clamp.
+    /// - Op-amp: the output drive `GOUT * (Vtarget - V(a))` sourced at the output
+    ///   `a` (the current the device pushes out toward the rest of the circuit;
+    ///   the inputs draw ~0).
     pub fn element_currents(&self) -> Vec<f64> {
         self.currents.clone()
     }
@@ -3768,6 +4022,136 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "varistor circuit must reproduce exactly");
+    }
+
+    // --- Op-amp (ideal-ish controlled source) ---------------------------------
+
+    /// Unity-gain follower: OUT tied back to IN−, source on IN+. The output
+    /// tracks the input to within the finite open-loop gain — and it must
+    /// *converge* in this closed loop. Nodes: 0=gnd, 1=Vin, 2=Vout(=IN−);
+    /// op-amp a=OUT, b=IN−, c=IN+.
+    #[test]
+    fn opamp_voltage_follower() {
+        for vin in [3.0_f64, -2.5, 7.0] {
+            let v = build3(
+                3,
+                &[ELEM_VSOURCE, ELEM_OPAMP],
+                &[1, 2],
+                &[0, 2],
+                &[0, 1],
+                &[vin, 12.0],
+            )
+            .node_voltages();
+            assert!(
+                (v[2] - vin).abs() < 1e-3,
+                "follower: Vout {} tracks Vin {}",
+                v[2],
+                vin
+            );
+        }
+    }
+
+    /// Non-inverting amp: gain = 1 + R1/R2 (R1 OUT→IN−, R2 IN−→gnd); R1=R2 → ×2,
+    /// the inverting input sits at the virtual Vin, and the output clamps at the
+    /// rail when the ideal gain would exceed it. Nodes: 0=gnd,1=Vin,2=Vout,3=IN−.
+    #[test]
+    fn opamp_noninverting_amp() {
+        let make = |vin: f64| {
+            build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_OPAMP],
+                &[1, 2, 3, 2],
+                &[0, 3, 0, 3],
+                &[0, 0, 0, 1],
+                &[vin, 10_000.0, 10_000.0, 12.0],
+            )
+        };
+        let v = make(2.0).node_voltages();
+        assert!((v[2] - 4.0).abs() < 1e-2, "gain 2: Vout {}", v[2]);
+        assert!((v[3] - 2.0).abs() < 1e-2, "virtual: IN- {} ~ Vin", v[3]);
+        let vs = make(8.0).node_voltages();
+        assert!((vs[2] - 12.0).abs() < 0.2, "clamps at +Vsat: {}", vs[2]);
+    }
+
+    /// Inverting amp: gain = −Rf/Rin (IN+→gnd, Rin source→IN−, Rf OUT→IN−). With
+    /// Rf=Rin the gain is −1. Nodes: 0=gnd,1=Vin,2=Vout,3=IN−.
+    #[test]
+    fn opamp_inverting_amp() {
+        let v = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_OPAMP],
+            &[1, 1, 2, 2],
+            &[0, 3, 3, 3],
+            &[0, 0, 0, 0],
+            &[3.0, 10_000.0, 10_000.0, 12.0],
+        )
+        .node_voltages();
+        assert!((v[2] + 3.0).abs() < 1e-2, "gain -1: Vout {}", v[2]);
+    }
+
+    /// Open-loop comparator: the output saturates to ±Vsat following
+    /// sign(V+ − V−). Nodes: 0=gnd, 1=V+, 2=Vout; IN− tied to gnd.
+    #[test]
+    fn opamp_comparator() {
+        let out = |vplus: f64| {
+            build3(
+                3,
+                &[ELEM_VSOURCE, ELEM_OPAMP],
+                &[1, 2],
+                &[0, 0],
+                &[0, 1],
+                &[vplus, 12.0],
+            )
+            .node_voltages()[2]
+        };
+        let (hi, lo) = (out(0.5), out(-0.5));
+        assert!((hi - 12.0).abs() < 0.2, "V+>V- saturates high: got {hi}");
+        assert!((lo + 12.0).abs() < 0.2, "V+<V- saturates low: got {lo}");
+    }
+
+    /// `set_netlist` accepts the op-amp (type 15) and marks the netlist nonlinear;
+    /// an out-of-range terminal is rejected fail-safe.
+    #[test]
+    fn opamp_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(
+                3,
+                &[ELEM_VSOURCE, ELEM_OPAMP],
+                &[1, 2],
+                &[0, 2],
+                &[0, 1],
+                &[3.0, 12.0],
+                &[0.0, 0.0],
+            ),
+            "valid op-amp netlist installs"
+        );
+        assert!(
+            !sim.set_netlist(3, &[ELEM_OPAMP], &[9], &[0], &[1], &[12.0], &[0.0]),
+            "out-of-range op-amp terminal rejected"
+        );
+    }
+
+    /// A follower reproduces bit-for-bit over a long run.
+    #[test]
+    fn opamp_run_is_reproducible() {
+        let run = || {
+            let mut sim = build3(
+                3,
+                &[ELEM_VSOURCE, ELEM_OPAMP],
+                &[1, 2],
+                &[0, 2],
+                &[0, 1],
+                &[3.0, 12.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "op-amp circuit must reproduce exactly");
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
