@@ -30,9 +30,18 @@ web check/lint/build). sim-core untouched — golden `0xeaac376499e4fa24` unchan
   what the two layers are, and why energy flows forward on AC's negative
   half-cycle (P = V·I; negative × negative = positive). New `--energy` token.
 
+- **Parts/IC ideation (no code, owner-driven):** `docs/parts-catalog-ideation.md`
+  (discrete/analog menagerie → 8 new sim primitives; first 5 parts:
+  per-device params → Schottky → LED → Zener → electrolytic-w/-ESR) and
+  `docs/ic-buildings-ideation.md` (ICs as assemblers; black-box → macro →
+  seal-a-sub-circuit-into-a-chip ladder; first ICs: gates → flip-flop → 555).
+
 ### Pick up here
 - **More demo pages** (capacitor, inductor, RC/RL) in the dark style; link from app.
 - Optional **toggle** for the energy layer if the belt is busy on dense boards.
+- **Parts roadmap** (owner-driven): steer which parts/ICs first; the gating sim
+  primitives are P3 multi-terminal + P4 controlled sources (see the two ideation
+  docs + `parts-roadmap.md`).
 - Owner-driven backlog unchanged (contracts prototype, per-island ΔT).
 
 ---
