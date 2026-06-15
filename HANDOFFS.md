@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 (pm) — QoL batch (partial) + scope time window
+
+**State:** 🟢 Green (full CI suite passed). Branch pushed. Shipped from the owner's
+QoL batch:
+- **Pan yields to Build on a grab** — clicking a part/wire in Pan switches to
+  Build/Select and grabs it (move/reshape); empty still pans. New `onMode` callback.
+- **R rotates the ghost** whenever a part is armed (was rotating a leftover selection).
+- **Scope selectable time window** — decimated spans 0.48 ms/4.8 ms/48 ms/0.48 s (base
+  = old behaviour), ⏱ button cycles, duration labelled. Fits a full low-f AC cycle.
+- **Open-loop current-source fix re-verified** (harness: open 0 mA/0 V, closed 10 mA).
+
+**Deferred (interaction-model changes — analysis in TODOS "QoL / fixes batch"):**
+drop-on-track segment split (#4), delete-only-segment-to-junction (#5), KiCad
+click-to-continue wiring (#6 — needs `onPointerDown` reworked to complete-while-wiring).
+Plus the still-pending **onboarding** (pull-based; `docs/ui/onboarding-first-run.md`)
+and the **digital scheduler** (Phase 1+, the dedicated session; `logic-…-nets.md` §6).
+
+---
+
 ## 2026-06-15 (later) — Logic-family decision + Phase 0, marquee/copy-paste, factory internals
 
 **State:** 🟢 Green. sim-core 88 tests pass, golden `0xeaac…fa24` **unchanged**; all

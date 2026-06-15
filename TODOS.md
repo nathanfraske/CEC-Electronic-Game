@@ -8,6 +8,39 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### QoL / fixes batch (owner, 2026-06-15 pm)
+- ~~**Pan yields to Build on a grab**: clicking a component or wire in Pan switches
+  to Build/Select and grabs it (move/reshape); empty still pans. `onMode` callback.~~
+- ~~**R rotates the ghost when a part is armed** (was rotating a leftover selection).~~
+- ~~**Open-loop current-source fix verified** (re-ran harness: open = 0 mA/0 V, closed
+  = 10 mA/10 kV). Residual: a return path that's topologically present but DC-broken
+  by *value* (open switch / lone cap) isn't caught by the topology-only union-find —
+  needs the value-aware singular detection already on the backlog.~~
+- [ ] **Drop a component onto existing track(s) should split/remove the spanned
+  segment**, not leave it shorting the pins (e.g. a Transformer across dual tracks —
+  the wire between the corner pins must be cut so the part bridges them, not the wire).
+  *Analysis:* `placeCell` needs a post-place pass that, for each placed pin landing on
+  an existing wire's route, splits that wire at the pin (reuse `junctionOnWire`/the
+  split path) and removes any wire segment that runs **between** two of the new part's
+  own pins (that's the short). Medium-complex; touches `placeCell` + graph split.
+- [ ] **Delete on a wire deletes only the segment up to the nearest junction(s)** on
+  that run, not the whole pin-to-pin wire. *Analysis:* wires already SPLIT at junctions
+  (`junctionOnWire`), so a junction-bounded segment is its own wire object and deletes
+  alone — the gap is deleting a single **segment between waypoints/corners** of one
+  multi-bend wire object: needs `deleteSelection` (or a wire-segment delete) to split
+  the wire at the clicked segment and drop only that piece. Medium-complex.
+- [ ] **Wiring auto-complete with a junction (KiCad continue)**: while drawing a wire,
+  clicking an existing trace drops a junction, ends the wire there, and **continues** a
+  new wire from it. *Analysis:* the current model is **drag-per-wire** (press a pin →
+  drag → release completes in `onPointerUp`; `finishWireOnWire` then `cancelWiring`).
+  KiCad continue needs (a) `finishWireOnWire` to RETURN the new junction and the
+  up-handler to set `this.wiring = {from:{junctionId}}` instead of cancelling, AND
+  (b) `onPointerDown` reworked so a press **while already wiring** COMPLETES at the
+  target (pin/wire/junction) instead of overwriting `this.wiring` with a new start —
+  i.e. a click-to-place mode. The (b) rework is the real work; do it deliberately.
+- ~~**Scope time window**: selectable, decimated span (0.48 ms/4.8 ms/48 ms/0.48 s);
+  base span = old per-tick behaviour; ⏱ button cycles it, duration labelled on scope.~~
+
 ### Shipped this session (editor fixes + phase-shift + info-panel P1)
 - ~~**Pan tool regression**: the Esc-default pan no longer blanket-grabs pointerdown —
   pin/junction press starts a wire, wire press reshapes, armed click places; only a
