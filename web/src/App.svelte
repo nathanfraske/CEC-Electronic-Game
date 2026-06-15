@@ -71,6 +71,13 @@
       color: "var(--warn)",
     },
     {
+      tag: "AC",
+      name: "AC Source",
+      desc: "Sine source · set Hz",
+      tier: "I",
+      color: "var(--accent)",
+    },
+    {
       tag: "R",
       name: "Resistor",
       desc: "Ideal ohms, no tolerance",
