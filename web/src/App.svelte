@@ -160,6 +160,13 @@
       color: "var(--bronze)",
     },
     {
+      tag: "MOV",
+      name: "Varistor",
+      desc: "Clamps spikes at ±Vc",
+      tier: "II",
+      color: "var(--warn)",
+    },
+    {
       tag: "SW",
       name: "Switch",
       desc: "Clock-driven (PWM)",
@@ -231,6 +238,7 @@
     "Sources",
     "Passives",
     "Diodes",
+    "Protection",
     "Active & Switching",
     "Logic & ICs",
   ];
@@ -247,6 +255,7 @@
     SD: "Diodes",
     LED: "Diodes",
     ZD: "Diodes",
+    MOV: "Protection",
     SW: "Active & Switching",
     NM: "Active & Switching",
     PM: "Active & Switching",

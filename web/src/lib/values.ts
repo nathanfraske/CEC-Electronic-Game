@@ -31,6 +31,8 @@ const CURATED_FULL: Record<string, number[]> = {
   AC: [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000],
   // Zener breakdown voltage Vz (V): the common standard BZX-series values.
   ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
+  // Varistor clamp voltage Vc (V): common MOV ratings, a superset of the chips.
+  MOV: [12, 18, 24, 36, 48, 68, 100],
   // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
   EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
@@ -46,6 +48,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   AC: [100, 500, 1000, 2000],
   // The classic Zener reference voltages people reach for first.
   ZD: [3.3, 4.7, 5.1, 6.2, 9.1, 12],
+  // The common varistor clamp voltages people reach for first.
+  MOV: [12, 18, 24, 36, 48],
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 

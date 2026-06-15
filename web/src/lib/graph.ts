@@ -256,6 +256,14 @@ export const PART_KINDS: Record<string, PartKind> = {
   // shunt voltage reference. Forward it is an ordinary ~0.7 V diode. Bronze keeps
   // it in the silicon-junction family while reading apart from the plain diode.
   ZD: kind("ZD", "Zener Diode", "bronze", twoPin("A", "K"), 5.1, "V", true),
+  // Varistor (MOV): a two-terminal *symmetric* voltage clamp — the across-the-line
+  // surge protector. Very high resistance until |V| reaches its clamp voltage Vc
+  // (`value`, in volts, default 18 V), then it conducts hard in either polarity to
+  // pin the node near ±Vc and absorb the surge. The symmetric cousin of the Zener;
+  // oriented a→b but bidirectional, so its pins are the neutral A/B pair. Amber
+  // `warn` reads as the protective/caution hue and sets the Protection family
+  // apart from the silicon-junction diodes.
+  MOV: kind("MOV", "Varistor", "warn", twoPin("A", "B"), 18, "V", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
   // N-channel MOSFET: the first three-terminal solver element. A voltage on the
