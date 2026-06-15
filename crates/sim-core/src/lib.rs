@@ -29,6 +29,24 @@
 //! | 3    | inductor           | henries       | backward-Euler companion (branch)  |
 //! | 4    | DC current source  | amps          | KCL injection: `value` from a -> b |
 //! | 5    | diode (nonlinear)  | (unused)      | Shockley, Newton companion a -> b  |
+//! | 6    | switch (clocked)   | duty `[0,1]`  | time-varying conductance a <-> b   |
+//!
+//! ## Clock-driven switch
+//!
+//! The **switch** (`ELEM_SWITCH`) is a deterministic PWM element: a
+//! time-varying *linear* conductance between `a` and `b` whose state is a pure
+//! function of the current [`Sim::tick`]. It chops with a fixed period of
+//! [`SWITCH_PERIOD_TICKS`] ticks; its `value` is the duty cycle in `[0, 1]`
+//! (clamped). It is closed for the first `round(duty * SWITCH_PERIOD_TICKS)`
+//! ticks of each period and open otherwise, i.e.
+//! `closed = (tick % SWITCH_PERIOD_TICKS) < on_ticks`. Closed it stamps the
+//! on-conductance `1/`[`SWITCH_RON`]; open it stamps [`SWITCH_GOFF`]. The stamp
+//! is exactly a resistor's symmetric KCL stamp (no branch unknown, no reactive
+//! state), so the switch needs **no Newton machinery** — it is part of the fixed
+//! linear base even when a diode forces the Newton path, with its conductance
+//! computed once per solve from the tick before any iterating. This makes a buck
+//! converter (switch into an inductor + freewheel diode + output cap) expressible
+//! as an ordinary netlist.
 //!
 //! ## MNA layout
 //!
@@ -141,6 +159,30 @@ pub const ELEM_ISOURCE: u8 = 4;
 /// defaults [`DIODE_IS`], [`DIODE_N`], [`DIODE_VT`]); it is reserved for a
 /// future per-device saturation current / emission coefficient.
 pub const ELEM_DIODE: u8 = 5;
+/// Clock-driven **switch** (PWM). Oriented `a <-> b` (symmetric, like a
+/// resistor). Its `value` is the **duty cycle** in `[0, 1]` (clamped). The
+/// switch is a *time-varying linear conductance*: a pure deterministic function
+/// of the current tick with period [`SWITCH_PERIOD_TICKS`], closed (conductance
+/// `1/`[`SWITCH_RON`]) for the first `round(duty * SWITCH_PERIOD_TICKS)` ticks of
+/// each period and open ([`SWITCH_GOFF`]) otherwise. It stamps like a resistor
+/// of that conductance and carries **no** branch unknown and no reactive state,
+/// so it needs no Newton machinery even when a diode is present.
+pub const ELEM_SWITCH: u8 = 6;
+
+// --- Clock-driven switch model constants --------------------------------------
+
+/// Switching period of [`ELEM_SWITCH`], in ticks. With [`DT`] = 2 us this is
+/// 100 us, i.e. a 10 kHz switching frequency. Fixed for determinism; the switch
+/// state is `(tick % SWITCH_PERIOD_TICKS) < round(duty * SWITCH_PERIOD_TICKS)`.
+const SWITCH_PERIOD_TICKS: u64 = 50;
+/// On-state resistance of a closed [`ELEM_SWITCH`], in ohms. Small but finite so
+/// the closed switch behaves like a near-ideal conductance `1/SWITCH_RON`
+/// without making the MNA system singular.
+const SWITCH_RON: f64 = 0.01;
+/// Off-state conductance of an open [`ELEM_SWITCH`], in siemens. Tiny but
+/// nonzero so an open switch leaves a finite (non-singular) stamp, mirroring the
+/// `gmin` floor used across diode junctions.
+const SWITCH_GOFF: f64 = 1.0e-9;
 
 // --- Diode (Shockley) model constants -----------------------------------------
 
@@ -454,6 +496,7 @@ impl Sim {
                     | ELEM_INDUCTOR
                     | ELEM_ISOURCE
                     | ELEM_DIODE
+                    | ELEM_SWITCH
             ) {
                 self.install_empty();
                 return false;
@@ -604,6 +647,22 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
+                ELEM_SWITCH => {
+                    // Clock-driven switch: a time-varying conductance computed
+                    // from the tick (tick 0 at the operating point). Stamped
+                    // exactly like a resistor of that conductance.
+                    let g = self.switch_conductance(e);
+                    if let Some(r) = ia {
+                        mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        mat[r * n + c] -= g;
+                        mat[c * n + r] -= g;
+                    }
+                }
                 ELEM_VSOURCE | ELEM_CAPACITOR => {
                     // Voltage constraint V(a) - V(b) = value, where `value` is
                     // the source EMF or the capacitor's stored voltage.
@@ -655,8 +714,8 @@ impl Sim {
         self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
         // Commit per-element currents (oriented a -> b) from the operating
         // point. Voltage sources and capacitors carry their branch unknown;
-        // inductors carry their stored initial current; resistors derive from
-        // the node voltages.
+        // inductors carry their stored initial current; resistors and the
+        // switch derive from the node voltages.
         for (i, e) in self.elements.iter().enumerate() {
             self.currents[i] = match e.kind {
                 ELEM_RESISTOR => {
@@ -666,6 +725,7 @@ impl Sim {
                         self.element_voltage(e) / e.value
                     }
                 }
+                ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
@@ -708,6 +768,23 @@ impl Sim {
                         continue;
                     }
                     let g = 1.0 / e.value;
+                    if let Some(r) = ia {
+                        mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        mat[r * n + c] -= g;
+                        mat[c * n + r] -= g;
+                    }
+                }
+                ELEM_SWITCH => {
+                    // Clock-driven switch: a time-varying conductance that is a
+                    // pure function of the current tick. Stamped exactly like a
+                    // resistor of that conductance (symmetric, no branch unknown,
+                    // no reactive state).
+                    let g = self.switch_conductance(e);
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -801,6 +878,7 @@ impl Sim {
                         self.element_voltage(e) / e.value
                     }
                 }
+                ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -1009,6 +1087,23 @@ impl Sim {
                         base_rhs[r] += e.value;
                     }
                 }
+                ELEM_SWITCH => {
+                    // Clock-driven switch: a tick-determined conductance stamped
+                    // into the fixed linear base (computed once from tick 0 here),
+                    // exactly like a resistor. Carries no branch unknown, so the
+                    // Newton loop sees it as part of the constant base.
+                    let g = self.switch_conductance(e);
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        base_mat[r * n + c] -= g;
+                        base_mat[c * n + r] -= g;
+                    }
+                }
                 ELEM_DIODE => diodes.push((i, ia, ib)),
                 _ => {}
             }
@@ -1026,6 +1121,7 @@ impl Sim {
                         self.element_voltage(e) / e.value
                     }
                 }
+                ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
@@ -1124,6 +1220,24 @@ impl Sim {
                         base_rhs[r] += e.value;
                     }
                 }
+                ELEM_SWITCH => {
+                    // Clock-driven switch: a tick-determined conductance stamped
+                    // into the fixed linear base (computed once per step from the
+                    // current tick before any Newton iterating), exactly like a
+                    // resistor. No branch unknown and no reactive state, so the
+                    // Newton loop treats it as part of the constant base.
+                    let g = self.switch_conductance(e);
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        base_mat[r * n + c] -= g;
+                        base_mat[c * n + r] -= g;
+                    }
+                }
                 ELEM_DIODE => diodes.push((i, ia, ib)),
                 _ => {}
             }
@@ -1142,6 +1256,7 @@ impl Sim {
                         self.element_voltage(e) / e.value
                     }
                 }
+                ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -1160,6 +1275,28 @@ impl Sim {
     #[inline]
     fn element_voltage(&self, e: &Element) -> f64 {
         self.node_v[e.a] - self.node_v[e.b]
+    }
+
+    /// The conductance of a clock-driven switch ([`ELEM_SWITCH`]) at the current
+    /// tick. `e.value` is the duty cycle, clamped into `[0, 1]`; the closed
+    /// window is `round(duty * SWITCH_PERIOD_TICKS)` ticks per period and the
+    /// switch is closed when `(tick % SWITCH_PERIOD_TICKS) < on_ticks`. Closed
+    /// returns `1/`[`SWITCH_RON`]; open returns [`SWITCH_GOFF`]. Pure `f64` and a
+    /// deterministic function of the tick, so every run reproduces. Computed once
+    /// per solve (the Newton path stamps it into the fixed linear base before
+    /// iterating), exactly like a resistor of that conductance.
+    #[inline]
+    fn switch_conductance(&self, e: &Element) -> f64 {
+        let duty = e.value.clamp(0.0, 1.0);
+        // round() ties away from zero; multiplying a duty in [0,1] by the period
+        // is exact for these small magnitudes, so the boundary is well defined.
+        let on_ticks = (duty * SWITCH_PERIOD_TICKS as f64).round() as u64;
+        let closed = (self.tick % SWITCH_PERIOD_TICKS) < on_ticks;
+        if closed {
+            1.0 / SWITCH_RON
+        } else {
+            SWITCH_GOFF
+        }
     }
 
     /// Advance exactly one fixed-size tick. Solves the implicit system, commits
@@ -1227,6 +1364,8 @@ impl Sim {
     /// - Inductor: its branch current; `0` at `t = 0` (de-energized).
     /// - Voltage source: its branch current.
     /// - Current source: its set `value` (forced, oriented `a -> b`).
+    /// - Switch: `G(tick) * (V(a) - V(b))`, the tick-determined conductance times
+    ///   the terminal voltage (large while closed, ~0 while open).
     pub fn element_currents(&self) -> Vec<f64> {
         self.currents.clone()
     }
@@ -2004,6 +2143,252 @@ mod tests {
             "diode clamps the divider midpoint into the knee: got {}",
             v[2]
         );
+    }
+
+    // --- Clock-driven switch (PWM) --------------------------------------------
+    //
+    // The switch (type 6) is a time-varying linear conductance: a pure
+    // deterministic function of the tick with period `SWITCH_PERIOD_TICKS`,
+    // closed for `round(duty * period)` ticks per period and open otherwise. It
+    // stamps like a resistor, needs no Newton machinery, and underpins the buck
+    // converter demo.
+
+    /// A switch in series with a pull-down resistor from a DC source produces a
+    /// clean PWM node: while the switch is closed (Ron tiny) the mid node sits at
+    /// ~Vin, and while it is open (Goff tiny) the pull-down holds it at ~0. Over a
+    /// full period the high/low counts and levels must match the duty exactly.
+    /// Layout: source 1->0 = Vin, switch 1->2 (a=1,b=2), R 2->0 pulls node 2 down.
+    /// The circuit is purely resistive, so each step's node 2 is a pure function
+    /// of that tick's switch state (no settling).
+    #[test]
+    fn switch_chops_rail_with_period_and_duty() {
+        let vin = 10.0;
+        let duty = 0.5; // on_ticks = round(0.5 * 50) = 25
+        let sim_period = SWITCH_PERIOD_TICKS as usize;
+        let mut sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vin, duty, 1_000.0],
+        );
+        let mut high = 0usize;
+        let mut low = 0usize;
+        // Step across exactly one period; reading node 2 after step k reflects the
+        // solve at tick k-1, so the 50 reads cover ticks 0..49 of the period.
+        for _ in 0..sim_period {
+            sim.step();
+            let v2 = sim.node_voltages()[2];
+            if (v2 - vin).abs() < 1e-2 {
+                high += 1;
+            } else if v2.abs() < 1e-3 {
+                low += 1;
+            } else {
+                panic!("switch node neither high nor low: {}", v2);
+            }
+        }
+        let on_ticks = (duty * SWITCH_PERIOD_TICKS as f64).round() as usize;
+        assert_eq!(high, on_ticks, "closed ticks per period match the duty");
+        assert_eq!(
+            low,
+            sim_period - on_ticks,
+            "open ticks per period match the duty"
+        );
+        // A second period reproduces the same pattern (the state is periodic in
+        // the tick), confirming the period really is SWITCH_PERIOD_TICKS.
+        let mut high2 = 0usize;
+        for _ in 0..sim_period {
+            sim.step();
+            if (sim.node_voltages()[2] - vin).abs() < 1e-2 {
+                high2 += 1;
+            }
+        }
+        assert_eq!(high2, on_ticks, "the switch pattern repeats every period");
+    }
+
+    /// Duty 0 holds the switch open for the whole period (node never goes high)
+    /// and duty 1 holds it closed (node never goes low) — the clamped extremes.
+    #[test]
+    fn switch_duty_extremes_are_fully_open_or_closed() {
+        let vin = 8.0;
+        let period = SWITCH_PERIOD_TICKS as usize;
+        // Duty 0: always open -> node 2 pinned near 0 by the pull-down.
+        let mut off = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vin, 0.0, 1_000.0],
+        );
+        for _ in 0..period {
+            off.step();
+            assert!(
+                off.node_voltages()[2].abs() < 1e-3,
+                "duty 0 switch stays open"
+            );
+        }
+        // Duty 1: always closed -> node 2 pinned near Vin.
+        let mut on = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vin, 1.0, 1_000.0],
+        );
+        for _ in 0..period {
+            on.step();
+            assert!(
+                (on.node_voltages()[2] - vin).abs() < 1e-2,
+                "duty 1 switch stays closed"
+            );
+        }
+    }
+
+    /// Through an RC low-pass, a PWM switch output averages to ~duty * Vin after
+    /// settling. Layout: source 1->0 = Vin, switch 1->2, R_load 2->0 (makes node 2
+    /// a clean rail-to-rail square wave), then a high-impedance R 2->3 + C 3->0
+    /// filter whose corner is far below the 10 kHz switching rate. The filtered
+    /// node 3, averaged over a full period to cancel residual ripple, lands on
+    /// duty * Vin.
+    #[test]
+    fn switch_through_rc_averages_to_duty_times_vin() {
+        let vin = 10.0;
+        let duty = 0.4; // target node 3 ~ 4.0 V
+        let mut sim = build(
+            4,
+            &[
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,  // R_load 2->0 (pull-down for a clean square wave)
+                ELEM_RESISTOR,  // R_filter 2->3
+                ELEM_CAPACITOR, // C 3->0
+            ],
+            &[1, 1, 2, 2, 3],
+            &[0, 2, 0, 3, 0],
+            // R_filter (100k) >> R_load (1k) so the filter does not load node 2;
+            // R_filter*C = 2.2 ms >> period (100 us) so ripple is small.
+            &[vin, duty, 1_000.0, 100_000.0, 22.0e-9],
+        );
+        // Settle for many filter time constants (2.2 ms each; 20000 * 2 us = 40 ms
+        // ~ 18 tau).
+        for _ in 0..20_000 {
+            sim.step();
+        }
+        // Average node 3 over one full period to cancel switching ripple.
+        let period = SWITCH_PERIOD_TICKS as usize;
+        let mut acc = 0.0f64;
+        for _ in 0..period {
+            sim.step();
+            acc += sim.node_voltages()[3];
+        }
+        let mean = acc / period as f64;
+        let expected = duty * vin; // 4.0 V
+        assert!(
+            (mean - expected).abs() < 0.1,
+            "RC-filtered switch output averages to duty*Vin: got {}, want {}",
+            mean,
+            expected
+        );
+    }
+
+    /// Replay invariant for a switched circuit: the switch state is a pure
+    /// deterministic function of the tick, so a fixed netlist stepped a fixed
+    /// number of times reproduces its snapshot-hash stream exactly. This is the
+    /// switch analogue of `run_is_reproducible`.
+    #[test]
+    fn switch_run_is_reproducible() {
+        let run = || {
+            // source 1->0, switch 1->2, R_load 2->0, R 2->3, C 3->0 (the RC
+            // low-pass exercised above).
+            let mut sim = build(
+                4,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_SWITCH,
+                    ELEM_RESISTOR,
+                    ELEM_RESISTOR,
+                    ELEM_CAPACITOR,
+                ],
+                &[1, 1, 2, 2, 3],
+                &[0, 2, 0, 3, 0],
+                &[10.0, 0.4, 1_000.0, 100_000.0, 22.0e-9],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "switched circuit must reproduce exactly");
+    }
+
+    /// The switch composes with the diode + inductor + capacitor of a buck
+    /// converter without diverging: a switch chopping a rail into an L, a
+    /// freewheel diode, and an output cap settles to a finite output below the
+    /// input (a step-down). This exercises the switch sitting in the fixed linear
+    /// base while the diode drives the Newton loop, in one netlist.
+    #[test]
+    fn switch_buck_converter_steps_down_and_is_finite() {
+        let vin = 12.0;
+        let duty = 0.5;
+        // Nodes: 0=gnd, 1=Vin, 2=switch node (L input / diode cathode), 3=output.
+        // source 1->0; switch 1->2; freewheel diode 0->2 (anode gnd -> cathode
+        // node 2, conducts when node 2 swings below ground as L freewheels);
+        // L 2->3; C 3->0; R_load 3->0.
+        let mut sim = build(
+            4,
+            &[
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_DIODE,
+                ELEM_INDUCTOR,
+                ELEM_CAPACITOR,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 0, 2, 3, 3],
+            &[0, 2, 2, 3, 0, 0],
+            &[vin, duty, 0.0, 100.0e-6, 47.0e-6, 50.0],
+        );
+        // Run well past the LC settling time.
+        for _ in 0..40_000 {
+            sim.step();
+        }
+        let v = sim.node_voltages();
+        assert!(v.iter().all(|x| x.is_finite()), "buck stays finite");
+        let vout = v[3];
+        // A real (lossy, diode-drop) buck steps the rail down: 0 < Vout < Vin.
+        assert!(
+            vout > 0.5 && vout < vin,
+            "buck output is a stepped-down rail: got {} (Vin {})",
+            vout,
+            vin
+        );
+    }
+
+    /// `set_netlist` accepts the switch element type (type 6); a malformed netlist
+    /// containing a switch still fails safe through the same validation.
+    #[test]
+    fn switch_netlist_validates() {
+        let mut sim = Sim::new(1);
+        let ok = sim.set_netlist(
+            3,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[5.0, 0.5, 1_000.0],
+        );
+        assert!(ok, "valid switch netlist installs");
+        assert_eq!(sim.element_count(), 3);
+        assert_eq!(
+            sim.element_at(1).kind,
+            ELEM_SWITCH,
+            "switch stored as type 6"
+        );
+        // Out-of-range node on a switch is still rejected (fail-safe).
+        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0.5]);
+        assert!(!bad, "out-of-range switch node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
 
     /// `new` installs a working demo so the app shows life before user input:

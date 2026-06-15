@@ -11,8 +11,12 @@ fixed step with implicit companion models. Linear netlists are a single dense
 Modified Nodal Analysis solve; netlists with a nonlinear device (the diode is
 the first) wrap that same assembly in a bounded, deterministic Newton–Raphson
 outer loop, linearizing each device about the previous iterate and capping the
-iteration count, so per tick cost stays bounded. An event driven digital engine
-owns gates, flip flops,
+iteration count, so per tick cost stays bounded. Time-varying linear elements —
+the first is a clock-driven (PWM) switch, a conductance toggled by a fixed-period
+function of the tick — are recomputed from the tick once per step and stamped
+into that same fixed linear base, so a buck converter (switch into an inductor,
+freewheel diode, and output cap) is just another netlist. An event driven
+digital engine owns gates, flip flops,
 and fabric, with events landing on the tick grid. A behavioral emulator owns
 each microcontroller and runs its firmware, temporally decoupled and
 resynchronized at pin interactions. The domains meet only at the pins through
