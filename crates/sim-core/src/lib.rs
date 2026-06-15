@@ -1641,6 +1641,15 @@ impl Sim {
                         mat[r * n + r] += GATE_GOUT;
                         rhs[r] += GATE_GOUT * vt;
                     }
+                    // Floor each sensed input to ground with GMIN so a floating gate
+                    // input is non-singular (and reads logic low) — the gate stamps
+                    // nothing else into its input rows. Negligible beside any driver.
+                    if let Some(r) = ib {
+                        mat[r * n + r] += GMIN;
+                    }
+                    if let Some(r) = Self::node_idx(e.c) {
+                        mat[r * n + r] += GMIN;
+                    }
                 }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => {
                     // Voltage constraint V(a) - V(b) = value, where `value` is
@@ -1792,6 +1801,15 @@ impl Sim {
                     if let Some(r) = ia {
                         mat[r * n + r] += GATE_GOUT;
                         rhs[r] += GATE_GOUT * vt;
+                    }
+                    // Floor each sensed input to ground with GMIN so a floating gate
+                    // input is non-singular (and reads logic low) — the gate stamps
+                    // nothing else into its input rows. Negligible beside any driver.
+                    if let Some(r) = ib {
+                        mat[r * n + r] += GMIN;
+                    }
+                    if let Some(r) = Self::node_idx(e.c) {
+                        mat[r * n + r] += GMIN;
                     }
                 }
                 ELEM_CAPACITOR => {
@@ -2579,6 +2597,15 @@ impl Sim {
                         base_mat[r * n + r] += GATE_GOUT;
                         base_rhs[r] += GATE_GOUT * vt;
                     }
+                    // Floor each sensed input to ground with GMIN so a floating gate
+                    // input is non-singular (and reads logic low) — the gate stamps
+                    // nothing else into its input rows. Negligible beside any driver.
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += GMIN;
+                    }
+                    if let Some(r) = Self::node_idx(e.c) {
+                        base_mat[r * n + r] += GMIN;
+                    }
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
@@ -2779,6 +2806,15 @@ impl Sim {
                     if let Some(r) = ia {
                         base_mat[r * n + r] += GATE_GOUT;
                         base_rhs[r] += GATE_GOUT * vt;
+                    }
+                    // Floor each sensed input to ground with GMIN so a floating gate
+                    // input is non-singular (and reads logic low) — the gate stamps
+                    // nothing else into its input rows. Negligible beside any driver.
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += GMIN;
+                    }
+                    if let Some(r) = Self::node_idx(e.c) {
+                        base_mat[r * n + r] += GMIN;
                     }
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
@@ -4480,6 +4516,43 @@ mod tests {
         };
         assert!(led_current(true) > 1.0e-3, "LED lit when buffered high");
         assert!(led_current(false) < 1.0e-6, "LED dark when buffered low");
+    }
+
+    /// A floating gate input is non-singular (GMIN-floored to ground) and reads as
+    /// logic low: an OR with its other input high still goes high, an AND goes low,
+    /// and every node voltage stays finite (no singular row → no NaN).
+    #[test]
+    fn gate_floating_input_reads_low() {
+        // nodes: 0 = gnd, 1 = inA (driven), 2 = inB (FLOATING), 3 = out.
+        // V_A(1->0) = 5 ; GATE(out=3, in1=1, in2=2) ; R(3->0) = 1 k. Node 2 connects
+        // to nothing but the gate's sensing input terminal.
+        let build = |code: f64| {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR],
+                &[1, 3, 3],
+                &[0, 1, 0],
+                &[0, 2, 0],
+                &[5.0, 5.0, 1000.0],
+                &[0.0, code, 0.0],
+            ));
+            for _ in 0..5 {
+                sim.step();
+            }
+            sim.state()
+        };
+        let or = build(1.0);
+        assert!(
+            or.iter().all(|v| v.is_finite()),
+            "no NaN with a floating input"
+        );
+        assert!(or[3] > 4.0, "OR(high, floating) reads high");
+        let and = build(0.0);
+        assert!(
+            and[3] < 1.0,
+            "AND(high, floating) reads low (a floating input is low)"
+        );
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
