@@ -9,6 +9,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 ## 2026-06-15
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
+- ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
+  pinned to what it names. `NetLabel.tagOff` + `graph.moveNetLabel` + a lightweight
+  `onPersist` board callback (save+undo, no netlist rebuild / clock rewind). (#65)~~
+- ~~**AC mains amplitudes**: 60 Hz freq; peak chips 170/311/325 V (= 120/220/230 Vrms);
+  RMS readout beside the peak; one-tap US/EU mains presets (amp + freq). (#65)~~
 - ~~**Pan yields to Build on a grab**: clicking a component or wire in Pan switches
   to Build/Select and grabs it (move/reshape); empty still pans. `onMode` callback.~~
 - ~~**R rotates the ghost when a part is armed** (was rotating a leftover selection).~~
