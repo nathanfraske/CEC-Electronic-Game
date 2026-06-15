@@ -383,6 +383,20 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: Endpoint } | null = null;
+  // KiCad-style click-to-continue wiring tracks, per press, whether the pointer left
+  // the cell it went down in. A press+release IN PLACE (a click) leaves the wire
+  // *pending* so the next click extends it (drop corners, T into a trace, finish on a
+  // pin); a press-move-release (a drag) is the classic drag-to-wire and completes the
+  // segment on release. `wiringDownCell` is the snapped down-cell used to detect that
+  // movement. Both are reset each time a wiring press begins/continues.
+  private wiringMoved = false;
+  private wiringDownCell: Cell | null = null;
+  // The wire + world point the last press landed on, so Delete can drop *only that
+  // segment* of a multi-bend run rather than the whole pin-to-pin wire. The leg is
+  // resolved from this point against the wire's *current* geometry at delete time
+  // (so a reshape between click and delete can't make it stale). Set whenever a wire
+  // is clicked; cleared when the selection clears.
+  private lastWireClick: { wireId: number; x: number; y: number } | null = null;
   // Dragging one SEGMENT of a wire to reshape its route, KiCad-style: the grabbed
   // segment translates along its perpendicular axis while its two endpoints (pins/
   // junctions) stay put and the bracketing segments stretch. `pts` is the working
@@ -884,6 +898,10 @@ export class Board {
   private spliceOnPlace(c: Component): void {
     const kind = this.graph.kindOf(c);
     if (!kind) return;
+    // Junction each pin got tied into when it split a trace (case 3). Used after
+    // the loop to curtail any segment of one wire that spanned *between* two of
+    // this part's pins (which would otherwise short them in parallel with the part).
+    const splitJunctions: number[] = [];
     for (const p of kind.pins) {
       const pinRef: PinRef = { componentId: c.id, pinIndex: p.index };
       const cell = this.graph.pinCell(c, p);
@@ -904,10 +922,61 @@ export class Board {
       //    pin (none yet on a fresh part, but cheap insurance for re-entrancy).
       const wireId = this.wireThroughCell(cell, pinRef);
       if (wireId !== null) {
-        this.graph.junctionOnWire(wireId, cell, pinRef);
+        const j = this.graph.junctionOnWire(wireId, cell, pinRef);
+        if (j) splitJunctions.push(j.id);
       }
       // 4) Empty cell: normal placement, nothing to splice.
     }
+    this.removeSpannedSegments(splitJunctions);
+  }
+
+  /**
+   * After {@link spliceOnPlace} ties a part's pins into split junctions, drop any
+   * wire now running *directly between two of those junctions* — the stretch of an
+   * existing track that lay between two pins of the just-placed part. Left in place
+   * it shorts those pins in parallel with the new part; removing it makes the part
+   * bridge those nodes (inserted in series into the track), which is what dropping a
+   * component across a trace should mean. Connectivity is preserved: each junction
+   * keeps its pin-wire plus the outer half of the original run, so the two track ends
+   * still reach the part's pins through the junctions (and `buildNetlist` ties them
+   * into the right nets).
+   *
+   * The incidence guard keeps a removal from orphaning a junction: each end must
+   * retain ≥2 incident wires (its pin-wire + an outer half) so it survives pruning
+   * and the landed pin stays joined to its net. The common two-pin "insert across a
+   * trace" case leaves both ends exactly that; only a rarer 3+ collinear-pins-on-one-
+   * wire case could strand a middle junction, and there the segment is left intact
+   * rather than disconnect a pin. No-op for fewer than two split junctions.
+   */
+  private removeSpannedSegments(junctionIds: number[]): void {
+    if (junctionIds.length < 2) return;
+    const set = new Set(junctionIds);
+    for (const w of [...this.graph.wires.values()]) {
+      if (
+        isJunctionRef(w.from) &&
+        isJunctionRef(w.to) &&
+        set.has(w.from.junctionId) &&
+        set.has(w.to.junctionId) &&
+        this.junctionIncidence(w.from.junctionId) > 2 &&
+        this.junctionIncidence(w.to.junctionId) > 2
+      ) {
+        this.graph.removeWire(w.id);
+      }
+    }
+  }
+
+  /** How many wires are incident to a junction (both ends counted per wire). */
+  private junctionIncidence(junctionId: number): number {
+    let n = 0;
+    for (const w of this.graph.wires.values()) {
+      if (
+        (isJunctionRef(w.from) && w.from.junctionId === junctionId) ||
+        (isJunctionRef(w.to) && w.to.junctionId === junctionId)
+      ) {
+        n++;
+      }
+    }
+    return n;
   }
 
   /**
@@ -983,6 +1052,32 @@ export class Board {
       this.selectedLabels.size === 0
     ) {
       return;
+    }
+    // Lone wire selected with a known clicked leg: drop only that segment of the run
+    // (split the multi-bend wire there), not the whole pin-to-pin wire. A straight
+    // wire has a single leg, so this still removes it entirely; a multi-select or a
+    // wire-plus-other-things selection takes the wholesale path below instead.
+    if (
+      this.selected.size === 0 &&
+      this.selectedWires.size === 1 &&
+      this.selectedJunctions.size === 0 &&
+      this.selectedLabels.size === 0 &&
+      this.lastWireClick !== null &&
+      this.selectedWires.has(this.lastWireClick.wireId)
+    ) {
+      const w = this.graph.wires.get(this.lastWireClick.wireId);
+      const leg = w
+        ? this.wireLegIndexAt(w, this.lastWireClick.x, this.lastWireClick.y)
+        : null;
+      if (w && leg !== null) {
+        this.pushUndo(this.graph.serialize());
+        this.graph.deleteWireSegment(w.id, leg);
+        this.rebuildNodes();
+        this.clearSelection();
+        this.redrawWires();
+        this.cb.onChange?.(this.graph);
+        return;
+      }
     }
     this.pushUndo(this.graph.serialize());
     for (const id of this.selectedLabels) this.graph.removeNetLabel(id);
@@ -1286,6 +1381,45 @@ export class Board {
     return best;
   }
 
+  /**
+   * Which *anchor leg* of a wire a world point sits on — the index into the route
+   * `[from, …waypoints, to]` so that the click lies on the leg between anchor `i`
+   * and `i+1`. The drawn route inserts an L-corner inside each leg, so a leg can be
+   * two on-screen segments; this maps the click back to the single model leg by
+   * testing each leg's own drawn geometry in order. Returns the closest leg, or
+   * null if the wire has fewer than two anchors. Used so Delete can drop just the
+   * clicked leg of a multi-bend run (see {@link BoardGraph.deleteWireSegment}).
+   */
+  private wireLegIndexAt(w: Wire, wx: number, wy: number): number | null {
+    const a = this.graph.endpointCell(w.from);
+    const b = this.graph.endpointCell(w.to);
+    if (!a || !b) return null;
+    const anchors = [a, ...(w.waypoints ?? []), b];
+    let bestLeg: number | null = null;
+    let bestD = Infinity;
+    for (let leg = 0; leg + 1 < anchors.length; leg++) {
+      const sub = this.wireRoute(
+        this.cellToWorld(anchors[leg]!),
+        this.cellToWorld(anchors[leg + 1]!),
+      );
+      for (let i = 0; i + 1 < sub.length; i++) {
+        const d = distToSegment(
+          wx,
+          wy,
+          sub[i]!.x,
+          sub[i]!.y,
+          sub[i + 1]!.x,
+          sub[i + 1]!.y,
+        );
+        if (d < bestD) {
+          bestD = d;
+          bestLeg = leg;
+        }
+      }
+    }
+    return bestLeg;
+  }
+
   /** Nearest junction within grab range of a world point, else null. */
   private junctionHitTest(wx: number, wy: number): number | null {
     const r2 = (JUNCTION_R * 2.4) ** 2;
@@ -1338,6 +1472,7 @@ export class Board {
     this.selectedWires.clear();
     this.selectedJunctions.clear();
     this.selectedLabels.clear();
+    this.lastWireClick = null;
     this.redrawSelection();
     this.emitSelect();
   }
@@ -1885,6 +2020,53 @@ export class Board {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
+
+    // Click-to-continue wiring (KiCad-style): a left press WHILE a wire is already in
+    // progress completes the current segment at whatever is under the cursor — a pin
+    // or existing junction finishes it; a bare trace T's in with an auto-junction and
+    // keeps going; empty space just keeps the wire rubber-banding. This runs before
+    // the normal pin/junction/body handling so a press mid-route never starts a brand
+    // new wire over the top of the one being drawn. (Wiring is only ever active in the
+    // wire/select/pan tools; entering any other tool cancels it — see setMode.)
+    if (this.wiring && e.button === 0) {
+      // A second press on the same junction the wire started from is the
+      // double-click-to-drag gesture, not a (no-op) continue onto itself: hand off to
+      // a junction drag instead of routing. (The first click left the wire pending.)
+      const jid = this.junctionHitTest(wp.x, wp.y);
+      if (jid !== null) {
+        const now = performance.now();
+        const dbl =
+          this.lastJunctionTap !== null &&
+          this.lastJunctionTap.id === jid &&
+          now - this.lastJunctionTap.t < DOUBLE_CLICK_MS;
+        if (dbl) {
+          this.lastJunctionTap = null;
+          this.cancelWiring();
+          this.junctionDrag = { id: jid, moved: false };
+          this.pendingUndo = this.graph.serialize();
+          return;
+        }
+      }
+      this.continueOrFinishWiring(wp.x, wp.y, false);
+      if (this.wiring) {
+        // Still routing: arm this press so a drag from here is a drag-to-wire and a
+        // release in place leaves the next click to continue. Remember a junction
+        // we're now routing from, so a follow-up double-click on it can grab it.
+        this.wiringDownCell = {
+          col: snap(wp.x, PITCH),
+          row: snap(wp.y, PITCH),
+        };
+        this.wiringMoved = false;
+        if (isJunctionRef(this.wiring.from)) {
+          this.lastJunctionTap = {
+            id: this.wiring.from.junctionId,
+            t: performance.now(),
+          };
+        }
+      }
+      return;
+    }
+
     // Pan tool: the neutral navigation tool Esc lands on. It does NOT blanket-grab
     // — dragging a PART BODY or empty space pans, but the build flow still works:
     // starting a wire from a pin/junction, reshaping a trace, and dropping an armed
@@ -1958,7 +2140,7 @@ export class Board {
       pin &&
       (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
     ) {
-      this.wiring = { from: pin };
+      this.startWiring(pin, wp);
       return;
     }
 
@@ -1992,7 +2174,7 @@ export class Board {
           return;
         }
         this.lastJunctionTap = { id: jid, t: now };
-        this.wiring = { from: { junctionId: jid } };
+        this.startWiring({ junctionId: jid }, wp);
         return;
       }
     }
@@ -2040,6 +2222,9 @@ export class Board {
       // the segment to reshape (KiCad-style), rather than just panning the view.
       if (this.mode === "pan" && !additive) this.yieldPanToSelect();
       this.selectWire(wireId, additive);
+      // Remember where on the run the click landed, so Delete can drop just that leg
+      // of a multi-bend wire (resolved against the live geometry at delete time).
+      this.lastWireClick = { wireId, x: wp.x, y: wp.y };
       // A non-additive press also arms a segment-drag: grab THIS segment of the
       // trace and drag it perpendicular (KiCad-style), the endpoints staying put.
       // Drag a segment back in line with its neighbours to straighten it (cleaned
@@ -2348,7 +2533,18 @@ export class Board {
       return;
     }
 
-    if (this.wiring) this.drawPendingWire();
+    if (this.wiring) {
+      // Note whether this press has left its down-cell: that turns the gesture into
+      // a drag-to-wire (completed on release) rather than a click (left pending).
+      if (
+        this.wiringDownCell &&
+        (snap(wp.x, PITCH) !== this.wiringDownCell.col ||
+          snap(wp.y, PITCH) !== this.wiringDownCell.row)
+      ) {
+        this.wiringMoved = true;
+      }
+      this.drawPendingWire();
+    }
     // Idle hover: keep the placement / junction / label ghost glued to the cursor
     // (snapped to the cell or the endpoint a click would attach to). Every tool
     // that draws a ghost must refresh here or its preview freezes in place.
@@ -2417,27 +2613,15 @@ export class Board {
       return;
     }
     if (this.wiring) {
-      const wp = this.screenToWorld(e.global.x, e.global.y);
-      const pinTarget = this.pinHitTest(wp.x, wp.y);
-      const jidTarget =
-        pinTarget === null ? this.junctionHitTest(wp.x, wp.y) : null;
-      const target: Endpoint | null = pinTarget
-        ? pinTarget
-        : jidTarget !== null
-          ? { junctionId: jidTarget }
-          : null;
-      if (target) {
-        const before = this.graph.serialize();
-        const wire = this.graph.connect(this.wiring.from, target);
-        if (wire) {
-          this.pushUndo(before);
-          this.redrawWires();
-          this.cb.onChange?.(this.graph);
-        }
-      } else {
-        this.finishWireOnWire(wp.x, wp.y);
+      // A press+release IN PLACE (a click) leaves the wire pending so the next click
+      // continues it (KiCad click-to-continue). A press-move-release (a drag) is the
+      // classic drag-to-wire: complete this segment now — finishing on a pin/junction,
+      // T-ing into a bare trace and continuing, or abandoning if released in space.
+      if (this.wiringMoved) {
+        const wp = this.screenToWorld(e.global.x, e.global.y);
+        this.continueOrFinishWiring(wp.x, wp.y, true);
       }
-      this.cancelWiring();
+      this.wiringMoved = false;
     }
   };
 
@@ -2471,22 +2655,23 @@ export class Board {
    * Finish an in-progress wire on an existing wire (a KiCad-style T): drop a
    * junction at the nearest grid point on the target wire's route, split that
    * wire so both halves meet the junction, and connect the new wire's end to it.
-   * No-op if the release isn't over a wire (or is over the dragged wire's own
-   * endpoint's wires only).
+   * Returns the new junction's id (so the caller can continue routing from it), or
+   * null if the point isn't over an eligible wire (off any trace, or over one already
+   * incident to the start endpoint, which would just fold a wire back on itself).
    */
-  private finishWireOnWire(wx: number, wy: number): void {
-    if (!this.wiring) return;
+  private finishWireOnWire(wx: number, wy: number): number | null {
+    if (!this.wiring) return null;
     const wireId = this.wireHitTest(wx, wy);
-    if (wireId === null) return;
+    if (wireId === null) return null;
     const w = this.graph.wires.get(wireId);
-    if (!w) return;
+    if (!w) return null;
     // Don't junction onto a wire already incident to the start endpoint — that
     // would just fold a wire back on itself.
     const fromKey = endpointKey(this.wiring.from);
     if (endpointKey(w.from) === fromKey || endpointKey(w.to) === fromKey)
-      return;
+      return null;
     const route = this.routeForWire(w);
-    if (route.length < 2) return;
+    if (route.length < 2) return null;
     const cp = closestOnPolyline(route, wx, wy);
     const cell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
     const before = this.graph.serialize();
@@ -2495,7 +2680,81 @@ export class Board {
       this.pushUndo(before);
       this.redrawWires();
       this.cb.onChange?.(this.graph);
+      return j.id;
     }
+    return null;
+  }
+
+  /**
+   * Begin a new wire from `from` (a pin or junction press), recording the down-cell
+   * so the press/release-in-place vs press-drag-release distinction works. A plain
+   * release in place leaves the wire pending for KiCad-style click-to-continue; a
+   * drag completes it on release (see {@link onPointerUp}).
+   */
+  private startWiring(from: Endpoint, wp: Point): void {
+    this.wiring = { from };
+    this.wiringDownCell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
+    this.wiringMoved = false;
+    this.drawPendingWire();
+  }
+
+  /**
+   * Complete the in-progress wire's current segment at world point (wx,wy), then
+   * either FINISH or CONTINUE per what's under the cursor — the shared core of both
+   * the click-to-continue press and the drag-to-wire release:
+   *
+   * - a **pin** or an existing **junction** is a definite node → connect and finish;
+   * - a **bare trace** → drop an auto-junction (a T) and CONTINUE a fresh wire from
+   *   it, so you can keep routing;
+   * - **empty space** → keep the wire pending (rubber-banding) for a click, or, when
+   *   `abandonOnEmpty` is set (a drag that ended in space), cancel it — preserving the
+   *   old "drag a wire off into nothing and let go to give up" behaviour.
+   *
+   * A target identical to the start endpoint is ignored (you can't end a wire on its
+   * own start), leaving the wire pending. Each committed segment carries its own undo
+   * (via `connect`/`finishWireOnWire`).
+   */
+  private continueOrFinishWiring(
+    wx: number,
+    wy: number,
+    abandonOnEmpty: boolean,
+  ): void {
+    if (!this.wiring) return;
+    const fromKey = endpointKey(this.wiring.from);
+    const pin = this.pinHitTest(wx, wy);
+    const target: Endpoint | null = pin
+      ? pin
+      : (() => {
+          const jid = this.junctionHitTest(wx, wy);
+          return jid !== null ? { junctionId: jid } : null;
+        })();
+    if (target) {
+      // Ignore a release/click back on the start endpoint itself (keep routing).
+      if (endpointKey(target) === fromKey) return;
+      const before = this.graph.serialize();
+      const wire = this.graph.connect(this.wiring.from, target);
+      if (wire) {
+        this.pushUndo(before);
+        this.redrawWires();
+        this.cb.onChange?.(this.graph);
+      }
+      this.cancelWiring(); // a pin/existing junction is a definite end → finish
+      return;
+    }
+    // Bare trace: T in with an auto-junction and continue routing from it. The new
+    // junction becomes the start, so re-anchor the down-cell to it (a drag-release
+    // continue leaves the pointer up; the next press re-arms anyway).
+    const newJ = this.finishWireOnWire(wx, wy);
+    if (newJ !== null) {
+      this.wiring = { from: { junctionId: newJ } };
+      const jc = this.graph.endpointCell(this.wiring.from);
+      if (jc) this.wiringDownCell = { ...jc };
+      this.wiringMoved = false;
+      this.drawPendingWire();
+      return;
+    }
+    // Empty space: keep rubber-banding for a click; abandon for a drag-into-nothing.
+    if (abandonOnEmpty) this.cancelWiring();
   }
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
@@ -2555,6 +2814,8 @@ export class Board {
 
   private cancelWiring(): void {
     this.wiring = null;
+    this.wiringDownCell = null;
+    this.wiringMoved = false;
     this.pendingWire.clear();
   }
 
