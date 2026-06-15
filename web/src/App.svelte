@@ -881,7 +881,16 @@
   // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
     armedPart = tag;
-    if (tag && (mode === "measure" || mode === "junction" || mode === "label"))
+    // Arming a part is an intent to build, so leave any non-building tool —
+    // including the neutral pan (Esc) default — and drop into select so the very
+    // next click drops the part.
+    if (
+      tag &&
+      (mode === "measure" ||
+        mode === "junction" ||
+        mode === "label" ||
+        mode === "pan")
+    )
       setMode("select");
     board?.setArmed(tag);
   }

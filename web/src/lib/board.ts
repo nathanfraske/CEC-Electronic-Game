@@ -1806,12 +1806,11 @@ export class Board {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
-    // Pan tool: left-drag pans the view (the neutral navigation tool Esc lands on).
-    // No placing/selecting — just grab and move, like holding the middle button.
-    if (this.mode === "pan") {
-      this.panning = { lastX: e.global.x, lastY: e.global.y };
-      return;
-    }
+    // Pan tool: the neutral navigation tool Esc lands on. It does NOT blanket-grab
+    // — dragging a PART BODY or empty space pans, but the build flow still works:
+    // starting a wire from a pin/junction, reshaping a trace, and dropping an armed
+    // part all fall through to their normal handlers below (which now also accept
+    // "pan"). Only an outright body/empty drag reaches the pan at the very end.
     if (this.mode === "measure") {
       if (this.measurePress(wp.x, wp.y)) return;
       if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
@@ -1876,7 +1875,10 @@ export class Board {
     }
 
     const pin = this.pinHitTest(wp.x, wp.y);
-    if (pin && (this.mode === "wire" || this.mode === "select")) {
+    if (
+      pin &&
+      (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
+    ) {
       this.wiring = { from: pin };
       return;
     }
@@ -1891,7 +1893,11 @@ export class Board {
         this.selectJunction(jid, true);
         return;
       }
-      if (this.mode === "wire" || this.mode === "select") {
+      if (
+        this.mode === "wire" ||
+        this.mode === "select" ||
+        this.mode === "pan"
+      ) {
         const now = performance.now();
         const dbl =
           this.lastJunctionTap !== null &&
@@ -1912,8 +1918,11 @@ export class Board {
       }
     }
 
+    // In pan mode a body press is NOT a grab — it falls through to the empty-space
+    // branch below and pans, so the hand tool never accidentally drags a part.
+    // (Shift/ctrl still selects so multi-select works from any tool.)
     const body = this.bodyHitTest(wp.x, wp.y);
-    if (body) {
+    if (body && (this.mode !== "pan" || additive)) {
       if (additive) {
         this.selectComponent(body.id, true);
         return;
@@ -2047,8 +2056,11 @@ export class Board {
     }
 
     if (this.wiring) this.drawPendingWire();
-    // Idle hover: keep the placement / junction ghost glued to the snapped cell.
-    if (this.armed || this.mode === "junction") this.updateGhost();
+    // Idle hover: keep the placement / junction / label ghost glued to the cursor
+    // (snapped to the cell or the endpoint a click would attach to). Every tool
+    // that draws a ghost must refresh here or its preview freezes in place.
+    if (this.armed || this.mode === "junction" || this.mode === "label")
+      this.updateGhost();
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
