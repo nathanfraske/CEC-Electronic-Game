@@ -75,6 +75,8 @@ export interface BoardCallbacks {
   onChange?: (graph: BoardGraph) => void;
   /** Fired when the selection changes. */
   onSelect?: (sel: { components: number; wires: number }) => void;
+  /** Fired when the board itself changes the armed part (e.g. right-click disarm). */
+  onArm?: (kind: string | null) => void;
 }
 
 export class Board {
@@ -113,6 +115,9 @@ export class Board {
   private w = 0;
   private h = 0;
   private mode: Mode = "select";
+  // The armed part kind: while set, clicking an empty cell drops it (place-and-
+  // repeat). The mode buttons are gone; this is the "Place mode" replacement.
+  private armed: string | null = null;
   private viewportDirty = true;
   private phase = 0;
   private lastTime = 0;
@@ -210,7 +215,30 @@ export class Board {
     this.mode = mode;
     if (mode !== "wire") this.cancelWiring();
     if (mode !== "measure") this.clearProbe();
-    this.app.stage.cursor = mode === "place" ? "copy" : "default";
+    this.updateCursor();
+  }
+
+  /** Arm a part kind: clicking empty board cells now drops it (place-and-repeat). */
+  setArmed(kind: string | null): void {
+    this.armed = kind;
+    this.updateCursor();
+  }
+
+  /** Esc: cancel an in-progress wire, otherwise clear the selection. */
+  escape(): void {
+    if (this.wiring) {
+      this.cancelWiring();
+      return;
+    }
+    this.clearSelection();
+  }
+
+  private updateCursor(): void {
+    this.app.stage.cursor = this.armed
+      ? "copy"
+      : this.mode === "measure"
+        ? "crosshair"
+        : "default";
   }
 
   /** Supply the pin→net mapping so the probe can read net voltages. */
@@ -224,7 +252,11 @@ export class Board {
     screenX: number,
     screenY: number,
   ): Component | undefined {
-    const cell = this.screenToCell(screenX, screenY);
+    return this.placeCell(kind, this.screenToCell(screenX, screenY));
+  }
+
+  /** Place a part at a grid cell, recording undo and refreshing the view. */
+  private placeCell(kind: string, cell: Cell): Component | undefined {
     const before = this.graph.serialize();
     const c = this.graph.place(kind, cell);
     if (c) {
@@ -693,8 +725,6 @@ export class Board {
       return;
     }
 
-    if (this.mode === "place") return; // placement driven by HUD drop/click
-
     const pin = this.pinHitTest(wp.x, wp.y);
     if (pin && (this.mode === "wire" || this.mode === "select")) {
       this.wiring = { from: pin };
@@ -718,7 +748,15 @@ export class Board {
       return;
     }
 
-    // Empty space: clear selection (unless additive) and begin panning.
+    // Empty space. With a part armed, drop it here and stay armed — Factorio-style
+    // place-and-repeat. Otherwise clear the selection and begin a pan.
+    if (this.armed && !additive) {
+      this.placeCell(this.armed, {
+        col: snap(wp.x, PITCH),
+        row: snap(wp.y, PITCH),
+      });
+      return;
+    }
     if (!additive) this.clearSelection();
     this.panning = { lastX: e.global.x, lastY: e.global.y };
   };
@@ -820,6 +858,12 @@ export class Board {
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
     e.preventDefault?.();
+    // While a part is armed, right-click disarms instead of deleting.
+    if (this.armed) {
+      this.setArmed(null);
+      this.cb.onArm?.(null);
+      return;
+    }
     const wp = this.screenToWorld(e.global.x, e.global.y);
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {

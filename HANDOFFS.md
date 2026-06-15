@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-14 — Modeless interaction (Phase 0): Build + Measure, armed parts
+
+**State:** 🟢 Green (fmt/clippy/test + golden, build:wasm, web check/lint/build all
+pass); pushed. Phase 0 of `docs/ui/mode-flow.md` — the clunky 4-mode toolbar
+(Select/Place/Wire/Measure) is collapsed into a Factorio-style modeless board:
+
+- **Build (default) + Measure toggle** replace the four mode buttons. The `Mode`
+  type keeps `place`/`wire` internally, but `App.svelte` only ever sets
+  `select`/`measure`.
+- **Armed-part model** (replaces Place mode): clicking a bin row *arms* that kind
+  (click again / Esc to disarm); clicking an empty board cell drops it and stays
+  armed (place-and-repeat). Drag-from-bin still one-shots. New on the board:
+  `setArmed`, `placeCell`, an `onArm` callback (so a board-side right-click disarm
+  mirrors back into the HUD), and `escape()`.
+- **`onPointerDown`**: the `place` early-return is gone. Pin → wire, body →
+  select/move, wire → select all run as before; an empty-cell press with a part
+  armed now places. Right-click disarms when armed (else deletes under cursor).
+- **Discoverability:** per-context cursor (`copy` armed / `crosshair` measuring /
+  default), a one-line **hint** in the board overlay, and an **armed-part chip**
+  (× to disarm) in the toolbar. **Esc** = disarm → cancel wiring → clear selection.
+
+### Pick up here
+- **Phase 1** (feedback): a translucent **ghost** of the armed part snapping to the
+  cell under the cursor, and **pin hover** highlight + snap-ring. **Phase 2**
+  (speed): click→click chained wiring, `1`–`9` hotbar + `Q` pipette, Shift-drag
+  box-select, Space-pan. Then retire the unused `place`/`wire` `Mode` variants.
+- This is on `claude/kind-turing-hdelb3`, ahead of `main`. No PR opened this
+  session (open/merge when the owner wants the live Pages site updated).
+
+---
+
 ## 2026-06-14 — Playtest overhaul: belts, scope, primer, probes, ground, reset/speed
 
 **State:** 🟢 Green; pushed. A large pass on the look + feel from hands-on feedback
