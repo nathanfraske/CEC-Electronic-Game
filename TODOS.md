@@ -20,17 +20,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   `tr-bridge-supply` example** (2 of its 4 diodes read 0 mA). **Ruled out:** it is NOT
   a cap-charge lock-in (broken without the cap) and NOT fixed by a symmetric
   common-mode reference (tested c+d→GND at 1 MΩ … 100 Ω: no effect — a conducting
-  diode at ~0.1 Ω overwhelms any sane reference). **Root cause (diagnosed):** the
-  coupled-inductor secondary's backward-Euler **companion conductance is enormous**
-  (`g₂ = L₂/DT ≈ 15 600 S` at DT=2 µs) so the winding looks like a near-short each
-  timestep; when a bridge diode clamps one terminal the secondary dumps a huge
-  transient current and symmetric full-wave conduction never establishes (a robust
-  lock-in / ill-conditioning, not a floating-node issue). **Fix is a dedicated,
-  golden-touching sim-core effort** — likely revisiting the transformer companion
-  model / adding series leakage impedance so the per-step secondary isn't a near-short,
-  and/or anti-lock-in in the transient. On par with the digital scheduler in scope.
-  Acceptance: all 4 diodes conduct alternately, output ≈ Vsec_pk − 2·Vf, no >>load
-  current spikes, golden regenerated deliberately. Fully diagnosed via the harness.
+  diode at ~0.1 Ω overwhelms any sane reference). **Root cause: NOT yet pinned down.**
+  The ~3.5 A D12 spike is a numerical/transient artifact (it can't be steady — the
+  secondary's backward-Euler companion impedance is `L₂/DT ≈ 15.6 kΩ`, so steady diode
+  current must be sub-mA; 3.5 A through that would need ~55 kV). So this looks like a
+  transient symmetry-breaking / Newton-conditioning issue in the floating-secondary +
+  nonlinear-bridge interaction, not a steady-state topology or floating-node problem.
+  **Next-step investigation:** instrument the first few cycles (does it ever conduct
+  full-wave then lock?), check Newton convergence/iteration counts near diode turn-on,
+  try a DC/gmin-stepped operating point or source-stepping at startup, and consider
+  whether the diode turn-on into the high-impedance secondary needs voltage limiting.
+  **Dedicated, golden-touching sim-core effort** (on par with the digital scheduler).
+  Acceptance: all 4 diodes conduct alternately, output ≈ Vsec_pk − 2·Vf, no spurious
+  current spikes, golden regenerated deliberately. Symptoms reproduced via the harness.
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
