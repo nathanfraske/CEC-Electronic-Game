@@ -10,6 +10,17 @@ Rules:
   knob and never changes the step.
 - Fixed evaluation and solve order. No reliance on iteration order of hashed
   collections, and no nondeterministic floating point reductions.
+- Bounded, deterministic nonlinear solve. Netlists with a nonlinear element
+  (e.g. a diode) are resolved by a Newton–Raphson outer loop inside each fixed
+  step: every iteration linearizes each device about the previous iterate, stamps
+  the companion in the fixed element order, and solves the same dense MNA system.
+  The iteration *count* is data-dependent, but each iteration is itself
+  deterministic and the count is hard-capped (settling to the last iterate on
+  non-convergence), so a given netlist still reproduces bit-for-bit. Convergence
+  is tested against fixed absolute and relative tolerances on both the
+  node-voltage update and the device-current residual. Robustness aids
+  (pn-junction voltage limiting, a small `gmin`) use fixed constants. A netlist
+  with no nonlinear element keeps the original single-pass linear solve unchanged.
 - Stable hashing only. Never use the standard library default hasher for a
   value that must reproduce across machines or compiler versions. The core
   uses FNV-1a over the snapshot bytes.
