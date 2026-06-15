@@ -346,14 +346,69 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
-  "&": kind(
-    "&",
-    "Logic Gate",
+  // Logic gates: the first behavioural digital ICs (sim type 17). Pins are ordered
+  // OUT, IN1, IN2 — pin 0 = output Y (a), pin 1 = input A (b), pin 2 = input B (c)
+  // — so buildNetlist's pin→terminal map is direct and the per-tag function code is
+  // stamped into `aux` (see GATE_AUX in netlist.ts). `value` is the logic-high rail
+  // in volts (default 5). Inputs are thresholded at half the rail, read from the
+  // previous tick (one tick of propagation delay). The two-input gates are 3-pin
+  // (Y right, A top-left, B bottom-left); the inverter NOT is 2-pin (Y, A). Green
+  // `ok` marks the digital-logic family.
+  AND: kind(
+    "AND",
+    "AND Gate",
     "ok",
-    [pin("A", 0, 0), pin("B", 0, 2), pin("Y", 2, 1)],
-    0,
-    "",
-    false,
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
+  OR: kind(
+    "OR",
+    "OR Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
+  NAND: kind(
+    "NAND",
+    "NAND Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
+  NOR: kind(
+    "NOR",
+    "NOR Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
+  XOR: kind(
+    "XOR",
+    "XOR Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
+  // The inverter (NOT): single input. Pin order OUT, IN — pin 0 = Y (a), pin 1 = A
+  // (b); the unused third terminal c defaults to ground in buildNetlist.
+  NOT: kind(
+    "NOT",
+    "NOT Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 1)],
+    5,
+    "V",
+    true,
   ),
   FF: kind(
     "FF",

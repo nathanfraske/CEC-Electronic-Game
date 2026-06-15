@@ -36,6 +36,14 @@ const CURATED_FULL: Record<string, number[]> = {
   // Op-amp saturation rail Vsat (V): the supply levels the output swings within.
   // Common single/dual-supply rails people reach for, with 12 V the default.
   OA: [3, 3.3, 5, 9, 12, 15, 18, 24],
+  // Logic-gate high rail (V): the digital supply the output drives to and the
+  // inputs threshold against (half-rail). The common logic families, 5 V default.
+  AND: [1.8, 2.5, 3.3, 5, 12, 15],
+  OR: [1.8, 2.5, 3.3, 5, 12, 15],
+  NAND: [1.8, 2.5, 3.3, 5, 12, 15],
+  NOR: [1.8, 2.5, 3.3, 5, 12, 15],
+  XOR: [1.8, 2.5, 3.3, 5, 12, 15],
+  NOT: [1.8, 2.5, 3.3, 5, 12, 15],
   // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
   EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
@@ -55,6 +63,13 @@ const CURATED_CHIPS: Record<string, number[]> = {
   MOV: [12, 18, 24, 36, 48],
   // The op-amp supply rails people reach for first.
   OA: [3.3, 5, 9, 12, 15],
+  // The logic rails people reach for first (5 V default, 3.3 V the modern norm).
+  AND: [3.3, 5, 12],
+  OR: [3.3, 5, 12],
+  NAND: [3.3, 5, 12],
+  NOR: [3.3, 5, 12],
+  XOR: [3.3, 5, 12],
+  NOT: [3.3, 5, 12],
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 

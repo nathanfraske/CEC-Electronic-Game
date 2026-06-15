@@ -1456,6 +1456,240 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
+  // ── Logic track ───────────────────────────────────────────────────────────
+  // Logic gates are kinds AND/OR/NAND/NOR/XOR (3-pin: pin 0 = Y output, pin 1 = A,
+  // pin 2 = B) and NOT (2-pin: pin 0 = Y, pin 1 = A). All map to solver type 17;
+  // `value` is the logic-high rail (5 V here). Inputs are thresholded at half the
+  // rail, read from the previous tick (one tick of propagation delay); the output
+  // is driven hard to the rail or ground. A driven Voltage Source above the
+  // threshold is a logic 1, below it a logic 0.
+  {
+    id: "logic-inverter",
+    name: "Inverter (NOT Gate)",
+    blurb:
+      "The simplest logic: an inverter flips its input. Drive its input low and the output goes high; drive it high and the output goes low. Wired to an LED, the surprise is that the light is ON when you're NOT driving the input — the gate manufactures a high output from a low input. It reads the input as a 1 only above half the supply rail, so anything below counts as 0.",
+    watch:
+      "the LED lit even though the input source sits at 0 V — the inverter drives its output HIGH (5 V) because the input is LOW. Raise the input above ~2.5 V (the toggle below) and the output snaps low, and the LED goes dark: the opposite of its input, always.",
+    build() {
+      // Vin → NOT.A ; NOT.Y → R → LED → GND. Input LOW (0 V) ⇒ NOT drives Y high
+      // (5 V) ⇒ the LED lights through the 330 Ω limiter (~9 mA). The LED makes the
+      // loop nonlinear, so the gate stamps on the Newton path.
+      //   nets: IN = Vin+ = NOT.A ; Y = NOT.Y = R.A ; R.B = LED.A ; GND = LED.K = Vin−.
+      const g = new BoardGraph();
+      const vin = comp(g, "V", 0, 0, 0, 1); // input source, LOW (0 V), + at top
+      const inv = comp(g, "NOT", 4, 0, 5); // inverter, 5 V logic rail
+      const r = comp(g, "R", 8, 0, 330); // LED current-limit
+      const led = comp(g, "LED", 12, 0, 0);
+      const gnd = comp(g, "GND", 12, 4, 0);
+      wire(g, vin, 0, inv, 1); // Vin+ → NOT.A (pin 1)
+      wire(g, inv, 0, r, 0); // NOT.Y (pin 0) → R.A
+      wire(g, r, 1, led, 0); // R.B → LED.A
+      wire(g, led, 1, gnd, 0); // LED.K → GND
+      wire(g, vin, 1, gnd, 0); // Vin− → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V) for the input, a NOT gate, then an LED with a series Resistor (R, ~330 Ω).",
+        why: "The source is the logic input — above half the rail it's a 1, below it a 0. The gate will invert whatever level it reads.",
+        done: (p) => at(p, "V") >= 1 && at(p, "NOT") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Wire Vin+ → the gate's A input, the gate's Y output → R → LED → Ground, and Vin− → GND. Leave the input source at 0 V and press Run.",
+        why: "With the input at 0 V (a logic 0), the inverter drives its output to a logic 1 — about 5 V — and the LED lights. The output is the opposite of the input.",
+        done: (p) => at(p, "NOT") >= 1 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Select the input source and set it to 5 V (or use the toggle below).",
+        why: "Now the input is a logic 1, so the inverter drives its output to a logic 0 (~0 V) and the LED goes dark. High in, low out — and a moment later, because the gate's decision lags its input by one tick (its propagation delay).",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Input low / high",
+      on: "Input 0 V (logic 0) — the inverter outputs HIGH, the LED is lit.",
+      off: "Input 5 V (logic 1) — the inverter outputs LOW, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const vin = comp(g, "V", 0, 0, 5, 1); // input HIGH
+        const inv = comp(g, "NOT", 4, 0, 5);
+        const r = comp(g, "R", 8, 0, 330);
+        const led = comp(g, "LED", 12, 0, 0);
+        const gnd = comp(g, "GND", 12, 4, 0);
+        wire(g, vin, 0, inv, 1);
+        wire(g, inv, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vin, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "logic-and",
+    name: "AND Gate Interlock",
+    blurb:
+      "An AND gate is a two-key interlock: its output goes high only when BOTH inputs are high. Tie its output to an LED and the light comes on only when both switches are thrown — exactly the safety logic that keeps a machine off unless every guard is in place. Drop either input and the output falls.",
+    watch:
+      "the LED lit because BOTH inputs sit at 5 V (logic 1) — AND(1,1) = 1. Drop either input to 0 V (the toggle below) and the output collapses to 0 and the LED goes dark: with an AND, every input must be high or nothing is.",
+    build() {
+      // V_A, V_B (both HIGH) → AND.A, AND.B ; AND.Y → R → LED → GND. AND(1,1)=1 ⇒
+      // the LED lights. Drop an input and AND→0 ⇒ dark. Nonlinear (LED) ⇒ Newton.
+      //   nets: A = Va+ = AND.A ; B = Vb+ = AND.B ; Y = AND.Y = R.A ;
+      //         R.B = LED.A ; GND = LED.K = Va− = Vb−.
+      const g = new BoardGraph();
+      const va = comp(g, "V", 0, 0, 5, 1); // input A, HIGH
+      const vb = comp(g, "V", 0, 4, 5, 1); // input B, HIGH
+      const and = comp(g, "AND", 4, 0, 5); // 5 V logic rail
+      const r = comp(g, "R", 8, 0, 330);
+      const led = comp(g, "LED", 12, 0, 0);
+      const gnd = comp(g, "GND", 8, 5, 0);
+      wire(g, va, 0, and, 1); // Va+ → AND.A (pin 1)
+      wire(g, vb, 0, and, 2); // Vb+ → AND.B (pin 2)
+      wire(g, and, 0, r, 0); // AND.Y (pin 0) → R.A
+      wire(g, r, 1, led, 0); // R.B → LED.A
+      wire(g, led, 1, gnd, 0); // LED.K → GND
+      wire(g, va, 1, gnd, 0); // Va− → GND
+      wire(g, vb, 1, gnd, 0); // Vb− → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place two Voltage Sources (V) for the two inputs, an AND gate, and an LED with a series Resistor (R, ~330 Ω).",
+        why: "The two sources are the two conditions. The AND gate will light the LED only when both are satisfied (both above half the rail).",
+        done: (p) => at(p, "V") >= 2 && at(p, "AND") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Wire each source's + into one of the gate's inputs (A and B), the gate's Y output → R → LED → Ground, and both sources' −'s → GND. Set both sources to 5 V and Run.",
+        why: "Both inputs are now logic 1, so AND(1,1) = 1: the gate drives its output high and the LED lights. Both keys are in.",
+        done: (p) => at(p, "V") >= 2 && at(p, "AND") >= 1 && p.complete,
+      },
+      {
+        do: "Select one input source and set it to 0 V (or use the toggle below).",
+        why: "With one input now a logic 0, AND(1,0) = 0: the output falls and the LED goes dark. An AND needs every input high — drop one and the whole thing is off.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Both high / one low",
+      on: "Both inputs 5 V — AND(1,1) = 1, the LED is lit.",
+      off: "One input 0 V — AND(1,0) = 0, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const va = comp(g, "V", 0, 0, 5, 1);
+        const vb = comp(g, "V", 0, 4, 0, 1); // input B dropped LOW
+        const and = comp(g, "AND", 4, 0, 5);
+        const r = comp(g, "R", 8, 0, 330);
+        const led = comp(g, "LED", 12, 0, 0);
+        const gnd = comp(g, "GND", 8, 5, 0);
+        wire(g, va, 0, and, 1);
+        wire(g, vb, 0, and, 2);
+        wire(g, and, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, va, 1, gnd, 0);
+        wire(g, vb, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "logic-half-adder",
+    name: "Half-Adder (XOR + AND)",
+    blurb:
+      "Two gates add two bits. An XOR gives the SUM (high when the inputs differ) and an AND gives the CARRY (high only when both are 1) — together they compute 1 + 1 = binary 10. It's the first real datapath: feed the same two inputs to both gates and read the two-bit answer off their outputs. Every adder in every CPU is built from this cell.",
+    watch:
+      "with both inputs high (1 + 1), the CARRY LED lit and the SUM LED dark — binary 10, which is two. The XOR sees its inputs matching, so the sum bit is 0; the AND sees both high, so the carry is 1. Flip one input low (the toggle) and it swaps: 1 + 0 = 01, sum lit, carry dark.",
+    build() {
+      // Half-adder: Sum = A XOR B, Carry = A AND B. A and B each fan out to both
+      // gates; each gate output drives its own LED through a limiter.
+      //   nets: A = Va+ = XOR.A = AND.A ; B = Vb+ = XOR.B = AND.B ;
+      //         SUM = XOR.Y = Rs.A ; CARRY = AND.Y = Rc.A ; GND common.
+      // A=1,B=1 ⇒ Sum=XOR(1,1)=0 (dark), Carry=AND(1,1)=1 (lit): 1+1 = 10.
+      const g = new BoardGraph();
+      const va = comp(g, "V", 0, 0, 5, 1); // input A, HIGH
+      const vb = comp(g, "V", 0, 8, 5, 1); // input B, HIGH
+      const xor = comp(g, "XOR", 4, 0, 5); // Sum = A XOR B
+      const and = comp(g, "AND", 4, 6, 5); // Carry = A AND B
+      const rs = comp(g, "R", 8, 0, 330); // sum LED limiter
+      const leds = comp(g, "LED", 11, 0, 0); // SUM
+      const rc = comp(g, "R", 8, 6, 330); // carry LED limiter
+      const ledc = comp(g, "LED", 11, 6, 0); // CARRY
+      const gnd = comp(g, "GND", 14, 4, 0);
+      // Inputs fan out to both gates.
+      wire(g, va, 0, xor, 1); // A → XOR.A
+      wire(g, va, 0, and, 1); // A → AND.A
+      wire(g, vb, 0, xor, 2); // B → XOR.B
+      wire(g, vb, 0, and, 2); // B → AND.B
+      // Sum branch.
+      wire(g, xor, 0, rs, 0); // XOR.Y → Rs
+      wire(g, rs, 1, leds, 0);
+      wire(g, leds, 1, gnd, 0);
+      // Carry branch.
+      wire(g, and, 0, rc, 0); // AND.Y → Rc
+      wire(g, rc, 1, ledc, 0);
+      wire(g, ledc, 1, gnd, 0);
+      // References.
+      wire(g, va, 1, gnd, 0);
+      wire(g, vb, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place two Voltage Sources (V) for inputs A and B, an XOR gate (the sum) and an AND gate (the carry), and an LED + Resistor for each gate's output.",
+        why: "The same two input bits feed both gates: XOR computes the sum bit, AND computes the carry bit. Two gates, a two-bit answer.",
+        done: (p) =>
+          at(p, "V") >= 2 &&
+          at(p, "XOR") >= 1 &&
+          at(p, "AND") >= 1 &&
+          at(p, "LED") >= 2,
+      },
+      {
+        do: "Wire input A to BOTH gates' A inputs and input B to BOTH gates' B inputs (each input fans out to two pins). Send XOR.Y → Rs → SUM LED → GND and AND.Y → Rc → CARRY LED → GND, then both sources' −'s → GND. Set both inputs to 5 V and Run.",
+        why: "Both inputs are 1. XOR(1,1) = 0 so the SUM LED is dark; AND(1,1) = 1 so the CARRY LED lights. That's 1 + 1 = binary 10 — two — read off the two LEDs.",
+        done: (p) =>
+          at(p, "XOR") >= 1 &&
+          at(p, "AND") >= 1 &&
+          at(p, "LED") >= 2 &&
+          p.complete,
+      },
+      {
+        do: "Select input B and set it to 0 V (or use the toggle below).",
+        why: "Now the inputs differ: XOR(1,0) = 1 lights the SUM LED, and AND(1,0) = 0 darkens the CARRY. That's 1 + 0 = binary 01 — one. The same cell, a different sum.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "1+1 / 1+0",
+      on: "Both inputs 1 — SUM = 0 (dark), CARRY = 1 (lit): 1 + 1 = 10.",
+      off: "Inputs differ (1 and 0) — SUM = 1 (lit), CARRY = 0 (dark): 1 + 0 = 01.",
+      alt() {
+        const g = new BoardGraph();
+        const va = comp(g, "V", 0, 0, 5, 1);
+        const vb = comp(g, "V", 0, 8, 0, 1); // B dropped LOW
+        const xor = comp(g, "XOR", 4, 0, 5);
+        const and = comp(g, "AND", 4, 6, 5);
+        const rs = comp(g, "R", 8, 0, 330);
+        const leds = comp(g, "LED", 11, 0, 0);
+        const rc = comp(g, "R", 8, 6, 330);
+        const ledc = comp(g, "LED", 11, 6, 0);
+        const gnd = comp(g, "GND", 14, 4, 0);
+        wire(g, va, 0, xor, 1);
+        wire(g, va, 0, and, 1);
+        wire(g, vb, 0, xor, 2);
+        wire(g, vb, 0, and, 2);
+        wire(g, xor, 0, rs, 0);
+        wire(g, rs, 1, leds, 0);
+        wire(g, leds, 1, gnd, 0);
+        wire(g, and, 0, rc, 0);
+        wire(g, rc, 1, ledc, 0);
+        wire(g, ledc, 1, gnd, 0);
+        wire(g, va, 1, gnd, 0);
+        wire(g, vb, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -2038,6 +2272,7 @@ export const EXAMPLE_CATEGORIES = [
   "Diodes",
   "Power & Switching",
   "Op-Amps",
+  "Logic & ICs",
   "AC Fundamentals",
   "Reactance",
   "Filters",
@@ -2072,6 +2307,9 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "opamp-follower": "Op-Amps",
   "opamp-noninverting": "Op-Amps",
   "opamp-comparator": "Op-Amps",
+  "logic-inverter": "Logic & ICs",
+  "logic-and": "Logic & ICs",
+  "logic-half-adder": "Logic & ICs",
   "ac-resistor": "AC Fundamentals",
   "ac-rms": "AC Fundamentals",
   "ac-cap": "Reactance",

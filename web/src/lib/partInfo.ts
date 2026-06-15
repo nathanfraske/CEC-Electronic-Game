@@ -91,6 +91,25 @@ function bjtRegion(e: ElectricalState): "cutoff" | "active" | "saturation" {
   return Math.abs(e.vAcross) < 0.3 ? "saturation" : "active";
 }
 
+// Logic-gate info is shared but for the name, the boolean equation, and the prose:
+// every gate shows the same live row — its logic-high rail, the half-rail switching
+// threshold, and the output drive current — because the per-part lesson is the
+// truth table (static), not a changing number. `value` is the logic-high rail.
+function gateInfo(name: string, equation: string, plain: string): PartInfo {
+  return {
+    name,
+    equation,
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · threshold ${f(rail / 2, "V")} · drive ${f(e.current, "A")}`,
+    plain: () => plain,
+    derived: (e, rail) => [
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Logic-high rail", value: f(rail, "V") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  };
+}
+
 export const PART_INFO: Record<string, PartInfo> = {
   R: {
     name: "Resistor",
@@ -428,6 +447,36 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output swing", value: `±${f(Math.max(vsat, 1), "V")}` },
     ],
   },
+  AND: gateInfo(
+    "AND Gate",
+    "Y = A · B",
+    "An AND gate drives its output high only when BOTH inputs are high; any low input forces the output low. It reads each input as a 1 when the voltage is above half the supply rail and as a 0 below — a single clean threshold, no in-between. Like every gate here the inputs draw essentially no current (they only sense the voltage), while the output is driven hard toward the rail or ground through a low-impedance driver. The decision is taken from the previous tick's input levels, so the output lags its inputs by exactly one simulation step — the propagation delay every real gate has, and what makes chains of gates settle in sequence rather than all at once.",
+  ),
+  OR: gateInfo(
+    "OR Gate",
+    "Y = A + B",
+    "An OR gate drives its output high when EITHER input is high (or both); only two low inputs give a low output. Each input is thresholded at half the supply rail — above is a 1, below a 0. The inputs draw essentially no current; the output is driven hard to the rail or to ground. The output follows the previous tick's inputs, so it lags by one simulation step — the gate's propagation delay.",
+  ),
+  NAND: gateInfo(
+    "NAND Gate",
+    "Y = (A · B)′",
+    "A NAND gate is the inverse of AND: its output is low only when both inputs are high, and high in every other case. NAND is universal — every other gate, and so every digital circuit, can be built from NAND gates alone, which is why real logic families are full of them. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs change.",
+  ),
+  NOR: gateInfo(
+    "NOR Gate",
+    "Y = (A + B)′",
+    "A NOR gate is the inverse of OR: its output is high only when BOTH inputs are low, and low otherwise. Like NAND it is universal — any logic can be built from NOR alone. Inputs are read against a half-rail threshold and draw no current; the output is driven hard to the rail or ground, lagging the inputs by one simulation step (the propagation delay).",
+  ),
+  XOR: gateInfo(
+    "XOR Gate",
+    "Y = A ⊕ B",
+    "An XOR (exclusive-OR) gate drives its output high when its inputs DIFFER and low when they match. It is the heart of binary arithmetic — the sum bit of a half-adder is exactly A XOR B (and A AND B is the carry) — and the basis of parity and comparison logic. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs settle.",
+  ),
+  NOT: gateInfo(
+    "NOT Gate",
+    "Y = A′",
+    "A NOT gate (an inverter) drives its output to the opposite of its single input: high in gives low out, low in gives high out. It is the simplest active logic element and the building block of every more complex gate. The input is thresholded at half the supply rail and draws no current; the output is driven hard to the rail or ground, lagging the input by exactly one simulation step. Wire an inverter's output back to its input and that one-tick delay makes it oscillate — a ring oscillator.",
+  ),
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",
