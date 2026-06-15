@@ -2,14 +2,21 @@
 //! Deterministic, fixed-step analog simulation core.
 //!
 //! A small but real continuous-time analog solver. It integrates an **arbitrary
-//! netlist of ideal elements** every fixed step using **implicit
-//! (backward-Euler) companion models** assembled by **Modified Nodal Analysis
-//! (MNA)** and solved with a dense Gaussian elimination with partial pivoting.
-//! Per-tick cost is fixed for a given netlist: the system size is fixed once the
-//! netlist is installed and the solve is a single non-iterative pass, so there
-//! is no data-dependent work.
+//! netlist of elements** every fixed step using **implicit (backward-Euler)
+//! companion models** assembled by **Modified Nodal Analysis (MNA)** and solved
+//! with a dense Gaussian elimination with partial pivoting.
 //!
-//! ## Element set (ideal only)
+//! Two solve regimes share that assembly:
+//!
+//! - **Linear fast path.** A netlist with no nonlinear element is a single
+//!   non-iterative pass. The system size is fixed once the netlist is installed,
+//!   so per-tick cost is fixed and the result is bit-for-bit reproducible.
+//! - **Nonlinear Newton path.** A netlist with at least one nonlinear element
+//!   (today: the diode) wraps that same assembly in a bounded, deterministic
+//!   **Newton–Raphson outer loop** (see below). The linear path is left
+//!   *untouched* so linear circuits remain identical to before.
+//!
+//! ## Element set
 //!
 //! Every element has exactly two terminals, nodes `a` and `b`. Node `0` is
 //! ground (the reference, fixed at 0 V) and is eliminated from the system.
@@ -21,6 +28,7 @@
 //! | 2    | capacitor          | farads        | backward-Euler companion           |
 //! | 3    | inductor           | henries       | backward-Euler companion (branch)  |
 //! | 4    | DC current source  | amps          | KCL injection: `value` from a -> b |
+//! | 5    | diode (nonlinear)  | (unused)      | Shockley, Newton companion a -> b  |
 //!
 //! ## MNA layout
 //!
@@ -34,7 +42,10 @@
 //!
 //! Node `k` (for `k >= 1`) maps to matrix index `k - 1`; node `0` (ground) has
 //! no row or column. Voltage-source and inductor branch currents are appended in
-//! ascending element index, so assembly and solve order are fully fixed.
+//! ascending element index, so assembly and solve order are fully fixed. The
+//! diode adds **no** branch unknown — it stamps a conductance and an equivalent
+//! current into the KCL rows like a resistor in parallel with a current source —
+//! so it never changes the system dimension.
 //!
 //! ## Companion models (backward-Euler, step `dt`)
 //!
@@ -44,13 +55,45 @@
 //! - **Inductor** `L` between `a,b`: a branch-current unknown `i` (oriented
 //!   `a -> b`) with branch equation `V(a)-V(b) - (L/dt)*i = -(L/dt)*i_prev`.
 //!
+//! ## Nonlinear devices and the Newton outer loop
+//!
+//! A nonlinear element contributes a current `i(v)` that is not affine in the
+//! node voltages, so a single solve cannot find the operating point. Instead the
+//! solver linearizes each nonlinear element about the **previous iterate** `v*`
+//! into a companion (a conductance `g = di/dv|_{v*}` in parallel with an
+//! equivalent current source `Ieq = i(v*) - g*v*`), solves the resulting linear
+//! MNA system, updates the node voltages, and repeats until convergence. This is
+//! Newton–Raphson on the nodal equations and is engaged **only** when at least
+//! one nonlinear element is present.
+//!
+//! The loop is built to be deterministic and bounded:
+//!
+//! - Fixed iteration order, fixed assembly/solve order, pure `f64`, no
+//!   hashed-collection iteration, no nondeterministic reductions.
+//! - Capped at [`NEWTON_MAX_ITERS`] iterations; if it has not converged it
+//!   settles to the last iterate (a defined outcome, never an infinite loop).
+//! - Convergence requires **both** a small node-voltage update and a small
+//!   residual, each with a fixed absolute + relative tolerance
+//!   ([`NEWTON_V_ABSTOL`]/[`NEWTON_RELTOL`], [`NEWTON_I_ABSTOL`]).
+//! - Robustness aids with fixed constants: pn-junction voltage limiting
+//!   (`pnjlim`-style) damps the per-iteration step across a junction to keep the
+//!   exponential from exploding, and a small conductance [`GMIN`] is stamped
+//!   across every junction so a reverse-biased or floating junction never yields
+//!   a singular row.
+//!
+//! In transient, the Newton loop runs **inside** each fixed [`DT`] step:
+//! reactive companions use the previous *step's* state (as in the linear path),
+//! while the Newton iterate converges the nonlinear devices within the step.
+//!
 //! ## Determinism
 //!
 //! Dynamically-sized but fixed-per-netlist dense MNA (Vec-backed), fixed
 //! assembly and solve order, pure `f64` arithmetic, no hashed-collection
-//! iteration, and no nondeterministic float reductions. The snapshot hash is
-//! FNV-1a over the tick and node voltages (little-endian, fixed order), never
-//! the std default hasher. See `docs/determinism.md`.
+//! iteration, and no nondeterministic float reductions. The Newton loop adds a
+//! data-dependent iteration *count* but every iteration is itself deterministic
+//! and the count is bounded, so a given netlist still reproduces bit-for-bit.
+//! The snapshot hash is FNV-1a over the tick and node voltages (little-endian,
+//! fixed order), never the std default hasher. See `docs/determinism.md`.
 
 use sim_protocol::PROTOCOL_VERSION;
 
@@ -89,6 +132,47 @@ pub const ELEM_INDUCTOR: u8 = 3;
 /// rhs[b] += value`). It is a pure right-hand-side stamp — no branch-current
 /// unknown and no reactive state.
 pub const ELEM_ISOURCE: u8 = 4;
+/// Junction **diode** (the first nonlinear element). Oriented anode `a` ->
+/// cathode `b`, it obeys the Shockley law `i = Is*(exp(v/(n*Vt)) - 1)` with
+/// `v = V(a) - V(b)`. Its presence engages the deterministic Newton outer loop;
+/// each iteration it contributes the companion conductance `g = di/dv` and the
+/// equivalent current `Ieq = i(v*) - g*v*` evaluated at the previous iterate
+/// `v*`. The `value` field is **unused** for now (the model uses the fixed
+/// defaults [`DIODE_IS`], [`DIODE_N`], [`DIODE_VT`]); it is reserved for a
+/// future per-device saturation current / emission coefficient.
+pub const ELEM_DIODE: u8 = 5;
+
+// --- Diode (Shockley) model constants -----------------------------------------
+
+/// Diode saturation current `Is`, in amperes. Fixed default (a typical
+/// small-signal silicon junction). Held constant for determinism; the diode's
+/// `value` field is unused for now.
+const DIODE_IS: f64 = 1.0e-12;
+/// Diode emission (ideality) coefficient `n`, dimensionless. Fixed default.
+const DIODE_N: f64 = 1.0;
+/// Thermal voltage `Vt = kT/q`, in volts, at ~300 K. Fixed default.
+const DIODE_VT: f64 = 0.025_852;
+
+// --- Newton outer-loop constants ----------------------------------------------
+
+/// Hard cap on Newton iterations per solve. If the loop has not converged by
+/// here it settles to the last iterate — a defined, finite outcome rather than
+/// an unbounded loop. Generous enough that the well-posed circuits we target
+/// converge well within it.
+const NEWTON_MAX_ITERS: usize = 100;
+/// Absolute tolerance on the per-iteration node-voltage update, in volts.
+const NEWTON_V_ABSTOL: f64 = 1.0e-9;
+/// Relative tolerance applied to the larger of the new and old node voltage when
+/// testing the update (so large rails converge on a relative basis).
+const NEWTON_RELTOL: f64 = 1.0e-6;
+/// Absolute tolerance on the nonlinear-current residual, in amperes. Around the
+/// diode saturation current so a converged reverse bias still passes.
+const NEWTON_I_ABSTOL: f64 = 1.0e-12;
+/// Minimum conductance stamped across every nonlinear junction, in siemens.
+/// Keeps a reverse-biased or floating junction from producing a singular row and
+/// gives Newton a finite slope everywhere. Tiny enough not to disturb the
+/// forward operating point at our tolerances.
+const GMIN: f64 = 1.0e-12;
 
 /// One two-terminal ideal element in the netlist.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -168,7 +252,66 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Vec<f64> {
     x
 }
 
-/// Deterministic fixed-step analog simulation of an arbitrary ideal netlist.
+// --- Diode (Shockley) device ---------------------------------------------------
+
+/// Evaluate the Shockley diode current and small-signal conductance at junction
+/// voltage `vd` (oriented anode -> cathode), returning `(i, g)` with
+/// `i = Is*(exp(vd/(n*Vt)) - 1)` and `g = di/dvd = (Is/(n*Vt))*exp(vd/(n*Vt))`.
+///
+/// `vd` is expected to already be clamped by [`pnjlim`], so the exponential
+/// argument is bounded and never overflows; the evaluation is a pure, branch-free
+/// `f64` function for determinism.
+#[inline]
+fn diode_eval(vd: f64) -> (f64, f64) {
+    let vth = DIODE_N * DIODE_VT;
+    let e = (vd / vth).exp();
+    let i = DIODE_IS * (e - 1.0);
+    let g = (DIODE_IS / vth) * e;
+    (i, g)
+}
+
+/// The critical junction voltage used by [`pnjlim`], `vcrit = n*Vt *
+/// ln(n*Vt / (sqrt(2)*Is))`. This is the inflection of the exponential where
+/// damping the Newton step keeps the iteration well conditioned. Computed once
+/// per call from the fixed model constants (a few `f64` ops; `ln` is not `const`,
+/// so this is a tiny pure function rather than a constant).
+#[inline]
+fn diode_vcrit() -> f64 {
+    let vth = DIODE_N * DIODE_VT;
+    vth * (vth / (core::f64::consts::SQRT_2 * DIODE_IS)).ln()
+}
+
+/// pn-junction voltage limiting (the classic SPICE `pnjlim`). Given the proposed
+/// new junction voltage `vnew` and the previous-iterate voltage `vold` (both
+/// anode -> cathode), return a damped voltage that limits how fast the junction
+/// can swing forward, so the diode exponential cannot explode and Newton stays
+/// well behaved. Reverse and small-forward steps pass through unchanged; only
+/// large forward excursions past `vcrit` are compressed logarithmically. This is
+/// a deterministic, pure `f64` function — the heart of the nonlinear robustness.
+#[inline]
+fn pnjlim(vnew: f64, vold: f64) -> f64 {
+    let vcrit = diode_vcrit();
+    let vth = DIODE_N * DIODE_VT;
+    if vnew > vcrit && (vnew - vold).abs() > 2.0 * vth {
+        if vold > 0.0 {
+            let arg = 1.0 + (vnew - vold) / vth;
+            if arg > 0.0 {
+                vold + vth * arg.ln()
+            } else {
+                // Would step the argument non-positive; fall back to vcrit, the
+                // standard SPICE guard, keeping the step finite.
+                vcrit
+            }
+        } else {
+            // Coming from a non-positive bias, clamp to the safe knee region.
+            vth * (vnew / vth).ln()
+        }
+    } else {
+        vnew
+    }
+}
+
+/// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
     /// Tick count since the netlist was installed or reset; one tick is one
@@ -181,12 +324,16 @@ pub struct Sim {
     elements: Vec<Element>,
 
     /// MNA system dimension: `(node_count - 1)` node voltages plus one branch
-    /// current per voltage source plus one per inductor.
+    /// current per voltage source plus one per inductor. Diodes add no unknown.
     dim: usize,
     /// For each element index, the column/row of its branch-current unknown in
     /// the MNA system, or `usize::MAX` if the element has no branch unknown
-    /// (resistors and capacitors).
+    /// (resistors, capacitors, and diodes).
     branch_index: Vec<usize>,
+    /// `true` iff the installed netlist contains at least one nonlinear element
+    /// (today: a diode). Selects the Newton outer loop over the linear fast path;
+    /// when `false`, the solve is byte-for-byte the original single-pass solve.
+    has_nonlinear: bool,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
     node_v: Vec<f64>,
@@ -195,6 +342,12 @@ pub struct Sim {
     /// previous branch current `i` (oriented `a -> b`). Unused for other kinds.
     /// One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
+    /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
+    /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
+    /// previous-iterate reference, so each step starts from the converged
+    /// junction of the last step. Only the diode entries are meaningful; others
+    /// stay `0.0`. Indexed in lockstep with `elements`.
+    diode_vd: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -235,8 +388,10 @@ impl Sim {
             elements: Vec::new(),
             dim: 0,
             branch_index: Vec::new(),
+            has_nonlinear: false,
             node_v: vec![0.0],
             reactive_state: Vec::new(),
+            diode_vd: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -293,7 +448,12 @@ impl Sim {
             let kind = types[i];
             if !matches!(
                 kind,
-                ELEM_VSOURCE | ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR | ELEM_ISOURCE
+                ELEM_VSOURCE
+                    | ELEM_RESISTOR
+                    | ELEM_CAPACITOR
+                    | ELEM_INDUCTOR
+                    | ELEM_ISOURCE
+                    | ELEM_DIODE
             ) {
                 self.install_empty();
                 return false;
@@ -338,10 +498,14 @@ impl Sim {
             }
         }
 
+        let has_nonlinear = elements.iter().any(|e| e.kind == ELEM_DIODE);
+
         self.node_count = node_count;
         self.dim = next;
         self.branch_index = branch_index;
+        self.has_nonlinear = has_nonlinear;
         self.reactive_state = vec![0.0; elements.len()];
+        self.diode_vd = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -357,6 +521,9 @@ impl Sim {
         self.tick = 0;
         for s in &mut self.reactive_state {
             *s = 0.0;
+        }
+        for vd in &mut self.diode_vd {
+            *vd = 0.0;
         }
         for v in &mut self.node_v {
             *v = 0.0;
@@ -386,6 +553,12 @@ impl Sim {
     /// Used only at install/reset, so its (differently sized) system never
     /// affects the fixed per-tick cost of [`Sim::step`].
     fn solve_operating_point(&mut self) {
+        // Nonlinear netlists take the Newton operating-point path; the linear
+        // single-pass assembly below is left byte-for-byte unchanged.
+        if self.has_nonlinear {
+            self.solve_operating_point_newton();
+            return;
+        }
         let node_unknowns = self.node_count - 1;
 
         // Capacitors and voltage sources each need a branch-current unknown in
@@ -507,6 +680,11 @@ impl Sim {
     /// caller can both commit dynamic state and read branch currents. Does not
     /// advance the tick or the reactive state.
     fn solve_into_readout(&mut self) -> Vec<f64> {
+        // Nonlinear netlists take the Newton transient path; the linear
+        // single-pass assembly below is left byte-for-byte unchanged.
+        if self.has_nonlinear {
+            return self.solve_into_readout_newton();
+        }
         let n = self.dim;
         if n == 0 {
             // Ground-only (or empty) circuit: nothing to solve.
@@ -630,6 +808,348 @@ impl Sim {
                 }
                 ELEM_VSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
+                _ => 0.0,
+            };
+        }
+        x
+    }
+
+    // --- Nonlinear (Newton) solve paths --------------------------------------
+    //
+    // These mirror the linear paths above but wrap the assembly in the bounded,
+    // deterministic Newton outer loop. They run only when `has_nonlinear` is
+    // true, so the linear fast paths stay byte-for-byte identical. The linear
+    // part of the system does not change between iterations, so it is stamped
+    // once into `base_mat`/`base_rhs`; each iteration copies that base and adds
+    // only the diode companion stamps evaluated at the current iterate.
+
+    /// Run the Newton outer loop on a system whose **linear** part is already
+    /// stamped into `base_mat` (`n x n`, row-major) and `base_rhs` (`n`). The
+    /// `diodes` slice lists, in ascending element order, each diode as
+    /// `(element_index, anode_mna_idx, cathode_mna_idx)` where the MNA index is
+    /// `None` for ground. The node-voltage iterate is seeded from `self.node_v`
+    /// and the junction iterate from `self.diode_vd`; both are updated in place,
+    /// and the solved unknown vector `x` of the final iterate is returned.
+    ///
+    /// Determinism: fixed element/diode order, fixed assembly and solve order,
+    /// pure `f64`, no hashed iteration. The iteration count is data-dependent but
+    /// bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the last iterate is
+    /// kept (a defined, finite outcome).
+    fn newton_iterate(
+        &mut self,
+        n: usize,
+        base_mat: &[f64],
+        base_rhs: &[f64],
+        diodes: &[(usize, Option<usize>, Option<usize>)],
+    ) -> Vec<f64> {
+        // Working unknown vector; node-voltage entries seed from the last solve
+        // so a transient step starts near its answer (few iterations).
+        let mut x = vec![0.0f64; n];
+        x[..(self.node_count - 1)].copy_from_slice(&self.node_v[1..self.node_count]);
+
+        let mut last = x.clone();
+        for _iter in 0..NEWTON_MAX_ITERS {
+            let mut mat = base_mat.to_vec();
+            let mut rhs = base_rhs.to_vec();
+
+            // Stamp each diode's companion at its current junction voltage.
+            // g = di/dv and Ieq = i(v*) - g*v* (plus GMIN for a finite slope).
+            for &(ei, ia, ib) in diodes {
+                let vd = self.diode_vd[ei];
+                let (id, gd) = diode_eval(vd);
+                let g = gd + GMIN;
+                let ieq = id - g * vd;
+                if let Some(r) = ia {
+                    mat[r * n + r] += g;
+                    rhs[r] -= ieq;
+                }
+                if let Some(r) = ib {
+                    mat[r * n + r] += g;
+                    rhs[r] += ieq;
+                }
+                if let (Some(r), Some(c)) = (ia, ib) {
+                    mat[r * n + c] -= g;
+                    mat[c * n + r] -= g;
+                }
+            }
+
+            x = solve_dense(mat, rhs, n);
+
+            // Update junction voltages with pn-junction limiting, and measure the
+            // largest limited junction swing for the residual-style current test.
+            let mut max_i_change = 0.0f64;
+            for &(ei, ia, ib) in diodes {
+                let va = ia.map(|r| x[r]).unwrap_or(0.0);
+                let vb = ib.map(|r| x[r]).unwrap_or(0.0);
+                let vd_raw = va - vb;
+                let vd_old = self.diode_vd[ei];
+                let vd_new = pnjlim(vd_raw, vd_old);
+                // Compare the device current at the old vs the limited-new bias;
+                // a converged junction barely moves, so this drives the I-test.
+                let (i_old, _) = diode_eval(vd_old);
+                let (i_new, _) = diode_eval(vd_new);
+                let di = (i_new - i_old).abs();
+                if di > max_i_change {
+                    max_i_change = di;
+                }
+                self.diode_vd[ei] = vd_new;
+            }
+
+            // Node-voltage update test (absolute + relative), over node rows only.
+            let mut converged_v = true;
+            for r in 0..(self.node_count - 1) {
+                let dv = (x[r] - last[r]).abs();
+                let tol = NEWTON_V_ABSTOL + NEWTON_RELTOL * x[r].abs().max(last[r].abs());
+                if dv > tol {
+                    converged_v = false;
+                }
+            }
+            let converged_i = max_i_change <= NEWTON_I_ABSTOL;
+
+            // Require both tests, and at least one full iteration, so a stale seed
+            // cannot report convergence before a fresh solve.
+            if converged_v && converged_i {
+                // Recompute node voltages from the limited junctions on the next
+                // pass would be a no-op (already converged); commit and stop.
+                self.node_v[0] = 0.0;
+                self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
+                return x;
+            }
+            last.copy_from_slice(&x);
+        }
+
+        // Iteration cap reached: settle deterministically to the last iterate.
+        self.node_v[0] = 0.0;
+        self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
+        x
+    }
+
+    /// Newton operating-point solve (install/reset, `t = 0`) for nonlinear
+    /// netlists. The linear part matches [`Sim::solve_operating_point`]
+    /// (capacitors and voltage sources carry branch unknowns; inductors are
+    /// current sources), with the diodes added as Newton companions. Writes
+    /// `self.node_v` and commits `self.currents`.
+    fn solve_operating_point_newton(&mut self) {
+        let node_unknowns = self.node_count - 1;
+
+        // Capacitors and voltage sources take branch unknowns, as in the linear
+        // OP path. Diodes take none. Index in ascending element order.
+        let mut op_branch = vec![usize::MAX; self.elements.len()];
+        let mut next = node_unknowns;
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_VSOURCE || e.kind == ELEM_CAPACITOR {
+                op_branch[i] = next;
+                next += 1;
+            }
+        }
+        let n = next;
+
+        if n == 0 {
+            for v in &mut self.node_v {
+                *v = 0.0;
+            }
+            return;
+        }
+
+        // Stamp the fixed linear part once and collect the diode terminal map.
+        let mut base_mat = vec![0.0f64; n * n];
+        let mut base_rhs = vec![0.0f64; n];
+        let mut diodes: Vec<(usize, Option<usize>, Option<usize>)> = Vec::new();
+        for (i, e) in self.elements.iter().enumerate() {
+            let ia = Self::node_idx(e.a);
+            let ib = Self::node_idx(e.b);
+            match e.kind {
+                ELEM_RESISTOR => {
+                    if e.value <= 0.0 {
+                        continue;
+                    }
+                    let g = 1.0 / e.value;
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        base_mat[r * n + c] -= g;
+                        base_mat[c * n + r] -= g;
+                    }
+                }
+                ELEM_VSOURCE | ELEM_CAPACITOR => {
+                    let bi = op_branch[i];
+                    let v = if e.kind == ELEM_VSOURCE {
+                        e.value
+                    } else {
+                        self.reactive_state[i]
+                    };
+                    if let Some(r) = ia {
+                        base_mat[r * n + bi] += 1.0;
+                        base_mat[bi * n + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + bi] -= 1.0;
+                        base_mat[bi * n + r] -= 1.0;
+                    }
+                    base_rhs[bi] += v;
+                }
+                ELEM_INDUCTOR => {
+                    let il = self.reactive_state[i];
+                    if let Some(r) = ia {
+                        base_rhs[r] -= il;
+                    }
+                    if let Some(r) = ib {
+                        base_rhs[r] += il;
+                    }
+                }
+                ELEM_ISOURCE => {
+                    if let Some(r) = ia {
+                        base_rhs[r] -= e.value;
+                    }
+                    if let Some(r) = ib {
+                        base_rhs[r] += e.value;
+                    }
+                }
+                ELEM_DIODE => diodes.push((i, ia, ib)),
+                _ => {}
+            }
+        }
+
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes);
+
+        // Commit per-element currents (oriented a -> b) at the operating point.
+        for (i, e) in self.elements.iter().enumerate() {
+            self.currents[i] = match e.kind {
+                ELEM_RESISTOR => {
+                    if e.value <= 0.0 {
+                        0.0
+                    } else {
+                        self.element_voltage(e) / e.value
+                    }
+                }
+                ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
+                ELEM_INDUCTOR => self.reactive_state[i],
+                ELEM_ISOURCE => e.value,
+                ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
+                _ => 0.0,
+            };
+        }
+    }
+
+    /// Newton transient solve (one step, current reactive state) for nonlinear
+    /// netlists. The linear part matches [`Sim::solve_into_readout`] (capacitor
+    /// and inductor backward-Euler companions, voltage-source and inductor branch
+    /// unknowns), with the diodes added as Newton companions. Writes
+    /// `self.node_v`, commits `self.currents`, and returns the solved unknown
+    /// vector so [`Sim::step`] can read inductor branch currents.
+    fn solve_into_readout_newton(&mut self) -> Vec<f64> {
+        let n = self.dim;
+        if n == 0 {
+            for v in &mut self.node_v {
+                *v = 0.0;
+            }
+            return Vec::new();
+        }
+
+        // Stamp the fixed linear part once and collect the diode terminal map.
+        let mut base_mat = vec![0.0f64; n * n];
+        let mut base_rhs = vec![0.0f64; n];
+        let mut diodes: Vec<(usize, Option<usize>, Option<usize>)> = Vec::new();
+        for (i, e) in self.elements.iter().enumerate() {
+            let ia = Self::node_idx(e.a);
+            let ib = Self::node_idx(e.b);
+            match e.kind {
+                ELEM_RESISTOR => {
+                    if e.value <= 0.0 {
+                        continue;
+                    }
+                    let g = 1.0 / e.value;
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        base_mat[r * n + c] -= g;
+                        base_mat[c * n + r] -= g;
+                    }
+                }
+                ELEM_CAPACITOR => {
+                    let g = e.value / DT;
+                    let ieq = g * self.reactive_state[i];
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += g;
+                        base_rhs[r] += ieq;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + r] += g;
+                        base_rhs[r] -= ieq;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        base_mat[r * n + c] -= g;
+                        base_mat[c * n + r] -= g;
+                    }
+                }
+                ELEM_VSOURCE => {
+                    let bi = self.branch_index[i];
+                    if let Some(r) = ia {
+                        base_mat[r * n + bi] += 1.0;
+                        base_mat[bi * n + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + bi] -= 1.0;
+                        base_mat[bi * n + r] -= 1.0;
+                    }
+                    base_rhs[bi] += e.value;
+                }
+                ELEM_INDUCTOR => {
+                    let bi = self.branch_index[i];
+                    let r_l = e.value / DT;
+                    if let Some(r) = ia {
+                        base_mat[r * n + bi] += 1.0;
+                        base_mat[bi * n + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + bi] -= 1.0;
+                        base_mat[bi * n + r] -= 1.0;
+                    }
+                    base_mat[bi * n + bi] -= r_l;
+                    base_rhs[bi] -= r_l * self.reactive_state[i];
+                }
+                ELEM_ISOURCE => {
+                    if let Some(r) = ia {
+                        base_rhs[r] -= e.value;
+                    }
+                    if let Some(r) = ib {
+                        base_rhs[r] += e.value;
+                    }
+                }
+                ELEM_DIODE => diodes.push((i, ia, ib)),
+                _ => {}
+            }
+        }
+
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes);
+
+        // Commit per-element currents (oriented a -> b) while `reactive_state`
+        // still holds the previous-step values (capacitor history term).
+        for (i, e) in self.elements.iter().enumerate() {
+            self.currents[i] = match e.kind {
+                ELEM_RESISTOR => {
+                    if e.value <= 0.0 {
+                        0.0
+                    } else {
+                        self.element_voltage(e) / e.value
+                    }
+                }
+                ELEM_CAPACITOR => {
+                    let g = e.value / DT;
+                    let ieq = g * self.reactive_state[i];
+                    g * self.element_voltage(e) - ieq
+                }
+                ELEM_VSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_ISOURCE => e.value,
+                ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
                 _ => 0.0,
             };
         }
@@ -1232,6 +1752,258 @@ mod tests {
                 expected
             );
         }
+    }
+
+    // --- Nonlinear: diode + Newton --------------------------------------------
+    //
+    // The Shockley diode (type 5) engages the deterministic Newton outer loop.
+    // These tests assert the physical operating point (which only holds if the
+    // loop actually converged within the cap) and the replay invariant.
+
+    /// The implicit-function solution of a forward-biased diode in series with a
+    /// resistor from a source: the loop current `i` satisfies
+    /// `Vsrc = i*R + n*Vt*ln(i/Is + 1)`. Newton-solve it on the scalar equation
+    /// to get an independent reference for the diode drop, so the core's result
+    /// is checked against physics rather than a hand-tuned constant.
+    fn series_diode_reference(vsrc: f64, r: f64) -> (f64, f64) {
+        // Solve f(i) = i*R + n*Vt*ln(i/Is + 1) - Vsrc = 0 for i > 0.
+        let vth = DIODE_N * DIODE_VT;
+        let mut i = (vsrc / r).max(1e-9); // start from the ohmic guess
+        for _ in 0..200 {
+            let vd = vth * (i / DIODE_IS + 1.0).ln();
+            let f = i * r + vd - vsrc;
+            let dvd_di = vth / (i + DIODE_IS); // d/di of n*Vt*ln(i/Is+1)
+            let df = r + dvd_di;
+            i -= f / df;
+            if i <= 0.0 {
+                i = 1e-15;
+            }
+        }
+        let vd = vth * (i / DIODE_IS + 1.0).ln();
+        (i, vd)
+    }
+
+    /// A forward-biased diode in series with a resistor conducts and drops a
+    /// junction voltage in the silicon "knee" band (~0.6–0.75 V at this drive
+    /// level), matching the independent scalar reference. The drop is set by the
+    /// current through the fixed `Is`; a few-tens-of-mA loop lands in the band.
+    /// Layout: source 1->0, R 1->2, diode 2->0 (anode 2 -> cathode ground). The
+    /// diode is element index 2.
+    #[test]
+    fn forward_diode_conducts_and_drops_knee_voltage() {
+        let vsrc = 5.0;
+        let r = 47.0; // ~90 mA loop -> ~0.65 V junction with Is = 1e-12
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vsrc, r, 0.0], // diode value is unused
+        );
+        let (i_ref, vd_ref) = series_diode_reference(vsrc, r);
+        let v = sim.node_voltages();
+        // Junction voltage is V(node 2) (cathode is ground).
+        assert!(
+            (0.6..=0.75).contains(&v[2]),
+            "forward diode sits in the knee band: got {}",
+            v[2]
+        );
+        assert!(
+            (v[2] - vd_ref).abs() < 1e-6,
+            "diode drop matches the scalar reference: got {}, want {}",
+            v[2],
+            vd_ref
+        );
+        // The diode (element 2) carries the loop current a -> b (into ground).
+        let c = sim.element_currents();
+        assert!(c[2] > 0.0, "forward diode conducts (positive a->b current)");
+        assert!(
+            (c[2] - i_ref).abs() < 1e-9,
+            "diode current matches the reference: got {}, want {}",
+            c[2],
+            i_ref
+        );
+        // KCL: the resistor and diode currents agree in the series loop.
+        assert!(
+            (c[1] - c[2]).abs() < 1e-9,
+            "series loop: resistor and diode carry the same current"
+        );
+        // Everything stayed finite (Newton did not diverge).
+        assert!(v.iter().all(|x| x.is_finite()), "node voltages finite");
+    }
+
+    /// A reverse-biased diode blocks: it carries only the tiny saturation
+    /// leakage (about -Is), so essentially no current, and the series node sits
+    /// near the source (almost no drop across the resistor). Layout: source
+    /// 1->0, R 1->2, diode 0->2 (anode ground -> cathode node 2), so a positive
+    /// rail reverse-biases it.
+    #[test]
+    fn reverse_diode_blocks() {
+        let vsrc = 5.0;
+        let r = 1_000.0;
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+            &[1, 1, 0],
+            &[0, 2, 2],
+            &[vsrc, r, 0.0],
+        );
+        let c = sim.element_currents();
+        // The diode current (a -> b) is about -Is in reverse: negligible.
+        assert!(
+            c[2].abs() < 1e-9,
+            "reverse diode blocks (~ -Is, near zero): got {}",
+            c[2]
+        );
+        // With almost no current, the resistor drop is tiny and node 2 ~ Vsrc.
+        let v = sim.node_voltages();
+        assert!(
+            (v[2] - vsrc).abs() < 1e-3,
+            "reverse-blocked node sits near the rail: got {}",
+            v[2]
+        );
+    }
+
+    /// A diode from a node to ground clamps that node near its forward voltage
+    /// even when a strong current source tries to push it far higher: the diode
+    /// shunts the excess. Layout: I src 0->1 forces current into node 1, diode
+    /// 1->0 clamps it. Without the diode the node would run away; with it the
+    /// node settles in the knee band.
+    #[test]
+    fn diode_clamps_node_near_forward_voltage() {
+        let i = 100.0e-3; // 100 mA forced in -> ~0.66 V clamp with Is = 1e-12
+        let sim = build(2, &[ELEM_ISOURCE, ELEM_DIODE], &[0, 1], &[1, 0], &[i, 0.0]);
+        let v = sim.node_voltages();
+        assert!(
+            (0.6..=0.85).contains(&v[1]),
+            "diode clamps the node into the forward band: got {}",
+            v[1]
+        );
+        // The diode must sink essentially all of the forced current (KCL).
+        let c = sim.element_currents();
+        assert!(
+            (c[1] - i).abs() < 1e-9,
+            "diode sinks the forced current: got {}, want {}",
+            c[1],
+            i
+        );
+        // The clamp voltage matches Shockley inverted at this current:
+        // vd = n*Vt*ln(i/Is + 1).
+        let vd_expected = DIODE_N * DIODE_VT * (i / DIODE_IS + 1.0).ln();
+        assert!(
+            (v[1] - vd_expected).abs() < 1e-6,
+            "clamp matches Shockley: got {}, want {}",
+            v[1],
+            vd_expected
+        );
+    }
+
+    /// The Newton loop converges for a forward diode *within the iteration cap*:
+    /// after one operating-point solve the residual of the nodal equation at the
+    /// reported voltages is below tolerance. (If the loop had merely hit the cap
+    /// and bailed, the residual would be large.) This checks convergence
+    /// directly rather than via a downstream value.
+    #[test]
+    fn newton_converges_within_cap_for_diode() {
+        let vsrc = 3.3;
+        let r = 470.0;
+        // source 1->0, R 1->2, diode 2->0.
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[vsrc, r, 0.0],
+        );
+        let v = sim.node_voltages();
+        // KCL residual at node 2 (the diode/resistor junction): current in from
+        // the resistor must equal the diode current out, to tight tolerance.
+        let vth = DIODE_N * DIODE_VT;
+        let i_diode = DIODE_IS * ((v[2] / vth).exp() - 1.0);
+        let i_res = (v[1] - v[2]) / r;
+        assert!(
+            (i_res - i_diode).abs() < 1e-9,
+            "converged: KCL residual at the junction is ~0 (i_res {} vs i_diode {})",
+            i_res,
+            i_diode
+        );
+    }
+
+    /// Replay invariant for a nonlinear (diode) circuit: the Newton loop is
+    /// deterministic, so a fixed netlist stepped a fixed number of times
+    /// reproduces its snapshot-hash stream exactly. This is the diode analogue of
+    /// `run_is_reproducible` and guards the nonlinear path against any
+    /// nondeterminism (hashed iteration, unstable reductions, iteration-count
+    /// drift).
+    #[test]
+    fn diode_run_is_reproducible() {
+        let run = || {
+            // A rectifier-ish RC load: source 1->0, R 1->2, diode 2->3,
+            // C 3->0. The diode steers charge onto the capacitor; the Newton
+            // loop runs inside every step.
+            let mut sim = build(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE, ELEM_CAPACITOR],
+                &[1, 1, 2, 3],
+                &[0, 2, 3, 0],
+                &[5.0, 1_000.0, 0.0, 1.0e-6],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "diode circuit must reproduce exactly");
+    }
+
+    /// `set_netlist` accepts the diode element type (type 5) and marks the
+    /// netlist nonlinear; a malformed netlist that happens to contain a diode
+    /// still fails safe through the same validation as any other element.
+    #[test]
+    fn diode_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // A bare diode across a source installs fine.
+        let ok = sim.set_netlist(
+            2,
+            &[ELEM_VSOURCE, ELEM_DIODE],
+            &[1, 1],
+            &[0, 0],
+            &[5.0, 0.0],
+        );
+        assert!(ok, "valid diode netlist installs");
+        assert_eq!(sim.element_count(), 2);
+        assert_eq!(sim.element_at(1).kind, ELEM_DIODE, "diode stored as type 5");
+        // Out-of-range node on a diode is still rejected (fail-safe).
+        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0.0]);
+        assert!(!bad, "out-of-range diode node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    /// A back-to-back source steps across a diode: forward then a forward diode
+    /// in a divider still settles to a finite, monotone-consistent operating
+    /// point and never produces NaN/Inf, exercising the gmin floor and limiting
+    /// on a node that is only weakly driven.
+    #[test]
+    fn diode_in_divider_is_finite_and_clamped() {
+        // source 1->0 = 5V, R1 1->2 = 1k, R2 2->0 = 1k (divider midpoint 2.5V),
+        // diode 2->0 in parallel with R2 clamps the midpoint to the knee.
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_DIODE],
+            &[1, 1, 2, 2],
+            &[0, 2, 0, 0],
+            &[5.0, 1_000.0, 1_000.0, 0.0],
+        );
+        let v = sim.node_voltages();
+        assert!(v.iter().all(|x| x.is_finite()), "finite operating point");
+        // The diode pulls the otherwise-2.5V midpoint down into the knee band.
+        assert!(
+            v[2] < 0.8 && v[2] > 0.5,
+            "diode clamps the divider midpoint into the knee: got {}",
+            v[2]
+        );
     }
 
     /// `new` installs a working demo so the app shows life before user input:

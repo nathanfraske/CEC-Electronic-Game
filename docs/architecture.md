@@ -7,8 +7,12 @@ crossing into the core once per frame with a batched snapshot.
 
 The simulation is several cooperating engines on one tick grid. A continuous
 time analog solver owns the real nets and power rails and integrates every
-fixed step with implicit companion models and a capped nonlinear solve, so per
-tick cost is bounded. An event driven digital engine owns gates, flip flops,
+fixed step with implicit companion models. Linear netlists are a single dense
+Modified Nodal Analysis solve; netlists with a nonlinear device (the diode is
+the first) wrap that same assembly in a bounded, deterministic Newton–Raphson
+outer loop, linearizing each device about the previous iterate and capping the
+iteration count, so per tick cost stays bounded. An event driven digital engine
+owns gates, flip flops,
 and fabric, with events landing on the tick grid. A behavioral emulator owns
 each microcontroller and runs its firmware, temporally decoupled and
 resynchronized at pin interactions. The domains meet only at the pins through
