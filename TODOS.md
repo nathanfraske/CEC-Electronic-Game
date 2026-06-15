@@ -15,7 +15,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ### In flight / pending
 - ~~**Inspector popup over the component** (`docs/ui/inspector-popup.md`): the value picker now floats as a popover anchored above the selected part — `board.ts` projects `componentBox` through the world transform each frame (`onAnchor`, change-detected, null during gestures/Measure); `App.svelte` positions an absolutely-placed `.value-pop` in `.board-frame` with edge-flip + a caret. Removed from the telemetry panel.~~
-- [ ] **Incomplete-circuit affordance** (designed in `docs/ui/incomplete-circuits.md`, still unbuilt): topology pre-check for a current source with no return path + a deterministic `singular()` solver flag → amber hint, don't halt the sim.
+- ~~**Incomplete-circuit affordance** (`docs/ui/incomplete-circuits.md`): `buildNetlist` now detects an ideal current source whose forced current has no return path (union-find over non-`I` elements; flags `floatingSources`), and App shows an amber "no return path — complete the loop" warning without halting the sim. (Deterministic solver `singular()` backstop is the remaining refinement.)~~
 
 ### Done — ticks/second playback, wall-clock readout, timeline-to-0, +3 examples
 - ~~**Ticks-per-second playback**: rate is now ticks of sim time per *real* second (real-dt driven), presets [50, 500, 5k, 50k, 500k]/s (500k/s = real time at DT 2 µs), replacing the per-frame multiplier (`loop.ts setTicksPerSecond` + `MAX_STEPS_PER_FRAME`).~~

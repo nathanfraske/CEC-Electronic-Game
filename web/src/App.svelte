@@ -196,6 +196,9 @@
   let selPart = $state<SelectedPart | null>(null);
   let showMore = $state(false);
   let anchor = $state<AnchorRect | null>(null);
+  // Set when the circuit can't actually solve (e.g. a current source with no
+  // return path) so the HUD can warn instead of showing a meaningless reading.
+  let circuitWarning = $state<string | null>(null);
   let canUndo = $state(false);
   let scrubFrac = $state(0);
   // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
@@ -322,6 +325,10 @@
       let netlistSig = "";
       const rebuildNetlist = (graph: BoardGraph): void => {
         const nl = buildNetlist(graph);
+        circuitWarning =
+          nl && nl.floatingSources.length > 0
+            ? "A current source has no return path — its current can't flow, so this reading isn't meaningful. Complete the loop back to the source."
+            : null;
         const sig = nl ? nl.sig : graph.components.size > 0 ? "empty" : "demo";
         if (sig === netlistSig) return;
         netlistSig = sig;
@@ -814,6 +821,10 @@
           {partCount} parts · {wireCount} wires · {selCount} sel
         </span>
       </div>
+
+      {#if circuitWarning}
+        <div class="circuit-warn">⚠ {circuitWarning}</div>
+      {/if}
 
       {#if buildEx}
         {@const ex = buildEx}
@@ -1537,6 +1548,24 @@
   .intro-banner strong {
     color: var(--text);
     font-weight: 600;
+  }
+  /* Incomplete-circuit warning: an amber bar, top-centre over the board. */
+  .circuit-warn {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    max-width: 70%;
+    padding: 7px 13px;
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--warn);
+    background: oklch(0.165 0.028 285 / 0.94);
+    border: 1px solid var(--warn);
+    border-radius: 4px;
+    box-shadow: 0 0 18px -8px var(--warn);
+    backdrop-filter: blur(3px);
+    z-index: 4;
   }
   .hl {
     font-weight: 600;

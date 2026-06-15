@@ -34,6 +34,8 @@ export interface BuiltNetlist {
   elemOfComponent: Map<number, number>;
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
   nodesOfComponent: Map<number, [number, number]>;
+  /** Current-source component ids whose forced current has no return path. */
+  floatingSources: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
   sig: string;
 }
@@ -143,6 +145,41 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   }
   if (types.length === 0) return null;
 
+  // Incomplete-circuit check: an ideal current source whose forced current has no
+  // return path (its two nodes aren't joined through any *other* element) makes
+  // the system singular → a confident but meaningless reading. Find such sources
+  // by union-finding nodes over every non-current-source element, then testing
+  // whether each current source's two nodes are connected without it.
+  const parent2 = Array.from({ length: nodeCount }, (_, i) => i);
+  const f2 = (x: number): number => {
+    while (parent2[x] !== x) {
+      parent2[x] = parent2[parent2[x]!]!;
+      x = parent2[x]!;
+    }
+    return x;
+  };
+  const u2 = (x: number, y: number): void => {
+    parent2[f2(x)] = f2(y);
+  };
+  for (const c of sorted) {
+    const t = TYPE_OF[c.kind];
+    if (t === undefined || t === 4) continue; // skip non-elements and I sources
+    const kind = graph.kindOf(c);
+    if (!kind || kind.pins.length < 2) continue;
+    const na = nodeIndex.get(find(key(c.id, 0)));
+    const nb = nodeIndex.get(find(key(c.id, 1)));
+    if (na !== undefined && nb !== undefined) u2(na, nb);
+  }
+  const floatingSources: number[] = [];
+  for (const c of sorted) {
+    if (c.kind !== "I") continue;
+    const na = nodeIndex.get(find(key(c.id, 0)));
+    const nb = nodeIndex.get(find(key(c.id, 1)));
+    if (na !== undefined && nb !== undefined && f2(na) !== f2(nb)) {
+      floatingSources.push(c.id);
+    }
+  }
+
   const sig =
     nodeCount +
     "|" +
@@ -162,6 +199,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     values: Float64Array.from(values),
     elemOfComponent,
     nodesOfComponent,
+    floatingSources,
     sig,
   };
 }
