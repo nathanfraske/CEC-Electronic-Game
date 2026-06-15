@@ -410,6 +410,22 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // Transformer: the first FOUR-terminal part — two magnetically coupled windings.
+  // Pins are ordered primary+, primary−, secondary+, secondary− so buildNetlist's
+  // pin→terminal map is direct (pin 0 → a, 1 → b, 2 → c, 3 → d), matching the core
+  // (ELEM_TRANSFORMER=18: primary a/b, secondary c/d). `value` is the turns ratio
+  // n = Ns/Np (default 2, a step-up); the inspector shows it as Np:Ns. The primary
+  // winding is on the left (P+ top, P− bottom), the secondary on the right. Violet
+  // marks the magnetic/reactive family alongside the inductor.
+  TR: kind(
+    "TR",
+    "Transformer",
+    "violet",
+    [pin("P+", 0, 0), pin("P−", 0, 2), pin("S+", 2, 0), pin("S−", 2, 2)],
+    2,
+    "",
+    true,
+  ),
   FF: kind(
     "FF",
     "D Flip-Flop",

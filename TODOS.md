@@ -8,22 +8,43 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Owner requests — potentiometer + programmable load (for VRMs/regulators)
+- [ ] **Potentiometer** (owner, 2026-06-15): a player-adjustable 3-terminal variable
+  resistor — two ends + a **wiper**, with a knob (0..1 wiper position) in the
+  inspector. Model = two resistances `R·t` and `R·(1−t)` from the wiper to each end
+  (reuses the existing resistor stamp; the wiper is the 3rd terminal `c`, already
+  threaded). Gives variable dividers, adjustable bias/feedback, manual gain — and is
+  the natural "knob" primitive. Low effort (no new sim primitive: expand to two Rs
+  in `buildNetlist`, like the EC cap, OR add a tiny `ELEM_POT` if cleaner).
+- [ ] **Programmable / electronic load** (owner, 2026-06-15): a sink that draws a
+  *commanded* current (constant-current) — and ideally constant-power / constant-R
+  modes — so you can **test supplies and build VRMs** (load-step response, regulation,
+  efficiency). Model = a controlled current sink (a value-set current draw, possibly
+  gated on its terminal voltage for CC vs CP). Pairs with the regulator IC + the
+  buck we already simulate → "build a VRM and load-test it" contracts. Together with
+  the pot, these unlock real power-supply design play.
+
 ### Owner requests — transformer phase (deferred; needs 4th terminal `d` + coupled-inductor model)
 - [ ] **Full-bridge rectifier example with a tunable turns ratio.** Centerpiece of
   the transformer example set: a full-bridge rectifier fed from the transformer
   secondary, with the **turns ratio (N₂/N₁) as the tunable knob** so the player
   watches the turns-per-side step the AC up/down before the bridge rectifies it
   (step-down → bridge, DC output tracks the ratio). (Owner idea, 2026-06-15.)
-- [ ] **Build-the-transformer-from-primitives example.** Even cooler (owner,
-  2026-06-15): an example where you place **two coils (inductors) + a magnetic
-  core** and watch the coupling come alive — i.e. model the **magnetic core as a
-  placeable coupling element** that links two nearby/wired inductors via mutual
-  inductance M = k·√(L₁L₂), rather than (or in addition to) a monolithic
-  transformer part. This argues for a **modular coupling architecture** in the
-  transformer design: a core element that couples inductors is more Factorio-ish
-  and more teachable than a sealed 4-pin transformer. Scope it when designing the
-  4th-terminal/coupled-inductor lift. Owner: **finish logic gates first, then
-  transformers.**
+- [ ] **Build-the-transformer-from-primitives example + a REUSABLE magnetic core.**
+  Even cooler (owner, 2026-06-15): place **two coils (inductors) + a magnetic core**
+  and watch the coupling come alive — model the **magnetic core as a placeable
+  coupling element** that links windings via mutual inductance M = k·√(L₁L₂),
+  rather than (or alongside) a monolithic 4-pin transformer. Owner follow-up: make
+  that **core element reusable — e.g. a ferrite**. One core abstraction (winding
+  count + coupling k + saturation curve) then covers a whole family: **transformer**
+  (2 windings), **common-mode choke** (2 windings, EMI), **ferrite bead** (1 lossy
+  winding, noise suppression), a **cored inductor** (1 winding, ↑L + saturation),
+  **autotransformer**, **saturable reactor**. This strongly favors the **modular
+  "core couples windings" architecture** over a sealed transformer part — more
+  Factorio-ish, more teachable, and far more reusable. The monolithic 4-pin
+  transformer (now in flight) is the fast first cut; design the modular ferrite-core
+  element as the follow-on (it can share the coupled-inductor math already built).
+  Owner: **finish logic gates first, then transformers.**
 
 ### IC ladder — logic gate (first behavioral digital IC)
 - ~~**sim-core logic gate** (`ELEM_GATE = 17`, #51): Tier-A behavioral driver,

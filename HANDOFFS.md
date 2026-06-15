@@ -45,13 +45,32 @@ decider/sorter, partInfo (truth table + half-rail threshold + one-tick delay), a
 a new **"Logic & ICs"** example set: inverter→LED, AND interlock, and an XOR+AND
 **half-adder** (1+1=10). Replaced the non-simulated `"&"` placeholder.
 
-**Next: the next IC rungs** — D flip-flop (clocked 1-bit state; edge-detect on the
-tick grid — the first sequential element, needs one stored bit) → counter/shift
-(bus ports) → 555 → linear regulator. Then the deferred discretes (fuse, thermistor,
-LDR, 7-seg). **Transformer + relay** need a **4th terminal `d`** boundary bump + a
-coupled-inductor model — see the two owner transformer requests in TODOS (tunable
-turns-ratio full-bridge rectifier; and building a transformer from two coils + a
-placeable magnetic-core coupling element). Owner: gates first, then transformers.
+**Transformer has LANDED (full feature, in this PR).** The **4th terminal `d`**
+boundary bump is done end-to-end (Element + `set_netlist` + sim-wasm + `loop.ts` +
+`netlist.ts` `FOUR_PIN_TYPES` + App.svelte — golden-safe, also unlocks the relay).
+`ELEM_TRANSFORMER=18` is **two magnetically coupled inductors** (primary a/b,
+secondary c/d; `value` = turns ratio n): two coupled branch currents + two reactive
+states (`reactive_state_b`), backward-Euler companion cross-linked by M=k·√(L₁L₂),
+per-winding resistance so it **blocks DC** (primary current saturates) and **scales
+AC by ~k·n**. Stamped in all 4 assembly paths (transient = coupled branches, OP =
+current sources). 4 new tests (AC scaling, DC blocking, validation, reproduce) — 83
+total, golden `0xeaac376499e4fa24` unchanged. Web: `TR` part (4-pin, two-coil + core
+glyph + factory converter), turns-ratio value shown as **Np:Ns** (`fmtVal`), partInfo,
+and a **"Transformers"** example — a **full-bridge rectifier with a tunable turns
+ratio** (the owner's centerpiece request). Also restored the op-amp per-tick current
+readout.
+
+**Owner ideas captured in TODOS (not yet built):** reusable **ferrite/magnetic-core**
+element (one core abstraction → transformer / common-mode choke / ferrite bead /
+cored inductor) + build-transformer-from-two-coils example; **potentiometer** (3-term
+wiper divider) and a **programmable/electronic load** (CC/CP sink) for building &
+load-testing **VRMs**.
+
+**Next: the next IC rungs** — D flip-flop (clocked 1-bit state; tick-grid edge detect
+— first sequential element) → counter/shift (bus ports) → 555 → linear regulator.
+Then the deferred discretes (fuse, thermistor, LDR, 7-seg) and the **relay** (reuses
+the now-built 4th terminal `d`). The modular ferrite-core, pot, and programmable load
+are strong near-term adds (see TODOS).
 
 ---
 
