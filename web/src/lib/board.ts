@@ -36,6 +36,7 @@ import {
   type ElectricalState,
   type GlyphStyle,
 } from "./glyphs";
+import { hasValue } from "./values";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode = "select" | "place" | "wire" | "measure";
@@ -487,10 +488,13 @@ export class Board {
     this.lastTime = now;
     if (running) this.realPhase += dt;
     // Tie the flow phase to the simulated timeline so the arrows/dots track
-    // delta-T: they advance as the tick advances (running OR scrubbing forward)
-    // and run in reverse when stepping/scrubbing back. Real time keeps them alive
-    // smoothly while running; when paused they move only with the timeline.
-    this.phase = this.realPhase + Number(snap.tick) * TICK_FLOW;
+    // delta-T (forward as the tick advances, reverse when stepping back). Cap the
+    // per-frame advance so very fast playback doesn't alias the flow into jitter;
+    // at normal/stepping speeds the delta is tiny and tracks the timeline exactly.
+    const target = this.realPhase + Number(snap.tick) * TICK_FLOW;
+    const d = target - this.phase;
+    const cap = 0.1;
+    this.phase += d > cap ? cap : d < -cap ? -cap : d;
 
     if (this.app.screen.width !== this.w || this.app.screen.height !== this.h) {
       this.viewportDirty = true;
@@ -1270,7 +1274,7 @@ export class Board {
         const normV = saturate(Math.abs(v ?? 0) / 6);
         const len = routeLength(route);
         const spacing = 40 - 28 * normC;
-        const n = Math.max(1, Math.floor(len / spacing));
+        const n = Math.min(14, Math.max(1, Math.floor(len / spacing)));
         const dir = cur >= 0 ? 1 : -1;
         const speed = 0.08 + normV * 0.6;
         for (let i = 0; i < n; i++) {
@@ -1737,13 +1741,24 @@ class ComponentNode {
 
   private layoutLabels(): void {
     if (isSymbol(this.kindTag)) {
-      const p1 = this.pinPositions[1] ?? { x: this.wPx, y: 0 };
-      const r = rotPx(p1.x, p1.y, this.component.rot);
-      const cx = r.x / 2;
-      const cy = r.y / 2;
-      this.label.position.set(cx, cy - 18);
-      this.value?.position.set(cx, cy + 18);
-      this.meter.position.set(cx, cy - 34);
+      // Place labels just outside the part's rotated extent — tag above the top,
+      // value below the bottom, centred — so they never overlap the body at any
+      // rotation (the cause of the rotated-number jumble).
+      let minX = 0;
+      let maxX = 0;
+      let minY = 0;
+      let maxY = 0;
+      for (const p of this.pinPositions) {
+        const r = rotPx(p.x, p.y, this.component.rot);
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y);
+      }
+      const cx = (minX + maxX) / 2;
+      this.label.position.set(cx, minY - 16);
+      this.value?.position.set(cx, maxY + 16);
+      this.meter.position.set(cx, minY - 30);
     } else {
       this.label.position.set(this.wPx / 2, this.hPx / 2);
     }
@@ -1785,9 +1800,9 @@ class ComponentNode {
       g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
       g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
     }
-    // While selected, show the live voltage *across* the part and the current
-    // *through* it — the two quantities words can't make intuitive.
-    if (selected && isSymbol(this.kindTag)) {
+    // Live "V across · I through" only for parts that have NO value popover (the
+    // popover carries the readout for the rest, so this avoids the overlap).
+    if (selected && isSymbol(this.kindTag) && !hasValue(this.kindTag)) {
       this.meter.text =
         fmtSI(electrical.vAcross, "V") +
         "  ·  " +
