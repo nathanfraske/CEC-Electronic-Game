@@ -173,6 +173,72 @@ export const EXAMPLES: ExampleSpec[] = [
     },
   },
   {
+    id: "pot-dimmer",
+    name: "Potentiometer Dimmer",
+    blurb:
+      "A potentiometer is an adjustable voltage divider — the fixed divider you just built, but with a knob. Wire its two ends across a supply and the wiper picks off any fraction of it you like. Send the wiper to an LED and you have a dimmer: slide toward the supply end for full brightness, toward the ground end to fade it out. The whole output is set by where the wiper sits.",
+    watch:
+      "the LED glow at the wiper's voltage — the divider output. Slide the wiper (the toggle): toward the A (supply) end it brightens, toward the B (ground) end it dims to dark. The wiper voltage, and so the LED current, tracks the wiper position.",
+    build() {
+      // V(5) across the pot A→B; the wiper feeds an LED through a limiter. The wiper
+      // voltage ≈ 5·(1−t), so a low wiper position is bright, a high one dim.
+      //   nets: A = V+ = POT.A ; GND(0) = POT.B = V− = LED.K ; W = POT.W = R.A ;
+      //         R.B = LED.A.
+      const g = new BoardGraph();
+      const v = comp(g, "V", 0, 0, 5, 1); // 5 V rail, + at top
+      const pot = comp(g, "POT", 4, 0, 10000); // 10 kΩ pot
+      pot.wiper = 0.1; // start bright (wiper near the A / supply end)
+      const r = comp(g, "R", 8, 0, 330); // LED current-limit
+      const led = comp(g, "LED", 11, 0, 0);
+      const gnd = comp(g, "GND", 4, 6, 0);
+      wire(g, v, 0, pot, 0); // V+ → POT.A (pin 0)
+      wire(g, pot, 1, gnd, 0); // POT.B (pin 1) → GND
+      wire(g, v, 1, gnd, 0); // V− → GND
+      wire(g, pot, 2, r, 0); // POT.W (pin 2 = wiper) → R
+      wire(g, r, 1, led, 0); // R → LED
+      wire(g, led, 1, gnd, 0); // LED → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V), a Potentiometer (POT), and an LED with a series Resistor (R, ~330 Ω).",
+        why: "The pot is the adjustable divider; the LED is what reads its output. The series resistor limits the LED current the way it always does.",
+        done: (p) => at(p, "V") >= 1 && at(p, "POT") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Wire V+ → the pot's A end and the pot's B end → Ground (and V− → GND). Take the WIPER (W) → R → LED → GND. Run.",
+        why: "The two ends sit across the full 5 V; the wiper taps a fraction of it set by its position. That tapped voltage drives the LED — an adjustable supply from one knob.",
+        done: (p) => at(p, "POT") >= 1 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Select the pot and slide its wiper (the percentage chips, or use the toggle below).",
+        why: "Moving the wiper toward the supply end lifts the tapped voltage and the LED brightens; toward the ground end it falls and the LED dims. Same parts, a continuously variable output — that's what the wiper buys you.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Wiper bright / dim",
+      on: "Wiper near A (10%) — most of the 5 V reaches the LED: bright.",
+      off: "Wiper near B (80%) — only a sliver reaches the LED: dim/dark.",
+      alt() {
+        const g = new BoardGraph();
+        const v = comp(g, "V", 0, 0, 5, 1);
+        const pot = comp(g, "POT", 4, 0, 10000);
+        pot.wiper = 0.8; // wiper toward the ground end → dim
+        const r = comp(g, "R", 8, 0, 330);
+        const led = comp(g, "LED", 11, 0, 0);
+        const gnd = comp(g, "GND", 4, 6, 0);
+        wire(g, v, 0, pot, 0);
+        wire(g, pot, 1, gnd, 0);
+        wire(g, v, 1, gnd, 0);
+        wire(g, pot, 2, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "rc",
     name: "RC Charge",
     blurb:
@@ -2447,6 +2513,7 @@ export const EXAMPLE_CATEGORIES = [
 export const EXAMPLE_CATEGORY: Record<string, string> = {
   primer: "Fundamentals",
   divider: "Fundamentals",
+  "pot-dimmer": "Fundamentals",
   parallel: "Sources & Current",
   isource: "Sources & Current",
   rc: "Capacitors & Inductors",

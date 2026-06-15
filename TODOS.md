@@ -20,8 +20,11 @@ the enabling primitive from the catalog's §0 / §9 roadmap):
   (a 2nd, switched branch). **Unblocked now** (uses the 4th terminal `d`). Needs the
   stateful/hysteretic latch (P6, integer/threshold on the tick grid, hashed) + the
   flyback-diode lesson. The first stateful-conduction part. **Med.**
-- [ ] **Potentiometer** — 3-terminal wiper divider (terminal `c` = wiper); expand to
-  two Rs in `buildNetlist` (like EC). The "knob" primitive for VRMs. **Low.**
+- ~~**Potentiometer** (`POT`) — 3-terminal wiper divider (A/B ends + wiper W);
+  `buildNetlist` expands it to two resistors A→W=R·t, W→B=R·(1−t) (no new solver
+  element). `Component.wiper` (0..1) + inspector % chips + the wiper slides live in
+  the schematic/factory glyph. "Potentiometer Dimmer" example. Web-only; golden
+  untouched.~~
 - [ ] **Fuse** (catalog §6.1) — latched "blown" state (P6, + I²t thermal P7): once
   the current·time threshold trips, it stays open until replaced. **Med.**
 - [ ] **Thermistor NTC/PTC** (catalog §6.3) — resistance vs temperature; needs the

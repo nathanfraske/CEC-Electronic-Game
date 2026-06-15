@@ -174,6 +174,9 @@ export interface SelectedPart {
   /** An AC source's peak amplitude in volts (its second scalar, beside `value` =
    * frequency). Undefined for kinds that have no amplitude. */
   amp?: number;
+  /** A potentiometer's wiper position in [0,1] (its second scalar, beside `value` =
+   * total resistance). Undefined for kinds with no wiper. */
+  wiper?: number;
 }
 
 /** Screen-space (CSS px, canvas-relative) rect of the lone selected part, for
@@ -1199,7 +1202,14 @@ export class Board {
     if (this.selected.size === 1 && edges === 0) {
       const id = [...this.selected][0]!;
       const c = this.graph.components.get(id);
-      if (c) single = { id: c.id, kind: c.kind, value: c.value, amp: c.amp };
+      if (c)
+        single = {
+          id: c.id,
+          kind: c.kind,
+          value: c.value,
+          amp: c.amp,
+          wiper: c.wiper,
+        };
     }
     this.cb.onSelect?.({
       components: this.selected.size,
@@ -1282,6 +1292,22 @@ export class Board {
     c.amp = amp;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed amplitude
+  }
+
+  /**
+   * Set a potentiometer's wiper position `wiper` (0..1) — its second scalar, beside
+   * `value` (the total resistance) — from the inspector; rebuilds the netlist (the
+   * two leg resistances change) so the new split takes effect. The glyph reads the
+   * wiper live each frame, so the wiper slides on its own; no node-side label.
+   * No-op if unchanged.
+   */
+  setComponentWiper(id: number, wiper: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || c.wiper === wiper) return;
+    this.pushUndo(this.graph.serialize());
+    c.wiper = wiper;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed wiper position
   }
 
   /**
@@ -3049,6 +3075,9 @@ class ComponentNode {
       // rather than inferring it from the voltage across (so it reads right with
       // no current). Pass the live value through; other glyphs ignore it.
       value: this.component.value,
+      // The potentiometer draws its wiper where it actually sits; other glyphs
+      // ignore this.
+      wiper: this.component.wiper,
     });
     // pin dots on top of the glyph
     for (const p of this.pinPositions) {
