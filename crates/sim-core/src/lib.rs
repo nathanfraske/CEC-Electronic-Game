@@ -39,6 +39,8 @@
 //! | 10   | Zener diode        | breakdown Vz  | Shockley + reverse-breakdown junction|
 //! | 11   | NMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
 //! | 12   | PMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
+//! | 13   | NPN BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
+//! | 14   | PNP BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
 //!
 //! Types 5, 8, 9, and 10 are the **diode family**: one set of Newton-companion
 //! routines parameterised by a [`DiodeModel`] (saturation current + thermal
@@ -50,6 +52,15 @@
 //! into a transconductance + output-conductance companion each Newton iteration
 //! (see [`mosfet_eval`]). Like a diode they add no branch unknown; unlike a diode
 //! they read the third terminal `c`, which is the only reason `c` exists.
+//!
+//! Types 13 and 14 are the **BJT family**: an Ebers-Moll bipolar transistor
+//! (collector `a`, emitter `b`, base `c`). Unlike the MOSFET's single square law it
+//! has **two** exponential junctions, so it reuses the diode exponential and the
+//! [`pnjlim`] limiter (one limited junction voltage each for base-emitter and
+//! base-collector) rather than a new device-specific limiter; each Newton iteration
+//! it linearises into the junction conductances + transconductances of the standard
+//! 3-terminal companion (see [`bjt_eval`]). Like the MOSFET it adds no branch
+//! unknown and reads the third terminal `c`.
 //!
 //! ## Sinusoidal AC voltage source
 //!
@@ -257,6 +268,28 @@ pub const ELEM_NMOS: u8 = 11;
 /// commit machinery. `value` is **unused** for now.
 pub const ELEM_PMOS: u8 = 12;
 
+/// **NPN bipolar junction transistor** (the first two-junction nonlinear device).
+/// Collector `a`, emitter `b`, base `c`; the main current flows `a -> b`
+/// (collector to emitter) and is controlled by the base `c`, mirroring the
+/// MOSFET's drain/source/gate. An Ebers-Moll model: **two** coupled exponential
+/// junctions (base-emitter and base-collector) that reuse the diode exponential
+/// and the [`pnjlim`] limiter rather than the MOSFET square law. At the current
+/// Newton iterate it linearises into the small-signal junction conductances
+/// `gpi`/`gmu` and the forward/reverse transconductances, plus equivalent currents
+/// on the collector and base (see [`bjt_eval`]). Like a MOSFET it adds **no**
+/// branch unknown and reads the third terminal `c`. `value` is **unused**; the
+/// model uses the fixed [`BJT_IS`], [`DIODE_VT`], [`BJT_BF`], [`BJT_BR`].
+pub const ELEM_NPN: u8 = 13;
+
+/// **PNP bipolar junction transistor**. Collector `a`, emitter `b`, base `c`; the
+/// conventions are the symmetric mirror of [`ELEM_NPN`]. It conducts when the base
+/// is pulled *below* the emitter (the junction voltages and currents are the
+/// sign-flipped image of the NPN's). Internally it reuses the same Ebers-Moll
+/// evaluation as the NPN on negated junction voltages (see [`bjt_op`]), so it
+/// rides the identical companion-stamp and commit machinery. `value` is
+/// **unused** for now.
+pub const ELEM_PNP: u8 = 14;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
@@ -335,6 +368,22 @@ const MOS_LAMBDA: f64 = 0.02;
 /// settled device passes through unchanged. See [`mosfet_limit`].
 const MOS_VLIM_DELTA: f64 = 2.0;
 
+// --- BJT (Ebers-Moll) model constants -----------------------------------------
+
+/// BJT transport saturation current `Is`, in amperes. Sets the scale of both
+/// exponential junctions in the Ebers-Moll model. A typical small-signal value;
+/// fixed for determinism (the device's `value` field is unused for now). The
+/// thermal voltage is shared with the diode family ([`DIODE_VT`]).
+const BJT_IS: f64 = 1.0e-15;
+/// BJT forward current gain `BF` (beta) — the active-region ratio `Ic / Ib` when
+/// the base-emitter junction is forward biased and the base-collector junction is
+/// reverse biased. Fixed default. Shared by both polarities.
+const BJT_BF: f64 = 100.0;
+/// BJT reverse current gain `BR` — the (much smaller) gain when the device is run
+/// inverted (collector and emitter swapped). Keeps the reverse junction's
+/// contribution physical. Fixed default. Shared by both polarities.
+const BJT_BR: f64 = 2.0;
+
 /// The handful of model parameters a junction needs, so one set of Newton-companion
 /// routines ([`diode_eval`], [`diode_vcrit`], [`pnjlim`]) serves the whole diode
 /// family. `vth = n * Vt`. `vz` is the reverse **breakdown** voltage; it is
@@ -405,12 +454,20 @@ fn is_mosfet(kind: u8) -> bool {
     matches!(kind, ELEM_NMOS | ELEM_PMOS)
 }
 
+/// True for every BJT-family element (NPN or PNP). Like [`is_diode`] and
+/// [`is_mosfet`], it centralises the membership test so the nonlinear split, the
+/// companion collection, and the current commit share one definition.
+#[inline]
+fn is_bjt(kind: u8) -> bool {
+    matches!(kind, ELEM_NPN | ELEM_PNP)
+}
+
 /// True for every nonlinear element (any device that drives the Newton outer
-/// loop): the diode family or the MOSFET family. The single switch that selects
-/// the Newton path over the linear fast path.
+/// loop): the diode family, the MOSFET family, or the BJT family. The single
+/// switch that selects the Newton path over the linear fast path.
 #[inline]
 fn is_nonlinear(kind: u8) -> bool {
-    is_diode(kind) || is_mosfet(kind)
+    is_diode(kind) || is_mosfet(kind) || is_bjt(kind)
 }
 
 // --- Newton outer-loop constants ----------------------------------------------
@@ -463,6 +520,12 @@ type DiodeMap = (usize, Option<usize>, Option<usize>);
 /// analogue of [`DiodeMap`] (drain/source/gate); aliased so the collection and the
 /// `newton_iterate` signature stay readable.
 type MosfetMap = (usize, Option<usize>, Option<usize>, Option<usize>);
+
+/// A BJT's terminal map for the Newton companion: `(element_index, collector_mna,
+/// emitter_mna, base_mna)`, each MNA index `None` for ground. The same shape as
+/// [`MosfetMap`] (the three terminals a/b/c = collector/emitter/base); aliased so
+/// the collection and the `newton_iterate` signature stay readable.
+type BjtMap = (usize, Option<usize>, Option<usize>, Option<usize>);
 
 /// Solve `A x = b` for a dense, row-major `n x n` system by Gaussian elimination
 /// with partial pivoting. Vec-backed so the dimension can vary per netlist, but
@@ -674,6 +737,80 @@ fn mosfet_limit(vnew: f64, vold: f64) -> f64 {
     }
 }
 
+// --- BJT (Ebers-Moll) device ---------------------------------------------------
+
+/// The small-signal companion of an Ebers-Moll BJT, linearised about its two
+/// junction voltages. `ic`/`ib`/`ie` are the terminal currents (into the
+/// collector / base / emitter, summing to zero) at the iterate; the four partials
+/// are the Jacobian of `(Ic, Ib)` with respect to `(Vbe, Vbc)`:
+/// `gpi = dIb/dVbe`, `gmu = dIb/dVbc`, `gif = dIc/dVbe`, and `gic_bc = dIc/dVbc`.
+/// They are all expressed in the **NPN** sign convention (the PNP negates the
+/// junction voltages and the currents on the way through [`Sim::bjt_op`], which
+/// leaves the conductances unchanged by the chain rule, exactly like the MOSFET).
+#[derive(Clone, Copy)]
+struct BjtOp {
+    ic: f64,
+    ib: f64,
+    ie: f64,
+    gpi: f64,
+    gmu: f64,
+    gif: f64,
+    gic_bc: f64,
+}
+
+/// The base junctions of a BJT expressed as an ordinary diode junction so the
+/// shared [`pnjlim`]/[`diode_vcrit`] limiter can damp each one. The model uses the
+/// BJT saturation current and the shared thermal voltage, with no reverse
+/// breakdown (`vz = INFINITY`). Pure constant fold.
+#[inline]
+fn bjt_junction_model() -> DiodeModel {
+    DiodeModel {
+        is: BJT_IS,
+        vth: DIODE_VT,
+        vz: f64::INFINITY,
+    }
+}
+
+/// Evaluate the Ebers-Moll NPN at base-emitter / base-collector junction voltages
+/// `vbe`/`vbc` (each expected already limited by [`pnjlim`], so the exponentials
+/// are bounded), returning the terminal currents and the small-signal partials in
+/// a [`BjtOp`]. With `evbe = exp(vbe/Vt)`, `evbc = exp(vbc/Vt)`:
+///
+/// - `Ic = Is*[(evbe - evbc) - (evbc - 1)/BR]` (into the collector)
+/// - `Ib = Is*[(evbe - 1)/BF + (evbc - 1)/BR]` (into the base)
+/// - `Ie = -(Ic + Ib)` (into the emitter)
+///
+/// and the Jacobian of `(Ic, Ib)` w.r.t. `(Vbe, Vbc)`:
+///
+/// - `gpi = dIb/dVbe = Is*evbe/(BF*Vt)`
+/// - `gmu = dIb/dVbc = Is*evbc/(BR*Vt)`
+/// - `gif = dIc/dVbe = Is*evbe/Vt`
+/// - `gic_bc = dIc/dVbc = -Is*evbc/Vt*(1 + 1/BR)`
+///
+/// Pure, branch-free `f64` (the limiting happens before the call), so it never
+/// costs determinism.
+#[inline]
+fn bjt_eval(vbe: f64, vbc: f64, is: f64, vt: f64, bf: f64, br: f64) -> BjtOp {
+    let evbe = (vbe / vt).exp();
+    let evbc = (vbc / vt).exp();
+    let ic = is * ((evbe - evbc) - (evbc - 1.0) / br);
+    let ib = is * ((evbe - 1.0) / bf + (evbc - 1.0) / br);
+    let ie = -(ic + ib);
+    let gpi = is * evbe / (bf * vt);
+    let gmu = is * evbc / (br * vt);
+    let gif = is * evbe / vt;
+    let gic_bc = -is * evbc / vt * (1.0 + 1.0 / br);
+    BjtOp {
+        ic,
+        ib,
+        ie,
+        gpi,
+        gmu,
+        gif,
+        gic_bc,
+    }
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -720,6 +857,16 @@ pub struct Sim {
     /// Per-element MOSFET drain-source control voltage `Vds`, the companion of
     /// [`Sim::mosfet_vgs`]; same role and indexing.
     mosfet_vds: Vec<f64>,
+    /// Per-element BJT base-emitter junction voltage `Vbe = V(c) - V(b)` carried
+    /// as the previous Newton iterate. Seeds the iterate and gives [`pnjlim`] its
+    /// previous-iterate reference for the base-emitter junction — the two-junction
+    /// analogue of [`Sim::diode_vd`]. Only BJT entries are meaningful; others stay
+    /// `0.0`. Indexed in lockstep with `elements`.
+    bjt_vbe: Vec<f64>,
+    /// Per-element BJT base-collector junction voltage `Vbc = V(c) - V(a)`, the
+    /// companion of [`Sim::bjt_vbe`] for the second (base-collector) junction; same
+    /// role and indexing.
+    bjt_vbc: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -766,6 +913,8 @@ impl Sim {
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
+            bjt_vbe: Vec::new(),
+            bjt_vbc: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -842,6 +991,8 @@ impl Sim {
                     | ELEM_ZENER
                     | ELEM_NMOS
                     | ELEM_PMOS
+                    | ELEM_NPN
+                    | ELEM_PNP
             ) {
                 self.install_empty();
                 return false;
@@ -901,6 +1052,8 @@ impl Sim {
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
         self.mosfet_vds = vec![0.0; elements.len()];
+        self.bjt_vbe = vec![0.0; elements.len()];
+        self.bjt_vbc = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -926,10 +1079,35 @@ impl Sim {
         for v in &mut self.mosfet_vds {
             *v = 0.0;
         }
+        for v in &mut self.bjt_vbe {
+            *v = 0.0;
+        }
+        for v in &mut self.bjt_vbc {
+            *v = 0.0;
+        }
         for v in &mut self.node_v {
             *v = 0.0;
         }
         self.solve_operating_point();
+    }
+
+    /// Stamp a small symmetric [`GMIN`] conductance between two MNA nodes (each
+    /// `None` for ground), exactly like a resistor of conductance `GMIN`. Used
+    /// across each BJT junction so a reverse-biased or floating junction keeps a
+    /// finite, non-singular slope — the multi-terminal analogue of the diode's
+    /// `g = gd + GMIN`.
+    #[inline]
+    fn stamp_gmin(mat: &mut [f64], n: usize, p: Option<usize>, q: Option<usize>) {
+        if let Some(r) = p {
+            mat[r * n + r] += GMIN;
+        }
+        if let Some(r) = q {
+            mat[r * n + r] += GMIN;
+        }
+        if let (Some(r), Some(c)) = (p, q) {
+            mat[r * n + c] -= GMIN;
+            mat[c * n + r] -= GMIN;
+        }
     }
 
     /// Map a node index to its MNA row/column, or `None` for ground (node `0`).
@@ -965,6 +1143,36 @@ impl Sim {
             }
         } else {
             mosfet_eval(vgs, vds, MOS_KP, NMOS_VTO, MOS_LAMBDA)
+        }
+    }
+
+    /// Linearise a BJT (`ELEM_NPN`/`ELEM_PNP`) about the **actual** junction
+    /// voltages `vbe = V(c) - V(b)` and `vbc = V(c) - V(a)`, returning the terminal
+    /// currents and the small-signal partials in a [`BjtOp`], in those same actual
+    /// variables — exactly what the companion stamp needs, independent of polarity.
+    ///
+    /// The PNP reuses the NPN Ebers-Moll evaluation on sign-flipped junction
+    /// voltages (`vbe_n = -vbe`, `vbc_n = -vbc`). Because the map is a pure
+    /// negation, the chain rule sends every conductance straight back (each partial
+    /// `d(current)/d(voltage)` is invariant under negating both) and only the
+    /// currents flip, so a single [`bjt_eval`] serves both polarities — the BJT
+    /// analogue of [`Sim::mosfet_op`]. Pure `f64`, deterministic.
+    #[inline]
+    fn bjt_op(kind: u8, vbe: f64, vbc: f64) -> BjtOp {
+        if kind == ELEM_PNP {
+            // Evaluate the NPN model on the mirrored internal junction voltages.
+            let op = bjt_eval(-vbe, -vbc, BJT_IS, DIODE_VT, BJT_BF, BJT_BR);
+            BjtOp {
+                ic: -op.ic,
+                ib: -op.ib,
+                ie: -op.ie,
+                gpi: op.gpi,
+                gmu: op.gmu,
+                gif: op.gif,
+                gic_bc: op.gic_bc,
+            }
+        } else {
+            bjt_eval(vbe, vbc, BJT_IS, DIODE_VT, BJT_BF, BJT_BR)
         }
     }
 
@@ -1317,7 +1525,15 @@ impl Sim {
     /// FET analogue of the junction limiting, so they fold into the same
     /// convergence gates as the diodes.
     ///
-    /// Determinism: fixed element/diode/mosfet order, fixed assembly and solve
+    /// BJTs ride it too: the `bjts` slice lists, in ascending element order, each
+    /// device as `(element_index, collector_mna, emitter_mna, base_mna)` with
+    /// `None` for a grounded terminal. Each carries **two** junction iterates in
+    /// `self.bjt_vbe`/`self.bjt_vbc`, both limited by the shared [`pnjlim`] (the
+    /// device reuses the diode exponential and limiter), and folds into the same
+    /// node-voltage / limiter-inactive convergence gates as the diodes with its own
+    /// mA-scale current-residual test alongside the MOSFET's.
+    ///
+    /// Determinism: fixed element/diode/mosfet/bjt order, fixed assembly and solve
     /// order, pure `f64`, no hashed iteration. The iteration count is
     /// data-dependent but bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the
     /// last iterate is kept (a defined, finite outcome).
@@ -1328,6 +1544,7 @@ impl Sim {
         base_rhs: &[f64],
         diodes: &[DiodeMap],
         mosfets: &[MosfetMap],
+        bjts: &[BjtMap],
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -1401,6 +1618,74 @@ impl Sim {
                 if let Some(r) = ic {
                     mat[r * n + r] += GMIN;
                 }
+            }
+
+            // Stamp each BJT's Ebers-Moll companion at its two junction voltages.
+            // Collector `a`, emitter `b`, base `c`. The control variables are the
+            // junction voltages Vbe = V(c) - V(b) and Vbc = V(c) - V(a); the four
+            // partials are the Jacobian of (Ic, Ib) w.r.t. (Vbe, Vbc). Writing each
+            // terminal current as its linear companion in the node voltages (via the
+            // chain rule dVbe = dVc - dVb, dVbc = dVc - dVa) gives this exact 3x3
+            // conductance block (rows = terminal KCL, columns = node voltage), with
+            // each row summing to zero (a floating BJT injects no net current):
+            //   row a(C): (a,a) += -gic_bc, (a,b) += -gif,      (a,c) += gif+gic_bc
+            //   row c(B): (c,a) += -gmu,    (c,b) += -gpi,      (c,c) += gpi+gmu
+            //   row b(E): (b,a) += gic_bc+gmu, (b,b) += gif+gpi,
+            //             (b,c) += -(gif+gic_bc+gpi+gmu)
+            // The equivalent currents (the diode/MOSFET pattern Ieq = I(v*) - J*v*)
+            // are Ieq_c = Ic - gif*Vbe - gic_bc*Vbc and Ieq_b = Ib - gpi*Vbe -
+            // gmu*Vbc, with Ieq_e = -(Ieq_c + Ieq_b); they enter the collector/base/
+            // emitter rows so the linearised device reproduces (Ic, Ib, Ie) at the
+            // iterate. A GMIN is stamped across the base-emitter and base-collector
+            // junctions (the diode `gmin` floor) so an off/floating junction never
+            // makes a row singular.
+            for &(ei, ia, ib, ic) in bjts {
+                let el = self.elements[ei];
+                let vbe = self.bjt_vbe[ei];
+                let vbc = self.bjt_vbc[ei];
+                let op = Self::bjt_op(el.kind, vbe, vbc);
+                let (gpi, gmu, gif, gic_bc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
+                let ieq_c = op.ic - gif * vbe - gic_bc * vbc;
+                let ieq_b = op.ib - gpi * vbe - gmu * vbc;
+                let ieq_e = -(ieq_c + ieq_b);
+                // Collector row (terminal a): current Ic into the collector.
+                if let Some(r) = ia {
+                    mat[r * n + r] += -gic_bc;
+                    rhs[r] -= ieq_c;
+                    if let Some(bb) = ib {
+                        mat[r * n + bb] += -gif;
+                    }
+                    if let Some(cc) = ic {
+                        mat[r * n + cc] += gif + gic_bc;
+                    }
+                }
+                // Base row (terminal c): current Ib into the base.
+                if let Some(r) = ic {
+                    mat[r * n + r] += gpi + gmu;
+                    rhs[r] -= ieq_b;
+                    if let Some(aa) = ia {
+                        mat[r * n + aa] += -gmu;
+                    }
+                    if let Some(bb) = ib {
+                        mat[r * n + bb] += -gpi;
+                    }
+                }
+                // Emitter row (terminal b): current Ie = -(Ic + Ib) into the emitter.
+                if let Some(r) = ib {
+                    mat[r * n + r] += gif + gpi;
+                    rhs[r] -= ieq_e;
+                    if let Some(aa) = ia {
+                        mat[r * n + aa] += gic_bc + gmu;
+                    }
+                    if let Some(cc) = ic {
+                        mat[r * n + cc] += -(gif + gic_bc + gpi + gmu);
+                    }
+                }
+                // GMIN across each junction (base-emitter, base-collector): a tiny
+                // symmetric conductance so a reverse-biased or floating junction
+                // keeps a finite, non-singular slope. Reuses the diode `gmin` floor.
+                Self::stamp_gmin(&mut mat, n, ic, ib);
+                Self::stamp_gmin(&mut mat, n, ic, ia);
             }
 
             x = solve_dense(mat, rhs, n);
@@ -1488,6 +1773,53 @@ impl Sim {
                 self.mosfet_vds[ei] = vds_new;
             }
 
+            // Update each BJT's two junction voltages with the shared pn-junction
+            // limiter (the device reuses the diode exponential, so it reuses
+            // `pnjlim` on each junction), and fold both limiter gaps into the same
+            // "limiter inactive" gate as the diodes/FETs. The terminal-current
+            // residual is tracked here with the same mA-scale absolute + relative
+            // test as the MOSFET (the diode's sub-pA absolute tolerance does not fit
+            // a BJT collector current), over both Ic and Ib. Vbe = V(c) - V(b),
+            // Vbc = V(c) - V(a) at the fresh solve.
+            let mut converged_bjt_i = true;
+            for &(ei, ia, ib, ic) in bjts {
+                let va = ia.map(|r| x[r]).unwrap_or(0.0);
+                let vb = ib.map(|r| x[r]).unwrap_or(0.0);
+                let vc = ic.map(|r| x[r]).unwrap_or(0.0);
+                let el = self.elements[ei];
+                let vbe_old = self.bjt_vbe[ei];
+                let vbc_old = self.bjt_vbc[ei];
+                // The PNP's junctions are the negated image of the NPN's, so limit on
+                // the internal (NPN-convention) variables and map back, exactly as
+                // `bjt_op` does for evaluation. This keeps a single proven limiter
+                // serving both polarities.
+                let sign = if el.kind == ELEM_PNP { -1.0 } else { 1.0 };
+                let vbe_raw = sign * (vc - vb);
+                let vbc_raw = sign * (vc - va);
+                let m = bjt_junction_model();
+                let vbe_lim = pnjlim(vbe_raw, sign * vbe_old, m);
+                let vbc_lim = pnjlim(vbc_raw, sign * vbc_old, m);
+                let vbe_new = sign * vbe_lim;
+                let vbc_new = sign * vbc_lim;
+                // Limiter-inactive gap, measured on the internal junction variables.
+                let gap = (vbe_raw - vbe_lim).abs().max((vbc_raw - vbc_lim).abs());
+                if gap > max_vd_gap {
+                    max_vd_gap = gap;
+                }
+                // Terminal-current residual across the limited step (Ic and Ib).
+                let op_old = Self::bjt_op(el.kind, vbe_old, vbc_old);
+                let op_new = Self::bjt_op(el.kind, vbe_new, vbc_new);
+                let dic = (op_new.ic - op_old.ic).abs();
+                let dib = (op_new.ib - op_old.ib).abs();
+                let tol_c = NEWTON_I_ABSTOL + NEWTON_RELTOL * op_new.ic.abs().max(op_old.ic.abs());
+                let tol_b = NEWTON_I_ABSTOL + NEWTON_RELTOL * op_new.ib.abs().max(op_old.ib.abs());
+                if dic > tol_c || dib > tol_b {
+                    converged_bjt_i = false;
+                }
+                self.bjt_vbe[ei] = vbe_new;
+                self.bjt_vbc[ei] = vbc_new;
+            }
+
             // Node-voltage update test (absolute + relative), over node rows only.
             let mut converged_v = true;
             for r in 0..(self.node_count - 1) {
@@ -1505,7 +1837,7 @@ impl Sim {
 
             // Require all the tests, and at least one full iteration, so a stale
             // seed cannot report convergence before a fresh solve.
-            if converged_v && converged_i && converged_mos_i && converged_limit {
+            if converged_v && converged_i && converged_mos_i && converged_bjt_i && converged_limit {
                 // Recompute node voltages from the limited junctions on the next
                 // pass would be a no-op (already converged); commit and stop.
                 self.node_v[0] = 0.0;
@@ -1548,11 +1880,13 @@ impl Sim {
             return;
         }
 
-        // Stamp the fixed linear part once and collect the diode and MOSFET maps.
+        // Stamp the fixed linear part once and collect the diode, MOSFET, and BJT
+        // maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
+        let mut bjts: Vec<BjtMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -1630,11 +1964,12 @@ impl Sim {
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
+                ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets);
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts);
 
         // Commit per-element currents (oriented a -> b) at the operating point.
         for (i, e) in self.elements.iter().enumerate() {
@@ -1656,6 +1991,9 @@ impl Sim {
                 ELEM_NMOS | ELEM_PMOS => {
                     Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
+                // The BJT main current is the collector current Ic, oriented a -> b
+                // (collector -> emitter), consistent with the MOSFET's drain current.
+                ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
                 _ => 0.0,
             };
         }
@@ -1681,6 +2019,7 @@ impl Sim {
         let mut base_rhs = vec![0.0f64; n];
         let mut diodes: Vec<DiodeMap> = Vec::new();
         let mut mosfets: Vec<MosfetMap> = Vec::new();
+        let mut bjts: Vec<BjtMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -1788,11 +2127,12 @@ impl Sim {
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
+                ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets);
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts);
 
         // Commit per-element currents (oriented a -> b) while `reactive_state`
         // still holds the previous-step values (capacitor history term).
@@ -1819,6 +2159,9 @@ impl Sim {
                 ELEM_NMOS | ELEM_PMOS => {
                     Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
+                // The BJT main current is the collector current Ic, oriented a -> b
+                // (collector -> emitter), consistent with the MOSFET's drain current.
+                ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
                 _ => 0.0,
             };
         }
@@ -3813,5 +4156,453 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "NMOS+PMOS pair must reproduce exactly");
+    }
+
+    // --- Three-terminal: NPN / PNP BJT + Newton -------------------------------
+    //
+    // The Ebers-Moll BJT (types 13/14) is the first device with two coupled
+    // exponential junctions; it reuses the diode exponential and the `pnjlim`
+    // limiter (one limited junction voltage each for base-emitter and
+    // base-collector) on the same deterministic Newton loop. Terminal convention:
+    // collector = a, emitter = b, base = c (the main current flows a -> b, base
+    // controls), mirroring the MOSFET's drain/source/gate. These tests check the
+    // operating point against an independent scalar Ebers-Moll evaluation (so the
+    // result is verified against the model, not a fitted constant), the
+    // off/saturation/active behaviors, current gain, the common-emitter amplifier,
+    // the PNP mirror, validation, and the replay invariant.
+
+    /// Independent scalar Ebers-Moll evaluation (NPN convention) at junction
+    /// voltages `vbe`/`vbc`, returning `(Ic, Ib)` — a reference that does not touch
+    /// the solver, so the core's operating point is checked against the model
+    /// directly.
+    fn bjt_terminal_currents(vbe: f64, vbc: f64) -> (f64, f64) {
+        let evbe = (vbe / DIODE_VT).exp();
+        let evbc = (vbc / DIODE_VT).exp();
+        let ic = BJT_IS * ((evbe - evbc) - (evbc - 1.0) / BJT_BR);
+        let ib = BJT_IS * ((evbe - 1.0) / BJT_BF + (evbc - 1.0) / BJT_BR);
+        (ic, ib)
+    }
+
+    /// Independent reference for an NPN common-emitter / common-source-style stage
+    /// with the **base driven by a fixed `vbe` source** (so `Vbe` is held), a
+    /// collector resistor `rc` from `vcc` to the collector, and the emitter
+    /// grounded. Solve the scalar collector-node KCL `(Vc - vcc)/rc + Ic = 0` for
+    /// the collector voltage `Vc` with Newton on the same Ebers-Moll currents the
+    /// core uses, returning `(Ic, Ib, Vc)`.
+    fn npn_fixed_vbe_reference(vcc: f64, rc: f64, vbe: f64) -> (f64, f64, f64) {
+        let mut vc = vcc; // no-current guess (cutoff)
+        for _ in 0..400 {
+            let (ic, _) = bjt_terminal_currents(vbe, vbe - vc);
+            let f = (vc - vcc) / rc + ic;
+            let h = 1.0e-9;
+            let (ic2, _) = bjt_terminal_currents(vbe, vbe - (vc + h));
+            let df = (((vc + h) - vcc) / rc + ic2 - f) / h;
+            vc -= f / df;
+        }
+        let (ic, ib) = bjt_terminal_currents(vbe, vbe - vc);
+        (ic, ib, vc)
+    }
+
+    /// With the base held **below** the turn-on knee, an NPN common-emitter stage
+    /// is in cutoff: it carries essentially no collector current, so the collector
+    /// resistor drops nothing and the collector sits parked at the rail (the "off"
+    /// state / a logic HIGH). Layout: VCC source 1->0; RC 1->2; NPN collector=2,
+    /// emitter=0, base=3; base source 3->0 = Vbb (< ~0.6 V).
+    #[test]
+    fn npn_off_when_base_low() {
+        let vcc = 5.0;
+        let rc = 1_000.0;
+        let vbb = 0.2; // below the ~0.6 V base-emitter knee -> cutoff
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0], // only the NPN reads c (its base = node 3)
+            &[vcc, rc, 0.0, vbb],
+        );
+        let v = sim.node_voltages();
+        // Collector (node 2) parked at the rail: no current, no IR drop.
+        assert!(
+            (v[2] - vcc).abs() < 1e-3,
+            "cutoff NPN leaves the collector near the rail: got {}",
+            v[2]
+        );
+        // The NPN (element 2) carries essentially no collector current.
+        let c = sim.element_currents();
+        assert!(
+            c[2].abs() < 1e-6,
+            "cutoff NPN carries no collector current: got {}",
+            c[2]
+        );
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+    }
+
+    /// With a strong base drive the NPN saturates: both junctions conduct, the
+    /// collector is pulled far below the rail, and the collector-emitter voltage
+    /// `Vce` is small (the "on" state / a logic LOW). Layout: VCC source 1->0; RC
+    /// 1->2; NPN collector=2 emitter=0 base=3; base resistor RB 3->4; base source
+    /// 4->0 driving hard through RB. The forced base current would demand far more
+    /// than `Vcc/RC` of collector current, so the device bottoms out.
+    #[test]
+    fn npn_saturates_with_base_drive() {
+        let vcc = 5.0;
+        let rc = 1_000.0;
+        let rb = 10_000.0;
+        let vbb = 5.0; // Ib ~ (5 - 0.7)/10k ~ 0.43 mA; BF*Ib >> Vcc/RC -> saturation
+        let sim = build3(
+            5,
+            &[
+                ELEM_VSOURCE,
+                ELEM_RESISTOR, // RC 1->2
+                ELEM_NPN,      // C=2 E=0 B=3
+                ELEM_RESISTOR, // RB 3->4
+                ELEM_VSOURCE,  // base drive 4->0
+            ],
+            &[1, 1, 2, 3, 4],
+            &[0, 2, 0, 4, 0],
+            &[0, 0, 3, 0, 0],
+            &[vcc, rc, 0.0, rb, vbb],
+        );
+        let v = sim.node_voltages();
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+        // Collector pulled well below the rail; Vce_sat is small (emitter is gnd).
+        let vce = v[2]; // emitter at ground
+        assert!(
+            vce < 0.4,
+            "saturated NPN pulls the collector low (small Vce_sat): got {}",
+            vce
+        );
+        assert!(
+            vce > 0.0,
+            "Vce_sat stays positive (forward active->sat corner)"
+        );
+        // Collector current is positive (a -> b is collector -> emitter) and near
+        // the resistor-limited ceiling (Vcc - Vce)/RC.
+        let c = sim.element_currents();
+        assert!(c[2] > 0.0, "saturated NPN draws collector current");
+        let i_rc = (vcc - vce) / rc;
+        assert!(
+            (c[2] - i_rc).abs() < 1e-6,
+            "series loop: RC and collector carry the same current ({} vs {})",
+            c[2],
+            i_rc
+        );
+    }
+
+    /// The defining quantitative check: biased in the forward-active region (base
+    /// driven by a fixed `Vbe`, base-collector reverse biased), the NPN lands on
+    /// the Ebers-Moll operating point with current gain `Ic ~ BF*Ib`. The collector
+    /// voltage and current match the independent scalar reference to ~1e-6
+    /// (relative), and `Ie ~ -(Ic + Ib)` holds. Layout: VCC source 1->0; RC 1->2;
+    /// NPN collector=2 emitter=0 base=3; base source 3->0 = Vbe directly.
+    #[test]
+    fn npn_current_gain_in_active_region() {
+        let vcc = 12.0;
+        let rc = 4_700.0;
+        let vbe_drive = 0.6; // moderate forward bias, firmly active (Vc stays high)
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0],
+            &[vcc, rc, 0.0, vbe_drive],
+        );
+        let (ic_ref, ib_ref, vc_ref) = npn_fixed_vbe_reference(vcc, rc, vbe_drive);
+        // The reference point is in forward-active: base-collector reverse biased
+        // (Vbc = Vbe - Vc < 0), so the square-law-free Ebers-Moll gain applies.
+        assert!(
+            vbe_drive - vc_ref < 0.0,
+            "reference is forward-active: Vbc {} < 0",
+            vbe_drive - vc_ref
+        );
+        let v = sim.node_voltages();
+        assert!(
+            (v[2] - vc_ref).abs() < 1e-6,
+            "collector voltage matches Ebers-Moll: got {}, want {}",
+            v[2],
+            vc_ref
+        );
+        let c = sim.element_currents();
+        // Collector current (a -> b) matches the scalar reference to ~1e-6 relative.
+        assert!(
+            (c[2] - ic_ref).abs() <= 1e-6 * ic_ref.abs().max(1.0) + 1e-12,
+            "collector current matches Ebers-Moll: got {}, want {}",
+            c[2],
+            ic_ref
+        );
+        // Current gain: Ic ~ BF * Ib (the hallmark of the active region). Compare
+        // the reference currents (the core matches them above), tolerant of the
+        // small Early/transport corrections in the exact model.
+        assert!(
+            (ic_ref / ib_ref - BJT_BF).abs() < 1e-3,
+            "Ic/Ib equals BF in the active region: got {}, want {}",
+            ic_ref / ib_ref,
+            BJT_BF
+        );
+        // Ie = -(Ic + Ib). Reconstruct Ie from the device op at the converged
+        // junctions and check the sum rule on the reference currents.
+        let ie_ref = -(ic_ref + ib_ref);
+        assert!(
+            (ie_ref + (ic_ref + ib_ref)).abs() < 1e-15,
+            "Ie = -(Ic + Ib) holds exactly in the model"
+        );
+        // KCL: the collector resistor (1->2) and the collector terminal (2->...)
+        // carry the same current in this series leg.
+        assert!(
+            (c[1] - c[2]).abs() < 1e-9,
+            "series loop: RC and collector carry one current ({} vs {})",
+            c[1],
+            c[2]
+        );
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+    }
+
+    /// A common-emitter stage shows **voltage gain**: a small change on the base
+    /// side moves the collector much harder, and inverting (more base drive -> more
+    /// collector current -> lower collector voltage). Biased in the forward-active
+    /// region with a fixed base-emitter drive that sets a ~0.1 mA collector current,
+    /// so the small-signal gain `-gm*RC` is well above unity. This is the BJT
+    /// analogue of `nmos_common_source_amplifies_with_transconductance`. Layout:
+    /// VCC source 1->0; RC 1->2; NPN collector=2 emitter=0 base=3; base source
+    /// 3->0 = Vbe directly.
+    #[test]
+    fn npn_common_emitter_amplifies() {
+        let vcc = 12.0;
+        let rc = 4_700.0;
+        let vbe0 = 0.66; // forward-active bias, ~0.12 mA collector current
+        let dv = 1.0e-4; // small base-emitter perturbation (stays linear)
+        let collector = |vbe: f64| {
+            build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[vcc, rc, 0.0, vbe],
+            )
+            .node_voltages()[2]
+        };
+        let vc_lo = collector(vbe0 - dv);
+        let vc_hi = collector(vbe0 + dv);
+        // Inverting: more base drive -> more collector current -> lower collector.
+        assert!(
+            vc_hi < vc_lo,
+            "common-emitter inverts: higher base -> lower collector ({} !< {})",
+            vc_hi,
+            vc_lo
+        );
+        // The collector swing is many times the base-side change (voltage gain
+        // magnitude well above unity), confirming the companion's transconductance.
+        let gain = (vc_hi - vc_lo) / (2.0 * dv);
+        assert!(
+            gain.abs() > 5.0,
+            "common-emitter has substantial inverting gain: got {}",
+            gain
+        );
+        // Quantitatively the magnitude is the textbook -gm*RC at this bias
+        // (gm = Ic/Vt), to good tolerance — a real amplifier, not just a sign.
+        let (ic_ref, _, _) = npn_fixed_vbe_reference(vcc, rc, vbe0);
+        let gm = ic_ref / DIODE_VT;
+        let gain_expected = -gm * rc;
+        assert!(
+            (gain - gain_expected).abs() < 0.1 * gain_expected.abs(),
+            "common-emitter gain ~ -gm*RC: got {}, want {}",
+            gain,
+            gain_expected
+        );
+    }
+
+    /// The PNP is the high-side mirror of the NPN. Wired collector `a` = node 2
+    /// (output, pulled down by RC), emitter `b` = node 1 (rail), base `c` = node 3.
+    /// With the base at the rail (`Vbe = V(3) - V(1) = 0`) it is **off** — the
+    /// pull-down holds the collector near ground. Pulling the base well below the
+    /// emitter turns it **on**, sourcing collector current from the rail and pulling
+    /// the collector up. Layout: VCC source 1->0; PNP collector=2 emitter=1 base=3;
+    /// RC (pull-down) 2->0; base resistor RB 3->4; base drive 4->0.
+    #[test]
+    fn pnp_high_side_active() {
+        let vcc = 5.0;
+        let rc = 1_000.0;
+        let rb = 10_000.0;
+        let build_pnp = |vbb: f64| {
+            build3(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_PNP,      // a=collector=2, b=emitter=1, c=base=3
+                    ELEM_RESISTOR, // RC pull-down 2->0
+                    ELEM_RESISTOR, // RB 3->4
+                    ELEM_VSOURCE,  // base drive 4->0
+                ],
+                &[1, 2, 2, 3, 4],
+                &[0, 1, 0, 4, 0],
+                &[0, 3, 0, 0, 0],
+                &[vcc, 0.0, rc, rb, vbb],
+            )
+        };
+        // Base at the rail: Vbe = V(base) - V(emitter) = 5 - 5 = 0 -> off.
+        let off = build_pnp(vcc);
+        let voff = off.node_voltages();
+        assert!(voff.iter().all(|x| x.is_finite()), "off state finite");
+        assert!(
+            voff[2].abs() < 0.5,
+            "PNP off: pull-down holds the collector near ground, got {}",
+            voff[2]
+        );
+        assert!(
+            off.element_currents()[1].abs() < 1e-6,
+            "PNP off carries ~no collector current: got {}",
+            off.element_currents()[1]
+        );
+        // Base pulled to ground through RB: emitter-base forward biased -> on, the
+        // collector is sourced from the rail and pulled high.
+        let on = build_pnp(0.0);
+        let von = on.node_voltages();
+        assert!(von.iter().all(|x| x.is_finite()), "on state finite");
+        assert!(
+            von[2] > 1.0,
+            "PNP on: sources from the rail and pulls the collector up, got {}",
+            von[2]
+        );
+        // The PNP collector current flows out of the collector terminal into the
+        // node, which is negative in the a -> b (collector -> emitter) convention.
+        let c = on.element_currents();
+        assert!(
+            c[1] < 0.0,
+            "PNP sources current into the collector node (negative a->b): got {}",
+            c[1]
+        );
+        // KCL at the collector (node 2): the PNP delivers current there and the
+        // pull-down (2->0) carries it to ground, so the two balance.
+        assert!(
+            (c[1] + c[2]).abs() < 1e-9,
+            "collector KCL: PNP and pull-down balance: {} vs {}",
+            c[1],
+            c[2]
+        );
+    }
+
+    /// `set_netlist` accepts the BJT element types (13 and 14), stores the control
+    /// (base) node, and marks the netlist nonlinear (so the Newton path runs). A
+    /// malformed netlist that contains a BJT — including an out-of-range base or
+    /// collector node — still fails safe through the same validation.
+    #[test]
+    fn bjt_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // A valid NPN common-emitter stage installs and stores the base node.
+        let ok = sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0],
+            &[5.0, 1_000.0, 0.0, 2.0],
+        );
+        assert!(ok, "valid NPN netlist installs");
+        assert_eq!(sim.element_count(), 4);
+        let npn = sim.element_at(2);
+        assert_eq!(npn.kind, ELEM_NPN, "NPN stored as type 13");
+        assert_eq!(npn.c, 3, "the NPN base node (c) is stored");
+        // A PNP installs too, as type 14 (collector=2, emitter=1, base=3).
+        let okp = sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_PNP, ELEM_RESISTOR, ELEM_VSOURCE],
+            &[1, 2, 2, 3],
+            &[0, 1, 0, 0],
+            &[0, 3, 0, 0],
+            &[5.0, 0.0, 1_000.0, 0.0],
+        );
+        assert!(okp, "valid PNP netlist installs");
+        assert_eq!(sim.element_at(1).kind, ELEM_PNP, "PNP stored as type 14");
+        assert_eq!(sim.element_at(1).c, 3, "the PNP base node (c) is stored");
+        // Out-of-range control (base) node is rejected fail-safe.
+        let bad = sim.set_netlist(
+            3,
+            &[ELEM_NPN],
+            &[2],
+            &[0],
+            &[9], // base node 9 out of range for node_count 3
+            &[0.0],
+        );
+        assert!(!bad, "out-of-range BJT base node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+        // Out-of-range collector node is rejected too.
+        let bad2 = sim.set_netlist(3, &[ELEM_NPN], &[9], &[0], &[1], &[0.0]);
+        assert!(!bad2, "out-of-range BJT collector node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    /// Replay invariant for an NPN circuit: the Newton loop (with the two-junction
+    /// Ebers-Moll companion and the dual `pnjlim` limiting) is deterministic, so a
+    /// fixed netlist stepped a fixed number of times reproduces its snapshot-hash
+    /// stream exactly. The NPN analogue of `nmos_run_is_reproducible`.
+    #[test]
+    fn npn_run_is_reproducible() {
+        let run = || {
+            // A common-emitter NPN switching a collector-resistor + load-cap node:
+            // VCC source 1->0; RC 1->2; NPN collector=2 emitter=0 base=3; RB 3->4;
+            // base source 4->0; load cap 2->0. The Newton loop runs every step.
+            let mut sim = build3(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_NPN,
+                    ELEM_RESISTOR,
+                    ELEM_VSOURCE,
+                ],
+                &[1, 1, 2, 3, 4],
+                &[0, 2, 0, 4, 0],
+                &[0, 0, 3, 0, 0],
+                &[5.0, 1_000.0, 0.0, 10_000.0, 3.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "NPN circuit must reproduce exactly");
+    }
+
+    /// Both BJT polarities on the Newton path reproduce bit-for-bit over a long run
+    /// — the NPN + PNP analogue of `mosfet_family_run_is_reproducible`. A
+    /// complementary pair (PNP high-side sourcing into a shared collector node, NPN
+    /// low-side sinking from it) driven from common base resistors exercises both
+    /// two-junction companions in one netlist, with a load cap on the transient
+    /// path.
+    #[test]
+    fn bjt_family_run_is_reproducible() {
+        let run = || {
+            // VCC source 1->0;
+            // PNP collector=2 emitter=1 base=3; NPN collector=2 emitter=0 base=4;
+            // RB_p 3->5; RB_n 4->5; base drive 5->0; load cap 2->0.
+            let mut sim = build3(
+                6,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_PNP,       // C=2 E=1 B=3
+                    ELEM_NPN,       // C=2 E=0 B=4
+                    ELEM_RESISTOR,  // RB_p 3->5
+                    ELEM_RESISTOR,  // RB_n 4->5
+                    ELEM_VSOURCE,   // base drive 5->0
+                    ELEM_CAPACITOR, // load cap 2->0
+                ],
+                &[1, 2, 2, 3, 4, 5, 2],
+                &[0, 1, 0, 5, 5, 0, 0],
+                &[0, 3, 4, 0, 0, 0, 0],
+                &[5.0, 0.0, 0.0, 47_000.0, 47_000.0, 2.5, 1.0e-9],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "NPN+PNP pair must reproduce exactly");
     }
 }
