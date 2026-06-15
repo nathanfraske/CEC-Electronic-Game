@@ -26,11 +26,13 @@ owner review. Branch `claude/kind-turing-hdelb3` continues past the merge.
 - **Double-click info pipeline** checked: smooth (open via double-click/`I`/ⓘ, then it
   re-targets on every single-click); double-click now always re-asserts the Real view.
 
-### Background agent in flight (integrate when it lands)
-A worktree agent is implementing the **3 deferred wiring/placement QoL fixes** (#4
-drop-on-track split, #5 delete-only-segment, #6 KiCad click-to-continue) — board.ts/
-graph.ts. When it completes: cherry-pick/merge its branch, resolve any board.ts
-conflicts, run gates, ship. (Analysis for each is in TODOS "QoL / fixes batch".)
+### Scoped wiring/placement fixes — INTEGRATED + on live (#64)
+The worktree agent's **3 fixes** landed (cherry-picked clean, gates pass, merged to
+live in #64): drop-on-track splits + de-shorts; segment-precise wire delete (adds
+`Junction.free` + `graph.deleteWireSegment`); **KiCad click-to-continue wiring**
+(press-while-routing completes-then-continues; classic drag-to-wire + junction
+double-click-drag preserved). Note the new **click-based wiring is "sticky"** mid-route
+(finish on a pin or Esc) — KiCad-faithful, as the owner asked; watch for feedback.
 
 ### Still open
 - **Digital scheduler** (Phase 1+, the dedicated session; `logic-…-nets.md` §6).
