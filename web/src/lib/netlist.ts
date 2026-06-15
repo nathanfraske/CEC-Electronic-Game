@@ -78,6 +78,10 @@ const TYPE_OF: Record<string, number> = {
   NOR: 17,
   XOR: 17,
   NOT: 17,
+  // Transformer: the first FOUR-terminal element (coupled inductors). Pins are
+  // ordered primary+, primary−, secondary+, secondary− → pin 0 → a, 1 → b, 2 → c,
+  // 3 → d. `value` is the turns ratio n = Ns/Np. The only kind that uses `d`.
+  TR: 18,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -90,6 +94,14 @@ const TYPE_OF: Record<string, number> = {
  * two-terminal element leaves c = 0 (ground), where the core ignores it.
  */
 const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
+
+/**
+ * Element types that carry a **fourth** terminal `d`: today only the transformer
+ * (type 18), whose pin 3 is the secondary− node. Pin 3 → d, stamped into the `d`
+ * array; every element with three or fewer terminals leaves d = 0 (ground), where
+ * the core ignores it.
+ */
+const FOUR_PIN_TYPES = new Set<number>([18]);
 
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
@@ -130,11 +142,17 @@ export interface BuiltNetlist {
    * collector), pin 1 → b (source / emitter), pin 2 → c (gate / base).
    */
   c: Uint32Array;
+  /**
+   * Fourth-terminal node per element, parallel to `a`/`b`/`c`: for the transformer
+   * (the only 4-pin element) it is the node of its pin 3 (secondary−); for every
+   * element with fewer pins it is `0` (ground), which the core ignores. Pin 3 → d.
+   */
+  d: Uint32Array;
   values: Float64Array;
   /**
    * Second per-element scalar, parallel to `values`: an AC source's peak
-   * amplitude in volts; `0` for every other element (where the core ignores it,
-   * so `0` cannot change a non-AC element). Built in lockstep with `values`.
+   * amplitude in volts, or a logic gate's function code; `0` for every other
+   * element (where the core ignores it). Built in lockstep with `values`.
    */
   aux: Float64Array;
   /** component id → element index (into `element_currents`). */
@@ -296,6 +314,10 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   // device (a MOSFET or a BJT), whose entry holds its control node (pin 2 — the
   // gate / the base). The core ignores c for 2-pin types.
   const cArr: number[] = [];
+  // The fourth-terminal array, parallel to `a`/`b`/`c`: a 4-pin device (the
+  // transformer) stamps its pin-3 node (secondary−); every other element leaves it
+  // 0 (ground), ignored by the core. Pushed in lockstep with each element stamp.
+  const dArr: number[] = [];
   const values: number[] = [];
   // The second per-element scalar, parallel to `values`: an AC source's peak
   // amplitude (volts); 0 for every other element. Pushed in lockstep with each
@@ -323,12 +345,14 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       aArr.push(na);
       bArr.push(mid);
       cArr.push(0); // 2-terminal: no control node
+      dArr.push(0); // 2-terminal: no fourth node
       values.push(c.value); // capacitance
       auxArr.push(0); // not an AC source: no amplitude
       types.push(ELEM_RESISTOR);
       aArr.push(mid);
       bArr.push(nb);
       cArr.push(0); // 2-terminal: no control node
+      dArr.push(0); // 2-terminal: no fourth node
       values.push(EC_ESR_OHMS); // parasitic series resistance
       auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
@@ -353,6 +377,12 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
         : 0;
+    // The fourth terminal: a 4-pin device (the transformer) stamps its pin-3 node
+    // (secondary−); every element with fewer pins leaves d = 0 (ground, ignored).
+    const nd =
+      FOUR_PIN_TYPES.has(t) && kind.pins.length >= 4
+        ? (nodeIndex.get(find(key(c.id, 3))) ?? 0)
+        : 0;
     // The second scalar: an AC source emits its peak amplitude (volts, defaulting
     // to 5 V when a legacy source carries none); a logic gate emits its boolean
     // function code (GATE_AUX); every other kind emits 0, which the core ignores.
@@ -364,6 +394,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     aArr.push(na);
     bArr.push(nb);
     cArr.push(nc);
+    dArr.push(nd);
     values.push(c.value);
     auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
@@ -445,6 +476,12 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   // aux-free circuit (no AC source) keeps its exact old signature.
   const auxSig = auxArr.some((x) => x !== 0) ? auxArr.join(",") : "";
 
+  // Fold the fourth terminal `d` in the same way: appended only when some element
+  // actually carries a non-zero d (i.e. a transformer is placed), so every
+  // transformer-free circuit keeps its exact old signature, while rewiring a
+  // transformer's secondary− net rebuilds the sim.
+  const dSig = dArr.some((x) => x !== 0) ? dArr.join(",") : "";
+
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
   // different net is recognised as a topology change and the sim is rebuilt —
@@ -463,7 +500,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     "|" +
     values.join(",") +
     (labelSig ? "|" + labelSig : "") +
-    (auxSig ? "|aux:" + auxSig : "");
+    (auxSig ? "|aux:" + auxSig : "") +
+    (dSig ? "|d:" + dSig : "");
 
   return {
     nodeCount,
@@ -471,6 +509,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     a: Uint32Array.from(aArr),
     b: Uint32Array.from(bArr),
     c: Uint32Array.from(cArr),
+    d: Uint32Array.from(dArr),
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     elemOfComponent,

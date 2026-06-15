@@ -36,16 +36,20 @@ impl Simulation {
     ///   `12` = PMOS.
     /// - `a[i]`, `b[i]` — the two main terminal node indices (drain/source for a
     ///   MOSFET). Node `0` is ground (the reference, fixed at 0 V).
-    /// - `c[i]` — the **control** terminal node index (the gate of a MOSFET).
-    ///   Ignored for every two-terminal element; pass `0` there.
+    /// - `c[i]` — the **control** terminal node index (the gate of a MOSFET, the
+    ///   second input of a logic gate). Ignored for elements that don't use it; pass
+    ///   `0` there.
+    /// - `d[i]` — the **fourth** terminal node index (a transformer's second
+    ///   secondary node; terminals are a/b = primary +/− and c/d = secondary +/−).
+    ///   Ignored for elements with three or fewer terminals; pass `0` there.
     /// - `values[i]` — the element value in the units implied by `types[i]`.
     /// - `aux[i]` — the **second per-element scalar**: an AC source's peak
-    ///   amplitude in volts (`0.0` selects the default 5 V), and ignored — pass
-    ///   `0.0` — by every other element.
+    ///   amplitude in volts (`0.0` selects the default 5 V) or a logic gate's
+    ///   function code, and ignored — pass `0.0` — by every other element.
     ///
     /// `node_count` is the total number of nodes including ground. Returns
     /// `true` on success. On any length mismatch, an out-of-range node (`a`, `b`,
-    /// or `c`), a zero `node_count`, or an unknown element type it fails safe
+    /// `c`, or `d`), a zero `node_count`, or an unknown element type it fails safe
     /// (installs an empty ground-only circuit) and returns `false` — it never
     /// throws.
     // Arity mirrors the core: one parallel array per per-element field plus the
@@ -58,11 +62,12 @@ impl Simulation {
         a: &[u32],
         b: &[u32],
         c: &[u32],
+        d: &[u32],
         values: &[f64],
         aux: &[f64],
     ) -> bool {
         self.inner
-            .set_netlist(node_count, types, a, b, c, values, aux)
+            .set_netlist(node_count, types, a, b, c, d, values, aux)
     }
 
     /// Reset to `t = 0` with reactive elements discharged, keeping the same

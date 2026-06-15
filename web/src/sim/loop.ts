@@ -48,6 +48,7 @@ export interface SimHandle {
     values: Float64Array,
     c?: Uint32Array,
     aux?: Float64Array,
+    d?: Uint32Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -66,17 +67,19 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       elementCurrents: sim.element_currents(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values, c, aux) =>
-      // Default the control array to all-ground and the aux scalars to all-zero
-      // when a caller omits them, then hand the wasm boundary its native
-      // a,b,c,values,aux order. The core ignores c for every two-terminal element
-      // and reads aux only for the AC source (0 there = the default 5 V).
+    setNetlist: (nodeCount, types, a, b, values, c, aux, d) =>
+      // Default the control array `c` and the fourth terminal `d` to all-ground and
+      // the aux scalars to all-zero when a caller omits them, then hand the wasm
+      // boundary its native a,b,c,d,values,aux order. The core ignores c/d for
+      // elements that don't use them and reads aux only for the AC source's
+      // amplitude / a logic gate's function code (0 there = the default).
       sim.set_netlist(
         nodeCount,
         types,
         a,
         b,
         c ?? new Uint32Array(types.length),
+        d ?? new Uint32Array(types.length),
         values,
         aux ?? new Float64Array(types.length),
       ),

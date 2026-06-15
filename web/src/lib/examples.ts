@@ -2262,6 +2262,108 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
+  // ── Transformer track ─────────────────────────────────────────────────────
+  // The transformer is kind "TR", a FOUR-pin part (pins P+, P−, S+, S− → a, b, c,
+  // d) — two magnetically coupled windings, `value` = turns ratio n = Ns/Np. It
+  // passes AC scaled by n and blocks DC. The classic use is the front end of a DC
+  // supply: step the mains down (or up), then rectify.
+  {
+    id: "tr-bridge-supply",
+    name: "Transformer + Bridge Rectifier",
+    blurb:
+      "The front end of nearly every DC supply: a transformer sets the AC voltage with its turns ratio, then a four-diode bridge rectifies BOTH half-cycles into a single-polarity output that a reservoir capacitor smooths to DC. Because the transformer passes only AC, this is also where the mains gets safely isolated from your circuit. The whole output level is set by one number — the turns ratio — so changing the turns on either side scales the DC straight up or down.",
+    watch:
+      "the secondary swing bigger than the primary (a 1:2 step-up), the bridge fold every half-cycle to the same polarity, and the cap hold a steady DC a couple of diode-drops below the secondary peak. Then flip the turns ratio (the toggle): more secondary turns lifts the DC output, fewer drops it — the turns ratio sets the rail.",
+    build() {
+      // AC -> transformer (step-up n=2) -> full-bridge -> cap + load. Nodes:
+      //   0 = gnd (= output−) ; 1 = primary+ ; SA/SB = secondary+/− (floating, the
+      //   bridge references them) ; P = output+.
+      // Bridge: D1 SA->P, D2 SB->P, D3 0->SA, D4 0->SB. The cap holds P, the load
+      //   draws from it. AC 5 V peak, n=2 -> secondary ~10 V peak -> DC ~8.6 V
+      //   (minus two diode drops), smoothed. The transformer + 4 diodes make this a
+      //   nonlinear circuit, so the coupled-inductor stamp rides the Newton path.
+      const g = new BoardGraph();
+      const ac = comp(g, "AC", 0, 0, 1000, 1); // 1 kHz primary drive, vertical
+      ac.amp = 5; // 5 V peak
+      const tr = comp(g, "TR", 4, 0, 2); // turns ratio n = 2 (a 1:2 step-up)
+      const d1 = comp(g, "D", 8, 0, 0);
+      const d2 = comp(g, "D", 8, 2, 0);
+      const d3 = comp(g, "D", 10, 0, 0);
+      const d4 = comp(g, "D", 10, 2, 0);
+      const cap = comp(g, "C", 13, 0, 100e-6, 1); // smoothing reservoir
+      const load = comp(g, "R", 15, 0, 1000, 1); // the DC load
+      const gnd = comp(g, "GND", 13, 6, 0);
+      wire(g, ac, 0, tr, 0); // AC+ → primary+ (pin 0 = a)
+      wire(g, ac, 1, tr, 1); // AC− → primary− (pin 1 = b)
+      wire(g, ac, 1, gnd, 0); // primary reference to ground
+      // Full-bridge across the secondary (tr pin 2 = S+, pin 3 = S−).
+      wire(g, tr, 2, d1, 0); // S+ → D1 anode
+      wire(g, d1, 1, cap, 0); // D1 cathode → OUT+ (= cap+)
+      wire(g, tr, 3, d2, 0); // S− → D2 anode
+      wire(g, d2, 1, cap, 0); // D2 cathode → OUT+
+      wire(g, gnd, 0, d3, 0); // OUT− (gnd) → D3 anode
+      wire(g, d3, 1, tr, 2); // D3 cathode → S+
+      wire(g, gnd, 0, d4, 0); // OUT− (gnd) → D4 anode
+      wire(g, d4, 1, tr, 3); // D4 cathode → S−
+      wire(g, cap, 1, gnd, 0); // cap− → ground
+      wire(g, load, 0, cap, 0); // load across the output
+      wire(g, load, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place an AC Source (AC) and a Transformer (TR). Wire AC+ → the transformer's P+ and AC− → P− (and to a Ground). Set the turns ratio to 1:2 (value 2) and Run.",
+        why: "The transformer couples the primary AC to the secondary through its core, scaling the voltage by the turns ratio. With a 1:2 step-up the secondary swings about twice the primary. Nothing is rectified yet — the secondary is still AC.",
+        done: (p) => at(p, "AC") >= 1 && at(p, "TR") >= 1,
+      },
+      {
+        do: "Build a four-diode bridge across the secondary (S+ and S−): two diodes pointing up to the output+, two from ground up to S+ and S−. Add a Capacitor (~100 µF) and a load Resistor from output+ to Ground. Run.",
+        why: "The bridge steers whichever secondary terminal is positive to the output+, so BOTH half-cycles push the same way — full-wave rectification. The capacitor fills in between the peaks, holding a smooth DC a couple of diode drops below the secondary's peak.",
+        done: (p) =>
+          at(p, "TR") >= 1 && at(p, "D") >= 4 && at(p, "C") >= 1 && p.complete,
+      },
+      {
+        do: "Select the transformer and change its turns ratio (or use the toggle below).",
+        why: "The DC output tracks the turns ratio: more secondary turns (a bigger step-up) lifts the rail, fewer drops it. The transformer sets the supply voltage before the bridge ever sees it — which is the whole point of choosing the turns.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Turns ratio 1:2 / 1:1",
+      on: "1:2 step-up — the secondary doubles the primary, so the DC rail sits high.",
+      off: "1:1 isolation — the secondary matches the primary, so the DC rail is lower (and the transformer now only isolates).",
+      alt() {
+        // Same supply, but a 1:1 transformer: the secondary ~ the primary, so the
+        // rectified DC output is markedly lower.
+        const g = new BoardGraph();
+        const ac = comp(g, "AC", 0, 0, 1000, 1);
+        ac.amp = 5;
+        const tr = comp(g, "TR", 4, 0, 1); // n = 1 (1:1 isolation)
+        const d1 = comp(g, "D", 8, 0, 0);
+        const d2 = comp(g, "D", 8, 2, 0);
+        const d3 = comp(g, "D", 10, 0, 0);
+        const d4 = comp(g, "D", 10, 2, 0);
+        const cap = comp(g, "C", 13, 0, 100e-6, 1);
+        const load = comp(g, "R", 15, 0, 1000, 1);
+        const gnd = comp(g, "GND", 13, 6, 0);
+        wire(g, ac, 0, tr, 0);
+        wire(g, ac, 1, tr, 1);
+        wire(g, ac, 1, gnd, 0);
+        wire(g, tr, 2, d1, 0);
+        wire(g, d1, 1, cap, 0);
+        wire(g, tr, 3, d2, 0);
+        wire(g, d2, 1, cap, 0);
+        wire(g, gnd, 0, d3, 0);
+        wire(g, d3, 1, tr, 2);
+        wire(g, gnd, 0, d4, 0);
+        wire(g, d4, 1, tr, 3);
+        wire(g, cap, 1, gnd, 0);
+        wire(g, load, 0, cap, 0);
+        wire(g, load, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
 ];
 
 /** Display order of example categories for the collapsible browser. */
@@ -2278,6 +2380,7 @@ export const EXAMPLE_CATEGORIES = [
   "Filters",
   "Resonance",
   "Rectification",
+  "Transformers",
 ];
 
 /** Which category each example belongs to, keyed by id. */
@@ -2319,6 +2422,7 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "ac-resonance": "Resonance",
   "ac-rectifier": "Rectification",
   "ac-supply": "Rectification",
+  "tr-bridge-supply": "Transformers",
 };
 
 /** The category an example belongs to (falls back to "Other"). */

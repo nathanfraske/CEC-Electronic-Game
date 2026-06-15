@@ -44,6 +44,18 @@
 //! | 15   | op-amp (nonlinear) | rail Vsat     | clamped transconductance, Newton (OUT=a IN-=b IN+=c)|
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
+//! | 18   | transformer        | turns ratio n | coupled inductors, backward-Euler (pri=a/b sec=c/d)|
+//!
+//! Type 18 is the **transformer**: two magnetically **coupled inductors** — the
+//! first four-terminal element (primary `a`/`b`, secondary `c`/`d`). Its `value` is
+//! the turns ratio `n = Ns/Np`; the primary self-inductance is the fixed
+//! [`TRANSFORMER_L1`], the secondary `L2 = n^2 * L1`, and the mutual inductance
+//! `M = k * sqrt(L1*L2)` with the fixed coupling [`TRANSFORMER_K`]. It carries **two**
+//! branch-current unknowns (primary `Ip` a->b, secondary `Is` c->d) coupled by `M`
+//! and a backward-Euler companion on each, so it blocks DC, shows magnetizing
+//! current, and scales AC by `n` — a real transformer, not an ideal ratio box. Like
+//! the inductor it is linear (no Newton) and keeps two reactive states (the two
+//! branch currents). See [`Sim::install`] and the coupled-inductor stamps.
 //!
 //! Type 17 is the **logic gate**: a Tier-A *behavioral* digital primitive (output
 //! `a`, inputs `b` and `c`). Each tick it thresholds its inputs against half the
@@ -403,6 +415,43 @@ const GATE_GOUT: f64 = 1.0;
 /// first-cut behavioral model.
 const GATE_VTH_FRAC: f64 = 0.5;
 
+/// **Transformer** (two magnetically coupled inductors). The first four-terminal
+/// element: primary `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio
+/// `n = Ns/Np`; with the fixed primary inductance [`TRANSFORMER_L1`] the secondary
+/// inductance is `L2 = n^2 * L1` and the mutual inductance is `M = k*sqrt(L1*L2) =
+/// k*n*L1` for the fixed coupling [`TRANSFORMER_K`]. It carries **two** branch
+/// unknowns — the primary current `Ip` (a->b) and the secondary current `Is`
+/// (c->d) — each with a backward-Euler companion and coupled through `M`, exactly
+/// the coupled-inductor equations `Vp = L1·dIp/dt + M·dIs/dt`,
+/// `Vs = M·dIp/dt + L2·dIs/dt`. So it blocks DC (no flux change, no secondary
+/// voltage), draws a real magnetizing current, and scales AC by the turns ratio.
+/// Linear (no Newton); keeps two reactive states (the two branch currents). The
+/// branch pair is allocated consecutively in [`Sim::install`]: `branch_index[i]` is
+/// the primary, `branch_index[i] + 1` the secondary.
+pub const ELEM_TRANSFORMER: u8 = 18;
+
+/// Transformer primary self-inductance, in henries (fixed). High enough that the
+/// magnetizing current is modest at audio frequencies (so the secondary voltage
+/// tracks `n * Vp` cleanly) while staying within the inductor range the dense solve
+/// already conditions for. The secondary inductance scales as `n^2 * TRANSFORMER_L1`.
+const TRANSFORMER_L1: f64 = 0.5;
+
+/// Transformer coupling coefficient `k` in `M = k*sqrt(L1*L2)` (fixed, just under
+/// 1). A near-unity value couples the windings tightly (little leakage) so the
+/// turns-ratio voltage scaling is clean, while staying `< 1` keeps the inductance
+/// matrix positive-definite (a physical, invertible coupled pair).
+const TRANSFORMER_K: f64 = 0.999;
+
+/// Transformer **primary** winding resistance, in ohms (fixed); the secondary scales
+/// as `n^2 * TRANSFORMER_RWIND` (more turns, more wire), keeping the same `L/R` time
+/// constant on both windings. Small enough to be negligible against the winding
+/// reactance at audio frequencies (so AC turns-ratio scaling stays clean), but
+/// non-zero so a DC drive's primary current **saturates** at `V/R` instead of
+/// ramping forever — which is exactly what lets the transformer **block DC** (once
+/// `dI/dt -> 0` the induced secondary voltage decays to zero). Without it an ideal
+/// coupled-inductor pair would integrate a DC step without bound.
+const TRANSFORMER_RWIND: f64 = 5.0;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -673,6 +722,19 @@ fn gate_target_level(code: f64, vhigh: f64, v1: f64, v2: f64) -> f64 {
     }
 }
 
+/// A transformer's winding inductances and mutual inductance from its turns ratio
+/// `n` (the element's `value`): primary `L1 = TRANSFORMER_L1` (fixed), secondary
+/// `L2 = n^2 * L1`, and mutual `M = TRANSFORMER_K * n * L1` (which equals
+/// `k*sqrt(L1*L2)`). Returns `(L1, L2, M)`. `n` is taken in absolute value so a
+/// reversed (negative) ratio couples with reversed polarity but a sane magnitude.
+#[inline]
+fn transformer_inductances(n: f64) -> (f64, f64, f64) {
+    let l1 = TRANSFORMER_L1;
+    let l2 = n * n * l1;
+    let m = TRANSFORMER_K * n * l1;
+    (l1, l2, m)
+}
+
 /// True for every nonlinear element (any device that drives the Newton outer
 /// loop): the diode family, the MOSFET family, the BJT family, the varistor, or the
 /// op-amp. The single switch that selects the Newton path over the linear fast path.
@@ -720,6 +782,13 @@ pub struct Element {
     /// two-terminal element, where it is `0` (ground) and never read. Node `0`
     /// is ground.
     pub c: usize,
+    /// Fourth terminal node index — the **second secondary** node of a four-terminal
+    /// element. Today only the [`ELEM_TRANSFORMER`] reads it: its terminals are
+    /// `a`/`b` = primary +/− and `c`/`d` = secondary +/−. Unused (`0` = ground, never
+    /// read) for every element with three or fewer terminals — the terminal analogue
+    /// of how `c` is ignored by two-terminal elements, so adding it changes nothing
+    /// on the existing paths. Node `0` is ground.
+    pub d: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
     /// Second per-element scalar, parallel to `value`. Unused by every element
@@ -1159,9 +1228,16 @@ pub struct Sim {
     node_v: Vec<f64>,
     /// Dynamic state carried between steps: for a capacitor (`ELEM_CAPACITOR`),
     /// the previous `V(a) - V(b)`; for an inductor (`ELEM_INDUCTOR`), the
-    /// previous branch current `i` (oriented `a -> b`). Unused for other kinds.
-    /// One entry per element, indexed in lockstep with `elements`.
+    /// previous branch current `i` (oriented `a -> b`); for a transformer
+    /// (`ELEM_TRANSFORMER`), the previous **primary** current `Ip` (a -> b). Unused
+    /// for other kinds. One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
+    /// Second dynamic state, used only by the transformer (`ELEM_TRANSFORMER`): the
+    /// previous **secondary** current `Is` (c -> d). The coupled-inductor companion
+    /// needs both winding currents from the previous step, so this carries the
+    /// secondary while [`Sim::reactive_state`] carries the primary. `0.0` for every
+    /// other element. One entry per element, indexed in lockstep with `elements`.
+    reactive_state_b: Vec<f64>,
     /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
     /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
     /// previous-iterate reference, so each step starts from the converged
@@ -1250,6 +1326,7 @@ impl Sim {
             has_nonlinear: false,
             node_v: vec![0.0],
             reactive_state: Vec::new(),
+            reactive_state_b: Vec::new(),
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
@@ -1269,6 +1346,7 @@ impl Sim {
                 a: 1,
                 b: 0,
                 c: 0,
+                d: 0,
                 value: v_source,
                 aux: 0.0,
             },
@@ -1277,6 +1355,7 @@ impl Sim {
                 a: 1,
                 b: 2,
                 c: 0,
+                d: 0,
                 value: 1_000.0,
                 aux: 0.0,
             },
@@ -1285,6 +1364,7 @@ impl Sim {
                 a: 2,
                 b: 0,
                 c: 0,
+                d: 0,
                 value: 1.0e-6,
                 aux: 0.0,
             },
@@ -1295,20 +1375,21 @@ impl Sim {
 
     /// Replace the circuit with the given netlist and reset to `t = 0`.
     ///
-    /// `types`, `a`, `b`, `c`, `values`, and `aux` are parallel arrays (one entry
-    /// per element). `c` is the **control terminal** (the gate of a MOSFET); for
-    /// every two-terminal element it is ignored, so callers pass `0` (or any
-    /// in-range node) there. `aux` is the **second per-element scalar**: the peak
-    /// amplitude of an [`ELEM_ACSOURCE`] (`0.0` selects the [`AC_AMPLITUDE`]
+    /// `types`, `a`, `b`, `c`, `d`, `values`, and `aux` are parallel arrays (one
+    /// entry per element). `c` is the **control terminal** (the gate of a MOSFET);
+    /// `d` is the **fourth terminal** (the transformer's second secondary node).
+    /// For an element that doesn't use them they are ignored, so callers pass `0`
+    /// (or any in-range node) there. `aux` is the **second per-element scalar**: the
+    /// peak amplitude of an [`ELEM_ACSOURCE`] (`0.0` selects the [`AC_AMPLITUDE`]
     /// default), and ignored — passed `0.0` — by every other element. On any
-    /// length mismatch, a node index (`a`, `b`, or `c`) outside `0..node_count`, a
-    /// zero `node_count`, or an unknown element type, the call **fails safe
+    /// length mismatch, a node index (`a`, `b`, `c`, or `d`) outside `0..node_count`,
+    /// a zero `node_count`, or an unknown element type, the call **fails safe
     /// deterministically**: the simulation is replaced with an empty single-node
     /// (ground-only) circuit and `false` is returned. On success the netlist is
     /// installed, reactive elements start discharged, and `true` is returned.
     /// Never panics.
     // The arity is the wire format: one parallel array per per-element field
-    // (types/a/b/c/values/aux) plus the node count. Bundling them into a struct
+    // (types/a/b/c/d/values/aux) plus the node count. Bundling them into a struct
     // would only move the same fields behind a name and obscure the boundary, so
     // the lint is intentionally allowed here.
     #[allow(clippy::too_many_arguments)]
@@ -1319,6 +1400,7 @@ impl Sim {
         a: &[u32],
         b: &[u32],
         c: &[u32],
+        d: &[u32],
         values: &[f64],
         aux: &[f64],
     ) -> bool {
@@ -1326,6 +1408,7 @@ impl Sim {
         if a.len() != n
             || b.len() != n
             || c.len() != n
+            || d.len() != n
             || values.len() != n
             || aux.len() != n
             || node_count == 0
@@ -1357,6 +1440,7 @@ impl Sim {
                     | ELEM_OPAMP
                     | ELEM_VARISTOR
                     | ELEM_GATE
+                    | ELEM_TRANSFORMER
             ) {
                 self.install_empty();
                 return false;
@@ -1364,10 +1448,11 @@ impl Sim {
             let na = a[i] as usize;
             let nb = b[i] as usize;
             let nc = c[i] as usize;
-            // Validate all three terminals. `c` is ignored at solve time for a
-            // two-terminal element, but it is still range-checked so a malformed
-            // index is rejected fail-safe rather than stored.
-            if na >= node_count || nb >= node_count || nc >= node_count {
+            let nd = d[i] as usize;
+            // Validate all four terminals. `c`/`d` are ignored at solve time for an
+            // element that doesn't use them, but they are still range-checked so a
+            // malformed index is rejected fail-safe rather than stored.
+            if na >= node_count || nb >= node_count || nc >= node_count || nd >= node_count {
                 self.install_empty();
                 return false;
             }
@@ -1376,6 +1461,7 @@ impl Sim {
                 a: na,
                 b: nb,
                 c: nc,
+                d: nd,
                 value: values[i],
                 aux: aux[i],
             });
@@ -1396,7 +1482,9 @@ impl Sim {
     /// readout rails are consistent before the first step.
     fn install(&mut self, node_count: usize, elements: Vec<Element>) {
         // Branch-current unknowns are appended after the node voltages, in
-        // ascending element index, for voltage sources and inductors.
+        // ascending element index, for voltage sources and inductors (one each) and
+        // the transformer (TWO consecutive: `branch_index[i]` is the primary current
+        // `Ip` and `branch_index[i] + 1` the secondary current `Is`).
         let node_unknowns = node_count - 1;
         let mut branch_index = vec![usize::MAX; elements.len()];
         let mut next = node_unknowns;
@@ -1404,6 +1492,9 @@ impl Sim {
             if e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE || e.kind == ELEM_INDUCTOR {
                 branch_index[i] = next;
                 next += 1;
+            } else if e.kind == ELEM_TRANSFORMER {
+                branch_index[i] = next; // primary branch; secondary is next + 1
+                next += 2;
             }
         }
 
@@ -1414,6 +1505,7 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.reactive_state = vec![0.0; elements.len()];
+        self.reactive_state_b = vec![0.0; elements.len()];
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
         self.mosfet_vds = vec![0.0; elements.len()];
@@ -1436,6 +1528,9 @@ impl Sim {
     pub fn reset(&mut self) {
         self.tick = 0;
         for s in &mut self.reactive_state {
+            *s = 0.0;
+        }
+        for s in &mut self.reactive_state_b {
             *s = 0.0;
         }
         for vd in &mut self.diode_vd {
@@ -1683,6 +1778,11 @@ impl Sim {
                         rhs[r] += il;
                     }
                 }
+                ELEM_TRANSFORMER => {
+                    // Both windings prime as current sources carrying their stored
+                    // currents (0 at t = 0, so the device starts open).
+                    self.stamp_transformer_op(&mut mat, &mut rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
                     // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
@@ -1717,7 +1817,7 @@ impl Sim {
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
-                ELEM_INDUCTOR => self.reactive_state[i],
+                ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
@@ -1876,6 +1976,11 @@ impl Sim {
                     mat[bi * n + bi] -= r_l;
                     rhs[bi] -= r_l * self.reactive_state[i];
                 }
+                ELEM_TRANSFORMER => {
+                    // Two coupled-inductor branch companions (primary + secondary),
+                    // cross-linked by the mutual inductance M.
+                    self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
                     // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
@@ -1915,7 +2020,11 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
+                    // The transformer reports its PRIMARY current (branch_index[i]);
+                    // the secondary current lives at branch_index[i] + 1.
+                    x[self.branch_index[i]]
+                }
                 ELEM_ISOURCE => e.value,
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
@@ -2560,6 +2669,10 @@ impl Sim {
                         base_rhs[r] += il;
                     }
                 }
+                ELEM_TRANSFORMER => {
+                    // Both windings prime as current sources (0 at t = 0).
+                    self.stamp_transformer_op(&mut base_mat, &mut base_rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
                         base_rhs[r] -= e.value;
@@ -2632,7 +2745,7 @@ impl Sim {
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
-                ELEM_INDUCTOR => self.reactive_state[i],
+                ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
@@ -2768,6 +2881,11 @@ impl Sim {
                     base_mat[bi * n + bi] -= r_l;
                     base_rhs[bi] -= r_l * self.reactive_state[i];
                 }
+                ELEM_TRANSFORMER => {
+                    // Two coupled-inductor branch companions into the fixed linear
+                    // base (constant across the Newton loop, like any inductor).
+                    self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
+                }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
                         base_rhs[r] -= e.value;
@@ -2847,7 +2965,11 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
+                    // The transformer reports its PRIMARY current (branch_index[i]);
+                    // the secondary current lives at branch_index[i] + 1.
+                    x[self.branch_index[i]]
+                }
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
@@ -2884,6 +3006,114 @@ impl Sim {
     #[inline]
     fn element_voltage(&self, e: &Element) -> f64 {
         self.node_v[e.a] - self.node_v[e.b]
+    }
+
+    /// Stamp the transformer's coupled-inductor backward-Euler companion into a
+    /// **transient** MNA system (`mat`/`rhs`, dimension `dim`). The element has two
+    /// branch unknowns — primary `Ip` (a->b) at `branch_index[i]` and secondary
+    /// `Is` (c->d) at `branch_index[i] + 1` — whose rows enforce
+    /// `Vp = (L1/DT)(Ip - Ip_prev) + (M/DT)(Is - Is_prev)` and the symmetric
+    /// secondary equation. It is the single inductor's branch companion doubled and
+    /// cross-coupled by `M`. The previous winding currents come from
+    /// `reactive_state` (primary) and `reactive_state_b` (secondary). A `GMIN` floor
+    /// on every terminal keeps a winding that lacks its own ground reference (an
+    /// isolated secondary) non-singular without materially loading a referenced one.
+    fn stamp_transformer(
+        &self,
+        mat: &mut [f64],
+        rhs: &mut [f64],
+        dim: usize,
+        e: &Element,
+        i: usize,
+    ) {
+        let bi_p = self.branch_index[i];
+        let bi_s = bi_p + 1;
+        let (l1, l2, m) = transformer_inductances(e.value);
+        let (g1, g2, gm) = (l1 / DT, l2 / DT, m / DT);
+        // Winding resistances: primary fixed, secondary scaled by n^2 (so both
+        // windings share the same L/R time constant). They sit in series with each
+        // winding, so they add to that branch row's diagonal.
+        let rp = TRANSFORMER_RWIND;
+        let rs = e.value * e.value * TRANSFORMER_RWIND;
+        let ip_prev = self.reactive_state[i];
+        let is_prev = self.reactive_state_b[i];
+        let ia = Self::node_idx(e.a);
+        let ib = Self::node_idx(e.b);
+        let ic = Self::node_idx(e.c);
+        let id = Self::node_idx(e.d);
+        // KCL: Ip injects a->b, Is injects c->d.
+        if let Some(r) = ia {
+            mat[r * dim + bi_p] += 1.0;
+        }
+        if let Some(r) = ib {
+            mat[r * dim + bi_p] -= 1.0;
+        }
+        if let Some(r) = ic {
+            mat[r * dim + bi_s] += 1.0;
+        }
+        if let Some(r) = id {
+            mat[r * dim + bi_s] -= 1.0;
+        }
+        // Primary branch row: V(a)-V(b) - g1*Ip - gm*Is = -(g1*Ip_prev + gm*Is_prev).
+        if let Some(r) = ia {
+            mat[bi_p * dim + r] += 1.0;
+        }
+        if let Some(r) = ib {
+            mat[bi_p * dim + r] -= 1.0;
+        }
+        mat[bi_p * dim + bi_p] -= g1 + rp;
+        mat[bi_p * dim + bi_s] -= gm;
+        rhs[bi_p] -= g1 * ip_prev + gm * is_prev;
+        // Secondary branch row: V(c)-V(d) - gm*Ip - g2*Is = -(gm*Ip_prev + g2*Is_prev).
+        if let Some(r) = ic {
+            mat[bi_s * dim + r] += 1.0;
+        }
+        if let Some(r) = id {
+            mat[bi_s * dim + r] -= 1.0;
+        }
+        mat[bi_s * dim + bi_s] -= g2 + rs;
+        mat[bi_s * dim + bi_p] -= gm;
+        rhs[bi_s] -= gm * ip_prev + g2 * is_prev;
+        // Ground floor on every winding terminal (isolation safety net).
+        for t in [ia, ib, ic, id].into_iter().flatten() {
+            mat[t * dim + t] += GMIN;
+        }
+    }
+
+    /// Stamp the transformer at the **operating point** (`t = 0` / DC priming),
+    /// where — exactly like an inductor — each winding is a current source carrying
+    /// its stored branch current (both `0` at `t = 0`, so the device primes open).
+    /// `dim` is the operating-point system size. The same `GMIN` floor keeps a
+    /// floating winding non-singular.
+    fn stamp_transformer_op(
+        &self,
+        mat: &mut [f64],
+        rhs: &mut [f64],
+        dim: usize,
+        e: &Element,
+        i: usize,
+    ) {
+        let ip_prev = self.reactive_state[i];
+        let is_prev = self.reactive_state_b[i];
+        let ia = Self::node_idx(e.a);
+        let ib = Self::node_idx(e.b);
+        let ic = Self::node_idx(e.c);
+        let id = Self::node_idx(e.d);
+        if let Some(r) = ia {
+            rhs[r] -= ip_prev;
+        }
+        if let Some(r) = ib {
+            rhs[r] += ip_prev;
+        }
+        if let Some(r) = ic {
+            rhs[r] -= is_prev;
+        }
+        if let Some(r) = id {
+            rhs[r] += is_prev;
+        }
+        for t in [ia, ib, ic, id].into_iter().flatten() {
+            mat[t * dim + t] += GMIN;
+        }
     }
 
     /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
@@ -2943,6 +3173,13 @@ impl Sim {
                     // Store the new inductor branch current (a -> b).
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
+                }
+                ELEM_TRANSFORMER => {
+                    // Store both new winding currents: primary Ip at branch bi, the
+                    // secondary Is at bi + 1 (allocated consecutively in `install`).
+                    let bi = self.branch_index[i];
+                    self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
+                    self.reactive_state_b[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
                 _ => {}
             }
@@ -3038,10 +3275,11 @@ mod tests {
     /// element here is two-terminal and ignores it. See [`build3`] for MOSFETs.
     fn build(node_count: usize, types: &[u8], a: &[u32], b: &[u32], values: &[f64]) -> Sim {
         let c = vec![0u32; types.len()];
+        let d = vec![0u32; types.len()];
         let aux = vec![0.0f64; types.len()];
         let mut sim = Sim::new(1);
         assert!(
-            sim.set_netlist(node_count, types, a, b, &c, values, &aux),
+            sim.set_netlist(node_count, types, a, b, &c, &d, values, &aux),
             "valid netlist must install"
         );
         sim
@@ -3049,7 +3287,8 @@ mod tests {
 
     /// Build a fresh `Sim` from a netlist that includes the third (control)
     /// terminal `c`, for the MOSFET tests. Two-terminal elements in the same
-    /// netlist set their `c` entry to `0` (ground), where it is ignored.
+    /// netlist set their `c` entry to `0` (ground), where it is ignored. The fourth
+    /// terminal `d` is all-ground here (no transformers); see [`build4`].
     fn build3(
         node_count: usize,
         types: &[u8],
@@ -3058,10 +3297,32 @@ mod tests {
         c: &[u32],
         values: &[f64],
     ) -> Sim {
+        let d = vec![0u32; types.len()];
         let aux = vec![0.0f64; types.len()];
         let mut sim = Sim::new(1);
         assert!(
-            sim.set_netlist(node_count, types, a, b, c, values, &aux),
+            sim.set_netlist(node_count, types, a, b, c, &d, values, &aux),
+            "valid netlist must install"
+        );
+        sim
+    }
+
+    /// Build a fresh `Sim` from a netlist that includes the fourth terminal `d`,
+    /// for the transformer tests (primary `a`/`b`, secondary `c`/`d`). Elements that
+    /// don't use the extra terminals set their `c`/`d` entries to `0` (ground).
+    fn build4(
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        values: &[f64],
+    ) -> Sim {
+        let aux = vec![0.0f64; types.len()];
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(node_count, types, a, b, c, d, values, &aux),
             "valid netlist must install"
         );
         sim
@@ -3357,13 +3618,43 @@ mod tests {
     fn invalid_netlist_fails_safe() {
         let mut sim = Sim::new(3);
         // Mismatched array lengths (`a` has two entries, the rest one).
-        let ok = sim.set_netlist(2, &[ELEM_RESISTOR], &[1, 0], &[0], &[0], &[1_000.0], &[0.0]);
+        let ok = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1, 0],
+            &[0],
+            &[0],
+            &[0],
+            &[1_000.0],
+            &[0.0],
+        );
         assert!(!ok, "length mismatch must be rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         assert_eq!(sim.element_currents().len(), 0, "no elements remain");
         // Mismatched control-array length (`c` too long) is rejected too.
-        let ok_c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[0, 0], &[1_000.0], &[0.0]);
+        let ok_c = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1],
+            &[0],
+            &[0, 0],
+            &[0],
+            &[1_000.0],
+            &[0.0],
+        );
         assert!(!ok_c, "mismatched c length must be rejected");
+        // Mismatched fourth-terminal length (`d` too long) is rejected too.
+        let ok_d = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1],
+            &[0],
+            &[0],
+            &[0, 0],
+            &[1_000.0],
+            &[0.0],
+        );
+        assert!(!ok_d, "mismatched d length must be rejected");
         // Mismatched aux-array length (`aux` too long) is rejected too.
         let ok_aux = sim.set_netlist(
             2,
@@ -3371,27 +3662,59 @@ mod tests {
             &[1],
             &[0],
             &[0],
+            &[0],
             &[1_000.0],
             &[0.0, 0.0],
         );
         assert!(!ok_aux, "mismatched aux length must be rejected");
         // Out-of-range node.
-        let ok2 = sim.set_netlist(2, &[ELEM_RESISTOR], &[5], &[0], &[0], &[1_000.0], &[0.0]);
+        let ok2 = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[5],
+            &[0],
+            &[0],
+            &[0],
+            &[1_000.0],
+            &[0.0],
+        );
         assert!(!ok2, "out-of-range node must be rejected");
         // Out-of-range control node (even though a resistor ignores it).
-        let ok2c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[7], &[1_000.0], &[0.0]);
+        let ok2c = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1],
+            &[0],
+            &[7],
+            &[0],
+            &[1_000.0],
+            &[0.0],
+        );
         assert!(!ok2c, "out-of-range control node must be rejected");
+        // Out-of-range fourth terminal (even though a resistor ignores it).
+        let ok2d = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1],
+            &[0],
+            &[0],
+            &[7],
+            &[1_000.0],
+            &[0.0],
+        );
+        assert!(!ok2d, "out-of-range d node must be rejected");
         // Unknown element type.
-        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[0], &[1_000.0], &[0.0]);
+        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[0], &[0], &[1_000.0], &[0.0]);
         assert!(!ok3, "unknown element type must be rejected");
         // Zero node_count.
-        let ok4 = sim.set_netlist(0, &[], &[], &[], &[], &[], &[]);
+        let ok4 = sim.set_netlist(0, &[], &[], &[], &[], &[], &[], &[]);
         assert!(!ok4, "zero node_count must be rejected");
         // A subsequent valid netlist still installs fine.
         let ok5 = sim.set_netlist(
             2,
             &[ELEM_VSOURCE, ELEM_RESISTOR],
             &[1, 1],
+            &[0, 0],
             &[0, 0],
             &[0, 0],
             &[5.0, 1_000.0],
@@ -3956,6 +4279,7 @@ mod tests {
             &[1, 1],
             &[0, 0],
             &[0, 0],
+            &[0, 0],
             &[5.0, 0.0],
             &[0.0, 0.0],
         );
@@ -3963,7 +4287,7 @@ mod tests {
         assert_eq!(sim.element_count(), 2);
         assert_eq!(sim.element_at(1).kind, ELEM_DIODE, "diode stored as type 5");
         // Out-of-range node on a diode is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0], &[0.0], &[0.0]);
+        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0], &[0], &[0.0], &[0.0]);
         assert!(!bad, "out-of-range diode node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -4178,6 +4502,7 @@ mod tests {
             &[1, 1],
             &[0, 0],
             &[0, 0],
+            &[0, 0],
             &[5.0, 18.0],
             &[0.0, 0.0],
         );
@@ -4203,7 +4528,7 @@ mod tests {
             "a varistor netlist is solved nonlinearly (clamps below the rail)"
         );
         // Out-of-range node on a varistor is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_VARISTOR], &[9], &[0], &[0], &[18.0], &[0.0]);
+        let bad = sim.set_netlist(2, &[ELEM_VARISTOR], &[9], &[0], &[0], &[0], &[18.0], &[0.0]);
         assert!(!bad, "out-of-range varistor node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -4331,13 +4656,14 @@ mod tests {
                 &[1, 2],
                 &[0, 2],
                 &[0, 1],
+                &[0, 0],
                 &[3.0, 12.0],
                 &[0.0, 0.0],
             ),
             "valid op-amp netlist installs"
         );
         assert!(
-            !sim.set_netlist(3, &[ELEM_OPAMP], &[9], &[0], &[1], &[12.0], &[0.0]),
+            !sim.set_netlist(3, &[ELEM_OPAMP], &[9], &[0], &[1], &[0], &[12.0], &[0.0]),
             "out-of-range op-amp terminal rejected"
         );
     }
@@ -4389,6 +4715,7 @@ mod tests {
             &[1, 2, 3, 3],
             &[0, 0, 1, 0],
             &[0, 0, 2, 0],
+            &[0, 0, 0, 0],
             &[va, vb, 5.0, 1000.0],
             &[0.0, 0.0, code, 0.0],
         ));
@@ -4455,6 +4782,7 @@ mod tests {
             &[1, 2, 3, 3],
             &[0, 0, 1, 0],
             &[0, 0, 2, 0],
+            &[0, 0, 0, 0],
             &[5.0, 5.0, 5.0, 1000.0],
             &[0.0, 0.0, 0.0, 0.0], // aux = 0 → AND
         ));
@@ -4477,6 +4805,7 @@ mod tests {
                 &[1, 2, 3, 3],
                 &[0, 0, 1, 0],
                 &[0, 0, 2, 0],
+                &[0, 0, 0, 0],
                 &[5.0, 0.0, 5.0, 1000.0],
                 &[0.0, 0.0, 4.0, 0.0], // XOR
             ));
@@ -4506,6 +4835,7 @@ mod tests {
                 &[1, 2, 2, 3],
                 &[0, 1, 3, 0],
                 &[0, 0, 0, 0], // gate in2 unused (BUF)
+                &[0, 0, 0, 0],
                 &[va, 5.0, 220.0, 0.0],
                 &[0.0, 7.0, 0.0, 0.0], // gate aux = 7 = BUF
             ));
@@ -4534,6 +4864,7 @@ mod tests {
                 &[1, 3, 3],
                 &[0, 1, 0],
                 &[0, 2, 0],
+                &[0, 0, 0],
                 &[5.0, 5.0, 1000.0],
                 &[0.0, code, 0.0],
             ));
@@ -4553,6 +4884,156 @@ mod tests {
             and[3] < 1.0,
             "AND(high, floating) reads low (a floating input is low)"
         );
+    }
+
+    // --- Transformer (coupled inductors, four-terminal) -----------------------
+    //
+    // The transformer (type 18) is two magnetically coupled inductors: primary
+    // a/b, secondary c/d, `value` = turns ratio n. It carries two coupled branch
+    // currents, blocks DC (winding resistance lets the primary current saturate),
+    // and scales AC by ~k*n. Linear (no Newton), two reactive states.
+
+    /// Drive the transformer primary with a 1 kHz, 5 V AC source and a near-open
+    /// (10 k) secondary referenced to ground, run past the start-up transient, and
+    /// return the steady **AC amplitudes** (half the peak-to-peak, which cancels any
+    /// magnetizing DC offset) of the primary and secondary node voltages.
+    fn transformer_ac_amps(n: f64) -> (f64, f64) {
+        let mut sim = Sim::new(1);
+        // nodes: 0 = gnd, 1 = primary+ / AC+, 2 = secondary+.
+        assert!(sim.set_netlist(
+            3,
+            &[ELEM_ACSOURCE, ELEM_TRANSFORMER, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 0, 0],
+            &[0, 2, 0], // transformer c = secondary+
+            &[0, 0, 0], // transformer d = secondary- (ground)
+            &[1000.0, n, 10_000.0],
+            &[5.0, 0.0, 0.0], // AC amplitude 5 V (aux)
+        ));
+        let (mut p_hi, mut p_lo, mut s_hi, mut s_lo) = (f64::MIN, f64::MAX, f64::MIN, f64::MAX);
+        for tk in 0..4000 {
+            sim.step();
+            if tk >= 1500 {
+                let v = sim.state();
+                p_hi = p_hi.max(v[1]);
+                p_lo = p_lo.min(v[1]);
+                s_hi = s_hi.max(v[2]);
+                s_lo = s_lo.min(v[2]);
+            }
+        }
+        ((p_hi - p_lo) / 2.0, (s_hi - s_lo) / 2.0)
+    }
+
+    /// The secondary AC voltage is the primary's, scaled by ~k*n: a step-up (n = 2)
+    /// roughly doubles it and a step-down (n = 0.5) roughly halves it.
+    #[test]
+    fn transformer_scales_ac_by_turns_ratio() {
+        let (vp, vs) = transformer_ac_amps(2.0);
+        let ratio = vs / vp;
+        assert!(
+            (ratio - TRANSFORMER_K * 2.0).abs() < 0.25,
+            "step-up x2: secondary/primary = {ratio} (expected ~2)"
+        );
+        let (vp2, vs2) = transformer_ac_amps(0.5);
+        let ratio2 = vs2 / vp2;
+        assert!(
+            (ratio2 - TRANSFORMER_K * 0.5).abs() < 0.15,
+            "step-down x0.5: secondary/primary = {ratio2} (expected ~0.5)"
+        );
+    }
+
+    /// A transformer blocks DC: a DC drive on the primary kicks the secondary at the
+    /// instant of the step (the inductive transient), but as the primary current
+    /// saturates against the winding resistance the secondary voltage decays toward
+    /// zero — unlike AC, a steady level does not pass through.
+    #[test]
+    fn transformer_blocks_dc() {
+        // DC 5 V on the primary; n = 2; 10 k on the secondary. (aux all zero → build4.)
+        let mut sim = build4(
+            3,
+            &[ELEM_VSOURCE, ELEM_TRANSFORMER, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 0, 0],
+            &[0, 2, 0],
+            &[0, 0, 0],
+            &[5.0, 2.0, 10_000.0],
+        );
+        let mut vsec_early = 0.0;
+        // L/R ~ 0.1 s ~ 50k ticks; run a few time constants so the kick decays.
+        for tk in 0..200_000 {
+            sim.step();
+            if tk == 5_000 {
+                vsec_early = sim.state()[2].abs();
+            }
+        }
+        let vsec_late = sim.state()[2].abs();
+        assert!(
+            vsec_early > 2.0,
+            "the secondary is kicked by the DC step transient: {vsec_early}"
+        );
+        assert!(
+            vsec_late < 0.5,
+            "the secondary decays toward zero under sustained DC: {vsec_late}"
+        );
+    }
+
+    /// A four-terminal transformer netlist installs; an out-of-range secondary
+    /// terminal `d` is rejected fail-safe.
+    #[test]
+    fn transformer_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(
+                3,
+                &[ELEM_TRANSFORMER],
+                &[1],
+                &[0],
+                &[2],
+                &[0],
+                &[2.0],
+                &[0.0]
+            ),
+            "valid four-terminal transformer installs"
+        );
+        assert!(
+            !sim.set_netlist(
+                3,
+                &[ELEM_TRANSFORMER],
+                &[1],
+                &[0],
+                &[2],
+                &[9],
+                &[2.0],
+                &[0.0]
+            ),
+            "out-of-range secondary terminal d is rejected"
+        );
+    }
+
+    /// A transformer circuit reproduces bit-for-bit over a long run (two coupled
+    /// branches and two reactive states stay deterministic).
+    #[test]
+    fn transformer_run_is_reproducible() {
+        let run = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                3,
+                &[ELEM_ACSOURCE, ELEM_TRANSFORMER, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 0, 0],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[1000.0, 2.0, 1000.0],
+                &[5.0, 0.0, 0.0],
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "transformer circuit must reproduce exactly");
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
@@ -4787,6 +5268,7 @@ mod tests {
             &[1, 1, 2],
             &[0, 2, 0],
             &[0, 0, 0],
+            &[0, 0, 0],
             &[5.0, 0.5, 1_000.0],
             &[0.0, 0.0, 0.0],
         );
@@ -4798,7 +5280,7 @@ mod tests {
             "switch stored as type 6"
         );
         // Out-of-range node on a switch is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0.5], &[0.0]);
+        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0], &[0.5], &[0.0]);
         assert!(!bad, "out-of-range switch node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -4925,6 +5407,7 @@ mod tests {
                 2,
                 &[ELEM_ACSOURCE, ELEM_RESISTOR],
                 &[1, 1],
+                &[0, 0],
                 &[0, 0],
                 &[0, 0],
                 &[f, 1_000.0],
@@ -5096,6 +5579,7 @@ mod tests {
             &[1, 1],
             &[0, 0],
             &[0, 0],
+            &[0, 0],
             &[1_000.0, 1_000.0],
             &[0.0, 0.0],
         );
@@ -5107,7 +5591,16 @@ mod tests {
             "AC source stored as type 7"
         );
         // Out-of-range node on an AC source is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[0], &[1_000.0], &[0.0]);
+        let bad = sim.set_netlist(
+            2,
+            &[ELEM_ACSOURCE],
+            &[9],
+            &[0],
+            &[0],
+            &[0],
+            &[1_000.0],
+            &[0.0],
+        );
         assert!(!bad, "out-of-range AC source node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -5405,6 +5898,7 @@ mod tests {
             &[1, 1, 2, 3],
             &[0, 2, 0, 0],
             &[0, 0, 3, 0],
+            &[0, 0, 0, 0],
             &[5.0, 1_000.0, 0.0, 3.0],
             &[0.0, 0.0, 0.0, 0.0],
         );
@@ -5420,6 +5914,7 @@ mod tests {
             &[1, 2, 2, 3],
             &[0, 1, 0, 0],
             &[0, 3, 0, 0],
+            &[0, 0, 0, 0],
             &[5.0, 0.0, 1_000.0, 0.0],
             &[0.0, 0.0, 0.0, 0.0],
         );
@@ -5432,14 +5927,15 @@ mod tests {
             &[ELEM_NMOS],
             &[2],
             &[0],
-            &[9], // gate node 9 out of range for node_count 3
+            &[9],
+            &[0], // gate node 9 out of range for node_count 3
             &[0.0],
             &[0.0],
         );
         assert!(!bad, "out-of-range MOSFET gate node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         // Out-of-range drain node is rejected too.
-        let bad2 = sim.set_netlist(3, &[ELEM_NMOS], &[9], &[0], &[1], &[0.0], &[0.0]);
+        let bad2 = sim.set_netlist(3, &[ELEM_NMOS], &[9], &[0], &[1], &[0], &[0.0], &[0.0]);
         assert!(!bad2, "out-of-range MOSFET drain node rejected");
     }
 
@@ -5852,6 +6348,7 @@ mod tests {
             &[1, 1, 2, 3],
             &[0, 2, 0, 0],
             &[0, 0, 3, 0],
+            &[0, 0, 0, 0],
             &[5.0, 1_000.0, 0.0, 2.0],
             &[0.0, 0.0, 0.0, 0.0],
         );
@@ -5867,6 +6364,7 @@ mod tests {
             &[1, 2, 2, 3],
             &[0, 1, 0, 0],
             &[0, 3, 0, 0],
+            &[0, 0, 0, 0],
             &[5.0, 0.0, 1_000.0, 0.0],
             &[0.0, 0.0, 0.0, 0.0],
         );
@@ -5879,14 +6377,15 @@ mod tests {
             &[ELEM_NPN],
             &[2],
             &[0],
-            &[9], // base node 9 out of range for node_count 3
+            &[9],
+            &[0], // base node 9 out of range for node_count 3
             &[0.0],
             &[0.0],
         );
         assert!(!bad, "out-of-range BJT base node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         // Out-of-range collector node is rejected too.
-        let bad2 = sim.set_netlist(3, &[ELEM_NPN], &[9], &[0], &[1], &[0.0], &[0.0]);
+        let bad2 = sim.set_netlist(3, &[ELEM_NPN], &[9], &[0], &[1], &[0], &[0.0], &[0.0]);
         assert!(!bad2, "out-of-range BJT collector node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }

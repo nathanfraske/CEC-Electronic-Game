@@ -118,6 +118,13 @@
       color: "var(--violet)",
     },
     {
+      tag: "TR",
+      name: "Transformer",
+      desc: "Couples AC · set turns ratio",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "I",
       name: "Current Source",
       desc: "Ideal fixed DC current",
@@ -300,6 +307,7 @@
     C: "Passives",
     EC: "Passives",
     L: "Passives",
+    TR: "Passives",
     D: "Diodes",
     SD: "Diodes",
     LED: "Diodes",
@@ -595,9 +603,10 @@
         board?.setNetNames(nl ? nl.nodeNames : null);
         netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
-          // Pass the control-terminal array `c` (the MOSFET gate nodes; 0 for
-          // every 2-pin element) and the second scalar `aux` (an AC source's peak
-          // amplitude; 0 elsewhere). setNetlist takes both as trailing optionals.
+          // Pass the control-terminal array `c` (MOSFET gate / gate IN2; 0 for 2-pin
+          // parts), the second scalar `aux` (AC amplitude / gate function code), and
+          // the fourth terminal `d` (a transformer's secondary− node; 0 elsewhere).
+          // setNetlist takes c, aux, and d as trailing optionals.
           sim.setNetlist(
             nl.nodeCount,
             nl.types,
@@ -606,6 +615,7 @@
             nl.values,
             nl.c,
             nl.aux,
+            nl.d,
           );
           controls?.resync();
         } else if (graph.components.size > 0) {
@@ -750,6 +760,16 @@
     if (kind === "SW") return Math.round(value * 100) + "% duty";
     // Manual switch: its value is a state, not a quantity — show it as a word.
     if (kind === "MSW") return value >= 0.5 ? "Closed" : "Open";
+    // Transformer: its value is the turns ratio n = Ns/Np; show it as Np:Ns (so a
+    // step-up n = 2 reads "1:2" and a step-down n = 0.5 reads "2:1").
+    if (kind === "TR") {
+      const trim = (x: number): string =>
+        (Number.isInteger(x) ? x.toString() : x.toFixed(2)).replace(
+          /\.?0+$/,
+          "",
+        );
+      return value >= 1 ? "1:" + trim(value) : trim(1 / value) + ":1";
+    }
     const u = PART_KINDS[kind]?.unit ?? "";
     return u ? formatValue(value, u) : String(value);
   }

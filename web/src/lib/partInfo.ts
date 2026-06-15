@@ -91,6 +91,14 @@ function bjtRegion(e: ElectricalState): "cutoff" | "active" | "saturation" {
   return Math.abs(e.vAcross) < 0.3 ? "saturation" : "active";
 }
 
+// Format a transformer turns ratio n = Ns/Np as Np:Ns (a step-up n = 2 → "1:2",
+// a step-down n = 0.5 → "2:1"), mirroring the inspector's `fmtVal`.
+function ratioStr(n: number): string {
+  const trim = (x: number): string =>
+    (Number.isInteger(x) ? x.toString() : x.toFixed(2)).replace(/\.?0+$/, "");
+  return n >= 1 ? "1:" + trim(n) : trim(1 / n) + ":1";
+}
+
 // Logic-gate info is shared but for the name, the boolean equation, and the prose:
 // every gate shows the same live row — its logic-high rail, the half-rail switching
 // threshold, and the output drive current — because the per-part lesson is the
@@ -477,6 +485,20 @@ export const PART_INFO: Record<string, PartInfo> = {
     "Y = A′",
     "A NOT gate (an inverter) drives its output to the opposite of its single input: high in gives low out, low in gives high out. It is the simplest active logic element and the building block of every more complex gate. The input is thresholded at half the supply rail and draws no current; the output is driven hard to the rail or ground, lagging the input by exactly one simulation step. Wire an inverter's output back to its input and that one-tick delay makes it oscillate — a ring oscillator.",
   ),
+  TR: {
+    name: "Transformer",
+    equation: "Vs/Vp = Ns/Np = n · Vp·Ip = Vs·Is",
+    headline: (e, n) =>
+      `Ratio ${ratioStr(n)} · primary ${f(e.vAcross, "V")} → secondary ≈ ${f(n * e.vAcross, "V")}`,
+    plain: () =>
+      "A transformer is two coils wound on a shared magnetic core. An alternating current in the primary sets up a changing magnetic flux in the core, and that changing flux induces a voltage in the secondary — Faraday's law. The voltage scales with the turns ratio: a secondary with twice the primary's turns sees twice the voltage, and because power is conserved (apart from small losses) it then carries half the current. Crucially, only a *changing* flux induces anything, so a transformer passes AC but blocks DC — feed it a steady voltage and, once the primary current settles against the winding resistance, the secondary goes quiet. The two windings share no electrical connection, only the core, so a transformer also isolates: the secondary can float at its own reference. Step up for high-voltage transmission, step down for a safe supply rail, or wire it 1:1 purely to isolate.",
+    derived: (e, n) => [
+      { label: "Turns ratio Np:Ns", value: ratioStr(n) },
+      { label: "Primary voltage Vp", value: f(e.vAcross, "V") },
+      { label: "Secondary ≈ n·Vp", value: f(n * e.vAcross, "V") },
+      { label: "Primary current Ip", value: f(e.current, "A") },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",

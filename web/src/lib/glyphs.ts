@@ -1144,6 +1144,75 @@ function drawNOT(g: Graphics, o: GlyphOpts): void {
   gateSchematic(g, o, "not", true, false);
 }
 
+// --- Transformer (two windings coupled through a core) ------------------------
+// Pins ordered P+, P−, S+, S−. The primary winding (left) couples through the iron
+// core (the two centre bars) to the secondary winding (right). `electrical.current`
+// is the PRIMARY current Ip: it drives the primary flow belt and pulses the core's
+// flux glow; the secondary shows a coupled shimmer (its own current isn't separately
+// exposed). The turns ratio `value` sets how the secondary voltage scales.
+function drawTR(g: Graphics, o: GlyphOpts): void {
+  const pp = o.pins[0];
+  const pm = o.pins[1];
+  const sp = o.pins[2];
+  const sm = o.pins[3];
+  if (!pp || !pm || !sp || !sm) return;
+  const priX = Math.min(pp.x, pm.x) + 8;
+  const secX = Math.max(sp.x, sm.x) - 8;
+  const topY = Math.min(pp.y, sp.y) + 4;
+  const botY = Math.max(pm.y, sm.y) - 4;
+  const midX = (priX + secX) / 2;
+  const bumps = 3;
+  const rr = (botY - topY) / (bumps * 2);
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Core flux glow between the windings, pulsing on the bounded clock with |Ip|.
+  if (drive > 0.02) {
+    const s = 1 + 0.12 * Math.sin(o.phase * PULSE_K);
+    g.ellipse(midX, (topY + botY) / 2, 6 * s, ((botY - topY) / 2) * s).fill({
+      color: 0x8a95f2,
+      alpha: 0.18 * drive,
+    });
+  }
+
+  // Leads to the top/bottom of each winding.
+  g.moveTo(pp.x, pp.y).lineTo(priX, pp.y).lineTo(priX, topY);
+  g.moveTo(pm.x, pm.y).lineTo(priX, pm.y).lineTo(priX, botY);
+  g.moveTo(sp.x, sp.y).lineTo(secX, sp.y).lineTo(secX, topY);
+  g.moveTo(sm.x, sm.y).lineTo(secX, sm.y).lineTo(secX, botY);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // Primary winding: vertical bumps bulging right (toward the core).
+  for (let i = 0; i < bumps; i++) {
+    const cy = topY + rr * (2 * i + 1);
+    g.arc(priX, cy, rr, -Math.PI / 2, Math.PI / 2, false);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+  // Secondary winding: vertical bumps bulging left (toward the core).
+  for (let i = 0; i < bumps; i++) {
+    const cy = topY + rr * (2 * i + 1);
+    g.arc(secX, cy, rr, -Math.PI / 2, Math.PI / 2, true);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+
+  // The iron core: two vertical bars between the windings (brighten with the flux).
+  g.moveTo(midX - 2, topY).lineTo(midX - 2, botY);
+  g.moveTo(midX + 2, topY).lineTo(midX + 2, botY);
+  g.stroke({ width: 1.8, color: o.color, alpha: 0.55 + 0.35 * drive });
+
+  // Primary current belt down the primary winding (signed by Ip).
+  flow(g, priX, topY, priX, botY, o.electrical.current, o.phase, 0x46d2e6);
+  // Secondary coupled shimmer: dots riding the same clock (the induced activity).
+  if (drive > 0.04) {
+    for (let i = 0; i < 2; i++) {
+      const t = (((i / 2 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(secX, topY + (botY - topY) * t, 1.6).fill({
+        color: 0x46d2e6,
+        alpha: 0.3 + 0.3 * drive,
+      });
+    }
+  }
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -1941,6 +2010,52 @@ function drawFNOT(g: Graphics, o: GlyphOpts): void {
   gateFactory(g, o, "not", true, false);
 }
 
+// The transformer as a Factorio voltage-converter station: the primary belt pair
+// feeds a core "converter" that drives the secondary belt pair out the other side,
+// scaled by the turns ratio. The core bars pulse with the primary current; the
+// primary flow and a coupled secondary shimmer ride the bounded clock.
+function drawFTR(g: Graphics, o: GlyphOpts): void {
+  const pp = o.pins[0];
+  const pm = o.pins[1];
+  const sp = o.pins[2];
+  const sm = o.pins[3];
+  if (!pp || !pm || !sp || !sm) return;
+  const midX = (pp.x + sp.x) / 2;
+  const my = (pp.y + pm.y) / 2;
+  const hw = 12;
+  const hh = Math.max(pm.y, sm.y) - my + 2;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Primary leads in from the left, secondary leads out to the right.
+  g.moveTo(pp.x, pp.y).lineTo(midX - hw, pp.y);
+  g.moveTo(pm.x, pm.y).lineTo(midX - hw, pm.y);
+  g.moveTo(midX + hw, sp.y).lineTo(sp.x, sp.y);
+  g.moveTo(midX + hw, sm.y).lineTo(sm.x, sm.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The converter body.
+  fBox(g, midX, my, hw, hh, o.color);
+
+  // Core flux bars down the middle, brightening with the primary current.
+  const s = 1 + 0.1 * Math.sin(o.phase * PULSE_K);
+  g.moveTo(midX - 2, my - hh + 3).lineTo(midX - 2, my + hh - 3);
+  g.moveTo(midX + 2, my - hh + 3).lineTo(midX + 2, my + hh - 3);
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.5 + 0.35 * drive * s });
+
+  // Primary intake flow, signed by Ip.
+  flow(g, midX - hw, my, midX, my, o.electrical.current, o.phase, 0x46d2e6);
+  // Secondary output shimmer (induced; its current isn't separately read).
+  if (drive > 0.04) {
+    for (let i = 0; i < 3; i++) {
+      const t = (((i / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(midX + hw + (sp.x - midX - hw) * t, my, 1.5).fill({
+        color: 0x46d2e6,
+        alpha: 0.3 + 0.3 * drive,
+      });
+    }
+  }
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -1986,6 +2101,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOR: drawNOR,
   XOR: drawXOR,
   NOT: drawNOT,
+  TR: drawTR,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -2015,6 +2131,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOR: drawFNOR,
   XOR: drawFXOR,
   NOT: drawFNOT,
+  TR: drawFTR,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */
