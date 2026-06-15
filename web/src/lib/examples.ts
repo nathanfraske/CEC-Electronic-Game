@@ -2268,6 +2268,66 @@ export const EXAMPLES: ExampleSpec[] = [
   // passes AC scaled by n and blocks DC. The classic use is the front end of a DC
   // supply: step the mains down (or up), then rectify.
   {
+    id: "tr-variac",
+    name: "Variac (Variable AC)",
+    blurb:
+      "A variac gives you an adjustable AC voltage from a fixed AC input — you turn a knob and the output rises or falls. Here that knob is the transformer's turns ratio: feed a fixed AC source into the primary, take your output off the secondary, and dial the ratio to scale the AC up or down. (A bench variac is a single tapped winding with a sliding contact, so it isn't isolated and adjusts continuously; this two-winding version does isolate, and steps through ratios — but the principle, a turns ratio you choose, is exactly the same.)",
+    watch:
+      "the secondary AC swing scale with the dialed turns ratio — about double the primary at 1:2, about half at 2:1 — while it stays a clean sine, just resized. Turn the ratio (the toggle) and the output amplitude follows: that adjustable AC is the whole job of a variac.",
+    build() {
+      // Fixed AC in → transformer → load on the secondary. The turns ratio is the
+      // variac control. nodes: 0 = gnd, 1 = primary+, 2 = secondary+. Secondary−
+      // shares ground (a non-isolated, variac-like hookup). 1 kHz, 5 V primary,
+      // n = 2 → secondary ~10 V peak. Linear (no diodes) → the coupled-inductor
+      // stamp rides the fast linear path.
+      const g = new BoardGraph();
+      const ac = comp(g, "AC", 0, 0, 1000, 1);
+      ac.amp = 5;
+      const tr = comp(g, "TR", 4, 0, 2); // turns ratio n = 2 (the variac setting)
+      const load = comp(g, "R", 8, 0, 1000, 1);
+      const gnd = comp(g, "GND", 4, 6, 0);
+      wire(g, ac, 0, tr, 0); // AC+ → primary+ (a)
+      wire(g, ac, 1, tr, 1); // AC− → primary− (b)
+      wire(g, ac, 1, gnd, 0); // primary reference
+      wire(g, tr, 2, load, 0); // secondary+ (c) → load
+      wire(g, tr, 3, gnd, 0); // secondary− (d) → ground (the load return)
+      wire(g, load, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place an AC Source (AC) and a Transformer (TR). Wire AC+ → P+, AC− → P− and to a Ground. Put a load Resistor from the secondary S+ to S− (tie S− to ground). Set the turns ratio to 1:2 and Run.",
+        why: "The transformer couples the fixed primary AC to the secondary, scaled by the turns ratio. At 1:2 the secondary swings about twice the primary — an adjustable AC supply, no rectification involved.",
+        done: (p) => at(p, "AC") >= 1 && at(p, "TR") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Select the transformer and change its turns ratio (or use the toggle below).",
+        why: "Dialing the ratio is exactly what the knob on a bench variac does — it sets how much of the input voltage reaches the output. Watch the secondary amplitude rise and fall as you change it, while the input stays put.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Turns ratio 1:2 / 2:1",
+      on: "1:2 step-up — the secondary swings about twice the fixed primary.",
+      off: "2:1 step-down — the same input, now about half the amplitude out.",
+      alt() {
+        const g = new BoardGraph();
+        const ac = comp(g, "AC", 0, 0, 1000, 1);
+        ac.amp = 5;
+        const tr = comp(g, "TR", 4, 0, 0.5); // n = 0.5 (2:1 step-down)
+        const load = comp(g, "R", 8, 0, 1000, 1);
+        const gnd = comp(g, "GND", 4, 6, 0);
+        wire(g, ac, 0, tr, 0);
+        wire(g, ac, 1, tr, 1);
+        wire(g, ac, 1, gnd, 0);
+        wire(g, tr, 2, load, 0);
+        wire(g, tr, 3, gnd, 0);
+        wire(g, load, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "tr-bridge-supply",
     name: "Transformer + Bridge Rectifier",
     blurb:
@@ -2422,6 +2482,7 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "ac-resonance": "Resonance",
   "ac-rectifier": "Rectification",
   "ac-supply": "Rectification",
+  "tr-variac": "Transformers",
   "tr-bridge-supply": "Transformers",
 };
 
