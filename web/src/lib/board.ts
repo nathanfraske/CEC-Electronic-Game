@@ -59,7 +59,7 @@ const UNDO_LIMIT = 60;
  * reverse when stepping/scrubbing back. Small so a single tick is a gentle nudge
  * while a full scrub reads as fast flow.
  */
-const TICK_FLOW = 0.03;
+const TICK_FLOW = 0.006;
 /**
  * Base Text resolution (device pixels per CSS pixel). Floored at 2 so labels are
  * supersampled and stay sharp even on 1x displays, capped at 3 to bound texture
@@ -1027,24 +1027,29 @@ export class Board {
 
   /**
    * Orthogonal "belts": each trace routes at 90°, colours by its net voltage,
-   * and carries flow chevrons whose direction + density track the current —
-   * Factorio belts, but electricity. Redrawn every frame so it stays live.
+   * and carries the KCL branch current as thickness + flow chevrons whose
+   * density + direction track that current — so a shared rail visibly thickens
+   * toward a source and thins past each tap. Factorio belts, but electricity.
+   * Redrawn every frame so it stays live.
    */
   private redrawWires(): void {
     const g = this.wireLayer;
     g.clear();
+    const currents = this.computeWireCurrents();
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
       const v = this.pinVoltage(w.from);
       const color = v === null ? PALETTE.cyan : voltageColor(v);
-      polyline(g, route);
-      g.stroke({ width: 6, color, alpha: 0.16 });
-      polyline(g, route);
-      g.stroke({ width: 2, color, alpha: 0.95 });
 
-      const cur = this.wireCurrent(w);
+      const cur = currents.get(w.id) ?? 0;
       const normC = saturate(Math.abs(cur) / 0.01);
+      const width = 1.6 + 3.4 * normC; // thickness tracks the branch current
+      polyline(g, route);
+      g.stroke({ width: width + 4, color, alpha: 0.16 });
+      polyline(g, route);
+      g.stroke({ width, color, alpha: 0.95 });
+
       if (normC > 0.02) {
         // Density (how many chevrons) tracks the current; speed tracks voltage.
         const normV = saturate(Math.abs(v ?? 0) / 6);
@@ -1110,13 +1115,95 @@ export class Board {
     );
   }
 
-  /** Signed current along the wire from→to, from whichever end is an element. */
-  private wireCurrent(w: Wire): number {
-    const ea = this.electrical?.get(w.from.componentId);
-    if (ea) return ea.current * (w.from.pinIndex === 1 ? 1 : -1);
-    const eb = this.electrical?.get(w.to.componentId);
-    if (eb) return -(eb.current * (w.to.pinIndex === 1 ? 1 : -1));
-    return 0;
+  /**
+   * KCL-aware per-wire current. Each element injects its current into the net at
+   * its two pins (−i at pin a, +i at pin b). Within a net the wires form a graph;
+   * routing those injections along a spanning tree gives the true branch current
+   * in every wire segment (it accumulates toward a source and splits at taps),
+   * with cycle (redundant) wires left at 0. Render-only — never touches the sim.
+   * Returns wireId → current oriented from→to.
+   */
+  private computeWireCurrents(): Map<number, number> {
+    const out = new Map<number, number>();
+    const wires = [...this.graph.wires.values()].sort((p, q) => p.id - q.id);
+    for (const w of wires) out.set(w.id, 0);
+    if (!this.electrical || wires.length === 0) return out;
+
+    // Current each element pushes into the net at each pin (the "injection").
+    const inj = new Map<string, number>();
+    const bump = (k: string, v: number): void => {
+      inj.set(k, (inj.get(k) ?? 0) + v);
+    };
+    for (const [compId, e] of this.electrical) {
+      bump(compId + ":0", -e.current); // pin a: current leaves the net
+      bump(compId + ":1", +e.current); // pin b: current enters the net
+    }
+
+    // Adjacency over pins, edges = wires (record from/to orientation per edge).
+    interface Edge {
+      other: string;
+      wireId: number;
+      otherIsFrom: boolean;
+    }
+    const adj = new Map<string, Edge[]>();
+    const node = (k: string): Edge[] => {
+      let l = adj.get(k);
+      if (!l) {
+        l = [];
+        adj.set(k, l);
+      }
+      return l;
+    };
+    for (const k of inj.keys()) node(k);
+    for (const w of wires) {
+      const f = w.from.componentId + ":" + w.from.pinIndex;
+      const t = w.to.componentId + ":" + w.to.pinIndex;
+      node(f).push({ other: t, wireId: w.id, otherIsFrom: false });
+      node(t).push({ other: f, wireId: w.id, otherIsFrom: true });
+    }
+
+    // Spanning forest by BFS; each tree edge carries the injection sum of the
+    // subtree beyond it (oriented child → parent).
+    const visited = new Set<string>();
+    for (const root of [...adj.keys()].sort()) {
+      if (visited.has(root)) continue;
+      const order: string[] = [];
+      const parent = new Map<
+        string,
+        { pin: string; wireId: number; childIsFrom: boolean }
+      >();
+      visited.add(root);
+      const queue = [root];
+      while (queue.length) {
+        const u = queue.shift()!;
+        order.push(u);
+        for (const e of adj.get(u) ?? []) {
+          if (visited.has(e.other)) continue;
+          visited.add(e.other);
+          // The child is e.other; otherIsFrom already says whether it is the
+          // wire's "from" endpoint (used to map child→parent flow onto from→to).
+          parent.set(e.other, {
+            pin: u,
+            wireId: e.wireId,
+            childIsFrom: e.otherIsFrom,
+          });
+          queue.push(e.other);
+        }
+      }
+      // Reverse-BFS (post-order): each node's subtree sum is final by the time we
+      // reach it, so record its parent edge's current, then roll it up.
+      const sub = new Map<string, number>();
+      for (const u of order) sub.set(u, inj.get(u) ?? 0);
+      for (let i = order.length - 1; i >= 0; i--) {
+        const u = order[i]!;
+        const p = parent.get(u);
+        if (!p) continue;
+        const s = sub.get(u)!;
+        out.set(p.wireId, p.childIsFrom ? s : -s); // child→parent mapped to from→to
+        sub.set(p.pin, (sub.get(p.pin) ?? 0) + s);
+      }
+    }
+    return out;
   }
 
   /** Draw a schematic ground symbol + "GND 0 V" at every node-0 source pin. */

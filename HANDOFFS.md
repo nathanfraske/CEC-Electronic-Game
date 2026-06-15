@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — KCL-aware belt flow, finer ΔT, readable example layouts + new examples
+
+**State:** 🟢 Green (fmt/clippy/test incl. new golden, build:wasm, web
+check/lint/build). On the branch; merge to `main` for the live site.
+
+- **KCL-aware wire flow** (`board.ts computeWireCurrents`): each element injects
+  its current at its two pins; routing those injections along a per-net spanning
+  tree gives the true branch current in every wire segment. A shared rail now
+  visibly **thickens toward a source and thins past each tap** (thickness +
+  chevron density + direction). Render-only; cycle/redundant wires read 0.
+- **Finer ΔT**: `DT` 10 µs → **2 µs**. Golden regenerated to
+  `0xeaac376499e4fa24` (justified: deliberate fidelity change). Monotonic-RC test
+  now runs 15000 × 2 µs (same physical time). Playback compensated to keep the
+  wall-clock pace: default `tpf` 0.5, `SPEEDS` [0.5,1,2,5,20], `TICK_FLOW` 0.006.
+- **Examples relaid** as readable rectangular loops with **explicit GND**
+  (primer/divider/RC/RL), plus two new ones: **Parallel Resistors** (shows the
+  new KCL rail accumulation) and **Current Source** (the `I` part, V = I·R).
+
+### Pick up here — outstanding owner requests
+- **Scope/telemetry panel** (asked, not yet built): make the right panel a
+  bigger/expandable box housing the scope; **toggle each node** on/off; **label
+  each node**. Touches `board.ts` (scope draw respects visibility + names) and
+  `App.svelte` (telemetry: per-node checkboxes + name inputs + expand control).
+- **Per-component value editing from real values** (asked): an inspector that
+  lets you pick a component's value from standard/E-series options per type (no
+  arbitrary 100.56 Ω). New values table + App inspector + a `board` setter.
+- **Next parts batch** (asked): switch / push-button (stateful click-to-toggle —
+  needs board interaction + netlist invalidation), then the nonlinear
+  diode/LED/BJT (needs a Newton loop in sim-core). See `docs/parts-roadmap.md`.
+
+---
+
 ## 2026-06-15 — Draggable wires, timeline-relative flow, crisp text, hotkeys + new I/GND parts
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 4 new current-source tests,

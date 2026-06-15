@@ -20,7 +20,10 @@
   import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
-  const SPEEDS = [0.1, 0.25, 1, 4, 16];
+  // Ticks-per-frame options. DT is 2 µs, so 0.5×/frame ≈ 1 µs of sim time per
+  // frame — the same readable wall-clock pace as before the finer DT, just
+  // smoother.
+  const SPEEDS = [0.5, 1, 2, 5, 20];
 
   // The component bin. The ideal primitives (V/R/C/L/I) plus an explicit ground
   // come first and are the parts the solver simulates today; the rest preview
@@ -131,7 +134,7 @@
   let proto = $state(0);
   let channels = $state<number[]>([]);
   let running = $state(false);
-  let tpf = $state(0.1);
+  let tpf = $state(0.5);
   let ready = $state(false);
   let mode = $state<Mode>("select");
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
