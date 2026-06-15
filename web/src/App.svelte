@@ -16,7 +16,12 @@
     type SelectedPart,
     type AnchorRect,
   } from "./lib/board";
-  import { BoardGraph, formatValue, PART_KINDS } from "./lib/graph";
+  import {
+    BoardGraph,
+    formatValue,
+    PART_KINDS,
+    type GraphSnapshot,
+  } from "./lib/graph";
   import {
     hasValue,
     isESeries,
@@ -258,6 +263,9 @@
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
   let partSearch = $state("");
+  // Save / load: a transient status line + the hidden file picker for Load.
+  let ioMsg = $state<string | null>(null);
+  let fileInput = $state<HTMLInputElement>();
   let buildEx = $state<ExampleSpec | null>(null);
   let buildStep = $state(0);
   let buildDone = $state(false);
@@ -675,6 +683,70 @@
     demo = null;
     showIntro = false;
   }
+  function flashIo(msg: string): void {
+    ioMsg = msg;
+    setTimeout(() => {
+      if (ioMsg === msg) ioMsg = null;
+    }, 3500);
+  }
+  // Save the board to a downloaded JSON file. Wrapped in a small versioned
+  // envelope so a future format change can migrate old saves (the graph snapshot
+  // itself already tolerates legacy shapes on restore). Nothing is sent anywhere.
+  function saveCircuit(): void {
+    const graph = board?.serialize();
+    if (!graph) return;
+    const payload = {
+      format: "cec-circuit",
+      version: 1,
+      savedAt: new Date().toISOString(),
+      graph,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download =
+      "cec-circuit-" +
+      new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-") +
+      ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+    flashIo("Circuit downloaded.");
+  }
+  function triggerLoad(): void {
+    fileInput?.click();
+  }
+  // Load a circuit from a user-chosen file. Accepts our envelope or a bare
+  // snapshot, validates the shape, and fails safe with a message on bad input.
+  function onLoadFile(e: Event): void {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ""; // allow re-picking the same file later
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(String(reader.result)) as {
+          format?: string;
+          graph?: unknown;
+        };
+        const graph =
+          parsed && parsed.format === "cec-circuit" ? parsed.graph : parsed;
+        if (!graph || typeof graph !== "object" || !("components" in graph)) {
+          throw new Error("not a circuit");
+        }
+        board?.loadGraph(graph as GraphSnapshot);
+        demo = null;
+        showIntro = false;
+        flashIo("Circuit loaded.");
+      } catch {
+        flashIo("Couldn't load that file — it isn't a valid circuit save.");
+      }
+    };
+    reader.readAsText(file);
+  }
   function undoAction(): void {
     board?.undo();
   }
@@ -1055,6 +1127,32 @@
       <button class="btn btn-ghost" onclick={clearBoard} disabled={!ready}>
         Clear
       </button>
+      <button
+        class="btn btn-ghost"
+        onclick={saveCircuit}
+        disabled={!ready}
+        title="Download this circuit as a .json file (kept on your device)"
+      >
+        Save
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={triggerLoad}
+        disabled={!ready}
+        title="Load a circuit from a .json file"
+      >
+        Load
+      </button>
+      <input
+        bind:this={fileInput}
+        type="file"
+        accept="application/json,.json"
+        onchange={onLoadFile}
+        class="file-hidden"
+        aria-hidden="true"
+        tabindex="-1"
+      />
+      {#if ioMsg}<span class="io-msg">{ioMsg}</span>{/if}
     </div>
     <div
       class="board-frame"
@@ -1519,6 +1617,16 @@
     border-radius: 3px;
     vertical-align: middle;
     opacity: 0.85;
+  }
+  .file-hidden {
+    display: none;
+  }
+  .io-msg {
+    align-self: center;
+    margin-left: 4px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--dim);
   }
   /* Voltmeter / ammeter function toggle, shown while measuring. */
   .meter-toggle {
