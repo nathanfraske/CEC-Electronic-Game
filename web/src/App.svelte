@@ -525,6 +525,15 @@
       } else if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) {
         board?.undo();
         e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "c" || e.key === "C")) {
+        board?.copySelection(); // copy the selected fragment to the clipboard
+        e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "x" || e.key === "X")) {
+        board?.cutSelection(); // cut = copy + delete
+        e.preventDefault();
+      } else if ((e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V")) {
+        board?.paste(); // paste with fresh ids, offset, and re-selected
+        e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
         // R rotates the *placement* of an armed part when nothing is selected, so
         // the ghost (and the drop) turn; otherwise it rotates the selection.

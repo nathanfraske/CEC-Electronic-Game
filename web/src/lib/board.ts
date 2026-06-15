@@ -183,6 +183,25 @@ export interface SelectedPart {
   wiper?: number;
 }
 
+/** A relocatable copy of a board fragment: the selected components (with their
+ * placement + scalars), the wires whose *both* ends are pins of those components
+ * (their internal traces), and any net labels pinned to those pins. Coordinates are
+ * absolute cells; paste re-anchors them with a growing offset. In-memory only. */
+interface ClipboardSnippet {
+  comps: {
+    oldId: number;
+    kind: string;
+    col: number;
+    row: number;
+    value: number;
+    rot: number;
+    amp?: number;
+    wiper?: number;
+  }[];
+  wires: { aId: number; aPin: number; bId: number; bPin: number }[];
+  labels: { compId: number; pin: number; name: string }[];
+}
+
 /** Screen-space (CSS px, canvas-relative) rect of the lone selected part, for
  * anchoring a floating HUD popover above it. */
 export interface AnchorRect {
@@ -234,6 +253,7 @@ export class Board {
   private readonly groundLayer = new Graphics();
   private readonly groundLabels: Text[] = [];
   private readonly selectionLayer = new Graphics();
+  private readonly marqueeLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
   // Translucent placement preview ("ghost") of the armed part at the snapped
@@ -375,6 +395,21 @@ export class Board {
   // within DOUBLE_CLICK_MS is recognised as a double-click → open its info panel.
   private lastBodyTap: { id: number; t: number } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
+  // Marquee (rubber-band) selection: a drag on empty space in Select mode sweeps a
+  // box; on release every component inside it (and every wire wholly inside) is
+  // selected. World coords; `additive` keeps the prior selection (shift-drag).
+  private marquee: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+    additive: boolean;
+  } | null = null;
+  // In-memory copy/paste clipboard: a relocatable snippet of the board (components
+  // + their internal wires + net labels on their pins). `pasteSeq` grows the paste
+  // offset so repeated pastes fan out instead of stacking exactly.
+  private clipboard: ClipboardSnippet | null = null;
+  private pasteSeq = 0;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
@@ -408,6 +443,10 @@ export class Board {
     this.netLabelLayer.addChild(this.netLabelGfx);
     this.netLabelLayer.eventMode = "none";
     this.world.addChild(this.netLabelLayer);
+    // The marquee rubber-band rides above everything but the ghost/probe overlays;
+    // non-interactive and hidden until a select-mode empty drag begins.
+    this.marqueeLayer.eventMode = "none";
+    this.world.addChild(this.marqueeLayer);
     // The ghost rides above the components so the preview is never occluded, and
     // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
     this.ghostLayer.addChild(this.ghostGlyph);
@@ -1987,13 +2026,22 @@ export class Board {
     }
 
     // Empty space. With a part armed, drop it here and stay armed — Factorio-style
-    // place-and-repeat. Otherwise clear the selection and begin a pan.
+    // place-and-repeat.
     if (this.armed && !additive) {
       this.placeCell(
         this.armed,
         { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
         this.armedRot,
       );
+      return;
+    }
+    // In Select mode an empty drag rubber-bands a marquee selection (a plain drag
+    // clears first; shift-drag adds to the current selection). In every other tool —
+    // notably the neutral Pan — an empty drag pans the view instead.
+    if (this.mode === "select") {
+      if (!additive) this.clearSelection();
+      this.marquee = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y, additive };
+      this.drawMarquee();
       return;
     }
     if (!additive) this.clearSelection();
@@ -2016,9 +2064,181 @@ export class Board {
     this.pendingUndo = this.graph.serialize();
   }
 
+  // --- marquee selection --------------------------------------------------
+
+  /** Redraw the rubber-band rectangle for the in-progress marquee. */
+  private drawMarquee(): void {
+    const m = this.marquee;
+    const g = this.marqueeLayer;
+    g.clear();
+    if (!m) return;
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0);
+    const h = Math.abs(m.y1 - m.y0);
+    g.rect(x, y, w, h).fill({ color: PALETTE.accent, alpha: 0.08 });
+    g.rect(x, y, w, h).stroke({ width: 1, color: PALETTE.accent, alpha: 0.7 });
+  }
+
+  /** Pick everything the marquee box encloses: a component whose grab-box centre
+   * is inside, a wire whose *both* endpoints are inside, and a junction inside. A
+   * box too small to be a real sweep is treated as a plain click (no-op — the press
+   * already cleared the selection unless it was additive). */
+  private finalizeMarquee(): void {
+    const m = this.marquee;
+    if (!m) return;
+    const x = Math.min(m.x0, m.x1);
+    const y = Math.min(m.y0, m.y1);
+    const w = Math.abs(m.x1 - m.x0);
+    const h = Math.abs(m.y1 - m.y0);
+    if (w < 3 && h < 3) return;
+    const inside = (px: number, py: number): boolean =>
+      px >= x && px <= x + w && py >= y && py <= y + h;
+    for (const c of this.graph.components.values()) {
+      const box = this.componentBox(c);
+      if (inside(box.x + box.width / 2, box.y + box.height / 2)) {
+        this.selected.add(c.id);
+      }
+    }
+    for (const wire of this.graph.wires.values()) {
+      const a = this.graph.endpointCell(wire.from);
+      const b = this.graph.endpointCell(wire.to);
+      if (!a || !b) continue;
+      const pa = this.cellToWorld(a);
+      const pb = this.cellToWorld(b);
+      if (inside(pa.x, pa.y) && inside(pb.x, pb.y))
+        this.selectedWires.add(wire.id);
+    }
+    for (const j of this.graph.junctions.values()) {
+      const p = this.cellToWorld(j.cell);
+      if (inside(p.x, p.y)) this.selectedJunctions.add(j.id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  // --- copy / paste -------------------------------------------------------
+
+  /** Copy the selected components, their *internal* wires (both ends on selected
+   * components), and the net labels pinned to their pins into the in-memory
+   * clipboard. (Junction-anchored wires/labels are skipped — v1 copies part
+   * fragments.) Same-named labels still alias their nets on paste, by design. */
+  copySelection(): void {
+    if (this.selected.size === 0) return;
+    const sel = new Set(this.selected);
+    const comps: ClipboardSnippet["comps"] = [];
+    for (const id of sel) {
+      const c = this.graph.components.get(id);
+      if (!c) continue;
+      comps.push({
+        oldId: id,
+        kind: c.kind,
+        col: c.cell.col,
+        row: c.cell.row,
+        value: c.value,
+        rot: c.rot,
+        amp: c.amp,
+        wiper: c.wiper,
+      });
+    }
+    if (comps.length === 0) return;
+    const wires: ClipboardSnippet["wires"] = [];
+    for (const w of this.graph.wires.values()) {
+      if (isJunctionRef(w.from) || isJunctionRef(w.to)) continue;
+      if (sel.has(w.from.componentId) && sel.has(w.to.componentId)) {
+        wires.push({
+          aId: w.from.componentId,
+          aPin: w.from.pinIndex,
+          bId: w.to.componentId,
+          bPin: w.to.pinIndex,
+        });
+      }
+    }
+    const labels: ClipboardSnippet["labels"] = [];
+    for (const l of this.graph.netLabels.values()) {
+      if (isJunctionRef(l.at)) continue;
+      if (sel.has(l.at.componentId)) {
+        labels.push({
+          compId: l.at.componentId,
+          pin: l.at.pinIndex,
+          name: l.name,
+        });
+      }
+    }
+    this.clipboard = { comps, wires, labels };
+    this.pasteSeq = 0;
+  }
+
+  /** Cut: copy the selection, then delete it. */
+  cutSelection(): void {
+    if (this.selected.size === 0) return;
+    this.copySelection();
+    this.deleteSelection();
+  }
+
+  /** Paste the clipboard fragment with fresh ids, offset a little from the source
+   * (and a little further on each repeat so copies fan out instead of stacking),
+   * remap the internal wires + labels onto the new ids, and select the new group. */
+  paste(): void {
+    const clip = this.clipboard;
+    if (!clip || clip.comps.length === 0) return;
+    this.pushUndo(this.graph.serialize());
+    this.pasteSeq += 1;
+    const off = 2 * this.pasteSeq;
+    const map = new Map<number, number>();
+    for (const cc of clip.comps) {
+      const nc = this.graph.place(cc.kind, {
+        col: cc.col + off,
+        row: cc.row + off,
+      });
+      if (!nc) continue;
+      nc.value = cc.value;
+      nc.rot = cc.rot;
+      if (cc.amp !== undefined) nc.amp = cc.amp;
+      if (cc.wiper !== undefined) nc.wiper = cc.wiper;
+      map.set(cc.oldId, nc.id);
+    }
+    for (const w of clip.wires) {
+      const na = map.get(w.aId);
+      const nb = map.get(w.bId);
+      if (na === undefined || nb === undefined) continue;
+      this.graph.connect(
+        { componentId: na, pinIndex: w.aPin },
+        { componentId: nb, pinIndex: w.bPin },
+      );
+    }
+    for (const l of clip.labels) {
+      const nid = map.get(l.compId);
+      if (nid === undefined) continue;
+      this.graph.addNetLabel({ componentId: nid, pinIndex: l.pin }, l.name);
+    }
+    this.selected.clear();
+    this.selectedWires.clear();
+    this.selectedJunctions.clear();
+    this.selectedLabels.clear();
+    for (const id of map.values()) this.selected.add(id);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.emitSelect();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /** Whether the clipboard holds anything to paste (for HUD enablement). */
+  hasClipboard(): boolean {
+    return this.clipboard !== null && this.clipboard.comps.length > 0;
+  }
+
   private readonly onPointerMove = (e: FederatedPointerEvent): void => {
     const wp = this.screenToWorld(e.global.x, e.global.y);
     this.pointer.copyFrom(wp);
+
+    if (this.marquee) {
+      this.marquee.x1 = wp.x;
+      this.marquee.y1 = wp.y;
+      this.drawMarquee();
+      return;
+    }
 
     if (this.draggingProbe) {
       const target = this.snapProbe(wp.x, wp.y) ?? {
@@ -2094,6 +2314,12 @@ export class Board {
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
+    if (this.marquee) {
+      this.finalizeMarquee();
+      this.marquee = null;
+      this.marqueeLayer.clear();
+      return;
+    }
     if (this.draggingProbe) {
       this.draggingProbe = null;
       return;
