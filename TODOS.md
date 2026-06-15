@@ -12,18 +12,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**`formatValue` ate integer trailing zeros** → 470 µF shown as "47 µF", 100 Ω as
   "1 Ω", 120 V as "12 V", 100 kΩ as "1 kΩ" (any 100–999 mantissa ending in 0, 10×
   too small). Fixed: only strip zeros after a decimal point. Web-only.~~
-- [ ] **sim-core: full-wave bridge off a transformer degenerates to HALF-wave.** The
-  user's bridge topology is CORRECT, but the floating transformer secondary's
-  common-mode pins one terminal (S+) at ≈V(out)/2 via symmetric diode leakage while
-  only the other (S−) swings — so 2 of the 4 diodes (the S+ pair) NEVER conduct,
-  regardless of secondary voltage (reproduced at n=0.25 AND n=1.0). **Affects the
-  shipped `tr-bridge-supply` example too** (2 of its 4 diodes read 0 mA). Output is a
-  plausible-looking positive DC, so it hides. Root cause = the coupled-inductor
-  transformer's floating secondary has an ill-defined/asymmetric common-mode that
-  locks into a half-wave operating point. **Golden-touching sim-core fix** (likely:
-  give the secondary a symmetric common-mode reference / fix the floating-node
-  handling); verify all 4 diodes conduct + output ≈ Vsec_pk − 2·Vf. Needs a careful
-  pass like the digital scheduler. Diagnosed via the harness; not yet fixed.
+- [ ] **sim-core: a diode bridge off a transformer doesn't rectify (HARD).** The
+  user's bridge topology is CORRECT, but the sim produces a half-wave artifact (or 0 V
+  with no cap): the two diodes on one secondary terminal (the S+ pair, D10/D11) NEVER
+  conduct, while the other terminal's diode draws a huge ~3.5 A spike. Reproduced at
+  n=0.25 AND n=1.0, **with and without the smoothing cap**, and **affects the shipped
+  `tr-bridge-supply` example** (2 of its 4 diodes read 0 mA). **Ruled out:** it is NOT
+  a cap-charge lock-in (broken without the cap) and NOT fixed by a symmetric
+  common-mode reference (tested c+d→GND at 1 MΩ … 100 Ω: no effect — a conducting
+  diode at ~0.1 Ω overwhelms any sane reference). **Root cause (diagnosed):** the
+  coupled-inductor secondary's backward-Euler **companion conductance is enormous**
+  (`g₂ = L₂/DT ≈ 15 600 S` at DT=2 µs) so the winding looks like a near-short each
+  timestep; when a bridge diode clamps one terminal the secondary dumps a huge
+  transient current and symmetric full-wave conduction never establishes (a robust
+  lock-in / ill-conditioning, not a floating-node issue). **Fix is a dedicated,
+  golden-touching sim-core effort** — likely revisiting the transformer companion
+  model / adding series leakage impedance so the per-step secondary isn't a near-short,
+  and/or anti-lock-in in the transient. On par with the digital scheduler in scope.
+  Acceptance: all 4 diodes conduct alternately, output ≈ Vsec_pk − 2·Vf, no >>load
+  current spikes, golden regenerated deliberately. Fully diagnosed via the harness.
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
