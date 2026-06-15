@@ -41,6 +41,7 @@
     categoryOf,
     type ExampleSpec,
   } from "./lib/examples";
+  import { loadBoard, makeDebouncedBoardSaver, resetAll } from "./lib/storage";
   import {
     buildNetlist,
     electricalMap,
@@ -449,6 +450,9 @@
 
   let board: Board | undefined;
   let controls: PlaybackControls | undefined;
+  // Persist the board to localStorage a beat after edits settle, so a refresh keeps
+  // your circuit (see lib/storage.ts). Debounced so a drag doesn't thrash storage.
+  const saveBoardDebounced = makeDebouncedBoardSaver();
 
   // A node's default display name: its net-label name (e.g. "VCC") when it has
   // one, else GND for node 0 / "Node i". A manual rename in the telemetry list
@@ -663,6 +667,8 @@
           canUndo = b.canUndo();
           rebuildNetlist(graph);
           advanceBuild(graph);
+          // Persist the current board so a refresh restores it (debounced).
+          saveBoardDebounced(graph.serialize());
           // Any edit — place, move, rotate, rewire, or a value change — rewinds
           // the scope and the clock to t=0 so you always watch the new circuit
           // from the start rather than mid-flight in the old one.
@@ -730,10 +736,20 @@
         { running: false, ticksPerSecond: tps },
       );
 
-      // Open with the primer so the very first thing you see is current flowing
-      // through a voltage-coloured wire — a demonstration of the two primitives.
-      const primer = EXAMPLES.find((e) => e.id === "primer");
-      if (primer) loadExample(primer);
+      // Restore the last saved board across refreshes; only fall back to the primer
+      // for a genuine first visit (no saved board). A saved-but-empty board still
+      // counts as the player's (they cleared it on purpose).
+      const saved = loadBoard();
+      if (saved) {
+        board.loadGraph(saved);
+        controls?.pause();
+        syncRunning();
+      } else {
+        // Open with the primer so the very first thing you see is current flowing
+        // through a voltage-coloured wire — a demonstration of the two primitives.
+        const primer = EXAMPLES.find((e) => e.id === "primer");
+        if (primer) loadExample(primer);
+      }
     })();
 
     return () => {
@@ -1033,6 +1049,20 @@
       : null;
     demoOn = true;
   }
+  // Wipe the saved board + all progress and reload to a clean first-run (for testing,
+  // and for anyone who wants a fresh start). Confirmed so it can't nuke a built board
+  // by accident.
+  function resetProgress(): void {
+    if (
+      !confirm(
+        "Reset the board and all saved progress? This clears your circuit and starts fresh.",
+      )
+    ) {
+      return;
+    }
+    resetAll();
+    location.reload();
+  }
   function toggleDemo(): void {
     const ex = demoExRef;
     if (!ex?.demo) return;
@@ -1134,6 +1164,13 @@
       {ready ? "Core Online" : "Booting…"}
     </span>
     <span class="chip mono">Tick {tick}</span>
+    <button
+      class="chip chip-reset"
+      onclick={resetProgress}
+      title="Reset the saved board and all progress (starts fresh)"
+    >
+      ↺ Reset
+    </button>
   </div>
 </div>
 

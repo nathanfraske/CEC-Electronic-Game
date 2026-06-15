@@ -272,6 +272,16 @@ body {
   white-space: nowrap;
 }
 
+/* The reset chip is a clickable chip; it warms to the warning hue on hover so the
+ * destructive action reads before you commit to it (it also confirms first). */
+.chip-reset {
+  cursor: pointer;
+}
+.chip-reset:hover {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
 /* Status chips read as lit indicators: tinted fill, a faint outer glow, and a
  * leading LED that breathes while the core reports that state. */
 .chip-ok,
