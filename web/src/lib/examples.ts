@@ -1285,6 +1285,177 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  // ── Op-amp track ──────────────────────────────────────────────────────────
+  // The op-amp is kind "OA", a 3-pin part ordered OUT, IN−, IN+ — pin 0 = Output,
+  // pin 1 = inverting input, pin 2 = non-inverting input — matching the core
+  // (ELEM_OPAMP=15: a=OUT, b=IN−, c=IN+; output drives V(a) toward
+  // Vsat·tanh(A·(V₊−V₋)/Vsat), A ≈ 1e5, `value` = Vsat). Three faces of the same
+  // part: a unity buffer and a resistor-ratio amplifier (both with negative
+  // feedback to IN−, the virtual short), and an open-loop comparator that rails.
+  {
+    id: "opamp-follower",
+    name: "Op-Amp Voltage Follower",
+    blurb:
+      "Wire the output straight back to the inverting input and the op-amp becomes a buffer: the output copies the voltage on the + input exactly, gain of one. It seems pointless until you notice what changed — the + input draws no current, so the source driving it is completely unloaded, while the output can drive a real load stiffly. It's the impedance buffer that lets a delicate signal source talk to a heavy load without sagging.",
+    watch:
+      "the output node sit at the same 3 V as the input — a perfect copy — while the output stiffly drives ~3 mA into the load resistor. The + input, meanwhile, sources nothing: the whole load current comes out of the op-amp, not the signal source.",
+    build() {
+      // Unity-gain buffer: IN+ driven by Vin, OUT tied back to IN− (full
+      // feedback). The virtual short forces V(IN−) = V(IN+), and since OUT = IN−,
+      // Vout = Vin. A load resistor to ground makes the output current visible.
+      //   nets: INP = Vin+ = OA.IN+ ; OUT = OA.OUT = OA.IN− = Rload.A ;
+      //         GND(0) = Vin− = Rload.B.
+      // Hand-check: Vout = Vin = 3 V; Iout = 3 V / 1 kΩ = 3 mA, sourced entirely by
+      // the op-amp output (the + input draws ~0). Nonlinear → the op-amp Newton path.
+      const g = new BoardGraph();
+      const vin = comp(g, "V", 0, 0, 3, 1); // vertical 3 V input, + at top
+      const oa = comp(g, "OA", 5, 0, 12); // Vsat = 12 V
+      const rload = comp(g, "R", 10, 0, 1000, 1); // output load (vertical)
+      const gnd = comp(g, "GND", 10, 4, 0);
+      wire(g, vin, 0, oa, 2); // Vin+ → OA.IN+ (pin 2)
+      wire(g, oa, 0, oa, 1); // OA.OUT (pin 0) → OA.IN− (pin 1) — feedback
+      wire(g, oa, 0, rload, 0); // OA.OUT → Rload.A
+      wire(g, rload, 1, gnd, 0); // Rload.B → GND
+      wire(g, vin, 1, gnd, 0); // Vin− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 3 V) for the input signal and an Op-Amp (OA).",
+        why: "The op-amp has two inputs — non-inverting (+) and inverting (−) — and one output. On its own its gain is enormous; feedback is what tames it into something useful.",
+        done: (p) => at(p, "V") >= 1 && at(p, "OA") >= 1,
+      },
+      {
+        do: "Wire Vin+ → the + input (IN+), then wire the OUTPUT straight back to the − input (IN−). Add a load Resistor (R, ~1 kΩ) from the output to a Ground, and Vin− → GND. Run.",
+        why: "Tying the output to the − input closes the loop. The huge gain now drives the output until the two inputs match — the 'virtual short' — so the output lands at exactly the + input's 3 V. Watch the output node copy the input while it stiffly drives the load.",
+        done: (p) => at(p, "OA") >= 1 && at(p, "R") >= 1 && p.complete,
+      },
+      {
+        do: "Select the input source and change its voltage; watch the output track it one-for-one.",
+        why: "Whatever you set the + input to, the output follows — gain of exactly one. The point isn't the voltage (it's unchanged); it's that the output now sources the load current the fragile input never could. That's buffering.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "opamp-noninverting",
+    name: "Non-Inverting Amplifier",
+    blurb:
+      "Add a feedback divider and the op-amp multiplies. A fraction of the output is fed back to the − input; the virtual short forces that fraction to equal the + input, so the output has to be larger than the input by exactly the inverse of the divider — a gain of 1 + Rf/Rg, set entirely by two resistors. The op-amp's own gain is huge and imprecise; the resistor ratio is what you actually get, accurate and stable.",
+    watch:
+      "the input sit at 1 V while the output settles at 3 V — a gain of ×3, which is 1 + 20 kΩ/10 kΩ. The feedback node (the − input) holds at 1 V too, matching the + input: the virtual short the whole result rests on.",
+    build() {
+      // Non-inverting amp: gain = 1 + Rf/Rg. Vin on IN+, feedback divider from OUT
+      // (Rf) to IN− to GND (Rg). The virtual short pins V(IN−) = V(IN+) = Vin, so
+      // the divider forces Vout = Vin·(1 + Rf/Rg). A load resistor makes Iout show.
+      //   nets: INP = Vin+ = OA.IN+ ; FB = OA.IN− = Rf.B = Rg.A ;
+      //         OUT = OA.OUT = Rf.A = Rload.A ; GND(0) = Vin− = Rg.B = Rload.B.
+      // Hand-check: Vin = 1 V, Rf = 20 kΩ, Rg = 10 kΩ → gain = 1 + 2 = 3, Vout = 3 V.
+      // Rg current = 1 V/10 kΩ = 0.1 mA flows on through Rf (none into IN−), so
+      // Vout = 1 + 0.1 mA·20 kΩ = 3 V. Nonlinear → the op-amp Newton path.
+      const g = new BoardGraph();
+      const vin = comp(g, "V", 0, 0, 1, 1); // vertical 1 V input, + at top
+      const oa = comp(g, "OA", 5, 0, 12); // Vsat = 12 V
+      const rf = comp(g, "R", 8, 4, 20000); // feedback resistor (OUT → IN−)
+      const rg = comp(g, "R", 4, 4, 10000); // ground-leg resistor (IN− → GND)
+      const rload = comp(g, "R", 11, 0, 3300, 1); // output load (vertical)
+      const gnd = comp(g, "GND", 8, 8, 0);
+      wire(g, vin, 0, oa, 2); // Vin+ → OA.IN+ (pin 2)
+      wire(g, oa, 0, rf, 0); // OA.OUT (pin 0) → Rf.A
+      wire(g, rf, 1, oa, 1); // Rf.B → OA.IN− (pin 1) — the feedback node
+      wire(g, rf, 1, rg, 0); // Rf.B → Rg.A (same FB node)
+      wire(g, rg, 1, gnd, 0); // Rg.B → GND
+      wire(g, oa, 0, rload, 0); // OA.OUT → Rload.A
+      wire(g, rload, 1, gnd, 0); // Rload.B → GND
+      wire(g, vin, 1, gnd, 0); // Vin− → GND (reference)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 1 V) for the input and an Op-Amp (OA).",
+        why: "Same op-amp as the buffer — but this time the feedback won't be a plain wire. A resistor divider in the feedback is what sets a gain bigger than one.",
+        done: (p) => at(p, "V") >= 1 && at(p, "OA") >= 1,
+      },
+      {
+        do: "Wire Vin+ → IN+. Then build the feedback divider: OUTPUT → Rf (~20 kΩ) → IN−, and IN− → Rg (~10 kΩ) → Ground. Add a load Resistor (~3.3 kΩ) from OUTPUT to GND, and Vin− → GND. Run.",
+        why: "Only a fraction of the output, Rg/(Rf+Rg), reaches the − input. The virtual short forces that fraction to equal the 1 V input, so the output must rise to 1 + Rf/Rg = 3× the input. Watch the output settle at 3 V and the feedback node hold at 1 V.",
+        done: (p) => at(p, "OA") >= 1 && at(p, "R") >= 3 && p.complete,
+      },
+      {
+        do: "Swap Rf or Rg for a different value and watch the gain change.",
+        why: "The output is always 1 + Rf/Rg times the input — double Rf and the gain climbs, regardless of the op-amp's own (enormous, imprecise) gain. Two resistors set the answer: that's why feedback amplifiers are precise.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "opamp-comparator",
+    name: "Op-Amp Comparator",
+    blurb:
+      "Take the feedback away and the op-amp stops being gentle. With nothing to tame it, its huge gain slams the output to one rail or the other depending only on which input is higher: + above −, the output pins to +Vsat; + below −, it drops to −Vsat. It's a one-bit decision — an analog voltage in, a hard yes/no out — the bridge from the analog world to the digital one.",
+    watch:
+      "the output slammed hard to the +12 V rail because the 4 V signal sits above the 2.5 V reference. There's no in-between: the output isn't amplifying the 1.5 V difference, it's just reporting its sign. Drop the signal below the reference (toggle below) and the output snaps to the opposite rail.",
+    build() {
+      // Open-loop comparator: no feedback. A signal on IN+ is compared against a
+      // reference on IN−; the output rails to ±Vsat by the sign of (V+ − V−).
+      //   nets: SIG = Vsig+ = OA.IN+ ; REF = Vref+ = OA.IN− ;
+      //         OUT = OA.OUT = Rload.A ; GND(0) = Vsig− = Vref− = Rload.B.
+      // Hand-check: V+ = 4 > V− = 2.5 ⇒ Vout → +Vsat = +12 V; Iout = 12 V/4.7 kΩ ≈
+      // 2.55 mA into the load. Flip Vsig below 2.5 V and Vout → −Vsat. Nonlinear →
+      // the op-amp Newton path (a stiff 1e5 gain that saturates cleanly).
+      const g = new BoardGraph();
+      const vsig = comp(g, "V", 0, 0, 4, 1); // signal, + at top → IN+
+      const vref = comp(g, "V", 0, 6, 2.5); // reference → IN−
+      const oa = comp(g, "OA", 5, 0, 12); // Vsat = 12 V, open loop
+      const rload = comp(g, "R", 10, 0, 4700, 1); // output load (vertical)
+      const gnd = comp(g, "GND", 10, 4, 0);
+      wire(g, vsig, 0, oa, 2); // Vsig+ → OA.IN+ (pin 2)
+      wire(g, vref, 0, oa, 1); // Vref+ → OA.IN− (pin 1)
+      wire(g, oa, 0, rload, 0); // OA.OUT → Rload.A
+      wire(g, rload, 1, gnd, 0); // Rload.B → GND
+      wire(g, vsig, 1, gnd, 0); // Vsig− → GND
+      wire(g, vref, 1, gnd, 0); // Vref− → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place two Voltage Sources — a signal (V, 4 V) and a reference (V, 2.5 V) — and an Op-Amp (OA).",
+        why: "A comparator weighs one voltage against another. The reference is the threshold; the signal is what you're testing against it.",
+        done: (p) => at(p, "V") >= 2 && at(p, "OA") >= 1,
+      },
+      {
+        do: "Wire the signal → IN+ and the reference → IN−. Add a load Resistor (~4.7 kΩ) from OUTPUT to a Ground, and both sources' −'s → GND. Leave the output unconnected to the inputs (no feedback). Run.",
+        why: "With no feedback, nothing tames the gain. The 4 V signal is above the 2.5 V reference, so the output slams to the positive rail (+12 V) — not 1.5 V amplified, just a hard 'yes, + is higher'. Watch it pin to the rail and drive the load.",
+        done: (p) => at(p, "OA") >= 1 && at(p, "V") >= 2 && p.complete,
+      },
+      {
+        do: "Select the signal source and set it below 2.5 V (or use the toggle below).",
+        why: "The moment the signal crosses below the reference, the output flips to the other rail. No gradual slope — a clean threshold. That all-or-nothing decision is how an analog level becomes a digital bit.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Signal above / below",
+      on: "Signal 4 V (above the 2.5 V reference) — the output rails HIGH to +12 V.",
+      off: "Signal 1 V (below the reference) — the output snaps LOW to −12 V.",
+      alt() {
+        // Same comparator, signal dropped below the reference: output rails low.
+        const g = new BoardGraph();
+        const vsig = comp(g, "V", 0, 0, 1, 1); // signal now below the reference
+        const vref = comp(g, "V", 0, 6, 2.5);
+        const oa = comp(g, "OA", 5, 0, 12);
+        const rload = comp(g, "R", 10, 0, 4700, 1);
+        const gnd = comp(g, "GND", 10, 4, 0);
+        wire(g, vsig, 0, oa, 2);
+        wire(g, vref, 0, oa, 1);
+        wire(g, oa, 0, rload, 0);
+        wire(g, rload, 1, gnd, 0);
+        wire(g, vsig, 1, gnd, 0);
+        wire(g, vref, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below
@@ -1866,6 +2037,7 @@ export const EXAMPLE_CATEGORIES = [
   "Capacitors & Inductors",
   "Diodes",
   "Power & Switching",
+  "Op-Amps",
   "AC Fundamentals",
   "Reactance",
   "Filters",
@@ -1897,6 +2069,9 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "bjt-switch": "Power & Switching",
   "bjt-ce-amp": "Power & Switching",
   "bjt-mirror": "Power & Switching",
+  "opamp-follower": "Op-Amps",
+  "opamp-noninverting": "Op-Amps",
+  "opamp-comparator": "Op-Amps",
   "ac-resistor": "AC Fundamentals",
   "ac-rms": "AC Fundamentals",
   "ac-cap": "Reactance",

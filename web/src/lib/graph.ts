@@ -327,6 +327,25 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // Op-amp: the flagship analog IC and the first behavioural 3-terminal *active*
+  // building block. A huge open-loop gain drives the output until the difference
+  // between its two inputs is (almost) nulled, the basis of every feedback
+  // amplifier, buffer, and comparator. Pins are ordered OUT, IN−, IN+ — pin 0 =
+  // Output (a), pin 1 = Inverting input (b), pin 2 = Non-inverting input (c) —
+  // so buildNetlist's pin→terminal map matches the core exactly (ELEM_OPAMP=15:
+  // a=OUT, b=IN−, c=IN+). `value` is the saturation rail Vsat in volts (the output
+  // swings within ±Vsat). The output is on the right vertex of the triangle, the
+  // two inputs on the left edge (IN+ top, IN− bottom). Cyan reads as the clean
+  // analog signal-processing block, apart from the green switches and rose BJTs.
+  OA: kind(
+    "OA",
+    "Op-Amp",
+    "cyan",
+    [pin("OUT", 2, 1), pin("IN−", 0, 2), pin("IN+", 0, 0)],
+    12,
+    "V",
+    true,
+  ),
   "&": kind(
     "&",
     "Logic Gate",

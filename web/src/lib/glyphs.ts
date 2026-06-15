@@ -969,6 +969,71 @@ function drawQP(g: Graphics, o: GlyphOpts): void {
   bjtSchematic(g, o, false);
 }
 
+// --- Op-amp (3-terminal high-gain amplifier) ----------------------------------
+// Pins are ordered OUT, IN−, IN+: pin 0 = Output (right vertex), pin 1 = IN−
+// (inverting, left edge), pin 2 = IN+ (non-inverting, left edge). The schematic is
+// the classic right-pointing triangle: the two inputs enter the vertical left
+// edge (IN+ marked +, IN− marked −) and the output leaves the apex.
+// `electrical.current` is the output drive Iout sourced at the apex; its magnitude
+// rides the body glow + the output belt density, its sign the belt direction —
+// the inputs sip no current (high-impedance), so only the output animates, the
+// "the inputs sense, the output drives" lesson. `electrical.vAcross` is
+// V(OUT)−V(IN−).
+function drawOA(g: Graphics, o: GlyphOpts): void {
+  const out = o.pins[0];
+  const inM = o.pins[1];
+  const inP = o.pins[2];
+  if (!out || !inM || !inP) return;
+  // Triangle: a vertical left edge spanning the two input heights, an apex on the
+  // right toward the output pin. Leads spur in/out from the pins to the body.
+  const leftX = Math.min(inP.x, inM.x) + 10;
+  const apexX = out.x - 8;
+  const midY = (inP.y + inM.y) / 2;
+  const topY = Math.min(inP.y, inM.y) - 3;
+  const botY = Math.max(inP.y, inM.y) + 3;
+
+  // |Iout| drives the body glow + the output belt; sign sets the belt direction.
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Body fill — brightens a touch as the output works (a near-ideal amp barely
+  // breaks a sweat, so keep it subtle).
+  g.moveTo(leftX, topY)
+    .lineTo(apexX, midY)
+    .lineTo(leftX, botY)
+    .closePath()
+    .fill({ color: o.color, alpha: 0.1 + 0.16 * drive });
+
+  // Input leads in to the left edge (high-impedance: drawn quiet, no flow dots).
+  g.moveTo(inP.x, inP.y).lineTo(leftX, inP.y);
+  g.moveTo(inM.x, inM.y).lineTo(leftX, inM.y);
+  // Output lead out from the apex.
+  g.moveTo(apexX, midY).lineTo(out.x, out.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The triangle outline — the amplifier body.
+  g.moveTo(leftX, topY)
+    .lineTo(apexX, midY)
+    .lineTo(leftX, botY)
+    .closePath()
+    .stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+
+  // Input polarity marks just inside the left edge: + at IN+, − at IN−.
+  const mk = leftX + 6;
+  const ms = 2.4; // mark half-size
+  // '+' at the non-inverting input
+  g.moveTo(mk - ms, inP.y)
+    .lineTo(mk + ms, inP.y)
+    .moveTo(mk, inP.y - ms)
+    .lineTo(mk, inP.y + ms);
+  // '−' at the inverting input
+  g.moveTo(mk - ms, inM.y).lineTo(mk + ms, inM.y);
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.9 });
+
+  // The output drive belt: flowing dots along the output lead, fed the SIGNED
+  // output current so it reverses with Iout and fades when the output idles.
+  flow(g, apexX, midY, out.x, out.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -1602,6 +1667,72 @@ function drawFQP(g: Graphics, o: GlyphOpts): void {
   bjtFactory(g, o, false);
 }
 
+// The op-amp as a Factorio comparator/amplifier station: two THIN sensor probes
+// (the high-impedance inputs, pins 2 and 1 — they only read, no belt runs through
+// them) feed a differential-comparator core that throws a FAT output belt out the
+// apex (pin 0). The output belt's width + flow density track |Iout|; the inputs
+// stay sparse and still — the visible "the inputs sense, the output drives"
+// lesson. All motion rides the bounded `o.phase` clock — magnitude is
+// width/density/alpha, never speed.
+function drawFOA(g: Graphics, o: GlyphOpts): void {
+  const out = o.pins[0];
+  const inM = o.pins[1];
+  const inP = o.pins[2];
+  if (!out || !inM || !inP) return;
+  const leftX = Math.min(inP.x, inM.x) + 9;
+  const my = (inP.y + inM.y) / 2;
+  const hw = 11;
+  const mx = leftX + hw;
+  const hh = Math.max(inP.y, inM.y) - my + 3;
+
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Input sensor probes in from the left to the core wall (drawn quiet — sensing,
+  // not conveying).
+  g.moveTo(inP.x, inP.y).lineTo(leftX, inP.y);
+  g.moveTo(inM.x, inM.y).lineTo(leftX, inM.y);
+  // Output spur out to the pin.
+  g.moveTo(mx + hw, my).lineTo(out.x, out.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The comparator core.
+  fBox(g, mx, my, hw, hh, o.color);
+
+  // The differential gauge inside: + and − sensor taps on the left wall that glow
+  // a touch with the drive — the two readings the core is comparing.
+  const tap = leftX + 4;
+  const ts = 2.2;
+  g.moveTo(tap - ts, inP.y)
+    .lineTo(tap + ts, inP.y)
+    .moveTo(tap, inP.y - ts)
+    .lineTo(tap, inP.y + ts);
+  g.moveTo(tap - ts, inM.y).lineTo(tap + ts, inM.y);
+  g.stroke({ width: 1.5, color: o.color, alpha: 0.6 + 0.3 * drive });
+  // A couple of sparse, still sensor dots on each input lead (no recirculation —
+  // they only read), a faint cue that the inputs are live but carry no belt.
+  g.circle((inP.x + leftX) / 2, inP.y, 1.2).fill({
+    color: o.color,
+    alpha: 0.4,
+  });
+  g.circle((inM.x + leftX) / 2, inM.y, 1.2).fill({
+    color: o.color,
+    alpha: 0.4,
+  });
+
+  // The FAT output belt out the right wall: its width grows with how hard the
+  // output is driving (a thin idle throat, a wide channel when sourcing current).
+  const beltW = 2 + 8 * drive;
+  if (drive > 0.02) {
+    g.roundRect(mx + hw, my - beltW / 2, out.x - (mx + hw), beltW, 2).fill({
+      color: o.color,
+      alpha: 0.22 + 0.3 * drive,
+    });
+  }
+
+  // The output drive flow, signed so it reverses with Iout and fades when idle.
+  flow(g, mx + hw, my, out.x, my, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -1640,6 +1771,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   PM: drawPM,
   Q: drawQ,
   QP: drawQP,
+  OA: drawOA,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -1662,6 +1794,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   PM: drawFPM,
   Q: drawFQ,
   QP: drawFQP,
+  OA: drawFOA,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */
