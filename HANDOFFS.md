@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Buck converter: diode + PWM switch wired up, animated demo
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + the new buck/switch tests,
+build:wasm, web check/lint/build).
+
+- **Switch element** (`sim-core` type 6, cherry-picked): time-varying linear
+  conductance, a pure function of the tick (`SWITCH_PERIOD_TICKS = 50` ≈ 10 kHz,
+  `value` = duty, `Ron 0.01 Ω` / `Goff 1e-9`), stamped in all four solve paths.
+  Golden unchanged; 31 tests incl. `switch_buck_converter_steps_down_and_is_finite`.
+- **Diode + switch in the web**: `netlist.ts` `D:5` / `SW:6`; animated `drawD`
+  (triangle + cathode bar, forward glow/flow) and `drawSW` (lever flicks
+  open/closed off live `vAcross`); both placeable in the bin.
+- **Buck Converter example**: Vin → SW → L → OUT, freewheel diode, smoothing cap +
+  load, GND; vertical V/C/R/D via a new optional `rot` on the example `comp()`.
+  Steps 10 V → ≈4 V at 40 % duty. (Connectivity is by pin-ref, so the rotations are
+  visual-only — the netlist is a correct buck regardless of layout.)
+- **Design notes added** (no code yet): `docs/ui/value-picker.md`,
+  `docs/ui/incomplete-circuits.md` (recommended fix for the V-loop/I-one-sided
+  asymmetry: a topology pre-check for a current-source terminal with no DC path +
+  a deterministic `singular()` flag from the solver, folded into the once-per-frame
+  snapshot read; surface an amber hint, don't halt the sim, don't hash the flag).
+
+### Pick up here
+- Build the **value Inspector** (`docs/ui/value-picker.md`) and the
+  **incomplete-circuit affordance** (`docs/ui/incomplete-circuits.md`).
+- More nonlinear parts (LED, BJT/MOSFET) now that the Newton engine exists.
+
+---
+
 ## 2026-06-15 — Scope/telemetry upgrade + value-picker design; solver upgrade in flight
 
 **State:** 🟢 Green (web check/lint/build; Rust unchanged this batch). Scope panel
