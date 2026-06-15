@@ -450,14 +450,20 @@ export const PART_KINDS: Record<string, PartKind> = {
     "Ω",
     true,
   ),
+  // D flip-flop: the first sequential IC (sim type 19, four-terminal). Pins are
+  // ordered Q, D, CLK, Q̄ so buildNetlist's pin→terminal map is direct (pin 0 → a =
+  // Q, 1 → b = D, 2 → c = CLK, 3 → d = Q̄), matching the core. On each rising clock
+  // edge it samples D and presents it on Q (Q̄ the complement). `value` is the logic
+  // rail. Outputs on the right (Q top, Q̄ bottom), inputs on the left (D top, the
+  // edge-clock CLK bottom). Cyan, the memory/clocked family.
   FF: kind(
     "FF",
     "D Flip-Flop",
     "cyan",
-    [pin("D", 0, 0), pin("CLK", 0, 2), pin("Q", 2, 0), pin("Q̅", 2, 2)],
-    0,
-    "",
-    false,
+    [pin("Q", 2, 0), pin("D", 0, 0), pin("CLK", 0, 2), pin("Q̅", 2, 2)],
+    5,
+    "V",
+    true,
   ),
   FP: kind(
     "FP",

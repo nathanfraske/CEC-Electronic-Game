@@ -8,6 +8,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Component info panel — frictionless trigger + pinout + construction cutaways (owner-greenlit, queued)
+Full design in **`docs/ui/component-info-panel.md`** (ideation, brainstormed
+2026-06-15). Make rich component info reachable without breaking build flow.
+Owner-approved direction + defaults:
+- [ ] **Phase 1** — open the info drawer on **double-click** a component (+ an `I`
+  hotkey on the selection, + an `ⓘ` chip on the value popover); reuse the existing
+  right-side `.info-drawer`; **click-away does NOT close it** (persistent instrument
+  panel that re-targets as you select); Esc/×/`I` dismiss. Add the **oriented,
+  labelled pinout** (built from `PART_KINDS.pins` + `selPart.rot`). Suppress the 2nd
+  click of a double on the manual switch so double-click stays universal.
+- [ ] **Phase 2** — the **construction cutaways**: a third `DETAIL_DRAWERS` map
+  (Pixi-drawn, parallel to `DRAWERS`/`FACTORY_DRAWERS`, hosted by a new "detail mode"
+  on `InfoDiagram`, `DETAIL ?? schematic` fallback) + an in-panel schematic⇄cutaway
+  toggle. First cutaways: the 3 capacitors (electrolytic rolled spiral, ceramic MLCC
+  layer stack, film roll), diode/LED die, resistor color-bands. ~9 shared templates
+  cover the ~30 kinds (see the doc's catalogue).
+- [ ] **Phase 3** — fill the cutaway catalogue along the parts roadmap.
+- Owner defaults locked: Pixi-drawn (not SVG); cutaway-with-toggle; click-away keeps
+  it open; MSW 2nd-click suppressed. Presentation-only (no sim/golden impact).
+
 ### BUILD QUEUE — remaining catalog + ICs (owner: "go down the list we already had")
 The full planned kit, from `docs/parts-catalog-ideation.md` and
 `docs/ic-buildings-ideation.md`. **Done so far:** LED, Zener, Schottky, electrolytic
@@ -44,8 +64,14 @@ the enabling primitive from the catalog's §0 / §9 roadmap):
 
 **ICs still to build** (`ic-buildings-ideation.md` §2.4 tier table, §3 entries) — all
 Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate set:
-- [ ] **D / JK flip-flop + latch** (§3.2) — one bit of clocked state; tick-grid edge
-  detect. The first **sequential** element. **Next IC rung. Low.**
+- ~~**D flip-flop** (`ELEM_DFF=19`, §3.2) — the first **sequential** element: 4-pin
+  (Q=a, D=b, CLK=c, Q̄=d), `value`=rail. Samples D on the rising CLK edge into a
+  stored bit (persistent unhashed state like the reactive companions), drives Q/Q̄
+  through `GATE_GOUT` from the committed bit (constant stamp, no Newton); one-tick
+  clk→Q delay. Edge-detect in the step commit. 4 tests (latch+hold, ÷2 toggle,
+  validate, reproduce); golden unchanged. Web: `FF` part (clocked-box glyph + edge
+  notch), partInfo, "Clocked Memory" + "Toggle (÷2 Counter)" examples. Reuses the
+  a/b/c/d boundary (no wasm change).~~ (JK/latch variants still open.)
 - [ ] **Shift register / counter / decoder / mux** (§3.3) — clocked integer state +
   **bus ports** (the §1.5 multi-bit belt renderer). **Low–med.**
 - [ ] **555 timer** (§3.4) — internal comparators + SR latch + tick-derived output;
