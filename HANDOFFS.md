@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Board interaction: placement ghost, junction drag, junction tool
+
+**State:** 🟢 Green. **crates/ untouched** — render/interaction/graph only; golden
+`0xeaac376499e4fa24` unchanged, `cargo test -p sim-core` 44 pass / 1 ignored;
+fmt + clippy clean; `build:wasm`, web format/check/lint/build all pass. Three
+features, all in `web/src/lib/board.ts`, `web/src/lib/graph.ts`,
+`web/src/App.svelte`:
+
+1. **Translucent placement ghost.** A non-interactive `ghostLayer` + reused
+   `ghostGlyph` in the world container (above components, below pending-wire/
+   probe; `alpha = GHOST_ALPHA`). `updateGhost()` redraws the armed part with the
+   real `drawGlyph` at the grid-snapped cursor cell (`cellToWorld`) and rotates it
+   by the new `armedRot`. Visible only while a part is armed AND the pointer is
+   over the canvas — `pointerInside` tracked via canvas `pointerenter`/
+   `pointerleave`; refreshed each `pointermove`. **Placement rotation:** `armedRot`
+   (0..3); `setArmed` zeroes it on a new kind (keeps it when re-arming the same
+   kind); `rotateArmed()` advances it. App's R calls `rotateArmed()` when
+   `armedPart && selCount === 0`, else the old `rotateSelection()`. The drop passes
+   it through `placeCell(kind, cell, rot)` (sets `c.rot` before `addNode`, whose
+   ctor reads it).
+2. **Double-click a junction to drag it.** `graph.ts` gains
+   `moveJunction(id, cell)` — mutates only `j.cell`; incident wires reference the
+   junction by id so they re-route by redraw; topology (and `sig`) unchanged.
+   `board.ts` `junctionDrag` + `lastJunctionTap`: a 2nd press on the same junction
+   within `DOUBLE_CLICK_MS` (350 ms) grabs it; move snaps + `moveJunction` +
+   redraw; up commits to undo only if it moved. **Single-click still starts a wire
+   from the junction** (unchanged).
+3. **Junction placer tool + `J`.** `Mode` gains `"junction"`; App adds the toolbar
+   button (mirrors Wire: `.btn`/`is-active` + `.hk` badge), `enterJunction()`, and
+   `J` in `onKey`. In junction mode a wire click → `placeJunctionAt` →
+   `junctionOnWire(wireId, cell)`. **`junctionOnWire`'s `from` is now optional**:
+   without it the wire is split in place (`A→J`, `J→B`), giving the junction its 2
+   incident ends so it survives `pruneJunctions` and `buildNetlist` keeps the two
+   halves one net via J.
+
+**Notes / deferred:** `onChange` still rewinds the clock to t=0 for *every* edit
+(existing app-wide convention) — a junction drag does too, exactly like a part
+move; but `sig` is stable so the solver netlist isn't rebuilt. Double-click is
+timing-based (no Pixi `dblclick` on the federated stage). No new CSS — the
+Junction button reuses existing `.btn`/`.hk` styles.
+
 ## 2026-06-15 — Zener (`ZD`) + electrolytic-cap (`EC`) web/UI integration
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 44 sim-core tests — 43 pass,

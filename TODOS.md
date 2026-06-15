@@ -8,6 +8,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — three board-interaction features (ghost / junction-drag / junction tool)
+- ~~**Translucent placement ghost for the armed part.** `board.ts` adds a
+  non-interactive `ghostLayer`/`ghostGlyph` (above components, below pending-wire/
+  probe; alpha `GHOST_ALPHA`), reusing `drawGlyph` at the grid-snapped cursor cell
+  (`cellToWorld`). Shown only while a part is armed AND the pointer is over the
+  canvas (tracked via `pointerenter`/`pointerleave` → `pointerInside`). New
+  placement-rotation state `armedRot`: `setArmed` resets it to 0 on a fresh kind;
+  `rotateArmed()` (R via App when armed + nothing selected) turns the ghost; the
+  drop applies it via `placeCell(kind, cell, rot)`. R still rotates the selection
+  when something is selected.~~
+- ~~**Double-click a junction to drag it.** `graph.ts` `moveJunction(id, cell)`
+  (updates only `j.cell`; incident wires reference it by id so they follow; `sig`
+  built from topology, not position, stays stable). `board.ts`: `junctionDrag` +
+  `lastJunctionTap` detect a 2nd press on the same junction within
+  `DOUBLE_CLICK_MS` (350) → grab + drag (snap, re-route, undoable via pending
+  snapshot, commit only if moved). Single-click on a junction still starts a wire.~~
+- ~~**Junction placer tool + `J` hotkey.** Added `"junction"` to `Mode`; toolbar
+  button (mirrors Wire, `is-active` + `.hk` badge) + `enterJunction()` + `J` in
+  `onKey`. In junction mode a wire click drops a junction at the snapped point via
+  `junctionOnWire(wireId, cell)` — `from` is now **optional**; with no incoming
+  wire it splits the trace in place (both halves end at J → survives prune, ties
+  the wires into one net). crates/ untouched; golden + all gates green.~~
+
 ### Done — Zener (`ZD`) + electrolytic-cap (`EC`) web/UI integration
 - ~~**Zener diode (`ZD`, sim type 10) + electrolytic cap with ESR (`EC`, netlist
   expansion, no new sim type) wired through the whole web layer** (crates
