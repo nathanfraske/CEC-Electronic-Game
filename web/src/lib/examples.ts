@@ -584,3 +584,31 @@ export const EXAMPLES: ExampleSpec[] = [
     },
   },
 ];
+
+/** Display order of example categories for the collapsible browser. */
+export const EXAMPLE_CATEGORIES = [
+  "Fundamentals",
+  "Sources & Current",
+  "Capacitors & Inductors",
+  "Diodes",
+  "Power & Switching",
+];
+
+/** Which category each example belongs to, keyed by id. */
+export const EXAMPLE_CATEGORY: Record<string, string> = {
+  primer: "Fundamentals",
+  divider: "Fundamentals",
+  parallel: "Sources & Current",
+  isource: "Sources & Current",
+  rc: "Capacitors & Inductors",
+  rl: "Capacitors & Inductors",
+  rlc: "Capacitors & Inductors",
+  "diode-clamp": "Diodes",
+  buck: "Power & Switching",
+  "pwm-average": "Power & Switching",
+};
+
+/** The category an example belongs to (falls back to "Other"). */
+export function categoryOf(id: string): string {
+  return EXAMPLE_CATEGORY[id] ?? "Other";
+}

@@ -13,7 +13,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Guided builds run the sim live** (`startBuild` resumes playback) so each added part comes alive in a working sub-circuit; **examples reworked into progressive/observable builds** (agent) — the buck now: forward path → ragged spike → add diode (spike vanishes) → add cap (smooths to ≈4 V). `steps[]`-only, topology unchanged, `done()` monotonic.~~
 - ~~**Custom playback rate**: a ticks/second number input beside the rate presets.~~
 
+### Done — collapsible example categories
+- ~~Examples are grouped into collapsible `<details>` categories (Fundamentals / Sources & Current / Capacitors & Inductors / Diodes / Power & Switching) so people can work through them; `examples.ts` exports `EXAMPLE_CATEGORIES` + `categoryOf(id)`. AC categories land with the AC set.~~
+
 ### In flight / pending
+- [ ] **AC source + AC curriculum** (agents): a sinusoidal `AC` source in sim-core (type 7, `value` = freq, fixed 5 V) + a ground-up AC example set (`docs/ui/ac-curriculum.md`) → wire `AC` into the web (glyph/bin/netlist/inspector freq) + author the AC examples under an "AC" category.
+- [ ] **Selectable / per-example DT** (for RF): DT is a fixed 2 µs global; to reach MHz/GHz cleanly each scenario wants its own DT. Make DT a netlist/scenario parameter (keep the golden pinned at 2 µs). Audio-range AC (≤ ~5 kHz) is fine at 2 µs today.
 - ~~**Inspector popup over the component** (`docs/ui/inspector-popup.md`): the value picker now floats as a popover anchored above the selected part — `board.ts` projects `componentBox` through the world transform each frame (`onAnchor`, change-detected, null during gestures/Measure); `App.svelte` positions an absolutely-placed `.value-pop` in `.board-frame` with edge-flip + a caret. Removed from the telemetry panel.~~
 - ~~**Incomplete-circuit affordance** (`docs/ui/incomplete-circuits.md`): `buildNetlist` now detects an ideal current source whose forced current has no return path (union-find over non-`I` elements; flags `floatingSources`), and App shows an amber "no return path — complete the loop" warning without halting the sim. (Deterministic solver `singular()` backstop is the remaining refinement.)~~
 

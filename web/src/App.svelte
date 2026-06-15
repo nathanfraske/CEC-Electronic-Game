@@ -26,7 +26,12 @@
     stepValue,
     nearestStandard,
   } from "./lib/values";
-  import { EXAMPLES, type ExampleSpec } from "./lib/examples";
+  import {
+    EXAMPLES,
+    EXAMPLE_CATEGORIES,
+    categoryOf,
+    type ExampleSpec,
+  } from "./lib/examples";
   import {
     buildNetlist,
     electricalMap,
@@ -699,27 +704,47 @@
       </ul>
     {:else}
       <p class="panel-note">
-        Watch a worked circuit run, or build it yourself step by step.
+        Pick a category and work through it — Watch a circuit run, or Build it
+        yourself step by step.
       </p>
-      <ul class="example-list scroll">
-        {#each EXAMPLES as ex (ex.id)}
-          <li class="example">
-            <div class="example-head">
-              <span class="example-name">{ex.name}</span>
-              <span class="example-actions">
-                <button class="btn btn-ghost" onclick={() => loadExample(ex)}>
-                  Watch
-                </button>
-                <button class="btn btn-ghost" onclick={() => startBuild(ex)}>
-                  Build
-                </button>
-              </span>
-            </div>
-            <p class="example-blurb">{ex.blurb}</p>
-            <p class="example-watch">Watch · {ex.watch}</p>
-          </li>
+      <div class="example-cats scroll">
+        {#each EXAMPLE_CATEGORIES as cat (cat)}
+          {@const items = EXAMPLES.filter((e) => categoryOf(e.id) === cat)}
+          {#if items.length > 0}
+            <details class="example-cat" open>
+              <summary class="example-cat-head">
+                <span class="example-cat-name">{cat}</span>
+                <span class="example-cat-count">{items.length}</span>
+              </summary>
+              <ul class="example-list">
+                {#each items as ex (ex.id)}
+                  <li class="example">
+                    <div class="example-head">
+                      <span class="example-name">{ex.name}</span>
+                      <span class="example-actions">
+                        <button
+                          class="btn btn-ghost"
+                          onclick={() => loadExample(ex)}
+                        >
+                          Watch
+                        </button>
+                        <button
+                          class="btn btn-ghost"
+                          onclick={() => startBuild(ex)}
+                        >
+                          Build
+                        </button>
+                      </span>
+                    </div>
+                    <p class="example-blurb">{ex.blurb}</p>
+                    <p class="example-watch">Watch · {ex.watch}</p>
+                  </li>
+                {/each}
+              </ul>
+            </details>
+          {/if}
         {/each}
-      </ul>
+      </div>
     {/if}
   </aside>
 
@@ -1376,10 +1401,56 @@
     border-color: var(--accent-line);
     background: var(--accent-soft);
   }
+  /* Collapsible example categories. */
+  .example-cat {
+    border-bottom: 1px solid var(--border);
+  }
+  .example-cat-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    font-family: var(--font-display);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .example-cat-head::-webkit-details-marker {
+    display: none;
+  }
+  .example-cat-head::before {
+    content: "▸";
+    font-size: 10px;
+    color: var(--faint);
+    transition: transform 0.15s var(--ease);
+  }
+  .example-cat[open] > .example-cat-head {
+    color: var(--accent);
+  }
+  .example-cat[open] > .example-cat-head::before {
+    transform: rotate(90deg);
+  }
+  .example-cat-name {
+    flex: 1;
+  }
+  .example-cat-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 1px 7px;
+  }
   .example-list {
     list-style: none;
     margin: 0;
-    padding: 10px;
+    padding: 0 10px 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
