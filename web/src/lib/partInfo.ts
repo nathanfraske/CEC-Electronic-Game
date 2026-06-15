@@ -231,6 +231,26 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Power", value: f(Math.abs(e.vAcross * e.current), "W") },
     ],
   },
+  MOV: {
+    name: "Varistor",
+    equation: "clamp at ±Vc (symmetric)",
+    headline: (e, vc) => {
+      // It conducts (sinks current) only while clamping a surge: positive current
+      // means it is pinning a positive spike near +Vc, negative current a negative
+      // spike near −Vc. Below the clamp it just leaks — idle. Report |V| vs Vc.
+      if (conducting(e)) {
+        const pol = e.current > 0 ? "+" : "−";
+        return `Clamping ${pol}${f(vc, "V")} · ${f(e.vAcross, "V")} across`;
+      }
+      return `Idle · |V| ${f(Math.abs(e.vAcross), "V")} < Vc ${f(vc, "V")}`;
+    },
+    plain: () =>
+      "A varistor (metal-oxide varistor, MOV) clamps voltage spikes. It is the across-the-line surge protector — the part wired straight across the rail in every power strip. Below its clamp voltage Vc it is almost an open circuit, passing only a tiny leakage, so it sits idle and invisible. But the moment the voltage across it reaches ±Vc — in EITHER polarity, the symmetric cousin of the Zener — it conducts hard and pins the rail near ±Vc, shunting the surge's energy through itself instead of into the load. A series element ahead of it soaks up the difference. (A real MOV slowly wears out as it absorbs joules; this ideal one does not.)",
+    derived: (e, vc) => [
+      { label: "Clamp Vc", value: f(vc, "V") },
+      { label: "Power V·I", value: f(Math.abs(e.vAcross * e.current), "W") },
+    ],
+  },
   EC: {
     name: "Electrolytic Cap",
     equation: "i = C · dV/dt  (in series with ESR)",

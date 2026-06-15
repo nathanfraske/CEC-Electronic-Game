@@ -32,6 +32,13 @@ const TYPE_OF: Record<string, number> = {
   SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
   LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)
   ZD: 10, // Zener diode (nonlinear; reverse breakdown clamps at value = Vz)
+  // Varistor (MOV): a 2-terminal *symmetric* voltage clamp (nonlinear; Newton).
+  // High resistance while |V| < value = Vc, then conducts hard above ±Vc to pin
+  // the node near ±Vc — the symmetric cousin of the Zener (two oppositely-facing
+  // breakdown junctions). Like every 2-pin element it leaves c = 0 (ground), and
+  // it carries no second `aux` scalar (aux = 0), so buildNetlist stamps it like
+  // any other passive: type 16 across its two nets, c = 0, aux = 0.
+  MOV: 16, // varistor (nonlinear; symmetric clamp at value = Vc)
   // The 3-terminal MOSFET family (level-1 square-law VCCS, Newton solve). Pins
   // are ordered D, S, G so the pin→terminal map is direct: pin 0 → a = Drain,
   // pin 1 → b = Source, pin 2 → c = Gate. They are the only kinds whose third

@@ -563,6 +563,74 @@ function drawZD(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + s, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+function drawMOV(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const x0 = a.x + 10;
+  const x1 = b.x - 10;
+  const amp = 7;
+  // A varistor is a *symmetric* voltage clamp: nearly open while |V| < Vc, then it
+  // conducts hard in EITHER polarity to pin |V| near Vc and dump the surge. The
+  // standard symbol is a resistor body with a diagonal arrow slashing through it.
+  // It idles quietly below the clamp and lights up when it clamps, so — like the
+  // Zener — drive the bloom off the (signed) clamp current rather than Vc (which
+  // the glyph isn't handed): a symmetric clamp bloom whose alpha tracks |I|, with
+  // the across-the-part field read on |V| so it brightens as the spike rises.
+  const clamp = norm(o.electrical.current, CUR_SCALE);
+  const field = norm(o.electrical.vAcross, V_SCALE);
+  // The symmetric clamp bloom: a cyan "spill" wrapping the whole body when it
+  // conducts (either direction), the watchable "dumping the surge" cue.
+  if (clamp > 0.03) {
+    g.roundRect(x0 - 4, my - amp - 6, x1 - x0 + 8, 2 * amp + 12, 6).fill({
+      color: 0x46d2e6,
+      alpha: 0.22 * clamp,
+    });
+  }
+  // a faint warn-coloured field that grows with |V across| — the rising spike the
+  // clamp is about to flatten (brightest just before it conducts).
+  if (field > 0.02) {
+    g.roundRect(x0 - 2, my - amp - 4, x1 - x0 + 4, 2 * amp + 8, 5).fill({
+      color: o.color,
+      alpha: 0.16 * field,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(x0, a.y);
+  g.moveTo(x1, b.y).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // the resistor zigzag body (the varistor's voltage-dependent resistance)
+  const segs = 6;
+  g.moveTo(x0, a.y);
+  for (let i = 0; i < segs; i++) {
+    const x = x0 + ((i + 0.5) / segs) * (x1 - x0);
+    const y = a.y + (i % 2 === 0 ? -amp : amp);
+    g.lineTo(x, y);
+  }
+  g.lineTo(x1, b.y);
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+  // the diagonal arrow slashing through the body — the mark that says "this
+  // resistance varies with voltage" (the VDR/MOV symbol).
+  const dx0 = mx - amp - 2;
+  const dy0 = my + amp + 4;
+  const dx1 = mx + amp + 4;
+  const dy1 = my - amp - 4;
+  g.moveTo(dx0, dy0).lineTo(dx1, dy1);
+  // arrowhead at the top-right tip
+  const ah = 4;
+  g.moveTo(dx1, dy1)
+    .lineTo(dx1 - ah, dy1 + ah * 0.4)
+    .moveTo(dx1, dy1)
+    .lineTo(dx1 - ah * 0.4, dy1 + ah);
+  g.stroke({ width: 1.8, color: o.color, alpha: 0.9 });
+  // Signed flow on both legs: it sinks current a→b OR b→a depending on the surge
+  // polarity, so feed `flow` the SIGNED current — the belt reverses with the spike.
+  flow(g, a.x, a.y, x0, a.y, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, x1, b.y, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawEC(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -1126,6 +1194,62 @@ function drawFZD(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+function drawFMOV(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  // The varistor's surge clamp / spillway (docs/parts-catalog-ideation.md §6.2):
+  // a sluice straddling the rail and the drain that sits SHUT and idle below the
+  // clamp voltage, then dumps the surge BOTH ways once |V| reaches Vc. It is the
+  // symmetric cousin of the Zener's one-way weir: a positive surge (V > +Vc,
+  // current a→b) lifts the TOP spillway and spills up to the high rail; a negative
+  // surge (V < −Vc, current b→a) lifts the BOTTOM spillway and spills down to the
+  // drain. The body's throat glows as the spike rises (|V across|); the weirs open
+  // and spill with the clamp current — magnitude as fill/lift/density, never speed.
+  const up = norm(Math.max(0, o.electrical.current), CUR_SCALE); // V > +Vc spill
+  const down = norm(Math.max(0, -o.electrical.current), CUR_SCALE); // V < −Vc spill
+  const field = norm(o.electrical.vAcross, V_SCALE);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // the central throat the belt passes through, brightening with the rising spike
+  // (warn-coloured) until a weir opens — the "about to clamp" cue.
+  g.roundRect(mx - 4, my - 7, 8, 14, 2).fill({
+    color: o.color,
+    alpha: 0.18 + 0.4 * field,
+  });
+  // A spillway gate + overflow stream. `dir = -1` is the top weir (spills UP to
+  // the rail), `dir = +1` the bottom weir (spills DOWN to the drain). Drawn shut
+  // and idle when `open ≈ 0`; lifts and pours (cyan, constant-rate dots) with it.
+  const weir = (open: number, dir: number): void => {
+    if (open <= 0.03) return;
+    const edgeY = my + dir * 11; // roof line (top) or floor line (bottom)
+    const tipY = edgeY + dir * (3 + 4 * open); // the lifted gate tip
+    g.moveTo(mx + 3, edgeY)
+      .lineTo(mx + 9, tipY)
+      .stroke({ width: 1.6, color: 0x46d2e6, alpha: 0.9 });
+    const farY = my + dir * 20; // where the overflow lands (rail / drain)
+    const n =
+      FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * open);
+    for (let i = 0; i < n; i++) {
+      const t = (((i / n + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(
+        mx + 9,
+        edgeY + dir * 2 + (farY - (edgeY + dir * 2)) * t,
+        1.6,
+      ).fill({ color: 0x46d2e6, alpha: 0.3 + 0.55 * open });
+    }
+  };
+  weir(up, -1); // positive surge spills UP to the high rail
+  weir(down, 1); // negative surge spills DOWN to the drain
+  // Signed flow on both legs — the clamp sinks current either direction with the
+  // surge polarity, so the belt reverses with the spike (the symmetric action).
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawFEC(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -1410,6 +1534,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   SD: drawSD,
   LED: drawLED,
   ZD: drawZD,
+  MOV: drawMOV,
   SW: drawSW,
   NM: drawNM,
   PM: drawPM,
@@ -1430,6 +1555,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   SD: drawFSD,
   LED: drawFLED,
   ZD: drawFZD,
+  MOV: drawFMOV,
   SW: drawFSW,
   NM: drawFNM,
   PM: drawFPM,

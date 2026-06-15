@@ -800,6 +800,69 @@ export const EXAMPLES: ExampleSpec[] = [
     ],
   },
   {
+    id: "surge-clamp",
+    name: "Varistor Surge Clamp",
+    blurb:
+      "The surge protector in every power strip: a varistor (MOV) wired across the line. A 36 V 'spike' feeds a series resistor into the MOV to ground. Below its clamp voltage Vc the MOV is nearly an open circuit, so the node would float to the full supply — but the instant it reaches Vc (18 V) the MOV conducts hard and pins the node there, sinking the surge's energy through itself. Lift it out and the node swings all the way to 36 V.",
+    watch:
+      "the node clamp at ~18 V, only half the 36 V spike — the MOV's clamp voltage Vc. The resistor drops the remaining ~18 V, and that ~18 mA dumps straight down through the MOV to ground. Toggle the MOV out and watch the node leap to the full, un-clamped 36 V.",
+    build() {
+      // V → R → node N; the MOV shunts N to ground, so N is clamped near +Vc. The
+      // varistor is symmetric (it would clamp a negative spike to −Vc just the
+      // same), drawn vertically (rot 3) so R feeds it along the top rail and it
+      // drops straight to ground — the across-the-line surge-protector orientation.
+      //   nets: N1 = V+ = R.A ; N = R.B = MOV.B ; GND(0) = MOV.A = V−.
+      // Hand-check: the MOV holds N ≈ Vc = 18 V (the positive-side breakdown
+      // junction I = MOV_IK·exp((V−Vc)/MOV_VTH) reaches the ~18 mA load at V ≈
+      // 18.1 V), so I = (36 − 18)/1kΩ ≈ 18 mA flows through R and sinks into the
+      // MOV (KCL). Nonlinear → Newton solve. Stamps type 16, c = 0, aux = 0.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 1000);
+      const mov = comp(g, "MOV", 6, 2, 18, 3); // value = Vc; vertical
+      const v = comp(g, "V", 2, 6, 36);
+      const gnd = comp(g, "GND", 6, 6, 0); // directly below the varistor
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, mov, 1); // R.B → MOV.B (the clamped node N)
+      wire(g, mov, 0, gnd, 0); // MOV.A → GND (varistor shunts the surge to 0 V)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 36 V) and a Resistor (R, ~1 kΩ).",
+        why: "Treat the 36 V rail as the incoming spike. R is the series element that will drop the excess once the varistor starts clamping (a real surge has source impedance; R stands in for it).",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Place a Varistor (MOV) and a Ground (GND). Wire V+ → R → the MOV, the MOV's other end → GND, and V− → GND. Then press Run.",
+        why: "Below Vc the MOV barely conducts, so the node would float toward 36 V — but the moment it reaches ~18 V the MOV conducts hard and refuses to let it climb. Watch the node pin at Vc while the rest drops across R, the surge current dumping to ground.",
+        done: (p) => at(p, "MOV") >= 1 && p.complete,
+      },
+      {
+        do: "Select the varistor and try a different clamp Vc (e.g. 24 V or 36 V).",
+        why: "The clamped node tracks Vc. Raise Vc above the spike and the MOV never conducts — the node rides the full rail. The MOV only earns its keep when the surge exceeds what the load can take.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Varistor → ground",
+      on: "Varistor in place — it clamps the node near its clamp voltage, ~18 V, half the spike.",
+      off: "Varistor lifted — nothing shunts the node, so it floats up to the full, un-clamped 36 V spike.",
+      alt() {
+        const g = new BoardGraph();
+        const r = comp(g, "R", 2, 0, 1000);
+        const mov = comp(g, "MOV", 6, 2, 18, 3); // same cell as the main build
+        const v = comp(g, "V", 2, 6, 36);
+        const gnd = comp(g, "GND", 6, 6, 0);
+        wire(g, v, 0, r, 0); // V+ → R.A keeps the node fed
+        wire(g, r, 1, mov, 1); // R.B → MOV.B keeps the node where it was
+        wire(g, v, 1, gnd, 0); // V− → GND keeps the reference
+        // MOV.A intentionally left unconnected — the clamp is lifted, node floats.
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "led-series",
     name: "Two LEDs in Series",
     blurb:
@@ -1759,6 +1822,7 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "schottky-vs-silicon": "Diodes",
   "led-series": "Diodes",
   "zener-shunt": "Diodes",
+  "surge-clamp": "Diodes",
   buck: "Power & Switching",
   "pwm-average": "Power & Switching",
   "mosfet-switch": "Power & Switching",
