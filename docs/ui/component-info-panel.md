@@ -581,3 +581,47 @@ phase shippable behind the existing gates and touching no sim/golden.
    `pinNote` map, defaulting pin names from a shared `label → human name` table
    (labels are shared across kinds). **Confirm** the authoring shape so the prose
    register stays consistent with `partInfo`/`examples.ts`.
+
+---
+
+## DECISION & 3-tier rework (owner, 2026-06-15)
+
+The owner is architecting a **3-tier component model** and reframed the info panel
+around it:
+
+> "schematic → analogy factory → as close to reality-factory as possible … when you
+> get the info panel out, it shows a real zoomed-in view of that component with a
+> closeup of the factory elements inside of it and the pinouts with labels, and all
+> the calculations happening. The basic power explanation should live somewhere else."
+
+**Tiers (and the maps that render them):**
+
+| Tier | Means | Renderer |
+| --- | --- | --- |
+| **Schematic** | the datasheet symbol | `DRAWERS` (`glyphs.ts`) |
+| **Analogy (Factory)** | the machine-metaphor teaching analogy | `FACTORY_DRAWERS` |
+| **Reality** | the live construction-internals, "as close to reality as possible" | `DETAIL_DRAWERS` (`detailDrawers.ts`) |
+
+**Shipped framework (2026-06-15):**
+- `glyphs.ts` `drawGlyphIn(g, o, style)` renders an **explicit** style without
+  touching the board's global lens; `hasFactory(kind)` gates the analogy tier.
+- `InfoDiagram.mode` = `"schematic" | "analogy" | "reality"`, with **outward
+  fallback** (reality → schematic) so a tier with no art for a kind never blanks.
+- The drawer's selector is a 3-way **Symbol · Factory · Real** (each button shown
+  only when that tier has distinct art), defaulting to **Real**. Body stays:
+  pinout → equation → "Right now" calculations.
+- The carriers-vs-energy **power primer moved out** of the per-component panel to a
+  collapsed "Reading the board" legend at the foot of the telemetry panel.
+
+**Pick-up / open:**
+- **Reality art is owner-provided, per component, as produced.** Each new piece is
+  one more `DETAIL_DRAWERS[kind]` entry (Pixi, token-coloured, fed live
+  `ElectricalState`) — no plumbing changes. The current `DETAIL_DRAWERS` (op-amp,
+  diode family, resistor — from the factory mockups) are the reality tier until the
+  owner's closer-to-reality art replaces/augments them.
+- The "zoomed-in closeup of the factory elements inside + pinouts + calculations"
+  is the standing layout target; as reality art lands, consider whether the pinout
+  overlays the reality drawing (labelled callouts on the real part) vs. sits beneath.
+- **Where the power primer ultimately lives:** parked in the telemetry legend for
+  now; the onboarding/concept-card system (`onboarding-first-run.md`) is its likely
+  permanent home (it is general "how to read the board," not per-part).
