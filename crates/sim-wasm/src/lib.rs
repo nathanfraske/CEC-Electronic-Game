@@ -27,23 +27,30 @@ impl Simulation {
 
     /// Replace the circuit with a netlist of ideal elements and reset to `t = 0`.
     ///
-    /// The five arrays are parallel — one entry per element, in the order the
+    /// The six arrays are parallel — one entry per element, in the order the
     /// front end will index currents back from [`Simulation::element_currents`]:
     ///
     /// - `types[i]` — element type: `0` = DC voltage source (value = volts),
     ///   `1` = resistor (ohms), `2` = capacitor (farads), `3` = inductor
-    ///   (henries), … `11` = NMOS, `12` = PMOS.
+    ///   (henries), … `7` = AC source (value = frequency Hz), … `11` = NMOS,
+    ///   `12` = PMOS.
     /// - `a[i]`, `b[i]` — the two main terminal node indices (drain/source for a
     ///   MOSFET). Node `0` is ground (the reference, fixed at 0 V).
     /// - `c[i]` — the **control** terminal node index (the gate of a MOSFET).
     ///   Ignored for every two-terminal element; pass `0` there.
     /// - `values[i]` — the element value in the units implied by `types[i]`.
+    /// - `aux[i]` — the **second per-element scalar**: an AC source's peak
+    ///   amplitude in volts (`0.0` selects the default 5 V), and ignored — pass
+    ///   `0.0` — by every other element.
     ///
     /// `node_count` is the total number of nodes including ground. Returns
     /// `true` on success. On any length mismatch, an out-of-range node (`a`, `b`,
     /// or `c`), a zero `node_count`, or an unknown element type it fails safe
     /// (installs an empty ground-only circuit) and returns `false` — it never
     /// throws.
+    // Arity mirrors the core: one parallel array per per-element field plus the
+    // node count — the boundary's wire format, so the lint is allowed here too.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_netlist(
         &mut self,
         node_count: usize,
@@ -52,8 +59,10 @@ impl Simulation {
         b: &[u32],
         c: &[u32],
         values: &[f64],
+        aux: &[f64],
     ) -> bool {
-        self.inner.set_netlist(node_count, types, a, b, c, values)
+        self.inner
+            .set_netlist(node_count, types, a, b, c, values, aux)
     }
 
     /// Reset to `t = 0` with reactive elements discharged, keeping the same

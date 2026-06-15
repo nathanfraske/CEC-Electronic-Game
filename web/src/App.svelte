@@ -20,6 +20,7 @@
     BoardGraph,
     formatValue,
     PART_KINDS,
+    AC_DEFAULT_AMP,
     type GraphSnapshot,
   } from "./lib/graph";
   import {
@@ -31,6 +32,8 @@
     standardValues,
     stepValue,
     nearestStandard,
+    acAmpChips,
+    stepAmp,
   } from "./lib/values";
   import {
     EXAMPLES,
@@ -523,8 +526,17 @@
         netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
           // Pass the control-terminal array `c` (the MOSFET gate nodes; 0 for
-          // every 2-pin element). setNetlist takes it as a trailing optional arg.
-          sim.setNetlist(nl.nodeCount, nl.types, nl.a, nl.b, nl.values, nl.c);
+          // every 2-pin element) and the second scalar `aux` (an AC source's peak
+          // amplitude; 0 elsewhere). setNetlist takes both as trailing optionals.
+          sim.setNetlist(
+            nl.nodeCount,
+            nl.types,
+            nl.a,
+            nl.b,
+            nl.values,
+            nl.c,
+            nl.aux,
+          );
           controls?.resync();
         } else if (graph.components.size > 0) {
           // Parts placed but no voltage source to reference: install a quiet
@@ -536,6 +548,7 @@
             new Uint32Array(),
             new Float64Array(),
             new Uint32Array(),
+            new Float64Array(),
           );
           controls?.resync();
         }
@@ -673,6 +686,17 @@
   }
   function stepVal(dir: number): void {
     if (selPart) setVal(stepValue(selPart.kind, selPart.value, dir));
+  }
+  // The AC source's amplitude (its second scalar): the displayed value defaults
+  // to 5 V when a source carries none, mirroring the frequency chips above.
+  function selAmp(): number {
+    return selPart?.amp ?? AC_DEFAULT_AMP;
+  }
+  function setAmp(v: number): void {
+    if (selPart) board?.setComponentAmp(selPart.id, v);
+  }
+  function stepAmpVal(dir: number): void {
+    if (selPart) setAmp(stepAmp(selAmp(), dir));
   }
   // The decade the current value sits in (for the decade × significand picker).
   function valueDecade(kind: string, value: number): number {
@@ -1391,6 +1415,32 @@
               title="Next larger standard value">+</button
             >
           </div>
+          {#if kind === "AC"}
+            <!-- The AC source's second scalar: its peak amplitude (volts),
+                 presented exactly like the frequency chips above. The row above
+                 sets the frequency (Hz); this one the peak voltage. -->
+            <div class="insp-sub">amplitude</div>
+            <div class="insp-row">
+              <button
+                class="btn btn-ghost insp-step"
+                onclick={() => stepAmpVal(-1)}
+                title="Next smaller amplitude">−</button
+              >
+              <div class="insp-chips">
+                {#each acAmpChips() as v (v)}
+                  <button
+                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                    onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                  >
+                {/each}
+              </div>
+              <button
+                class="btn btn-ghost insp-step"
+                onclick={() => stepAmpVal(1)}
+                title="Next larger amplitude">+</button
+              >
+            </div>
+          {/if}
           <button class="insp-more" onclick={() => (showMore = !showMore)}>
             {showMore ? "▾ fewer" : "▸ more values"}
           </button>
@@ -1466,9 +1516,9 @@
                   <div class="info-live">
                     <div class="info-live-head">Right now</div>
                     <div class="info-sub mono">
-                      {info.headline(e, selPart.value)}
+                      {info.headline(e, selPart.value, selPart.amp)}
                     </div>
-                    {#each info.derived(e, selPart.value) as row (row.label)}
+                    {#each info.derived(e, selPart.value, selPart.amp) as row (row.label)}
                       <div class="info-row">
                         <span>{row.label}</span>
                         <span class="mono">{row.value}</span>

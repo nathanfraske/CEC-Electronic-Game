@@ -47,11 +47,24 @@ export interface Component {
   kind: string;
   /** Anchor cell (top-left of footprint) after snapping. */
   cell: Cell;
-  /** Ideal value (volts / ohms / farads / henries). */
+  /** Ideal value (volts / ohms / farads / henries). For an AC source this is the
+   * frequency in Hz; the peak amplitude is the separate {@link Component.amp}. */
   value: number;
+  /**
+   * The AC source's second scalar: its peak amplitude in volts. Only meaningful
+   * for kind `"AC"` (where `value` is the frequency); other kinds leave it
+   * undefined. A new AC source defaults to {@link AC_DEFAULT_AMP} (5 V), so an AC
+   * source that never touches the amplitude inspector swings +/- 5 V exactly as
+   * before. Optional so older snapshots without it round-trip to the default.
+   */
+  amp?: number;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
 }
+
+/** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
+ * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */
+export const AC_DEFAULT_AMP = 5;
 
 /** Fully-qualified address of a pin on a placed component. */
 export interface PinRef {
@@ -451,6 +464,10 @@ export class BoardGraph {
       cell,
       value: template.defaultValue,
       rot: 0,
+      // An AC source carries a second scalar (its peak amplitude), defaulting to
+      // 5 V so a freshly placed source swings +/- 5 V exactly as before. Other
+      // kinds leave it undefined.
+      ...(kind === "AC" ? { amp: AC_DEFAULT_AMP } : {}),
     };
     this.components.set(component.id, component);
     return component;

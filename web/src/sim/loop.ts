@@ -33,10 +33,12 @@ export interface SimHandle {
    *
    * `a`/`b` are the two main terminals (drain/source for a MOSFET). `c` is the
    * optional **control** terminal — the gate of a three-terminal device (NMOS
-   * type 11, PMOS type 12); it is ignored by every two-terminal element. When
-   * omitted it defaults to all-ground (zeros), so existing two-terminal callers
-   * need not pass it. It is the last parameter (not in the wasm `a,b,c,values`
-   * order) precisely so those callers stay source-compatible.
+   * type 11, PMOS type 12); it is ignored by every two-terminal element. `aux`
+   * is the optional **second per-element scalar** — an AC source's peak amplitude
+   * in volts (0 selects the default 5 V), ignored by every other element. Both
+   * `c` and `aux` default to all-zero when omitted, so existing callers need not
+   * pass them; they trail the wasm `a,b,c,values,aux` order precisely so those
+   * callers stay source-compatible.
    */
   setNetlist(
     nodeCount: number,
@@ -45,6 +47,7 @@ export interface SimHandle {
     b: Uint32Array,
     values: Float64Array,
     c?: Uint32Array,
+    aux?: Float64Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -63,10 +66,11 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       elementCurrents: sim.element_currents(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values, c) =>
-      // Default the control array to all-ground when the caller (a two-terminal
-      // build) omits it, then hand the wasm boundary its native a,b,c,values
-      // order. The core ignores c for every two-terminal element.
+    setNetlist: (nodeCount, types, a, b, values, c, aux) =>
+      // Default the control array to all-ground and the aux scalars to all-zero
+      // when a caller omits them, then hand the wasm boundary its native
+      // a,b,c,values,aux order. The core ignores c for every two-terminal element
+      // and reads aux only for the AC source (0 there = the default 5 V).
       sim.set_netlist(
         nodeCount,
         types,
@@ -74,6 +78,7 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
         b,
         c ?? new Uint32Array(types.length),
         values,
+        aux ?? new Float64Array(types.length),
       ),
     reset: () => sim.reset(),
   };

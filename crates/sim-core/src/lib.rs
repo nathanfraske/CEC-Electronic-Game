@@ -79,13 +79,14 @@
 //! DC source ([`ELEM_VSOURCE`]) — same branch-current unknown, same stamp — except
 //! its right-hand-side EMF is a sine that is a pure deterministic function of the
 //! current [`Sim::tick`]:
-//! `V(a) - V(b) = AC_AMPLITUDE * sin(2*pi * f * tick * dt)`, where `f` is its
-//! `value` (frequency in Hz, clamped to `>= 0`) and the peak amplitude is the
-//! fixed [`AC_AMPLITUDE`]. Being linear and time-varying it carries no Newton
-//! machinery: like the switch, it is part of the fixed linear base and its EMF is
-//! recomputed once per solve from the tick (the sine is exactly `0` at `t = 0`),
-//! so it composes with a diode rectifier on the Newton path. Amplitude is fixed
-//! for now; a two-parameter (amplitude + frequency) netlist is future work.
+//! `V(a) - V(b) = amplitude * sin(2*pi * f * tick * dt)`, where `f` is its
+//! `value` (frequency in Hz, clamped to `>= 0`) and the peak `amplitude` is its
+//! own second scalar `aux` when set (`> 0.0`), else the [`AC_AMPLITUDE`] default.
+//! Being linear and time-varying it carries no Newton machinery: like the switch,
+//! it is part of the fixed linear base and its EMF is recomputed once per solve
+//! from the tick (the sine is exactly `0` at `t = 0`), so it composes with a
+//! diode rectifier on the Newton path. The amplitude is the source's second
+//! per-element scalar (`aux`), beside the `value` frequency.
 //!
 //! ## Clock-driven switch
 //!
@@ -225,14 +226,16 @@ pub const ELEM_DIODE: u8 = 5;
 /// so it needs no Newton machinery even when a diode is present.
 pub const ELEM_SWITCH: u8 = 6;
 /// Sinusoidal **AC voltage source**. Oriented `a -> b`, it enforces the
-/// time-varying constraint `V(a) - V(b) = `[`AC_AMPLITUDE`]` * sin(2*pi * f *
-/// tick * dt)` through the same MNA branch-current augmentation as
-/// [`ELEM_VSOURCE`]; the *only* difference is the right-hand-side EMF is this
-/// sine rather than a constant. Its `value` is the frequency `f` in hertz
-/// (clamped to `>= 0`); the peak amplitude is the fixed [`AC_AMPLITUDE`]. The EMF
-/// is a pure deterministic function of the tick (so it reproduces and rewinds
-/// with the tick and is exactly `0` at `t = 0`), and the element is linear, so it
-/// lives in the fixed linear base and needs no Newton machinery.
+/// time-varying constraint `V(a) - V(b) = amplitude * sin(2*pi * f * tick * dt)`
+/// through the same MNA branch-current augmentation as [`ELEM_VSOURCE`]; the
+/// *only* difference is the right-hand-side EMF is this sine rather than a
+/// constant. Its `value` is the frequency `f` in hertz (clamped to `>= 0`); the
+/// peak `amplitude` is its own `aux` scalar when set (`> 0.0`), else the
+/// [`AC_AMPLITUDE`] default — so a source that supplies no amplitude swings
+/// +/- 5 V as before. The EMF is a pure deterministic function of the tick (so it
+/// reproduces and rewinds with the tick and is exactly `0` at `t = 0`), and the
+/// element is linear, so it lives in the fixed linear base and needs no Newton
+/// machinery.
 pub const ELEM_ACSOURCE: u8 = 7;
 
 /// **Schottky diode**. Same Newton-companion junction as [`ELEM_DIODE`], but a
@@ -317,10 +320,11 @@ pub const ELEM_VARISTOR: u8 = 16;
 
 // --- AC voltage source model constants ----------------------------------------
 
-/// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
-/// `value` carries only the frequency); a two-parameter netlist that also sets
-/// amplitude per device is future work. Held constant so the EMF stays a pure
-/// function of the tick and the value field.
+/// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
+/// source's `aux` scalar is `0.0` (the unset default), so a source that supplies
+/// no amplitude — every existing AC example — still swings +/- 5 V exactly as
+/// before. A source that sets `aux > 0.0` overrides it with that peak per device
+/// (the amplitude is the source's second scalar, beside its `value` frequency).
 const AC_AMPLITUDE: f64 = 5.0;
 
 // --- Clock-driven switch model constants --------------------------------------
@@ -557,6 +561,13 @@ pub struct Element {
     pub c: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
+    /// Second per-element scalar, parallel to `value`. Unused by every element
+    /// except the [`ELEM_ACSOURCE`], where it is the **peak amplitude** in volts
+    /// (`0.0` there selects the [`AC_AMPLITUDE`] default). Every other element
+    /// leaves it `0.0`, where it is never read — so adding the field changes
+    /// nothing on the existing paths, the scalar analogue of how the third
+    /// terminal `c` is ignored by two-terminal elements.
+    pub aux: f64,
 }
 
 /// A diode's terminal map for the Newton companion: `(element_index, anode_mna,
@@ -1035,6 +1046,7 @@ impl Sim {
                 b: 0,
                 c: 0,
                 value: v_source,
+                aux: 0.0,
             },
             Element {
                 kind: ELEM_RESISTOR,
@@ -1042,6 +1054,7 @@ impl Sim {
                 b: 2,
                 c: 0,
                 value: 1_000.0,
+                aux: 0.0,
             },
             Element {
                 kind: ELEM_CAPACITOR,
@@ -1049,6 +1062,7 @@ impl Sim {
                 b: 0,
                 c: 0,
                 value: 1.0e-6,
+                aux: 0.0,
             },
         ];
         sim.install(3, demo);
@@ -1057,15 +1071,23 @@ impl Sim {
 
     /// Replace the circuit with the given netlist and reset to `t = 0`.
     ///
-    /// `types`, `a`, `b`, `c`, and `values` are parallel arrays (one entry per
-    /// element). `c` is the **control terminal** (the gate of a MOSFET); for every
-    /// two-terminal element it is ignored, so callers pass `0` (or any in-range
-    /// node) there. On any length mismatch, a node index (`a`, `b`, or `c`)
-    /// outside `0..node_count`, a zero `node_count`, or an unknown element type,
-    /// the call **fails safe deterministically**: the simulation is replaced with
-    /// an empty single-node (ground-only) circuit and `false` is returned. On
-    /// success the netlist is installed, reactive elements start discharged, and
-    /// `true` is returned. Never panics.
+    /// `types`, `a`, `b`, `c`, `values`, and `aux` are parallel arrays (one entry
+    /// per element). `c` is the **control terminal** (the gate of a MOSFET); for
+    /// every two-terminal element it is ignored, so callers pass `0` (or any
+    /// in-range node) there. `aux` is the **second per-element scalar**: the peak
+    /// amplitude of an [`ELEM_ACSOURCE`] (`0.0` selects the [`AC_AMPLITUDE`]
+    /// default), and ignored — passed `0.0` — by every other element. On any
+    /// length mismatch, a node index (`a`, `b`, or `c`) outside `0..node_count`, a
+    /// zero `node_count`, or an unknown element type, the call **fails safe
+    /// deterministically**: the simulation is replaced with an empty single-node
+    /// (ground-only) circuit and `false` is returned. On success the netlist is
+    /// installed, reactive elements start discharged, and `true` is returned.
+    /// Never panics.
+    // The arity is the wire format: one parallel array per per-element field
+    // (types/a/b/c/values/aux) plus the node count. Bundling them into a struct
+    // would only move the same fields behind a name and obscure the boundary, so
+    // the lint is intentionally allowed here.
+    #[allow(clippy::too_many_arguments)]
     pub fn set_netlist(
         &mut self,
         node_count: usize,
@@ -1074,9 +1096,16 @@ impl Sim {
         b: &[u32],
         c: &[u32],
         values: &[f64],
+        aux: &[f64],
     ) -> bool {
         let n = types.len();
-        if a.len() != n || b.len() != n || c.len() != n || values.len() != n || node_count == 0 {
+        if a.len() != n
+            || b.len() != n
+            || c.len() != n
+            || values.len() != n
+            || aux.len() != n
+            || node_count == 0
+        {
             self.install_empty();
             return false;
         }
@@ -1122,6 +1151,7 @@ impl Sim {
                 b: nb,
                 c: nc,
                 value: values[i],
+                aux: aux[i],
             });
         }
 
@@ -2396,18 +2426,22 @@ impl Sim {
     }
 
     /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
-    /// current tick: `AC_AMPLITUDE * sin(2*pi * f * tick * dt)`, where `e.value`
-    /// is the frequency `f` in hertz (clamped to `>= 0`). This is the right-hand
-    /// side of the source's voltage constraint `V(a) - V(b) = emf`, the only
-    /// difference from a DC source. Pure `f64` and a deterministic function of the
-    /// tick (so it reproduces and rewinds with the tick; at `tick = 0` it is
-    /// exactly `0`). Recomputed once per solve and stamped into the fixed linear
-    /// base, exactly like a DC source's constant `value`.
+    /// current tick: `amplitude * sin(2*pi * f * tick * dt)`, where `e.value` is
+    /// the frequency `f` in hertz (clamped to `>= 0`) and the peak `amplitude` is
+    /// the source's own `e.aux` when it is set (`> 0.0`), else the [`AC_AMPLITUDE`]
+    /// default — so a source that supplies no amplitude swings +/- 5 V exactly as
+    /// before. This is the right-hand side of the source's voltage constraint
+    /// `V(a) - V(b) = emf`, the only difference from a DC source. Pure `f64` and a
+    /// deterministic function of the tick (so it reproduces and rewinds with the
+    /// tick; at `tick = 0` it is exactly `0`). Recomputed once per solve and
+    /// stamped into the fixed linear base, exactly like a DC source's constant
+    /// `value`.
     #[inline]
     fn ac_source_emf(&self, e: &Element) -> f64 {
+        let amplitude = if e.aux > 0.0 { e.aux } else { AC_AMPLITUDE };
         let f = e.value.max(0.0);
         let phase = core::f64::consts::TAU * f * (self.tick as f64) * DT;
-        AC_AMPLITUDE * phase.sin()
+        amplitude * phase.sin()
     }
 
     /// The conductance of a clock-driven switch ([`ELEM_SWITCH`]) at the current
@@ -2540,9 +2574,10 @@ mod tests {
     /// element here is two-terminal and ignores it. See [`build3`] for MOSFETs.
     fn build(node_count: usize, types: &[u8], a: &[u32], b: &[u32], values: &[f64]) -> Sim {
         let c = vec![0u32; types.len()];
+        let aux = vec![0.0f64; types.len()];
         let mut sim = Sim::new(1);
         assert!(
-            sim.set_netlist(node_count, types, a, b, &c, values),
+            sim.set_netlist(node_count, types, a, b, &c, values, &aux),
             "valid netlist must install"
         );
         sim
@@ -2559,9 +2594,10 @@ mod tests {
         c: &[u32],
         values: &[f64],
     ) -> Sim {
+        let aux = vec![0.0f64; types.len()];
         let mut sim = Sim::new(1);
         assert!(
-            sim.set_netlist(node_count, types, a, b, c, values),
+            sim.set_netlist(node_count, types, a, b, c, values, &aux),
             "valid netlist must install"
         );
         sim
@@ -2857,24 +2893,35 @@ mod tests {
     fn invalid_netlist_fails_safe() {
         let mut sim = Sim::new(3);
         // Mismatched array lengths (`a` has two entries, the rest one).
-        let ok = sim.set_netlist(2, &[ELEM_RESISTOR], &[1, 0], &[0], &[0], &[1_000.0]);
+        let ok = sim.set_netlist(2, &[ELEM_RESISTOR], &[1, 0], &[0], &[0], &[1_000.0], &[0.0]);
         assert!(!ok, "length mismatch must be rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         assert_eq!(sim.element_currents().len(), 0, "no elements remain");
         // Mismatched control-array length (`c` too long) is rejected too.
-        let ok_c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[0, 0], &[1_000.0]);
+        let ok_c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[0, 0], &[1_000.0], &[0.0]);
         assert!(!ok_c, "mismatched c length must be rejected");
+        // Mismatched aux-array length (`aux` too long) is rejected too.
+        let ok_aux = sim.set_netlist(
+            2,
+            &[ELEM_RESISTOR],
+            &[1],
+            &[0],
+            &[0],
+            &[1_000.0],
+            &[0.0, 0.0],
+        );
+        assert!(!ok_aux, "mismatched aux length must be rejected");
         // Out-of-range node.
-        let ok2 = sim.set_netlist(2, &[ELEM_RESISTOR], &[5], &[0], &[0], &[1_000.0]);
+        let ok2 = sim.set_netlist(2, &[ELEM_RESISTOR], &[5], &[0], &[0], &[1_000.0], &[0.0]);
         assert!(!ok2, "out-of-range node must be rejected");
         // Out-of-range control node (even though a resistor ignores it).
-        let ok2c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[7], &[1_000.0]);
+        let ok2c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[7], &[1_000.0], &[0.0]);
         assert!(!ok2c, "out-of-range control node must be rejected");
         // Unknown element type.
-        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[0], &[1_000.0]);
+        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[0], &[1_000.0], &[0.0]);
         assert!(!ok3, "unknown element type must be rejected");
         // Zero node_count.
-        let ok4 = sim.set_netlist(0, &[], &[], &[], &[], &[]);
+        let ok4 = sim.set_netlist(0, &[], &[], &[], &[], &[], &[]);
         assert!(!ok4, "zero node_count must be rejected");
         // A subsequent valid netlist still installs fine.
         let ok5 = sim.set_netlist(
@@ -2884,6 +2931,7 @@ mod tests {
             &[0, 0],
             &[0, 0],
             &[5.0, 1_000.0],
+            &[0.0, 0.0],
         );
         assert!(ok5, "valid netlist installs after failures");
     }
@@ -3445,12 +3493,13 @@ mod tests {
             &[0, 0],
             &[0, 0],
             &[5.0, 0.0],
+            &[0.0, 0.0],
         );
         assert!(ok, "valid diode netlist installs");
         assert_eq!(sim.element_count(), 2);
         assert_eq!(sim.element_at(1).kind, ELEM_DIODE, "diode stored as type 5");
         // Out-of-range node on a diode is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0], &[0.0]);
+        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0], &[0.0], &[0.0]);
         assert!(!bad, "out-of-range diode node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -3666,6 +3715,7 @@ mod tests {
             &[0, 0],
             &[0, 0],
             &[5.0, 18.0],
+            &[0.0, 0.0],
         );
         assert!(ok, "valid varistor netlist installs");
         assert_eq!(sim.element_count(), 2);
@@ -3689,7 +3739,7 @@ mod tests {
             "a varistor netlist is solved nonlinearly (clamps below the rail)"
         );
         // Out-of-range node on a varistor is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_VARISTOR], &[9], &[0], &[0], &[18.0]);
+        let bad = sim.set_netlist(2, &[ELEM_VARISTOR], &[9], &[0], &[0], &[18.0], &[0.0]);
         assert!(!bad, "out-of-range varistor node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -3953,6 +4003,7 @@ mod tests {
             &[0, 2, 0],
             &[0, 0, 0],
             &[5.0, 0.5, 1_000.0],
+            &[0.0, 0.0, 0.0],
         );
         assert!(ok, "valid switch netlist installs");
         assert_eq!(sim.element_count(), 3);
@@ -3962,7 +4013,7 @@ mod tests {
             "switch stored as type 6"
         );
         // Out-of-range node on a switch is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0.5]);
+        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0.5], &[0.0]);
         assert!(!bad, "out-of-range switch node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -4068,6 +4119,57 @@ mod tests {
             "RMS over a full period is amplitude/sqrt(2): got {}, want {}",
             rms,
             expected
+        );
+    }
+
+    /// The AC source's peak amplitude is tunable per source via the `aux` scalar:
+    /// a source with `aux = 12.0` swings the driven node to +/- 12 V, while a
+    /// source left at `aux = 0.0` keeps the +/- 5 V [`AC_AMPLITUDE`] default. The
+    /// node sits straight across a resistor so it carries the source EMF directly,
+    /// so its peak is exactly the source amplitude. This is the only behavioural
+    /// difference the second scalar introduces.
+    #[test]
+    fn ac_source_amplitude_is_tunable_per_source() {
+        let f = 500.0; // 1000 ticks per period at dt = 2 us.
+        let period_ticks = (1.0 / (f * DT)).round() as u64;
+        // Sample the extreme node voltage over one period of an AC source across a
+        // resistor, with the given peak `amp` (passed as the source's `aux`).
+        let peak_of = |amp: f64| -> (f64, f64) {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                2,
+                &[ELEM_ACSOURCE, ELEM_RESISTOR],
+                &[1, 1],
+                &[0, 0],
+                &[0, 0],
+                &[f, 1_000.0],
+                &[amp, 0.0],
+            ));
+            let mut vmax = f64::NEG_INFINITY;
+            let mut vmin = f64::INFINITY;
+            for _ in 0..period_ticks {
+                sim.step();
+                let v = sim.node_voltages()[1];
+                vmax = vmax.max(v);
+                vmin = vmin.min(v);
+            }
+            (vmax, vmin)
+        };
+        // aux = 12 -> swings +/- 12 V.
+        let (vmax12, vmin12) = peak_of(12.0);
+        assert!(
+            (vmax12 - 12.0).abs() < 1e-2 && (vmin12 + 12.0).abs() < 1e-2,
+            "amplitude 12 swings +/- 12 V: got +{}, {}",
+            vmax12,
+            vmin12
+        );
+        // aux = 0 -> the AC_AMPLITUDE default (+/- 5 V), byte-for-byte the old path.
+        let (vmax0, vmin0) = peak_of(0.0);
+        assert!(
+            (vmax0 - AC_AMPLITUDE).abs() < 1e-2 && (vmin0 + AC_AMPLITUDE).abs() < 1e-2,
+            "amplitude 0 keeps the +/- 5 V default: got +{}, {}",
+            vmax0,
+            vmin0
         );
     }
 
@@ -4210,6 +4312,7 @@ mod tests {
             &[0, 0],
             &[0, 0],
             &[1_000.0, 1_000.0],
+            &[0.0, 0.0],
         );
         assert!(ok, "valid AC source netlist installs");
         assert_eq!(sim.element_count(), 2);
@@ -4219,7 +4322,7 @@ mod tests {
             "AC source stored as type 7"
         );
         // Out-of-range node on an AC source is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[0], &[1_000.0]);
+        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[0], &[1_000.0], &[0.0]);
         assert!(!bad, "out-of-range AC source node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -4518,6 +4621,7 @@ mod tests {
             &[0, 2, 0, 0],
             &[0, 0, 3, 0],
             &[5.0, 1_000.0, 0.0, 3.0],
+            &[0.0, 0.0, 0.0, 0.0],
         );
         assert!(ok, "valid NMOS netlist installs");
         assert_eq!(sim.element_count(), 4);
@@ -4532,6 +4636,7 @@ mod tests {
             &[0, 1, 0, 0],
             &[0, 3, 0, 0],
             &[5.0, 0.0, 1_000.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
         );
         assert!(okp, "valid PMOS netlist installs");
         assert_eq!(sim.element_at(1).kind, ELEM_PMOS, "PMOS stored as type 12");
@@ -4544,11 +4649,12 @@ mod tests {
             &[0],
             &[9], // gate node 9 out of range for node_count 3
             &[0.0],
+            &[0.0],
         );
         assert!(!bad, "out-of-range MOSFET gate node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         // Out-of-range drain node is rejected too.
-        let bad2 = sim.set_netlist(3, &[ELEM_NMOS], &[9], &[0], &[1], &[0.0]);
+        let bad2 = sim.set_netlist(3, &[ELEM_NMOS], &[9], &[0], &[1], &[0.0], &[0.0]);
         assert!(!bad2, "out-of-range MOSFET drain node rejected");
     }
 
@@ -4962,6 +5068,7 @@ mod tests {
             &[0, 2, 0, 0],
             &[0, 0, 3, 0],
             &[5.0, 1_000.0, 0.0, 2.0],
+            &[0.0, 0.0, 0.0, 0.0],
         );
         assert!(ok, "valid NPN netlist installs");
         assert_eq!(sim.element_count(), 4);
@@ -4976,6 +5083,7 @@ mod tests {
             &[0, 1, 0, 0],
             &[0, 3, 0, 0],
             &[5.0, 0.0, 1_000.0, 0.0],
+            &[0.0, 0.0, 0.0, 0.0],
         );
         assert!(okp, "valid PNP netlist installs");
         assert_eq!(sim.element_at(1).kind, ELEM_PNP, "PNP stored as type 14");
@@ -4988,11 +5096,12 @@ mod tests {
             &[0],
             &[9], // base node 9 out of range for node_count 3
             &[0.0],
+            &[0.0],
         );
         assert!(!bad, "out-of-range BJT base node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         // Out-of-range collector node is rejected too.
-        let bad2 = sim.set_netlist(3, &[ELEM_NPN], &[9], &[0], &[1], &[0.0]);
+        let bad2 = sim.set_netlist(3, &[ELEM_NPN], &[9], &[0], &[1], &[0.0], &[0.0]);
         assert!(!bad2, "out-of-range BJT collector node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
