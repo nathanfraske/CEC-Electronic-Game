@@ -1025,6 +1025,20 @@
         {fmtRate(s)}
       </button>
     {/each}
+    <input
+      class="rate-custom mono"
+      type="number"
+      min="1"
+      max="2000000"
+      step="1"
+      value={tps}
+      onchange={(e) =>
+        setRate(Math.max(1, Math.round(Number(e.currentTarget.value)) || 1))}
+      disabled={!ready}
+      title="Custom ticks per second"
+      aria-label="Custom ticks per second"
+    />
+    <span class="speed-unit">t/s</span>
   </div>
 </div>
 
@@ -1056,6 +1070,25 @@
   .meter-toggle .btn {
     min-width: 30px;
     padding: 6px 9px;
+  }
+  /* Custom ticks-per-second entry next to the rate presets. */
+  .rate-custom {
+    width: 76px;
+    font-size: 11px;
+    padding: 5px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--text);
+  }
+  .rate-custom:focus {
+    outline: none;
+    border-color: var(--accent-line);
+  }
+  .speed-unit {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
   }
   /* The armed-part chip: shows what a board click will drop, with an × to disarm. */
   .armed-chip {
