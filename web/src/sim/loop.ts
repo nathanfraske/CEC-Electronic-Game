@@ -99,15 +99,37 @@ export interface LoopOptions {
   historyCap?: number;
 }
 
+/**
+ * One stepped tick within a single render frame: its tick index and the node
+ * voltages at that tick. The frame loop steps and rings every tick already; this
+ * is the (downsampled) batch of those intermediate states, handed to the view so
+ * the scope can chart at sub-frame resolution instead of aliasing at high tps.
+ * No new wasm crossing — it carries snapshot data already read this frame.
+ */
+export interface SubFrameSample {
+  tick: number;
+  state: Float64Array;
+}
+
 /** Most ticks to simulate in one animation frame, so a long frame never stalls. */
 const MAX_STEPS_PER_FRAME = 10000;
+
+/**
+ * Cap on samples reported per frame in the sub-frame batch. The frame may step
+ * thousands of ticks (e.g. tps=500000 at 60fps ≈ 8333/frame); the batch is
+ * deterministically downsampled to this many evenly-spaced ticks (always including
+ * the latest) so the scope sees the AC waveform without aliasing while memory and
+ * work stay bounded regardless of tps. Matches the scope's retained window so one
+ * frame refreshes at most a full screen of samples — no more, no wasted copies.
+ */
+const SCOPE_BATCH_CAP = 240;
 
 // Presentation speed is "how fast you watch": how many fixed ticks of sim time to
 // advance per real second, driven by the real elapsed time between frames (so the
 // rate is honest regardless of frame rate), separate from the fixed physical step.
 export function runLoop(
   sim: SimHandle,
-  onFrame: (snap: Snapshot) => void,
+  onFrame: (snap: Snapshot, scopeBatch?: SubFrameSample[]) => void,
   opts: LoopOptions = {},
 ): PlaybackControls {
   let running = opts.running ?? false;
@@ -145,10 +167,31 @@ export function runLoop(
     if (snap) onFrame(snap);
   };
 
+  // Evenly-spaced, in-order sub-frame samples over retained indices [lo, hi], at
+  // most SCOPE_BATCH_CAP of them and always including hi (the latest). Deterministic
+  // in the count of stepped ticks, so the batch stays bounded even at huge tps.
+  const sampleSubFrame = (lo: number, hi: number): SubFrameSample[] => {
+    const span = hi - lo; // number of intervals
+    const total = span + 1; // ticks available in [lo, hi]
+    const n = Math.min(SCOPE_BATCH_CAP, total);
+    const out: SubFrameSample[] = [];
+    let prev = -1;
+    for (let k = 0; k < n; k++) {
+      // Map k∈[0,n-1] across [lo,hi] so k=n-1 lands exactly on hi; round to a tick.
+      const idx = n === 1 ? hi : lo + Math.round((k * span) / (n - 1));
+      if (idx === prev) continue; // guard against a repeat from rounding
+      prev = idx;
+      const s = at(idx);
+      if (s) out.push({ tick: Number(s.tick), state: s.state });
+    }
+    return out;
+  };
+
   const frame = (): void => {
     const now = performance.now();
     const dt = lastTime ? Math.min(0.1, (now - lastTime) / 1000) : 0;
     lastTime = now;
+    let scopeBatch: SubFrameSample[] | undefined;
     if (running) {
       acc += tps * dt;
       let steps = Math.floor(acc);
@@ -159,8 +202,17 @@ export function runLoop(
         push(sim.snapshot());
       }
       cursor = live();
+      // Hand the scope every tick stepped this frame (downsampled to a bounded,
+      // evenly-spaced set that always includes the latest) so AC charts cleanly at
+      // any tps. Pure JS routing of snapshots already read — no extra wasm crossing.
+      // The last `steps` retained items are exactly those ticks (eviction only ever
+      // drops from the head, so the newest stay), giving the index range below.
+      if (steps > 0) {
+        scopeBatch = sampleSubFrame(Math.max(0, live() - steps + 1), live());
+      }
     }
-    show();
+    const snap = at(cursor);
+    if (snap) onFrame(snap, scopeBatch);
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);

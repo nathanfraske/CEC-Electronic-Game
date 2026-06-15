@@ -7,6 +7,7 @@
     runLoop,
     DT_SECONDS,
     type Snapshot,
+    type SubFrameSample,
     type PlaybackControls,
   } from "./sim/loop";
   import {
@@ -472,14 +473,19 @@
       // Paused by default: the player presses Run, or steps tick by tick.
       controls = runLoop(
         sim,
-        (snap: Snapshot) => {
+        (snap: Snapshot, scopeBatch?: SubFrameSample[]) => {
           // Attribute per-element current and per-net voltage to each component
           // so the glyphs animate with what is actually happening to them.
           const electrical: Map<number, ElectricalState> | undefined =
             netlist && snap.elementCurrents
               ? electricalMap(netlist, snap.state, snap.elementCurrents)
               : undefined;
-          b.update(snap, electrical, controls?.isRunning() ?? false);
+          b.update(
+            snap,
+            electrical,
+            controls?.isRunning() ?? false,
+            scopeBatch,
+          );
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             selElectrical = e;
