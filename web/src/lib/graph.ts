@@ -600,7 +600,12 @@ export function formatValue(value: number, unit: string): string {
     if (abs >= scale) {
       const v = value / scale;
       const s = v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v.toFixed(2);
-      return s.replace(/\.?0+$/, "") + " " + p + unit;
+      // Strip trailing zeros only *after a decimal point* ("4.70"->"4.7", "1.00"->"1",
+      // "50.0"->"50"); never from an integer mantissa — "470" must stay "470", not
+      // become "47" (the old `/\.?0+$/` ate integer zeros, showing 470 µF as "47 µF",
+      // 100 Ω as "1 Ω", 120 V as "12 V", …).
+      const trimmed = s.includes(".") ? s.replace(/\.?0+$/, "") : s;
+      return trimmed + " " + p + unit;
     }
   }
   return value.toExponential(1) + " " + unit;
