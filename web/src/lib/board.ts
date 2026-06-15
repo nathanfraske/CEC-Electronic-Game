@@ -66,6 +66,14 @@ const PIN_R = 4.5;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
+// Fixed integration step (s) — the determinism contract's dt. Display-only here
+// (ticks → seconds for the scope's time-window label); never feeds the sim.
+const DT_SECONDS = 2e-6;
+// Selectable scope time windows, in ticks: 0.48 ms / 4.8 ms / 48 ms / 0.48 s. The
+// first equals the original fixed window, so the default changes nothing; the
+// longer spans are *decimated* down to ~MAX_SAMPLES points so a low-frequency AC
+// cycle (which the short window can't fit) becomes visible without a huge buffer.
+const SCOPE_SPAN_TICKS = [240, 2400, 24000, 240000];
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
@@ -323,6 +331,8 @@ export class Board {
   private readonly nodeLabels = new Map<number, string>();
   private readonly nodeHidden = new Set<number>();
   private scopeExpanded = false;
+  // Index into SCOPE_SPAN_TICKS — the visible scope time window (decimated record).
+  private scopeSpanIdx = 0;
   // Net names per node from the netlist's net labels (e.g. node 3 → "VCC"): the
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
@@ -777,6 +787,22 @@ export class Board {
     this.scopeExpanded = !this.scopeExpanded;
     this.layoutScope();
     return this.scopeExpanded;
+  }
+
+  /** Advance the scope's visible time window to the next preset (wrapping) and clear
+   * the trace so it refills at the new decimation. Returns the new span's label. */
+  cycleScopeSpan(): string {
+    this.scopeSpanIdx = (this.scopeSpanIdx + 1) % SCOPE_SPAN_TICKS.length;
+    this.clearScope();
+    return this.scopeSpanLabel();
+  }
+
+  /** Human label for the current scope time window (e.g. "4.8 ms"). */
+  scopeSpanLabel(): string {
+    const s = SCOPE_SPAN_TICKS[this.scopeSpanIdx]! * DT_SECONDS;
+    if (s < 1e-3) return `${(s * 1e6).toFixed(0)} µs`;
+    if (s < 1) return `${(s * 1e3).toFixed(s * 1e3 < 10 ? 1 : 0)} ms`;
+    return `${s.toFixed(2)} s`;
   }
 
   /**
@@ -3171,10 +3197,17 @@ export class Board {
    * timeline jumped before it, e.g. a scrub-back or reset). */
   private pushScopeSample(tick: number, state: ArrayLike<number>): void {
     const last = this.scopeSamples[this.scopeSamples.length - 1];
-    if (!last || tick > last.tick) {
+    // Decimate: keep one point per `stride` ticks so a long span still fits in
+    // ~MAX_SAMPLES points. At the base span stride = 1, so this is exactly the old
+    // per-tick behaviour; wider spans skip the in-between ticks.
+    const stride = Math.max(
+      1,
+      Math.floor(SCOPE_SPAN_TICKS[this.scopeSpanIdx]! / MAX_SAMPLES),
+    );
+    if (!last || tick >= last.tick + stride) {
       this.scopeSamples.push({ tick, values: Array.from(state) });
       if (this.scopeSamples.length > MAX_SAMPLES) this.scopeSamples.shift();
-    } else if (last && tick < (this.scopeSamples[0]?.tick ?? 0)) {
+    } else if (tick < (this.scopeSamples[0]?.tick ?? 0)) {
       // Scrubbed before the retained window (or the run was reset): start over.
       this.scopeSamples = [{ tick, values: Array.from(state) }];
     }
@@ -3296,6 +3329,14 @@ export class Board {
       "t " + cur.tick,
       Math.min(cx + 3, r.x + r.width - 42),
       r.y + r.height - 12,
+    );
+    // The visible time window (decimated span), bottom-left, so a long window reads
+    // as deliberate rather than a stretched trace.
+    this.scopeLabel(
+      3,
+      "◄ " + this.scopeSpanLabel() + " ►",
+      r.x + padL,
+      y0 + ih + 2,
     );
 
     // Legend along the top: a coloured dot + (custom) name per visible node.

@@ -1074,6 +1074,10 @@
   function toggleScope(): void {
     scopeBig = board?.toggleScopeExpanded() ?? false;
   }
+  let scopeSpan = $state("480 µs");
+  function cycleSpan(): void {
+    scopeSpan = board?.cycleScopeSpan() ?? scopeSpan;
+  }
   function toggleNode(i: number, visible: boolean): void {
     nodeVisible[i] = visible;
     board?.setNodeHidden(i, !visible);
@@ -2027,14 +2031,24 @@
 
     <h3 class="sub-title nodes-head">
       <span>Nodes · {channels.length}</span>
-      <button
-        class="btn btn-ghost scope-expand"
-        onclick={toggleScope}
-        disabled={!ready}
-        title="Resize the scope on the board"
-      >
-        {scopeBig ? "Shrink scope" : "Expand scope"}
-      </button>
+      <span class="scope-ctl">
+        <button
+          class="btn btn-ghost scope-expand"
+          onclick={cycleSpan}
+          disabled={!ready}
+          title="Scope time window — click to cycle (decimated, so a full AC cycle fits)"
+        >
+          ⏱ {scopeSpan}
+        </button>
+        <button
+          class="btn btn-ghost scope-expand"
+          onclick={toggleScope}
+          disabled={!ready}
+          title="Resize the scope on the board"
+        >
+          {scopeBig ? "Shrink scope" : "Expand scope"}
+        </button>
+      </span>
     </h3>
     <ul class="chan-list scroll">
       {#each channels as v, i (i)}
@@ -2275,6 +2289,10 @@
     align-items: center;
     justify-content: space-between;
     gap: 8px;
+  }
+  .scope-ctl {
+    display: flex;
+    gap: 6px;
   }
   .scope-expand {
     font-size: 10px;
