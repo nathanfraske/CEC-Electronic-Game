@@ -124,27 +124,18 @@ mixed-rail interface cases). Decide direction after reading the doc.
   board + settings) + reload to a clean first-run; confirmed so it can't nuke a board
   by accident.~~
 
-### Absolute-beginner onboarding / first-run (owner-driven; brainstorm in flight)
-Design doc being written at **`docs/ui/onboarding-first-run.md`** (agent, 2026-06-15).
-Brief: get someone who knows NOTHING about electronics rolling — how do you wire
-things up, what am I looking at, what am I trying to read, the minimum mental model.
-**Owner add-ons to fold into the doc (2026-06-15):**
-- [ ] **Learn-as-you-explore, not a rail.** Concepts are introduced *as you go* /
-  contextually (triggered by what you do), but the player is **free to explore
-  whatever they want** at any time — progressive disclosure without a forced linear
-  tutorial. The hand-holding rides alongside free play, not in front of it.
-- [ ] **NO levels/tiers/picker — pull-based help in one open sandbox** (owner
-  correction 2026-06-15: a levels menu defeats the open sandbox). "Self-select" =
-  *what you pull, not what you pick*: the explanation layer is opt-in and
-  always-available, so a total beginner can have ALL of it explained the moment they
-  reach for it, and an EE just builds, never gated. Routing = the cold-open
-  "Show me / Let me build" fork (both land in the same sandbox) + a persistent
-  "Explain/?" handle that explains anything on demand + gentle, mutable first-
-  encounter cards. One `explainAsYouGo` mute flag is the only state; everything is
-  reachable for everyone always.
-- [ ] **Replayable / resumable onboarding.** They can run the onboarding (or any
-  guided bit) **again** if they get stuck, make a mistake, or want more help — it's
-  not a one-shot. A persistent "help / show me again" affordance + a reset path.
+### Absolute-beginner onboarding / first-run (owner-driven; MVP shipped)
+Design doc at **`docs/ui/onboarding-first-run.md`**. Pull-based discovery layer.
+- ~~**Learn-as-you-explore, not a rail** + **NO levels — pull-based, one mute** +
+  **replayable**: shipped as the MVP — `concepts.ts` (4 first-encounter cards:
+  source/ground/loop/reading) offered the moment the board shows each true (reactive
+  triggers on board state), deduped via queue + persisted `seenConcepts`; one
+  `explainAsYouGo` mute; an always-on **"?" Help handle** (mute / replay tips / re-show
+  intro); settings load+persist via `storage.ts`; cards hold off behind the cold open.~~
+- [ ] **Heavier guided pieces (deferred, §1–§3/§6):** cold-open auto-play of the
+  primer + the "Show me / Let me build" fork; the guided **first-build wiring
+  affordances** (pin-glow on the active step, next-edge ghost "from here → to there");
+  **bin-narrowing + pre-arm** for the first build; tie the cards to a Lab Notebook codex.
 
 ### Component info panel — frictionless trigger + pinout + construction cutaways (owner-greenlit, queued)
 Full design in **`docs/ui/component-info-panel.md`** (ideation, brainstormed

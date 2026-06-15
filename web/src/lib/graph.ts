@@ -90,6 +90,16 @@ export interface PinRef {
 export interface Junction {
   id: number;
   cell: Cell;
+  /**
+   * A deliberate *free wire-end* (a dangling endpoint, KiCad-style): a junction
+   * that terminates a single wire on purpose, e.g. the cut left behind when one
+   * segment of a multi-bend wire is deleted ({@link BoardGraph.deleteWireSegment}).
+   * Unlike an ordinary junction it earns its keep with only one incident wire, so
+   * {@link BoardGraph.pruneJunctions} does not sweep it (and its lone wire) away.
+   * Absent (falsy) for the usual ≥2-wire tie points. It still collapses normally
+   * once its wire is removed (incidence 0 ⇒ pruned).
+   */
+  free?: boolean;
 }
 
 /** Address of a junction, the wire-endpoint counterpart to {@link PinRef}. */
@@ -775,9 +785,17 @@ export class BoardGraph {
     return undefined;
   }
 
-  /** Create a free junction at a grid cell and return it. */
-  addJunction(cell: Cell): Junction {
-    const j: Junction = { id: this.nextJunctionId++, cell: { ...cell } };
+  /**
+   * Create a junction at a grid cell and return it. `free` marks it a deliberate
+   * dangling wire-end (see {@link Junction.free}) that survives pruning with a
+   * single incident wire; the default is an ordinary tie point.
+   */
+  addJunction(cell: Cell, free = false): Junction {
+    const j: Junction = {
+      id: this.nextJunctionId++,
+      cell: { ...cell },
+      ...(free ? { free: true } : {}),
+    };
     this.junctions.set(j.id, j);
     return j;
   }
@@ -834,6 +852,69 @@ export class BoardGraph {
   }
 
   /**
+   * Delete a single straight *leg* of a wire (a multi-bend run), leaving the rest
+   * intact — the model side of "Delete removes only the clicked segment, not the
+   * whole pin-to-pin wire". The run reads `from → wp0 → … → wp(n-1) → to`, so it has
+   * `n + 1` legs; `legIndex` (0-based, in route order) selects the one to drop.
+   *
+   * The two flanking runs survive as their own wires, each terminating in a
+   * **free** junction ({@link Junction.free}) placed at the deleted leg's boundary
+   * (a former bend, or the kept side of a pin). Those cut junctions persist with a
+   * single wire so the remaining run isn't swept away by {@link pruneJunctions}.
+   * When the deleted leg touches an endpoint (the first or last leg) that side has
+   * no flanking run — the wire simply retreats from that pin/junction. A straight
+   * wire with no bends has a single leg, so deleting it removes the whole wire (the
+   * caller falls back here when there is nothing finer to cut). Out-of-range indices
+   * are treated the same way. Pieces are created before the original is removed so an
+   * endpoint shared with the kept side never momentarily drops below its incidence.
+   */
+  deleteWireSegment(wireId: number, legIndex: number): void {
+    const w = this.wires.get(wireId);
+    if (!w) return;
+    const wps = (w.waypoints ?? []).map((c) => ({ ...c }));
+    const legCount = wps.length + 1;
+    // No interior bends, or an index with nothing finer to cut: drop the whole wire.
+    if (wps.length === 0 || legIndex < 0 || legIndex >= legCount) {
+      this.removeWire(wireId);
+      return;
+    }
+    // Leg `k` joins anchor k and k+1 of [from, wp0, …, wp(n-1), to]. The leg's start
+    // anchor is `from` when k===0 else wp(k-1); its end anchor is `to` when k===n
+    // else wp(k). A flanking run exists only on a side whose boundary is a waypoint.
+    const k = legIndex;
+    const n = wps.length;
+    // Left run: from `from` up to (and terminating at) a free junction at wp(k-1).
+    if (k > 0) {
+      const jl = this.addJunction(wps[k - 1]!, true);
+      const leftWps = wps.slice(0, k - 1); // bends strictly before the cut
+      const left: Wire = {
+        id: this.nextWireId++,
+        from: { ...w.from },
+        to: { junctionId: jl.id },
+        ...(leftWps.length > 0 ? { waypoints: leftWps } : {}),
+      };
+      this.wires.set(left.id, left);
+    }
+    // Right run: from a free junction at wp(k) through the later bends to `to`.
+    if (k < n) {
+      const jr = this.addJunction(wps[k]!, true);
+      const rightWps = wps.slice(k + 1); // bends strictly after the cut
+      const right: Wire = {
+        id: this.nextWireId++,
+        from: { junctionId: jr.id },
+        to: { ...w.to },
+        ...(rightWps.length > 0 ? { waypoints: rightWps } : {}),
+      };
+      this.wires.set(right.id, right);
+    }
+    // Original gone last so a shared kept-side endpoint keeps its incidence
+    // throughout. removeWire prunes, but the new cut junctions are `free`, so they
+    // (and their flanking runs) stay; an endpoint that lost its only wire collapses
+    // exactly as a normal delete would.
+    this.removeWire(wireId);
+  }
+
+  /**
    * Remove junctions that no longer earn their keep. A junction needs at least
    * two incident wire-ends to tie nets together; with one it is a dangling stub
    * (drop the junction and that lone wire), with none just drop the junction.
@@ -853,6 +934,10 @@ export class BoardGraph {
         // A junction carrying a net label earns its keep even with <2 wires: the
         // label is a real connection point (it can alias to another net by name).
         if (this.junctionHasLabel(j.id)) continue;
+        // A deliberate free wire-end (e.g. a segment-delete cut) also stays while it
+        // still terminates a wire; only once its wire is gone (incidence 0) does it
+        // collapse like any other orphan.
+        if (j.free && incident.length >= 1) continue;
         if (incident.length >= 2) continue;
         if (incident.length === 1) {
           // Lone wire ending on the junction is pointless — drop it too.
@@ -970,6 +1055,7 @@ export class BoardGraph {
       junctions: [...this.junctions.values()].map((j) => ({
         id: j.id,
         cell: { ...j.cell },
+        ...(j.free ? { free: true } : {}),
       })),
       netLabels: [...this.netLabels.values()].map((l) => ({
         id: l.id,
@@ -994,7 +1080,11 @@ export class BoardGraph {
       this.components.set(c.id, { ...c, cell: { ...c.cell } });
     }
     for (const j of s.junctions ?? []) {
-      this.junctions.set(j.id, { id: j.id, cell: { ...j.cell } });
+      this.junctions.set(j.id, {
+        id: j.id,
+        cell: { ...j.cell },
+        ...(j.free ? { free: true } : {}),
+      });
     }
     // Net labels are absent in older snapshots (treated as none), exactly like
     // the junction legacy handling above.

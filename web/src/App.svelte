@@ -41,7 +41,15 @@
     categoryOf,
     type ExampleSpec,
   } from "./lib/examples";
-  import { loadBoard, makeDebouncedBoardSaver, resetAll } from "./lib/storage";
+  import {
+    loadBoard,
+    makeDebouncedBoardSaver,
+    resetAll,
+    loadSettings,
+    saveSettings,
+  } from "./lib/storage";
+  import { CONCEPTS, type ConceptCard } from "./lib/concepts";
+  import { SvelteSet } from "svelte/reactivity";
   import {
     buildNetlist,
     electricalMap,
@@ -389,6 +397,19 @@
   let demoOn = $state(true);
   let demoExRef: ExampleSpec | null = null;
   let showIntro = $state(true);
+  // --- Onboarding: pull-based, no levels (docs/ui/onboarding-first-run.md §10). The
+  // single preference is `explainAsYouGo` (a mute, not a level); `seenConcepts` records
+  // which first-encounter cards have fired so each shows once. Loaded from settings on
+  // mount; the help handle can replay them. `concept` is the card on screen now.
+  let explainAsYouGo = $state(true);
+  const seenConcepts = new SvelteSet<string>();
+  let concept = $state<ConceptCard | null>(null);
+  let conceptQueue = $state<string[]>([]);
+  let helpOpen = $state(false);
+  // Derived board facts the concept triggers watch (set in onChange / rebuildNetlist).
+  let hasSource = $state(false);
+  let hasGround = $state(false);
+  let solvable = $state(false);
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
@@ -442,6 +463,91 @@
     const kind = selPart?.kind;
     if (kind) diagramMode = hasDetail(kind) ? "reality" : "schematic";
   });
+
+  /** Persist just the onboarding slice of settings (mute + which cards have fired). */
+  function persistSettings(): void {
+    saveSettings({
+      v: 1,
+      seenIntro: !showIntro,
+      explainAsYouGo,
+      seenConcepts: [...seenConcepts],
+    });
+  }
+  /** Offer a first-encounter concept card (deduped): ignored when muted or already
+   * seen/queued; otherwise it joins the queue and is shown one at a time. */
+  function offerConcept(id: string): void {
+    if (!explainAsYouGo) return;
+    // Don't compete with the cold-open intro; the as-you-go cards begin once it's
+    // dismissed (i.e. the player has engaged), then follow what they do.
+    if (showIntro) return;
+    if (
+      seenConcepts.has(id) ||
+      conceptQueue.includes(id) ||
+      concept?.id === id
+    ) {
+      return;
+    }
+    if (!CONCEPTS[id]) return;
+    conceptQueue = [...conceptQueue, id];
+    pumpConcepts();
+  }
+  /** Show the next queued card if none is up; marks it seen (so it fires once). */
+  function pumpConcepts(): void {
+    if (concept || conceptQueue.length === 0) return;
+    const [next, ...rest] = conceptQueue;
+    conceptQueue = rest;
+    concept = CONCEPTS[next!] ?? null;
+    if (concept) {
+      seenConcepts.add(concept.id);
+      persistSettings();
+    }
+  }
+  function dismissConcept(): void {
+    concept = null;
+    pumpConcepts();
+  }
+  /** The mute. Off silences the as-you-go cards (and clears the queue); on re-enables. */
+  function setExplain(on: boolean): void {
+    explainAsYouGo = on;
+    if (!on) {
+      conceptQueue = [];
+      concept = null;
+    }
+    persistSettings();
+  }
+  /** Replay: forget which cards have fired so they offer again as you explore. */
+  function replayConcepts(): void {
+    seenConcepts.clear();
+    conceptQueue = [];
+    concept = null;
+    helpOpen = false;
+    persistSettings();
+  }
+
+  // First-encounter triggers — each fires its card the first moment the board can
+  // show it true: a source placed, a ground placed, a live complete loop, a part read.
+  $effect(() => {
+    if (hasSource) offerConcept("source");
+  });
+  $effect(() => {
+    if (hasGround) offerConcept("ground");
+  });
+  $effect(() => {
+    if (running && solvable && hasSource) offerConcept("loop");
+  });
+  $effect(() => {
+    if (selPart && solvable) offerConcept("reading");
+  });
+  // Persist "intro seen" the first time the cold-open banner is dismissed (by any
+  // path), so it doesn't reappear every refresh.
+  let introPersisted = false;
+  $effect(() => {
+    if (!showIntro && !introPersisted) {
+      introPersisted = true;
+      persistSettings();
+    }
+  });
+
   // Calculator inputs, seeded from each calc's presets.
   const initialCalc: Record<string, Record<string, number>> = {};
   for (const c of CALCS) {
@@ -662,6 +768,9 @@
       let netlistSig = "";
       const rebuildNetlist = (graph: BoardGraph): void => {
         const nl = buildNetlist(graph);
+        // Onboarding: a non-null netlist means the circuit forms a solvable loop —
+        // the trigger for the "a circuit is a loop" / "reading a part" concept cards.
+        solvable = nl !== null;
         circuitWarning =
           nl && nl.floatingSources.length > 0
             ? "A current source has no return path — its current can't flow, so this reading isn't meaningful. Complete the loop back to the source."
@@ -718,6 +827,16 @@
           partCount = graph.components.size;
           wireCount = graph.wires.size;
           canUndo = b.canUndo();
+          // Onboarding facts: has the player placed a source / a ground yet? (Drives
+          // the first-encounter concept cards via their $effect triggers.)
+          let src = false;
+          let gnd = false;
+          for (const c of graph.components.values()) {
+            if (c.kind === "V" || c.kind === "AC" || c.kind === "I") src = true;
+            else if (c.kind === "GND") gnd = true;
+          }
+          hasSource = src;
+          hasGround = gnd;
           rebuildNetlist(graph);
           advanceBuild(graph);
           // Persist the current board so a refresh restores it (debounced).
@@ -815,6 +934,15 @@
       // Restore the last saved board across refreshes; only fall back to the primer
       // for a genuine first visit (no saved board). A saved-but-empty board still
       // counts as the player's (they cleared it on purpose).
+      // Restore onboarding preferences: the explain-as-you-go mute and which concept
+      // cards have already fired (so each shows once across refreshes), plus whether
+      // the cold-open intro has been seen.
+      const settings = loadSettings();
+      explainAsYouGo = settings.explainAsYouGo ?? true;
+      seenConcepts.clear();
+      for (const id of settings.seenConcepts ?? []) seenConcepts.add(id);
+      showIntro = !settings.seenIntro;
+
       const saved = loadBoard();
       if (saved) {
         board.loadGraph(saved);
@@ -1640,6 +1768,71 @@
           >
         </div>
       {/if}
+
+      <!-- First-encounter concept card (pull-based onboarding): a one-clause "what
+           you just caused," dismissible, never blocking, muted by Explain-as-I-go. -->
+      {#if concept}
+        <div class="concept-card" role="status">
+          <div class="concept-head">
+            <span class="concept-tag">Tip</span>
+            <span class="concept-title">{concept.title}</span>
+            <button
+              class="intro-x"
+              onclick={dismissConcept}
+              aria-label="Dismiss tip">×</button
+            >
+          </div>
+          <p class="concept-body">{concept.body}</p>
+          <div class="concept-foot">
+            <button class="btn btn-accent concept-got" onclick={dismissConcept}>
+              Got it
+            </button>
+            <button
+              class="concept-mute"
+              onclick={() => setExplain(false)}
+              title="Stop offering these as-you-go tips (re-enable from ? Help)"
+            >
+              Don't explain as I go
+            </button>
+          </div>
+        </div>
+      {/if}
+
+      <!-- Always-available Help handle: the single mute, replay, and re-show-intro,
+           so a novice can pull more help and an expert can silence it. -->
+      <div class="help-handle">
+        <button
+          class="help-btn"
+          onclick={() => (helpOpen = !helpOpen)}
+          aria-label="Help and tips"
+          title="Help &amp; tips">?</button
+        >
+        {#if helpOpen}
+          <div class="help-menu">
+            <label class="help-row">
+              <input
+                type="checkbox"
+                checked={explainAsYouGo}
+                onchange={(e) => setExplain(e.currentTarget.checked)}
+              />
+              Explain things as I go
+            </label>
+            <button
+              class="help-row-btn"
+              onclick={() => {
+                replayConcepts();
+              }}>↺ Replay the tips</button
+            >
+            <button
+              class="help-row-btn"
+              onclick={() => {
+                showIntro = true;
+                helpOpen = false;
+              }}>Show the intro again</button
+            >
+          </div>
+        {/if}
+      </div>
 
       {#if popPos && selPart && hasValue(selPart.kind)}
         {@const kind = selPart.kind}
@@ -3174,6 +3367,134 @@
   .intro-banner strong {
     color: var(--text);
     font-weight: 600;
+  }
+  /* First-encounter concept card: a small "what you just caused" toast, top-centre. */
+  .concept-card {
+    position: absolute;
+    top: 52px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(380px, 70%);
+    padding: 12px 14px;
+    background: oklch(0.165 0.028 285 / 0.96);
+    border: 1px solid var(--accent-line);
+    border-radius: 5px;
+    box-shadow: 0 8px 28px -10px var(--accent);
+    backdrop-filter: blur(3px);
+    z-index: 6;
+  }
+  .concept-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .concept-tag {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 2px;
+    padding: 1px 5px;
+  }
+  .concept-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.03em;
+    color: var(--text);
+    flex: 1;
+  }
+  .concept-body {
+    margin: 0 0 10px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .concept-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .concept-got {
+    padding: 4px 14px;
+    font-size: 12px;
+  }
+  .concept-mute {
+    background: none;
+    border: none;
+    color: var(--faint);
+    font-size: 11px;
+    cursor: pointer;
+    text-decoration: underline;
+    padding: 0;
+  }
+  .concept-mute:hover {
+    color: var(--dim);
+  }
+  /* Always-available Help handle (the single mute + replay), board top-left. */
+  .help-handle {
+    position: absolute;
+    left: 10px;
+    top: 10px;
+    z-index: 6;
+  }
+  .help-btn {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 1px solid var(--border-bright);
+    background: oklch(0.165 0.028 285 / 0.9);
+    color: var(--dim);
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    line-height: 1;
+  }
+  .help-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent-line);
+  }
+  .help-menu {
+    position: absolute;
+    top: 32px;
+    left: 0;
+    width: 200px;
+    background: oklch(0.165 0.028 285 / 0.97);
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    box-shadow: 0 8px 24px -10px #000;
+  }
+  .help-row {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 12px;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .help-row-btn {
+    text-align: left;
+    background: none;
+    border: none;
+    color: var(--dim);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 3px 2px;
+    border-radius: 3px;
+  }
+  .help-row-btn:hover {
+    color: var(--text);
+    background: var(--surface-2);
   }
   /* Incomplete-circuit warning: an amber bar, top-centre over the board. */
   .circuit-warn {
