@@ -38,14 +38,20 @@ propagation delay, no persistent state, golden `0xeaac376499e4fa24` unchanged,
 6 new tests (78 total). Also fixed a latent op-amp per-tick current readout
 omission (readout-only, not hashed) while in those match blocks.
 
-**Next: the gate WEB wiring** — placeable gate parts (AND/OR/NAND/NOR/XOR/NOT,
-each → `ELEM_GATE` with its `aux` code; `value`=rail), glyphs (schematic boolean
-symbols + factory decider/sorter), partInfo (truth table + threshold + one-tick
-delay), a "Logic & ICs" example set (gate truth-table demo, a half-adder from
-XOR+AND, an SR/ring blink). NOT/BUF are 2-pin (c=0, ignored); 2-input gates 3-pin.
-Then D flip-flop → counter/shift → 555 → linear regulator. Remaining discretes
-(fuse, thermistor, LDR, 7-seg, relay/transformer w/ a 4th terminal `d`) are lower
-priority than the IC tier.
+**Gate WEB wiring has LANDED too** — placeable AND/OR/NAND/NOR/XOR/NOT parts (each
+→ `ELEM_GATE` with its `aux` code via `GATE_AUX`; `value`=rail; 17 added to
+`THREE_PIN_TYPES`), distinct boolean-symbol schematic glyphs + a Factorio
+decider/sorter, partInfo (truth table + half-rail threshold + one-tick delay), and
+a new **"Logic & ICs"** example set: inverter→LED, AND interlock, and an XOR+AND
+**half-adder** (1+1=10). Replaced the non-simulated `"&"` placeholder.
+
+**Next: the next IC rungs** — D flip-flop (clocked 1-bit state; edge-detect on the
+tick grid — the first sequential element, needs one stored bit) → counter/shift
+(bus ports) → 555 → linear regulator. Then the deferred discretes (fuse, thermistor,
+LDR, 7-seg). **Transformer + relay** need a **4th terminal `d`** boundary bump + a
+coupled-inductor model — see the two owner transformer requests in TODOS (tunable
+turns-ratio full-bridge rectifier; and building a transformer from two coils + a
+placeable magnetic-core coupling element). Owner: gates first, then transformers.
 
 ---
 

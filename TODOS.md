@@ -8,6 +8,44 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Owner requests — transformer phase (deferred; needs 4th terminal `d` + coupled-inductor model)
+- [ ] **Full-bridge rectifier example with a tunable turns ratio.** Centerpiece of
+  the transformer example set: a full-bridge rectifier fed from the transformer
+  secondary, with the **turns ratio (N₂/N₁) as the tunable knob** so the player
+  watches the turns-per-side step the AC up/down before the bridge rectifies it
+  (step-down → bridge, DC output tracks the ratio). (Owner idea, 2026-06-15.)
+- [ ] **Build-the-transformer-from-primitives example.** Even cooler (owner,
+  2026-06-15): an example where you place **two coils (inductors) + a magnetic
+  core** and watch the coupling come alive — i.e. model the **magnetic core as a
+  placeable coupling element** that links two nearby/wired inductors via mutual
+  inductance M = k·√(L₁L₂), rather than (or in addition to) a monolithic
+  transformer part. This argues for a **modular coupling architecture** in the
+  transformer design: a core element that couples inductors is more Factorio-ish
+  and more teachable than a sealed 4-pin transformer. Scope it when designing the
+  4th-terminal/coupled-inductor lift. Owner: **finish logic gates first, then
+  transformers.**
+
+### IC ladder — logic gate (first behavioral digital IC)
+- ~~**sim-core logic gate** (`ELEM_GATE = 17`, #51): Tier-A behavioral driver,
+  a=OUT/b=IN1/c=IN2, `value` = logic-high rail, `aux` = function code (0 AND, 1 OR,
+  2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF). Tick-pure boolean of the committed
+  previous-tick inputs thresholded at half-rail; drives OUT toward 0/rail through
+  `GATE_GOUT` (a constant Thévenin stamp = the switch's shape) in all 4 assembly
+  sites + 4 readouts; one tick of propagation delay, no persistent state, golden
+  unchanged. Also restored the op-amp's per-tick current readout.~~
+- ~~**GMIN floor on gate inputs** (#52): a floating/undriven gate input was a
+  singular row; floored each sensed input to ground with `GMIN` → non-singular,
+  reads logic low. Golden unchanged; 79 tests.~~
+- ~~**gate WEB wiring:** placeable AND/OR/NAND/NOR/XOR/NOT parts (each → type 17 +
+  its `aux` code; `value` = rail, half-rail threshold), boolean-symbol schematic
+  glyphs + Factorio decider/sorter, partInfo (truth table + threshold + 1-tick
+  delay), and a "Logic & ICs" example set (inverter→LED, AND interlock, XOR+AND
+  half-adder). Replaced the old non-simulated "&" placeholder.~~
+- [ ] **Next IC rungs:** D flip-flop (clocked 1-bit state, edge detect on the tick
+  grid) → counter/shift (bus ports) → 555 → linear regulator. Then the deferred
+  discretes (fuse/thermistor/LDR/7-seg) and the 4th-terminal parts (relay,
+  transformer — see the owner transformer requests above).
+
 ### Design ideation (no code) — ground returns + progression; MCU decision
 - ~~**`docs/game-ground-returns.md`** — tiered grounding ladder G0 ideal-star → G1 lumped return R+L → G2 paintable ground-zone (the unlocked escape hatch) → G3 loop-area/EMI (integer shoelace × di/dt, deterministic) → G4 shared-ground noise budget; rejects full multi-layer PCB. Grounding is a **bonus/multiplier axis, not pass/fail**; violations located+explained; EMI scalar stays out of the golden.~~
 - ~~**`docs/game-progression.md`** — 9-era tech-tree spine gating the ~8 sim primitives (not parts individually); unlock via credits + competency exams + discovery; the contract's **judgement part = a placeable acceptance fixture** whose pins are the harness. Exploration rewards: **Lab Notebook** codex (first time you cause a phenomenon), **Eureka boosts** (doing X discounts X's gate), **autopsy-for-Lux** (analyze a blown part), **Lux-vs-Credits** (deepen vs widen — a tinkerer can climb without shipping).~~

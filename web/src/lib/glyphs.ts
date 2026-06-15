@@ -1034,6 +1034,116 @@ function drawOA(g: Graphics, o: GlyphOpts): void {
   flow(g, apexX, midY, out.x, out.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// --- Logic gates (behavioral digital ICs) -------------------------------------
+// Pins are ordered Y, A, B: pin 0 = output (right), pin 1 = input A, pin 2 = input
+// B (absent for the inverter). The body draws the distinctive boolean symbol — AND
+// is a flat-backed "D", OR/XOR a curved shield, NOT a triangle — with an inversion
+// bubble on the output for NAND/NOR/NOT and the extra back-arc for XOR.
+// `electrical.current` is the output drive current: its magnitude lights the body
+// and the output flow belt, so a gate driving a load visibly works (a gate feeding
+// another gate's high-impedance input draws ~0 and idles quietly — which is
+// correct). The boolean shape is the identity; the live logic levels read on the
+// scope.
+type GateShape = "and" | "or" | "not";
+
+function gateSchematic(
+  g: Graphics,
+  o: GlyphOpts,
+  shape: GateShape,
+  inverted: boolean,
+  xor: boolean,
+): void {
+  const out = o.pins[0];
+  const inA = o.pins[1];
+  if (!out || !inA) return;
+  const inB = o.pins[2]; // undefined for the inverter (single input)
+  const midY = inB ? (inA.y + inB.y) / 2 : inA.y;
+  const topY = inB ? Math.min(inA.y, inB.y) : midY - 12;
+  const botY = inB ? Math.max(inA.y, inB.y) : midY + 12;
+  const backX = Math.min(inA.x, inB?.x ?? inA.x) + 9;
+  const tipX = out.x - (inverted ? 12 : 7); // leave room for the inversion bubble
+  const midX = (backX + tipX) / 2;
+  const col = o.color;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Input + output leads. For XOR the leads reach the inner body, crossing the
+  // outer back-arc just as a real XOR symbol's do.
+  g.moveTo(inA.x, inA.y).lineTo(backX, inA.y);
+  if (inB) g.moveTo(inB.x, inB.y).lineTo(backX, inB.y);
+  g.moveTo(tipX, midY).lineTo(out.x, out.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The body outline, as a closed path (drawn twice — fill then stroke).
+  const body = (gg: Graphics): void => {
+    if (shape === "not") {
+      gg.moveTo(backX, topY).lineTo(tipX, midY).lineTo(backX, botY).closePath();
+    } else if (shape === "and") {
+      // Flat vertical back, straight top/bottom, a rounded front (the "D").
+      gg.moveTo(backX, botY)
+        .lineTo(backX, topY)
+        .lineTo(midX, topY)
+        .quadraticCurveTo(tipX, topY, tipX, midY)
+        .quadraticCurveTo(tipX, botY, midX, botY)
+        .lineTo(backX, botY)
+        .closePath();
+    } else {
+      // OR/XOR: a concave back bulging into the body, two sweeps to a front point.
+      gg.moveTo(backX, topY)
+        .quadraticCurveTo(backX + 9, midY, backX, botY)
+        .quadraticCurveTo(midX, botY, tipX, midY)
+        .quadraticCurveTo(midX, topY, backX, topY)
+        .closePath();
+    }
+  };
+  body(g);
+  g.fill({ color: col, alpha: 0.12 + 0.16 * drive });
+  body(g);
+  g.stroke({ width: 2.2, color: col, alpha: 0.95 });
+
+  // XOR's extra back-arc, a parallel curve just behind the body's concave back.
+  if (xor) {
+    g.moveTo(backX - 5, topY)
+      .quadraticCurveTo(backX + 4, midY, backX - 5, botY)
+      .stroke({ width: 2, color: col, alpha: 0.9 });
+  }
+
+  // The inversion bubble at the output tip (NAND / NOR / NOT).
+  if (inverted) {
+    g.circle(tipX + 4, midY, 3.2).stroke({ width: 2, color: col, alpha: 0.95 });
+  }
+
+  // Output drive belt: flowing dots along the output lead, signed by the current.
+  flow(
+    g,
+    tipX + (inverted ? 8 : 0),
+    midY,
+    out.x,
+    out.y,
+    o.electrical.current,
+    o.phase,
+    0x46d2e6,
+  );
+}
+
+function drawAND(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "and", false, false);
+}
+function drawOR(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "or", false, false);
+}
+function drawNAND(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "and", true, false);
+}
+function drawNOR(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "or", true, false);
+}
+function drawXOR(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "or", false, true);
+}
+function drawNOT(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "not", true, false);
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -1733,6 +1843,104 @@ function drawFOA(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + hw, my, out.x, my, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// The logic gate as a Factorio decider/sorter: input belts arrive on the left, a
+// threshold "decider" body weighs them, and one decided belt leaves on the right.
+// The output belt's width + flow track |Iout| (lit when driving a load). The left
+// intake wall is straight for AND, concave for OR/XOR; an inversion shows as a
+// bubble on the output throat, XOR as a doubled intake.
+function gateFactory(
+  g: Graphics,
+  o: GlyphOpts,
+  shape: GateShape,
+  inverted: boolean,
+  xor: boolean,
+): void {
+  const out = o.pins[0];
+  const inA = o.pins[1];
+  if (!out || !inA) return;
+  const inB = o.pins[2];
+  const midY = inB ? (inA.y + inB.y) / 2 : inA.y;
+  const leftX = Math.min(inA.x, inB?.x ?? inA.x) + 9;
+  const hw = 11;
+  const mx = leftX + hw;
+  const hh = (inB ? Math.abs(inA.y - midY) : 9) + 3;
+  const col = o.color;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+  const throatX = mx + hw + (inverted ? 8 : 0);
+
+  // Input probe leads in, output throat out.
+  g.moveTo(inA.x, inA.y).lineTo(leftX, inA.y);
+  if (inB) g.moveTo(inB.x, inB.y).lineTo(leftX, inB.y);
+  g.moveTo(throatX, midY).lineTo(out.x, out.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The decider body.
+  fBox(g, mx, midY, hw, hh, col);
+
+  // Intake wall: straight for AND, concave for OR/XOR (and the inverter). Doubled
+  // for XOR (the "exclusive" extra gate).
+  const drawIntake = (xoff: number): void => {
+    if (shape === "and") {
+      g.moveTo(leftX + xoff, midY - hh + 3).lineTo(leftX + xoff, midY + hh - 3);
+    } else {
+      g.moveTo(leftX + xoff, midY - hh + 3).quadraticCurveTo(
+        leftX + xoff + 4,
+        midY,
+        leftX + xoff,
+        midY + hh - 3,
+      );
+    }
+    g.stroke({ width: 1.4, color: col, alpha: 0.55 });
+  };
+  drawIntake(1);
+  if (xor) drawIntake(-3);
+
+  // Sparse input probe dots (sensing, not conveying).
+  for (const p of inB ? [inA, inB] : [inA]) {
+    g.circle((p.x + leftX) / 2, p.y, 1.2).fill({ color: col, alpha: 0.45 });
+  }
+
+  // The decided output belt: width grows with the drive.
+  const beltW = 2 + 8 * drive;
+  if (drive > 0.02) {
+    g.roundRect(mx + hw, midY - beltW / 2, throatX - (mx + hw), beltW, 2).fill({
+      color: col,
+      alpha: 0.22 + 0.3 * drive,
+    });
+  }
+
+  // Inversion bubble on the output throat (NAND / NOR / NOT).
+  if (inverted) {
+    g.circle(mx + hw + 4, midY, 3).stroke({
+      width: 1.8,
+      color: col,
+      alpha: 0.9,
+    });
+  }
+
+  // The decided output flow, signed by Iout.
+  flow(g, throatX, midY, out.x, midY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawFAND(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "and", false, false);
+}
+function drawFOR(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "or", false, false);
+}
+function drawFNAND(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "and", true, false);
+}
+function drawFNOR(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "or", true, false);
+}
+function drawFXOR(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "or", false, true);
+}
+function drawFNOT(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "not", true, false);
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -1772,6 +1980,12 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   Q: drawQ,
   QP: drawQP,
   OA: drawOA,
+  AND: drawAND,
+  OR: drawOR,
+  NAND: drawNAND,
+  NOR: drawNOR,
+  XOR: drawXOR,
+  NOT: drawNOT,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -1795,6 +2009,12 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   Q: drawFQ,
   QP: drawFQP,
   OA: drawFOA,
+  AND: drawFAND,
+  OR: drawFOR,
+  NAND: drawFNAND,
+  NOR: drawFNOR,
+  XOR: drawFXOR,
+  NOT: drawFNOT,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */

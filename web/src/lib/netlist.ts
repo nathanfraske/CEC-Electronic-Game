@@ -67,6 +67,17 @@ const TYPE_OF: Record<string, number> = {
   // non-inverting input); the output current it sources at `a` is `GOUT·(Vtarget −
   // V(a))`, driving V(a) toward `Vsat·tanh(GAIN·(V(c)−V(b))/Vsat)` (`value` = Vsat).
   OA: 15, // op-amp (nonlinear; output swings within ±Vsat = value)
+  // Logic gates: all share solver type 17 (the behavioral digital gate); the
+  // boolean function is selected per part by the `aux` code (see GATE_AUX). Pins
+  // are ordered OUT, IN1, IN2 (pin 0 → a = output, 1 → b = input A, 2 → c = input
+  // B). `value` is the logic-high rail (volts). The two-input gates are 3-pin (so
+  // their IN2 stamps into `c`); the inverter NOT is 2-pin (c = ground, ignored).
+  AND: 17,
+  OR: 17,
+  NAND: 17,
+  NOR: 17,
+  XOR: 17,
+  NOT: 17,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -78,7 +89,22 @@ const TYPE_OF: Record<string, number> = {
  * pin 2 → c, and that pin's node is the one stamped into the `c` array; every
  * two-terminal element leaves c = 0 (ground), where the core ignores it.
  */
-const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15]);
+const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
+
+/**
+ * Logic-gate boolean function codes, keyed by part tag, written into each gate's
+ * second scalar `aux`. Mirrors `gate_logic` in `crates/sim-core/src/lib.rs`:
+ * 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF. Every gate part maps to
+ * solver type 17; this code is what makes one an AND and another an XOR.
+ */
+const GATE_AUX: Record<string, number> = {
+  AND: 0,
+  OR: 1,
+  NAND: 2,
+  NOR: 3,
+  XOR: 4,
+  NOT: 6,
+};
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
@@ -327,10 +353,12 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
         : 0;
-    // The second scalar: an AC source emits its peak amplitude (volts), defaulting
-    // to 5 V when a (legacy) source carries none; every other kind emits 0, which
-    // the core ignores. Kept parallel to `values`.
-    const aux = c.kind === "AC" ? (c.amp ?? AC_DEFAULT_AMP) : 0;
+    // The second scalar: an AC source emits its peak amplitude (volts, defaulting
+    // to 5 V when a legacy source carries none); a logic gate emits its boolean
+    // function code (GATE_AUX); every other kind emits 0, which the core ignores.
+    // Kept parallel to `values`.
+    const aux =
+      c.kind === "AC" ? (c.amp ?? AC_DEFAULT_AMP) : (GATE_AUX[c.kind] ?? 0);
     const idx = types.length;
     types.push(t);
     aArr.push(na);
