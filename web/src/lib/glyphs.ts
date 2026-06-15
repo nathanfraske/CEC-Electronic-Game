@@ -41,6 +41,13 @@ export interface GlyphOpts {
    * Optional, so the placement ghost (which has no live value) can omit it.
    */
   value?: number;
+  /**
+   * The potentiometer's wiper position in `[0, 1]` ({@link Component.wiper}), so its
+   * glyph can draw the wiper tap where it actually sits and slide it as the player
+   * turns the knob. Only the POT reads it; other glyphs ignore it. Optional (the
+   * placement ghost omits it → a centred wiper).
+   */
+  wiper?: number;
 }
 
 // Saturating normalize: maps a magnitude to 0..1 with a soft knee at `scale`.
@@ -1213,6 +1220,62 @@ function drawTR(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// --- Potentiometer (variable resistor with a movable wiper) --------------------
+// Pins ordered A, B, W: the two track ends (A left, B right) and the wiper W below.
+// The resistive track runs A→B; the wiper arrow taps it at `o.wiper` (0 = A end,
+// 1 = B end), and slides as the player turns the knob. `electrical.current` is the
+// A→W leg current (drives the flow belt + heat halo); `value` is the total
+// resistance.
+function drawPOT(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  const w = o.pins[2];
+  if (!a || !b || !w) return;
+  const x0 = a.x + 8;
+  const x1 = b.x - 8;
+  const amp = 6;
+  const trackY = a.y;
+  const t = Math.min(1, Math.max(0, o.wiper ?? 0.5));
+  const heat = norm(o.electrical.current, CUR_SCALE);
+
+  if (heat > 0.03) {
+    g.roundRect(x0 - 2, trackY - amp - 4, x1 - x0 + 4, 2 * amp + 8, 5).fill({
+      color: 0xe0533a,
+      alpha: 0.16 * heat,
+    });
+  }
+  // End leads.
+  g.moveTo(a.x, a.y).lineTo(x0, trackY);
+  g.moveTo(x1, trackY).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // Zigzag track A→B.
+  const segs = 6;
+  g.moveTo(x0, trackY);
+  for (let i = 0; i < segs; i++) {
+    const x = x0 + ((i + 0.5) / segs) * (x1 - x0);
+    const y = trackY + (i % 2 === 0 ? -amp : amp);
+    g.lineTo(x, y);
+  }
+  g.lineTo(x1, trackY);
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+
+  // Wiper: a lead up from W that taps the track at the wiper position, capped with
+  // an arrowhead pointing at the track. It slides horizontally as `t` changes.
+  const tapX = x0 + t * (x1 - x0);
+  const tapY = trackY + amp + 5;
+  g.moveTo(w.x, w.y).lineTo(w.x, tapY).lineTo(tapX, tapY);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  const ah = 4;
+  g.moveTo(tapX, trackY + amp)
+    .lineTo(tapX - ah, tapY)
+    .lineTo(tapX + ah, tapY)
+    .closePath()
+    .fill({ color: o.color, alpha: 0.95 });
+
+  // Track current belt (the A→W leg), signed by its current.
+  flow(g, x0, trackY, x1, trackY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -2056,6 +2119,53 @@ function drawFTR(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// The potentiometer as a Factorio throttle: a resistive channel A→B with a sliding
+// tap (the wiper) that picks off the belt partway along, at the wiper position.
+function drawFPOT(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  const w = o.pins[2];
+  if (!a || !b || !w) return;
+  const x0 = a.x + 6;
+  const x1 = b.x - 6;
+  const trackY = a.y;
+  const t = Math.min(1, Math.max(0, o.wiper ?? 0.5));
+  const heat = norm(o.electrical.current, CUR_SCALE);
+
+  // End leads + the channel body.
+  g.moveTo(a.x, a.y).lineTo(x0, trackY);
+  g.moveTo(x1, trackY).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.roundRect(x0, trackY - 5, x1 - x0, 10, 2).fill({
+    color: 0x161020,
+    alpha: 0.96,
+  });
+  g.roundRect(x0, trackY - 5, x1 - x0, 10, 2).stroke({
+    width: 1.6,
+    color: o.color,
+    alpha: 0.9,
+  });
+
+  // The sliding tap at the wiper position, with the wiper lead from W.
+  const tapX = x0 + t * (x1 - x0);
+  const tapY = trackY + 9;
+  g.moveTo(w.x, w.y)
+    .lineTo(w.x, tapY)
+    .lineTo(tapX, tapY)
+    .lineTo(tapX, trackY + 5);
+  g.stroke({ width: 2, color: o.color, alpha: 0.9 });
+  g.rect(tapX - 2, trackY - 5, 4, 10).fill({ color: o.color, alpha: 0.8 });
+
+  // Belt flow along the channel, signed by the A→W leg current.
+  flow(g, x0, trackY, x1, trackY, o.electrical.current, o.phase, 0x46d2e6);
+  if (heat > 0.03) {
+    g.roundRect(x0, trackY - 5, x1 - x0, 10, 2).fill({
+      color: 0xe0533a,
+      alpha: 0.14 * heat,
+    });
+  }
+}
+
 function drawFGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -2102,6 +2212,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   XOR: drawXOR,
   NOT: drawNOT,
   TR: drawTR,
+  POT: drawPOT,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
@@ -2132,6 +2243,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   XOR: drawFXOR,
   NOT: drawFNOT,
   TR: drawFTR,
+  POT: drawFPOT,
 };
 
 /** Component art style: real schematic symbols, or Factorio-ish machines. */

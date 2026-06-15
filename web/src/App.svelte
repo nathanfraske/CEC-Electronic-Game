@@ -125,6 +125,13 @@
       color: "var(--violet)",
     },
     {
+      tag: "POT",
+      name: "Potentiometer",
+      desc: "Variable divider · slide the wiper",
+      tier: "II",
+      color: "var(--bronze)",
+    },
+    {
       tag: "I",
       name: "Current Source",
       desc: "Ideal fixed DC current",
@@ -308,6 +315,7 @@
     EC: "Passives",
     L: "Passives",
     TR: "Passives",
+    POT: "Passives",
     D: "Diodes",
     SD: "Diodes",
     LED: "Diodes",
@@ -789,6 +797,24 @@
   }
   function stepAmpVal(dir: number): void {
     if (selPart) setAmp(stepAmp(selAmp(), dir));
+  }
+  // The potentiometer's wiper position (its second scalar): 0..1, centred by
+  // default. Presented as a row of percentage chips, like the AC amplitude.
+  const WIPER_CHIPS = [0, 0.25, 0.5, 0.75, 1];
+  function selWiper(): number {
+    return selPart?.wiper ?? 0.5;
+  }
+  function setWiper(v: number): void {
+    if (selPart) board?.setComponentWiper(selPart.id, v);
+  }
+  function stepWiperVal(dir: number): void {
+    // Nudge the wiper by 5%, clamped to [0,1] and snapped to a clean centi-step.
+    setWiper(
+      Math.min(
+        1,
+        Math.max(0, Math.round((selWiper() + dir * 0.05) * 100) / 100),
+      ),
+    );
   }
   // The decade the current value sits in (for the decade × significand picker).
   function valueDecade(kind: string, value: number): number {
@@ -1547,6 +1573,33 @@
                   class="btn btn-ghost insp-step"
                   onclick={() => stepAmpVal(1)}
                   title="Next larger amplitude">+</button
+                >
+              </div>
+            {/if}
+            {#if kind === "POT"}
+              <!-- The potentiometer's wiper position (0 = A end, 1 = B end), shown
+                 as percentage chips with ±5% nudges. Sliding it splits the track. -->
+              <div class="insp-sub">wiper</div>
+              <div class="insp-row">
+                <button
+                  class="btn btn-ghost insp-step"
+                  onclick={() => stepWiperVal(-1)}
+                  title="Nudge the wiper toward A">−</button
+                >
+                <div class="insp-chips">
+                  {#each WIPER_CHIPS as v (v)}
+                    <button
+                      class="chip-val {Math.abs(selWiper() - v) < 0.001
+                        ? 'is-active'
+                        : ''}"
+                      onclick={() => setWiper(v)}>{Math.round(v * 100)}%</button
+                    >
+                  {/each}
+                </div>
+                <button
+                  class="btn btn-ghost insp-step"
+                  onclick={() => stepWiperVal(1)}
+                  title="Nudge the wiper toward B">+</button
                 >
               </div>
             {/if}

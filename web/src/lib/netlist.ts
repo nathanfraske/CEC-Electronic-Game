@@ -129,6 +129,12 @@ const ELEM_CAPACITOR = 2;
 // simplicity — see docs/parts-catalog-ideation.md §2.1.
 const EC_ESR_OHMS = 0.5;
 
+// Minimum resistance of either potentiometer leg, in ohms — a small wiper-contact
+// floor so an end-stop wiper (t → 0 or 1) reads as a near-short rather than an
+// exact 0 Ω (which the resistor stamp would treat as an open). Also keeps the wiper
+// node referenced through both legs at the extremes.
+const POT_WIPER_MIN = 0.5;
+
 export interface BuiltNetlist {
   nodeCount: number;
   types: Uint8Array;
@@ -360,6 +366,37 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       continue;
     }
 
+    // Potentiometer: expand into TWO resistors meeting at the (external) wiper node
+    // W — A→W = R·t and W→B = R·(1−t), where t = wiper position (0..1) and R = the
+    // total resistance (value). No new solver element; just the existing resistor
+    // stamp. The wiper position rides into `values` (so changing it rebuilds the
+    // sim via the value signature). The A→W (upper) leg is mapped for the
+    // glyph/inspector current; vAcross is read across the whole track (A → B).
+    if (c.kind === "POT") {
+      const nw = nodeIndex.get(find(key(c.id, 2))) ?? 0; // wiper node
+      const tpos = Math.min(0.999, Math.max(0.001, c.wiper ?? 0.5));
+      const rAW = Math.max(c.value * tpos, POT_WIPER_MIN);
+      const rWB = Math.max(c.value * (1 - tpos), POT_WIPER_MIN);
+      const upIdx = types.length;
+      types.push(ELEM_RESISTOR);
+      aArr.push(na);
+      bArr.push(nw);
+      cArr.push(0);
+      dArr.push(0);
+      values.push(rAW);
+      auxArr.push(0);
+      types.push(ELEM_RESISTOR);
+      aArr.push(nw);
+      bArr.push(nb);
+      cArr.push(0);
+      dArr.push(0);
+      values.push(rWB);
+      auxArr.push(0);
+      elemOfComponent.set(c.id, upIdx); // A→W leg current
+      nodesOfComponent.set(c.id, [na, nb]); // V across the whole track
+      continue;
+    }
+
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
     // The third terminal: a 3-pin device stamps its control node — pin 2 → c. For
@@ -431,6 +468,16 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       if (mid !== undefined) {
         u2(na, mid);
         u2(mid, nb);
+      }
+      continue;
+    }
+    // A POT is two resistors meeting at the wiper W: it ties A↔W↔B for the
+    // return-path test, like any other passive path.
+    if (c.kind === "POT") {
+      const nw = nodeIndex.get(find(key(c.id, 2)));
+      if (nw !== undefined) {
+        u2(na, nw);
+        u2(nw, nb);
       }
       continue;
     }

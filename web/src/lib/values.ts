@@ -46,6 +46,8 @@ const CURATED_FULL: Record<string, number[]> = {
   NOT: [1.8, 2.5, 3.3, 5, 12, 15],
   // Transformer turns ratio n = Ns/Np: step-downs (< 1) through step-ups (> 1).
   TR: [0.1, 0.2, 0.25, 0.5, 1, 2, 4, 5, 10],
+  // Potentiometer total resistance (Ω): the common bench pot values.
+  POT: [100, 500, 1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3, 250e3, 500e3, 1e6],
   // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
   EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
@@ -74,6 +76,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   NOT: [3.3, 5, 12],
   // The turns ratios people reach for first: ¼, ½, 1:1, ×2, ×4.
   TR: [0.25, 0.5, 1, 2, 4],
+  // The pot values people reach for first.
+  POT: [1e3, 10e3, 50e3, 100e3, 1e6],
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 

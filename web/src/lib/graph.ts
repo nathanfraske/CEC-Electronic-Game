@@ -58,6 +58,15 @@ export interface Component {
    * before. Optional so older snapshots without it round-trip to the default.
    */
   amp?: number;
+  /**
+   * The potentiometer's wiper position in `[0, 1]`: the fraction of the total
+   * resistance ({@link Component.value}) between the A end and the wiper. `0` puts
+   * the wiper at A, `1` at B, `0.5` centres it. Only meaningful for kind `"POT"`
+   * (where {@link buildNetlist} splits it into two resistors); other kinds leave it
+   * undefined. A new POT defaults to centred (0.5). Optional so older snapshots
+   * round-trip to the default.
+   */
+  wiper?: number;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
 }
@@ -426,6 +435,21 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // Potentiometer: a three-terminal variable resistor — two ends A, B and a movable
+  // wiper W that taps somewhere along the track. Pins ordered A, B, W (pin 0 = A,
+  // 1 = B, 2 = W). `value` is the total end-to-end resistance; the wiper position
+  // (Component.wiper, 0..1) sets where W sits. buildNetlist expands it into two
+  // resistors — A→W = R·t and W→B = R·(1−t) — so there's no new solver element. The
+  // classic divider/knob. Bronze, the resistor family.
+  POT: kind(
+    "POT",
+    "Potentiometer",
+    "bronze",
+    [pin("A", 0, 0), pin("B", 2, 0), pin("W", 1, 2)],
+    10000,
+    "Ω",
+    true,
+  ),
   FF: kind(
     "FF",
     "D Flip-Flop",
@@ -572,6 +596,8 @@ export class BoardGraph {
       // 5 V so a freshly placed source swings +/- 5 V exactly as before. Other
       // kinds leave it undefined.
       ...(kind === "AC" ? { amp: AC_DEFAULT_AMP } : {}),
+      // A potentiometer carries its wiper position, defaulting to centred (0.5).
+      ...(kind === "POT" ? { wiper: 0.5 } : {}),
     };
     this.components.set(component.id, component);
     return component;

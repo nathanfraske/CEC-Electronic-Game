@@ -499,6 +499,19 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Primary current Ip", value: f(e.current, "A") },
     ],
   },
+  POT: {
+    name: "Potentiometer",
+    equation: "R(A→W) = R·t · R(W→B) = R·(1−t)",
+    headline: (e, r) =>
+      `${f(r, "Ω")} track · ${f(e.vAcross, "V")} across @ ${f(e.current, "A")}`,
+    plain: () =>
+      "A potentiometer is a resistor with a sliding wiper that taps the track somewhere between its two ends. Wire the two ends across a voltage and the wiper picks off an adjustable fraction of it — a variable divider, the workhorse 'knob' for volume, brightness, set-points, and bias. The wiper splits the total resistance into two pieces — R·t from the A end to the wiper and R·(1−t) from the wiper to B — so sliding it trades resistance from one side to the other while the total stays fixed. Use all three terminals as a divider, or just one end and the wiper as a plain adjustable resistor (a rheostat).",
+    derived: (e, r) => [
+      { label: "Total resistance", value: f(r, "Ω") },
+      { label: "Voltage across A–B", value: f(e.vAcross, "V") },
+      { label: "Current (A→W leg)", value: f(e.current, "A") },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",
