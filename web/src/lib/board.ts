@@ -49,7 +49,8 @@ export type Mode =
   | "wire"
   | "measure"
   | "junction"
-  | "label";
+  | "label"
+  | "pan";
 
 /** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
 interface ProbePoint {
@@ -529,11 +530,13 @@ export class Board {
   private updateCursor(): void {
     this.app.stage.cursor = this.armed
       ? "copy"
-      : this.mode === "measure" ||
-          this.mode === "junction" ||
-          this.mode === "label"
-        ? "crosshair"
-        : "default";
+      : this.mode === "pan"
+        ? "grab"
+        : this.mode === "measure" ||
+            this.mode === "junction" ||
+            this.mode === "label"
+          ? "crosshair"
+          : "default";
   }
 
   private readonly onPointerEnter = (): void => {
@@ -1738,6 +1741,12 @@ export class Board {
 
     // Middle button always pans.
     if (e.button === 1) {
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
+    // Pan tool: left-drag pans the view (the neutral navigation tool Esc lands on).
+    // No placing/selecting — just grab and move, like holding the middle button.
+    if (this.mode === "pan") {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
