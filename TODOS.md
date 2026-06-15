@@ -8,7 +8,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
-### Persistence — localStorage for board + progress (owner, 2026-06-15)
+### Shipped this session (editor fixes + phase-shift + info-panel P1)
+- ~~**Pan tool regression**: the Esc-default pan no longer blanket-grabs pointerdown —
+  pin/junction press starts a wire, wire press reshapes, armed click places; only a
+  body/empty drag pans. `arm()` leaves pan for select. (board.ts + App.svelte.)~~
+- ~~**Label ghost**: onPointerMove now refreshes the ghost in `label` mode, so the
+  name-pill preview follows the cursor + snaps (was only `armed`/`junction`).~~
+- ~~**Open-loop current source** zeroed (see deeper-#2 tombstone below).~~
+- ~~**POT B-terminal investigation**: NOT a bug — a properly-wired W→B leg conducts
+  (verified 0.31 mA via the wasm solver); the user's ~0 reading reproduces the
+  B-floating (rheostat) case exactly. Wiring near-miss, no code change.~~
+- ~~**Phase-shift example** (`phase-shift`, Filters): corrected to 138 Hz
+  (= 1/(2πRC√6)) with honest 56°/112°/180° tap labels + the 1/29 attenuation lesson +
+  a detune-to-1 kHz demo. Verified end-to-end (transient sim: −180.0°, 1/29.1).~~
+
+### Editor: copy/paste + marquee select + group drag (owner, 2026-06-15)
+- [ ] **Box / marquee select** (shift+drag, or drag on empty in Select mode): a
+  rubber-band rectangle that selects every component inside it + the wires whose
+  both ends are inside (their "internal" traces). (`mode-flow.md` had this on the
+  Phase-2 roadmap.)
+- [ ] **Group drag**: dragging any selected component moves the WHOLE selection
+  (components + their internal wires) together, connectivity preserved.
+- [ ] **Copy/paste** (⌘/Ctrl-C / -V): copy the selected components + internal wires
+  (relative coords) to an in-memory clipboard; paste with fresh ids + a small offset,
+  remapping wire endpoints to the new ids, and select the pasted group. (Net labels
+  on copied pins/traces should come along too.)
 - ~~**Persist board state across refreshes.** `lib/storage.ts` saves the
   `BoardGraph.serialize()` to localStorage (debounced 400 ms) on every edit and
   restores it on load (falls back to the primer only on a true first visit). Guarded
@@ -46,12 +70,12 @@ things up, what am I looking at, what am I trying to read, the minimum mental mo
 Full design in **`docs/ui/component-info-panel.md`** (ideation, brainstormed
 2026-06-15). Make rich component info reachable without breaking build flow.
 Owner-approved direction + defaults:
-- [ ] **Phase 1** — open the info drawer on **double-click** a component (+ an `I`
-  hotkey on the selection, + an `ⓘ` chip on the value popover); reuse the existing
-  right-side `.info-drawer`; **click-away does NOT close it** (persistent instrument
-  panel that re-targets as you select); Esc/×/`I` dismiss. Add the **oriented,
-  labelled pinout** (built from `PART_KINDS.pins` + `selPart.rot`). Suppress the 2nd
-  click of a double on the manual switch so double-click stays universal.
+- ~~**Phase 1** — open the info drawer on **double-click** a component (`onInspect`
+  board callback; works from Select + Pan), + an `I` hotkey toggle, + an `ⓘ` chip on
+  the value popover. Reuse the right-side `.info-drawer`; Esc closes the drawer first.
+  **Oriented labelled pinout** shipped (`web/src/lib/pinout.ts`: `PART_KINDS.pins`
+  rotated by `selPart.rot` → SVG body+legs+dots + DOM labels + per-leg glosses).
+  MSW 2nd-click-of-a-double suppressed so double-click stays universal.~~ (shipped)
 - [ ] **Phase 2** — the **construction cutaways**: a third `DETAIL_DRAWERS` map
   (Pixi-drawn, parallel to `DRAWERS`/`FACTORY_DRAWERS`, hosted by a new "detail mode"
   on `InfoDiagram`, `DETAIL ?? schematic` fallback) + an in-panel schematic⇄cutaway
@@ -365,7 +389,7 @@ Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate 
 - ~~**LED** wired up with a current-limiting example (and a Schottky added alongside); see the 2026-06-15 Schottky+LED entry above.~~ Still open: other nonlinear parts (Zener, BJT/MOSFET) on the Newton engine.
 - ~~**1-pin part hit box** (GND): `componentBox` now returns a generous 36×48 grab box for 1-pin parts, so GND is easy to click + drag.~~
 - ~~**Floating GND no longer falsely grounds**: `buildNetlist` only accepts a GND as the reference if its net is wired to ≥1 other pin (net size > 1); a GND sitting unconnected on the board is ignored, so a disconnected circuit no longer falsely "solves" (was reading 10 V·10 mA on an open I→R chain).~~
-- [ ] **Dangling current-source affordance (deeper #2)**: even with a *connected* ground, an ideal current source whose forced current has no return loop yields a singular solve (degenerate → misleading reading), whereas a V source just shows 0 current. Detect the singular/no-DC-path case (or a current source with no current loop) and surface "incomplete circuit" instead of garbage. Needs proper topology / singularity detection (likely a `sim-core` "singular" signal + an App hint).
+- ~~**Dangling current-source affordance (deeper #2)**: an ideal current source whose forced current has no return loop made the MNA system singular → the deterministic zero-pivot fallback reported a phantom (full current "flowing" + huge IR voltage). `buildNetlist` now **zeroes the forced current** of every detected `floatingSources` member so the dead branch reads an honest 0 mA / 0 V (the amber "no return path" banner explains why); closing the loop restores the real value. Verified through the wasm solver (open: 0 mA; closed: 10 mA / 10 kV). Web-only, golden-safe.~~
 - ~~**Value Inspector** shipped (`web/src/lib/values.ts` + board `setComponentValue`/`onSelect.single` + App): select one part → curated value chips + −/+ standard-value stepper + a "more values" decade×significand picker (E24 R / E6 C·L; curated lists for V/I and SW duty). Every valued part (V/R/C/L/I/SW) is now configurable; edits rebuild the netlist live.~~
 - [ ] **Buck converter demo** (owner, "fun, less important"): a fully-animated buck converter showing energy moved in "buckets" to a new voltage — needs switching (switch/MOSFET + diode + L + C), so it follows the solver upgrade + a switch part.
 
