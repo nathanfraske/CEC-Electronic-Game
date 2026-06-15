@@ -563,13 +563,20 @@ impact anywhere; nothing crosses the JS↔wasm boundary that doesn't already.
 
 ---
 
-## 10. Owner add-ons (2026-06-15): explore-as-you-learn, level select, replayable
+## 10. Owner add-ons (2026-06-15): explore-as-you-learn, pull-based help (NO levels), replayable
 
-Three owner requirements that sharpen §1/§2/§5/§7 into first-class features. They
-fit together: the **level picker** sets the initial coaching *density*; the
-**explore-as-you-learn** model means concepts still surface contextually whatever
-the level; **replayability** means none of it is one-shot. All three are
-presentation + a little local state — no sim/golden impact.
+Three owner requirements that sharpen §1/§2/§5/§7 into first-class features.
+
+> **Owner correction (2026-06-15): NO levels / tiers / upfront picker.** A levels
+> menu gates the experience and defeats the open sandbox. There is **one sandbox for
+> everyone**. "Self-select" means **what you pull, not what you pick**: the
+> explanation layer is *opt-in and always-available*, so someone who knows nothing
+> can have **all of it** explained the moment they reach for it, and an expert just
+> builds and is never gated or quizzed. Onboarding is **not a mode you're in or a
+> level you chose — it's a layer you pull on**, as much or as little as you want, at
+> any moment.
+
+All three are presentation + a little local state — no sim/golden impact.
 
 ### 10.1 Learn-as-you-explore, not a rail (resolves open question #1)
 The tutorial is **not a sequence-locked path** — it's a set of **contextual triggers
@@ -594,20 +601,36 @@ reachable the entire time. Mechanics:
 - This makes the "tutorial" a **discovery layer over the sandbox**, which is exactly
   "introduces concepts as you go, but you're free to explore whatever you want."
 
-### 10.2 Self-selected onboarding level at the start
-A **one-time picker** on first launch (a small modal over the cold-open §1), setting
-the **coaching density, not the content**:
+### 10.2 No levels — routing the novice through the open sandbox (pull, not pick)
+Everyone lands in the **same** open sandbox. There is no picker and no tier. The
+novice gets fully explained *because the explanation is always one reach away*, via
+three pull-first surfaces that an expert simply never touches:
 
-| Level | What it sets |
-| --- | --- |
-| **Never touched electronics** | Full: the guided first build auto-offered, every concept card, pin/ghost spotlights, the bin pre-narrowed to V/R/GND (§1). |
-| **I know some** | Light: bin opens fuller, the guided build is a dismissible suggestion, concept cards fire only for the less-obvious bits (ground reference, the scope), no hand spotlights. |
-| **Skip it / I know electronics** | None: full bin + tools + scope open immediately, no cards, straight to the sandbox + first contract (the §7 "I already know electronics" path, chosen explicitly up front instead of bailed into). |
+- **The front door is an invitation, not a menu.** The cold open (§1) already forks
+  *"Show me how this works"* vs *"Let me build."* That is the whole "routing": one
+  optional thread a novice grabs and an expert ignores — and **both land in the exact
+  same sandbox**. "Show me" runs the hand-held walkthrough (§3); "Let me build" drops
+  you straight in. Neither is a state you're stuck in; you can start, stop, or start
+  the walkthrough at any later moment.
+- **Pull anything → it explains itself.** A persistent **"Explain / ?"** handle is
+  always on screen; point it at a part, the scope, a wire, a number, and you get that
+  thing explained (the double-click info panel from `component-info-panel.md` is part
+  of this). So *"have it all explained if they want"* = **everything is interrogable
+  on demand**, with zero ceremony. This is the spine of the whole answer.
+- **Gentle push that an expert can mute.** First-encounter concept cards (§10.1)
+  offer themselves as you cause a phenomenon — one clause, dismissible, never
+  blocking, always logged to the Lab Notebook. The *single* preference in the whole
+  system is **"explain things as I go" on/off** (a mute, not a level) for the person
+  who wants the nudges silenced or fully on. Default: gentle-on, instantly mutable —
+  a novice sees the offers without knowing to ask; one tap and the expert is left
+  alone. That one toggle is the only state, and it changes *whether coaching narrates*,
+  never *what is reachable* (everything is reachable for everyone, always).
 
-Stored as a single `onboardingLevel` setting. **Changeable later** (§10.3). It only
-gates *how much fires*, never *what's reachable* — every level can reach the sandbox,
-the examples library, and the first contract immediately (resolves open question #3
-as hide-and-fade keyed to the level).
+So the self-selection is **behavioural**: you take as much explanation as you pull.
+No one is asked to rank themselves, nothing is gated, and the sandbox is identical
+for the absolute beginner and the EE — they just engage the explanation layer
+differently. (Resolves open questions #1 and #3: optional, never a gate;
+hide-and-fade is just the default unobtrusiveness, not a per-level lock.)
 
 ### 10.3 Replayable / never a dead-end
 Nothing in onboarding is one-shot; a mistake re-arms the help instead of stranding:
@@ -620,14 +643,18 @@ Nothing in onboarding is one-shot; a mistake re-arms the help instead of strandi
   re-run from the library (already true — Build mode replays `do`/`why`/`done`); each
   guided step keeps its existing **"Show solution" / reset** escape hatch (§3), so a
   wrong wire just re-shows the target ghost rather than dead-ending.
-- **Restart onboarding** in settings: clears `seenConcepts` and re-opens the level
-  picker, so a returning or stuck player can take the whole ramp again.
+- **Replay the whole walkthrough** anytime from the Help handle ("show me from the
+  start"): re-runs the cold-open → guided first build, and optionally clears
+  `seenConcepts` so the first-encounter cards fire again for someone re-learning.
 - Implementation is tiny: the same `seenConcepts` set that de-dupes first-encounter
   cards is what "replay" clears or bypasses; no new content, just re-show paths.
 
 ### 10.4 Minimal new surface for §10
-On top of the ~5 affordances the agent already scoped, these three add only: an
-`onboardingLevel` + `seenConcepts` in local settings, the level-picker modal, and a
-persistent Help button that routes to existing coach-marks / the notebook / the
-example library. The Lab Notebook (already a planned progression reward) carries the
-"concepts as you go" record, so 10.1 and the codex are one build.
+No tier state, no picker. On top of the ~5 affordances the agent already scoped,
+these three add only: a single `explainAsYouGo` mute flag + a `seenConcepts` set in
+local settings, and a persistent **Explain / Help** handle that routes to the
+existing coach-marks, the info panel, the Lab Notebook, and the example library. The
+Lab Notebook (already a planned progression reward) carries the "concepts as you go"
+record, so §10.1 and the codex are one build. Everyone shares one sandbox; the only
+difference between a novice and an EE is how much of the always-present explanation
+layer they choose to pull.
