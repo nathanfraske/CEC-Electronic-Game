@@ -8,6 +8,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — interaction polish (#22), carrier/energy belt, demo pages
+- ~~**Fixes (#22):** flow-jitter cap (per-frame phase delta + ≤14 chevrons/wire); rotated-part labels against the rotated pin bounds; on-board meter gated to no-value parts (popover shows V·A); top selector chips wrap; **reset-on-edit** rewinds scope+clock to t=0 on any change (`App.onChange`).~~
+- ~~**Carrier/energy belt (loop-tile):** two animated layers per wire — carriers (chevrons, integrate signed current → DC stream / AC slosh) + energy (orange dots, integrate signed power v·i → steady delivery on a resistor while carriers slosh, slosh on a reactive part). Per-wire accumulators off the timeline phase, pruned on delete; `docs/ui/visual-language.md` updated. Render-only, golden unchanged.~~
+- ~~**Demo pages:** `docs/visuals/resistor.html` + `diode.html`, standalone, dark HUD style (agent-built on `claude/resistor-diode-visuals`, cherry-picked).~~
+- [ ] **More demo pages** in the dark style (capacitor, inductor, RC/RL); link them from the app.
+- [ ] Optional **toggle** for the energy layer if the belt is too busy on dense boards.
+
 ### Done — ammeter, custom rate, progressive guided builds
 - ~~**Ammeter**: the Measure tool gains a V/A toggle; "A" reads the current through a clicked part or wire (KCL branch current) — `board.setProbeMode` + `drawAmmeter` + cached per-frame wire currents.~~
 - ~~**Guided builds run the sim live** (`startBuild` resumes playback) so each added part comes alive in a working sub-circuit; **examples reworked into progressive/observable builds** (agent) — the buck now: forward path → ragged spike → add diode (spike vanishes) → add cap (smooths to ≈4 V). `steps[]`-only, topology unchanged, `done()` monotonic.~~

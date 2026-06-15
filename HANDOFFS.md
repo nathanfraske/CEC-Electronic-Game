@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Interaction polish, carrier/energy belt, demo pages
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,
+web check/lint/build). sim-core untouched — golden `0xeaac376499e4fa24` unchanged.
+
+- **Fixes batch (#22):** flow-jitter at high playback speed (per-frame phase-delta
+  cap + chevrons capped to 14/wire); rotated parts lay labels/value/meter against
+  the *rotated* pin bounds; on-board meter gated to parts without an editable
+  value (the popover already shows V·A); top selector chips wrap instead of
+  scrolling; **reset-on-edit** — any change (place/move/rotate/rewire/value)
+  rewinds the scope + clock to t=0 (App `onChange`).
+- **Carrier/energy belt (loop-tile):** each wire animates two layers — *carriers*
+  (voltage-coloured chevrons, position integrates **signed current** → stream on
+  DC, slosh on AC) and *energy* (warm-orange dots, travel integrates **signed
+  power v·i** → steady delivery to the load on a resistor even while carriers
+  slosh; sloshes on a reactive part). Per-wire phase accumulators
+  (`carrierOffset`/`energyOffset`) off the same timeline-relative phase, consumed
+  once/frame, pruned on delete. Encoding in `docs/ui/visual-language.md`.
+- **Demo pages:** `docs/visuals/resistor.html` (heating, I²R) + `docs/visuals/
+  diode.html` (half-wave + smoothing cap), standalone, in the **dark HUD** style
+  (matches the app, not the light reference docs).
+
+### Pick up here
+- **More demo pages** in the same dark style (capacitor, inductor, RC/RL — the
+  user asked for "a couple more"); consider linking them from the app.
+- A **toggle** for the energy layer if the belt reads too busy on dense boards.
+- Same owner-driven backlog as below (contracts prototype, per-island ΔT).
+
+---
+
 ## 2026-06-15 — AC track (sine source + 9-example curriculum) + game-design ideation
 
 **State:** 🟢 Green (fmt/clippy/test incl. golden + 38 sim-core tests, build:wasm,
