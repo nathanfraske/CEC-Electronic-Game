@@ -686,6 +686,20 @@ export class Board {
     this.netNames = map ? new Map(map) : new Map();
   }
 
+  /**
+   * Drop the scope's recorded sample history so the trace starts fresh. Called
+   * whenever the circuit actually changes — an example loaded, the board cleared, or
+   * a component value / net edited (i.e. the netlist signature changed and the sim
+   * was reinstalled). Without this the scope keeps the previous circuit's samples
+   * and only overwrites them once the new run's tick passes the old window's end,
+   * leaving stale data on screen in the meantime. The node count and meaning can
+   * change across circuits, so the old samples aren't comparable anyway — clear them.
+   */
+  clearScope(): void {
+    this.scopeSamples = [];
+    this.scopeCursor = 0;
+  }
+
   placeAt(
     kind: string,
     screenX: number,
