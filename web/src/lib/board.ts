@@ -177,6 +177,12 @@ export class Board {
   private probeA: ProbePoint | null = null;
   private probeB: ProbePoint | null = null;
   private draggingProbe: "A" | "B" | null = null;
+  // Meter function: "V" reads voltage between two leads; "A" reads the current
+  // through the clicked element/wire (an ammeter). `lastWireCurrents` is cached
+  // from the per-frame KCL solve so the ammeter can read a wire's branch current.
+  private probeMode: "V" | "A" = "V";
+  private ammeter: { kind: "comp" | "wire"; id: number } | null = null;
+  private lastWireCurrents = new Map<number, number>();
   private probeNodes: Map<number, [number, number]> | null = null;
   private lastState: Float64Array = new Float64Array();
   private electrical: Map<number, ElectricalState> | undefined;
@@ -297,6 +303,12 @@ export class Board {
   /** Supply the pin→net mapping so the probe can read net voltages. */
   setProbeNodes(map: Map<number, [number, number]> | null): void {
     this.probeNodes = map;
+    this.clearProbe();
+  }
+
+  /** Switch the meter between voltmeter ("V") and ammeter ("A"). */
+  setProbeMode(mode: "V" | "A"): void {
+    this.probeMode = mode;
     this.clearProbe();
   }
 
@@ -722,6 +734,20 @@ export class Board {
 
   /** Press in measure mode: grab a nearby lead to drag, or drop the next lead. */
   private measurePress(wx: number, wy: number): boolean {
+    if (this.probeMode === "A") {
+      // Ammeter: point at a part (current through it) or a wire (branch current).
+      const body = this.bodyHitTest(wx, wy);
+      if (body) {
+        this.ammeter = { kind: "comp", id: body.id };
+        return true;
+      }
+      const wid = this.wireHitTest(wx, wy);
+      if (wid !== null) {
+        this.ammeter = { kind: "wire", id: wid };
+        return true;
+      }
+      return false;
+    }
     const grab = this.probeLeadAt(wx, wy);
     if (grab) {
       this.draggingProbe = grab;
@@ -739,6 +765,7 @@ export class Board {
     this.probeA = null;
     this.probeB = null;
     this.draggingProbe = null;
+    this.ammeter = null;
     this.probeLayer.clear();
     this.probeText.visible = false;
   }
@@ -830,6 +857,10 @@ export class Board {
       this.probeText.visible = false;
       return;
     }
+    if (this.probeMode === "A") {
+      this.drawAmmeter(g);
+      return;
+    }
     const a = this.probeA ? this.leadPos(this.probeA) : null;
     const b = this.probeB ? this.leadPos(this.probeB) : null;
     if (a) this.drawLead(a.x, a.y, PROBE_PLUS);
@@ -850,6 +881,49 @@ export class Board {
     } else {
       this.probeText.visible = false;
     }
+  }
+
+  /** Ammeter readout: a ring on the clicked part/wire showing its current. */
+  private drawAmmeter(g: Graphics): void {
+    if (!this.ammeter) {
+      this.probeText.visible = false;
+      return;
+    }
+    let cur = 0;
+    let x = 0;
+    let y = 0;
+    let ok = false;
+    if (this.ammeter.kind === "comp") {
+      const c = this.graph.components.get(this.ammeter.id);
+      if (c) {
+        cur = this.electrical?.get(c.id)?.current ?? 0;
+        const box = this.componentBox(c);
+        x = box.x + box.width / 2;
+        y = box.y + box.height / 2;
+        ok = true;
+      }
+    } else {
+      const w = this.graph.wires.get(this.ammeter.id);
+      if (w) {
+        cur = this.lastWireCurrents.get(w.id) ?? 0;
+        const route = this.routeForWire(w);
+        if (route.length >= 2) {
+          const m = sampleRoute(route, 0.5);
+          x = m.x;
+          y = m.y;
+          ok = true;
+        }
+      }
+    }
+    if (!ok) {
+      this.probeText.visible = false;
+      return;
+    }
+    g.circle(x, y, 12).fill({ color: 0x161020, alpha: 0.55 });
+    g.circle(x, y, 12).stroke({ width: 2.5, color: PROBE_PLUS, alpha: 0.95 });
+    this.probeText.text = "I " + fmtSI(cur, "A");
+    this.probeText.position.set(x, y - 22);
+    this.probeText.visible = true;
   }
 
   // --- input handlers -----------------------------------------------------
@@ -1117,6 +1191,7 @@ export class Board {
     const g = this.wireLayer;
     g.clear();
     const currents = this.computeWireCurrents();
+    this.lastWireCurrents = currents;
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
