@@ -2816,21 +2816,42 @@ export class Board {
     const ih = r.height - padT - padB;
 
     const chans = samples[samples.length - 1]!.values.length;
-    let lo = 0;
-    let hi = 1;
+    // Autoscale Y to the visible traces' true min/max across the retained window,
+    // so a big AC or switching swing fits instead of clipping against the frame.
+    // Seeded empty (not [0,1]) so the full amplitude drives the scale; ground is
+    // then kept in view as the baseline, and the range is padded with ~8% headroom
+    // top and bottom so peaks never sit right on the frame edge.
+    let vlo = Infinity;
+    let vhi = -Infinity;
     for (const s of samples) {
       for (let c = 1; c < s.values.length; c++) {
         if (this.nodeHidden.has(c)) continue; // autoscale to visible traces only
         const v = s.values[c] ?? 0;
-        if (v < lo) lo = v;
-        if (v > hi) hi = v;
+        if (v < vlo) vlo = v;
+        if (v > vhi) vhi = v;
       }
     }
+    if (!Number.isFinite(vlo) || !Number.isFinite(vhi)) {
+      // No visible signal yet (all-ground, or every trace hidden): a calm 0..1 window.
+      vlo = 0;
+      vhi = 1;
+    }
+    // Keep ground in frame as the reference, then guard a perfectly flat signal so
+    // it centres as a line rather than collapsing the range.
+    vlo = Math.min(vlo, 0);
+    vhi = Math.max(vhi, 0);
+    if (vhi - vlo < 1e-9) {
+      vhi += 0.5;
+      vlo -= 0.5;
+    }
+    const pad = (vhi - vlo) * 0.08;
+    const lo = vlo - pad;
+    const hi = vhi + pad;
     const span = hi - lo || 1;
     const xAt = (i: number): number => x0 + (i / (MAX_SAMPLES - 1)) * iw;
     const yAt = (v: number): number => y0 + (1 - (v - lo) / span) * ih;
 
-    if (lo < 0) {
+    if (lo < 0 && hi > 0) {
       const yz = yAt(0);
       g.moveTo(x0, yz).lineTo(x0 + iw, yz);
       g.stroke({ width: 1, color: PALETTE.border, alpha: 0.4 });
