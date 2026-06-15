@@ -272,14 +272,33 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // NPN bipolar transistor: a three-terminal current-controlled device. A small
+  // base current controls a much larger collector→emitter current (Ic ≈ β·Ib,
+  // β ≈ 100). Pins are ordered C, E, B — pin 0 = Collector (a), pin 1 = Emitter
+  // (b), pin 2 = Base (c) — so buildNetlist's pin→terminal map is direct and
+  // matches the core (Ebers-Moll, main current a→b = collector→emitter). Collector
+  // at top, emitter at bottom, base on the left, mirroring the schematic. `value`
+  // is unused (fixed model). The vivid accent rose marks the gain/switching family.
   Q: kind(
     "Q",
     "NPN Transistor",
     "accent",
-    [pin("B", 0, 1), pin("C", 2, 0), pin("E", 2, 2)],
+    [pin("C", 2, 0), pin("E", 2, 2), pin("B", 0, 1)],
     0,
     "",
-    false,
+    true,
+  ),
+  // PNP bipolar transistor: the polarity mirror of the NPN — it turns on when the
+  // base is pulled *below* the emitter, and is the natural high-side partner. Same
+  // C, E, B pin order and the same fixed Ebers-Moll model; `value` unused.
+  QP: kind(
+    "QP",
+    "PNP Transistor",
+    "accent",
+    [pin("C", 2, 0), pin("E", 2, 2), pin("B", 0, 1)],
+    0,
+    "",
+    true,
   ),
   "&": kind(
     "&",
