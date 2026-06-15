@@ -8,6 +8,61 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### BUILD QUEUE — remaining catalog + ICs (owner: "go down the list we already had")
+The full planned kit, from `docs/parts-catalog-ideation.md` and
+`docs/ic-buildings-ideation.md`. **Done so far:** LED, Zener, Schottky, electrolytic
+cap, BJT (NPN/PNP), MOSFET (N/P), op-amp, manual switch, varistor (MOV), logic gates
+(AND/OR/NAND/NOR/XOR/NOT), transformer. Remaining, in rough build order (P-codes are
+the enabling primitive from the catalog's §0 / §9 roadmap):
+
+**Discrete parts still to build**
+- [ ] **Relay** (catalog §5.2) — electromechanical: coil current pulls a contact
+  (a 2nd, switched branch). **Unblocked now** (uses the 4th terminal `d`). Needs the
+  stateful/hysteretic latch (P6, integer/threshold on the tick grid, hashed) + the
+  flyback-diode lesson. The first stateful-conduction part. **Med.**
+- [ ] **Potentiometer** — 3-terminal wiper divider (terminal `c` = wiper); expand to
+  two Rs in `buildNetlist` (like EC). The "knob" primitive for VRMs. **Low.**
+- [ ] **Fuse** (catalog §6.1) — latched "blown" state (P6, + I²t thermal P7): once
+  the current·time threshold trips, it stays open until replaced. **Med.**
+- [ ] **Thermistor NTC/PTC** (catalog §6.3) — resistance vs temperature; needs the
+  thermal scalar state P7 (self-heating from I²R, evolved on the tick grid). **Med.**
+- [ ] **LDR / photoresistor** (catalog §7.1) — resistance vs light; needs the
+  light/display I/O channel P8 (a player- or contract-driven light input). **Med.**
+- [ ] **Photodiode** (catalog §1.4) — light-controlled current source (P8 + Newton). **Med.**
+- [ ] **Seven-segment display** (catalog §7.2) — multi-terminal display, light I/O P8. **Med.**
+- [ ] **Ceramic capacitor** (catalog §2.2) — low-ESR, non-polarized, voltage derating
+  (P2 per-device params). **Low–med.**
+- [ ] **JFET** (catalog §3.3) — depletion-mode FET (P3, MOSFET-like Newton path). **Med.**
+- [ ] **Darlington pair** (catalog §3.4) — two cascaded BJTs, β≈β² (P3 composite). **Low–med.**
+- [ ] **Programmable / electronic load** — commanded CC/CP/CR sink (for VRM load-testing). **Med.**
+- [ ] **Autotransformer / true variac** — single tapped winding (see entry below). **Med.**
+- [ ] **Reusable ferrite / magnetic core** — one core abstraction → transformer /
+  common-mode choke / ferrite bead / cored inductor (see entry below). **Med–high.**
+
+**ICs still to build** (`ic-buildings-ideation.md` §2.4 tier table, §3 entries) — all
+Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate set:
+- [ ] **D / JK flip-flop + latch** (§3.2) — one bit of clocked state; tick-grid edge
+  detect. The first **sequential** element. **Next IC rung. Low.**
+- [ ] **Shift register / counter / decoder / mux** (§3.3) — clocked integer state +
+  **bus ports** (the §1.5 multi-bit belt renderer). **Low–med.**
+- [ ] **555 timer** (§3.4) — internal comparators + SR latch + tick-derived output;
+  R/C on the timing pins set the frequency. The "make it blink" win. **Med.**
+- [ ] **Linear regulator (78xx)** (§3.5, Tier B) — controlled pass element holding
+  Vout against load (output impedance + transient ride). The **VRM** thread. **Med.**
+- [ ] **Comparator** — dedicated threshold→rail part with hysteresis (op-amp open-loop
+  already does the basic job; this adds input loading + a clean schmitt). **Low.**
+- [ ] **Switching regulator / buck-boost controller** (§2.4, C→A) — build the buck
+  from discretes (we already simulate one) then seal it. **Med.**
+- [ ] **DAC** (§2.4) — code → output voltage (a driven Thévenin source). **Low–med.**
+- [ ] **ADC** (§2.4) — sample/quantize a node voltage → digital word on the tick grid. **Med.**
+- [ ] **H-bridge / motor driver** (§2.4) — digital control of four switches + an
+  inductive load. **Med.**
+- [ ] **Memory (register file / SRAM)** (§2.4) — addressed array of bits. **Med.**
+- [ ] **Microcontroller** (§3.11, emulator) — real C/Arduino firmware on an emulated
+  core, a deterministic digital island. The sequential capstone. **High.**
+- [ ] **FPGA** (Tier C) — the seal-a-built-subcircuit reprogrammable building; the
+  spatial capstone. **High.**
+
 ### Owner requests — autotransformer + an ideal-vs-real fidelity pass
 - [ ] **Autotransformer / true variac** (owner, 2026-06-15): a **single tapped
   winding** (top / tap / bottom — the tap is the 3rd terminal `c`), where the
