@@ -119,6 +119,41 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Power", value: f(Math.abs(e.vAcross * e.current), "W") },
     ],
   },
+  SD: {
+    name: "Schottky Diode",
+    equation: "I = Is·(e^(V/n·Vt) − 1)",
+    headline: (e) =>
+      conducting(e)
+        ? `Forward · ${f(e.vAcross, "V")} drop @ ${f(e.current, "A")}`
+        : `Reverse · blocking (${f(e.vAcross, "V")})`,
+    plain: () =>
+      "A Schottky diode replaces one side of the junction with metal, so it conducts with only about a 0.3 V forward drop — roughly half a silicon diode's ~0.7 V. The much larger saturation current Is pulls that knee down (a bigger Is means the same current at a lower voltage). The low drop wastes less power and the metal junction switches fast, which is why Schottkys are the catch diode in switching supplies.",
+    derived: (e) => [
+      { label: "Power", value: f(Math.abs(e.vAcross * e.current), "W") },
+    ],
+  },
+  LED: {
+    name: "LED",
+    equation: "I = Is·(e^(V/n·Vt) − 1)",
+    headline: (e) =>
+      conducting(e)
+        ? `Lit · ${f(e.vAcross, "V")} drop @ ${f(e.current, "A")}`
+        : `Off · blocking (${f(e.vAcross, "V")})`,
+    plain: () =>
+      "An LED is a diode that turns forward current into light. Its junction has a high forward drop — about 1.8–2 V, set by the semiconductor's band gap (a tiny Is and a wider junction push the knee up) — so it needs a series resistor to limit the current. The light output rises with the forward current, so the resistor sets both the operating current and the brightness. Current flows anode → cathode.",
+    derived: (e) => [
+      { label: "Power", value: f(Math.abs(e.vAcross * e.current), "W") },
+      {
+        // Radiant output tracks forward current; show it as a relative figure
+        // against a ~20 mA full-brightness reference (presentation only).
+        label: "Brightness (≈I/20 mA)",
+        value:
+          e.current > 0
+            ? `${Math.round(Math.min(1, e.current / 0.02) * 100)}%`
+            : "0%",
+      },
+    ],
+  },
   SW: {
     name: "Switch",
     equation: "closed for duty × period",

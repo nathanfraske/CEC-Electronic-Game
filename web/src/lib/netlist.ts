@@ -23,6 +23,8 @@ const TYPE_OF: Record<string, number> = {
   D: 5, // diode (nonlinear; engages the Newton solve)
   SW: 6, // clock-driven switch; value = duty cycle
   AC: 7, // sinusoidal voltage source; value = frequency (Hz)
+  SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
+  LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)
 };
 
 export interface BuiltNetlist {

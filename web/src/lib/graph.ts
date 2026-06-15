@@ -121,6 +121,12 @@ export const PART_KINDS: Record<string, PartKind> = {
   GND: kind("GND", "Ground", "dim", onePin("⏚"), 0, "", true),
   // Diode: nonlinear (Shockley); anode A -> cathode K. Engages the Newton solve.
   D: kind("D", "Diode", "warn", twoPin("A", "K"), 0, "", true),
+  // Schottky diode: same Newton junction as D but a low ~0.3 V drop (metal–
+  // semiconductor). Cyan reads as the cool, low-loss/fast variant vs silicon's amber.
+  SD: kind("SD", "Schottky Diode", "cyan", twoPin("A", "K"), 0, "", true),
+  // LED: a diode that emits light; ~1.9 V drop, brightness tracks forward current.
+  // The vivid accent rose is the "emitting" hue.
+  LED: kind("LED", "LED", "accent", twoPin("A", "K"), 0, "", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
   Q: kind(

@@ -31,6 +31,13 @@
 //! | 5    | diode (nonlinear)  | (unused)      | Shockley, Newton companion a -> b  |
 //! | 6    | switch (clocked)   | duty `[0,1]`  | time-varying conductance a <-> b   |
 //! | 7    | AC voltage source  | frequency Hz  | MNA augmentation, EMF = sine(tick) |
+//! | 8    | Schottky diode     | (unused)      | Shockley (low Vf), Newton companion|
+//! | 9    | LED                | (unused)      | Shockley (high Vf), Newton companion|
+//!
+//! Types 5, 8, and 9 are the **diode family**: one set of Newton-companion
+//! routines parameterised by a [`DiodeModel`] (saturation current + thermal
+//! voltage), differing only in the model constants. The standard silicon diode is
+//! unchanged, so existing nonlinear circuits reproduce bit-for-bit.
 //!
 //! ## Sinusoidal AC voltage source
 //!
@@ -194,6 +201,19 @@ pub const ELEM_SWITCH: u8 = 6;
 /// lives in the fixed linear base and needs no Newton machinery.
 pub const ELEM_ACSOURCE: u8 = 7;
 
+/// **Schottky diode**. Same Newton-companion junction as [`ELEM_DIODE`], but a
+/// metal-semiconductor model: a much larger saturation current gives a low
+/// forward drop (~0.3 V vs ~0.7 V silicon). Oriented anode `a` -> cathode `b`;
+/// `value` is unused (the model is fixed). See [`diode_model`].
+pub const ELEM_SCHOTTKY: u8 = 8;
+
+/// **LED** (light-emitting diode). Same junction machinery as [`ELEM_DIODE`] with
+/// a high forward drop (~1.8–2 V, a larger ideality factor and tiny saturation
+/// current). The emitted brightness is a presentation-only function of the
+/// forward current, computed in the view — the core just solves the junction.
+/// Oriented anode `a` -> cathode `b`; `value` is unused. See [`diode_model`].
+pub const ELEM_LED: u8 = 9;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
@@ -227,6 +247,53 @@ const DIODE_IS: f64 = 1.0e-12;
 const DIODE_N: f64 = 1.0;
 /// Thermal voltage `Vt = kT/q`, in volts, at ~300 K. Fixed default.
 const DIODE_VT: f64 = 0.025_852;
+
+/// **Schottky** saturation current — far larger than silicon, which is what pulls
+/// the forward knee down to ~0.3 V at a ~100 mA drive. Ideality 1.
+const SCHOTTKY_IS: f64 = 1.0e-6;
+/// **LED** saturation current — tiny, and paired with a larger ideality factor to
+/// push the forward knee up to ~1.8–2 V.
+const LED_IS: f64 = 1.0e-18;
+/// LED emission (ideality) coefficient — wider junction than a signal diode.
+const LED_N: f64 = 2.0;
+
+/// The handful of model parameters a junction needs, so one set of Newton-companion
+/// routines ([`diode_eval`], [`diode_vcrit`], [`pnjlim`]) serves the whole diode
+/// family. `vth = n * Vt`.
+#[derive(Clone, Copy)]
+struct DiodeModel {
+    is: f64,
+    vth: f64,
+}
+
+/// The junction model for a diode-family element kind. A pure function of `kind`
+/// (the `value` field is unused by these devices), so it never costs determinism.
+#[inline]
+fn diode_model(kind: u8) -> DiodeModel {
+    match kind {
+        ELEM_SCHOTTKY => DiodeModel {
+            is: SCHOTTKY_IS,
+            vth: DIODE_N * DIODE_VT,
+        },
+        ELEM_LED => DiodeModel {
+            is: LED_IS,
+            vth: LED_N * DIODE_VT,
+        },
+        // ELEM_DIODE and anything else: the silicon default.
+        _ => DiodeModel {
+            is: DIODE_IS,
+            vth: DIODE_N * DIODE_VT,
+        },
+    }
+}
+
+/// True for every element on the Newton (diode-family) path. Centralises the
+/// membership test so the linear/nonlinear split, the companion-collection loops,
+/// and the current commit all agree on exactly one definition.
+#[inline]
+fn is_diode(kind: u8) -> bool {
+    matches!(kind, ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED)
+}
 
 // --- Newton outer-loop constants ----------------------------------------------
 
@@ -337,11 +404,10 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Vec<f64> {
 /// argument is bounded and never overflows; the evaluation is a pure, branch-free
 /// `f64` function for determinism.
 #[inline]
-fn diode_eval(vd: f64) -> (f64, f64) {
-    let vth = DIODE_N * DIODE_VT;
-    let e = (vd / vth).exp();
-    let i = DIODE_IS * (e - 1.0);
-    let g = (DIODE_IS / vth) * e;
+fn diode_eval(vd: f64, m: DiodeModel) -> (f64, f64) {
+    let e = (vd / m.vth).exp();
+    let i = m.is * (e - 1.0);
+    let g = (m.is / m.vth) * e;
     (i, g)
 }
 
@@ -351,9 +417,8 @@ fn diode_eval(vd: f64) -> (f64, f64) {
 /// per call from the fixed model constants (a few `f64` ops; `ln` is not `const`,
 /// so this is a tiny pure function rather than a constant).
 #[inline]
-fn diode_vcrit() -> f64 {
-    let vth = DIODE_N * DIODE_VT;
-    vth * (vth / (core::f64::consts::SQRT_2 * DIODE_IS)).ln()
+fn diode_vcrit(m: DiodeModel) -> f64 {
+    m.vth * (m.vth / (core::f64::consts::SQRT_2 * m.is)).ln()
 }
 
 /// pn-junction voltage limiting (the classic SPICE `pnjlim`). Given the proposed
@@ -364,9 +429,9 @@ fn diode_vcrit() -> f64 {
 /// large forward excursions past `vcrit` are compressed logarithmically. This is
 /// a deterministic, pure `f64` function — the heart of the nonlinear robustness.
 #[inline]
-fn pnjlim(vnew: f64, vold: f64) -> f64 {
-    let vcrit = diode_vcrit();
-    let vth = DIODE_N * DIODE_VT;
+fn pnjlim(vnew: f64, vold: f64, m: DiodeModel) -> f64 {
+    let vcrit = diode_vcrit(m);
+    let vth = m.vth;
     if vnew > vcrit && (vnew - vold).abs() > 2.0 * vth {
         if vold > 0.0 {
             let arg = 1.0 + (vnew - vold) / vth;
@@ -531,6 +596,8 @@ impl Sim {
                     | ELEM_DIODE
                     | ELEM_SWITCH
                     | ELEM_ACSOURCE
+                    | ELEM_SCHOTTKY
+                    | ELEM_LED
             ) {
                 self.install_empty();
                 return false;
@@ -575,7 +642,7 @@ impl Sim {
             }
         }
 
-        let has_nonlinear = elements.iter().any(|e| e.kind == ELEM_DIODE);
+        let has_nonlinear = elements.iter().any(|e| is_diode(e.kind));
 
         self.node_count = node_count;
         self.dim = next;
@@ -985,7 +1052,7 @@ impl Sim {
             // g = di/dv and Ieq = i(v*) - g*v* (plus GMIN for a finite slope).
             for &(ei, ia, ib) in diodes {
                 let vd = self.diode_vd[ei];
-                let (id, gd) = diode_eval(vd);
+                let (id, gd) = diode_eval(vd, diode_model(self.elements[ei].kind));
                 let g = gd + GMIN;
                 let ieq = id - g * vd;
                 if let Some(r) = ia {
@@ -1007,16 +1074,31 @@ impl Sim {
             // Update junction voltages with pn-junction limiting, and measure the
             // largest limited junction swing for the residual-style current test.
             let mut max_i_change = 0.0f64;
+            // Largest gap between the raw solved junction voltage and the limited
+            // one. While `pnjlim` is actively compressing a big forward swing this
+            // is large, which means the junction has NOT settled — a high-Vf, tiny
+            // Is device (an LED) cold-starts with its node pinned at the rail, so
+            // both the node-voltage and the sub-pA current tests can read
+            // "converged" while pnjlim is still dragging the junction up. Gating on
+            // an inactive limiter closes that false-convergence hole. Reverse and
+            // small-forward steps pass through pnjlim unchanged, so the gap is
+            // exactly zero at a true operating point and this never over-iterates.
+            let mut max_vd_gap = 0.0f64;
             for &(ei, ia, ib) in diodes {
                 let va = ia.map(|r| x[r]).unwrap_or(0.0);
                 let vb = ib.map(|r| x[r]).unwrap_or(0.0);
                 let vd_raw = va - vb;
                 let vd_old = self.diode_vd[ei];
-                let vd_new = pnjlim(vd_raw, vd_old);
+                let m = diode_model(self.elements[ei].kind);
+                let vd_new = pnjlim(vd_raw, vd_old, m);
+                let gap = (vd_raw - vd_new).abs();
+                if gap > max_vd_gap {
+                    max_vd_gap = gap;
+                }
                 // Compare the device current at the old vs the limited-new bias;
                 // a converged junction barely moves, so this drives the I-test.
-                let (i_old, _) = diode_eval(vd_old);
-                let (i_new, _) = diode_eval(vd_new);
+                let (i_old, _) = diode_eval(vd_old, m);
+                let (i_new, _) = diode_eval(vd_new, m);
                 let di = (i_new - i_old).abs();
                 if di > max_i_change {
                     max_i_change = di;
@@ -1034,10 +1116,13 @@ impl Sim {
                 }
             }
             let converged_i = max_i_change <= NEWTON_I_ABSTOL;
+            // The limiter must be inactive (junctions settled), not still hauling a
+            // cold-started high-Vf device up toward its knee.
+            let converged_limit = max_vd_gap <= NEWTON_V_ABSTOL;
 
-            // Require both tests, and at least one full iteration, so a stale seed
-            // cannot report convergence before a fresh solve.
-            if converged_v && converged_i {
+            // Require all three tests, and at least one full iteration, so a stale
+            // seed cannot report convergence before a fresh solve.
+            if converged_v && converged_i && converged_limit {
                 // Recompute node voltages from the limited junctions on the next
                 // pass would be a no-op (already converged); commit and stop.
                 self.node_v[0] = 0.0;
@@ -1159,7 +1244,7 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_DIODE => diodes.push((i, ia, ib)),
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => diodes.push((i, ia, ib)),
                 _ => {}
             }
         }
@@ -1180,7 +1265,9 @@ impl Sim {
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
-                ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => {
+                    diode_eval(self.diode_vd[i], diode_model(e.kind)).0
+                }
                 _ => 0.0,
             };
         }
@@ -1310,7 +1397,7 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_DIODE => diodes.push((i, ia, ib)),
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => diodes.push((i, ia, ib)),
                 _ => {}
             }
         }
@@ -1336,7 +1423,9 @@ impl Sim {
                 }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
-                ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => {
+                    diode_eval(self.diode_vd[i], diode_model(e.kind)).0
+                }
                 _ => 0.0,
             };
         }
@@ -2182,6 +2271,96 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "diode circuit must reproduce exactly");
+    }
+
+    /// The Schottky model (type 8) conducts the same loop but at a markedly lower
+    /// forward drop than the silicon diode — the defining property of the part.
+    /// Same layout as the silicon knee test (source 1->0, R 1->2, diode 2->0).
+    #[test]
+    fn schottky_drops_less_than_silicon() {
+        let build_one = |kind: u8| {
+            build(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, kind],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[5.0, 47.0, 0.0],
+            )
+            .node_voltages()[2]
+        };
+        let vd_schottky = build_one(ELEM_SCHOTTKY);
+        let vd_silicon = build_one(ELEM_DIODE);
+        assert!(
+            (0.25..=0.45).contains(&vd_schottky),
+            "Schottky sits in its low-knee band: got {vd_schottky}"
+        );
+        assert!(
+            vd_schottky < vd_silicon - 0.2,
+            "Schottky drops well below silicon: {vd_schottky} vs {vd_silicon}"
+        );
+    }
+
+    /// The LED model (type 9) conducts at a high forward drop (~1.8–2 V), well
+    /// above silicon. A 150 ohm series resistor lands it near a ~20 mA operating
+    /// point. Layout: source 1->0, R 1->2, LED 2->0.
+    #[test]
+    fn led_drops_more_than_silicon() {
+        let build_one = |kind: u8| {
+            build(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, kind],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[5.0, 150.0, 0.0],
+            )
+            .node_voltages()[2]
+        };
+        let vd_led = build_one(ELEM_LED);
+        let vd_silicon = build_one(ELEM_DIODE);
+        assert!(
+            (1.6..=2.1).contains(&vd_led),
+            "LED sits in its high-knee band: got {vd_led}"
+        );
+        assert!(vd_led > vd_silicon + 0.8, "LED drops well above silicon");
+        // Forward current is positive (the view turns it into brightness).
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_LED],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[5.0, 150.0, 0.0],
+        );
+        assert!(sim.element_currents()[2] > 0.0, "LED conducts forward");
+    }
+
+    /// The whole diode family on the Newton path reproduces bit-for-bit over a
+    /// long run — the type-8/9 analogue of `diode_run_is_reproducible`. A source
+    /// feeds a Schottky and an LED on parallel branches sharing the rail.
+    #[test]
+    fn diode_family_run_is_reproducible() {
+        let run = || {
+            // source 1->0; R 1->2; Schottky 2->0; R 1->3; LED 3->0.
+            let mut sim = build(
+                4,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_SCHOTTKY,
+                    ELEM_RESISTOR,
+                    ELEM_LED,
+                ],
+                &[1, 1, 2, 1, 3],
+                &[0, 2, 0, 3, 0],
+                &[5.0, 47.0, 0.0, 150.0, 0.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "diode family must reproduce exactly");
     }
 
     /// `set_netlist` accepts the diode element type (type 5) and marks the

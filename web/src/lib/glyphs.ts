@@ -378,6 +378,142 @@ function drawD(g: Graphics, o: GlyphOpts): void {
   );
 }
 
+function drawSD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const s = 8;
+  // A Schottky is the same one-way valve as the silicon diode but with a much
+  // lower forward knee, so it lights up earlier; the glow tracks the (positive)
+  // forward current exactly like the diode — magnitude as alpha, never speed.
+  const cond = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  if (cond > 0.03) {
+    g.circle(mx, my, 13).fill({ color: o.color, alpha: 0.2 * cond });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - s, my);
+  g.moveTo(mx + s, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // triangle pointing from anode to cathode
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // The distinctive Schottky cathode bar: a plain bar with the ends bent back
+  // into little flags (an "S"/bracket on each end) — the standard symbol.
+  const f = 4; // flag length
+  g.moveTo(mx + s - f, my - s)
+    .lineTo(mx + s, my - s)
+    .lineTo(mx + s, my + s)
+    .lineTo(mx + s - f, my + s);
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  flow(
+    g,
+    a.x,
+    a.y,
+    mx - s,
+    my,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+  flow(
+    g,
+    mx + s,
+    my,
+    b.x,
+    b.y,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+}
+
+function drawLED(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const s = 8;
+  // The marquee onboarding part: it visibly LIGHTS UP. Brightness is a function
+  // of the forward current (norm → 0..1), so it glows brighter as more current
+  // flows and is dark when reverse-biased or off. A gentle breathing on the
+  // bounded phase keeps it alive without coupling speed to magnitude.
+  const lit = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  if (lit > 0.01) {
+    const breathe = 0.85 + 0.15 * Math.sin(o.phase * PULSE_K);
+    // layered halo: a soft wide bloom + a tight bright core, both keyed to `lit`.
+    g.circle(mx, my, 20).fill({ color: o.color, alpha: 0.22 * lit * breathe });
+    g.circle(mx, my, 13).fill({ color: o.color, alpha: 0.38 * lit * breathe });
+    g.circle(mx, my, 6).fill({
+      color: 0xffffff,
+      alpha: 0.3 * lit * breathe,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - s, my);
+  g.moveTo(mx + s, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // triangle + cathode bar, exactly like the diode
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.95,
+  });
+  g.moveTo(mx + s, my - s).lineTo(mx + s, my + s);
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  // The two little arrows radiating away from the body — the "emitting light"
+  // marker that distinguishes an LED from a plain diode. Their reach grows a
+  // touch with brightness (alpha + length), but they never move.
+  const reach = 7 + 4 * lit;
+  for (let k = 0; k < 2; k++) {
+    const ox = mx - 1 + k * 6; // two arrows offset along the top edge
+    const sx = ox + 3;
+    const sy = my - s - 2;
+    const ex = sx + reach * 0.7;
+    const ey = sy - reach;
+    g.moveTo(sx, sy).lineTo(ex, ey);
+    // arrowhead
+    g.moveTo(ex, ey)
+      .lineTo(ex - 3.2, ey + 1.2)
+      .moveTo(ex, ey)
+      .lineTo(ex - 1.2, ey + 3.2);
+    g.stroke({ width: 1.4, color: o.color, alpha: 0.55 + 0.4 * lit });
+  }
+  flow(
+    g,
+    a.x,
+    a.y,
+    mx - s,
+    my,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+  flow(
+    g,
+    mx + s,
+    my,
+    b.x,
+    b.y,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+}
+
 function drawSW(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -579,6 +715,75 @@ function drawFD(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + hw, my, b.x, b.y, fwd, o.phase, 0x46d2e6);
 }
 
+function drawFSD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const cond = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // A low-loss check-valve: the same one-way gate as the diode, but slimmer with
+  // an open throat — visibly the leaner/faster valve (it barely impedes the belt).
+  g.poly([mx - 6, my - 7, mx + 6, my, mx - 6, my + 7]).stroke({
+    width: 1.6,
+    color: o.color,
+    alpha: 0.85,
+  });
+  g.poly([mx - 3, my - 4, mx + 5, my, mx - 3, my + 4]).fill({
+    color: o.color,
+    alpha: 0.3 + 0.6 * cond,
+  });
+  const fwd = Math.max(0, o.electrical.current);
+  flow(g, a.x, a.y, mx - hw, my, fwd, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, fwd, o.phase, 0x46d2e6);
+}
+
+function drawFLED(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  // A one-way gate that doubles as a beacon: the lamp on the roof brightens with
+  // the forward current (alpha + a gentle breathe on the bounded phase), dark
+  // when off — the factory-lens twin of the lighting-up LED symbol.
+  const lit = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  if (lit > 0.01) {
+    const breathe = 0.85 + 0.15 * Math.sin(o.phase * PULSE_K);
+    g.circle(mx, my - 4, 18).fill({
+      color: o.color,
+      alpha: 0.2 * lit * breathe,
+    });
+  }
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // the one-way gate
+  g.poly([mx - 5, my - 6, mx + 5, my, mx - 5, my + 6]).fill({
+    color: o.color,
+    alpha: 0.3 + 0.5 * lit,
+  });
+  // the beacon lamp on the roof
+  if (lit > 0.01) {
+    const breathe = 0.85 + 0.15 * Math.sin(o.phase * PULSE_K);
+    g.circle(mx, my - 11, 3.5).fill({
+      color: 0xffffff,
+      alpha: 0.4 * lit * breathe,
+    });
+    g.circle(mx, my - 11, 3.5).stroke({
+      color: o.color,
+      width: 1.2,
+      alpha: 0.9,
+    });
+  }
+  const fwd = Math.max(0, o.electrical.current);
+  flow(g, a.x, a.y, mx - hw, my, fwd, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, fwd, o.phase, 0x46d2e6);
+}
+
 function drawFSW(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -634,6 +839,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   AC: drawAC,
   GND: drawGND,
   D: drawD,
+  SD: drawSD,
+  LED: drawLED,
   SW: drawSW,
 };
 
@@ -646,6 +853,8 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   AC: drawFAC,
   GND: drawFGND,
   D: drawFD,
+  SD: drawFSD,
+  LED: drawFLED,
   SW: drawFSW,
 };
 
