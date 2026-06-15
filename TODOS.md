@@ -12,7 +12,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**`docs/game-ground-returns.md`** — tiered grounding ladder G0 ideal-star → G1 lumped return R+L → G2 paintable ground-zone (the unlocked escape hatch) → G3 loop-area/EMI (integer shoelace × di/dt, deterministic) → G4 shared-ground noise budget; rejects full multi-layer PCB. Grounding is a **bonus/multiplier axis, not pass/fail**; violations located+explained; EMI scalar stays out of the golden.~~
 - ~~**`docs/game-progression.md`** — 9-era tech-tree spine gating the ~8 sim primitives (not parts individually); unlock via credits + competency exams + discovery; the contract's **judgement part = a placeable acceptance fixture** whose pins are the harness. Exploration rewards: **Lab Notebook** codex (first time you cause a phenomenon), **Eureka boosts** (doing X discounts X's gate), **autopsy-for-Lux** (analyze a blown part), **Lux-vs-Credits** (deepen vs widen — a tinkerer can climb without shipping).~~
 - ~~**MCU decision** captured in `ic-buildings-ideation.md` §3.11: real C/Arduino firmware at the top of the ladder, run on an emulated core as a fast deterministic digital island; MCU (sequential) + FPGA (spatial) are the two programmable capstones.~~
-- [ ] **NEXT (owner-greenlit): MOSFETs + transistors** — the multi-terminal (P3) + controlled-source (P4) lift. Scope + implement next.
+- ~~**NEXT (owner-greenlit): MOSFETs + transistors** — the multi-terminal (P3)
+  lift, web/UI half. Built on the committed sim-core level-1 MOSFET
+  (`ELEM_NMOS = 11`, `ELEM_PMOS = 12`; D=a, S=b, G=c; crates untouched, golden
+  `0xeaac376499e4fa24` unchanged). **`buildNetlist` now carries a third terminal
+  `c: Uint32Array`** — a 3-pin device (a MOSFET) stamps `c[i]` = its gate node
+  (pin 2), a 2-pin part stamps `c[i] = 0` (ground, ignored by the core); pin→
+  terminal map is direct (pin 0 → a/Drain, 1 → b/Source, 2 → c/Gate). `c` folds
+  into the topology `sig` (so rewiring the gate rebuilds, a pure move doesn't),
+  the MOSFET pulls its gate net into the floating-source union-find, and
+  `elemOfComponent`/`nodesOfComponent` map to [drain, source] (current = Id a→b,
+  vAcross = Vds). App passes `nl.c` at both `setNetlist` call sites (empty array
+  for the ground-only fallback). `graph.ts PART_KINDS` `NM`/`PM` (ok/green, pins
+  D,S,G, value unused) + bin + Active & Switching category. `glyphs.ts`:
+  schematic = the standard MOSFET symbol (insulated gate bar, drain up/source
+  down, body arrow N-in / P-out, channel chokes shut in cutoff); factory = a
+  gain-assembler/valve (thin gate control belt opens a fat drain→source main
+  belt whose width/density track Id, choking shut below threshold) — all on the
+  bounded `o.phase` clock. `partInfo.ts` `NM`/`PM` (Vgs vs ~2 V threshold;
+  cutoff/triode/saturation; square law + gm; insulated gate draws no current;
+  live region + Vds/Id + a recovered-gm row). **Two `examples.ts` builds** under
+  Power & Switching: **MOSFET as a Switch** (gate drives an LED hard on/off,
+  gate-high/low toggle) and **Common-Source Amplifier** (NMOS + 100 Ω drain R,
+  Vgg = 3 V → saturation, drain ≈3.9 V @ ~11 mA, small gate swing → larger
+  inverted drain swing). All gates green (53 sim-core tests: 52 pass / 1 ignored;
+  fmt/clippy; build:wasm; web format/check/lint/build).~~
 
 ### Done — three board-interaction features (ghost / junction-drag / junction tool)
 - ~~**Translucent placement ghost for the armed part.** `board.ts` adds a

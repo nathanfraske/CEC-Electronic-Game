@@ -219,6 +219,33 @@ export const PART_KINDS: Record<string, PartKind> = {
   ZD: kind("ZD", "Zener Diode", "bronze", twoPin("A", "K"), 5.1, "V", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
+  // N-channel MOSFET: the first three-terminal solver element. A voltage on the
+  // gate (Vgs vs the ~2 V threshold) controls the drain→source current. Pins are
+  // ordered D, S, G — pin 0 = Drain (a), pin 1 = Source (b), pin 2 = Gate (c) —
+  // so buildNetlist's pin→terminal map is direct. Drain at top, source at bottom,
+  // gate on the left, matching the schematic. `value` is unused (fixed model).
+  // The `ok` green reads as the "switching/gain" family.
+  NM: kind(
+    "NM",
+    "N-MOSFET",
+    "ok",
+    [pin("D", 2, 0), pin("S", 2, 2), pin("G", 0, 1)],
+    0,
+    "",
+    true,
+  ),
+  // P-channel MOSFET: the high-side mirror of the NMOS — it conducts when the gate
+  // is pulled *below* the source by more than |VTO|. Same D, S, G pin order and
+  // the same fixed model; `value` unused.
+  PM: kind(
+    "PM",
+    "P-MOSFET",
+    "ok",
+    [pin("D", 2, 0), pin("S", 2, 2), pin("G", 0, 1)],
+    0,
+    "",
+    true,
+  ),
   Q: kind(
     "Q",
     "NPN Transistor",

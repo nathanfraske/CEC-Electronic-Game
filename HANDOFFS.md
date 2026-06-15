@@ -5,6 +5,75 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — MOSFET (NMOS/PMOS) web/UI integration (sim types 11 & 12)
+
+**State:** 🟢 Green. **crates/ untouched** — built on the committed sim-core
+level-1 MOSFET (`ELEM_NMOS = 11`, `ELEM_PMOS = 12`; drain `a`, source `b`, gate
+`c`), golden `0xeaac376499e4fa24` unchanged; 53 sim-core tests (52 pass / 1
+ignored `print_golden`); fmt/clippy clean; build:wasm, web format/check/lint/build
+all pass. The first **three-terminal** part is now placeable, simulated, animated,
+explained, and has examples.
+
+**The third terminal through `buildNetlist` (`web/src/lib/netlist.ts`):**
+- `BuiltNetlist` gains **`c: Uint32Array`**, parallel to `a`/`b`. For each
+  element it is pushed in lockstep (EC's two stamps each push `c = 0`). A **3-pin
+  device** (a MOSFET, `THREE_PIN_TYPES = {11,12}` and `kind.pins.length >= 3`)
+  stamps `c` = its **gate** node (pin 2); every **2-pin** part stamps `c = 0`
+  (ground), which the core ignores.
+- **Pin→terminal convention matches the core exactly:** pin 0 → a = **Drain**,
+  pin 1 → b = **Source**, pin 2 → c = **Gate**. `PART_KINDS` `NM`/`PM` define
+  pins in that order (labelled D, S, G), so the map is direct.
+- `elemOfComponent` → the MOSFET element (current = `Id`, oriented a→b =
+  drain→source); `nodesOfComponent` → `[drain, source]`, so `vAcross` reads
+  `Vds`.
+- `c` folds into the topology **`sig`** (rewiring the gate to a new net rebuilds
+  the netlist; a pure move leaves every node — c included — unchanged, so the sim
+  isn't reset). The MOSFET also unions its **gate net** into the floating-source
+  return-path check (all three nodes participate).
+- `web/src/App.svelte`: both `setNetlist` call sites updated — the live one passes
+  **`nl.c`**, the quiet ground-only fallback passes a new empty `Uint32Array`.
+  (`loop.ts setNetlist` already took the trailing optional `c?`.)
+
+**Parts / glyphs / info / bin:**
+- `graph.ts PART_KINDS` `NM` ("N-MOSFET") + `PM` ("P-MOSFET"), `ok`/green
+  ("switching/gain" family), 3 pins **D, S, G**, `value` unused (fixed model),
+  `ideal: true`. `netlist.ts TYPE_OF` `NM:11`, `PM:12`. App `PARTS` bin + the
+  **Active & Switching** category (`PART_CAT_OF`).
+- `glyphs.ts` (`DRAWERS` + `FACTORY_DRAWERS`): **schematic** = the standard
+  enhancement MOSFET symbol (insulated gate bar off a broken channel, drain
+  up/source down, the body/channel arrow N-in vs P-out, the channel fingers
+  retract = choke shut in cutoff). **Factory** = a gain-assembler/valve: a thin
+  gate control belt lifts a sluice that opens a **fat drain→source main belt**
+  whose width + flow density track `Id` and choke shut below threshold. All
+  motion on the bounded `o.phase` clock — magnitude is width/density/alpha/glow,
+  never speed.
+- `partInfo.ts` `NM`/`PM`: teach Vgs vs the ~2 V threshold controlling Id;
+  cutoff/triode/saturation; the square law + transconductance gm; the insulated
+  gate draws no DC current. Live `headline` = the operating region + Vds/Id;
+  derived rows = Id, a **recovered gm** (inverts the saturation square law from
+  the measured Id/Vds, since the gate node isn't exposed to the inspector), and
+  power Vds·Id.
+
+**Examples (`examples.ts`, under Power & Switching, hand-checked):**
+- **MOSFET as a Switch** (`mosfet-switch`) — VDD 5 V → R 150 Ω → LED → NMOS
+  (low-side), gate driven by a second V source; gate HIGH (5 V > VTO) closes the
+  channel (LED lit, ~18 mA, drain ≈0.3 V), gate LOW cuts off (dark). A
+  gate-high/low `demo` toggle.
+- **Common-Source Amplifier** (`mosfet-cs-amp`) — VDD 5 V → RD 100 Ω → NMOS
+  drain (output), source → GND, gate bias Vgg 3 V (Vov = 1 V → saturation). Drain
+  parks ≈3.9 V @ Id ≈11 mA; a small gate nudge swings the drain ~2× harder and
+  inverts (gain ≈ −gm·(RD‖ro)). Mirrors the sim-core
+  `nmos_saturation_operating_point_matches_square_law` layout.
+
+### Pick up here
+- The MOSFET `value` field is unused (fixed VTO/KP/λ). A per-device params block
+  (P2) would let learners sweep threshold/size — the natural fidelity upgrade, and
+  it would also let `partInfo` show a true Vgs/region instead of the
+  recovered-gm derivation (the gate node could then be exposed in
+  `nodesOfComponent`).
+- The BJT (`Q`, 3 pins) is still a placeholder — the next multi-terminal part now
+  that the 3-terminal netlist seam exists. Same owner-driven UI backlog as below.
+
 ## 2026-06-15 — Board interaction: placement ghost, junction drag, junction tool
 
 **State:** 🟢 Green. **crates/ untouched** — render/interaction/graph only; golden
