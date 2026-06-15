@@ -371,6 +371,18 @@ export class BoardGraph {
     if (c) c.cell = cell;
   }
 
+  /**
+   * Move a free junction to a new (already-snapped) grid cell. Incident wires
+   * reference the junction by id, so they re-route to follow automatically; only
+   * the geometry changes, never the connectivity — so the netlist `sig` (built
+   * from topology + node numbering, not positions) stays stable and the running
+   * sim isn't reset.
+   */
+  moveJunction(id: number, cell: Cell): void {
+    const j = this.junctions.get(id);
+    if (j) j.cell = { ...cell };
+  }
+
   /** Remove a component and any wires touching its pins (and tidy junctions). */
   removeComponent(id: number): void {
     this.components.delete(id);
@@ -468,20 +480,25 @@ export class BoardGraph {
   }
 
   /**
-   * Drop a wire onto an existing wire: create a junction at `cell`, split the
+   * Drop a junction onto an existing wire: create a junction at `cell`, split the
    * target wire into target.from→J and J→target.to (preserving its waypoint on
-   * the half that still needs it), and connect `from` to the new junction.
-   * Returns the junction, or undefined if anything is stale. Used for KiCad-style
-   * wire-to-wire (T) junctions.
+   * the half that still needs it), and — when an incoming `from` endpoint is given
+   * — connect it to the new junction. Returns the junction, or undefined if
+   * anything is stale.
+   *
+   * With `from` it is the KiCad-style wire-to-wire (T) junction made by ending a
+   * new wire on a trace. Without `from` (the "place junction" tool) it simply
+   * splits the wire in place: both halves now terminate at the junction, so it
+   * has the two incident wire-ends it needs to survive {@link pruneJunctions}.
    */
   junctionOnWire(
     targetWireId: number,
     cell: Cell,
-    from: Endpoint,
+    from?: Endpoint,
   ): Junction | undefined {
     const target = this.wires.get(targetWireId);
     if (!target) return undefined;
-    if (!this.endpointExists(from)) return undefined;
+    if (from !== undefined && !this.endpointExists(from)) return undefined;
     const j = this.addJunction(cell);
     const jref: JunctionRef = { junctionId: j.id };
     // Split: keep the original wire as from→J, add a second J→to. The waypoint
@@ -504,8 +521,10 @@ export class BoardGraph {
       else if (b && manhattanOnLeg(origMid, cell, b))
         second.mid = { ...origMid };
     }
-    // `target` was mutated in place (it is the same object the map holds).
-    this.connect(from, { ...jref });
+    // `target` was mutated in place (it is the same object the map holds). With an
+    // incoming endpoint, tie it to the junction; without one (the place-junction
+    // tool) the two split halves alone give the junction its two incident ends.
+    if (from !== undefined) this.connect(from, { ...jref });
     return j;
   }
 

@@ -302,9 +302,11 @@
       ? probeMode === "A"
         ? "PROBE · click a part/wire for its current AND voltage at once (a real meter needs separate ports for each)"
         : "VOLTMETER · click two points to read ΔV (one point = vs GND)"
-      : armedPart
-        ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
-        : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
+      : mode === "junction"
+        ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
+        : armedPart
+          ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
+          : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
   // The displayed tick as a wall-clock duration of simulated time (tick × DT).
@@ -345,13 +347,19 @@
         board?.undo();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "r" || e.key === "R")) {
-        board?.rotateSelection();
+        // R rotates the *placement* of an armed part when nothing is selected, so
+        // the ghost (and the drop) turn; otherwise it rotates the selection.
+        if (armedPart && selCount === 0) board?.rotateArmed();
+        else board?.rotateSelection();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
         enterBuild(); // b = Build (place + select)
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "w" || e.key === "W")) {
         enterWire(); // w = Wire
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "j" || e.key === "J")) {
+        enterJunction(); // j = Junction (tap a wire to drop a junction)
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "m" || e.key === "M")) {
         enterMeasure(); // m = Measure
@@ -597,11 +605,11 @@
     mode = m;
     board?.setMode(m);
   }
-  // Arm / disarm a part for placement. Arming while measuring drops you back into
-  // Build so the click actually places.
+  // Arm / disarm a part for placement. Arming while in a non-placing tool
+  // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
     armedPart = tag;
-    if (tag && mode === "measure") setMode("select");
+    if (tag && (mode === "measure" || mode === "junction")) setMode("select");
     board?.setArmed(tag);
   }
   function toggleArm(tag: string): void {
@@ -613,6 +621,10 @@
   function enterWire(): void {
     arm(null);
     setMode("wire");
+  }
+  function enterJunction(): void {
+    arm(null);
+    setMode("junction");
   }
   function enterMeasure(): void {
     arm(null);
@@ -875,6 +887,14 @@
         title="Wire: drag pin to pin; end on a trace to drop a junction (W)"
       >
         Wire <kbd class="hk">W</kbd>
+      </button>
+      <button
+        class="btn btn-ghost {mode === 'junction' ? 'is-active' : ''}"
+        onclick={enterJunction}
+        disabled={!ready}
+        title="Junction: click a wire to drop a junction at that point (J)"
+      >
+        Junction <kbd class="hk">J</kbd>
       </button>
       <button
         class="btn btn-ghost {mode === 'measure' ? 'is-active' : ''}"

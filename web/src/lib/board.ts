@@ -19,6 +19,7 @@ import type { Snapshot, SubFrameSample } from "../sim/loop";
 import {
   BoardGraph,
   PALETTE,
+  PART_KINDS,
   snap,
   formatValue,
   rotateOffset,
@@ -42,7 +43,7 @@ import {
 import { hasValue } from "./values";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
-export type Mode = "select" | "place" | "wire" | "measure";
+export type Mode = "select" | "place" | "wire" | "measure" | "junction";
 
 /** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
 interface ProbePoint {
@@ -61,6 +62,10 @@ const MAX_SAMPLES = 240;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
+/** Max gap (ms) between two presses on a junction to count as a double-click. */
+const DOUBLE_CLICK_MS = 350;
+/** Alpha the armed-part placement ghost is drawn at (a faint translucent preview). */
+const GHOST_ALPHA = 0.32;
 /**
  * Visual flow clock. The animated belts/dots/pulses advance off a *bounded* phase
  * that ticks at a fixed wall-clock rate, NOT at the playback ticks-per-second and
@@ -196,6 +201,11 @@ export class Board {
   private readonly selectionLayer = new Graphics();
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
+  // Translucent placement preview ("ghost") of the armed part at the snapped
+  // cursor cell. A dedicated low-alpha layer holding one reused Graphics — no DOM,
+  // and it rotates the held part's glyph in place via the holder's rotation.
+  private readonly ghostLayer = new Container();
+  private readonly ghostGlyph = new Graphics();
   private readonly probeLayer = new Graphics();
   private readonly probeText = new Text({
     text: "",
@@ -233,6 +243,13 @@ export class Board {
   // The armed part kind: while set, clicking an empty cell drops it (place-and-
   // repeat). The mode buttons are gone; this is the "Place mode" replacement.
   private armed: string | null = null;
+  // Placement rotation (0..3, 90° CW steps) for the armed part: R rotates it while
+  // a part is armed and nothing is selected, the ghost reflects it, and the part
+  // is dropped at this rotation. Independent of any selected part's rotation.
+  private armedRot = 0;
+  // Whether the pointer is currently over the board, so the ghost shows only while
+  // hovering and hides the moment the pointer leaves.
+  private pointerInside = false;
   private viewportDirty = true;
   // `phase` is the bounded visual flow clock fed to every drawer: it advances at a
   // fixed wall-clock rate (FLOW_HZ), so the flow reads at a constant calm pace no
@@ -267,6 +284,12 @@ export class Board {
   private wiring: { from: Endpoint } | null = null;
   // Dragging an existing wire to reshape its route (creates/moves its waypoint).
   private wireDrag: { id: number; grab: Cell; moved: boolean } | null = null;
+  // Dragging a junction (started by a double-click on it) to a new grid cell; its
+  // incident wires follow because they reference it by id. `moved` gates the undo.
+  private junctionDrag: { id: number; moved: boolean } | null = null;
+  // Timestamp + id of the last junction press, to detect a double-click (a second
+  // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
+  private lastJunctionTap: { id: number; t: number } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
@@ -295,6 +318,13 @@ export class Board {
     this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
+    // The ghost rides above the components so the preview is never occluded, and
+    // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
+    this.ghostLayer.addChild(this.ghostGlyph);
+    this.ghostLayer.eventMode = "none";
+    this.ghostLayer.alpha = GHOST_ALPHA;
+    this.ghostLayer.visible = false;
+    this.world.addChild(this.ghostLayer);
     this.world.addChild(this.pendingWire);
     this.world.addChild(this.probeLayer);
     this.world.addChild(this.probeText);
@@ -363,6 +393,10 @@ export class Board {
     app.stage.on("pointerupoutside", this.onPointerUp);
     app.stage.on("rightdown", this.onRightDown);
     app.canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    // Track pointer presence on the canvas so the placement ghost shows only while
+    // the cursor is over the board and vanishes the instant it leaves.
+    app.canvas.addEventListener("pointerenter", this.onPointerEnter);
+    app.canvas.addEventListener("pointerleave", this.onPointerLeave);
 
     this.drawGrid();
   }
@@ -374,12 +408,28 @@ export class Board {
     if (mode !== "wire") this.cancelWiring();
     if (mode !== "measure") this.clearProbe();
     this.updateCursor();
+    this.updateGhost();
   }
 
   /** Arm a part kind: clicking empty board cells now drops it (place-and-repeat). */
   setArmed(kind: string | null): void {
+    // Arming a fresh kind starts it at rotation 0 (R then rotates from there);
+    // re-arming the same kind keeps the rotation the player dialled in.
+    if (kind !== this.armed) this.armedRot = 0;
     this.armed = kind;
     this.updateCursor();
+    this.updateGhost();
+  }
+
+  /**
+   * Rotate the *placement* rotation of the armed part 90° CW. Used by R while a
+   * part is armed and nothing is selected; the ghost reflects it immediately and
+   * the part drops at this rotation. No-op when nothing is armed.
+   */
+  rotateArmed(): void {
+    if (!this.armed) return;
+    this.armedRot = (this.armedRot + 1) % 4;
+    this.updateGhost();
   }
 
   /** Esc: cancel an in-progress wire, otherwise clear the selection. */
@@ -394,9 +444,65 @@ export class Board {
   private updateCursor(): void {
     this.app.stage.cursor = this.armed
       ? "copy"
-      : this.mode === "measure"
+      : this.mode === "measure" || this.mode === "junction"
         ? "crosshair"
         : "default";
+  }
+
+  private readonly onPointerEnter = (): void => {
+    this.pointerInside = true;
+    this.updateGhost();
+  };
+
+  private readonly onPointerLeave = (): void => {
+    this.pointerInside = false;
+    this.updateGhost();
+  };
+
+  /**
+   * Draw the translucent placement preview of the armed part at the grid-snapped
+   * cursor cell, reusing the real glyph drawer at a low alpha on the ghost layer.
+   * Shown only while a part is armed and the pointer is over the board; hidden
+   * otherwise. The held part's placement rotation rotates the glyph in place, and
+   * it snaps to `cellToWorld(cell)` so it sits exactly where a drop would land.
+   */
+  private updateGhost(): void {
+    const show = this.armed !== null && this.pointerInside;
+    this.ghostLayer.visible = show;
+    if (!show || this.armed === null) {
+      this.ghostGlyph.clear();
+      return;
+    }
+    const kind = PART_KINDS[this.armed];
+    if (!kind) {
+      this.ghostLayer.visible = false;
+      this.ghostGlyph.clear();
+      return;
+    }
+    const cell = {
+      col: snap(this.pointer.x, PITCH),
+      row: snap(this.pointer.y, PITCH),
+    };
+    const o = this.cellToWorld(cell);
+    this.ghostLayer.position.set(o.x, o.y);
+    // Rotate the glyph in place exactly like a placed component's holder does, so
+    // the preview matches the orientation the part will be dropped at.
+    this.ghostGlyph.rotation = (this.armedRot * Math.PI) / 2;
+    const color = PALETTE[kind.colorKey];
+    const pins = kind.pins.map((p) => ({ x: p.dx * PITCH, y: p.dy * PITCH }));
+    const g = this.ghostGlyph;
+    g.clear();
+    drawGlyph(g, {
+      kind: this.armed,
+      pins,
+      wPx: (kind.w - 1) * PITCH,
+      hPx: (kind.h - 1) * PITCH,
+      color,
+      electrical: ZERO_ELECTRICAL,
+      phase: 0,
+    });
+    // Pin dots, matching the real node so the ghost reads as the same part.
+    for (const p of pins) g.circle(p.x, p.y, PIN_R).fill({ color });
   }
 
   /** Supply the pin→net mapping so the probe can read net voltages. */
@@ -450,11 +556,18 @@ export class Board {
     return this.placeCell(kind, this.screenToCell(screenX, screenY));
   }
 
-  /** Place a part at a grid cell, recording undo and refreshing the view. */
-  private placeCell(kind: string, cell: Cell): Component | undefined {
+  /**
+   * Place a part at a grid cell, recording undo and refreshing the view. `rot`
+   * (90° CW steps) sets the dropped orientation — the armed placement rotation, so
+   * a part lands at the angle the ghost previewed; it defaults to 0 (drag-drop).
+   */
+  private placeCell(kind: string, cell: Cell, rot = 0): Component | undefined {
     const before = this.graph.serialize();
     const c = this.graph.place(kind, cell);
     if (c) {
+      // Drop at the requested orientation (the armed placement rotation) so the
+      // part lands exactly as the ghost previewed it; addNode reads c.rot.
+      c.rot = ((rot % 4) + 4) % 4;
       this.pushUndo(before);
       this.addNode(c);
       this.redrawWires();
@@ -639,6 +752,8 @@ export class Board {
     this.app.stage.off("pointerupoutside", this.onPointerUp);
     this.app.stage.off("rightdown", this.onRightDown);
     this.app.canvas.removeEventListener("wheel", this.onWheel);
+    this.app.canvas.removeEventListener("pointerenter", this.onPointerEnter);
+    this.app.canvas.removeEventListener("pointerleave", this.onPointerLeave);
     for (const node of this.nodes.values()) node.destroy();
     this.nodes.clear();
     this.world.destroy({ children: true });
@@ -1188,6 +1303,16 @@ export class Board {
       return;
     }
 
+    // Junction tool: a non-additive click drops a junction at the nearest grid
+    // point on the clicked wire (the KiCad "place junction" action) — the same
+    // create+split path as ending a wire on a wire, but with no incoming wire.
+    // Falls through to pan when not over a wire (and shift-click still selects).
+    if (this.mode === "junction" && !additive) {
+      if (this.placeJunctionAt(wp.x, wp.y)) return;
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
+
     const pin = this.pinHitTest(wp.x, wp.y);
     if (pin && (this.mode === "wire" || this.mode === "select")) {
       this.wiring = { from: pin };
@@ -1195,8 +1320,9 @@ export class Board {
     }
 
     // A junction acts like a pin: a plain press starts a branch wire from it; a
-    // shift/ctrl press selects it (so the Delete key can remove it). It is tested
-    // before wires/bodies because it sits atop the wire it splits.
+    // shift/ctrl press selects it (so the Delete key can remove it). A *double*-
+    // click instead grabs it for dragging (move the junction; its incident wires
+    // follow). It is tested before wires/bodies because it sits atop its wire.
     const jid = this.junctionHitTest(wp.x, wp.y);
     if (jid !== null) {
       if (additive) {
@@ -1204,6 +1330,21 @@ export class Board {
         return;
       }
       if (this.mode === "wire" || this.mode === "select") {
+        const now = performance.now();
+        const dbl =
+          this.lastJunctionTap !== null &&
+          this.lastJunctionTap.id === jid &&
+          now - this.lastJunctionTap.t < DOUBLE_CLICK_MS;
+        if (dbl) {
+          // Second click on the same junction: grab it for dragging instead of
+          // starting a wire. (The first click's wire was a no-op release-in-place.)
+          this.lastJunctionTap = null;
+          this.cancelWiring();
+          this.junctionDrag = { id: jid, moved: false };
+          this.pendingUndo = this.graph.serialize();
+          return;
+        }
+        this.lastJunctionTap = { id: jid, t: now };
         this.wiring = { from: { junctionId: jid } };
         return;
       }
@@ -1239,10 +1380,11 @@ export class Board {
     // Empty space. With a part armed, drop it here and stay armed — Factorio-style
     // place-and-repeat. Otherwise clear the selection and begin a pan.
     if (this.armed && !additive) {
-      this.placeCell(this.armed, {
-        col: snap(wp.x, PITCH),
-        row: snap(wp.y, PITCH),
-      });
+      this.placeCell(
+        this.armed,
+        { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
+        this.armedRot,
+      );
       return;
     }
     if (!additive) this.clearSelection();
@@ -1297,6 +1439,20 @@ export class Board {
       return;
     }
 
+    if (this.junctionDrag) {
+      const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
+      const j = this.graph.junctions.get(this.junctionDrag.id);
+      if (j && (cell.col !== j.cell.col || cell.row !== j.cell.row)) {
+        this.junctionDrag.moved = true;
+        this.graph.moveJunction(this.junctionDrag.id, cell);
+        // Incident wires reference the junction by id, so re-routing them is just
+        // a redraw — connectivity (and thus the netlist) is untouched.
+        this.redrawWires();
+        this.redrawSelection();
+      }
+      return;
+    }
+
     if (this.panning) {
       this.world.position.x += e.global.x - this.panning.lastX;
       this.world.position.y += e.global.y - this.panning.lastY;
@@ -1324,6 +1480,8 @@ export class Board {
     }
 
     if (this.wiring) this.drawPendingWire();
+    // Idle hover: keep the placement ghost glued to the snapped cursor cell.
+    if (this.armed) this.updateGhost();
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
@@ -1342,6 +1500,18 @@ export class Board {
         this.cb.onChange?.(this.graph);
       }
       this.wireDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.junctionDrag) {
+      // Commit the move only if it actually moved (so a stray micro-drag from the
+      // double-click doesn't push an empty undo). Topology is unchanged, so the
+      // netlist `sig` is stable and the running sim isn't reset.
+      if (this.junctionDrag.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        this.cb.onChange?.(this.graph);
+      }
+      this.junctionDrag = null;
       this.pendingUndo = null;
       return;
     }
@@ -1382,6 +1552,32 @@ export class Board {
       this.cancelWiring();
     }
   };
+
+  /**
+   * Junction tool: drop a junction at the nearest grid point on the wire under
+   * the cursor, reusing the same `junctionOnWire` create+split path as ending a
+   * wire on a wire — but with no incoming wire, so it just taps the trace in place
+   * (KiCad "place junction"). The two split halves give the junction its two
+   * incident ends, so it survives pruning and ties those wires into one net.
+   * Returns true if a junction was placed (i.e. the cursor was over a wire).
+   */
+  private placeJunctionAt(wx: number, wy: number): boolean {
+    const wireId = this.wireHitTest(wx, wy);
+    if (wireId === null) return false;
+    const w = this.graph.wires.get(wireId);
+    if (!w) return false;
+    const route = this.routeForWire(w);
+    if (route.length < 2) return false;
+    const cp = closestOnPolyline(route, wx, wy);
+    const cell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
+    const before = this.graph.serialize();
+    const j = this.graph.junctionOnWire(wireId, cell);
+    if (!j) return false;
+    this.pushUndo(before);
+    this.redrawWires();
+    this.cb.onChange?.(this.graph);
+    return true;
+  }
 
   /**
    * Finish an in-progress wire on an existing wire (a KiCad-style T): drop a
