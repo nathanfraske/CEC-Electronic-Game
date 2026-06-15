@@ -33,8 +33,9 @@
 //! | 7    | AC voltage source  | frequency Hz  | MNA augmentation, EMF = sine(tick) |
 //! | 8    | Schottky diode     | (unused)      | Shockley (low Vf), Newton companion|
 //! | 9    | LED                | (unused)      | Shockley (high Vf), Newton companion|
+//! | 10   | Zener diode        | breakdown Vz  | Shockley + reverse-breakdown junction|
 //!
-//! Types 5, 8, and 9 are the **diode family**: one set of Newton-companion
+//! Types 5, 8, 9, and 10 are the **diode family**: one set of Newton-companion
 //! routines parameterised by a [`DiodeModel`] (saturation current + thermal
 //! voltage), differing only in the model constants. The standard silicon diode is
 //! unchanged, so existing nonlinear circuits reproduce bit-for-bit.
@@ -214,6 +215,15 @@ pub const ELEM_SCHOTTKY: u8 = 8;
 /// Oriented anode `a` -> cathode `b`; `value` is unused. See [`diode_model`].
 pub const ELEM_LED: u8 = 9;
 
+/// **Zener diode**. A silicon junction that also conducts *backwards* once the
+/// reverse bias exceeds its breakdown voltage — the basis of a shunt voltage
+/// reference/clamp. Oriented anode `a` -> cathode `b`; its `value` is the
+/// **breakdown voltage `Vz`** in volts (clamped to a sane minimum). Modelled as
+/// the silicon forward junction plus a second, oppositely-facing exponential that
+/// turns on near `-Vz` (see [`diode_eval`]), solved on the same Newton path with
+/// limiting applied to whichever junction is active. See [`diode_model`].
+pub const ELEM_ZENER: u8 = 10;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
@@ -257,33 +267,68 @@ const LED_IS: f64 = 1.0e-18;
 /// LED emission (ideality) coefficient — wider junction than a signal diode.
 const LED_N: f64 = 2.0;
 
+/// **Zener** breakdown knee current, in amperes — the reverse current at exactly
+/// `vd = -Vz`. Calibrates where the breakdown "turns on".
+const ZENER_ISZ: f64 = 5.0e-4;
+/// **Zener** breakdown sharpness (the breakdown junction's effective thermal
+/// voltage), in volts. Smaller = a harder clamp; large enough to keep Newton well
+/// conditioned. The reverse current is `ISZ * exp((-vd - Vz) / ZENER_VTH_BR)`.
+const ZENER_VTH_BR: f64 = 0.02;
+/// Floor on a Zener's breakdown voltage, in volts, so `value <= 0` can't produce a
+/// degenerate or back-to-front device.
+const ZENER_VZ_MIN: f64 = 0.5;
+
 /// The handful of model parameters a junction needs, so one set of Newton-companion
 /// routines ([`diode_eval`], [`diode_vcrit`], [`pnjlim`]) serves the whole diode
-/// family. `vth = n * Vt`.
+/// family. `vth = n * Vt`. `vz` is the reverse **breakdown** voltage; it is
+/// `f64::INFINITY` for every non-Zener device, which switches the breakdown term
+/// off entirely — so those devices stay byte-for-byte identical.
 #[derive(Clone, Copy)]
 struct DiodeModel {
     is: f64,
     vth: f64,
+    vz: f64,
 }
 
-/// The junction model for a diode-family element kind. A pure function of `kind`
-/// (the `value` field is unused by these devices), so it never costs determinism.
+/// The junction model for a diode-family element kind. Pure function of `kind` and
+/// the element `value` (only the Zener reads `value`, as its breakdown voltage),
+/// so it never costs determinism.
 #[inline]
-fn diode_model(kind: u8) -> DiodeModel {
+fn diode_model(kind: u8, value: f64) -> DiodeModel {
     match kind {
         ELEM_SCHOTTKY => DiodeModel {
             is: SCHOTTKY_IS,
             vth: DIODE_N * DIODE_VT,
+            vz: f64::INFINITY,
         },
         ELEM_LED => DiodeModel {
             is: LED_IS,
             vth: LED_N * DIODE_VT,
+            vz: f64::INFINITY,
         },
-        // ELEM_DIODE and anything else: the silicon default.
+        ELEM_ZENER => DiodeModel {
+            is: DIODE_IS,
+            vth: DIODE_N * DIODE_VT,
+            vz: value.max(ZENER_VZ_MIN),
+        },
+        // ELEM_DIODE and anything else: the silicon default, no breakdown.
         _ => DiodeModel {
             is: DIODE_IS,
             vth: DIODE_N * DIODE_VT,
+            vz: f64::INFINITY,
         },
+    }
+}
+
+/// The breakdown junction of a Zener, expressed as an ordinary forward junction in
+/// the variable `vbr = -vd - Vz` so the standard [`diode_eval`]/[`pnjlim`] routines
+/// can limit it. No breakdown of its own (`vz = INFINITY`).
+#[inline]
+fn zener_breakdown_model() -> DiodeModel {
+    DiodeModel {
+        is: ZENER_ISZ,
+        vth: ZENER_VTH_BR,
+        vz: f64::INFINITY,
     }
 }
 
@@ -292,7 +337,7 @@ fn diode_model(kind: u8) -> DiodeModel {
 /// and the current commit all agree on exactly one definition.
 #[inline]
 fn is_diode(kind: u8) -> bool {
-    matches!(kind, ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED)
+    matches!(kind, ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER)
 }
 
 // --- Newton outer-loop constants ----------------------------------------------
@@ -408,7 +453,20 @@ fn diode_eval(vd: f64, m: DiodeModel) -> (f64, f64) {
     let e = (vd / m.vth).exp();
     let i = m.is * (e - 1.0);
     let g = (m.is / m.vth) * e;
-    (i, g)
+    if m.vz.is_finite() {
+        // Zener: add a second junction facing the other way that turns on near the
+        // reverse breakdown voltage. In the variable `vbr = -vd - Vz` it is an
+        // ordinary forward exponential (with knee current `ISZ` at `vbr = 0`, i.e.
+        // exactly `vd = -Vz`). Its current flows cathode -> anode, so it subtracts
+        // from the device current; d(vbr)/d(vd) = -1 makes its conductance add.
+        let vbr = -vd - m.vz;
+        let ebr = (vbr / ZENER_VTH_BR).exp();
+        let i_br = ZENER_ISZ * ebr;
+        let g_br = (ZENER_ISZ / ZENER_VTH_BR) * ebr;
+        (i - i_br, g + g_br)
+    } else {
+        (i, g)
+    }
 }
 
 /// The critical junction voltage used by [`pnjlim`], `vcrit = n*Vt *
@@ -598,6 +656,7 @@ impl Sim {
                     | ELEM_ACSOURCE
                     | ELEM_SCHOTTKY
                     | ELEM_LED
+                    | ELEM_ZENER
             ) {
                 self.install_empty();
                 return false;
@@ -1052,7 +1111,8 @@ impl Sim {
             // g = di/dv and Ieq = i(v*) - g*v* (plus GMIN for a finite slope).
             for &(ei, ia, ib) in diodes {
                 let vd = self.diode_vd[ei];
-                let (id, gd) = diode_eval(vd, diode_model(self.elements[ei].kind));
+                let el = self.elements[ei];
+                let (id, gd) = diode_eval(vd, diode_model(el.kind, el.value));
                 let g = gd + GMIN;
                 let ieq = id - g * vd;
                 if let Some(r) = ia {
@@ -1089,8 +1149,21 @@ impl Sim {
                 let vb = ib.map(|r| x[r]).unwrap_or(0.0);
                 let vd_raw = va - vb;
                 let vd_old = self.diode_vd[ei];
-                let m = diode_model(self.elements[ei].kind);
-                let vd_new = pnjlim(vd_raw, vd_old, m);
+                let el = self.elements[ei];
+                let m = diode_model(el.kind, el.value);
+                let vd_new = if m.vz.is_finite() {
+                    // Zener: limit whichever junction is swinging. First the forward
+                    // junction (caps large positive vd), then the breakdown junction
+                    // — a forward junction in `vbr = -vd - Vz` (caps the deep reverse
+                    // swing). When neither limits, both pass through and `vd_new ==
+                    // vd_raw`, so non-breakdown operation is unaffected.
+                    let vd_f = pnjlim(vd_raw, vd_old, m);
+                    let bm = zener_breakdown_model();
+                    let vbr_new = pnjlim(-vd_f - m.vz, -vd_old - m.vz, bm);
+                    -vbr_new - m.vz
+                } else {
+                    pnjlim(vd_raw, vd_old, m)
+                };
                 let gap = (vd_raw - vd_new).abs();
                 if gap > max_vd_gap {
                     max_vd_gap = gap;
@@ -1244,7 +1317,7 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => diodes.push((i, ia, ib)),
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 _ => {}
             }
         }
@@ -1265,8 +1338,8 @@ impl Sim {
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
-                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => {
-                    diode_eval(self.diode_vd[i], diode_model(e.kind)).0
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
+                    diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
                 }
                 _ => 0.0,
             };
@@ -1397,7 +1470,7 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => diodes.push((i, ia, ib)),
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 _ => {}
             }
         }
@@ -1423,8 +1496,8 @@ impl Sim {
                 }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
-                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED => {
-                    diode_eval(self.diode_vd[i], diode_model(e.kind)).0
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
+                    diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
                 }
                 _ => 0.0,
             };
@@ -2361,6 +2434,86 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "diode family must reproduce exactly");
+    }
+
+    /// A Zener (type 10) in the classic shunt-regulator layout clamps the reverse
+    /// node near its breakdown voltage `Vz`, well below the supply. Layout: source
+    /// 1->0 (12 V), R 1->2, Zener anode=ground -> cathode=node 2, so node 2 reverse-
+    /// biases it; once node 2 reaches ~Vz the breakdown junction conducts the
+    /// excess. Vz = 5.1 V.
+    #[test]
+    fn zener_clamps_reverse_voltage() {
+        let vz = 5.1;
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_ZENER],
+            &[1, 1, 0], // Zener anode at ground...
+            &[0, 2, 2], // ...cathode at node 2
+            &[12.0, 1_000.0, vz],
+        );
+        let v = sim.node_voltages();
+        assert!(
+            (5.0..=5.35).contains(&v[2]),
+            "Zener clamps node near Vz (≈5.1 V): got {}",
+            v[2]
+        );
+        // It actually clamped — node 2 sits far below the 12 V supply.
+        assert!(v[2] < 6.0, "clamped well below the rail");
+        // The shunt current (R current) flows into the Zener: |I_zener| ≈ I_R, and
+        // the Zener current is negative in a->b terms (it conducts cathode->anode).
+        let c = sim.element_currents();
+        let i_r = (v[1] - v[2]) / 1_000.0;
+        assert!(c[2] < 0.0, "Zener sinks the shunt current (reverse)");
+        assert!(
+            (c[2].abs() - i_r).abs() < 1e-6,
+            "KCL: Zener carries the resistor's current ({} vs {})",
+            c[2].abs(),
+            i_r
+        );
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+    }
+
+    /// Forward-biased, a Zener is just a silicon diode — it drops the usual ~0.7 V
+    /// knee, *not* its breakdown voltage. Layout: source 1->0, R 1->2, Zener
+    /// anode=node 2 -> cathode=ground.
+    #[test]
+    fn zener_forward_is_an_ordinary_diode() {
+        let sim = build(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_ZENER],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[5.0, 47.0, 5.1], // Vz is irrelevant in forward conduction
+        );
+        let v = sim.node_voltages();
+        assert!(
+            (0.6..=0.75).contains(&v[2]),
+            "forward Zener drops the silicon knee, not Vz: got {}",
+            v[2]
+        );
+    }
+
+    /// A Zener shunt regulator with a load cap reproduces bit-for-bit over a long
+    /// run — guards the breakdown branch + its dual limiting against nondeterminism.
+    #[test]
+    fn zener_run_is_reproducible() {
+        let run = || {
+            // source 1->0; R 1->2; Zener anode=gnd->cathode=2; cap 2->0.
+            let mut sim = build(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_ZENER, ELEM_CAPACITOR],
+                &[1, 1, 0, 2],
+                &[0, 2, 2, 0],
+                &[12.0, 1_000.0, 5.1, 1.0e-6],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "Zener regulator must reproduce exactly");
     }
 
     /// `set_netlist` accepts the diode element type (type 5) and marks the
