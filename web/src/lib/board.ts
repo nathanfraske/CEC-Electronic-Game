@@ -234,6 +234,10 @@ export interface BoardCallbacks {
   /** Fired when the board changes its own mode (e.g. the Pan tool yields to Build
    * when you grab a part/wire), so the HUD's tool selector follows. */
   onMode?: (mode: Mode) => void;
+  /** A presentation-only change that must persist (e.g. dragging a net label's tag):
+   * the HUD should save the board + refresh undo state, but NOT rebuild the netlist or
+   * rewind the clock the way {@link BoardCallbacks.onChange} does. */
+  onPersist?: (graph: BoardGraph) => void;
   /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
   onAnchor?: (rect: AnchorRect | null) => void;
   /** Open the deep info panel for a component — fired by a double-click on its body
@@ -415,6 +419,8 @@ export class Board {
   // Dragging a junction (started by a double-click on it) to a new grid cell; its
   // incident wires follow because they reference it by id. `moved` gates the undo.
   private junctionDrag: { id: number; moved: boolean } | null = null;
+  // Dragging a net label's tag pill (it follows the cursor; the anchor stays put).
+  private labelDrag: { id: number; moved: boolean } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
@@ -1449,10 +1455,10 @@ export class Board {
       const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
-      // The pill: ~7px per mono char + padding, ~18px tall, offset (+12,−18).
+      // The pill: ~7px per mono char + padding, ~18px tall, at the (draggable) offset.
       const w = Math.max(28, l.name.length * 7 + 12);
-      const px = o.x + 12;
-      const py = o.y - 18;
+      const px = o.x + (l.tagOff?.dx ?? 12);
+      const py = o.y + (l.tagOff?.dy ?? -18);
       if (
         wx >= px - 3 &&
         wx <= px + w + 3 &&
@@ -2131,6 +2137,13 @@ export class Board {
       const hitLabel = this.labelHitTest(wp.x, wp.y);
       if (hitLabel !== null) {
         this.selectLabel(hitLabel, additive);
+        // A plain press also grabs the tag for dragging (KiCad-style): the pill
+        // follows the cursor while the dot + leader stay pinned to the net it names.
+        // Shift/ctrl just (de)selects.
+        if (!additive) {
+          this.labelDrag = { id: hitLabel, moved: false };
+          this.pendingUndo = this.graph.serialize();
+        }
         return;
       }
     }
@@ -2507,6 +2520,19 @@ export class Board {
       return;
     }
 
+    if (this.labelDrag) {
+      const l = this.graph.netLabels.get(this.labelDrag.id);
+      const cell = l ? (l.pos ?? this.graph.endpointCell(l.at)) : null;
+      if (l && cell) {
+        // Offset = cursor relative to the anchor; the dot + leader stay, the pill moves.
+        const o = this.cellToWorld(cell);
+        this.graph.moveNetLabel(l.id, wp.x - o.x, wp.y - o.y);
+        this.labelDrag.moved = true;
+        this.drawNetLabels();
+      }
+      return;
+    }
+
     if (this.panning) {
       this.world.position.x += e.global.x - this.panning.lastX;
       this.world.position.y += e.global.y - this.panning.lastY;
@@ -2588,6 +2614,17 @@ export class Board {
         this.cb.onChange?.(this.graph);
       }
       this.junctionDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.labelDrag) {
+      // Moving the tag is presentation only (the net is unchanged), so commit just an
+      // undo point; no netlist rebuild. A press-without-move leaves it a plain select.
+      if (this.labelDrag.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        this.cb.onPersist?.(this.graph);
+      }
+      this.labelDrag = null;
       this.pendingUndo = null;
       return;
     }
@@ -3015,10 +3052,11 @@ export class Board {
       const editing = this.editingLabelId === l.id;
       t.text = l.name;
       t.style.fill = color;
-      // Offset the pill up-and-right of the point so it clears the pin/junction dot
-      // and any wire running through it; a leader ties it back to the anchor.
-      const px = o.x + 12;
-      const py = o.y - 18;
+      // Offset the pill from the anchor (default up-and-right so it clears the dot
+      // and any wire through it; or wherever the player dragged it). A leader ties it
+      // back to the anchor, KiCad-style — the dot stays on what the label names.
+      const px = o.x + (l.tagOff?.dx ?? 12);
+      const py = o.y + (l.tagOff?.dy ?? -18);
       const padX = 6;
       const padY = 3;
       const w = t.width + padX * 2;

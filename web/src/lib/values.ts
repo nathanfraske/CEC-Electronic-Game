@@ -28,7 +28,8 @@ const CURATED_FULL: Record<string, number[]> = {
   I: [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2],
   SW: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9],
   // AC frequency (Hz), kept in the ~50 Hz–5 kHz band the 2 µs step resolves well.
-  AC: [50, 100, 200, 300, 500, 1000, 2000, 3000, 5000],
+  // 50 + 60 are the two mains line frequencies (EU/US).
+  AC: [50, 60, 100, 200, 300, 500, 1000, 2000, 3000, 5000],
   // Zener breakdown voltage Vz (V): the common standard BZX-series values.
   ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
   // Varistor clamp voltage Vc (V): common MOV ratings, a superset of the chips.
@@ -85,12 +86,25 @@ const CURATED_CHIPS: Record<string, number[]> = {
 };
 
 /**
- * Curated peak-amplitude chips (volts) for the AC source's *second* scalar — the
+ * Curated **peak**-amplitude chips (volts) for the AC source's *second* scalar — the
  * amplitude, distinct from its `value` (frequency, {@link CURATED_FULL}.AC). The
- * common rail-ish levels people reach for; 5 V is the default. Presented in the
+ * common rail-ish levels people reach for; 5 V is the default. The three large values
+ * are the **peaks of real mains** (RMS·√2): 170 V ≈ 120 Vrms (US), 311 V ≈ 220 Vrms,
+ * 325 V ≈ 230 Vrms (EU) — so the sim emulates real line voltage. Presented in the
  * inspector exactly like the frequency chips, with +/- stepping.
  */
-export const AC_AMP_CHIPS = [1, 2, 3.3, 5, 9, 12];
+export const AC_AMP_CHIPS = [1, 2, 3.3, 5, 9, 12, 170, 311, 325];
+
+/**
+ * One-click mains presets: peak amplitude (V) + line frequency (Hz), labelled by the
+ * familiar RMS nominal. Sets both scalars so "emulate real electricity" is one tap.
+ */
+export const AC_MAINS_PRESETS: { label: string; amp: number; freq: number }[] =
+  [
+    { label: "US 120 V / 60 Hz", amp: 170, freq: 60 },
+    { label: "EU 230 V / 50 Hz", amp: 325, freq: 50 },
+    { label: "220 V / 50 Hz", amp: 311, freq: 50 },
+  ];
 
 /** The AC source's curated amplitude chips (volts). */
 export const acAmpChips = (): number[] => AC_AMP_CHIPS;
