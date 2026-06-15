@@ -8,6 +8,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Absolute-beginner onboarding / first-run (owner-driven; brainstorm in flight)
+Design doc being written at **`docs/ui/onboarding-first-run.md`** (agent, 2026-06-15).
+Brief: get someone who knows NOTHING about electronics rolling — how do you wire
+things up, what am I looking at, what am I trying to read, the minimum mental model.
+**Owner add-ons to fold into the doc (2026-06-15):**
+- [ ] **Learn-as-you-explore, not a rail.** Concepts are introduced *as you go* /
+  contextually (triggered by what you do), but the player is **free to explore
+  whatever they want** at any time — progressive disclosure without a forced linear
+  tutorial. The hand-holding rides alongside free play, not in front of it.
+- [ ] **Self-selected onboarding level at the start.** Let the player pick how much
+  hand-holding they want up front (e.g. "never touched electronics" → "know some" →
+  "skip it / expert"), which sets the density of coaching/disclosure.
+- [ ] **Replayable / resumable onboarding.** They can run the onboarding (or any
+  guided bit) **again** if they get stuck, make a mistake, or want more help — it's
+  not a one-shot. A persistent "help / show me again" affordance + a reset path.
+
 ### Component info panel — frictionless trigger + pinout + construction cutaways (owner-greenlit, queued)
 Full design in **`docs/ui/component-info-panel.md`** (ideation, brainstormed
 2026-06-15). Make rich component info reachable without breaking build flow.

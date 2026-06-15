@@ -605,6 +605,11 @@
         if (sig === netlistSig) return;
         netlistSig = sig;
         netlist = nl;
+        // The circuit actually changed (an example loaded, the board cleared, or a
+        // value/topology edit — never a pure move, which leaves the sig unchanged).
+        // Drop the scope's old samples so the trace resets immediately instead of
+        // showing stale data from the previous circuit until the run catches up.
+        board?.clearScope();
         board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
         // Surface the net-label names (node index → name) so the scope legend and
         // the telemetry "Nodes" list can show `VCC` instead of `Node 3`.
