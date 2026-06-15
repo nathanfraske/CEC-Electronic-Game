@@ -1,14 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
 // Compile the interactive board into a solver netlist. Pins joined by wires form
-// nets (nodes); the four ideal kinds (V/R/C/L) become two-terminal elements. The
-// net touching the first voltage source's "−" pin is ground (node 0). Returns
-// the flat arrays the wasm `set_netlist` wants, plus the maps the renderer needs
-// to attribute per-element current and per-net voltage back to each component.
+// nets (nodes); the ideal two-terminal kinds (V/R/C/L/I) become elements. Ground
+// (node 0) is an explicit GND part's net if one is present, else the fallback of
+// the first voltage source's "−" pin — so current-source-only circuits, which
+// have no voltage source to borrow a reference from, are still simulatable.
+// Returns the flat arrays the wasm `set_netlist` wants, plus the maps the
+// renderer needs to attribute per-element current and per-net voltage back to
+// each component.
 
 import { BoardGraph } from "./graph";
 import type { ElectricalState } from "./glyphs";
 
-const TYPE_OF: Record<string, number> = { V: 0, R: 1, C: 2, L: 3 };
+// Solver element types, keyed by part tag. Only kinds listed here become
+// elements; 1-pin reference parts (GND) are deliberately absent so the element
+// loop skips them. Mirrors the `ELEM_*` constants in `crates/sim-core/src/lib.rs`.
+const TYPE_OF: Record<string, number> = { V: 0, R: 1, C: 2, L: 3, I: 4 };
 
 export interface BuiltNetlist {
   nodeCount: number;
@@ -58,12 +64,23 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     );
   }
 
-  // Ground = the net of the first voltage source's "−" pin (pin index 1).
+  // Ground (node 0): an explicit GND part's net wins if one is placed; this is
+  // what lets a current-source-only loop simulate (no voltage source to borrow a
+  // reference from). Otherwise fall back to the first voltage source's "−" pin
+  // (index 1), preserving the original behaviour for V-driven circuits.
   let groundRoot: string | null = null;
   for (const c of sorted) {
-    if (c.kind === "V") {
-      groundRoot = find(key(c.id, 1));
+    if (c.kind === "GND") {
+      groundRoot = find(key(c.id, 0)); // GND is a 1-pin part
       break;
+    }
+  }
+  if (groundRoot === null) {
+    for (const c of sorted) {
+      if (c.kind === "V") {
+        groundRoot = find(key(c.id, 1));
+        break;
+      }
     }
   }
   if (groundRoot === null) return null; // no reference → not simulatable

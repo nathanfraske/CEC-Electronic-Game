@@ -22,8 +22,9 @@
   const SEED = 1337;
   const SPEEDS = [0.1, 0.25, 1, 4, 16];
 
-  // The component bin. The four ideal primitives (V/R/C/L) come first and are the
-  // parts the solver simulates today; the rest preview later tech-tree tiers.
+  // The component bin. The ideal primitives (V/R/C/L/I) plus an explicit ground
+  // come first and are the parts the solver simulates today; the rest preview
+  // later tech-tree tiers.
   const PARTS = [
     {
       tag: "V",
@@ -52,6 +53,20 @@
       desc: "Stored current, saturation",
       tier: "I",
       color: "var(--violet)",
+    },
+    {
+      tag: "I",
+      name: "Current Source",
+      desc: "Ideal fixed DC current",
+      tier: "I",
+      color: "var(--warn)",
+    },
+    {
+      tag: "GND",
+      name: "Ground",
+      desc: "0 V reference (node 0)",
+      tier: "I",
+      color: "var(--dim)",
     },
     {
       tag: "D",

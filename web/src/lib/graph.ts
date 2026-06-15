@@ -32,11 +32,11 @@ export interface PartKind {
   /** Footprint in cells, used to size the rendered node body. */
   w: number;
   h: number;
-  /** Default ideal value (volts / ohms / farads / henries). 0 if not electrical. */
+  /** Default ideal value (volts / ohms / farads / henries / amps). 0 if not electrical. */
   defaultValue: number;
-  /** SI unit symbol for the value ("V", "Ω", "F", "H"); "" if none. */
+  /** SI unit symbol for the value ("V", "Ω", "F", "H", "A"); "" if none. */
   unit: string;
-  /** True for the four ideal primitives the solver understands today. */
+  /** True for the ideal primitives the solver understands today (incl. GND). */
   ideal: boolean;
 }
 
@@ -103,14 +103,20 @@ export type PaletteKey = keyof typeof PALETTE;
  * the active/digital parts get a small, readable pinout. Footprints are sized so
  * pins land on grid intersections. These mirror the tech-tree bin in App.svelte.
  *
- * The four ideal primitives (V, R, C, L) carry default values and are the parts
- * the solver simulates today; the rest are placeholders for later tiers.
+ * The ideal primitives (V, R, C, L, I) carry default values and are the parts
+ * the solver simulates today; GND is a 1-pin reference (node 0, not an element);
+ * the rest are placeholders for later tiers.
  */
 export const PART_KINDS: Record<string, PartKind> = {
   V: kind("V", "Voltage Source", "warn", twoPin("+", "−"), 5, "V", true),
   R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   L: kind("L", "Inductor", "violet", twoPin("A", "B"), 1e-3, "H", true),
+  // Ideal DC current source: arrow points a -> b, default 10 mA. Its dual is V.
+  I: kind("I", "Current Source", "warn", twoPin("A", "B"), 1e-2, "A", true),
+  // Explicit ground reference: a single pin whose net becomes node 0. Not a
+  // solver element (1 pin, absent from TYPE_OF) — it only anchors the reference.
+  GND: kind("GND", "Ground", "dim", onePin("⏚"), 0, "", true),
   D: kind("D", "Diode", "warn", twoPin("A", "K"), 0, "", false),
   Q: kind(
     "Q",
@@ -165,6 +171,11 @@ function pin(label: string, dx: number, dy: number): Pin {
 
 function twoPin(a: string, b: string): Pin[] {
   return [pin(a, 0, 0), pin(b, 2, 0)];
+}
+
+/** A single-terminal part (e.g. an explicit ground reference). */
+function onePin(a: string): Pin[] {
+  return [pin(a, 0, 0)];
 }
 
 function kind(

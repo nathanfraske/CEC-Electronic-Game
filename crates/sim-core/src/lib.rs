@@ -20,6 +20,7 @@
 //! | 1    | resistor           | ohms          | conductance `1/value`              |
 //! | 2    | capacitor          | farads        | backward-Euler companion           |
 //! | 3    | inductor           | henries       | backward-Euler companion (branch)  |
+//! | 4    | DC current source  | amps          | KCL injection: `value` from a -> b |
 //!
 //! ## MNA layout
 //!
@@ -81,6 +82,12 @@ pub const ELEM_CAPACITOR: u8 = 2;
 /// Inductor; `value` is henries (backward-Euler companion, branch-current
 /// unknown).
 pub const ELEM_INDUCTOR: u8 = 3;
+/// Ideal DC current source; `value` is amps (the dual of the voltage source).
+/// The arrow points `a -> b`: a positive `value` *draws* current out of node
+/// `a` and *delivers* it into node `b` (KCL stamp `rhs[a] -= value;
+/// rhs[b] += value`). It is a pure right-hand-side stamp — no branch-current
+/// unknown and no reactive state.
+pub const ELEM_ISOURCE: u8 = 4;
 
 /// One two-terminal ideal element in the netlist.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -91,7 +98,7 @@ pub struct Element {
     pub a: usize,
     /// Second terminal node index. Node `0` is ground.
     pub b: usize,
-    /// Element value in the units implied by `kind` (V / ohm / F / H).
+    /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
 }
 
@@ -285,7 +292,7 @@ impl Sim {
             let kind = types[i];
             if !matches!(
                 kind,
-                ELEM_VSOURCE | ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR
+                ELEM_VSOURCE | ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR | ELEM_ISOURCE
             ) {
                 self.install_empty();
                 return false;
@@ -453,6 +460,16 @@ impl Sim {
                         rhs[r] += il;
                     }
                 }
+                ELEM_ISOURCE => {
+                    // Ideal current source injecting `value` a -> b: current
+                    // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
+                    if let Some(r) = ia {
+                        rhs[r] -= e.value;
+                    }
+                    if let Some(r) = ib {
+                        rhs[r] += e.value;
+                    }
+                }
                 _ => {}
             }
         }
@@ -477,6 +494,7 @@ impl Sim {
                 }
                 ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
+                ELEM_ISOURCE => e.value,
                 _ => 0.0,
             };
         }
@@ -571,6 +589,17 @@ impl Sim {
                     mat[bi * n + bi] -= r_l;
                     rhs[bi] -= r_l * self.reactive_state[i];
                 }
+                ELEM_ISOURCE => {
+                    // Ideal current source injecting `value` a -> b: current
+                    // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
+                    // No branch unknown and no history term — a pure KCL stamp.
+                    if let Some(r) = ia {
+                        rhs[r] -= e.value;
+                    }
+                    if let Some(r) = ib {
+                        rhs[r] += e.value;
+                    }
+                }
                 _ => {}
             }
         }
@@ -599,6 +628,7 @@ impl Sim {
                     g * self.element_voltage(e) - ieq
                 }
                 ELEM_VSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_ISOURCE => e.value,
                 _ => 0.0,
             };
         }
@@ -675,6 +705,7 @@ impl Sim {
     ///   `t = 0` (discharged) this is `0`.
     /// - Inductor: its branch current; `0` at `t = 0` (de-energized).
     /// - Voltage source: its branch current.
+    /// - Current source: its set `value` (forced, oriented `a -> b`).
     pub fn element_currents(&self) -> Vec<f64> {
         self.currents.clone()
     }
@@ -1052,6 +1083,153 @@ mod tests {
         // The source current is a->b (node1->gnd). It sources 20 mA into node 1,
         // so -20 mA flows node1->gnd through the source branch.
         assert!((c[0] + 0.02).abs() < 1e-9, "source supplies 20 mA total");
+    }
+
+    /// An ideal current source forced through a single resistor to ground
+    /// develops `I * R` across the resistor, with an exact sign set by the
+    /// `a -> b` convention.
+    ///
+    /// **Sign convention (a -> b):** the source's KCL stamp is
+    /// `rhs[a] -= value; rhs[b] += value`, so a positive `value` *pushes*
+    /// conventional current **into node `b`** and *draws* it **out of node `a`**.
+    /// The arrow points `a -> b`: current is delivered at the `b` terminal. To
+    /// raise a node above ground, that node is the `b` terminal. Here the source
+    /// is oriented `0 -> 1` (b = node 1), so it sources `value` into node 1; the
+    /// resistor `1 -> 0` carries it to ground and node 1 settles at `+I*R`.
+    #[test]
+    fn current_source_drives_resistor_to_i_r() {
+        let i = 2.0e-3; // 2 mA
+        let r = 3_300.0; // 3.3 kohm
+                         // node 0 = gnd, node 1 = driven. I src 0->1 (sources into node 1),
+                         // R 1->0 (carries the current to ground).
+        let sim = build(2, &[ELEM_ISOURCE, ELEM_RESISTOR], &[0, 1], &[1, 0], &[i, r]);
+        let v = sim.node_voltages();
+        let expected = i * r; // 6.6 V
+        assert!(
+            (v[1] - expected).abs() < 1e-9,
+            "I*R across the resistor: got {}, want {}",
+            v[1],
+            expected
+        );
+        // The source reports its forced value (a -> b), and the resistor (1->0)
+        // carries the same current a -> b, so both read +I.
+        let c = sim.element_currents();
+        assert!((c[0] - i).abs() < 1e-12, "source reports its set current");
+        assert!((c[1] - i).abs() < 1e-9, "resistor carries the loop current");
+    }
+
+    /// KCL holds at every node for a current-source-driven circuit: the signed
+    /// `a -> b` currents incident on any non-ground node sum to ~0. Uses a
+    /// current source splitting between two parallel resistors so an internal
+    /// node has several incident elements.
+    #[test]
+    fn current_source_kcl_holds_at_every_node() {
+        // node 0 = gnd, 1 = driven. I src 0->1 = 5 mA into node 1, two
+        // resistors 1->0 carry it to ground.
+        let sim = build(
+            2,
+            &[ELEM_ISOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[0, 1, 1],
+            &[1, 0, 0],
+            &[5.0e-3, 1_000.0, 1_000.0],
+        );
+        let currents = sim.element_currents();
+        for node in 1..sim.node_count() {
+            let mut net = 0.0;
+            for (idx, &current) in currents.iter().enumerate() {
+                let e = sim.element_at(idx);
+                if e.a == node {
+                    net += current; // current a->b leaves this node
+                }
+                if e.b == node {
+                    net -= current; // current a->b enters this node
+                }
+            }
+            assert!(net.abs() < 1e-12, "KCL at node {}: net {} != 0", node, net);
+        }
+        // The 5 mA splits evenly across the equal resistors (each 1->0).
+        assert!(
+            (currents[1] - 2.5e-3).abs() < 1e-9,
+            "first resistor takes half"
+        );
+        assert!(
+            (currents[2] - 2.5e-3).abs() < 1e-9,
+            "second resistor takes half"
+        );
+    }
+
+    /// Flipping the current source's `a,b` terminals flips the sign of the node
+    /// voltage it develops (the dual of the voltage-source sign test). Its own
+    /// reported current is the forced `value` (a -> b) either way; flipping the
+    /// terminals reverses which node the current is delivered to, and thus the
+    /// developed voltage. Needs an explicit ground reference, which the current
+    /// source itself does not provide — node 0 is ground here.
+    #[test]
+    fn current_source_flip_flips_sign() {
+        let i = 1.5e-3;
+        let r = 2_000.0;
+        // Forward: I src 0->1 sources into node 1; R 1->0. Node 1 -> +I*R.
+        // Arrays are [isrc, R]: a = [0, 1], b = [1, 0].
+        let forward = build(2, &[ELEM_ISOURCE, ELEM_RESISTOR], &[0, 1], &[1, 0], &[i, r]);
+        // Reversed source: I src 1->0 (terminals swapped) draws from node 1;
+        // the resistor stays 1->0. a = [1, 1], b = [0, 0]. Node 1 -> -I*R.
+        let reversed = build(2, &[ELEM_ISOURCE, ELEM_RESISTOR], &[1, 1], &[0, 0], &[i, r]);
+        let vf = forward.node_voltages()[1];
+        let vr = reversed.node_voltages()[1];
+        assert!((vf - i * r).abs() < 1e-9, "forward develops +I*R");
+        assert!(
+            (vf + vr).abs() < 1e-12,
+            "flipping the source a,b flips the developed node voltage"
+        );
+        // The source's reported current is the forced `value` a -> b in both
+        // cases, so flipping its terminals flips the *reported* sign.
+        let cf = forward.element_currents();
+        let cr = reversed.element_currents();
+        assert!(
+            (cf[0] - i).abs() < 1e-12,
+            "forward source current is +i (a->b)"
+        );
+        assert!(
+            (cr[0] - i).abs() < 1e-12,
+            "reversed source current is still +i (a->b)"
+        );
+        // The resistor it drives flips with the source.
+        assert!(
+            (cf[1] + cr[1]).abs() < 1e-9,
+            "the driven resistor current flips with the source"
+        );
+    }
+
+    /// A current source feeding a capacitor is the textbook constant-current
+    /// ramp: `V(t) = (I/C) * t`. With backward-Euler and a forced current, each
+    /// step adds exactly `I * dt / C`, so the capacitor node rises linearly.
+    #[test]
+    fn current_source_ramps_capacitor_linearly() {
+        let i = 1.0e-3; // 1 mA
+        let c = 1.0e-6; // 1 uF -> dV/step = I*dt/C = 1e-3 * 1e-5 / 1e-6 = 1e-2 V
+                        // node 0 = gnd, 1 = driven. I src 0->1 sources into node 1, charging
+                        // C 1->0 at constant current.
+        let mut sim = build(
+            2,
+            &[ELEM_ISOURCE, ELEM_CAPACITOR],
+            &[0, 1],
+            &[1, 0],
+            &[i, c],
+        );
+        assert_eq!(sim.node_voltages()[1], 0.0, "capacitor starts discharged");
+        let step_dv = i * DT / c;
+        for k in 1..=200 {
+            sim.step();
+            let expected = step_dv * (k as f64);
+            let got = sim.node_voltages()[1];
+            assert!(
+                (got - expected).abs() < 1e-9,
+                "constant-current ramp at step {}: got {}, want {}",
+                k,
+                got,
+                expected
+            );
+        }
     }
 
     /// `new` installs a working demo so the app shows life before user input:
