@@ -155,6 +155,10 @@
   let selCount = $state(0);
   let canUndo = $state(false);
   let scrubFrac = $state(0);
+  // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
+  let scopeBig = $state(false);
+  let nodeVisible = $state<Record<number, boolean>>({});
+  let nodeNames = $state<Record<number, string>>({});
 
   let board: Board | undefined;
   let controls: PlaybackControls | undefined;
@@ -397,6 +401,17 @@
   }
   function resetView(): void {
     board?.resetView();
+  }
+  function toggleScope(): void {
+    scopeBig = board?.toggleScopeExpanded() ?? false;
+  }
+  function toggleNode(i: number, visible: boolean): void {
+    nodeVisible[i] = visible;
+    board?.setNodeHidden(i, !visible);
+  }
+  function renameNode(i: number, name: string): void {
+    nodeNames[i] = name;
+    board?.setNodeLabel(i, name);
   }
   function loadExample(ex: ExampleSpec): void {
     board?.loadGraph(ex.build());
@@ -736,12 +751,40 @@
       <span class="readout-v mono">{tick} / {liveTick}</span>
     </div>
 
-    <h3 class="sub-title">Channels · {channels.length}</h3>
+    <h3 class="sub-title nodes-head">
+      <span>Nodes · {channels.length}</span>
+      <button
+        class="btn btn-ghost scope-expand"
+        onclick={toggleScope}
+        disabled={!ready}
+        title="Resize the scope on the board"
+      >
+        {scopeBig ? "Shrink scope" : "Expand scope"}
+      </button>
+    </h3>
     <ul class="chan-list scroll">
       {#each channels as v, i (i)}
         <li class="chan" style="--c: {channelColor(i)}">
-          <span class="chan-dot"></span>
-          <span class="chan-name">{channelLabel(i)}</span>
+          {#if i === 0}
+            <span class="chan-dot"></span>
+            <span class="chan-name">GND</span>
+          {:else}
+            <input
+              type="checkbox"
+              class="chan-vis"
+              style="accent-color: {channelColor(i)}"
+              checked={nodeVisible[i] ?? true}
+              onchange={(e) => toggleNode(i, e.currentTarget.checked)}
+              title="Show this node on the scope"
+            />
+            <input
+              class="chan-rename mono"
+              value={nodeNames[i] ?? ""}
+              placeholder={channelLabel(i)}
+              oninput={(e) => renameNode(i, e.currentTarget.value)}
+              aria-label="Rename {channelLabel(i)}"
+            />
+          {/if}
           <span class="chan-val mono">{fmt(v)}</span>
           <span class="chan-bar">
             <span class="chan-fill" style="width: {barWidth(v)}%"></span>
@@ -855,6 +898,49 @@
   .armed-x:hover {
     color: var(--text);
     border-color: var(--accent);
+  }
+
+  /* Telemetry node controls: per-node scope visibility + rename, scope sizer. */
+  .nodes-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .scope-expand {
+    font-size: 10px;
+    padding: 3px 8px;
+  }
+  .chan-vis {
+    grid-row: 1 / 3;
+    width: 13px;
+    height: 13px;
+    margin: 0;
+    cursor: pointer;
+  }
+  .chan-rename {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 3px;
+    padding: 2px 5px;
+    min-width: 0;
+    width: 100%;
+  }
+  .chan-rename::placeholder {
+    color: var(--dim);
+    letter-spacing: 0.12em;
+  }
+  .chan-rename:hover {
+    border-color: var(--border);
+  }
+  .chan-rename:focus {
+    outline: none;
+    border-color: var(--accent-line);
+    background: var(--surface);
   }
 
   .part {

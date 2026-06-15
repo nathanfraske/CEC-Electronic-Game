@@ -115,6 +115,7 @@ export class Board {
   private readonly scopeTraces = new Graphics();
   private readonly scopeFrame = new Graphics();
   private readonly scopeLabels: Text[] = [];
+  private readonly scopeLegend: Text[] = [];
 
   private readonly graph = new BoardGraph();
   private readonly nodes = new Map<number, ComponentNode>();
@@ -124,6 +125,11 @@ export class Board {
   // so the scope freezes when paused and aligns to the timeline.
   private scopeSamples: { tick: number; values: number[] }[] = [];
   private scopeCursor = 0;
+  // Per-node scope controls, driven from the telemetry panel: custom names,
+  // hidden traces, and an enlarged scope.
+  private readonly nodeLabels = new Map<number, string>();
+  private readonly nodeHidden = new Set<number>();
+  private scopeExpanded = false;
 
   private w = 0;
   private h = 0;
@@ -210,6 +216,21 @@ export class Board {
       this.scopeLabels.push(t);
       this.scope.addChild(t);
     }
+    for (let i = 0; i < 8; i++) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.dim,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 10,
+          fontWeight: "600",
+        },
+      });
+      t.resolution = DPR;
+      t.visible = false;
+      this.scopeLegend.push(t);
+      this.scope.addChild(t);
+    }
     app.stage.addChild(this.scope);
 
     app.stage.eventMode = "static";
@@ -265,6 +286,31 @@ export class Board {
   setProbeNodes(map: Map<number, [number, number]> | null): void {
     this.probeNodes = map;
     this.clearProbe();
+  }
+
+  /** Rename a scope node; an empty name restores the default "Node i". */
+  setNodeLabel(node: number, name: string): void {
+    const n = name.trim();
+    if (n) this.nodeLabels.set(node, n);
+    else this.nodeLabels.delete(node);
+  }
+
+  /** Show or hide a node's scope trace (the value readout stays either way). */
+  setNodeHidden(node: number, hidden: boolean): void {
+    if (hidden) this.nodeHidden.add(node);
+    else this.nodeHidden.delete(node);
+  }
+
+  /** Toggle the enlarged scope; returns the new expanded state. */
+  toggleScopeExpanded(): boolean {
+    this.scopeExpanded = !this.scopeExpanded;
+    this.layoutScope();
+    return this.scopeExpanded;
+  }
+
+  /** A node's display name: its custom label, or GND / "Node i" by default. */
+  private nodeName(i: number): string {
+    return this.nodeLabels.get(i) ?? (i === 0 ? "GND" : "Node " + i);
   }
 
   placeAt(
@@ -1318,9 +1364,14 @@ export class Board {
   }
 
   private scopeRect(): Rectangle {
-    const sw = Math.min(300, Math.max(190, this.w * 0.34));
-    const sh = Math.min(160, Math.max(96, this.h * 0.28));
     const pad = 12;
+    if (this.scopeExpanded) {
+      const sw = Math.max(280, this.w * 0.6);
+      const sh = Math.max(190, this.h * 0.62);
+      return new Rectangle(this.w - sw - pad, this.h - sh - pad, sw, sh);
+    }
+    const sw = Math.min(320, Math.max(200, this.w * 0.36));
+    const sh = Math.min(170, Math.max(104, this.h * 0.3));
     return new Rectangle(this.w - sw - pad, this.h - sh - pad, sw, sh);
   }
 
@@ -1347,6 +1398,7 @@ export class Board {
     const g = this.scopeTraces;
     g.clear();
     for (const t of this.scopeLabels) t.visible = false;
+    for (const t of this.scopeLegend) t.visible = false;
 
     const samples = this.scopeSamples;
     if (samples.length < 2) return;
@@ -1364,7 +1416,9 @@ export class Board {
     let lo = 0;
     let hi = 1;
     for (const s of samples) {
-      for (const v of s.values) {
+      for (let c = 1; c < s.values.length; c++) {
+        if (this.nodeHidden.has(c)) continue; // autoscale to visible traces only
+        const v = s.values[c] ?? 0;
         if (v < lo) lo = v;
         if (v > hi) hi = v;
       }
@@ -1379,8 +1433,9 @@ export class Board {
       g.stroke({ width: 1, color: PALETTE.border, alpha: 0.4 });
     }
 
-    // Channel traces (skip node 0, the flat ground reference).
+    // Channel traces (skip node 0, the flat ground reference, and hidden nodes).
     for (let c = 1; c < chans; c++) {
+      if (this.nodeHidden.has(c)) continue;
       const color = CHANNEL_COLORS[(c - 1) % CHANNEL_COLORS.length] ?? 0xffffff;
       for (let i = 0; i < samples.length; i++) {
         const v = samples[i]!.values[c] ?? 0;
@@ -1398,13 +1453,27 @@ export class Board {
     const cur = samples[this.scopeCursor]!;
     this.scopeLabel(0, fmtSI(hi, "V"), r.x + 4, y0 - 5);
     this.scopeLabel(1, fmtSI(lo, "V"), r.x + 4, y0 + ih - 5);
-    this.scopeLabel(2, "SCOPE · V / tick", r.x + padL, r.y + 3);
     this.scopeLabel(
-      3,
+      2,
       "t " + cur.tick,
       Math.min(cx + 3, r.x + r.width - 42),
       r.y + r.height - 12,
     );
+
+    // Legend along the top: a coloured dot + (custom) name per visible node.
+    let li = 0;
+    let lx = r.x + padL;
+    const ly = r.y + 3;
+    for (let c = 1; c < chans && li < this.scopeLegend.length; c++) {
+      if (this.nodeHidden.has(c)) continue;
+      const color = CHANNEL_COLORS[(c - 1) % CHANNEL_COLORS.length] ?? 0xffffff;
+      g.circle(lx, ly + 6, 3).fill({ color });
+      const t = this.scopeLegend[li++]!;
+      t.text = this.nodeName(c);
+      t.position.set(lx + 7, ly);
+      t.visible = true;
+      lx += 7 + t.text.length * 6 + 14;
+    }
   }
 }
 

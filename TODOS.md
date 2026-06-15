@@ -8,6 +8,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — scope/telemetry upgrade (expandable, per-node toggle + rename)
+- ~~Scope can **expand** (≈60% of the board) from a telemetry button; per-node **show/hide** checkboxes and **rename** inputs in the telemetry panel; the scope autoscales to visible traces and draws a coloured **legend** of node names. `board.ts`: `setNodeLabel`/`setNodeHidden`/`toggleScopeExpanded` + `scopeLegend` pool; `App.svelte`: node controls (GND stays fixed).~~
+
+### In flight / backlog (this session)
+- [ ] **Solver upgrade → nonlinear Newton engine** (background agent, sim-core only): general Newton–Raphson outer loop engaged when a nonlinear element is present (linear fast-path keeps the golden bit-identical), with the **diode** as the first nonlinear element. Foundation for diode/LED/BJT/MOSFET.
+- [ ] **Value picker** design landed (`docs/ui/value-picker.md`, via agent): a composite **Inspector** (shown when one part is selected) — curated ~8 value chips + ▲▼ stepper + a "More values ▸" decade×significand disclosure (E24 R / E6 C·L). Build next.
+- [ ] **Buck converter demo** (owner, "fun, less important"): a fully-animated buck converter showing energy moved in "buckets" to a new voltage — needs switching (switch/MOSFET + diode + L + C), so it follows the solver upgrade + a switch part.
+
 ### Done — KCL-aware belt flow, finer ΔT, readable example layouts + new examples
 - ~~**KCL-aware wire flow:** `computeWireCurrents()` routes each element's injected current along a per-net spanning tree, so every wire segment shows its true branch current — the supply rail now visibly **thickens toward a source and thins past each tap** (thickness + chevron density + direction all track it). Replaces the old single-element `wireCurrent`. Render-only; never touches the sim.~~
 - ~~**Finer ΔT:** `DT` 10 µs → **2 µs** (5× smoother dynamics). Golden regenerated `0xeaac376499e4fa24`; the monotonic-RC test now runs the same physical time (15000 × 2 µs). Playback compensated so wall-clock pace is unchanged: default `tpf` 0.1 → 0.5, `SPEEDS` [0.5,1,2,5,20], chevron `TICK_FLOW` 0.03 → 0.006.~~
