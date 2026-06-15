@@ -9,8 +9,18 @@
     type Snapshot,
     type PlaybackControls,
   } from "./sim/loop";
-  import { Board, type Mode } from "./lib/board";
-  import { BoardGraph } from "./lib/graph";
+  import { Board, type Mode, type SelectedPart } from "./lib/board";
+  import { BoardGraph, formatValue, PART_KINDS } from "./lib/graph";
+  import {
+    hasValue,
+    isESeries,
+    chipsOf,
+    decadesOf,
+    significandsOf,
+    standardValues,
+    stepValue,
+    nearestStandard,
+  } from "./lib/values";
   import { EXAMPLES, type ExampleSpec } from "./lib/examples";
   import {
     buildNetlist,
@@ -174,6 +184,9 @@
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
+  // The lone selected part (for the value inspector) + its "more values" toggle.
+  let selPart = $state<SelectedPart | null>(null);
+  let showMore = $state(false);
   let canUndo = $state(false);
   let scrubFrac = $state(0);
   // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
@@ -310,6 +323,7 @@
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
+          selPart = sel.single ?? null;
         },
         onArm: (kind) => {
           // The board disarmed itself (right-click) — mirror it into the HUD.
@@ -387,6 +401,49 @@
   function setRate(n: number): void {
     tps = n;
     controls?.setTicksPerSecond(n);
+  }
+
+  // --- value inspector (shown when exactly one part is selected) ---
+  function fmtVal(kind: string, value: number): string {
+    if (kind === "SW") return Math.round(value * 100) + "% duty";
+    const u = PART_KINDS[kind]?.unit ?? "";
+    return u ? formatValue(value, u) : String(value);
+  }
+  function setVal(v: number): void {
+    if (selPart) board?.setComponentValue(selPart.id, v);
+  }
+  function stepVal(dir: number): void {
+    if (selPart) setVal(stepValue(selPart.kind, selPart.value, dir));
+  }
+  // The decade the current value sits in (for the decade × significand picker).
+  function valueDecade(kind: string, value: number): number {
+    const decs = decadesOf(kind);
+    if (decs.length === 0 || value <= 0) return 1;
+    const ideal = Math.pow(10, Math.floor(Math.log10(value)));
+    let best = decs[0]!;
+    let bestD = Infinity;
+    for (const d of decs) {
+      const dd = Math.abs(Math.log10(d) - Math.log10(ideal));
+      if (dd < bestD) {
+        bestD = dd;
+        best = d;
+      }
+    }
+    return best;
+  }
+  function setSig(s: number): void {
+    if (!selPart) return;
+    setVal(
+      nearestStandard(
+        selPart.kind,
+        s * valueDecade(selPart.kind, selPart.value),
+      ),
+    );
+  }
+  function setDecade(d: number): void {
+    if (!selPart) return;
+    const sig = selPart.value / valueDecade(selPart.kind, selPart.value);
+    setVal(nearestStandard(selPart.kind, sig * d));
   }
   function setMode(m: Mode): void {
     mode = m;
@@ -762,6 +819,72 @@
 
   <aside class="panel telemetry">
     <h2 class="panel-title">Telemetry</h2>
+
+    {#if selPart && hasValue(selPart.kind)}
+      {@const kind = selPart.kind}
+      {@const cd = valueDecade(kind, selPart.value)}
+      <div class="inspector">
+        <div class="insp-head">
+          <span class="insp-kind">{partName(kind)}</span>
+          <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
+        </div>
+        <div class="insp-row">
+          <button
+            class="btn btn-ghost insp-step"
+            onclick={() => stepVal(-1)}
+            title="Next smaller standard value">−</button
+          >
+          <div class="insp-chips">
+            {#each chipsOf(kind) as v (v)}
+              <button
+                class="chip-val {selPart.value === v ? 'is-active' : ''}"
+                onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+              >
+            {/each}
+          </div>
+          <button
+            class="btn btn-ghost insp-step"
+            onclick={() => stepVal(1)}
+            title="Next larger standard value">+</button
+          >
+        </div>
+        <button class="insp-more" onclick={() => (showMore = !showMore)}>
+          {showMore ? "▾ fewer" : "▸ more values"}
+        </button>
+        {#if showMore && isESeries(kind)}
+          <div class="insp-sub">decade</div>
+          <div class="insp-chips wrap">
+            {#each decadesOf(kind) as d (d)}
+              <button
+                class="chip-val sm {cd === d ? 'is-active' : ''}"
+                onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
+              >
+            {/each}
+          </div>
+          <div class="insp-sub">significand (E-series)</div>
+          <div class="insp-chips wrap">
+            {#each significandsOf(kind) as s (s)}
+              <button
+                class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
+                  ? 'is-active'
+                  : ''}"
+                onclick={() => setSig(s)}>{s.toFixed(1)}</button
+              >
+            {/each}
+          </div>
+        {:else if showMore}
+          <div class="insp-chips wrap">
+            {#each standardValues(kind) as v (v)}
+              <button
+                class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
+                onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+              >
+            {/each}
+          </div>
+        {/if}
+      </div>
+    {/if}
+
     <div class="readout">
       <span class="readout-k">Snapshot</span>
       <span class="readout-v mono">{hex(hash)}</span>
@@ -972,6 +1095,101 @@
     outline: none;
     border-color: var(--accent-line);
     background: var(--surface);
+  }
+
+  /* Value inspector: a compact standard-value picker for the selected part. */
+  .inspector {
+    margin-bottom: 14px;
+    padding: 10px 11px;
+    border: 1px solid var(--accent-line);
+    border-radius: 4px;
+    background: var(--accent-soft);
+  }
+  .insp-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .insp-kind {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+  .insp-val {
+    font-size: 14px;
+    color: var(--accent);
+    font-variant-numeric: tabular-nums;
+  }
+  .insp-row {
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+  }
+  .insp-step {
+    padding: 2px 9px;
+    font-size: 15px;
+    line-height: 1;
+  }
+  .insp-chips {
+    display: flex;
+    gap: 5px;
+    flex: 1;
+    overflow-x: auto;
+  }
+  .insp-chips.wrap {
+    flex-wrap: wrap;
+    overflow: visible;
+    margin-bottom: 4px;
+  }
+  .chip-val {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+    padding: 4px 7px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .chip-val.sm {
+    font-size: 10px;
+    padding: 3px 6px;
+  }
+  .chip-val:hover {
+    color: var(--text);
+    border-color: var(--dim);
+  }
+  .chip-val.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .insp-more {
+    margin-top: 8px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+  .insp-more:hover {
+    color: var(--text);
+  }
+  .insp-sub {
+    margin-top: 8px;
+    margin-bottom: 4px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
   }
 
   .part {
