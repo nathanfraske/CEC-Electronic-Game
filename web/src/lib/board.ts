@@ -279,7 +279,11 @@ export class Board {
   // The pending label edit: the endpoint to attach to and the existing label id
   // (null ⇒ create a new one on commit). Set when the HUD editor opens; consumed
   // by commitLabel / cleared by cancelLabelEdit.
-  private pendingLabel: { id: number | null; at: Endpoint } | null = null;
+  private pendingLabel: {
+    id: number | null;
+    at: Endpoint;
+    pos?: Cell;
+  } | null = null;
   // Per-tick scope history (one entry per simulated tick, not per render frame)
   // so the scope freezes when paused and aligns to the timeline.
   private scopeSamples: { tick: number; values: number[] }[] = [];
@@ -606,8 +610,60 @@ export class Board {
       this.ghostLayer.visible = true;
       return;
     }
+    // Label ghost: a translucent name-pill at the point a click would attach it (a
+    // pin, a junction, or a bare trace), so the tool reads as active and shows where
+    // the label will land.
+    if (this.armed === null && this.mode === "label" && this.pointerInside) {
+      const pos = this.labelGhostPos();
+      g.clear();
+      g.rotation = 0;
+      const px = 12;
+      const py = -18;
+      const w = 34;
+      const h = 18;
+      g.circle(0, 0, 2.4).fill({ color: PALETTE.cyan });
+      g.moveTo(0, 0)
+        .lineTo(px, py + h / 2)
+        .stroke({ width: 1, color: PALETTE.cyan, alpha: 0.6 });
+      g.roundRect(px, py, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.9 });
+      g.roundRect(px, py, w, h, 3).stroke({
+        width: 1,
+        color: PALETTE.cyan,
+        alpha: 0.7,
+      });
+      for (let i = 0; i < 3; i++) {
+        g.circle(px + 9 + i * 7, py + h / 2, 1.4).fill({
+          color: PALETTE.cyan,
+          alpha: 0.5,
+        });
+      }
+      this.ghostLayer.alpha = 0.55;
+      this.ghostLayer.position.set(pos.x, pos.y);
+      this.ghostLayer.visible = true;
+      return;
+    }
     this.ghostLayer.visible = false;
     g.clear();
+  }
+
+  /** Where the label-tool ghost sits: a pin, then a junction, then the grid-snapped
+   * point on the wire under the cursor — matching where a click would attach the
+   * label. Falls back to the bare grid cell. */
+  private labelGhostPos(): Point {
+    const pin = this.pinHitTest(this.pointer.x, this.pointer.y);
+    if (pin) {
+      const c = this.graph.endpointCell(pin);
+      if (c) return this.cellToWorld(c);
+    }
+    const jid = this.junctionHitTest(this.pointer.x, this.pointer.y);
+    if (jid !== null) {
+      const c = this.graph.endpointCell({ junctionId: jid });
+      if (c) return this.cellToWorld(c);
+    }
+    return this.cellToWorld({
+      col: snap(this.pointer.x, PITCH),
+      row: snap(this.pointer.y, PITCH),
+    });
   }
 
   /** Where the junction-placer ghost sits: snapped to the wire under the cursor
@@ -1178,7 +1234,7 @@ export class Board {
   private labelHitTest(wx: number, wy: number): number | null {
     let best: number | null = null;
     for (const l of this.graph.netLabels.values()) {
-      const cell = this.graph.endpointCell(l.at);
+      const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
       // The pill: ~7px per mono char + padding, ~18px tall, offset (+12,−18).
@@ -1346,7 +1402,7 @@ export class Board {
     if (pending.id === null) {
       if (!trimmed) return; // nothing to add (empty name on a not-yet-created label)
       this.pushUndo(this.graph.serialize());
-      const l = this.graph.addNetLabel(pending.at, trimmed);
+      const l = this.graph.addNetLabel(pending.at, trimmed, pending.pos);
       this.redrawWires();
       if (l) this.selectLabel(l.id, false);
       this.cb.onChange?.(this.graph);
@@ -1377,12 +1433,18 @@ export class Board {
    * edit it; otherwise prepare to create a new one on commit. Computes the on-screen
    * rect of the anchor cell so the HUD can position the input, and fires onLabelEdit.
    */
-  private beginLabelEdit(at: Endpoint): void {
-    const cell = this.graph.endpointCell(at);
-    if (!cell) return;
+  private beginLabelEdit(at: Endpoint, pos?: Cell): void {
+    // `pos` (set when labelling a bare trace) overrides where the editor/pill sit;
+    // `at` still resolves the net. An existing label at this anchor keeps its own pos.
     const existing = this.graph.netLabelAt(at);
+    const cell = existing?.pos ?? pos ?? this.graph.endpointCell(at);
+    if (!cell) return;
     this.editingLabelId = existing?.id ?? null;
-    this.pendingLabel = { id: existing?.id ?? null, at: { ...at } };
+    this.pendingLabel = {
+      id: existing?.id ?? null,
+      at: { ...at },
+      ...(pos ? { pos: { ...pos } } : {}),
+    };
     if (existing) this.selectLabel(existing.id, false);
     else this.clearSelection();
     const o = this.cellToWorld(cell);
@@ -1786,6 +1848,18 @@ export class Board {
       if (jid !== null) {
         this.beginLabelEdit({ junctionId: jid });
         return;
+      }
+      // Off a pin/junction but on a bare trace: label that wire's net, drawn at the
+      // clicked point on the trace (anchored to the wire's `from`, which shares its
+      // net). Lets you name a long run anywhere along it.
+      const wid = this.wireHitTest(wp.x, wp.y);
+      if (wid !== null) {
+        const w = this.graph.wires.get(wid);
+        if (w) {
+          const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
+          this.beginLabelEdit(w.from, cell);
+          return;
+        }
       }
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
@@ -2358,7 +2432,9 @@ export class Board {
     );
     let ti = 0;
     for (const l of labels) {
-      const cell = this.graph.endpointCell(l.at);
+      // A trace label draws at its `pos` on the wire; a pin/junction label at its
+      // anchor. Either way the colour/voltage comes from the net (its `at` endpoint).
+      const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
       const v = this.pinVoltage(l.at);
