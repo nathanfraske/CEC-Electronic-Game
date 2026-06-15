@@ -171,6 +171,9 @@ export interface SelectedPart {
   id: number;
   kind: string;
   value: number;
+  /** An AC source's peak amplitude in volts (its second scalar, beside `value` =
+   * frequency). Undefined for kinds that have no amplitude. */
+  amp?: number;
 }
 
 /** Screen-space (CSS px, canvas-relative) rect of the lone selected part, for
@@ -1196,7 +1199,7 @@ export class Board {
     if (this.selected.size === 1 && edges === 0) {
       const id = [...this.selected][0]!;
       const c = this.graph.components.get(id);
-      if (c) single = { id: c.id, kind: c.kind, value: c.value };
+      if (c) single = { id: c.id, kind: c.kind, value: c.value, amp: c.amp };
     }
     this.cb.onSelect?.({
       components: this.selected.size,
@@ -1249,6 +1252,22 @@ export class Board {
     this.nodes.get(id)?.setValue(value);
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed value
+  }
+
+  /**
+   * Set an AC source's peak amplitude `amp` (volts) — its second scalar, beside
+   * `value` (frequency) — from the inspector; rebuilds the netlist so the new
+   * amplitude takes effect. The amplitude isn't drawn on the glyph (the sine art
+   * is fixed), so unlike {@link setComponentValue} there is no node-side label to
+   * refresh. No-op if unchanged.
+   */
+  setComponentAmp(id: number, amp: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || c.amp === amp) return;
+    this.pushUndo(this.graph.serialize());
+    c.amp = amp;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed amplitude
   }
 
   /**

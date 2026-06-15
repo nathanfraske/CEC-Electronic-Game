@@ -49,6 +49,37 @@ const CURATED_CHIPS: Record<string, number[]> = {
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
 };
 
+/**
+ * Curated peak-amplitude chips (volts) for the AC source's *second* scalar — the
+ * amplitude, distinct from its `value` (frequency, {@link CURATED_FULL}.AC). The
+ * common rail-ish levels people reach for; 5 V is the default. Presented in the
+ * inspector exactly like the frequency chips, with +/- stepping.
+ */
+export const AC_AMP_CHIPS = [1, 2, 3.3, 5, 9, 12];
+
+/** The AC source's curated amplitude chips (volts). */
+export const acAmpChips = (): number[] => AC_AMP_CHIPS;
+
+/** Step to the next (`dir>0`) or previous curated AC amplitude from `amp`. */
+export function stepAmp(amp: number, dir: number): number {
+  // Index of the nearest current amplitude, then move one detent — the linear
+  // analogue of `stepValue` (the amplitude list is a small curated linear set).
+  let idx = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < AC_AMP_CHIPS.length; i++) {
+    const d = Math.abs(AC_AMP_CHIPS[i]! - amp);
+    if (d < bestD) {
+      bestD = d;
+      idx = i;
+    }
+  }
+  const next = Math.max(
+    0,
+    Math.min(AC_AMP_CHIPS.length - 1, idx + Math.sign(dir)),
+  );
+  return AC_AMP_CHIPS[next]!;
+}
+
 /** True if this part kind exposes an adjustable value at all. */
 export function hasValue(kind: string): boolean {
   return kind in DECADES || kind in CURATED_FULL;

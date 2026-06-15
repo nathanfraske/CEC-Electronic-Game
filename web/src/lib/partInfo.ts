@@ -8,7 +8,7 @@
 // readings change; all the changing numbers live in `headline` + `derived`, which
 // the drawer groups into a separate "Right now" section. Presentation only.
 
-import { formatValue } from "./graph";
+import { AC_DEFAULT_AMP, formatValue } from "./graph";
 import type { ElectricalState } from "./glyphs";
 
 export interface DerivedRow {
@@ -21,12 +21,17 @@ export interface PartInfo {
   name: string;
   /** The symbolic governing relation, e.g. "V = I · R". */
   equation: string;
-  /** The relation with the live numbers substituted (goes in the live section). */
-  headline(e: ElectricalState, value: number): string;
+  /**
+   * The relation with the live numbers substituted (goes in the live section).
+   * `value` is the part's primary scalar; `amp` is the optional second scalar (an
+   * AC source's peak amplitude in volts), which only the AC source reads.
+   */
+  headline(e: ElectricalState, value: number, amp?: number): string;
   /** Static plain-language explanation — no live numbers, so it never reflows. */
   plain(): string;
-  /** Secondary live quantities (power, energy, τ, …) as label/value rows. */
-  derived(e: ElectricalState, value: number): DerivedRow[];
+  /** Secondary live quantities (power, energy, τ, …) as label/value rows. The
+   * optional `amp` is the AC source's amplitude; other parts ignore it. */
+  derived(e: ElectricalState, value: number, amp?: number): DerivedRow[];
 }
 
 const f = formatValue;
@@ -150,14 +155,14 @@ export const PART_INFO: Record<string, PartInfo> = {
   },
   AC: {
     name: "AC Source",
-    equation: "v(t) = 5·sin(2π·f·t)",
-    headline: (e, freq) =>
-      `5 V peak @ ${f(freq, "Hz")} · now ${f(e.vAcross, "V")}`,
+    equation: "v(t) = A·sin(2π·f·t)",
+    headline: (e, freq, amp = AC_DEFAULT_AMP) =>
+      `${f(amp, "V")} peak @ ${f(freq, "Hz")} · now ${f(e.vAcross, "V")}`,
     plain: () =>
-      "A sine source swings its voltage smoothly between +5 V and −5 V, reversing the current every half-cycle. Its RMS value (peak ÷ √2) is the steady voltage that would deliver the same power.",
-    derived: (_e, freq) => [
+      "A sine source swings its voltage smoothly between its positive and negative peak, reversing the current every half-cycle. Its RMS value (peak ÷ √2) is the steady voltage that would deliver the same power.",
+    derived: (_e, freq, amp = AC_DEFAULT_AMP) => [
       { label: "Period 1/f", value: f(freq > 0 ? 1 / freq : 0, "s") },
-      { label: "RMS = peak/√2", value: f(5 / Math.SQRT2, "V") },
+      { label: "RMS = peak/√2", value: f(amp / Math.SQRT2, "V") },
     ],
   },
   D: {

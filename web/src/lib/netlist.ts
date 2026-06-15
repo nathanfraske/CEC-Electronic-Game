@@ -8,7 +8,12 @@
 // renderer needs to attribute per-element current and per-net voltage back to
 // each component.
 
-import { BoardGraph, endpointKey, isJunctionRef } from "./graph";
+import {
+  AC_DEFAULT_AMP,
+  BoardGraph,
+  endpointKey,
+  isJunctionRef,
+} from "./graph";
 import type { Endpoint } from "./graph";
 import type { ElectricalState } from "./glyphs";
 
@@ -80,6 +85,12 @@ export interface BuiltNetlist {
    */
   c: Uint32Array;
   values: Float64Array;
+  /**
+   * Second per-element scalar, parallel to `values`: an AC source's peak
+   * amplitude in volts; `0` for every other element (where the core ignores it,
+   * so `0` cannot change a non-AC element). Built in lockstep with `values`.
+   */
+  aux: Float64Array;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
@@ -240,6 +251,11 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   // gate / the base). The core ignores c for 2-pin types.
   const cArr: number[] = [];
   const values: number[] = [];
+  // The second per-element scalar, parallel to `values`: an AC source's peak
+  // amplitude (volts); 0 for every other element. Pushed in lockstep with each
+  // element stamp so the arrays stay aligned. The core ignores it for non-AC
+  // kinds, so a 0 there cannot change anything.
+  const auxArr: number[] = [];
   const elemOfComponent = new Map<number, number>();
   const nodesOfComponent = new Map<number, [number, number]>();
   for (const c of sorted) {
@@ -262,11 +278,13 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       bArr.push(mid);
       cArr.push(0); // 2-terminal: no control node
       values.push(c.value); // capacitance
+      auxArr.push(0); // not an AC source: no amplitude
       types.push(ELEM_RESISTOR);
       aArr.push(mid);
       bArr.push(nb);
       cArr.push(0); // 2-terminal: no control node
       values.push(EC_ESR_OHMS); // parasitic series resistance
+      auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
       nodesOfComponent.set(c.id, [na, nb]); // V across the whole part
       continue;
@@ -287,12 +305,17 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
         : 0;
+    // The second scalar: an AC source emits its peak amplitude (volts), defaulting
+    // to 5 V when a (legacy) source carries none; every other kind emits 0, which
+    // the core ignores. Kept parallel to `values`.
+    const aux = c.kind === "AC" ? (c.amp ?? AC_DEFAULT_AMP) : 0;
     const idx = types.length;
     types.push(t);
     aArr.push(na);
     bArr.push(nb);
     cArr.push(nc);
     values.push(c.value);
+    auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
     nodesOfComponent.set(c.id, [na, nb]);
   }
@@ -365,6 +388,13 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     .map((l) => l.name + ">" + (nodeIndex.get(find(endpointKey(l.at))) ?? -1))
     .join(",");
 
+  // Fold the second scalar `aux` (the AC amplitudes) into the signature, so
+  // re-tuning an AC source's amplitude is recognised as a change and the sim is
+  // rebuilt — while a pure move (which never changes any aux) leaves it unchanged.
+  // Appended only when some element actually carries a non-zero aux, so every
+  // aux-free circuit (no AC source) keeps its exact old signature.
+  const auxSig = auxArr.some((x) => x !== 0) ? auxArr.join(",") : "";
+
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
   // different net is recognised as a topology change and the sim is rebuilt —
@@ -382,7 +412,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     cArr.join(",") +
     "|" +
     values.join(",") +
-    (labelSig ? "|" + labelSig : "");
+    (labelSig ? "|" + labelSig : "") +
+    (auxSig ? "|aux:" + auxSig : "");
 
   return {
     nodeCount,
@@ -391,6 +422,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     b: Uint32Array.from(bArr),
     c: Uint32Array.from(cArr),
     values: Float64Array.from(values),
+    aux: Float64Array.from(auxArr),
     elemOfComponent,
     nodesOfComponent,
     nodeNames,
