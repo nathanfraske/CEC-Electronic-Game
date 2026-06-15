@@ -277,6 +277,25 @@ export const PART_INFO: Record<string, PartInfo> = {
       "A clock-driven switch chops the circuit on and off at a fixed duty cycle (10 kHz here). Averaged over many cycles it delivers the duty fraction of the input — the basis of a switching regulator.",
     derived: () => [],
   },
+  MSW: {
+    name: "Manual Switch",
+    equation: "closed ⇒ wire · open ⇒ break",
+    // The state is the part's `value` (1 = closed, 0 = open) — what the player
+    // flipped it to — so it reads correctly even with no current flowing. When
+    // closed, report the current it is passing; when open, that it is blocking.
+    headline: (e, state) =>
+      state >= 0.5
+        ? `Closed · passing ${f(e.current, "A")}`
+        : `Open · blocking (${f(e.vAcross, "V")} across)`,
+    plain: () =>
+      "A manual switch is a hand-operated SPST switch you flip by clicking it. Closed, it is a near-ideal wire — it conducts, dropping almost no voltage, so current flows freely through it. Open, it is a break in the circuit — an air gap that blocks all current, standing the full voltage across its contacts. It is the simplest control there is: click to make or break the loop.",
+    derived: (e, state) => [
+      { label: "State", value: state >= 0.5 ? "Closed" : "Open" },
+      // Throughput when closed; an open switch passes nothing, so it dissipates
+      // nothing either (V across, but I ≈ 0).
+      { label: "Power V·I", value: f(Math.abs(e.vAcross * e.current), "W") },
+    ],
+  },
   NM: {
     name: "N-MOSFET",
     equation: "Id = ½·KP·(Vgs − Vth)²·(1 + λ·Vds)",

@@ -266,6 +266,12 @@ export const PART_KINDS: Record<string, PartKind> = {
   MOV: kind("MOV", "Varistor", "warn", twoPin("A", "B"), 18, "V", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
+  // Manual switch: a player-operated SPST switch. Reuses the SW solver element
+  // (type 6) but `value` is its STATE — 1 = closed (always conducting), 0 = open
+  // (always blocking) — flipped by clicking the part on the board. Default closed
+  // (1). Violet reads it apart from the clock switch's green while keeping it in
+  // the switching family. See `web/src/lib/netlist.ts` (MSW maps to type 6).
+  MSW: kind("MSW", "Manual Switch", "violet", twoPin("A", "B"), 1, "", true),
   // N-channel MOSFET: the first three-terminal solver element. A voltage on the
   // gate (Vgs vs the ~2 V threshold) controls the drain→source current. Pins are
   // ordered D, S, G — pin 0 = Drain (a), pin 1 = Source (b), pin 2 = Gate (c) —

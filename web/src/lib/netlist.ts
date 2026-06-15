@@ -28,6 +28,12 @@ const TYPE_OF: Record<string, number> = {
   I: 4,
   D: 5, // diode (nonlinear; engages the Newton solve)
   SW: 6, // clock-driven switch; value = duty cycle
+  // Manual switch: the SAME solver element as SW (type 6), but the player flips
+  // its `value` between 1 (closed) and 0 (open) by clicking it. The core reads
+  // `value` as the duty cycle, so value = 1 is always-closed (duty 100%) and
+  // value = 0 always-open (duty 0%) — a manual switch is just a clock switch the
+  // player parks at one extreme. No new sim element; the golden is unchanged.
+  MSW: 6, // manual switch; value = state (1 = closed, 0 = open) — duty 1/0
   AC: 7, // sinusoidal voltage source; value = frequency (Hz)
   SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
   LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)

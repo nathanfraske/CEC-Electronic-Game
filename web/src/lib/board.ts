@@ -1255,6 +1255,20 @@ export class Board {
   }
 
   /**
+   * Flip a manual switch (kind `MSW`) between closed (value 1) and open (value 0).
+   * Routed through {@link setComponentValue}, so the flip is undoable and rebuilds
+   * the netlist exactly like an inspector value edit — the sim sees the new state
+   * (an always-closed vs always-open switch, duty 1 vs 0) immediately. No-op on any
+   * other kind. Returns true if it toggled a manual switch.
+   */
+  private toggleManualSwitch(id: number): boolean {
+    const c = this.graph.components.get(id);
+    if (!c || c.kind !== "MSW") return false;
+    this.setComponentValue(id, c.value >= 0.5 ? 0 : 1);
+    return true;
+  }
+
+  /**
    * Set an AC source's peak amplitude `amp` (volts) — its second scalar, beside
    * `value` (frequency) — from the inspector; rebuilds the netlist so the new
    * amplitude takes effect. The amplitude isn't drawn on the glyph (the sine art
@@ -1951,6 +1965,14 @@ export class Board {
       if (this.dragging.moved && this.pendingUndo) {
         this.commitUndo(this.pendingUndo);
         this.cb.onChange?.(this.graph);
+      } else if (!this.dragging.moved && this.dragging.ids.length === 1) {
+        // A press-and-release in place (a click, not a drag) on a lone manual
+        // switch flips it open/closed. The pointer-down already selected it, so
+        // this both toggles AND selects — a click on the part does the obvious
+        // thing. (The flip carries its own undo via setComponentValue, so the
+        // unmoved drag's pendingUndo is simply discarded below.) Any other part,
+        // or a multi-selection drag, is untouched.
+        this.toggleManualSwitch(this.dragging.ids[0]!);
       }
       this.dragging = null;
       this.pendingUndo = null;
@@ -3002,6 +3024,10 @@ class ComponentNode {
       color: this.color,
       electrical,
       phase,
+      // The manual switch draws its open/closed blade from its commanded state
+      // rather than inferring it from the voltage across (so it reads right with
+      // no current). Pass the live value through; other glyphs ignore it.
+      value: this.component.value,
     });
     // pin dots on top of the glyph
     for (const p of this.pinPositions) {

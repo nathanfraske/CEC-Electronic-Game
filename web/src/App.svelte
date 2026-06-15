@@ -174,6 +174,13 @@
       color: "var(--ok)",
     },
     {
+      tag: "MSW",
+      name: "Manual Switch",
+      desc: "Click to open / close",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "NM",
       name: "N-MOSFET",
       desc: "Gate controls Id",
@@ -257,6 +264,7 @@
     ZD: "Diodes",
     MOV: "Protection",
     SW: "Active & Switching",
+    MSW: "Active & Switching",
     NM: "Active & Switching",
     PM: "Active & Switching",
     Q: "Active & Switching",
@@ -627,7 +635,7 @@
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             selElectrical = e;
-            if (infoOpen) infoDiagram?.setState(selPart.kind, e);
+            if (infoOpen) infoDiagram?.setState(selPart.kind, e, selPart.value);
           } else {
             selElectrical = null;
           }
@@ -692,6 +700,8 @@
   // --- value inspector (shown when exactly one part is selected) ---
   function fmtVal(kind: string, value: number): string {
     if (kind === "SW") return Math.round(value * 100) + "% duty";
+    // Manual switch: its value is a state, not a quantity — show it as a word.
+    if (kind === "MSW") return value >= 0.5 ? "Closed" : "Open";
     const u = PART_KINDS[kind]?.unit ?? "";
     return u ? formatValue(value, u) : String(value);
   }
@@ -1409,85 +1419,103 @@
               )} through
             </div>
           {/if}
-          <div class="insp-row">
-            <button
-              class="btn btn-ghost insp-step"
-              onclick={() => stepVal(-1)}
-              title="Next smaller standard value">−</button
-            >
+          {#if kind === "MSW"}
+            <!-- Manual switch: a bespoke two-state toggle, not a numeric sweep.
+                 Open (value 0) / Closed (value 1) chips, mirroring how the other
+                 parts' value chips read — and matching the click-to-flip on the
+                 board. Both go through setComponentValue, so they're undoable and
+                 rebuild the netlist immediately. -->
             <div class="insp-chips">
-              {#each chipsOf(kind) as v (v)}
-                <button
-                  class="chip-val {selPart.value === v ? 'is-active' : ''}"
-                  onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-                >
-              {/each}
+              <button
+                class="chip-val {selPart.value < 0.5 ? 'is-active' : ''}"
+                onclick={() => setVal(0)}>Open</button
+              >
+              <button
+                class="chip-val {selPart.value >= 0.5 ? 'is-active' : ''}"
+                onclick={() => setVal(1)}>Closed</button
+              >
             </div>
-            <button
-              class="btn btn-ghost insp-step"
-              onclick={() => stepVal(1)}
-              title="Next larger standard value">+</button
-            >
-          </div>
-          {#if kind === "AC"}
-            <!-- The AC source's second scalar: its peak amplitude (volts),
-                 presented exactly like the frequency chips above. The row above
-                 sets the frequency (Hz); this one the peak voltage. -->
-            <div class="insp-sub">amplitude</div>
+          {:else}
             <div class="insp-row">
               <button
                 class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(-1)}
-                title="Next smaller amplitude">−</button
+                onclick={() => stepVal(-1)}
+                title="Next smaller standard value">−</button
               >
               <div class="insp-chips">
-                {#each acAmpChips() as v (v)}
+                {#each chipsOf(kind) as v (v)}
                   <button
-                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                    onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                    class="chip-val {selPart.value === v ? 'is-active' : ''}"
+                    onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
                   >
                 {/each}
               </div>
               <button
                 class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(1)}
-                title="Next larger amplitude">+</button
+                onclick={() => stepVal(1)}
+                title="Next larger standard value">+</button
               >
             </div>
-          {/if}
-          <button class="insp-more" onclick={() => (showMore = !showMore)}>
-            {showMore ? "▾ fewer" : "▸ more values"}
-          </button>
-          {#if showMore && isESeries(kind)}
-            <div class="insp-sub">decade</div>
-            <div class="insp-chips wrap">
-              {#each decadesOf(kind) as d (d)}
+            {#if kind === "AC"}
+              <!-- The AC source's second scalar: its peak amplitude (volts),
+                 presented exactly like the frequency chips above. The row above
+                 sets the frequency (Hz); this one the peak voltage. -->
+              <div class="insp-sub">amplitude</div>
+              <div class="insp-row">
                 <button
-                  class="chip-val sm {cd === d ? 'is-active' : ''}"
-                  onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
+                  class="btn btn-ghost insp-step"
+                  onclick={() => stepAmpVal(-1)}
+                  title="Next smaller amplitude">−</button
                 >
-              {/each}
-            </div>
-            <div class="insp-sub">significand (E-series)</div>
-            <div class="insp-chips wrap">
-              {#each significandsOf(kind) as s (s)}
+                <div class="insp-chips">
+                  {#each acAmpChips() as v (v)}
+                    <button
+                      class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                      onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                    >
+                  {/each}
+                </div>
                 <button
-                  class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
-                    ? 'is-active'
-                    : ''}"
-                  onclick={() => setSig(s)}>{s.toFixed(1)}</button
+                  class="btn btn-ghost insp-step"
+                  onclick={() => stepAmpVal(1)}
+                  title="Next larger amplitude">+</button
                 >
-              {/each}
-            </div>
-          {:else if showMore}
-            <div class="insp-chips wrap">
-              {#each standardValues(kind) as v (v)}
-                <button
-                  class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
-                  onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-                >
-              {/each}
-            </div>
+              </div>
+            {/if}
+            <button class="insp-more" onclick={() => (showMore = !showMore)}>
+              {showMore ? "▾ fewer" : "▸ more values"}
+            </button>
+            {#if showMore && isESeries(kind)}
+              <div class="insp-sub">decade</div>
+              <div class="insp-chips wrap">
+                {#each decadesOf(kind) as d (d)}
+                  <button
+                    class="chip-val sm {cd === d ? 'is-active' : ''}"
+                    onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
+                  >
+                {/each}
+              </div>
+              <div class="insp-sub">significand (E-series)</div>
+              <div class="insp-chips wrap">
+                {#each significandsOf(kind) as s (s)}
+                  <button
+                    class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => setSig(s)}>{s.toFixed(1)}</button
+                  >
+                {/each}
+              </div>
+            {:else if showMore}
+              <div class="insp-chips wrap">
+                {#each standardValues(kind) as v (v)}
+                  <button
+                    class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
+                    onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+                  >
+                {/each}
+              </div>
+            {/if}
           {/if}
           <span class="value-pop-caret" style="left: {popPos.caretLeft}px"
           ></span>

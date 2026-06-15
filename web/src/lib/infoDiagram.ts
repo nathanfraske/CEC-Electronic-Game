@@ -17,6 +17,10 @@ export class InfoDiagram {
   private readonly glyph = new Graphics();
   private kind = "";
   private electrical: ElectricalState = ZERO_ELECTRICAL;
+  // The selected part's primary scalar (its `value`), forwarded to `drawGlyph` so
+  // state-from-value glyphs (the manual switch) read correctly even when nothing is
+  // running. Undefined until a part with a value is shown; other glyphs ignore it.
+  private value: number | undefined = undefined;
   private phase = 0;
   private raf = 0;
   private last = 0;
@@ -38,9 +42,10 @@ export class InfoDiagram {
     this.loop();
   }
 
-  setState(kind: string, e: ElectricalState): void {
+  setState(kind: string, e: ElectricalState, value?: number): void {
     this.kind = kind;
     this.electrical = e;
+    this.value = value;
   }
 
   private readonly loop = (): void => {
@@ -76,6 +81,7 @@ export class InfoDiagram {
       color,
       electrical: this.electrical,
       phase: this.phase,
+      value: this.value,
     });
     for (const p of pins) {
       g.circle(p.x, p.y, 5).fill({ color: 0x120f1c });
