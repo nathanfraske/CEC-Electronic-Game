@@ -425,6 +425,67 @@ const GATE_GOUT: f64 = 1.0;
 /// first-cut behavioral model.
 const GATE_VTH_FRAC: f64 = 0.5;
 
+/// A logic family: the DC levels and output drive that define how a gate reads its
+/// inputs and presents its output, replacing the single `value`-is-everything model
+/// (`value` was simultaneously V_IL, V_IH, V_OL and V_OH). Levels are fractions of
+/// the gate's rail (`value`) so one table serves any rail; the conductances are the
+/// output drive strength. All fields are fixed constants → golden-reproducible.
+///
+/// This is the substrate for the separated analog/digital domain (see
+/// `docs/ui/logic-analog-digital-nets.md` §6): a **receiver** reads an input with
+/// [`LogicFamily::reads_high`] (V_IH), a **driver** presents the output with
+/// [`LogicFamily::drive`] (V_OL/V_OH through R_ol/R_oh). The default
+/// [`LogicFamily::LEGACY`] reproduces the original idealised gate exactly, so wiring
+/// the gate through this abstraction changes no number and no golden.
+#[derive(Clone, Copy)]
+struct LogicFamily {
+    /// Input read high above this fraction of the rail. (A real family's lower
+    /// `V_IL` threshold — the indeterminate band below this — arrives with the
+    /// receiver's `X` verdict in the scheduler phase; LEGACY has no such band.)
+    v_ih_frac: f64,
+    /// Output-low / output-high voltage as a fraction of the rail.
+    v_ol_frac: f64,
+    v_oh_frac: f64,
+    /// Output drive conductance (siemens) for the low / high pull.
+    g_ol: f64,
+    g_oh: f64,
+}
+
+impl LogicFamily {
+    /// The idealised family that reproduces the original gate behaviour bit-for-bit:
+    /// a single half-rail input threshold ([`GATE_VTH_FRAC`]) and a rail-to-ground
+    /// output through [`GATE_GOUT`]. The default for every gate until a real family
+    /// (TTL/CMOS/LVCMOS) is selected, which keeps every existing golden unchanged.
+    const LEGACY: LogicFamily = LogicFamily {
+        v_ih_frac: GATE_VTH_FRAC,
+        v_ol_frac: 0.0,
+        v_oh_frac: 1.0,
+        g_ol: GATE_GOUT,
+        g_oh: GATE_GOUT,
+    };
+
+    /// Receiver: does input voltage `v` read as logic high at rail `vhigh`? An input
+    /// must exceed `v_ih_frac * vhigh` to be high; below reads low. (For LEGACY this
+    /// is the exact `v > GATE_VTH_FRAC * value` compare the gate used.)
+    #[inline]
+    fn reads_high(&self, v: f64, vhigh: f64) -> bool {
+        v > self.v_ih_frac * vhigh.max(0.0)
+    }
+
+    /// Driver: the (target voltage, output conductance) this family presents for a
+    /// logic level at rail `vhigh`. High → `(v_oh_frac*vhigh, g_oh)`; low →
+    /// `(v_ol_frac*vhigh, g_ol)`. (For LEGACY: `(vhigh, GATE_GOUT)` / `(0, GATE_GOUT)`.)
+    #[inline]
+    fn drive(&self, level_high: bool, vhigh: f64) -> (f64, f64) {
+        let vh = vhigh.max(0.0);
+        if level_high {
+            (self.v_oh_frac * vh, self.g_oh)
+        } else {
+            (self.v_ol_frac * vh, self.g_ol)
+        }
+    }
+}
+
 /// **Transformer** (two magnetically coupled inductors). The first four-terminal
 /// element: primary `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio
 /// `n = Ns/Np`; with the fixed primary inductance [`TRANSFORMER_L1`] the secondary
@@ -738,13 +799,15 @@ fn gate_logic(code: f64, in1: bool, in2: bool) -> bool {
 /// `value`, floored at `0`. Pure `f64` + boolean, so it reproduces exactly.
 #[inline]
 fn gate_target_level(code: f64, vhigh: f64, v1: f64, v2: f64) -> f64 {
-    let vh = vhigh.max(0.0);
-    let vth = GATE_VTH_FRAC * vh;
-    if gate_logic(code, v1 > vth, v2 > vth) {
-        vh
-    } else {
-        0.0
-    }
+    // Route through the (default) LEGACY family: a receiver reads each input, the
+    // boolean is evaluated, and the driver presents the output voltage. LEGACY's
+    // numbers are the original idealisation (half-rail threshold, rail/ground out
+    // through GATE_GOUT), so this is byte-identical — the substrate for real
+    // families + the digital-domain boundary (docs/ui/logic-analog-digital-nets.md).
+    let fam = LogicFamily::LEGACY;
+    let in1 = fam.reads_high(v1, vhigh);
+    let in2 = fam.reads_high(v2, vhigh);
+    fam.drive(gate_logic(code, in1, in2), vhigh).0
 }
 
 /// A transformer's winding inductances and mutual inductance from its turns ratio
@@ -4864,6 +4927,26 @@ mod tests {
             sim.step();
         }
         sim.state()[3]
+    }
+
+    /// The LEGACY logic family must reproduce the original idealised gate exactly —
+    /// a half-rail input threshold and a rail/ground output through GATE_GOUT. This
+    /// guards the family substrate so building real families on top can't silently
+    /// move the default the existing goldens depend on.
+    #[test]
+    fn legacy_family_matches_original_gate() {
+        let fam = LogicFamily::LEGACY;
+        // Receiver: the half-rail threshold, at any rail.
+        assert!(fam.reads_high(3.0, 5.0)); // 3 V > 2.5 V
+        assert!(!fam.reads_high(2.0, 5.0)); // 2 V < 2.5 V
+        assert!(!fam.reads_high(2.5, 5.0)); // exactly half-rail is not "above"
+                                            // Driver: rail high, ground low, both through GATE_GOUT.
+        assert_eq!(fam.drive(true, 5.0), (5.0, GATE_GOUT));
+        assert_eq!(fam.drive(false, 5.0), (0.0, GATE_GOUT));
+        // End to end: gate_target_level still maps to exactly {rail, 0}.
+        assert_eq!(gate_target_level(0.0, 5.0, 5.0, 5.0), 5.0); // AND(1,1) = 1
+        assert_eq!(gate_target_level(0.0, 5.0, 5.0, 0.0), 0.0); // AND(1,0) = 0
+        assert_eq!(gate_target_level(1.0, 5.0, 0.0, 5.0), 5.0); // OR(0,1)  = 1
     }
 
     #[test]

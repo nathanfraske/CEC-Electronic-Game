@@ -604,3 +604,71 @@ boundary stays coarse throughout (digital levels are just more bytes in the
 existing once-per-frame snapshot), and every stage turns one of the owner's
 failure cases — mixed rails, divided inputs, open-drain buses — into a lesson
 rather than a silent wrong answer.
+
+---
+
+## 6. DECISION & build order (owner, 2026-06-15)
+
+**Decided.** Build the **full separated analog/digital domain (Option A2) now** —
+families + driver/receiver boundary + the deterministic event-driven digital
+scheduler + the level-bearing hash — rather than phasing the scheduler in later.
+Rationale (owner): *wire it all up now so we know it works and so the future has
+the lowest risk of having to break the golden/hash again.* Once the digital-domain
+representation exists, every later digital part (counter, shift register, decoder,
+…) is golden-**additive**, never golden-breaking.
+
+**Default family: legacy-ideal, real opt-in.** A freshly-placed gate (and every
+existing gate example) defaults to the `LEGACY` family whose numbers reproduce
+today's behaviour exactly (`V_IL = V_IH = value/2`, `V_OL = 0`, `V_OH = value`,
+`R_oh = R_ol = 1 Ω` = today's `GATE_GOUT`). So **example behaviour is byte-identical
+on the analog side**; only the **gate/DFF reproducibility goldens regenerate** (the
+representation + hash changed), and the main analog golden `0xeaac…` is untouched
+(it has no digital parts — `Sim::new` builds the RC circuit, `lib.rs:3486`).
+
+### The determinism-critical design (the acceptance bar)
+
+- **Levels** are a `#[repr(u8)]` enum `Level { Low=0, High=1, Z=2, X=3 }`. The
+  digital domain does **no float compares internally** — quantisation happens only
+  at the receiver boundary.
+- **Net classification** (deterministic, fixed element order): a node touched by an
+  analog element (R/C/L/source/diode/transistor/switch/…) is **analog**; a node
+  touched **only** by digital pins (gate/FF I/O) is a **pure-digital net** (leaves
+  the MNA matrix); a node touched by both is a **boundary net** (stays analog; a
+  receiver reads it, a driver writes it). Computed in-core from the element list so
+  the hash can use it; mirrors the existing ground-selection/floating-source passes.
+- **Boundary model.** Receiver: `quantise(v, family) → Level` via `V_IL`/`V_IH`
+  (forbidden band → `X`). Driver: stamps the analog node as a Thévenin source
+  `(V_OL|V_OH, R_ol|R_oh)`; open-drain releases the high side to `GMIN`. Under
+  `LEGACY` the driver stamp is identically today's `GATE_GOUT` Thévenin → no numeric
+  change on boundary/example nets.
+- **Scheduler.** Pure-digital nets are evaluated by an event engine on the **tick
+  grid**: a fixed-capacity **per-tick bucket keyed by integer tick** (NOT a
+  float-keyed `BinaryHeap`), drained in **element-index order**. Combinational
+  feedback is resolved by the **same one-tick-delay** the gate already uses (read
+  last tick's committed levels, settle next tick) — never an unbounded fixpoint.
+- **Hash.** `fnv1a` (`lib.rs:230`) folds, in fixed order: the analog `node_v` for
+  analog/boundary nodes (as today) **plus** the digital net **levels** (one `u8`
+  each) for pure-digital nets. This is the deliberate hash-format change; it is
+  **forward-stable** — adding digital parts later adds level bytes in the same fixed
+  order, never reshuffling existing ones. Pure-analog circuits hash exactly as today.
+
+### Build order (each step keeps `cargo test -p sim-core` green; only the marked
+step regenerates the gate/DFF goldens)
+
+0. **Family substrate (golden-stable).** `LogicFamily { v_il, v_ih, v_ol, v_oh,
+   r_oh, r_ol, open_drain }` + a `const FAMILIES` table (`LEGACY`, then TTL / 5 V
+   CMOS / 3.3 V LVCMOS / 2.5 V / 1.8 V) + a per-gate family index defaulting to
+   `LEGACY`. Refactor `gate_target_level` (`lib.rs:740`) and the three `GATE_GOUT`
+   stamp sites (`:1782`, `:1962`, `:2787`) + readouts (`:1876`, `:2096`) to read
+   the family. **Golden unchanged** (LEGACY = today). Add a legacy-equivalence test.
+1. **Receiver/driver split + net classification** (still MNA, still LEGACY) — the
+   boundary abstraction, no behaviour change yet. Golden unchanged.
+2. **Scheduler + level-bearing hash** — move pure-digital nets out of MNA into the
+   event engine; fold levels into `fnv1a`. **Regenerate gate/DFF goldens** (the one
+   deliberate break); add per-family `*_run_is_reproducible` + a mixed-rail +
+   open-drain test. Extend to the DFF (`lib.rs:468`).
+3. **Boundary threading to the web** — expose the family index across
+   `set_netlist` (sim-wasm → loop.ts → netlist.ts), a family value-chip in the
+   inspector, noise-margin/forbidden-band readouts (presentation), and surface the
+   already-implemented **XNOR (5)/BUF (7)** as parts while here (`GATE_AUX` gap).
+4. **Open-drain / Z / wired-AND** parts + the **level-shifter** (golden-additive).
