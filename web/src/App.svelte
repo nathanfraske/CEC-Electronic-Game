@@ -192,6 +192,8 @@
   let armedPart = $state<string | null>(null);
   // The multimeter function in Measure mode: voltmeter or ammeter.
   let probeMode = $state<"V" | "A">("V");
+  // Component art style: real schematic symbols, or the Factorio machine lens.
+  let boardStyle = $state<"schematic" | "factory">("schematic");
   // Fallback kind for native drag-and-drop from the bin (set on dragstart).
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
@@ -568,6 +570,10 @@
     probeMode = m;
     board?.setProbeMode(m);
   }
+  function toggleStyle(): void {
+    boardStyle = boardStyle === "schematic" ? "factory" : "schematic";
+    board?.setStyle(boardStyle);
+  }
   function clearBoard(): void {
     board?.clear();
     demo = null;
@@ -839,6 +845,14 @@
         title="Info: deep explanatory view of the selected part + calculators"
       >
         ⓘ Info
+      </button>
+      <button
+        class="btn btn-ghost {boardStyle === 'factory' ? 'is-active' : ''}"
+        onclick={toggleStyle}
+        disabled={!ready}
+        title="Toggle component art: schematic symbols ↔ factory machines"
+      >
+        {boardStyle === "factory" ? "⚙ Factory" : "⎍ Schematic"}
       </button>
       {#if armedPart}
         <span class="armed-chip" title="Armed for placement">

@@ -29,8 +29,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Value popover fixes**: removed the stray scrollbar (the caret was triggering it — scroll now only on the expanded grid), widened to 320 px with larger chips, and **restored the live "V across · I through" readout** at the top.~~
 - ~~**Combined DMM probe**: the Measure "A" probe now reads a part/wire's **current AND voltage together** (with a teaching note that real meters use separate ports).~~
 
-### Pending
-- [ ] **Schematic ↔ Factory style toggle** (`docs/ui/teaching-tools.md` Tool 2): a parallel `FACTORY_DRAWERS` map (cap = buffer chest, source = generator, …) sharing pin geometry, a `board.setStyle` + toolbar toggle; default schematic. Art-only, isolated.
+- ~~**Schematic ↔ Factory style toggle** (`docs/ui/teaching-tools.md` Tool 2): a parallel `FACTORY_DRAWERS` map in `glyphs.ts` (cap = buffer chest that fills, source = generator, R = throat, L = flywheel, D = check-valve, SW = door, GND = drain) sharing pin geometry + the same flow/charge animation; `board.setStyle` + `setGlyphStyle` + a toolbar toggle; default schematic. Wiring unchanged across styles.~~
+
+### Pending / owner-driven
+- [ ] **Review + integrate the contract prototype** (on worktree branch `worktree-agent-a8d3b4a8b025619c4`, commit `8872b3c`): Test Load judgement part + sweep grader + Contracts tab + Credits. Cherry-pick will conflict with the AC/info-drawer changes — resolve on integration. Then Lux + standing contracts + the firewall.
+- [ ] **Sandbox model** (`docs/architecture.md`): per-island adaptive ΔT + shared physical-time clock.
+- [ ] Calculator **solve-for → push-back** and the **per-tier Factory reveal** (once competency gates exist).
 - [ ] **Sandbox simulation model** (from the ΔT-in-one-sandbox question): shard the sim **per electrical island** (connected component), each with its own **adaptive ΔT** sized to its fastest dynamics; drive the whole board off a **shared physical-time clock** (each island does however many of its own ΔT-steps to reach the target sim-time); wiring two islands merges them to the finer ΔT. MHz comes free per-island; a single ms→GHz *connected* net is the deferred multirate frontier. Capture in `docs/architecture.md`; black-boxing validated sub-circuits is also a ΔT/perf lever. (Owner to steer before building.)
 - [ ] **Game MVP** (owner-driven, if greenlit): the smallest "not-a-puzzle" loop — a **parametric contract generator + pin-sampling grader** off the deterministic replay (start with one template, e.g. "hold 5 V ±2% under 0–100 mA").
 - [ ] **Selectable / per-example DT** (for RF): DT is a fixed 2 µs global; to reach MHz/GHz cleanly each scenario wants its own DT. Make DT a netlist/scenario parameter (keep the golden pinned at 2 µs). Audio-range AC (≤ ~5 kHz) is fine at 2 µs today.

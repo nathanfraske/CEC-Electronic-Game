@@ -407,6 +407,208 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
+// --- Factory style: components as machines/buildings (the Factorio lens) ------
+// Same keys, same pin geometry, same animation helpers — only the body art
+// changes, so wiring is identical across styles (see docs/ui/teaching-tools.md).
+
+/** Lead stubs from the two pins to the building edges. */
+function fLeads(g: Graphics, o: GlyphOpts, mx: number, hw: number): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  g.moveTo(a.x, a.y).lineTo(mx - hw, a.y);
+  g.moveTo(mx + hw, b.y).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+}
+
+/** A boxy machine body with a depth highlight along the top. */
+function fBox(
+  g: Graphics,
+  mx: number,
+  my: number,
+  hw: number,
+  hh: number,
+  color: number,
+): void {
+  g.roundRect(mx - hw, my - hh, 2 * hw, 2 * hh, 3).fill({
+    color: 0x161020,
+    alpha: 0.96,
+  });
+  g.roundRect(mx - hw, my - hh, 2 * hw, 2 * hh, 3).stroke({
+    width: 1.8,
+    color,
+    alpha: 0.95,
+  });
+  g.moveTo(mx - hw + 2, my - hh + 2)
+    .lineTo(mx + hw - 2, my - hh + 2)
+    .stroke({ width: 1.4, color, alpha: 0.4 });
+}
+
+function generator(g: Graphics, o: GlyphOpts, drive: number): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * 2.4);
+  g.circle(mx, my, 5).fill({
+    color: o.color,
+    alpha: 0.4 + 0.55 * drive * pulse,
+  });
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, o.color);
+  flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, o.color);
+}
+
+function drawFV(g: Graphics, o: GlyphOpts): void {
+  generator(g, o, norm(o.electrical.vAcross || 5, V_SCALE));
+}
+function drawFI(g: Graphics, o: GlyphOpts): void {
+  generator(g, o, norm(o.electrical.current, CUR_SCALE));
+}
+function drawFAC(g: Graphics, o: GlyphOpts): void {
+  generator(g, o, norm(o.electrical.vAcross, V_SCALE));
+}
+
+function drawFR(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const heat = norm(o.electrical.current, CUR_SCALE);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  if (heat > 0.03) {
+    g.roundRect(mx - hw, my - 11, 2 * hw, 22, 3).fill({
+      color: 0xe0533a,
+      alpha: 0.18 * heat,
+    });
+  }
+  // a throat the belt squeezes through
+  g.poly([mx - hw + 2, my - 8, mx - 3, my, mx - hw + 2, my + 8]).fill({
+    color: o.color,
+    alpha: 0.3,
+  });
+  g.poly([mx + hw - 2, my - 8, mx + 3, my, mx + hw - 2, my + 8]).fill({
+    color: o.color,
+    alpha: 0.3,
+  });
+  flow(g, mx - hw, my, mx + hw, my, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+function drawFC(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const hh = 12;
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, hh, o.color);
+  // a buffer chest that fills with the charge level
+  const charge = norm(o.electrical.vAcross, V_SCALE);
+  const fillH = 2 * (hh - 3) * charge;
+  if (fillH > 0.5) {
+    g.roundRect(mx - hw + 3, my + hh - 3 - fillH, 2 * (hw - 3), fillH, 1).fill({
+      color: o.color,
+      alpha: 0.55,
+    });
+  }
+}
+
+function drawFL(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 12, o.color);
+  // a flywheel whose spokes spin faster with more current
+  const spin = norm(o.electrical.current, CUR_SCALE);
+  const ang = o.phase * (1 + spin * 6);
+  g.circle(mx, my, 7).stroke({ width: 1.4, color: o.color, alpha: 0.8 });
+  for (let i = 0; i < 4; i++) {
+    const t = ang + (i * Math.PI) / 2;
+    g.moveTo(mx, my).lineTo(mx + 7 * Math.cos(t), my + 7 * Math.sin(t));
+  }
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.7 + 0.25 * spin });
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, o.color);
+  flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, o.color);
+}
+
+function drawFD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const cond = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // a one-way conveyor gate, lit when it's passing
+  g.poly([mx - 5, my - 6, mx + 5, my, mx - 5, my + 6]).fill({
+    color: o.color,
+    alpha: 0.3 + 0.6 * cond,
+  });
+  const fwd = Math.max(0, o.electrical.current);
+  flow(g, a.x, a.y, mx - hw, my, fwd, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, fwd, o.phase, 0x46d2e6);
+}
+
+function drawFSW(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  const closed = Math.abs(o.electrical.vAcross) < 0.25;
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  // a door: shut (solid panel) when closed, ajar when open
+  if (closed) {
+    g.rect(mx - 6, my - 7, 12, 14).fill({ color: o.color, alpha: 0.35 });
+    flow(g, mx - hw, my, mx + hw, my, o.electrical.current, o.phase, o.color);
+  } else {
+    g.poly([
+      mx - 6,
+      my - 7,
+      mx + 2,
+      my - 9,
+      mx + 2,
+      my + 5,
+      mx - 6,
+      my + 7,
+    ]).fill({ color: 0x9c93b8, alpha: 0.3 });
+  }
+}
+
+function drawFGND(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  if (!a) return;
+  // a drain grate the return belt pours into
+  const topY = a.y + 9;
+  g.moveTo(a.x, a.y).lineTo(a.x, topY);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.rect(a.x - 10, topY, 20, 9).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.9,
+  });
+  for (let i = -2; i <= 2; i++) {
+    g.moveTo(a.x + i * 4, topY + 1).lineTo(a.x + i * 4, topY + 8);
+  }
+  g.stroke({ width: 1.2, color: o.color, alpha: 0.55 });
+}
+
 const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   V: drawV,
   R: drawR,
@@ -419,14 +621,35 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   SW: drawSW,
 };
 
+const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
+  V: drawFV,
+  R: drawFR,
+  C: drawFC,
+  L: drawFL,
+  I: drawFI,
+  AC: drawFAC,
+  GND: drawFGND,
+  D: drawFD,
+  SW: drawFSW,
+};
+
+/** Component art style: real schematic symbols, or Factorio-ish machines. */
+export type GlyphStyle = "schematic" | "factory";
+let currentStyle: GlyphStyle = "schematic";
+export function setGlyphStyle(s: GlyphStyle): void {
+  currentStyle = s;
+}
+
 /** Returns true if the kind draws a schematic symbol (vs. a fallback card). */
 export function isSymbol(kind: string): boolean {
   return kind in DRAWERS;
 }
 
-/** Draw a component's glyph + state animation into the (pre-cleared) Graphics. */
+/** Draw a component's glyph + state animation into the (pre-cleared) Graphics,
+ * in the active style (schematic symbols, or the Factory machine lens). */
 export function drawGlyph(g: Graphics, o: GlyphOpts): void {
-  const drawer = DRAWERS[o.kind];
+  const map = currentStyle === "factory" ? FACTORY_DRAWERS : DRAWERS;
+  const drawer = map[o.kind] ?? DRAWERS[o.kind];
   if (drawer) drawer(g, o);
   else drawCard(g, o);
 }

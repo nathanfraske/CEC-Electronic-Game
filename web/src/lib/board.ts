@@ -31,8 +31,10 @@ import {
 import {
   drawGlyph,
   isSymbol,
+  setGlyphStyle,
   ZERO_ELECTRICAL,
   type ElectricalState,
+  type GlyphStyle,
 } from "./glyphs";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
@@ -322,6 +324,12 @@ export class Board {
   setProbeMode(mode: "V" | "A"): void {
     this.probeMode = mode;
     this.clearProbe();
+  }
+
+  /** Switch the component art style (schematic symbols ↔ factory machines). The
+   * glyphs redraw with it next frame; pins and wiring are unchanged. */
+  setStyle(style: GlyphStyle): void {
+    setGlyphStyle(style);
   }
 
   /** Rename a scope node; an empty name restores the default "Node i". */
