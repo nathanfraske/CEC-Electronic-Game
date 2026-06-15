@@ -7,6 +7,13 @@
 
 import init, { Simulation } from "../wasm/sim_wasm.js";
 
+/**
+ * Seconds of physical time per simulated tick — must match `DT` in
+ * `crates/sim-core/src/lib.rs` (2 µs). Used to turn ticks into a wall-clock
+ * reading and to drive playback at a chosen ticks-per-(real-)second.
+ */
+export const DT_SECONDS = 2e-6;
+
 /** One batched read of the core, taken once per frame and handed to the view. */
 export interface Snapshot {
   tick: bigint;
@@ -76,8 +83,8 @@ export interface PlaybackControls {
   stepBack(): void;
   /** Jump the cursor to a fraction [0,1] of the recorded history. */
   seekFraction(f: number): void;
-  /** Set how many fixed ticks to advance per animation frame while running. */
-  setTicksPerFrame(n: number): void;
+  /** Set how many fixed ticks of sim time to advance per real second while running. */
+  setTicksPerSecond(n: number): void;
   isRunning(): boolean;
   status(): PlaybackStatus;
   /** Rebuild the history from the sim's current state (after a netlist change). */
@@ -88,53 +95,68 @@ export interface PlaybackControls {
 
 export interface LoopOptions {
   running?: boolean;
-  ticksPerFrame?: number;
+  ticksPerSecond?: number;
   historyCap?: number;
 }
 
-// Presentation speed is "how fast you watch": how many fixed ticks of sim time
-// to advance per animation frame, separate from the fixed physical step.
+/** Most ticks to simulate in one animation frame, so a long frame never stalls. */
+const MAX_STEPS_PER_FRAME = 10000;
+
+// Presentation speed is "how fast you watch": how many fixed ticks of sim time to
+// advance per real second, driven by the real elapsed time between frames (so the
+// rate is honest regardless of frame rate), separate from the fixed physical step.
 export function runLoop(
   sim: SimHandle,
   onFrame: (snap: Snapshot) => void,
   opts: LoopOptions = {},
 ): PlaybackControls {
   let running = opts.running ?? false;
-  // Fractional ticks-per-frame: a value < 1 advances slowly (one tick every few
-  // frames) via an accumulator, so "watch speed" can go well below 1.
-  let tpf = Math.max(0.01, opts.ticksPerFrame ?? 0.25);
-  let acc = 0;
-  const cap = Math.max(2, opts.historyCap ?? 1200);
+  let tps = Math.max(1, opts.ticksPerSecond ?? 500);
+  let acc = 0; // fractional ticks carried between frames
+  let lastTime = 0;
   let raf = 0;
 
-  // History ring: index 0 is the oldest retained tick, last is the live tick.
-  const history: Snapshot[] = [sim.snapshot()];
-  let cursor = 0;
+  // History as a fixed-size circular buffer: O(1) push + evict, so the cap can be
+  // large enough for the timeline to scrub all the way back to t=0 in a normal
+  // session without the O(n) cost of shifting an array every tick.
+  const cap = Math.max(2, opts.historyCap ?? 100000);
+  const ring: Snapshot[] = new Array<Snapshot>(cap);
+  let head = 0; // index of the oldest retained snapshot
+  let count = 0; // number retained
+  let cursor = 0; // displayed index within [0, count)
 
-  const live = (): number => history.length - 1;
-
-  const record = (): void => {
-    history.push(sim.snapshot());
-    if (history.length > cap) {
-      history.shift();
-      if (cursor > 0) cursor--;
-    }
+  const push = (s: Snapshot): void => {
+    ring[(head + count) % cap] = s;
+    if (count === cap) head = (head + 1) % cap;
+    else count++;
   };
+  const at = (i: number): Snapshot | undefined => ring[(head + i) % cap];
+  const live = (): number => count - 1;
+  const reset = (): void => {
+    head = 0;
+    count = 0;
+    cursor = 0;
+    push(sim.snapshot());
+  };
+  reset();
 
   const show = (): void => {
-    const snap = history[cursor];
+    const snap = at(cursor);
     if (snap) onFrame(snap);
   };
 
   const frame = (): void => {
+    const now = performance.now();
+    const dt = lastTime ? Math.min(0.1, (now - lastTime) / 1000) : 0;
+    lastTime = now;
     if (running) {
-      acc += tpf;
+      acc += tps * dt;
       let steps = Math.floor(acc);
       acc -= steps;
-      if (steps > 256) steps = 256; // never freeze on a long frame
+      if (steps > MAX_STEPS_PER_FRAME) steps = MAX_STEPS_PER_FRAME;
       for (let i = 0; i < steps; i++) {
         sim.step();
-        record();
+        push(sim.snapshot());
       }
       cursor = live();
     }
@@ -163,7 +185,7 @@ export function runLoop(
         cursor++;
       } else {
         sim.step();
-        record();
+        push(sim.snapshot());
         cursor = live();
       }
       show();
@@ -179,27 +201,24 @@ export function runLoop(
       cursor = Math.round(clamped * live());
       show();
     },
-    setTicksPerFrame: (n: number) => {
-      tpf = Math.max(0.01, n);
+    setTicksPerSecond: (n: number) => {
+      tps = Math.max(1, n);
     },
     isRunning: () => running,
     status: () => ({
       cursor,
       live: live(),
-      tick: history[cursor]?.tick ?? 0n,
-      liveTick: history[live()]?.tick ?? 0n,
+      tick: at(cursor)?.tick ?? 0n,
+      liveTick: at(live())?.tick ?? 0n,
     }),
     resync: () => {
-      history.length = 0;
-      history.push(sim.snapshot());
-      cursor = 0;
+      reset();
     },
     restart: () => {
       sim.reset();
-      history.length = 0;
-      history.push(sim.snapshot());
-      cursor = 0;
       acc = 0;
+      lastTime = 0;
+      reset();
     },
   };
 }
