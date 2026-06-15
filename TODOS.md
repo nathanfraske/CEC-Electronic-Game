@@ -8,6 +8,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Bugs found via the full-bridge-rectifier review (2026-06-15 eve)
+- ~~**`formatValue` ate integer trailing zeros** → 470 µF shown as "47 µF", 100 Ω as
+  "1 Ω", 120 V as "12 V", 100 kΩ as "1 kΩ" (any 100–999 mantissa ending in 0, 10×
+  too small). Fixed: only strip zeros after a decimal point. Web-only.~~
+- [ ] **sim-core: full-wave bridge off a transformer degenerates to HALF-wave.** The
+  user's bridge topology is CORRECT, but the floating transformer secondary's
+  common-mode pins one terminal (S+) at ≈V(out)/2 via symmetric diode leakage while
+  only the other (S−) swings — so 2 of the 4 diodes (the S+ pair) NEVER conduct,
+  regardless of secondary voltage (reproduced at n=0.25 AND n=1.0). **Affects the
+  shipped `tr-bridge-supply` example too** (2 of its 4 diodes read 0 mA). Output is a
+  plausible-looking positive DC, so it hides. Root cause = the coupled-inductor
+  transformer's floating secondary has an ill-defined/asymmetric common-mode that
+  locks into a half-wave operating point. **Golden-touching sim-core fix** (likely:
+  give the secondary a symmetric common-mode reference / fix the floating-node
+  handling); verify all 4 diodes conduct + output ≈ Vsec_pk − 2·Vf. Needs a careful
+  pass like the digital scheduler. Diagnosed via the harness; not yet fixed.
+
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
   pinned to what it names. `NetLabel.tagOff` + `graph.moveNetLabel` + a lightweight
