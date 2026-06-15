@@ -799,22 +799,20 @@
     if (selPart) setAmp(stepAmp(selAmp(), dir));
   }
   // The potentiometer's wiper position (its second scalar): 0..1, centred by
-  // default. Presented as a row of percentage chips, like the AC amplitude.
-  const WIPER_CHIPS = [0, 0.25, 0.5, 0.75, 1];
+  // default. Presented as a continuous slider that sets the exact position.
   function selWiper(): number {
     return selPart?.wiper ?? 0.5;
   }
+  // A slider drag is a single undo step: record undo on the first move of a drag,
+  // then update live (no undo) for the rest; `endWiperDrag` re-arms it on release.
+  let wiperDragging = false;
   function setWiper(v: number): void {
-    if (selPart) board?.setComponentWiper(selPart.id, v);
+    if (!selPart) return;
+    board?.setComponentWiper(selPart.id, v, !wiperDragging);
+    wiperDragging = true;
   }
-  function stepWiperVal(dir: number): void {
-    // Nudge the wiper by 5%, clamped to [0,1] and snapped to a clean centi-step.
-    setWiper(
-      Math.min(
-        1,
-        Math.max(0, Math.round((selWiper() + dir * 0.05) * 100) / 100),
-      ),
-    );
+  function endWiperDrag(): void {
+    wiperDragging = false;
   }
   // The decade the current value sits in (for the decade × significand picker).
   function valueDecade(kind: string, value: number): number {
@@ -1577,30 +1575,26 @@
               </div>
             {/if}
             {#if kind === "POT"}
-              <!-- The potentiometer's wiper position (0 = A end, 1 = B end), shown
-                 as percentage chips with ±5% nudges. Sliding it splits the track. -->
-              <div class="insp-sub">wiper</div>
+              <!-- The potentiometer's wiper position (0 = A end, 1 = B end) as a
+                 continuous slider; drag it to set the exact split of the track. -->
+              <div class="insp-sub">
+                wiper · {Math.round(selWiper() * 100)}%
+              </div>
               <div class="insp-row">
-                <button
-                  class="btn btn-ghost insp-step"
-                  onclick={() => stepWiperVal(-1)}
-                  title="Nudge the wiper toward A">−</button
-                >
-                <div class="insp-chips">
-                  {#each WIPER_CHIPS as v (v)}
-                    <button
-                      class="chip-val {Math.abs(selWiper() - v) < 0.001
-                        ? 'is-active'
-                        : ''}"
-                      onclick={() => setWiper(v)}>{Math.round(v * 100)}%</button
-                    >
-                  {/each}
-                </div>
-                <button
-                  class="btn btn-ghost insp-step"
-                  onclick={() => stepWiperVal(1)}
-                  title="Nudge the wiper toward B">+</button
-                >
+                <span class="wiper-end">A</span>
+                <input
+                  class="wiper-slider"
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={selWiper()}
+                  aria-label="Potentiometer wiper position"
+                  oninput={(e) => setWiper(Number(e.currentTarget.value))}
+                  onchange={endWiperDrag}
+                  onpointerup={endWiperDrag}
+                />
+                <span class="wiper-end">B</span>
               </div>
             {/if}
             <button class="insp-more" onclick={() => (showMore = !showMore)}>
@@ -2208,6 +2202,45 @@
     font-size: 9px;
     letter-spacing: 0.14em;
     text-transform: uppercase;
+    color: var(--faint);
+  }
+
+  /* Potentiometer wiper: a continuous slider across the track (A … B). */
+  .wiper-slider {
+    flex: 1;
+    min-width: 0;
+    height: 4px;
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+    accent-color: var(--accent);
+  }
+  .wiper-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 1px solid var(--bg);
+    box-shadow: 0 0 6px var(--accent);
+    cursor: pointer;
+  }
+  .wiper-slider::-moz-range-thumb {
+    width: 13px;
+    height: 13px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 1px solid var(--bg);
+    cursor: pointer;
+  }
+  .wiper-end {
+    font-family: var(--font-mono);
+    font-size: 10px;
     color: var(--faint);
   }
 

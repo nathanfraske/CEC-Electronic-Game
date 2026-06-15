@@ -1300,11 +1300,15 @@ export class Board {
    * two leg resistances change) so the new split takes effect. The glyph reads the
    * wiper live each frame, so the wiper slides on its own; no node-side label.
    * No-op if unchanged.
+   *
+   * `recordUndo` is `false` for the live intermediate steps of a slider drag (so a
+   * single drag pushes only one undo, captured on the first move) and `true` for a
+   * discrete set or the start of a drag.
    */
-  setComponentWiper(id: number, wiper: number): void {
+  setComponentWiper(id: number, wiper: number, recordUndo = true): void {
     const c = this.graph.components.get(id);
     if (!c || c.wiper === wiper) return;
-    this.pushUndo(this.graph.serialize());
+    if (recordUndo) this.pushUndo(this.graph.serialize());
     c.wiper = wiper;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed wiper position
