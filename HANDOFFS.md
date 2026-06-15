@@ -5,6 +5,50 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Op-amp shipped end-to-end + scope autoscale (#47–#50)
+
+**State:** 🟢 Green. Golden `0xeaac376499e4fa24` unchanged; 72 sim-core tests. The
+op-amp is now a fully playable part, and the scope no longer clips big swings.
+
+**Shipped (all on `main`):**
+- **Op-amp sim-core** (#47): `ELEM_OPAMP=15` — smooth-clamped transconductance
+  VCCS, `Vtarget = Vsat·tanh(GAIN·Vd/Vsat)` driven through finite `OPAMP_GOUT`;
+  3-terminal a=OUT/b=IN−/c=IN+; per-iteration `Vd` step limiter for feedback
+  robustness. 6 tests (follower, non-inv, inv, comparator, validate, reproduce).
+  (Fixed a companion-stamp sign bug that railed the comparator backwards.)
+- **Manual switch** (#48): `MSW` web part, reuses `ELEM_SWITCH=6` at value 0/1 +
+  click-toggle. Open/Closed chips, LED example.
+- **Op-amp web** (#49): `OA` placeable part (triangle glyph + factory comparator
+  station), `value` = Vsat, added to `THREE_PIN_TYPES` (pin 2 = IN+ → `c`),
+  curated Vsat rails, partInfo (virtual short / comparator prose), and a new
+  **"Op-Amps"** example category: voltage follower, non-inverting amp (×3),
+  open-loop comparator (high/low demo).
+- **Scope autoscale** (#50): Y now fits the visible traces' true min/max across
+  the window with ~8% headroom (was seeded [0,1] with no margin → big AC/PWM
+  swings clipped on the frame). Keeps the 0 baseline in view; web-only, golden safe.
+
+### In flight / pick up here (preliminary ICs)
+**Logic-gate sim-core has LANDED** (`ELEM_GATE=17`): a Tier-A behavioural digital
+primitive (a=OUT, b=IN1, c=IN2; `value`=logic-high rail, `aux`=function code:
+0 AND/1 OR/2 NAND/3 NOR/4 XOR/5 XNOR/6 NOT/7 BUF). It thresholds inputs at half
+the rail read from the **committed previous-tick `node_v`**, drives OUT toward
+0/Vhigh through `GATE_GOUT` — a constant Thévenin stamp (the switch's linear,
+tick-determined shape) added to all 4 assembly sites + 4 readouts. One tick of
+propagation delay, no persistent state, golden `0xeaac376499e4fa24` unchanged,
+6 new tests (78 total). Also fixed a latent op-amp per-tick current readout
+omission (readout-only, not hashed) while in those match blocks.
+
+**Next: the gate WEB wiring** — placeable gate parts (AND/OR/NAND/NOR/XOR/NOT,
+each → `ELEM_GATE` with its `aux` code; `value`=rail), glyphs (schematic boolean
+symbols + factory decider/sorter), partInfo (truth table + threshold + one-tick
+delay), a "Logic & ICs" example set (gate truth-table demo, a half-adder from
+XOR+AND, an SR/ring blink). NOT/BUF are 2-pin (c=0, ignored); 2-input gates 3-pin.
+Then D flip-flop → counter/shift → 555 → linear regulator. Remaining discretes
+(fuse, thermistor, LDR, 7-seg, relay/transformer w/ a 4th terminal `d`) are lower
+priority than the IC tier.
+
+---
+
 ## 2026-06-15 — Parts blitz: transistors, varistor, net labels, AC amplitude (#37–#46)
 
 **State:** 🟢 Green. Golden `0xeaac376499e4fa24` unchanged throughout (verified via

@@ -43,6 +43,20 @@
 //! | 14   | PNP BJT (nonlinear)| (unused)      | Ebers-Moll, Newton (C=a E=b B=c)   |
 //! | 15   | op-amp (nonlinear) | rail Vsat     | clamped transconductance, Newton (OUT=a IN-=b IN+=c)|
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
+//! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
+//!
+//! Type 17 is the **logic gate**: a Tier-A *behavioral* digital primitive (output
+//! `a`, inputs `b` and `c`). Each tick it thresholds its inputs against half the
+//! logic-high rail (its `value`) read from the **committed previous-tick** node
+//! voltages, evaluates the boolean selected by its function code (`aux`: 0 AND,
+//! 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF — NOT/BUF ignore `c`), and
+//! drives the output toward `0` or the rail through a finite output conductance
+//! [`GATE_GOUT`]. Because the decision is taken from the previous tick's voltages,
+//! the stamp is a **constant** for the solve (a conductance to ground plus a current
+//! injection — exactly the form of the clocked switch), so it adds no Newton work
+//! and no branch unknown, and it gives every gate one tick of propagation delay.
+//! It holds **no** persistent state of its own (the output level is recomputed from
+//! `node_v` each tick), so it is reproducible and never enters the snapshot hash.
 //!
 //! Type 15 is the **operational amplifier**: an ideal-ish op-amp (output `a`,
 //! inverting input `b`, non-inverting input `c`) that drives its **output** toward
@@ -356,6 +370,39 @@ pub const ELEM_OPAMP: u8 = 15;
 /// See [`varistor_eval`].
 pub const ELEM_VARISTOR: u8 = 16;
 
+/// **Logic gate** (Tier-A behavioral digital primitive). Three terminals: output
+/// `a`, input 1 `b`, input 2 `c`. Its `value` is the **logic-high rail** in volts
+/// and its `aux` is the **function code** ([`gate_logic`]: 0 AND, 1 OR, 2 NAND,
+/// 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF — the single-input NOT/BUF ignore `c`). Each
+/// tick it thresholds the two inputs against half the rail using the **committed
+/// previous-tick** node voltages, evaluates the boolean, and drives the output
+/// toward `0` (logic low) or the rail (logic high) through the fixed output
+/// conductance [`GATE_GOUT`]. Because the decision comes from the *previous* tick,
+/// the per-tick stamp is a **constant** — a conductance [`GATE_GOUT`] from `a` to
+/// ground plus a current injection `GATE_GOUT * Vtarget` into `a`, exactly the form
+/// of a Thevenin source and the same "linear, tick-determined" shape as the clocked
+/// [`ELEM_SWITCH`]. So it adds **no** Newton work, **no** branch unknown, and one
+/// tick of propagation delay; a feedback loop of gates oscillates rather than
+/// deadlocking (a ring oscillator), which is physically honest. It holds no
+/// persistent state — the output level is recomputed from `node_v` every tick — so
+/// it stays reproducible and never enters the snapshot hash. See [`gate_logic`] and
+/// [`gate_target_level`].
+pub const ELEM_GATE: u8 = 17;
+
+/// Logic-gate output conductance (siemens): the gate drives its output toward the
+/// rail or ground through this finite conductance, a stiff but non-ideal ~1 ohm
+/// driver (`1/GATE_GOUT`) so logic levels read crisply while a real, finite drive
+/// strength still limits the current into a load. The digital analogue of
+/// [`OPAMP_GOUT`].
+const GATE_GOUT: f64 = 1.0;
+
+/// Logic-gate input threshold as a fraction of the logic-high rail: an input reads
+/// as logic `1` when its node voltage exceeds `GATE_VTH_FRAC * value`. A clean
+/// half-rail switching point (the CMOS-like idealisation); the invalid/indeterminate
+/// band of a real family is deliberately collapsed to this single threshold for the
+/// first-cut behavioral model.
+const GATE_VTH_FRAC: f64 = 0.5;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -590,9 +637,48 @@ fn is_opamp(kind: u8) -> bool {
     kind == ELEM_OPAMP
 }
 
+/// Evaluate a logic gate's boolean output from its two thresholded inputs and its
+/// function code (`code` = the element's `aux`, rounded to the nearest non-negative
+/// integer): 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT (ignores `in2`),
+/// 7 BUF (ignores `in2`). Any other code falls back to AND. Pure boolean — fully
+/// deterministic and platform-independent.
+#[inline]
+fn gate_logic(code: f64, in1: bool, in2: bool) -> bool {
+    match code.round() as u32 {
+        1 => in1 || in2,
+        2 => !(in1 && in2),
+        3 => !(in1 || in2),
+        4 => in1 ^ in2,
+        5 => !(in1 ^ in2),
+        6 => !in1,
+        7 => in1,
+        // 0 and any unrecognised code: AND.
+        _ => in1 && in2,
+    }
+}
+
+/// The voltage a logic gate drives its output toward this tick. The two input node
+/// voltages `v1`, `v2` (the **committed previous-tick** values) are thresholded at
+/// `GATE_VTH_FRAC * vhigh`, the boolean is evaluated by [`gate_logic`], and the
+/// result maps to `vhigh` (logic 1) or `0.0` (logic 0). `vhigh` is the gate's
+/// `value`, floored at `0`. Pure `f64` + boolean, so it reproduces exactly.
+#[inline]
+fn gate_target_level(code: f64, vhigh: f64, v1: f64, v2: f64) -> f64 {
+    let vh = vhigh.max(0.0);
+    let vth = GATE_VTH_FRAC * vh;
+    if gate_logic(code, v1 > vth, v2 > vth) {
+        vh
+    } else {
+        0.0
+    }
+}
+
 /// True for every nonlinear element (any device that drives the Newton outer
 /// loop): the diode family, the MOSFET family, the BJT family, the varistor, or the
 /// op-amp. The single switch that selects the Newton path over the linear fast path.
+/// (The logic gate is deliberately **not** here: its output decision is taken from
+/// the previous tick, so within a solve its stamp is constant and a gate-only circuit
+/// stays on the linear fast path.)
 #[inline]
 fn is_nonlinear(kind: u8) -> bool {
     is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
@@ -1114,6 +1200,13 @@ pub struct Sim {
     /// op-amp entries are meaningful; others stay `0.0`. Indexed in lockstep with
     /// `elements`.
     opamp_vd: Vec<f64>,
+    /// Per-element logic-gate driven output level (volts) for the current tick:
+    /// recomputed before each solve from the committed previous-tick input voltages
+    /// (see [`gate_target_level`]), then read back when committing the gate's output
+    /// current. Pure within-tick scratch — *not* persistent state and never hashed,
+    /// so it cannot affect the snapshot. Only gate entries are meaningful; others
+    /// stay `0.0`. Indexed in lockstep with `elements`.
+    gate_target: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -1164,6 +1257,7 @@ impl Sim {
             bjt_vbc: Vec::new(),
             varistor_v: Vec::new(),
             opamp_vd: Vec::new(),
+            gate_target: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -1262,6 +1356,7 @@ impl Sim {
                     | ELEM_PNP
                     | ELEM_OPAMP
                     | ELEM_VARISTOR
+                    | ELEM_GATE
             ) {
                 self.install_empty();
                 return false;
@@ -1326,6 +1421,7 @@ impl Sim {
         self.bjt_vbc = vec![0.0; elements.len()];
         self.varistor_v = vec![0.0; elements.len()];
         self.opamp_vd = vec![0.0; elements.len()];
+        self.gate_target = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -1533,6 +1629,19 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
+                ELEM_GATE => {
+                    // Logic gate: a tick-pure boolean driver. Threshold its inputs
+                    // from the committed (here, just-initialised) node voltages,
+                    // evaluate the boolean, and drive the output toward 0/rail through
+                    // GATE_GOUT — a constant conductance to ground plus a current
+                    // injection (a Thevenin source). Stored for the current readout.
+                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
+                    self.gate_target[i] = vt;
+                    if let Some(r) = ia {
+                        mat[r * n + r] += GATE_GOUT;
+                        rhs[r] += GATE_GOUT * vt;
+                    }
+                }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => {
                     // Voltage constraint V(a) - V(b) = value, where `value` is
                     // the DC source EMF, the AC source's tick-determined sine EMF
@@ -1601,6 +1710,10 @@ impl Sim {
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
+                // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
+                // current the gate sources out of its output `a` (same output-current
+                // convention as the op-amp). Vtarget was committed during assembly.
+                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 _ => 0.0,
             };
         }
@@ -1666,6 +1779,19 @@ impl Sim {
                     if let (Some(r), Some(c)) = (ia, ib) {
                         mat[r * n + c] -= g;
                         mat[c * n + r] -= g;
+                    }
+                }
+                ELEM_GATE => {
+                    // Logic gate: thresholded boolean of the committed previous-tick
+                    // inputs drives the output toward 0/rail through GATE_GOUT (a
+                    // constant conductance to ground + a current injection). Reading
+                    // last tick's inputs makes the stamp constant for this solve and
+                    // gives the gate one tick of propagation delay. Stored for readout.
+                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
+                    self.gate_target[i] = vt;
+                    if let Some(r) = ia {
+                        mat[r * n + r] += GATE_GOUT;
+                        rhs[r] += GATE_GOUT * vt;
                     }
                 }
                 ELEM_CAPACITOR => {
@@ -1773,6 +1899,10 @@ impl Sim {
                 }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
+                // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
+                // current the gate sources out of its output `a` (same output-current
+                // convention as the op-amp). Vtarget was committed during assembly.
+                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 _ => 0.0,
             };
         }
@@ -2437,6 +2567,19 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
+                ELEM_GATE => {
+                    // Logic gate: the thresholded boolean of the committed
+                    // (here just-initialised) inputs drives the output toward 0/rail
+                    // through GATE_GOUT, stamped into the fixed linear base as a
+                    // constant conductance to ground + a current injection. Constant
+                    // for the whole Newton solve. Stored for the current readout.
+                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
+                    self.gate_target[i] = vt;
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += GATE_GOUT;
+                        base_rhs[r] += GATE_GOUT * vt;
+                    }
+                }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
@@ -2486,6 +2629,10 @@ impl Sim {
                     let (vtarget, _) = opamp_target(self.opamp_vd[i], vsat);
                     OPAMP_GOUT * (vtarget - self.node_v[e.a])
                 }
+                // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
+                // current the gate sources out of its output `a`. Vtarget was
+                // committed from the previous-tick inputs during base assembly.
+                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 _ => 0.0,
             };
         }
@@ -2620,6 +2767,20 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
+                ELEM_GATE => {
+                    // Logic gate: the thresholded boolean of the committed
+                    // previous-tick inputs drives the output toward 0/rail through
+                    // GATE_GOUT, stamped into the fixed linear base as a constant
+                    // conductance to ground + a current injection. Reading last
+                    // tick's inputs keeps it constant for the Newton solve and gives
+                    // one tick of propagation delay. Stored for the current readout.
+                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
+                    self.gate_target[i] = vt;
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += GATE_GOUT;
+                        base_rhs[r] += GATE_GOUT * vt;
+                    }
+                }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
@@ -2664,6 +2825,19 @@ impl Sim {
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
+                // The op-amp output drive Iout = GOUT*(Vtarget − V(a)), at the
+                // committed differential iterate and the solved output voltage — the
+                // same readout the operating-point path commits. (Without this arm
+                // the per-tick op-amp current would fall through to 0 after tick 0.)
+                ELEM_OPAMP => {
+                    let vsat = e.value.max(OPAMP_VSAT_MIN);
+                    let (vtarget, _) = opamp_target(self.opamp_vd[i], vsat);
+                    OPAMP_GOUT * (vtarget - self.node_v[e.a])
+                }
+                // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
+                // current the gate sources out of its output `a`. Vtarget was
+                // committed from the previous-tick inputs during base assembly.
+                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 _ => 0.0,
             };
         }
@@ -4152,6 +4326,160 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "op-amp circuit must reproduce exactly");
+    }
+
+    // --- Logic gate (Tier-A behavioral digital primitive) ---------------------
+    //
+    // The gate (type 17) is a tick-pure boolean driver: it thresholds its two
+    // inputs against half its logic-high rail (`value`) read from the *committed
+    // previous-tick* node voltages, evaluates the boolean selected by `aux`
+    // (0 AND .. 7 BUF), and drives its output toward 0/rail through GATE_GOUT. It
+    // is linear within a solve (one tick of propagation delay), adds no branch
+    // unknown, and holds no persistent state of its own — so it never enters the
+    // snapshot hash and a gate-only circuit stays on the linear fast path.
+
+    /// Build a single-gate test circuit and run it to steady state, returning the
+    /// output node voltage. Layout (nodes 0 = gnd, 1 = inA, 2 = inB, 3 = out):
+    /// `V_A(1->0)` and `V_B(2->0)` pin the inputs to 0/5 V; `GATE(out=3, in1=1,
+    /// in2=2)` carries the given function `code` (its `aux`) and a 5 V rail; a 1 k
+    /// load runs from the output to ground.
+    fn gate_out(code: f64, a_hi: bool, b_hi: bool) -> f64 {
+        let va = if a_hi { 5.0 } else { 0.0 };
+        let vb = if b_hi { 5.0 } else { 0.0 };
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR],
+            &[1, 2, 3, 3],
+            &[0, 0, 1, 0],
+            &[0, 0, 2, 0],
+            &[va, vb, 5.0, 1000.0],
+            &[0.0, 0.0, code, 0.0],
+        ));
+        // The inputs are pinned by ideal sources, so the gate sees them on the very
+        // next tick; a few steps let the one-tick-delayed output settle.
+        for _ in 0..5 {
+            sim.step();
+        }
+        sim.state()[3]
+    }
+
+    #[test]
+    fn gate_and_or_truth_tables() {
+        // code 0 = AND: high only when both inputs are high.
+        assert!(gate_out(0.0, false, false) < 1.0);
+        assert!(gate_out(0.0, true, false) < 1.0);
+        assert!(gate_out(0.0, false, true) < 1.0);
+        assert!(gate_out(0.0, true, true) > 4.0);
+        // code 1 = OR: high when either input is high.
+        assert!(gate_out(1.0, false, false) < 1.0);
+        assert!(gate_out(1.0, true, false) > 4.0);
+        assert!(gate_out(1.0, false, true) > 4.0);
+        assert!(gate_out(1.0, true, true) > 4.0);
+    }
+
+    #[test]
+    fn gate_nand_nor_xor_truth_tables() {
+        // code 2 = NAND: the inverse of AND.
+        assert!(gate_out(2.0, false, false) > 4.0);
+        assert!(gate_out(2.0, true, false) > 4.0);
+        assert!(gate_out(2.0, true, true) < 1.0);
+        // code 3 = NOR: the inverse of OR.
+        assert!(gate_out(3.0, false, false) > 4.0);
+        assert!(gate_out(3.0, true, false) < 1.0);
+        assert!(gate_out(3.0, true, true) < 1.0);
+        // code 4 = XOR: high iff the inputs differ.
+        assert!(gate_out(4.0, false, false) < 1.0);
+        assert!(gate_out(4.0, true, false) > 4.0);
+        assert!(gate_out(4.0, false, true) > 4.0);
+        assert!(gate_out(4.0, true, true) < 1.0);
+    }
+
+    #[test]
+    fn gate_not_ignores_second_input() {
+        // code 6 = NOT: Y = !inA, inB ignored — so inB must not change the result.
+        assert!(gate_out(6.0, false, false) > 4.0);
+        assert!(gate_out(6.0, false, true) > 4.0);
+        assert!(gate_out(6.0, true, false) < 1.0);
+        assert!(gate_out(6.0, true, true) < 1.0);
+        // code 7 = BUF: Y = inA, inB ignored.
+        assert!(gate_out(7.0, false, true) < 1.0);
+        assert!(gate_out(7.0, true, false) > 4.0);
+    }
+
+    /// The gate is purely combinational with exactly one tick of propagation delay
+    /// (it reads the previous tick's inputs). An AND of two highs reads low at the
+    /// t = 0 operating point (the gate saw the initial zeros) and high after one step.
+    #[test]
+    fn gate_one_tick_propagation_delay() {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR],
+            &[1, 2, 3, 3],
+            &[0, 0, 1, 0],
+            &[0, 0, 2, 0],
+            &[5.0, 5.0, 5.0, 1000.0],
+            &[0.0, 0.0, 0.0, 0.0], // aux = 0 → AND
+        ));
+        assert!(
+            sim.state()[3] < 1.0,
+            "output low before the inputs propagate"
+        );
+        sim.step();
+        assert!(sim.state()[3] > 4.0, "output high exactly one tick later");
+    }
+
+    /// A gate-only circuit stays on the linear fast path yet reproduces bit-for-bit.
+    #[test]
+    fn gate_run_is_reproducible() {
+        let run = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR],
+                &[1, 2, 3, 3],
+                &[0, 0, 1, 0],
+                &[0, 0, 2, 0],
+                &[5.0, 0.0, 5.0, 1000.0],
+                &[0.0, 0.0, 4.0, 0.0], // XOR
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "gate circuit must reproduce exactly");
+    }
+
+    /// A gate driving an LED through a series resistor exercises the *Newton*-path
+    /// gate stamp (the LED makes the circuit nonlinear). Buffered high the LED
+    /// lights; buffered low it is dark.
+    #[test]
+    fn gate_drives_led_on_newton_path() {
+        // nodes: 0 = gnd, 1 = in, 2 = out, 3 = LED anode.
+        // V_A(1->0) sets the input; GATE(out=2, in1=1) BUF; R(2->3); LED(3->0).
+        let led_current = |a_hi: bool| {
+            let va = if a_hi { 5.0 } else { 0.0 };
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR, ELEM_LED],
+                &[1, 2, 2, 3],
+                &[0, 1, 3, 0],
+                &[0, 0, 0, 0], // gate in2 unused (BUF)
+                &[va, 5.0, 220.0, 0.0],
+                &[0.0, 7.0, 0.0, 0.0], // gate aux = 7 = BUF
+            ));
+            for _ in 0..50 {
+                sim.step();
+            }
+            sim.element_currents()[3].abs()
+        };
+        assert!(led_current(true) > 1.0e-3, "LED lit when buffered high");
+        assert!(led_current(false) < 1.0e-6, "LED dark when buffered low");
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
