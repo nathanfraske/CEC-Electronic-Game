@@ -419,4 +419,194 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  {
+    id: "rlc",
+    name: "RLC Ringing",
+    blurb:
+      "A 5 V source kicks a series resistor, inductor and capacitor. With the resistance small the loop is underdamped, so the capacitor voltage rings — a decaying sine — before settling.",
+    watch:
+      "the scope draw a damped sine: V(cap) overshoots 5 V, swings back, and rings down over a few cycles as the small resistance bleeds the energy away.",
+    build() {
+      // Single series loop: R then L then C across the top, V at the bottom-left,
+      // GND bottom-right. One loop, one mesh current shared by every part.
+      //   nets: N1 = V+ = R.A ; N2 = R.B = L.A ; N3 = L.B = C.+ ;
+      //         GND(0) = C.− = V−.
+      // L = 1 mH, C = 1 µF → f0 = 1/(2π√LC) ≈ 5.0 kHz (period ≈ 199 µs,
+      // ~100 fixed steps/cycle so backward-Euler adds negligible damping).
+      // ζ = (R/2)·√(C/L) = 5·√(1e-6/1e-3) ≈ 0.16 — well underdamped, Q ≈ 3, so
+      // it rings ~3 visible cycles. Steady state: current → 0, V(cap) → 5 V (a
+      // charged cap is an open), the energy having sloshed L↔C and died in R.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 10);
+      const l = comp(g, "L", 6, 0, 1e-3);
+      const c = comp(g, "C", 10, 0, 1e-6);
+      const v = comp(g, "V", 2, 6, 5);
+      const gnd = comp(g, "GND", 12, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, l, 0); // R.B → L.A
+      wire(g, l, 1, c, 0); // L.B → C.+ (the cap node that rings)
+      wire(g, c, 1, gnd, 0); // C.− → GND (right rail)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "The source's sudden turn-on is the 'kick' that starts the loop ringing.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Resistor (R) — keep it small.",
+        why: "R is the only thing that drains energy; small R means a long, lively ring instead of a quick settle.",
+        done: (p) => at(p, "R") >= 1,
+      },
+      {
+        do: "Place an Inductor (L) and a Capacitor (C).",
+        why: "L and C trade energy back and forth — current vs charge — and that exchange is the oscillation.",
+        done: (p) => at(p, "L") >= 1 && at(p, "C") >= 1,
+      },
+      {
+        do: "Wire one series loop: V+ → R → L → C → V−.",
+        why: "A single loop forces one shared current through all three; L and C set the pitch, R the decay.",
+        done: (p) => p.wires >= 4,
+      },
+      {
+        do: "Add a Ground (GND) on the bottom rail.",
+        why: "Ground is the 0 V reference the ringing cap voltage is measured against.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "pwm-average",
+    name: "PWM Dimmer",
+    blurb:
+      "A switch chops a 10 V rail at 10 kHz with a 30% duty cycle; a resistor and capacitor low-pass the choppy square wave into a steady DC level. The output parks at roughly duty × Vin.",
+    watch:
+      "the switch node slam between 10 V and 0 V while the smoothed output holds near 3 V (30% of 10 V) with just a little ripple riding on top.",
+    build() {
+      // SW chops Vin onto node X; a pull-down resistor yanks X to ground while the
+      // switch is open, so X is a clean 0↔10 V square. R + C then average it.
+      //   nets: N1 = Vin+ = SW.A ; X = SW.B = Rpd.A = R.A ;
+      //         OUT = R.B = C.+ ; GND(0) = Rpd.B = C.− = Vin−.
+      // Switch period = 50 ticks = 100 µs (10 kHz). Low-pass RC = 1 kΩ·1 µF =
+      // 1 ms ≈ 10 switch periods → strong averaging with a small, watchable
+      // ripple. Rpd = 100 Ω ≪ R so the off-state pulls X near 0 V without much
+      // skew. Steady state: V(OUT) ≈ duty × Vin ≈ 3 V (a touch high, ~3.2 V,
+      // since the 100 Ω pull-down can't reach a perfect 0 V), small 10 kHz ripple.
+      const g = new BoardGraph();
+      const sw = comp(g, "SW", 6, 0, 0.3); // 30% duty
+      const r = comp(g, "R", 10, 0, 1000);
+      const vin = comp(g, "V", 2, 6, 10);
+      const rpd = comp(g, "R", 6, 3, 100, 1); // vertical pull-down on X
+      const c = comp(g, "C", 12, 3, 1e-6, 1); // vertical output cap
+      const gnd = comp(g, "GND", 12, 6, 0);
+      wire(g, vin, 0, sw, 0); // Vin+ → SW.A (left rail)
+      wire(g, sw, 1, r, 0); // SW.B → R.A (the chopped node X)
+      wire(g, sw, 1, rpd, 0); // SW.B → Rpd.A (pull X to ground when open)
+      wire(g, r, 1, c, 0); // R.B → C.+ (the smoothed output)
+      wire(g, rpd, 1, gnd, 0); // Rpd.B → GND
+      wire(g, c, 1, gnd, 0); // C.− → GND (output reference)
+      wire(g, vin, 1, gnd, 0); // Vin− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V) — the 10 V rail.",
+        why: "This is the full-strength rail the dimmer will average down.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Switch (SW) and set a 30% duty.",
+        why: "On 30% of the time, off 70%: the rail spends most of each cycle disconnected, so its average drops.",
+        done: (p) => at(p, "SW") >= 1,
+      },
+      {
+        do: "Place two Resistors (R) and a Capacitor (C).",
+        why: "One resistor pulls the switch node down when it opens; the other plus the cap form the smoothing low-pass.",
+        done: (p) => at(p, "R") >= 2 && at(p, "C") >= 1,
+      },
+      {
+        do: "Wire SW → node, pull-down to ground, then R → C to the output.",
+        why: "The switch node becomes a clean square wave; the RC averages it to a steady level.",
+        done: (p) => p.wires >= 5,
+      },
+      {
+        do: "Add a Ground (GND) and finish the rails.",
+        why: "Ground references the output and completes the pull-down path. Watch it settle near duty × Vin.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "diode-clamp",
+    name: "Diode Clamp",
+    blurb:
+      "A 5 V source feeds a resistor into a node, and a diode ties that node to ground. The diode won't conduct until ~0.6 V, then holds firm — so the node is clamped at one diode drop no matter how hard the rail pushes.",
+    watch:
+      "the node pinned near 0.6 V (not 5 V) while ~4.4 mA flows: the diode is a one-way valve that simply refuses to let the node climb past its forward voltage.",
+    build() {
+      // V → R → node N; the diode shunts N to ground (anode N, cathode GND), so N
+      // is clamped at the diode's forward drop.
+      //   nets: N1 = V+ = R.A ; N = R.B = D.A ; GND(0) = D.K = V−.
+      // The diode makes this nonlinear (Newton solve). Hand-solving the loop:
+      // I = (5 − Vd)/1kΩ and Vd = Vt·ln(I/Is) settle at Vd ≈ 0.57 V, I ≈ 4.4 mA —
+      // so N parks near 0.57 V while the resistor drops the remaining ~4.4 V.
+      // Every node has a real current path: V→R→D→GND. Steady = same (DC).
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 1000);
+      const d = comp(g, "D", 6, 0, 0); // anode A → cathode K (value unused)
+      const v = comp(g, "V", 2, 6, 5);
+      const gnd = comp(g, "GND", 6, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, d, 0); // R.B → D.A (the clamped node N)
+      wire(g, d, 1, gnd, 0); // D.K → GND (clamp to 0 V reference)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V).",
+        why: "The 5 V rail is what tries to drive the node high.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Resistor (R).",
+        why: "It limits the current into the diode so the clamp can't draw an unbounded spike.",
+        done: (p) => at(p, "R") >= 1,
+      },
+      {
+        do: "Place a Diode (D).",
+        why: "The diode is a one-way valve with a ~0.6 V threshold — that threshold is the clamp level.",
+        done: (p) => at(p, "D") >= 1,
+      },
+      {
+        do: "Wire V+ → R → node, then the diode from the node down to ground.",
+        why: "The diode shunts everything above its forward drop to ground, pinning the node there.",
+        done: (p) => p.wires >= 3,
+      },
+      {
+        do: "Add a Ground (GND) for the diode's cathode and the reference.",
+        why: "Ground is both the clamp target and the 0 V the node is measured against.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Diode → ground",
+      on: "Diode grounded — it clamps the node at one forward drop, about 0.6 V.",
+      off: "Diode lifted — nothing shunts the node, so it floats up to the full 5 V rail.",
+      alt() {
+        const g = new BoardGraph();
+        const r = comp(g, "R", 2, 0, 1000);
+        const d = comp(g, "D", 6, 0, 0);
+        const v = comp(g, "V", 2, 6, 5);
+        const gnd = comp(g, "GND", 6, 6, 0);
+        wire(g, v, 0, r, 0);
+        wire(g, r, 1, d, 0); // R.B → D.A keeps the node fed
+        wire(g, v, 1, gnd, 0); // V− → GND keeps the reference
+        // D.K intentionally left unconnected — the clamp is lifted, node floats.
+        return g.serialize();
+      },
+    },
+  },
 ];

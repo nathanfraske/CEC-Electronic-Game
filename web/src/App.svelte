@@ -5,6 +5,7 @@
   import {
     createSimulation,
     runLoop,
+    DT_SECONDS,
     type Snapshot,
     type PlaybackControls,
   } from "./sim/loop";
@@ -20,10 +21,23 @@
   import type { ElectricalState } from "./lib/glyphs";
 
   const SEED = 1337;
-  // Ticks-per-frame options. DT is 2 µs, so 0.5×/frame ≈ 1 µs of sim time per
-  // frame — the same readable wall-clock pace as before the finer DT, just
-  // smoother.
-  const SPEEDS = [0.5, 1, 2, 5, 20];
+  // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
+  // so 500_000 ticks/s = real time (one sim-second per second); the rest run
+  // proportionally slower so fast dynamics are watchable.
+  const RATES = [50, 500, 5000, 50000, 500000];
+  const fmtRate = (n: number): string =>
+    n >= 1000 ? n / 1000 + "k/s" : n + "/s";
+  // Sim-seconds advanced per real second, as a friendly "× real time" label.
+  const fmtRealtime = (rate: number): string => {
+    const f = rate * DT_SECONDS;
+    return f >= 1 ? f + "× real time" : "1/" + Math.round(1 / f) + " real time";
+  };
+  // A tick count as a wall-clock duration (tick × DT).
+  const fmtTime = (s: number): string => {
+    if (s < 1e-3) return (s * 1e6).toFixed(1) + " µs";
+    if (s < 1) return (s * 1e3).toFixed(2) + " ms";
+    return s.toFixed(3) + " s";
+  };
 
   // The component bin. The ideal primitives (V/R/C/L/I) plus an explicit ground
   // come first and are the parts the solver simulates today; the rest preview
@@ -141,7 +155,7 @@
   let proto = $state(0);
   let channels = $state<number[]>([]);
   let running = $state(false);
-  let tpf = $state(0.5);
+  let tps = $state(500);
   let ready = $state(false);
   let mode = $state<Mode>("select");
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
@@ -185,6 +199,9 @@
         ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
         : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
+
+  // The displayed tick as a wall-clock duration of simulated time (tick × DT).
+  const simSeconds = $derived(Number(tick) * DT_SECONDS);
 
   onMount(() => {
     let app: Application | undefined;
@@ -323,7 +340,7 @@
             scrubFrac = st.live > 0 ? st.cursor / st.live : 0;
           }
         },
-        { running: false, ticksPerFrame: tpf },
+        { running: false, ticksPerSecond: tps },
       );
 
       // Open with the primer so the very first thing you see is current flowing
@@ -367,9 +384,9 @@
     controls?.seekFraction(Number(el.value) / 1000);
     syncRunning();
   }
-  function setSpeed(n: number): void {
-    tpf = n;
-    controls?.setTicksPerFrame(n);
+  function setRate(n: number): void {
+    tps = n;
+    controls?.setTicksPerSecond(n);
   }
   function setMode(m: Mode): void {
     mode = m;
@@ -757,6 +774,10 @@
       <span class="readout-k">Tick</span>
       <span class="readout-v mono">{tick} / {liveTick}</span>
     </div>
+    <div class="readout">
+      <span class="readout-k">Sim time</span>
+      <span class="readout-v mono">{fmtTime(simSeconds)}</span>
+    </div>
 
     <h3 class="sub-title nodes-head">
       <span>Nodes · {channels.length}</span>
@@ -838,18 +859,21 @@
       disabled={!ready}
       aria-label="Timeline position"
     />
-    <span class="scrub-read mono">t {tick} / {liveTick}</span>
+    <span class="scrub-read mono">
+      t {tick} / {liveTick} · {fmtTime(simSeconds)}
+    </span>
   </div>
 
   <div class="speed">
-    <span class="speed-label">Speed</span>
-    {#each SPEEDS as s (s)}
+    <span class="speed-label">Rate</span>
+    {#each RATES as s (s)}
       <button
-        class="btn btn-ghost {tpf === s ? 'is-active' : ''}"
-        onclick={() => setSpeed(s)}
+        class="btn btn-ghost {tps === s ? 'is-active' : ''}"
+        onclick={() => setRate(s)}
         disabled={!ready}
+        title={fmtRate(s) + " — " + fmtRealtime(s)}
       >
-        {s}×
+        {fmtRate(s)}
       </button>
     {/each}
   </div>
