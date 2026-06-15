@@ -410,6 +410,11 @@
           canUndo = b.canUndo();
           rebuildNetlist(graph);
           advanceBuild(graph);
+          // Any edit — place, move, rotate, rewire, or a value change — rewinds
+          // the scope and the clock to t=0 so you always watch the new circuit
+          // from the start rather than mid-flight in the old one.
+          controls?.restart();
+          syncRunning();
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
@@ -1483,7 +1488,7 @@
     display: flex;
     gap: 5px;
     flex: 1;
-    overflow-x: auto;
+    flex-wrap: wrap;
   }
   .insp-chips.wrap {
     flex-wrap: wrap;
