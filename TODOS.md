@@ -8,6 +8,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Done — ammeter, custom rate, progressive guided builds
+- ~~**Ammeter**: the Measure tool gains a V/A toggle; "A" reads the current through a clicked part or wire (KCL branch current) — `board.setProbeMode` + `drawAmmeter` + cached per-frame wire currents.~~
+- ~~**Guided builds run the sim live** (`startBuild` resumes playback) so each added part comes alive in a working sub-circuit; **examples reworked into progressive/observable builds** (agent) — the buck now: forward path → ragged spike → add diode (spike vanishes) → add cap (smooths to ≈4 V). `steps[]`-only, topology unchanged, `done()` monotonic.~~
+- ~~**Custom playback rate**: a ticks/second number input beside the rate presets.~~
+
+### In flight / pending
+- [ ] **Inspector as a popup over the component** (agent brainstorming `docs/ui/inspector-popup.md`): move the value picker out of the telemetry panel into a floating popover anchored above the clicked part (world→screen projection, edge-flip, open-on-select/close-on-deselect). Build after the brainstorm.
+- [ ] **Incomplete-circuit affordance** (designed in `docs/ui/incomplete-circuits.md`, still unbuilt): topology pre-check for a current source with no return path + a deterministic `singular()` solver flag → amber hint, don't halt the sim.
+
 ### Done — ticks/second playback, wall-clock readout, timeline-to-0, +3 examples
 - ~~**Ticks-per-second playback**: rate is now ticks of sim time per *real* second (real-dt driven), presets [50, 500, 5k, 50k, 500k]/s (500k/s = real time at DT 2 µs), replacing the per-frame multiplier (`loop.ts setTicksPerSecond` + `MAX_STEPS_PER_FRAME`).~~
 - ~~**Timeline reaches t=0**: history is now an O(1) circular ring with a large cap, so the scrubber spans 0→max in a normal session (no O(n) shift/tick). (True unbounded rewind via keyframes is still the deep-rewind backlog item.)~~
