@@ -64,6 +64,12 @@ export interface Wire {
   id: number;
   from: PinRef;
   to: PinRef;
+  /**
+   * Optional manual routing waypoint (a grid cell the orthogonal route bends
+   * through). Set by dragging the wire; absent means the auto L-route is used.
+   * Purely cosmetic — it never affects connectivity or the solver netlist.
+   */
+  mid?: Cell;
 }
 
 /** A serialized copy of the whole graph, used for undo/redo. */
@@ -305,6 +311,18 @@ export class BoardGraph {
     this.wires.delete(id);
   }
 
+  /** Set/update a wire's manual routing waypoint (the grid cell it bends through). */
+  setWireMid(id: number, cell: Cell): void {
+    const w = this.wires.get(id);
+    if (w) w.mid = { ...cell };
+  }
+
+  /** Drop a wire's manual waypoint, returning it to the auto orthogonal route. */
+  clearWireMid(id: number): void {
+    const w = this.wires.get(id);
+    if (w) delete w.mid;
+  }
+
   /** Absolute cell of a pin (anchor + rotated pin offset). */
   pinCell(component: Component, pin: Pin): Cell {
     const r = rotateOffset(pin.dx, pin.dy, component.rot);
@@ -342,6 +360,7 @@ export class BoardGraph {
         id: w.id,
         from: { ...w.from },
         to: { ...w.to },
+        ...(w.mid ? { mid: { ...w.mid } } : {}),
       })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
@@ -356,7 +375,12 @@ export class BoardGraph {
       this.components.set(c.id, { ...c, cell: { ...c.cell } });
     }
     for (const w of s.wires) {
-      this.wires.set(w.id, { id: w.id, from: { ...w.from }, to: { ...w.to } });
+      this.wires.set(w.id, {
+        id: w.id,
+        from: { ...w.from },
+        to: { ...w.to },
+        ...(w.mid ? { mid: { ...w.mid } } : {}),
+      });
     }
     this.nextComponentId = s.nextComponentId;
     this.nextWireId = s.nextWireId;

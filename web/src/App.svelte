@@ -154,7 +154,7 @@
       ? "MEASURE · click two points to read ΔV"
       : armedPart
         ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
-        : "BUILD · click a part to arm, then click to place · drag a pin to wire",
+        : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
   onMount(() => {
@@ -177,6 +177,27 @@
         // Universal cancel: disarm first, otherwise cancel a wire / clear selection.
         if (armedPart) arm(null);
         else board?.escape();
+        e.preventDefault();
+      } else if (e.key === " ") {
+        togglePlay(); // spacebar = play / pause
+        e.preventDefault();
+      } else if (e.key === "ArrowLeft") {
+        board?.nudge(-1, 0); // arrows nudge the selection (or pan)
+        e.preventDefault();
+      } else if (e.key === "ArrowRight") {
+        board?.nudge(1, 0);
+        e.preventDefault();
+      } else if (e.key === "ArrowUp") {
+        board?.nudge(0, -1);
+        e.preventDefault();
+      } else if (e.key === "ArrowDown") {
+        board?.nudge(0, 1);
+        e.preventDefault();
+      } else if (e.key === "," || e.key === "<") {
+        stepBack(); // , / < = step one tick back
+        e.preventDefault();
+      } else if (e.key === "." || e.key === ">") {
+        stepFwd(); // . / > = step one tick forward
         e.preventDefault();
       }
     };
