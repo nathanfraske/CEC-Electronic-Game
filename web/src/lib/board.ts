@@ -763,6 +763,11 @@ export class Board {
     return this.undoStack.length > 0;
   }
 
+  /** Snapshot the whole board (for the save-to-file feature). */
+  serialize(): GraphSnapshot {
+    return this.graph.serialize();
+  }
+
   /** Replace the whole board with a prebuilt graph (e.g. a worked example). */
   loadGraph(snapshot: GraphSnapshot): void {
     this.pushUndo(this.graph.serialize());
