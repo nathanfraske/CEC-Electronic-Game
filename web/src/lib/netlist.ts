@@ -8,7 +8,7 @@
 // renderer needs to attribute per-element current and per-net voltage back to
 // each component.
 
-import { BoardGraph } from "./graph";
+import { BoardGraph, endpointKey } from "./graph";
 import type { ElectricalState } from "./glyphs";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
@@ -44,7 +44,9 @@ export interface BuiltNetlist {
 }
 
 export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
-  // Union-find over pins, keyed "componentId:pinIndex".
+  // Union-find over wire endpoints: pins (keyed "componentId:pinIndex") AND
+  // junctions (keyed "j<id>"). A junction is not an element — it only joins the
+  // wire-ends that meet at it into one net, exactly like a wire does.
   const parent = new Map<string, string>();
   const find = (k: string): string => {
     const p = parent.get(k);
@@ -65,16 +67,17 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   const key = (compId: number, pin: number): string => compId + ":" + pin;
 
   const sorted = [...graph.components.values()].sort((p, q) => p.id - q.id);
+  const junctions = [...graph.junctions.values()].sort((p, q) => p.id - q.id);
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind) continue;
     for (const p of kind.pins) find(key(c.id, p.index));
   }
+  // Seed each junction as its own singleton so a junction joining only wires
+  // (no pin yet) is still a real net node, numbered deterministically below.
+  for (const j of junctions) find(endpointKey({ junctionId: j.id }));
   for (const w of graph.wires.values()) {
-    union(
-      key(w.from.componentId, w.from.pinIndex),
-      key(w.to.componentId, w.to.pinIndex),
-    );
+    union(endpointKey(w.from), endpointKey(w.to));
   }
 
   // How many pins share each net, so we can tell a ground that's actually wired
@@ -122,6 +125,12 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       const r = find(key(c.id, p.index));
       if (!nodeIndex.has(r)) nodeIndex.set(r, next++);
     }
+  }
+  // Number any net rooted only at a junction (one that joins wires reaching no
+  // pin). Junctions sorted by id keeps this deterministic and move-invariant.
+  for (const j of junctions) {
+    const r = find(endpointKey({ junctionId: j.id }));
+    if (!nodeIndex.has(r)) nodeIndex.set(r, next++);
   }
   const nodeCount = next;
 

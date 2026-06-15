@@ -59,11 +59,63 @@ export interface PinRef {
   pinIndex: number;
 }
 
-/** A wire joins two pins. Wires are the edges; connected wires form a net. */
+/**
+ * A junction: a free point on the grid that wires can end on, just like a pin.
+ * It is NOT an element — it only ties the wire-ends that meet at it into one net
+ * (KiCad's wire-to-wire junction dot). Created when a wire is dropped onto an
+ * existing wire, which splits that wire so both halves terminate here.
+ */
+export interface Junction {
+  id: number;
+  cell: Cell;
+}
+
+/** Address of a junction, the wire-endpoint counterpart to {@link PinRef}. */
+export interface JunctionRef {
+  junctionId: number;
+}
+
+/**
+ * A wire endpoint: either a component pin or a junction. The two are
+ * distinguished structurally — {@link isJunctionRef} narrows by the presence of
+ * `junctionId`. Wire-ends sharing a net (pin or junction) are electrically one
+ * node.
+ */
+export type Endpoint = PinRef | JunctionRef;
+
+/** Type guard: an endpoint that addresses a junction rather than a pin. */
+export function isJunctionRef(e: Endpoint): e is JunctionRef {
+  return (e as JunctionRef).junctionId !== undefined;
+}
+
+/** Type guard: an endpoint that addresses a component pin. */
+export function isPinRef(e: Endpoint): e is PinRef {
+  return (e as PinRef).componentId !== undefined;
+}
+
+/** Stable union-find / map key for a wire endpoint (pin or junction). */
+export function endpointKey(e: Endpoint): string {
+  return isJunctionRef(e)
+    ? "j" + e.junctionId
+    : e.componentId + ":" + e.pinIndex;
+}
+
+/** True if two endpoints address the same pin or the same junction. */
+export function sameEndpoint(a: Endpoint, b: Endpoint): boolean {
+  if (isJunctionRef(a) && isJunctionRef(b))
+    return a.junctionId === b.junctionId;
+  if (isPinRef(a) && isPinRef(b)) return samePin(a, b);
+  return false;
+}
+
+/**
+ * A wire joins two endpoints — pins and/or junctions. Wires are the edges;
+ * connected wires form a net.
+ */
 export interface Wire {
   id: number;
-  from: PinRef;
-  to: PinRef;
+  from: Endpoint;
+  to: Endpoint;
   /**
    * Optional manual routing waypoint (a grid cell the orthogonal route bends
    * through). Set by dragging the wire; absent means the auto L-route is used.
@@ -76,8 +128,12 @@ export interface Wire {
 export interface GraphSnapshot {
   components: Component[];
   wires: Wire[];
+  /** Free wire-to-wire junctions. Absent in older snapshots (treated as []). */
+  junctions?: Junction[];
   nextComponentId: number;
   nextWireId: number;
+  /** Next junction id. Absent in older snapshots (rederived from junctions). */
+  nextJunctionId?: number;
 }
 
 /**
@@ -272,8 +328,10 @@ export function formatValue(value: number, unit: string): string {
 export class BoardGraph {
   private nextComponentId = 1;
   private nextWireId = 1;
+  private nextJunctionId = 1;
   readonly components = new Map<number, Component>();
   readonly wires = new Map<number, Wire>();
+  readonly junctions = new Map<number, Junction>();
 
   /** Place a new component of `kind` anchored at the given (already-snapped) cell. */
   place(kind: string, cell: Cell): Component | undefined {
@@ -296,14 +354,15 @@ export class BoardGraph {
     if (c) c.cell = cell;
   }
 
-  /** Remove a component and any wires touching its pins. */
+  /** Remove a component and any wires touching its pins (and tidy junctions). */
   removeComponent(id: number): void {
     this.components.delete(id);
     for (const [wid, w] of this.wires) {
-      if (w.from.componentId === id || w.to.componentId === id) {
+      if (endpointHasComponent(w.from, id) || endpointHasComponent(w.to, id)) {
         this.wires.delete(wid);
       }
     }
+    this.pruneJunctions();
   }
 
   /** Resolve the part template for a placed component. */
@@ -311,15 +370,18 @@ export class BoardGraph {
     return PART_KINDS[component.kind];
   }
 
-  /** Add a wire between two distinct pins; rejects self- and duplicate links. */
-  connect(from: PinRef, to: PinRef): Wire | undefined {
-    if (samePin(from, to)) return undefined;
-    if (!this.components.has(from.componentId)) return undefined;
-    if (!this.components.has(to.componentId)) return undefined;
+  /**
+   * Add a wire between two distinct endpoints (pins and/or junctions); rejects
+   * self- and duplicate links, and ends that no longer exist.
+   */
+  connect(from: Endpoint, to: Endpoint): Wire | undefined {
+    if (sameEndpoint(from, to)) return undefined;
+    if (!this.endpointExists(from) || !this.endpointExists(to))
+      return undefined;
     for (const w of this.wires.values()) {
       if (
-        (samePin(w.from, from) && samePin(w.to, to)) ||
-        (samePin(w.from, to) && samePin(w.to, from))
+        (sameEndpoint(w.from, from) && sameEndpoint(w.to, to)) ||
+        (sameEndpoint(w.from, to) && sameEndpoint(w.to, from))
       ) {
         return undefined;
       }
@@ -329,8 +391,16 @@ export class BoardGraph {
     return wire;
   }
 
+  /** Remove a wire and tidy any junction left dangling (<2 incident wires). */
   removeWire(id: number): void {
     this.wires.delete(id);
+    this.pruneJunctions();
+  }
+
+  /** True if an endpoint still resolves to a live pin or junction. */
+  private endpointExists(e: Endpoint): boolean {
+    if (isJunctionRef(e)) return this.junctions.has(e.junctionId);
+    return this.components.has(e.componentId);
   }
 
   /** Set/update a wire's manual routing waypoint (the grid cell it bends through). */
@@ -364,11 +434,110 @@ export class BoardGraph {
     return this.pinCell(c, p);
   }
 
+  /** Resolve any wire endpoint (pin or junction) to its absolute cell. */
+  endpointCell(e: Endpoint): Cell | undefined {
+    if (isJunctionRef(e)) {
+      const j = this.junctions.get(e.junctionId);
+      return j ? { ...j.cell } : undefined;
+    }
+    return this.pinRefCell(e);
+  }
+
+  /** Create a free junction at a grid cell and return it. */
+  addJunction(cell: Cell): Junction {
+    const j: Junction = { id: this.nextJunctionId++, cell: { ...cell } };
+    this.junctions.set(j.id, j);
+    return j;
+  }
+
+  /**
+   * Drop a wire onto an existing wire: create a junction at `cell`, split the
+   * target wire into target.from→J and J→target.to (preserving its waypoint on
+   * the half that still needs it), and connect `from` to the new junction.
+   * Returns the junction, or undefined if anything is stale. Used for KiCad-style
+   * wire-to-wire (T) junctions.
+   */
+  junctionOnWire(
+    targetWireId: number,
+    cell: Cell,
+    from: Endpoint,
+  ): Junction | undefined {
+    const target = this.wires.get(targetWireId);
+    if (!target) return undefined;
+    if (!this.endpointExists(from)) return undefined;
+    const j = this.addJunction(cell);
+    const jref: JunctionRef = { junctionId: j.id };
+    // Split: keep the original wire as from→J, add a second J→to. The waypoint
+    // (if any) lies on one leg; reattach it to whichever half it still sits on.
+    const origTo = target.to;
+    const origMid = target.mid;
+    target.to = { ...jref };
+    delete target.mid;
+    const second: Wire = {
+      id: this.nextWireId++,
+      from: { ...jref },
+      to: origTo,
+    };
+    this.wires.set(second.id, second);
+    if (origMid) {
+      const a = this.endpointCell(target.from);
+      const b = this.endpointCell(origTo);
+      // Put the bend back on the leg whose straight span it lies near.
+      if (a && manhattanOnLeg(origMid, a, cell)) target.mid = { ...origMid };
+      else if (b && manhattanOnLeg(origMid, cell, b))
+        second.mid = { ...origMid };
+    }
+    // `target` was mutated in place (it is the same object the map holds).
+    this.connect(from, { ...jref });
+    return j;
+  }
+
+  /**
+   * Remove junctions that no longer earn their keep. A junction needs at least
+   * two incident wire-ends to tie nets together; with one it is a dangling stub
+   * (drop the junction and that lone wire), with none just drop the junction.
+   * Looped because deleting a stub wire can in turn strand another junction.
+   */
+  pruneJunctions(): void {
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const j of [...this.junctions.values()]) {
+        const incident: Wire[] = [];
+        for (const w of this.wires.values()) {
+          if (junctionTouches(w.from, j.id) || junctionTouches(w.to, j.id)) {
+            incident.push(w);
+          }
+        }
+        if (incident.length >= 2) continue;
+        if (incident.length === 1) {
+          // Lone wire ending on the junction is pointless — drop it too.
+          this.wires.delete(incident[0]!.id);
+        }
+        this.junctions.delete(j.id);
+        changed = true;
+      }
+    }
+  }
+
+  /** Delete a junction outright, severing every wire that ends on it. */
+  removeJunction(id: number): void {
+    if (!this.junctions.delete(id)) return;
+    for (const [wid, w] of this.wires) {
+      if (junctionTouches(w.from, id) || junctionTouches(w.to, id)) {
+        this.wires.delete(wid);
+      }
+    }
+    this.pruneJunctions();
+  }
+
   clear(): void {
     this.components.clear();
     this.wires.clear();
+    this.junctions.clear();
     this.nextComponentId = 1;
     this.nextWireId = 1;
+    this.nextJunctionId = 1;
   }
 
   /** Deep-copy the whole graph (for the undo stack). */
@@ -384,8 +553,13 @@ export class BoardGraph {
         to: { ...w.to },
         ...(w.mid ? { mid: { ...w.mid } } : {}),
       })),
+      junctions: [...this.junctions.values()].map((j) => ({
+        id: j.id,
+        cell: { ...j.cell },
+      })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
+      nextJunctionId: this.nextJunctionId,
     };
   }
 
@@ -393,8 +567,12 @@ export class BoardGraph {
   restore(s: GraphSnapshot): void {
     this.components.clear();
     this.wires.clear();
+    this.junctions.clear();
     for (const c of s.components) {
       this.components.set(c.id, { ...c, cell: { ...c.cell } });
+    }
+    for (const j of s.junctions ?? []) {
+      this.junctions.set(j.id, { id: j.id, cell: { ...j.cell } });
     }
     for (const w of s.wires) {
       this.wires.set(w.id, {
@@ -406,9 +584,37 @@ export class BoardGraph {
     }
     this.nextComponentId = s.nextComponentId;
     this.nextWireId = s.nextWireId;
+    // Older snapshots carry no junction counter; derive a safe next id.
+    this.nextJunctionId =
+      s.nextJunctionId ??
+      [...this.junctions.keys()].reduce((m, id) => Math.max(m, id + 1), 1);
   }
 }
 
 function samePin(a: PinRef, b: PinRef): boolean {
   return a.componentId === b.componentId && a.pinIndex === b.pinIndex;
+}
+
+/** True if `e` is a pin endpoint on the given component. */
+function endpointHasComponent(e: Endpoint, componentId: number): boolean {
+  return isPinRef(e) && e.componentId === componentId;
+}
+
+/** True if `e` is the given junction's endpoint. */
+function junctionTouches(e: Endpoint, junctionId: number): boolean {
+  return isJunctionRef(e) && e.junctionId === junctionId;
+}
+
+/**
+ * Is grid point `p` on the orthogonal L-route between `a` and `b`? The auto
+ * route bends once, so `p` lies on it iff it shares a row or column with both
+ * within the bounding box — a cheap test used to keep a split wire's waypoint on
+ * the correct half.
+ */
+function manhattanOnLeg(p: Cell, a: Cell, b: Cell): boolean {
+  const inX =
+    p.col >= Math.min(a.col, b.col) && p.col <= Math.max(a.col, b.col);
+  const inY =
+    p.row >= Math.min(a.row, b.row) && p.row <= Math.max(a.row, b.row);
+  return inX && inY;
 }
