@@ -22,6 +22,30 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   (= 1/(2πRC√6)) with honest 56°/112°/180° tap labels + the 1/29 attenuation lesson +
   a detune-to-1 kHz demo. Verified end-to-end (transient sim: −180.0°, 1/29.1).~~
 
+### Logic gates: real logic levels / families + analog↔digital boundary (owner, 2026-06-15)
+Brainstorm doc **written** at **`docs/ui/logic-analog-digital-nets.md`** (agent).
+Recommends a 4-phase path: **(0)** add a `const` logic-family descriptor defaulted to
+a legacy-ideal family that reproduces today's numbers *exactly* (golden untouched —
+same trick as the AC `aux`/4th-terminal `d`); **(1)** opt-in real families with honest
+`V_IL/IH/OL/OH` + asymmetric pull-up/down + open-drain (a deliberate golden regen);
+**(2)** noise-margin/forbidden-band warnings + a first-class **level-shifter** part
+(mostly presentation); **(3)** only when digital gets big, a separate deterministic
+event scheduler (the architecture doc's target; the one hash-changing, risky step).
+Includes a debug/validation plan (per-family threshold tests, mixed-rail, open-drain,
+reproducibility, a legacy-equivalence golden guard). Decide direction before Phase 1.
+- [ ] **Latent bug the agent flagged:** XNOR/BUF exist in sim-core `gate_logic` but
+  aren't wired in `GATE_AUX` (web), so they're unreachable as placed parts. Verify +
+  wire them (or confirm intentional). Cheap; do alongside Phase 0/1.
+Owner: the gates (`ELEM_GATE=17`) currently can't handle logic-high being anything
+but their set HIGH value and low being exactly 0 — no V_IL/V_IH vs V_OL/V_OH, no
+noise margin, no mixed-rail interfacing (a 3.3 V part driving a 5 V part), no notion
+of a divided/pulled input. Likely endgame: a **separated analog vs digital net
+system with boundary/barrier elements** (or a per-gate logic-family descriptor under
+the single analog solve). Must stay **golden-stable** (any sim-core behaviour change
+⇒ regenerate the golden + justify) and keep the coarse JS↔wasm boundary. Doc must
+include a **debug/validation plan** (deterministic sim-core tests across families +
+mixed-rail interface cases). Decide direction after reading the doc.
+
 ### Editor: copy/paste + marquee select + group drag (owner, 2026-06-15)
 - [ ] **Box / marquee select** (shift+drag, or drag on empty in Select mode): a
   rubber-band rectangle that selects every component inside it + the wires whose
