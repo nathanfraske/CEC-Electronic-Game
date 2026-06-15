@@ -28,13 +28,23 @@ export interface SimHandle {
   step(): void;
   snapshot(): Snapshot;
   protocolVersion(): number;
-  /** Install a netlist of ideal elements and reset to t=0. */
+  /**
+   * Install a netlist of ideal elements and reset to t=0.
+   *
+   * `a`/`b` are the two main terminals (drain/source for a MOSFET). `c` is the
+   * optional **control** terminal — the gate of a three-terminal device (NMOS
+   * type 11, PMOS type 12); it is ignored by every two-terminal element. When
+   * omitted it defaults to all-ground (zeros), so existing two-terminal callers
+   * need not pass it. It is the last parameter (not in the wasm `a,b,c,values`
+   * order) precisely so those callers stay source-compatible.
+   */
   setNetlist(
     nodeCount: number,
     types: Uint8Array,
     a: Uint32Array,
     b: Uint32Array,
     values: Float64Array,
+    c?: Uint32Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -53,8 +63,18 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       elementCurrents: sim.element_currents(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values) =>
-      sim.set_netlist(nodeCount, types, a, b, values),
+    setNetlist: (nodeCount, types, a, b, values, c) =>
+      // Default the control array to all-ground when the caller (a two-terminal
+      // build) omits it, then hand the wasm boundary its native a,b,c,values
+      // order. The core ignores c for every two-terminal element.
+      sim.set_netlist(
+        nodeCount,
+        types,
+        a,
+        b,
+        c ?? new Uint32Array(types.length),
+        values,
+      ),
     reset: () => sim.reset(),
   };
 }
