@@ -30,6 +30,21 @@
 //! | 4    | DC current source  | amps          | KCL injection: `value` from a -> b |
 //! | 5    | diode (nonlinear)  | (unused)      | Shockley, Newton companion a -> b  |
 //! | 6    | switch (clocked)   | duty `[0,1]`  | time-varying conductance a <-> b   |
+//! | 7    | AC voltage source  | frequency Hz  | MNA augmentation, EMF = sine(tick) |
+//!
+//! ## Sinusoidal AC voltage source
+//!
+//! The **AC source** ([`ELEM_ACSOURCE`]) is a voltage constraint identical to the
+//! DC source ([`ELEM_VSOURCE`]) — same branch-current unknown, same stamp — except
+//! its right-hand-side EMF is a sine that is a pure deterministic function of the
+//! current [`Sim::tick`]:
+//! `V(a) - V(b) = AC_AMPLITUDE * sin(2*pi * f * tick * dt)`, where `f` is its
+//! `value` (frequency in Hz, clamped to `>= 0`) and the peak amplitude is the
+//! fixed [`AC_AMPLITUDE`]. Being linear and time-varying it carries no Newton
+//! machinery: like the switch, it is part of the fixed linear base and its EMF is
+//! recomputed once per solve from the tick (the sine is exactly `0` at `t = 0`),
+//! so it composes with a diode rectifier on the Newton path. Amplitude is fixed
+//! for now; a two-parameter (amplitude + frequency) netlist is future work.
 //!
 //! ## Clock-driven switch
 //!
@@ -168,6 +183,24 @@ pub const ELEM_DIODE: u8 = 5;
 /// of that conductance and carries **no** branch unknown and no reactive state,
 /// so it needs no Newton machinery even when a diode is present.
 pub const ELEM_SWITCH: u8 = 6;
+/// Sinusoidal **AC voltage source**. Oriented `a -> b`, it enforces the
+/// time-varying constraint `V(a) - V(b) = `[`AC_AMPLITUDE`]` * sin(2*pi * f *
+/// tick * dt)` through the same MNA branch-current augmentation as
+/// [`ELEM_VSOURCE`]; the *only* difference is the right-hand-side EMF is this
+/// sine rather than a constant. Its `value` is the frequency `f` in hertz
+/// (clamped to `>= 0`); the peak amplitude is the fixed [`AC_AMPLITUDE`]. The EMF
+/// is a pure deterministic function of the tick (so it reproduces and rewinds
+/// with the tick and is exactly `0` at `t = 0`), and the element is linear, so it
+/// lives in the fixed linear base and needs no Newton machinery.
+pub const ELEM_ACSOURCE: u8 = 7;
+
+// --- AC voltage source model constants ----------------------------------------
+
+/// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
+/// `value` carries only the frequency); a two-parameter netlist that also sets
+/// amplitude per device is future work. Held constant so the EMF stays a pure
+/// function of the tick and the value field.
+const AC_AMPLITUDE: f64 = 5.0;
 
 // --- Clock-driven switch model constants --------------------------------------
 
@@ -497,6 +530,7 @@ impl Sim {
                     | ELEM_ISOURCE
                     | ELEM_DIODE
                     | ELEM_SWITCH
+                    | ELEM_ACSOURCE
             ) {
                 self.install_empty();
                 return false;
@@ -535,7 +569,7 @@ impl Sim {
         let mut branch_index = vec![usize::MAX; elements.len()];
         let mut next = node_unknowns;
         for (i, e) in elements.iter().enumerate() {
-            if e.kind == ELEM_VSOURCE || e.kind == ELEM_INDUCTOR {
+            if e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE || e.kind == ELEM_INDUCTOR {
                 branch_index[i] = next;
                 next += 1;
             }
@@ -610,7 +644,7 @@ impl Sim {
         let mut op_branch = vec![usize::MAX; self.elements.len()];
         let mut next = node_unknowns;
         for (i, e) in self.elements.iter().enumerate() {
-            if e.kind == ELEM_VSOURCE || e.kind == ELEM_CAPACITOR {
+            if e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE || e.kind == ELEM_CAPACITOR {
                 op_branch[i] = next;
                 next += 1;
             }
@@ -663,14 +697,16 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_VSOURCE | ELEM_CAPACITOR => {
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => {
                     // Voltage constraint V(a) - V(b) = value, where `value` is
-                    // the source EMF or the capacitor's stored voltage.
+                    // the DC source EMF, the AC source's tick-determined sine EMF
+                    // (exactly 0 here at tick 0), or the capacitor's stored
+                    // voltage.
                     let bi = op_branch[i];
-                    let v = if e.kind == ELEM_VSOURCE {
-                        e.value
-                    } else {
-                        self.reactive_state[i]
+                    let v = match e.kind {
+                        ELEM_VSOURCE => e.value,
+                        ELEM_ACSOURCE => self.ac_source_emf(e),
+                        _ => self.reactive_state[i],
                     };
                     if let Some(r) = ia {
                         mat[r * n + bi] += 1.0;
@@ -726,7 +762,7 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
-                ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
                 _ => 0.0,
@@ -829,6 +865,21 @@ impl Sim {
                     }
                     rhs[bi] += e.value;
                 }
+                ELEM_ACSOURCE => {
+                    // Identical MNA augmentation to a DC source; the only
+                    // difference is the EMF is the tick-determined sine, computed
+                    // once here from the current tick (linear and time-varying).
+                    let bi = self.branch_index[i];
+                    if let Some(r) = ia {
+                        mat[r * n + bi] += 1.0;
+                        mat[bi * n + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * n + bi] -= 1.0;
+                        mat[bi * n + r] -= 1.0;
+                    }
+                    rhs[bi] += self.ac_source_emf(e);
+                }
                 ELEM_INDUCTOR => {
                     // Backward-Euler companion with a branch current i
                     // (oriented a -> b): V(a) - V(b) - (L/dt)*i = -(L/dt)*i_prev.
@@ -884,7 +935,7 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
                 _ => 0.0,
             };
@@ -1015,7 +1066,7 @@ impl Sim {
         let mut op_branch = vec![usize::MAX; self.elements.len()];
         let mut next = node_unknowns;
         for (i, e) in self.elements.iter().enumerate() {
-            if e.kind == ELEM_VSOURCE || e.kind == ELEM_CAPACITOR {
+            if e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE || e.kind == ELEM_CAPACITOR {
                 op_branch[i] = next;
                 next += 1;
             }
@@ -1053,12 +1104,16 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_VSOURCE | ELEM_CAPACITOR => {
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => {
+                    // A voltage constraint stamped into the fixed linear base: the
+                    // DC EMF, the AC source's tick-determined sine (0 here at tick
+                    // 0), or the capacitor's stored voltage. The AC source is
+                    // linear, so it belongs in the base, not the Newton companion.
                     let bi = op_branch[i];
-                    let v = if e.kind == ELEM_VSOURCE {
-                        e.value
-                    } else {
-                        self.reactive_state[i]
+                    let v = match e.kind {
+                        ELEM_VSOURCE => e.value,
+                        ELEM_ACSOURCE => self.ac_source_emf(e),
+                        _ => self.reactive_state[i],
                     };
                     if let Some(r) = ia {
                         base_mat[r * n + bi] += 1.0;
@@ -1122,7 +1177,7 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
-                ELEM_VSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
@@ -1198,6 +1253,23 @@ impl Sim {
                     }
                     base_rhs[bi] += e.value;
                 }
+                ELEM_ACSOURCE => {
+                    // Same branch augmentation as a DC source, stamped into the
+                    // fixed linear base; only the EMF differs (the tick-determined
+                    // sine, computed once per step before any Newton iterating).
+                    // Being linear, it is part of the constant base, so an AC
+                    // source feeding a diode rectifier converges normally.
+                    let bi = self.branch_index[i];
+                    if let Some(r) = ia {
+                        base_mat[r * n + bi] += 1.0;
+                        base_mat[bi * n + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        base_mat[r * n + bi] -= 1.0;
+                        base_mat[bi * n + r] -= 1.0;
+                    }
+                    base_rhs[bi] += self.ac_source_emf(e);
+                }
                 ELEM_INDUCTOR => {
                     let bi = self.branch_index[i];
                     let r_l = e.value / DT;
@@ -1262,7 +1334,7 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE => diode_eval(self.diode_vd[i]).0,
                 _ => 0.0,
@@ -1275,6 +1347,21 @@ impl Sim {
     #[inline]
     fn element_voltage(&self, e: &Element) -> f64 {
         self.node_v[e.a] - self.node_v[e.b]
+    }
+
+    /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
+    /// current tick: `AC_AMPLITUDE * sin(2*pi * f * tick * dt)`, where `e.value`
+    /// is the frequency `f` in hertz (clamped to `>= 0`). This is the right-hand
+    /// side of the source's voltage constraint `V(a) - V(b) = emf`, the only
+    /// difference from a DC source. Pure `f64` and a deterministic function of the
+    /// tick (so it reproduces and rewinds with the tick; at `tick = 0` it is
+    /// exactly `0`). Recomputed once per solve and stamped into the fixed linear
+    /// base, exactly like a DC source's constant `value`.
+    #[inline]
+    fn ac_source_emf(&self, e: &Element) -> f64 {
+        let f = e.value.max(0.0);
+        let phase = core::f64::consts::TAU * f * (self.tick as f64) * DT;
+        AC_AMPLITUDE * phase.sin()
     }
 
     /// The conductance of a clock-driven switch ([`ELEM_SWITCH`]) at the current
@@ -1362,7 +1449,7 @@ impl Sim {
     ///   `ieq = g * (V(a)-V(b))_prev` — i.e. `C * dV/dt` by backward-Euler. At
     ///   `t = 0` (discharged) this is `0`.
     /// - Inductor: its branch current; `0` at `t = 0` (de-energized).
-    /// - Voltage source: its branch current.
+    /// - Voltage source (DC or AC): its branch current.
     /// - Current source: its set `value` (forced, oriented `a -> b`).
     /// - Switch: `G(tick) * (V(a) - V(b))`, the tick-determined conductance times
     ///   the terminal voltage (large while closed, ~0 while open).
@@ -2388,6 +2475,262 @@ mod tests {
         // Out-of-range node on a switch is still rejected (fail-safe).
         let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0.5]);
         assert!(!bad, "out-of-range switch node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    // --- Sinusoidal AC voltage source -----------------------------------------
+    //
+    // The AC source (type 7) is a voltage constraint exactly like the DC source
+    // (type 0); its only difference is a tick-determined sine EMF,
+    // `AC_AMPLITUDE * sin(2*pi*f*tick*dt)`. Being linear and time-varying it is
+    // part of the fixed linear base (no Newton). These tests assert the node
+    // tracks the independent scalar sine, the peaks and RMS over a full period,
+    // composition with a diode rectifier, and the replay invariant.
+
+    /// The expected AC source EMF at a given tick, computed independently of the
+    /// solver from the same closed form, so the core is checked against physics
+    /// rather than a fitted constant.
+    fn ac_emf_at_tick(f: f64, tick: u64) -> f64 {
+        AC_AMPLITUDE * (core::f64::consts::TAU * f * (tick as f64) * DT).sin()
+    }
+
+    /// An AC source straight across a resistor puts the full source EMF on the
+    /// driven node (no divider), so the node voltage must track
+    /// `AC_AMPLITUDE * sin(2*pi*f*t)` tick by tick. Sample several ticks across one
+    /// period and compare against the independent scalar sine. Layout: AC source
+    /// 1->0 (value = f), resistor 1->0. Node 1 carries the source EMF directly.
+    #[test]
+    fn ac_source_node_tracks_sine_across_resistor() {
+        let f = 1_000.0; // 1 kHz -> period = 1/f = 1 ms = 500 ticks at dt = 2 us.
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[f, 1_000.0],
+        );
+        // At t = 0 the sine is exactly 0.
+        assert!(
+            sim.node_voltages()[1].abs() < 1e-12,
+            "AC source is 0 V at tick 0: got {}",
+            sim.node_voltages()[1]
+        );
+        // `step` solves at the pre-increment tick and then advances, so after the
+        // k-th step `node_v` reflects the solve at tick k-1 (i.e. `sim.tick()-1`).
+        // Step across one full period of distinct phases and compare each reading
+        // against the scalar sine at the tick that produced it.
+        let period_ticks = (1.0 / (f * DT)).round() as u64; // 500
+        for _ in 0..period_ticks {
+            sim.step();
+            let solved_tick = sim.tick() - 1;
+            let got = sim.node_voltages()[1];
+            let want = ac_emf_at_tick(f, solved_tick);
+            assert!(
+                (got - want).abs() < 1e-9,
+                "node tracks the scalar sine at tick {}: got {}, want {}",
+                solved_tick,
+                got,
+                want
+            );
+        }
+    }
+
+    /// Across one period the AC node reaches both peaks near +/- AC_AMPLITUDE and
+    /// its RMS over a whole period is AC_AMPLITUDE / sqrt(2) (the textbook sine
+    /// RMS). Computed numerically over every tick of one period.
+    #[test]
+    fn ac_source_peaks_and_rms_over_a_period() {
+        let f = 500.0; // period = 1/f = 2 ms = 1000 ticks at dt = 2 us.
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[f, 1_000.0],
+        );
+        let period_ticks = (1.0 / (f * DT)).round() as u64; // 1000
+        let mut vmax = f64::NEG_INFINITY;
+        let mut vmin = f64::INFINITY;
+        let mut sumsq = 0.0f64;
+        for _ in 0..period_ticks {
+            sim.step();
+            let v = sim.node_voltages()[1];
+            vmax = vmax.max(v);
+            vmin = vmin.min(v);
+            sumsq += v * v;
+        }
+        // Peaks: the sample grid does not land exactly on the crest, but with 1000
+        // ticks per period it gets very close to +/- AC_AMPLITUDE.
+        assert!(
+            (vmax - AC_AMPLITUDE).abs() < 1e-2,
+            "positive peak near +AC_AMPLITUDE: got {}",
+            vmax
+        );
+        assert!(
+            (vmin + AC_AMPLITUDE).abs() < 1e-2,
+            "negative peak near -AC_AMPLITUDE: got {}",
+            vmin
+        );
+        // RMS over a whole period is AC_AMPLITUDE / sqrt(2).
+        let rms = (sumsq / period_ticks as f64).sqrt();
+        let expected = AC_AMPLITUDE / core::f64::consts::SQRT_2;
+        assert!(
+            (rms - expected).abs() < 1e-3,
+            "RMS over a full period is amplitude/sqrt(2): got {}, want {}",
+            rms,
+            expected
+        );
+    }
+
+    /// The AC source frequency clamps to >= 0: a negative `value` is treated as
+    /// 0 Hz, i.e. a flat 0 V source (sin(0) = 0), so the driven node stays at 0.
+    #[test]
+    fn ac_source_clamps_negative_frequency_to_dc_zero() {
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[-1_000.0, 1_000.0],
+        );
+        for _ in 0..200 {
+            sim.step();
+            assert!(
+                sim.node_voltages()[1].abs() < 1e-12,
+                "negative frequency clamps to a flat 0 V source: got {}",
+                sim.node_voltages()[1]
+            );
+        }
+    }
+
+    /// The AC source reports its branch current like a DC source, and KCL holds:
+    /// across a single resistor the source current equals the resistor current
+    /// (oriented a -> b) every tick.
+    #[test]
+    fn ac_source_branch_current_satisfies_kcl() {
+        let f = 1_000.0;
+        let r = 470.0;
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[f, r],
+        );
+        for _ in 0..600 {
+            sim.step();
+            let c = sim.element_currents();
+            let v1 = sim.node_voltages()[1];
+            // Resistor (1->0) carries v1 / r; node 1 KCL: source a->b leaves node 1
+            // and resistor a->b leaves node 1, so they must be equal and opposite.
+            assert!(
+                (c[1] - v1 / r).abs() < 1e-9,
+                "resistor current is V/R: got {}, want {}",
+                c[1],
+                v1 / r
+            );
+            assert!(
+                (c[0] + c[1]).abs() < 1e-9,
+                "KCL at node 1: source and resistor branch currents balance"
+            );
+        }
+    }
+
+    /// An AC source through a series resistor into a diode + capacitor is a
+    /// half-wave rectifier: the diode forces the Newton path while the AC source
+    /// sits in the fixed linear base. It must converge (stay finite) and the
+    /// output capacitor must charge to a positive DC level (rectification), well
+    /// below the peak. Layout: AC 1->0, R 1->2, diode 2->3, C 3->0, R_load 3->0.
+    #[test]
+    fn ac_source_with_diode_rectifies_and_converges() {
+        let f = 1_000.0;
+        let mut sim = build(
+            4,
+            &[
+                ELEM_ACSOURCE,
+                ELEM_RESISTOR,
+                ELEM_DIODE,
+                ELEM_CAPACITOR,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 3],
+            &[0, 2, 3, 0, 0],
+            &[f, 100.0, 0.0, 10.0e-6, 10_000.0],
+        );
+        // Run many periods so the output settles.
+        for _ in 0..10_000 {
+            sim.step();
+            assert!(
+                sim.node_voltages().iter().all(|x| x.is_finite()),
+                "rectifier stays finite (Newton converges with an AC source)"
+            );
+        }
+        let vout = sim.node_voltages()[3];
+        // Half-wave rectified output is a positive DC level, below the peak and
+        // above ground (the diode drop and load bleed keep it well under +5 V).
+        assert!(
+            vout > 0.1 && vout < AC_AMPLITUDE,
+            "rectified output is a positive DC level below the peak: got {}",
+            vout
+        );
+    }
+
+    /// Replay invariant for an AC circuit: the EMF is a pure deterministic
+    /// function of the tick, so a fixed netlist stepped a fixed number of times
+    /// reproduces its snapshot-hash stream exactly. The AC analogue of
+    /// `run_is_reproducible`; covers both the linear fast path and (with the
+    /// diode) the Newton path.
+    #[test]
+    fn ac_run_is_reproducible() {
+        let run = || {
+            // AC 1->0 -> R 1->2 -> diode 2->3 -> C 3->0 + R_load 3->0: the AC
+            // source on the linear base, the diode on the Newton loop.
+            let mut sim = build(
+                4,
+                &[
+                    ELEM_ACSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_DIODE,
+                    ELEM_CAPACITOR,
+                    ELEM_RESISTOR,
+                ],
+                &[1, 1, 2, 3, 3],
+                &[0, 2, 3, 0, 0],
+                &[1_000.0, 100.0, 0.0, 10.0e-6, 10_000.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "AC circuit must reproduce exactly");
+    }
+
+    /// `set_netlist` accepts the AC source element type (type 7); a malformed
+    /// netlist containing an AC source still fails safe through the same
+    /// validation, and a valid AC source is stored as type 7.
+    #[test]
+    fn ac_source_netlist_validates() {
+        let mut sim = Sim::new(1);
+        let ok = sim.set_netlist(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[1_000.0, 1_000.0],
+        );
+        assert!(ok, "valid AC source netlist installs");
+        assert_eq!(sim.element_count(), 2);
+        assert_eq!(
+            sim.element_at(0).kind,
+            ELEM_ACSOURCE,
+            "AC source stored as type 7"
+        );
+        // Out-of-range node on an AC source is still rejected (fail-safe).
+        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[1_000.0]);
+        assert!(!bad, "out-of-range AC source node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
 
