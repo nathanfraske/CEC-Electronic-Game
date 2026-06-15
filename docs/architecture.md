@@ -30,3 +30,43 @@ a behavioral block at the pins regardless of how the behavior was authored.
 
 A native desktop build can wrap the same web app later and reuse the identical
 Rust core.
+
+## Sandbox simulation model: electrical islands + adaptive ΔT
+
+*Direction, not yet built — today the core runs a single global ΔT of 2 µs. This
+is the agreed target once the game becomes an open sandbox.* It also resolves the
+core tension of one sandbox holding wildly different timescales (a millisecond
+power rail beside a kilohertz oscillator beside fast logic): a single global ΔT
+can't serve all of them, because the step must be small enough for the fastest
+signal while the slow parts then need impractically many steps.
+
+The resolution is to **shard the simulation by electrical island.** Components are
+in the same island only if a wire path connects them — exactly the connected
+components the netlist union-find already computes. Two machines that aren't wired
+together are **independent simulations with independent clocks**, which is also
+the Factorio "districts" metaphor made literal (see `docs/game-factory-loop.md`).
+
+- **Per-island adaptive ΔT.** Each island chooses ΔT from *its own* fastest
+  dynamics — `min(R·C, L/R, 1/f_source, switch_period) / oversample` with a floor
+  — so it shrinks when you drop in something fast and grows when it's all slow.
+  ΔT is a deterministic function of the island's topology, so reproducibility
+  holds; the golden test pins its circuit's ΔT explicitly.
+- **A shared physical-time clock.** The board advances by **sim-seconds**, and
+  each island integrates however many of its own ΔT-steps it needs to reach the
+  shared target time. Everything stays temporally consistent, and you only pay the
+  fine-ΔT compute on the island that actually has fast dynamics. (This is why the
+  front end already separates fidelity (ΔT) from playback rate (ticks/second) and
+  shows wall-clock sim-time.)
+- **Wiring merges islands.** Connecting two districts unions them into one island
+  that adopts the finer ΔT — a legible consequence: a fast district wired into a
+  slow one makes the whole thing tick finely, which is physically true.
+- **Black-boxing is a scale *and* ΔT lever.** A validated sub-circuit collapses to
+  a pin-level behavioral block (the same "domains meet at the pins" mechanism used
+  for the digital/MCU engines); a black-boxed oscillator becomes "a 1 kHz clock
+  source" and no longer needs fine ΔT inside it.
+
+The one case this does not make cheap is a **single connected net that genuinely
+spans ms → GHz**. That is inherently expensive; the real answer is multi-rate /
+envelope integration within one net (fast subnet fine, slow subnet coarse,
+coupled), which is the deferred frontier — rare in practice, since you seldom wire
+a power supply straight into an RF oscillator and watch both evolve.

@@ -38,7 +38,10 @@
     graphShape,
     type BuiltNetlist,
   } from "./lib/netlist";
-  import type { ElectricalState } from "./lib/glyphs";
+  import { ZERO_ELECTRICAL, type ElectricalState } from "./lib/glyphs";
+  import { partInfo } from "./lib/partInfo";
+  import { CALCS } from "./lib/calc";
+  import { InfoDiagram } from "./lib/infoDiagram";
 
   const SEED = 1337;
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
@@ -211,6 +214,40 @@
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
   let circuitWarning = $state<string | null>(null);
+  // Info drawer: the deep explanatory view of the selected part + calculators.
+  let infoOpen = $state(false);
+  let infoTab = $state<"info" | "calc">("info");
+  let selElectrical = $state<ElectricalState | null>(null);
+  let infoDiagram: InfoDiagram | undefined;
+  // Calculator inputs, seeded from each calc's presets.
+  const initialCalc: Record<string, Record<string, number>> = {};
+  for (const c of CALCS) {
+    const row: Record<string, number> = {};
+    for (const fld of c.fields) row[fld.key] = fld.preset;
+    initialCalc[c.id] = row;
+  }
+  let calcVals = $state(initialCalc);
+  function fillCalc(id: string): void {
+    if (!selPart) return;
+    const u = PART_KINDS[selPart.kind]?.unit;
+    const c = CALCS.find((x) => x.id === id);
+    if (!c) return;
+    for (const fld of c.fields) {
+      if (fld.unit === u) calcVals[id]![fld.key] = selPart.value;
+    }
+  }
+  // A Svelte action that owns the diagram's Pixi sub-app for the drawer's lifetime.
+  function infoDiagramAction(node: HTMLCanvasElement) {
+    const d = new InfoDiagram();
+    infoDiagram = d;
+    void d.init(node);
+    return {
+      destroy() {
+        d.destroy();
+        if (infoDiagram === d) infoDiagram = undefined;
+      },
+    };
+  }
   let canUndo = $state(false);
   let scrubFrac = $state(0);
   // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
@@ -232,7 +269,7 @@
   const hint = $derived(
     mode === "measure"
       ? probeMode === "A"
-        ? "AMMETER · click a part or wire to read the current through it"
+        ? "PROBE · click a part/wire for its current AND voltage at once (a real meter needs separate ports for each)"
         : "VOLTMETER · click two points to read ΔV (one point = vs GND)"
       : armedPart
         ? `PLACING ${partName(armedPart)} · click to drop · Esc to cancel`
@@ -244,7 +281,7 @@
 
   // Position the value popover above the selected part, flipping below near the
   // top edge and clamping left into the board frame; the caret tracks the part.
-  const POP_W = 268;
+  const POP_W = 320;
   const popPos = $derived.by(() => {
     if (!anchor || !frameEl) return null;
     const m = 8;
@@ -399,6 +436,13 @@
               ? electricalMap(netlist, snap.state, snap.elementCurrents)
               : undefined;
           b.update(snap, electrical, controls?.isRunning() ?? false);
+          if (selPart) {
+            const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
+            selElectrical = e;
+            if (infoOpen) infoDiagram?.setState(selPart.kind, e);
+          } else {
+            selElectrical = null;
+          }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
           const st = controls?.status();
@@ -784,10 +828,18 @@
           <button
             class="btn btn-ghost {probeMode === 'A' ? 'is-active' : ''}"
             onclick={() => setProbeMode("A")}
-            title="Ammeter — current through a part/wire">A</button
+            title="Probe — a part/wire's current + voltage together">A</button
           >
         </span>
       {/if}
+      <button
+        class="btn btn-ghost {infoOpen ? 'is-active' : ''}"
+        onclick={() => (infoOpen = !infoOpen)}
+        disabled={!ready}
+        title="Info: deep explanatory view of the selected part + calculators"
+      >
+        ⓘ Info
+      </button>
       {#if armedPart}
         <span class="armed-chip" title="Armed for placement">
           {partName(armedPart)}
@@ -928,6 +980,14 @@
             <span class="insp-kind">{partName(kind)}</span>
             <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
           </div>
+          {#if selElectrical}
+            <div class="insp-meter mono">
+              {formatValue(selElectrical.vAcross, "V")} across · {formatValue(
+                selElectrical.current,
+                "A",
+              )} through
+            </div>
+          {/if}
           <div class="insp-row">
             <button
               class="btn btn-ghost insp-step"
@@ -985,6 +1045,101 @@
           <span class="value-pop-caret" style="left: {popPos.caretLeft}px"
           ></span>
         </div>
+      {/if}
+
+      {#if infoOpen}
+        <aside class="info-drawer">
+          <div class="info-head">
+            <span class="info-title">
+              {selPart ? partName(selPart.kind) : "Component Info"}
+            </span>
+            <button
+              class="intro-x"
+              onclick={() => (infoOpen = false)}
+              aria-label="Close info">×</button
+            >
+          </div>
+          <div class="info-tabs">
+            <button
+              class="tab {infoTab === 'info' ? 'is-active' : ''}"
+              onclick={() => (infoTab = "info")}>Info</button
+            >
+            <button
+              class="tab {infoTab === 'calc' ? 'is-active' : ''}"
+              onclick={() => (infoTab = "calc")}>Calculators</button
+            >
+          </div>
+          <div class="info-body scroll">
+            {#if infoTab === "info"}
+              {#if selPart}
+                {@const info = partInfo(selPart.kind)}
+                {#if info}
+                  {@const e = selElectrical ?? ZERO_ELECTRICAL}
+                  <div class="info-diagram">
+                    <canvas use:infoDiagramAction></canvas>
+                  </div>
+                  <div class="info-eq mono">{info.equation}</div>
+                  <div class="info-sub mono">
+                    {info.headline(e, selPart.value)}
+                  </div>
+                  <p class="info-plain">{info.plain(e, selPart.value)}</p>
+                  {#each info.derived(e, selPart.value) as row (row.label)}
+                    <div class="info-row">
+                      <span>{row.label}</span>
+                      <span class="mono">{row.value}</span>
+                    </div>
+                  {/each}
+                {:else}
+                  <p class="info-empty">
+                    {partName(selPart.kind)} isn't simulated yet — no live math to
+                    show.
+                  </p>
+                {/if}
+              {:else}
+                <p class="info-empty">
+                  Select a component on the board to see what it's doing — its
+                  governing equation with the live numbers, and a plain
+                  explanation of what's happening right now.
+                </p>
+              {/if}
+            {:else}
+              {#each CALCS as c (c.id)}
+                {@const r = c.compute(calcVals[c.id] ?? {})}
+                <div class="calc-card">
+                  <div class="calc-head">
+                    <span class="calc-name">{c.name}</span>
+                    {#if selPart}
+                      <button
+                        class="calc-fill"
+                        onclick={() => fillCalc(c.id)}
+                        title="Fill matching fields from the selected part"
+                        >↤ sel</button
+                      >
+                    {/if}
+                  </div>
+                  <div class="calc-fields">
+                    {#each c.fields as fld (fld.key)}
+                      <label class="calc-field">
+                        <span class="calc-flabel">{fld.label} ({fld.unit})</span
+                        >
+                        <input
+                          class="calc-input mono"
+                          type="number"
+                          value={calcVals[c.id]?.[fld.key] ?? fld.preset}
+                          oninput={(ev) => {
+                            const o = calcVals[c.id];
+                            if (o) o[fld.key] = Number(ev.currentTarget.value);
+                          }}
+                        />
+                      </label>
+                    {/each}
+                  </div>
+                  <div class="calc-worked mono">{r.worked}</div>
+                </div>
+              {/each}
+            {/if}
+          </div>
+        </aside>
       {/if}
     </div>
   </main>
@@ -1250,15 +1405,19 @@
   .value-pop {
     position: absolute;
     z-index: 5;
-    width: 268px;
-    max-height: 340px;
-    overflow-y: auto;
-    padding: 10px 11px;
+    width: 320px;
+    padding: 12px 13px;
     border: 1px solid var(--border-bright);
     border-radius: 5px;
     background: oklch(0.165 0.028 285 / 0.96);
     box-shadow: 0 12px 34px -12px #000;
     backdrop-filter: blur(4px);
+  }
+  /* Live "V across · I through" readout, restored at the top of the picker. */
+  .insp-meter {
+    font-size: 12.5px;
+    color: var(--ok);
+    margin-bottom: 8px;
   }
   .value-pop-caret {
     position: absolute;
@@ -1314,14 +1473,15 @@
   }
   .insp-chips.wrap {
     flex-wrap: wrap;
-    overflow: visible;
+    overflow-y: auto;
+    max-height: 168px;
     margin-bottom: 4px;
   }
   .chip-val {
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
     white-space: nowrap;
-    padding: 4px 7px;
+    padding: 5px 9px;
     border: 1px solid var(--border);
     border-radius: 3px;
     background: var(--surface);
@@ -1329,8 +1489,8 @@
     cursor: pointer;
   }
   .chip-val.sm {
-    font-size: 10px;
-    padding: 3px 6px;
+    font-size: 11px;
+    padding: 4px 7px;
   }
   .chip-val:hover {
     color: var(--text);
@@ -1363,6 +1523,153 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--faint);
+  }
+
+  /* Component info drawer: the deep explanatory view, right side over the board. */
+  .info-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 340px;
+    max-width: 72%;
+    display: flex;
+    flex-direction: column;
+    background: oklch(0.155 0.026 285 / 0.97);
+    border-left: 1px solid var(--border-bright);
+    box-shadow: -14px 0 40px -18px #000;
+    backdrop-filter: blur(5px);
+    z-index: 6;
+  }
+  .info-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .info-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 16px;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+  .info-tabs {
+    display: flex;
+    gap: 6px;
+    padding: 10px 14px 0;
+  }
+  .info-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+  }
+  .info-diagram {
+    height: 170px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    overflow: hidden;
+    margin-bottom: 12px;
+    background: #120f1c;
+  }
+  .info-diagram canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
+  .info-eq {
+    font-size: 15px;
+    color: var(--accent);
+    margin-bottom: 4px;
+  }
+  .info-sub {
+    font-size: 13px;
+    color: var(--text);
+    margin-bottom: 10px;
+  }
+  .info-plain {
+    margin: 0 0 12px;
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dim);
+  }
+  .info-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 6px 0;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--faint);
+  }
+  .info-row .mono {
+    color: var(--text);
+  }
+  .info-empty {
+    font-size: 13px;
+    line-height: 1.55;
+    color: var(--dim);
+  }
+  .calc-card {
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--surface);
+    padding: 10px 11px;
+    margin-bottom: 10px;
+  }
+  .calc-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+  .calc-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .calc-fill {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--accent);
+    background: none;
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    padding: 2px 6px;
+    cursor: pointer;
+  }
+  .calc-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .calc-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .calc-flabel {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
+  }
+  .calc-input {
+    width: 84px;
+    font-size: 12px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .calc-worked {
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--ok);
+    word-break: break-word;
   }
 
   .part {

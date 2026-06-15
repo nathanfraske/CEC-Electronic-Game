@@ -929,20 +929,24 @@ export class Board {
     }
   }
 
-  /** Ammeter readout: a ring on the clicked part/wire showing its current. */
+  /** Probe readout: a ring on the clicked part/wire showing its current AND its
+   * voltage at once (a real meter needs separate ports — a teaching note). */
   private drawAmmeter(g: Graphics): void {
     if (!this.ammeter) {
       this.probeText.visible = false;
       return;
     }
     let cur = 0;
+    let volt = 0;
     let x = 0;
     let y = 0;
     let ok = false;
     if (this.ammeter.kind === "comp") {
       const c = this.graph.components.get(this.ammeter.id);
       if (c) {
-        cur = this.electrical?.get(c.id)?.current ?? 0;
+        const e = this.electrical?.get(c.id);
+        cur = e?.current ?? 0;
+        volt = e?.vAcross ?? 0;
         const box = this.componentBox(c);
         x = box.x + box.width / 2;
         y = box.y + box.height / 2;
@@ -952,6 +956,7 @@ export class Board {
       const w = this.graph.wires.get(this.ammeter.id);
       if (w) {
         cur = this.lastWireCurrents.get(w.id) ?? 0;
+        volt = this.pinVoltage(w.from) ?? 0;
         const route = this.routeForWire(w);
         if (route.length >= 2) {
           const m = sampleRoute(route, 0.5);
@@ -967,7 +972,7 @@ export class Board {
     }
     g.circle(x, y, 12).fill({ color: 0x161020, alpha: 0.55 });
     g.circle(x, y, 12).stroke({ width: 2.5, color: PROBE_PLUS, alpha: 0.95 });
-    this.probeText.text = "I " + fmtSI(cur, "A");
+    this.probeText.text = "I " + fmtSI(cur, "A") + "  ·  V " + fmtSI(volt, "V");
     this.probeText.position.set(x, y - 22);
     this.probeText.visible = true;
   }
