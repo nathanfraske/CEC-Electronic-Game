@@ -50,10 +50,12 @@ function comp(
   col: number,
   row: number,
   value: number,
+  rot = 0,
 ): Component {
   const c = g.place(kind, { col, row });
   if (!c) throw new Error("unknown kind: " + kind);
   c.value = value;
+  c.rot = rot;
   return c;
 }
 
@@ -355,6 +357,64 @@ export const EXAMPLES: ExampleSpec[] = [
       {
         do: "Wire the source across the resistor, GND on one rail.",
         why: "The forced current runs through R, and V = I·R appears across it.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
+  {
+    id: "buck",
+    name: "Buck Converter",
+    blurb:
+      "A switch chops a 10 V rail on and off; an inductor + diode catch each pulse and a capacitor smooths it, stepping the rail down to ≈ 4 V (the 40% duty cycle). Every part is animated.",
+    watch:
+      "the switch flick on/off, the inductor scoop a 'bucket' of energy each cycle and the diode hand it on when the switch opens — the output settles near 4 V = 10 V × 40%.",
+    build() {
+      // Vin+ → SW → (switch node) → L → OUT; the freewheel diode catches the
+      // node when the switch opens; C + R load smooth and draw the output. Vin /
+      // C / R / D are placed vertical so the rails read top-to-bottom.
+      const g = new BoardGraph();
+      const vin = comp(g, "V", 1, 1, 10, 1); // vertical, + at top
+      const sw = comp(g, "SW", 4, 1, 0.4); // 40% duty
+      const l = comp(g, "L", 12, 1, 1e-3);
+      const d = comp(g, "D", 8, 4, 0, 3); // freewheel: anode low, cathode up
+      const c = comp(g, "C", 12, 3, 22e-6, 1);
+      const r = comp(g, "R", 14, 3, 100, 1);
+      const gnd = comp(g, "GND", 8, 6, 0);
+      wire(g, vin, 0, sw, 0); // Vin+ → SW.A
+      wire(g, sw, 1, l, 0); // SW.B → L.A (the switch node)
+      wire(g, sw, 1, d, 1); // SW.B → D.K (freewheel cathode)
+      wire(g, l, 1, c, 0); // L.B → C.+ (the output)
+      wire(g, l, 1, r, 0); // L.B → R.A (the load)
+      wire(g, vin, 1, gnd, 0); // Vin− → GND
+      wire(g, d, 0, gnd, 0); // D.A → GND
+      wire(g, c, 1, gnd, 0); // C.− → GND
+      wire(g, r, 1, gnd, 0); // R.B → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V) — the 10 V input rail.",
+        why: "The buck steps this rail down to a lower, steady output.",
+        done: (p) => at(p, "V") >= 1,
+      },
+      {
+        do: "Place a Switch (SW) — the chopper.",
+        why: "Rapidly switching the rail on and off is how a buck moves energy in packets without wasting it as heat.",
+        done: (p) => at(p, "SW") >= 1,
+      },
+      {
+        do: "Place an Inductor (L) and a Diode (D).",
+        why: "L is the 'bucket' that scoops energy while the switch is on; D hands it to the output when the switch opens.",
+        done: (p) => at(p, "L") >= 1 && at(p, "D") >= 1,
+      },
+      {
+        do: "Place the output Capacitor (C) and a load Resistor (R).",
+        why: "C smooths the pulses into a steady voltage; R is what you're powering.",
+        done: (p) => at(p, "C") >= 1 && at(p, "R") >= 1,
+      },
+      {
+        do: "Add a Ground (GND) and wire the buck up.",
+        why: "Switch → inductor → output, with the diode and ground completing the freewheel path. Watch it settle to Vin × duty.",
         done: (p) => p.complete,
       },
     ],

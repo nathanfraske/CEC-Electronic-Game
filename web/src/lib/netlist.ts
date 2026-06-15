@@ -14,7 +14,15 @@ import type { ElectricalState } from "./glyphs";
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
 // loop skips them. Mirrors the `ELEM_*` constants in `crates/sim-core/src/lib.rs`.
-const TYPE_OF: Record<string, number> = { V: 0, R: 1, C: 2, L: 3, I: 4 };
+const TYPE_OF: Record<string, number> = {
+  V: 0,
+  R: 1,
+  C: 2,
+  L: 3,
+  I: 4,
+  D: 5, // diode (nonlinear; engages the Newton solve)
+  SW: 6, // clock-driven switch; value = duty cycle
+};
 
 export interface BuiltNetlist {
   nodeCount: number;

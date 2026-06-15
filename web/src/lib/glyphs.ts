@@ -276,6 +276,87 @@ function drawGND(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+function drawD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const s = 8;
+  // A diode only conducts forward (anode a -> cathode b): the glow + flow track
+  // the positive current, so it lights up when forward-biased and goes dark when
+  // it blocks.
+  const cond = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  if (cond > 0.03) {
+    g.circle(mx, my, 13).fill({ color: o.color, alpha: 0.2 * cond });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - s, my);
+  g.moveTo(mx + s, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // triangle pointing from anode to cathode
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.poly([mx - s, my - s, mx + s, my, mx - s, my + s]).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // cathode bar
+  g.moveTo(mx + s, my - s).lineTo(mx + s, my + s);
+  g.stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+  flow(
+    g,
+    a.x,
+    a.y,
+    mx - s,
+    my,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+  flow(
+    g,
+    mx + s,
+    my,
+    b.x,
+    b.y,
+    Math.max(0, o.electrical.current),
+    o.phase,
+    0x46d2e6,
+  );
+}
+
+function drawSW(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const gap = 9;
+  // Read the switch state off the simulation: closed drops ~0 V across it, open
+  // stands the full node difference. The lever flicks up/down as it switches.
+  const closed = Math.abs(o.electrical.vAcross) < 0.25;
+  g.moveTo(a.x, a.y).lineTo(mx - gap, my);
+  g.moveTo(mx + gap, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.circle(mx - gap, my, 2).fill({ color: o.color });
+  g.circle(mx + gap, my, 2).fill({ color: o.color });
+  const tipX = closed ? mx + gap : mx + gap - 3;
+  const tipY = closed ? my : my - 12;
+  g.moveTo(mx - gap, my).lineTo(tipX, tipY);
+  g.stroke({ width: 2.4, color: closed ? o.color : 0x9c93b8, alpha: 0.95 });
+  if (closed) {
+    const cond = norm(o.electrical.current, CUR_SCALE);
+    if (cond > 0.03) {
+      g.circle(mx, my, 12).fill({ color: o.color, alpha: 0.16 * cond });
+    }
+    flow(g, a.x, a.y, b.x, b.y, o.electrical.current, o.phase, o.color);
+  }
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -299,6 +380,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   L: drawL,
   I: drawI,
   GND: drawGND,
+  D: drawD,
+  SW: drawSW,
 };
 
 /** Returns true if the kind draws a schematic symbol (vs. a fallback card). */

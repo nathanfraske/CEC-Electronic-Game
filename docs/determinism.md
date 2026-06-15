@@ -21,6 +21,12 @@ Rules:
   node-voltage update and the device-current residual. Robustness aids
   (pn-junction voltage limiting, a small `gmin`) use fixed constants. A netlist
   with no nonlinear element keeps the original single-pass linear solve unchanged.
+- Tick-determined elements are pure functions of the tick. A time-varying linear
+  element (the first is the clock-driven PWM switch, a conductance toggled with a
+  fixed integer period) derives its state from the tick alone — no wall clock, no
+  hashing, no accumulated rounding — and is recomputed once per step before any
+  iterating, so it stamps into the fixed linear base. Being a deterministic
+  function of the tick, it reproduces bit-for-bit and rewinds with the tick.
 - Stable hashing only. Never use the standard library default hasher for a
   value that must reproduce across machines or compiler versions. The core
   uses FNV-1a over the snapshot bytes.
