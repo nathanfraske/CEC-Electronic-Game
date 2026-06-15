@@ -18,8 +18,11 @@
 //!
 //! ## Element set
 //!
-//! Every element has exactly two terminals, nodes `a` and `b`. Node `0` is
-//! ground (the reference, fixed at 0 V) and is eliminated from the system.
+//! Most elements have two terminals, nodes `a` and `b`; the transistors add a
+//! third **control** terminal `c` (the gate). Node `0` is ground (the reference,
+//! fixed at 0 V) and is eliminated from the system. A two-terminal element sets
+//! `c = 0`, where it is ignored, so adding the field changes nothing on the
+//! existing path.
 //!
 //! | type | element            | `value` units | model                              |
 //! |------|--------------------|---------------|------------------------------------|
@@ -34,11 +37,19 @@
 //! | 8    | Schottky diode     | (unused)      | Shockley (low Vf), Newton companion|
 //! | 9    | LED                | (unused)      | Shockley (high Vf), Newton companion|
 //! | 10   | Zener diode        | breakdown Vz  | Shockley + reverse-breakdown junction|
+//! | 11   | NMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
+//! | 12   | PMOS (nonlinear)   | (unused)      | level-1 square-law VCCS, Newton (D=a S=b G=c)|
 //!
 //! Types 5, 8, 9, and 10 are the **diode family**: one set of Newton-companion
 //! routines parameterised by a [`DiodeModel`] (saturation current + thermal
 //! voltage), differing only in the model constants. The standard silicon diode is
 //! unchanged, so existing nonlinear circuits reproduce bit-for-bit.
+//!
+//! Types 11 and 12 are the **MOSFET family**: a level-1 square-law
+//! voltage-controlled current source (drain `a`, source `b`, gate `c`) linearised
+//! into a transconductance + output-conductance companion each Newton iteration
+//! (see [`mosfet_eval`]). Like a diode they add no branch unknown; unlike a diode
+//! they read the third terminal `c`, which is the only reason `c` exists.
 //!
 //! ## Sinusoidal AC voltage source
 //!
@@ -224,6 +235,28 @@ pub const ELEM_LED: u8 = 9;
 /// limiting applied to whichever junction is active. See [`diode_model`].
 pub const ELEM_ZENER: u8 = 10;
 
+/// **N-channel MOSFET** (the first three-terminal device). Drain `a`, source `b`,
+/// gate `c`; the channel current flows `a -> b` (drain to source) and is
+/// controlled by `c`. A level-1 square-law voltage-controlled current source: at
+/// the current Newton iterate it linearises into a transconductance `gm` (from the
+/// gate) and an output conductance `gds` (drain-source) plus an equivalent current
+/// (see [`mosfet_eval`]). Like a diode it adds **no** branch unknown — it stamps
+/// conductances and a current into the KCL rows — but unlike a diode it reads the
+/// third terminal, which is why [`Element`] carries `c`. The gate draws no DC
+/// current (a [`GMIN`] is stamped to keep its node non-singular). `value` is
+/// **unused** for now; the model uses the fixed [`NMOS_VTO`], [`MOS_KP`],
+/// [`MOS_LAMBDA`].
+pub const ELEM_NMOS: u8 = 11;
+
+/// **P-channel MOSFET**. Drain `a`, source `b`, gate `c`; the conventions are the
+/// symmetric mirror of [`ELEM_NMOS`]. It conducts when the gate is *below* the
+/// source by more than `|VTO|` (its threshold [`PMOS_VTO`] is negative), and the
+/// drain current flows source -> drain (negative in `a -> b` terms). Internally it
+/// reuses the same square-law evaluation as the NMOS on sign-flipped terminal
+/// voltages (see [`mosfet_eval`]), so it rides the identical companion-stamp and
+/// commit machinery. `value` is **unused** for now.
+pub const ELEM_PMOS: u8 = 12;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Peak amplitude of an [`ELEM_ACSOURCE`], in volts. Fixed for now (the source's
@@ -277,6 +310,30 @@ const ZENER_VTH_BR: f64 = 0.02;
 /// Floor on a Zener's breakdown voltage, in volts, so `value <= 0` can't produce a
 /// degenerate or back-to-front device.
 const ZENER_VZ_MIN: f64 = 0.5;
+
+// --- MOSFET (level-1 square-law) model constants ------------------------------
+
+/// **NMOS** gate-source threshold voltage `VTO`, in volts. The channel turns on
+/// once `Vgs` exceeds this. Fixed default (an enhancement-mode logic-level part);
+/// the device's `value` field is unused for now.
+const NMOS_VTO: f64 = 2.0;
+/// **PMOS** gate-source threshold voltage `VTO`, in volts — negative, since a PMOS
+/// conducts when the gate is pulled *below* the source by more than `|VTO|`.
+const PMOS_VTO: f64 = -2.0;
+/// MOSFET transconductance parameter `KP = mu*Cox*(W/L)`, in A/V^2. Sets the drain
+/// current scale of the square law. Shared by both polarities.
+const MOS_KP: f64 = 0.02;
+/// MOSFET channel-length-modulation parameter `LAMBDA`, in 1/V. Gives the
+/// saturation region a finite (Early-like) output conductance, so a saturated
+/// stage has a real, non-zero `gds`. Shared by both polarities.
+const MOS_LAMBDA: f64 = 0.02;
+/// Maximum per-iteration change, in volts, allowed for a MOSFET's `Vgs`/`Vds`
+/// control voltages — the FET analogue of [`pnjlim`]'s junction limiting. The
+/// square law is polynomial (far less stiff than a diode exponential), so this
+/// mild clamp is all Newton needs to stay well behaved through the
+/// cutoff/triode/saturation corners; it only acts on large excursions, so a
+/// settled device passes through unchanged. See [`mosfet_limit`].
+const MOS_VLIM_DELTA: f64 = 2.0;
 
 /// The handful of model parameters a junction needs, so one set of Newton-companion
 /// routines ([`diode_eval`], [`diode_vcrit`], [`pnjlim`]) serves the whole diode
@@ -340,6 +397,22 @@ fn is_diode(kind: u8) -> bool {
     matches!(kind, ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER)
 }
 
+/// True for every MOSFET-family element. Like [`is_diode`], it centralises the
+/// membership test so the nonlinear split, the companion collection, and the
+/// current commit share one definition.
+#[inline]
+fn is_mosfet(kind: u8) -> bool {
+    matches!(kind, ELEM_NMOS | ELEM_PMOS)
+}
+
+/// True for every nonlinear element (any device that drives the Newton outer
+/// loop): the diode family or the MOSFET family. The single switch that selects
+/// the Newton path over the linear fast path.
+#[inline]
+fn is_nonlinear(kind: u8) -> bool {
+    is_diode(kind) || is_mosfet(kind)
+}
+
 // --- Newton outer-loop constants ----------------------------------------------
 
 /// Hard cap on Newton iterations per solve. If the loop has not converged by
@@ -361,18 +434,35 @@ const NEWTON_I_ABSTOL: f64 = 1.0e-12;
 /// forward operating point at our tolerances.
 const GMIN: f64 = 1.0e-12;
 
-/// One two-terminal ideal element in the netlist.
+/// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
+/// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
+/// use the control terminal `c`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Element {
     /// Element type. See the `ELEM_*` constants.
     pub kind: u8,
-    /// First terminal node index. Node `0` is ground.
+    /// First terminal node index (drain for a MOSFET). Node `0` is ground.
     pub a: usize,
-    /// Second terminal node index. Node `0` is ground.
+    /// Second terminal node index (source for a MOSFET). Node `0` is ground.
     pub b: usize,
+    /// Control terminal node index — the gate for a MOSFET. Unused for every
+    /// two-terminal element, where it is `0` (ground) and never read. Node `0`
+    /// is ground.
+    pub c: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
 }
+
+/// A diode's terminal map for the Newton companion: `(element_index, anode_mna,
+/// cathode_mna)`, each MNA index `None` for ground. Collected once per solve in
+/// ascending element order and stamped each iteration.
+type DiodeMap = (usize, Option<usize>, Option<usize>);
+
+/// A MOSFET's terminal map for the Newton companion: `(element_index, drain_mna,
+/// source_mna, gate_mna)`, each MNA index `None` for ground. The four-terminal
+/// analogue of [`DiodeMap`] (drain/source/gate); aliased so the collection and the
+/// `newton_iterate` signature stay readable.
+type MosfetMap = (usize, Option<usize>, Option<usize>, Option<usize>);
 
 /// Solve `A x = b` for a dense, row-major `n x n` system by Gaussian elimination
 /// with partial pivoting. Vec-backed so the dimension can vary per netlist, but
@@ -509,6 +599,81 @@ fn pnjlim(vnew: f64, vold: f64, m: DiodeModel) -> f64 {
     }
 }
 
+// --- MOSFET (level-1 square-law) device ----------------------------------------
+
+/// The small-signal companion of a level-1 square-law MOSFET, linearised about a
+/// control point. `gm = dId/dVgs` (the gate transconductance), `gds = dId/dVds`
+/// (the drain-source output conductance), and `id` is the drain current at the
+/// point.
+#[derive(Clone, Copy)]
+struct MosfetOp {
+    id: f64,
+    gm: f64,
+    gds: f64,
+}
+
+/// Evaluate the level-1 square-law MOSFET at control voltages `vgs`/`vds`,
+/// returning the drain current `Id` and its partials `gm = dId/dVgs`,
+/// `gds = dId/dVds`. The current is oriented **drain -> source** (the `a -> b`
+/// orientation of an [`ELEM_NMOS`]).
+///
+/// This is written for the NMOS sign convention (`vov = vgs - VTO`, conduction for
+/// `vov > 0`); the PMOS reuses it by negating its terminal voltages on the way in
+/// and the resulting current/partials on the way out (see [`Sim::mosfet_control`]
+/// and the commit), which keeps a single, well-tested square law for both
+/// polarities. Three regions, matched in value and slope at the boundaries:
+///
+/// - **Cutoff** (`vov <= 0`): the channel is off — `Id = gm = gds = 0`.
+/// - **Triode** (`0 < vds < vov`): `Id = KP*(vov*vds - 0.5*vds^2)`, so
+///   `gm = KP*vds` and `gds = KP*(vov - vds)`.
+/// - **Saturation** (`vds >= vov > 0`): `Id = 0.5*KP*vov^2*(1 + LAMBDA*vds)`, so
+///   `gm = KP*vov*(1 + LAMBDA*vds)` and `gds = 0.5*KP*vov^2*LAMBDA`.
+///
+/// Pure, branch-clean `f64` (the region split is on the control values, which are
+/// limited deterministically before the call), so it never costs determinism.
+#[inline]
+fn mosfet_eval(vgs: f64, vds: f64, kp: f64, vto: f64, lambda: f64) -> MosfetOp {
+    let vov = vgs - vto;
+    if vov <= 0.0 {
+        // Cutoff: no channel.
+        MosfetOp {
+            id: 0.0,
+            gm: 0.0,
+            gds: 0.0,
+        }
+    } else if vds < vov {
+        // Triode (linear/ohmic) region.
+        let id = kp * (vov * vds - 0.5 * vds * vds);
+        let gm = kp * vds;
+        let gds = kp * (vov - vds);
+        MosfetOp { id, gm, gds }
+    } else {
+        // Saturation region, with channel-length modulation.
+        let id = 0.5 * kp * vov * vov * (1.0 + lambda * vds);
+        let gm = kp * vov * (1.0 + lambda * vds);
+        let gds = 0.5 * kp * vov * vov * lambda;
+        MosfetOp { id, gm, gds }
+    }
+}
+
+/// MOSFET control-voltage limiting — the square-law analogue of [`pnjlim`]. Clamp
+/// the proposed new control voltage `vnew` so it cannot move more than
+/// [`MOS_VLIM_DELTA`] from the previous iterate `vold`, keeping Newton from
+/// overshooting across the cutoff/triode/saturation corners. Small steps pass
+/// through unchanged, so a settled device is unaffected and this never
+/// over-iterates. Deterministic, pure `f64`.
+#[inline]
+fn mosfet_limit(vnew: f64, vold: f64) -> f64 {
+    let delta = vnew - vold;
+    if delta > MOS_VLIM_DELTA {
+        vold + MOS_VLIM_DELTA
+    } else if delta < -MOS_VLIM_DELTA {
+        vold - MOS_VLIM_DELTA
+    } else {
+        vnew
+    }
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -529,8 +694,9 @@ pub struct Sim {
     /// (resistors, capacitors, and diodes).
     branch_index: Vec<usize>,
     /// `true` iff the installed netlist contains at least one nonlinear element
-    /// (today: a diode). Selects the Newton outer loop over the linear fast path;
-    /// when `false`, the solve is byte-for-byte the original single-pass solve.
+    /// (a diode or a MOSFET). Selects the Newton outer loop over the linear fast
+    /// path; when `false`, the solve is byte-for-byte the original single-pass
+    /// solve.
     has_nonlinear: bool,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
@@ -546,6 +712,14 @@ pub struct Sim {
     /// junction of the last step. Only the diode entries are meaningful; others
     /// stay `0.0`. Indexed in lockstep with `elements`.
     diode_vd: Vec<f64>,
+    /// Per-element MOSFET gate-source control voltage `Vgs` carried as the
+    /// previous Newton iterate. Seeds the iterate and gives [`mosfet_limit`] its
+    /// reference (the FET analogue of `diode_vd`). Only MOSFET entries are
+    /// meaningful; others stay `0.0`. Indexed in lockstep with `elements`.
+    mosfet_vgs: Vec<f64>,
+    /// Per-element MOSFET drain-source control voltage `Vds`, the companion of
+    /// [`Sim::mosfet_vgs`]; same role and indexing.
+    mosfet_vds: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -590,27 +764,33 @@ impl Sim {
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             diode_vd: Vec::new(),
+            mosfet_vgs: Vec::new(),
+            mosfet_vds: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
-        // 1 = source/R junction, 2 = R/C junction.
+        // 1 = source/R junction, 2 = R/C junction. Two-terminal elements set the
+        // unused control terminal c = 0 (ground), where it is ignored.
         let demo = vec![
             Element {
                 kind: ELEM_VSOURCE,
                 a: 1,
                 b: 0,
+                c: 0,
                 value: v_source,
             },
             Element {
                 kind: ELEM_RESISTOR,
                 a: 1,
                 b: 2,
+                c: 0,
                 value: 1_000.0,
             },
             Element {
                 kind: ELEM_CAPACITOR,
                 a: 2,
                 b: 0,
+                c: 0,
                 value: 1.0e-6,
             },
         ];
@@ -620,23 +800,26 @@ impl Sim {
 
     /// Replace the circuit with the given netlist and reset to `t = 0`.
     ///
-    /// `types`, `a`, `b`, and `values` are parallel arrays (one entry per
-    /// element). On any length mismatch, a node index outside `0..node_count`,
-    /// a zero `node_count`, or an unknown element type, the call **fails safe
-    /// deterministically**: the simulation is replaced with an empty
-    /// single-node (ground-only) circuit and `false` is returned. On success the
-    /// netlist is installed, reactive elements start discharged, and `true` is
-    /// returned. Never panics.
+    /// `types`, `a`, `b`, `c`, and `values` are parallel arrays (one entry per
+    /// element). `c` is the **control terminal** (the gate of a MOSFET); for every
+    /// two-terminal element it is ignored, so callers pass `0` (or any in-range
+    /// node) there. On any length mismatch, a node index (`a`, `b`, or `c`)
+    /// outside `0..node_count`, a zero `node_count`, or an unknown element type,
+    /// the call **fails safe deterministically**: the simulation is replaced with
+    /// an empty single-node (ground-only) circuit and `false` is returned. On
+    /// success the netlist is installed, reactive elements start discharged, and
+    /// `true` is returned. Never panics.
     pub fn set_netlist(
         &mut self,
         node_count: usize,
         types: &[u8],
         a: &[u32],
         b: &[u32],
+        c: &[u32],
         values: &[f64],
     ) -> bool {
         let n = types.len();
-        if a.len() != n || b.len() != n || values.len() != n || node_count == 0 {
+        if a.len() != n || b.len() != n || c.len() != n || values.len() != n || node_count == 0 {
             self.install_empty();
             return false;
         }
@@ -657,13 +840,19 @@ impl Sim {
                     | ELEM_SCHOTTKY
                     | ELEM_LED
                     | ELEM_ZENER
+                    | ELEM_NMOS
+                    | ELEM_PMOS
             ) {
                 self.install_empty();
                 return false;
             }
             let na = a[i] as usize;
             let nb = b[i] as usize;
-            if na >= node_count || nb >= node_count {
+            let nc = c[i] as usize;
+            // Validate all three terminals. `c` is ignored at solve time for a
+            // two-terminal element, but it is still range-checked so a malformed
+            // index is rejected fail-safe rather than stored.
+            if na >= node_count || nb >= node_count || nc >= node_count {
                 self.install_empty();
                 return false;
             }
@@ -671,6 +860,7 @@ impl Sim {
                 kind,
                 a: na,
                 b: nb,
+                c: nc,
                 value: values[i],
             });
         }
@@ -701,7 +891,7 @@ impl Sim {
             }
         }
 
-        let has_nonlinear = elements.iter().any(|e| is_diode(e.kind));
+        let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
 
         self.node_count = node_count;
         self.dim = next;
@@ -709,6 +899,8 @@ impl Sim {
         self.has_nonlinear = has_nonlinear;
         self.reactive_state = vec![0.0; elements.len()];
         self.diode_vd = vec![0.0; elements.len()];
+        self.mosfet_vgs = vec![0.0; elements.len()];
+        self.mosfet_vds = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -728,6 +920,12 @@ impl Sim {
         for vd in &mut self.diode_vd {
             *vd = 0.0;
         }
+        for v in &mut self.mosfet_vgs {
+            *v = 0.0;
+        }
+        for v in &mut self.mosfet_vds {
+            *v = 0.0;
+        }
         for v in &mut self.node_v {
             *v = 0.0;
         }
@@ -741,6 +939,32 @@ impl Sim {
             None
         } else {
             Some(node - 1)
+        }
+    }
+
+    /// Linearise a MOSFET (`ELEM_NMOS`/`ELEM_PMOS`) about the **actual** terminal
+    /// voltages `vgs = V(c) - V(b)` and `vds = V(a) - V(b)`, returning the drain
+    /// current `Id` (oriented `a -> b`) and the partials `gm = dId/dVgs`,
+    /// `gds = dId/dVds` in those same actual variables — exactly what the companion
+    /// stamp needs, independent of polarity.
+    ///
+    /// The PMOS reuses the NMOS square law on sign-flipped internal variables
+    /// (`vgs_n = -vgs`, `vds_n = -vds`, threshold `-PMOS_VTO`). Because the map is a
+    /// pure negation, the chain rule sends the conductances straight back
+    /// (`gm = gm_n`, `gds = gds_n`) and only the current flips (`Id = -id_n`), so a
+    /// single [`mosfet_eval`] serves both. Pure `f64`, deterministic.
+    #[inline]
+    fn mosfet_op(kind: u8, vgs: f64, vds: f64) -> MosfetOp {
+        if kind == ELEM_PMOS {
+            // Evaluate the NMOS square law on the mirrored internal variables.
+            let op = mosfet_eval(-vgs, -vds, MOS_KP, -PMOS_VTO, MOS_LAMBDA);
+            MosfetOp {
+                id: -op.id,
+                gm: op.gm,
+                gds: op.gds,
+            }
+        } else {
+            mosfet_eval(vgs, vds, MOS_KP, NMOS_VTO, MOS_LAMBDA)
         }
     }
 
@@ -1086,16 +1310,24 @@ impl Sim {
     /// and the junction iterate from `self.diode_vd`; both are updated in place,
     /// and the solved unknown vector `x` of the final iterate is returned.
     ///
-    /// Determinism: fixed element/diode order, fixed assembly and solve order,
-    /// pure `f64`, no hashed iteration. The iteration count is data-dependent but
-    /// bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the last iterate is
-    /// kept (a defined, finite outcome).
+    /// MOSFETs ride the same loop: the `mosfets` slice lists, in ascending element
+    /// order, each device as `(element_index, drain_mna, source_mna, gate_mna)`
+    /// with `None` for a grounded terminal. Their control iterate is carried in
+    /// `self.mosfet_vgs`/`self.mosfet_vds` and limited by [`mosfet_limit`], the
+    /// FET analogue of the junction limiting, so they fold into the same
+    /// convergence gates as the diodes.
+    ///
+    /// Determinism: fixed element/diode/mosfet order, fixed assembly and solve
+    /// order, pure `f64`, no hashed iteration. The iteration count is
+    /// data-dependent but bounded by [`NEWTON_MAX_ITERS`]; on non-convergence the
+    /// last iterate is kept (a defined, finite outcome).
     fn newton_iterate(
         &mut self,
         n: usize,
         base_mat: &[f64],
         base_rhs: &[f64],
-        diodes: &[(usize, Option<usize>, Option<usize>)],
+        diodes: &[DiodeMap],
+        mosfets: &[MosfetMap],
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -1129,6 +1361,48 @@ impl Sim {
                 }
             }
 
+            // Stamp each MOSFET's companion at its current control point. The
+            // device is a transconductance `gm` (gate -> channel) and an output
+            // conductance `gds` (drain-source) in parallel with an equivalent
+            // current `Ieq = Id - gm*Vgs - gds*Vds`. With drain `a`, source `b`,
+            // gate `c`, the exact KCL stamps (skipping any grounded terminal) are:
+            //   row a(D): +gds at (a,a), +gm at (a,c), -(gm+gds) at (a,b), rhs[a]-=Ieq
+            //   row b(S): -gds at (b,a), -gm at (b,c), +(gm+gds) at (b,b), rhs[b]+=Ieq
+            //   row c(G): +GMIN at (c,c)  (ideal gate draws no current; keeps it
+            //             non-singular, reusing the diode `gmin` floor).
+            for &(ei, ia, ib, ic) in mosfets {
+                let el = self.elements[ei];
+                let vgs = self.mosfet_vgs[ei];
+                let vds = self.mosfet_vds[ei];
+                let op = Self::mosfet_op(el.kind, vgs, vds);
+                let gm = op.gm;
+                let gds = op.gds;
+                let ieq = op.id - gm * vgs - gds * vds;
+                if let Some(r) = ia {
+                    mat[r * n + r] += gds;
+                    rhs[r] -= ieq;
+                    if let Some(cc) = ic {
+                        mat[r * n + cc] += gm;
+                    }
+                    if let Some(bb) = ib {
+                        mat[r * n + bb] -= gm + gds;
+                    }
+                }
+                if let Some(r) = ib {
+                    mat[r * n + r] += gm + gds;
+                    rhs[r] += ieq;
+                    if let Some(aa) = ia {
+                        mat[r * n + aa] -= gds;
+                    }
+                    if let Some(cc) = ic {
+                        mat[r * n + cc] -= gm;
+                    }
+                }
+                if let Some(r) = ic {
+                    mat[r * n + r] += GMIN;
+                }
+            }
+
             x = solve_dense(mat, rhs, n);
 
             // Update junction voltages with pn-junction limiting, and measure the
@@ -1143,6 +1417,8 @@ impl Sim {
             // an inactive limiter closes that false-convergence hole. Reverse and
             // small-forward steps pass through pnjlim unchanged, so the gap is
             // exactly zero at a true operating point and this never over-iterates.
+            // The MOSFET limiter feeds the same gap so a still-limiting FET also
+            // blocks a premature "converged".
             let mut max_vd_gap = 0.0f64;
             for &(ei, ia, ib) in diodes {
                 let va = ia.map(|r| x[r]).unwrap_or(0.0);
@@ -1179,6 +1455,39 @@ impl Sim {
                 self.diode_vd[ei] = vd_new;
             }
 
+            // Update each MOSFET's control voltages with the FET step limiter, and
+            // fold its limiter gap into the same "limiter inactive" gate as the
+            // diodes. The drain-current residual is tracked separately (the diode's
+            // sub-pA absolute tolerance does not fit a mA-scale FET current), with
+            // its own absolute + relative test below. Vgs = V(c) - V(b),
+            // Vds = V(a) - V(b) at the fresh solve.
+            let mut converged_mos_i = true;
+            for &(ei, ia, ib, ic) in mosfets {
+                let va = ia.map(|r| x[r]).unwrap_or(0.0);
+                let vb = ib.map(|r| x[r]).unwrap_or(0.0);
+                let vc = ic.map(|r| x[r]).unwrap_or(0.0);
+                let vgs_raw = vc - vb;
+                let vds_raw = va - vb;
+                let vgs_old = self.mosfet_vgs[ei];
+                let vds_old = self.mosfet_vds[ei];
+                let vgs_new = mosfet_limit(vgs_raw, vgs_old);
+                let vds_new = mosfet_limit(vds_raw, vds_old);
+                let gap = (vgs_raw - vgs_new).abs().max((vds_raw - vds_new).abs());
+                if gap > max_vd_gap {
+                    max_vd_gap = gap;
+                }
+                let el = self.elements[ei];
+                let i_old = Self::mosfet_op(el.kind, vgs_old, vds_old).id;
+                let i_new = Self::mosfet_op(el.kind, vgs_new, vds_new).id;
+                let di = (i_new - i_old).abs();
+                let tol = NEWTON_I_ABSTOL + NEWTON_RELTOL * i_new.abs().max(i_old.abs());
+                if di > tol {
+                    converged_mos_i = false;
+                }
+                self.mosfet_vgs[ei] = vgs_new;
+                self.mosfet_vds[ei] = vds_new;
+            }
+
             // Node-voltage update test (absolute + relative), over node rows only.
             let mut converged_v = true;
             for r in 0..(self.node_count - 1) {
@@ -1189,13 +1498,14 @@ impl Sim {
                 }
             }
             let converged_i = max_i_change <= NEWTON_I_ABSTOL;
-            // The limiter must be inactive (junctions settled), not still hauling a
-            // cold-started high-Vf device up toward its knee.
+            // The limiter must be inactive (junctions and FET control voltages
+            // settled), not still hauling a cold-started high-Vf device up toward
+            // its knee or clamping a big FET swing.
             let converged_limit = max_vd_gap <= NEWTON_V_ABSTOL;
 
-            // Require all three tests, and at least one full iteration, so a stale
+            // Require all the tests, and at least one full iteration, so a stale
             // seed cannot report convergence before a fresh solve.
-            if converged_v && converged_i && converged_limit {
+            if converged_v && converged_i && converged_mos_i && converged_limit {
                 // Recompute node voltages from the limited junctions on the next
                 // pass would be a no-op (already converged); commit and stop.
                 self.node_v[0] = 0.0;
@@ -1238,10 +1548,11 @@ impl Sim {
             return;
         }
 
-        // Stamp the fixed linear part once and collect the diode terminal map.
+        // Stamp the fixed linear part once and collect the diode and MOSFET maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
-        let mut diodes: Vec<(usize, Option<usize>, Option<usize>)> = Vec::new();
+        let mut diodes: Vec<DiodeMap> = Vec::new();
+        let mut mosfets: Vec<MosfetMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -1318,11 +1629,12 @@ impl Sim {
                     }
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
+                ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes);
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets);
 
         // Commit per-element currents (oriented a -> b) at the operating point.
         for (i, e) in self.elements.iter().enumerate() {
@@ -1340,6 +1652,9 @@ impl Sim {
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
+                }
+                ELEM_NMOS | ELEM_PMOS => {
+                    Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
                 _ => 0.0,
             };
@@ -1361,10 +1676,11 @@ impl Sim {
             return Vec::new();
         }
 
-        // Stamp the fixed linear part once and collect the diode terminal map.
+        // Stamp the fixed linear part once and collect the diode and MOSFET maps.
         let mut base_mat = vec![0.0f64; n * n];
         let mut base_rhs = vec![0.0f64; n];
-        let mut diodes: Vec<(usize, Option<usize>, Option<usize>)> = Vec::new();
+        let mut diodes: Vec<DiodeMap> = Vec::new();
+        let mut mosfets: Vec<MosfetMap> = Vec::new();
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -1471,11 +1787,12 @@ impl Sim {
                     }
                 }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
+                ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 _ => {}
             }
         }
 
-        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes);
+        let x = self.newton_iterate(n, &base_mat, &base_rhs, &diodes, &mosfets);
 
         // Commit per-element currents (oriented a -> b) while `reactive_state`
         // still holds the previous-step values (capacitor history term).
@@ -1498,6 +1815,9 @@ impl Sim {
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
+                }
+                ELEM_NMOS | ELEM_PMOS => {
+                    Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
                 _ => 0.0,
             };
@@ -1649,11 +1969,33 @@ impl Sim {
 mod tests {
     use super::*;
 
-    /// Build a fresh `Sim`, install a netlist, and assert the install succeeded.
+    /// Build a fresh `Sim`, install a two-terminal netlist, and assert the install
+    /// succeeded. The control terminal `c` is all-ground (zeros), since every
+    /// element here is two-terminal and ignores it. See [`build3`] for MOSFETs.
     fn build(node_count: usize, types: &[u8], a: &[u32], b: &[u32], values: &[f64]) -> Sim {
+        let c = vec![0u32; types.len()];
         let mut sim = Sim::new(1);
         assert!(
-            sim.set_netlist(node_count, types, a, b, values),
+            sim.set_netlist(node_count, types, a, b, &c, values),
+            "valid netlist must install"
+        );
+        sim
+    }
+
+    /// Build a fresh `Sim` from a netlist that includes the third (control)
+    /// terminal `c`, for the MOSFET tests. Two-terminal elements in the same
+    /// netlist set their `c` entry to `0` (ground), where it is ignored.
+    fn build3(
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        values: &[f64],
+    ) -> Sim {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(node_count, types, a, b, c, values),
             "valid netlist must install"
         );
         sim
@@ -1948,25 +2290,32 @@ mod tests {
     #[test]
     fn invalid_netlist_fails_safe() {
         let mut sim = Sim::new(3);
-        // Mismatched array lengths.
-        let ok = sim.set_netlist(2, &[ELEM_RESISTOR], &[1, 0], &[0], &[1_000.0]);
+        // Mismatched array lengths (`a` has two entries, the rest one).
+        let ok = sim.set_netlist(2, &[ELEM_RESISTOR], &[1, 0], &[0], &[0], &[1_000.0]);
         assert!(!ok, "length mismatch must be rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
         assert_eq!(sim.element_currents().len(), 0, "no elements remain");
+        // Mismatched control-array length (`c` too long) is rejected too.
+        let ok_c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[0, 0], &[1_000.0]);
+        assert!(!ok_c, "mismatched c length must be rejected");
         // Out-of-range node.
-        let ok2 = sim.set_netlist(2, &[ELEM_RESISTOR], &[5], &[0], &[1_000.0]);
+        let ok2 = sim.set_netlist(2, &[ELEM_RESISTOR], &[5], &[0], &[0], &[1_000.0]);
         assert!(!ok2, "out-of-range node must be rejected");
+        // Out-of-range control node (even though a resistor ignores it).
+        let ok2c = sim.set_netlist(2, &[ELEM_RESISTOR], &[1], &[0], &[7], &[1_000.0]);
+        assert!(!ok2c, "out-of-range control node must be rejected");
         // Unknown element type.
-        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[1_000.0]);
+        let ok3 = sim.set_netlist(2, &[99], &[1], &[0], &[0], &[1_000.0]);
         assert!(!ok3, "unknown element type must be rejected");
         // Zero node_count.
-        let ok4 = sim.set_netlist(0, &[], &[], &[], &[]);
+        let ok4 = sim.set_netlist(0, &[], &[], &[], &[], &[]);
         assert!(!ok4, "zero node_count must be rejected");
         // A subsequent valid netlist still installs fine.
         let ok5 = sim.set_netlist(
             2,
             &[ELEM_VSOURCE, ELEM_RESISTOR],
             &[1, 1],
+            &[0, 0],
             &[0, 0],
             &[5.0, 1_000.0],
         );
@@ -2528,13 +2877,14 @@ mod tests {
             &[ELEM_VSOURCE, ELEM_DIODE],
             &[1, 1],
             &[0, 0],
+            &[0, 0],
             &[5.0, 0.0],
         );
         assert!(ok, "valid diode netlist installs");
         assert_eq!(sim.element_count(), 2);
         assert_eq!(sim.element_at(1).kind, ELEM_DIODE, "diode stored as type 5");
         // Out-of-range node on a diode is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0.0]);
+        let bad = sim.set_netlist(2, &[ELEM_DIODE], &[9], &[0], &[0], &[0.0]);
         assert!(!bad, "out-of-range diode node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -2795,6 +3145,7 @@ mod tests {
             &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR],
             &[1, 1, 2],
             &[0, 2, 0],
+            &[0, 0, 0],
             &[5.0, 0.5, 1_000.0],
         );
         assert!(ok, "valid switch netlist installs");
@@ -2805,7 +3156,7 @@ mod tests {
             "switch stored as type 6"
         );
         // Out-of-range node on a switch is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0.5]);
+        let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0.5]);
         assert!(!bad, "out-of-range switch node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -3051,6 +3402,7 @@ mod tests {
             &[ELEM_ACSOURCE, ELEM_RESISTOR],
             &[1, 1],
             &[0, 0],
+            &[0, 0],
             &[1_000.0, 1_000.0],
         );
         assert!(ok, "valid AC source netlist installs");
@@ -3061,7 +3413,7 @@ mod tests {
             "AC source stored as type 7"
         );
         // Out-of-range node on an AC source is still rejected (fail-safe).
-        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[1_000.0]);
+        let bad = sim.set_netlist(2, &[ELEM_ACSOURCE], &[9], &[0], &[0], &[1_000.0]);
         assert!(!bad, "out-of-range AC source node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
     }
@@ -3081,5 +3433,385 @@ mod tests {
             sim.node_voltages()[2] > before,
             "demo capacitor charges, so the app shows life"
         );
+    }
+
+    // --- Three-terminal: NMOS / PMOS + Newton ---------------------------------
+    //
+    // The level-1 square-law MOSFET (types 11/12) is the first device to use the
+    // control terminal `c` (the gate). It drives the same deterministic Newton
+    // outer loop as the diode. These tests check the operating point against the
+    // square law it implements (so the result is verified against the model, not a
+    // fitted constant), the common-source switch/amplifier behavior, the PMOS
+    // mirror, validation, and the replay invariant.
+
+    /// Independent reference for an NMOS common-source stage: a drain resistor `rd`
+    /// from `vdd` to the drain, source grounded, gate held at `vgs` (so `Vgs` is
+    /// fixed). Solve `Vds = vdd - Id(vgs, Vds)*rd` for the drain voltage `Vds` by a
+    /// scalar fixed-point/Newton iteration on the *same* square law the core uses
+    /// ([`mosfet_eval`]), returning `(Id, Vds)`. This checks the solver against the
+    /// model directly.
+    fn nmos_cs_reference(vdd: f64, rd: f64, vgs: f64) -> (f64, f64) {
+        // f(vds) = vds - vdd + Id(vds)*rd = 0. Id and dId/dVds from mosfet_eval.
+        let mut vds = vdd; // start with the no-current drop (cutoff guess)
+        for _ in 0..200 {
+            let op = mosfet_eval(vgs, vds, MOS_KP, NMOS_VTO, MOS_LAMBDA);
+            let f = vds - vdd + op.id * rd;
+            let df = 1.0 + op.gds * rd; // d/dVds
+            vds -= f / df;
+        }
+        let op = mosfet_eval(vgs, vds, MOS_KP, NMOS_VTO, MOS_LAMBDA);
+        (op.id, vds)
+    }
+
+    /// An NMOS common-source stage with the gate held **below** threshold is in
+    /// cutoff: it carries no drain current, so the drain resistor drops nothing and
+    /// the drain sits at the rail (the "off" state of an NMOS switch / a logic
+    /// HIGH). Layout: VDD source 1->0; RD 1->2; NMOS drain=2, source=0, gate=3;
+    /// gate source 3->0 = Vgg (< VTO = 2 V).
+    #[test]
+    fn nmos_cutoff_pulls_drain_to_rail() {
+        let vdd = 5.0;
+        let rd = 1_000.0;
+        let vgg = 1.0; // below VTO -> cutoff
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NMOS, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0], // only the NMOS reads c (its gate = node 3)
+            &[vdd, rd, 0.0, vgg],
+        );
+        let v = sim.node_voltages();
+        // Drain (node 2) sits at the rail: no current, no IR drop.
+        assert!(
+            (v[2] - vdd).abs() < 1e-6,
+            "cutoff NMOS leaves the drain at the rail: got {}",
+            v[2]
+        );
+        // The NMOS (element 2) carries essentially no drain current.
+        let c = sim.element_currents();
+        assert!(
+            c[2].abs() < 1e-9,
+            "cutoff NMOS carries no drain current: got {}",
+            c[2]
+        );
+    }
+
+    /// With the gate held **well above** threshold, the NMOS turns hard on and
+    /// pulls the drain far below the rail — the "on" state of the switch / a logic
+    /// LOW. The drain current is positive (drain -> source) and the resistor and
+    /// device currents match (series KCL). Same layout as the cutoff test with a
+    /// high gate drive.
+    #[test]
+    fn nmos_conducts_and_pulls_drain_low() {
+        let vdd = 5.0;
+        let rd = 1_000.0;
+        let vgg = 5.0; // well above VTO -> strong conduction
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NMOS, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0],
+            &[vdd, rd, 0.0, vgg],
+        );
+        let v = sim.node_voltages();
+        assert!(v.iter().all(|x| x.is_finite()), "finite (Newton converged)");
+        // The drain is pulled well below the rail (switch closed / logic LOW).
+        assert!(
+            v[2] < 0.5,
+            "conducting NMOS pulls the drain low: got {}",
+            v[2]
+        );
+        let c = sim.element_currents();
+        // Drain current is positive (a -> b is drain -> source) and ~ rail/RD.
+        assert!(c[2] > 0.0, "conducting NMOS draws drain current");
+        // Series loop: the drain resistor (1->2) and the NMOS (2->0) carry the
+        // same current (KCL at node 2).
+        assert!(
+            (c[1] - c[2]).abs() < 1e-9,
+            "RD and NMOS carry the same series current: {} vs {}",
+            c[1],
+            c[2]
+        );
+    }
+
+    /// The defining quantitative check: a saturated NMOS common-source stage lands
+    /// exactly on the square-law operating point, to ~1e-6. The chosen drive keeps
+    /// `Vds >= Vov`, so the device is in saturation; the drain voltage and current
+    /// both match the independent scalar reference, and the series-loop KCL holds.
+    #[test]
+    fn nmos_saturation_operating_point_matches_square_law() {
+        let vdd = 5.0;
+        let rd = 100.0;
+        let vgg = 3.0; // Vov = Vgg - VTO = 1.0 V
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NMOS, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0],
+            &[vdd, rd, 0.0, vgg],
+        );
+        let (id_ref, vds_ref) = nmos_cs_reference(vdd, rd, vgg);
+        // Sanity on the reference itself: this operating point is in saturation
+        // (Vds >= Vov = 1.0), where the square law and its gds are well defined.
+        assert!(
+            vds_ref >= (vgg - NMOS_VTO),
+            "reference point is in saturation: Vds {} >= Vov {}",
+            vds_ref,
+            vgg - NMOS_VTO
+        );
+        let v = sim.node_voltages();
+        assert!(
+            (v[2] - vds_ref).abs() < 1e-6,
+            "drain voltage matches the square law: got {}, want {}",
+            v[2],
+            vds_ref
+        );
+        let c = sim.element_currents();
+        assert!(
+            (c[2] - id_ref).abs() < 1e-6,
+            "drain current matches the square law: got {}, want {}",
+            c[2],
+            id_ref
+        );
+        // Series-loop KCL: RD current equals the drain current.
+        assert!(
+            (c[1] - c[2]).abs() < 1e-9,
+            "series loop carries one current: {} vs {}",
+            c[1],
+            c[2]
+        );
+    }
+
+    /// A saturated common-source stage shows **transconductance**: raising the gate
+    /// a little raises the drain current and so lowers the drain voltage (inverting
+    /// gain). The measured small-signal gain `dVds/dVgg` has the right sign and is
+    /// the textbook `-gm*RD` to good tolerance, confirming the companion's `gm`.
+    #[test]
+    fn nmos_common_source_amplifies_with_transconductance() {
+        let vdd = 5.0;
+        let rd = 100.0;
+        let vgg0 = 3.0;
+        let dv = 1.0e-3; // small gate perturbation
+        let drain = |vgg: f64| {
+            build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NMOS, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[vdd, rd, 0.0, vgg],
+            )
+            .node_voltages()[2]
+        };
+        let vds_lo = drain(vgg0 - dv);
+        let vds_hi = drain(vgg0 + dv);
+        // Inverting: more gate -> more Id -> lower drain.
+        assert!(
+            vds_hi < vds_lo,
+            "common-source inverts: higher gate -> lower drain ({} !< {})",
+            vds_hi,
+            vds_lo
+        );
+        let gain = (vds_hi - vds_lo) / (2.0 * dv);
+        // Square-law gm at the bias: in saturation gm = KP*Vov*(1+LAMBDA*Vds).
+        let (_, vds0) = nmos_cs_reference(vdd, rd, vgg0);
+        let vov = vgg0 - NMOS_VTO;
+        let gm = MOS_KP * vov * (1.0 + MOS_LAMBDA * vds0);
+        // Small-signal gain of a common-source stage with finite ro = 1/gds:
+        // Av = -gm * (RD || ro). Compare to the measured slope.
+        let gds = 0.5 * MOS_KP * vov * vov * MOS_LAMBDA;
+        let ro = 1.0 / gds;
+        let r_eff = rd * ro / (rd + ro);
+        let gain_expected = -gm * r_eff;
+        assert!(
+            (gain - gain_expected).abs() < 1e-3 * gain_expected.abs().max(1.0),
+            "small-signal gain ~ -gm*(RD||ro): got {}, want {}",
+            gain,
+            gain_expected
+        );
+    }
+
+    /// The PMOS is the high-side mirror of the NMOS. Wired drain `a` = node 2
+    /// (output), source `b` = node 1 (rail), gate `c` = node 3. With the gate at
+    /// the rail (`Vgs = V(3) - V(1) = 0`, above the negative threshold) it is
+    /// **off** — the pull-down resistor holds the drain near ground. Pulling the
+    /// gate to ground (`Vgs = -VDD`, below `PMOS_VTO`) turns it **on**, sourcing
+    /// current from the rail and pulling the drain high. Layout: VDD source 1->0;
+    /// PMOS drain=2 source=1 gate=3; RD (pull-down) 2->0; gate source 3->0 = Vgg.
+    #[test]
+    fn pmos_high_side_switch_off_and_on() {
+        let vdd = 5.0;
+        let rd = 1_000.0;
+        let build_pmos = |vgg: f64| {
+            build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_PMOS, ELEM_RESISTOR, ELEM_VSOURCE],
+                &[1, 2, 2, 3], // PMOS a = drain = node 2
+                &[0, 1, 0, 0], // PMOS b = source = node 1 (rail)
+                &[0, 3, 0, 0], // PMOS c = gate = node 3
+                &[vdd, 0.0, rd, vgg],
+            )
+        };
+        // Gate at the rail: Vgs = V(gate) - V(source) = 5 - 5 = 0 > VTO(-2) -> off.
+        let off = build_pmos(vdd);
+        let voff = off.node_voltages();
+        assert!(voff.iter().all(|x| x.is_finite()), "off state finite");
+        assert!(
+            voff[2].abs() < 0.5,
+            "PMOS off: pull-down holds the drain near ground, got {}",
+            voff[2]
+        );
+        assert!(
+            off.element_currents()[1].abs() < 1e-6,
+            "PMOS off carries ~no current: got {}",
+            off.element_currents()[1]
+        );
+        // Gate at ground: Vgs = 0 - 5 = -5 < VTO(-2) -> on, drain pulled up.
+        let on = build_pmos(0.0);
+        let von = on.node_voltages();
+        assert!(von.iter().all(|x| x.is_finite()), "on state finite");
+        assert!(
+            von[2] > 2.0,
+            "PMOS on: sources from the rail and pulls the drain high, got {}",
+            von[2]
+        );
+        // The PMOS drain current flows source -> drain, i.e. *into* the drain (`a`)
+        // from outside, which is negative in the a -> b convention.
+        let c = on.element_currents();
+        assert!(
+            c[1] < 0.0,
+            "PMOS sources current into the drain (negative a->b)"
+        );
+        // KCL at the drain (node 2): the PMOS delivers current there and the
+        // pull-down (2->0) carries it to ground, so their magnitudes match. The
+        // PMOS current a->b leaves node 2 (its `a`) as a negative number, the
+        // resistor a->b leaves node 2 as a positive number; they sum to ~0.
+        assert!(
+            (c[1] + c[2]).abs() < 1e-9,
+            "drain KCL: PMOS and pull-down balance: {} vs {}",
+            c[1],
+            c[2]
+        );
+    }
+
+    /// `set_netlist` accepts the MOSFET element types (11 and 12), stores the
+    /// control node, and marks the netlist nonlinear (so the Newton path runs). A
+    /// malformed netlist that contains a MOSFET — including an out-of-range control
+    /// node — still fails safe through the same validation.
+    #[test]
+    fn mosfet_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // A valid NMOS common-source stage installs and stores the gate node.
+        let ok = sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NMOS, ELEM_VSOURCE],
+            &[1, 1, 2, 3],
+            &[0, 2, 0, 0],
+            &[0, 0, 3, 0],
+            &[5.0, 1_000.0, 0.0, 3.0],
+        );
+        assert!(ok, "valid NMOS netlist installs");
+        assert_eq!(sim.element_count(), 4);
+        let nmos = sim.element_at(2);
+        assert_eq!(nmos.kind, ELEM_NMOS, "NMOS stored as type 11");
+        assert_eq!(nmos.c, 3, "the NMOS gate node (c) is stored");
+        // A PMOS installs too, as type 12 (drain=2, source=1, gate=3).
+        let okp = sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_PMOS, ELEM_RESISTOR, ELEM_VSOURCE],
+            &[1, 2, 2, 3],
+            &[0, 1, 0, 0],
+            &[0, 3, 0, 0],
+            &[5.0, 0.0, 1_000.0, 0.0],
+        );
+        assert!(okp, "valid PMOS netlist installs");
+        assert_eq!(sim.element_at(1).kind, ELEM_PMOS, "PMOS stored as type 12");
+        assert_eq!(sim.element_at(1).c, 3, "the PMOS gate node (c) is stored");
+        // Out-of-range control (gate) node is rejected fail-safe.
+        let bad = sim.set_netlist(
+            3,
+            &[ELEM_NMOS],
+            &[2],
+            &[0],
+            &[9], // gate node 9 out of range for node_count 3
+            &[0.0],
+        );
+        assert!(!bad, "out-of-range MOSFET gate node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+        // Out-of-range drain node is rejected too.
+        let bad2 = sim.set_netlist(3, &[ELEM_NMOS], &[9], &[0], &[1], &[0.0]);
+        assert!(!bad2, "out-of-range MOSFET drain node rejected");
+    }
+
+    /// Replay invariant for an NMOS circuit: the Newton loop (with the FET
+    /// companion and step limiter) is deterministic, so a fixed netlist stepped a
+    /// fixed number of times reproduces its snapshot-hash stream exactly. The
+    /// NMOS analogue of `diode_run_is_reproducible`.
+    #[test]
+    fn nmos_run_is_reproducible() {
+        let run = || {
+            // A common-source NMOS switching a drain-resistor + load-cap node: VDD
+            // source 1->0; RD 1->2; NMOS drain=2 source=0 gate=3; gate source
+            // 3->0; load cap 2->0. The Newton loop runs inside every step.
+            let mut sim = build3(
+                4,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_NMOS,
+                    ELEM_VSOURCE,
+                    ELEM_CAPACITOR,
+                ],
+                &[1, 1, 2, 3, 2],
+                &[0, 2, 0, 0, 0],
+                &[0, 0, 3, 0, 0],
+                &[5.0, 1_000.0, 0.0, 3.0, 1.0e-9],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "NMOS circuit must reproduce exactly");
+    }
+
+    /// Both MOSFET polarities on the Newton path reproduce bit-for-bit over a long
+    /// run — the NMOS + PMOS analogue of `diode_family_run_is_reproducible`. A CMOS
+    /// inverter-style pair (PMOS high-side + NMOS low-side sharing a drain node and
+    /// a common gate) exercises both companions in one netlist.
+    #[test]
+    fn mosfet_family_run_is_reproducible() {
+        let run = || {
+            // VDD source 1->0; PMOS drain=2 source=1 gate=3; NMOS drain=2 source=0
+            // gate=3; input gate source 3->0; load cap 2->0. Output node 2 swings
+            // as the shared gate (node 3) is held; both devices iterate every step.
+            // a = drain, b = source, c = gate for both: PMOS (2,1,3), NMOS (2,0,3).
+            let mut sim = build3(
+                4,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_PMOS,
+                    ELEM_NMOS,
+                    ELEM_VSOURCE,
+                    ELEM_CAPACITOR,
+                ],
+                &[1, 2, 2, 3, 2],
+                &[0, 1, 0, 0, 0],
+                &[0, 3, 3, 0, 0],
+                &[5.0, 0.0, 0.0, 2.5, 1.0e-9],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "NMOS+PMOS pair must reproduce exactly");
     }
 }
