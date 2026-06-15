@@ -22,8 +22,11 @@ import {
   snap,
   formatValue,
   rotateOffset,
+  isJunctionRef,
+  endpointKey,
   type Component,
   type PinRef,
+  type Endpoint,
   type Cell,
   type Wire,
   type GraphSnapshot,
@@ -52,6 +55,8 @@ interface ProbePoint {
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
 const PIN_R = 4.5;
+/** Radius of the filled wire-to-wire junction dot (KiCad-style). */
+const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
@@ -181,6 +186,7 @@ export class Board {
   private readonly nodes = new Map<number, ComponentNode>();
   private readonly selected = new Set<number>();
   private readonly selectedWires = new Set<number>();
+  private readonly selectedJunctions = new Set<number>();
   // Per-tick scope history (one entry per simulated tick, not per render frame)
   // so the scope freezes when paused and aligns to the timeline.
   private scopeSamples: { tick: number; values: number[] }[] = [];
@@ -227,7 +233,7 @@ export class Board {
     origins: Map<number, Cell>;
     moved: boolean;
   } | null = null;
-  private wiring: { from: PinRef } | null = null;
+  private wiring: { from: Endpoint } | null = null;
   // Dragging an existing wire to reshape its route (creates/moves its waypoint).
   private wireDrag: { id: number; grab: Cell; moved: boolean } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
@@ -436,12 +442,19 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
-  /** Delete the current selection (components + wires). */
+  /** Delete the current selection (components + wires + junctions). */
   deleteSelection(): void {
-    if (this.selected.size === 0 && this.selectedWires.size === 0) return;
+    if (
+      this.selected.size === 0 &&
+      this.selectedWires.size === 0 &&
+      this.selectedJunctions.size === 0
+    ) {
+      return;
+    }
     this.pushUndo(this.graph.serialize());
     for (const id of this.selected) this.graph.removeComponent(id);
     for (const id of this.selectedWires) this.graph.removeWire(id);
+    for (const id of this.selectedJunctions) this.graph.removeJunction(id);
     this.rebuildNodes();
     this.clearSelection();
     this.redrawWires();
@@ -723,25 +736,45 @@ export class Board {
     return best;
   }
 
+  /** Nearest junction within grab range of a world point, else null. */
+  private junctionHitTest(wx: number, wy: number): number | null {
+    const r2 = (JUNCTION_R * 2.4) ** 2;
+    let best: number | null = null;
+    let bestD = r2;
+    for (const j of this.graph.junctions.values()) {
+      const p = this.cellToWorld(j.cell);
+      const d = (p.x - wx) ** 2 + (p.y - wy) ** 2;
+      if (d <= bestD) {
+        bestD = d;
+        best = j.id;
+      }
+    }
+    return best;
+  }
+
   // --- selection ----------------------------------------------------------
 
   private clearSelection(): void {
     this.selected.clear();
     this.selectedWires.clear();
+    this.selectedJunctions.clear();
     this.redrawSelection();
     this.emitSelect();
   }
 
   private emitSelect(): void {
     let single: SelectedPart | undefined;
-    if (this.selected.size === 1 && this.selectedWires.size === 0) {
+    // Junctions count as edge selections (folded into `wires`) so the inspector
+    // only opens for a lone component with nothing else picked.
+    const edges = this.selectedWires.size + this.selectedJunctions.size;
+    if (this.selected.size === 1 && edges === 0) {
       const id = [...this.selected][0]!;
       const c = this.graph.components.get(id);
       if (c) single = { id: c.id, kind: c.kind, value: c.value };
     }
     this.cb.onSelect?.({
       components: this.selected.size,
-      wires: this.selectedWires.size,
+      wires: edges,
       single,
     });
   }
@@ -754,6 +787,7 @@ export class Board {
     if (
       this.selected.size === 1 &&
       this.selectedWires.size === 0 &&
+      this.selectedJunctions.size === 0 &&
       this.mode !== "measure" &&
       !busy
     ) {
@@ -797,6 +831,7 @@ export class Board {
     } else {
       this.selected.clear();
       this.selectedWires.clear();
+      this.selectedJunctions.clear();
       this.selected.add(id);
     }
     this.redrawSelection();
@@ -810,7 +845,22 @@ export class Board {
     } else {
       this.selected.clear();
       this.selectedWires.clear();
+      this.selectedJunctions.clear();
       this.selectedWires.add(id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private selectJunction(id: number, additive: boolean): void {
+    if (additive) {
+      if (this.selectedJunctions.has(id)) this.selectedJunctions.delete(id);
+      else this.selectedJunctions.add(id);
+    } else {
+      this.selected.clear();
+      this.selectedWires.clear();
+      this.selectedJunctions.clear();
+      this.selectedJunctions.add(id);
     }
     this.redrawSelection();
     this.emitSelect();
@@ -894,8 +944,49 @@ export class Board {
     return nodes[ref.pinIndex] ?? null;
   }
 
-  private pinVoltage(ref: PinRef): number | null {
-    const node = this.pinNode(ref);
+  /**
+   * Net node for any wire endpoint (pin or junction). `probeNodes` only maps
+   * *element* pins to nodes, so a junction — and any pin not in that map —
+   * resolves by hopping across wires (a small BFS) to the first element pin on
+   * the same net. Render-only; null when the net touches no element pin.
+   */
+  private endpointNode(e: Endpoint): number | null {
+    if (!isJunctionRef(e)) {
+      const direct = this.pinNode(e);
+      if (direct !== null) return direct;
+    }
+    const seen = new Set<string>();
+    const startKey = endpointKey(e);
+    seen.add(startKey);
+    let frontier: Endpoint[] = [e];
+    while (frontier.length) {
+      const nextFrontier: Endpoint[] = [];
+      for (const cur of frontier) {
+        const curKey = endpointKey(cur);
+        for (const w of this.graph.wires.values()) {
+          const fk = endpointKey(w.from);
+          const tk = endpointKey(w.to);
+          let other: Endpoint | null = null;
+          if (fk === curKey) other = w.to;
+          else if (tk === curKey) other = w.from;
+          if (!other) continue;
+          const ok = endpointKey(other);
+          if (seen.has(ok)) continue;
+          seen.add(ok);
+          if (!isJunctionRef(other)) {
+            const node = this.pinNode(other);
+            if (node !== null) return node;
+          }
+          nextFrontier.push(other);
+        }
+      }
+      frontier = nextFrontier;
+    }
+    return null;
+  }
+
+  private pinVoltage(e: Endpoint): number | null {
+    const node = this.endpointNode(e);
     return node === null ? null : this.nodeVoltage(node);
   }
 
@@ -913,7 +1004,7 @@ export class Board {
     const wireId = this.wireHitTest(wx, wy);
     if (wireId !== null) {
       const w = this.graph.wires.get(wireId);
-      const node = w ? this.pinNode(w.from) : null;
+      const node = w ? this.endpointNode(w.from) : null;
       const route = w ? this.routeForWire(w) : [];
       if (w && node !== null && route.length >= 2) {
         const cp = closestOnPolyline(route, wx, wy);
@@ -1068,6 +1159,21 @@ export class Board {
       return;
     }
 
+    // A junction acts like a pin: a plain press starts a branch wire from it; a
+    // shift/ctrl press selects it (so the Delete key can remove it). It is tested
+    // before wires/bodies because it sits atop the wire it splits.
+    const jid = this.junctionHitTest(wp.x, wp.y);
+    if (jid !== null) {
+      if (additive) {
+        this.selectJunction(jid, true);
+        return;
+      }
+      if (this.mode === "wire" || this.mode === "select") {
+        this.wiring = { from: { junctionId: jid } };
+        return;
+      }
+    }
+
     const body = this.bodyHitTest(wp.x, wp.y);
     if (body) {
       if (additive) {
@@ -1219,7 +1325,14 @@ export class Board {
     }
     if (this.wiring) {
       const wp = this.screenToWorld(e.global.x, e.global.y);
-      const target = this.pinHitTest(wp.x, wp.y);
+      const pinTarget = this.pinHitTest(wp.x, wp.y);
+      const jidTarget =
+        pinTarget === null ? this.junctionHitTest(wp.x, wp.y) : null;
+      const target: Endpoint | null = pinTarget
+        ? pinTarget
+        : jidTarget !== null
+          ? { junctionId: jidTarget }
+          : null;
       if (target) {
         const before = this.graph.serialize();
         const wire = this.graph.connect(this.wiring.from, target);
@@ -1228,10 +1341,43 @@ export class Board {
           this.redrawWires();
           this.cb.onChange?.(this.graph);
         }
+      } else {
+        this.finishWireOnWire(wp.x, wp.y);
       }
       this.cancelWiring();
     }
   };
+
+  /**
+   * Finish an in-progress wire on an existing wire (a KiCad-style T): drop a
+   * junction at the nearest grid point on the target wire's route, split that
+   * wire so both halves meet the junction, and connect the new wire's end to it.
+   * No-op if the release isn't over a wire (or is over the dragged wire's own
+   * endpoint's wires only).
+   */
+  private finishWireOnWire(wx: number, wy: number): void {
+    if (!this.wiring) return;
+    const wireId = this.wireHitTest(wx, wy);
+    if (wireId === null) return;
+    const w = this.graph.wires.get(wireId);
+    if (!w) return;
+    // Don't junction onto a wire already incident to the start endpoint — that
+    // would just fold a wire back on itself.
+    const fromKey = endpointKey(this.wiring.from);
+    if (endpointKey(w.from) === fromKey || endpointKey(w.to) === fromKey)
+      return;
+    const route = this.routeForWire(w);
+    if (route.length < 2) return;
+    const cp = closestOnPolyline(route, wx, wy);
+    const cell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
+    const before = this.graph.serialize();
+    const j = this.graph.junctionOnWire(wireId, cell, this.wiring.from);
+    if (j) {
+      this.pushUndo(before);
+      this.redrawWires();
+      this.cb.onChange?.(this.graph);
+    }
+  }
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
     e.preventDefault?.();
@@ -1242,6 +1388,17 @@ export class Board {
       return;
     }
     const wp = this.screenToWorld(e.global.x, e.global.y);
+    // Junction sits atop the wire it splits, so test it first.
+    const jid = this.junctionHitTest(wp.x, wp.y);
+    if (jid !== null) {
+      this.pushUndo(this.graph.serialize());
+      this.graph.removeJunction(jid);
+      this.selectedJunctions.delete(jid);
+      this.redrawWires();
+      this.redrawSelection();
+      this.cb.onChange?.(this.graph);
+      return;
+    }
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
       this.pushUndo(this.graph.serialize());
@@ -1396,6 +1553,7 @@ export class Board {
         }
       }
     }
+    this.drawJunctions(g);
     // Drop offsets for wires that no longer exist (after a delete), so the maps
     // can't grow without bound across a long editing session.
     if (this.carrierOffset.size > this.graph.wires.size) {
@@ -1408,6 +1566,29 @@ export class Board {
     }
     // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
     this.flowDelta = 0;
+  }
+
+  /**
+   * Draw the wire-to-wire junction dots (KiCad style): a small filled disc where
+   * three+ wire-ends tie together, in the net's voltage colour so it reads as one
+   * with the belt. A dark backing ring keeps it legible over the flowing belt.
+   */
+  private drawJunctions(g: Graphics): void {
+    for (const j of this.graph.junctions.values()) {
+      const p = this.cellToWorld(j.cell);
+      const v = this.pinVoltage({ junctionId: j.id });
+      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const hot = this.selectedJunctions.has(j.id);
+      g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({ color: 0x0d0b16, alpha: 1 });
+      g.circle(p.x, p.y, JUNCTION_R).fill({ color });
+      if (hot) {
+        g.circle(p.x, p.y, JUNCTION_R + 3).stroke({
+          width: 1.5,
+          color: PALETTE.accent,
+          alpha: 0.9,
+        });
+      }
+    }
   }
 
   /** A 90° (Manhattan) route between two pins: leave along the dominant axis. */
@@ -1429,8 +1610,8 @@ export class Board {
    * either endpoint has gone missing. This is the single source of wire geometry.
    */
   private routeForWire(w: Wire): Point[] {
-    const a = this.graph.pinRefCell(w.from);
-    const b = this.graph.pinRefCell(w.to);
+    const a = this.graph.endpointCell(w.from);
+    const b = this.graph.endpointCell(w.to);
     if (!a || !b) return [];
     const pa = this.cellToWorld(a);
     const pb = this.cellToWorld(b);
@@ -1442,8 +1623,8 @@ export class Board {
   /** True if a wire's waypoint sits essentially on the straight pin-to-pin line. */
   private midIsRedundant(w: Wire): boolean {
     if (!w.mid) return false;
-    const a = this.graph.pinRefCell(w.from);
-    const b = this.graph.pinRefCell(w.to);
+    const a = this.graph.endpointCell(w.from);
+    const b = this.graph.endpointCell(w.to);
     if (!a || !b) return false;
     return (
       distToSegment(w.mid.col, w.mid.row, a.col, a.row, b.col, b.row) < 0.5
@@ -1491,8 +1672,10 @@ export class Board {
     };
     for (const k of inj.keys()) node(k);
     for (const w of wires) {
-      const f = w.from.componentId + ":" + w.from.pinIndex;
-      const t = w.to.componentId + ":" + w.to.pinIndex;
+      // Endpoint keys span pins and junctions; a junction injects nothing, so it
+      // is just a KCL pass-through node where the branch current splits/merges.
+      const f = endpointKey(w.from);
+      const t = endpointKey(w.to);
       node(f).push({ other: t, wireId: w.id, otherIsFrom: false });
       node(t).push({ other: f, wireId: w.id, otherIsFrom: true });
     }
@@ -1582,13 +1765,33 @@ export class Board {
     const g = this.pendingWire;
     g.clear();
     if (!this.wiring) return;
-    const start = this.graph.pinRefCell(this.wiring.from);
+    const start = this.graph.endpointCell(this.wiring.from);
     if (!start) return;
     const ps = this.cellToWorld(start);
     const snapTo = this.pinHitTest(this.pointer.x, this.pointer.y);
+    // Preview a wire-to-wire junction: when releasing over a wire (not a pin),
+    // snap the end to the nearest grid point on that wire's route and show a dot.
+    let junctionPt: Point | null = null;
+    if (!snapTo) {
+      const wid = this.wireHitTest(this.pointer.x, this.pointer.y);
+      const w = wid !== null ? this.graph.wires.get(wid) : undefined;
+      const fromKey = endpointKey(this.wiring.from);
+      if (
+        w &&
+        endpointKey(w.from) !== fromKey &&
+        endpointKey(w.to) !== fromKey
+      ) {
+        const route = this.routeForWire(w);
+        if (route.length >= 2) {
+          const cp = closestOnPolyline(route, this.pointer.x, this.pointer.y);
+          const cell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
+          junctionPt = this.cellToWorld(cell);
+        }
+      }
+    }
     const end = snapTo
       ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
-      : this.pointer;
+      : (junctionPt ?? this.pointer);
     const route = this.wireRoute(ps, end);
     polyline(g, route);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
@@ -1597,6 +1800,12 @@ export class Board {
     if (snapTo) {
       g.circle(end.x, end.y, PIN_R + 2).stroke({
         width: 1.5,
+        color: PALETTE.accent,
+        alpha: 0.9,
+      });
+    } else if (junctionPt) {
+      // A filled dot previewing the junction that the release will create.
+      g.circle(junctionPt.x, junctionPt.y, JUNCTION_R).fill({
         color: PALETTE.accent,
         alpha: 0.9,
       });
