@@ -86,6 +86,12 @@ export function stepAmp(amp: number, dir: number): number {
 
 /** True if this part kind exposes an adjustable value at all. */
 export function hasValue(kind: string): boolean {
+  // MSW (manual switch) has an adjustable value too — its state, 0 (open) or 1
+  // (closed) — but it's a bespoke two-choice toggle, not a numeric E-series/curated
+  // sweep, so it isn't in DECADES/CURATED_FULL (whose log-based steppers assume
+  // positive values). The inspector renders its Open/Closed chips on a dedicated
+  // branch; we only need to report here that it has a value popover at all.
+  if (kind === "MSW") return true;
   return kind in DECADES || kind in CURATED_FULL;
 }
 

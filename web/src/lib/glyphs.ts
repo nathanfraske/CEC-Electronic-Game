@@ -32,6 +32,15 @@ export interface GlyphOpts {
   electrical: ElectricalState;
   /** Free-running animation phase (seconds). */
   phase: number;
+  /**
+   * The placed component's primary scalar (`Component.value`), when the live
+   * renderer can supply it. Most glyphs read their state purely off `electrical`
+   * and ignore this; the manual switch (MSW) uses it to draw open/closed directly
+   * from its commanded state (1 = closed, 0 = open) rather than inferring it from
+   * the voltage across — so a switch with no current still reads correctly.
+   * Optional, so the placement ghost (which has no live value) can omit it.
+   */
+  value?: number;
 }
 
 // Saturating normalize: maps a magnitude to 0..1 with a soft knee at `scale`.
@@ -714,6 +723,60 @@ function drawSW(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// Whether a switch glyph should read as CLOSED. The manual switch knows its own
+// commanded state, so prefer `o.value` (≥ 0.5 = closed) when the live renderer
+// supplied it — that way it reads correctly even with no current flowing (an open
+// loop, or a closed switch carrying zero current). Falls back to the electrical
+// inference the clock switch uses: a closed switch drops ~0 V, an open one stands
+// the full node difference across itself.
+function switchClosed(o: GlyphOpts): boolean {
+  if (o.value !== undefined) return o.value >= 0.5;
+  return Math.abs(o.electrical.vAcross) < 0.25;
+}
+
+function drawMSW(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const gap = 9;
+  // The standard SPST switch: a hinged blade pivoting on the left contact. It
+  // CLOSES flat onto the right contact at state ≥ 0.5 (conducting) and LIFTS OPEN
+  // (the blade swings up off the contact) at state < 0.5 (the break). Hand-flipped
+  // by the player — the state comes straight off `o.value`, so it reads right with
+  // or without current.
+  const closed = switchClosed(o);
+  g.moveTo(a.x, a.y).lineTo(mx - gap, my);
+  g.moveTo(mx + gap, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // the two fixed contacts (the pivot on the left, the landing pad on the right)
+  g.circle(mx - gap, my, 2.4).fill({ color: o.color });
+  g.circle(mx + gap, my, 2.4).fill({ color: o.color });
+  // the hinged blade: lands on the right contact when closed, lifts well clear
+  // (a wider, more obvious swing than the clock switch) when open.
+  const tipX = closed ? mx + gap : mx + gap - 4;
+  const tipY = closed ? my : my - 14;
+  g.moveTo(mx - gap, my).lineTo(tipX, tipY);
+  g.stroke({ width: 2.6, color: closed ? o.color : 0x9c93b8, alpha: 0.95 });
+  if (closed) {
+    // a near-ideal wire: a conduction glow + the flowing belt across the contacts.
+    const cond = norm(o.electrical.current, CUR_SCALE);
+    if (cond > 0.03) {
+      g.circle(mx, my, 12).fill({ color: o.color, alpha: 0.16 * cond });
+    }
+    flow(g, a.x, a.y, b.x, b.y, o.electrical.current, o.phase, o.color);
+  } else {
+    // a visible break in the line when open — a small gap mark at the contact the
+    // blade has lifted off, so "open = no path" reads at a glance.
+    g.circle(mx + gap, my, 4.5).stroke({
+      width: 1.4,
+      color: 0x9c93b8,
+      alpha: 0.5,
+    });
+  }
+}
+
 // --- MOSFET (3-terminal) ------------------------------------------------------
 // Pins are ordered D, S, G: pin 0 = Drain (top), pin 1 = Source (bottom),
 // pin 2 = Gate (left). `electrical.current` is Id oriented a→b = drain→source;
@@ -1329,6 +1392,42 @@ function drawFSW(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+function drawFMSW(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 13;
+  // A player-operated gate across the belt: when CLOSED (conducting) the door is
+  // swung aside so the belt runs straight through; when OPEN the door is shut
+  // square across the lane, blocking it. The state comes from `o.value`, so it
+  // reads right even with no goods on the belt.
+  const closed = switchClosed(o);
+  fLeads(g, o, mx, hw);
+  fBox(g, mx, my, hw, 11, o.color);
+  if (closed) {
+    // door swung aside (hinged flat against the top wall, out of the lane) — the
+    // belt flows through the open gateway.
+    g.moveTo(mx - 6, my - 7)
+      .lineTo(mx + 6, my - 7)
+      .stroke({ width: 2.2, color: o.color, alpha: 0.6 });
+    flow(g, mx - hw, my, mx + hw, my, o.electrical.current, o.phase, o.color);
+  } else {
+    // door shut square across the lane — a solid barred panel stopping the belt.
+    g.rect(mx - 6, my - 8, 12, 16).fill({ color: 0x9c93b8, alpha: 0.32 });
+    g.rect(mx - 6, my - 8, 12, 16).stroke({
+      width: 1.6,
+      color: 0x9c93b8,
+      alpha: 0.7,
+    });
+    // a couple of bars to read it as a closed gate, not a panel
+    g.moveTo(mx, my - 8)
+      .lineTo(mx, my + 8)
+      .stroke({ width: 1.2, color: 0x9c93b8, alpha: 0.55 });
+  }
+}
+
 // The MOSFET as a Factorio gain-assembler / valve: a thin GATE control belt
 // (from pin 2) drives a sluice that opens a FAT drain→source MAIN belt (pin 0 →
 // pin 1). The main belt's thickness + flow density track |Id|, and it visibly
@@ -1536,6 +1635,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   ZD: drawZD,
   MOV: drawMOV,
   SW: drawSW,
+  MSW: drawMSW,
   NM: drawNM,
   PM: drawPM,
   Q: drawQ,
@@ -1557,6 +1657,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   ZD: drawFZD,
   MOV: drawFMOV,
   SW: drawFSW,
+  MSW: drawFMSW,
   NM: drawFNM,
   PM: drawFPM,
   Q: drawFQ,

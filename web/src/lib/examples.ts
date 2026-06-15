@@ -707,6 +707,72 @@ export const EXAMPLES: ExampleSpec[] = [
     ],
   },
   {
+    id: "manual-switch-led",
+    name: "Manual Switch + LED",
+    blurb:
+      "The first thing every switch does: make and break a loop. A 5 V source drives an LED through a current-limiting resistor, and a manual switch sits in series with the load. Closed, the switch is a near-ideal wire — the loop is complete and the LED lights. Open, it's a break in the circuit — no current can flow and the LED goes dark. Click the switch to flip it.",
+    watch:
+      "the LED while you click the switch. Closed completes the loop and ~20 mA flows, lighting the LED; open breaks the loop and the current — and the light — drop to zero. The switch either is the wire or it isn't.",
+    build() {
+      // V → R → LED → MSW → GND. Same current-limited LED branch as the LED
+      // example, with a manual switch in series with the load to make/break it.
+      // Default CLOSED (value 1): the loop is complete, so I ≈ (5 − 1.9)/150 ≈
+      // 21 mA and the LED is lit. Flip the switch open (value 0) to break it.
+      //   nets: N1 = V+ = R.A ; N2 = R.B = LED.A ; N3 = LED.K = MSW.A ;
+      //         GND(0) = MSW.B = V−.
+      const g = new BoardGraph();
+      const r = comp(g, "R", 2, 0, 150);
+      const led = comp(g, "LED", 6, 0, 0); // anode A → cathode K (value unused)
+      const msw = comp(g, "MSW", 10, 0, 1); // value 1 = closed (the wire is made)
+      const v = comp(g, "V", 2, 6, 5);
+      const gnd = comp(g, "GND", 10, 6, 0);
+      wire(g, v, 0, r, 0); // V+ → R.A (left rail)
+      wire(g, r, 1, led, 0); // R.B → LED.A (the LED's anode)
+      wire(g, led, 1, msw, 0); // LED.K → MSW.A
+      wire(g, msw, 1, gnd, 0); // MSW.B → GND (right rail)
+      wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Voltage Source (V, 5 V), a Resistor (R, ~150 Ω), and an LED.",
+        why: "This is the load branch: the 5 V rail drives the LED, and R limits the current so the LED is bright but safe (~20 mA).",
+        done: (p) => at(p, "V") >= 1 && at(p, "R") >= 1 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Place a Manual Switch (MSW) and a Ground (GND). Wire V+ → R → LED → MSW → GND, and V− → GND. Then press Run.",
+        why: "The switch starts closed, so the loop is complete: current flows and the LED lights. The closed switch is just a wire in the path.",
+        done: (p) => at(p, "MSW") >= 1 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Click the manual switch to open it, then click again to close it.",
+        why: "Open, the switch is a break — no current flows and the LED is dark. Close it and the loop is whole again and the LED relights. That make-or-break is the whole job of a switch.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Switch closed / open",
+      on: "Switch CLOSED — the loop is complete, current flows and the LED is lit.",
+      off: "Switch OPEN — the loop is broken: no current, the LED is dark.",
+      alt() {
+        // Same board, but the manual switch is open (value 0): the loop is broken,
+        // so no current flows and the LED is dark.
+        const g = new BoardGraph();
+        const r = comp(g, "R", 2, 0, 150);
+        const led = comp(g, "LED", 6, 0, 0);
+        const msw = comp(g, "MSW", 10, 0, 0); // value 0 = open (the break)
+        const v = comp(g, "V", 2, 6, 5);
+        const gnd = comp(g, "GND", 10, 6, 0);
+        wire(g, v, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, msw, 0);
+        wire(g, msw, 1, gnd, 0);
+        wire(g, v, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
     id: "schottky-vs-silicon",
     name: "Schottky vs Silicon",
     blurb:
@@ -1825,6 +1891,7 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "surge-clamp": "Diodes",
   buck: "Power & Switching",
   "pwm-average": "Power & Switching",
+  "manual-switch-led": "Power & Switching",
   "mosfet-switch": "Power & Switching",
   "mosfet-cs-amp": "Power & Switching",
   "bjt-switch": "Power & Switching",
