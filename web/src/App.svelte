@@ -49,6 +49,7 @@
     type BuiltNetlist,
   } from "./lib/netlist";
   import { ZERO_ELECTRICAL, type ElectricalState } from "./lib/glyphs";
+  import { pinoutOf } from "./lib/pinout";
   import { partInfo } from "./lib/partInfo";
   import { CALCS } from "./lib/calc";
   import { InfoDiagram } from "./lib/infoDiagram";
@@ -546,15 +547,24 @@
         enterMeasure(); // m = Measure
         e.preventDefault();
       } else if (e.key === "Escape") {
-        // Universal cancel that lands on the neutral Pan tool: disarm a part, cancel
-        // any in-progress wire / open label editor / selection, then switch to
-        // panning so Escape always leaves you in a safe "just navigate" state.
-        if (armedPart) arm(null);
-        board?.escape();
-        setMode("pan");
+        // Universal cancel, in order of least-destructive first: a first Esc just
+        // closes the open info drawer (without dropping your armed part or
+        // selection). Otherwise it disarms a part, cancels any in-progress wire /
+        // open label editor / selection, then switches to the neutral Pan tool so
+        // Escape always leaves you in a safe "just navigate" state.
+        if (infoOpen) {
+          infoOpen = false;
+        } else {
+          if (armedPart) arm(null);
+          board?.escape();
+          setMode("pan");
+        }
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "h" || e.key === "H")) {
         setMode("pan"); // H = the hand / pan tool
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "i" || e.key === "I")) {
+        infoOpen = !infoOpen; // I = toggle the deep info panel for the selection
         e.preventDefault();
       } else if (e.key === " ") {
         togglePlay(); // spacebar = play / pause
@@ -685,6 +695,11 @@
         },
         onAnchor: (rect) => {
           anchor = rect;
+        },
+        onInspect: () => {
+          // Double-click on a part: the board already made it the lone selection
+          // (onSelect fired first), so we only open the deep info drawer for it.
+          infoOpen = true;
         },
         onLabelEdit: (req) => {
           if (req) {
@@ -1573,6 +1588,12 @@
           <div class="insp-head">
             <span class="insp-kind">{partName(kind)}</span>
             <span class="insp-val mono">{fmtVal(kind, selPart.value)}</span>
+            <button
+              class="insp-info"
+              title="More about this part — pinout & details (I)"
+              aria-label="Open the info panel for this part"
+              onclick={() => (infoOpen = true)}>ⓘ</button
+            >
           </div>
           {#if selElectrical}
             <div class="insp-meter mono">
@@ -1739,6 +1760,63 @@
                   <div class="info-diagram">
                     <canvas use:infoDiagramAction></canvas>
                   </div>
+                  {@const po = pinoutOf(selPart.kind, selPart.rot)}
+                  {#if po}
+                    <div class="pinout-wrap">
+                      <div class="pinout-cap">Pinout</div>
+                      <div
+                        class="pinout"
+                        style="width: {po.width}px; height: {po.height}px;"
+                      >
+                        <svg
+                          width={po.width}
+                          height={po.height}
+                          viewBox="0 0 {po.width} {po.height}"
+                          aria-hidden="true"
+                        >
+                          <rect
+                            class="pinout-body"
+                            x={po.body.x}
+                            y={po.body.y}
+                            width={po.body.w}
+                            height={po.body.h}
+                            rx="4"
+                          />
+                          {#each po.pins as p (p.label)}
+                            <line
+                              class="pinout-leg"
+                              x1={po.body.x + po.body.w / 2}
+                              y1={po.body.y + po.body.h / 2}
+                              x2={p.x}
+                              y2={p.y}
+                            />
+                          {/each}
+                          {#each po.pins as p (p.label)}
+                            <circle
+                              class="pinout-dot"
+                              cx={p.x}
+                              cy={p.y}
+                              r="4.5"
+                              style="fill: {po.color}"
+                            />
+                          {/each}
+                        </svg>
+                        {#each po.pins as p (p.label)}
+                          <div
+                            class="pinout-label"
+                            style="left: {p.lx}px; top: {p.ly}px; transform: translate({p.tx}, {p.ty});"
+                          >
+                            <span class="pinout-name" style="color: {po.color}"
+                              >{p.label}</span
+                            >
+                            {#if p.gloss}<span class="pinout-gloss"
+                                >{p.gloss}</span
+                              >{/if}
+                          </div>
+                        {/each}
+                      </div>
+                    </div>
+                  {/if}
                   <div class="info-eq mono">{info.equation}</div>
                   <p class="info-plain">{info.plain()}</p>
                   <div class="info-live">
@@ -2191,8 +2269,23 @@
   .insp-head {
     display: flex;
     align-items: baseline;
-    justify-content: space-between;
+    gap: 8px;
     margin-bottom: 8px;
+  }
+  /* The "tell me more" door on the value popover → opens the deep info drawer. */
+  .insp-info {
+    margin-left: auto;
+    align-self: center;
+    background: none;
+    border: none;
+    padding: 0 2px;
+    font-size: 13px;
+    line-height: 1;
+    color: var(--dim);
+    cursor: pointer;
+  }
+  .insp-info:hover {
+    color: var(--cyan);
   }
   .insp-kind {
     font-family: var(--font-display);
@@ -2367,6 +2460,63 @@
     width: 100%;
     height: 100%;
     display: block;
+  }
+  /* Pinout: an oriented terminal map. The SVG draws the package body, legs and
+     dots; the labels are DOM text positioned over it (so they stay selectable and
+     screen-reader legible). Centred, with the diagram sized to its content. */
+  .pinout-wrap {
+    margin-bottom: 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: #120f1c;
+    padding: 6px 8px 10px;
+  }
+  .pinout-cap {
+    font-family: var(--font-display);
+    font-size: 10px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--dim);
+    margin-bottom: 2px;
+  }
+  .pinout {
+    position: relative;
+    margin: 0 auto;
+  }
+  .pinout svg {
+    position: absolute;
+    inset: 0;
+  }
+  .pinout-body {
+    fill: var(--surface-2);
+    stroke: var(--border-bright);
+    stroke-width: 1.5;
+  }
+  .pinout-leg {
+    stroke: var(--border-bright);
+    stroke-width: 2;
+  }
+  .pinout-dot {
+    stroke: #120f1c;
+    stroke-width: 1.5;
+  }
+  .pinout-label {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+    white-space: nowrap;
+    pointer-events: none;
+  }
+  .pinout-name {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .pinout-gloss {
+    font-size: 9.5px;
+    color: var(--dim);
+    letter-spacing: 0.01em;
   }
   .info-eq {
     font-size: 15px;

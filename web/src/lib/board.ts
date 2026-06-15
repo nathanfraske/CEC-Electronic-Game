@@ -172,6 +172,9 @@ export interface SelectedPart {
   id: number;
   kind: string;
   value: number;
+  /** Orientation in 90° CW steps (0..3), so the info-panel pinout can be drawn
+   * matching the way the part actually points on the board. */
+  rot: number;
   /** An AC source's peak amplitude in volts (its second scalar, beside `value` =
    * frequency). Undefined for kinds that have no amplitude. */
   amp?: number;
@@ -203,6 +206,10 @@ export interface BoardCallbacks {
   onArm?: (kind: string | null) => void;
   /** Per-frame screen rect of the lone selected part (or null) to anchor a popover. */
   onAnchor?: (rect: AnchorRect | null) => void;
+  /** Open the deep info panel for a component — fired by a double-click on its body
+   * (the part is also made the lone selection first, so the panel and the board
+   * agree on which part). The HUD decides what "open" means (sets `infoOpen`). */
+  onInspect?: (id: number) => void;
   /**
    * Open the inline net-label name editor. Fired when a label-mode click lands on
    * a pin/junction (or an existing tag): the HUD shows a small input seeded with
@@ -364,6 +371,9 @@ export class Board {
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
+  // Last component-body press (id + time), so a second press on the same body
+  // within DOUBLE_CLICK_MS is recognised as a double-click → open its info panel.
+  private lastBodyTap: { id: number; t: number } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
@@ -1280,6 +1290,7 @@ export class Board {
           id: c.id,
           kind: c.kind,
           value: c.value,
+          rot: c.rot,
           amp: c.amp,
           wiper: c.wiper,
         };
@@ -1922,6 +1933,25 @@ export class Board {
     // branch below and pans, so the hand tool never accidentally drags a part.
     // (Shift/ctrl still selects so multi-select works from any tool.)
     const body = this.bodyHitTest(wp.x, wp.y);
+    // Double-click a component body opens its info panel — works from Select and Pan
+    // alike, before the mode-specific handling below. The first click selects (and,
+    // for a manual switch, toggles) as usual; the second click within the window
+    // makes it the lone selection, opens info, and is swallowed here (no drag, and
+    // no second MSW flip), so double-click is a clean, universal "inspect" gesture.
+    if (body && !additive) {
+      const now = performance.now();
+      const dbl =
+        this.lastBodyTap !== null &&
+        this.lastBodyTap.id === body.id &&
+        now - this.lastBodyTap.t < DOUBLE_CLICK_MS;
+      if (dbl) {
+        this.lastBodyTap = null;
+        this.selectComponent(body.id, false);
+        this.cb.onInspect?.(body.id);
+        return;
+      }
+      this.lastBodyTap = { id: body.id, t: now };
+    }
     if (body && (this.mode !== "pan" || additive)) {
       if (additive) {
         this.selectComponent(body.id, true);
