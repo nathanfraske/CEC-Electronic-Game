@@ -14,7 +14,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Custom playback rate**: a ticks/second number input beside the rate presets.~~
 
 ### In flight / pending
-- [ ] **Inspector as a popup over the component** (agent brainstorming `docs/ui/inspector-popup.md`): move the value picker out of the telemetry panel into a floating popover anchored above the clicked part (world→screen projection, edge-flip, open-on-select/close-on-deselect). Build after the brainstorm.
+- ~~**Inspector popup over the component** (`docs/ui/inspector-popup.md`): the value picker now floats as a popover anchored above the selected part — `board.ts` projects `componentBox` through the world transform each frame (`onAnchor`, change-detected, null during gestures/Measure); `App.svelte` positions an absolutely-placed `.value-pop` in `.board-frame` with edge-flip + a caret. Removed from the telemetry panel.~~
 - [ ] **Incomplete-circuit affordance** (designed in `docs/ui/incomplete-circuits.md`, still unbuilt): topology pre-check for a current source with no return path + a deterministic `singular()` solver flag → amber hint, don't halt the sim.
 
 ### Done — ticks/second playback, wall-clock readout, timeline-to-0, +3 examples
