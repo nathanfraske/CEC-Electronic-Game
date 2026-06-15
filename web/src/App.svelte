@@ -468,17 +468,19 @@
   // One-line contextual hint that replaces the old mode buttons: it tells you
   // what a click will do right now, so the modeless board stays learnable.
   const hint = $derived(
-    mode === "measure"
-      ? probeMode === "A"
-        ? "AMMETER · click a part/wire to clamp it and read the current through it (the voltmeter stays put — both can be live)"
-        : "VOLTMETER · click two points to read ΔV (one point = vs GND) · the ammeter stays put alongside it"
-      : mode === "junction"
-        ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
-        : mode === "label"
-          ? "LABEL · click a pin or junction to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
-          : armedPart
-            ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
-            : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
+    mode === "pan"
+      ? "PAN · drag anywhere to move around the board · pick a tool (B/W/M/J/L) to build · Esc returns here"
+      : mode === "measure"
+        ? probeMode === "A"
+          ? "AMMETER · click a part/wire to clamp it and read the current through it (the voltmeter stays put — both can be live)"
+          : "VOLTMETER · click two points to read ΔV (one point = vs GND) · the ammeter stays put alongside it"
+        : mode === "junction"
+          ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
+          : mode === "label"
+            ? "LABEL · click a pin or junction to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
+            : armedPart
+              ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
+              : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
   // The displayed tick as a wall-clock duration of simulated time (tick × DT).
@@ -540,9 +542,15 @@
         enterMeasure(); // m = Measure
         e.preventDefault();
       } else if (e.key === "Escape") {
-        // Universal cancel: disarm first, otherwise cancel a wire / clear selection.
+        // Universal cancel that lands on the neutral Pan tool: disarm a part, cancel
+        // any in-progress wire / open label editor / selection, then switch to
+        // panning so Escape always leaves you in a safe "just navigate" state.
         if (armedPart) arm(null);
-        else board?.escape();
+        board?.escape();
+        setMode("pan");
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "h" || e.key === "H")) {
+        setMode("pan"); // H = the hand / pan tool
         e.preventDefault();
       } else if (e.key === " ") {
         togglePlay(); // spacebar = play / pause
@@ -882,6 +890,10 @@
   function enterMeasure(): void {
     arm(null);
     setMode("measure");
+  }
+  function enterPan(): void {
+    arm(null);
+    setMode("pan");
   }
   function setProbeMode(m: "V" | "A"): void {
     probeMode = m;
@@ -1293,6 +1305,14 @@
         title="Measure: probe voltage between two points, or current through a part (M)"
       >
         Measure <kbd class="hk">M</kbd>
+      </button>
+      <button
+        class="btn btn-ghost {mode === 'pan' ? 'is-active' : ''}"
+        onclick={enterPan}
+        disabled={!ready}
+        title="Pan: drag to move around the board — the neutral tool Esc returns to (H)"
+      >
+        Pan <kbd class="hk">H</kbd>
       </button>
       {#if mode === "measure"}
         <span class="meter-toggle">

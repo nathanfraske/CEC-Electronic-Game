@@ -17,9 +17,15 @@ things up, what am I looking at, what am I trying to read, the minimum mental mo
   contextually (triggered by what you do), but the player is **free to explore
   whatever they want** at any time — progressive disclosure without a forced linear
   tutorial. The hand-holding rides alongside free play, not in front of it.
-- [ ] **Self-selected onboarding level at the start.** Let the player pick how much
-  hand-holding they want up front (e.g. "never touched electronics" → "know some" →
-  "skip it / expert"), which sets the density of coaching/disclosure.
+- [ ] **NO levels/tiers/picker — pull-based help in one open sandbox** (owner
+  correction 2026-06-15: a levels menu defeats the open sandbox). "Self-select" =
+  *what you pull, not what you pick*: the explanation layer is opt-in and
+  always-available, so a total beginner can have ALL of it explained the moment they
+  reach for it, and an EE just builds, never gated. Routing = the cold-open
+  "Show me / Let me build" fork (both land in the same sandbox) + a persistent
+  "Explain/?" handle that explains anything on demand + gentle, mutable first-
+  encounter cards. One `explainAsYouGo` mute flag is the only state; everything is
+  reachable for everyone always.
 - [ ] **Replayable / resumable onboarding.** They can run the onboarding (or any
   guided bit) **again** if they get stuck, make a mistake, or want more help — it's
   not a one-shot. A persistent "help / show me again" affordance + a reset path.
