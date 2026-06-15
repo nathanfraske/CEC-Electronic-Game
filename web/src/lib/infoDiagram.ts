@@ -13,7 +13,7 @@
 
 import { Application, Container, Graphics } from "pixi.js";
 import { PART_KINDS, PALETTE } from "./graph";
-import { drawGlyph, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
+import { drawGlyphIn, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
 import { drawDetail } from "./detailDrawers";
 
 const PITCH = 26; // mirrors the board's grid pitch
@@ -22,8 +22,15 @@ const SCALE = 2.8; // blow the schematic symbol up to fill the drawer
 // the factory internals read big (the headline visual) with a little breathing room.
 const DETAIL_FILL = 0.92;
 
-/** Which picture the diagram shows: the schematic symbol, or the internals. */
-export type DiagramMode = "schematic" | "detail";
+/**
+ * Which tier of the component view the diagram shows (the owner's 3-tier model):
+ *   • "schematic" — the datasheet symbol (DRAWERS);
+ *   • "analogy"   — the Factory machine metaphor (FACTORY_DRAWERS), a teaching analogy;
+ *   • "reality"   — the construction-internals "as close to reality" view
+ *     (DETAIL_DRAWERS), animated from the live state. Falls back outward
+ *     (reality → schematic) when a tier's art doesn't exist for the kind.
+ */
+export type DiagramMode = "schematic" | "analogy" | "reality";
 
 export class InfoDiagram {
   private app: Application | undefined;
@@ -70,7 +77,7 @@ export class InfoDiagram {
     this.wiper = wiper;
   }
 
-  /** Switch between the schematic symbol and the construction-internals view. */
+  /** Switch the view tier: schematic symbol / Factory analogy / reality internals. */
   setMode(mode: DiagramMode): void {
     this.mode = mode;
   }
@@ -93,10 +100,10 @@ export class InfoDiagram {
     const g = this.glyph;
     g.clear();
 
-    // Detail mode: try the construction-internals drawer first; on a hit, draw it
+    // Reality tier: try the construction-internals drawer first; on a hit, draw it
     // big and centred and we're done. On a miss, fall through to the schematic
-    // glyph below (DETAIL ?? schematic) so the panel is never blank.
-    if (this.mode === "detail" && this.kind) {
+    // glyph below (reality → schematic) so the panel is never blank.
+    if (this.mode === "reality" && this.kind) {
       const kind = PART_KINDS[this.kind];
       const color = kind ? PALETTE[kind.colorKey] : PALETTE.accent;
       this.holder.scale.set(1);
@@ -114,7 +121,9 @@ export class InfoDiagram {
       if (drew) return;
     }
 
-    // Schematic mode (or the detail fallback): the board's glyph, scaled up.
+    // Schematic / analogy tiers (and the reality fallback): the board's glyph,
+    // scaled up. The analogy tier draws the Factory machine art explicitly, without
+    // touching the board's global lens.
     this.holder.scale.set(SCALE);
     const kind = PART_KINDS[this.kind];
     if (!kind) return;
@@ -126,17 +135,21 @@ export class InfoDiagram {
     }));
     const wPx = (kind.w - 1) * PITCH;
     const hPx = (kind.h - 1) * PITCH;
-    drawGlyph(g, {
-      kind: this.kind,
-      pins,
-      wPx,
-      hPx,
-      color,
-      electrical: this.electrical,
-      phase: this.phase,
-      value: this.value,
-      wiper: this.wiper,
-    });
+    drawGlyphIn(
+      g,
+      {
+        kind: this.kind,
+        pins,
+        wPx,
+        hPx,
+        color,
+        electrical: this.electrical,
+        phase: this.phase,
+        value: this.value,
+        wiper: this.wiper,
+      },
+      this.mode === "analogy" ? "factory" : "schematic",
+    );
     for (const p of pins) {
       g.circle(p.x, p.y, 5).fill({ color: 0x120f1c });
       g.circle(p.x, p.y, 3.5).fill({ color });

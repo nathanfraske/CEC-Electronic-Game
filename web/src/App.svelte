@@ -48,7 +48,11 @@
     graphShape,
     type BuiltNetlist,
   } from "./lib/netlist";
-  import { ZERO_ELECTRICAL, type ElectricalState } from "./lib/glyphs";
+  import {
+    ZERO_ELECTRICAL,
+    hasFactory,
+    type ElectricalState,
+  } from "./lib/glyphs";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
   import { partInfo } from "./lib/partInfo";
@@ -416,20 +420,27 @@
   // below flips it, and it snaps back to detail when a fresh detail-capable part
   // is selected (see the $effect). Falls back to schematic for kinds with no
   // detail drawer — `diagramHasDetail` gates the toggle's visibility.
-  let diagramMode = $state<DiagramMode>("detail");
-  // Whether the current selection has a construction-detail drawer (so the
-  // symbol⇄inside toggle is worth showing). Pure read of the kind.
+  let diagramMode = $state<DiagramMode>("reality");
+  // Which tiers the current selection actually has distinct art for (a pure read of
+  // the kind). The schematic tier always exists; the others gate their toggle button.
   const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
-  // The mode the diagram should actually render in: the user's choice when the
-  // part has a detail view, else forced to schematic so nothing is ever blank.
-  const effectiveDiagramMode = $derived<DiagramMode>(
-    diagramHasDetail ? diagramMode : "schematic",
+  const diagramHasFactory = $derived(
+    selPart ? hasFactory(selPart.kind) : false,
   );
-  // Selecting a different part defaults the view back to its internals when it has
+  // The tier the diagram should actually render in: the user's choice when that
+  // tier's art exists, else clamped outward to schematic so nothing is ever blank.
+  const effectiveDiagramMode = $derived<DiagramMode>(
+    diagramMode === "reality" && !diagramHasDetail
+      ? "schematic"
+      : diagramMode === "analogy" && !diagramHasFactory
+        ? "schematic"
+        : diagramMode,
+  );
+  // Selecting a different part defaults the view to its reality internals when it has
   // them — so double-clicking an op-amp opens straight to "what's happening inside."
   $effect(() => {
     const kind = selPart?.kind;
-    if (kind && hasDetail(kind)) diagramMode = "detail";
+    if (kind) diagramMode = hasDetail(kind) ? "reality" : "schematic";
   });
   // Calculator inputs, seeded from each calc's presets.
   const initialCalc: Record<string, Record<string, number>> = {};
@@ -735,8 +746,11 @@
         },
         onInspect: () => {
           // Double-click on a part: the board already made it the lone selection
-          // (onSelect fired first), so we only open the deep info drawer for it.
+          // (onSelect fired first). Open the deep info drawer and land straight on
+          // the reality internals when the part has them — even if it was already
+          // selected, so a double-click always re-asserts the "what's inside" view.
           infoOpen = true;
+          if (selPart && hasDetail(selPart.kind)) diagramMode = "reality";
         },
         onLabelEdit: (req) => {
           if (req) {
@@ -1808,39 +1822,52 @@
                 {@const info = partInfo(selPart.kind)}
                 {#if info}
                   {@const e = selElectrical ?? ZERO_ELECTRICAL}
-                  {#if diagramHasDetail}
-                    <!-- Symbol ⇄ Inside: flip the hero diagram between the
-                         schematic symbol you'll meet on a datasheet and the live
-                         construction-internals view (what's happening inside, in
-                         real time). Only shown for parts that have a detail
-                         drawer; others stay on the symbol. -->
+                  {#if diagramHasDetail || diagramHasFactory}
+                    <!-- The 3-tier view selector: Symbol (datasheet schematic) →
+                         Factory (the machine-metaphor analogy) → Real (the live
+                         construction-internals, "as close to reality as possible").
+                         A tier's button only appears when that kind has its own art;
+                         the diagram clamps outward to the symbol otherwise. -->
                     <div
                       class="diagram-toggle"
                       role="group"
-                      aria-label="Diagram view"
+                      aria-label="Component view tier"
                     >
-                      <button
-                        class="seg {effectiveDiagramMode === 'detail'
-                          ? 'is-active'
-                          : ''}"
-                        onclick={() => (diagramMode = "detail")}
-                        title="Show what's happening inside the part, live"
-                      >
-                        Inside
-                      </button>
                       <button
                         class="seg {effectiveDiagramMode === 'schematic'
                           ? 'is-active'
                           : ''}"
                         onclick={() => (diagramMode = "schematic")}
-                        title="Show the schematic symbol"
+                        title="Schematic — the symbol you'll meet on a datasheet"
                       >
                         Symbol
                       </button>
+                      {#if diagramHasFactory}
+                        <button
+                          class="seg {effectiveDiagramMode === 'analogy'
+                            ? 'is-active'
+                            : ''}"
+                          onclick={() => (diagramMode = "analogy")}
+                          title="Factory — the machine-metaphor analogy"
+                        >
+                          Factory
+                        </button>
+                      {/if}
+                      {#if diagramHasDetail}
+                        <button
+                          class="seg {effectiveDiagramMode === 'reality'
+                            ? 'is-active'
+                            : ''}"
+                          onclick={() => (diagramMode = "reality")}
+                          title="Real — a zoomed-in view of what's happening inside, live"
+                        >
+                          Real
+                        </button>
+                      {/if}
                     </div>
                   {/if}
                   <div
-                    class="info-diagram {effectiveDiagramMode === 'detail'
+                    class="info-diagram {effectiveDiagramMode === 'reality'
                       ? 'is-detail'
                       : ''}"
                   >
@@ -1930,43 +1957,6 @@
                   live "right now" readout of its numbers.
                 </p>
               {/if}
-
-              <section class="belt-note">
-                <h3 class="belt-title">The belt — carriers &amp; energy</h3>
-                <div class="belt-legend">
-                  <span class="belt-key"
-                    ><b class="belt-carrier">›</b> carriers · charge</span
-                  >
-                  <span class="belt-key"
-                    ><b class="belt-energy">●</b> energy · power</span
-                  >
-                </div>
-                <p class="info-plain">
-                  Two things ride every wire. The <b>carriers</b> are the arrow
-                  chevrons, coloured by the net's voltage — they move the way
-                  the current flows. On <b>DC</b> they stream one way; on
-                  <b>AC</b> they slosh back and forth in place, because the current
-                  reverses every half-cycle. Net charge barely travels.
-                </p>
-                <p class="info-plain">
-                  The orange dots are <b>energy</b> — power,
-                  <span class="mono">P = V·I</span>, carried to the load. Here's
-                  the surprise: on AC's negative half-cycle <b>both</b> the
-                  voltage and the current go negative, yet the energy still
-                  flows
-                  <b>forward</b>. Power is their <i>product</i>, and negative ×
-                  negative is <b>positive</b> — so
-                  <span class="mono">P = V·I ≥ 0</span> the whole cycle through a
-                  resistor. The carriers slosh, but the energy is never not being
-                  delivered.
-                </p>
-                <p class="info-plain">
-                  In a capacitor or inductor the voltage and current sit a
-                  quarter-cycle apart, so <span class="mono">V·I</span> swings both
-                  ways — the energy sloshes in and back out, delivering nothing on
-                  average. That's reactive power.
-                </p>
-              </section>
             {:else}
               {#each CALCS as c (c.id)}
                 {@const r = c.compute(calcVals[c.id] ?? {})}
@@ -2080,6 +2070,40 @@
         </li>
       {/each}
     </ul>
+    <!-- The carriers-vs-energy primer lives here now (general "how to read the
+         board animation"), not in the per-component info panel. Collapsed by
+         default so it's available without crowding the readings. -->
+    <details class="board-legend">
+      <summary>Reading the board — carriers &amp; energy</summary>
+      <div class="belt-legend">
+        <span class="belt-key"
+          ><b class="belt-carrier">›</b> carriers · charge</span
+        >
+        <span class="belt-key"><b class="belt-energy">●</b> energy · power</span
+        >
+      </div>
+      <p class="info-plain">
+        Two things ride every wire. The <b>carriers</b> are the arrow chevrons,
+        coloured by the net's voltage — they move the way the current flows. On
+        <b>DC</b> they stream one way; on <b>AC</b> they slosh back and forth in place,
+        because the current reverses every half-cycle. Net charge barely travels.
+      </p>
+      <p class="info-plain">
+        The orange dots are <b>energy</b> — power,
+        <span class="mono">P = V·I</span>, carried to the load. Here's the
+        surprise: on AC's negative half-cycle
+        <b>both</b> the voltage and the current go negative, yet the energy
+        still flows <b>forward</b>. Power is their <i>product</i>, and negative
+        × negative is <b>positive</b> — so <span class="mono">P = V·I ≥ 0</span> the
+        whole cycle through a resistor. The carriers slosh, but the energy is never
+        not being delivered.
+      </p>
+      <p class="info-plain">
+        In a capacitor or inductor the voltage and current sit a quarter-cycle
+        apart, so <span class="mono">V·I</span> swings both ways — the energy sloshes
+        in and back out, delivering nothing on average. That's reactive power.
+      </p>
+    </details>
   </aside>
 </div>
 
@@ -2711,18 +2735,28 @@
     color: var(--dim);
   }
   /* Always-on explainer for the two belt layers (carriers vs energy). */
-  .belt-note {
-    margin-top: 14px;
-    padding-top: 12px;
+  /* The carriers-vs-energy primer, now a collapsible legend at the foot of the
+     telemetry panel (moved out of the per-component info panel). */
+  .board-legend {
+    margin-top: 12px;
+    padding-top: 10px;
     border-top: 1px solid var(--border);
   }
-  .belt-title {
+  .board-legend > summary {
     font-family: var(--font-display);
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 12px;
+    font-size: 11px;
+    color: var(--dim);
+    cursor: pointer;
+    margin-bottom: 8px;
+    list-style: revert;
+  }
+  .board-legend > summary:hover {
     color: var(--text);
-    margin: 0 0 8px;
+  }
+  .board-legend .info-plain:last-child {
+    margin-bottom: 0;
   }
   .belt-legend {
     display: flex;
@@ -2746,9 +2780,6 @@
     color: var(--energy);
     font-size: 12px;
     line-height: 1;
-  }
-  .belt-note .info-plain:last-child {
-    margin-bottom: 0;
   }
   .calc-card {
     border: 1px solid var(--border);
