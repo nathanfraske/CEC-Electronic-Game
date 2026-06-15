@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-15 — Draggable wires, timeline-relative flow, crisp text, hotkeys + new I/GND parts
+
+**State:** 🟢 Green (fmt/clippy/test incl. golden + 4 new current-source tests,
+build:wasm, web check/lint/build). Phase 0 is on `main` (PR #5). This session's
+work is on the branch, to ship as **one combined merge**:
+
+- **Draggable wires:** `Wire.mid` optional waypoint — drag a wire to bend its
+  orthogonal belt through a grid cell; drop it back on the straight pin-to-pin
+  line to straighten. `routeForWire` is now the single source of wire geometry
+  (draw / hit-test / selection-with-handle-dot / probe-snap). Cosmetic only — the
+  netlist signature ignores `mid`, so the sim never resets.
+- **Timeline-relative flow:** the flow phase is `realPhase + tick*TICK_FLOW`, so
+  the arrows/dots track ΔT — forward as the tick advances (running OR scrubbing
+  forward), reverse when stepping/scrubbing back — instead of freezing on pause.
+- **Crisp text (round 2):** Text resolution floored at 2× and multiplied by zoom
+  (`applyTextRes` + `ComponentNode.setTextRes`); the old cap-at-2 mismatched the
+  hi-DPI renderer. Labels stay sharp when zoomed.
+- **Hotkeys:** Space play/pause · arrows nudge the selection (or pan when empty,
+  `board.nudge`) · `,`/`.` step a tick back/forward.
+- **New ideal elements** (parallel worktree agent, cherry-picked clean): ideal DC
+  **current source** (`I`, sim-core type 4, animated arrow) and an **explicit
+  ground** (`GND`, 1-pin reference; `buildNetlist` prefers it for node 0). RC
+  golden unchanged. See `docs/parts-roadmap.md`.
+
+### Pick up here
+- Combined PR → `main` is the next action (user chose one combined merge); then the
+  live Pages site has everything.
+- Modeless **Phase 1** still open (`docs/ui/mode-flow.md`): ghost preview + pin
+  hover-snap. Per-component **value editing** is now more valuable (I/GND/V/R/C/L
+  all carry values). The rail chevron density still reflects a *single* element's
+  current, not the KCL sum along a shared net — a known visualization gap.
+
+---
+
 ## 2026-06-14 — Modeless interaction (Phase 0): Build + Measure, armed parts
 
 **State:** 🟢 Green (fmt/clippy/test + golden, build:wasm, web check/lint/build all
