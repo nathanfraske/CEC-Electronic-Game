@@ -8,6 +8,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-15
 
+### Owner requests — autotransformer + an ideal-vs-real fidelity pass
+- [ ] **Autotransformer / true variac** (owner, 2026-06-15): a **single tapped
+  winding** (top / tap / bottom — the tap is the 3rd terminal `c`), where the
+  tap-to-bottom voltage is a chosen fraction of top-to-bottom. The authentic variac
+  (continuously variable if paired with the pot), non-isolated, more copper-efficient
+  than the two-winding transformer. Natural variant of the coupled-inductor math
+  already built (one self-inductance + a tap fraction; or two series-coupled
+  sub-windings sharing the tap node). **Note:** you can ALREADY rough one out today
+  by **series-connecting the existing 2-winding transformer's windings** (tie P− to
+  S+ → that junction is the tap) — a real technique ("transformer connected as an
+  autotransformer"); the coupling does the work. A dedicated `AT` part would be the
+  clean/authentic version.
+- [ ] **Ideal-vs-real fidelity pass** (owner, 2026-06-15): a deliberate later pass
+  that **separates the idealized parts from the realistic ones** and wires fidelity
+  into **progression/tech-tree** (`docs/game-progression.md`, `docs/game-rewards.md`):
+  ideal primitives early (ideal transformer ratio, lossless), real models later
+  (winding R already in the transformer, leakage/saturation, ESR, tolerance, the
+  realism multiplier in `game-rewards.md`). Catalog which parts have an ideal vs real
+  tier and gate the real tier behind the tech tree. Do this when doing change/progress
+  work, not now.
+
 ### Owner requests — potentiometer + programmable load (for VRMs/regulators)
 - [ ] **Potentiometer** (owner, 2026-06-15): a player-adjustable 3-terminal variable
   resistor — two ends + a **wiper**, with a knob (0..1 wiper position) in the
