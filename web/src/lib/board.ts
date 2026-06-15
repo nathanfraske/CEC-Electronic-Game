@@ -76,6 +76,16 @@ const MAX_TEXT_RES = 4;
 const PROBE_PLUS = 0xe0533a;
 const PROBE_MINUS = 0x7c90a4;
 
+// The belt carries two layers: charge carriers (voltage-coloured chevrons) and
+// the energy they deliver (warm-orange dots). `*_RATE` set how far each advances
+// per unit of animation phase; `I_REF`/`V_REF` normalise current and net voltage
+// so the integration is dimensionless and self-scales with playback speed.
+const ENERGY_COLOR = 0xff8a3d;
+const CARRIER_RATE = 0.5;
+const ENERGY_RATE = 0.6;
+const I_REF = 0.01; // 10 mA — same reference the thickness/density use
+const V_REF = 6; // ~one rail; net voltage above this saturates the energy layer
+
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
   PALETTE.accent,
@@ -169,6 +179,16 @@ export class Board {
   // contributes the timeline-tracking part (see `update`).
   private phase = 0;
   private realPhase = 0;
+  private prevPhase = 0;
+  // Signed change in `phase` over the current frame, consumed once by the belt
+  // animation so it integrates exactly once per frame (drag-driven redraws, which
+  // also call redrawWires, leave it zero and just reposition the dots).
+  private flowDelta = 0;
+  // Per-wire integrated offsets [0,1) for the two belt layers. Carriers integrate
+  // signed current (stream on DC, slosh on AC); energy integrates signed power v·i
+  // (streams to the load on a resistor, sloshes on a reactive part). Keyed by wire.
+  private carrierOffset = new Map<number, number>();
+  private energyOffset = new Map<number, number>();
   private lastTime = 0;
   private textRes = DPR;
   private lastAnchorKey = ""; // change-detect the popover anchor rect
@@ -495,6 +515,10 @@ export class Board {
     const d = target - this.phase;
     const cap = 0.1;
     this.phase += d > cap ? cap : d < -cap ? -cap : d;
+    // How far the belt advances this frame: forward while running, backward when
+    // stepping/scrubbing back, frozen when paused. redrawWires consumes it once.
+    this.flowDelta = this.phase - this.prevPhase;
+    this.prevPhase = this.phase;
 
     if (this.app.screen.width !== this.w || this.app.screen.height !== this.h) {
       this.viewportDirty = true;
@@ -1245,16 +1269,27 @@ export class Board {
 
   /**
    * Orthogonal "belts": each trace routes at 90°, colours by its net voltage,
-   * and carries the KCL branch current as thickness + flow chevrons whose
-   * density + direction track that current — so a shared rail visibly thickens
-   * toward a source and thins past each tap. Factorio belts, but electricity.
-   * Redrawn every frame so it stays live.
+   * and carries the KCL branch current as thickness + two flowing layers —
+   * charge carriers and the energy they deliver. So a shared rail visibly
+   * thickens toward a source and thins past each tap. Factorio belts, but
+   * electricity. Redrawn every frame so it stays live.
+   *
+   * The two layers are the loop-tile idea (`docs/ui/visual-language.md`):
+   * carriers integrate the
+   * *signed* current, so they stream on DC and slosh in place on AC (the current
+   * reverses each half-cycle). Energy integrates the *signed* power v·i: on a
+   * resistor v and i reverse together, so the product stays positive and energy
+   * streams steadily to the load even while the carriers slosh; on a reactive
+   * part v and i are a quarter-cycle apart, so the energy sloshes in and back out
+   * with no net delivery. Energy rides the high-potential wire (v≈0 returns carry
+   * charge but little energy), which is exactly where the power flows.
    */
   private redrawWires(): void {
     const g = this.wireLayer;
     g.clear();
     const currents = this.computeWireCurrents();
     this.lastWireCurrents = currents;
+    const fd = this.flowDelta;
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
@@ -1269,16 +1304,22 @@ export class Board {
       polyline(g, route);
       g.stroke({ width, color, alpha: 0.95 });
 
+      const len = routeLength(route);
+      const iNorm = Math.max(-1, Math.min(1, cur / I_REF));
+      const vNorm = Math.max(-1, Math.min(1, (v ?? 0) / V_REF));
+
+      // Carriers (charge): chevrons that stream on DC and slosh on AC. Position
+      // integrates the signed current; the arrowhead points the way it is moving.
       if (normC > 0.02) {
-        // Density (how many chevrons) tracks the current; speed tracks voltage.
-        const normV = saturate(Math.abs(v ?? 0) / 6);
-        const len = routeLength(route);
+        let co =
+          (this.carrierOffset.get(w.id) ?? 0) + iNorm * fd * CARRIER_RATE;
+        co = ((co % 1) + 1) % 1;
+        this.carrierOffset.set(w.id, co);
         const spacing = 40 - 28 * normC;
         const n = Math.min(14, Math.max(1, Math.floor(len / spacing)));
         const dir = cur >= 0 ? 1 : -1;
-        const speed = 0.08 + normV * 0.6;
         for (let i = 0; i < n; i++) {
-          const t = (((i / n + this.phase * speed * dir) % 1) + 1) % 1;
+          const t = (i / n + co) % 1;
           const s = sampleRoute(route, t);
           drawChevron(
             g,
@@ -1287,11 +1328,42 @@ export class Board {
             s.dx * dir,
             s.dy * dir,
             color,
-            0.4 + 0.5 * normC,
+            0.32 + 0.42 * normC,
           );
         }
       }
+
+      // Energy (power): warm-orange dots whose travel integrates the signed power
+      // v·i, so they keep delivering to the load while the carriers slosh.
+      const pNorm = Math.abs(vNorm * iNorm);
+      if (pNorm > 0.012) {
+        let eo =
+          (this.energyOffset.get(w.id) ?? 0) + vNorm * iNorm * fd * ENERGY_RATE;
+        eo = ((eo % 1) + 1) % 1;
+        this.energyOffset.set(w.id, eo);
+        const m = Math.min(10, Math.max(1, Math.floor(len / 34)));
+        for (let j = 0; j < m; j++) {
+          const t = (j / m + eo) % 1;
+          const s = sampleRoute(route, t);
+          g.circle(s.x, s.y, 2.4).fill({
+            color: ENERGY_COLOR,
+            alpha: 0.5 + 0.4 * pNorm,
+          });
+        }
+      }
     }
+    // Drop offsets for wires that no longer exist (after a delete), so the maps
+    // can't grow without bound across a long editing session.
+    if (this.carrierOffset.size > this.graph.wires.size) {
+      for (const id of this.carrierOffset.keys()) {
+        if (!this.graph.wires.has(id)) {
+          this.carrierOffset.delete(id);
+          this.energyOffset.delete(id);
+        }
+      }
+    }
+    // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
+    this.flowDelta = 0;
   }
 
   /** A 90° (Manhattan) route between two pins: leave along the dominant axis. */

@@ -1,0 +1,512 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The one-way valve — CEC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* CEC design tokens, mirrored from web/src/app.css (criticalerrorcomputing.com):
+     a dark blue-violet bench-instrument HUD, rose accent, mono telemetry. */
+  :root{
+    --bg:#100d1a; --surface:#171327; --surface-2:#1e1834;
+    --text:#e9e6f5; --dim:#9c93b8; --faint:#6b6488;
+    --border:#3b3560; --border-bright:#534a7d;
+    --accent:#f5247a; --cyan:#46d2e6; --violet:#9a78ff;
+    --ok:#3ad39a; --warn:#e6a23a; --bronze:#c9a76a; --bad:#e0533a;
+    --accent-line:rgba(245,36,122,0.42); --accent-soft:rgba(245,36,122,0.14);
+    --stage:#0d0b16;
+    --font-body:"Saira", system-ui, sans-serif;
+    --font-display:"Saira Condensed", "Arial Narrow", sans-serif;
+    --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg);
+    font-family:var(--font-body); font-size:16px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100svh;
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(154,120,255,0.12), transparent 60%),
+      radial-gradient(90% 70% at 50% 120%, rgba(245,36,122,0.06), transparent 55%),
+      linear-gradient(to right, rgba(120,110,170,0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(120,110,170,0.05) 1px, transparent 1px),
+      var(--bg);
+    background-size:100% 100%, 100% 100%, 34px 34px, 34px 34px;
+  }
+  body::after{content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
+    background:radial-gradient(130% 110% at 50% 40%, transparent 62%, rgba(0,0,0,0.34) 100%);}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px; position:relative; z-index:1;}
+
+  /* header */
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:18px; position:relative;}
+  .hud-header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px; background:linear-gradient(90deg, transparent, var(--accent-line) 18%, rgba(245,36,122,0.55) 50%, var(--accent-line) 82%, transparent); opacity:0.7;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:14px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase; text-shadow:0 0 24px rgba(154,120,255,0.35);}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500; text-shadow:0 0 16px rgba(245,36,122,0.45);}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:linear-gradient(180deg,var(--surface-2),var(--surface)); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  .chip-state{position:relative; padding-left:18px; color:var(--ok); border-color:rgba(58,211,154,0.45); background:rgba(58,211,154,0.08); transition:color .2s, border-color .2s, background .2s;}
+  .chip-state::before{content:""; position:absolute; left:8px; top:50%; width:5px; height:5px; margin-top:-2.5px; border-radius:50%; background:currentColor; box-shadow:0 0 7px 0 currentColor;}
+  .chip-state.blocked{color:var(--bad); border-color:rgba(224,83,58,0.5); background:rgba(224,83,58,0.08);}
+
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; letter-spacing:0.02em; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;}
+  p.intro b{color:var(--text);}
+  p.intro .mono{font-family:var(--font-mono); color:var(--cyan); font-size:13px;}
+
+  /* main grid */
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; align-items:start;}
+  .stack{display:flex; flex-direction:column; gap:16px; min-width:0;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:var(--stage); box-shadow:inset 0 0 0 1px rgba(0,0,0,0.45), inset 0 0 60px -20px rgba(0,0,0,0.85), 0 0 24px -10px rgba(154,120,255,0.4);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .board-frame::before{content:""; position:absolute; inset:0; pointer-events:none; z-index:4; background:radial-gradient(130% 110% at 50% 0%, transparent 62%, rgba(0,0,0,0.28) 100%), repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0, rgba(0,0,0,0.16) 1px, transparent 1px, transparent 3px); mix-blend-mode:multiply; opacity:0.5;}
+  .board-frame::after{content:""; position:absolute; left:0; right:0; top:-36%; height:36%; pointer-events:none; z-index:5; background:linear-gradient(180deg, transparent, rgba(70,210,230,0.22) 50%, transparent); opacity:0.16; animation:sweep 7s linear infinite;}
+  @keyframes sweep{0%{transform:translateY(0);}100%{transform:translateY(380%);}}
+  .scope-tag{position:absolute; top:10px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:rgba(13,11,22,0.72); backdrop-filter:blur(2px); padding:3px 7px; border:1px solid var(--border); border-radius:2px; z-index:6;}
+  .scope-tag.l{left:12px;} .scope-tag.r{right:12px;}
+
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--surface),var(--bg)); overflow:hidden;}
+  .panel-title{position:relative; margin:0; padding:12px 14px 10px 16px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-title::before{content:""; position:absolute; left:0; top:12px; bottom:9px; width:2px; background:var(--accent); box-shadow:0 0 8px -1px var(--accent);}
+  .panel-body{padding:12px 14px;}
+
+  /* telemetry */
+  .chan{--c:var(--accent); display:grid; grid-template-columns:11px 1fr auto; grid-template-rows:auto auto; align-items:center; gap:4px 9px; padding:9px 0;}
+  .chan + .chan{border-top:1px solid var(--border);}
+  .chan-dot{grid-row:1/3; width:9px; height:9px; border-radius:50%; background:var(--c); box-shadow:0 0 0 2px rgba(255,255,255,0.04), 0 0 9px 0 var(--c);}
+  .chan-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; color:var(--dim);}
+  .chan-val{font-family:var(--font-mono); font-size:12px; color:var(--text); text-align:right; font-variant-numeric:tabular-nums;}
+  .chan-bar{grid-column:2/4; height:5px; border-radius:2px; background:rgba(0,0,0,0.45); box-shadow:inset 0 0 0 1px rgba(0,0,0,0.4); overflow:hidden; position:relative;}
+  /* center-zero meter: fill grows from middle */
+  .chan-bar.bipolar::before{content:""; position:absolute; left:50%; top:0; bottom:0; width:1px; background:var(--border-bright);}
+  .chan-fill{display:block; height:100%; width:0%; border-radius:inherit; background:linear-gradient(90deg, rgba(255,255,255,0.0), var(--c)); box-shadow:0 0 8px -1px var(--c); transition:width 0.06s linear;}
+  .chan-fill.center{position:absolute; top:0; left:50%; width:0%; transition:none;}
+
+  /* legend rows */
+  .leg{display:flex; gap:11px; padding:10px 0; border-bottom:1px solid var(--border);}
+  .leg:last-child{border-bottom:none;}
+  .leg-key{flex-shrink:0; width:46px; height:34px; border-radius:3px; border:1px solid var(--border); display:grid; place-items:center; overflow:hidden; background:var(--stage);}
+  .leg-key svg{width:100%; height:100%;}
+  .leg-txt{font-size:12px; color:var(--dim); line-height:1.45;}
+  .leg-txt b{color:var(--text); font-weight:600;}
+  .leg-txt .mono{font-family:var(--font-mono); color:var(--faint); font-size:11px;}
+
+  /* transport / controls */
+  .transport{margin-top:0; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--surface),transparent); padding:12px 16px; display:flex; flex-wrap:wrap; gap:16px 24px; align-items:center; position:relative;}
+  .transport::before{content:""; position:absolute; left:0; right:0; top:-1px; height:1px; background:linear-gradient(90deg, transparent, var(--accent-line) 22%, var(--accent-line) 78%, transparent); opacity:0.5;}
+  .tg{display:flex; align-items:center; gap:10px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .tg-val{font-family:var(--font-mono); font-size:12px; color:var(--text); min-width:46px; font-variant-numeric:tabular-nums;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:linear-gradient(180deg,var(--surface-2),var(--surface)); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s, transform .06s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim); box-shadow:0 0 0 1px var(--accent-soft);}
+  .btn:active{transform:translateY(1px);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft); box-shadow:inset 0 0 12px -6px var(--accent), 0 0 10px -4px var(--accent);}
+  .btn-ghost.cap.is-active{color:var(--ok); border-color:rgba(58,211,154,0.5); background:rgba(58,211,154,0.1); box-shadow:inset 0 0 12px -6px var(--ok), 0 0 10px -4px var(--ok);}
+
+  input[type=range]{-webkit-appearance:none; appearance:none; width:150px; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft), 0 0 12px -2px var(--cyan);}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px; box-shadow:inset 0 0 0 1px rgba(0,0,0,0.4);}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+
+  footer{margin-top:22px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;}
+  footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} input[type=range]{width:130px;} }
+  @media (prefers-reduced-motion:reduce){ .board-frame::after{display:none;} *{transition-duration:0.01ms !important;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand">
+      <div class="brand-mark">CE</div>
+      <div class="brand-text">Critical Error<span class="brand-sub">diode lab</span></div>
+    </div>
+    <div class="header-meta">
+      <span class="chip chip-accent">AC → DC</span>
+      <span class="chip chip-state" id="stateChip">PASS</span>
+    </div>
+  </div>
+
+  <h1 class="lede">The one-way valve</h1>
+  <p class="intro">An AC source swings the bus <b>up and down</b>. A diode is a one-way valve: it lets the <b>forward</b> half through to the load and <b>slams shut</b> on the reverse half, so the carriers stall against a closed gate. What gets through is a <span class="mono">half-wave</span> — bumps of one polarity with gaps between. Add the smoothing <b>cap</b> and those gaps fill in toward a rough DC rail. The valve also costs about <b>0.6&nbsp;V</b> to open, so the output sits a diode-drop below the peak.</p>
+
+  <div class="main">
+    <div class="stack">
+      <div class="board-frame">
+        <span class="scope-tag l">rectifier &middot; live</span>
+        <span class="scope-tag r" id="gateTag">gate open</span>
+        <svg id="scene" viewBox="0 0 980 300" xmlns="http://www.w3.org/2000/svg" aria-label="An alternating-current source feeds a diode that passes the forward half-cycles to a load and blocks the reverse half-cycles; a gate valve closes on the blocked half.">
+          <defs>
+            <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+            <filter id="soft" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="7"/></filter>
+            <linearGradient id="srcGradD" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#241c3a"/>
+              <stop offset="100%" stop-color="#161126"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+
+      <div class="board-frame">
+        <span class="scope-tag l">scope &middot; output v(t)</span>
+        <span class="scope-tag r" id="scopeTag">half-wave</span>
+        <svg id="scope" viewBox="0 0 980 240" xmlns="http://www.w3.org/2000/svg" aria-label="Oscilloscope trace: the AC input waveform in dim teal and the rectified output waveform highlighted; only the forward half-cycles pass.">
+          <defs>
+            <linearGradient id="fillIn" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="rgba(70,210,230,0.30)"/>
+              <stop offset="100%" stop-color="rgba(70,210,230,0)"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <h2 class="panel-title">Telemetry</h2>
+        <div class="panel-body">
+          <div class="chan" style="--c:var(--cyan)">
+            <span class="chan-dot"></span><span class="chan-name">AC INPUT</span><span class="chan-val" id="vIn">+0.00 V</span>
+            <span class="chan-bar bipolar"><span class="chan-fill center" id="bIn"></span></span>
+          </div>
+          <div class="chan" style="--c:var(--ok)">
+            <span class="chan-dot"></span><span class="chan-name">OUTPUT</span><span class="chan-val" id="vOut">+0.00 V</span>
+            <span class="chan-bar"><span class="chan-fill" id="bOut"></span></span>
+          </div>
+          <div class="chan" style="--c:var(--violet)">
+            <span class="chan-dot"></span><span class="chan-name">DIODE DROP</span><span class="chan-val" id="vDrop">0.60 V</span>
+            <span class="chan-bar"><span class="chan-fill" id="bDrop"></span></span>
+          </div>
+          <div class="chan" id="rowRipple" style="--c:var(--warn); display:none">
+            <span class="chan-dot"></span><span class="chan-name">RIPPLE</span><span class="chan-val" id="vRip">— V</span>
+            <span class="chan-bar"><span class="chan-fill" id="bRip"></span></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Encoding key</h2>
+        <div class="panel-body">
+          <div class="leg"><span class="leg-key"><svg viewBox="0 0 46 34"><path d="M3 17 Q11 3 17 17 T31 17 T45 17" fill="none" stroke="#46d2e6" stroke-width="2"/></svg></span><div class="leg-txt"><b>AC input</b> swings both ways around <span class="mono">0 V</span> — the dim teal sine.</div></div>
+          <div class="leg"><span class="leg-key"><svg viewBox="0 0 46 34"><path d="M3 24 L9 24 L23 24 L23 24" fill="none"/><path d="M3 24 Q10 6 17 24 M31 24 Q38 6 45 24" fill="none" stroke="#3ad39a" stroke-width="2"/><line x1="3" y1="24" x2="45" y2="24" stroke="#3b3560" stroke-width="1"/></svg></span><div class="leg-txt"><b>Output</b> keeps only the forward bumps — a half-wave, a diode-drop lower.</div></div>
+          <div class="leg"><span class="leg-key"><svg viewBox="0 0 46 34"><polygon points="14,9 14,25 28,17" fill="#9a78ff" opacity="0.85"/><line x1="28" y1="9" x2="28" y2="25" stroke="#9a78ff" stroke-width="2.5"/></svg></span><div class="leg-txt"><b>Diode</b> passes flow only in the arrow’s direction; the bar is the blocking gate.</div></div>
+          <div class="leg"><span class="leg-key"><svg viewBox="0 0 46 34"><line x1="18" y1="8" x2="18" y2="26" stroke="#3ad39a" stroke-width="2.5"/><line x1="26" y1="8" x2="26" y2="26" stroke="#3ad39a" stroke-width="2.5"/></svg></span><div class="leg-txt"><b>Cap</b> stores charge through each bump and bleeds it into the gaps — smoothing.</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="tg">
+      <span class="tg-label">amplitude</span>
+      <input type="range" id="amp" min="20" max="100" value="75" aria-label="AC source amplitude">
+      <span class="tg-val" id="ampVal">6.0 V</span>
+    </div>
+    <div class="tg">
+      <span class="tg-label">speed</span>
+      <input type="range" id="speed" min="20" max="200" value="100" aria-label="AC frequency / sweep speed">
+      <span class="tg-val" id="spdVal">1.0×</span>
+    </div>
+    <div class="tg"><button class="btn btn-ghost cap" id="btnCap">smoothing cap</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+// SPDX-License-Identifier: Apache-2.0
+(function(){
+  "use strict";
+  var NS="http://www.w3.org/2000/svg";
+  function el(t,a,txt){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+
+  var prefersReduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ===== model =====
+  var VDROP = 0.6;          // diode forward drop (volts)
+  var V_AMP_MAX = 8.0;      // peak amplitude at slider=100 -> we map 20..100 to 1.6..8.0
+  var R_LOAD = 1.0;         // arbitrary; output current ~ Vout
+  // smoothing cap (rough RC); when on, output follows peaks and decays slowly
+  var CAP_DECAY = 0.9;      // per-second fraction retained-ish (tuned in loop)
+
+  // ----- circuit schematic SVG (top) -----
+  var scene=document.getElementById("scene");
+  var yMid=150, xSrc=120, xDio=470, xLoad=820;
+  var TOP_Y=92, BOT_Y=208;
+
+  // graticule
+  for(var gx=60; gx<=920; gx+=40){ scene.appendChild(el("line",{x1:gx,y1:18,x2:gx,y2:282,stroke:"#2a2444","stroke-width":1,opacity:0.10})); }
+  for(var gy=38; gy<=270; gy+=40){ scene.appendChild(el("line",{x1:40,y1:gy,x2:940,y2:gy,stroke:"#2a2444","stroke-width":1,opacity:0.09})); }
+
+  // AC source block with sine glyph
+  scene.appendChild(el("circle",{cx:xSrc,cy:yMid,r:34,fill:"url(#srcGradD)",stroke:"#4a3a66","stroke-width":1.6}));
+  var srcSine=el("path",{d:"M "+(xSrc-18)+" "+yMid+" q 9 -16 18 0 t 18 0",fill:"none",stroke:"#46d2e6","stroke-width":2.4,"stroke-linecap":"round"});
+  scene.appendChild(srcSine);
+  scene.appendChild(el("text",{x:xSrc,y:yMid+54,"font-family":"var(--font-mono)","font-size":11,fill:"#6b6488","text-anchor":"middle","letter-spacing":"0.08em"},"AC SOURCE"));
+
+  // wires: source top -> up -> right to diode; diode -> right to load; load down; bottom back
+  var wireTop=el("path",{d:"M "+xSrc+" "+(yMid-34)+" L "+xSrc+" "+TOP_Y+" L "+(xDio-46)+" "+TOP_Y,fill:"none",stroke:"#46d2e6","stroke-width":4,"stroke-linecap":"round",opacity:0.28});
+  var wireOut=el("path",{d:"M "+(xDio+46)+" "+TOP_Y+" L "+xLoad+" "+TOP_Y,fill:"none",stroke:"#3ad39a","stroke-width":4,"stroke-linecap":"round",opacity:0.28});
+  var wireRet=el("path",{d:"M "+xLoad+" "+TOP_Y+" L "+xLoad+" "+BOT_Y+" L "+xSrc+" "+BOT_Y+" L "+xSrc+" "+(yMid+34),fill:"none",stroke:"#6b6488","stroke-width":3.4,"stroke-linecap":"round",opacity:0.32});
+  scene.appendChild(wireTop); scene.appendChild(wireOut); scene.appendChild(wireRet);
+
+  // diode symbol at xDio on the TOP_Y rail: triangle (anode->cathode) + bar = gate
+  var triApex=xDio+22; // points right (current passes left->right when forward)
+  var diodeGroup=el("g",{});
+  scene.appendChild(diodeGroup);
+  var dioGlow=el("circle",{cx:xDio,cy:TOP_Y,r:30,fill:"#3ad39a",filter:"url(#soft)",opacity:0});
+  diodeGroup.appendChild(dioGlow);
+  var tri=el("polygon",{points:(xDio-22)+","+(TOP_Y-18)+" "+(xDio-22)+","+(TOP_Y+18)+" "+triApex+","+TOP_Y,fill:"#9a78ff",stroke:"#9a78ff","stroke-width":1.5,opacity:0.9});
+  diodeGroup.appendChild(tri);
+  // cathode bar = the gate that "shuts". We animate a second overlay bar that drops to close.
+  var bar=el("line",{x1:triApex,y1:TOP_Y-20,x2:triApex,y2:TOP_Y+20,stroke:"#cfd2e6","stroke-width":3,"stroke-linecap":"round"});
+  diodeGroup.appendChild(bar);
+  // gate shutter: a translucent panel that slides across the channel when blocked
+  var shutter=el("rect",{x:xDio-24,y:TOP_Y-19,width:48,height:38,rx:2,fill:"#e0533a",opacity:0});
+  diodeGroup.appendChild(shutter);
+  // forward/blocked label under diode
+  var dioLab=el("text",{x:xDio,y:TOP_Y-30,"font-family":"var(--font-mono)","font-size":11,fill:"#9a78ff","text-anchor":"middle"},"DIODE");
+  scene.appendChild(dioLab);
+
+  // load resistor (right) + optional cap
+  scene.appendChild(el("rect",{x:xLoad-14,y:yMid-30,width:28,height:60,rx:4,fill:"#181426",stroke:"#3ad39a","stroke-width":1.4}));
+  scene.appendChild(el("text",{x:xLoad+24,y:yMid-30,"font-family":"var(--font-mono)","font-size":10.5,fill:"#6b6488"},"LOAD"));
+  // cap (drawn between out node and ground, just left of load) — visibility toggled
+  var capX=xLoad-70;
+  var capGroup=el("g",{opacity:0});
+  scene.appendChild(capGroup);
+  capGroup.appendChild(el("line",{x1:capX,y1:TOP_Y,x2:capX,y2:yMid-9,stroke:"#3ad39a","stroke-width":2,opacity:0.6}));
+  capGroup.appendChild(el("line",{x1:capX-12,y1:yMid-9,x2:capX+12,y2:yMid-9,stroke:"#3ad39a","stroke-width":3,"stroke-linecap":"round"}));
+  capGroup.appendChild(el("line",{x1:capX-12,y1:yMid+9,x2:capX+12,y2:yMid+9,stroke:"#3ad39a","stroke-width":3,"stroke-linecap":"round"}));
+  capGroup.appendChild(el("line",{x1:capX,y1:yMid+9,x2:capX,y2:BOT_Y,stroke:"#3ad39a","stroke-width":2,opacity:0.6}));
+  capGroup.appendChild(el("text",{x:capX-18,y:yMid+4,"font-family":"var(--font-mono)","font-size":10,fill:"#3ad39a","text-anchor":"end"},"CAP"));
+
+  // carrier particles on the input side (left of diode) and output side (right)
+  function makeParticles(n){ var arr=[]; for(var i=0;i<n;i++){ var d=el("circle",{cx:-10,cy:-10,r:2.4,fill:"#7fe6f3",filter:"url(#glow)",opacity:0}); scene.appendChild(d); arr.push({el:d, t:i/n}); } return arr; }
+  var inParts=makeParticles(18);  // source -> diode along TOP_Y
+  var outParts=makeParticles(18); // diode -> load along TOP_Y
+  var xInA=xSrc, xInB=xDio-46;
+  var xOutA=xDio+46, xOutB=xLoad;
+
+  // ===== scope (bottom) =====
+  var scope=document.getElementById("scope");
+  var SW=980, SH=240, sMidY=120, sLeft=60, sRight=940, sAmp=82;
+  // scope graticule
+  for(var sx=sLeft; sx<=sRight; sx+=((sRight-sLeft)/10)){ scope.appendChild(el("line",{x1:sx,y1:24,x2:sx,y2:SH-24,stroke:"#2a2444","stroke-width":1,opacity:0.12})); }
+  for(var sy=24; sy<=SH-24; sy+=((SH-48)/6)){ scope.appendChild(el("line",{x1:sLeft-6,y1:sy,x2:sRight,y2:sy,stroke:"#2a2444","stroke-width":1,opacity:0.10})); }
+  // zero line
+  scope.appendChild(el("line",{x1:sLeft-6,y1:sMidY,x2:sRight,y2:sMidY,stroke:"#534a7d","stroke-width":1,opacity:0.7}));
+  scope.appendChild(el("text",{x:sLeft-10,y:sMidY+4,"font-family":"var(--font-mono)","font-size":10,fill:"#6b6488","text-anchor":"end"},"0V"));
+  scope.appendChild(el("text",{x:sLeft-10,y:sMidY-sAmp+4,"font-family":"var(--font-mono)","font-size":10,fill:"#6b6488","text-anchor":"end"},"+Vpk"));
+  scope.appendChild(el("text",{x:sLeft-10,y:sMidY+sAmp+4,"font-family":"var(--font-mono)","font-size":10,fill:"#6b6488","text-anchor":"end"},"−Vpk"));
+  // traces
+  var fillOut=el("path",{d:"",fill:"url(#fillIn)",stroke:"none",opacity:0.9});
+  scope.appendChild(fillOut);
+  var traceIn=el("path",{d:"",fill:"none",stroke:"#46d2e6","stroke-width":1.6,opacity:0.34,"stroke-linejoin":"round"});
+  scope.appendChild(traceIn);
+  var traceOut=el("path",{d:"",fill:"none",stroke:"#3ad39a","stroke-width":2.4,opacity:0.95,"stroke-linejoin":"round","stroke-linecap":"round"});
+  scope.appendChild(traceOut);
+  // sweep head dot
+  var head=el("circle",{cx:sRight,cy:sMidY,r:3.2,fill:"#3ad39a",filter:"url(#glow)"});
+  scope.appendChild(head);
+
+  // ===== state / controls =====
+  var ampEl=document.getElementById("amp"), spdEl=document.getElementById("speed"),
+      ampVal=document.getElementById("ampVal"), spdVal=document.getElementById("spdVal"),
+      btnRun=document.getElementById("btnRun"), btnCap=document.getElementById("btnCap"),
+      gateTag=document.getElementById("gateTag"), scopeTag=document.getElementById("scopeTag"),
+      stateChip=document.getElementById("stateChip"), footnote=document.getElementById("footnote"),
+      rowRipple=document.getElementById("rowRipple");
+  var vInEl=document.getElementById("vIn"), vOutEl=document.getElementById("vOut"),
+      vDropEl=document.getElementById("vDrop"), vRipEl=document.getElementById("vRip"),
+      bInEl=document.getElementById("bIn"), bOutEl=document.getElementById("bOut"),
+      bDropEl=document.getElementById("bDrop"), bRipEl=document.getElementById("bRip");
+
+  var state={running:true, cap:false, ampV:6.0, speed:1.0};
+  function readAmp(){ state.ampV = lerp(1.6, V_AMP_MAX, ((+ampEl.value)-20)/80); ampVal.textContent=state.ampV.toFixed(1)+" V"; }
+  function readSpd(){ state.speed=(+spdEl.value)/100; spdVal.textContent=state.speed.toFixed(1)+"×"; }
+  ampEl.addEventListener("input", readAmp);
+  spdEl.addEventListener("input", readSpd);
+  btnRun.addEventListener("click", function(){ state.running=!state.running; this.textContent=state.running?"pause":"run"; this.classList.toggle("is-active", state.running); });
+  btnCap.addEventListener("click", function(){ state.cap=!state.cap; this.classList.toggle("is-active", state.cap);
+    capGroup.setAttribute("opacity", state.cap?1:0);
+    rowRipple.style.display = state.cap? "grid":"none";
+    scopeTag.textContent = state.cap? "smoothed DC" : "half-wave";
+  });
+  readAmp(); readSpd();
+
+  vDropEl.textContent = VDROP.toFixed(2)+" V";
+
+  footnote.innerHTML='<b>Reading the bench.</b> The source swings the input both ways; the diode is the valve. On the <b>forward</b> half the gate is open — carriers stream left&rarr;right into the load and the output bump appears, sitting one <b>diode drop (~0.6&nbsp;V)</b> below the input peak. On the <b>reverse</b> half the shutter drops red, the carriers pile up and stall, and the output rests at zero — that is the blocked half of a <b>half-wave rectifier</b>. The <b>cap</b> banks charge on each bump and trickles it out through the valleys, lifting the trace toward a rough DC rail with a little <b>ripple</b>. This is a stylized visualization, not a field solver — the RC smoothing, the fixed 0.6&nbsp;V drop, and the gate timing are idealized for teaching.';
+
+  // history buffer for scope (per pixel column, scroll right->left as time sweeps)
+  var N = 220; // samples across the scope width
+  var inBuf=new Float32Array(N), outBuf=new Float32Array(N);
+  var filled=0;
+  var phase=0, last=0, capV=0;
+  var phaseFlowIn=0, phaseFlowOut=0; // particle drift accumulators (input/output side)
+
+  function sampleInput(ph){ return Math.sin(ph*Math.PI*2); } // normalized -1..1
+
+  function frame(ts){
+    if(!last) last=ts; var dt=Math.min(50, ts-last); last=ts;
+    var dts=dt*0.001;
+    var baseRate=0.55; // cycles per second at 1x
+    if(state.running) phase += dts*baseRate*state.speed;
+
+    // instantaneous values (normalized then scaled by ampV)
+    var sIn = sampleInput(phase);
+    var vIn = sIn*state.ampV;
+    // ideal diode: conduct when vIn > VDROP, output = vIn - VDROP, else 0 (no cap)
+    var conduct = vIn > VDROP;
+    var vRect = conduct ? (vIn - VDROP) : 0;
+
+    // capacitor model: cap charges up to vRect when diode conducts & vRect>capV,
+    // otherwise decays slowly into the load.
+    var vOut;
+    if(state.cap){
+      if(conduct && vRect > capV){ capV = vRect; }            // charge to peak (diode feeds cap)
+      else { capV = capV * Math.pow(0.5, dts*state.speed*2.4); } // RC decay through load
+      capV = clamp(capV, 0, state.ampV);
+      vOut = capV;
+    } else {
+      vOut = vRect;
+      capV = vRect;
+    }
+
+    // push to ring buffers (advance one sample per ~frame, scaled by speed for density)
+    // To keep the trace smooth we sample every frame.
+    if(state.running){
+      // shift left
+      inBuf.copyWithin(0,1); outBuf.copyWithin(0,1);
+      inBuf[N-1]=vIn; outBuf[N-1]=vOut;
+      if(filled<N) filled++;
+    }
+
+    // ===== draw scope traces =====
+    var span=sRight-sLeft;
+    function yFor(v){ return sMidY - (v/state.ampV)*sAmp; }
+    var dIn="", dOut="", dFill="";
+    var startI = N-filled;
+    for(var i=startI;i<N;i++){
+      var x = sLeft + (i/(N-1))*span;
+      var yi = clamp(yFor(inBuf[i]), 18, SH-18);
+      var yo = clamp(yFor(outBuf[i]), 18, SH-18);
+      dIn += (i===startI?"M":"L")+x.toFixed(1)+" "+yi.toFixed(1)+" ";
+      dOut += (i===startI?"M":"L")+x.toFixed(1)+" "+yo.toFixed(1)+" ";
+    }
+    // fill under output trace down to zero line
+    if(filled>1){
+      var x0=sLeft + (startI/(N-1))*span;
+      var xN=sLeft + ((N-1)/(N-1))*span;
+      dFill = "M"+x0.toFixed(1)+" "+sMidY+" "+ dOut.replace(/^M/,"L") + " L"+xN.toFixed(1)+" "+sMidY+" Z";
+    }
+    traceIn.setAttribute("d", dIn);
+    traceOut.setAttribute("d", dOut);
+    fillOut.setAttribute("d", dFill);
+    head.setAttribute("cx", sRight); head.setAttribute("cy", clamp(yFor(outBuf[N-1]),18,SH-18));
+    head.setAttribute("opacity", vOut>0.02?1:0.3);
+
+    // ===== schematic animation =====
+    // gate open on forward conduction; shutter drops on reverse/blocked.
+    // smooth the gate state a touch for a mechanical feel
+    shutter._o = (shutter._o==null?0:shutter._o);
+    shutter._o = lerp(shutter._o, conduct?0:1, clamp(dts*12,0,1));
+    shutter.setAttribute("opacity", (shutter._o*0.55).toFixed(2));
+    // bar (cathode) glows green when open, reddens when shut
+    bar.setAttribute("stroke", conduct? "#3ad39a" : "#e0533a");
+    dioGlow.setAttribute("opacity", conduct? (0.10+clamp(vRect/state.ampV,0,1)*0.4).toFixed(2) : 0);
+    tri.setAttribute("opacity", conduct? 0.95 : 0.5);
+    dioLab.setAttribute("fill", conduct? "#3ad39a" : "#e0533a");
+    dioLab.textContent = conduct? "OPEN" : "SHUT";
+
+    gateTag.textContent = conduct? "gate open" : "gate shut";
+    stateChip.textContent = conduct? "PASS" : "BLOCK";
+    stateChip.classList.toggle("blocked", !conduct);
+
+    // input-side particles: always flowing toward the diode (the source pushes),
+    // but they PILE UP and stall just left of the gate when blocked.
+    var inFlowRate = state.running? (0.15+Math.abs(sIn)*0.7)*state.speed : 0;
+    if(state.running && !prefersReduce) phaseFlowIn += dts*inFlowRate;
+    var dir = sIn>=0? 1 : -1; // forward push vs reverse pull (visual)
+    for(var p=0;p<inParts.length;p++){
+      var pp=inParts[p];
+      var tt=((pp.t + (dir>0?phaseFlowIn:-phaseFlowIn))%1+1)%1;
+      var x = lerp(xInA, xInB, tt);
+      // if blocked and particle near gate, clamp at gate (pile up)
+      if(!conduct && x > xInB-46){ x = xInB-46 - ((p%5)*3); }
+      pp.el.setAttribute("cx", x.toFixed(1));
+      pp.el.setAttribute("cy", (TOP_Y + Math.sin(tt*40+phaseFlowIn*6)*1.5).toFixed(1));
+      var vis = (Math.abs(sIn)>0.04)? (0.35+Math.abs(sIn)*0.5):0.12;
+      // when blocked, jitter the piled particles a bit (stalled, agitated)
+      if(!conduct && x > xInB-60){ pp.el.setAttribute("cy",(TOP_Y + Math.sin(p*2+phase*30)*2.2).toFixed(1)); }
+      pp.el.setAttribute("fill", conduct? "#7fe6f3" : "#9c93b8");
+      pp.el.setAttribute("opacity", vis.toFixed(2));
+      pp.el.setAttribute("r",(1.8+Math.abs(sIn)*1.2).toFixed(2));
+    }
+    // output-side particles: only flow when conducting (or cap discharging into load)
+    var outActive = conduct || (state.cap && vOut>0.05);
+    if(state.running && !prefersReduce && outActive) phaseFlowOut += dts*(0.2+clamp(vOut/state.ampV,0,1)*0.8)*state.speed;
+    for(var q=0;q<outParts.length;q++){
+      var oq=outParts[q];
+      if(!outActive){ oq.el.setAttribute("opacity",0); continue; }
+      var to=((oq.t + phaseFlowOut)%1+1)%1;
+      var ox=lerp(xOutA,xOutB,to);
+      oq.el.setAttribute("cx",ox.toFixed(1));
+      oq.el.setAttribute("cy",(TOP_Y+Math.sin(to*40+phaseFlowOut*6)*1.3).toFixed(1));
+      oq.el.setAttribute("fill","#8ef0c4");
+      oq.el.setAttribute("opacity",(0.3+clamp(vOut/state.ampV,0,1)*0.55).toFixed(2));
+      oq.el.setAttribute("r",(1.8+clamp(vOut/state.ampV,0,1)*1.4).toFixed(2));
+    }
+    // wire intensities track activity
+    wireTop.setAttribute("opacity",(0.18+Math.abs(sIn)*0.3).toFixed(2));
+    wireOut.setAttribute("opacity",(0.16+clamp(vOut/state.ampV,0,1)*0.4).toFixed(2));
+    wireOut.setAttribute("stroke-width",(2.5+clamp(vOut/state.ampV,0,1)*3).toFixed(1));
+    wireTop.setAttribute("stroke-width",(2.5+Math.abs(sIn)*3).toFixed(1));
+    srcSine.setAttribute("stroke", sIn>=0? "#46d2e6" : "#9a78ff");
+
+    // ===== telemetry =====
+    vInEl.textContent = (vIn>=0?"+":"")+vIn.toFixed(2)+" V";
+    vInEl.style.color = sIn>=0? "var(--cyan)":"var(--violet)";
+    vOutEl.textContent = "+"+vOut.toFixed(2)+" V";
+    // bipolar input bar (center-zero)
+    var inPct = clamp(vIn/state.ampV,-1,1)*50;
+    if(inPct>=0){ bInEl.style.left="50%"; bInEl.style.width=inPct.toFixed(0)+"%"; }
+    else{ bInEl.style.left=(50+inPct).toFixed(0)+"%"; bInEl.style.width=(-inPct).toFixed(0)+"%"; }
+    bInEl.style.background = sIn>=0? "linear-gradient(90deg,rgba(70,210,230,0),#46d2e6)":"linear-gradient(90deg,#9a78ff,rgba(154,120,255,0))";
+    bOutEl.style.width = clamp(vOut/state.ampV,0,1)*100+"%";
+    bDropEl.style.width = clamp(VDROP/state.ampV,0,1)*100+"%";
+
+    // ripple (only meaningful with cap): track min/max of recent output
+    if(state.cap){
+      var mn=Infinity,mx=-Infinity;
+      for(var r=Math.max(startI,N-120);r<N;r++){ if(outBuf[r]<mn)mn=outBuf[r]; if(outBuf[r]>mx)mx=outBuf[r]; }
+      if(mx<0)mx=0; if(mn===Infinity)mn=0;
+      var ripple=Math.max(0,mx-mn);
+      vRipEl.textContent = ripple.toFixed(2)+" V";
+      bRipEl.style.width = clamp(ripple/state.ampV,0,1)*100+"%";
+    }
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

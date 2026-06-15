@@ -22,6 +22,32 @@ This is the canonical encoding the board renderer should follow.
   branch takes its share, the belt continues thinner, *in = out*.
 - The aggregate **return flows back along the ground bus**.
 
+## Carriers and energy — two layers on the belt
+
+A belt carries two things at once, and they are **not the same thing** — this is
+the loop-tile idea, and it is how the board shows AC honestly.
+
+- **Carriers (charge)** — the voltage-coloured chevrons. Their position
+  integrates the **signed current**, so on DC they stream steadily and on AC they
+  **slosh in place** (the current reverses every half-cycle; the chevron flips and
+  walks back). Net charge transport over an AC cycle is ~zero, and you can see it.
+- **Energy (power)** — warm-orange dots (`#ff8a3d`). Their travel integrates the
+  **signed power `v·i`**. On a resistor `v` and `i` reverse *together*, so the
+  product stays positive and the energy **streams steadily to the load even while
+  the carriers slosh** — the heart of why AC delivers power without net charge
+  flow. On a reactive part `v` and `i` are a quarter-cycle apart, so `v·i`
+  alternates sign and the energy **sloshes in and back out** with no net delivery
+  (reactive power, made visible).
+
+Energy rides the **high-potential** wire: a return near 0 V carries the same
+carriers but `v≈0`, so almost no energy density — which is exactly where the
+power does and does not flow.
+
+Both layers are presentation-only phase accumulators (`carrierOffset` /
+`energyOffset` in `board.ts`), integrated off the same timeline-relative phase as
+the chevrons, so scrubbing the timeline runs them backward too. They never feed
+the simulation.
+
 ## Color is identity, not magnitude
 
 You cannot read 12.0 V against 11.7 V from a hue, so color only *names* the rail;
