@@ -1,0 +1,479 @@
+<!--
+  SPDX-License-Identifier: Apache-2.0
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A resistor on a bus — CEC</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  /* CEC design tokens, mirrored from web/src/app.css (criticalerrorcomputing.com):
+     a dark blue-violet bench-instrument HUD, rose accent, mono telemetry. */
+  :root{
+    --bg:#100d1a; --surface:#171327; --surface-2:#1e1834;
+    --text:#e9e6f5; --dim:#9c93b8; --faint:#6b6488;
+    --border:#3b3560; --border-bright:#534a7d;
+    --accent:#f5247a; --cyan:#46d2e6; --violet:#9a78ff;
+    --ok:#3ad39a; --warn:#e6a23a; --bronze:#c9a76a; --bad:#e0533a;
+    --accent-line:rgba(245,36,122,0.42); --accent-soft:rgba(245,36,122,0.14);
+    --stage:#0d0b16;
+    --font-body:"Saira", system-ui, sans-serif;
+    --font-display:"Saira Condensed", "Arial Narrow", sans-serif;
+    --font-mono:"IBM Plex Mono", ui-monospace, monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg);
+    font-family:var(--font-body); font-size:16px; line-height:1.5;
+    -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100svh;
+    background:
+      radial-gradient(120% 80% at 50% -10%, rgba(154,120,255,0.12), transparent 60%),
+      radial-gradient(90% 70% at 50% 120%, rgba(245,36,122,0.06), transparent 55%),
+      linear-gradient(to right, rgba(120,110,170,0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(120,110,170,0.05) 1px, transparent 1px),
+      var(--bg);
+    background-size:100% 100%, 100% 100%, 34px 34px, 34px 34px;
+  }
+  /* subtle full-page vignette */
+  body::after{content:""; position:fixed; inset:0; pointer-events:none; z-index:50;
+    background:radial-gradient(130% 110% at 50% 40%, transparent 62%, rgba(0,0,0,0.34) 100%);}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px; position:relative; z-index:1;}
+
+  /* header */
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:18px; position:relative;}
+  .hud-header::after{content:""; position:absolute; left:0; right:0; bottom:-1px; height:1px; background:linear-gradient(90deg, transparent, var(--accent-line) 18%, rgba(245,36,122,0.55) 50%, var(--accent-line) 82%, transparent); opacity:0.7;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:14px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase; text-shadow:0 0 24px rgba(154,120,255,0.35);}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500; text-shadow:0 0 16px rgba(245,36,122,0.45);}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:linear-gradient(180deg,var(--surface-2),var(--surface)); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  .chip-live{position:relative; padding-left:18px; color:var(--ok); border-color:rgba(58,211,154,0.45); background:rgba(58,211,154,0.08);}
+  .chip-live::before{content:""; position:absolute; left:8px; top:50%; width:5px; height:5px; margin-top:-2.5px; border-radius:50%; background:currentColor; box-shadow:0 0 7px 0 currentColor; animation:breathe 2s ease-in-out infinite;}
+  @keyframes breathe{0%,100%{opacity:0.55;}50%{opacity:1;}}
+
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; letter-spacing:0.02em; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;}
+  p.intro b{color:var(--text);}
+  p.intro .mono{font-family:var(--font-mono); color:var(--warn); font-size:13px;}
+
+  /* main grid */
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:var(--stage); box-shadow:inset 0 0 0 1px rgba(0,0,0,0.45), inset 0 0 60px -20px rgba(0,0,0,0.85), 0 0 24px -10px rgba(154,120,255,0.4);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  /* CRT glass: vignette + scanlines + slow sweep */
+  .board-frame::before{content:""; position:absolute; inset:0; pointer-events:none; z-index:4; background:radial-gradient(130% 110% at 50% 0%, transparent 62%, rgba(0,0,0,0.28) 100%), repeating-linear-gradient(0deg, rgba(0,0,0,0.16) 0, rgba(0,0,0,0.16) 1px, transparent 1px, transparent 3px); mix-blend-mode:multiply; opacity:0.5;}
+  .board-frame::after{content:""; position:absolute; left:0; right:0; top:-36%; height:36%; pointer-events:none; z-index:5; background:linear-gradient(180deg, transparent, rgba(70,210,230,0.22) 50%, transparent); opacity:0.16; animation:sweep 7s linear infinite;}
+  @keyframes sweep{0%{transform:translateY(0);}100%{transform:translateY(380%);}}
+  .scope-tag{position:absolute; top:10px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:rgba(13,11,22,0.72); backdrop-filter:blur(2px); padding:3px 7px; border:1px solid var(--border); border-radius:2px; z-index:6;}
+  .scope-tag.l{left:12px;} .scope-tag.r{right:12px;}
+
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--surface),var(--bg)); overflow:hidden;}
+  .panel-title{position:relative; margin:0; padding:12px 14px 10px 16px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-title::before{content:""; position:absolute; left:0; top:12px; bottom:9px; width:2px; background:var(--accent); box-shadow:0 0 8px -1px var(--accent);}
+  .panel-body{padding:12px 14px;}
+
+  /* big equation readout */
+  .eq{font-family:var(--font-mono); display:flex; flex-direction:column; gap:10px;}
+  .eq-line{display:flex; align-items:baseline; justify-content:space-between; gap:8px;}
+  .eq-line .lhs{font-size:12px; letter-spacing:0.06em; color:var(--faint); text-transform:uppercase;}
+  .eq-line .rhs{font-size:20px; font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;}
+  .eq-line .rhs .u{font-size:12px; color:var(--dim); margin-left:3px;}
+  .vI{color:var(--cyan); text-shadow:0 0 12px rgba(70,210,230,0.4);}
+  .vR{color:var(--violet); text-shadow:0 0 12px rgba(154,120,255,0.4);}
+  .vV{color:var(--accent); text-shadow:0 0 12px rgba(245,36,122,0.45);}
+  .vP{color:var(--warn); text-shadow:0 0 12px rgba(230,162,58,0.45);}
+  .eq-formula{margin-top:4px; padding-top:10px; border-top:1px solid var(--border); font-size:13px; color:var(--dim); display:flex; justify-content:space-between; align-items:baseline;}
+  .eq-formula b{color:var(--text);}
+
+  /* meters */
+  .chan{--c:var(--accent); display:grid; grid-template-columns:11px 1fr auto; grid-template-rows:auto auto; align-items:center; gap:4px 9px; padding:9px 0;}
+  .chan + .chan{border-top:1px solid var(--border);}
+  .chan-dot{grid-row:1/3; width:9px; height:9px; border-radius:50%; background:var(--c); box-shadow:0 0 0 2px rgba(255,255,255,0.04), 0 0 9px 0 var(--c);}
+  .chan-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; color:var(--dim);}
+  .chan-val{font-family:var(--font-mono); font-size:12px; color:var(--text); text-align:right; font-variant-numeric:tabular-nums;}
+  .chan-bar{grid-column:2/4; height:5px; border-radius:2px; background:rgba(0,0,0,0.45); box-shadow:inset 0 0 0 1px rgba(0,0,0,0.4); overflow:hidden;}
+  .chan-fill{display:block; height:100%; width:0%; border-radius:inherit; background:linear-gradient(90deg, rgba(255,255,255,0.0), var(--c)); box-shadow:0 0 8px -1px var(--c); transition:width 0.1s linear, background 0.2s linear;}
+  .note{margin-top:10px; font-size:11.5px; color:var(--faint); line-height:1.5;}
+  .note b{color:var(--dim);}
+
+  /* transport / controls */
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--surface),transparent); padding:12px 16px; display:flex; flex-wrap:wrap; gap:16px 24px; align-items:center; position:relative;}
+  .transport::before{content:""; position:absolute; left:0; right:0; top:-1px; height:1px; background:linear-gradient(90deg, transparent, var(--accent-line) 22%, var(--accent-line) 78%, transparent); opacity:0.5;}
+  .tg{display:flex; align-items:center; gap:10px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .tg-val{font-family:var(--font-mono); font-size:12px; color:var(--text); min-width:54px; font-variant-numeric:tabular-nums;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:linear-gradient(180deg,var(--surface-2),var(--surface)); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s, transform .06s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim); box-shadow:0 0 0 1px var(--accent-soft);}
+  .btn:active{transform:translateY(1px);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft); box-shadow:inset 0 0 12px -6px var(--accent), 0 0 10px -4px var(--accent);}
+
+  input[type=range]{-webkit-appearance:none; appearance:none; width:160px; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]:focus-visible::-webkit-slider-thumb{box-shadow:0 0 0 3px var(--accent-soft), 0 0 12px -2px var(--cyan);}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px; box-shadow:inset 0 0 0 1px rgba(0,0,0,0.4);}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+
+  footer{margin-top:22px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;}
+  footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} input[type=range]{width:140px;} }
+  @media (prefers-reduced-motion:reduce){ .board-frame::after{display:none;} .chip-live::before{animation:none;} *{transition-duration:0.01ms !important;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand">
+      <div class="brand-mark">CE</div>
+      <div class="brand-text">Critical Error<span class="brand-sub">resistor lab</span></div>
+    </div>
+    <div class="header-meta">
+      <span class="chip chip-accent">P = I²R</span>
+      <span class="chip chip-live" id="liveChip">LIVE</span>
+    </div>
+  </div>
+
+  <h1 class="lede">A resistor on a bus</h1>
+  <p class="intro">A source pushes current down the bus, through a resistor, and back to the return. The resistor fights that flow, and the work it loses to heat is <b>P&nbsp;=&nbsp;I²R</b> — so the glow follows the <em>square</em> of the current. <b>Double the current and the heat quadruples.</b> Push the <span class="mono">CURRENT</span> slider, watch <span class="mono">V&nbsp;=&nbsp;I·R</span> rise in lockstep, and hit <b>BOOST</b> to slam it to the rail.</p>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag l">resistor bench &middot; live</span>
+      <span class="scope-tag r" id="modeTag">I 0.50 A</span>
+      <svg id="scene" viewBox="0 0 980 460" xmlns="http://www.w3.org/2000/svg" aria-label="A direct-current source drives current through a resistor that heats up as current rises; voltage drop and dissipated power are shown live.">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="heatBlur" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="14"/></filter>
+          <filter id="softBlur" x="-80%" y="-80%" width="260%" height="260%"><feGaussianBlur stdDeviation="6"/></filter>
+          <radialGradient id="heatGrad" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="#ffffff"/>
+            <stop offset="35%" stop-color="#ffd27a"/>
+            <stop offset="70%" stop-color="#e6a23a"/>
+            <stop offset="100%" stop-color="#e6a23a" stop-opacity="0"/>
+          </radialGradient>
+          <linearGradient id="srcGrad" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#241c3a"/>
+            <stop offset="100%" stop-color="#161126"/>
+          </linearGradient>
+        </defs>
+      </svg>
+    </div>
+
+    <div class="side">
+      <div class="panel">
+        <h2 class="panel-title">Readout</h2>
+        <div class="panel-body">
+          <div class="eq">
+            <div class="eq-line"><span class="lhs">current&nbsp;·&nbsp;I</span><span class="rhs vI" id="rI">0.50<span class="u">A</span></span></div>
+            <div class="eq-line"><span class="lhs">resistance&nbsp;·&nbsp;R</span><span class="rhs vR" id="rR">10.0<span class="u">Ω</span></span></div>
+            <div class="eq-line"><span class="lhs">drop&nbsp;·&nbsp;V</span><span class="rhs vV" id="rV">5.00<span class="u">V</span></span></div>
+            <div class="eq-line"><span class="lhs">power&nbsp;·&nbsp;P</span><span class="rhs vP" id="rP">2.50<span class="u">W</span></span></div>
+            <div class="eq-formula"><span>V = I·R</span><span id="fV"><b>5.00</b> = 0.50 × 10</span></div>
+            <div class="eq-formula"><span>P = I²R</span><span id="fP"><b>2.50</b> = 0.25 × 10</span></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2 class="panel-title">Heat &amp; power</h2>
+        <div class="panel-body">
+          <div class="chan" style="--c:var(--cyan)">
+            <span class="chan-dot"></span><span class="chan-name">CURRENT</span><span class="chan-val" id="mI">0.50 A</span>
+            <span class="chan-bar"><span class="chan-fill" id="bI"></span></span>
+          </div>
+          <div class="chan" style="--c:var(--warn)">
+            <span class="chan-dot"></span><span class="chan-name">POWER · I²R</span><span class="chan-val" id="mP">2.50 W</span>
+            <span class="chan-bar"><span class="chan-fill" id="bP"></span></span>
+          </div>
+          <div class="chan" style="--c:var(--bad)">
+            <span class="chan-dot"></span><span class="chan-name">JUNCTION TEMP</span><span class="chan-val" id="mT">— °C</span>
+            <span class="chan-bar"><span class="chan-fill" id="bT"></span></span>
+          </div>
+          <p class="note"><b>Why it bends.</b> Current rises along a straight line, but power is its square — so the heat bar pulls away fast. At 2× current the power bar sits 4× higher.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="tg">
+      <span class="tg-label">current</span>
+      <input type="range" id="current" min="0" max="100" value="25" aria-label="Source current">
+      <span class="tg-val" id="curVal">0.50 A</span>
+    </div>
+    <div class="tg"><button class="btn" id="btnBoost">boost</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+// SPDX-License-Identifier: Apache-2.0
+(function(){
+  "use strict";
+  var NS="http://www.w3.org/2000/svg";
+  function el(t,a,txt){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  // mix two #rrggbb hex colors by t in [0,1]
+  function mix(c1,c2,t){
+    var a=parseInt(c1.slice(1),16), b=parseInt(c2.slice(1),16);
+    var r=Math.round(lerp((a>>16)&255,(b>>16)&255,t));
+    var g=Math.round(lerp((a>>8)&255,(b>>8)&255,t));
+    var bl=Math.round(lerp(a&255,b&255,t));
+    return "rgb("+r+","+g+","+bl+")";
+  }
+
+  var svg=document.getElementById("scene");
+  var prefersReduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  // ---- model constants ----
+  var R = 10.0;          // ohms (fixed resistor)
+  var I_MAX = 2.0;       // amps at slider max
+  var yMid = 230;        // bus centerline
+  var xSrc = 130;        // source block right edge region
+  var xResA = 410, xResB = 570; // resistor body span
+  var xLoad = 850;       // return / load column
+  var resCx = (xResA+xResB)/2, resCy = yMid;
+
+  // ---- static backdrop ----
+  // faint internal graticule
+  for(var gx=60; gx<=920; gx+=40){ svg.appendChild(el("line",{x1:gx,y1:24,x2:gx,y2:436,stroke:"#2a2444","stroke-width":1,opacity:0.12})); }
+  for(var gy=44; gy<=420; gy+=40){ svg.appendChild(el("line",{x1:40,y1:gy,x2:940,y2:gy,stroke:"#2a2444","stroke-width":1,opacity:0.10})); }
+
+  // source block (battery / supply)
+  svg.appendChild(el("rect",{x:xSrc-70,y:yMid-58,width:60,height:116,rx:4,fill:"url(#srcGrad)",stroke:"#4a3a66","stroke-width":1.4}));
+  svg.appendChild(el("text",{x:xSrc-40,y:yMid,"font-family":"var(--font-display)","font-size":12,fill:"#b9a9d6","text-anchor":"middle","letter-spacing":"0.18em",transform:"rotate(-90 "+(xSrc-40)+" "+yMid+")"},"SOURCE"));
+  // battery plates inside
+  svg.appendChild(el("line",{x1:xSrc-40,y1:yMid-30,x2:xSrc-40,y2:yMid-12,stroke:"#d8a24a","stroke-width":3,"stroke-linecap":"round"}));
+  svg.appendChild(el("line",{x1:xSrc-46,y1:yMid+6,x2:xSrc-34,y2:yMid+6,stroke:"#6b6488","stroke-width":2,"stroke-linecap":"round"}));
+  svg.appendChild(el("text",{x:xSrc-40,y:yMid-36,"font-family":"var(--font-mono)","font-size":13,fill:"#d8a24a","text-anchor":"middle"},"+"));
+
+  // top supply trace (source -> resistor), bottom return trace (resistor -> load -> source)
+  var TOP_Y = yMid-58, BOT_Y = yMid+58;
+  // We draw the live current as a single conductor loop running along a path.
+  // Geometry of the loop (clockwise): out the top of source, right to resistor,
+  // through resistor, right to load column, down, left along bottom, back to source.
+  // Conductor body strokes (thickness encodes current):
+  var topBody = el("path",{d:"",fill:"none",stroke:"#46d2e6","stroke-width":6,"stroke-linecap":"round",opacity:0.22});
+  var botBody = el("path",{d:"",fill:"none",stroke:"#46d2e6","stroke-width":6,"stroke-linecap":"round",opacity:0.22});
+  svg.appendChild(topBody); svg.appendChild(botBody);
+
+  // path geometry helpers (polyline segments)
+  // TOP path: source top-right -> up to TOP_Y -> right to resistor left lead
+  var topD = "M "+(xSrc-10)+" "+TOP_Y+" L "+xResA+" "+TOP_Y+" L "+xResA+" "+yMid;
+  var botD = "M "+xResB+" "+yMid+" L "+xResB+" "+TOP_Y+" L "+xLoad+" "+TOP_Y+" L "+xLoad+" "+BOT_Y+" L "+(xSrc-10)+" "+BOT_Y+" L "+(xSrc-10)+" "+TOP_Y;
+  topBody.setAttribute("d", topD);
+  botBody.setAttribute("d", botD);
+
+  // resistor body (the device) — a chip with a zigzag, heats up
+  var resW = xResB-xResA, resH = 64;
+  // heat halo (behind everything in resistor area)
+  var halo = el("circle",{cx:resCx,cy:resCy,r:70,fill:"url(#heatGrad)",filter:"url(#heatBlur)",opacity:0});
+  svg.insertBefore(halo, topBody); // halo sits under conductors
+  var resBox = el("rect",{x:xResA,y:resCy-resH/2,width:resW,height:resH,rx:5,fill:"#181426",stroke:"#9a78ff","stroke-width":1.6});
+  svg.appendChild(resBox);
+  // zigzag resistor glyph inside the box
+  var zz="M "+(xResA+14)+" "+resCy;
+  var steps=6, span=resW-28, amp=15;
+  for(var z=0; z<=steps; z++){ var zx=xResA+14+ span*(z/steps); var zy=resCy + (z%2===0? -amp : amp)*(z===0||z===steps?0:1); zz += " L "+zx.toFixed(1)+" "+zy.toFixed(1); }
+  var zig = el("path",{d:zz,fill:"none",stroke:"#9a78ff","stroke-width":3,"stroke-linecap":"round","stroke-linejoin":"round"});
+  svg.appendChild(zig);
+  // resistor leads connecting box to the loop corners
+  svg.appendChild(el("line",{x1:xResA,y1:yMid,x2:xResA,y2:yMid,stroke:"#9a78ff","stroke-width":3})); // (top corner already meets at xResA,yMid)
+  // labels around resistor
+  var resLab = el("text",{x:resCx,y:resCy-resH/2-12,"font-family":"var(--font-mono)","font-size":12,fill:"#9a78ff","text-anchor":"middle","letter-spacing":"0.08em"},"R = 10 Ω");
+  svg.appendChild(resLab);
+  var tempLab = el("text",{x:resCx,y:resCy+resH/2+22,"font-family":"var(--font-mono)","font-size":11,fill:"#e6a23a","text-anchor":"middle"},"");
+  svg.appendChild(tempLab);
+
+  // load / return column
+  svg.appendChild(el("rect",{x:xLoad-2,y:yMid-46,width:4,height:92,rx:2,fill:"#1c1830",stroke:"#4a3a66","stroke-width":1}));
+  svg.appendChild(el("text",{x:xLoad+10,y:yMid-50,"font-family":"var(--font-mono)","font-size":11,fill:"#6b6488"},"RETURN"));
+
+  // voltage caliper across the resistor (height accent, rose)
+  var calX = xResA-26;
+  var calTop = el("line",{x1:calX,y1:TOP_Y,x2:calX,y2:TOP_Y,stroke:"#f5247a","stroke-width":1,"stroke-dasharray":"3 3",opacity:0.5});
+  // drop annotation
+  svg.appendChild(el("text",{x:resCx,y:36,"font-family":"var(--font-mono)","font-size":10.5,fill:"#46d2e6","text-anchor":"middle",opacity:0.8},"flow + thickness = current"));
+
+  // current particles along the loop. Each particle has a parametric position 0..1
+  // over the *whole* loop perimeter; we map it to (x,y) using a segment table.
+  // Build a unified perimeter polyline (clockwise) from source-top around.
+  var P = [
+    [xSrc-10, TOP_Y], [xResA, TOP_Y], [xResA, yMid],      // into resistor (top lead)
+    [xResB, yMid], [xResB, TOP_Y], [xLoad, TOP_Y],         // out of resistor, to load
+    [xLoad, BOT_Y], [xSrc-10, BOT_Y], [xSrc-10, TOP_Y]     // down, back along bottom, up to start
+  ];
+  // segment lengths + cumulative
+  var segLen=[], total=0;
+  for(var i=0;i<P.length-1;i++){ var dx=P[i+1][0]-P[i][0], dy=P[i+1][1]-P[i][1]; var L=Math.hypot(dx,dy); segLen.push(L); total+=L; }
+  function ptAt(u){ // u in [0,1)
+    var d=((u%1)+1)%1 * total, acc=0;
+    for(var i=0;i<segLen.length;i++){ if(d<=acc+segLen[i]){ var t=(d-acc)/segLen[i]; return [lerp(P[i][0],P[i+1][0],t), lerp(P[i][1],P[i+1][1],t)]; } acc+=segLen[i]; }
+    return P[P.length-1];
+  }
+  // resistor span in u-space: between the two resistor leads (indices 2..3 region)
+  // Particles inside the resistor get "stalled"/jittered when hot to read as resistance.
+  var uResStart=(segLen[0])/total, uResEnd=(segLen[0]+segLen[1]+segLen[2])/total;
+
+  var NP=64;
+  var parts=[];
+  for(var p=0;p<NP;p++){
+    var dot=el("circle",{cx:-10,cy:-10,r:2.4,fill:"#7fe6f3",filter:"url(#glow)",opacity:0});
+    svg.appendChild(dot);
+    parts.push({u:p/NP, el:dot});
+  }
+
+  // bring caliper + temp label to top
+  svg.appendChild(calTop);
+
+  // ---- controls / state ----
+  var curEl=document.getElementById("current"), curVal=document.getElementById("curVal");
+  var btnRun=document.getElementById("btnRun"), btnBoost=document.getElementById("btnBoost");
+  var modeTag=document.getElementById("modeTag"), footnote=document.getElementById("footnote");
+  var state={running:true, target:0.25, displayed:0.25, boost:0};
+
+  function readSlider(){ state.target=(+curEl.value)/100; }
+  curEl.addEventListener("input", function(){ readSlider(); state.boost=0; });
+  btnRun.addEventListener("click", function(){ state.running=!state.running; this.textContent=state.running?"pause":"run"; this.classList.toggle("is-active", state.running); });
+  btnBoost.addEventListener("click", function(){
+    state.boost=1.0; // animate displayed toward max regardless of slider
+    curEl.value=100; readSlider();
+    this.classList.add("is-active");
+    var self=this; setTimeout(function(){ self.classList.remove("is-active"); }, 350);
+  });
+  readSlider();
+
+  var rI=document.getElementById("rI"), rR=document.getElementById("rR"), rV=document.getElementById("rV"), rP=document.getElementById("rP");
+  var fV=document.getElementById("fV"), fP=document.getElementById("fP");
+  var mI=document.getElementById("mI"), mP=document.getElementById("mP"), mT=document.getElementById("mT");
+  var bI=document.getElementById("bI"), bP=document.getElementById("bP"), bT=document.getElementById("bT");
+
+  rR.innerHTML="10.0<span class=\"u\">Ω</span>";
+
+  footnote.innerHTML='<b>Reading the bench.</b> The teal flow is current; the conductor thickens with it and the dots crowd and speed up. The violet block is the resistor — carriers shoulder through it, which is the resistance you feel. The amber halo is dissipated power, <b>P&nbsp;=&nbsp;I²R</b>, so it ramps cool&rarr;amber&rarr;white-hot on the <i>square</i> of the current; the modeled junction temperature is a first-order thermal lag, not a calibrated rise. This is a stylized visualization, not a field solver — geometry, glow, and temperature are tuned for teaching, and a real resistor’s resistance would itself drift with heat.';
+
+  // thermal state (normalized 0..1), lags the instantaneous power
+  var heat=0;
+
+  var phase=0, last=0;
+  function frame(ts){
+    if(!last) last=ts; var dt=Math.min(50, ts-last); last=ts;
+    var dts=dt*0.001;
+
+    // ease displayed current toward target (snappier under boost)
+    var k = state.boost>0 ? 6 : 3.2;
+    state.displayed = lerp(state.displayed, state.target, clamp(dts*k,0,1));
+    if(Math.abs(state.displayed-state.target)<0.002){ state.displayed=state.target; state.boost=0; }
+
+    var I = state.displayed * I_MAX;            // amps
+    var Ifrac = state.displayed;                 // 0..1
+    var V = I * R;                               // volts
+    var Pw = I*I*R;                              // watts
+    var Pmax = I_MAX*I_MAX*R;                    // 40 W
+    var Pfrac = Pw/Pmax;                         // == Ifrac^2
+
+    // thermal lag toward Pfrac (heats faster than it cools, like a real part).
+    // Heat keeps settling even when paused, so the part cools down if you stop.
+    var towards = Pfrac;
+    var rate = (towards>heat? 1.6 : 0.9);
+    heat = lerp(heat, towards, clamp(dts*rate,0,1));
+    var T_amb=24, T_rise=heat*210; // up to ~234 °C at full tilt
+    var Tjun = T_amb + T_rise;
+
+    // advance flow phase ~ current (faster, denser when higher)
+    var flowRate = 0.10 + Ifrac*0.85;
+    if(state.running && !prefersReduce) phase += dts*flowRate;
+    else if(state.running && prefersReduce) phase += dts*0.0; // hold still under reduced motion
+
+    // ---- visuals ----
+    // conductor thickness
+    var w = 2 + Ifrac*11;
+    topBody.setAttribute("stroke-width", w.toFixed(1));
+    botBody.setAttribute("stroke-width", w.toFixed(1));
+    var lineOp = 0.18 + Ifrac*0.30;
+    topBody.setAttribute("opacity", lineOp.toFixed(2));
+    botBody.setAttribute("opacity", lineOp.toFixed(2));
+
+    // particles: number visible + speed scale with current
+    var nShow = Math.round(8 + Ifrac*(NP-8));
+    for(var i=0;i<NP;i++){
+      var pt=parts[i];
+      if(i>=nShow){ pt.el.setAttribute("opacity",0); continue; }
+      var u = pt.u + phase; // drift
+      var xy = ptAt(u);
+      // stall + jitter inside resistor when hot: carriers shoulder through
+      var uu=((u%1)+1)%1;
+      if(uu>uResStart && uu<uResEnd){
+        var jit = (0.4+heat*1.4);
+        xy[1] += Math.sin((u*40)+phase*8)*jit;
+        xy[0] += Math.cos((u*33)+phase*6)*jit*0.5;
+      }
+      pt.el.setAttribute("cx", xy[0].toFixed(1));
+      pt.el.setAttribute("cy", xy[1].toFixed(1));
+      pt.el.setAttribute("r", (1.8+Ifrac*1.6).toFixed(2));
+      pt.el.setAttribute("opacity", (0.35+Ifrac*0.55).toFixed(2));
+    }
+
+    // resistor heat: halo radius + opacity + zigzag color ramp cool->amber->white
+    var haloR = 40 + heat*60;
+    halo.setAttribute("r", haloR.toFixed(0));
+    halo.setAttribute("opacity", (heat*0.92).toFixed(2));
+    // color ramp: violet(cool) -> amber -> white(hot)
+    var zc;
+    if(heat<0.5){ zc=mix("#9a78ff","#e6a23a", heat/0.5); }
+    else{ zc=mix("#e6a23a","#fff4d8",(heat-0.5)/0.5); }
+    zig.setAttribute("stroke", zc);
+    zig.setAttribute("stroke-width",(3+heat*1.6).toFixed(1));
+    resBox.setAttribute("stroke", mix("#9a78ff", "#ffcf85", clamp(heat*1.2,0,1)));
+    resBox.setAttribute("fill", mix("#181426", "#3a2410", clamp(heat,0,1)));
+    resLab.setAttribute("fill", mix("#9a78ff","#ffd27a",clamp(heat,0,1)));
+
+    // voltage caliper height across resistor (rose) — taller with V (shown as glow length)
+    var calTopY = TOP_Y; // top conductor sits at TOP_Y; caliper from there to mid scaled by V
+    calTop.setAttribute("y1", (resCy - (resH/2) - 6).toFixed(0));
+    calTop.setAttribute("y2", (resCy + (resH/2) + 6).toFixed(0));
+    calTop.setAttribute("opacity", (0.25 + Ifrac*0.45).toFixed(2));
+    calTop.setAttribute("stroke-width", (1 + Ifrac*1.5).toFixed(1));
+
+    tempLab.textContent = Tjun.toFixed(0)+" °C";
+    tempLab.setAttribute("fill", heat>0.66 ? "#fff4d8" : (heat>0.33? "#ffd27a":"#e6a23a"));
+
+    // ---- numeric readouts ----
+    rI.innerHTML = I.toFixed(2)+"<span class=\"u\">A</span>";
+    rV.innerHTML = V.toFixed(2)+"<span class=\"u\">V</span>";
+    rP.innerHTML = Pw.toFixed(2)+"<span class=\"u\">W</span>";
+    fV.innerHTML = "<b>"+V.toFixed(2)+"</b> = "+I.toFixed(2)+" × 10";
+    fP.innerHTML = "<b>"+Pw.toFixed(2)+"</b> = "+(I*I).toFixed(2)+" × 10";
+
+    mI.textContent = I.toFixed(2)+" A";
+    mP.textContent = Pw.toFixed(2)+" W";
+    mT.textContent = Tjun.toFixed(0)+" °C";
+    bI.style.width = (Ifrac*100).toFixed(0)+"%";
+    bP.style.width = (Pfrac*100).toFixed(0)+"%";
+    bT.style.width = (clamp(T_rise/210,0,1)*100).toFixed(0)+"%";
+    // temp bar color warms
+    bT.style.background = "linear-gradient(90deg, rgba(255,255,255,0), "+(heat>0.66?"#fff4d8":(heat>0.33?"#ffd27a":"#e0533a"))+")";
+
+    curVal.textContent = I.toFixed(2)+" A";
+    modeTag.textContent = "I "+I.toFixed(2)+" A";
+
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
