@@ -57,12 +57,28 @@ const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
 /**
- * Flow-phase advance per simulated tick. Ties the current arrows/dots to the
- * timeline: forward when the tick advances (running or scrubbing forward),
- * reverse when stepping/scrubbing back. Small so a single tick is a gentle nudge
- * while a full scrub reads as fast flow.
+ * Visual flow clock. The animated belts/dots/pulses advance off a *bounded* phase
+ * that ticks at a fixed wall-clock rate, NOT at the playback ticks-per-second and
+ * NOT scaled by V/I. `FLOW_HZ` is that rate in visual phase-units per real second;
+ * at the drawers' unit rates this lands the recirculation in the readable
+ * ~0.3–1.5 visual-Hz band for every current and every playback speed.
+ *
+ * Why this exists: magnitude used to ride *speed* (glyph `flow()` speed ∝ current)
+ * AND the phase used to ride *tps* (`tick·TICK_FLOW`). Their product blew up — at
+ * high V/I or high tps the flow was unreadable. Magnitude now lives on density +
+ * thickness + alpha (see `flow()` and `redrawWires`), and the timeline only sets
+ * the *direction* of this clock (see `update`), so scrubbing still runs it back.
+ *
+ * Effective recirculation (cycles/sec), old vs new, over tps × current:
+ *           OLD glyph@1A  OLD carrier@1A | NEW (any I, any tps)
+ *   tps=10      1.1            0.5        |  glyph 0.60, carrier 0.60, energy 0.66
+ *   tps=50      1.3            0.7        |  glyph 0.60, carrier 0.60, energy 0.66
+ *   tps=500     4.1            2.0        |  glyph 0.60, carrier 0.60, energy 0.66
+ *   tps=5000    6.2            3.0        |  glyph 0.60, carrier 0.60, energy 0.66
+ * (OLD @1 mA stayed ~0.2–0.3, which is why lowering tps never fixed the *high*-
+ * current cases.) NEW pins every cell in the readable 0.3–1.5 band, tps-invariant.
  */
-const TICK_FLOW = 0.006;
+const FLOW_HZ = 0.6;
 /**
  * Base Text resolution (device pixels per CSS pixel). Floored at 2 so labels are
  * supersampled and stay sharp even on 1x displays, capped at 3 to bound texture
@@ -78,13 +94,21 @@ const PROBE_MINUS = 0x7c90a4;
 
 // The belt carries two layers: charge carriers (voltage-coloured chevrons) and
 // the energy they deliver (warm-orange dots). `*_RATE` set how far each advances
-// per unit of animation phase; `I_REF`/`V_REF` normalise current and net voltage
-// so the integration is dimensionless and self-scales with playback speed.
+// per unit of the bounded visual phase, so with FLOW_HZ both recirculate in the
+// readable band. Crucially the phase step uses only the SIGN of current / of power
+// v·i (see the saturating factors below) — not their magnitude — so the belts move
+// at a constant calm rate while still: carriers reverse on AC (signed current
+// flips each half-cycle) and energy streams steadily to a resistive load (v·i sign
+// stays positive). Magnitude is shown by thickness + density + alpha, never speed.
 const ENERGY_COLOR = 0xff8a3d;
-const CARRIER_RATE = 0.5;
-const ENERGY_RATE = 0.6;
+const CARRIER_RATE = 1.0;
+const ENERGY_RATE = 1.1; // slightly faster so the two layers stay distinguishable
 const I_REF = 0.01; // 10 mA — same reference the thickness/density use
 const V_REF = 6; // ~one rail; net voltage above this saturates the energy layer
+// Saturate the direction factor: any current/power past this small fraction of the
+// reference moves at full constant speed; smaller values ramp smoothly so an AC
+// zero-crossing eases through zero instead of snapping (it never sets the rate).
+const FLOW_DIR_SAT = 0.05;
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
@@ -174,11 +198,14 @@ export class Board {
   // repeat). The mode buttons are gone; this is the "Place mode" replacement.
   private armed: string | null = null;
   private viewportDirty = true;
-  // `phase` is the effective animation phase used by every drawer; `realPhase`
-  // is the wall-clock part that only advances while running. The simulated tick
-  // contributes the timeline-tracking part (see `update`).
+  // `phase` is the bounded visual flow clock fed to every drawer: it advances at a
+  // fixed wall-clock rate (FLOW_HZ), so the flow reads at a constant calm pace no
+  // matter the playback tps or the V/I magnitude. Its *direction* tracks the
+  // timeline — forward while the tick advances, reverse when stepping/scrubbing
+  // back — via the sign of the tick change (see `update`). `prevTick` remembers
+  // the last displayed tick so that sign can be computed.
   private phase = 0;
-  private realPhase = 0;
+  private prevTick = 0;
   private prevPhase = 0;
   // Signed change in `phase` over the current frame, consumed once by the belt
   // animation so it integrates exactly once per frame (drag-driven redraws, which
@@ -506,15 +533,19 @@ export class Board {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
     this.lastTime = now;
-    if (running) this.realPhase += dt;
-    // Tie the flow phase to the simulated timeline so the arrows/dots track
-    // delta-T (forward as the tick advances, reverse when stepping back). Cap the
-    // per-frame advance so very fast playback doesn't alias the flow into jitter;
-    // at normal/stepping speeds the delta is tiny and tracks the timeline exactly.
-    const target = this.realPhase + Number(snap.tick) * TICK_FLOW;
-    const d = target - this.phase;
-    const cap = 0.1;
-    this.phase += d > cap ? cap : d < -cap ? -cap : d;
+    // Advance the bounded visual flow clock at a FIXED wall-clock rate (FLOW_HZ) —
+    // never scaled by playback tps or by V/I, so the flow reads at a constant calm
+    // pace everywhere. Only the *direction* tracks the timeline: forward while
+    // running (a smooth glide even at low tps, where most frames cross no tick),
+    // and on the sign of the displayed-tick change when paused, so stepping/
+    // scrubbing back runs the flow backward and an idle pause freezes it.
+    const tick = Number(snap.tick);
+    let dir = 0;
+    if (running) dir = 1;
+    else if (tick > this.prevTick) dir = 1;
+    else if (tick < this.prevTick) dir = -1;
+    this.prevTick = tick;
+    this.phase += dir * FLOW_HZ * dt;
     // How far the belt advances this frame: forward while running, backward when
     // stepping/scrubbing back, frozen when paused. redrawWires consumes it once.
     this.flowDelta = this.phase - this.prevPhase;
@@ -1307,12 +1338,22 @@ export class Board {
       const len = routeLength(route);
       const iNorm = Math.max(-1, Math.min(1, cur / I_REF));
       const vNorm = Math.max(-1, Math.min(1, (v ?? 0) / V_REF));
+      // Direction factors: the SIGN of current (carriers) and of power v·i (energy),
+      // saturated to ±1 just past FLOW_DIR_SAT so any real flow advances at the same
+      // constant rate — magnitude never sets speed. The smooth ramp through zero
+      // lets an AC half-cycle ease across the reversal instead of snapping.
+      const carrierDir = Math.max(-1, Math.min(1, iNorm / FLOW_DIR_SAT));
+      const energyDir = Math.max(
+        -1,
+        Math.min(1, (vNorm * iNorm) / FLOW_DIR_SAT),
+      );
 
-      // Carriers (charge): chevrons that stream on DC and slosh on AC. Position
-      // integrates the signed current; the arrowhead points the way it is moving.
+      // Carriers (charge): chevrons that stream on DC and slosh on AC. The offset
+      // advances by the signed *direction* (not magnitude) at the constant belt
+      // rate; the arrowhead points the way it is moving.
       if (normC > 0.02) {
         let co =
-          (this.carrierOffset.get(w.id) ?? 0) + iNorm * fd * CARRIER_RATE;
+          (this.carrierOffset.get(w.id) ?? 0) + carrierDir * fd * CARRIER_RATE;
         co = ((co % 1) + 1) % 1;
         this.carrierOffset.set(w.id, co);
         const spacing = 40 - 28 * normC;
@@ -1333,12 +1374,15 @@ export class Board {
         }
       }
 
-      // Energy (power): warm-orange dots whose travel integrates the signed power
-      // v·i, so they keep delivering to the load while the carriers slosh.
+      // Energy (power): warm-orange dots. Travel follows the *sign* of power v·i at
+      // the constant belt rate, so on a resistor (v,i reverse together → product
+      // stays positive) they stream steadily to the load even while the carriers
+      // slosh; on a reactive part the sign alternates and they slosh in and back
+      // out. Density/alpha still encode how much power (|v·i|).
       const pNorm = Math.abs(vNorm * iNorm);
       if (pNorm > 0.012) {
         let eo =
-          (this.energyOffset.get(w.id) ?? 0) + vNorm * iNorm * fd * ENERGY_RATE;
+          (this.energyOffset.get(w.id) ?? 0) + energyDir * fd * ENERGY_RATE;
         eo = ((eo % 1) + 1) % 1;
         this.energyOffset.set(w.id, eo);
         const m = Math.min(10, Math.max(1, Math.floor(len / 34)));
