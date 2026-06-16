@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (evening) — Scope smoothing/auto, slow playback, render interpolation
+
+**State:** 🟢 Green — full gates pass (cargo fmt/clippy/test 102 incl. determinism; build:wasm;
+web check/lint/build). Branch `claude/kind-turing-hdelb3`. Pure presentation — no Rust/golden
+touch. Headed to main.
+
+**Owner's scope + slow-motion batch:**
+1. **Scope jitter (zoomed-out / slow)** — the trace was plotted by sample *index*, so at long
+   spans the sparse decimated samples stepped instead of panned. Now the x-axis maps by **tick**
+   within a sliding window `[tick−span, tick]` (board.ts `drawScope`, `scopeTick`), so it pans
+   smoothly. Dropped the dead `scopeCursor`.
+2. **Auto time-base** — the `⏱` span control gains an **auto** slot after the presets:
+   `updateAutoSpan()` sizes the window to ~`AUTO_CYCLES` (3) periods of the biggest-swinging trace
+   (period from upward mid-crossing spacing, eased; DC holds, too-short widens). Button shows
+   "auto"; the live window shows in the scope overlay.
+3. **Slow playback** — `RATES` now reach down to **1 t/s** (= 500,000× slow-mo); `fmtRealtime`
+   reads as a "…× slow-mo" factor. `dt` (2 µs) is unchanged — it's the determinism contract.
+4. **Smooth slow-mo (render interpolation)** — `sim/loop.ts` `lerpSnapshot` + the frame display
+   step now **glide between the two latest computed ticks** by the fractional accumulator (node
+   voltages + element currents), so at low rates the visuals slide instead of snapping once per
+   step. ≤1-tick display lag (imperceptible above a few t/s); paused/scrubbing shows the exact
+   snapshot. The sim still steps at the fixed dt → determinism untouched.
+
+**Still TODO (owner asked, not yet done):** add **component + net labels to a few example
+circuits** (examples.ts) for clarity — the owner specifically wants the rectifier / AC examples
+labelled (Vin/Vout/GND etc.). The delegated agent hit a server 500 and did nothing; examples.ts
+is untouched. API: `c.label = "R1"`; `g.addNetLabel({componentId, pinIndex}, "NAME")` — **net-label
+names ALIAS nets, so each distinct net needs a UNIQUE name** (reusing a name shorts them).
+
+---
+
 ## 2026-06-16 (afternoon) — Tiers on the board + owner review fixes
 
 **State:** 🟢 Green — full gate set passes (cargo fmt/clippy/test 102 incl. determinism;
