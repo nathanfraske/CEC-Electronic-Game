@@ -4233,11 +4233,16 @@ class ComponentNode {
     if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
       tg.clear();
-      const hw = this.wPx / 2 + PITCH * 0.7;
-      const hh = Math.max(this.hPx / 2 + PITCH * 0.7, hw * 0.6);
+      // Render at a fixed REFERENCE size (≈ the info panel's), then scale the result
+      // down onto the part footprint. The drawers carry fixed-pixel details (studs,
+      // throats, spring/piston clamps like `anchorX − 40`); at the tiny footprint
+      // bounds those dominate and distort the layout, so the board view drifted out
+      // of alignment with the info panel. Rendering big + scaling keeps them matched.
+      const REF_HW = 130;
+      const REF_HH = 80;
       const opts = {
         kind: this.kindTag,
-        bounds: { hw, hh },
+        bounds: { hw: REF_HW, hh: REF_HH },
         color: this.color,
         electrical,
         phase,
@@ -4250,6 +4255,8 @@ class ComponentNode {
       if (tier === "reality") drawDetail(tg, opts);
       else drawAnalogy(tg, opts);
       setStudsVisible(true);
+      const targetHW = this.wPx / 2 + PITCH * 0.7;
+      tg.scale.set(targetHW / REF_HW);
       tg.visible = true;
     } else {
       this.tierGlyph.visible = false;
