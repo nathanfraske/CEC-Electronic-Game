@@ -84,9 +84,23 @@ function mix(a: number, b: number, t: number): number {
 }
 
 /**
+ * Smooth fade for the marginal carrier as `mag` grows the visible dot count past a
+ * whole dot. Keeps the dot *positions* fixed (always FLOW_DOTS_MAX evenly-spaced
+ * slots) and only ramps the trailing dots' alpha in/out — so a live current that
+ * wiggles across a rounding boundary no longer flips the count and teleports every
+ * dot. Magnitude still rides density+alpha (visual-language §flow), just jitter-free.
+ */
+function dotPresence(i: number, mag: number, max = FLOW_DOTS_MAX): number {
+  const visible = FLOW_DOTS_MIN + (max - FLOW_DOTS_MIN) * mag;
+  return Math.max(0, Math.min(1, visible - i));
+}
+
+/**
  * Flowing carriers along a straight segment — the detail-view "belt". Density +
  * alpha ride `mag` (0..1); the belt always recirculates at the bounded rate.
- * `dir` (+1/−1) sets travel direction. `r` is the dot radius.
+ * `dir` (+1/−1) sets travel direction. `r` is the dot radius. The dot slots are
+ * FIXED (FLOW_DOTS_MAX of them) and faded by magnitude, so the belt never jitters
+ * when the live current changes — only the trailing dots dim in and out.
  */
 function belt(
   g: Graphics,
@@ -101,12 +115,14 @@ function belt(
   r = 2.2,
 ): void {
   if (mag < 0.02) return;
-  const n = FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * mag);
+  const n = FLOW_DOTS_MAX;
   for (let i = 0; i < n; i++) {
+    const present = dotPresence(i, mag);
+    if (present <= 0) continue;
     const t = (((i / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
     const x = ax + (bx - ax) * t;
     const y = ay + (by - ay) * t;
-    g.circle(x, y, r).fill({ color, alpha: 0.35 + 0.55 * mag });
+    g.circle(x, y, r).fill({ color, alpha: (0.35 + 0.55 * mag) * present });
   }
 }
 
@@ -659,13 +675,16 @@ function drawDetailInductor(g: Graphics, o: DetailOpts): void {
           });
       }
     }
-    // flux dots running the core axis (the field through the centre)
-    const nf = FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * i);
+    // flux dots running the core axis (the field through the centre). Fixed slots,
+    // faded by |I| — so a changing inductor current doesn't flip the count + jitter.
+    const nf = FLOW_DOTS_MAX;
     for (let k = 0; k < nf; k++) {
+      const present = dotPresence(k, i);
+      if (present <= 0) continue;
       const t = (((k / nf + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
       g.circle(coilL + (coilR - coilL) * t, axisY, 2.4).fill({
         color: FLUX,
-        alpha: 0.3 + 0.5 * i,
+        alpha: (0.3 + 0.5 * i) * present,
       });
     }
     // axis arrow — the field direction through the core
@@ -717,10 +736,13 @@ function drawDetailInductor(g: Graphics, o: DetailOpts): void {
   }
 
   // --- electrons spiralling through the turns (front bright, back dim) ----------
+  // Fixed slot count so the spiral never re-spaces when |I| wiggles; the trailing
+  // electrons fade in with current instead of popping in and shifting the rest.
   if (i > 0.02) {
-    const ne =
-      FLOW_DOTS_MIN + 2 + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * i);
+    const ne = FLOW_DOTS_MAX + 2;
     for (let k = 0; k < ne; k++) {
+      const present = dotPresence(k, i, ne);
+      if (present <= 0) continue;
       const t = (((k / ne + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
       const theta = t * turns * Math.PI * 2;
       const front = Math.sin(theta) > 0;
@@ -730,7 +752,7 @@ function drawDetailInductor(g: Graphics, o: DetailOpts): void {
         2.6,
       ).fill({
         color: FIELD,
-        alpha: (front ? 0.9 : 0.32) * (0.4 + 0.6 * i),
+        alpha: (front ? 0.9 : 0.32) * (0.4 + 0.6 * i) * present,
       });
     }
   }

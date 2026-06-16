@@ -954,7 +954,9 @@
             if (infoOpen) {
               // Keep the picture (symbol vs internals) and the live state current
               // every frame, so a mode flip or a re-mounted canvas is always right.
+              // Share the board's flow clock so the internals pause/flow with time.
               infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setPhase(b.flowPhase());
               infoDiagram?.setState(
                 selPart.kind,
                 e,

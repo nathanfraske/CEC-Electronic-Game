@@ -45,9 +45,12 @@ export class InfoDiagram {
   private value: number | undefined = undefined;
   // The potentiometer's wiper position, forwarded for the same reason. Optional.
   private wiper: number | undefined = undefined;
+  // The shared visual flow clock, handed in each frame from the board
+  // (`Board.flowPhase()`) rather than free-run here. Riding the board's clock
+  // makes the internals animation advance at the same calm rate, freeze when the
+  // sim is paused, and run backward when scrubbing — i.e. pause and flow with time.
   private phase = 0;
   private raf = 0;
-  private last = 0;
 
   async init(canvas: HTMLCanvasElement): Promise<void> {
     const app = new Application();
@@ -82,13 +85,19 @@ export class InfoDiagram {
     this.mode = mode;
   }
 
+  /**
+   * Adopt the board's shared visual flow clock (`Board.flowPhase()`), fed once per
+   * frame. The internals then recirculate at the board's calm fixed rate, freeze
+   * with a paused sim, and reverse when stepping/scrubbing back — pause-and-flow-
+   * with-time, instead of a free-running wall-clock that ignored playback.
+   */
+  setPhase(phase: number): void {
+    this.phase = phase;
+  }
+
   private readonly loop = (): void => {
     const app = this.app;
     if (!app) return;
-    const now = performance.now();
-    const dt = this.last ? Math.min(0.05, (now - this.last) / 1000) : 0;
-    this.last = now;
-    this.phase += dt;
     this.holder.position.set(app.screen.width / 2, app.screen.height / 2);
     this.draw();
     this.raf = requestAnimationFrame(this.loop);
