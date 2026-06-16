@@ -22,7 +22,7 @@ right values. Fixed.
   - `infoDiagram.ts` passes the same per-pin layout mapped into its panel (0.6·hw /
     0.82·hh), so the board and info views are consistent.
   - `anchorPt(o, label, fxFrac, fyFrac)` helper resolves an anchor or a fraction
-    fallback. Drawers that don't read `anchors` (R/C/L/D/TR/**Q/QP**) are unchanged.
+    fallback. Drawers that don't read `anchors` (R/C/L/D/TR) are unchanged.
 - **Faithful re-ports (analogyDrawers.ts), all anchored + proportional:**
   - **MOSFET NM/PM** — pressure-pilot valve: drain↔source pipe (drain top, source
     bottom — real pin order), seated throat + lifting plug, threshold spring/piston +
@@ -41,10 +41,19 @@ right values. Fixed.
     phase-clock molecule jiggle), neck/seat, body chamber with **side vent pipes**,
     bonnet + set-screw (depth = Vclamp) + threshold spring, poppet that cracks at
     `|V|>Vclamp` and vents (flow = |I|). Both leads feed the vessel (bidirectional).
+  - **BJT Q/QP** (added after owner OK) — amplifying valve, anchored C-top / E-bottom /
+    B-left: collector↔emitter pipe + plug, base **check valve** (passes flow — the
+    BJT draws base current) feeding a **float chamber** whose level lifts the plug
+    linkage. PNP mirrors (supply = emitter, flow up). Plug/chamber ride steep
+    `norm(I_C)`; supply reservoir = |V_CE|.
+- **Headless verification harness** (not committed; `/tmp`): compiles the drawers to CJS
+  (type-only pixi import elides) and runs a recording mock that asserts, in board mode
+  (studs hidden), that **every pin is reached by a lead**, nothing leaves the bounds,
+  and the moving part responds to its driver. Caught + fixed real gaps (uncapped pipe
+  mouths on NM/PM/ZD/Q/QP). All 7 pass.
 
-**Open / possible next:** **Q/QP (BJT) analogy** still uses its old hardcoded terminal
-positions (not anchored) — same low-cost fix if the owner wants it consistent. Visual
-polish is eyeball-only (can't render Pixi headlessly here).
+**Open / possible next:** all flagged analogy tiers done + anchored. Visual/aesthetic
+polish is eyeball-only (can't rasterise Pixi headlessly here) — owner review pending.
 
 ---
 

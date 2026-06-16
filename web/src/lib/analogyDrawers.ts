@@ -1001,60 +1001,65 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
 
 // ============================================================================
 // Bipolar transistor (BJT) — ported from transistor-tiers.html tier 2: an AMPLIFYING
-// VALVE. A big vertical supply pipe (collector at top, emitter at bottom, pressure =
-// V_CE) is sealed by a plug at a seat. A small BASE flow trickles through a check
-// valve (cracks at ~0.7 V) into a side chamber; the rising level floats a linkage
-// that lifts the plug, opening a LARGE collector flow. A small base flow commands a
-// big collector flow — the gain β. I_E = I_C + I_B.
+// VALVE. The collector↔emitter pipe (pressure = V_CE) is sealed by a plug at a seat.
+// A small BASE flow trickles through a check valve (cracks at ~0.7 V) into a side
+// chamber; the rising level floats a linkage that lifts the plug, opening a LARGE
+// collector flow — a small base flow commands a big collector flow (the gain β).
+// Unlike the MOSFET's sealed gate, the base check valve passes real flow (the BJT
+// draws base current). Collector top, emitter bottom (the real pin order), base on
+// the left. The PNP mirrors it: the high-pressure supply is the EMITTER and the flow
+// runs emitter→collector (up).
 //
 // Live mapping (BJT ElectricalState: current = I_C, vAcross = V_CE; value = β):
-//   • collector = norm(|I_C|) → plug lift + the big collector/emitter flow density.
-//   • base      = small proxy  → the chamber level + the thin base trickle.
-//   • supply    = V_CE         → the reservoir fill at the top.
+//   • open      = norm(|I_C|, steep) → plug lift + chamber level (I_B isn't exposed,
+//     so the collector current is the visible proxy for the base having filled it).
+//   • flow      = norm(|I_C|)        → the big collector→emitter stream density.
+//   • supply    = |V_CE|             → the supply-reservoir fill.
 // ============================================================================
 function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
-  const npn = o.kind !== "QP";
+  const pnp = o.kind === "QP"; // p-type: emitter is the high side, flow emitter→collector
 
   const ic = norm(o.electrical.current, CUR_SCALE);
-  const vce = norm(o.electrical.vAcross, V_SCALE);
-  // Gate opening: a SENSITIVE response to the collector current (steep near zero,
-  // saturating) so the plug + chamber visibly track even small currents instead of
-  // barely budging — the gate-lift is the teaching point.
-  const lvl = norm(o.electrical.current, CUR_SCALE * 0.3);
   const conducting = ic > 0.03;
+  // Sensitive base proxy (steep near 0) so even a small I_C visibly fills the chamber
+  // and lifts the plug — the gate-lift is the teaching point.
+  const open = norm(o.electrical.current, CUR_SCALE * 0.3);
+  const vce = norm(o.electrical.vAcross, V_SCALE);
 
-  const pipeX = hw * 0.34;
-  const pipeHW = hw * 0.1;
-  const pipeTop = -hh * 0.56;
-  const pipeBot = hh * 0.56;
-  const throatY = 0;
-  const plugY = throatY - lvl * hh * 0.42; // lifts up off the seat as it opens
-  const chamX = -hw * 0.42;
-  const chamHW = hw * 0.16;
-  const chamTop = -hh * 0.3;
-  const chamBot = hh * 0.44;
-  const waterY = chamBot - lvl * (chamBot - chamTop);
+  // Terminals on the real pins: collector top, emitter bottom (shared pipe), base left.
+  const C = anchorPt(o, "C", 0.588, -0.95);
+  const E = anchorPt(o, "E", 0.588, 0.95);
+  const B = anchorPt(o, "B", -0.588, 0);
+  const pipeX = (C.x + E.x) / 2;
+  const pipeHW = Math.min(hw, hh) * 0.14;
+  const topY = Math.min(C.y, E.y);
+  const botY = Math.max(C.y, E.y);
+  const throatY = (topY + botY) / 2;
+  const supplyY = pnp ? botY : topY; // high-pressure end
+  const outletY = pnp ? topY : botY;
+  const toSupply = Math.sign(supplyY - throatY) || -1;
+  const plugY = throatY + toSupply * open * Math.abs(supplyY - throatY) * 0.55;
 
-  // --- supply reservoir (pressure = V_CE) just beyond the supply end -----------
-  const resH = hh * 0.16;
-  const resY = npn ? pipeTop - resH : pipeBot; // above (NPN) / below (PNP) the pipe
-  g.roundRect(pipeX - hw * 0.16, resY, hw * 0.32, resH, 3).stroke({
-    width: 1.6,
-    color: PALETTE.rail,
-    alpha: 0.85,
-  });
-  g.rect(pipeX - hw * 0.15, resY + resH * (1 - vce), hw * 0.3, resH * vce).fill(
-    {
-      color: WATER,
-      alpha: 0.45,
-    },
+  // --- supply reservoir at the high-pressure end (fill = |V_CE|) ----------------
+  const resLen = Math.abs(botY - topY) * 0.26;
+  const resW = pipeHW * 3.4;
+  const rIn = supplyY - toSupply * resLen;
+  g.roundRect(pipeX - resW / 2, Math.min(supplyY, rIn), resW, resLen, 4).stroke(
+    { width: 1.6, color: PALETTE.rail, alpha: 0.85 },
   );
+  const fillH = resLen * vce;
+  g.rect(
+    pipeX - resW / 2 + 3,
+    Math.min(supplyY, supplyY - toSupply * fillH),
+    resW - 6,
+    fillH,
+  ).fill({ color: WATER, alpha: 0.45 });
 
-  // --- main pipe walls + seat + plug -------------------------------------------
+  // --- main pipe walls + seat ridges + mouth caps ------------------------------
   for (const s of [-1, 1]) {
-    g.moveTo(pipeX + s * pipeHW, pipeTop)
-      .lineTo(pipeX + s * pipeHW, pipeBot)
+    g.moveTo(pipeX + s * pipeHW, supplyY)
+      .lineTo(pipeX + s * pipeHW, outletY)
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
     g.poly([
       pipeX + s * pipeHW,
@@ -1065,45 +1070,33 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
       throatY + 12,
     ]).fill({ color: PALETTE.rail, alpha: 0.85 });
   }
-  // collector (large) + emitter flow around the plug, when open
-  if (conducting) {
-    belt(
-      g,
-      pipeX,
-      npn ? pipeTop : pipeBot,
-      pipeX,
-      plugY - 12,
-      ic,
-      1,
-      o.phase,
-      WATER,
-      2.8,
-    );
-    belt(
-      g,
-      pipeX,
-      plugY + 12,
-      pipeX,
-      npn ? pipeBot : pipeTop,
-      ic,
-      1,
-      o.phase,
-      WATER,
-      2.8,
-    );
+  for (const y of [supplyY, outletY]) {
+    g.moveTo(pipeX - pipeHW, y)
+      .lineTo(pipeX + pipeHW, y)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
-  const plugCol = conducting ? PLATE : mix(PLATE, PALETTE.dim, 0.5);
-  g.ellipse(pipeX, plugY, pipeHW * 1.3, 10).fill({
-    color: plugCol,
+
+  // --- collector → emitter stream around the plug ------------------------------
+  if (conducting) {
+    belt(g, pipeX, supplyY, pipeX, plugY - 12, ic, 1, o.phase, WATER, 2.8);
+    belt(g, pipeX, plugY + 12, pipeX, outletY, ic, 1, o.phase, WATER, 2.8);
+  }
+  g.ellipse(pipeX, plugY, pipeHW * 1.25, 10).fill({
+    color: conducting ? PLATE : mix(PLATE, PALETTE.dim, 0.5),
     alpha: 0.95,
   });
-  g.ellipse(pipeX, plugY, pipeHW * 1.3, 10).stroke({
-    width: 1.2,
-    color: PLATE,
-    alpha: 0.6,
+  g.ellipse(pipeX, plugY, pipeHW * 1.25, 10).stroke({
+    width: 1.1,
+    color: 0xdfe3ee,
+    alpha: 0.5,
   });
 
-  // --- the pilot chamber: base flow fills it, a float lifts the linkage ---------
+  // --- float chamber: base flow fills it, the float lifts the plug linkage ------
+  const chamX = -hw * 0.06;
+  const chamHW = hw * 0.13;
+  const chamTop = throatY - hh * 0.42;
+  const chamBot = throatY + hh * 0.34;
+  const waterY = chamBot - open * (chamBot - chamTop);
   for (const s of [-1, 1]) {
     g.moveTo(chamX + s * chamHW, chamTop)
       .lineTo(chamX + s * chamHW, chamBot)
@@ -1116,43 +1109,57 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
     color: WATER,
     alpha: 0.5,
   });
-  // float + linkage rod to the plug stem
-  g.roundRect(chamX - chamHW + 4, waterY - 6, chamHW * 2 - 8, 10, 2).fill({
+  g.moveTo(chamX - chamHW + 2, waterY)
+    .lineTo(chamX + chamHW - 2, waterY)
+    .stroke({ width: 1.4, color: WATER2, alpha: open > 0.03 ? 0.8 : 0 });
+  // float + linkage rod to the plug
+  g.roundRect(chamX - chamHW + 4, waterY - 5, chamHW * 2 - 8, 10, 2).fill({
     color: PLATE,
     alpha: 0.9,
   });
-  g.moveTo(chamX, waterY - 6)
-    .lineTo(pipeX, plugY)
-    .stroke({ width: 3, color: PLATE, alpha: 0.7 });
+  g.moveTo(chamX, waterY)
+    .lineTo(pipeX - pipeHW, plugY)
+    .stroke({ width: 3, color: PLATE, alpha: 0.65 });
 
-  // --- base inlet check valve (cracks at 0.7 V) feeding the chamber ------------
-  const bvX = -hw + 14;
-  const bvY = chamBot - 8;
-  g.moveTo(bvX, bvY)
-    .lineTo(chamX - chamHW, bvY)
-    .stroke({ width: 3, color: PALETTE.border, alpha: 0.8 });
-  g.circle(bvX + 22, bvY, 6).fill({
+  // --- base inlet check valve (cracks at ~0.7 V; the base DOES draw flow) -------
+  const seatBX = chamX - chamHW;
+  const ballX = seatBX - 16;
+  for (const s of [-1, 1]) {
+    g.moveTo(B.x, B.y + s * 5)
+      .lineTo(seatBX, B.y + s * 5)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.8 });
+  }
+  // flange cap across the base inlet, so the base lead meets the pin
+  g.moveTo(B.x, B.y - 5)
+    .lineTo(B.x, B.y + 5)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.8 });
+  g.poly(springPts(ballX + 6, seatBX, B.y, 4, 4), false).stroke({
+    width: 1.6,
+    color: WARM,
+    alpha: 0.8,
+  });
+  g.circle(ballX + (conducting ? 4 : 0), B.y, 6).fill({
     color: conducting ? PALETTE.ok : PLATE,
-    alpha: 0.9,
+    alpha: 0.92,
   });
   if (conducting) {
     belt(
       g,
-      bvX,
-      bvY,
-      chamX - chamHW,
-      bvY,
-      Math.min(1, lvl * 0.7),
+      B.x,
+      B.y,
+      ballX - 6,
+      B.y,
+      Math.min(1, open * 0.8),
       1,
       o.phase,
       WATER,
-      2.2,
+      2,
     );
   }
 
-  stud(g, bvX, bvY, PALETTE.accent);
-  stud(g, pipeX, npn ? pipeTop : pipeBot, PALETTE.bronze);
-  stud(g, pipeX, npn ? pipeBot : pipeTop, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.accent);
+  stud(g, C.x, C.y, PALETTE.bronze);
+  stud(g, E.x, E.y, PALETTE.bronze);
 }
 
 // ============================================================================

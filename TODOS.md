@@ -13,9 +13,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   resolved via `tierKit.anchorPt`). MOSFET = pressure-pilot valve (N/P mirror); OA = pilot
   spool valve (OUT/IN±); ZD = check-valve on the pin axis + spillway w/ reverse return; MOV =
   relief valve (vessel+vents+bonnet/screw). All move from the right live values.~~
-- [ ] **BJT (Q/QP) analogy** — not anchored yet (still hardcoded terminal x/y like the old
-  MOSFET). Apply the same `anchors` routing if the owner wants it consistent with PM/NM.
-- [ ] **Owner eyeball** the five re-ported analogy tiers on the board (deep zoom) + info panel.
+- ~~**BJT (Q/QP) analogy** — DONE (owner OK'd). Anchored C/E/B + re-ported to the amplifying-
+  valve ref: base check valve → float chamber → plug linkage; PNP mirror. Verified by the
+  headless harness (pins reached, in-bounds, responds to I_C).~~
+- [ ] **Owner eyeball** the re-ported analogy tiers (NM/PM/OA/ZD/MOV/Q/QP) on the board (deep
+  zoom) + info panel.
 
 ## 2026-06-16 (afternoon) — tiers on the board + owner review fixes
 
