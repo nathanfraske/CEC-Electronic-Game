@@ -89,6 +89,42 @@ transformer's equivalent of the cap's companion R, so even the **Ideal** transfo
 already do the regularizing. Net: keep what we have, give the ideal transformer a leakage floor,
 let FAIL catch true degeneracy.)
 
+## Resolution: fidelity IS the progression curve (owner, 2026-06-16)
+
+The owner's call, and it dissolves the A-vs-B fight: **fidelity is a gradient tied to
+progression**, not a global mode you fight with.
+
+- **The very basics are pure ideal.** Ideal R, C, L, V, current source — RC networks,
+  voltage dividers, simple loops. Trivial to do ideally, and (per the research above) they
+  *self-regularize* — C/L carry their companion R, GMIN handles any junction — so pure-ideal
+  mode is effortless and effectively never FAILs here. Where a new player starts.
+- **Past the basics, you carry some reality with you.** The moment you build anything beyond
+  the very basics — a rectifier, an amplifier, a transformer, a switcher — the parts carry
+  their *essential* parasitics by default (diode I-V, transformer leakage, source impedance,
+  ESR). No manual resistors, no constant FAILs: reality is baked into the parts you've earned.
+  This is just the parts' baseline models — most already exist.
+- **Advanced play adds more and more reality.** As the player progresses, Real variants layer
+  on the full spec'd parasitics — tolerance, ESR/ESL, temperature drift, power/voltage ratings,
+  core saturation — unlocked along the tech-tree / Lux economy
+  (`docs/design/game-contracts-economy.md`). So **fidelity is the difficulty/depth curve**
+  (`docs/design/game-design.md`), not a switch.
+
+**This simplifies the model:**
+
+- We do **not** need a pure zero-impedance "ideal transformer." A transformer is a
+  *past-the-basics* part, so it carries reality (leakage) by default — which is exactly the
+  current model (ideal-T + `TRANSFORMER_LLEAK` floor). The bridge works; nothing to add. The
+  earlier "make an ideal transformer or the bridge dies" worry dissolves: the baseline model
+  *is* the right fidelity for its tier.
+- The basics parts (R/C/L/V/I) stay pure ideal (and self-regularize).
+- "Ideal vs Real" is therefore primarily a **progression axis** (baseline fidelity → advanced
+  Real variants), not a per-part toggle. A per-part fidelity override can be a later
+  advanced-mode convenience, not the core mechanic.
+- **The FAIL state's role narrows:** it's the rare, correct backstop for genuinely degenerate
+  configs (a dead short, an ideal-source loop, an unloaded bare bridge) — not an everyday
+  event. The visible FAIL box still ships (the honest signal), but in normal play you seldom
+  see it.
+
 ## The FAIL state (engine foundation — SHIPPED)
 
 `crates/sim-core/src/lib.rs`, merged in PR #70:
@@ -237,12 +273,23 @@ let FAIL catch true degeneracy.)
 
 ## Suggested build order
 
-1. **Finish FAIL visibly** (wasm boundary + red-box renderer + pause) — the foundation is
-   in; make it show. Small, high-value, unblocks the whole feature.
-2. **Diverge the transformer** (the part that started this): Ideal TR (no leakage/loss,
-   FAILs on inrush) vs Real TR (current leakage+winding-R model, retuned for realistic
-   mains inrush). Seeds the `real` flag end-to-end on one part.
-3. **The bin toggle + per-part inspector toggle + allow-but-warn mixing.**
-4. **Roll out Real variants** in fidelity order: diode (Rs) and source (output Z) first
-   (they bound the most common FAILs), then R (tolerance/power), C/EC (ESR/rating),
-   MOSFET/BJT/op-amp parasitics, inductor saturation.
+(Reframed by the "fidelity is the progression curve" resolution above — no big Ideal/Real
+toggle infra; the baseline is mostly there, and Real variants are *additive upgrades*.)
+
+1. **Finish FAIL visibly** (wasm boundary exposes `failed()` + mask → `board.ts` pulsing
+   red FAIL box → `loop.ts` pauses on FAIL; show `+FAIL/−FAIL` on the readout). The engine
+   half is shipped; this is the rare-but-honest backstop. Small, self-contained, high-value.
+2. **Confirm the tiers (curriculum pass, not engine work).** Basics (R/C/L/V/I) are pure
+   ideal already and self-regularize; past-basics parts (diode, transformer, op-amp, FETs,
+   BJT) already carry their essential parasitics — so the transformer needs **nothing** (its
+   leakage floor is right for its tier). Mostly: sort the example/contract ladder into the
+   "ideal basics" tier vs the "reality carried" tier.
+3. **Layer advanced Real variants as additive, unlockable upgrades** ("more reality as you
+   advance"), gated by the tech-tree / Lux economy: diode `Rs` + junction cap, R
+   tolerance/power-rating, C/EC ESR/ESL + voltage rating, FET/BJT junction caps + SOA,
+   op-amp GBW/offset/Ibias, inductor saturation, transformer core saturation/loss. Each is
+   additive — the baseline model is the default; the Real variant *adds* parasitics — so the
+   analog golden and `*_run_is_reproducible` stay safe (Real models get their own coverage).
+4. **(Later)** a per-part fidelity override (advanced-mode convenience), and a web-side
+   **netlist test harness** (the c-terminal bug had zero web coverage — sim-core hand-wires
+   c/d, so UI-built circuits are untested).
