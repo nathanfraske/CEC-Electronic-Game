@@ -15,6 +15,7 @@ import { Application, Container, Graphics } from "pixi.js";
 import { PART_KINDS, PALETTE } from "./graph";
 import { drawGlyphIn, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
 import { drawDetail } from "./detailDrawers";
+import { drawAnalogy } from "./analogyDrawers";
 
 const PITCH = 26; // mirrors the board's grid pitch
 const SCALE = 2.8; // blow the schematic symbol up to fill the drawer
@@ -109,16 +110,17 @@ export class InfoDiagram {
     const g = this.glyph;
     g.clear();
 
-    // Reality tier: try the construction-internals drawer first; on a hit, draw it
-    // big and centred and we're done. On a miss, fall through to the schematic
-    // glyph below (reality → schematic) so the panel is never blank.
-    if (this.mode === "reality" && this.kind) {
+    // Reality + analogy tiers: try the full-panel illustration first (the device
+    // internals for "reality", the factory-machine metaphor for "analogy"); on a
+    // hit, draw it big and centred and we're done. On a miss, fall through to the
+    // glyph below (reality → board factory glyph → schematic) so it's never blank.
+    if (this.kind && (this.mode === "reality" || this.mode === "analogy")) {
       const kind = PART_KINDS[this.kind];
       const color = kind ? PALETTE[kind.colorKey] : PALETTE.accent;
       this.holder.scale.set(1);
       const hw = (app.screen.width / 2) * DETAIL_FILL;
       const hh = (app.screen.height / 2) * DETAIL_FILL;
-      const drew = drawDetail(g, {
+      const opts = {
         kind: this.kind,
         bounds: { hw, hh },
         color,
@@ -126,13 +128,15 @@ export class InfoDiagram {
         phase: this.phase,
         value: this.value,
         wiper: this.wiper,
-      });
+      };
+      const drew =
+        this.mode === "reality" ? drawDetail(g, opts) : drawAnalogy(g, opts);
       if (drew) return;
     }
 
-    // Schematic / analogy tiers (and the reality fallback): the board's glyph,
-    // scaled up. The analogy tier draws the Factory machine art explicitly, without
-    // touching the board's global lens.
+    // Schematic tier (and the reality/analogy fallback): the board's glyph, scaled
+    // up. The analogy fallback draws the Factory machine board art explicitly,
+    // without touching the board's global lens.
     this.holder.scale.set(SCALE);
     const kind = PART_KINDS[this.kind];
     if (!kind) return;
