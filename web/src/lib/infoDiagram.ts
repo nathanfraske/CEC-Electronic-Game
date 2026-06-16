@@ -121,6 +121,17 @@ export class InfoDiagram {
       this.holder.scale.set(1);
       const hw = (app.screen.width / 2) * DETAIL_FILL;
       const hh = (app.screen.height / 2) * DETAIL_FILL;
+      // Anchor each terminal at its catalog grid position, mapped into the panel —
+      // the same per-pin layout the board uses, so a multi-terminal illustration
+      // routes its leads the same way here (inputs/outputs on the matching sides)
+      // and the info view stays consistent with the on-board one.
+      const cw = (kind?.w ?? 1) - 1;
+      const ch = (kind?.h ?? 1) - 1;
+      const anchors = (kind?.pins ?? []).map((p) => ({
+        label: p.label,
+        x: cw > 0 ? ((p.dx - cw / 2) / (cw / 2)) * 0.6 * hw : 0,
+        y: ch > 0 ? ((p.dy - ch / 2) / (ch / 2)) * 0.82 * hh : 0,
+      }));
       const opts = {
         kind: this.kind,
         bounds: { hw, hh },
@@ -129,6 +140,7 @@ export class InfoDiagram {
         phase: this.phase,
         value: this.value,
         wiper: this.wiper,
+        anchors,
       };
       // The info panel has no separate pin dots, so the illustration's own studs
       // are its terminals — keep them (the board hides them; see tierKit).
