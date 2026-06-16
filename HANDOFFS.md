@@ -5,6 +5,112 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Visible FAIL UI built (pushed, NOT yet merged)
+
+**State:** 🟢 Green (fmt, build:wasm, web check/lint/build). Branch `claude/kind-turing-hdelb3`,
+ahead of `main`; **NOT merged** — owner is mid a manual examples-cleanup pass, so coordinate
+before merging, and **keep hands off `web/src/lib/examples.ts`.**
+
+**Built the visible FAIL UI** (the engine clamp shipped in PR #70; this is the front end):
+- `crates/sim-wasm`: `failed()` + `failed_element_mask()` passthroughs.
+- `web/src/sim/loop.ts`: `Snapshot.failed` + `failedMask`, read each frame; **the run freezes on
+  FAIL** (`if (at(cursor)?.failed) running = false`) — the whole-sim FAIL state.
+- `web/src/lib/glyphs.ts` + `netlist.ts`: `ElectricalState.failed`; `electricalMap` maps the
+  per-element FAIL mask back to each component.
+- `web/src/lib/board.ts`: `ComponentNode` draws a **pulsing red `FAIL` box + label** on any
+  flagged part (`PALETTE.bad`; the pulse runs on a free wall-clock so it breathes even while the
+  run is frozen — the flow phase is frozen when paused).
+- `web/src/App.svelte`: passes `snap.failedMask` into `electricalMap`.
+- **Deferred polish:** the `+FAIL/−FAIL` numeric-readout swap (the meter still shows the clamped
+  number when a failed part is selected) and a global FAIL banner — the box + freeze already read
+  clearly. Couldn't verify the visual live (no browser here); it compiles and the engine FAIL is
+  unit-tested. Owner to confirm the red box on the deployed build.
+
+**Owner asks logged (TODOS):** component **labels / renaming** (a per-part custom label, like net
+labels — "a big one"); owner is also doing a manual pass to label/clean the **examples**.
+
+**NEXT:** coordinate + merge the FAIL UI; then curriculum tiering (ideal-basics vs reality-carried)
++ the first additive Real-variant upgrades. (The entry below has the Ideal-vs-Real resolution +
+the multi-rate architecture note.)
+
+---
+
+## 2026-06-16 (night) — Ideal-vs-Real RESOLVED (fidelity gradient) + multi-rate note
+
+**State:** 🟢 Green; clean tree after this. Branch `claude/kind-turing-hdelb3` (ahead of `main`
+by docs only since PR #70). A **design-conversation** stretch — two design docs, no engine code.
+
+**Ideal-vs-Real RESOLVED** (`docs/sim/ideal-vs-real-parts.md`): owner's call is **fidelity is the
+progression curve**, not a global Ideal/Real toggle. Basics (R/C/L/V/I) are pure ideal and
+*self-regularize*; past-basics parts carry their essential parasitics by default (no manual
+resistors); advanced play unlocks more reality (tolerance/ESR/ratings/saturation) along the
+tech-tree. **Research (CircuitJS source + ngspice manual, primary) confirms the mechanism:**
+energy-storage elements get a companion resistance for free from the discretization
+(`R_cap = Δt/C`, `R_ind ∝ L/Δt`) so they're never zero-impedance — *we already do this*;
+semiconductors get GMIN; ideal sources stay pure and a genuine short / source-loop is left
+singular → FAIL (correct). So the **"ideal transformer" worry dissolves** — a transformer is
+reality-carried by default and its current leakage-floor model is right for its tier; no
+zero-leakage variant needed. FAIL narrows to a rare, correct backstop.
+
+**Multi-rate architecture note** (`docs/sim/multi-rate-domains.md`): how to host a GHz CPU and a
+µs analog net deterministically. Key: **multi-rate ≠ adaptive** — fixed integer rate ratios are
+structure-not-value, so deterministic; adaptive Δt is not. Two kernels (continuous analog MNA at
+fixed Δt + discrete event-driven digital sub-stepping a fixed integer per analog tick), meeting
+only at **boundary nets**. Owner's insight, now the centerpiece: the analog↔digital boundary **is
+a real converter** (ADC/comparator/Schmitt/DAC) — you must place one to cross, exactly as in
+hardware, so it's physically honest and falls out for free. Forward-looking (CPU/FPGA/ADC tier).
+
+**NEXT (unchanged priority):** the **visible FAIL UI** — wasm boundary exposes `failed()` +
+`failed_element_mask()`, `board.ts` draws the pulsing red `FAIL` box on flagged parts + shows
+`+FAIL/−FAIL` on the readout, `loop.ts` pauses the run on FAIL. Engine half shipped (PR #70).
+Then curriculum tiering (ideal-basics vs reality-carried examples) + the first additive
+Real-variant upgrades. The catalogue roadmap (7-seg, >4-pin keystone, …) is still queued.
+
+---
+
+## 2026-06-16 (later) — c-terminal + FAIL fixes SHIPPED (PR #70); Ideal-vs-Real design underway
+
+**State:** 🟢 Green (fmt, clippy, **102 sim-core tests**, golden stable, wasm, web). **Merged to
+`main` via PR #70**. Branch `claude/kind-turing-hdelb3`.
+
+**Two fixes shipped (PR #70):**
+1. **Four-pin c-terminal grounded** (`web/src/lib/netlist.ts`): pin 2 → node `c` was computed
+   only for `THREE_PIN_TYPES`, so the transformer's **S+** and the DFF's **CLK** (both pin 2 on
+   four-pin devices) silently mapped to **ground**. Transformer → bridge collapsed to **half-wave**
+   (the owner's "top-right terminal does nothing / one diode conducts"); DFF → never clocked. Fix:
+   `nc` now includes `FOUR_PIN_TYPES`, mirroring `nd`. The sim-core bridge tests passed because they
+   hand-wire c/d, bypassing the web netlist — **a real web-side coverage gap (no netlist test exists).**
+2. **FAIL state** (`crates/sim-core/src/lib.rs`): `flag_and_clamp_fails()` at the end of `step()`
+   clamps any non-finite/`> FAIL_LIMIT` (1e9) value to a finite bound (so a NaN can't propagate and
+   delete traces), raises `failed()`, and marks `failed_element_mask()`. Deterministic → **native and
+   wasm now agree** (NaN was the platform split behind every "live-only" failure). Golden untouched.
+
+**Ideal-vs-Real direction (owner's framing):** two part families toggled in the bin. Ideal = no
+parasitics, reads **+FAIL/−FAIL** (whole-sim FAIL state + pulsing red box on the culprit) when pushed
+past physics. Real = realistic parasitics, bounded. Mixing **allowed but warned**. Design doc:
+**`docs/sim/ideal-vs-real-parts.md`** (mechanic + FAIL foundation + per-part catalogue/brainstorm +
+build order). Parts audit done: only **6 parts purely ideal** — V, AC, R, C, L, I; the rest carry
+incidental parasitics (TR leakage+RWIND, EC ESR, op-amp output-Z, switch Ron, gate drive, POT wiper,
+pull-up). The TR and EC seed their Real variant.
+
+**OPEN DESIGN QUESTION (owner raised, being researched):** the divergence is a **fixed-Δt transient**
+artifact (SPICE dodges it with *adaptive* timestepping, which we can't use — it'd break determinism).
+Real parts always have inherent R/L, so requiring users to add resistors is counterintuitive. Two
+reconciliations: **(A)** purist ideal = zero parasitics, FAILs (you add impedance); **(B)** ideal
+carries a tiny *universal* lead/wire R(+L) so it just works, Real adds full parasitics; FAIL becomes a
+rare backstop. Possibly both via an Ideal-mode toggle. **A background research agent is investigating
+how ngspice/LTspice, Falstad CircuitJS, Multisim, and EE curricula handle this** — decide A/B/both on
+its findings.
+
+**NEXT:** (1) research lands → pick A/B/both for ideal-mode; (2) build the **ideal transformer**
+(its leakage floor depends on A vs B — the `tr-bridge-supply` example is already bounded+full-wave
+post-#70, so it won't insta-die); (3) the **visible FAIL UI** — wasm boundary exposes `failed()` +
+mask, `board.ts` draws the pulsing red FAIL box, `loop.ts` pauses on FAIL; (4) the bin Ideal/Real
+toggle + allow-but-warn mixing; (5) roll out Real variants (diode Rs, source output-Z first). Also
+worth adding: a **web-side netlist test harness** (the c-terminal bug had zero web coverage).
+
+---
+
 ## 2026-06-16 (late) — Transformer inrush fix SHIPPED (PR #69) + transistor curriculum
 
 **State:** 🟢 Green (fmt, clippy, **100 sim-core tests**, golden stable, wasm, web). **Merged

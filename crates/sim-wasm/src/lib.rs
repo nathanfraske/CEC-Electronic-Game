@@ -118,4 +118,19 @@ impl Simulation {
     pub fn snapshot_hash(&self) -> u64 {
         self.inner.snapshot_hash()
     }
+
+    /// Whether the most recent step produced a non-physical **FAIL** — an ideal part
+    /// driven past what physics allows (no series impedance: an ideal source into a
+    /// short, an ideal diode charging a cap with nothing to limit it). The renderer
+    /// surfaces this as the whole-sim FAIL state and freezes the run.
+    pub fn failed(&self) -> bool {
+        self.inner.failed()
+    }
+
+    /// Per-element FAIL mask, in the **same order** as [`Simulation::element_currents`]:
+    /// `1` for each element whose reading hit the FAIL bound this step, `0` otherwise.
+    /// The front end maps these back to components by index to box the offending parts.
+    pub fn failed_element_mask(&self) -> Vec<u8> {
+        self.inner.failed_element_mask()
+    }
 }

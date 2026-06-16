@@ -13,6 +13,12 @@ export interface ElectricalState {
   current: number;
   /** Volts across the element, V(a) − V(b). */
   vAcross: number;
+  /**
+   * Set when this part hit the FAIL bound this tick — an ideal part driven past
+   * what physics allows (no series impedance). The renderer boxes it in pulsing
+   * red. Absent/false for every well-behaved part.
+   */
+  failed?: boolean;
 }
 
 export const ZERO_ELECTRICAL: ElectricalState = { current: 0, vAcross: 0 };

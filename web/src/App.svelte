@@ -935,7 +935,12 @@
           // so the glyphs animate with what is actually happening to them.
           const electrical: Map<number, ElectricalState> | undefined =
             netlist && snap.elementCurrents
-              ? electricalMap(netlist, snap.state, snap.elementCurrents)
+              ? electricalMap(
+                  netlist,
+                  snap.state,
+                  snap.elementCurrents,
+                  snap.failedMask,
+                )
               : undefined;
           b.update(
             snap,

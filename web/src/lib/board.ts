@@ -3845,13 +3845,19 @@ export class Board {
  * (for the ideal primitives) a value readout. The Board repositions it on drag
  * and ticks it each frame with the element's electrical state.
  */
+/** FAIL-box pulse rate (Hz) — a calm-but-urgent breathe on a free wall-clock, so it
+ *  keeps pulsing even though a FAIL freezes the run (the flow phase is frozen then). */
+const FAIL_PULSE_HZ = 1.4;
+
 class ComponentNode {
   readonly view = new Container();
   private readonly glyphHolder = new Container();
   private readonly glyph = new Graphics();
+  private readonly failBox = new Graphics();
   private readonly label: Text;
   private readonly value: Text | null;
   private readonly meter: Text;
+  private readonly failText: Text;
   private readonly pinPositions: { x: number; y: number }[] = [];
   private readonly wPx: number;
   private readonly hPx: number;
@@ -3921,6 +3927,25 @@ class ComponentNode {
     this.meter.visible = false;
     this.view.addChild(this.meter);
 
+    // FAIL overlay (drawn last → on top): a pulsing red box + "FAIL" label shown
+    // whenever this part hits the FAIL bound. In `view` space (un-rotated) so the box
+    // stays axis-aligned around the rotated part.
+    this.view.addChild(this.failBox);
+    this.failText = new Text({
+      text: "FAIL",
+      style: {
+        fill: PALETTE.bad,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 11,
+        fontWeight: "700",
+        letterSpacing: 1,
+      },
+    });
+    this.failText.anchor.set(0.5);
+    this.failText.resolution = DPR;
+    this.failText.visible = false;
+    this.view.addChild(this.failText);
+
     this.layoutLabels();
     // pin dots
     for (const p of this.pinPositions) {
@@ -3966,6 +3991,7 @@ class ComponentNode {
     this.label.resolution = r;
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
+    this.failText.resolution = r;
   }
 
   /** Refresh the on-board value label after an inspector edit. */
@@ -4007,6 +4033,46 @@ class ComponentNode {
       this.meter.visible = true;
     } else {
       this.meter.visible = false;
+    }
+    // FAIL overlay: a pulsing red box + "FAIL" around the part's rotated extent. It
+    // hit the FAIL bound — an ideal part with no series impedance pushed past physics.
+    // The pulse runs on a free wall-clock so it breathes even though a FAIL freezes
+    // the run (the flow `phase` is frozen while paused).
+    if (electrical.failed) {
+      let minX = 0;
+      let maxX = 0;
+      let minY = 0;
+      let maxY = 0;
+      for (const p of this.pinPositions) {
+        const r = rotPx(p.x, p.y, this.component.rot);
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y);
+      }
+      const pad = 13;
+      const pulse =
+        0.5 +
+        0.5 *
+          Math.sin((performance.now() / 1000) * Math.PI * 2 * FAIL_PULSE_HZ);
+      this.failBox.clear();
+      this.failBox
+        .roundRect(
+          minX - pad,
+          minY - pad,
+          maxX - minX + 2 * pad,
+          maxY - minY + 2 * pad,
+          4,
+        )
+        .fill({ color: PALETTE.bad, alpha: 0.08 })
+        .stroke({ color: PALETTE.bad, width: 2, alpha: 0.35 + 0.65 * pulse });
+      this.failBox.visible = true;
+      this.failText.position.set((minX + maxX) / 2, minY - pad - 9);
+      this.failText.alpha = 0.55 + 0.45 * pulse;
+      this.failText.visible = true;
+    } else {
+      this.failBox.visible = false;
+      this.failText.visible = false;
     }
   }
 
