@@ -30,8 +30,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
     golden-stable (Ideal default); web `families.ts` mirror + `Component.family` +
     buildNetlist aux pack + `setComponentFamily` + App.svelte family chip picker & noise-
     margin readout. Test `gate_family_levels_and_mixed_rail` (the level-shifter lesson).~~
-  - [ ] **Stage 4 (follow-up)** — open-drain driver (release high → Z) + wired-AND bus
-    (open-drain + pull-up, resolved by MNA) + level-shifter part (all golden-additive).
+  - **Stage 4 — digital-interface ground rules.** (Prior batch SHIPPED to live via **PR #67**.)
+    - ~~**Open-drain output mode + wired-AND bus.** Per-gate open-drain (aux bit 8): pulls
+      low, releases high → an external pull-up forms a wired-AND bus, resolved by the MNA
+      solve. `aux` now masks func/family/open-drain; new `gate_gout` for a mode-aware
+      current readout. Default push-pull → golden-stable. Inspector output toggle + web
+      threading. Test `gate_open_drain_wired_and_bus` (bus = A AND B).~~
+    - [ ] **Level-shifter part** (rail A → rail B; needs a two-rail design — defer until
+      the owner's new symbols land) + optional convenience **pull-up** part.
 
 ## 2026-06-15
 
