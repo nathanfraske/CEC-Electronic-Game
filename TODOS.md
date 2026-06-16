@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16
+
+- **Digital scheduler (owner ask) — research done + Stage 1 shipped; Stage 2 next.**
+  Six research agents synthesized into `docs/ui/logic-analog-digital-nets.md` §7 (the
+  authoritative design + build plan). Owner chose scope **Stages 1–2**.
+  - ~~**Stage 1 — net classification (golden-stable).** `classify_nets`/`is_digital`/
+    `NetClass`/`Sim::net_class` label each node Analog/Digital/Boundary; computed but not
+    yet acted on, so every golden is bit-identical. Test added.~~
+  - [ ] **Stage 2 — event engine + level-bearing hash (the deliberate break).** `Level`
+    enum + `LogicFamily.quantize` (needs `v_il_frac`) + `combine` resolution table;
+    evaluate-all double-buffer per-tick engine (element-index order, §7.3 phase order);
+    net-centric drive resolution replacing the per-gate stamps at the 4 sites; 4-state
+    DFF; fold pure-digital levels + DFF state into `snapshot_hash`. **GMIN gotcha:** the
+    per-reader GMIN floor means the restructure perturbs node_v at 1e-12 → regenerate
+    digital trajectories (no fixed digital golden exists; RC/0xeaac untouched). Test bar
+    in §7.7 incl. the rewind-across-edge replay test. Full plan in HANDOFFS.
+  - [ ] **Stage 3 (follow-up)** — web threading: family chips, noise-margin / forbidden-
+    band readouts, surface XNOR/BUF. **Stage 4** — open-drain/wired-AND + level-shifter.
+
 ## 2026-06-15
 
 ### Bugs found via the full-bridge-rectifier review (2026-06-15 eve)

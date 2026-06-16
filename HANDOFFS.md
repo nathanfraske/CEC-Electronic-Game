@@ -5,6 +5,67 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (pm) — Digital scheduler: research synthesized + Stage 1 shipped
+
+**State:** 🟢 Green (all gates: fmt, clippy, 92 sim-core tests + 1 ignored, wasm, web).
+Pushed to `claude/kind-turing-hdelb3` (3 commits this batch). The owner asked to build
+the digital scheduler; chose scope **Stages 1–2 (full scheduler)**.
+
+**Done:**
+- **Research (6 agents) → `docs/ui/logic-analog-digital-nets.md` §7** — the
+  research-validated design + build plan. Read §7 first; it is the authoritative spec.
+  Headline: the fixed 2 µs step collapses all the variable-timestep mixed-mode machinery
+  to a strict per-tick lock-step; unit-delay two-pass evaluate→commit is provably
+  order-independent; digitaljs is the working precedent; Falstad (gates in the MNA matrix
+  + RNG) is the anti-pattern we're leaving.
+- **Stage 1 — net classification (golden-stable), shipped.** `classify_nets` in `install`
+  labels each node Analog/Digital/Boundary deterministically; `is_digital(kind)`;
+  `NetClass` enum; `Sim::net_class(n)->u8` accessor; `net_classes` field. Computed but
+  **not yet acted on** (pure-digital nets still stamp into MNA), so every golden is
+  bit-identical (0xeaac RC, gate/DFF reproducibility all unchanged). Test
+  `net_classification_separates_domains`.
+
+**NEXT — Stage 2: the event engine + level-bearing hash (the one deliberate break).**
+This is the determinism-sacred core; do it deliberately, not rushed. Full spec in §7
+(esp. §7.3 phase order, §7.5 models, §7.6 corrections, §7.7 test bar). Concrete plan:
+
+- **Model:** `#[repr(u8)] enum Level{Low,High,Z,X}`; `LogicFamily.quantize(v,vhigh)->Level`
+  (needs a new **`v_il_frac`** field; LEGACY sets `v_il_frac=v_ih_frac=0.5` → no X band →
+  identical); a `combine(Level,Level)->Level` resolution table (Z yields; disagreeing
+  strong → X — table in §7.6). DFF state becomes 4-state `Level` (`ff_q` + `ff_clk_prev`),
+  replacing the f64 `ff_bit`/`ff_clk_high`.
+- **Engine (per tick, in `step`):** evaluate-all double-buffer in **element-index order**:
+  (1) each gate's output Level from committed input net-levels (4-state `gate_logic`);
+  (2) each DFF Q/Q̄ from `ff_q`, with edge-detect on the committed CLK net-level;
+  (3) **resolve per net** by folding all drivers via `combine` → `digital_drive[node]`;
+  (4) the four MNA stamp sites stamp **each digital/boundary net once** from its resolved
+  level (LEGACY Thévenin = today's `GATE_GOUT`), replacing the per-gate/DFF stamps;
+  (5) after the solve, commit each digital/boundary net-level = `quantize(node_v)`.
+- **⚠ GMIN gotcha (the trap):** today each gate stamps `GMIN` on *each* input it reads, so
+  a net read by K gates gets K·GMIN on its diagonal. A net-centric restructure that floors
+  each net once gives 1·GMIN → `node_v` differs at the 1e-12 level → **every digital hash
+  changes**. So the restructure *is* the deliberate break (regenerate digital trajectories;
+  there is **no fixed digital golden** — gate/DFF tests are self-consistency `run==run` +
+  behavior, and the only fixed golden is RC/0xeaac which has no digital parts and stays).
+  Either replicate K·GMIN exactly (ugly) or accept the regen (cleaner) — accept it.
+- **Hash (`snapshot_hash`, lib.rs:3548):** fold `node_v` for Analog+Boundary nodes (as
+  today) **plus** one `u8` Level per **pure-Digital** net **plus** each DFF's `ff_q` and
+  `ff_clk_prev` (u8). Forward-stable, append-only; RC golden untouched.
+- **Stamp-site inventory (current lines):** gate arms 1894 / 2074 / 2901 / 3128; `stamp_dff`
+  3365 (called at 4 sites); gate/DFF readout (`currents`) arms; commit/latch 3452; hash 3548.
+- **Tests (§7.7):** ring-oscillator oscillates (no hang/deadlock); gate-only stays on the
+  **linear fast path** (no Newton); 4-state resolution table; multi-driver wired-AND
+  (open-drain+pull-up); per-family `*_run_is_reproducible`; and **rewind-across-a-clock-edge
+  → identical hash** (store `ff_q`+`ff_clk_prev` in the keyframe — the most likely replay
+  bug). Existing gate/DFF behavior + self-consistency tests must stay green.
+- **Sequencing tip:** because of the GMIN gotcha there is no clean golden-stable sub-split;
+  do the restructure + hash as one focused commit, leaning on the existing behavior/
+  self-consistency tests + the new test bar to prove correctness and determinism.
+
+Stages 3–4 (web threading; open-drain/level-shifter parts) remain follow-ups.
+
+---
+
 ## 2026-06-16 — Transformer→bridge FIXED (ideal-T, hard secondary)
 
 **State:** 🟢 Green (all gates: fmt, clippy, 90 sim-core tests + 1 ignored, wasm build,
