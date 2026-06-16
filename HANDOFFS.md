@@ -51,8 +51,21 @@ This is the determinism-sacred core; do it deliberately, not rushed. Full spec i
 - **Hash (`snapshot_hash`, lib.rs:3548):** fold `node_v` for Analog+Boundary nodes (as
   today) **plus** one `u8` Level per **pure-Digital** net **plus** each DFF's `ff_q` and
   `ff_clk_prev` (u8). Forward-stable, append-only; RC golden untouched.
-- **Stamp-site inventory (current lines):** gate arms 1894 / 2074 / 2901 / 3128; `stamp_dff`
-  3365 (called at 4 sites); gate/DFF readout (`currents`) arms; commit/latch 3452; hash 3548.
+- **Exact touchpoint map (verified @ commit 51c54dc — re-grep before editing, they drift):**
+  - *Substrate:* `struct LogicFamily` 444, `const LEGACY` 462 (add `v_il_frac` here =
+    `v_ih_frac`), `reads_high` 474 + `drive` 482 (add `quantize`/`combine` near these),
+    `gate_target_level` 809, `ff_bit`/`ff_clk_high` fields 1394/1398 + inits 1488/1489
+    (→ become 4-state `ff_q`/`ff_clk_prev`). Already present to leverage: `NetClass` 852,
+    `classify_nets` 865, `Sim::net_class` accessor, `is_digital`.
+  - *The 4 MNA solve sites* (each has a gate STAMP arm + gate READOUT arm + a `stamp_dff`
+    call + a DFF READOUT arm): linear-OP, linear-transient, Newton-OP, Newton-transient.
+    Gate stamp arms at **1894 / 2074 / 2901 / 3128**; `stamp_dff` def **3365** (called at
+    all 4); commit/latch DFF arm **3452**; `snapshot_hash` **3548**. So it's ~16 match arms
+    + stamp_dff + commit + hash — sizeable; a shared `stamp_digital(mat,rhs,dim)` helper +
+    a precomputed `digital_drive: Vec<Level>` (resolved per node once per tick) keeps the
+    4 sites to one call each.
+  - *Baseline is green @ 51c54dc:* 91 sim-core tests, clippy, fmt, wasm, web all pass — so
+    any red during Stage 2 is attributable to the restructure.
 - **Tests (§7.7):** ring-oscillator oscillates (no hang/deadlock); gate-only stays on the
   **linear fast path** (no Newton); 4-state resolution table; multi-driver wired-AND
   (open-drain+pull-up); per-family `*_run_is_reproducible`; and **rewind-across-a-clock-edge
