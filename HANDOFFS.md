@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Stage 4 COMPLETE: open-drain + level-shifter + pull-up
+
+**State:** 🟢 Green (fmt, clippy, **98 sim-core tests**, wasm, web). Branch
+`claude/kind-turing-hdelb3`, a few commits ahead of `main` (PR #67's big batch is already
+live). Stage 4's digital-interface ground rules are **all in**, with **tier-1 schematic
+symbols** (owner will do a tier 2/3 art pass later — that was the explicit ask).
+
+**The set:**
+- **Open-drain output mode** (per-gate toggle, aux bit 8) → wired-AND bus with a pull-up.
+- **Level shifter** (`ELEM_LEVELSHIFT=20`, digital, 2-pin OUT/IN): reads input at rail A
+  (`value`), re-drives at rail B (`aux`) — the conversion lives in its pins (Ideal
+  receiver/driver). Web: `value` = input rail (chips), `amp` = output rail (a dedicated
+  picker); glyph = the buffer triangle (placeholder). Test `level_shifter_translates_rails`.
+- **Pull-up** (`ELEM_PULLUP=21`, analog, 1-pin): resistor to internal Vcc (`value`) through
+  `PULLUP_R=4.7k`, stamped as a constant Thévenin in the 4 assembly sites. Glyph = a
+  resistor up to a Vcc bar. Test `pullup_takes_net_to_vcc_unless_pulled`.
+
+**Architecture note (confirmed with owner):** the analog↔digital boundary lives in the
+gate/FF/shifter **pins** (receiver = quantize voltage→Level on inputs; driver = stamp
+Level→voltage on outputs). The pull-up is a **plain analog resistor**, NOT a boundary
+marker — it just sets a net's voltage so an all-released open-drain bus reads high.
+
+**aux bit layout (digital elements):** func bits 0–3 · family bits 4–7 · open-drain bit 8
+(masked by `aux_bits`/`gate_func_code`/`gate_family_index`/`gate_open_drain`). The level
+shifter (a non-gate) instead uses `aux` = output rail B (like AC uses aux for amplitude).
+
+**NEXT:** owner is drafting **new symbols** — when they land, do the **tier-2 (factory) +
+tier-3 (real) glyph pass** for LS/PU (currently LS aliases the buffer, PU is a custom
+schematic; factory falls back to schematic). Also still open: lifting pure-digital nets
+out of MNA (hash-neutral perf), the FBR curriculum example, the digital Tier-A ladder
+(counters/shift registers/decoders — now all golden-**additive** on this foundation).
+Ship Stage 4 whenever the owner wants (a few commits ahead of `main`; merge via PR like #67).
+
+---
+
 ## 2026-06-16 (night) — Big batch SHIPPED (PR #67) + Stage 4 open-drain ground rule
 
 **State:** 🟢 Green (fmt, clippy, **96 sim-core tests**, wasm, web). **The whole prior

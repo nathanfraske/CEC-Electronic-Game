@@ -36,8 +36,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
       solve. `aux` now masks func/family/open-drain; new `gate_gout` for a mode-aware
       current readout. Default push-pull → golden-stable. Inspector output toggle + web
       threading. Test `gate_open_drain_wired_and_bus` (bus = A AND B).~~
-    - [ ] **Level-shifter part** (rail A → rail B; needs a two-rail design — defer until
-      the owner's new symbols land) + optional convenience **pull-up** part.
+    - ~~**Level-shifter (`ELEM_LEVELSHIFT=20`) + pull-up (`ELEM_PULLUP=21`).** Level
+      shifter: 2-pin, reads input at rail A (`value`), re-drives at rail B (`aux`) —
+      conversion in its pins (Ideal receiver/driver); web `value`=input rail, `amp`=output
+      rail picker. Pull-up: 1-pin resistor to internal Vcc through 4.7k, constant Thévenin
+      in the 4 assembly sites. Both golden-additive; tier-1 schematic glyphs (LS = buffer
+      placeholder, PU = resistor-to-Vcc). Tests `level_shifter_translates_rails`,
+      `pullup_takes_net_to_vcc_unless_pulled`.~~
+    - [ ] **Tier-2 (factory) + tier-3 (real) glyphs for LS/PU** — owner's symbol pass
+      (LS currently aliases the buffer; factory falls back to schematic).
 
 ## 2026-06-15
 
