@@ -43,6 +43,52 @@ can fail real, and vice-versa).
   intended, honest behaviour. The cure in-circuit is to add real impedance — a literal
   resistor, or a Real part.
 
+## How real tools handle it (research, 2026-06-16)
+
+The inrush/divergence is a **fixed-Δt transient** artifact, not a circuit-theory problem —
+SPICE/LTspice dodge it with **adaptive timestepping** (shrink Δt through the inrush), which
+we can't use without breaking the deterministic golden. Research into ngspice and Falstad
+**CircuitJS** (primary sources: the CircuitJS source, the ngspice manual) shows the real
+tools resolve it with a **hybrid**, *not* a universal series resistor:
+
+1. **Energy-storage elements regularize themselves.** A capacitor/inductor is stamped as a
+   companion model with a **finite resistance baked into the discretization** — CircuitJS uses
+   `R_cap = Δt/C` (backward-Euler) / `Δt/2C` (trapezoidal), `R_ind ∝ L/Δt`. They are *never*
+   zero-impedance to the solver, so an ideal source charging a cap is auto-regularized by the
+   cap itself. **Our engine already does this** (`g_cap = C/Δt`, the inductor companion).
+2. **Semiconductors get GMIN** — ngspice default `1e-12 S` across every junction, then
+   GMIN-stepping → source-stepping for DC convergence. **We have `GMIN = 1e-12`.**
+3. **Ideal voltage sources stay PURE.** Neither ngspice nor CircuitJS bakes a series resistance
+   into an ideal source. A genuine short across one, or a loop of ideal sources/inductors, is
+   left **singular → it fails** (ngspice errors "singular matrix"; CircuitJS's only mitigation is
+   dropping the ground node). That failure is *correct* — it is genuinely unphysical.
+
+**This resolves the tension — and it's good news.** The worry that ideal mode forces resistors
+everywhere is **mostly unfounded**: RC / RL / rectifier-with-cap / amplifier circuits all work in
+pure-ideal mode, because C and L self-regularize and GMIN handles junctions. Only **genuinely
+degenerate** configs FAIL — a dead short, an ideal-source loop, a bare bridge with no cap or load
+— and those *should* fail (a real source would pop a fuse). So **option A (pure ideal that FAILs)
+is viable and matches the real tools** — it is *not* the "add resistors everywhere" nightmare,
+because the regularization is already free.
+
+**The transformer is the one exception.** A zero-leakage transformer is both physically impossible
+*and* numerically degenerate (its hard secondary + a diode is ill-conditioned). Leakage is the
+transformer's equivalent of the cap's companion R, so even the **Ideal** transformer must keep a
+**small leakage floor** — exactly the `TRANSFORMER_LLEAK` already added. So: Ideal TR = low-leakage
+(bridge works, beginner-safe); Real TR = more leakage + winding R + core loss + saturation.
+
+**Recommended policy — the hybrid:**
+- Ideal mode = pure sources + pure R + C/L (with their inherent companion R) + GMIN junctions; the
+  ideal transformer keeps a small leakage floor (its companion impedance).
+- The **FAIL** state catches genuine degeneracy (rare, and correct).
+- **Real** parts add the full spec'd parasitics (ESR, tolerance, ratings, temperature, saturation).
+- *Optional later:* a "purist" toggle that strips the conditioning floors for advanced users who
+  want to see the raw singularities.
+
+(So we do **not** build option B's "tiny R on everything" — the real tools don't, and C/L/GMIN
+already do the regularizing. Net: keep what we have, give the ideal transformer a leakage floor,
+let FAIL catch true degeneracy.)
+
 ## The FAIL state (engine foundation — SHIPPED)
 
 `crates/sim-core/src/lib.rs`, merged in PR #70:
