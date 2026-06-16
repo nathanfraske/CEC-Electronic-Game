@@ -368,10 +368,11 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 
   const flow = norm(o.electrical.current, CUR_SCALE);
   const dir = o.electrical.current >= 0 ? 1 : -1;
-  const charge = Math.max(
-    -1,
-    Math.min(1, o.electrical.vAcross / (V_SCALE * 1.3)),
-  );
+  // Greatly EXAGGERATED, signed response: a sensitive knee so even a small Vc visibly
+  // swings the piston and works the spring (the spring is the whole teaching point),
+  // saturating but monotonic so it still reads proportionally.
+  const charge =
+    Math.sign(o.electrical.vAcross) * norm(o.electrical.vAcross, V_SCALE * 0.3);
 
   const aX = -hw + 8;
   const bX = hw - 8;
@@ -381,8 +382,8 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
   const pumpX = -hw * 0.74;
   const valveX = -hw * 0.52;
   const anchorX = hw * 0.6; // fixed wall the spring pushes against
-  const restX = -hw * 0.08;
-  const throwX = hw * 0.34;
+  const restX = -hw * 0.1;
+  const throwX = hw * 0.44; // bigger swing so the motion is unmistakable
   const pistonX = Math.max(
     valveX + 22,
     Math.min(anchorX - 40, restX + charge * throwX),
