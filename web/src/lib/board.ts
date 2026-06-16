@@ -43,6 +43,7 @@ import {
 import { hasValue } from "./values";
 import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
+import { setStudsVisible } from "./tierKit";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -75,6 +76,9 @@ const PIN_R = 4.5;
 export type BoardLens = "schematic" | "analogy" | "reality";
 /** World zoom at/above which analogy/reality parts swap to the full illustration. */
 const TIER_ZOOM = 2.2;
+/** Deeper still: the tier illustration also gets its simple pinout labels (the
+ * "full detail" LOD). Below this you get the cleaner label-free illustration. */
+const DETAIL_ZOOM = 4.5;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
@@ -92,7 +96,9 @@ const AUTO_CYCLES = 3;
 const AUTO_SPAN_MIN = 120;
 const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
-const MAX_SCALE = 3.5;
+// Zoom further in than before so the full-detail tier (with pinout labels) has room
+// to read. The LOD swaps still gate on TIER_ZOOM / DETAIL_ZOOM, well below this.
+const MAX_SCALE = 8;
 const UNDO_LIMIT = 60;
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
@@ -861,6 +867,13 @@ export class Board {
     setGlyphStyle("schematic");
   }
 
+  /** Whether the zoom level-of-detail is active. Off ⇒ every part stays the clean
+   * schematic symbol at any zoom (the lens is ignored), for a distraction-free board. */
+  private lodEnabled = true;
+  setLod(enabled: boolean): void {
+    this.lodEnabled = enabled;
+  }
+
   /** Rename a scope node; an empty name restores the default "Node i". */
   setNodeLabel(node: number, name: string): void {
     const n = name.trim();
@@ -1383,12 +1396,14 @@ export class Board {
     this.redrawWires();
     this.drawGround();
     this.drawNetLabels();
+    // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
+    const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
     for (const [id, node] of this.nodes) {
       node.update(
         electrical?.get(id) ?? ZERO_ELECTRICAL,
         this.phase,
         this.selected.has(id),
-        this.lens,
+        effLens,
         this.world.scale.x,
       );
     }
@@ -4022,6 +4037,9 @@ class ComponentNode {
   private readonly meter: Text;
   private readonly failText: Text;
   private readonly pinPositions: { x: number; y: number }[] = [];
+  private readonly pinLabels: string[] = [];
+  // Small pin-name labels (A/K, B/C/E, …) drawn over the part at the deepest LOD.
+  private readonly pinTexts: Text[] = [];
   private readonly wPx: number;
   private readonly hPx: number;
   private readonly color: number;
@@ -4041,12 +4059,30 @@ class ComponentNode {
     this.hPx = ((kind?.h ?? 1) - 1) * PITCH;
     for (const p of kind?.pins ?? []) {
       this.pinPositions.push({ x: p.dx * PITCH, y: p.dy * PITCH });
+      this.pinLabels.push(p.label);
     }
 
     this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
     this.glyphHolder.addChild(this.tierGlyph);
     this.glyphHolder.addChild(this.glyph);
     this.view.addChild(this.glyphHolder);
+    // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
+    // upright; positioned at the rotated pin and shown only at the deepest zoom.
+    for (const lbl of this.pinLabels) {
+      const t = new Text({
+        text: lbl,
+        style: {
+          fill: this.color,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+          fontWeight: "600",
+        },
+      });
+      t.anchor.set(0.5);
+      t.visible = false;
+      this.pinTexts.push(t);
+      this.view.addChild(t);
+    }
     const symbol = isSymbol(this.kindTag);
     this.label = new Text({
       // The custom label if the player named this part, else the kind tag.
@@ -4158,6 +4194,7 @@ class ComponentNode {
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
     this.failText.resolution = r;
+    for (const t of this.pinTexts) t.resolution = r;
   }
 
   /** Refresh the on-board value label after an inspector edit. */
@@ -4207,8 +4244,12 @@ class ComponentNode {
         value: this.component.value,
         wiper: this.component.wiper,
       };
+      // Hide the illustration's own decorative studs on the board — the real pin
+      // dots below mark the connections (and avoid the doubled-terminal clutter).
+      setStudsVisible(false);
       if (tier === "reality") drawDetail(tg, opts);
       else drawAnalogy(tg, opts);
+      setStudsVisible(true);
       tg.visible = true;
     } else {
       this.tierGlyph.visible = false;
@@ -4234,6 +4275,20 @@ class ComponentNode {
     for (const p of this.pinPositions) {
       g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
       g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    }
+    // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
+    // at the rotated pin. Only with a tier illustration showing and zoomed in far.
+    const showPins = tier !== null && zoom >= DETAIL_ZOOM;
+    for (let i = 0; i < this.pinTexts.length; i++) {
+      const t = this.pinTexts[i]!;
+      const p = this.pinPositions[i];
+      if (showPins && p) {
+        const r = rotPx(p.x, p.y, this.component.rot);
+        t.position.set(r.x, r.y - 9);
+        t.visible = true;
+      } else {
+        t.visible = false;
+      }
     }
     // Live "V across · I through" only for parts that have NO value popover (the
     // popover carries the readout for the rest, so this avoids the overlap).

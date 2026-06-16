@@ -1087,7 +1087,9 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
   const maj = npn ? ELEC : HOLE; // the carrier the main stream is made of
   const beta = o.value && o.value > 1 ? o.value : 100;
 
-  const ic = norm(o.electrical.current, CUR_SCALE);
+  // Sensitive knee so the carrier stream + recombination visibly respond to even a
+  // small collector current (the device's response is the point), not just big ones.
+  const ic = norm(o.electrical.current, CUR_SCALE * 0.3);
   const ib = Math.min(1, (ic / beta) * 40); // a small, visible base trickle
   const dir = o.electrical.current >= 0 ? 1 : -1;
 
@@ -1204,7 +1206,9 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   const carrier = nch ? ELEC : HOLE;
   const OXIDE = mix(PALETTE.warn, 0xffffff, 0.2);
 
-  const id = norm(o.electrical.current, CUR_SCALE);
+  // Sensitive knee so the channel width + carrier stream visibly track even a small
+  // drain current, not only large ones (the gate-controlled response is the point).
+  const id = norm(o.electrical.current, CUR_SCALE * 0.3);
   const dir = o.electrical.current >= 0 ? 1 : -1;
   const on = id > 0.03;
 

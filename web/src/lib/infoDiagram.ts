@@ -16,6 +16,7 @@ import { PART_KINDS, PALETTE } from "./graph";
 import { drawGlyphIn, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
 import { drawDetail } from "./detailDrawers";
 import { drawAnalogy } from "./analogyDrawers";
+import { setStudsVisible } from "./tierKit";
 
 const PITCH = 26; // mirrors the board's grid pitch
 const SCALE = 2.8; // blow the schematic symbol up to fill the drawer
@@ -129,6 +130,9 @@ export class InfoDiagram {
         value: this.value,
         wiper: this.wiper,
       };
+      // The info panel has no separate pin dots, so the illustration's own studs
+      // are its terminals — keep them (the board hides them; see tierKit).
+      setStudsVisible(true);
       const drew =
         this.mode === "reality" ? drawDetail(g, opts) : drawAnalogy(g, opts);
       if (drew) return;

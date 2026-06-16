@@ -1237,6 +1237,13 @@
           : "schematic";
     board?.setLens(boardLens);
   }
+  // Master on/off for the zoom level-of-detail (the tier reveal). Off ⇒ plain
+  // schematic symbols at any zoom, whatever the lens.
+  let lodOn = $state(true);
+  function toggleLod(): void {
+    lodOn = !lodOn;
+    board?.setLod(lodOn);
+  }
   function clearBoard(): void {
     board?.clear();
     demo = null;
@@ -1700,7 +1707,7 @@
       <button
         class="btn btn-ghost {boardLens !== 'schematic' ? 'is-active' : ''}"
         onclick={cycleLens}
-        disabled={!ready}
+        disabled={!ready || !lodOn}
         title="Board lens: schematic → analogy → reality. Zoom in on a part to see its analogy/reality detail."
       >
         {boardLens === "reality"
@@ -1708,6 +1715,14 @@
           : boardLens === "analogy"
             ? "◆ Analogy"
             : "⎍ Schematic"}
+      </button>
+      <button
+        class="btn btn-ghost {lodOn ? 'is-active' : ''}"
+        onclick={toggleLod}
+        disabled={!ready}
+        title="Zoom level-of-detail: on reveals analogy/reality detail as you zoom into a part; off keeps plain schematic symbols at any zoom."
+      >
+        {lodOn ? "⊕ LOD" : "⊘ LOD"}
       </button>
       {#if armedPart}
         <span class="armed-chip" title="Armed for placement">
