@@ -5,6 +5,53 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (eve) — Digital scheduler Stage 2 SHIPPED (event engine + level hash)
+
+**State:** 🟢 Green (fmt, clippy, **94 sim-core tests** + 1 ignored, wasm, web). Pushed
+to `claude/kind-turing-hdelb3`. **Stages 1–2 (the full scheduler) are done.**
+
+**What landed (sim-core, the Option A2 design in `logic-analog-digital-nets.md §7`):**
+- **`Level` {Low,High,Z,X}** (`#[repr(u8)]`, no float compares in the digital domain);
+  **`combine`** resolution table (Z yields; disagreeing strong → X); 4-state
+  **`gate_logic_level`** (reduces to the old boolean table on Low/High).
+- **`LogicFamily`** gained **`v_il_frac`** + **`quantize`** (receiver, forbidden band → X)
+  + **`drive_level`** (driver: Thévenin for High/Low, mid-rail for X, None=release for Z).
+  LEGACY is byte-identical to the old half-rail/`GATE_GOUT` behaviour.
+- **Net-centric engine:** `eval_digital` reads each gate's inputs as Levels from the
+  committed previous-tick voltages (per-reader rail = one tick of delay), resolves every
+  net's drive via `combine` in element order, and `stamp_digital` drives each
+  Digital/Boundary net **once** — replacing the 4 per-gate stamp sites + 4 `stamp_dff`
+  calls. Two outputs on a net now **resolve** instead of fighting. Still linear fast path.
+- **4-state DFF:** `ff_q` + `ff_clk_prev` (Level), latched via `quantize`; **both now in
+  the hash**. `snapshot_hash` folds node_v for analog/boundary, the discrete Level (u8)
+  for each pure-digital net, and the DFF state. **RC golden `0xeaac` untouched.**
+- Removed superseded `gate_logic`/`gate_target_level`/`reads_high`/`drive`/`stamp_dff`.
+- **New tests:** ring oscillator oscillates; multi-driver resolves (agree→level,
+  conflict→mid-rail X); per-tick **lockstep replay** of a clocked DFF. All prior
+  gate/DFF behaviour + reproducibility tests stayed green.
+- **Note:** the predicted "deliberate golden break" needed **no golden regeneration** —
+  digital tests are behaviour + self-consistency, and the only fixed golden (RC) has no
+  digital parts. The GMIN-bookkeeping change shifted digital node_v at 1e-12 but no test
+  pins a digital node to a fixed value.
+
+**Still pure-MNA-resident:** pure-digital nets still occupy MNA rows (driven + solved +
+quantised). Lifting them OUT of the matrix is a **hash-neutral** future optimisation
+(the hash already folds their discrete Level, not node_v) — do it only if perf needs it.
+
+**NEXT — Stages 3–4 (follow-ups, golden-additive / presentation):**
+- **Stage 3 (web):** thread a per-gate family index through `set_netlist`
+  (sim-wasm → loop.ts → netlist.ts) + a family chip in the inspector; noise-margin /
+  forbidden-band readouts (read the snapshot, presentation-only); surface XNOR(5)/BUF(7)
+  as board parts (the `GATE_AUX` gap in `web/src/lib/netlist.ts`). Real families
+  (TTL/CMOS/LVCMOS) become selectable here — the `quantize`/`drive_level`/X machinery is
+  already in place; just add the `FAMILIES` table + per-element index.
+- **Stage 4 (sim-core, additive):** open-drain driver mode (release high → Z) + wired-AND
+  bus (open-drain + pull-up resistor, resolved by the MNA solve); a level-shifter part.
+- **Renderer:** `Sim::net_class(n)` (0/1/2) is already exposed for drawing digital nets /
+  boundary buffers distinctly.
+
+---
+
 ## 2026-06-16 (pm) — Digital scheduler: research synthesized + Stage 1 shipped
 
 **State:** 🟢 Green (all gates: fmt, clippy, 92 sim-core tests + 1 ignored, wasm, web).

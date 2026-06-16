@@ -14,14 +14,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   - ~~**Stage 1 — net classification (golden-stable).** `classify_nets`/`is_digital`/
     `NetClass`/`Sim::net_class` label each node Analog/Digital/Boundary; computed but not
     yet acted on, so every golden is bit-identical. Test added.~~
-  - [ ] **Stage 2 — event engine + level-bearing hash (the deliberate break).** `Level`
-    enum + `LogicFamily.quantize` (needs `v_il_frac`) + `combine` resolution table;
-    evaluate-all double-buffer per-tick engine (element-index order, §7.3 phase order);
-    net-centric drive resolution replacing the per-gate stamps at the 4 sites; 4-state
-    DFF; fold pure-digital levels + DFF state into `snapshot_hash`. **GMIN gotcha:** the
-    per-reader GMIN floor means the restructure perturbs node_v at 1e-12 → regenerate
-    digital trajectories (no fixed digital golden exists; RC/0xeaac untouched). Test bar
-    in §7.7 incl. the rewind-across-edge replay test. Full plan in HANDOFFS.
+  - ~~**Stage 2 — event engine + level-bearing hash (the deliberate break).** Shipped:
+    `Level` {Low,High,Z,X} + `combine` table + 4-state `gate_logic_level`;
+    `LogicFamily.quantize`/`drive_level` + `v_il_frac`; net-centric `eval_digital` +
+    `stamp_digital` (one resolved drive per net, replacing the 4 per-gate stamps + 4
+    `stamp_dff`); 4-state DFF (`ff_q`+`ff_clk_prev`) hashed; `snapshot_hash` folds
+    pure-digital Levels + DFF state. Multi-driver now resolves instead of fighting.
+    Needed **no golden regen** (digital tests are behaviour + self-consistency; RC/0xeaac
+    has no digital parts and is untouched). New tests: ring oscillator, multi-driver
+    resolve, per-tick lockstep DFF replay. All gates green.~~
   - [ ] **Stage 3 (follow-up)** — web threading: family chips, noise-margin / forbidden-
     band readouts, surface XNOR/BUF. **Stage 4** — open-drain/wired-AND + level-shifter.
 
