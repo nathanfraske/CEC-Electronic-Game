@@ -1099,12 +1099,20 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
   const x1 = hw * 0.7;
   const eB = -hw * 0.12; // emitter|base boundary
   const bC = hw * 0.0; // base|collector boundary (base is the thin slab eB..bC)
-  // n+/p/n (NPN) or p+/n/p (PNP) region tints
+  // n+/p/n (NPN) or p+/n/p (PNP) region tints — they brighten as the device
+  // conducts (the live response), strongest in the heavily-doped emitter.
   const emCol = npn ? PALETTE.cyan : HOLE;
   const bsCol = npn ? HOLE : PALETTE.cyan;
-  g.rect(x0, regT, eB - x0, regB - regT).fill({ color: emCol, alpha: 0.12 });
-  g.rect(eB, regT, bC - eB, regB - regT).fill({ color: bsCol, alpha: 0.16 });
-  g.rect(bC, regT, x1 - bC, regB - regT).fill({ color: emCol, alpha: 0.09 });
+  const glow = 0.1 + 0.24 * ic;
+  g.rect(x0, regT, eB - x0, regB - regT).fill({ color: emCol, alpha: glow });
+  g.rect(eB, regT, bC - eB, regB - regT).fill({
+    color: bsCol,
+    alpha: glow + 0.05,
+  });
+  g.rect(bC, regT, x1 - bC, regB - regT).fill({
+    color: emCol,
+    alpha: glow * 0.8,
+  });
   g.rect(x0, regT, x1 - x0, regB - regT).stroke({
     width: 1.5,
     color: PALETTE.border,
@@ -1233,20 +1241,36 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
     alpha: 0.18,
   });
 
-  // --- the inversion channel (tapered), lit once the gate inverts it ------------
+  // --- the inversion channel (tapered, PINCHED at the drain), lit by the gate ----
   if (on) {
-    const w = 4 + 8 * id;
-    // tapered toward the drain in saturation (pinch-off) — taper rides drive
+    // Both the channel depth and its brightness ride the drain current: it is full
+    // at the source and pinches toward the drain (pinch-off) the harder it's driven.
+    const wS = 3 + 16 * id; // source-side depth
+    const wD = wS * (0.62 - 0.4 * id); // drain-side depth (pinches with drive)
     g.poly([
       xL,
       surf + 2,
       xR,
       surf + 2,
       xR,
-      surf + 2 + w * 0.4,
+      surf + 2 + wD,
       xL,
-      surf + 2 + w,
-    ]).fill({ color: carrier, alpha: 0.25 + 0.4 * id });
+      surf + 2 + wS,
+    ]).fill({
+      color: carrier,
+      alpha: 0.3 + 0.5 * id,
+    });
+    // a thin depletion band hugging the inversion layer underneath
+    g.poly([
+      xL,
+      surf + 2 + wS,
+      xR,
+      surf + 2 + wD,
+      xR,
+      surf + 2 + wD + 10,
+      xL,
+      surf + 2 + wS + 13,
+    ]).fill({ color: PALETTE.violet, alpha: 0.1 + 0.1 * id });
   }
 
   // --- thin oxide + metal gate on top of the channel ---------------------------
