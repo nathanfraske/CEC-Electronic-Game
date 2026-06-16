@@ -92,6 +92,10 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, v, 0, r, 0); // V+ → R.A (left rail)
       wire(g, r, 1, v, 1); // R.B → V− (right rail)
       wire(g, v, 1, gnd, 0); // V− → GND (the 0 V reference)
+      v.label = "Vs";
+      r.label = "R1";
+      g.addNetLabel({ componentId: v.id, pinIndex: 0 }, "+5V");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
@@ -130,6 +134,12 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, r1, 1, r2, 0); // R1.B → R2.A (the divider tap)
       wire(g, r2, 1, gnd, 0); // R2.B → GND (right rail)
       wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      v.label = "Vs";
+      r1.label = "R1";
+      r2.label = "R2";
+      g.addNetLabel({ componentId: v.id, pinIndex: 0 }, "+5V");
+      g.addNetLabel({ componentId: r1.id, pinIndex: 1 }, "Vout");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
@@ -256,6 +266,12 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, r, 1, c, 0); // R.B → C.+ (the cap node)
       wire(g, c, 1, gnd, 0); // C.− → GND (right rail)
       wire(g, v, 1, gnd, 0); // V− → GND (reference, bottom rail)
+      v.label = "Vs";
+      r.label = "R1";
+      c.label = "C1";
+      g.addNetLabel({ componentId: v.id, pinIndex: 0 }, "+5V");
+      g.addNetLabel({ componentId: c.id, pinIndex: 0 }, "Vcap");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
@@ -2796,6 +2812,12 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, d, 1, r, 0); // D.K → R.A (cathode / the rectified node)
       wire(g, r, 1, gnd, 0); // R.B → GND (right rail)
       wire(g, ac, 1, gnd, 0); // AC− → GND (reference, bottom rail)
+      ac.label = "Vac";
+      d.label = "D1";
+      r.label = "RL";
+      g.addNetLabel({ componentId: ac.id, pinIndex: 0 }, "Vin");
+      g.addNetLabel({ componentId: d.id, pinIndex: 1 }, "Vout");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
@@ -2866,6 +2888,13 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, r, 1, gnd, 0); // R.B → GND
       wire(g, c, 1, gnd, 0); // C.− → GND
       wire(g, ac, 1, gnd, 0); // AC− → GND (reference, bottom rail)
+      ac.label = "Vac";
+      d.label = "D1";
+      r.label = "RL";
+      c.label = "C1";
+      g.addNetLabel({ componentId: ac.id, pinIndex: 0 }, "Vin");
+      g.addNetLabel({ componentId: d.id, pinIndex: 1 }, "Vout");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
@@ -3017,6 +3046,18 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, cap, 1, gnd, 0); // cap− → ground
       wire(g, load, 0, cap, 0); // load across the output
       wire(g, load, 1, gnd, 0);
+      ac.label = "Vac";
+      tr.label = "T1";
+      d1.label = "D1";
+      d2.label = "D2";
+      d3.label = "D3";
+      d4.label = "D4";
+      cap.label = "C1";
+      load.label = "RL";
+      g.addNetLabel({ componentId: ac.id, pinIndex: 0 }, "Vprim");
+      g.addNetLabel({ componentId: tr.id, pinIndex: 2 }, "Vsec");
+      g.addNetLabel({ componentId: cap.id, pinIndex: 0 }, "Vout");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
       return g.serialize();
     },
     steps: [
