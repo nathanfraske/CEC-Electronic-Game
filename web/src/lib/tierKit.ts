@@ -129,8 +129,20 @@ export function belt(
 
 // --- machine furniture --------------------------------------------------------
 
-/** A terminal stud (dark disc + coloured core), the factory-style pin marker. */
+// Whether stud() actually paints. On the board the illustration's decorative studs
+// are redundant with (and offset from) the real pin dots the wires meet, so the
+// board hides them while the info panel keeps them (it has no separate pins). A
+// module flag like glyphs.ts's `currentStyle`: set immediately before each tier
+// draw and read synchronously (single-threaded), so no per-call plumbing.
+let studsVisible = true;
+export function setStudsVisible(v: boolean): void {
+  studsVisible = v;
+}
+
+/** A terminal stud (dark disc + coloured core), the factory-style pin marker.
+ * A no-op while studs are hidden (see {@link setStudsVisible}). */
 export function stud(g: Graphics, x: number, y: number, color: number): void {
+  if (!studsVisible) return;
   g.circle(x, y, 5).fill({ color: 0x101820 });
   g.circle(x, y, 5).stroke({ width: 1.5, color });
   g.circle(x, y, 2.4).fill({ color });
