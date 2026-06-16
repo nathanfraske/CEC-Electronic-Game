@@ -675,6 +675,31 @@ const TRANSFORMER_RWIND: f64 = 5.0;
 /// Driven through the resolved digital domain (see [`Sim::eval_digital`]).
 pub const ELEM_DFF: u8 = 19;
 
+/// **Level shifter** (a digital interface part). Two terminals: output `a`, input `b`.
+/// It reads the input net's logic level at the **input rail** `value` (rail A) and
+/// re-drives the output at the **output rail** `aux` (rail B) — translating a low-rail
+/// signal to a clean high-rail one and vice versa (the part that lets a 1.8 V sensor
+/// talk to a 5 V MCU). Handled by the digital engine as a buffer with two rails: an
+/// Ideal-family receiver at rail A, an Ideal-family driver at rail B. The analog↔digital
+/// conversion lives in its pins (receiver in, driver out) like every digital part. Adds
+/// no Newton work and no branch unknown.
+pub const ELEM_LEVELSHIFT: u8 = 20;
+
+/// **Pull-up** (a one-terminal analog convenience — *not* a domain boundary; the
+/// boundary is the gate/shifter pins). Its single terminal `a` is pulled toward an
+/// internal supply at `value` volts through a fixed resistance [`PULLUP_R`] — exactly a
+/// resistor from the net to `Vcc`. The companion to an open-drain ([`gate_open_drain`])
+/// bus: when every open-drain driver releases, the pull-up sets the net's voltage to the
+/// rail (which the readers then quantise High); when any pulls low, its stiff ~1 Ω wins.
+/// A constant linear Thévenin stamp (`g` to ground + `g·value` injection), no branch
+/// unknown.
+pub const ELEM_PULLUP: u8 = 21;
+
+/// Fixed pull-up resistance in ohms (the I²C / interrupt-line norm). Weak enough that an
+/// open-drain low pull (~1 Ω) dominates it, stiff enough to take a released net to the
+/// rail well within a tick.
+const PULLUP_R: f64 = 4_700.0;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -998,7 +1023,7 @@ fn is_nonlinear(kind: u8) -> bool {
 /// `docs/ui/logic-analog-digital-nets.md` §7.
 #[inline]
 fn is_digital(kind: u8) -> bool {
-    kind == ELEM_GATE || kind == ELEM_DFF
+    kind == ELEM_GATE || kind == ELEM_DFF || kind == ELEM_LEVELSHIFT
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -1790,6 +1815,8 @@ impl Sim {
                     | ELEM_GATE
                     | ELEM_TRANSFORMER
                     | ELEM_DFF
+                    | ELEM_LEVELSHIFT
+                    | ELEM_PULLUP
             ) {
                 self.install_empty();
                 return false;
@@ -2139,6 +2166,14 @@ impl Sim {
                         rhs[r] += e.value;
                     }
                 }
+                ELEM_PULLUP => {
+                    // Pull node a toward Vcc (value) through PULLUP_R: a constant
+                    // Thevenin (g to ground + g·Vcc injection), the open-drain companion.
+                    if let Some(r) = ia {
+                        mat[r * n + r] += 1.0 / PULLUP_R;
+                        rhs[r] += e.value / PULLUP_R;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2171,7 +2206,11 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE | ELEM_LEVELSHIFT => {
+                    self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
+                }
+                // Pull-up: the current it sources from Vcc (value) into its net.
+                ELEM_PULLUP => (e.value - self.node_v[e.a]) / PULLUP_R,
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -2332,6 +2371,13 @@ impl Sim {
                         rhs[r] += e.value;
                     }
                 }
+                ELEM_PULLUP => {
+                    // Pull node a toward Vcc (value) through PULLUP_R (constant Thevenin).
+                    if let Some(r) = ia {
+                        mat[r * n + r] += 1.0 / PULLUP_R;
+                        rhs[r] += e.value / PULLUP_R;
+                    }
+                }
                 _ => {}
             }
         }
@@ -2373,7 +2419,11 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE | ELEM_LEVELSHIFT => {
+                    self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
+                }
+                // Pull-up: the current it sources from Vcc (value) into its net.
+                ELEM_PULLUP => (e.value - self.node_v[e.a]) / PULLUP_R,
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3035,6 +3085,14 @@ impl Sim {
                         base_rhs[r] += e.value;
                     }
                 }
+                ELEM_PULLUP => {
+                    // Pull node a toward Vcc (value) through PULLUP_R (constant Thevenin,
+                    // part of the fixed Newton base).
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += 1.0 / PULLUP_R;
+                        base_rhs[r] += e.value / PULLUP_R;
+                    }
+                }
                 ELEM_SWITCH => {
                     // Clock-driven switch: a tick-determined conductance stamped
                     // into the fixed linear base (computed once from tick 0 here),
@@ -3106,7 +3164,11 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE | ELEM_LEVELSHIFT => {
+                    self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
+                }
+                // Pull-up: the current it sources from Vcc (value) into its net.
+                ELEM_PULLUP => (e.value - self.node_v[e.a]) / PULLUP_R,
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3238,6 +3300,14 @@ impl Sim {
                         base_rhs[r] += e.value;
                     }
                 }
+                ELEM_PULLUP => {
+                    // Pull node a toward Vcc (value) through PULLUP_R (constant Thevenin,
+                    // part of the fixed Newton base).
+                    if let Some(r) = ia {
+                        base_mat[r * n + r] += 1.0 / PULLUP_R;
+                        base_rhs[r] += e.value / PULLUP_R;
+                    }
+                }
                 ELEM_SWITCH => {
                     // Clock-driven switch: a tick-determined conductance stamped
                     // into the fixed linear base (computed once per step from the
@@ -3320,7 +3390,11 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE | ELEM_LEVELSHIFT => {
+                    self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
+                }
+                // Pull-up: the current it sources from Vcc (value) into its net.
+                ELEM_PULLUP => (e.value - self.node_v[e.a]) / PULLUP_R,
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3516,6 +3590,19 @@ impl Sim {
                     self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
                     self.digital_vhigh[e.d] = e.value;
                     self.digital_family[e.d] = fi as u8;
+                }
+                ELEM_LEVELSHIFT => {
+                    // Read the input (b) at the INPUT rail A (value), re-drive the output
+                    // (a) at the OUTPUT rail B (aux) — the part that translates levels
+                    // across rails. Ideal receiver/driver (a translator, not a family).
+                    let fam = &FAMILIES[0];
+                    let lvl = fam.quantize(self.node_v[e.b], e.value);
+                    let (tv, g) = fam.drive_level(lvl, e.aux).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = tv;
+                    self.gate_gout[i] = g;
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], lvl);
+                    self.digital_vhigh[e.a] = e.aux; // output net carries rail B
+                    self.digital_family[e.a] = 0;
                 }
                 _ => {}
             }
@@ -5649,6 +5736,80 @@ mod tests {
         assert!(bus(true, false)[2] < 1.0, "one low: bus pulled low");
         assert!(bus(false, true)[2] < 1.0, "one low: bus pulled low");
         assert!(bus(false, false)[2] < 1.0, "both low: bus low");
+    }
+
+    /// A **level shifter** (type 20) reads its input at the input rail (`value`) and
+    /// re-drives the output at the output rail (`aux`): it translates a logic high
+    /// across rails — the part that lets a 1.8 V signal drive a 5 V part cleanly, and a
+    /// 5 V signal drive a 1.8 V part.
+    #[test]
+    fn level_shifter_translates_rails() {
+        // nodes: 0 gnd, 1 = input (driven), 2 = shifted output.
+        let shift = |rail_a: f64, rail_b: f64, in_high: bool| -> f64 {
+            let vin = if in_high { rail_a } else { 0.0 };
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                3,
+                &[ELEM_VSOURCE, ELEM_LEVELSHIFT],
+                &[1, 2], // a: Vsrc node 1, shifter OUT node 2
+                &[0, 1], // b: Vsrc gnd, shifter IN node 1
+                &[0, 0],
+                &[0, 0],
+                &[vin, rail_a], // values: Vsrc EMF, shifter input rail A
+                &[0.0, rail_b], // aux: -, shifter output rail B
+            ));
+            for _ in 0..6 {
+                sim.step();
+            }
+            sim.state()[2]
+        };
+        // Up-shift 1.8 V -> 5 V: a 1.8 V high becomes a clean 5 V high; low stays low.
+        assert!(
+            shift(1.8, 5.0, true) > 4.5,
+            "up-shift: 1.8 V high -> ~5 V: {}",
+            shift(1.8, 5.0, true)
+        );
+        assert!(
+            shift(1.8, 5.0, false) < 0.5,
+            "low stays low across the shift"
+        );
+        // Down-shift 5 V -> 1.8 V: a 5 V high becomes a 1.8 V high.
+        let down = shift(5.0, 1.8, true);
+        assert!(
+            (1.5..1.9).contains(&down),
+            "down-shift: 5 V high -> ~1.8 V: {down}"
+        );
+    }
+
+    /// A **pull-up** (type 21) takes its net to Vcc (`value`) through a fixed resistance
+    /// when nothing else drives it, but a stiff open-drain low wins — the pull-up half of
+    /// the wired-AND bus, using the dedicated part.
+    #[test]
+    fn pullup_takes_net_to_vcc_unless_pulled() {
+        const OD_BUF: f64 = 7.0 + 256.0; // open-drain buffer
+                                         // nodes: 0 gnd, 1 = bus (pull-up + open-drain buffer), 2 = buffer input.
+        let run = |in_high: bool| -> f64 {
+            let vin = if in_high { 5.0 } else { 0.0 };
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                3,
+                &[ELEM_PULLUP, ELEM_VSOURCE, ELEM_GATE],
+                &[1, 2, 1], // a: pull-up bus, Vsrc node 2, OD-buf OUT bus
+                &[0, 0, 2], // b: -, Vsrc gnd, OD-buf IN node 2
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, vin, 5.0],
+                &[0.0, 0.0, OD_BUF],
+            ));
+            for _ in 0..10 {
+                sim.step();
+            }
+            sim.state()[1]
+        };
+        // High input -> open-drain releases -> the pull-up takes the bus to ~5 V.
+        assert!(run(true) > 4.0, "released: pull-up takes the bus to Vcc");
+        // Low input -> open-drain pulls low -> the stiff low beats the 4.7 k pull-up.
+        assert!(run(false) < 1.0, "open-drain low wins over the pull-up");
     }
 
     // --- Transformer (ideal-T model, four-terminal) ---------------------------

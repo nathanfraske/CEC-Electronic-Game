@@ -74,6 +74,8 @@ const GLOSS: Record<string, Record<string, string>> = {
   XNOR: GATE,
   NOT: { Y: "output", A: "input" },
   BUF: { Y: "output", A: "input" },
+  LS: { OUT: "shifted output (rail B)", IN: "input (rail A)" },
+  PU: { "●": "to the net (pulls up to Vcc)" },
 };
 
 /**

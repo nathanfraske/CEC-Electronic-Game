@@ -307,6 +307,39 @@ function drawGND(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// Pull-up: a resistor from the single pin (bottom) up to an internal Vcc rail (the
+// short bar with an up-tick at top). `current` is how hard it sources from Vcc into
+// the net. A tier-1 placeholder symbol; the factory/real tiers fall back to it.
+function drawPU(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  if (!a) return;
+  const x = a.x;
+  const topY = a.y - 28; // Vcc bar height above the pin
+  const amp = 6;
+  // lower lead
+  g.moveTo(x, a.y).lineTo(x, a.y - 5);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // vertical zigzag resistor body
+  const y0 = a.y - 5;
+  const y1 = topY + 6;
+  const segs = 6;
+  g.moveTo(x, y0);
+  for (let i = 0; i < segs; i++) {
+    const yy = y0 + ((i + 0.5) / segs) * (y1 - y0);
+    const xx = x + (i % 2 === 0 ? -amp : amp);
+    g.lineTo(xx, yy);
+  }
+  g.lineTo(x, y1);
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+  // top lead + Vcc bar with an up-tick (the internal supply)
+  g.moveTo(x, y1).lineTo(x, topY);
+  g.moveTo(x - 8, topY).lineTo(x + 8, topY);
+  g.moveTo(x, topY).lineTo(x, topY - 4);
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.9 });
+  // current sourced down from Vcc into the net
+  flow(g, x, y1, x, a.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawAC(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -2323,6 +2356,10 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   XNOR: drawXNOR,
   NOT: drawNOT,
   BUF: drawBUF,
+  // Level shifter: a translator buffer (tier-1 placeholder = the buffer triangle).
+  LS: drawBUF,
+  // Pull-up: a resistor to an internal Vcc rail.
+  PU: drawPU,
   TR: drawTR,
   POT: drawPOT,
   FF: drawFF,

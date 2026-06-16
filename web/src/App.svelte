@@ -310,6 +310,20 @@
       color: "var(--cyan)",
     },
     {
+      tag: "LS",
+      name: "Level Shifter",
+      desc: "Translates rail A → rail B",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
+      tag: "PU",
+      name: "Pull-up",
+      desc: "Resistor to Vcc · open-drain bus",
+      tier: "II",
+      color: "var(--bronze)",
+    },
+    {
       tag: "FP",
       name: "FPGA Fabric",
       desc: "Spatial, parallel logic",
@@ -368,6 +382,8 @@
     NOT: "Logic & ICs",
     BUF: "Logic & ICs",
     FF: "Logic & ICs",
+    LS: "Logic & ICs",
+    PU: "Logic & ICs",
     FP: "Logic & ICs",
     uC: "Logic & ICs",
   };
@@ -2011,6 +2027,19 @@
                   releases high · <span class="mono">add a pull-up to Vcc</span>
                 </div>
               {/if}
+            {/if}
+            {#if kind === "LS"}
+              <!-- The level shifter's OUTPUT rail (rail B); the value chips above set
+                   the INPUT rail (rail A). Pick both to shift up (A < B) or down. -->
+              <div class="insp-sub">output rail (B)</div>
+              <div class="insp-chips wrap">
+                {#each [1.8, 2.5, 3.3, 5, 12] as v (v)}
+                  <button
+                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                    onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                  >
+                {/each}
+              </div>
             {/if}
             {#if kind === "AC"}
               <!-- The AC source's second scalar: its peak amplitude (volts),

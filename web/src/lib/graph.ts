@@ -542,6 +542,24 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // Level shifter (sim type 20): translates a logic level across rails. Pins OUT,
+  // IN (pin 0 → a = output, 1 → b = input). `value` is the INPUT rail (rail A, the
+  // threshold side); the OUTPUT rail (rail B) is the second scalar (Component.amp,
+  // stamped into `aux` by buildNetlist). Reads at rail A, re-drives at rail B — a
+  // 1.8 V high in becomes a clean 5 V high out (or vice versa). Green logic family.
+  LS: kind(
+    "LS",
+    "Level Shifter",
+    "ok",
+    [pin("OUT", 2, 1), pin("IN", 0, 1)],
+    1.8,
+    "V",
+    true,
+  ),
+  // Pull-up (sim type 21): a one-terminal resistor to an internal Vcc at `value`
+  // volts — the companion to an open-drain bus (wired-AND). Bronze, the resistor
+  // family. The single pin attaches to the net being pulled up.
+  PU: kind("PU", "Pull-up", "bronze", onePin("●"), 5, "V", true),
   FP: kind(
     "FP",
     "FPGA Fabric",
@@ -684,6 +702,9 @@ export class BoardGraph {
       // 5 V so a freshly placed source swings +/- 5 V exactly as before. Other
       // kinds leave it undefined.
       ...(kind === "AC" ? { amp: AC_DEFAULT_AMP } : {}),
+      // A level shifter carries its OUTPUT rail (rail B) as the second scalar,
+      // defaulting to 5 V — so a fresh shifter translates its 1.8 V input up to 5 V.
+      ...(kind === "LS" ? { amp: 5 } : {}),
       // A potentiometer carries its wiper position, defaulting to centred (0.5).
       ...(kind === "POT" ? { wiper: 0.5 } : {}),
     };

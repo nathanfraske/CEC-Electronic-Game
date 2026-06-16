@@ -80,6 +80,12 @@ const TYPE_OF: Record<string, number> = {
   XNOR: 17,
   NOT: 17,
   BUF: 17,
+  // Level shifter: pins OUT, IN (pin 0 → a, 1 → b). `value` = input rail A; the
+  // output rail B rides in `aux` (set below).
+  LS: 20,
+  // Pull-up: one terminal (pin 0 → a). `value` = Vcc; pulls the net up through a
+  // fixed resistance.
+  PU: 21,
   // Transformer: the first FOUR-terminal element (coupled inductors). Pins are
   // ordered primary+, primary−, secondary+, secondary− → pin 0 → a, 1 → b, 2 → c,
   // 3 → d. `value` is the turns ratio n = Ns/Np.
@@ -437,9 +443,11 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const aux =
       c.kind === "AC"
         ? (c.amp ?? AC_DEFAULT_AMP)
-        : (GATE_AUX[c.kind] ?? 0) +
-          16 * (c.family ?? 0) +
-          (c.openDrain ? 256 : 0);
+        : c.kind === "LS"
+          ? (c.amp ?? 5) // a level shifter's output rail B (its second scalar)
+          : (GATE_AUX[c.kind] ?? 0) +
+            16 * (c.family ?? 0) +
+            (c.openDrain ? 256 : 0);
     const idx = types.length;
     types.push(t);
     aArr.push(na);
