@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (night) — design (Ideal-vs-Real + multi-rate)
+
+- **Ideal-vs-Real RESOLVED** as a progression-driven **fidelity gradient** (not a global
+  toggle). Doc: `docs/sim/ideal-vs-real-parts.md`. Basics (R/C/L/V/I) pure-ideal &
+  self-regularizing; past-basics carry essential parasitics by default; advanced unlocks more.
+  Research-backed (CircuitJS source + ngspice manual). Parts audit done (only 6 purely ideal).
+  - [ ] **Visible FAIL UI** (engine half shipped PR #70): wasm boundary exposes `failed()` +
+    `failed_element_mask()`; `board.ts` pulsing red `FAIL` box + `+FAIL/−FAIL` readout;
+    `loop.ts` pauses on FAIL.
+  - [ ] **Curriculum tiering**: sort examples/contracts into "ideal basics" vs "reality carried".
+  - [ ] **Additive Real-variant upgrades** (tech-tree/Lux gated, golden-safe additive): diode
+    Rs + junction cap, R tolerance/power, C/EC ESR/ESL + ratings, FET/BJT caps + SOA, op-amp
+    GBW/offset/Ibias, L saturation, transformer core saturation/loss.
+  - [ ] **Web netlist test harness** — the c-terminal bug had zero web coverage (sim-core
+    hand-wires c/d, so UI-built circuits are untested).
+- **Multi-rate / mixed-signal architecture captured**: `docs/sim/multi-rate-domains.md`. Fixed
+  integer rate ratios = deterministic (vs adaptive Δt); analog MNA at fixed Δt + digital event
+  kernel sub-stepping a fixed integer per tick; the **ADC/comparator/DAC = the boundary**.
+  - [ ] Lands with the CPU (`uC`) / FPGA (`FP`) / ADC-DAC tier; builds on the digital scheduler.
+
 ## 2026-06-16 (later)
 
 - ~~**Four-pin c-terminal grounded — FIXED + SHIPPED (PR #70).** `nc` (pin 2 → node c) was

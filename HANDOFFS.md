@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Ideal-vs-Real RESOLVED (fidelity gradient) + multi-rate note
+
+**State:** 🟢 Green; clean tree after this. Branch `claude/kind-turing-hdelb3` (ahead of `main`
+by docs only since PR #70). A **design-conversation** stretch — two design docs, no engine code.
+
+**Ideal-vs-Real RESOLVED** (`docs/sim/ideal-vs-real-parts.md`): owner's call is **fidelity is the
+progression curve**, not a global Ideal/Real toggle. Basics (R/C/L/V/I) are pure ideal and
+*self-regularize*; past-basics parts carry their essential parasitics by default (no manual
+resistors); advanced play unlocks more reality (tolerance/ESR/ratings/saturation) along the
+tech-tree. **Research (CircuitJS source + ngspice manual, primary) confirms the mechanism:**
+energy-storage elements get a companion resistance for free from the discretization
+(`R_cap = Δt/C`, `R_ind ∝ L/Δt`) so they're never zero-impedance — *we already do this*;
+semiconductors get GMIN; ideal sources stay pure and a genuine short / source-loop is left
+singular → FAIL (correct). So the **"ideal transformer" worry dissolves** — a transformer is
+reality-carried by default and its current leakage-floor model is right for its tier; no
+zero-leakage variant needed. FAIL narrows to a rare, correct backstop.
+
+**Multi-rate architecture note** (`docs/sim/multi-rate-domains.md`): how to host a GHz CPU and a
+µs analog net deterministically. Key: **multi-rate ≠ adaptive** — fixed integer rate ratios are
+structure-not-value, so deterministic; adaptive Δt is not. Two kernels (continuous analog MNA at
+fixed Δt + discrete event-driven digital sub-stepping a fixed integer per analog tick), meeting
+only at **boundary nets**. Owner's insight, now the centerpiece: the analog↔digital boundary **is
+a real converter** (ADC/comparator/Schmitt/DAC) — you must place one to cross, exactly as in
+hardware, so it's physically honest and falls out for free. Forward-looking (CPU/FPGA/ADC tier).
+
+**NEXT (unchanged priority):** the **visible FAIL UI** — wasm boundary exposes `failed()` +
+`failed_element_mask()`, `board.ts` draws the pulsing red `FAIL` box on flagged parts + shows
+`+FAIL/−FAIL` on the readout, `loop.ts` pauses the run on FAIL. Engine half shipped (PR #70).
+Then curriculum tiering (ideal-basics vs reality-carried examples) + the first additive
+Real-variant upgrades. The catalogue roadmap (7-seg, >4-pin keystone, …) is still queued.
+
+---
+
 ## 2026-06-16 (later) — c-terminal + FAIL fixes SHIPPED (PR #70); Ideal-vs-Real design underway
 
 **State:** 🟢 Green (fmt, clippy, **102 sim-core tests**, golden stable, wasm, web). **Merged to
