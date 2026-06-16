@@ -472,8 +472,8 @@ function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
     Math.min(1, o.electrical.vAcross / (V_SCALE * 1.6)),
   );
 
-  const baseY = hh * 0.72; // tank floor
-  const maxH = hh * 1.5; // full-scale water column
+  const baseY = hh * 0.5; // tank floor
+  const maxH = hh * 0.92; // full-scale water column (kept within bounds)
   const srcX = -hw * 0.66;
   const srcW = hw * 0.34;
   const capCx = hw * 0.34;
@@ -604,7 +604,12 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
   const cxP = -hw * 0.4;
   const cxS = hw * 0.4;
   const cy = -hh * 0.08;
-  const spin = o.phase * FLOW_SPEED * dir * Math.PI;
+  // AC ROCKS the wheels back and forth — not one continuous spin. The hinge angle
+  // swings on the shared phase clock (so it pauses + flows with the sim) and its
+  // amplitude rides the drive (magnitude on amplitude, never speed); `dir` biases
+  // which way it leads so it tracks the live current's sense.
+  const swing = Math.sin(o.phase * Math.PI) * dir;
+  const rock = swing * (0.35 + 0.65 * drive) * 1.5;
 
   // --- AC drive (left) + primary rod -------------------------------------------
   const drvX = -hw + 14;
@@ -635,12 +640,27 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
       .stroke({ width: 3, color: PALETTE.rail, alpha: 0.85 });
   }
 
-  // --- the two wheels (radii = turns ratio), rocking with the AC drive ---------
-  pulley(g, cxP, cy, rp, spin, drive);
-  pulley(g, cxS, cy, rs, spin, drive);
+  // --- the two wheels (radii = turns ratio), hinging back and forth ------------
+  pulley(g, cxP, cy, rp, rock, drive);
+  pulley(g, cxS, cy, rs, rock, drive);
 
-  // --- WARM ticks shuttling along the top strap (power transfer) ---------------
-  belt(g, cxP, cy - rp, cxS, cy - rs, drive, dir, o.phase, WARM, 2.6);
+  // --- WARM ticks on the strap, shuttling back and forth as the wheels rock -----
+  if (drive > 0.03) {
+    const topPyP = cy - rp;
+    const topPyS = cy - rs;
+    const nT = FLOW_DOTS_MAX;
+    for (let k = 0; k < nT; k++) {
+      const present = dotPresence(k, drive);
+      if (present <= 0) continue;
+      const u = (((k / nT + 0.14 * swing) % 1) + 1) % 1;
+      g.circle(cxP + (cxS - cxP) * u, topPyP + (topPyS - topPyP) * u, 2.6).fill(
+        {
+          color: WARM,
+          alpha: (0.3 + 0.5 * drive) * present,
+        },
+      );
+    }
+  }
 
   // --- the flux gauge: strap travel between the two saturation ends ------------
   const trackY = hh * 0.66;
@@ -653,7 +673,7 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
       .lineTo(sx, trackY + 6)
       .stroke({ width: 1.6, color: PALETTE.rail, alpha: 0.8 });
   }
-  const travel = Math.sin(spin); // strap position, −1..+1
+  const travel = swing * (0.4 + 0.6 * drive); // strap position swings with the rock
   // sat zones at each end brighten as the strap nears its travel limit
   for (const end of [-1, 1]) {
     const near = Math.max(0, (travel * end - 0.8) / 0.2);
@@ -699,25 +719,27 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
 
   const aX = -hw + 8;
   const bX = hw - 8;
-  const pipeHH = hh * 0.2;
-  const bodyL = -hw * 0.36;
-  const bodyR = hw * 0.36;
-  const seatX = -hw * 0.08; // the seat the ball rests on
-  const seatedX = seatX + 22; // ball centre when shut
-  const liftX = seatedX - hw * 0.26 * fwd; // lifts left (open) with forward flow
-  const ballR = hh * 0.26;
-  const plungerX = bodyR - 6; // fixed spring backing
+  const pipeHH = hh * 0.17;
+  const bodyL = -hw * 0.34;
+  const bodyR = hw * 0.46;
+  const seatX = bodyL + 16; // the seat, just inside the anode inlet
+  const ballR = hh * 0.2;
+  const plungerX = bodyR - 6; // fixed spring backing, downstream of the ball
+  const ballRest = seatX + ballR + 3; // ball sits just downstream of the seat
+  // Forward flow pushes the ball DOWNSTREAM (toward the cathode) off its seat,
+  // compressing the spring; reverse keeps it seated. (Anode left → cathode right.)
+  const liftX = Math.min(plungerX - ballR - 4, ballRest + hw * 0.16 * fwd);
 
   // --- conduction / breakdown halo ---------------------------------------------
   if (conducting && isLED) {
     const breathe = 0.82 + 0.18 * Math.sin(o.phase * 2.2);
-    g.circle(0, 0, hh * (0.7 + 0.5 * fwd)).fill({
+    g.circle(0, 0, Math.min(hh * 0.85, hh * (0.55 + 0.4 * fwd))).fill({
       color: emit,
       alpha: 0.22 * fwd * breathe,
     });
   } else if (breakdown) {
     const breathe = 0.8 + 0.2 * Math.sin(o.phase * 2.2);
-    g.circle(seatX, 0, hh * 0.7).fill({
+    g.circle(seatX, 0, hh * 0.6).fill({
       color: PALETTE.bad,
       alpha: (0.16 + 0.4 * rev) * breathe,
     });
@@ -776,16 +798,15 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
 
   // --- water through when open, or a dammed trickle stalled at the seat ---------
   if (conducting) {
-    belt(g, aX, 0, bodyL, 0, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, aX, 0, seatX - ballR, 0, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, liftX + ballR, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
   } else if (breakdown) {
     belt(g, bX, 0, aX, 0, rev, -1, o.phase, PALETTE.bad, 2.6);
   } else {
-    // blocked: a few dots pile up against the seat on the biased side
-    const fromX = o.electrical.vAcross >= 0 ? aX : bX;
+    // blocked: a few dots pile up against the seat from the anode side
     for (let k = 0; k < 3; k++) {
       const t = (((k / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(fromX + (seatX - fromX) * t, 0, 2.2).fill({
+      g.circle(aX + (seatX - ballR - aX) * t, 0, 2.2).fill({
         color: WATER,
         alpha: 0.3 * (1 - t),
       });
@@ -823,97 +844,119 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
   const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
   const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
   const conducting = fwd > 0.03;
+  const clamping = rev > 0.03;
   const vrev = Math.max(0, -o.electrical.vAcross); // reverse volts across the part
   const vz = o.value && o.value > 0 ? o.value : 5.1;
-  const wall = Math.min(1, vz / (V_SCALE * 1.6)); // spillway wall height (0..1)
+  const wall = Math.min(0.92, vz / (V_SCALE * 1.6)); // spillway-wall height frac
   const lvl = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe level
-  const clamping = rev > 0.03;
 
+  // The forward check valve runs along a LOW axis; the reverse standpipe rises
+  // clearly above it on the right — two distinct paths, well separated.
+  const lineY = hh * 0.42;
   const aX = -hw + 8;
   const bX = hw - 8;
-  const pipeHH = hh * 0.16;
-  const bodyL = -hw * 0.36;
-  const bodyR = hw * 0.12;
-  const seatX = -hw * 0.12;
-  const ballR = hh * 0.2;
-  const liftX = seatX + 18 - hw * 0.2 * fwd;
+  const pipeHH = hh * 0.13;
 
-  // --- forward pipes + valve body ----------------------------------------------
+  // --- forward check valve (left): a compact spring valve on the axis -----------
+  const bodyL = -hw * 0.52;
+  const bodyR = -hw * 0.04;
+  const seatX = bodyL + 16;
+  const ballR = hh * 0.15;
+  const plungerX = bodyR - 6;
+  const liftX = Math.min(
+    plungerX - ballR - 4,
+    seatX + ballR + 3 + hw * 0.13 * fwd,
+  );
   for (const s of [-1, 1]) {
-    g.moveTo(aX + 4, s * pipeHH)
-      .lineTo(bodyL, s * pipeHH)
-      .moveTo(bodyR, s * pipeHH)
-      .lineTo(bX - 4, s * pipeHH)
+    g.moveTo(aX + 4, lineY + s * pipeHH)
+      .lineTo(bodyL, lineY + s * pipeHH)
+      .moveTo(bodyR, lineY + s * pipeHH)
+      .lineTo(bX - 4, lineY + s * pipeHH)
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
   housing(
     g,
     bodyL,
-    -pipeHH - 10,
+    lineY - pipeHH - 9,
     bodyR - bodyL,
-    (pipeHH + 10) * 2,
+    (pipeHH + 9) * 2,
     PALETTE.bronze,
-    10,
+    9,
   );
   for (const s of [-1, 1]) {
     g.poly([
       seatX - 8,
-      s * (pipeHH + 5),
-      seatX + 6,
-      s * (pipeHH + 5),
-      seatX + 2,
-      s * pipeHH * 0.4,
+      lineY + s * (pipeHH + 5),
+      seatX + 10,
+      lineY + s * (pipeHH + 5),
+      seatX + 4,
+      lineY + s * pipeHH * 0.4,
       seatX - 4,
-      s * pipeHH * 0.4,
+      lineY + s * pipeHH * 0.4,
     ]).fill({ color: PALETTE.rail, alpha: 0.9 });
   }
+  g.roundRect(plungerX, lineY - ballR, 7, ballR * 2, 2).fill({
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+  g.poly(
+    springPts(liftX + ballR, plungerX, lineY, ballR * 0.4, 6),
+    false,
+  ).stroke({ width: 2.4, color: WARM, alpha: 0.85 });
   const ballCol = conducting ? PALETTE.ok : clamping ? PALETTE.warn : PLATE;
-  g.circle(liftX, 0, ballR).fill({ color: ballCol, alpha: 0.92 });
-  g.circle(liftX, 0, ballR).stroke({ width: 1.4, color: 0xdce3f0, alpha: 0.6 });
+  g.circle(liftX, lineY, ballR).fill({ color: ballCol, alpha: 0.92 });
+  g.circle(liftX, lineY, ballR).stroke({
+    width: 1.4,
+    color: 0xdce3f0,
+    alpha: 0.6,
+  });
 
-  // --- the reverse standpipe + spillway wall (right of the body) ----------------
-  const spX = hw * 0.46;
-  const spW = hw * 0.26;
-  const spBot = hh * 0.66;
-  const spTop = -hh * 0.66;
+  // --- reverse standpipe + spillway (rises up from a tap on the right) ----------
+  const spX = hw * 0.32;
+  const spW = hw * 0.22;
+  const spBot = lineY - pipeHH;
+  const spTop = -hh * 0.84;
   const span = spBot - spTop;
-  // standpipe walls
-  g.moveTo(spX - spW / 2, spTop)
-    .lineTo(spX - spW / 2, spBot)
-    .moveTo(spX + spW / 2, spTop)
-    .lineTo(spX + spW / 2, spBot)
+  g.moveTo(spX, lineY)
+    .lineTo(spX, spBot)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.5 });
+  g.moveTo(spX - spW / 2, spBot)
+    .lineTo(spX - spW / 2, spTop)
+    .moveTo(spX + spW / 2, spBot)
+    .lineTo(spX + spW / 2, spTop)
     .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
-  // the spillway wall at height Vz (over the right lip)
+  // the spillway wall at height Vz (the right lip)
   const wallY = spBot - wall * span;
   g.moveTo(spX + spW / 2, wallY)
-    .lineTo(spX + spW / 2 + 14, wallY)
+    .lineTo(spX + spW / 2 + 16, wallY)
     .stroke({ width: 3, color: PALETTE.accent, alpha: 0.9 });
-  // the water level = reverse voltage
-  const lvlY = spBot - lvl * span;
+  // water level = reverse voltage, held at the wall once it's reached (the clamp)
+  const lvlY = spBot - Math.min(lvl, wall) * span;
   g.rect(spX - spW / 2 + 2, lvlY, spW - 4, spBot - lvlY).fill({
     color: WATER,
     alpha: 0.6,
   });
-  // overflow over the wall once the level reaches it (the clamp)
   if (lvl >= wall - 0.02 && clamping) {
     for (let k = 0; k < 4; k++) {
       const t = (((k / 4 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      const ox = spX + spW / 2 + 4 + t * 12;
-      const oy = wallY + t * t * span * 0.5;
-      g.circle(ox, oy, 2.4).fill({ color: WATER, alpha: 0.7 * (1 - t * 0.5) });
+      g.circle(
+        spX + spW / 2 + 6 + t * 14,
+        wallY + t * t * (spBot - wallY) * 0.8,
+        2.4,
+      ).fill({ color: WATER, alpha: 0.7 * (1 - t * 0.5) });
     }
   }
 
-  // --- water flow: forward through the valve, or reverse over the spillway ------
+  // --- flow: forward through the valve, or reverse backing up the standpipe -----
   if (conducting) {
-    belt(g, aX, 0, bodyL, 0, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, aX, lineY, seatX - ballR, lineY, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, liftX + ballR, lineY, bX, lineY, fwd, 1, o.phase, WATER, 2.6);
   } else if (clamping) {
-    belt(g, bX, 0, spX + spW / 2, 0, rev, -1, o.phase, PALETTE.warn, 2.4);
+    belt(g, bX, lineY, spX, lineY, rev, -1, o.phase, PALETTE.warn, 2.4);
   }
 
-  stud(g, aX, 0, PALETTE.bronze);
-  stud(g, bX, 0, PALETTE.bronze);
+  stud(g, aX, lineY, PALETTE.bronze);
+  stud(g, bX, lineY, PALETTE.bronze);
 }
 
 // ============================================================================
@@ -940,33 +983,30 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
 
   const pipeX = hw * 0.34;
   const pipeHW = hw * 0.1;
-  const pipeTop = -hh * 0.82;
-  const pipeBot = hh * 0.82;
+  const pipeTop = -hh * 0.56;
+  const pipeBot = hh * 0.56;
   const throatY = 0;
   const plugY = throatY - lvl * hh * 0.3; // lifts up off the seat as it opens
   const chamX = -hw * 0.42;
   const chamHW = hw * 0.16;
-  const chamTop = -hh * 0.34;
-  const chamBot = hh * 0.5;
+  const chamTop = -hh * 0.3;
+  const chamBot = hh * 0.44;
   const waterY = chamBot - lvl * (chamBot - chamTop);
 
-  // --- supply reservoir (pressure = V_CE) at the collector end -----------------
-  const resY = npn ? pipeTop : pipeBot;
-  g.roundRect(
-    pipeX - hw * 0.16,
-    resY - (npn ? 26 : 0),
-    hw * 0.32,
-    26,
-    3,
-  ).stroke({
+  // --- supply reservoir (pressure = V_CE) just beyond the supply end -----------
+  const resH = hh * 0.16;
+  const resY = npn ? pipeTop - resH : pipeBot; // above (NPN) / below (PNP) the pipe
+  g.roundRect(pipeX - hw * 0.16, resY, hw * 0.32, resH, 3).stroke({
     width: 1.6,
     color: PALETTE.rail,
     alpha: 0.85,
   });
-  g.rect(pipeX - hw * 0.15, resY - (npn ? 24 : -2), hw * 0.3, 22 * vce).fill({
-    color: WATER,
-    alpha: 0.45,
-  });
+  g.rect(pipeX - hw * 0.15, resY + resH * (1 - vce), hw * 0.3, resH * vce).fill(
+    {
+      color: WATER,
+      alpha: 0.45,
+    },
+  );
 
   // --- main pipe walls + seat + plug -------------------------------------------
   for (const s of [-1, 1]) {
@@ -1094,18 +1134,19 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
 
   const pipeX = hw * 0.36;
   const pipeHW = hw * 0.1;
-  const pipeTop = -hh * 0.82;
-  const pipeBot = hh * 0.82;
+  const pipeTop = -hh * 0.56;
+  const pipeBot = hh * 0.74;
   const throatY = 0;
   const plugY = throatY - id * hh * 0.3;
 
-  // --- drain reservoir (pressure = V_DS) ---------------------------------------
-  g.roundRect(pipeX - hw * 0.16, pipeTop - 26, hw * 0.32, 26, 3).stroke({
+  // --- drain reservoir (pressure = V_DS), just above the drain end -------------
+  const resH = hh * 0.16;
+  g.roundRect(pipeX - hw * 0.16, pipeTop - resH, hw * 0.32, resH, 3).stroke({
     width: 1.6,
     color: PALETTE.rail,
     alpha: 0.85,
   });
-  g.rect(pipeX - hw * 0.15, pipeTop - 24, hw * 0.3, 22 * vds).fill({
+  g.rect(pipeX - hw * 0.15, pipeTop - resH * vds, hw * 0.3, resH * vds).fill({
     color: WATER,
     alpha: 0.45,
   });
