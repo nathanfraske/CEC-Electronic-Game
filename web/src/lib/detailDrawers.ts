@@ -646,6 +646,382 @@ function drawDetailInductor(g: Graphics, o: DetailOpts): void {
   belt(g, coilR, axisY, bX, axisY, i, dir, o.phase, CUR, 2.4);
 }
 
+// ============================================================================
+// Ceramic capacitor (MLCC) — ported from capacitor-ceramic-tiers.html tier 3: a
+// cutaway of the multilayer chip. Interleaved metal electrodes wire alternately to
+// the + and − leads; between them the ceramic dielectric POLARISES — its dipoles
+// swing into line with the field as the voltage rises. Electrons pile onto the
+// plates wired to − and drain off those wired to +, but NONE cross the ceramic
+// (which is what storing charge physically is). A wider chip is more capacitance.
+//
+// Live mapping (cap ElectricalState: current a→b, vAcross = Vc; value = C):
+//   • charge      = norm(|Vc|) → plate +/electron marks, dipole alignment, field, halo.
+//   • flow        = norm(|I|)  → electrons streaming along the leads; sign sets dir.
+//   • capacitance = value      → chip width (plate area).
+// ============================================================================
+function drawDetailCeramicCap(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const POS = PALETTE.pos;
+  const LOW = PALETTE.violet;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const METAL = mix(PALETTE.dim, 0xffffff, 0.45);
+
+  const vFrac = norm(o.electrical.vAcross, V_SCALE);
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const vHigh = o.electrical.vAcross >= 0; // terminal a is the + side
+
+  const half = hw * (0.32 + 0.18 * (o.value ? norm(o.value, 5e-6) : 0.5));
+  const x0 = -half;
+  const x1 = half;
+  const blockT = -hh * 0.62;
+  const blockB = hh * 0.62;
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const lBus = x0 + 16;
+  const rBus = x1 - 16;
+  const gap = (x1 - x0) * 0.18;
+  const leftCol = vHigh ? POS : LOW;
+  const rightCol = vHigh ? LOW : POS;
+
+  // --- field halo + chip body --------------------------------------------------
+  if (vFrac > 0.03) {
+    g.roundRect(
+      x0 - 6,
+      blockT - 6,
+      2 * half + 12,
+      blockB - blockT + 12,
+      12,
+    ).fill({ color: POS, alpha: 0.05 + 0.22 * vFrac });
+  }
+  housing(g, x0, blockT, 2 * half, blockB - blockT, PALETTE.dim, 10);
+
+  // --- leads + the two end-cap buses -------------------------------------------
+  g.moveTo(aX, 0)
+    .lineTo(lBus, 0)
+    .stroke({ width: 4, color: leftCol, alpha: 0.85 });
+  g.moveTo(rBus, 0)
+    .lineTo(bX, 0)
+    .stroke({ width: 4, color: rightCol, alpha: 0.85 });
+  g.moveTo(lBus, blockT + 10)
+    .lineTo(lBus, blockB - 10)
+    .stroke({ width: 4, color: leftCol, alpha: 0.85 });
+  g.moveTo(rBus, blockT + 10)
+    .lineTo(rBus, blockB - 10)
+    .stroke({ width: 4, color: rightCol, alpha: 0.85 });
+
+  // --- interleaved electrode plates + their charge marks + the dielectric -------
+  const nPlates = 5;
+  const mL = lBus + gap + 6;
+  const mR = rBus - gap - 6;
+  for (let p = 0; p < nPlates; p++) {
+    const py = blockT + ((blockB - blockT) * (p + 0.5)) / nPlates;
+    const leftConn = p % 2 === 0;
+    const px0 = leftConn ? lBus : lBus + gap;
+    const px1 = leftConn ? rBus - gap : rBus;
+    g.moveTo(px0, py)
+      .lineTo(px1, py)
+      .stroke({ width: 5, color: METAL, alpha: 0.92 });
+    // the plate's charge: + when wired to the high terminal, electrons when low.
+    const positive = leftConn === vHigh;
+    const marks = 4;
+    for (let j = 0; j < marks; j++) {
+      const mx = mL + ((j + 0.5) / marks) * (mR - mL);
+      const a = Math.min(1, Math.max(0, (vFrac - j * 0.04) * 1.2));
+      if (a <= 0.02) continue;
+      if (positive) {
+        g.moveTo(mx - 3, py).lineTo(mx + 3, py);
+        g.moveTo(mx, py - 3).lineTo(mx, py + 3);
+        g.stroke({ width: 1.5, color: POS, alpha: a });
+      } else {
+        g.circle(mx, py, 2.6).fill({ color: ELEC, alpha: a });
+      }
+    }
+    // the ceramic dielectric between this plate and the next: dipoles that swing
+    // into line with the field as Vc rises, + faint field-line dashes.
+    if (p < nPlates - 1) {
+      const ymid = py + (blockB - blockT) / nPlates / 2;
+      for (let d = 0; d < 4; d++) {
+        const dx = mL + ((d + 0.5) / 4) * (mR - mL);
+        const base = ((d * 53 + p * 29) % 180) - 90; // scattered when uncharged
+        const ang = (base * (1 - vFrac) * Math.PI) / 180; // → 0 (aligned) as Vc↑
+        const ca = Math.cos(ang + Math.PI / 2);
+        const sa = Math.sin(ang + Math.PI / 2);
+        const len = (blockB - blockT) / nPlates / 2 - 4;
+        g.moveTo(dx - ca * len, ymid - sa * len)
+          .lineTo(dx + ca * len, ymid + sa * len)
+          .stroke({
+            width: 1.8,
+            color: PALETTE.dim,
+            alpha: 0.35 + 0.4 * vFrac,
+          });
+        g.circle(dx + ca * len, ymid + sa * len, 1.8).fill({
+          color: POS,
+          alpha: 0.4 + 0.5 * vFrac,
+        });
+      }
+    }
+  }
+
+  // --- electrons along the leads (none cross the ceramic) ----------------------
+  belt(g, aX, 0, lBus, 0, flow, dir, o.phase, ELEC, 2.4);
+  belt(g, rBus, 0, bX, 0, flow, dir, o.phase, ELEC, 2.4);
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
+// ============================================================================
+// Aluminium electrolytic capacitor — ported from capacitor-electrolytic-tiers.html
+// tier 3: a cutaway of the wound foil. An etched aluminium anode (its area sets the
+// capacitance) carries a very thin OXIDE as the dielectric; a conductive electrolyte
+// is the other plate, with a cathode foil collecting it. Electrons move in the metal
+// while ions split in the electrolyte; the oxide is what makes it polarised. Nothing
+// crosses the thin oxide.
+//
+// Live mapping (cap ElectricalState: current a→b, vAcross = Vc; value = C):
+//   • charge      = norm(|Vc|) → anode + marks, oxide field, ions splitting, halo.
+//   • flow        = norm(|I|)  → electrons along the leads; sign sets dir.
+//   • capacitance = value      → the etched-anode tooth count (area).
+// ============================================================================
+function drawDetailElectrolyticCap(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const POS = PALETTE.pos;
+  const LOW = PALETTE.violet;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const METAL = mix(PALETTE.dim, 0xffffff, 0.45);
+  const OXIDE = mix(PALETTE.warn, 0xffffff, 0.35);
+  const TEAL = mix(PALETTE.cyan, PALETTE.ok, 0.5);
+
+  const vFrac = norm(o.electrical.vAcross, V_SCALE);
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+
+  const y0 = -hh * 0.56;
+  const y1 = hh * 0.56;
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const anodeBackX = -hw * 0.62;
+  const toothTipX = -hw * 0.06; // etched teeth reach toward the electrolyte
+  const elecL = hw * 0.02;
+  const elecR = hw * 0.5;
+  const cathL = hw * 0.54;
+  const cathR = hw * 0.66;
+  // more capacitance = more etched teeth (area)
+  const teeth = Math.max(
+    3,
+    Math.round(3 + 5 * (o.value ? norm(o.value, 5e-4) : 0.5)),
+  );
+
+  if (vFrac > 0.03) {
+    g.roundRect(
+      anodeBackX - 6,
+      y0 - 6,
+      cathR - anodeBackX + 12,
+      y1 - y0 + 12,
+      10,
+    ).fill({ color: POS, alpha: 0.05 + 0.2 * vFrac });
+  }
+
+  // --- etched aluminium anode (comb of teeth) + its thin oxide skin -------------
+  const anode: number[] = [anodeBackX, y0];
+  const oxide: number[] = [];
+  for (let i = 0; i <= 2 * teeth; i++) {
+    const yy = y0 + (i * (y1 - y0)) / (2 * teeth);
+    const xx = i % 2 === 0 ? toothTipX - 14 : toothTipX;
+    anode.push(xx, yy);
+    oxide.push(xx + 5, yy);
+  }
+  anode.push(anodeBackX, y1);
+  g.poly(anode).fill({ color: METAL, alpha: 0.85 });
+  g.poly(anode).stroke({ width: 1.5, color: METAL, alpha: 0.95 });
+  g.poly(oxide, false).stroke({ width: 3, color: OXIDE, alpha: 0.9 });
+
+  // --- electrolyte (ions) + the cathode foil -----------------------------------
+  g.rect(elecL, y0, elecR - elecL, y1 - y0).fill({ color: TEAL, alpha: 0.12 });
+  g.rect(elecL, y0, elecR - elecL, y1 - y0).stroke({
+    width: 1,
+    color: PALETTE.border,
+    alpha: 0.7,
+  });
+  housing(g, cathL, y0, cathR - cathL, y1 - y0, PALETTE.dim, 4);
+
+  // --- leads (+ anode / − cathode) ---------------------------------------------
+  g.moveTo(aX, 0)
+    .lineTo(anodeBackX, 0)
+    .stroke({ width: 4, color: POS, alpha: 0.85 });
+  g.moveTo(cathR, 0)
+    .lineTo(bX, 0)
+    .stroke({ width: 4, color: LOW, alpha: 0.85 });
+
+  // --- anode + marks + oxide field lines, growing with charge ------------------
+  for (let i = 0; i < teeth; i++) {
+    const yy = y0 + ((i + 0.5) * (y1 - y0)) / teeth;
+    const a = Math.min(1, vFrac * 1.15);
+    if (a > 0.04) {
+      g.moveTo(toothTipX - 22, yy).lineTo(toothTipX - 16, yy);
+      g.moveTo(toothTipX - 19, yy - 3).lineTo(toothTipX - 19, yy + 3);
+      g.stroke({ width: 1.5, color: POS, alpha: a });
+      g.moveTo(toothTipX + 6, yy)
+        .lineTo(elecL + 6, yy)
+        .stroke({
+          width: 1.4,
+          color: POS,
+          alpha: 0.08 + 0.5 * vFrac,
+        });
+    }
+  }
+
+  // --- ions in the electrolyte: split toward the plates as Vc rises -------------
+  const nIons = 8;
+  const ionSpanX = Math.max(0, elecR - elecL - 36);
+  const ionSpanY = Math.max(0, y1 - y0 - 28);
+  for (let i = 0; i < nIons; i++) {
+    const neg = i % 2 === 0;
+    const homeX = elecL + 18 + ionSpanX * ((i * 0.618) % 1);
+    const homeY = y0 + 14 + ionSpanY * ((i * 0.382) % 1);
+    const targetX = neg ? elecL + 14 : elecR - 14;
+    const x =
+      homeX + (targetX - homeX) * vFrac + Math.sin(o.phase * 0.4 + i) * 2;
+    const y = homeY + Math.cos(o.phase * 0.35 + i) * 2;
+    g.circle(x, y, 4.5).fill({ color: neg ? LOW : POS, alpha: 0.9 });
+    if (neg) {
+      g.moveTo(x - 2.2, y)
+        .lineTo(x + 2.2, y)
+        .stroke({ width: 1.2, color: 0x0c0e1a });
+    } else {
+      g.moveTo(x - 2.2, y).lineTo(x + 2.2, y);
+      g.moveTo(x, y - 2.2).lineTo(x, y + 2.2);
+      g.stroke({ width: 1.2, color: 0x0c0e1a });
+    }
+  }
+
+  // --- electrons along the metal leads -----------------------------------------
+  belt(g, aX, 0, anodeBackX, 0, flow, dir, o.phase, ELEC, 2.4);
+  belt(g, cathR, 0, bX, 0, flow, dir, o.phase, ELEC, 2.4);
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
+// ============================================================================
+// Transformer — ported from transformer-tiers.html tier 3: two windings on a shared
+// iron core. The primary current builds a changing FLUX that loops around the core
+// and threads the secondary; that changing flux induces the secondary voltage. The
+// turns ratio sets the voltage ratio (its inverse the current), and the coupling is
+// magnetic only — which is why the two circuits stay isolated. (Saturation — the
+// flux winding to the core limit and holding — belongs to the ideal-vs-real work.)
+//
+// Live mapping (transformer ElectricalState: primary current Ip, vAcross = Vp;
+// value = turns ratio n = Ns/Np):
+//   • drive = norm(|Ip|) → flux-loop + winding-electron density/alpha.
+//   • dir   = sign(Ip)   → flux + electron direction (reverses each AC half-cycle).
+//   • ratio = value      → the secondary winding's turn count vs the primary's.
+// ============================================================================
+function rectPerimeter(
+  t: number,
+  x0: number,
+  y0: number,
+  x1: number,
+  y1: number,
+): { x: number; y: number } {
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const per = 2 * (w + h);
+  let d = (((t % 1) + 1) % 1) * per;
+  if (d < w) return { x: x0 + d, y: y0 };
+  d -= w;
+  if (d < h) return { x: x1, y: y0 + d };
+  d -= h;
+  if (d < w) return { x: x1 - d, y: y1 };
+  d -= w;
+  return { x: x0, y: y1 - d };
+}
+
+function drawDetailTransformer(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const FLUX = mix(PALETTE.cyan, 0xffffff, 0.45);
+  const BRONZE = PALETTE.bronze;
+
+  const drive = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const n = Math.max(0.34, Math.min(3, o.value && o.value > 0 ? o.value : 1));
+  const primTurns = 6;
+  const secTurns = Math.max(2, Math.min(12, Math.round(primTurns * n)));
+
+  // --- the iron core (a thick rectangular ring) --------------------------------
+  const x0 = -hw * 0.34;
+  const x1 = hw * 0.34;
+  const y0 = -hh * 0.6;
+  const y1 = hh * 0.6;
+  const lw = Math.min(hw, hh) * 0.13;
+  g.roundRect(x0, y0, x1 - x0, y1 - y0, 8).stroke({
+    width: lw,
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+
+  // --- flux dots looping around the core (primary current drives the flux) -----
+  if (drive > 0.02) {
+    const mx0 = x0;
+    const my0 = y0;
+    const mx1 = x1;
+    const my1 = y1;
+    const nF = FLOW_DOTS_MAX;
+    for (let k = 0; k < nF; k++) {
+      const present = dotPresence(k, drive);
+      if (present <= 0) continue;
+      const t = (((k / nF + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const pt = rectPerimeter(t, mx0, my0, mx1, my1);
+      g.circle(pt.x, pt.y, 2.6).fill({
+        color: FLUX,
+        alpha: (0.35 + 0.5 * drive) * present,
+      });
+    }
+  }
+
+  // --- AC drive (left) + load R (right), wired to the two legs -----------------
+  const drvX = -hw + 14;
+  g.circle(drvX, 0, 10).stroke({ width: 2, color: PALETTE.cyan, alpha: 0.8 });
+  g.moveTo(drvX - 6, 0)
+    .quadraticCurveTo(drvX - 3, -7, drvX, 0)
+    .quadraticCurveTo(drvX + 3, 7, drvX + 6, 0)
+    .stroke({ width: 1.8, color: PALETTE.cyan, alpha: 0.85 });
+  g.moveTo(drvX + 10, 0)
+    .lineTo(x0 - lw, 0)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.8 });
+  const loadX = hw - 12;
+  g.moveTo(x1 + lw, 0)
+    .lineTo(loadX, 0)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.8 });
+  g.roundRect(loadX - 6, -16, 12, 32, 3).stroke({
+    width: 3,
+    color: PALETTE.violet,
+    alpha: 0.5 + 0.4 * drive,
+  });
+
+  // --- the two windings (turn counts in the turns ratio) -----------------------
+  const wyT = y0 + lw + 6;
+  const wyB = y1 - lw - 6;
+  const drawWinding = (cx: number, turns: number): void => {
+    for (let k = 0; k < turns; k++) {
+      const wy = wyT + (wyB - wyT) * (turns === 1 ? 0.5 : k / (turns - 1));
+      g.ellipse(cx, wy, 16, 5.5).stroke({
+        width: 3,
+        color: BRONZE,
+        alpha: 0.92,
+      });
+    }
+  };
+  drawWinding(x0, primTurns);
+  drawWinding(x1, secTurns);
+
+  // --- electrons in each winding (primary down, secondary up), by drive --------
+  belt(g, x0, wyT, x0, wyB, drive, dir, o.phase, ELEC, 2.4);
+  belt(g, x1, wyB, x1, wyT, drive, dir, o.phase, ELEC, 2.4);
+  stud(g, drvX, 0, PALETTE.bronze);
+  stud(g, loadX, 0, PALETTE.bronze);
+}
+
 /**
  * The construction-detail drawers, keyed by kind — the third sibling map to
  * DRAWERS / FACTORY_DRAWERS. A kind absent here has no detail view yet; the host
@@ -658,7 +1034,10 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   LED: drawDetailDiode,
   ZD: drawDetailDiode,
   R: drawDetailResistor,
+  C: drawDetailCeramicCap,
+  EC: drawDetailElectrolyticCap,
   L: drawDetailInductor,
+  TR: drawDetailTransformer,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */
