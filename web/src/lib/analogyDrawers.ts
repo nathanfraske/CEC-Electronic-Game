@@ -203,12 +203,140 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
   belt(g, cx + chamR, 0, pipeR, 0, i, dir, o.phase, WATER, 2.6);
 }
 
+// ============================================================================
+// Resistor — ported from resistor-tiers.html tier 2: water in a pipe with a narrow
+// THROAT. The throat IS the resistance — more resistance, a tighter throat, less
+// flow for the same push. The water funnels through the gap (continuity) and the
+// friction there is the heat. Two standpipes read the pressure on each side; the
+// height difference between them is the voltage drop.
+//
+// Live mapping (resistor ElectricalState: current a→b, vAcross = V(a)−V(b)):
+//   • flow   = norm(|I|)        → water-dot density/alpha (NOT speed). Sign of the
+//     drop orients the flow direction + which standpipe stands high.
+//   • drop   = vAcross          → the upstream/downstream standpipe column heights.
+//   • heat   = norm(|V·I|)      → the throat glow (and a hot tint as it's pushed).
+//   • R      = value (Ω)        → the throat tightness (a tighter gap).
+// ============================================================================
+function openingAt(
+  x: number,
+  pipeL: number,
+  pipeR: number,
+  full: number,
+  throatHalf: number,
+): number {
+  const cx = (pipeL + pipeR) / 2;
+  const throatW = (pipeR - pipeL) * 0.16; // half-width of the pinched region
+  const d = Math.abs(x - cx);
+  if (d >= throatW) return full;
+  const s = d / throatW; // 0 at the centre, 1 at the throat shoulders
+  const sm = s * s * (3 - 2 * s); // smoothstep
+  return throatHalf + (full - throatHalf) * sm;
+}
+
+function drawAnalogyResistor(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+
+  const cur = norm(o.electrical.current, CUR_SCALE);
+  const power = norm(
+    Math.abs(o.electrical.vAcross * o.electrical.current),
+    V_SCALE * CUR_SCALE,
+  );
+  const aHigh = o.electrical.vAcross >= 0; // terminal a is the high-pressure side
+  const dir = aHigh ? 1 : -1;
+  const heatCol = mix(PALETTE.warn, PALETTE.bad, power);
+
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const pipeL = aX + 4;
+  const pipeR = bX - 4;
+  const full = hh * 0.22; // wide-pipe half-height
+  // A tighter throat for more resistance (value = R in ohms).
+  const rNorm = o.value ? norm(o.value, 1000) : 0.5;
+  const throatHalf = full * (1 - 0.72 * rNorm);
+  const cx = 0;
+
+  // --- heat glow at the throat (friction = power) ------------------------------
+  if (power > 0.04) {
+    g.ellipse(cx, 0, hw * (0.16 + 0.06 * power), full * (1.6 + power)).fill({
+      color: heatCol,
+      alpha: Math.min(0.5, 0.5 * power),
+    });
+  }
+
+  // --- the pipe walls (the throat profile) + water-filled body -----------------
+  const N = 28;
+  const top: number[] = [];
+  const bot: number[] = [];
+  for (let k = 0; k <= N; k++) {
+    const x = pipeL + (k / N) * (pipeR - pipeL);
+    const op = openingAt(x, pipeL, pipeR, full, throatHalf);
+    top.push(x, -op);
+    bot.push(x, op);
+  }
+  // body fill: the water inside the pipe (top wall, then bottom wall reversed)
+  const body = top.slice();
+  for (let k = bot.length - 2; k >= 0; k -= 2) body.push(bot[k]!, bot[k + 1]!);
+  g.poly(body).fill({ color: PALETTE.cyan, alpha: 0.07 });
+  g.poly(top, false).stroke({ width: 3, color: PALETTE.bronze, alpha: 0.95 });
+  g.poly(bot, false).stroke({ width: 3, color: PALETTE.bronze, alpha: 0.95 });
+
+  // --- two standpipes: pressure each side; the difference is the drop ----------
+  const tubeTop = -hh * 0.92;
+  const upX = cx - (pipeR - pipeL) * 0.22;
+  const dnX = cx + (pipeR - pipeL) * 0.22;
+  const vMag = Math.min(1, Math.abs(o.electrical.vAcross) / V_SCALE);
+  const colH = hh * 0.18 + hh * 0.46 * vMag; // upstream column tracks the drop
+  const colLo = hh * 0.18; // downstream reference column
+  const upH = aHigh ? colH : colLo;
+  const dnH = aHigh ? colLo : colH;
+  const upCol = aHigh ? PALETTE.cyan : PALETTE.violet;
+  const dnCol = aHigh ? PALETTE.violet : PALETTE.cyan;
+  for (const [sx, h, col] of [
+    [upX, upH, upCol],
+    [dnX, dnH, dnCol],
+  ] as const) {
+    g.moveTo(sx, -full)
+      .lineTo(sx, tubeTop)
+      .stroke({ width: 1.5, color: PALETTE.border, alpha: 0.8 });
+    g.roundRect(sx - 5, tubeTop, 10, -full - tubeTop, 2).stroke({
+      width: 1.4,
+      color: PALETTE.border,
+      alpha: 0.7,
+    });
+    g.roundRect(sx - 4, -full - h, 8, h, 2).fill({ color: col, alpha: 0.85 });
+  }
+
+  // --- the water funnelling through the throat (3 lanes converge) --------------
+  if (cur > 0.02) {
+    const lanes = [-0.62, 0, 0.62];
+    const N2 = FLOW_DOTS_MAX;
+    for (const lane of lanes) {
+      for (let k = 0; k < N2; k++) {
+        const present = dotPresence(k, cur);
+        if (present <= 0) continue;
+        const t = (((k / N2 + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+        const x = pipeL + t * (pipeR - pipeL);
+        const op = openingAt(x, pipeL, pipeR, full, throatHalf);
+        g.circle(x, lane * (op - 3), 2.6).fill({
+          color: WATER,
+          alpha: (0.3 + 0.55 * cur) * present,
+        });
+      }
+    }
+  }
+
+  // --- terminal studs ----------------------------------------------------------
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
  * no rich analogy yet; the host falls back to the (scaled) board Factory glyph.
  */
 const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
+  R: drawAnalogyResistor,
   L: drawAnalogyInductor,
 };
 
