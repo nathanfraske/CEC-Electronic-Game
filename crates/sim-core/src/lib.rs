@@ -56,14 +56,17 @@
 //! and the previous clock level — that are deterministic but unhashed (the `Q`/`Q̄`
 //! node voltages carry the observable state into the hash).
 //!
-//! Type 18 is the **transformer**: two magnetically **coupled inductors** — the
-//! first four-terminal element (primary `a`/`b`, secondary `c`/`d`). Its `value` is
-//! the turns ratio `n = Ns/Np`; the primary self-inductance is the fixed
-//! [`TRANSFORMER_L1`], the secondary `L2 = n^2 * L1`, and the mutual inductance
-//! `M = k * sqrt(L1*L2)` with the fixed coupling [`TRANSFORMER_K`]. It carries **two**
-//! branch-current unknowns (primary `Ip` a->b, secondary `Is` c->d) coupled by `M`
-//! and a backward-Euler companion on each, so it blocks DC, shows magnetizing
-//! current, and scales AC by `n` — a real transformer, not an ideal ratio box. Like
+//! Type 18 is the **transformer**: an **ideal-T model** — the first four-terminal
+//! element (primary `a`/`b`, secondary `c`/`d`). Its `value` is the turns ratio
+//! `n = Ns/Np`. A magnetising inductance [`TRANSFORMER_L1`] (with primary winding
+//! resistance) sits across the primary; the secondary EMF is *forced* to `n · V_Lm`
+//! (n times the magnetiser voltage — a HARD differential, no series term), and the
+//! secondary current reflects `n·Is` back into the primary. It carries **two**
+//! branch-current unknowns (magnetiser `Im` a->b, secondary `Is` c->d), only `Im`
+//! reactive. So it blocks DC (as `Im` saturates `V_Lm -> 0`), shows magnetizing
+//! current, and scales AC by `n` — and its hard ratio lets a diode bridge rectify
+//! full-wave (a raw coupled-inductor pair, or any softer secondary, sags to
+//! half-wave; see `docs/sim/transformer-bridge-convergence.md`). Like
 //! the inductor it is linear (no Newton) and keeps two reactive states (the two
 //! branch currents). See [`Sim::install`] and the coupled-inductor stamps.
 //!
@@ -486,41 +489,46 @@ impl LogicFamily {
     }
 }
 
-/// **Transformer** (two magnetically coupled inductors). The first four-terminal
-/// element: primary `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio
-/// `n = Ns/Np`; with the fixed primary inductance [`TRANSFORMER_L1`] the secondary
-/// inductance is `L2 = n^2 * L1` and the mutual inductance is `M = k*sqrt(L1*L2) =
-/// k*n*L1` for the fixed coupling [`TRANSFORMER_K`]. It carries **two** branch
-/// unknowns — the primary current `Ip` (a->b) and the secondary current `Is`
-/// (c->d) — each with a backward-Euler companion and coupled through `M`, exactly
-/// the coupled-inductor equations `Vp = L1·dIp/dt + M·dIs/dt`,
-/// `Vs = M·dIp/dt + L2·dIs/dt`. So it blocks DC (no flux change, no secondary
-/// voltage), draws a real magnetizing current, and scales AC by the turns ratio.
-/// Linear (no Newton); keeps two reactive states (the two branch currents). The
-/// branch pair is allocated consecutively in [`Sim::install`]: `branch_index[i]` is
-/// the primary, `branch_index[i] + 1` the secondary.
+/// **Transformer** (ideal-T model). The first four-terminal element: primary
+/// `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio `n = Ns/Np`. A
+/// magnetising inductance [`TRANSFORMER_L1`] in series with the primary winding
+/// resistance [`TRANSFORMER_RWIND`] sits across the primary; the ideal coupling
+/// *forces* the secondary EMF to `n · V_Lm` — n times the voltage across the
+/// magnetiser — a HARD differential with no series term, while the secondary current
+/// reflects `n·Is` back into the primary KCL. It carries **two** branch unknowns —
+/// the magnetising current `Im` (a->b) and the secondary current `Is` (c->d) — but
+/// only `Im` is reactive (a backward-Euler companion); `Is` is algebraic. So it
+/// blocks DC (as the magnetiser saturates, `V_Lm -> 0` and the secondary collapses),
+/// draws a real magnetizing current, and scales AC by the turns ratio. Crucially the
+/// forced secondary EMF is a HARD voltage differential (like a real source), so a
+/// diode bridge across it rectifies full-wave — a softer secondary (a raw coupled-
+/// inductor pair, or an EMF with series winding resistance) sags under the bridge's
+/// asymmetric load and degenerates to half-wave or latches a runaway
+/// (`docs/sim/transformer-bridge-convergence.md`). Linear (no Newton); keeps one
+/// reactive state (the magnetiser). The branch pair is allocated consecutively in
+/// [`Sim::install`]: `branch_index[i]` is the magnetiser, `branch_index[i] + 1` the
+/// secondary.
 pub const ELEM_TRANSFORMER: u8 = 18;
 
-/// Transformer primary self-inductance, in henries (fixed). High enough that the
-/// magnetizing current is modest at audio frequencies (so the secondary voltage
-/// tracks `n * Vp` cleanly) while staying within the inductor range the dense solve
-/// already conditions for. The secondary inductance scales as `n^2 * TRANSFORMER_L1`.
+/// Transformer **magnetising** inductance, in henries (fixed) — the shunt branch of
+/// the ideal-T model. High enough that the magnetizing current is modest at audio
+/// frequencies (so the secondary EMF `n · V_Lm` tracks `n · Vp` cleanly) while
+/// staying within the inductor range the dense solve already conditions for. The
+/// secondary is coupled ideally (turns ratio `n`) as a hard differential, so there is
+/// no separate secondary inductance or winding resistance — only the primary-side
+/// [`TRANSFORMER_RWIND`] gives the device loss.
 const TRANSFORMER_L1: f64 = 0.5;
 
-/// Transformer coupling coefficient `k` in `M = k*sqrt(L1*L2)` (fixed, just under
-/// 1). A near-unity value couples the windings tightly (little leakage) so the
-/// turns-ratio voltage scaling is clean, while staying `< 1` keeps the inductance
-/// matrix positive-definite (a physical, invertible coupled pair).
-const TRANSFORMER_K: f64 = 0.999;
-
-/// Transformer **primary** winding resistance, in ohms (fixed); the secondary scales
-/// as `n^2 * TRANSFORMER_RWIND` (more turns, more wire), keeping the same `L/R` time
-/// constant on both windings. Small enough to be negligible against the winding
-/// reactance at audio frequencies (so AC turns-ratio scaling stays clean), but
-/// non-zero so a DC drive's primary current **saturates** at `V/R` instead of
-/// ramping forever — which is exactly what lets the transformer **block DC** (once
-/// `dI/dt -> 0` the induced secondary voltage decays to zero). Without it an ideal
-/// coupled-inductor pair would integrate a DC step without bound.
+/// Transformer **primary** winding resistance, in ohms (fixed); it sits in series
+/// with the magnetiser on the primary side. The secondary is an ideal hard
+/// differential and carries no winding resistance of its own (any series term there
+/// would soften the differential and break bridge rectification — see
+/// [`ELEM_TRANSFORMER`]). Small enough to be negligible against the winding reactance
+/// at audio frequencies (so AC turns-ratio scaling stays clean), but non-zero so a DC
+/// drive's magnetising current **saturates** at `V/R` instead of ramping forever —
+/// which is exactly what lets the transformer **block DC** (once `dI/dt -> 0` the
+/// induced secondary voltage decays to zero). Without it an ideal magnetising
+/// inductor would integrate a DC step without bound.
 const TRANSFORMER_RWIND: f64 = 5.0;
 
 /// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
@@ -808,19 +816,6 @@ fn gate_target_level(code: f64, vhigh: f64, v1: f64, v2: f64) -> f64 {
     let in1 = fam.reads_high(v1, vhigh);
     let in2 = fam.reads_high(v2, vhigh);
     fam.drive(gate_logic(code, in1, in2), vhigh).0
-}
-
-/// A transformer's winding inductances and mutual inductance from its turns ratio
-/// `n` (the element's `value`): primary `L1 = TRANSFORMER_L1` (fixed), secondary
-/// `L2 = n^2 * L1`, and mutual `M = TRANSFORMER_K * n * L1` (which equals
-/// `k*sqrt(L1*L2)`). Returns `(L1, L2, M)`. `n` is taken in absolute value so a
-/// reversed (negative) ratio couples with reversed polarity but a sane magnitude.
-#[inline]
-fn transformer_inductances(n: f64) -> (f64, f64, f64) {
-    let l1 = TRANSFORMER_L1;
-    let l2 = n * n * l1;
-    let m = TRANSFORMER_K * n * l1;
-    (l1, l2, m)
 }
 
 /// True for every nonlinear element (any device that drives the Newton outer
@@ -1317,13 +1312,14 @@ pub struct Sim {
     /// Dynamic state carried between steps: for a capacitor (`ELEM_CAPACITOR`),
     /// the previous `V(a) - V(b)`; for an inductor (`ELEM_INDUCTOR`), the
     /// previous branch current `i` (oriented `a -> b`); for a transformer
-    /// (`ELEM_TRANSFORMER`), the previous **primary** current `Ip` (a -> b). Unused
+    /// (`ELEM_TRANSFORMER`), the previous **magnetising** current `Im` (a -> b) — the
+    /// only winding current that carries reactive memory in the ideal-T model. Unused
     /// for other kinds. One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
     /// Second dynamic state, used only by the transformer (`ELEM_TRANSFORMER`): the
-    /// previous **secondary** current `Is` (c -> d). The coupled-inductor companion
-    /// needs both winding currents from the previous step, so this carries the
-    /// secondary while [`Sim::reactive_state`] carries the primary. `0.0` for every
+    /// previous **secondary** current `Is` (c -> d). The secondary is algebraic in the
+    /// ideal-T model, so this is needed only to prime the operating point; the
+    /// transient stamp reads it from the solved vector each step. `0.0` for every
     /// other element. One entry per element, indexed in lockstep with `elements`.
     reactive_state_b: Vec<f64>,
     /// The D flip-flop's stored bit (`0.0` or `1.0`): the value latched at the last
@@ -1584,8 +1580,8 @@ impl Sim {
     fn install(&mut self, node_count: usize, elements: Vec<Element>) {
         // Branch-current unknowns are appended after the node voltages, in
         // ascending element index, for voltage sources and inductors (one each) and
-        // the transformer (TWO consecutive: `branch_index[i]` is the primary current
-        // `Ip` and `branch_index[i] + 1` the secondary current `Is`).
+        // the transformer (TWO consecutive: `branch_index[i]` is the magnetising
+        // current `Im` and `branch_index[i] + 1` the secondary current `Is`).
         let node_unknowns = node_count - 1;
         let mut branch_index = vec![usize::MAX; elements.len()];
         let mut next = node_unknowns;
@@ -2147,10 +2143,12 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
-                    // The transformer reports its PRIMARY current (branch_index[i]);
-                    // the secondary current lives at branch_index[i] + 1.
-                    x[self.branch_index[i]]
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_TRANSFORMER => {
+                    // Primary current drawn a -> b is the magnetising current plus the
+                    // reflected secondary load: Im + n·Is (branch_index[i] = Im, +1 = Is).
+                    let bi = self.branch_index[i];
+                    x[bi] + e.value * x[bi + 1]
                 }
                 ELEM_ISOURCE => e.value,
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
@@ -3118,10 +3116,12 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
-                    // The transformer reports its PRIMARY current (branch_index[i]);
-                    // the secondary current lives at branch_index[i] + 1.
-                    x[self.branch_index[i]]
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_TRANSFORMER => {
+                    // Primary current drawn a -> b is the magnetising current plus the
+                    // reflected secondary load: Im + n·Is (branch_index[i] = Im, +1 = Is).
+                    let bi = self.branch_index[i];
+                    x[bi] + e.value * x[bi + 1]
                 }
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
@@ -3188,27 +3188,37 @@ impl Sim {
         e: &Element,
         i: usize,
     ) {
-        let bi_p = self.branch_index[i];
-        let bi_s = bi_p + 1;
-        let (l1, l2, m) = transformer_inductances(e.value);
-        let (g1, g2, gm) = (l1 / DT, l2 / DT, m / DT);
-        // Winding resistances: primary fixed, secondary scaled by n^2 (so both
-        // windings share the same L/R time constant). They sit in series with each
-        // winding, so they add to that branch row's diagonal.
+        // Ideal-transformer "T" model (docs/sim/transformer-bridge-convergence.md §6):
+        // a magnetising inductance L1 (with primary winding resistance Rp) across the
+        // primary, an IDEAL turns-ratio coupling that *forces* the secondary EMF to
+        // n·V_Lm — n times the voltage across the magnetiser, a HARD differential
+        // exactly like a real voltage source — the secondary winding resistance Rs in
+        // series, and the secondary current reflected n·Is back into the primary. The
+        // hard ratio is what lets a diode bridge rectify full-wave: a raw coupled-
+        // inductor pair is only a SOFT differential (its winding voltage sags under the
+        // bridge's asymmetric load) and degenerates to half-wave. Coupling to V_Lm (not
+        // the terminal voltage V(a)-V(b)) is what keeps DC blocked — V_Lm -> 0 as the
+        // magnetiser saturates. It also drops the near-singular 1/(1-k²) coupled matrix
+        // entirely. Two branch unknowns: Im (magnetiser, a→b) and Is (secondary, c→d);
+        // only Im carries reactive memory.
+        let n = e.value;
+        let bi_m = self.branch_index[i]; // magnetising current Im (a -> b)
+        let bi_s = bi_m + 1; // secondary current Is (c -> d)
+        let g_mag = TRANSFORMER_L1 / DT; // backward-Euler companion of the magnetiser
         let rp = TRANSFORMER_RWIND;
-        let rs = e.value * e.value * TRANSFORMER_RWIND;
-        let ip_prev = self.reactive_state[i];
-        let is_prev = self.reactive_state_b[i];
+        let im_prev = self.reactive_state[i];
         let ia = Self::node_idx(e.a);
         let ib = Self::node_idx(e.b);
         let ic = Self::node_idx(e.c);
         let id = Self::node_idx(e.d);
-        // KCL: Ip injects a->b, Is injects c->d.
+        // KCL: the primary draws Im + n·Is (a -> b); the secondary carries Is (c -> d).
         if let Some(r) = ia {
-            mat[r * dim + bi_p] += 1.0;
+            mat[r * dim + bi_m] += 1.0;
+            mat[r * dim + bi_s] += n;
         }
         if let Some(r) = ib {
-            mat[r * dim + bi_p] -= 1.0;
+            mat[r * dim + bi_m] -= 1.0;
+            mat[r * dim + bi_s] -= n;
         }
         if let Some(r) = ic {
             mat[r * dim + bi_s] += 1.0;
@@ -3216,27 +3226,39 @@ impl Sim {
         if let Some(r) = id {
             mat[r * dim + bi_s] -= 1.0;
         }
-        // Primary branch row: V(a)-V(b) - g1*Ip - gm*Is = -(g1*Ip_prev + gm*Is_prev).
+        // Magnetising branch row: V(a)-V(b) - (g_mag + rp)·Im = -g_mag·Im_prev.
         if let Some(r) = ia {
-            mat[bi_p * dim + r] += 1.0;
+            mat[bi_m * dim + r] += 1.0;
         }
         if let Some(r) = ib {
-            mat[bi_p * dim + r] -= 1.0;
+            mat[bi_m * dim + r] -= 1.0;
         }
-        mat[bi_p * dim + bi_p] -= g1 + rp;
-        mat[bi_p * dim + bi_s] -= gm;
-        rhs[bi_p] -= g1 * ip_prev + gm * is_prev;
-        // Secondary branch row: V(c)-V(d) - gm*Ip - g2*Is = -(gm*Ip_prev + g2*Is_prev).
+        mat[bi_m * dim + bi_m] -= g_mag + rp;
+        rhs[bi_m] -= g_mag * im_prev;
+        // Ideal-transformer secondary row. The secondary EMF tracks the voltage
+        // across the MAGNETISING inductance (n·V_Lm), NOT the full primary terminal
+        // voltage: that is what lets the device still block DC (as Im saturates,
+        // V_Lm -> 0 and the secondary collapses) while passing AC. The differential is
+        // forced HARD (no series Is term, exactly like an ideal voltage source) so a
+        // diode bridge rectifies full-wave: any series winding resistance here would
+        // make V(c)-V(d) sag with Is, and a bridge charging a cap would then latch the
+        // wrong diode pair and run away (the cap voltage feeds positive into Is). The
+        // primary-side rp still gives the device loss and DC-blocking. Backward-Euler
+        // gives the inductor voltage V_Lm = g_mag·(Im - Im_prev), so
+        //   V(c) - V(d) = n·g_mag·(Im - Im_prev)
+        //   <=>  V(c) - V(d) - n·g_mag·Im = -n·g_mag·Im_prev.
         if let Some(r) = ic {
             mat[bi_s * dim + r] += 1.0;
         }
         if let Some(r) = id {
             mat[bi_s * dim + r] -= 1.0;
         }
-        mat[bi_s * dim + bi_s] -= g2 + rs;
-        mat[bi_s * dim + bi_p] -= gm;
-        rhs[bi_s] -= gm * ip_prev + g2 * is_prev;
-        // Ground floor on every winding terminal (isolation safety net).
+        mat[bi_s * dim + bi_m] -= n * g_mag;
+        rhs[bi_s] -= n * g_mag * im_prev;
+        // Anti-singularity floor on every winding terminal (isolation safety net). The
+        // hard forced differential keeps even a floating bridge load stable, so the
+        // secondary needs no stronger common-mode reference than the primary — the
+        // device stays galvanically isolated.
         for t in [ia, ib, ic, id].into_iter().flatten() {
             mat[t * dim + t] += GMIN;
         }
@@ -3365,8 +3387,11 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                 }
                 ELEM_TRANSFORMER => {
-                    // Store both new winding currents: primary Ip at branch bi, the
-                    // secondary Is at bi + 1 (allocated consecutively in `install`).
+                    // Store both new winding currents: the magnetising current Im at
+                    // branch bi (the only one that carries reactive memory — the
+                    // companion's history term), and the secondary current Is at bi + 1
+                    // (allocated consecutively in `install`; algebraic, kept for the
+                    // operating-point priming).
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                     self.reactive_state_b[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
@@ -5108,12 +5133,14 @@ mod tests {
         );
     }
 
-    // --- Transformer (coupled inductors, four-terminal) -----------------------
+    // --- Transformer (ideal-T model, four-terminal) ---------------------------
     //
-    // The transformer (type 18) is two magnetically coupled inductors: primary
-    // a/b, secondary c/d, `value` = turns ratio n. It carries two coupled branch
-    // currents, blocks DC (winding resistance lets the primary current saturate),
-    // and scales AC by ~k*n. Linear (no Newton), two reactive states.
+    // The transformer (type 18) is an ideal-T model: a magnetising inductance
+    // across the primary a/b and a secondary c/d whose EMF is forced to n·V_Lm,
+    // `value` = turns ratio n. It carries a magnetising branch current and an
+    // algebraic secondary current, blocks DC (winding resistance lets the
+    // magnetising current saturate, collapsing V_Lm), and scales AC by n. Linear
+    // (no Newton), one reactive state (the magnetiser).
 
     /// Drive the transformer primary with a 1 kHz, 5 V AC source and a near-open
     /// (10 k) secondary referenced to ground, run past the start-up transient, and
@@ -5146,20 +5173,20 @@ mod tests {
         ((p_hi - p_lo) / 2.0, (s_hi - s_lo) / 2.0)
     }
 
-    /// The secondary AC voltage is the primary's, scaled by ~k*n: a step-up (n = 2)
-    /// roughly doubles it and a step-down (n = 0.5) roughly halves it.
+    /// The secondary AC voltage is the primary's, scaled by the turns ratio n: a
+    /// step-up (n = 2) roughly doubles it and a step-down (n = 0.5) roughly halves it.
     #[test]
     fn transformer_scales_ac_by_turns_ratio() {
         let (vp, vs) = transformer_ac_amps(2.0);
         let ratio = vs / vp;
         assert!(
-            (ratio - TRANSFORMER_K * 2.0).abs() < 0.25,
+            (ratio - 2.0).abs() < 0.25,
             "step-up x2: secondary/primary = {ratio} (expected ~2)"
         );
         let (vp2, vs2) = transformer_ac_amps(0.5);
         let ratio2 = vs2 / vp2;
         assert!(
-            (ratio2 - TRANSFORMER_K * 0.5).abs() < 0.15,
+            (ratio2 - 0.5).abs() < 0.15,
             "step-down x0.5: secondary/primary = {ratio2} (expected ~0.5)"
         );
     }
@@ -5256,6 +5283,98 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "transformer circuit must reproduce exactly");
+    }
+
+    /// A transformer feeding a diode **full bridge** must rectify **full-wave**: all
+    /// four diodes conduct (each half-cycle uses a diagonal pair), both secondary
+    /// terminals swing symmetrically about the output common-mode, and the smoothed
+    /// output settles near `Vsec_peak - 2*Vf` with low ripple. This is the regression
+    /// that drove the move from a coupled-inductor model (a soft differential that
+    /// sagged to half-wave under the bridge's asymmetric load) to the ideal-T model
+    /// (a hard forced ratio). See `docs/sim/transformer-bridge-convergence.md`.
+    #[test]
+    fn transformer_bridge_rectifies_full_wave() {
+        // Nodes: 0 = gnd = OUT-, 1 = AC+/primary+, 2 = secondary P, 3 = secondary N,
+        // 4 = OUT+. Bridge: D1 sp->out+, D2 sn->out+, D3 gnd->sp, D4 gnd->sn.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            5,
+            &[
+                ELEM_ACSOURCE,
+                ELEM_TRANSFORMER,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_CAPACITOR,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 0, 0, 4, 4], // a
+            &[0, 0, 4, 4, 2, 3, 0, 0], // b
+            &[0, 2, 0, 0, 0, 0, 0, 0], // c (transformer secondary +)
+            &[0, 3, 0, 0, 0, 0, 0, 0], // d (transformer secondary -)
+            &[60.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0e-4, 1000.0],
+            &[12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // AC amplitude 12 V
+        ));
+        // Run ~9 line cycles (60 Hz -> 16.7 ms; dt = 2 us -> 8333 ticks/cycle) so the
+        // 100 uF / 1 k output (tau = 0.1 s) settles, then measure over the last ~1.5.
+        let (mut out_hi, mut out_lo) = (f64::MIN, f64::MAX);
+        let (mut sp_hi, mut sp_lo) = (f64::MIN, f64::MAX);
+        let (mut sn_hi, mut sn_lo) = (f64::MIN, f64::MAX);
+        let mut d_peak = [0.0f64; 4]; // peak forward current per diode (elems 2..6)
+        let mut i_primary_peak = 0.0f64;
+        for tk in 0..75_000 {
+            sim.step();
+            if tk >= 62_000 {
+                let v = sim.state();
+                out_hi = out_hi.max(v[4]);
+                out_lo = out_lo.min(v[4]);
+                sp_hi = sp_hi.max(v[2]);
+                sp_lo = sp_lo.min(v[2]);
+                sn_hi = sn_hi.max(v[3]);
+                sn_lo = sn_lo.min(v[3]);
+                let ic = sim.element_currents();
+                for k in 0..4 {
+                    d_peak[k] = d_peak[k].max(ic[2 + k]);
+                }
+                i_primary_peak = i_primary_peak.max(ic[1].abs());
+            }
+        }
+        let ripple = out_hi - out_lo;
+        // 1) Every diode conducts a real forward current (full bridge, not half-wave).
+        for (k, &p) in d_peak.iter().enumerate() {
+            assert!(
+                p > 1.0e-3,
+                "diode D{} barely conducts ({p} A): not full-wave",
+                k + 1
+            );
+        }
+        // 2) Both secondary terminals swing through a comparable span (neither is
+        //    pinned near a constant level the way the broken soft-differential did).
+        let sp_span = sp_hi - sp_lo;
+        let sn_span = sn_hi - sn_lo;
+        assert!(
+            sp_span > 5.0 && sn_span > 5.0,
+            "a secondary terminal is pinned (sp span {sp_span}, sn span {sn_span})"
+        );
+        assert!(
+            (sp_span - sn_span).abs() < 0.25 * sp_span.max(sn_span),
+            "secondary terminals swing asymmetrically (sp {sp_span}, sn {sn_span})"
+        );
+        // 3) Output is a sensible smoothed DC near Vsec_peak - 2*Vf with low ripple,
+        //    and the primary current stays bounded (no DC runaway / inrush blow-up).
+        assert!(
+            out_lo > 6.0 && out_hi < 12.0,
+            "output not a sane rectified DC level (lo {out_lo}, hi {out_hi})"
+        );
+        assert!(
+            ripple < 2.0,
+            "output ripple too large for full-wave smoothing: {ripple} V"
+        );
+        assert!(
+            i_primary_peak < 20.0,
+            "primary current ran away (peak {i_primary_peak} A)"
+        );
     }
 
     // --- D flip-flop (edge-triggered one-bit memory) --------------------------

@@ -9,7 +9,14 @@ impossible current spike**, surveys the established cures with their math and
 determinism trade-offs, and ends with a single concrete, sized, bit-reproducible
 fix recommendation. **No code is changed by this note.**
 
-> TL;DR — The bridge and the floating-node handling are not the bug. The bug is
+> **⚠ Status (2026-06-16): §0–§5 are the original research note; its lead
+> recommendation (§4, a secondary→ground reference resistor) was empirically
+> falsified — see §6 — and the implemented fix is in §7.** Read §6 and §7 first;
+> §0–§5 are kept verbatim as the investigation record. The shipped fix is the
+> ideal-T model with a *hard* secondary differential (no series resistance, no
+> common-mode reference resistor).
+
+> TL;DR (original) — The bridge and the floating-node handling are not the bug. The bug is
 > that the transformer's **secondary common-mode voltage is unconstrained**:
 > its only DC tie to ground is `GMIN = 1e-12` S per node (`lib.rs:856`,
 > `lib.rs:3240`), which is *symmetric* and therefore lets the off-diodes'
@@ -593,3 +600,66 @@ a bonus, removes the `1/(1−k²)` ill-conditioning of §1.5. It is a real model
 the acceptance bar: all four diodes conduct in alternating pairs, `Vout ≈ Vsec_pk − 2·Vf`,
 no spurious current spikes, no DC-current runaway. The single-resistor and GMIN-stepping
 remedies of §2–§4 are **not** sufficient for this symptom.
+
+---
+
+## 7. IMPLEMENTED FIX (lead, 2026-06-16) — ideal-T with a *purely* hard secondary
+
+The §6 fix is implemented and shipped. The model is now the ideal-T of §2.6, with two
+refinements that the implementation forced and that are worth recording because they
+contradict the earlier sizing advice.
+
+### What was built (`stamp_transformer`, `stamp_transformer_op`)
+Two branch unknowns per device: the magnetising current `Im` (a→b, the only reactive
+state) and the secondary current `Is` (c→d, algebraic). With `g_mag = L1/DT`,
+`rp = TRANSFORMER_RWIND`:
+- **KCL** — primary draws `Im + n·Is` (a→b); secondary carries `Is` (c→d). The `n·Is`
+  is the CCCS reflecting the secondary load back to the primary.
+- **Magnetising row** — `V(a) − V(b) − (g_mag + rp)·Im = −g_mag·Im_prev` (a backward-
+  Euler inductor companion with series primary winding resistance).
+- **Secondary row (HARD differential)** — `V(c) − V(d) − n·g_mag·Im = −n·g_mag·Im_prev`,
+  i.e. `V(c) − V(d) = n·V_Lm` where `V_Lm = g_mag·(Im − Im_prev)` is the backward-Euler
+  voltage across the **magnetiser**.
+
+The crucial subtlety is that the secondary EMF is forced to `n·V_Lm` (the magnetiser
+voltage), **not** `n·(V(a) − V(b))` (the primary terminal voltage). That is what keeps
+DC blocked: as a DC drive saturates `Im` against `rp`, `dIm/dt → 0`, `V_Lm → 0`, and the
+secondary collapses — verified by `transformer_blocks_dc`. The primary current readout is
+`Im + n·Is`.
+
+### Refinement 1 — the secondary must carry **no** series resistance
+The first cut put the reflected winding resistance `rs = n²·rp` in series on the secondary
+row (`V(c) − V(d) = n·V_Lm − rs·Is`). It **ran away**: feeding the bridge, one terminal
+pinned at −Vf (a clamp diode) while the other ramped to +100 V and `Is` climbed past 25 A,
+monotonically. Mechanism — with a series `rs`, `V(c) − V(d)` *sags* with `Is` (a soft
+Thévenin again), which lets the bridge latch the **wrong** diagonal (the pair opposing the
+EMF polarity); in that state `Is = [n·V_Lm + Vcap + 2·Vf]/rs` **grows with the cap
+voltage**, so charging the cap pumps more current, which charges the cap — positive
+feedback. Setting `rs = 0` makes `V(c) − V(d)` a *hard* differential: the wrong-diagonal
+state becomes algebraically impossible (forcing `V(c) − V(d) = +n·V_Lm` makes node c > node
+d, which cannot coexist with the opposing pair conducting), exactly like the ideal voltage
+source of §6. So the secondary winding resistance is dropped; `rp` on the primary side
+still supplies the device's loss and the DC-blocking saturation. (A future "full" T-model
+could restore secondary copper loss as a *series resistor on an internal node outside* the
+ideal coupling, which does not soften the forced differential — deferred, not needed.)
+
+### Refinement 2 — **no common-mode reference resistor is needed** (§4 was a red herring)
+A floating differential source feeding the bridge does **not** need the §4 secondary→ground
+resistor. The baseline test (a floating AC source — *zero* common-mode tie beyond the
+`1e-12` GMIN floor — into the identical bridge + 100 µF + 1 kΩ) rectifies full-wave
+perfectly: clean 10.4 V DC, all four diodes at 0.138 A, never exceeding 10.8 V. An interim
+`1 MΩ` secondary→ground reference was tried and then **removed** after confirming the
+hard-differential transformer is just as stable with the GMIN-only floor (diode currents
+become *exactly* symmetric, D1 = D4, D2 = D3). Removing it preserves the transformer's
+galvanic isolation. So §1.2's "balanced-leakage divider pins the common mode" was never the
+operative failure for a hard source — it only bit the soft coupled-inductor model.
+
+### Acceptance (regression `transformer_bridge_rectifies_full_wave`)
+A 12 V-peak (n = 1) secondary into a 4-diode bridge + 100 µF + 1 kΩ now gives **Vout ≈
+9.96–10.85 V** (`≈ Vsec_pk − 2·Vf`), ripple ≈ 0.9 V, **all four diodes conducting** in
+alternating pairs (0.12 / 0.155 A), primary current bounded ≈ 0.19 A — **no spike, no DC
+runaway**. The test asserts each diode conducts, both secondary terminals swing a
+comparable span (neither pinned), the output is a sane smoothed DC, and the primary current
+stays bounded. `transformer_scales_ac_by_turns_ratio` now expects the ratio = `n` exactly
+(the ideal coupling has no `k` factor; `TRANSFORMER_K` was removed). The analog-RC main
+golden (`run_is_reproducible`) is untouched — it has no transformer.

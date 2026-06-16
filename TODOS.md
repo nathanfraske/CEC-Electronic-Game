@@ -12,27 +12,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**`formatValue` ate integer trailing zeros** → 470 µF shown as "47 µF", 100 Ω as
   "1 Ω", 120 V as "12 V", 100 kΩ as "1 kΩ" (any 100–999 mantissa ending in 0, 10×
   too small). Fixed: only strip zeros after a decimal point. Web-only.~~
-- [ ] **sim-core: a diode bridge off a transformer doesn't rectify (HARD) — DIAGNOSED,
-  fix = transformer model rewrite.** Full research + verification in
-  **`docs/sim/transformer-bridge-convergence.md`** (note: §1–§4 recommend a
-  secondary→ground resistor; **§6 = my verification proves that is WRONG and doesn't
-  work**). Verified root cause: the coupled-inductor secondary is a **soft differential**
-  source (its `V(in1)−V(in2)` depends on a free branch-current unknown), so under the
-  bridge's asymmetric load the winding voltage sags, one terminal pins at V(out)/2, the
-  other swings, and only 2 of 4 diodes conduct (+ a runaway DC magnetising current,
-  8.5→9.9 A, that a non-saturating linear core can't restrain). A **voltage source**
-  (hard differential, `V=E` forced) works at any series impedance (0–50 Ω) — confirmed —
-  because it forces both terminals to swing symmetrically about a *steady* out/2
-  common-mode (instrumented: working cm steady at out/2 with both terminals swinging vs
-  broken cm swinging with one terminal pinned). **Ruled out by test:** secondary→ground
-  resistor (1 kΩ–1 MΩ, single + center-tap), lowering k (0.9), branch-current clamp
-  (±1 A core-sat proxy), damping R across secondary, longer settling. **Correct fix:**
-  the **ideal-transformer + magnetising/leakage ("T") model** — stamp the secondary as a
-  forced ratio `V_s = n·V_p` in series with leakage L + winding R, a CCCS reflecting
-  `Ip += n·Is`, and a magnetising L across the primary (also removes the `1/(1−k²)`
-  conditioning hazard). Real rewrite of `stamp_transformer`/`_op`, **golden-regenerating**.
-  Acceptance: all 4 diodes conduct in alternating pairs, `Vout ≈ Vsec_pk − 2·Vf`, no
-  current spikes, no DC runaway. Then run an audit agent over it (owner asked).
+- ~~**sim-core: a diode bridge off a transformer doesn't rectify (HARD) — FIXED.**
+  Rewrote `stamp_transformer`/`stamp_transformer_op` from coupled-inductor to the
+  **ideal-T model**: a magnetising inductance `Im` (+ primary winding R `rp`) across the
+  primary, the secondary EMF forced **hard** to `n·V_Lm` (n × the *magnetiser* voltage,
+  NOT the terminal voltage — that's what keeps DC blocked), the secondary current
+  reflected `n·Is` into the primary KCL. Readout = `Im + n·Is`. Two refinements the
+  build forced (see `transformer-bridge-convergence.md` §7): (1) the secondary carries
+  **zero** series resistance — a `rs·Is` term softens the differential and the bridge
+  runs away (positive feedback `Is = [n·V_Lm+Vcap+2Vf]/rs` grows with the cap); `rp` on
+  the primary still gives loss + DC-block saturation. (2) **No** secondary→ground
+  common-mode resistor is needed (§4 was a red herring) — a floating AC-source baseline
+  rectifies full-wave on the GMIN-only floor, so isolation is preserved. Removed the now-
+  unused `TRANSFORMER_K`/`transformer_inductances`. New regression
+  `transformer_bridge_rectifies_full_wave` (all 4 diodes conduct, Vout ≈ Vsec_pk−2Vf ≈
+  10.4 V, ripple ~0.9 V, Iprim ~0.19 A, no spike/runaway); `transformer_scales_ac` now
+  expects ratio = n (no k). Main analog-RC golden untouched. All gates green; audit agent
+  dispatched (owner asked).~~
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay

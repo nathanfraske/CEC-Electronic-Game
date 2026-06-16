@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 — Transformer→bridge FIXED (ideal-T, hard secondary)
+
+**State:** 🟢 Green (all gates: fmt, clippy, 89 sim-core tests + 1 ignored, wasm build,
+web check/lint/build). **Not yet committed/pushed** — uncommitted on
+`claude/kind-turing-hdelb3`. An **audit agent is still running** in the background
+(owner asked for one); fold its findings in before/after pushing.
+
+**What changed (`crates/sim-core/src/lib.rs`):** rewrote the transformer from a
+coupled-inductor pair to an **ideal-T model**. Two branches: magnetising `Im` (a→b, the
+only reactive state) + secondary `Is` (c→d, algebraic). Magnetiser row is a backward-
+Euler inductor companion with primary winding R `rp`; the **secondary is a HARD
+differential** `V(c)−V(d) = n·V_Lm` where `V_Lm = g_mag·(Im−Im_prev)` is the magnetiser
+voltage (NOT the terminal voltage — coupling to `V_Lm` is what blocks DC). Primary KCL
+draws `Im + n·Is`; current readout = `Im + n·Is`.
+
+**Two hard-won refinements** (full writeup: `docs/sim/transformer-bridge-convergence.md`
+§7; the §6 verification already killed the §1–§4 "secondary→ground resistor" idea):
+1. **Secondary has zero series resistance.** A `rs·Is` term softens the differential →
+   under a bridge charging a cap it latches the wrong diode pair and runs away (positive
+   feedback, `Is` climbed past 25 A in the trace). `rs = 0` makes the wrong state
+   algebraically impossible. `rp` (primary) still gives loss + DC-block.
+2. **No common-mode reference resistor.** Proved via a floating-AC-source baseline that
+   the bridge rectifies full-wave on the GMIN-only floor; an interim 1 MΩ tie was added
+   then **removed** (preserves galvanic isolation, diode currents become exactly
+   symmetric). §4 of the research note was a red herring for a *hard* source.
+
+Removed now-dead `TRANSFORMER_K` + `transformer_inductances`. Updated all transformer
+doc-comments. `transformer_scales_ac_by_turns_ratio` now expects ratio = **n** (no k).
+New regression **`transformer_bridge_rectifies_full_wave`**: 12 V-pk / n=1 / bridge /
+100 µF / 1 kΩ → Vout 9.96–10.85 V, ripple ~0.9 V, **all 4 diodes** (0.12/0.155 A),
+Iprim ~0.19 A, no spike/runaway. **Main analog-RC golden `run_is_reproducible`
+untouched** (no transformer in it); `transformer_run_is_reproducible` still self-checks.
+
+**Next:** (1) await audit agent, address findings; (2) commit + push; (3) the owner's
+next ask is the **digital scheduler** ("we can do the scheduler after"). Optional: a
+step-down + step-up bridge variant test, and the FBR curriculum example (TODOS).
+
+---
+
 ## 2026-06-15 (eve) — Merged to live (#63), 3-tier info panel, onboarding MVP
 
 **State:** 🟢 Green (all gates). **PR #63 merged to `main` → deployed to live** for
