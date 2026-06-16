@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (afternoon) — Tiers on the board + owner review fixes
+
+**State:** 🟢 Green — full gate set passes (cargo fmt/clippy/test 102 incl. determinism;
+build:wasm; web check/lint/build). Branch `claude/kind-turing-hdelb3` (reset onto main after
+the #74 squash, new commits on top). Pure presentation — no Rust/golden touch. Headed to main
+(owner's iterate-on-main loop).
+
+**Addressed the owner's review of the deployed tiers (all 7 notes + the zener follow-up):**
+1. **Tiers on the board** — board lens is now 3-way (Schematic / Analogy / Reality), replacing
+   schematic↔factory. A part shows the schematic symbol as the overview; **zoomed in past
+   `TIER_ZOOM` (board.ts, =2.2)** the analogy/reality lens morphs it into the full-panel
+   illustration drawn into the part footprint (new `tierGlyph` on `ComponentNode`, centred at
+   `(wPx/2,hPx/2)`, animated from the same live state + shared phase). A working LOD: zoom-in
+   adds detail, zoom-out is clean + cheap. **This is the bit built without a live eyeball — most
+   likely to need tuning** (TIER_ZOOM threshold, the footprint `bounds` = `wPx/2+PITCH*0.7` /
+   `max(hPx/2+…, hw*0.6)`, possible off-screen-cull for cost on big boards).
+2. **Resistor reality** — rebuilt as the **conductor-lattice** view (resistor-tiers tier 3):
+   jiggling + ion cores, electrons drifting toward + and scattering, heat glow/smoke. (Was a
+   colour-band rod.)
+3. **Info-panel clipping** — electrolytic two-tank, BJT + MOSFET reservoirs were overflowing;
+   pulled them inside the canvas (proportional heights).
+4. **Transformer analogy** — wheels now **rock back and forth** (AC hinge on the shared phase
+   clock, amplitude ride drive) instead of one continuous spin; strap ticks shuttle.
+5. **Info tab defaults to the board lens** — `diagramMode` defaults to `boardLens` on
+   selection/double-click (untracked, still toggleable).
+6. **Diode analogy** — ball now lifts **downstream** (toward cathode) when forward (was
+   backwards); decluttered.
+7. **Diode reality** — rebuilt as the **PN-junction cutaway** (diode-factory.html): P|depletion|N,
+   carriers crossing + recombining, depletion width tracks bias, LED photons, Schottky = electrons.
+   **+ Zener analogy** rebuilt to the check-valve+spillway doc (no longer scrunched).
+
+**Files:** `web/src/lib/board.ts` (BoardLens + TIER_ZOOM + ComponentNode.tierGlyph),
+`web/src/App.svelte` (3-way lens button `cycleLens`, info-tab default), `analogyDrawers.ts`
+(transformer/diode/zener/EC/BJT/MOSFET), `detailDrawers.ts` (resistor + diode reality).
+`Board.setStyle` is now unused (App calls `setLens`); left in place.
+
+**Caveats unchanged:** BJT/MOSFET reality gate cue off |I| (no Vgs/Ib); transformer reality |Ip|
+flux proxy. Still no live screenshot of the board-tier LOD — verify thresholds/positioning there.
+
+---
+
 ## 2026-06-16 (overnight) — Part-demo tiers: animation fixed + all batch-1/2 tiers built
 
 **State:** 🟢 Green — all web gates pass (`format`/`check`/`lint`/`build`); no Rust/golden

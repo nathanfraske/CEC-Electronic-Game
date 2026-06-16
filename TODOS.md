@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (afternoon) — tiers on the board + owner review fixes
+
+- ~~**Tiers on the board (LOD)** — DONE. 3-way board lens (Schematic/Analogy/Reality); a part
+  morphs into its full-panel illustration once zoomed past `TIER_ZOOM` (board.ts), else the
+  schematic symbol. `ComponentNode.tierGlyph` + `Board.setLens`. **Needs an owner eyeball:**
+  threshold + footprint bounds + possible off-screen cull.~~
+- ~~**Resistor reality** = conductor lattice + drifting electrons + heat (was a colour-band rod).~~
+- ~~**Diode reality** = PN-junction cutaway (P|depletion|N, recombination, LED photons, Schottky).~~
+- ~~**Info-panel clipping** fixed (electrolytic tanks, BJT/MOSFET reservoirs pulled in-bounds).~~
+- ~~**Transformer analogy** rocks back-and-forth (AC hinge) on the shared clock; strap shuttles.~~
+- ~~**Info tab defaults to the board lens** (untracked; still toggleable).~~
+- ~~**Diode analogy** ball lifts downstream when forward (was backwards) + decluttered.~~
+- ~~**Zener analogy** rebuilt to the check-valve+spillway doc (no longer scrunched).~~
+- [ ] **Board-tier LOD polish (owner review):** tune `TIER_ZOOM`; consider a cross-fade across
+  the threshold; cull off-screen parts when drawing tier illustrations on large boards (cost).
+
 ## 2026-06-16 (overnight) — part-demo tiers: animation fix + all batch-1/2 tiers built
 
 - ~~**Animation feedback (owner): slow down, de-jitter, pause-and-flow-with-time** — DONE.
