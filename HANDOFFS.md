@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (evening 2) — Transformer flux exposed; cap-spring; review-batch in progress
+
+**State:** 🟢 Green — full gates (cargo fmt/clippy/test 102 incl. determinism +
+`transformer_*`; build:wasm; web check/lint/build). Branch `claude/kind-turing-hdelb3`.
+
+**Done this stretch (owner's big review batch — partial):**
+1. **Transformer flux exposed + driven from it.** The owner asked why a bridge shows
+   asymmetric flux bias if "flux isn't modelled" — it IS (the magnetising current `Im`
+   is a reactive store; I'd conflated *modelled* with *exposed*). Surfaced it read-only
+   (golden-safe, not hashed): `sim-core::reactive_currents()` → wasm →
+   `Snapshot.reactiveCurrents` (interpolated in `lerpSnapshot`) → `electricalMap` →
+   `ElectricalState.flux`. The transformer analogy + reality now read `flux`: wheels
+   rock to where the flux sits (DC bias → off-centre, heavy drive → pins a sat end),
+   core-flux loop brightness/direction follow real flux. Best under slow-mo. Confirmed
+   the high-step-up bridge is *bounded* (so 601 V from US-mains×step-up is correct, not
+   a bug — `transformer_bridge_high_stepup_inrush_bounded`).
+2. **Ceramic-cap spring greatly exaggerated** (sensitive signed-norm of Vc + bigger
+   throw) so the piston/spring visibly works at realistic Vc.
+
+**Still TODO from the same batch (NOT done):**
+- **Zoom LOD: 3 levels + toggle + zoom in further.** Currently 2 (schematic ↔ one tier
+   illustration past `TIER_ZOOM`). Owner wants a *deeper* level = the design sheet 1:1
+   (likely needs text labels in drawers — an architecture question to confirm), a
+   slightly-simplified middle (current), and a toggle to disable the LOD. Raise
+   `MAX_SCALE` (board.ts ~90).
+- **Pinout clutter on the board.** The tier illustration draws its own decorative
+   `stud()`s AND the real pin dots show → doubled terminals. Add a `studs?: boolean` to
+   TierOpts (board passes false; info panel keeps them) and gate the drawers' terminal studs.
+- **Electrolytic two-tank: remove the "matched-level guide" line** across the tops
+   (analogyDrawers `drawAnalogyElectrolyticCap`) — owner says it implies more than "fill/drain".
+- **Transistors not moving proportionally** — BJT/MOSFET plug-lift uses `norm(current)`;
+   make it a sensitive signed response like the cap spring (current only exposes the main
+   through-current + node0−node1 V, not the gate/base control — note the limit).
+
+---
+
 ## 2026-06-16 (evening) — Scope smoothing/auto, slow playback, render interpolation
 
 **State:** 🟢 Green — full gates pass (cargo fmt/clippy/test 102 incl. determinism; build:wasm;
