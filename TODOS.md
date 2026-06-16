@@ -23,8 +23,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
     Needed **no golden regen** (digital tests are behaviour + self-consistency; RC/0xeaac
     has no digital parts and is untouched). New tests: ring oscillator, multi-driver
     resolve, per-tick lockstep DFF replay. All gates green.~~
-  - [ ] **Stage 3 (follow-up)** — web threading: family chips, noise-margin / forbidden-
-    band readouts, surface XNOR/BUF. **Stage 4** — open-drain/wired-AND + level-shifter.
+  - ~~**Stage 3 — logic families + XNOR/BUF.** Shipped: XNOR/BUF surfaced on the board
+    (PART_KINDS, type-17 map, codes 5/7, glyphs, palette, partInfo, pinout, values);
+    sim-core `FAMILIES` (Ideal/CMOS/TTL) packed in aux upper bits (`func + 16*family`),
+    wired through eval_digital/stamp_digital/commit/DFF via per-net `digital_family`,
+    golden-stable (Ideal default); web `families.ts` mirror + `Component.family` +
+    buildNetlist aux pack + `setComponentFamily` + App.svelte family chip picker & noise-
+    margin readout. Test `gate_family_levels_and_mixed_rail` (the level-shifter lesson).~~
+  - [ ] **Stage 4 (follow-up)** — open-drain driver (release high → Z) + wired-AND bus
+    (open-drain + pull-up, resolved by MNA) + level-shifter part (all golden-additive).
 
 ## 2026-06-15
 

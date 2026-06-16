@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (eve) — Stage 3 DONE; whole batch ready to ship (review audit pending)
+
+**State:** 🟢 Green (fmt, clippy, **95 sim-core tests**, wasm, web check/lint/build).
+Branch `claude/kind-turing-hdelb3` is **~18 commits ahead of `main`** and **not merged**
+— so NONE of this is live yet (GitHub Pages deploys from `main`). The owner wants to
+**ship the whole batch together after a review audit**.
+
+**The full unshipped batch (oldest→newest):** transformer ideal-T bridge fix + audit
+follow-ups → digital scheduler Stages 1–2 (net classification, event engine,
+level-bearing hash, 4-state DFF) → XNOR/BUF gates → logic-families foundation →
+logic-family picker UI.
+
+**Stage 3 (this batch) — logic families, DONE:**
+- **XNOR + BUF** surfaced on the board (closed the GATE_AUX gap): graph.ts PART_KINDS,
+  netlist.ts type-17 map + codes 5/7, glyphs ×2 (XNOR = XOR + bubble; BUF = NOT triangle,
+  no bubble), palette/category, partInfo, pinout, value chips.
+- **sim-core families:** `const FAMILIES` (0 Ideal / 1 CMOS / 2 TTL), per-element family
+  packed in `aux`'s upper bits (`func + 16*family`, decoded by `gate_family_index`/
+  `gate_func_code`) — **no wasm-boundary change**. Wired through `eval_digital`/
+  `stamp_digital`/`commit_net_levels`/DFF latch via a per-net `digital_family`. Default
+  Ideal → goldens unchanged. Test `gate_family_levels_and_mixed_rail` (CMOS V_OH≈0.95·rail;
+  1.8 V high LOST into a 12 V part).
+- **Family UI:** `web/src/lib/families.ts` mirrors the Rust fractions; `Component.family`;
+  `buildNetlist` packs aux; `board.setComponentFamily` + clipboard/serialize threading;
+  App.svelte family chip picker (Ideal/CMOS/TTL) + live V_IL/V_IH/V_OL/V_OH + noise-margin
+  readout for digital parts.
+
+**NEXT:** the owner asked for a **review audit that everything works** before shipping —
+then merge `claude/kind-turing-hdelb3` → `main` (one batch) to deploy. Do NOT merge
+without the owner's explicit go-ahead.
+
+**Stage 4 (follow-up, not started):** open-drain driver mode (release high → Z) + a
+wired-AND bus (open-drain + pull-up, resolved by the MNA solve) + a level-shifter part —
+all golden-additive. Lifting pure-digital nets out of MNA stays a hash-neutral perf option.
+
+---
+
 ## 2026-06-16 (eve) — Digital scheduler Stage 2 SHIPPED (event engine + level hash)
 
 **State:** 🟢 Green (fmt, clippy, **94 sim-core tests** + 1 ignored, wasm, web). Pushed
