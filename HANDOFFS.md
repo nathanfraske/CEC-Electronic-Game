@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (evening 3) — Board LOD + remaining review-batch fixes (DONE)
+
+**State:** 🟢 Green — web check/lint/build (no Rust change this batch; golden untouched).
+Branch `claude/kind-turing-hdelb3`. Finishes the owner's review batch.
+
+- **Board LOD now 3 levels + toggle + deeper zoom** (board.ts): schematic → tier
+  illustration (`TIER_ZOOM` 2.2) → illustration **+ simple pinout labels** (new
+  `DETAIL_ZOOM` 4.5); `MAX_SCALE` 3.5→8. `Board.setLod(on/off)` + the `⊕/⊘ LOD`
+  button (off ⇒ plain schematic at any zoom; lens button disabled while off). Pinout
+  labels = pooled `Text` per pin on the part `view`, upright at the rotated pin.
+  (Owner confirmed: NO explanatory text on the board — that stays in the info tab —
+  **just** pin-name labels at the deep level.)
+- **Pinout clutter fixed**: the tier illustration's decorative `stud()`s are hidden on
+  the board (real pin dots are the connections) via a tierKit `studsVisible` module
+  flag (set by `setStudsVisible`, like `currentStyle`); board clears it around each
+  tier draw, info panel keeps studs.
+- **Electrolytic two-tank**: removed the matched-level top line.
+- **Transistors**: BJT/MOSFET (analogy + reality) gate-lift/channel now a sensitive
+  signed-norm of the through-current (steep near 0) + bigger throw, so they visibly
+  track small currents. (Still only the main through-current + node0−node1 V are
+  exposed — no Vgs/Vbe/Ib — noted as a future state-exposure if finer transistor
+  fidelity is wanted, à la the transformer flux.)
+
+**Open / possible next:** tune `TIER_ZOOM`/`DETAIL_ZOOM` thresholds on a live eyeball;
+off-screen cull for tier illustrations on big boards (perf); deeper transistor fidelity
+would need Vgs/Ib exposed (same pattern as the transformer flux just shipped).
+
+---
+
 ## 2026-06-16 (evening 2) — Transformer flux exposed; cap-spring; review-batch in progress
 
 **State:** 🟢 Green — full gates (cargo fmt/clippy/test 102 incl. determinism +
