@@ -5,6 +5,51 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (late) — Transformer inrush fix SHIPPED (PR #69) + transistor curriculum
+
+**State:** 🟢 Green (fmt, clippy, **100 sim-core tests**, golden stable, wasm, web). **Merged
+to `main` via PR #69** (Pages deploy rebuilds wasm → live). Branch `claude/kind-turing-hdelb3`.
+
+**The bug (owner-reported, live):** the `tr-bridge-supply` example diverged — **~61 kA on
+wasm**, traces vanishing mid-run (NaN propagation) — at high step-up / high frequency.
+Native was bounded (~50 A) at the same point: the platform split flagged an **ill-conditioned
+inrush solve**, NOT stale cache (owner cleared cache + hard-reloaded; still broke).
+
+**Root cause:** the ideal-T fix made the secondary a **hard, zero-impedance** EMF (rs=0, to
+keep full-wave). Charging an empty reservoir cap through the bridge at high step-up is then a
+near-impulse — a stiff Newton step that tips to garbage under wasm's float rounding. The
+secondary branch row also had **no diagonal** (a bare voltage constraint).
+
+**Fix:** a small **secondary leakage inductance** `TRANSFORMER_LLEAK = 5 mH`, a backward-Euler
+companion in series in the secondary branch (sign convention matches the magnetiser's `rp`:
+**negative** diagonal `-g_leak`, history term subtracted — I first got the sign +g_leak and it
+grew an LC oscillation; flipping it fixed it). Leakage has **zero DC drop**, so unlike series
+*resistance* (which sags the EMF → half-wave, the reason rs was removed) it leaves full-wave
+rectification untouched — it only limits secondary di/dt (inrush) and conditions the row.
+`Is` is now a **second reactive state** (`secondary_state`, parallels `reactive_state`;
+reflected in `node_v`, NOT hashed → snapshot-hash format + analog golden UNCHANGED).
+n=4/1 kHz inrush **49.8 A → 4.3 A**. New regressions: `transformer_bridge_high_stepup_inrush_bounded`
+(1 kHz ratio sweep) + `transformer_bridge_isolated_primary_stays_bounded` (floating primary) —
+the corners the old 60 Hz / n≤2 bridge tests missed.
+
+**Also shipped (same PR):** the **"Logic from Transistors" curriculum** (owner picked it off the
+roadmap) — CMOS inverter/NAND/NOR from raw MOSFETs + an SR latch (cross-coupled NOR, behavioral
+gates) in `examples.ts`. Pure content; MOSFET model already does CMOS rail-to-rail as-is.
+
+**Roadmap status (from the 4 research agents — see chat):** owner confirmed the economy model
+(seal = FPGA; everyday ICs unlocked via Lux-gated tech tree after a build-from-primitives
+contract; IC costs Lux once / cheaper Credits-per-placement than discrete — the integration
+lesson). NEXT off the roadmap: the **>4-terminal `Element` keystone** (an optional per-element
+extra-nodes side-table — unlocks wide counters/muxes/decoders + the **BCD→7-seg decoder**), the
+**7-seg display** (S7 = 7-LED netlist expansion + per-segment GlyphOpts), the small ≤4-pin (B)
+digital parts (D-latch, Schmitt, tri-state, 2-bit counter), and on the analog side the
+**reusable magnetic core** (generalize the ideal-T to N windings) + relay (P6 latch pioneer).
+
+**NEXT:** confirm the Pages deploy went green and owner sees sane bridge currents after a
+refresh. Then resume the roadmap (owner picks the next item).
+
+---
+
 ## 2026-06-16 (night) — Stage 4 COMPLETE: open-drain + level-shifter + pull-up
 
 **State:** 🟢 Green (fmt, clippy, **98 sim-core tests**, wasm, web). Branch
