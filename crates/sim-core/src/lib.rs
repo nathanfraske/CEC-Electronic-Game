@@ -3926,6 +3926,17 @@ impl Sim {
         self.currents.clone()
     }
 
+    /// Per-element **reactive branch current**, in installed-netlist order: a
+    /// transformer's **magnetising current `Im`** (a→b) — its core-flux proxy
+    /// (`Φ = L1·Im`), the state that carries the transformer's memory and DC flux
+    /// bias — and an inductor's branch current; `0.0` for non-reactive elements.
+    /// Read-only and **not part of the snapshot hash** (it is already reflected in
+    /// `node_v`), so exposing it is replay-safe. Lets the renderer show a
+    /// transformer's real flux level + bias rather than a free-running animation.
+    pub fn reactive_currents(&self) -> Vec<f64> {
+        self.reactive_state.clone()
+    }
+
     /// Read-only snapshot of the exposed state vector, for rendering and the
     /// wasm boundary. Returns the node voltages (length `node_count`, index `0`
     /// is ground at `0.0`). Variable length is expected by the front end's

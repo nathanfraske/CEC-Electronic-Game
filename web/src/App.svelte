@@ -953,6 +953,7 @@
                   snap.state,
                   snap.elementCurrents,
                   snap.failedMask,
+                  snap.reactiveCurrents,
                 )
               : undefined;
           b.update(

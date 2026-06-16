@@ -109,6 +109,14 @@ impl Simulation {
         self.inner.element_currents()
     }
 
+    /// Per-element reactive branch current, same order as element_currents: a
+    /// transformer's magnetising current `Im` (its core-flux proxy + DC bias), an
+    /// inductor's branch current, else 0. Read-only, not hashed — for showing real
+    /// transformer flux in the renderer.
+    pub fn reactive_currents(&self) -> Vec<f64> {
+        self.inner.reactive_currents()
+    }
+
     /// Protocol version, checked by the front end on load.
     pub fn protocol_version(&self) -> u32 {
         self.inner.protocol_version()

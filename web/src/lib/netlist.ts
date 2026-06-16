@@ -640,6 +640,7 @@ export function electricalMap(
   nodeVoltages: Float64Array,
   elementCurrents: Float64Array,
   failedMask?: Uint8Array,
+  reactiveCurrents?: Float64Array,
 ): Map<number, ElectricalState> {
   const map = new Map<number, ElectricalState>();
   for (const [compId, ei] of netlist.elemOfComponent) {
@@ -650,6 +651,9 @@ export function electricalMap(
     map.set(compId, {
       current: elementCurrents[ei] ?? 0,
       vAcross,
+      // The transformer's magnetising current / inductor branch current (its real
+      // flux), when the core exposes it — lets the transformer tier read true flux.
+      flux: reactiveCurrents ? (reactiveCurrents[ei] ?? 0) : undefined,
       // The element-indexed FAIL mask, mapped back to its component (the renderer
       // boxes any part whose element hit the bound).
       failed: failedMask ? (failedMask[ei] ?? 0) !== 0 : false,

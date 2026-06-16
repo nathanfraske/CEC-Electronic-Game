@@ -22,6 +22,9 @@ export interface Snapshot {
   state: Float64Array;
   /** Per-element current, in set_netlist order. Present once the netlist is wired. */
   elementCurrents?: Float64Array;
+  /** Per-element reactive branch current (a transformer's magnetising current / flux
+   * proxy; an inductor's branch current; else 0), in set_netlist order. */
+  reactiveCurrents?: Float64Array;
   /** Whole-sim FAIL state: an ideal part was driven past physical bounds this tick. */
   failed: boolean;
   /** Per-element FAIL mask, in set_netlist order (1 = that element hit the bound). */
@@ -69,6 +72,7 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       snapshotHash: sim.snapshot_hash(),
       state: sim.state(),
       elementCurrents: sim.element_currents(),
+      reactiveCurrents: sim.reactive_currents(),
       failed: sim.failed(),
       failedMask: sim.failed_element_mask(),
     }),
@@ -163,22 +167,26 @@ function lerpSnapshot(a: Snapshot, b: Snapshot, f: number): Snapshot {
     const av = a.state[i] ?? 0;
     state[i] = av + ((b.state[i] ?? av) - av) * f;
   }
-  let elementCurrents = b.elementCurrents;
-  const ac = a.elementCurrents;
-  if (ac && elementCurrents && ac.length === elementCurrents.length) {
-    const m = elementCurrents.length;
-    const blended = new Float64Array(m);
-    for (let i = 0; i < m; i++) {
-      const av = ac[i] ?? 0;
-      blended[i] = av + ((elementCurrents[i] ?? av) - av) * f;
+  // Blend a per-element array (element currents / reactive currents) when both
+  // sides line up; otherwise pass `b` through unchanged.
+  const blend = (
+    av0: Float64Array | undefined,
+    bv0: Float64Array | undefined,
+  ): Float64Array | undefined => {
+    if (!av0 || !bv0 || av0.length !== bv0.length) return bv0;
+    const out = new Float64Array(bv0.length);
+    for (let i = 0; i < bv0.length; i++) {
+      const av = av0[i] ?? 0;
+      out[i] = av + ((bv0[i] ?? av) - av) * f;
     }
-    elementCurrents = blended;
-  }
+    return out;
+  };
   return {
     tick: b.tick,
     snapshotHash: b.snapshotHash,
     state,
-    elementCurrents,
+    elementCurrents: blend(a.elementCurrents, b.elementCurrents),
+    reactiveCurrents: blend(a.reactiveCurrents, b.reactiveCurrents),
     failed: b.failed,
     failedMask: b.failedMask,
   };
