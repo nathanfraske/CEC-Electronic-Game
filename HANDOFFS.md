@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (overnight) — Part-demo tiers: animation fixed + all batch-1/2 tiers built
+
+**State:** 🟢 Green — all web gates pass (`format`/`check`/`lint`/`build`); no Rust/golden
+touch (pure presentation). Branch `claude/kind-turing-hdelb3`, **pushed**. Not merged to main
+(owner offline; will eyeball in the morning). Owner's standing ask: *"push on until a gated
+decision point or you run out of designs."* The remaining item — the **board LOD** — is that
+gated decision point (a visual-tuning pass the owner wants to see live).
+
+**Done this stretch (owner's most-recent feedback + both batches):**
+1. **Animation slow/de-jitter/pause-flow-with-time** — `InfoDiagram` no longer free-runs a
+   wall-clock phase; it adopts the **board's shared flow clock** via the new
+   `Board.flowPhase()` (App.svelte feeds `infoDiagram.setPhase(b.flowPhase())` each frame).
+   That clock is calm (`FLOW_HZ≈0.6`), freezes when paused, reverses when scrubbing back. The
+   detail dot-loops were de-jittered with a fixed-slot `dotPresence` fade (no more count-flip
+   teleporting when the live current wiggles).
+2. **Analogy tier is now full-panel** (was the small scaled board glyph). New
+   `web/src/lib/analogyDrawers.ts` + shared `web/src/lib/tierKit.ts` (extracted the common
+   types/scales/`belt`/`stud`/`housing`/`mix`/`norm`/`dotPresence` from detailDrawers; reality
+   tier behaviour unchanged). `InfoDiagram` analogy mode → `drawAnalogy()` full-panel, else the
+   board Factory glyph; `effectiveDiagramMode` gates on `hasFactory || hasAnalogy`.
+3. **Analogy drawers (full-panel):** R, C, EC, L, TR, D/SD/LED, ZD, Q/QP, NM/PM.
+4. **Reality drawers added:** C (MLCC), EC (Al-foil), TR (iron-core windings), Q/QP (BJT
+   silicon), NM/PM (MOSFET silicon) — registered in `DETAIL_DRAWERS`.
+5. Saved + queued the **PMOS ref** (`docs/ui/parts/mosfet-pmos-tiers.html`).
+
+**Discipline kept:** every tier reads only live `electrical`/`value` + the shared `phase`;
+magnitude on density/alpha (never speed); motion at the calm phase rate/direction; no text
+(the info panel supplies telemetry rows); recolour from PALETTE.
+
+**NEXT — the gated decision point (board LOD):** a *working* LOD (owner: NOT hide-to-reveal —
+the part is always visible/animating; zoom-IN adds factory→reality detail, zoom-OUT simplifies
+for clarity + cost). Plan in `docs/ui/part-demos-tiers.md` phase 3: hook the swap off
+`world.scale` in `Board.update()`, positioning the full-panel analogy/reality illustration as
+an overlay over the zoomed part (the drawers already take a centred `bounds`, so they drop in).
+Thresholds + blend are the visual-tuning the owner will eyeball — **stop here for owner review**.
+Caveats to mention on review: BJT/MOSFET reality drive the gate/base proxies off |I| (no Vgs/Ib
+in the basic ElectricalState); transformer reality uses |Ip| as a flux-activity proxy (true
+core-flux/saturation belongs to the ideal-vs-real work).
+
+---
+
 ## 2026-06-16 (night) — Part-demo tiers: refs + design landed, implementation starting
 
 **State:** 🟢 Green (docs only this stretch; web/Rust untouched). Branch `claude/kind-turing-hdelb3`.

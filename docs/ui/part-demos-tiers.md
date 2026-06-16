@@ -1,7 +1,29 @@
 # Part demos — the three fidelity tiers (schematic · analogy · reality)
 
-Status: **refs + design landed; implementation starting** (2026-06-16). This is the
+Status: **tiers built for all batch-1 + batch-2 parts** (2026-06-16). This is the
 visual companion to the Ideal-vs-Real fidelity work (`docs/sim/ideal-vs-real-parts.md`).
+
+## Progress (2026-06-16)
+
+The animation now rides the **board's shared flow clock** (`Board.flowPhase()`), so the
+info-panel tiers pause and flow with time and run at the calm `FLOW_HZ` rate (the dot loops
+are de-jittered via a fixed-slot `dotPresence` fade). The analogy tier is now a **full-panel
+illustration** like the reality tier — a new `web/src/lib/analogyDrawers.ts` sibling on a
+shared `web/src/lib/tierKit.ts` (types + scales + `belt`/`stud`/`housing`/`mix`/`norm`/
+`dotPresence`). `InfoDiagram`'s analogy mode draws `drawAnalogy()` full-panel when present,
+else falls back to the board Factory glyph.
+
+**Tiers shipped** (analogy = `analogyDrawers.ts`, reality = `detailDrawers.ts`):
+- **Analogy (full-panel):** R (hydraulic throat), C (piston-spring), EC (two tanks),
+  L (paddle-wheel flywheel), TR (belted wheels + flux gauge), D/SD/LED (spring check
+  valve), ZD (check valve + Vz spillway), Q/QP (amplifying valve), NM/PM (pressure-pilot
+  valve).
+- **Reality:** OA, D/SD/LED/ZD, R, L (pre-existing) + **C** (MLCC cutaway), **EC** (Al-foil
+  cutaway), **TR** (iron core + windings), **Q/QP** (E/thin-B/C silicon), **NM/PM**
+  (metal-oxide-silicon channel).
+
+**Remaining:** the **board LOD** (phase 3 below) — a *visual-tuning* pass the owner will
+eyeball on the live render before it's final (the gated decision point).
 
 ## The idea
 
