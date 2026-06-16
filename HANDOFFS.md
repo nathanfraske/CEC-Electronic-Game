@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Part-demo tiers: refs + design landed, implementation starting
+
+**State:** 🟢 Green (docs only this stretch; web/Rust untouched). Branch `claude/kind-turing-hdelb3`.
+Component labels merged via **PR #72** (deployed).
+
+**New MAJOR feature kicked off — three-tier part demos** (owner's design): every part shown
+**schematic / analogy / reality**, animating live, revealed by **zooming into a placed part** or via
+the **info panel**. Owner uploaded 5 detailed design sheets → saved as **`docs/ui/parts/*-tiers.html`**
+(resistor, ceramic cap, electrolytic cap, inductor, transformer — standalone HTML, the authoritative
+visual/animation spec). Design + phased plan: **`docs/ui/part-demos-tiers.md`**. **More part sheets
+coming once this batch is implemented** (owner will upload the next batch then).
+
+**Existing scaffolding to extend (don't duplicate):** App.svelte's `infoDiagram` (`setMode`/`setState`),
+`hasDetail`/`hasFactory`, `diagramMode`/`effectiveDiagramMode` (schematic vs reality). A background
+Explore agent is mapping its exact API + renderer + the board zoom/LOD hook.
+
+**NEXT (the build, phased — see the doc):** (1) finish mapping `infoDiagram`; (2) port the
+**resistor** tiers into a reusable `TierView` mounted in the info panel (the pattern); (3) tier
+switcher + live per-frame feed (`electricalMap` + derived P/Q/E/flux/τ); (4) **board zoom-to-reveal**
+(LOD swap on `world.scale`); (5) the other 4 parts; (6) polish + next batch. Pure presentation → no
+golden impact. (Ideal-vs-Real fidelity work — curriculum tiering + Real-variant upgrades — remains
+queued below; the tier demos are its visual companion.)
+
+---
+
 ## 2026-06-16 (night) — Component labels built + FAIL UI merged (PR #71)
 
 **State:** 🟢 Green (web check/lint/build; no Rust change this stretch). Branch

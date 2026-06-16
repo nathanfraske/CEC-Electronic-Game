@@ -1,0 +1,399 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Inductor, three factory tiers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    --pos:#46d2e6; --neg:#d8a24a; --out:#f5247a; --rail:#6b6488;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  #stat.chip{transition:color .12s, border-color .12s;}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;} p.intro b{color:var(--text);}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .leg{display:flex; gap:11px; padding:9px 0; border-bottom:1px solid var(--border); font-size:12px; color:var(--dim); line-height:1.45;}
+  .leg:last-child{border-bottom:none;}
+  .leg b{color:var(--text);} .leg .mono{font-family:var(--font-mono); color:var(--faint); font-size:11px;}
+  .leg .tag{flex-shrink:0; width:20px; font-family:var(--font-mono); font-size:14px; text-align:center;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .xfer{margin-top:4px;}
+  .xfer svg{width:100%; height:auto; display:block;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:188px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--accent); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].pos::-webkit-slider-thumb{background:var(--pos); box-shadow:0 0 10px -2px var(--pos);}
+  input[type=range].pos::-moz-range-thumb{background:var(--pos);}
+  input[type=range].neg::-webkit-slider-thumb{background:var(--neg); box-shadow:0 0 10px -2px var(--neg);}
+  input[type=range].neg::-moz-range-thumb{background:var(--neg);}
+  input[type=range].volt::-webkit-slider-thumb{background:var(--cyan); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].volt::-moz-range-thumb{background:var(--cyan);}
+  input[type=range].res::-webkit-slider-thumb{background:var(--violet); box-shadow:0 0 10px -2px var(--violet);}
+  input[type=range].res::-moz-range-thumb{background:var(--violet);}
+  input[type=range].volt::-webkit-slider-thumb{background:var(--cyan); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].volt::-moz-range-thumb{background:var(--cyan);}
+  input[type=range].res::-webkit-slider-thumb{background:var(--violet); box-shadow:0 0 10px -2px var(--violet);}
+  input[type=range].res::-moz-range-thumb{background:var(--violet);}
+  input[type=range].cap::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].cap::-moz-range-thumb{background:var(--bronze);}
+  input[type=range].ind::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].ind::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">part demo</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent">INDUCTOR</span><span class="chip" id="stat">AIR CORE</span></div>
+  </div>
+
+  <h1 class="lede">The inductor, across the three tiers</h1>
+  <p class="intro">The same inductor shown three ways, switched with the tier control and wired as a simple energize and de-energize loop so you can watch it work. <b>Tier 1</b> is the schematic: a supply, a series resistor, and the coil symbol, with current that ramps up instead of jumping because the coil resists any change. <b>Tier 2</b> is the reality-analogous view: a heavy flywheel turned by the flow in a pipe, where the spin is the current, the pressure across the wheel is the voltage, the spinning momentum is the stored energy, and a heavier wheel is a larger inductance. <b>Tier 3</b> is the reality-matched view: a real coil of wire whose current builds a magnetic field, where the field holds the energy and fights every change in current, and more turns means more inductance. All three run on one model, <span class="mono">V = L dI/dt</span> with energy <span class="mono">half L I squared</span>, the current follows <span class="mono">L / R</span>, and every value is a free parameter for the game to set.</p>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="tierTag">tier 1 &middot; schematic</span>
+      <span class="scope-tag r" id="stTag">I 0.00 A</span>
+      <svg id="scene" viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg" aria-label="animated inductor across three tiers">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="glowBig" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="9"/></filter>
+          <linearGradient id="tri" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="oklch(0.30 0.05 285)"/><stop offset="1" stop-color="oklch(0.22 0.04 285)"/>
+          </linearGradient>
+          <radialGradient id="house" cx="0.5" cy="0.35" r="0.8">
+            <stop offset="0" stop-color="oklch(0.235 0.038 285)"/><stop offset="1" stop-color="oklch(0.175 0.03 285)"/>
+          </radialGradient>
+        </defs>
+      </svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">What it does</h2><div class="panel-body" id="legend"></div></div>
+      <div class="panel"><h2 class="panel-title">Telemetry</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Current and coil voltage</h2><div class="panel-body xfer"><svg id="xfer" viewBox="0 0 280 170" xmlns="http://www.w3.org/2000/svg" aria-label="inductor current and voltage over time"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><span class="tg-label">tier</span><button class="btn btn-ghost is-active" id="t1">1 schematic</button><button class="btn btn-ghost" id="t2">2 analogy</button><button class="btn btn-ghost" id="t3">3 reality</button></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="tg"><span class="tg-label">speed</span><input type="range" id="speed" min="0" max="200" value="100" style="width:110px"></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">supply Vs</span><span class="ic-val" id="labVs">6.0 V</span></div><input type="range" class="volt" id="vs" min="0" max="1000" value="600"></div>
+    <div class="in-ctl" style="--c:var(--violet)"><div class="ic-top"><span class="ic-name">series R</span><span class="ic-val" id="labR">22 &#937;</span></div><input type="range" class="res" id="res" min="1" max="100" value="22"></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">inductance L</span><span class="ic-val" id="labL">100 mH</span></div><input type="range" class="ind" id="ind" min="1" max="1000" value="100"></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+
+  var CYAN='#46d2e6',VIOLET='#9a78ff',BRONZE='#c9a45a',WARM='#ffe6c0',WATER='#42a6ea',ELEC='#5bc8ff',PLATE='#aeb6c9',POS='#ff8f6b',NEG='#5bc8ff',DIM='#b6b0c6',FAINT='#80798f';
+  var CFG={Vmax:10,Rmin:1,Rmax:100,Lmin:1,Lmax:1000};
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'6'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+
+  /* TIER 1 schematic RL loop */
+  var t1={};
+  (function(){
+    var Lx=130,Rx=720,TY=190,BY=350;
+    var loop=[[Lx,258],[Lx,TY],[Rx,TY],[Rx,BY],[Lx,BY],[Lx,276]];
+    gT1.appendChild(el('polyline',{points:poly(loop),fill:'none',stroke:'#3a4763','stroke-width':3,'stroke-linejoin':'round'}));
+    t1.cur=el('polyline',{points:poly(loop),fill:'none',stroke:WARM,'stroke-width':2.4,'stroke-dasharray':'2 13','stroke-linecap':'round',opacity:0});gT1.appendChild(t1.cur);
+    gT1.appendChild(el('line',{x1:Lx-20,y1:258,x2:Lx+20,y2:258,stroke:CYAN,'stroke-width':3.5,'stroke-linecap':'round'}));
+    gT1.appendChild(el('line',{x1:Lx-11,y1:276,x2:Lx+11,y2:276,stroke:'#7d7791','stroke-width':5,'stroke-linecap':'round'}));
+    gT1.appendChild(el('text',{x:Lx-30,y:262,'font-family':'var(--font-mono)','font-size':14,fill:CYAN,'text-anchor':'end','font-weight':'600'},'+'));
+    var zz='M 300 '+TY,zx=[314,330,346,362,378,394],zy=[TY-16,TY+16,TY-16,TY+16,TY-16,TY+16];
+    for(var i=0;i<zx.length;i++){zz+=' L '+zx[i]+' '+zy[i];}
+    zz+=' L 410 '+TY;
+    gT1.appendChild(el('path',{d:zz,fill:'none',stroke:VIOLET,'stroke-width':3,'stroke-linejoin':'round','stroke-linecap':'round'}));
+    t1.fieldHalo=el('ellipse',{cx:580,cy:TY,rx:96,ry:30,fill:CYAN,opacity:0,filter:'url(#glow)'});gT1.appendChild(t1.fieldHalo);
+    var bumps='M 500 '+TY+' a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0 a 20 20 0 0 1 40 0';
+    gT1.appendChild(el('path',{d:bumps,fill:'none',stroke:BRONZE,'stroke-width':3.4,'stroke-linejoin':'round','stroke-linecap':'round'}));
+    t1.mode=el('text',{x:430,y:150,'font-family':'var(--font-display)','font-size':15,fill:DIM,'text-anchor':'middle','font-weight':'600','letter-spacing':'0.12em'},'ENERGIZING');gT1.appendChild(t1.mode);
+    t1.labVL=el('text',{x:580,y:156,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'middle'},'Vl 0.0 V');gT1.appendChild(t1.labVL);
+    t1.labI=el('text',{x:732,y:178,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'start'},'I 0.00 A');gT1.appendChild(t1.labI);
+    t1.labL=el('text',{x:580,y:232,'font-family':'var(--font-display)','font-size':17,fill:BRONZE,'text-anchor':'middle','font-weight':'600'},'100 mH');gT1.appendChild(t1.labL);
+    t1.labR=el('text',{x:355,y:232,'font-family':'var(--font-mono)','font-size':12,fill:VIOLET,'text-anchor':'middle'},'22 \u03a9');gT1.appendChild(t1.labR);
+    t1.labVs=el('text',{x:Lx,y:392,'font-family':'var(--font-mono)','font-size':12,fill:CYAN,'text-anchor':'middle'},'Vs 6.0 V');gT1.appendChild(t1.labVs);
+    gT1.appendChild(el('text',{x:430,y:430,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'current ramps up against the coil, then coasts; the coil resists any change'));
+  })();
+  function updateT1(m){
+    var fop=m.iSat>0.02?clamp(0.28+m.iSat*0.7,0,0.95).toFixed(2):0;
+    t1.cur.setAttribute('stroke-dashoffset',(-m.cur).toFixed(1));t1.cur.setAttribute('opacity',fop);
+    t1.fieldHalo.setAttribute('opacity',clamp(m.iSat*0.5,0,0.5).toFixed(2));
+    t1.mode.textContent=m.modeName;t1.mode.setAttribute('fill',m.modeColor);
+    t1.labVL.textContent='Vl '+m.VL.toFixed(1)+' V';
+  }
+
+  /* TIER 2 paddle wheel in the pipe */
+  var t2={};
+  var FW={midY:275,pipeT:248,pipeB:302,vC:185,cx:470,chamR:72};
+  function wheelR(L){return lerp(40,64,clamp((Math.log(L)-Math.log(CFG.Lmin))/(Math.log(CFG.Lmax)-Math.log(CFG.Lmin)),0,1));}
+  (function(){
+    var P=FW;
+    gT2.appendChild(el('rect',{x:60,y:251,width:58,height:48,rx:4,fill:'rgba(70,210,230,0.06)',stroke:'#3a4763','stroke-width':1.6}));
+    t2.pump=el('rect',{x:78,y:255,width:10,height:40,rx:2,fill:CYAN,opacity:0.55});gT2.appendChild(t2.pump);
+    gT2.appendChild(el('text',{x:89,y:244,'font-family':'var(--font-mono)','font-size':11,fill:CYAN,'text-anchor':'middle'},'pump'));
+    gT2.appendChild(el('line',{x1:118,y1:P.pipeT,x2:800,y2:P.pipeT,stroke:'#3a4763','stroke-width':2}));
+    gT2.appendChild(el('line',{x1:118,y1:P.pipeB,x2:800,y2:P.pipeB,stroke:'#3a4763','stroke-width':2}));
+    t2.vTop=el('line',{x1:P.vC,y1:P.pipeT,x2:P.vC,y2:268,stroke:VIOLET,'stroke-width':4,'stroke-linecap':'round'});gT2.appendChild(t2.vTop);
+    t2.vBot=el('line',{x1:P.vC,y1:P.pipeB,x2:P.vC,y2:282,stroke:VIOLET,'stroke-width':4,'stroke-linecap':'round'});gT2.appendChild(t2.vBot);
+    gT2.appendChild(el('circle',{cx:P.cx,cy:P.midY,r:P.chamR,fill:'rgba(18,22,38,0.82)',stroke:'#3a4763','stroke-width':2}));
+    t2.dotsL=[];for(var i=0;i<4;i++){var d=el('circle',{r:3,fill:WATER,opacity:0});gT2.appendChild(d);t2.dotsL.push({el:d,u:i/4});}
+    t2.dotsR=[];for(i=0;i<4;i++){var dr=el('circle',{r:3,fill:WATER,opacity:0});gT2.appendChild(dr);t2.dotsR.push({el:dr,u:i/4});}
+    t2.swirl=[];for(i=0;i<4;i++){var sw=el('circle',{r:2.8,fill:WATER,opacity:0});gT2.appendChild(sw);t2.swirl.push({el:sw,p:i/4});}
+    [320,612].forEach(function(sx){gT2.appendChild(el('line',{x1:sx,y1:P.pipeT,x2:sx,y2:178,stroke:'#3a4763','stroke-width':1.6}));gT2.appendChild(el('line',{x1:sx+16,y1:P.pipeT,x2:sx+16,y2:178,stroke:'#3a4763','stroke-width':1.6}));});
+    t2.spUp=el('rect',{x:320,y:210,width:16,height:38,fill:'rgba(66,166,234,0.5)'});gT2.appendChild(t2.spUp);
+    t2.spDn=el('rect',{x:612,y:210,width:16,height:38,fill:'rgba(66,166,234,0.5)'});gT2.appendChild(t2.spDn);
+    gT2.appendChild(el('text',{x:328,y:172,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'in'));
+    gT2.appendChild(el('text',{x:620,y:172,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'out'));
+    t2.eglow=el('circle',{cx:P.cx,cy:P.midY,r:40,fill:BRONZE,opacity:0,filter:'url(#glow)'});gT2.appendChild(t2.eglow);
+    t2.wheel=el('g',{});
+    t2.wheel.appendChild(el('circle',{cx:0,cy:0,r:60,fill:'rgba(201,164,90,0.06)',stroke:BRONZE,'stroke-width':3}));
+    for(var pd=0;pd<6;pd++){var ang=pd/6*Math.PI*2,ca=Math.cos(ang),sa=Math.sin(ang),col=(pd===0)?WARM:BRONZE;
+      t2.wheel.appendChild(el('line',{x1:(12*ca).toFixed(1),y1:(12*sa).toFixed(1),x2:(58*ca).toFixed(1),y2:(58*sa).toFixed(1),stroke:col,'stroke-width':3.4,'stroke-linecap':'round'}));
+      var rxp=58*ca,ryp=58*sa,px=-sa,py=ca;
+      t2.wheel.appendChild(el('line',{x1:(rxp-11*px).toFixed(1),y1:(ryp-11*py).toFixed(1),x2:(rxp+11*px).toFixed(1),y2:(ryp+11*py).toFixed(1),stroke:col,'stroke-width':3.6,'stroke-linecap':'round'}));}
+    t2.wheel.appendChild(el('circle',{cx:0,cy:0,r:9,fill:BRONZE}));
+    gT2.appendChild(t2.wheel);
+    t2.mode=el('text',{x:430,y:150,'font-family':'var(--font-display)','font-size':15,fill:DIM,'text-anchor':'middle','font-weight':'600','letter-spacing':'0.12em'},'ENERGIZING');gT2.appendChild(t2.mode);
+    gT2.appendChild(el('text',{x:185,y:240,'font-family':'var(--font-mono)','font-size':11,fill:VIOLET,'text-anchor':'middle'},'valve = R'));
+    t2.labVL=el('text',{x:466,y:196,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'middle'},'Vl 0.0 V');gT2.appendChild(t2.labVL);
+    t2.labI=el('text',{x:746,y:198,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'start'},'I 0.00 A');gT2.appendChild(t2.labI);
+    t2.labL=el('text',{x:746,y:214,'font-family':'var(--font-display)','font-size':15,fill:BRONZE,'text-anchor':'start','font-weight':'600'},'100 mH');gT2.appendChild(t2.labL);
+    t2.labVs=el('text',{x:89,y:322,'font-family':'var(--font-mono)','font-size':11,fill:CYAN,'text-anchor':'middle'},'Vs 6.0 V');gT2.appendChild(t2.labVs);
+    gT2.appendChild(el('text',{x:430,y:352,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'wheel spin is the current and its momentum is the stored energy'));
+    gT2.appendChild(el('text',{x:430,y:366,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'pressure across the wheel is the voltage, present only while the spin changes'));
+    gT2.appendChild(el('text',{x:430,y:380,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'a heavier wheel resists change more, which is more inductance'));
+  })();
+  function updateT2(m){
+    var P=FW;
+    var vh=clamp(lerp(33,3,(m.R-1)/99),3,33);
+    t2.vTop.setAttribute('y2',(P.midY-vh).toFixed(1));t2.vBot.setAttribute('y2',(P.midY+vh).toFixed(1));
+    var op=m.iSat>0.02?0.85:0;
+    for(var i=0;i<t2.dotsL.length;i++){var d=t2.dotsL[i];d.u=(d.u+m.iSat*0.012+1)%1;d.el.setAttribute('cx',(125+d.u*270).toFixed(1));d.el.setAttribute('cy',P.midY);d.el.setAttribute('opacity',op);}
+    for(i=0;i<t2.dotsR.length;i++){var dr=t2.dotsR[i];dr.u=(dr.u+m.iSat*0.012+1)%1;dr.el.setAttribute('cx',(545+dr.u*250).toFixed(1));dr.el.setAttribute('cy',P.midY);dr.el.setAttribute('opacity',op);}
+    for(i=0;i<t2.swirl.length;i++){var sw=t2.swirl[i];sw.p=(sw.p+m.iSat*0.01+1)%1;var a=sw.p*Math.PI*2;sw.el.setAttribute('cx',(P.cx+63*Math.cos(a)).toFixed(1));sw.el.setAttribute('cy',(P.midY+63*Math.sin(a)).toFixed(1));sw.el.setAttribute('opacity',op);}
+    var off=clamp(m.VL/CFG.Vmax,-1,1)*26;
+    t2.spUp.setAttribute('y',(210-off).toFixed(1));t2.spUp.setAttribute('height',(38+off).toFixed(1));
+    t2.spDn.setAttribute('y',(210+off).toFixed(1));t2.spDn.setAttribute('height',(38-off).toFixed(1));
+    var R=wheelR(m.L),sc=R/60;
+    t2.wheel.setAttribute('transform','translate('+P.cx+','+P.midY+') rotate('+m.theta.toFixed(1)+') scale('+sc.toFixed(3)+')');
+    t2.eglow.setAttribute('r',(R*0.7).toFixed(1));t2.eglow.setAttribute('opacity',clamp(m.eFrac*0.4,0,0.4).toFixed(2));
+    t2.pump.setAttribute('x',(78+m.Vs/CFG.Vmax*20).toFixed(1));
+  }
+
+  /* TIER 3 air-core solenoid and field */
+  var t3={};
+  var SOL={x0:322,x1:642,axisY:284,ry:42,turnsMax:14};
+  function turnsOf(L){return Math.round(lerp(4,SOL.turnsMax,clamp((Math.sqrt(L)-Math.sqrt(CFG.Lmin))/(Math.sqrt(CFG.Lmax)-Math.sqrt(CFG.Lmin)),0,1)));}
+  (function(){
+    var S=SOL,mid=(S.x0+S.x1)/2;
+    t3.eglow=el('ellipse',{cx:mid,cy:S.axisY,rx:0,ry:S.ry-4,fill:BRONZE,opacity:0,filter:'url(#glow)'});gT3.appendChild(t3.eglow);
+    t3.lines=[];var defs=[{h:60,ext:20},{h:104,ext:40}];
+    for(var li=0;li<defs.length;li++){var D=defs[li];
+      var up=el('path',{d:'M '+S.x0+' '+S.axisY+' L '+S.x1+' '+S.axisY+' C '+(S.x1+D.ext)+' '+(S.axisY-D.h)+', '+(S.x0-D.ext)+' '+(S.axisY-D.h)+', '+S.x0+' '+S.axisY+' Z',fill:'none',stroke:CYAN,'stroke-width':1.3,opacity:0});gT3.appendChild(up);
+      var dn=el('path',{d:'M '+S.x0+' '+S.axisY+' L '+S.x1+' '+S.axisY+' C '+(S.x1+D.ext)+' '+(S.axisY+D.h)+', '+(S.x0-D.ext)+' '+(S.axisY+D.h)+', '+S.x0+' '+S.axisY+' Z',fill:'none',stroke:CYAN,'stroke-width':1.3,opacity:0});gT3.appendChild(dn);
+      t3.lines.push({el:up,len:up.getTotalLength()});t3.lines.push({el:dn,len:dn.getTotalLength()});}
+    t3.flux=[];for(li=0;li<t3.lines.length;li++){for(var j=0;j<2;j++){var fd=el('circle',{r:2.7,fill:'#9be8ff',opacity:0});gT3.appendChild(fd);t3.flux.push({el:fd,line:li,p:j/2});}}
+    t3.axisArrow=el('path',{d:'M '+(mid+10)+' '+(S.axisY-6)+' L '+(mid+24)+' '+S.axisY+' L '+(mid+10)+' '+(S.axisY+6)+' Z',fill:CYAN,opacity:0});gT3.appendChild(t3.axisArrow);
+    t3.leadL=el('line',{x1:48,y1:S.axisY,x2:S.x0,y2:S.axisY,stroke:VIOLET,'stroke-width':4,'stroke-linecap':'round'});gT3.appendChild(t3.leadL);
+    t3.leadR=el('line',{x1:S.x1,y1:S.axisY,x2:812,y2:S.axisY,stroke:VIOLET,'stroke-width':4,'stroke-linecap':'round'});gT3.appendChild(t3.leadR);
+    t3.turns=[];for(var i=0;i<S.turnsMax;i++){var tp=el('ellipse',{cx:0,cy:S.axisY,rx:12,ry:S.ry,fill:'none',stroke:BRONZE,'stroke-width':3.4,opacity:0});gT3.appendChild(tp);t3.turns.push(tp);}
+    t3.spir=[];for(i=0;i<8;i++){var sp=el('circle',{r:3.1,fill:ELEC,stroke:'#c4f1ff','stroke-width':0.8,opacity:0});gT3.appendChild(sp);t3.spir.push({el:sp,p:i/8});}
+    t3.eL=[];for(i=0;i<3;i++){var e=el('circle',{r:3.1,fill:ELEC,stroke:'#c4f1ff','stroke-width':0.8,opacity:0});gT3.appendChild(e);t3.eL.push({el:e,u:i/3});}
+    t3.eR=[];for(i=0;i<3;i++){var e2=el('circle',{r:3.1,fill:ELEC,stroke:'#c4f1ff','stroke-width':0.8,opacity:0});gT3.appendChild(e2);t3.eR.push({el:e2,u:i/3});}
+    t3.mode=el('text',{x:430,y:150,'font-family':'var(--font-display)','font-size':15,fill:DIM,'text-anchor':'middle','font-weight':'600','letter-spacing':'0.12em'},'ENERGIZING');gT3.appendChild(t3.mode);
+    t3.labTurns=el('text',{x:430,y:170,'font-family':'var(--font-mono)','font-size':12,fill:BRONZE,'text-anchor':'middle'},'7 turns');gT3.appendChild(t3.labTurns);
+    gT3.appendChild(el('text',{x:430,y:190,'font-family':'var(--font-mono)','font-size':11,fill:DIM,'text-anchor':'middle'},'blue dots are electrons in the wire \u00b7 the field flows through the core and loops back'));
+    gT3.appendChild(el('text',{x:430,y:412,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'current spirals through the turns and builds the magnetic field'));
+    gT3.appendChild(el('text',{x:430,y:428,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'more turns links more field per amp, so more turns is more inductance'));
+    t3.labI=el('text',{x:430,y:446,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'middle'},'I 0.00 A');gT3.appendChild(t3.labI);
+  })();
+  function updateT3(m){
+    var S=SOL,N=turnsOf(m.L),span=S.x1-S.x0,fo=clamp(m.iSat,0,1);
+    for(var i=0;i<t3.turns.length;i++){var tp=t3.turns[i];if(i<N){var x=S.x0+(N===1?0.5:i/(N-1))*span;tp.setAttribute('cx',x.toFixed(1));tp.setAttribute('opacity',0.92);}else{tp.setAttribute('opacity',0);}}
+    for(i=0;i<t3.lines.length;i++){t3.lines[i].el.setAttribute('opacity',(0.05+fo*0.32).toFixed(2));}
+    t3.axisArrow.setAttribute('opacity',(0.15+fo*0.7).toFixed(2));
+    for(i=0;i<t3.flux.length;i++){var fx=t3.flux[i];fx.p=(fx.p+m.iSat*0.004+1)%1;var L=t3.lines[fx.line];var pt=L.el.getPointAtLength(fx.p*L.len);fx.el.setAttribute('cx',pt.x.toFixed(1));fx.el.setAttribute('cy',pt.y.toFixed(1));fx.el.setAttribute('opacity',(fo*0.85).toFixed(2));}
+    t3.eglow.setAttribute('rx',(span/2+6).toFixed(1));t3.eglow.setAttribute('opacity',clamp(m.eFrac*0.4,0,0.4).toFixed(2));
+    var so=m.iSat>0.02?1:0;
+    for(i=0;i<t3.spir.length;i++){var sp=t3.spir[i];sp.p=(sp.p+m.iSat*0.006+1)%1;var t=sp.p*N*Math.PI*2;var x=S.x0+sp.p*span,y=S.axisY-S.ry*Math.cos(t),depth=Math.sin(t);sp.el.setAttribute('cx',x.toFixed(1));sp.el.setAttribute('cy',y.toFixed(1));sp.el.setAttribute('opacity',(so*(depth>0?0.95:0.38)).toFixed(2));}
+    var fop=m.iSat>0.02?clamp(0.4+m.iSat*0.6,0,1).toFixed(2):0;
+    for(i=0;i<t3.eL.length;i++){var e=t3.eL[i];e.u=(e.u+m.iSat*0.02+1)%1;e.el.setAttribute('cx',(48+e.u*(S.x0-48)).toFixed(1));e.el.setAttribute('cy',S.axisY);e.el.setAttribute('opacity',fop);}
+    for(i=0;i<t3.eR.length;i++){var e3=t3.eR[i];e3.u=(e3.u+m.iSat*0.02+1)%1;e3.el.setAttribute('cx',(S.x1+e3.u*(812-S.x1)).toFixed(1));e3.el.setAttribute('cy',S.axisY);e3.el.setAttribute('opacity',fop);}
+    t3.mode.textContent=m.modeName;t3.mode.setAttribute('fill',m.modeColor);
+    t3.labTurns.textContent=N+' turns';
+    t3.labI.textContent='I '+(Math.abs(m.I)<1?(m.I*1000).toFixed(0)+' mA':m.I.toFixed(2)+' A');
+  }
+
+  /* shared telemetry */
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roI=trow('coil current'),roVL=trow('coil voltage'),roLam=trow('flux linkage'),roE=trow('energy'),roTau=trow('time constant'),roState=trow('state');
+  function fmtI(I){var a=Math.abs(I);return a<1?(I*1000).toFixed(0)+' mA':I.toFixed(2)+' A';}
+  function fmtLam(x){return x<1?(x*1000).toFixed(0)+' \u00b5Wb':(x<1000?x.toFixed(1)+' mWb':(x/1000).toFixed(2)+' Wb');}
+  function fmtE(x){return x<1?(x*1000).toFixed(0)+' \u00b5J':(x<1000?x.toFixed(2)+' mJ':(x/1000).toFixed(2)+' J');}
+  function fmtL(x){return x<1000?x.toFixed(0)+' mH':(x/1000).toFixed(2)+' H';}
+
+  /* scope: current and coil voltage over time */
+  var xf=document.getElementById('xfer');
+  var SX0=42,SX1=262,SY0=20,SY1=146,SN=140;
+  var bI=[],bV=[];for(var sb=0;sb<SN;sb++){bI.push(0);bV.push(0);}
+  var trI,trV;
+  (function(){
+    xf.appendChild(el('line',{x1:SX0,y1:SY1,x2:SX1,y2:SY1,stroke:'#3a4763','stroke-width':1.4}));
+    xf.appendChild(el('line',{x1:SX0,y1:SY0,x2:SX0,y2:SY1,stroke:'#3a4763','stroke-width':1.4}));
+    xf.appendChild(el('text',{x:(SX0+SX1)/2,y:165,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'time'));
+    xf.appendChild(el('circle',{cx:SX0+8,cy:11,r:3,fill:CYAN}));xf.appendChild(el('text',{x:SX0+15,y:14,'font-family':'var(--font-mono)','font-size':10,fill:CYAN},'I'));
+    xf.appendChild(el('circle',{cx:SX0+52,cy:11,r:3,fill:WARM}));xf.appendChild(el('text',{x:SX0+59,y:14,'font-family':'var(--font-mono)','font-size':10,fill:WARM},'Vl'));
+    trV=el('polyline',{points:'',fill:'none',stroke:WARM,'stroke-width':1.6,'stroke-linejoin':'round',opacity:0.85});xf.appendChild(trV);
+    trI=el('polyline',{points:'',fill:'none',stroke:CYAN,'stroke-width':2,'stroke-linejoin':'round'});xf.appendChild(trI);
+  })();
+  function pushScope(I,VL){bI.push(I);bI.shift();bV.push(Math.abs(VL));bV.shift();}
+  function drawScope(){var imax=0.0001;for(var i=0;i<SN;i++){if(bI[i]>imax){imax=bI[i];}}var pi='',pv='';for(i=0;i<SN;i++){var x=(SX0+(i/(SN-1))*(SX1-SX0)).toFixed(1);pi+=x+','+(SY1-clamp(bI[i]/imax,0,1)*(SY1-SY0)).toFixed(1)+' ';pv+=x+','+(SY1-clamp(bV[i]/CFG.Vmax,0,1)*(SY1-SY0)).toFixed(1)+' ';}trI.setAttribute('points',pi);trV.setAttribute('points',pv);}
+
+  /* per-tier legend */
+  var legend=document.getElementById('legend');
+  function setLegend(n){var h;
+    if(n===1){h='<p style="margin:0 0 8px">Tier 1, the schematic. The supply drives current through the series resistor and the coil. The current cannot jump, so it ramps up along an L over R curve while the coil takes the leftover voltage, and that coil voltage fades to zero as the current settles. Cut the supply and the current coasts back down the same way.</p><p style="margin:0">The coil only ever shows a voltage while the current is changing. <span class="mono">V = L dI/dt</span>, energy <span class="mono">half L I squared</span>.</p>';}
+    else if(n===2){h='<p style="margin:0 0 8px">Tier 2, a heavy flywheel in the pipe. The pump is the supply, the valve is the series resistor, and a weighted wheel turned by the flow is the inductor. The spin rate is the current, and the wheel fights any change in it, so it takes pressure across the wheel to speed it up and the wheel shoves the flow along when you try to slow it.</p><p style="margin:0">The pressure across the wheel is the voltage, present only while the spin is changing, the spinning momentum is the stored energy, and a heavier wheel is a larger inductance. At a steady spin no pressure is needed, which is the coil acting like a plain wire at DC.</p>';}
+    else{h='<p style="margin:0 0 8px">Tier 3, a coil of wire. The blue dots are electrons moving through the wire, and the current circling the turns builds a magnetic field through the core. The field is where the energy is held.</p><p style="margin:0">When the current changes, the changing field pushes back to oppose the change, which is what makes the coil resist it. More turns link more field per amp, so more turns is more inductance, and the coil here adds turns as the inductance rises.</p>';}
+    legend.innerHTML=h;}
+
+  /* controls + state */
+  var vsEl=document.getElementById('vs'),resEl=document.getElementById('res'),indEl=document.getElementById('ind'),
+      labVs=document.getElementById('labVs'),labR=document.getElementById('labR'),labL=document.getElementById('labL'),
+      btnRun=document.getElementById('btnRun'),speedEl=document.getElementById('speed'),
+      t1b=document.getElementById('t1'),t2b=document.getElementById('t2'),t3b=document.getElementById('t3'),
+      tierTag=document.getElementById('tierTag'),stTag=document.getElementById('stTag'),footnote=document.getElementById('footnote');
+  var st={run:true,tier:1,phase:0,spd:1,I:0,mode:1,hold:0,cur:0,theta:0};
+  var tierNames={1:'tier 1 \u00b7 schematic',2:'tier 2 \u00b7 analogy',3:'tier 3 \u00b7 reality'};
+  footnote.textContent='The playback clock is scaled so the current is easy to watch. The time constant shown is the real L over R. Modeled as an ideal air core coil, the linear case with no core saturation.';
+
+  function showTier(n){
+    st.tier=n;
+    gT1.style.display=(n===1)?'':'none';gT2.style.display=(n===2)?'':'none';gT3.style.display=(n===3)?'':'none';
+    t1b.classList.toggle('is-active',n===1);t2b.classList.toggle('is-active',n===2);t3b.classList.toggle('is-active',n===3);
+    tierTag.textContent=tierNames[n];setLegend(n);
+  }
+  t1b.addEventListener('click',function(){showTier(1);});
+  t2b.addEventListener('click',function(){showTier(2);});
+  t3b.addEventListener('click',function(){showTier(3);});
+  btnRun.addEventListener('click',function(){st.run=!st.run;this.textContent=st.run?'pause':'run';this.classList.toggle('is-active',st.run);});
+  speedEl.addEventListener('input',function(){st.spd=(+speedEl.value)/100;});
+
+  showTier(1);
+
+  /* shared loop: RL energize and de-energize */
+  function frame(){
+    var Vs=(+vsEl.value)/100, R=(+resEl.value), Lh=(+indEl.value);
+    var tau=Lh/R;
+    var steadyI=Vs/R;
+    var target=st.mode>0?steadyI:0;
+    if(st.run){
+      var step=clamp(0.9/tau,0.01,0.35)*st.spd;
+      st.I+=(target-st.I)*step;
+      if(Math.abs(target-st.I)<0.012*Math.max(steadyI,1e-3)){st.hold+=1;if(st.hold>45){st.mode=-st.mode;st.hold=0;}}else{st.hold=0;}
+    }
+    var Vsrc=st.mode>0?Vs:0;
+    var I=st.I, VL=Vsrc-I*R, lam=Lh*I, E=0.5*Lh*I*I;
+    var iSat=clamp(I/Math.max(steadyI,1e-3),0,1), eFrac=iSat*iSat;
+    if(st.run){st.phase+=st.spd;st.cur+=iSat*5.0;st.theta+=iSat*6.0;pushScope(I,VL);}
+    var modeName,modeColor;
+    if(iSat>0.985&&st.mode>0){modeName='STEADY';modeColor=DIM;}
+    else if(iSat<0.04&&st.mode<0){modeName='OFF';modeColor=DIM;}
+    else{modeName=(st.mode>0)?'ENERGIZING':'DE-ENERGIZING';modeColor=(st.mode>0)?CYAN:VIOLET;}
+    var m={I:I,VL:VL,iSat:iSat,eFrac:eFrac,cur:st.cur,theta:st.theta,phase:st.phase,modeName:modeName,modeColor:modeColor,R:R,Vs:Vs,L:Lh,mode:st.mode};
+
+    var Ls=fmtL(Lh),Rs=R+' \u03a9',VsS=Vs.toFixed(1)+' V';
+    labVs.textContent=VsS;labR.textContent=Rs;labL.textContent=Ls;
+    t1.labL.textContent=Ls;t1.labR.textContent=Rs;t1.labVs.textContent='Vs '+VsS;t1.labI.textContent='I '+fmtI(I);
+    t2.labL.textContent=Ls;t2.labVs.textContent='Vs '+VsS;t2.labI.textContent='I '+fmtI(I);t2.labVL.textContent='Vl '+VL.toFixed(1)+' V';
+
+    if(st.tier===1){updateT1(m);}else if(st.tier===2){updateT2(m);}else{updateT3(m);}
+    drawScope();
+
+    roI.textContent=fmtI(I);
+    roVL.textContent=VL.toFixed(2)+' V';
+    roLam.textContent=fmtLam(lam);
+    roE.textContent=fmtE(E);
+    roTau.textContent=(tau>=1000?(tau/1000).toFixed(2)+' s':tau.toFixed(1)+' ms');
+    roState.textContent=modeName;roState.style.color=modeColor;
+    stTag.textContent='I '+fmtI(I);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

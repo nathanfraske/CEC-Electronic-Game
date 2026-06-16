@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (night) — part-demo tiers (owner design)
+
+- **Three-tier part demos — STARTED (refs + design).** Every part shown schematic / analogy /
+  reality, live-animated, revealed by zooming into a placed part or via the info panel. Refs:
+  `docs/ui/parts/*-tiers.html` (5: R, ceramic C, electrolytic C, L, TR — authoritative spec).
+  Design + plan: `docs/ui/part-demos-tiers.md`. Extends App.svelte `infoDiagram` / `hasFactory` /
+  `diagramMode`. Pure presentation → no golden impact. **Next batch of part sheets arrives once
+  this 5 is implemented.**
+  - [ ] Map existing `infoDiagram` / factory / `diagramMode` + board zoom-LOD (Explore agent in flight).
+  - [ ] Port **resistor** → reusable `TierView` in the info panel (the pattern the rest follow).
+  - [ ] Tier switcher (schematic/analogy/reality) + live per-frame feed (`electricalMap` + derived
+    P/Q/E/flux/τ).
+  - [ ] **Board zoom-to-reveal**: render the `TierView` in place of the glyph past a zoom threshold.
+  - [ ] Port ceramic C, electrolytic C, L, TR onto the same pattern; then the next batch.
+
 ## 2026-06-16 (night) — design (Ideal-vs-Real + multi-rate)
 
 - **Ideal-vs-Real RESOLVED** as a progression-driven **fidelity gradient** (not a global
