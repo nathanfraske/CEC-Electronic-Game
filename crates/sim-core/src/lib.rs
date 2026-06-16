@@ -2149,12 +2149,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_q[i] == Level::High {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -2350,12 +2351,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_q[i] == Level::High {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -3082,12 +3084,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_q[i] == Level::High {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -3295,12 +3298,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_q[i] == Level::High {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
