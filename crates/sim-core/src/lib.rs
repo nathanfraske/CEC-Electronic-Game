@@ -829,6 +829,70 @@ fn is_nonlinear(kind: u8) -> bool {
     is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
 }
 
+/// True for the **digital** element kinds — a logic gate or a flip-flop. Their
+/// terminals are logic pins (driven/sensed levels) rather than continuous-voltage
+/// analog terminals. The net-classification pass ([`classify_nets`]) uses this to
+/// separate the analog and digital domains; the boundary between them is any node
+/// where a digital pin and an analog element meet. See
+/// `docs/ui/logic-analog-digital-nets.md` §7.
+#[inline]
+fn is_digital(kind: u8) -> bool {
+    kind == ELEM_GATE || kind == ELEM_DFF
+}
+
+/// How a circuit node relates to the analog/digital split — the substrate for the
+/// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7). Ground and
+/// any node touched by an analog element are [`NetClass::Analog`]; a node touched
+/// **only** by digital pins is a pure-[`NetClass::Digital`] net (which will leave the
+/// MNA matrix once the event scheduler lands); a node touched by **both** is a
+/// [`NetClass::Boundary`] net (a receiver reads it, a driver writes it). Computed
+/// deterministically in fixed element order so the result can feed the snapshot hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum NetClass {
+    Analog = 0,
+    Digital = 1,
+    Boundary = 2,
+}
+
+/// Classify every node as analog / pure-digital / boundary from the element list —
+/// the in-core analogue of a Verilog-AMS discipline-resolution pass (LRM Annex F),
+/// done in fixed element order so it is deterministic. A node is *analog-touched* if
+/// any analog element has a terminal on it and *digital-touched* if any digital pin
+/// does; ground (node `0`) is always analog (the shared reference). Unused element
+/// terminals sit at ground, so iterating all four terminals is safe — an unused
+/// terminal can only ever re-mark ground, which is forced analog regardless.
+fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
+    let mut analog_touched = vec![false; node_count];
+    let mut digital_touched = vec![false; node_count];
+    for e in elements {
+        let digital = is_digital(e.kind);
+        for t in [e.a, e.b, e.c, e.d] {
+            if t >= node_count {
+                continue;
+            }
+            if digital {
+                digital_touched[t] = true;
+            } else {
+                analog_touched[t] = true;
+            }
+        }
+    }
+    (0..node_count)
+        .map(|n| {
+            if n == 0 {
+                NetClass::Analog // ground: the shared reference for both domains
+            } else if analog_touched[n] && digital_touched[n] {
+                NetClass::Boundary
+            } else if digital_touched[n] {
+                NetClass::Digital
+            } else {
+                NetClass::Analog
+            }
+        })
+        .collect()
+}
+
 // --- Newton outer-loop constants ----------------------------------------------
 
 /// Hard cap on Newton iterations per solve. If the loop has not converged by
@@ -1306,6 +1370,12 @@ pub struct Sim {
     /// path; when `false`, the solve is byte-for-byte the original single-pass
     /// solve.
     has_nonlinear: bool,
+    /// Per-node analog/digital classification (length `node_count`), computed at
+    /// install from the element list ([`classify_nets`]). Topology metadata for the
+    /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
+    /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
+    /// the event scheduler lands. Exposed via [`Sim::net_class`].
+    net_classes: Vec<NetClass>,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
     node_v: Vec<f64>,
@@ -1412,6 +1482,7 @@ impl Sim {
             dim: 0,
             branch_index: Vec::new(),
             has_nonlinear: false,
+            net_classes: vec![NetClass::Analog],
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             ff_bit: Vec::new(),
@@ -1589,11 +1660,13 @@ impl Sim {
         }
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
+        let net_classes = classify_nets(node_count, &elements);
 
         self.node_count = node_count;
         self.dim = next;
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
+        self.net_classes = net_classes;
         self.reactive_state = vec![0.0; elements.len()];
         self.ff_bit = vec![0.0; elements.len()];
         self.ff_clk_high = vec![0.0; elements.len()];
@@ -3463,6 +3536,15 @@ impl Sim {
     /// Stable hash of the full snapshot. Part of the replay contract. FNV-1a
     /// over the tick (little-endian) followed by each node voltage
     /// (little-endian `f64` bits), in fixed node order.
+    /// The analog/digital classification of node `n` as a small code: `0` = analog,
+    /// `1` = pure-digital, `2` = boundary (an out-of-range node reads `0` = analog).
+    /// Topology metadata for the separated digital domain — exposed for the renderer
+    /// to draw digital nets and boundary buffers distinctly. Deterministic, fixed at
+    /// install. See `docs/ui/logic-analog-digital-nets.md` §7.
+    pub fn net_class(&self, n: usize) -> u8 {
+        self.net_classes.get(n).copied().unwrap_or(NetClass::Analog) as u8
+    }
+
     pub fn snapshot_hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
@@ -3610,6 +3692,64 @@ mod tests {
             sim.step();
         }
         println!("golden = 0x{:016x}", sim.snapshot_hash());
+    }
+
+    /// Net classification separates the analog and digital domains deterministically
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.7): ground and analog-only nodes
+    /// read `0`, nodes touched only by digital pins read `1` (pure-digital), and a
+    /// node touched by both reads `2` (boundary). It is pure topology metadata and
+    /// does not perturb the solve (the goldens above stay bit-identical).
+    #[test]
+    fn net_classification_separates_domains() {
+        // Analog-only RC: every node analog.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 0.0],
+        ));
+        assert_eq!(
+            [sim.net_class(0), sim.net_class(1), sim.net_class(2)],
+            [0, 0, 0]
+        );
+
+        // Gate-only inverter ring (G1: out=1 in=2, G2: out=2 in=1): both internal
+        // nodes are pure-digital; ground stays analog.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            3,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 2],
+            &[2, 1],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 5.0],
+            &[6.0, 6.0], // NOT, NOT
+        ));
+        assert_eq!(
+            [sim.net_class(0), sim.net_class(1), sim.net_class(2)],
+            [0, 1, 1]
+        );
+
+        // Boundary: a buffer's output node is also loaded by a resistor to ground, so
+        // it is touched by a digital pin (gate out) and an analog element (resistor).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            2,
+            &[ELEM_GATE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 1000.0],
+            &[7.0, 0.0], // BUF, (resistor aux unused)
+        ));
+        assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
     }
 
     /// A resistive voltage divider's node voltage is exact (no dynamics): a 12 V
