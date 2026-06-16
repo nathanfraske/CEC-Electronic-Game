@@ -65,6 +65,7 @@
   } from "./lib/glyphs";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
+  import { hasAnalogy } from "./lib/analogyDrawers";
   import { partInfo } from "./lib/partInfo";
   import { CALCS } from "./lib/calc";
   import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
@@ -479,8 +480,10 @@
   // Which tiers the current selection actually has distinct art for (a pure read of
   // the kind). The schematic tier always exists; the others gate their toggle button.
   const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
+  // The analogy tier renders the full-panel illustration when one exists, else the
+  // board's Factory glyph — so it's available when EITHER is present.
   const diagramHasFactory = $derived(
-    selPart ? hasFactory(selPart.kind) : false,
+    selPart ? hasFactory(selPart.kind) || hasAnalogy(selPart.kind) : false,
   );
   // The tier the diagram should actually render in: the user's choice when that
   // tier's art exists, else clamped outward to schematic so nothing is ever blank.
@@ -954,7 +957,9 @@
             if (infoOpen) {
               // Keep the picture (symbol vs internals) and the live state current
               // every frame, so a mode flip or a re-mounted canvas is always right.
+              // Share the board's flow clock so the internals pause/flow with time.
               infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setPhase(b.flowPhase());
               infoDiagram?.setState(
                 selPart.kind,
                 e,

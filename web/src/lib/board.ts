@@ -1281,6 +1281,17 @@ export class Board {
     this.emitAnchor();
   }
 
+  /**
+   * The bounded visual flow clock (see `phase`). Exposed so the info-panel
+   * diagram can share the SAME timeline-respecting clock the board's belts ride:
+   * it advances at the calm fixed rate while running, freezes when paused, and
+   * runs backward when stepping/scrubbing back — so the part-internals animation
+   * pauses and flows with time exactly like the board, instead of free-running.
+   */
+  flowPhase(): number {
+    return this.phase;
+  }
+
   destroy(): void {
     this.app.stage.off("pointerdown", this.onPointerDown);
     this.app.stage.off("pointermove", this.onPointerMove);

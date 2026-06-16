@@ -6,6 +6,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (overnight) — part-demo tiers: animation fix + all batch-1/2 tiers built
+
+- ~~**Animation feedback (owner): slow down, de-jitter, pause-and-flow-with-time** — DONE.
+  `InfoDiagram` adopts the board's shared flow clock (`Board.flowPhase()` → `setPhase` each
+  frame): calm `FLOW_HZ`, freezes paused, reverses on scrub. Detail dot-loops de-jittered with a
+  fixed-slot `dotPresence` fade (no count-flip teleporting).~~
+- ~~**Analogy tier = full-panel illustration (owner: "as detailed as the design doc")** — DONE.
+  New `web/src/lib/analogyDrawers.ts` + shared `web/src/lib/tierKit.ts`; `InfoDiagram` analogy
+  mode draws full-panel `drawAnalogy()` else falls back to the board Factory glyph; gate is
+  `hasFactory || hasAnalogy`.~~
+- ~~**Analogy drawers (full-panel):** R, C, EC, L, TR, D/SD/LED, ZD, Q/QP, NM/PM — DONE.~~
+- ~~**Reality drawers:** C (MLCC), EC (Al-foil), TR (iron-core windings), Q/QP (BJT silicon),
+  NM/PM (MOSFET silicon) — DONE, registered in `DETAIL_DRAWERS`.~~
+- ~~**Batch 2 implemented** (diode/zener analogy, transistor + MOSFET analogy & reality);
+  PMOS ref saved (`docs/ui/parts/mosfet-pmos-tiers.html`).~~
+- [ ] **Board LOD — the gated decision point.** Working LOD (NOT hide-to-reveal): always visible
+  + animating, zoom-IN adds factory→reality detail, zoom-OUT simplifies. Hook off `world.scale`
+  in `Board.update()`; overlay the full-panel analogy/reality drawer (they take a centred
+  `bounds`) over the zoomed part. Thresholds/blend are visual tuning — **owner to eyeball live.**
+- [ ] **Tier-fidelity caveats to revisit** (need richer per-element state): BJT/MOSFET reality
+  proxy gate/base off |I| (no Vgs/Ib); transformer reality uses |Ip| as a flux-activity proxy
+  (true core-flux/saturation is the ideal-vs-real work).
+
 ## 2026-06-16 (night) — part-demo tiers (owner design)
 
 - **Three-tier part demos — STARTED (refs + design).** Every part shown schematic / analogy /
