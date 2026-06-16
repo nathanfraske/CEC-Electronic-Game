@@ -583,21 +583,39 @@ const FAMILIES: [LogicFamily; 3] = [
     },
 ];
 
-/// Decode a gate/flip-flop's logic-family index from its `aux` scalar. The family rides
-/// in the **upper bits** (`aux / 16`) while the gate function code occupies the low bits
-/// ([`gate_func_code`]); a flip-flop has no function code, so its low bits are `0`. An
-/// out-of-range index clamps to the last family. For a legacy element (`aux` in `0..8`,
-/// no family bits) this is `0` = [`LogicFamily::LEGACY`], so behaviour is unchanged.
+/// A digital element packs three independent fields into its `aux` scalar (all small
+/// non-negative integers, exact in `f64`): the gate **function code** in bits 0–3
+/// ([`gate_func_code`]), the **logic-family index** in bits 4–7 ([`gate_family_index`]),
+/// and an **open-drain** output flag in bit 8 ([`gate_open_drain`]). Decoded with bit
+/// masks so each field is independent. A legacy element (`aux` in `0..8`) decodes to
+/// function only, family `0` ([`LogicFamily::LEGACY`]), push-pull — behaviour unchanged.
 #[inline]
-fn gate_family_index(aux: f64) -> usize {
-    ((aux.round().max(0.0) as usize) / 16).min(FAMILIES.len() - 1)
+fn aux_bits(aux: f64) -> u32 {
+    aux.round().max(0.0) as u32
 }
 
-/// Decode a gate's function code (`0..8`, the low bits of `aux`) from a packed `aux`
-/// that may also carry a family index in its upper bits ([`gate_family_index`]).
+/// Decode a digital element's logic-family index (bits 4–7 of `aux`), clamped to the
+/// last family if out of range.
+#[inline]
+fn gate_family_index(aux: f64) -> usize {
+    (((aux_bits(aux) >> 4) & 0x0F) as usize).min(FAMILIES.len() - 1)
+}
+
+/// Decode a gate's function code (bits 0–3 of `aux`).
 #[inline]
 fn gate_func_code(aux: f64) -> f64 {
-    (aux.round().max(0.0) as i64).rem_euclid(16) as f64
+    (aux_bits(aux) & 0x0F) as f64
+}
+
+/// Decode the **open-drain** output flag (bit 8 of `aux`): when set, the driver pulls
+/// its output **low** but **releases** (high-impedance `Z`) instead of driving it high
+/// — the high then comes from an external pull-up resistor. Open-drain outputs sharing
+/// a net form a **wired-AND** bus (any driver low → net low; all release → pull-up
+/// high), the I²C / open-collector / interrupt-line idiom. See
+/// `docs/ui/logic-analog-digital-nets.md` §7.6.
+#[inline]
+fn gate_open_drain(aux: f64) -> bool {
+    (aux_bits(aux) >> 8) & 0x01 != 0
 }
 
 /// **Transformer** (ideal-T model). The first four-terminal element: primary
@@ -1601,6 +1619,11 @@ pub struct Sim {
     /// within-tick scratch — *not* persistent state and never hashed. Only gate entries
     /// are meaningful; others stay `0.0`. Indexed in lockstep with `elements`.
     gate_target: Vec<f64>,
+    /// Per-element logic-gate output **conductance** for the current tick, paired with
+    /// `gate_target` so the displayed current is `gate_gout·(gate_target − V(a))` — the
+    /// family's drive strength, and `0` when an open-drain output has **released** (so a
+    /// released output reads ~0 A, not a spurious pull current). Scratch; never hashed.
+    gate_gout: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
     /// pre-step reactive state is still in scope, so `element_currents` is a
@@ -1659,6 +1682,7 @@ impl Sim {
             varistor_v: Vec::new(),
             opamp_vd: Vec::new(),
             gate_target: Vec::new(),
+            gate_gout: Vec::new(),
             currents: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
@@ -1846,6 +1870,7 @@ impl Sim {
         self.varistor_v = vec![0.0; elements.len()];
         self.opamp_vd = vec![0.0; elements.len()];
         self.gate_target = vec![0.0; elements.len()];
+        self.gate_gout = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
@@ -2146,7 +2171,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -2348,7 +2373,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3081,7 +3106,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3295,7 +3320,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
+                ELEM_GATE => self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
                     // Q output drive current via the flip-flop's family (matches the
@@ -3465,8 +3490,18 @@ impl Sim {
                     let in1 = fam.quantize(self.node_v[e.b], e.value);
                     let in2 = fam.quantize(self.node_v[e.c], e.value);
                     let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
-                    self.gate_target[i] = fam.drive_level(out, e.value).map_or(0.0, |(v, _)| v);
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], out);
+                    // Open-drain: pull low, but RELEASE the high side (Z) — the high
+                    // comes from an external pull-up. Open-drain outputs on one net form
+                    // a wired-AND bus (any low wins; all release -> pull-up high).
+                    let driven = if gate_open_drain(e.aux) && out == Level::High {
+                        Level::Z
+                    } else {
+                        out
+                    };
+                    let (tv, g) = fam.drive_level(driven, e.value).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = tv;
+                    self.gate_gout[i] = g;
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
                     self.digital_vhigh[e.a] = e.value;
                     self.digital_family[e.a] = fi as u8;
                 }
@@ -5566,6 +5601,54 @@ mod tests {
             lost < 2.0,
             "the 1.8 V high is below the 12 V part's V_IL, so it reads LOW (high lost): {lost}"
         );
+    }
+
+    /// Open-drain outputs (aux bit 8) sharing a net with a pull-up resistor form a
+    /// **wired-AND bus** (`docs/ui/logic-analog-digital-nets.md` §7.6): each open-drain
+    /// buffer pulls the bus low when its input is low but RELEASES (high-Z) when high,
+    /// so the bus is low if any driver pulls and is pulled high by the resistor only
+    /// when all release. Result: bus = A AND B. This is the I²C / open-collector idiom,
+    /// resolved by the analog solve (no fight).
+    #[test]
+    fn gate_open_drain_wired_and_bus() {
+        const OD_BUF: f64 = 7.0 + 256.0; // BUF function (7), open-drain bit (256)
+                                         // nodes: 0 gnd, 1 Vcc, 2 bus, 3 inA, 4 inB. Two open-drain buffers drive the bus
+                                         // from their inputs; a 1 k pull-up ties the bus to the 5 V rail.
+        let bus = |a_high: bool, b_high: bool| -> Vec<f64> {
+            let va = if a_high { 5.0 } else { 0.0 };
+            let vb = if b_high { 5.0 } else { 0.0 };
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_GATE,
+                    ELEM_GATE,
+                ],
+                &[1, 3, 4, 2, 2, 2], // a
+                &[0, 0, 0, 1, 3, 4], // b
+                &[0, 0, 0, 0, 0, 0], // c
+                &[0, 0, 0, 0, 0, 0], // d
+                &[5.0, va, vb, 1000.0, 5.0, 5.0],
+                &[0.0, 0.0, 0.0, 0.0, OD_BUF, OD_BUF],
+            ));
+            for _ in 0..10 {
+                sim.step();
+            }
+            sim.state()
+        };
+        // All release only when both inputs are high -> the pull-up takes the bus high.
+        assert!(
+            bus(true, true)[2] > 4.0,
+            "both high: both release, pull-up takes the bus high"
+        );
+        // Any low driver pulls the bus low (wired-AND) -- the 1 ohm pull dominates the 1 k pull-up.
+        assert!(bus(true, false)[2] < 1.0, "one low: bus pulled low");
+        assert!(bus(false, true)[2] < 1.0, "one low: bus pulled low");
+        assert!(bus(false, false)[2] < 1.0, "both low: bus low");
     }
 
     // --- Transformer (ideal-T model, four-terminal) ---------------------------

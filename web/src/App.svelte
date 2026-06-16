@@ -1078,6 +1078,17 @@
   function setFamily(idx: number): void {
     if (selPart) board?.setComponentFamily(selPart.id, idx);
   }
+  // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
+  // releases high — needs an external pull-up). The D flip-flop is always push-pull.
+  function isGatePart(kind: string): boolean {
+    return isDigitalPart(kind) && kind !== "FF";
+  }
+  function selOpenDrain(): boolean {
+    return selPart?.openDrain ?? false;
+  }
+  function setOpenDrain(v: boolean): void {
+    if (selPart) board?.setComponentOpenDrain(selPart.id, v);
+  }
   // The potentiometer's wiper position (its second scalar): 0..1, centred by
   // default. Presented as a continuous slider that sets the exact position.
   function selWiper(): number {
@@ -1979,6 +1990,27 @@
                   )} lo</span
                 >
               </div>
+            {/if}
+            {#if isGatePart(kind)}
+              <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+                   releases high (needs an external pull-up) — open-drain outputs on one
+                   net make a wired-AND bus (I²C / interrupt-line idiom). -->
+              <div class="insp-sub">output</div>
+              <div class="insp-chips">
+                <button
+                  class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+                  onclick={() => setOpenDrain(false)}>Push-pull</button
+                >
+                <button
+                  class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+                  onclick={() => setOpenDrain(true)}>Open-drain</button
+                >
+              </div>
+              {#if selOpenDrain()}
+                <div class="insp-sub">
+                  releases high · <span class="mono">add a pull-up to Vcc</span>
+                </div>
+              {/if}
             {/if}
             {#if kind === "AC"}
               <!-- The AC source's second scalar: its peak amplitude (volts),

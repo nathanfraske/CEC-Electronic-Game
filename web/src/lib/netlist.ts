@@ -437,7 +437,9 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     const aux =
       c.kind === "AC"
         ? (c.amp ?? AC_DEFAULT_AMP)
-        : (GATE_AUX[c.kind] ?? 0) + 16 * (c.family ?? 0);
+        : (GATE_AUX[c.kind] ?? 0) +
+          16 * (c.family ?? 0) +
+          (c.openDrain ? 256 : 0);
     const idx = types.length;
     types.push(t);
     aArr.push(na);

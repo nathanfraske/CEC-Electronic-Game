@@ -77,6 +77,16 @@ export interface Component {
    * exactly as before. Optional so older snapshots round-trip to Ideal.
    */
   family?: number;
+  /**
+   * Open-drain (open-collector) output mode for a logic gate: when `true`, the gate
+   * pulls its output LOW but RELEASES (high-impedance) instead of driving it high — the
+   * high comes from an external pull-up resistor. Open-drain gates sharing a net form a
+   * wired-AND bus (the I²C / interrupt-line idiom). Encoded into `aux` bit 8 (`+256`) by
+   * {@link buildNetlist}, matching `gate_open_drain` in `crates/sim-core/src/lib.rs`.
+   * Only meaningful for the logic gates; undefined elsewhere defaults to push-pull, so
+   * existing parts are unchanged and older snapshots round-trip.
+   */
+  openDrain?: boolean;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
 }
