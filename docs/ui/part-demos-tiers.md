@@ -94,10 +94,14 @@ zoom-to-reveal**.
    each in `DETAIL_DRAWERS`; the panel auto-unlocks it. Verify with `pnpm -C web check/lint/build`.
 2. **Verify/port the Factory (analogy) tier** for these kinds against each ref's Tier 2 (water
    throat / tank+piston / flywheel / belted wheels). Most exist; fill gaps (esp. `TR`).
-3. **Board zoom-to-reveal** (the new mechanic): there's no component LOD swap today. Hook
-   `Board.update()` at `world.scale ≥ ~3` with a single selected part → render the detail drawer
-   in place of the glyph (LOD swap) so you literally "zoom into the part and watch it work." (The
-   simpler fallback is an `onZoomDetail` callback that auto-opens the info drawer.)
+3. **Board level-of-detail — a *working* LOD, NOT hide-to-reveal** (owner clarification): the
+   part is **always** visible and animating with its live state. The board glyph already does
+   this and is the zoomed-out "simplified working view"; zooming **in** progressively
+   swaps/blends toward the richer factory → reality detail (more internals, same live numbers),
+   and zooming **out** simplifies for clarity + render cost. **Nothing is ever hidden** at any
+   zoom — you can always see it work. Hook the swap off `world.scale` in `Board.update()`; the
+   exact thresholds + blend are a visual-tuning pass (owner will eyeball the live render before
+   it's final).
 4. **Polish**: telemetry + tier switcher on the board at high zoom; smooth glyph→detail fade.
 5. **Next batch** of part sheets once these five land.
 

@@ -21,12 +21,17 @@ coming once this batch is implemented** (owner will upload the next batch then).
 `hasDetail`/`hasFactory`, `diagramMode`/`effectiveDiagramMode` (schematic vs reality). A background
 Explore agent is mapping its exact API + renderer + the board zoom/LOD hook.
 
-**NEXT (the build, phased — see the doc):** (1) finish mapping `infoDiagram`; (2) port the
-**resistor** tiers into a reusable `TierView` mounted in the info panel (the pattern); (3) tier
-switcher + live per-frame feed (`electricalMap` + derived P/Q/E/flux/τ); (4) **board zoom-to-reveal**
-(LOD swap on `world.scale`); (5) the other 4 parts; (6) polish + next batch. Pure presentation → no
-golden impact. (Ideal-vs-Real fidelity work — curriculum tiering + Real-variant upgrades — remains
-queued below; the tier demos are its visual companion.)
+**Progress + NEXT:** Mapping done — the three-tier system already exists (~70-80%): `InfoDiagram`
+(PixiJS) + `DRAWERS`/`FACTORY_DRAWERS`/`DETAIL_DRAWERS` + tier switcher + live feed; reality drawers
+for OA/D/SD/LED/ZD/R. **Inductor reality tier DONE** (`drawDetailInductor`, registered; gates green —
+needs a live eyeball). Remaining reality drawers: **C, EC, TR** (same `drawDetail<Kind>` pattern in
+`detailDrawers.ts` → `DETAIL_DRAWERS`). Then the **board LOD** — owner clarified it's a *working* LOD,
+**NOT** hide-to-reveal: the part is always visible/animating, zoom-IN adds factory→reality detail,
+zoom-OUT simplifies for clarity + render cost, nothing hidden; tune on visual review. **Batch 2 queued**
+(`docs/ui/parts/`): `diode-factory`, `diode-tier2-study`, `zener-tier2` (analogy → `FACTORY_DRAWERS`),
+`transistor-tiers` (Q/QP/NM/PM reality) — implement after batch 1, in order, no rush. Pure presentation
+→ no golden impact. (Ideal-vs-Real fidelity work remains queued below; the tier demos are its visual
+companion.)
 
 ---
 

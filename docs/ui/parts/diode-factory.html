@@ -1,0 +1,364 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diode factory building</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    --pos:#46d2e6; --neg:#d8a24a; --out:#f5247a; --rail:#6b6488;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  #stat.chip{transition:color .12s, border-color .12s;}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;} p.intro b{color:var(--text);}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .leg{display:flex; gap:11px; padding:9px 0; border-bottom:1px solid var(--border); font-size:12px; color:var(--dim); line-height:1.45;}
+  .leg:last-child{border-bottom:none;}
+  .leg b{color:var(--text);} .leg .mono{font-family:var(--font-mono); color:var(--faint); font-size:11px;}
+  .leg .tag{flex-shrink:0; width:20px; font-family:var(--font-mono); font-size:14px; text-align:center;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .xfer{margin-top:4px;}
+  .xfer svg{width:100%; height:auto; display:block;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:188px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--accent); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--accent); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].pos::-webkit-slider-thumb{background:var(--pos); box-shadow:0 0 10px -2px var(--pos);}
+  input[type=range].pos::-moz-range-thumb{background:var(--pos);}
+  input[type=range].neg::-webkit-slider-thumb{background:var(--neg); box-shadow:0 0 10px -2px var(--neg);}
+  input[type=range].neg::-moz-range-thumb{background:var(--neg);}
+  input[type=range].volt::-webkit-slider-thumb{background:var(--cyan); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].volt::-moz-range-thumb{background:var(--cyan);}
+  input[type=range].res::-webkit-slider-thumb{background:var(--violet); box-shadow:0 0 10px -2px var(--violet);}
+  input[type=range].res::-moz-range-thumb{background:var(--violet);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">part demo</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent">OP-AMP</span><span class="chip" id="stat">SAT +</span></div>
+  </div>
+
+  <h1 class="lede">The diode building, and what it is doing</h1>
+  <p class="intro">This is the <b>factory building</b> for the diode: a cutaway of the junction inside, not the schematic symbol. Current inside a diode is carried by charges moving through the crystal, and you are watching those carriers move in real time. The left contact is the anode, the right is the cathode, and the junction sits in the middle. Push the voltage <b>forward</b> and the carriers are driven into the junction where they cross and current flows; <b>reverse</b> it and they are pulled apart, the bare middle region widens into a barrier, and almost nothing gets through. The three types work by genuinely different physics, so each shows a different picture. Pick one and watch. Push the reverse voltage far enough and the junction breaks down.</p>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag">diode &middot; factory view</span>
+      <span class="scope-tag r" id="iTag">I = 12.8 mA</span>
+      <svg id="scene" viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg" aria-label="animated op-amp building">
+        <defs>
+          <filter id="glow" x="-60%" y="-60%" width="220%" height="220%"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+          <filter id="glowBig" x="-120%" y="-120%" width="340%" height="340%"><feGaussianBlur stdDeviation="9"/></filter>
+          <linearGradient id="tri" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stop-color="oklch(0.30 0.05 285)"/><stop offset="1" stop-color="oklch(0.22 0.04 285)"/>
+          </linearGradient>
+          <radialGradient id="house" cx="0.5" cy="0.35" r="0.8">
+            <stop offset="0" stop-color="oklch(0.235 0.038 285)"/><stop offset="1" stop-color="oklch(0.175 0.03 285)"/>
+          </radialGradient>
+        </defs>
+      </svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">What it does</h2><div class="panel-body" id="legend"></div></div>
+      <div class="panel"><h2 class="panel-title">Telemetry</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Transfer curve</h2><div class="panel-body xfer"><svg id="xfer" viewBox="0 0 280 170" xmlns="http://www.w3.org/2000/svg" aria-label="output versus input difference"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="tg"><span class="tg-label">flow</span><input type="range" id="speed" min="0" max="200" value="100" style="width:110px"></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">applied voltage</span><span class="ic-val" id="labV">+2.0 V</span></div><input type="range" class="volt" id="volt" min="-600" max="600" value="200"></div>
+    <div class="tg"><span class="tg-label">type</span><button class="btn btn-ghost is-active" id="btnSi">Si</button><button class="btn btn-ghost" id="btnSch">Schottky</button><button class="btn btn-ghost" id="btnLed">LED</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);for(var k in a)e.setAttribute(k,a[k]);if(txt!=null)e.textContent=txt;return e;}
+  var BRONZE='#c9a45a', BRONZE2='#8a6f3a', HOLE='#ff8a5a', ELEC='#5bc8ff', RED='#ff3b2e', DIM='#8a98a6', WARM='#ffe6c0';
+  var Vt=0.02585, Rs=100;
+  var TYPES={
+    Si:{label:'silicon PN junction', leftType:'P', emit:false, Vbi:0.7, Vf:'0.7', Is:1e-14,n:1,Vbr:5,Rbr:3, glow:'#ffb24d', leftFill:'#2e1a1a',
+        desc:'<b>Silicon PN junction.</b> Holes from the P side and electrons from the N side are driven into the junction and recombine, releasing the energy as heat. The built-in barrier is about 0.7 V.'},
+    Schottky:{label:'metal to N junction', leftType:'metal', emit:false, Vbi:0.3, Vf:'0.3', Is:1e-7,n:1,Vbr:4,Rbr:3, glow:'#bfe0ff', leftFill:'#2b2d36',
+        desc:'<b>Metal to semiconductor.</b> Only electrons carry the current. They cross a low barrier from the N silicon into the metal, with no holes and no recombination, so there is no stored charge and switching is fast.'},
+    LED:{label:'light emitting PN', leftType:'P', emit:true, Vbi:2.0, Vf:'2.0', Is:1e-12,n:3.2,Vbr:5,Rbr:3, glow:'#ffce4a', leftFill:'#2e1a1a',
+        desc:'<b>Light emitting PN junction.</b> In a direct-bandgap crystal each electron and hole that recombine emit a photon, so forward current becomes light. The larger bandgap sets the higher 2 V drop and the color.'}
+  };
+  function diodeI(Vd,p){var fwd=p.Is*(Math.exp(Math.min(Vd/(p.n*Vt),60))-1);var bd=(Vd<-p.Vbr)?(Vd+p.Vbr)/p.Rbr:0;return fwd+bd;}
+  function solve(Vapp,p){var lo=-(p.Vbr+3),hi=3;for(var k=0;k<60;k++){var m=(lo+hi)/2;if(m+Rs*diodeI(m,p)-Vapp>0)hi=m;else lo=m;}var Vd=(lo+hi)/2;return {Vd:Vd,I:diodeI(Vd,p)};}
+  function depW(V,p){var wn=Math.sqrt(Math.max(0.04,(p.Vbi-V))/(p.Vbi+5));return Math.max(7,Math.min(76,76*wn));}
+  var cur='Si';
+  var svg=document.getElementById('scene');
+  var defs=svg.querySelector('defs');
+
+  var bL=258,bR=602,bT=150,bB=360, xJ=430, innerL=270,innerR=590, yTop=192,yBot=338, yMid=255;
+
+  // clip for interior
+  var clip=el('clipPath',{id:'boxclip'}); clip.appendChild(el('rect',{x:bL,y:bT,width:bR-bL,height:bB-bT,rx:13})); defs.appendChild(clip);
+
+  // external leads + terminals + polarity
+  var leadA=el('line',{x1:110,y1:yMid,x2:bL,y2:yMid,stroke:'#5a5366',"stroke-width":7,"stroke-linecap":"round",opacity:0.7}); svg.appendChild(leadA);
+  var leadK=el('line',{x1:bR,y1:yMid,x2:750,y2:yMid,stroke:'#5a5366',"stroke-width":7,"stroke-linecap":"round",opacity:0.7}); svg.appendChild(leadK);
+  [[110,'A','anode'],[750,'K','cathode']].forEach(function(d){svg.appendChild(el('circle',{cx:d[0],cy:yMid,r:8,fill:'#1c150e',stroke:BRONZE,"stroke-width":2}));svg.appendChild(el('circle',{cx:d[0],cy:yMid,r:3.4,fill:BRONZE}));
+    svg.appendChild(el('text',{x:d[0],y:yMid+26,"font-family":"var(--font-mono)","font-size":12,fill:BRONZE,"text-anchor":"middle"},d[1]));
+    svg.appendChild(el('text',{x:d[0],y:yMid+39,"font-family":"var(--font-mono)","font-size":8,fill:DIM,"text-anchor":"middle",opacity:0.7},d[2]));});
+  var polL=el('text',{x:110,y:yMid-16,"font-family":"var(--font-mono)","font-size":15,fill:WARM,"text-anchor":"middle"},'+'); svg.appendChild(polL);
+  var polR=el('text',{x:750,y:yMid-16,"font-family":"var(--font-mono)","font-size":15,fill:DIM,"text-anchor":"middle"},'\u2212'); svg.appendChild(polR);
+  var labVin=el('text',{x:160,y:yMid-16,"font-family":"var(--font-mono)","font-size":12,fill:WARM,"text-anchor":"middle"},''); svg.appendChild(labVin);
+  var biasLab=el('text',{x:430,y:bT-26,"font-family":"var(--font-mono)","font-size":10,fill:DIM,"text-anchor":"middle","letter-spacing":"0.14em"},'FORWARD BIAS'); svg.appendChild(biasLab);
+  // current packets on leads
+  var cpck=[]; for(var i=0;i<6;i++){var c=el('path',{d:'M -5 -4 L 0 0 L -5 4',fill:'none',stroke:WARM,"stroke-width":2.2,"stroke-linecap":"round","stroke-linejoin":"round",opacity:0,filter:'url(#glow)'});svg.appendChild(c);cpck.push({el:c,off:(i%3)/3,lead:i<3?'A':'K'});}
+
+  // emission / breakdown halo (behind box)
+  var halo=el('circle',{cx:xJ,cy:yMid,r:120,fill:'#ffce4a',opacity:0,filter:'url(#glowBig)'}); svg.appendChild(halo);
+  // box shadow
+  svg.appendChild(el('rect',{x:bL-4,y:bT-4,width:(bR-bL)+8,height:(bB-bT)+8,rx:16,fill:'#0c0f16'}));
+
+  // clipped interior
+  var inner=el('g',{"clip-path":"url(#boxclip)"}); svg.appendChild(inner);
+  var rectL=el('rect',{x:bL,y:bT,width:170,height:bB-bT,fill:'#2e1a1a'}); inner.appendChild(rectL);
+  var rectD=el('rect',{x:xJ-20,y:bT,width:40,height:bB-bT,fill:'#0e1018'}); inner.appendChild(rectD);
+  var rectR=el('rect',{x:xJ+20,y:bT,width:170,height:bB-bT,fill:'#16222e'}); inner.appendChild(rectR);
+  // region labels
+  var labLeft=el('text',{x:340,y:bT+22,"font-family":"var(--font-display)","font-size":15,fill:'#e0b0a0',"text-anchor":"middle","letter-spacing":"0.1em",opacity:0.9},'P'); inner.appendChild(labLeft);
+  var labRight=el('text',{x:510,y:bT+22,"font-family":"var(--font-display)","font-size":15,fill:'#9ad0ff',"text-anchor":"middle","letter-spacing":"0.1em",opacity:0.9},'N'); inner.appendChild(labRight);
+  var labDep=el('text',{x:xJ,y:bB-12,"font-family":"var(--font-mono)","font-size":8.5,fill:DIM,"text-anchor":"middle","letter-spacing":"0.08em",opacity:0.85},'depletion'); inner.appendChild(labDep);
+
+  // carrier pools (in clipped interior)
+  function pool(n,color,parent){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:3.6,fill:color,opacity:0});parent.appendChild(c);a.push({el:c,off:Math.random(),baseY:yTop+Math.random()*(yBot-yTop),jy:Math.random()*6.283});}return a;}
+  var holes=pool(14,HOLE,inner), eN=pool(14,ELEC,inner), eMetal=pool(20,ELEC,inner);
+  // breakdown pairs
+  var bdE=pool(8,ELEC,inner), bdH=pool(8,HOLE,inner);
+  bdE.forEach(function(c){c.po=Math.random();}); bdH.forEach(function(c,i){c.po=bdE[i].po;});
+
+  // box frame (on top of clipped fills)
+  svg.appendChild(el('rect',{x:bL,y:bT,width:bR-bL,height:bB-bT,rx:13,fill:'none',stroke:BRONZE,"stroke-width":3}));
+  svg.appendChild(el('rect',{x:bL+6,y:bT+6,width:(bR-bL)-12,height:(bB-bT)-12,rx:9,fill:'none',stroke:BRONZE2,"stroke-width":1.5,opacity:0.6}));
+  // type + Vf labels
+  var labType=el('text',{x:xJ,y:bT-9,"font-family":"var(--font-display)","font-size":15,fill:BRONZE,"text-anchor":"middle","font-weight":"700","letter-spacing":"0.06em"},''); svg.appendChild(labType);
+  var labVf=el('text',{x:xJ,y:bB+24,"font-family":"var(--font-display)","font-size":15,fill:'#9a78ff',"text-anchor":"middle","font-weight":"600"},''); svg.appendChild(labVf);
+
+  // recombination / photon pool (unclipped, so LED photons can leave)
+  var flash=[]; for(var i=0;i<11;i++){var c=el('circle',{r:3,fill:'#ffd24a',opacity:0,filter:'url(#glow)'});svg.appendChild(c);flash.push({el:c,off:Math.random(),baseY:yTop+Math.random()*(yBot-yTop),dx:(Math.random()-0.5)*30});}
+  // smoke
+  var smoke=[]; for(var i=0;i<6;i++){var c=el('circle',{r:6,fill:'#9a9a9a',opacity:0});svg.appendChild(c);smoke.push({el:c,off:i/6});}
+
+  // ---- telemetry / I-V ----
+  var tel=document.getElementById('telemetry');
+  function ro(k,id,col){var d=document.createElement('div');d.className='ro';d.innerHTML='<span class="ro-k">'+k+'</span><span class="ro-v" id="'+id+'"'+(col?' style="color:'+col+'"':'')+'>--</span>';tel.appendChild(d);}
+  ro('applied V','roVa',WARM); ro('bias','roBias','#fff'); ro('diode drop','roVd','#9a78ff'); ro('current','roI',WARM); ro('power','roP','#ff9a4a'); ro('state','roState','#fff');
+
+  var xf=document.getElementById('xfer');
+  var xfBox={ox:42,oy:10,w:206,h:140}, Imax=0.055, VdLo=-6.5, VdHi=2.6;
+  function xfX(vd){ return xfBox.ox + (vd-VdLo)/(VdHi-VdLo)*xfBox.w; }
+  function xfY(i){ var t=Math.max(-1,Math.min(1,i/Imax)); return xfBox.oy + (1-(t+1)/2)*xfBox.h; }
+  var xfPoint=el('circle',{cx:0,cy:0,r:4,fill:'#ffd27a',stroke:'#fff',"stroke-width":1.4});
+  function drawIV(p){
+    VdLo=-(p.Vbr+1.5); VdHi=2.6;
+    while(xf.firstChild)xf.removeChild(xf.firstChild);
+    xf.appendChild(el('line',{x1:xfX(0),y1:xfBox.oy,x2:xfX(0),y2:xfBox.oy+xfBox.h,stroke:'#3b3560',"stroke-width":1}));
+    xf.appendChild(el('line',{x1:xfBox.ox,y1:xfY(0),x2:xfBox.ox+xfBox.w,y2:xfY(0),stroke:'#3b3560',"stroke-width":1}));
+    xf.appendChild(el('line',{x1:xfX(-p.Vbr),y1:xfBox.oy,x2:xfX(-p.Vbr),y2:xfBox.oy+xfBox.h,stroke:RED,"stroke-width":1,"stroke-dasharray":"2 4",opacity:0.5}));
+    xf.appendChild(el('text',{x:xfX(-p.Vbr),y:xfBox.oy+xfBox.h-3,"font-family":"var(--font-mono)","font-size":8,fill:RED,"text-anchor":"middle",opacity:0.8},'\u2212Vbr'));
+    var pts=[]; for(var i=0;i<=220;i++){var vd=VdLo+(i/220)*(VdHi-VdLo); var ii=Math.max(-Imax,Math.min(Imax,diodeI(vd,p))); pts.push(xfX(vd).toFixed(1)+','+xfY(ii).toFixed(1));}
+    xf.appendChild(el('polyline',{points:pts.join(' '),fill:'none',stroke:p.glow,"stroke-width":2}));
+    xf.appendChild(xfPoint);
+    xf.appendChild(el('text',{x:xfBox.ox+xfBox.w,y:xfBox.oy+xfBox.h+14,"font-family":"var(--font-mono)","font-size":9,fill:DIM,"text-anchor":"end"},'Vd (V)'));
+    xf.appendChild(el('text',{x:xfX(0)+4,y:xfBox.oy+9,"font-family":"var(--font-mono)","font-size":9,fill:DIM},'I (mA)'));
+  }
+
+  function setLegend(p){
+    document.getElementById('legend').innerHTML=
+      '<div class="leg"><span class="tag" style="color:'+p.glow+'">\u25c9</span><div>'+p.desc+'</div></div>'+
+      '<div class="leg"><span class="tag" style="color:#5bc8ff">\u2192</span><div><b>Forward.</b> Carriers are pushed into the junction, the bare middle region collapses, and they cross. Current flows, holding roughly <span class="mono">Vf</span> across the body.</div></div>'+
+      '<div class="leg"><span class="tag" style="color:#9a78ff">\u2715</span><div><b>Reverse.</b> Carriers are pulled to the contacts, the bare middle region widens into a barrier, and almost nothing crosses. Only tiny leakage.</div></div>'+
+      '<div class="leg"><span class="tag" style="color:#ff3b2e">\u26a1</span><div><b>Breakdown.</b> Past the reverse limit the field tears carrier pairs loose in the junction and current floods backward, which destroys an ordinary diode.</div></div>';
+  }
+  // ---- controls ----
+  var volt=document.getElementById('volt'), labV=document.getElementById('labV'),
+      btnRun=document.getElementById('btnRun'), speedEl=document.getElementById('speed'),
+      btnSi=document.getElementById('btnSi'), btnSch=document.getElementById('btnSch'), btnLed=document.getElementById('btnLed'),
+      statChip=document.getElementById('stat'), iTag=document.getElementById('iTag'), footnote=document.getElementById('footnote');
+  var st={run:true, speed:1.0};
+  btnRun.addEventListener('click',function(){st.run=!st.run;this.textContent=st.run?'pause':'run';this.classList.toggle('is-active',st.run);});
+  speedEl.addEventListener('input',function(){st.speed=(+this.value)/100;});
+  function setType(t,btn){cur=t;var p=TYPES[t];[btnSi,btnSch,btnLed].forEach(function(b){b.classList.remove('is-active');});btn.classList.add('is-active');
+    rectL.setAttribute('fill',p.leftFill);
+    labLeft.textContent=(p.leftType==='metal')?'metal':'P'; labLeft.setAttribute('fill',(p.leftType==='metal')?'#cfd2e6':'#e0b0a0');
+    drawIV(p); setLegend(p);}
+  btnSi.addEventListener('click',function(){setType('Si',this);});
+  btnSch.addEventListener('click',function(){setType('Schottky',this);});
+  btnLed.addEventListener('click',function(){setType('LED',this);});
+
+  footnote.innerHTML='<b>Notes.</b> This is a cutaway of the junction, not the schematic. The moving dots are charge carriers: orange are holes, the positive carriers, and blue are electrons, the negative carriers. In forward bias they are driven into the junction; in a PN diode a hole and an electron meet and recombine, releasing the energy as heat in silicon or as a photon in an LED, while in a Schottky diode electrons just cross a low barrier into the metal with no recombination, which is why it has no stored charge and switches fast. In reverse the carriers are pulled back to the contacts and the bare depletion region in the middle widens and blocks the flow. The electrical numbers come from the Shockley diode equation with a 100 \u03a9 series current limiter. The reverse breakdown voltage is set low so the slider can reach it; real rectifiers hold off far more and Zener diodes are built to run there. Power is the diode drop times current and is exact; the carrier counts, the glow, and the photon and smoke effects are illustrative, not to scale.';
+
+  function updatePool(p, fromX, toX, fwd, rate, vis){
+    var lo=Math.min(fromX,toX), hi=Math.max(fromX,toX);
+    p.forEach(function(c){
+      var x;
+      if(fwd && rate>0){ var uu=((c.off+phase*rate)%1+1)%1; x=fromX+uu*(toX-fromX); }
+      else { x=lo + c.off*(hi-lo); }
+      x += Math.sin(phase*3+c.jy)*1.4;
+      var y=c.baseY + Math.sin(phase*2.4+c.jy*1.3)*3;
+      c.el.setAttribute('cx',x.toFixed(1)); c.el.setAttribute('cy',y.toFixed(1)); c.el.setAttribute('opacity',vis);
+    });
+  }
+
+  // ---- animation ----
+  var phase=0, last=0, thr=1e-4;
+  function frame(ts){
+    if(!last)last=ts; var dt=Math.min(50,ts-last); last=ts; if(st.run) phase+=dt*0.001*st.speed;
+    var V=(+volt.value)/100, p=TYPES[cur];
+    var r=solve(V,p), Vd=r.Vd, I=r.I, P=Vd*I;
+    var fwd=I>thr, bd=I<-thr;
+    var Inorm=Math.min(1,Math.abs(I)/0.035), bn=Math.min(1,Math.abs(I)/0.025);
+    var w=depW(V,p);
+    var depL=(p.leftType==='metal')?xJ:(xJ-w), depR=xJ+w;
+
+    // region rects
+    rectL.setAttribute('x',bL); rectL.setAttribute('width',(depL-bL).toFixed(1));
+    rectD.setAttribute('x',depL.toFixed(1)); rectD.setAttribute('width',(depR-depL).toFixed(1));
+    rectR.setAttribute('x',depR.toFixed(1)); rectR.setAttribute('width',(bR-depR).toFixed(1));
+    labLeft.setAttribute('x',((bL+depL)/2).toFixed(0)); labRight.setAttribute('x',((depR+bR)/2).toFixed(0)); labDep.setAttribute('x',((depL+depR)/2).toFixed(0));
+    labDep.setAttribute('opacity',(depR-depL)>28?0.85:0.35);
+
+    // labels / bias
+    labV.textContent=(V>=0?'+':'\u2212')+Math.abs(V).toFixed(1)+' V';
+    labVin.textContent=(V>=0?'+':'\u2212')+Math.abs(V).toFixed(1)+' V';
+    labType.textContent=p.label; labVf.textContent='Vf \u2248 '+p.Vf+' V';
+    var hiL=(V>=0);
+    biasLab.textContent=hiL?'FORWARD BIAS':'REVERSE BIAS';
+    polL.textContent=hiL?'+':'\u2212'; polL.setAttribute('fill',hiL?WARM:DIM);
+    polR.textContent=hiL?'\u2212':'+'; polR.setAttribute('fill',hiL?DIM:WARM);
+
+    // carriers
+    var rate=fwd?(0.3+Inorm*1.6):0;
+    if(p.leftType==='P'){ updatePool(holes, innerL+5, depL-3, fwd, rate, 0.92); updatePool(eMetal,0,0,false,0,0); }
+    else { updatePool(eMetal, depL-3, innerL+5, fwd, (fwd?0.25+Inorm*0.9:0), 0.92); updatePool(holes,0,0,false,0,0); }
+    updatePool(eN, innerR-5, depR+3, fwd, rate, 0.92);
+
+    // recombination / photons (PN forward)
+    var emit=p.emit, isPN=(p.leftType==='P');
+    flash.forEach(function(f){
+      if(!(fwd&&isPN)){ f.el.setAttribute('opacity',0); return; }
+      var t=((f.off+phase*1.4)%1+1)%1, shape=Math.sin(Math.PI*t);
+      var x=xJ+f.dx*(emit?0.5:1), y=emit?(f.baseY-t*66):f.baseY;
+      f.el.setAttribute('cx',x.toFixed(1)); f.el.setAttribute('cy',y.toFixed(1));
+      f.el.setAttribute('r',(emit?(2.4*(1-0.35*t)):(1.5+3*t)).toFixed(1));
+      f.el.setAttribute('fill',emit?'#fff6e0':'#ffd24a');
+      f.el.setAttribute('opacity',(shape*Inorm*(emit?0.95:0.8)).toFixed(2));
+    });
+
+    // breakdown pairs
+    bdE.forEach(function(c,i){ var h=bdH[i];
+      if(!bd){ c.el.setAttribute('opacity',0); h.el.setAttribute('opacity',0); return; }
+      var t=((c.po+phase*1.2)%1+1)%1, op=Math.sin(Math.PI*t)*bn;
+      var xs=depL+c.po*(depR-depL);
+      c.el.setAttribute('cx',(xs+t*((depR+14)-xs)).toFixed(1)); c.el.setAttribute('cy',c.baseY.toFixed(1)); c.el.setAttribute('opacity',op.toFixed(2));
+      h.el.setAttribute('cx',(xs-t*(xs-(depL-14))).toFixed(1)); h.el.setAttribute('cy',h.baseY.toFixed(1)); h.el.setAttribute('opacity',op.toFixed(2));
+    });
+
+    // current packets on leads
+    var dir=fwd?1:(bd?-1:0);
+    cpck.forEach(function(c){
+      if(dir===0){ c.el.setAttribute('opacity',0); return; }
+      var x0=c.lead==='A'?114:606, x1=c.lead==='A'?254:746;
+      var pp=((c.off+phase*(0.3+Inorm*1.5))%1+1)%1; if(dir<0)pp=1-pp;
+      c.el.setAttribute('transform','translate('+(x0+(x1-x0)*pp).toFixed(1)+','+yMid+') rotate('+(dir<0?180:0)+')'); c.el.setAttribute('opacity',(0.4+0.5*Inorm).toFixed(2));
+    });
+
+    // halo
+    if(bd){ halo.setAttribute('fill',RED); halo.setAttribute('opacity',(0.25+0.4*bn).toFixed(2)); halo.setAttribute('r',(90+30*bn).toFixed(0)); }
+    else if(fwd&&emit){ halo.setAttribute('fill',p.glow); halo.setAttribute('opacity',(0.15+0.5*Inorm).toFixed(2)); halo.setAttribute('r',(70+40*Inorm).toFixed(0)); }
+    else if(fwd&&isPN){ halo.setAttribute('fill','#ffae5a'); halo.setAttribute('opacity',(0.04+0.14*Inorm).toFixed(2)); halo.setAttribute('r',(60+20*Inorm).toFixed(0)); }
+    else { halo.setAttribute('opacity',0); }
+
+    // smoke (breakdown)
+    smoke.forEach(function(s){ if(!bd){s.el.setAttribute('opacity',0);return;} var t=((s.off+phase*0.4)%1+1)%1; s.el.setAttribute('cx',(xJ+Math.sin(phase*2+s.off*7)*16*t).toFixed(1)); s.el.setAttribute('cy',(bT-t*70).toFixed(1)); s.el.setAttribute('r',(5+10*t).toFixed(1)); s.el.setAttribute('opacity',(0.45*bn*(1-t)).toFixed(2)); });
+
+    // I-V op point
+    xfPoint.setAttribute('cx',xfX(Math.max(VdLo,Math.min(VdHi,Vd))).toFixed(1)); xfPoint.setAttribute('cy',xfY(I).toFixed(1)); xfPoint.setAttribute('fill',p.glow);
+
+    // telemetry
+    function fmtI(i){var a=Math.abs(i);return (i<0?'\u2212':'')+(a>=1e-3?(a*1000).toFixed(1)+' mA':a>=1e-6?(a*1e6).toFixed(1)+' \u00b5A':a.toExponential(0)+' A');}
+    document.getElementById('roVa').textContent=(V>=0?'+':'\u2212')+Math.abs(V).toFixed(2)+' V';
+    document.getElementById('roBias').textContent=hiL?'forward':'reverse'; document.getElementById('roBias').style.color=hiL?WARM:'#9a78ff';
+    document.getElementById('roVd').textContent=(Vd>=0?'+':'\u2212')+Math.abs(Vd).toFixed(3)+' V';
+    document.getElementById('roI').textContent=fmtI(I);
+    document.getElementById('roP').textContent=(P>=1?P.toFixed(2)+' W':(P*1000).toFixed(1)+' mW');
+    var state,col; if(bd){state='BREAKDOWN';col=RED;} else if(fwd){state='CONDUCTING';col='#7fd9a0';} else {state='BLOCKING';col=DIM;}
+    document.getElementById('roState').textContent=state; document.getElementById('roState').style.color=col;
+    iTag.textContent='I = '+fmtI(I);
+    statChip.textContent=state; statChip.style.color=col;
+    statChip.style.borderColor='color-mix(in oklch, '+(bd?'var(--bad)':(fwd?'var(--ok)':'var(--border-bright)'))+' 50%, transparent)';
+
+    requestAnimationFrame(frame);
+  }
+  setType('Si',btnSi);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

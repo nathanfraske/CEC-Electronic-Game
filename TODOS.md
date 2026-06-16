@@ -14,12 +14,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   Design + plan: `docs/ui/part-demos-tiers.md`. Extends App.svelte `infoDiagram` / `hasFactory` /
   `diagramMode`. Pure presentation → no golden impact. **Next batch of part sheets arrives once
   this 5 is implemented.**
-  - [ ] Map existing `infoDiagram` / factory / `diagramMode` + board zoom-LOD (Explore agent in flight).
-  - [ ] Port **resistor** → reusable `TierView` in the info panel (the pattern the rest follow).
-  - [ ] Tier switcher (schematic/analogy/reality) + live per-frame feed (`electricalMap` + derived
-    P/Q/E/flux/τ).
-  - [ ] **Board zoom-to-reveal**: render the `TierView` in place of the glyph past a zoom threshold.
-  - [ ] Port ceramic C, electrolytic C, L, TR onto the same pattern; then the next batch.
+  - ~~Map the existing system — DONE (agent): three-tier `InfoDiagram` (PixiJS) + `DRAWERS` /
+    `FACTORY_DRAWERS` / `DETAIL_DRAWERS` is ~70-80% built; tier switcher (`Symbol/Factory/Real`) +
+    live per-frame feed already exist. Reality drawers exist for OA/D/SD/LED/ZD/R.~~
+  - **Reality-tier drawers** (`detailDrawers.ts` → `DETAIL_DRAWERS`, the `drawDetail<Kind>` pattern):
+    - ~~**Inductor (L)** — DONE (`drawDetailInductor`; solenoid + field loops + flux + spiral + dI/dt
+      shimmer). Gates green; needs an eyeball on the live render.~~
+    - [ ] **Ceramic cap (C)**, [ ] **electrolytic cap (EC)**, [ ] **transformer (TR)**. (R pre-existing —
+      diff vs its ref + enrich later.)
+  - [ ] **Board LOD — a *working* LOD, NOT hide-to-reveal** (owner clarified): the part is always
+    visible + animating; zoom-IN progressively reveals factory→reality detail (same live state),
+    zoom-OUT simplifies for clarity + render cost; nothing hidden. Tune thresholds/blend on visual review.
+  - [ ] **Batch 2 (queued)** in `docs/ui/parts/`: `diode-factory`, `diode-tier2-study`, `zener-tier2`
+    (analogy → `FACTORY_DRAWERS`), `transistor-tiers` (Q/QP/NM/PM reality). Implement after batch 1, in
+    order. More batches may follow.
 
 ## 2026-06-16 (night) — design (Ideal-vs-Real + multi-rate)
 
