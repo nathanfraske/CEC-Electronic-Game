@@ -480,10 +480,20 @@ export const PART_INFO: Record<string, PartInfo> = {
     "Y = A ⊕ B",
     "An XOR (exclusive-OR) gate drives its output high when its inputs DIFFER and low when they match. It is the heart of binary arithmetic — the sum bit of a half-adder is exactly A XOR B (and A AND B is the carry) — and the basis of parity and comparison logic. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs settle.",
   ),
+  XNOR: gateInfo(
+    "XNOR Gate",
+    "Y = (A ⊕ B)′",
+    "An XNOR (exclusive-NOR, or equality) gate is the complement of XOR: it drives its output high when its inputs MATCH and low when they differ — a one-bit equality test. Chain them to compare multi-bit buses. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs settle.",
+  ),
   NOT: gateInfo(
     "NOT Gate",
     "Y = A′",
     "A NOT gate (an inverter) drives its output to the opposite of its single input: high in gives low out, low in gives high out. It is the simplest active logic element and the building block of every more complex gate. The input is thresholded at half the supply rail and draws no current; the output is driven hard to the rail or ground, lagging the input by exactly one simulation step. Wire an inverter's output back to its input and that one-tick delay makes it oscillate — a ring oscillator.",
+  ),
+  BUF: gateInfo(
+    "Buffer",
+    "Y = A",
+    "A buffer (BUF) drives its output to MATCH its single input — a non-inverting gate. It does no logic; it restores and re-drives a weak or loaded signal (a line driver) and adds exactly one simulation step of delay. The input is thresholded at half the rail and draws no current; the output is driven hard to the rail or ground.",
   ),
   TR: {
     name: "Transformer",

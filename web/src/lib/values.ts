@@ -44,7 +44,9 @@ const CURATED_FULL: Record<string, number[]> = {
   NAND: [1.8, 2.5, 3.3, 5, 12, 15],
   NOR: [1.8, 2.5, 3.3, 5, 12, 15],
   XOR: [1.8, 2.5, 3.3, 5, 12, 15],
+  XNOR: [1.8, 2.5, 3.3, 5, 12, 15],
   NOT: [1.8, 2.5, 3.3, 5, 12, 15],
+  BUF: [1.8, 2.5, 3.3, 5, 12, 15],
   // D flip-flop logic rail (V): the digital supply its outputs drive to.
   FF: [1.8, 2.5, 3.3, 5, 12, 15],
   // Transformer turns ratio n = Ns/Np: step-downs (< 1) through step-ups (> 1).
@@ -76,7 +78,9 @@ const CURATED_CHIPS: Record<string, number[]> = {
   NAND: [3.3, 5, 12],
   NOR: [3.3, 5, 12],
   XOR: [3.3, 5, 12],
+  XNOR: [3.3, 5, 12],
   NOT: [3.3, 5, 12],
+  BUF: [3.3, 5, 12],
   FF: [3.3, 5, 12],
   // The turns ratios people reach for first: ¼, ½, 1:1, ×2, ×4.
   TR: [0.25, 0.5, 1, 2, 4],

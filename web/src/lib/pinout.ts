@@ -71,7 +71,9 @@ const GLOSS: Record<string, Record<string, string>> = {
   NAND: GATE,
   NOR: GATE,
   XOR: GATE,
+  XNOR: GATE,
   NOT: { Y: "output", A: "input" },
+  BUF: { Y: "output", A: "input" },
 };
 
 /**

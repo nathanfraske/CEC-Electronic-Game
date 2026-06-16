@@ -77,7 +77,9 @@ const TYPE_OF: Record<string, number> = {
   NAND: 17,
   NOR: 17,
   XOR: 17,
+  XNOR: 17,
   NOT: 17,
+  BUF: 17,
   // Transformer: the first FOUR-terminal element (coupled inductors). Pins are
   // ordered primary+, primary−, secondary+, secondary− → pin 0 → a, 1 → b, 2 → c,
   // 3 → d. `value` is the turns ratio n = Ns/Np.
@@ -119,7 +121,9 @@ const GATE_AUX: Record<string, number> = {
   NAND: 2,
   NOR: 3,
   XOR: 4,
+  XNOR: 5,
   NOT: 6,
+  BUF: 7,
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
