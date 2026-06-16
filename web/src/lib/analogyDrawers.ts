@@ -24,6 +24,7 @@ import {
   type TierOpts as AnalogyOpts,
   belt,
   dotPresence,
+  housing,
   mix,
   norm,
   stud,
@@ -672,6 +673,249 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
   stud(g, loadX, cy, PALETTE.bronze);
 }
 
+// ============================================================================
+// Diode — ported from diode-tier2-study.html (the "spring valve"): a SPRING-LOADED
+// CHECK VALVE. A ball is held against its seat by a spring; once the forward push
+// beats the spring (forward bias past the ~0.7 V knee) the ball lifts off and water
+// streams through anode→cathode. Reverse-bias and the ball stays seated — blocked.
+// An ordinary diode forced into reverse breakdown stresses the seat (rose glow); an
+// LED lights its body as it conducts.
+//
+// Live mapping (diode ElectricalState: current a→b = anode→cathode, vAcross =
+// V(anode)−V(cathode)):
+//   • forward = norm(max(0, I))  → ball lift + water stream + (LED) the lamp.
+//   • reverse = norm(max(0,−I))  → breakdown stress glow + backward trickle.
+//   • bias    = sign(vAcross)    → which side runs high; the dammed trickle side.
+// ============================================================================
+function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const isLED = o.kind === "LED";
+  const emit = isLED ? o.color : PALETTE.bad;
+
+  const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
+  const conducting = fwd > 0.03;
+  const breakdown = rev > 0.03;
+
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const pipeHH = hh * 0.2;
+  const bodyL = -hw * 0.36;
+  const bodyR = hw * 0.36;
+  const seatX = -hw * 0.08; // the seat the ball rests on
+  const seatedX = seatX + 22; // ball centre when shut
+  const liftX = seatedX - hw * 0.26 * fwd; // lifts left (open) with forward flow
+  const ballR = hh * 0.26;
+  const plungerX = bodyR - 6; // fixed spring backing
+
+  // --- conduction / breakdown halo ---------------------------------------------
+  if (conducting && isLED) {
+    const breathe = 0.82 + 0.18 * Math.sin(o.phase * 2.2);
+    g.circle(0, 0, hh * (0.7 + 0.5 * fwd)).fill({
+      color: emit,
+      alpha: 0.22 * fwd * breathe,
+    });
+  } else if (breakdown) {
+    const breathe = 0.8 + 0.2 * Math.sin(o.phase * 2.2);
+    g.circle(seatX, 0, hh * 0.7).fill({
+      color: PALETTE.bad,
+      alpha: (0.16 + 0.4 * rev) * breathe,
+    });
+  }
+
+  // --- pipes + valve body ------------------------------------------------------
+  for (const s of [-1, 1]) {
+    g.moveTo(aX + 4, s * pipeHH)
+      .lineTo(bodyL, s * pipeHH)
+      .moveTo(bodyR, s * pipeHH)
+      .lineTo(bX - 4, s * pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  housing(
+    g,
+    bodyL,
+    -pipeHH - 12,
+    bodyR - bodyL,
+    (pipeHH + 12) * 2,
+    PALETTE.bronze,
+    12,
+  );
+  if (isLED && conducting) {
+    g.roundRect(bodyL, -pipeHH - 12, bodyR - bodyL, (pipeHH + 12) * 2, 12).fill(
+      {
+        color: emit,
+        alpha: 0.18 * fwd,
+      },
+    );
+  }
+
+  // --- the seat (two lips the ball seals against) ------------------------------
+  for (const s of [-1, 1]) {
+    g.poly([
+      seatX - 10,
+      s * (pipeHH + 6),
+      seatX + 8,
+      s * (pipeHH + 6),
+      seatX + 3,
+      s * pipeHH * 0.4,
+      seatX - 5,
+      s * pipeHH * 0.4,
+    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
+  }
+
+  // --- the spring (plunger → ball), compressed when the ball lifts --------------
+  g.roundRect(plungerX, -ballR, 8, ballR * 2, 2).fill({
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+  g.poly(springPts(liftX + ballR, plungerX, 0, ballR * 0.45, 6), false).stroke({
+    width: 2.6,
+    color: WARM,
+    alpha: 0.85,
+  });
+
+  // --- water through when open, or a dammed trickle stalled at the seat ---------
+  if (conducting) {
+    belt(g, aX, 0, bodyL, 0, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, liftX, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
+  } else if (breakdown) {
+    belt(g, bX, 0, aX, 0, rev, -1, o.phase, PALETTE.bad, 2.6);
+  } else {
+    // blocked: a few dots pile up against the seat on the biased side
+    const fromX = o.electrical.vAcross >= 0 ? aX : bX;
+    for (let k = 0; k < 3; k++) {
+      const t = (((k / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(fromX + (seatX - fromX) * t, 0, 2.2).fill({
+        color: WATER,
+        alpha: 0.3 * (1 - t),
+      });
+    }
+  }
+
+  // --- the ball + its highlight ------------------------------------------------
+  const ballCol = conducting ? PALETTE.ok : breakdown ? PALETTE.bad : PLATE;
+  g.circle(liftX, 0, ballR).fill({ color: ballCol, alpha: 0.92 });
+  g.circle(liftX, 0, ballR).stroke({ width: 1.5, color: 0xdce3f0, alpha: 0.6 });
+  g.circle(liftX - ballR * 0.34, -ballR * 0.34, ballR * 0.22).fill({
+    color: 0xffffff,
+    alpha: 0.7,
+  });
+
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
+// ============================================================================
+// Zener — ported from zener-tier2.html: a CHECK VALVE WITH A SPILLWAY. Forward, it
+// is the same spring check valve as a diode. In reverse it is a standpipe with a
+// spillway: the water level is the reverse voltage and the wall height is Vz. Push
+// the bias negative and the level climbs to the wall, then pours over and HOLDS
+// there — the clamp. A higher Vz builds the wall higher.
+//
+// Live mapping (zener ElectricalState; value = Vz):
+//   • forward  = norm(max(0, I))  → the check valve opens (as a diode).
+//   • reverse  = vAcross < 0      → standpipe level = |Vrev|; overflow + reverse
+//     current once the level reaches the Vz spillway wall (the clamp).
+// ============================================================================
+function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+
+  const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
+  const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
+  const conducting = fwd > 0.03;
+  const vrev = Math.max(0, -o.electrical.vAcross); // reverse volts across the part
+  const vz = o.value && o.value > 0 ? o.value : 5.1;
+  const wall = Math.min(1, vz / (V_SCALE * 1.6)); // spillway wall height (0..1)
+  const lvl = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe level
+  const clamping = rev > 0.03;
+
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const pipeHH = hh * 0.16;
+  const bodyL = -hw * 0.36;
+  const bodyR = hw * 0.12;
+  const seatX = -hw * 0.12;
+  const ballR = hh * 0.2;
+  const liftX = seatX + 18 - hw * 0.2 * fwd;
+
+  // --- forward pipes + valve body ----------------------------------------------
+  for (const s of [-1, 1]) {
+    g.moveTo(aX + 4, s * pipeHH)
+      .lineTo(bodyL, s * pipeHH)
+      .moveTo(bodyR, s * pipeHH)
+      .lineTo(bX - 4, s * pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  housing(
+    g,
+    bodyL,
+    -pipeHH - 10,
+    bodyR - bodyL,
+    (pipeHH + 10) * 2,
+    PALETTE.bronze,
+    10,
+  );
+  for (const s of [-1, 1]) {
+    g.poly([
+      seatX - 8,
+      s * (pipeHH + 5),
+      seatX + 6,
+      s * (pipeHH + 5),
+      seatX + 2,
+      s * pipeHH * 0.4,
+      seatX - 4,
+      s * pipeHH * 0.4,
+    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
+  }
+  const ballCol = conducting ? PALETTE.ok : clamping ? PALETTE.warn : PLATE;
+  g.circle(liftX, 0, ballR).fill({ color: ballCol, alpha: 0.92 });
+  g.circle(liftX, 0, ballR).stroke({ width: 1.4, color: 0xdce3f0, alpha: 0.6 });
+
+  // --- the reverse standpipe + spillway wall (right of the body) ----------------
+  const spX = hw * 0.46;
+  const spW = hw * 0.26;
+  const spBot = hh * 0.66;
+  const spTop = -hh * 0.66;
+  const span = spBot - spTop;
+  // standpipe walls
+  g.moveTo(spX - spW / 2, spTop)
+    .lineTo(spX - spW / 2, spBot)
+    .moveTo(spX + spW / 2, spTop)
+    .lineTo(spX + spW / 2, spBot)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  // the spillway wall at height Vz (over the right lip)
+  const wallY = spBot - wall * span;
+  g.moveTo(spX + spW / 2, wallY)
+    .lineTo(spX + spW / 2 + 14, wallY)
+    .stroke({ width: 3, color: PALETTE.accent, alpha: 0.9 });
+  // the water level = reverse voltage
+  const lvlY = spBot - lvl * span;
+  g.rect(spX - spW / 2 + 2, lvlY, spW - 4, spBot - lvlY).fill({
+    color: WATER,
+    alpha: 0.6,
+  });
+  // overflow over the wall once the level reaches it (the clamp)
+  if (lvl >= wall - 0.02 && clamping) {
+    for (let k = 0; k < 4; k++) {
+      const t = (((k / 4 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      const ox = spX + spW / 2 + 4 + t * 12;
+      const oy = wallY + t * t * span * 0.5;
+      g.circle(ox, oy, 2.4).fill({ color: WATER, alpha: 0.7 * (1 - t * 0.5) });
+    }
+  }
+
+  // --- water flow: forward through the valve, or reverse over the spillway ------
+  if (conducting) {
+    belt(g, aX, 0, bodyL, 0, fwd, 1, o.phase, WATER, 2.6);
+    belt(g, liftX, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
+  } else if (clamping) {
+    belt(g, bX, 0, spX + spW / 2, 0, rev, -1, o.phase, PALETTE.warn, 2.4);
+  }
+
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -683,6 +927,10 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   EC: drawAnalogyElectrolyticCap,
   L: drawAnalogyInductor,
   TR: drawAnalogyTransformer,
+  D: drawAnalogyDiode,
+  SD: drawAnalogyDiode,
+  LED: drawAnalogyDiode,
+  ZD: drawAnalogyZener,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */
