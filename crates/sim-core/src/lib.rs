@@ -623,28 +623,33 @@ fn gate_open_drain(aux: f64) -> bool {
 /// magnetising inductance [`TRANSFORMER_L1`] in series with the primary winding
 /// resistance [`TRANSFORMER_RWIND`] sits across the primary; the ideal coupling
 /// *forces* the secondary EMF to `n · V_Lm` — n times the voltage across the
-/// magnetiser — a HARD differential with no series term, while the secondary current
-/// reflects `n·Is` back into the primary KCL. It carries **two** branch unknowns —
-/// the magnetising current `Im` (a->b) and the secondary current `Is` (c->d) — but
-/// only `Im` is reactive (a backward-Euler companion); `Is` is algebraic. So it
-/// blocks DC (as the magnetiser saturates, `V_Lm -> 0` and the secondary collapses),
+/// magnetiser — a HARD differential (no series *resistance*) with only a small series
+/// [`TRANSFORMER_LLEAK`] leakage inductance, while the secondary current reflects
+/// `n·Is` back into the primary KCL. It carries **two** branch unknowns — the
+/// magnetising current `Im` (a->b) and the secondary current `Is` (c->d) — and **both**
+/// are reactive backward-Euler companions (`Im` the magnetiser, `Is` the leakage). So
+/// it blocks DC (as the magnetiser saturates, `V_Lm -> 0` and the secondary collapses),
 /// draws a real magnetizing current, and scales AC by the turns ratio. Crucially the
 /// forced secondary EMF is a HARD voltage differential (like a real source), so a
 /// diode bridge across it rectifies full-wave — a softer secondary (a raw coupled-
-/// inductor pair, or an EMF with series winding resistance) sags under the bridge's
+/// inductor pair, or an EMF with series winding *resistance*) sags under the bridge's
 /// asymmetric load and degenerates to half-wave or latches a runaway
-/// (`docs/sim/transformer-bridge-convergence.md`). Linear (no Newton); keeps one
-/// reactive state (the magnetiser). The branch pair is allocated consecutively in
-/// [`Sim::install`]: `branch_index[i]` is the magnetiser, `branch_index[i] + 1` the
-/// secondary.
+/// (`docs/sim/transformer-bridge-convergence.md`). The leakage *inductance* is the
+/// exception that is safe: zero drop at DC (so it never sags the differential), it only
+/// limits the secondary's di/dt — which tames the rectifier inrush into an empty
+/// reservoir cap and conditions the otherwise-bare secondary row. Linear (no Newton);
+/// keeps **two** reactive states (magnetiser + secondary leakage). The branch pair is
+/// allocated consecutively in [`Sim::install`]: `branch_index[i]` is the magnetiser,
+/// `branch_index[i] + 1` the secondary.
 pub const ELEM_TRANSFORMER: u8 = 18;
 
 /// Transformer **magnetising** inductance, in henries (fixed) — the shunt branch of
 /// the ideal-T model. High enough that the magnetizing current is modest at audio
 /// frequencies (so the secondary EMF `n · V_Lm` tracks `n · Vp` cleanly) while
 /// staying within the inductor range the dense solve already conditions for. The
-/// secondary is coupled ideally (turns ratio `n`) as a hard differential, so there is
-/// no separate secondary inductance or winding resistance — only the primary-side
+/// secondary is coupled ideally (turns ratio `n`) as a hard differential with no
+/// winding *resistance*; its only series term is the small [`TRANSFORMER_LLEAK`]
+/// leakage inductance (which limits inrush with zero DC drop). The primary-side
 /// [`TRANSFORMER_RWIND`] gives the device loss.
 const TRANSFORMER_L1: f64 = 0.5;
 
@@ -659,6 +664,20 @@ const TRANSFORMER_L1: f64 = 0.5;
 /// induced secondary voltage decays to zero). Without it an ideal magnetising
 /// inductor would integrate a DC step without bound.
 const TRANSFORMER_RWIND: f64 = 5.0;
+
+/// Transformer **secondary** leakage inductance, in henries (fixed) — a small series
+/// inductance on the secondary branch. Unlike a series *resistance* (which sags the
+/// EMF under load and degenerates the bridge to half-wave — see [`TRANSFORMER_RWIND`]),
+/// a leakage inductance has **zero voltage drop at DC/steady state**, so it leaves the
+/// hard turns-ratio differential — and full-wave rectification — intact. What it does
+/// do is limit the secondary current's `di/dt`, which **tames the rectifier inrush**
+/// when a diode bridge charges an empty reservoir capacitor: without it the hard,
+/// zero-impedance secondary drives a near-impulse into the cap (a stiff, ill-
+/// conditioned solve that stays bounded on one platform but can diverge on another).
+/// It is the textbook source impedance that sets a real rectifier's conduction angle.
+/// Small (a fraction of [`TRANSFORMER_L1`], i.e. a tight coupling k≈1) so AC turns-
+/// ratio scaling stays clean. Makes the secondary current `Is` a second reactive state.
+const TRANSFORMER_LLEAK: f64 = 5.0e-3;
 
 /// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
 /// Four terminals: output `a` = `Q`, input `b` = `D` (data), input `c` = `CLK`
@@ -1572,6 +1591,14 @@ pub struct Sim {
     /// only winding current that carries reactive memory in the ideal-T model. Unused
     /// for other kinds. One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
+    /// Second reactive store, paralleling `reactive_state`: for a transformer
+    /// (`ELEM_TRANSFORMER`), the previous **secondary** current `Is` (c -> d), the
+    /// history term of its [`TRANSFORMER_LLEAK`] leakage-inductance companion (which
+    /// limits rectifier inrush without softening the hard turns-ratio differential).
+    /// `0.0` for every other element. One entry per element, in lockstep with
+    /// `elements`. Like `reactive_state` it is reflected in `node_v` (not hashed
+    /// directly), so it never perturbs the snapshot hash format.
+    secondary_state: Vec<f64>,
     /// The D flip-flop's stored output [`Level`]: the bit latched at the last rising
     /// clock edge, which drives `Q` (and inverted, `Q̄`) every tick until the next edge.
     /// Used only by [`ELEM_DFF`]; `Level::Low` for every other element. Persistent
@@ -1693,6 +1720,7 @@ impl Sim {
             net_classes: vec![NetClass::Analog],
             node_v: vec![0.0],
             reactive_state: Vec::new(),
+            secondary_state: Vec::new(),
             ff_q: Vec::new(),
             ff_clk_prev: Vec::new(),
             net_level: vec![Level::Low],
@@ -1883,6 +1911,7 @@ impl Sim {
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
         self.reactive_state = vec![0.0; elements.len()];
+        self.secondary_state = vec![0.0; elements.len()];
         self.ff_q = vec![Level::Low; elements.len()];
         self.ff_clk_prev = vec![Level::Low; elements.len()];
         self.net_level = vec![Level::Low; node_count];
@@ -1913,6 +1942,9 @@ impl Sim {
     pub fn reset(&mut self) {
         self.tick = 0;
         for s in &mut self.reactive_state {
+            *s = 0.0;
+        }
+        for s in &mut self.secondary_state {
             *s = 0.0;
         }
         for s in &mut self.ff_q {
@@ -3451,8 +3483,10 @@ impl Sim {
         let bi_m = self.branch_index[i]; // magnetising current Im (a -> b)
         let bi_s = bi_m + 1; // secondary current Is (c -> d)
         let g_mag = TRANSFORMER_L1 / DT; // backward-Euler companion of the magnetiser
+        let g_leak = TRANSFORMER_LLEAK / DT; // backward-Euler companion of the secondary leakage
         let rp = TRANSFORMER_RWIND;
         let im_prev = self.reactive_state[i];
+        let is_prev = self.secondary_state[i];
         let ia = Self::node_idx(e.a);
         let ib = Self::node_idx(e.b);
         let ic = Self::node_idx(e.c);
@@ -3500,7 +3534,18 @@ impl Sim {
             mat[bi_s * dim + r] -= 1.0;
         }
         mat[bi_s * dim + bi_m] -= n * g_mag;
-        rhs[bi_s] -= n * g_mag * im_prev;
+        // Secondary leakage-inductance companion, in series in the secondary branch
+        // exactly as `rp` sits in series in the magnetiser branch — same sign
+        // convention (a series element subtracts on the branch diagonal):
+        //   V(c)-V(d) = n·V_Lm + L_leak·dIs/dt,  L_leak·dIs/dt = g_leak·(Is - Is_prev).
+        // The diagonal `-g_leak` both conditions the secondary row (which was a bare
+        // hard constraint with no diagonal) and limits the secondary current's di/dt,
+        // taming the bridge inrush into an empty reservoir cap (a zero-impedance hard
+        // source drives that as a near-impulse — bounded on one platform, divergent on
+        // another). At DC/steady state dIs/dt → 0, so it has ZERO drop: the hard
+        // turns-ratio differential, and full-wave rectification, are untouched.
+        mat[bi_s * dim + bi_s] -= g_leak;
+        rhs[bi_s] -= n * g_mag * im_prev + g_leak * is_prev;
         // Anti-singularity floor on every winding terminal (isolation safety net). The
         // hard forced differential keeps even a floating bridge load stable, so the
         // secondary needs no stronger common-mode reference than the primary — the
@@ -3717,12 +3762,13 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                 }
                 ELEM_TRANSFORMER => {
-                    // Store the new magnetising current Im at branch bi — the only
-                    // winding current that carries reactive memory (the companion's
-                    // history term). The secondary Is (bi + 1) is algebraic: it is
-                    // re-derived each step from the solve, so nothing to store.
+                    // Store the new magnetising current Im (branch bi) and the new
+                    // secondary current Is (branch bi + 1). Both now carry reactive
+                    // memory: Im is the magnetiser companion's history term, Is the
+                    // secondary leakage-inductance companion's (TRANSFORMER_LLEAK).
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
+                    self.secondary_state[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
                 ELEM_DFF => {
                     // Edge-triggered latch: on a rising CLK edge (Low -> High) sample
@@ -6113,6 +6159,115 @@ mod tests {
             assert!(
                 i_primary_peak < 20.0,
                 "n={n}: primary current ran away (peak {i_primary_peak} A)"
+            );
+        }
+    }
+
+    /// Galvanic isolation: the ONLY ground is on the rectified output, so the AC
+    /// source + transformer primary form a FLOATING loop with no DC path to gnd.
+    /// The shipping `bridge_rectifier_run` shares gnd between primary and secondary,
+    /// so it never exercises a floating primary common-mode — held only by the
+    /// per-winding `GMIN` floor. This guards that case: the bridge must still
+    /// rectify to a sane DC and the current must stay bounded. (The retired
+    /// coupled-inductor model's near-singular `1/(1-k²)` matrix blew this exact
+    /// topology up to ~1e118 A — the tell-tale of a stale, pre-ideal-T build.)
+    #[test]
+    fn transformer_bridge_isolated_primary_stays_bounded() {
+        let amp = 12.0;
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            6, // 0=gnd(out-), 1=pri+, 5=pri-(floating), 2=sec+, 3=sec-, 4=out+
+            &[
+                ELEM_ACSOURCE,
+                ELEM_TRANSFORMER,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_CAPACITOR,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 0, 0, 4, 4], // a
+            &[5, 5, 4, 4, 2, 3, 0, 0], // b  (AC- and primary- on floating node 5)
+            &[0, 2, 0, 0, 0, 0, 0, 0], // c
+            &[0, 3, 0, 0, 0, 0, 0, 0], // d
+            &[60.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0e-4, 1000.0],
+            &[amp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ));
+        let mut out_hi = f64::MIN;
+        let mut i_peak = 0.0f64;
+        for tk in 0..75_000 {
+            sim.step();
+            if tk >= 62_000 {
+                let v = sim.state();
+                out_hi = out_hi.max(v[4]);
+                let ic = sim.element_currents();
+                for k in 0..4 {
+                    i_peak = i_peak.max(ic[2 + k].abs());
+                }
+            }
+        }
+        assert!(
+            i_peak.is_finite() && i_peak < 20.0,
+            "isolated-primary bridge current ran away (peak {i_peak} A)"
+        );
+        assert!(
+            out_hi > 6.0 && out_hi < 12.0,
+            "isolated-primary bridge output not a sane rectified DC (hi {out_hi} V)"
+        );
+    }
+
+    /// The shipped `tr-bridge-supply` example EXACTLY (AC 1 kHz / 5 V peak, 100 µF
+    /// reservoir, 1 kΩ load), swept across the UI's turns-ratio chips — including the
+    /// step-ups (1:2, 1:4). At high step-up the secondary EMF charges an *empty* cap
+    /// through the bridge, and a zero-impedance hard secondary drives that as a near-
+    /// impulse: a stiff, ill-conditioned solve that stayed bounded in native but blew
+    /// up to ~61 kA on wasm (a real user report). The [`TRANSFORMER_LLEAK`] leakage
+    /// companion conditions the secondary row and limits its di/dt, so the inrush is a
+    /// sane few amps and bounded on every platform. (The earlier 60 Hz / n≤2 bridge
+    /// tests never exercised this corner — the regression hid above them.)
+    #[test]
+    fn transformer_bridge_high_stepup_inrush_bounded() {
+        for &n in &[0.25_f64, 0.5, 1.0, 2.0, 4.0] {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                5,
+                &[
+                    ELEM_ACSOURCE,
+                    ELEM_TRANSFORMER,
+                    ELEM_DIODE,
+                    ELEM_DIODE,
+                    ELEM_DIODE,
+                    ELEM_DIODE,
+                    ELEM_CAPACITOR,
+                    ELEM_RESISTOR,
+                ],
+                &[1, 1, 2, 3, 0, 0, 4, 4],
+                &[0, 0, 4, 4, 2, 3, 0, 0],
+                &[0, 2, 0, 0, 0, 0, 0, 0],
+                &[0, 3, 0, 0, 0, 0, 0, 0],
+                &[1000.0, n, 0.0, 0.0, 0.0, 0.0, 100.0e-6, 1000.0],
+                &[5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            ));
+            let mut ipri = 0.0f64;
+            let mut out_hi = f64::MIN;
+            for tk in 0..40_000 {
+                sim.step();
+                ipri = ipri.max(sim.element_currents()[1].abs());
+                if tk >= 30_000 {
+                    out_hi = out_hi.max(sim.state()[4]);
+                }
+            }
+            // No inrush runaway on any platform (the bug peaked at tens of A in native,
+            // ~61 kA on wasm; the leakage companion holds it to a sane few amps).
+            assert!(
+                ipri.is_finite() && ipri < 20.0,
+                "n={n}: primary inrush ran away (peak {ipri} A)"
+            );
+            // Still rectifies to a sane positive DC that scales up with the turns ratio.
+            assert!(
+                out_hi > 0.0 && out_hi < 5.0 * n + 1.0,
+                "n={n}: bridge output not a sane rectified DC (hi {out_hi} V)"
             );
         }
     }
