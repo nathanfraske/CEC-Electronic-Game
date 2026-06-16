@@ -981,6 +981,17 @@ function drawDetailTransformer(g: Graphics, o: DetailOpts): void {
   const n = Math.max(0.34, Math.min(3, o.value && o.value > 0 ? o.value : 1));
   const primTurns = 6;
   const secTurns = Math.max(2, Math.min(12, Math.round(primTurns * n)));
+  // The core-flux loop reads the REAL magnetising current (flux) when the sim
+  // exposes it — its magnitude sets the loop brightness, its sign the loop
+  // direction (so a DC bias keeps it lit one way; AC reverses it) — else the
+  // primary current stands in. The windings still animate from the primary current.
+  const FLUX_SCALE = 0.3;
+  const fluxMag =
+    o.electrical.flux !== undefined
+      ? norm(o.electrical.flux, FLUX_SCALE)
+      : drive;
+  const fluxDir =
+    o.electrical.flux !== undefined ? (o.electrical.flux >= 0 ? 1 : -1) : dir;
 
   // --- the iron core (a thick rectangular ring) --------------------------------
   const x0 = -hw * 0.34;
@@ -994,21 +1005,21 @@ function drawDetailTransformer(g: Graphics, o: DetailOpts): void {
     alpha: 0.9,
   });
 
-  // --- flux dots looping around the core (primary current drives the flux) -----
-  if (drive > 0.02) {
+  // --- flux dots looping around the core (the REAL magnetising flux) -----------
+  if (fluxMag > 0.02) {
     const mx0 = x0;
     const my0 = y0;
     const mx1 = x1;
     const my1 = y1;
     const nF = FLOW_DOTS_MAX;
     for (let k = 0; k < nF; k++) {
-      const present = dotPresence(k, drive);
+      const present = dotPresence(k, fluxMag);
       if (present <= 0) continue;
-      const t = (((k / nF + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const t = (((k / nF + o.phase * FLOW_SPEED * fluxDir) % 1) + 1) % 1;
       const pt = rectPerimeter(t, mx0, my0, mx1, my1);
       g.circle(pt.x, pt.y, 2.6).fill({
         color: FLUX,
-        alpha: (0.35 + 0.5 * drive) * present,
+        alpha: (0.35 + 0.5 * fluxMag) * present,
       });
     }
   }

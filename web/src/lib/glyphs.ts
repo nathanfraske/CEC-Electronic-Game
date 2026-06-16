@@ -14,6 +14,13 @@ export interface ElectricalState {
   /** Volts across the element, V(a) − V(b). */
   vAcross: number;
   /**
+   * Reactive branch current: a transformer's **magnetising current `Im`** — its
+   * core-flux proxy (`Φ = L1·Im`) carrying the real flux level + DC bias — or an
+   * inductor's branch current. Absent for parts with no reactive state. Lets the
+   * transformer tier animate from real flux instead of a free oscillation.
+   */
+  flux?: number;
+  /**
    * Set when this part hit the FAIL bound this tick — an ideal part driven past
    * what physics allows (no series impedance). The renderer boxes it in pulsing
    * red. Absent/false for every well-behaved part.

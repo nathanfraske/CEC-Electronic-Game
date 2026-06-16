@@ -605,12 +605,18 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
   const cxP = -hw * 0.4;
   const cxS = hw * 0.4;
   const cy = -hh * 0.08;
-  // AC ROCKS the wheels back and forth — not one continuous spin. The hinge angle
-  // swings on the shared phase clock (so it pauses + flows with the sim) and its
-  // amplitude rides the drive (magnitude on amplitude, never speed); `dir` biases
-  // which way it leads so it tracks the live current's sense.
-  const swing = Math.sin(o.phase * Math.PI) * dir;
-  const rock = swing * (0.35 + 0.65 * drive) * 1.5;
+  // Drive the rock from the REAL core flux (the magnetising current `Im`) when the
+  // sim exposes it: the wheels rock to where the flux actually sits, so a DC flux
+  // BIAS sits off-centre and a heavily-driven core pins toward a saturation end —
+  // not a free oscillation. Falls back to a calm phase hinge when there's no flux
+  // readout. Best observed under slow playback, where the swing reads instead of
+  // aliasing. `FLUX_SCALE` is the magnetising current that reads as a strong flux.
+  const FLUX_SCALE = 0.3;
+  const fluxN =
+    o.electrical.flux !== undefined
+      ? Math.max(-1, Math.min(1, o.electrical.flux / FLUX_SCALE))
+      : Math.sin(o.phase * Math.PI) * dir;
+  const rock = fluxN * 1.6;
 
   // --- AC drive (left) + primary rod -------------------------------------------
   const drvX = -hw + 14;
@@ -653,7 +659,7 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
     for (let k = 0; k < nT; k++) {
       const present = dotPresence(k, drive);
       if (present <= 0) continue;
-      const u = (((k / nT + 0.14 * swing) % 1) + 1) % 1;
+      const u = (((k / nT + 0.14 * fluxN) % 1) + 1) % 1;
       g.circle(cxP + (cxS - cxP) * u, topPyP + (topPyS - topPyP) * u, 2.6).fill(
         {
           color: WARM,
@@ -674,8 +680,9 @@ function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
       .lineTo(sx, trackY + 6)
       .stroke({ width: 1.6, color: PALETTE.rail, alpha: 0.8 });
   }
-  const travel = swing * (0.4 + 0.6 * drive); // strap position swings with the rock
-  // sat zones at each end brighten as the strap nears its travel limit
+  const travel = fluxN; // strap position = the real core-flux level (signed)
+  // sat zones at each end brighten as the flux pins toward that travel limit
+
   for (const end of [-1, 1]) {
     const near = Math.max(0, (travel * end - 0.8) / 0.2);
     g.rect(end > 0 ? thw - 26 : -thw, trackY - 6, 26, 12).fill({
