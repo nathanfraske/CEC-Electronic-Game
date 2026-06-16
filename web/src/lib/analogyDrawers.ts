@@ -545,6 +545,133 @@ function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
   stud(g, capR, baseY, PALETTE.bronze);
 }
 
+// A spoked pulley wheel centred at (cx,cy), radius r, rotated by `spin`; one WARM
+// reference spoke so the rotation reads. `glow` (0..1) brightens it with the drive.
+function pulley(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  r: number,
+  spin: number,
+  glow: number,
+): void {
+  g.circle(cx, cy, r).stroke({
+    width: 3,
+    color: PALETTE.bronze,
+    alpha: 0.4 + 0.5 * glow,
+  });
+  for (let k = 0; k < 6; k++) {
+    const a = spin + (k / 6) * Math.PI * 2;
+    const col = k === 0 ? PALETTE.warn : PALETTE.bronze;
+    g.moveTo(cx, cy)
+      .lineTo(cx + Math.cos(a) * r * 0.92, cy + Math.sin(a) * r * 0.92)
+      .stroke({
+        width: 3,
+        color: col,
+        alpha: (k === 0 ? 0.65 : 0.5) + 0.4 * glow,
+      });
+  }
+  g.circle(cx, cy, r * 0.14).fill({ color: PALETTE.bronze, alpha: 0.9 });
+}
+
+// ============================================================================
+// Transformer — ported from transformer-tiers.html tier 2: TWO WHEELS AND A FINITE
+// STRAP. A primary wheel and a secondary wheel are linked by a strap (the core
+// flux). Rock the primary (AC drive) and the strap shuttles, both wheels rock and
+// power flows to the load. The wheel-radius ratio is the turns ratio — it sets the
+// voltage, its inverse sets the current. The strap has finite travel: crank it
+// steadily (DC) and it jams at its end — the core saturating.
+//
+// Live mapping (transformer ElectricalState: primary current Ip, vAcross = Vp;
+// value = turns ratio n = Ns/Np):
+//   • drive   = norm(|Ip|) → strap-tick density/alpha + wheel-spoke brightness.
+//   • dir     = sign(Ip)   → rock direction (flips each AC half-cycle).
+//   • ratio   = value      → secondary-vs-primary wheel radius (the turns ratio).
+//   • strap travel = sin(spin) → the flux-gauge pointer between the two sat ends.
+// ============================================================================
+function drawAnalogyTransformer(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+
+  const drive = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const n = Math.max(0.33, Math.min(3, o.value && o.value > 0 ? o.value : 1));
+
+  // Wheel radii in the turns ratio rs/rp = n; the larger wheel fills baseR.
+  const baseR = hh * 0.36;
+  const rp = n >= 1 ? baseR / n : baseR;
+  const rs = n >= 1 ? baseR : baseR * n;
+  const cxP = -hw * 0.4;
+  const cxS = hw * 0.4;
+  const cy = -hh * 0.08;
+  const spin = o.phase * FLOW_SPEED * dir * Math.PI;
+
+  // --- AC drive (left) + primary rod -------------------------------------------
+  const drvX = -hw + 14;
+  g.circle(drvX, cy, 10).stroke({ width: 2, color: PALETTE.cyan, alpha: 0.8 });
+  g.moveTo(drvX - 6, cy)
+    .quadraticCurveTo(drvX - 3, cy - 7, drvX, cy)
+    .quadraticCurveTo(drvX + 3, cy + 7, drvX + 6, cy)
+    .stroke({ width: 1.8, color: PALETTE.cyan, alpha: 0.85 });
+  g.moveTo(drvX + 10, cy)
+    .lineTo(cxP - rp, cy)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+
+  // --- load R (right) + secondary rod, dimming if power transfer falters --------
+  const loadX = hw - 12;
+  g.moveTo(cxS + rs, cy)
+    .lineTo(loadX, cy)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  g.roundRect(loadX - 6, cy - 16, 12, 32, 3).stroke({
+    width: 3,
+    color: PALETTE.violet,
+    alpha: 0.5 + 0.4 * drive,
+  });
+
+  // --- the finite strap (top + bottom tangents) --------------------------------
+  for (const s of [-1, 1]) {
+    g.moveTo(cxP, cy + s * rp)
+      .lineTo(cxS, cy + s * rs)
+      .stroke({ width: 3, color: PALETTE.rail, alpha: 0.85 });
+  }
+
+  // --- the two wheels (radii = turns ratio), rocking with the AC drive ---------
+  pulley(g, cxP, cy, rp, spin, drive);
+  pulley(g, cxS, cy, rs, spin, drive);
+
+  // --- WARM ticks shuttling along the top strap (power transfer) ---------------
+  belt(g, cxP, cy - rp, cxS, cy - rs, drive, dir, o.phase, WARM, 2.6);
+
+  // --- the flux gauge: strap travel between the two saturation ends ------------
+  const trackY = hh * 0.66;
+  const thw = hw * 0.34;
+  g.moveTo(-thw, trackY)
+    .lineTo(thw, trackY)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+  for (const sx of [-thw, 0, thw]) {
+    g.moveTo(sx, trackY - 6)
+      .lineTo(sx, trackY + 6)
+      .stroke({ width: 1.6, color: PALETTE.rail, alpha: 0.8 });
+  }
+  const travel = Math.sin(spin); // strap position, −1..+1
+  // sat zones at each end brighten as the strap nears its travel limit
+  for (const end of [-1, 1]) {
+    const near = Math.max(0, (travel * end - 0.8) / 0.2);
+    g.rect(end > 0 ? thw - 26 : -thw, trackY - 6, 26, 12).fill({
+      color: PALETTE.accent,
+      alpha: 0.12 + 0.4 * near,
+    });
+  }
+  const px = travel * thw;
+  g.poly([px - 6, trackY - 16, px + 6, trackY - 16, px, trackY - 5]).fill({
+    color: Math.abs(travel) > 0.8 ? PALETTE.accent : WARM,
+    alpha: 0.9,
+  });
+
+  // --- primary / secondary terminal studs --------------------------------------
+  stud(g, drvX, cy, PALETTE.bronze);
+  stud(g, loadX, cy, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -555,6 +682,7 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   C: drawAnalogyCeramicCap,
   EC: drawAnalogyElectrolyticCap,
   L: drawAnalogyInductor,
+  TR: drawAnalogyTransformer,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */
