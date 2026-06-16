@@ -36,6 +36,7 @@
     stepAmp,
     AC_MAINS_PRESETS,
   } from "./lib/values";
+  import { LOGIC_FAMILIES, familyLevels } from "./lib/families";
   import {
     EXAMPLES,
     EXAMPLE_CATEGORIES,
@@ -1055,6 +1056,28 @@
   function stepAmpVal(dir: number): void {
     if (selPart) setAmp(stepAmp(selAmp(), dir));
   }
+  // Logic family of a digital part (gate or flip-flop): a third descriptor beside
+  // `value` (the rail). Indexes LOGIC_FAMILIES; 0 = Ideal (the default).
+  const DIGITAL_KINDS = new Set([
+    "AND",
+    "OR",
+    "NAND",
+    "NOR",
+    "XOR",
+    "XNOR",
+    "NOT",
+    "BUF",
+    "FF",
+  ]);
+  function isDigitalPart(kind: string): boolean {
+    return DIGITAL_KINDS.has(kind);
+  }
+  function selFamily(): number {
+    return selPart?.family ?? 0;
+  }
+  function setFamily(idx: number): void {
+    if (selPart) board?.setComponentFamily(selPart.id, idx);
+  }
   // The potentiometer's wiper position (its second scalar): 0..1, centred by
   // default. Presented as a continuous slider that sets the exact position.
   function selWiper(): number {
@@ -1922,6 +1945,41 @@
                 title="Next larger standard value">+</button
               >
             </div>
+            {#if isDigitalPart(kind)}
+              {@const lv = familyLevels(selFamily(), selPart.value)}
+              <!-- The logic family sets the input thresholds and output levels:
+                   Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
+                   margins. Packed into `aux` for the solver (func + 16*family). -->
+              <div class="insp-sub">logic family</div>
+              <div class="insp-chips wrap">
+                {#each LOGIC_FAMILIES as fam, i (fam.name)}
+                  <button
+                    class="chip-val {selFamily() === i ? 'is-active' : ''}"
+                    onclick={() => setFamily(i)}>{fam.name}</button
+                  >
+                {/each}
+              </div>
+              <div class="insp-sub">
+                thresholds · <span class="mono"
+                  >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
+                    lv.vIh,
+                    "V",
+                  )}</span
+                >
+              </div>
+              <div class="insp-sub">
+                output · <span class="mono"
+                  >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
+                >
+                · noise margin
+                <span class="mono"
+                  >{formatValue(lv.nmHigh, "V")} hi · {formatValue(
+                    lv.nmLow,
+                    "V",
+                  )} lo</span
+                >
+              </div>
+            {/if}
             {#if kind === "AC"}
               <!-- The AC source's second scalar: its peak amplitude (volts),
                  presented exactly like the frequency chips above. The row above

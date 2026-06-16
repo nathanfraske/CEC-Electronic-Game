@@ -67,6 +67,16 @@ export interface Component {
    * round-trip to the default.
    */
   wiper?: number;
+  /**
+   * The logic family of a digital part (gate or flip-flop): an index into the
+   * {@link LOGIC_FAMILIES} table — `0` = Ideal (the half-rail default), `1` = CMOS,
+   * `2` = TTL. Only meaningful for the logic gates and the D flip-flop; other kinds
+   * leave it undefined. Encoded into `aux`'s upper bits by {@link buildNetlist}
+   * (`func + 16*family`), matching `FAMILIES` in `crates/sim-core/src/lib.rs`. A new
+   * gate defaults to Ideal, so any part that never touches the family picker behaves
+   * exactly as before. Optional so older snapshots round-trip to Ideal.
+   */
+  family?: number;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
 }

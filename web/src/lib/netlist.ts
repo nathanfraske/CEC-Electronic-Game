@@ -429,11 +429,15 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
         ? (nodeIndex.get(find(key(c.id, 3))) ?? 0)
         : 0;
     // The second scalar: an AC source emits its peak amplitude (volts, defaulting
-    // to 5 V when a legacy source carries none); a logic gate emits its boolean
-    // function code (GATE_AUX); every other kind emits 0, which the core ignores.
-    // Kept parallel to `values`.
+    // to 5 V when a legacy source carries none); a logic gate / flip-flop emits its
+    // function code (GATE_AUX) in the low bits PLUS its logic-family index in the
+    // upper bits (`func + 16*family`, matching `gate_family_index`/`gate_func_code`
+    // in sim-core); every other kind emits 0, which the core ignores. Kept parallel
+    // to `values`.
     const aux =
-      c.kind === "AC" ? (c.amp ?? AC_DEFAULT_AMP) : (GATE_AUX[c.kind] ?? 0);
+      c.kind === "AC"
+        ? (c.amp ?? AC_DEFAULT_AMP)
+        : (GATE_AUX[c.kind] ?? 0) + 16 * (c.family ?? 0);
     const idx = types.length;
     types.push(t);
     aArr.push(na);
