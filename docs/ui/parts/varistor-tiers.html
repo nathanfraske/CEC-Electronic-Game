@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Varistor, three ways</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root{
+  --bg:oklch(0.135 0.022 285); --surface:oklch(0.19 0.025 285); --surface-2:oklch(0.25 0.03 285);
+  --border:oklch(0.32 0.03 285); --text:oklch(0.93 0.02 285); --muted:oklch(0.72 0.03 285);
+  --accent:oklch(0.64 0.255 350); --cyan:oklch(0.82 0.13 215); --bronze:oklch(0.74 0.085 72); --ok:oklch(0.8 0.17 150);
+  --font-display:'Saira Condensed',sans-serif; --font-body:'Saira',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);line-height:1.5;
+  padding:22px 26px 40px;max-width:1180px;margin:0 auto;
+  background-image:radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.2 0.04 320 / 0.4), transparent);}
+.hud-header{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:18px;}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-weight:700;
+  letter-spacing:0.14em;font-size:14px;color:var(--muted);text-transform:uppercase;}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);}
+.header-meta{display:flex;gap:8px;}
+.chip{font-family:var(--font-mono);font-size:11px;padding:3px 9px;border-radius:20px;
+  border:1px solid var(--border);color:var(--muted);background:var(--surface);}
+.chip-accent{border-color:color-mix(in oklch,var(--accent),transparent 55%);color:var(--accent);}
+h1.lede{font-family:var(--font-display);font-weight:600;font-size:31px;letter-spacing:0.01em;margin:0 0 6px;}
+p.intro{color:var(--muted);font-size:15px;margin:0 0 18px;max-width:74ch;}
+.modebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.seg-label{font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px;}
+.seg button{font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:0.03em;
+  color:var(--muted);background:transparent;border:none;border-radius:6px;padding:6px 13px;cursor:pointer;transition:all .15s;}
+.seg button:hover{color:var(--text);}
+.seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+.grid{display:grid;grid-template-columns:1fr 312px;gap:18px;align-items:start;}
+.board-frame{background:linear-gradient(160deg,oklch(0.16 0.025 285),oklch(0.13 0.02 285));
+  border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:inset 0 1px 0 oklch(0.4 0.04 285 / 0.3);}
+.board-frame svg{display:block;width:100%;height:auto;}
+.panels{display:flex;flex-direction:column;gap:14px;}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 15px;}
+.panel h2{font-family:var(--font-mono);font-weight:500;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 11px;display:flex;align-items:center;gap:7px;}
+.panel h2::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);}
+#scope{display:block;width:100%;height:auto;}
+.ro{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--font-mono);font-size:12.5px;
+  padding:5px 0;border-bottom:1px solid oklch(0.26 0.025 285 / 0.6);}
+.ro:last-child{border-bottom:none;}
+.ro-k{color:var(--muted);}
+.ro-v{color:var(--text);font-weight:500;}
+.ro-v.hot{color:var(--accent);}
+.transport{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;margin-top:18px;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 18px;}
+.ctl{display:flex;flex-direction:column;gap:6px;min-width:180px;flex:1;}
+.ctl-head{display:flex;justify-content:space-between;align-items:baseline;}
+.ctl label{font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;color:var(--muted);text-transform:uppercase;}
+.ctl .val{font-family:var(--font-mono);font-size:12.5px;color:var(--cyan);font-weight:500;}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:5px;border-radius:3px;
+  background:var(--surface-2);outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--cyan);border:2px solid var(--bg);box-shadow:0 0 0 1px var(--cyan);}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--cyan);border:2px solid var(--bg);}
+input.ta::-webkit-slider-thumb{background:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+input.ta::-moz-range-thumb{background:var(--accent);}
+input.tb::-webkit-slider-thumb{background:var(--bronze);box-shadow:0 0 0 1px var(--bronze);}
+input.tb::-moz-range-thumb{background:var(--bronze);}
+.btn{font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:0.04em;color:var(--text);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:9px 18px;cursor:pointer;transition:all .15s;}
+.btn:hover{border-color:var(--accent);}
+.btn.is-active{box-shadow:inset 0 -2px 0 var(--accent);}
+footer{margin-top:20px;padding-top:14px;border-top:1px solid var(--border);
+  font-family:var(--font-body);font-size:12.5px;color:var(--muted);max-width:84ch;}
+footer b{color:var(--muted);font-weight:600;}
+@media(max-width:880px){.grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+  <div class="hud-header">
+    <div class="brand"><span class="dot"></span>Critical Error Computing &middot; component lab</div>
+    <div class="header-meta"><span class="chip chip-accent">metal oxide varistor</span><span class="chip" id="chipReg">CLAMPING</span></div>
+  </div>
+  <h1 class="lede">Varistor, three ways</h1>
+  <p class="intro">A varistor is a resistor whose resistance depends on the voltage across it. Below its clamp voltage it is nearly an insulator and passes almost nothing. Above the clamp its resistance collapses and it conducts hard, which pins the voltage near the clamp and dumps the surplus current. It works the same in both directions, which is why it sits across the line in a surge protector. Switch tiers to see it as a schematic, as a pressure relief valve, and as the zinc oxide grains underneath.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; schematic</button>
+      <button data-t="t2">2 &middot; analogy</button>
+      <button data-t="t3">3 &middot; reality</button>
+    </div>
+  </div>
+
+  <main class="grid">
+    <div class="board-frame">
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg">
+        <text x="20" y="34" font-family="var(--font-display)" font-size="13" fill="#80798f" letter-spacing="0.1em" id="visTag">SCHEMATIC</text>
+        <rect x="1142" y="14" width="0" height="0" fill="none"/>
+        <g id="gT1"></g>
+        <g id="gT2" style="display:none"></g>
+        <g id="gT3" style="display:none"></g>
+      </svg>
+    </div>
+    <aside class="panels">
+      <section class="panel"><h2>telemetry</h2><div id="telemetry"></div></section>
+      <section class="panel"><h2>characteristic</h2>
+        <svg id="scope" viewBox="0 0 300 230" xmlns="http://www.w3.org/2000/svg"></svg>
+      </section>
+    </aside>
+  </main>
+
+  <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin:14px 0 -4px;text-align:center;">Drag <span style="color:var(--cyan)">applied voltage</span> above the <span style="color:var(--accent)">clamp voltage</span> to make it conduct. Below the clamp it blocks and nothing flows.</div>
+  <div class="transport">
+    <div class="ctl">
+      <div class="ctl-head"><label>applied voltage</label><span class="val" id="vLab">8.0 V</span></div>
+      <input type="range" id="vIn" min="-1000" max="1000" value="800">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label>clamp voltage</label><span class="val" id="vnLab">5.0 V</span></div>
+      <input type="range" id="vnIn" min="300" max="1200" value="500" class="ta">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label>exponent</label><span class="val" id="aLab">24</span></div>
+      <input type="range" id="aIn" min="8" max="40" value="24" class="tb">
+    </div>
+    <button class="btn is-active" id="btnRun">pause</button>
+  </div>
+
+  <footer id="footnote"></footer>
+
+<script>
+(function(){
+  "use strict";
+  var SVGNS='http://www.w3.org/2000/svg';
+  function el(tag,attrs,txt){var e=document.createElementNS(SVGNS,tag);if(attrs){for(var k in attrs){e.setAttribute(k,attrs[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function poly(pts){return pts.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function th(i){return (i*0.61803398875)%1;}
+  function dens(n){return clamp(Math.pow(n,0.6)*1.25,0,1);}
+  function hcoil(xa,xb,y,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,x=lerp(xa,xb,t),yy=y+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+yy.toFixed(1)+' ';}return d;}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function fmtI(I){var a=Math.abs(I);var s=(I<0?'\u2212':'');if(a<1e-9)return '0 A';if(a<1e-3)return s+(a*1e6).toFixed(a<1e-4?1:0)+' \u00b5A';if(a<1)return s+(a*1e3).toFixed(a<1e-2?1:0)+' mA';if(a<1000)return s+a.toFixed(a<10?2:1)+' A';return s+(a/1000).toFixed(2)+' kA';}
+  function fmtV(v){return (v<0?'\u2212':'')+Math.abs(v).toFixed(1);}
+  function fmtR(R){if(R>=1e12)return (R/1e12).toFixed(R<1e13?1:0)+' T\u03a9';if(R>=1e9)return (R/1e9).toFixed(R<1e10?2:0)+' G\u03a9';if(R>=1e6)return (R/1e6).toFixed(R<1e7?2:0)+' M\u03a9';if(R>=1e3)return (R/1e3).toFixed(R<1e4?2:0)+' k\u03a9';if(R>=1)return R.toFixed(R<10?2:1)+' \u03a9';return (R*1000).toFixed(0)+' m\u03a9';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',BLUE='#7fc6ff',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',HOLE='#ff7a59',OXIDE='#caa46a',ZINC='#8fb6c9';
+
+  // ===== metal oxide varistor model, power law =====
+  var IREF=0.001, ICAP=50, VGB=3.2;                          // current at the knee (1 mA at V=Vn), surge-current display cap, volts per grain boundary
+  function model(V, Vn, alpha){
+    var sgn=(V<0?-1:(V>0?1:0)), av=Math.abs(V), r=(Vn>0?av/Vn:0);
+    var Imag=IREF*Math.pow(r, alpha);                        // amps, uncapped
+    var I=sgn*Math.min(Imag, ICAP);
+    var R=(Imag>1e-13)?(av/Imag):1e13;
+    var region=(r<0.9)?'leakage':((r<1.1)?'knee':'clamping');
+    return {I:I, Imag:Imag, av:av, r:r, R:R, region:region, sgn:sgn};
+  }
+
+  var scene=document.getElementById('scene');
+  var gT1=document.getElementById('gT1'),gT2=document.getElementById('gT2'),gT3=document.getElementById('gT3');
+  var t1={},t2={},t3={},sc={};
+
+  /*FILL_BUILD_T1*/
+  function buildT1(){
+    var CX=276, T1Y=84, T2Y=456, BT=198, BB=342, BW=74;
+    t1.CX=CX; t1.T1Y=T1Y; t1.T2Y=T2Y;
+    gT1.appendChild(el('line',{x1:CX,y1:T1Y,x2:CX,y2:BT,stroke:STEEL,'stroke-width':2.4}));
+    gT1.appendChild(el('line',{x1:CX,y1:BB,x2:CX,y2:T2Y,stroke:STEEL,'stroke-width':2.4}));
+    gT1.appendChild(el('rect',{x:CX-BW/2,y:BT,width:BW,height:BB-BT,rx:6,fill:'oklch(0.22 0.03 285)',stroke:STEEL,'stroke-width':1.8}));
+    t1.glow=el('rect',{x:CX-BW/2+2,y:BT+2,width:BW-4,height:BB-BT-4,rx:5,fill:ORANGE,opacity:0});gT1.appendChild(t1.glow);
+    gT1.appendChild(el('line',{x1:CX-BW/2-9,y1:BB+8,x2:CX+BW/2+9,y2:BT-8,stroke:BRONZE,'stroke-width':2.4}));
+    gT1.appendChild(el('polygon',{points:poly([[CX+BW/2+9,BT-8],[CX+BW/2-3,BT-4],[CX+BW/2+1,BT+8]]),fill:BRONZE}));
+    gT1.appendChild(el('circle',{cx:CX,cy:T1Y,r:4,fill:STEEL}));
+    gT1.appendChild(el('circle',{cx:CX,cy:T2Y,r:4,fill:STEEL}));
+    gT1.appendChild(el('text',{x:CX-15,y:T1Y+4,'font-family':'var(--font-display)','font-size':15,fill:DIM,'text-anchor':'end'},'1'));
+    gT1.appendChild(el('text',{x:CX-15,y:T2Y+4,'font-family':'var(--font-display)','font-size':15,fill:DIM,'text-anchor':'end'},'2'));
+    t1.plus=el('text',{x:CX+15,y:T1Y+5,'font-family':'var(--font-mono)','font-size':16,fill:ACCENT,'text-anchor':'start'},'+');gT1.appendChild(t1.plus);
+    t1.pI=el('path',{d:'M '+CX+' '+T1Y+' L '+CX+' '+T2Y,fill:'none',stroke:'none'});gT1.appendChild(t1.pI);t1.lenI=t1.pI.getTotalLength();
+    t1.iDots=[];for(var i=0;i<20;i++){var c=el('circle',{r:4,fill:CYAN,opacity:0});gT1.appendChild(c);t1.iDots.push({el:c,u:i/20,th:th(i)});}
+    t1.vLab=el('text',{x:CX-18,y:150,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'end'},'');gT1.appendChild(t1.vLab);
+    gT1.appendChild(el('text',{x:CX+BW/2+30,y:274,'font-family':'var(--font-mono)','font-size':10.5,fill:FAINT,'text-anchor':'start'},'voltage'));
+    gT1.appendChild(el('text',{x:CX+BW/2+30,y:288,'font-family':'var(--font-mono)','font-size':10.5,fill:FAINT,'text-anchor':'start'},'dependent'));
+    gT1.appendChild(el('text',{x:470,y:168,'font-family':'var(--font-display)','font-size':14,fill:DIM,'letter-spacing':'0.08em'},'VOLTAGE DEPENDENT R'));
+    gT1.appendChild(el('text',{x:470,y:206,'font-family':'var(--font-mono)','font-size':11,fill:FAINT},'resistance right now'));
+    t1.rLab=el('text',{x:470,y:240,'font-family':'var(--font-mono)','font-size':23,fill:CYAN},'');gT1.appendChild(t1.rLab);
+    t1.iLab=el('text',{x:470,y:286,'font-family':'var(--font-mono)','font-size':13,fill:WATER2},'');gT1.appendChild(t1.iLab);
+    t1.vnLab=el('text',{x:470,y:314,'font-family':'var(--font-mono)','font-size':12,fill:BRONZE},'');gT1.appendChild(t1.vnLab);
+    t1.stateLab=el('text',{x:470,y:360,'font-family':'var(--font-body)','font-size':14,fill:OK},'');gT1.appendChild(t1.stateLab);
+    gT1.appendChild(el('text',{x:470,y:390,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'no polarity, it clamps either way'));
+  }
+  /*FILL_UPDATE_T1*/
+  function updateT1(s){
+    var idN=s.idN, dC=dens(idN), i;
+    t1.glow.setAttribute('opacity',(idN*0.5).toFixed(2));
+    t1.plus.setAttribute('y', (s.sgn<0?t1.T2Y:t1.T1Y)+5);
+    t1.plus.setAttribute('opacity', s.sgn===0?'0':'0.95');
+    for(i=0;i<t1.iDots.length;i++){var d=t1.iDots[i],vis=(dC>d.th && s.idN>0.008);if(s.run&&vis){d.u=(d.u+0.004+0.014*idN)%1;}var uu=(s.sgn<0)?(1-d.u):d.u,p=t1.pI.getPointAtLength(uu*t1.lenI);d.el.setAttribute('cx',p.x.toFixed(1));d.el.setAttribute('cy',p.y.toFixed(1));d.el.setAttribute('opacity',vis?'0.92':'0');}
+    t1.vLab.textContent='V '+fmtV(s.Vsigned)+' V';
+    t1.rLab.textContent=fmtR(s.R);
+    t1.rLab.setAttribute('fill', s.region==='clamping'?ACCENT:(s.region==='knee'?BRONZE:CYAN));
+    t1.iLab.textContent='I '+fmtI(s.I);
+    t1.vnLab.textContent='clamp \u00b1'+s.Vn.toFixed(1)+' V';
+    t1.stateLab.textContent=(s.region==='leakage')?'below clamp, blocking':((s.region==='knee')?'at the clamp threshold':'clamping, conducting hard');
+    t1.stateLab.setAttribute('fill',(s.region==='clamping')?ACCENT:((s.region==='knee')?BRONZE:FAINT));
+  }
+  /*FILL_BUILD_T2*/
+  function buildT2(){
+    var cx=300;
+    t2.cx=cx;
+    // inlet pressure arrow (below the vessel), updated each frame
+    t2.pLine=el('line',{x1:cx,y1:516,x2:cx,y2:496,stroke:WATER,'stroke-width':3});gT2.appendChild(t2.pLine);
+    t2.pHead=el('polygon',{points:'',fill:WATER});gT2.appendChild(t2.pHead);
+    gT2.appendChild(el('rect',{x:cx-15,y:468,width:30,height:24,fill:'oklch(0.25 0.03 285)',stroke:STEEL,'stroke-width':2}));
+    // vessel
+    t2.vesFill=el('rect',{x:234,y:320,width:132,height:148,rx:14,fill:WATER,opacity:0});gT2.appendChild(t2.vesFill);
+    gT2.appendChild(el('rect',{x:234,y:320,width:132,height:148,rx:14,fill:'none',stroke:STEEL,'stroke-width':3}));
+    t2.mol=[];for(var i=0;i<9;i++){var mx=260+(i%3)*40,my=352+Math.floor(i/3)*38;var c=el('circle',{cx:mx,cy:my,r:3,fill:WATER2,opacity:0.85});gT2.appendChild(c);t2.mol.push({el:c,bx:mx,by:my,ph:i*1.7});}
+    // neck + seat
+    gT2.appendChild(el('line',{x1:285,y1:320,x2:285,y2:296,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:315,y1:320,x2:315,y2:296,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:272,y1:296,x2:285,y2:296,stroke:STEEL,'stroke-width':3}));
+    gT2.appendChild(el('line',{x1:315,y1:296,x2:328,y2:296,stroke:STEEL,'stroke-width':3}));
+    // body chamber walls with vent gaps (gap at y 250..266)
+    gT2.appendChild(el('line',{x1:250,y1:296,x2:250,y2:266,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:250,y1:250,x2:250,y2:224,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:350,y1:296,x2:350,y2:266,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:350,y1:250,x2:350,y2:224,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:250,y1:296,x2:272,y2:296,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:328,y1:296,x2:350,y2:296,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:250,y1:224,x2:272,y2:224,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:328,y1:224,x2:350,y2:224,stroke:STEEL,'stroke-width':2.5}));
+    // side vent pipes
+    gT2.appendChild(el('line',{x1:250,y1:250,x2:206,y2:250,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:250,y1:266,x2:206,y2:266,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:350,y1:250,x2:394,y2:250,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:350,y1:266,x2:394,y2:266,stroke:STEEL,'stroke-width':2.5}));
+    // bonnet
+    gT2.appendChild(el('line',{x1:272,y1:224,x2:272,y2:154,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:328,y1:224,x2:328,y2:154,stroke:STEEL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:266,y1:154,x2:334,y2:154,stroke:STEEL,'stroke-width':3}));
+    // set screw + spring (updated)
+    t2.screw=el('rect',{x:cx-7,y:154,width:14,height:14,fill:BRONZE,stroke:WARM,'stroke-width':1});gT2.appendChild(t2.screw);
+    t2.spring=el('path',{d:'',fill:'none',stroke:STEEL,'stroke-width':2,opacity:0.9});gT2.appendChild(t2.spring);
+    // flow paths up the neck and out the vents
+    t2.pL=el('path',{d:'M 300 452 L 300 296 L 268 276 L 250 258 L 206 258',fill:'none',stroke:'none'});gT2.appendChild(t2.pL);t2.lenL=t2.pL.getTotalLength();
+    t2.pR=el('path',{d:'M 300 452 L 300 296 L 332 276 L 350 258 L 394 258',fill:'none',stroke:'none'});gT2.appendChild(t2.pR);t2.lenR=t2.pR.getTotalLength();
+    t2.fL=[];for(i=0;i<12;i++){var cl=el('circle',{r:4,fill:WATER,opacity:0});gT2.appendChild(cl);t2.fL.push({el:cl,u:i/12,th:th(i)});}
+    t2.fR=[];for(i=0;i<12;i++){var cr=el('circle',{r:4,fill:WATER,opacity:0});gT2.appendChild(cr);t2.fR.push({el:cr,u:i/12,th:th(i*2+1)});}
+    // poppet (updated)
+    t2.poppet=el('polygon',{points:'',fill:BRONZE,stroke:WARM,'stroke-width':1.5});gT2.appendChild(t2.poppet);
+    // labels
+    gT2.appendChild(el('text',{x:cx,y:512,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'applied pressure'));
+    t2.polLab=el('text',{x:cx,y:404,'font-family':'var(--font-mono)','font-size':11,fill:ACCENT,'text-anchor':'middle'},'');gT2.appendChild(t2.polLab);
+    gT2.appendChild(el('text',{x:cx,y:148,'font-family':'var(--font-mono)','font-size':9.5,fill:BRONZE,'text-anchor':'middle'},'set point = clamp'));
+    gT2.appendChild(el('text',{x:200,y:246,'font-family':'var(--font-mono)','font-size':9.5,fill:WATER2,'text-anchor':'end'},'vent'));
+    gT2.appendChild(el('text',{x:398,y:246,'font-family':'var(--font-mono)','font-size':9.5,fill:WATER2,'text-anchor':'start'},'vent'));
+    gT2.appendChild(el('text',{x:472,y:196,'font-family':'var(--font-display)','font-size':14,fill:DIM,'letter-spacing':'0.05em'},'PRESSURE RELIEF VALVE'));
+    t2.l1=el('text',{x:472,y:232,'font-family':'var(--font-mono)','font-size':12.5,fill:ACCENT},'');gT2.appendChild(t2.l1);
+    t2.l2=el('text',{x:472,y:260,'font-family':'var(--font-mono)','font-size':12.5,fill:BRONZE},'');gT2.appendChild(t2.l2);
+    t2.l3=el('text',{x:472,y:288,'font-family':'var(--font-mono)','font-size':12.5,fill:WATER2},'');gT2.appendChild(t2.l3);
+    t2.stateLab=el('text',{x:472,y:332,'font-family':'var(--font-body)','font-size':14,fill:OK},'');gT2.appendChild(t2.stateLab);
+    gT2.appendChild(el('text',{x:472,y:364,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'tighten the screw, the clamp rises'));
+    gT2.appendChild(el('text',{x:472,y:380,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'pops open for either polarity'));
+  }
+  /*FILL_UPDATE_T2*/
+  function updateT2(s){
+    var r=s.r, idN=s.idN, dC=dens(idN), i, cx=t2.cx, av=Math.abs(s.Vsigned);
+    var lift=clamp((r-1)*2,0,1)*40, by=296-lift, ptop=by-22;
+    t2.poppet.setAttribute('points', poly([[cx-22,by],[cx+22,by],[cx+14,ptop],[cx-14,ptop]]));
+    t2.poppet.setAttribute('fill', s.region==='clamping'?ORANGE:BRONZE);
+    var screwBottom=166+clamp((s.Vn-3)/9,0,1)*24;
+    t2.screw.setAttribute('height',(screwBottom-154).toFixed(1));
+    t2.spring.setAttribute('d', vcoil(cx, screwBottom, ptop, 7, 5));
+    t2.vesFill.setAttribute('opacity',(clamp(av/10,0,1)*0.42).toFixed(2));
+    for(i=0;i<t2.mol.length;i++){var m=t2.mol[i],amp=2+clamp(av/10,0,1)*5,ox=Math.sin(s.tick*0.13+m.ph)*amp,oy=Math.cos(s.tick*0.11+m.ph*1.4)*amp;m.el.setAttribute('cx',(m.bx+ox).toFixed(1));m.el.setAttribute('cy',(m.by+oy).toFixed(1));}
+    var aLen=12+clamp(av/10,0,1)*26, ty=516-aLen;
+    t2.pLine.setAttribute('y2',ty.toFixed(1));
+    t2.pHead.setAttribute('points',poly([[cx-6,ty+9],[cx+6,ty+9],[cx,ty]]));
+    for(i=0;i<t2.fL.length;i++){var dl=t2.fL[i],vl=(dC>dl.th && idN>0.008);if(s.run&&vl){dl.u=(dl.u+0.006+0.02*idN)%1;}var pl=t2.pL.getPointAtLength(dl.u*t2.lenL);dl.el.setAttribute('cx',pl.x.toFixed(1));dl.el.setAttribute('cy',pl.y.toFixed(1));dl.el.setAttribute('opacity',vl?'0.92':'0');}
+    for(i=0;i<t2.fR.length;i++){var dr=t2.fR[i],vr=(dC>dr.th && idN>0.008);if(s.run&&vr){dr.u=(dr.u+0.006+0.02*idN)%1;}var pr=t2.pR.getPointAtLength(dr.u*t2.lenR);dr.el.setAttribute('cx',pr.x.toFixed(1));dr.el.setAttribute('cy',pr.y.toFixed(1));dr.el.setAttribute('opacity',vr?'0.92':'0');}
+    t2.polLab.textContent=(s.sgn<0?'\u2212 polarity, same clamp':(s.sgn>0?'+ polarity':''));
+    t2.l1.textContent='applied '+fmtV(s.Vsigned)+' V';
+    t2.l2.textContent='set point \u00b1'+s.Vn.toFixed(1)+' V';
+    t2.l3.textContent='flow out '+fmtI(s.I);
+    t2.stateLab.textContent=(s.region==='leakage')?'sealed, holding, no flow':((s.region==='knee')?'right at the cracking point':'popped open, venting');
+    t2.stateLab.setAttribute('fill',(s.region==='clamping')?ACCENT:((s.region==='knee')?BRONZE:OK));
+  }
+  /*FILL_BUILD_T3*/
+  function buildT3(){
+    var cx=330, lw=86, yTop=112, yBot=456, eHW=122;
+    t3.cx=cx; t3.lw=lw; t3.yTop=yTop; t3.yBot=yBot;
+    gT3.appendChild(el('rect',{x:cx-eHW,y:90,width:2*eHW,height:20,rx:3,fill:STEEL}));
+    gT3.appendChild(el('rect',{x:cx-eHW,y:456,width:2*eHW,height:20,rx:3,fill:STEEL}));
+    gT3.appendChild(el('text',{x:cx-eHW-8,y:104,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'end'},'electrode'));
+    gT3.appendChild(el('text',{x:cx-eHW-8,y:472,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'end'},'electrode'));
+    t3.chainG=el('g',{});gT3.appendChild(t3.chainG);
+    t3.pE=el('path',{d:'M '+cx+' '+(yTop+4)+' L '+cx+' '+(yBot-4),fill:'none',stroke:'none'});gT3.appendChild(t3.pE);t3.lenE=t3.pE.getTotalLength();
+    t3.eDots=[];for(var i=0;i<18;i++){var c=el('circle',{r:4.2,fill:ELEC,opacity:0});gT3.appendChild(c);t3.eDots.push({el:c,u:i/18,th:th(i)});}
+    // annotations on the left
+    gT3.appendChild(el('line',{x1:170,y1:170,x2:cx-lw+6,y2:178,stroke:FAINT,'stroke-width':1}));
+    gT3.appendChild(el('text',{x:166,y:166,'font-family':'var(--font-mono)','font-size':10.5,fill:ZINC,'text-anchor':'end'},'ZnO grain'));
+    gT3.appendChild(el('text',{x:166,y:180,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT,'text-anchor':'end'},'n-type, conducts'));
+    gT3.appendChild(el('line',{x1:150,y1:290,x2:cx-lw+6,y2:288,stroke:FAINT,'stroke-width':1}));
+    gT3.appendChild(el('text',{x:146,y:286,'font-family':'var(--font-mono)','font-size':10.5,fill:ORANGE,'text-anchor':'end'},'grain boundary'));
+    gT3.appendChild(el('text',{x:146,y:300,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT,'text-anchor':'end'},'holds off ~3.2 V'));
+    // readout right
+    gT3.appendChild(el('text',{x:486,y:158,'font-family':'var(--font-display)','font-size':14,fill:DIM,'letter-spacing':'0.06em'},'ZINC OXIDE GRAINS'));
+    t3.vLab=el('text',{x:486,y:194,'font-family':'var(--font-mono)','font-size':12.5,fill:ACCENT},'');gT3.appendChild(t3.vLab);
+    t3.lClamp=el('text',{x:486,y:222,'font-family':'var(--font-mono)','font-size':12.5,fill:BRONZE},'');gT3.appendChild(t3.lClamp);
+    t3.lN=el('text',{x:486,y:262,'font-family':'var(--font-mono)','font-size':16,fill:CYAN},'');gT3.appendChild(t3.lN);
+    gT3.appendChild(el('text',{x:486,y:284,'font-family':'var(--font-mono)','font-size':11,fill:FAINT},'in series, \u00d7 3.2 V each'));
+    t3.lEq=el('text',{x:486,y:312,'font-family':'var(--font-mono)','font-size':11.5,fill:WATER2},'');gT3.appendChild(t3.lEq);
+    t3.stateLab=el('text',{x:486,y:356,'font-family':'var(--font-body)','font-size':14,fill:OK},'');gT3.appendChild(t3.stateLab);
+    gT3.appendChild(el('text',{x:486,y:388,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'clamp = boundaries in series \u00d7 3.2 V'));
+    t3.lastN=-1; t3.grains=[]; t3.bounds=[];
+    rebuildChain(2);
+  }
+  function rebuildChain(N){
+    while(t3.chainG.firstChild){t3.chainG.removeChild(t3.chainG.firstChild);}
+    t3.grains=[]; t3.bounds=[];
+    var cx=t3.cx, lw=t3.lw, yTop=t3.yTop, yBot=t3.yBot, H=yBot-yTop, bh=H/(N+1), np=6, g, b, j;
+    function linePts(k){var pts=[];for(var jj=0;jj<np;jj++){var t=jj/(np-1),x=cx-lw+t*2*lw+Math.sin(k*2.1+jj*1.3)*5,jit=Math.sin(k*1.7+jj*2.3)*6,y=yTop+k*bh+jit;pts.push([x,y]);}return pts;}
+    for(g=0;g<=N;g++){
+      var top=linePts(g), bot=linePts(g+1).slice().reverse();
+      var poh=el('polygon',{points:poly(top.concat(bot)),fill:'oklch(0.31 0.045 240)',stroke:ZINC,'stroke-width':1.2,opacity:0.9});
+      t3.chainG.appendChild(poh); t3.grains.push(poh);
+    }
+    for(b=1;b<=N;b++){
+      var lp=linePts(b),d='';for(j=0;j<lp.length;j++){d+=(j===0?'M ':'L ')+lp[j][0].toFixed(1)+' '+lp[j][1].toFixed(1)+' ';}
+      var be=el('path',{d:d,fill:'none',stroke:HOLE,'stroke-width':3.5,'stroke-linecap':'round'});
+      t3.chainG.appendChild(be); t3.bounds.push(be);
+    }
+  }
+  /*FILL_UPDATE_T3*/
+  function updateT3(s){
+    var N=Math.max(1,Math.round(s.Vn/VGB));
+    if(N!==t3.lastN){rebuildChain(N);t3.lastN=N;}
+    var idN=s.idN, dC=dens(idN), i, broken=(s.region!=='leakage');
+    for(i=0;i<t3.bounds.length;i++){
+      t3.bounds[i].setAttribute('stroke', broken?ORANGE:'oklch(0.5 0.13 25)');
+      t3.bounds[i].setAttribute('opacity', broken?(0.55+0.45*idN).toFixed(2):'0.9');
+    }
+    for(i=0;i<t3.grains.length;i++){
+      t3.grains[i].setAttribute('fill', broken?'oklch('+(0.31+0.12*idN).toFixed(3)+' '+(0.045+0.04*idN).toFixed(3)+' 235)':'oklch(0.31 0.045 240)');
+    }
+    for(i=0;i<t3.eDots.length;i++){var d=t3.eDots[i],vis=(dC>d.th && idN>0.008);if(s.run&&vis){d.u=(d.u+0.005+0.02*idN)%1;}var uu=(s.sgn<0)?(1-d.u):d.u,p=t3.pE.getPointAtLength(uu*t3.lenE);d.el.setAttribute('cx',p.x.toFixed(1));d.el.setAttribute('cy',p.y.toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');}
+    t3.vLab.textContent='applied '+fmtV(s.Vsigned)+' V';
+    t3.lClamp.textContent='clamp \u2248 '+s.Vn.toFixed(1)+' V';
+    t3.lN.textContent='N = '+N+' boundaries';
+    t3.lEq.textContent=N+' \u00d7 3.2 V \u2248 '+(N*VGB).toFixed(1)+' V';
+    t3.stateLab.textContent=(s.region==='leakage')?'boundaries blocking, no current':((s.region==='knee')?'boundaries starting to break down':'boundaries broken down, conducting');
+    t3.stateLab.setAttribute('fill',(s.region==='clamping')?ACCENT:((s.region==='knee')?BRONZE:OK));
+  }
+
+  // ===== scope : current against voltage characteristic =====
+  function buildScope(){
+    var S=document.getElementById('scope'),W=300,H=230,L=42,R=288,T=16,B=196;
+    sc.S=S;sc.L=L;sc.R=R;sc.T=T;sc.B=B;sc.CY=(T+B)/2;sc.CX=(L+R)/2;
+    sc.LOGMIN=-6;sc.LOGMAX=Math.log10(ICAP);
+    var hh=(B-T)/2;
+    function fOf(I){return (Math.log10(I)-sc.LOGMIN)/(sc.LOGMAX-sc.LOGMIN);}
+    var f1=fOf(0.001);
+    S.appendChild(el('line',{x1:L,y1:(sc.CY-f1*hh),x2:R,y2:(sc.CY-f1*hh),stroke:'oklch(0.34 0.03 285)','stroke-width':1,'stroke-dasharray':'2 4'}));
+    S.appendChild(el('line',{x1:L,y1:(sc.CY+f1*hh),x2:R,y2:(sc.CY+f1*hh),stroke:'oklch(0.34 0.03 285)','stroke-width':1,'stroke-dasharray':'2 4'}));
+    S.appendChild(el('text',{x:L+2,y:(sc.CY-f1*hh-3),'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'start'},'1 mA'));
+    S.appendChild(el('line',{x1:L,y1:sc.CY,x2:R,y2:sc.CY,stroke:'oklch(0.42 0.03 285)','stroke-width':1}));
+    S.appendChild(el('line',{x1:sc.CX,y1:T,x2:sc.CX,y2:B,stroke:'oklch(0.42 0.03 285)','stroke-width':1}));
+    S.appendChild(el('text',{x:R,y:sc.CY+13,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'end'},'V'));
+    S.appendChild(el('text',{x:sc.CX+6,y:T+8,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'start'},'I'));
+    sc.vnPos=el('line',{x1:0,y1:T,x2:0,y2:B,stroke:BRONZE,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.65});S.appendChild(sc.vnPos);
+    sc.vnNeg=el('line',{x1:0,y1:T,x2:0,y2:B,stroke:BRONZE,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.65});S.appendChild(sc.vnNeg);
+    sc.curve=el('path',{d:'',fill:'none',stroke:CYAN,'stroke-width':2});S.appendChild(sc.curve);
+    sc.dot=el('circle',{cx:sc.CX,cy:sc.CY,r:4.5,fill:ACCENT});S.appendChild(sc.dot);
+    sc.vnLab=el('text',{x:0,y:B+12,'font-family':'var(--font-mono)','font-size':8.5,fill:BRONZE,'text-anchor':'middle'},'');S.appendChild(sc.vnLab);
+    S.appendChild(el('text',{x:L-4,y:T+4,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'+50A'));
+    S.appendChild(el('text',{x:L-4,y:B,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'\u221250A'));
+    S.appendChild(el('text',{x:sc.CX,y:H-3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'I vs V, log current, both polarities'));
+  }
+
+  function drawScope(s){
+    var L=sc.L,R=sc.R,T=sc.T,B=sc.B,CY=sc.CY,Vspan=10,alpha=s.alpha,Vn=s.Vn,hh=(B-T)/2;
+    function sx(v){return L+(v+Vspan)/(2*Vspan)*(R-L);}
+    function sy(I){var a=Math.abs(I);if(a<1e-9)return CY;var fr=clamp((Math.log10(a)-sc.LOGMIN)/(sc.LOGMAX-sc.LOGMIN),0,1);return CY-(I<0?-1:1)*fr*hh;}
+    function iAt(v){var av=Math.abs(v),rr=(Vn>0?av/Vn:0),im=IREF*Math.pow(rr,alpha);return (v<0?-1:1)*Math.min(im,ICAP);}
+    var d='';for(var k=0;k<=200;k++){var v=-Vspan+k/200*2*Vspan;d+=(k===0?'M ':'L ')+sx(v).toFixed(1)+' '+sy(iAt(v)).toFixed(1)+' ';}
+    sc.curve.setAttribute('d',d);
+    var xp=sx(Vn),xn=sx(-Vn);
+    sc.vnPos.setAttribute('x1',xp);sc.vnPos.setAttribute('x2',xp);
+    sc.vnNeg.setAttribute('x1',xn);sc.vnNeg.setAttribute('x2',xn);
+    sc.vnLab.setAttribute('x',xp);sc.vnLab.textContent='+Vn';
+    sc.dot.setAttribute('cx',sx(clamp(s.Vsigned,-Vspan,Vspan)).toFixed(1));
+    sc.dot.setAttribute('cy',sy(s.I).toFixed(1));
+  }
+
+
+  // ===== telemetry =====
+  var telem=document.getElementById('telemetry');
+  function trow(label){var row=document.createElement('div');row.className='ro';var k=document.createElement('span');k.className='ro-k';k.textContent=label;var v=document.createElement('span');v.className='ro-v';row.appendChild(k);row.appendChild(v);telem.appendChild(row);return v;}
+  var roV=trow('applied V'),roVn=trow('clamp V'),roA=trow('exponent \u03b1'),roI=trow('current'),roR=trow('resistance'),roReg=trow('region');
+
+  // ===== loop =====
+  var vIn=document.getElementById('vIn'),vnIn=document.getElementById('vnIn'),aIn=document.getElementById('aIn');
+  var vLab=document.getElementById('vLab'),vnLab=document.getElementById('vnLab'),aLab=document.getElementById('aLab');
+  var chipReg=document.getElementById('chipReg'),visTag=document.getElementById('visTag'),footnote=document.getElementById('footnote');
+  var btnRun=document.getElementById('btnRun');
+  var running=true, tier='t1', tick=0;
+
+  function frame(){
+    if(running){tick++;}
+    var V=(+vIn.value)*0.01, Vn=(+vnIn.value)*0.01, alpha=(+aIn.value);
+    var m=model(V,Vn,alpha);
+    var idN=clamp(m.Imag/0.4,0,1);
+    var s={Vsigned:V, Vn:Vn, alpha:alpha, I:m.I, Imag:m.Imag, R:m.R, r:m.r, region:m.region, sgn:m.sgn, idN:idN, run:running, tick:tick};
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else{updateT3(s);}
+    drawScope(s);
+    vLab.textContent=fmtV(V)+' V';
+    vnLab.textContent=Vn.toFixed(1)+' V';
+    aLab.textContent=String(alpha);
+    roV.textContent=fmtV(V)+' V';
+    roVn.textContent='\u00b1'+Vn.toFixed(2)+' V';
+    roA.textContent=String(alpha);
+    roI.textContent=fmtI(m.I);
+    roR.textContent=fmtR(m.R);roR.className='ro-v'+(m.region==='clamping'?' hot':'');
+    roReg.textContent=m.region;roReg.style.color=(m.region==='clamping')?ACCENT:((m.region==='knee')?BRONZE:FAINT);
+    chipReg.textContent=m.region.toUpperCase();
+    requestAnimationFrame(frame);
+  }
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';
+    var names={t1:'schematic',t2:'pressure relief valve',t3:'zinc oxide grains'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+
+  footnote.innerHTML='<b>Notes.</b> The varistor follows a power law, the current rising as the voltage over the clamp voltage raised to a large exponent, so a small step past the clamp multiplies the current enormously. Real zinc oxide parts run that exponent from about twenty to fifty. The clamp is not a perfectly flat rail, the voltage across the part still creeps up as the surge current grows. The clamp voltage is set in manufacturing by the number of zinc oxide grain boundaries stacked in series, each holding off roughly three volts. Currents in the scenes are scaled for legibility.';
+
+  buildT1();buildT2();buildT3();buildScope();
+  setTier('t1');
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
