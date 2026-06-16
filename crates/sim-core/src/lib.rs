@@ -44,7 +44,7 @@
 //! | 15   | op-amp (nonlinear) | rail Vsat     | clamped transconductance, Newton (OUT=a IN-=b IN+=c)|
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
-//! | 18   | transformer        | turns ratio n | coupled inductors, backward-Euler (pri=a/b sec=c/d)|
+//! | 18   | transformer        | turns ratio n | ideal-T: magnetiser + hard secondary (pri=a/b sec=c/d)|
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
 //!
 //! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
@@ -1316,12 +1316,6 @@ pub struct Sim {
     /// only winding current that carries reactive memory in the ideal-T model. Unused
     /// for other kinds. One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
-    /// Second dynamic state, used only by the transformer (`ELEM_TRANSFORMER`): the
-    /// previous **secondary** current `Is` (c -> d). The secondary is algebraic in the
-    /// ideal-T model, so this is needed only to prime the operating point; the
-    /// transient stamp reads it from the solved vector each step. `0.0` for every
-    /// other element. One entry per element, indexed in lockstep with `elements`.
-    reactive_state_b: Vec<f64>,
     /// The D flip-flop's stored bit (`0.0` or `1.0`): the value latched at the last
     /// rising clock edge, which drives `Q`/`Q̄` every tick until the next edge. Used
     /// only by [`ELEM_DFF`]; `0.0` for every other element. Persistent sequential
@@ -1420,7 +1414,6 @@ impl Sim {
             has_nonlinear: false,
             node_v: vec![0.0],
             reactive_state: Vec::new(),
-            reactive_state_b: Vec::new(),
             ff_bit: Vec::new(),
             ff_clk_high: Vec::new(),
             diode_vd: Vec::new(),
@@ -1602,7 +1595,6 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.reactive_state = vec![0.0; elements.len()];
-        self.reactive_state_b = vec![0.0; elements.len()];
         self.ff_bit = vec![0.0; elements.len()];
         self.ff_clk_high = vec![0.0; elements.len()];
         self.diode_vd = vec![0.0; elements.len()];
@@ -1627,9 +1619,6 @@ impl Sim {
     pub fn reset(&mut self) {
         self.tick = 0;
         for s in &mut self.reactive_state {
-            *s = 0.0;
-        }
-        for s in &mut self.reactive_state_b {
             *s = 0.0;
         }
         for s in &mut self.ff_bit {
@@ -2096,8 +2085,8 @@ impl Sim {
                     rhs[bi] -= r_l * self.reactive_state[i];
                 }
                 ELEM_TRANSFORMER => {
-                    // Two coupled-inductor branch companions (primary + secondary),
-                    // cross-linked by the mutual inductance M.
+                    // Ideal-T model: magnetising-inductor companion (Im) + a hard
+                    // forced secondary differential (Is), n·Is reflected to the primary.
                     self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
                 }
                 ELEM_DFF => {
@@ -3029,8 +3018,8 @@ impl Sim {
                     base_rhs[bi] -= r_l * self.reactive_state[i];
                 }
                 ELEM_TRANSFORMER => {
-                    // Two coupled-inductor branch companions into the fixed linear
-                    // base (constant across the Newton loop, like any inductor).
+                    // Ideal-T companion into the fixed linear base (constant across the
+                    // Newton loop, like any inductor).
                     self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
                 }
                 ELEM_DFF => {
@@ -3170,15 +3159,14 @@ impl Sim {
         self.node_v[e.a] - self.node_v[e.b]
     }
 
-    /// Stamp the transformer's coupled-inductor backward-Euler companion into a
-    /// **transient** MNA system (`mat`/`rhs`, dimension `dim`). The element has two
-    /// branch unknowns — primary `Ip` (a->b) at `branch_index[i]` and secondary
-    /// `Is` (c->d) at `branch_index[i] + 1` — whose rows enforce
-    /// `Vp = (L1/DT)(Ip - Ip_prev) + (M/DT)(Is - Is_prev)` and the symmetric
-    /// secondary equation. It is the single inductor's branch companion doubled and
-    /// cross-coupled by `M`. The previous winding currents come from
-    /// `reactive_state` (primary) and `reactive_state_b` (secondary). A `GMIN` floor
-    /// on every terminal keeps a winding that lacks its own ground reference (an
+    /// Stamp the transformer's ideal-T backward-Euler companion into a **transient**
+    /// MNA system (`mat`/`rhs`, dimension `dim`). The element has two branch unknowns —
+    /// the magnetising current `Im` (a->b) at `branch_index[i]` and the secondary
+    /// current `Is` (c->d) at `branch_index[i] + 1`. The magnetising row is an inductor
+    /// companion `V(a)-V(b) = (g_mag+rp)·Im - g_mag·Im_prev`; the secondary row forces
+    /// the hard differential `V(c)-V(d) = n·g_mag·(Im - Im_prev) = n·V_Lm`. Only `Im`
+    /// carries reactive memory (from `reactive_state`); `Is` is algebraic. A `GMIN`
+    /// floor on every terminal keeps a winding that lacks its own ground reference (an
     /// isolated secondary) non-singular without materially loading a referenced one.
     fn stamp_transformer(
         &self,
@@ -3265,9 +3253,10 @@ impl Sim {
     }
 
     /// Stamp the transformer at the **operating point** (`t = 0` / DC priming),
-    /// where — exactly like an inductor — each winding is a current source carrying
-    /// its stored branch current (both `0` at `t = 0`, so the device primes open).
-    /// `dim` is the operating-point system size. The same `GMIN` floor keeps a
+    /// where — exactly like an inductor — the magnetising winding is a current source
+    /// carrying its stored current `Im` (`0` at `t = 0`, so the device primes open).
+    /// The secondary is algebraic (no reactive memory), so it primes open with just the
+    /// `GMIN` floor. `dim` is the operating-point system size; the floor keeps a
     /// floating winding non-singular.
     fn stamp_transformer_op(
         &self,
@@ -3277,23 +3266,16 @@ impl Sim {
         e: &Element,
         i: usize,
     ) {
-        let ip_prev = self.reactive_state[i];
-        let is_prev = self.reactive_state_b[i];
+        let im_prev = self.reactive_state[i];
         let ia = Self::node_idx(e.a);
         let ib = Self::node_idx(e.b);
         let ic = Self::node_idx(e.c);
         let id = Self::node_idx(e.d);
         if let Some(r) = ia {
-            rhs[r] -= ip_prev;
+            rhs[r] -= im_prev;
         }
         if let Some(r) = ib {
-            rhs[r] += ip_prev;
-        }
-        if let Some(r) = ic {
-            rhs[r] -= is_prev;
-        }
-        if let Some(r) = id {
-            rhs[r] += is_prev;
+            rhs[r] += im_prev;
         }
         for t in [ia, ib, ic, id].into_iter().flatten() {
             mat[t * dim + t] += GMIN;
@@ -3387,14 +3369,12 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                 }
                 ELEM_TRANSFORMER => {
-                    // Store both new winding currents: the magnetising current Im at
-                    // branch bi (the only one that carries reactive memory — the
-                    // companion's history term), and the secondary current Is at bi + 1
-                    // (allocated consecutively in `install`; algebraic, kept for the
-                    // operating-point priming).
+                    // Store the new magnetising current Im at branch bi — the only
+                    // winding current that carries reactive memory (the companion's
+                    // history term). The secondary Is (bi + 1) is algebraic: it is
+                    // re-derived each step from the solve, so nothing to store.
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
-                    self.reactive_state_b[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
                 ELEM_DFF => {
                     // Edge-triggered latch: on a rising CLK edge (low -> high) sample
@@ -5285,17 +5265,14 @@ mod tests {
         assert_eq!(run(), run(), "transformer circuit must reproduce exactly");
     }
 
-    /// A transformer feeding a diode **full bridge** must rectify **full-wave**: all
-    /// four diodes conduct (each half-cycle uses a diagonal pair), both secondary
-    /// terminals swing symmetrically about the output common-mode, and the smoothed
-    /// output settles near `Vsec_peak - 2*Vf` with low ripple. This is the regression
-    /// that drove the move from a coupled-inductor model (a soft differential that
-    /// sagged to half-wave under the bridge's asymmetric load) to the ideal-T model
-    /// (a hard forced ratio). See `docs/sim/transformer-bridge-convergence.md`.
-    #[test]
-    fn transformer_bridge_rectifies_full_wave() {
-        // Nodes: 0 = gnd = OUT-, 1 = AC+/primary+, 2 = secondary P, 3 = secondary N,
-        // 4 = OUT+. Bridge: D1 sp->out+, D2 sn->out+, D3 gnd->sp, D4 gnd->sn.
+    /// Build a transformer (turns ratio `n`) feeding a 4-diode full bridge into a
+    /// 100 uF / 1 k smoothed load from a 60 Hz AC source of peak `amp`, run ~9 line
+    /// cycles (60 Hz -> 8333 ticks/cycle at dt = 2 us) so the output settles, and
+    /// return the steady measurements over the last ~1.5 cycles:
+    /// `(out_lo, out_hi, sp_span, sn_span, d_peak[4], i_primary_peak)`. Nodes:
+    /// 0 = gnd = OUT-, 1 = AC+/primary+, 2 = secondary P, 3 = secondary N, 4 = OUT+.
+    /// Bridge: D1 sp->out+, D2 sn->out+, D3 gnd->sp, D4 gnd->sn (elements 2..=5).
+    fn bridge_rectifier_run(n: f64, amp: f64) -> (f64, f64, f64, f64, [f64; 4], f64) {
         let mut sim = Sim::new(1);
         assert!(sim.set_netlist(
             5,
@@ -5313,15 +5290,13 @@ mod tests {
             &[0, 0, 4, 4, 2, 3, 0, 0], // b
             &[0, 2, 0, 0, 0, 0, 0, 0], // c (transformer secondary +)
             &[0, 3, 0, 0, 0, 0, 0, 0], // d (transformer secondary -)
-            &[60.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0e-4, 1000.0],
-            &[12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0], // AC amplitude 12 V
+            &[60.0, n, 0.0, 0.0, 0.0, 0.0, 1.0e-4, 1000.0],
+            &[amp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         ));
-        // Run ~9 line cycles (60 Hz -> 16.7 ms; dt = 2 us -> 8333 ticks/cycle) so the
-        // 100 uF / 1 k output (tau = 0.1 s) settles, then measure over the last ~1.5.
         let (mut out_hi, mut out_lo) = (f64::MIN, f64::MAX);
         let (mut sp_hi, mut sp_lo) = (f64::MIN, f64::MAX);
         let (mut sn_hi, mut sn_lo) = (f64::MIN, f64::MAX);
-        let mut d_peak = [0.0f64; 4]; // peak forward current per diode (elems 2..6)
+        let mut d_peak = [0.0f64; 4]; // peak forward current per diode (elems 2..=5)
         let mut i_primary_peak = 0.0f64;
         for tk in 0..75_000 {
             sim.step();
@@ -5340,6 +5315,27 @@ mod tests {
                 i_primary_peak = i_primary_peak.max(ic[1].abs());
             }
         }
+        (
+            out_lo,
+            out_hi,
+            sp_hi - sp_lo,
+            sn_hi - sn_lo,
+            d_peak,
+            i_primary_peak,
+        )
+    }
+
+    /// A transformer feeding a diode **full bridge** must rectify **full-wave**: all
+    /// four diodes conduct (each half-cycle uses a diagonal pair), both secondary
+    /// terminals swing symmetrically about the output common-mode, and the smoothed
+    /// output settles near `Vsec_peak - 2*Vf` with low ripple. This is the regression
+    /// that drove the move from a coupled-inductor model (a soft differential that
+    /// sagged to half-wave under the bridge's asymmetric load) to the ideal-T model
+    /// (a hard forced ratio). See `docs/sim/transformer-bridge-convergence.md`.
+    #[test]
+    fn transformer_bridge_rectifies_full_wave() {
+        let (out_lo, out_hi, sp_span, sn_span, d_peak, i_primary_peak) =
+            bridge_rectifier_run(1.0, 12.0);
         let ripple = out_hi - out_lo;
         // 1) Every diode conducts a real forward current (full bridge, not half-wave).
         for (k, &p) in d_peak.iter().enumerate() {
@@ -5351,8 +5347,6 @@ mod tests {
         }
         // 2) Both secondary terminals swing through a comparable span (neither is
         //    pinned near a constant level the way the broken soft-differential did).
-        let sp_span = sp_hi - sp_lo;
-        let sn_span = sn_hi - sn_lo;
         assert!(
             sp_span > 5.0 && sn_span > 5.0,
             "a secondary terminal is pinned (sp span {sp_span}, sn span {sn_span})"
@@ -5375,6 +5369,53 @@ mod tests {
             i_primary_peak < 20.0,
             "primary current ran away (peak {i_primary_peak} A)"
         );
+    }
+
+    /// Full-wave rectification holds across the **turns ratio**: a step-up (n = 2) and
+    /// a step-down (n = 0.5) bridge each still conduct all four diodes, scale the DC
+    /// output by `n` (`Vout ~ n*Vsec_pk - 2*Vf`), and stay bounded. These exercise the
+    /// `n*g_mag` secondary coupling and the `n*Is` primary reflection — the exact terms
+    /// the ideal-T rewrite changed — at ratios away from unity.
+    #[test]
+    fn transformer_bridge_full_wave_scales_with_ratio() {
+        let amp = 12.0;
+        for &n in &[2.0_f64, 0.5_f64] {
+            let (out_lo, out_hi, sp_span, sn_span, d_peak, i_primary_peak) =
+                bridge_rectifier_run(n, amp);
+            // All four diodes conduct (full-wave at any ratio).
+            for (k, &p) in d_peak.iter().enumerate() {
+                assert!(
+                    p > 1.0e-4,
+                    "n={n}: diode D{} barely conducts ({p} A)",
+                    k + 1
+                );
+            }
+            // Neither secondary terminal is pinned; the two swing comparably.
+            assert!(
+                sp_span > 1.0
+                    && sn_span > 1.0
+                    && (sp_span - sn_span).abs() < 0.25 * sp_span.max(sn_span),
+                "n={n}: secondary terminals pinned/asymmetric (sp {sp_span}, sn {sn_span})"
+            );
+            // DC output tracks the turns ratio: just under the n-scaled secondary peak,
+            // and within ~2*Vf of it (two diode drops).
+            let ideal_pk = n * amp;
+            assert!(
+                out_hi < ideal_pk && out_hi > ideal_pk - 2.0,
+                "n={n}: peak DC {out_hi} not near n*Vsec_pk - 2*Vf (~{:.1})",
+                ideal_pk - 1.3
+            );
+            // Ripple stays a small fraction of the output; primary current bounded.
+            assert!(
+                (out_hi - out_lo) < 0.2 * out_hi,
+                "n={n}: ripple too large ({} V)",
+                out_hi - out_lo
+            );
+            assert!(
+                i_primary_peak < 20.0,
+                "n={n}: primary current ran away (peak {i_primary_peak} A)"
+            );
+        }
     }
 
     // --- D flip-flop (edge-triggered one-bit memory) --------------------------

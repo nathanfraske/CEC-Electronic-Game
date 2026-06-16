@@ -591,11 +591,14 @@ the asymmetry.
 ### The correct fix
 Make the secondary a **hard differential source** — i.e. the **ideal-transformer +
 magnetising/leakage ("T") model of §2.6**, which §2.6 wrongly under-weighted as merely
-"long-term." Stamp the secondary as a forced ratio `V_s = n·V_p` (a VCVS-style hard
-constraint) in series with leakage inductance + winding R, with a CCCS reflecting the
-secondary current to the primary (`Ip += n·Is`) and the magnetising inductance across the
-primary. This reproduces the *working* voltage-source behaviour (hard differential) and, as
-a bonus, removes the `1/(1−k²)` ill-conditioning of §1.5. It is a real model rewrite of
+"long-term." Stamp the secondary as a forced ratio (a VCVS-style hard constraint), with a
+CCCS reflecting the secondary current to the primary (`Ip += n·Is`) and the magnetising
+inductance across the primary. **(Implementation note, see §7: the forced EMF is `n·V_Lm`,
+n times the *magnetiser* voltage — NOT `n·V_p`, the primary terminal voltage. Coupling to
+`V_Lm` is what preserves DC blocking; and the secondary winding R must be dropped, not kept
+in series, or the differential softens and the bridge runs away.)** This reproduces the
+*working* voltage-source behaviour (hard differential) and, as a bonus, removes the
+`1/(1−k²)` ill-conditioning of §1.5. It is a real model rewrite of
 `stamp_transformer`/`stamp_transformer_op` (golden-regenerating), and must be verified to
 the acceptance bar: all four diodes conduct in alternating pairs, `Vout ≈ Vsec_pk − 2·Vf`,
 no spurious current spikes, no DC-current runaway. The single-resistor and GMIN-stepping

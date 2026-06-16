@@ -7,10 +7,10 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-16 — Transformer→bridge FIXED (ideal-T, hard secondary)
 
-**State:** 🟢 Green (all gates: fmt, clippy, 89 sim-core tests + 1 ignored, wasm build,
-web check/lint/build). **Not yet committed/pushed** — uncommitted on
-`claude/kind-turing-hdelb3`. An **audit agent is still running** in the background
-(owner asked for one); fold its findings in before/after pushing.
+**State:** 🟢 Green (all gates: fmt, clippy, 90 sim-core tests + 1 ignored, wasm build,
+web check/lint/build). Pushed to `claude/kind-turing-hdelb3` (2 commits). **Audit agent
+done** (owner asked for one) — verdict: fix correct, no defects; its findings are folded
+in (see "Audit follow-ups" below).
 
 **What changed (`crates/sim-core/src/lib.rs`):** rewrote the transformer from a
 coupled-inductor pair to an **ideal-T model**. Two branches: magnetising `Im` (a→b, the
@@ -38,9 +38,19 @@ New regression **`transformer_bridge_rectifies_full_wave`**: 12 V-pk / n=1 / bri
 Iprim ~0.19 A, no spike/runaway. **Main analog-RC golden `run_is_reproducible`
 untouched** (no transformer in it); `transformer_run_is_reproducible` still self-checks.
 
-**Next:** (1) await audit agent, address findings; (2) commit + push; (3) the owner's
-next ask is the **digital scheduler** ("we can do the scheduler after"). Optional: a
-step-down + step-up bridge variant test, and the FBR curriculum example (TODOS).
+**Audit follow-ups (all done):** the audit confirmed the stamp math sign-by-sign, the
+hard-differential reasoning, and zero determinism risk. Folded in: (1) new
+`transformer_bridge_full_wave_scales_with_ratio` test (step-up n=2 + step-down n=0.5 —
+exercises the `n·g_mag` / `n·Is` terms; refactored both bridge tests onto a
+`bridge_rectifier_run(n, amp)` helper); (2) removed the now-dead `reactive_state_b`
+field (secondary is algebraic — it was written every step but never meaningfully read)
+and simplified `stamp_transformer_op`; (3) fixed stale "coupled-inductor / mutual-M"
+comments and the doc §6 `n·V_p`→`n·V_Lm` prose mismatch.
+
+**Next:** the owner's next ask is the **digital scheduler** ("we can do the scheduler
+after"). Optional leftovers: the FBR curriculum example + reusable magnetic core (TODOS),
+and a possible secondary copper-loss model via an internal node (deferred — would restore
+winding R without softening the forced differential).
 
 ---
 

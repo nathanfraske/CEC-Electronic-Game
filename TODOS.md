@@ -26,9 +26,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   rectifies full-wave on the GMIN-only floor, so isolation is preserved. Removed the now-
   unused `TRANSFORMER_K`/`transformer_inductances`. New regression
   `transformer_bridge_rectifies_full_wave` (all 4 diodes conduct, Vout ≈ Vsec_pk−2Vf ≈
-  10.4 V, ripple ~0.9 V, Iprim ~0.19 A, no spike/runaway); `transformer_scales_ac` now
-  expects ratio = n (no k). Main analog-RC golden untouched. All gates green; audit agent
-  dispatched (owner asked).~~
+  10.4 V, ripple ~0.9 V, Iprim ~0.19 A, no spike/runaway) + `..._scales_with_ratio` (step-up
+  n=2 / step-down n=0.5); `transformer_scales_ac` now expects ratio = n (no k). Main
+  analog-RC golden untouched. **Audit agent passed** (owner asked): stamp math correct
+  sign-by-sign, no determinism risk; findings folded in (ratio test, dead `reactive_state_b`
+  removed, stale comments fixed). All gates green.~~
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay
