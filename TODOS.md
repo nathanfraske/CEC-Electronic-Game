@@ -12,9 +12,16 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   toggle). Doc: `docs/sim/ideal-vs-real-parts.md`. Basics (R/C/L/V/I) pure-ideal &
   self-regularizing; past-basics carry essential parasitics by default; advanced unlocks more.
   Research-backed (CircuitJS source + ngspice manual). Parts audit done (only 6 purely ideal).
-  - [ ] **Visible FAIL UI** (engine half shipped PR #70): wasm boundary exposes `failed()` +
-    `failed_element_mask()`; `board.ts` pulsing red `FAIL` box + `+FAIL/−FAIL` readout;
-    `loop.ts` pauses on FAIL.
+  - ~~**Visible FAIL UI** — DONE. wasm boundary exposes `failed()` + `failed_element_mask()`;
+    `electricalMap` carries per-part `failed`; `board.ts` draws a pulsing red `FAIL` box +
+    label on each flagged part (`PALETTE.bad`, free wall-clock pulse so it breathes while the
+    run is frozen); `loop.ts` **freezes the run on FAIL** (the whole-sim FAIL state). Deferred
+    polish: the `+FAIL/−FAIL` numeric-readout swap and a global banner (box+pause already read
+    clearly).~~
+  - [ ] **Component labels / renaming** (owner ask — "a big one"): let the player name/label a
+    placed component (custom text by the ref-des), like net labels but per-part. Inspector
+    field + on-board label + persists in the graph snapshot. *(Owner is also doing a manual
+    pass to label/clean the examples — keep hands off `examples.ts`.)*
   - [ ] **Curriculum tiering**: sort examples/contracts into "ideal basics" vs "reality carried".
   - [ ] **Additive Real-variant upgrades** (tech-tree/Lux gated, golden-safe additive): diode
     Rs + junction cap, R tolerance/power, C/EC ESR/ESL + ratings, FET/BJT caps + SOA, op-amp

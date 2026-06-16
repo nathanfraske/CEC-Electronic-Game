@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Visible FAIL UI built (pushed, NOT yet merged)
+
+**State:** 🟢 Green (fmt, build:wasm, web check/lint/build). Branch `claude/kind-turing-hdelb3`,
+ahead of `main`; **NOT merged** — owner is mid a manual examples-cleanup pass, so coordinate
+before merging, and **keep hands off `web/src/lib/examples.ts`.**
+
+**Built the visible FAIL UI** (the engine clamp shipped in PR #70; this is the front end):
+- `crates/sim-wasm`: `failed()` + `failed_element_mask()` passthroughs.
+- `web/src/sim/loop.ts`: `Snapshot.failed` + `failedMask`, read each frame; **the run freezes on
+  FAIL** (`if (at(cursor)?.failed) running = false`) — the whole-sim FAIL state.
+- `web/src/lib/glyphs.ts` + `netlist.ts`: `ElectricalState.failed`; `electricalMap` maps the
+  per-element FAIL mask back to each component.
+- `web/src/lib/board.ts`: `ComponentNode` draws a **pulsing red `FAIL` box + label** on any
+  flagged part (`PALETTE.bad`; the pulse runs on a free wall-clock so it breathes even while the
+  run is frozen — the flow phase is frozen when paused).
+- `web/src/App.svelte`: passes `snap.failedMask` into `electricalMap`.
+- **Deferred polish:** the `+FAIL/−FAIL` numeric-readout swap (the meter still shows the clamped
+  number when a failed part is selected) and a global FAIL banner — the box + freeze already read
+  clearly. Couldn't verify the visual live (no browser here); it compiles and the engine FAIL is
+  unit-tested. Owner to confirm the red box on the deployed build.
+
+**Owner asks logged (TODOS):** component **labels / renaming** (a per-part custom label, like net
+labels — "a big one"); owner is also doing a manual pass to label/clean the **examples**.
+
+**NEXT:** coordinate + merge the FAIL UI; then curriculum tiering (ideal-basics vs reality-carried)
++ the first additive Real-variant upgrades. (The entry below has the Ideal-vs-Real resolution +
+the multi-rate architecture note.)
+
+---
+
 ## 2026-06-16 (night) — Ideal-vs-Real RESOLVED (fidelity gradient) + multi-rate note
 
 **State:** 🟢 Green; clean tree after this. Branch `claude/kind-turing-hdelb3` (ahead of `main`

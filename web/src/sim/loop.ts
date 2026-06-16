@@ -22,6 +22,10 @@ export interface Snapshot {
   state: Float64Array;
   /** Per-element current, in set_netlist order. Present once the netlist is wired. */
   elementCurrents?: Float64Array;
+  /** Whole-sim FAIL state: an ideal part was driven past physical bounds this tick. */
+  failed: boolean;
+  /** Per-element FAIL mask, in set_netlist order (1 = that element hit the bound). */
+  failedMask?: Uint8Array;
 }
 
 export interface SimHandle {
@@ -65,6 +69,8 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       snapshotHash: sim.snapshot_hash(),
       state: sim.state(),
       elementCurrents: sim.element_currents(),
+      failed: sim.failed(),
+      failedMask: sim.failed_element_mask(),
     }),
     protocolVersion: () => sim.protocol_version(),
     setNetlist: (nodeCount, types, a, b, values, c, aux, d) =>
@@ -230,6 +236,10 @@ export function runLoop(
         push(sim.snapshot());
       }
       cursor = live();
+      // A FAIL — an ideal part driven past physical bounds — freezes the run so the
+      // failure holds for inspection (the whole-sim FAIL state). Fix the circuit (add
+      // impedance / a real part) and press Run again.
+      if (at(cursor)?.failed) running = false;
       // Hand the scope every tick stepped this frame (downsampled to a bounded,
       // evenly-spaced set that always includes the latest) so AC charts cleanly at
       // any tps. Pure JS routing of snapshots already read — no extra wasm crossing.

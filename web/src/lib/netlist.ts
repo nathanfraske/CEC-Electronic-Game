@@ -639,6 +639,7 @@ export function electricalMap(
   netlist: BuiltNetlist,
   nodeVoltages: Float64Array,
   elementCurrents: Float64Array,
+  failedMask?: Uint8Array,
 ): Map<number, ElectricalState> {
   const map = new Map<number, ElectricalState>();
   for (const [compId, ei] of netlist.elemOfComponent) {
@@ -646,7 +647,13 @@ export function electricalMap(
     const vAcross = nodes
       ? (nodeVoltages[nodes[0]] ?? 0) - (nodeVoltages[nodes[1]] ?? 0)
       : 0;
-    map.set(compId, { current: elementCurrents[ei] ?? 0, vAcross });
+    map.set(compId, {
+      current: elementCurrents[ei] ?? 0,
+      vAcross,
+      // The element-indexed FAIL mask, mapped back to its component (the renderer
+      // boxes any part whose element hit the bound).
+      failed: failedMask ? (failedMask[ei] ?? 0) !== 0 : false,
+    });
   }
   return map;
 }
