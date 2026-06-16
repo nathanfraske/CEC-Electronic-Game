@@ -413,19 +413,22 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
 
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
-    // The third terminal: a 3-pin device stamps its control node — pin 2 → c. For
-    // a MOSFET (pins ordered D, S, G) that is the GATE; for a BJT (pins ordered C,
-    // E, B) that is the BASE; for an op-amp (pins ordered OUT, IN−, IN+) that is
-    // the non-inverting input IN+. A 2-pin part has no third pin, so c = 0
-    // (ground), which the core ignores. Guard on the actual pin count so only true
-    // 3-pin kinds take the control path. (elemOfComponent maps to this element: for
-    // a MOSFET its current is Id oriented a→b = drain→source and nodesOfComponent =
+    // The third terminal: any device with a pin 2 stamps it as node c. For a 3-pin
+    // device that is the control node — a MOSFET's GATE (pins D, S, G), a BJT's BASE
+    // (pins C, E, B), an op-amp's non-inverting input IN+ (pins OUT, IN−, IN+). For a
+    // 4-pin device it is a real signal terminal — the transformer's SECONDARY+ (pins
+    // P+, P−, S+, S−) and the D flip-flop's CLK (pins Q, D, CLK, Q̄). A 2-pin part has
+    // no pin 2, so c = 0 (ground), which the core ignores. **Both** 3- and 4-pin kinds
+    // must take this path: omitting the 4-pin kinds grounds the transformer's S+ (and
+    // the flip-flop's CLK), silently collapsing a bridge to half-wave and stopping a
+    // flip-flop from ever clocking. (elemOfComponent maps to this element: for a
+    // MOSFET its current is Id oriented a→b = drain→source and nodesOfComponent =
     // [drain, source] so vAcross reads Vds; for a BJT its current is Ic oriented
     // a→b = collector→emitter and nodesOfComponent = [collector, emitter] so
     // vAcross reads Vce; for an op-amp its current is the output drive Iout sourced
     // at a = OUT and nodesOfComponent = [OUT, IN−], so vAcross reads V(OUT)−V(IN−).)
     const nc =
-      THREE_PIN_TYPES.has(t) && kind.pins.length >= 3
+      (THREE_PIN_TYPES.has(t) || FOUR_PIN_TYPES.has(t)) && kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
         : 0;
     // The fourth terminal: a 4-pin device (the transformer) stamps its pin-3 node
