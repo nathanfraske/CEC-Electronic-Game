@@ -67,6 +67,16 @@ export interface Component {
    * round-trip to the default.
    */
   wiper?: number;
+  /**
+   * The logic family of a digital part (gate or flip-flop): an index into the
+   * {@link LOGIC_FAMILIES} table — `0` = Ideal (the half-rail default), `1` = CMOS,
+   * `2` = TTL. Only meaningful for the logic gates and the D flip-flop; other kinds
+   * leave it undefined. Encoded into `aux`'s upper bits by {@link buildNetlist}
+   * (`func + 16*family`), matching `FAMILIES` in `crates/sim-core/src/lib.rs`. A new
+   * gate defaults to Ideal, so any part that never touches the family picker behaves
+   * exactly as before. Optional so older snapshots round-trip to Ideal.
+   */
+  family?: number;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
 }
@@ -442,11 +452,34 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // XNOR (equality): the complement of XOR — output high when the inputs match.
+  // Same 3-pin shape and function-code family (aux = 5 in GATE_AUX).
+  XNOR: kind(
+    "XNOR",
+    "XNOR Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    5,
+    "V",
+    true,
+  ),
   // The inverter (NOT): single input. Pin order OUT, IN — pin 0 = Y (a), pin 1 = A
   // (b); the unused third terminal c defaults to ground in buildNetlist.
   NOT: kind(
     "NOT",
     "NOT Gate",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 1)],
+    5,
+    "V",
+    true,
+  ),
+  // The buffer (BUF): single input, non-inverting — the output follows the input.
+  // Same 2-pin shape as NOT without the inversion bubble (aux = 7 in GATE_AUX); a
+  // line driver / one-tick delay element.
+  BUF: kind(
+    "BUF",
+    "Buffer",
     "ok",
     [pin("Y", 2, 1), pin("A", 0, 1)],
     5,

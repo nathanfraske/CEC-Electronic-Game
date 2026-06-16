@@ -5,6 +5,213 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (eve) — Stage 3 DONE; whole batch ready to ship (review audit pending)
+
+**State:** 🟢 Green (fmt, clippy, **95 sim-core tests**, wasm, web check/lint/build).
+Branch `claude/kind-turing-hdelb3` is **~18 commits ahead of `main`** and **not merged**
+— so NONE of this is live yet (GitHub Pages deploys from `main`). The owner wants to
+**ship the whole batch together after a review audit**.
+
+**The full unshipped batch (oldest→newest):** transformer ideal-T bridge fix + audit
+follow-ups → digital scheduler Stages 1–2 (net classification, event engine,
+level-bearing hash, 4-state DFF) → XNOR/BUF gates → logic-families foundation →
+logic-family picker UI.
+
+**Stage 3 (this batch) — logic families, DONE:**
+- **XNOR + BUF** surfaced on the board (closed the GATE_AUX gap): graph.ts PART_KINDS,
+  netlist.ts type-17 map + codes 5/7, glyphs ×2 (XNOR = XOR + bubble; BUF = NOT triangle,
+  no bubble), palette/category, partInfo, pinout, value chips.
+- **sim-core families:** `const FAMILIES` (0 Ideal / 1 CMOS / 2 TTL), per-element family
+  packed in `aux`'s upper bits (`func + 16*family`, decoded by `gate_family_index`/
+  `gate_func_code`) — **no wasm-boundary change**. Wired through `eval_digital`/
+  `stamp_digital`/`commit_net_levels`/DFF latch via a per-net `digital_family`. Default
+  Ideal → goldens unchanged. Test `gate_family_levels_and_mixed_rail` (CMOS V_OH≈0.95·rail;
+  1.8 V high LOST into a 12 V part).
+- **Family UI:** `web/src/lib/families.ts` mirrors the Rust fractions; `Component.family`;
+  `buildNetlist` packs aux; `board.setComponentFamily` + clipboard/serialize threading;
+  App.svelte family chip picker (Ideal/CMOS/TTL) + live V_IL/V_IH/V_OL/V_OH + noise-margin
+  readout for digital parts.
+
+**NEXT:** the owner asked for a **review audit that everything works** before shipping —
+then merge `claude/kind-turing-hdelb3` → `main` (one batch) to deploy. Do NOT merge
+without the owner's explicit go-ahead.
+
+**Stage 4 (follow-up, not started):** open-drain driver mode (release high → Z) + a
+wired-AND bus (open-drain + pull-up, resolved by the MNA solve) + a level-shifter part —
+all golden-additive. Lifting pure-digital nets out of MNA stays a hash-neutral perf option.
+
+---
+
+## 2026-06-16 (eve) — Digital scheduler Stage 2 SHIPPED (event engine + level hash)
+
+**State:** 🟢 Green (fmt, clippy, **94 sim-core tests** + 1 ignored, wasm, web). Pushed
+to `claude/kind-turing-hdelb3`. **Stages 1–2 (the full scheduler) are done.**
+
+**What landed (sim-core, the Option A2 design in `logic-analog-digital-nets.md §7`):**
+- **`Level` {Low,High,Z,X}** (`#[repr(u8)]`, no float compares in the digital domain);
+  **`combine`** resolution table (Z yields; disagreeing strong → X); 4-state
+  **`gate_logic_level`** (reduces to the old boolean table on Low/High).
+- **`LogicFamily`** gained **`v_il_frac`** + **`quantize`** (receiver, forbidden band → X)
+  + **`drive_level`** (driver: Thévenin for High/Low, mid-rail for X, None=release for Z).
+  LEGACY is byte-identical to the old half-rail/`GATE_GOUT` behaviour.
+- **Net-centric engine:** `eval_digital` reads each gate's inputs as Levels from the
+  committed previous-tick voltages (per-reader rail = one tick of delay), resolves every
+  net's drive via `combine` in element order, and `stamp_digital` drives each
+  Digital/Boundary net **once** — replacing the 4 per-gate stamp sites + 4 `stamp_dff`
+  calls. Two outputs on a net now **resolve** instead of fighting. Still linear fast path.
+- **4-state DFF:** `ff_q` + `ff_clk_prev` (Level), latched via `quantize`; **both now in
+  the hash**. `snapshot_hash` folds node_v for analog/boundary, the discrete Level (u8)
+  for each pure-digital net, and the DFF state. **RC golden `0xeaac` untouched.**
+- Removed superseded `gate_logic`/`gate_target_level`/`reads_high`/`drive`/`stamp_dff`.
+- **New tests:** ring oscillator oscillates; multi-driver resolves (agree→level,
+  conflict→mid-rail X); per-tick **lockstep replay** of a clocked DFF. All prior
+  gate/DFF behaviour + reproducibility tests stayed green.
+- **Note:** the predicted "deliberate golden break" needed **no golden regeneration** —
+  digital tests are behaviour + self-consistency, and the only fixed golden (RC) has no
+  digital parts. The GMIN-bookkeeping change shifted digital node_v at 1e-12 but no test
+  pins a digital node to a fixed value.
+
+**Still pure-MNA-resident:** pure-digital nets still occupy MNA rows (driven + solved +
+quantised). Lifting them OUT of the matrix is a **hash-neutral** future optimisation
+(the hash already folds their discrete Level, not node_v) — do it only if perf needs it.
+
+**NEXT — Stages 3–4 (follow-ups, golden-additive / presentation):**
+- **Stage 3 (web):** thread a per-gate family index through `set_netlist`
+  (sim-wasm → loop.ts → netlist.ts) + a family chip in the inspector; noise-margin /
+  forbidden-band readouts (read the snapshot, presentation-only); surface XNOR(5)/BUF(7)
+  as board parts (the `GATE_AUX` gap in `web/src/lib/netlist.ts`). Real families
+  (TTL/CMOS/LVCMOS) become selectable here — the `quantize`/`drive_level`/X machinery is
+  already in place; just add the `FAMILIES` table + per-element index.
+- **Stage 4 (sim-core, additive):** open-drain driver mode (release high → Z) + wired-AND
+  bus (open-drain + pull-up resistor, resolved by the MNA solve); a level-shifter part.
+- **Renderer:** `Sim::net_class(n)` (0/1/2) is already exposed for drawing digital nets /
+  boundary buffers distinctly.
+
+---
+
+## 2026-06-16 (pm) — Digital scheduler: research synthesized + Stage 1 shipped
+
+**State:** 🟢 Green (all gates: fmt, clippy, 92 sim-core tests + 1 ignored, wasm, web).
+Pushed to `claude/kind-turing-hdelb3` (3 commits this batch). The owner asked to build
+the digital scheduler; chose scope **Stages 1–2 (full scheduler)**.
+
+**Done:**
+- **Research (6 agents) → `docs/ui/logic-analog-digital-nets.md` §7** — the
+  research-validated design + build plan. Read §7 first; it is the authoritative spec.
+  Headline: the fixed 2 µs step collapses all the variable-timestep mixed-mode machinery
+  to a strict per-tick lock-step; unit-delay two-pass evaluate→commit is provably
+  order-independent; digitaljs is the working precedent; Falstad (gates in the MNA matrix
+  + RNG) is the anti-pattern we're leaving.
+- **Stage 1 — net classification (golden-stable), shipped.** `classify_nets` in `install`
+  labels each node Analog/Digital/Boundary deterministically; `is_digital(kind)`;
+  `NetClass` enum; `Sim::net_class(n)->u8` accessor; `net_classes` field. Computed but
+  **not yet acted on** (pure-digital nets still stamp into MNA), so every golden is
+  bit-identical (0xeaac RC, gate/DFF reproducibility all unchanged). Test
+  `net_classification_separates_domains`.
+
+**NEXT — Stage 2: the event engine + level-bearing hash (the one deliberate break).**
+This is the determinism-sacred core; do it deliberately, not rushed. Full spec in §7
+(esp. §7.3 phase order, §7.5 models, §7.6 corrections, §7.7 test bar). Concrete plan:
+
+- **Model:** `#[repr(u8)] enum Level{Low,High,Z,X}`; `LogicFamily.quantize(v,vhigh)->Level`
+  (needs a new **`v_il_frac`** field; LEGACY sets `v_il_frac=v_ih_frac=0.5` → no X band →
+  identical); a `combine(Level,Level)->Level` resolution table (Z yields; disagreeing
+  strong → X — table in §7.6). DFF state becomes 4-state `Level` (`ff_q` + `ff_clk_prev`),
+  replacing the f64 `ff_bit`/`ff_clk_high`.
+- **Engine (per tick, in `step`):** evaluate-all double-buffer in **element-index order**:
+  (1) each gate's output Level from committed input net-levels (4-state `gate_logic`);
+  (2) each DFF Q/Q̄ from `ff_q`, with edge-detect on the committed CLK net-level;
+  (3) **resolve per net** by folding all drivers via `combine` → `digital_drive[node]`;
+  (4) the four MNA stamp sites stamp **each digital/boundary net once** from its resolved
+  level (LEGACY Thévenin = today's `GATE_GOUT`), replacing the per-gate/DFF stamps;
+  (5) after the solve, commit each digital/boundary net-level = `quantize(node_v)`.
+- **⚠ GMIN gotcha (the trap):** today each gate stamps `GMIN` on *each* input it reads, so
+  a net read by K gates gets K·GMIN on its diagonal. A net-centric restructure that floors
+  each net once gives 1·GMIN → `node_v` differs at the 1e-12 level → **every digital hash
+  changes**. So the restructure *is* the deliberate break (regenerate digital trajectories;
+  there is **no fixed digital golden** — gate/DFF tests are self-consistency `run==run` +
+  behavior, and the only fixed golden is RC/0xeaac which has no digital parts and stays).
+  Either replicate K·GMIN exactly (ugly) or accept the regen (cleaner) — accept it.
+- **Hash (`snapshot_hash`, lib.rs:3548):** fold `node_v` for Analog+Boundary nodes (as
+  today) **plus** one `u8` Level per **pure-Digital** net **plus** each DFF's `ff_q` and
+  `ff_clk_prev` (u8). Forward-stable, append-only; RC golden untouched.
+- **Exact touchpoint map (verified @ commit 51c54dc — re-grep before editing, they drift):**
+  - *Substrate:* `struct LogicFamily` 444, `const LEGACY` 462 (add `v_il_frac` here =
+    `v_ih_frac`), `reads_high` 474 + `drive` 482 (add `quantize`/`combine` near these),
+    `gate_target_level` 809, `ff_bit`/`ff_clk_high` fields 1394/1398 + inits 1488/1489
+    (→ become 4-state `ff_q`/`ff_clk_prev`). Already present to leverage: `NetClass` 852,
+    `classify_nets` 865, `Sim::net_class` accessor, `is_digital`.
+  - *The 4 MNA solve sites* (each has a gate STAMP arm + gate READOUT arm + a `stamp_dff`
+    call + a DFF READOUT arm): linear-OP, linear-transient, Newton-OP, Newton-transient.
+    Gate stamp arms at **1894 / 2074 / 2901 / 3128**; `stamp_dff` def **3365** (called at
+    all 4); commit/latch DFF arm **3452**; `snapshot_hash` **3548**. So it's ~16 match arms
+    + stamp_dff + commit + hash — sizeable; a shared `stamp_digital(mat,rhs,dim)` helper +
+    a precomputed `digital_drive: Vec<Level>` (resolved per node once per tick) keeps the
+    4 sites to one call each.
+  - *Baseline is green @ 51c54dc:* 91 sim-core tests, clippy, fmt, wasm, web all pass — so
+    any red during Stage 2 is attributable to the restructure.
+- **Tests (§7.7):** ring-oscillator oscillates (no hang/deadlock); gate-only stays on the
+  **linear fast path** (no Newton); 4-state resolution table; multi-driver wired-AND
+  (open-drain+pull-up); per-family `*_run_is_reproducible`; and **rewind-across-a-clock-edge
+  → identical hash** (store `ff_q`+`ff_clk_prev` in the keyframe — the most likely replay
+  bug). Existing gate/DFF behavior + self-consistency tests must stay green.
+- **Sequencing tip:** because of the GMIN gotcha there is no clean golden-stable sub-split;
+  do the restructure + hash as one focused commit, leaning on the existing behavior/
+  self-consistency tests + the new test bar to prove correctness and determinism.
+
+Stages 3–4 (web threading; open-drain/level-shifter parts) remain follow-ups.
+
+---
+
+## 2026-06-16 — Transformer→bridge FIXED (ideal-T, hard secondary)
+
+**State:** 🟢 Green (all gates: fmt, clippy, 90 sim-core tests + 1 ignored, wasm build,
+web check/lint/build). Pushed to `claude/kind-turing-hdelb3` (2 commits). **Audit agent
+done** (owner asked for one) — verdict: fix correct, no defects; its findings are folded
+in (see "Audit follow-ups" below).
+
+**What changed (`crates/sim-core/src/lib.rs`):** rewrote the transformer from a
+coupled-inductor pair to an **ideal-T model**. Two branches: magnetising `Im` (a→b, the
+only reactive state) + secondary `Is` (c→d, algebraic). Magnetiser row is a backward-
+Euler inductor companion with primary winding R `rp`; the **secondary is a HARD
+differential** `V(c)−V(d) = n·V_Lm` where `V_Lm = g_mag·(Im−Im_prev)` is the magnetiser
+voltage (NOT the terminal voltage — coupling to `V_Lm` is what blocks DC). Primary KCL
+draws `Im + n·Is`; current readout = `Im + n·Is`.
+
+**Two hard-won refinements** (full writeup: `docs/sim/transformer-bridge-convergence.md`
+§7; the §6 verification already killed the §1–§4 "secondary→ground resistor" idea):
+1. **Secondary has zero series resistance.** A `rs·Is` term softens the differential →
+   under a bridge charging a cap it latches the wrong diode pair and runs away (positive
+   feedback, `Is` climbed past 25 A in the trace). `rs = 0` makes the wrong state
+   algebraically impossible. `rp` (primary) still gives loss + DC-block.
+2. **No common-mode reference resistor.** Proved via a floating-AC-source baseline that
+   the bridge rectifies full-wave on the GMIN-only floor; an interim 1 MΩ tie was added
+   then **removed** (preserves galvanic isolation, diode currents become exactly
+   symmetric). §4 of the research note was a red herring for a *hard* source.
+
+Removed now-dead `TRANSFORMER_K` + `transformer_inductances`. Updated all transformer
+doc-comments. `transformer_scales_ac_by_turns_ratio` now expects ratio = **n** (no k).
+New regression **`transformer_bridge_rectifies_full_wave`**: 12 V-pk / n=1 / bridge /
+100 µF / 1 kΩ → Vout 9.96–10.85 V, ripple ~0.9 V, **all 4 diodes** (0.12/0.155 A),
+Iprim ~0.19 A, no spike/runaway. **Main analog-RC golden `run_is_reproducible`
+untouched** (no transformer in it); `transformer_run_is_reproducible` still self-checks.
+
+**Audit follow-ups (all done):** the audit confirmed the stamp math sign-by-sign, the
+hard-differential reasoning, and zero determinism risk. Folded in: (1) new
+`transformer_bridge_full_wave_scales_with_ratio` test (step-up n=2 + step-down n=0.5 —
+exercises the `n·g_mag` / `n·Is` terms; refactored both bridge tests onto a
+`bridge_rectifier_run(n, amp)` helper); (2) removed the now-dead `reactive_state_b`
+field (secondary is algebraic — it was written every step but never meaningfully read)
+and simplified `stamp_transformer_op`; (3) fixed stale "coupled-inductor / mutual-M"
+comments and the doc §6 `n·V_p`→`n·V_Lm` prose mismatch.
+
+**Next:** the owner's next ask is the **digital scheduler** ("we can do the scheduler
+after"). Optional leftovers: the FBR curriculum example + reusable magnetic core (TODOS),
+and a possible secondary copper-loss model via an internal node (deferred — would restore
+winding R without softening the forced differential).
+
+---
+
 ## 2026-06-15 (eve) — Merged to live (#63), 3-tier info panel, onboarding MVP
 
 **State:** 🟢 Green (all gates). **PR #63 merged to `main` → deployed to live** for

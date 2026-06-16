@@ -44,7 +44,7 @@
 //! | 15   | op-amp (nonlinear) | rail Vsat     | clamped transconductance, Newton (OUT=a IN-=b IN+=c)|
 //! | 16   | varistor (MOV)     | clamp Vc      | symmetric dual-junction clamp, Newton a -> b|
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
-//! | 18   | transformer        | turns ratio n | coupled inductors, backward-Euler (pri=a/b sec=c/d)|
+//! | 18   | transformer        | turns ratio n | ideal-T: magnetiser + hard secondary (pri=a/b sec=c/d)|
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
 //!
 //! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
@@ -56,14 +56,17 @@
 //! and the previous clock level — that are deterministic but unhashed (the `Q`/`Q̄`
 //! node voltages carry the observable state into the hash).
 //!
-//! Type 18 is the **transformer**: two magnetically **coupled inductors** — the
-//! first four-terminal element (primary `a`/`b`, secondary `c`/`d`). Its `value` is
-//! the turns ratio `n = Ns/Np`; the primary self-inductance is the fixed
-//! [`TRANSFORMER_L1`], the secondary `L2 = n^2 * L1`, and the mutual inductance
-//! `M = k * sqrt(L1*L2)` with the fixed coupling [`TRANSFORMER_K`]. It carries **two**
-//! branch-current unknowns (primary `Ip` a->b, secondary `Is` c->d) coupled by `M`
-//! and a backward-Euler companion on each, so it blocks DC, shows magnetizing
-//! current, and scales AC by `n` — a real transformer, not an ideal ratio box. Like
+//! Type 18 is the **transformer**: an **ideal-T model** — the first four-terminal
+//! element (primary `a`/`b`, secondary `c`/`d`). Its `value` is the turns ratio
+//! `n = Ns/Np`. A magnetising inductance [`TRANSFORMER_L1`] (with primary winding
+//! resistance) sits across the primary; the secondary EMF is *forced* to `n · V_Lm`
+//! (n times the magnetiser voltage — a HARD differential, no series term), and the
+//! secondary current reflects `n·Is` back into the primary. It carries **two**
+//! branch-current unknowns (magnetiser `Im` a->b, secondary `Is` c->d), only `Im`
+//! reactive. So it blocks DC (as `Im` saturates `V_Lm -> 0`), shows magnetizing
+//! current, and scales AC by `n` — and its hard ratio lets a diode bridge rectify
+//! full-wave (a raw coupled-inductor pair, or any softer secondary, sags to
+//! half-wave; see `docs/sim/transformer-bridge-convergence.md`). Like
 //! the inductor it is linear (no Newton) and keeps two reactive states (the two
 //! branch currents). See [`Sim::install`] and the coupled-inductor stamps.
 //!
@@ -394,21 +397,17 @@ pub const ELEM_VARISTOR: u8 = 16;
 
 /// **Logic gate** (Tier-A behavioral digital primitive). Three terminals: output
 /// `a`, input 1 `b`, input 2 `c`. Its `value` is the **logic-high rail** in volts
-/// and its `aux` is the **function code** ([`gate_logic`]: 0 AND, 1 OR, 2 NAND,
-/// 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF — the single-input NOT/BUF ignore `c`). Each
-/// tick it thresholds the two inputs against half the rail using the **committed
-/// previous-tick** node voltages, evaluates the boolean, and drives the output
-/// toward `0` (logic low) or the rail (logic high) through the fixed output
-/// conductance [`GATE_GOUT`]. Because the decision comes from the *previous* tick,
-/// the per-tick stamp is a **constant** — a conductance [`GATE_GOUT`] from `a` to
-/// ground plus a current injection `GATE_GOUT * Vtarget` into `a`, exactly the form
-/// of a Thevenin source and the same "linear, tick-determined" shape as the clocked
-/// [`ELEM_SWITCH`]. So it adds **no** Newton work, **no** branch unknown, and one
-/// tick of propagation delay; a feedback loop of gates oscillates rather than
-/// deadlocking (a ring oscillator), which is physically honest. It holds no
-/// persistent state — the output level is recomputed from `node_v` every tick — so
-/// it stays reproducible and never enters the snapshot hash. See [`gate_logic`] and
-/// [`gate_target_level`].
+/// and its `aux` is the **function code** ([`gate_logic_level`]: 0 AND, 1 OR, 2 NAND,
+/// 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF — the single-input NOT/BUF ignore `c`). The
+/// digital engine ([`Sim::eval_digital`]) reads the two inputs as logic [`Level`]s
+/// from the **committed previous-tick** node voltages (the receiver, one tick of
+/// delay), evaluates the four-state boolean, and resolves the output level onto its
+/// net; the driver then presents it as a constant Thevenin (conductance [`GATE_GOUT`]
+/// to ground + a current injection) via [`Sim::stamp_digital`]. So it adds **no**
+/// Newton work, **no** branch unknown, and one tick of propagation delay; a feedback
+/// loop of gates oscillates rather than deadlocking (a ring oscillator), which is
+/// physically honest. Its only state is the net's discrete level (folded into the
+/// snapshot hash as a `u8`).
 pub const ELEM_GATE: u8 = 17;
 
 /// Logic-gate output conductance (siemens): the gate drives its output toward the
@@ -425,6 +424,52 @@ const GATE_GOUT: f64 = 1.0;
 /// first-cut behavioral model.
 const GATE_VTH_FRAC: f64 = 0.5;
 
+/// A digital logic level — the value a pure-digital net or a logic pin carries in the
+/// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7). Four-state so
+/// the engine can represent an undriven/high-impedance net (`Z`, e.g. an open-drain
+/// output that released) and an indeterminate one (`X`, from a receiver's forbidden
+/// band or a multi-driver conflict). `#[repr(u8)]` and folded directly into the
+/// snapshot hash; the digital domain does **no float compares internally**, so a level
+/// reproduces bit-for-bit. Quantisation of an analog voltage to a level happens only at
+/// the receiver ([`LogicFamily::quantize`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Level {
+    Low = 0,
+    High = 1,
+    Z = 2,
+    X = 3,
+}
+
+impl Level {
+    /// Four-state logical inversion: `Low <-> High`; both `Z` and `X` invert to `X`
+    /// (an undriven or indeterminate value stays indeterminate).
+    #[inline]
+    fn invert(self) -> Level {
+        match self {
+            Level::Low => Level::High,
+            Level::High => Level::Low,
+            _ => Level::X,
+        }
+    }
+}
+
+/// Resolve two driver levels onto one net (the IEEE-1164 / Logisim `combine()` rule,
+/// `docs/ui/logic-analog-digital-nets.md` §7.6): `Z` yields to any real driver; `X`
+/// dominates; equal real levels agree; two **disagreeing** strong levels conflict to
+/// `X`. Associative and commutative, so folding a net's drivers in element-index order
+/// is deterministic and order-independent.
+#[inline]
+fn combine(a: Level, b: Level) -> Level {
+    match (a, b) {
+        (Level::Z, x) | (x, Level::Z) => x,
+        (Level::X, _) | (_, Level::X) => Level::X,
+        (Level::Low, Level::Low) => Level::Low,
+        (Level::High, Level::High) => Level::High,
+        _ => Level::X,
+    }
+}
+
 /// A logic family: the DC levels and output drive that define how a gate reads its
 /// inputs and presents its output, replacing the single `value`-is-everything model
 /// (`value` was simultaneously V_IL, V_IH, V_OL and V_OH). Levels are fractions of
@@ -439,9 +484,11 @@ const GATE_VTH_FRAC: f64 = 0.5;
 /// the gate through this abstraction changes no number and no golden.
 #[derive(Clone, Copy)]
 struct LogicFamily {
-    /// Input read high above this fraction of the rail. (A real family's lower
-    /// `V_IL` threshold — the indeterminate band below this — arrives with the
-    /// receiver's `X` verdict in the scheduler phase; LEGACY has no such band.)
+    /// Input reads **low** at/below this fraction of the rail (`V_IL`). Between `V_IL`
+    /// and `V_IH` is the forbidden band the receiver quantises to `X`. LEGACY sets
+    /// `v_il_frac == v_ih_frac`, so the band is empty and the receiver is two-state.
+    v_il_frac: f64,
+    /// Input reads **high** above this fraction of the rail (`V_IH`).
     v_ih_frac: f64,
     /// Output-low / output-high voltage as a fraction of the rail.
     v_ol_frac: f64,
@@ -457,6 +504,7 @@ impl LogicFamily {
     /// output through [`GATE_GOUT`]. The default for every gate until a real family
     /// (TTL/CMOS/LVCMOS) is selected, which keeps every existing golden unchanged.
     const LEGACY: LogicFamily = LogicFamily {
+        v_il_frac: GATE_VTH_FRAC,
         v_ih_frac: GATE_VTH_FRAC,
         v_ol_frac: 0.0,
         v_oh_frac: 1.0,
@@ -464,63 +512,134 @@ impl LogicFamily {
         g_oh: GATE_GOUT,
     };
 
-    /// Receiver: does input voltage `v` read as logic high at rail `vhigh`? An input
-    /// must exceed `v_ih_frac * vhigh` to be high; below reads low. (For LEGACY this
-    /// is the exact `v > GATE_VTH_FRAC * value` compare the gate used.)
+    /// Receiver: quantise an analog input voltage `v` (at rail `vhigh`) to a logic
+    /// [`Level`] — `High` above `V_IH`, `Low` at/below `V_IL`, `X` in the forbidden
+    /// band between. The one place a float becomes a level. For LEGACY `v_il == v_ih`,
+    /// so the band is empty and this is the exact `v > value/2` two-state decision the
+    /// gate used (`> V_IH` high, else low; the `X` arm is unreachable).
     #[inline]
-    fn reads_high(&self, v: f64, vhigh: f64) -> bool {
-        v > self.v_ih_frac * vhigh.max(0.0)
+    fn quantize(&self, v: f64, vhigh: f64) -> Level {
+        let vh = vhigh.max(0.0);
+        if v > self.v_ih_frac * vh {
+            Level::High
+        } else if v <= self.v_il_frac * vh {
+            Level::Low
+        } else {
+            Level::X
+        }
     }
 
-    /// Driver: the (target voltage, output conductance) this family presents for a
-    /// logic level at rail `vhigh`. High → `(v_oh_frac*vhigh, g_oh)`; low →
-    /// `(v_ol_frac*vhigh, g_ol)`. (For LEGACY: `(vhigh, GATE_GOUT)` / `(0, GATE_GOUT)`.)
+    /// Driver: the analog Thévenin `(target voltage, conductance)` to stamp for a
+    /// digital output [`Level`] at rail `vhigh`, or `None` to **release** (high-Z — a
+    /// `Z` output, e.g. an open-drain pull that let go). `High → (V_OH, g_oh)`,
+    /// `Low → (V_OL, g_ol)`, `X → mid-rail` (so an unknown is visible on the analog
+    /// node), `Z → None`. For LEGACY this is `(vhigh, GATE_GOUT)` / `(0, GATE_GOUT)`.
     #[inline]
-    fn drive(&self, level_high: bool, vhigh: f64) -> (f64, f64) {
+    fn drive_level(&self, level: Level, vhigh: f64) -> Option<(f64, f64)> {
         let vh = vhigh.max(0.0);
-        if level_high {
-            (self.v_oh_frac * vh, self.g_oh)
-        } else {
-            (self.v_ol_frac * vh, self.g_ol)
+        match level {
+            Level::High => Some((self.v_oh_frac * vh, self.g_oh)),
+            Level::Low => Some((self.v_ol_frac * vh, self.g_ol)),
+            Level::X => Some((
+                0.5 * (self.v_ol_frac + self.v_oh_frac) * vh,
+                self.g_oh.max(self.g_ol),
+            )),
+            Level::Z => None,
         }
     }
 }
 
-/// **Transformer** (two magnetically coupled inductors). The first four-terminal
-/// element: primary `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio
-/// `n = Ns/Np`; with the fixed primary inductance [`TRANSFORMER_L1`] the secondary
-/// inductance is `L2 = n^2 * L1` and the mutual inductance is `M = k*sqrt(L1*L2) =
-/// k*n*L1` for the fixed coupling [`TRANSFORMER_K`]. It carries **two** branch
-/// unknowns — the primary current `Ip` (a->b) and the secondary current `Is`
-/// (c->d) — each with a backward-Euler companion and coupled through `M`, exactly
-/// the coupled-inductor equations `Vp = L1·dIp/dt + M·dIs/dt`,
-/// `Vs = M·dIp/dt + L2·dIs/dt`. So it blocks DC (no flux change, no secondary
-/// voltage), draws a real magnetizing current, and scales AC by the turns ratio.
-/// Linear (no Newton); keeps two reactive states (the two branch currents). The
-/// branch pair is allocated consecutively in [`Sim::install`]: `branch_index[i]` is
-/// the primary, `branch_index[i] + 1` the secondary.
+/// The selectable logic families, indexed by a small per-element code carried in the
+/// upper bits of a gate/flip-flop's `aux` (see [`gate_family_index`]). Index `0` is
+/// always [`LogicFamily::LEGACY`] (the idealised default every existing circuit uses,
+/// so the goldens are unchanged); the rest are real families with honest thresholds
+/// and noise margins. All are fixed `const` data → golden-reproducible. Levels are
+/// rail fractions so one entry serves any rail (`value`); the rail + family together
+/// give the absolute `V_IL`/`V_IH`/`V_OL`/`V_OH`. See
+/// `docs/ui/logic-analog-digital-nets.md` §7.
+const FAMILIES: [LogicFamily; 3] = [
+    // 0: LEGACY / ideal — half-rail threshold, rail-to-ground output, no forbidden band.
+    LogicFamily::LEGACY,
+    // 1: CMOS — ~30%/70% input thresholds, near rail-to-rail output. Rail-independent,
+    //    so it serves 5 V CMOS, 3.3 V LVCMOS, 1.8 V, … by choosing the rail. Symmetric
+    //    ~0.25·rail noise margins.
+    LogicFamily {
+        v_il_frac: 0.3,
+        v_ih_frac: 0.7,
+        v_ol_frac: 0.05,
+        v_oh_frac: 0.95,
+        g_ol: GATE_GOUT,
+        g_oh: GATE_GOUT,
+    },
+    // 2: TTL — 0.8 V / 2.0 V inputs and 0.4 V / 3.4 V outputs at a 5 V rail (the classic
+    //    asymmetric thresholds with a notoriously thin low-side margin). Tuned for 5 V.
+    LogicFamily {
+        v_il_frac: 0.16,
+        v_ih_frac: 0.4,
+        v_ol_frac: 0.08,
+        v_oh_frac: 0.68,
+        g_ol: GATE_GOUT,
+        g_oh: GATE_GOUT,
+    },
+];
+
+/// Decode a gate/flip-flop's logic-family index from its `aux` scalar. The family rides
+/// in the **upper bits** (`aux / 16`) while the gate function code occupies the low bits
+/// ([`gate_func_code`]); a flip-flop has no function code, so its low bits are `0`. An
+/// out-of-range index clamps to the last family. For a legacy element (`aux` in `0..8`,
+/// no family bits) this is `0` = [`LogicFamily::LEGACY`], so behaviour is unchanged.
+#[inline]
+fn gate_family_index(aux: f64) -> usize {
+    ((aux.round().max(0.0) as usize) / 16).min(FAMILIES.len() - 1)
+}
+
+/// Decode a gate's function code (`0..8`, the low bits of `aux`) from a packed `aux`
+/// that may also carry a family index in its upper bits ([`gate_family_index`]).
+#[inline]
+fn gate_func_code(aux: f64) -> f64 {
+    (aux.round().max(0.0) as i64).rem_euclid(16) as f64
+}
+
+/// **Transformer** (ideal-T model). The first four-terminal element: primary
+/// `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio `n = Ns/Np`. A
+/// magnetising inductance [`TRANSFORMER_L1`] in series with the primary winding
+/// resistance [`TRANSFORMER_RWIND`] sits across the primary; the ideal coupling
+/// *forces* the secondary EMF to `n · V_Lm` — n times the voltage across the
+/// magnetiser — a HARD differential with no series term, while the secondary current
+/// reflects `n·Is` back into the primary KCL. It carries **two** branch unknowns —
+/// the magnetising current `Im` (a->b) and the secondary current `Is` (c->d) — but
+/// only `Im` is reactive (a backward-Euler companion); `Is` is algebraic. So it
+/// blocks DC (as the magnetiser saturates, `V_Lm -> 0` and the secondary collapses),
+/// draws a real magnetizing current, and scales AC by the turns ratio. Crucially the
+/// forced secondary EMF is a HARD voltage differential (like a real source), so a
+/// diode bridge across it rectifies full-wave — a softer secondary (a raw coupled-
+/// inductor pair, or an EMF with series winding resistance) sags under the bridge's
+/// asymmetric load and degenerates to half-wave or latches a runaway
+/// (`docs/sim/transformer-bridge-convergence.md`). Linear (no Newton); keeps one
+/// reactive state (the magnetiser). The branch pair is allocated consecutively in
+/// [`Sim::install`]: `branch_index[i]` is the magnetiser, `branch_index[i] + 1` the
+/// secondary.
 pub const ELEM_TRANSFORMER: u8 = 18;
 
-/// Transformer primary self-inductance, in henries (fixed). High enough that the
-/// magnetizing current is modest at audio frequencies (so the secondary voltage
-/// tracks `n * Vp` cleanly) while staying within the inductor range the dense solve
-/// already conditions for. The secondary inductance scales as `n^2 * TRANSFORMER_L1`.
+/// Transformer **magnetising** inductance, in henries (fixed) — the shunt branch of
+/// the ideal-T model. High enough that the magnetizing current is modest at audio
+/// frequencies (so the secondary EMF `n · V_Lm` tracks `n · Vp` cleanly) while
+/// staying within the inductor range the dense solve already conditions for. The
+/// secondary is coupled ideally (turns ratio `n`) as a hard differential, so there is
+/// no separate secondary inductance or winding resistance — only the primary-side
+/// [`TRANSFORMER_RWIND`] gives the device loss.
 const TRANSFORMER_L1: f64 = 0.5;
 
-/// Transformer coupling coefficient `k` in `M = k*sqrt(L1*L2)` (fixed, just under
-/// 1). A near-unity value couples the windings tightly (little leakage) so the
-/// turns-ratio voltage scaling is clean, while staying `< 1` keeps the inductance
-/// matrix positive-definite (a physical, invertible coupled pair).
-const TRANSFORMER_K: f64 = 0.999;
-
-/// Transformer **primary** winding resistance, in ohms (fixed); the secondary scales
-/// as `n^2 * TRANSFORMER_RWIND` (more turns, more wire), keeping the same `L/R` time
-/// constant on both windings. Small enough to be negligible against the winding
-/// reactance at audio frequencies (so AC turns-ratio scaling stays clean), but
-/// non-zero so a DC drive's primary current **saturates** at `V/R` instead of
-/// ramping forever — which is exactly what lets the transformer **block DC** (once
-/// `dI/dt -> 0` the induced secondary voltage decays to zero). Without it an ideal
-/// coupled-inductor pair would integrate a DC step without bound.
+/// Transformer **primary** winding resistance, in ohms (fixed); it sits in series
+/// with the magnetiser on the primary side. The secondary is an ideal hard
+/// differential and carries no winding resistance of its own (any series term there
+/// would soften the differential and break bridge rectification — see
+/// [`ELEM_TRANSFORMER`]). Small enough to be negligible against the winding reactance
+/// at audio frequencies (so AC turns-ratio scaling stays clean), but non-zero so a DC
+/// drive's magnetising current **saturates** at `V/R` instead of ramping forever —
+/// which is exactly what lets the transformer **block DC** (once `dI/dt -> 0` the
+/// induced secondary voltage decays to zero). Without it an ideal magnetising
+/// inductor would integrate a DC step without bound.
 const TRANSFORMER_RWIND: f64 = 5.0;
 
 /// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
@@ -531,11 +650,11 @@ const TRANSFORMER_RWIND: f64 = 5.0;
 /// `D` into a stored bit; otherwise it holds. The outputs are driven from the
 /// **committed** bit (a constant Thévenin stamp, exactly the gate's shape, so it adds
 /// no Newton work), and the bit is updated once per step in the commit phase from the
-/// solved `CLK`/`D` — giving a clean one-tick clock-to-output delay. The stored bit
-/// and the previous clock level are persistent per-element state (like the reactive
-/// companions: deterministic, not hashed — the observable `Q`/`Q̄` voltages carry into
-/// the snapshot). Wire `Q̄ → D` for a toggle (÷2), the seed of every counter. See
-/// [`Sim::stamp_dff`].
+/// solved `CLK`/`D` — giving a clean one-tick clock-to-output delay. The stored output
+/// level (`ff_q`) and the previous clock level (`ff_clk_prev`) are persistent four-state
+/// [`Level`] state that **enters the snapshot hash**, so a rewind landing on a clock
+/// edge replays identically. Wire `Q̄ → D` for a toggle (÷2), the seed of every counter.
+/// Driven through the resolved digital domain (see [`Sim::eval_digital`]).
 pub const ELEM_DFF: u8 = 19;
 
 // --- AC voltage source model constants ----------------------------------------
@@ -772,55 +891,74 @@ fn is_opamp(kind: u8) -> bool {
     kind == ELEM_OPAMP
 }
 
-/// Evaluate a logic gate's boolean output from its two thresholded inputs and its
-/// function code (`code` = the element's `aux`, rounded to the nearest non-negative
-/// integer): 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT (ignores `in2`),
-/// 7 BUF (ignores `in2`). Any other code falls back to AND. Pure boolean — fully
-/// deterministic and platform-independent.
+/// Evaluate a logic gate's four-state output [`Level`] from its two input levels and
+/// its function code (`code` = the element's `aux`, rounded to the nearest non-negative
+/// integer): 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT (ignores `in2`), 7 BUF
+/// (ignores `in2`). Any other code falls back to AND. A `Z` (undriven) input reads as
+/// unknown (`X`); the standard IEEE-1364 four-state tables propagate `X` (e.g.
+/// `AND(0, X) = 0` but `AND(1, X) = X`). Pure enum logic — deterministic and
+/// platform-independent; on `Low`/`High` inputs it is exactly the original boolean
+/// truth table.
 #[inline]
-fn gate_logic(code: f64, in1: bool, in2: bool) -> bool {
-    match code.round() as u32 {
-        1 => in1 || in2,
-        2 => !(in1 && in2),
-        3 => !(in1 || in2),
-        4 => in1 ^ in2,
-        5 => !(in1 ^ in2),
-        6 => !in1,
-        7 => in1,
+fn gate_logic_level(code: f64, in1: Level, in2: Level) -> Level {
+    // Tri-state code: 0 = low, 1 = high, 2 = unknown (Z reads as unknown on an input).
+    let tri = |l: Level| -> u8 {
+        match l {
+            Level::Low => 0,
+            Level::High => 1,
+            _ => 2,
+        }
+    };
+    let a = tri(in1);
+    let b = tri(in2);
+    let and = |p: u8, q: u8| -> u8 {
+        if p == 0 || q == 0 {
+            0
+        } else if p == 2 || q == 2 {
+            2
+        } else {
+            1
+        }
+    };
+    let or = |p: u8, q: u8| -> u8 {
+        if p == 1 || q == 1 {
+            1
+        } else if p == 2 || q == 2 {
+            2
+        } else {
+            0
+        }
+    };
+    let xor = |p: u8, q: u8| -> u8 {
+        if p == 2 || q == 2 {
+            2
+        } else {
+            p ^ q
+        }
+    };
+    let not = |p: u8| -> u8 {
+        match p {
+            0 => 1,
+            1 => 0,
+            _ => 2,
+        }
+    };
+    let r = match code.round() as u32 {
+        1 => or(a, b),
+        2 => not(and(a, b)),
+        3 => not(or(a, b)),
+        4 => xor(a, b),
+        5 => not(xor(a, b)),
+        6 => not(a),
+        7 => a,
         // 0 and any unrecognised code: AND.
-        _ => in1 && in2,
+        _ => and(a, b),
+    };
+    match r {
+        0 => Level::Low,
+        1 => Level::High,
+        _ => Level::X,
     }
-}
-
-/// The voltage a logic gate drives its output toward this tick. The two input node
-/// voltages `v1`, `v2` (the **committed previous-tick** values) are thresholded at
-/// `GATE_VTH_FRAC * vhigh`, the boolean is evaluated by [`gate_logic`], and the
-/// result maps to `vhigh` (logic 1) or `0.0` (logic 0). `vhigh` is the gate's
-/// `value`, floored at `0`. Pure `f64` + boolean, so it reproduces exactly.
-#[inline]
-fn gate_target_level(code: f64, vhigh: f64, v1: f64, v2: f64) -> f64 {
-    // Route through the (default) LEGACY family: a receiver reads each input, the
-    // boolean is evaluated, and the driver presents the output voltage. LEGACY's
-    // numbers are the original idealisation (half-rail threshold, rail/ground out
-    // through GATE_GOUT), so this is byte-identical — the substrate for real
-    // families + the digital-domain boundary (docs/ui/logic-analog-digital-nets.md).
-    let fam = LogicFamily::LEGACY;
-    let in1 = fam.reads_high(v1, vhigh);
-    let in2 = fam.reads_high(v2, vhigh);
-    fam.drive(gate_logic(code, in1, in2), vhigh).0
-}
-
-/// A transformer's winding inductances and mutual inductance from its turns ratio
-/// `n` (the element's `value`): primary `L1 = TRANSFORMER_L1` (fixed), secondary
-/// `L2 = n^2 * L1`, and mutual `M = TRANSFORMER_K * n * L1` (which equals
-/// `k*sqrt(L1*L2)`). Returns `(L1, L2, M)`. `n` is taken in absolute value so a
-/// reversed (negative) ratio couples with reversed polarity but a sane magnitude.
-#[inline]
-fn transformer_inductances(n: f64) -> (f64, f64, f64) {
-    let l1 = TRANSFORMER_L1;
-    let l2 = n * n * l1;
-    let m = TRANSFORMER_K * n * l1;
-    (l1, l2, m)
 }
 
 /// True for every nonlinear element (any device that drives the Newton outer
@@ -832,6 +970,70 @@ fn transformer_inductances(n: f64) -> (f64, f64, f64) {
 #[inline]
 fn is_nonlinear(kind: u8) -> bool {
     is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
+}
+
+/// True for the **digital** element kinds — a logic gate or a flip-flop. Their
+/// terminals are logic pins (driven/sensed levels) rather than continuous-voltage
+/// analog terminals. The net-classification pass ([`classify_nets`]) uses this to
+/// separate the analog and digital domains; the boundary between them is any node
+/// where a digital pin and an analog element meet. See
+/// `docs/ui/logic-analog-digital-nets.md` §7.
+#[inline]
+fn is_digital(kind: u8) -> bool {
+    kind == ELEM_GATE || kind == ELEM_DFF
+}
+
+/// How a circuit node relates to the analog/digital split — the substrate for the
+/// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7). Ground and
+/// any node touched by an analog element are [`NetClass::Analog`]; a node touched
+/// **only** by digital pins is a pure-[`NetClass::Digital`] net (which will leave the
+/// MNA matrix once the event scheduler lands); a node touched by **both** is a
+/// [`NetClass::Boundary`] net (a receiver reads it, a driver writes it). Computed
+/// deterministically in fixed element order so the result can feed the snapshot hash.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum NetClass {
+    Analog = 0,
+    Digital = 1,
+    Boundary = 2,
+}
+
+/// Classify every node as analog / pure-digital / boundary from the element list —
+/// the in-core analogue of a Verilog-AMS discipline-resolution pass (LRM Annex F),
+/// done in fixed element order so it is deterministic. A node is *analog-touched* if
+/// any analog element has a terminal on it and *digital-touched* if any digital pin
+/// does; ground (node `0`) is always analog (the shared reference). Unused element
+/// terminals sit at ground, so iterating all four terminals is safe — an unused
+/// terminal can only ever re-mark ground, which is forced analog regardless.
+fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
+    let mut analog_touched = vec![false; node_count];
+    let mut digital_touched = vec![false; node_count];
+    for e in elements {
+        let digital = is_digital(e.kind);
+        for t in [e.a, e.b, e.c, e.d] {
+            if t >= node_count {
+                continue;
+            }
+            if digital {
+                digital_touched[t] = true;
+            } else {
+                analog_touched[t] = true;
+            }
+        }
+    }
+    (0..node_count)
+        .map(|n| {
+            if n == 0 {
+                NetClass::Analog // ground: the shared reference for both domains
+            } else if analog_touched[n] && digital_touched[n] {
+                NetClass::Boundary
+            } else if digital_touched[n] {
+                NetClass::Digital
+            } else {
+                NetClass::Analog
+            }
+        })
+        .collect()
 }
 
 // --- Newton outer-loop constants ----------------------------------------------
@@ -1311,31 +1513,50 @@ pub struct Sim {
     /// path; when `false`, the solve is byte-for-byte the original single-pass
     /// solve.
     has_nonlinear: bool,
+    /// Per-node analog/digital classification (length `node_count`), computed at
+    /// install from the element list ([`classify_nets`]). Topology metadata for the
+    /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
+    /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
+    /// the event scheduler lands. Exposed via [`Sim::net_class`].
+    net_classes: Vec<NetClass>,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
     node_v: Vec<f64>,
     /// Dynamic state carried between steps: for a capacitor (`ELEM_CAPACITOR`),
     /// the previous `V(a) - V(b)`; for an inductor (`ELEM_INDUCTOR`), the
     /// previous branch current `i` (oriented `a -> b`); for a transformer
-    /// (`ELEM_TRANSFORMER`), the previous **primary** current `Ip` (a -> b). Unused
+    /// (`ELEM_TRANSFORMER`), the previous **magnetising** current `Im` (a -> b) — the
+    /// only winding current that carries reactive memory in the ideal-T model. Unused
     /// for other kinds. One entry per element, indexed in lockstep with `elements`.
     reactive_state: Vec<f64>,
-    /// Second dynamic state, used only by the transformer (`ELEM_TRANSFORMER`): the
-    /// previous **secondary** current `Is` (c -> d). The coupled-inductor companion
-    /// needs both winding currents from the previous step, so this carries the
-    /// secondary while [`Sim::reactive_state`] carries the primary. `0.0` for every
-    /// other element. One entry per element, indexed in lockstep with `elements`.
-    reactive_state_b: Vec<f64>,
-    /// The D flip-flop's stored bit (`0.0` or `1.0`): the value latched at the last
-    /// rising clock edge, which drives `Q`/`Q̄` every tick until the next edge. Used
-    /// only by [`ELEM_DFF`]; `0.0` for every other element. Persistent sequential
-    /// state — deterministic but unhashed (the observable `Q`/`Q̄` voltages carry it
-    /// into the snapshot). Indexed in lockstep with `elements`.
-    ff_bit: Vec<f64>,
-    /// The D flip-flop's previous clock level as a boolean (`0.0` low / `1.0` high),
-    /// kept so the commit phase can detect a rising edge (`low -> high`). Used only by
-    /// [`ELEM_DFF`]; `0.0` elsewhere. Indexed in lockstep with `elements`.
-    ff_clk_high: Vec<f64>,
+    /// The D flip-flop's stored output [`Level`]: the bit latched at the last rising
+    /// clock edge, which drives `Q` (and inverted, `Q̄`) every tick until the next edge.
+    /// Used only by [`ELEM_DFF`]; `Level::Low` for every other element. Persistent
+    /// sequential state that **enters the snapshot hash** (so a rewind landing on a
+    /// clock edge replays identically). Indexed in lockstep with `elements`.
+    ff_q: Vec<Level>,
+    /// The D flip-flop's previous clock [`Level`], kept so the commit phase can detect a
+    /// rising edge (`Low -> High`). Used only by [`ELEM_DFF`]; `Level::Low` elsewhere.
+    /// Also hashed (it is part of the sequential state). Indexed with `elements`.
+    ff_clk_prev: Vec<Level>,
+    /// Committed digital [`Level`] of every node, from the quantisation of last tick's
+    /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
+    /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
+    /// analog nets. Length `node_count`. The pure-`Digital` nets' levels feed the hash.
+    net_level: Vec<Level>,
+    /// Scratch: each node's resolved driven [`Level`] this tick (the digital engine
+    /// folds all of a net's drivers via [`combine`] in element order), with its driver
+    /// rail in `digital_vhigh`. Recomputed every solve by [`Sim::eval_digital`]; not
+    /// committed state and not hashed. Length `node_count`.
+    digital_drive: Vec<Level>,
+    /// Scratch: the rail (`vhigh`) of each node's digital driver, paired with
+    /// `digital_drive` so the stamp can turn a [`Level`] into a Thévenin voltage.
+    digital_vhigh: Vec<f64>,
+    /// Scratch: the [`FAMILIES`] index of each node's digital driver, so the driver
+    /// stamp ([`Sim::stamp_digital`]) and the canonical-level commit
+    /// ([`Sim::commit_net_levels`]) use that driver's family levels. Paired with
+    /// `digital_drive`/`digital_vhigh`; recomputed every solve. `0` (LEGACY) if undriven.
+    digital_family: Vec<u8>,
     /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
     /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
     /// previous-iterate reference, so each step starts from the converged
@@ -1374,12 +1595,11 @@ pub struct Sim {
     /// op-amp entries are meaningful; others stay `0.0`. Indexed in lockstep with
     /// `elements`.
     opamp_vd: Vec<f64>,
-    /// Per-element logic-gate driven output level (volts) for the current tick:
-    /// recomputed before each solve from the committed previous-tick input voltages
-    /// (see [`gate_target_level`]), then read back when committing the gate's output
-    /// current. Pure within-tick scratch — *not* persistent state and never hashed,
-    /// so it cannot affect the snapshot. Only gate entries are meaningful; others
-    /// stay `0.0`. Indexed in lockstep with `elements`.
+    /// Per-element logic-gate driven output voltage for the current tick: recomputed
+    /// before each solve by [`Sim::eval_digital`] from the committed previous-tick
+    /// input levels, then read back when committing the gate's output current. Pure
+    /// within-tick scratch — *not* persistent state and never hashed. Only gate entries
+    /// are meaningful; others stay `0.0`. Indexed in lockstep with `elements`.
     gate_target: Vec<f64>,
     /// Latest current through each element (oriented `a -> b`), one entry per
     /// element in submission order. Committed by every solve while the
@@ -1422,11 +1642,15 @@ impl Sim {
             dim: 0,
             branch_index: Vec::new(),
             has_nonlinear: false,
+            net_classes: vec![NetClass::Analog],
             node_v: vec![0.0],
             reactive_state: Vec::new(),
-            reactive_state_b: Vec::new(),
-            ff_bit: Vec::new(),
-            ff_clk_high: Vec::new(),
+            ff_q: Vec::new(),
+            ff_clk_prev: Vec::new(),
+            net_level: vec![Level::Low],
+            digital_drive: vec![Level::Z],
+            digital_vhigh: vec![0.0],
+            digital_family: vec![0],
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
@@ -1584,8 +1808,8 @@ impl Sim {
     fn install(&mut self, node_count: usize, elements: Vec<Element>) {
         // Branch-current unknowns are appended after the node voltages, in
         // ascending element index, for voltage sources and inductors (one each) and
-        // the transformer (TWO consecutive: `branch_index[i]` is the primary current
-        // `Ip` and `branch_index[i] + 1` the secondary current `Is`).
+        // the transformer (TWO consecutive: `branch_index[i]` is the magnetising
+        // current `Im` and `branch_index[i] + 1` the secondary current `Is`).
         let node_unknowns = node_count - 1;
         let mut branch_index = vec![usize::MAX; elements.len()];
         let mut next = node_unknowns;
@@ -1600,15 +1824,20 @@ impl Sim {
         }
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
+        let net_classes = classify_nets(node_count, &elements);
 
         self.node_count = node_count;
         self.dim = next;
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
+        self.net_classes = net_classes;
         self.reactive_state = vec![0.0; elements.len()];
-        self.reactive_state_b = vec![0.0; elements.len()];
-        self.ff_bit = vec![0.0; elements.len()];
-        self.ff_clk_high = vec![0.0; elements.len()];
+        self.ff_q = vec![Level::Low; elements.len()];
+        self.ff_clk_prev = vec![Level::Low; elements.len()];
+        self.net_level = vec![Level::Low; node_count];
+        self.digital_drive = vec![Level::Z; node_count];
+        self.digital_vhigh = vec![0.0; node_count];
+        self.digital_family = vec![0; node_count];
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
         self.mosfet_vds = vec![0.0; elements.len()];
@@ -1624,6 +1853,7 @@ impl Sim {
         // Prime the readout at the initial operating point (t = 0). Does not
         // advance the tick or the per-tick reactive state.
         self.solve_operating_point();
+        self.commit_net_levels();
     }
 
     /// Reset to `t = 0` with reactive elements discharged, keeping the same
@@ -1633,14 +1863,14 @@ impl Sim {
         for s in &mut self.reactive_state {
             *s = 0.0;
         }
-        for s in &mut self.reactive_state_b {
-            *s = 0.0;
+        for s in &mut self.ff_q {
+            *s = Level::Low;
         }
-        for s in &mut self.ff_bit {
-            *s = 0.0;
+        for s in &mut self.ff_clk_prev {
+            *s = Level::Low;
         }
-        for s in &mut self.ff_clk_high {
-            *s = 0.0;
+        for s in &mut self.net_level {
+            *s = Level::Low;
         }
         for vd in &mut self.diode_vd {
             *vd = 0.0;
@@ -1667,6 +1897,7 @@ impl Sim {
             *v = 0.0;
         }
         self.solve_operating_point();
+        self.commit_net_levels();
     }
 
     /// Stamp a small symmetric [`GMIN`] conductance between two MNA nodes (each
@@ -1766,6 +1997,9 @@ impl Sim {
     /// Used only at install/reset, so its (differently sized) system never
     /// affects the fixed per-tick cost of [`Sim::step`].
     fn solve_operating_point(&mut self) {
+        // Resolve the digital domain first (from the committed input levels) so the
+        // boundary/digital drives are ready for whichever assembly path runs.
+        self.eval_digital();
         // Nonlinear netlists take the Newton operating-point path; the linear
         // single-pass assembly below is left byte-for-byte unchanged.
         if self.has_nonlinear {
@@ -1833,28 +2067,6 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_GATE => {
-                    // Logic gate: a tick-pure boolean driver. Threshold its inputs
-                    // from the committed (here, just-initialised) node voltages,
-                    // evaluate the boolean, and drive the output toward 0/rail through
-                    // GATE_GOUT — a constant conductance to ground plus a current
-                    // injection (a Thevenin source). Stored for the current readout.
-                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
-                    self.gate_target[i] = vt;
-                    if let Some(r) = ia {
-                        mat[r * n + r] += GATE_GOUT;
-                        rhs[r] += GATE_GOUT * vt;
-                    }
-                    // Floor each sensed input to ground with GMIN so a floating gate
-                    // input is non-singular (and reads logic low) — the gate stamps
-                    // nothing else into its input rows. Negligible beside any driver.
-                    if let Some(r) = ib {
-                        mat[r * n + r] += GMIN;
-                    }
-                    if let Some(r) = Self::node_idx(e.c) {
-                        mat[r * n + r] += GMIN;
-                    }
-                }
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => {
                     // Voltage constraint V(a) - V(b) = value, where `value` is
                     // the DC source EMF, the AC source's tick-determined sine EMF
@@ -1892,11 +2104,6 @@ impl Sim {
                     // currents (0 at t = 0, so the device starts open).
                     self.stamp_transformer_op(&mut mat, &mut rhs, n, e, i);
                 }
-                ELEM_DFF => {
-                    // Drive Q/Q̄ from the stored bit (constant Thevenin); the bit is
-                    // latched in the commit phase, so the stamp is fixed for the solve.
-                    self.stamp_dff(&mut mat, &mut rhs, n, e, i);
-                }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
                     // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
@@ -1910,6 +2117,9 @@ impl Sim {
                 _ => {}
             }
         }
+        // Digital gates and flip-flops drive their nets through the resolved digital
+        // domain (one stamp per net), not per element.
+        self.stamp_digital(&mut mat, &mut rhs, n);
 
         let x = solve_dense(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
@@ -1939,12 +2149,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_bit[i] >= 0.5 {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -1957,6 +2168,9 @@ impl Sim {
     /// caller can both commit dynamic state and read branch currents. Does not
     /// advance the tick or the reactive state.
     fn solve_into_readout(&mut self) -> Vec<f64> {
+        // Resolve the digital domain first (from the committed input levels) so the
+        // boundary/digital drives are ready for whichever assembly path runs.
+        self.eval_digital();
         // Nonlinear netlists take the Newton transient path; the linear
         // single-pass assembly below is left byte-for-byte unchanged.
         if self.has_nonlinear {
@@ -2011,28 +2225,6 @@ impl Sim {
                     if let (Some(r), Some(c)) = (ia, ib) {
                         mat[r * n + c] -= g;
                         mat[c * n + r] -= g;
-                    }
-                }
-                ELEM_GATE => {
-                    // Logic gate: thresholded boolean of the committed previous-tick
-                    // inputs drives the output toward 0/rail through GATE_GOUT (a
-                    // constant conductance to ground + a current injection). Reading
-                    // last tick's inputs makes the stamp constant for this solve and
-                    // gives the gate one tick of propagation delay. Stored for readout.
-                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
-                    self.gate_target[i] = vt;
-                    if let Some(r) = ia {
-                        mat[r * n + r] += GATE_GOUT;
-                        rhs[r] += GATE_GOUT * vt;
-                    }
-                    // Floor each sensed input to ground with GMIN so a floating gate
-                    // input is non-singular (and reads logic low) — the gate stamps
-                    // nothing else into its input rows. Negligible beside any driver.
-                    if let Some(r) = ib {
-                        mat[r * n + r] += GMIN;
-                    }
-                    if let Some(r) = Self::node_idx(e.c) {
-                        mat[r * n + r] += GMIN;
                     }
                 }
                 ELEM_CAPACITOR => {
@@ -2100,13 +2292,9 @@ impl Sim {
                     rhs[bi] -= r_l * self.reactive_state[i];
                 }
                 ELEM_TRANSFORMER => {
-                    // Two coupled-inductor branch companions (primary + secondary),
-                    // cross-linked by the mutual inductance M.
+                    // Ideal-T model: magnetising-inductor companion (Im) + a hard
+                    // forced secondary differential (Is), n·Is reflected to the primary.
                     self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
-                }
-                ELEM_DFF => {
-                    // Drive Q/Q̄ from the stored bit (constant Thevenin pull).
-                    self.stamp_dff(&mut mat, &mut rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
                     // Ideal current source injecting `value` a -> b: current
@@ -2122,6 +2310,8 @@ impl Sim {
                 _ => {}
             }
         }
+        // Digital gates/flip-flops drive their nets through the resolved digital domain.
+        self.stamp_digital(&mut mat, &mut rhs, n);
 
         let x = solve_dense(mat, rhs, n);
 
@@ -2147,10 +2337,12 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
-                    // The transformer reports its PRIMARY current (branch_index[i]);
-                    // the secondary current lives at branch_index[i] + 1.
-                    x[self.branch_index[i]]
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_TRANSFORMER => {
+                    // Primary current drawn a -> b is the magnetising current plus the
+                    // reflected secondary load: Im + n·Is (branch_index[i] = Im, +1 = Is).
+                    let bi = self.branch_index[i];
+                    x[bi] + e.value * x[bi + 1]
                 }
                 ELEM_ISOURCE => e.value,
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
@@ -2159,12 +2351,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_bit[i] >= 0.5 {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -2809,10 +3002,6 @@ impl Sim {
                     // Both windings prime as current sources (0 at t = 0).
                     self.stamp_transformer_op(&mut base_mat, &mut base_rhs, n, e, i);
                 }
-                ELEM_DFF => {
-                    // Drive Q/Q̄ from the stored bit into the fixed Newton base.
-                    self.stamp_dff(&mut base_mat, &mut base_rhs, n, e, i);
-                }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
                         base_rhs[r] -= e.value;
@@ -2838,28 +3027,6 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_GATE => {
-                    // Logic gate: the thresholded boolean of the committed
-                    // (here just-initialised) inputs drives the output toward 0/rail
-                    // through GATE_GOUT, stamped into the fixed linear base as a
-                    // constant conductance to ground + a current injection. Constant
-                    // for the whole Newton solve. Stored for the current readout.
-                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
-                    self.gate_target[i] = vt;
-                    if let Some(r) = ia {
-                        base_mat[r * n + r] += GATE_GOUT;
-                        base_rhs[r] += GATE_GOUT * vt;
-                    }
-                    // Floor each sensed input to ground with GMIN so a floating gate
-                    // input is non-singular (and reads logic low) — the gate stamps
-                    // nothing else into its input rows. Negligible beside any driver.
-                    if let Some(r) = ib {
-                        base_mat[r * n + r] += GMIN;
-                    }
-                    if let Some(r) = Self::node_idx(e.c) {
-                        base_mat[r * n + r] += GMIN;
-                    }
-                }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
@@ -2868,6 +3035,8 @@ impl Sim {
                 _ => {}
             }
         }
+        // Digital gates/flip-flops drive their nets through the resolved digital domain.
+        self.stamp_digital(&mut base_mat, &mut base_rhs, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -2915,12 +3084,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_bit[i] >= 0.5 {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -3031,13 +3201,9 @@ impl Sim {
                     base_rhs[bi] -= r_l * self.reactive_state[i];
                 }
                 ELEM_TRANSFORMER => {
-                    // Two coupled-inductor branch companions into the fixed linear
-                    // base (constant across the Newton loop, like any inductor).
+                    // Ideal-T companion into the fixed linear base (constant across the
+                    // Newton loop, like any inductor).
                     self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
-                }
-                ELEM_DFF => {
-                    // Drive Q/Q̄ from the stored bit into the fixed Newton base.
-                    self.stamp_dff(&mut base_mat, &mut base_rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
                     if let Some(r) = ia {
@@ -3065,29 +3231,6 @@ impl Sim {
                         base_mat[c * n + r] -= g;
                     }
                 }
-                ELEM_GATE => {
-                    // Logic gate: the thresholded boolean of the committed
-                    // previous-tick inputs drives the output toward 0/rail through
-                    // GATE_GOUT, stamped into the fixed linear base as a constant
-                    // conductance to ground + a current injection. Reading last
-                    // tick's inputs keeps it constant for the Newton solve and gives
-                    // one tick of propagation delay. Stored for the current readout.
-                    let vt = gate_target_level(e.aux, e.value, self.node_v[e.b], self.node_v[e.c]);
-                    self.gate_target[i] = vt;
-                    if let Some(r) = ia {
-                        base_mat[r * n + r] += GATE_GOUT;
-                        base_rhs[r] += GATE_GOUT * vt;
-                    }
-                    // Floor each sensed input to ground with GMIN so a floating gate
-                    // input is non-singular (and reads logic low) — the gate stamps
-                    // nothing else into its input rows. Negligible beside any driver.
-                    if let Some(r) = ib {
-                        base_mat[r * n + r] += GMIN;
-                    }
-                    if let Some(r) = Self::node_idx(e.c) {
-                        base_mat[r * n + r] += GMIN;
-                    }
-                }
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => diodes.push((i, ia, ib)),
                 ELEM_NMOS | ELEM_PMOS => mosfets.push((i, ia, ib, Self::node_idx(e.c))),
                 ELEM_NPN | ELEM_PNP => bjts.push((i, ia, ib, Self::node_idx(e.c))),
@@ -3096,6 +3239,8 @@ impl Sim {
                 _ => {}
             }
         }
+        // Digital gates/flip-flops drive their nets through the resolved digital domain.
+        self.stamp_digital(&mut base_mat, &mut base_rhs, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -3118,10 +3263,12 @@ impl Sim {
                     let ieq = g * self.reactive_state[i];
                     g * self.element_voltage(e) - ieq
                 }
-                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR | ELEM_TRANSFORMER => {
-                    // The transformer reports its PRIMARY current (branch_index[i]);
-                    // the secondary current lives at branch_index[i] + 1.
-                    x[self.branch_index[i]]
+                ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_INDUCTOR => x[self.branch_index[i]],
+                ELEM_TRANSFORMER => {
+                    // Primary current drawn a -> b is the magnetising current plus the
+                    // reflected secondary load: Im + n·Is (branch_index[i] = Im, +1 = Is).
+                    let bi = self.branch_index[i];
+                    x[bi] + e.value * x[bi + 1]
                 }
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
@@ -3151,12 +3298,13 @@ impl Sim {
                 ELEM_GATE => GATE_GOUT * (self.gate_target[i] - self.node_v[e.a]),
                 // The flip-flop's Q output drive current, from the committed bit.
                 ELEM_DFF => {
-                    let vq = if self.ff_bit[i] >= 0.5 {
-                        e.value.max(0.0)
-                    } else {
-                        0.0
-                    };
-                    GATE_GOUT * (vq - self.node_v[e.a])
+                    // Q output drive current via the flip-flop's family (matches the
+                    // stamp), so the displayed current is consistent with CMOS/TTL
+                    // output levels and an X-driven Q — not a 2-state rail/0.
+                    let (vq, g) = FAMILIES[gate_family_index(e.aux)]
+                        .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
                 }
                 _ => 0.0,
             };
@@ -3170,15 +3318,14 @@ impl Sim {
         self.node_v[e.a] - self.node_v[e.b]
     }
 
-    /// Stamp the transformer's coupled-inductor backward-Euler companion into a
-    /// **transient** MNA system (`mat`/`rhs`, dimension `dim`). The element has two
-    /// branch unknowns — primary `Ip` (a->b) at `branch_index[i]` and secondary
-    /// `Is` (c->d) at `branch_index[i] + 1` — whose rows enforce
-    /// `Vp = (L1/DT)(Ip - Ip_prev) + (M/DT)(Is - Is_prev)` and the symmetric
-    /// secondary equation. It is the single inductor's branch companion doubled and
-    /// cross-coupled by `M`. The previous winding currents come from
-    /// `reactive_state` (primary) and `reactive_state_b` (secondary). A `GMIN` floor
-    /// on every terminal keeps a winding that lacks its own ground reference (an
+    /// Stamp the transformer's ideal-T backward-Euler companion into a **transient**
+    /// MNA system (`mat`/`rhs`, dimension `dim`). The element has two branch unknowns —
+    /// the magnetising current `Im` (a->b) at `branch_index[i]` and the secondary
+    /// current `Is` (c->d) at `branch_index[i] + 1`. The magnetising row is an inductor
+    /// companion `V(a)-V(b) = (g_mag+rp)·Im - g_mag·Im_prev`; the secondary row forces
+    /// the hard differential `V(c)-V(d) = n·g_mag·(Im - Im_prev) = n·V_Lm`. Only `Im`
+    /// carries reactive memory (from `reactive_state`); `Is` is algebraic. A `GMIN`
+    /// floor on every terminal keeps a winding that lacks its own ground reference (an
     /// isolated secondary) non-singular without materially loading a referenced one.
     fn stamp_transformer(
         &self,
@@ -3188,27 +3335,37 @@ impl Sim {
         e: &Element,
         i: usize,
     ) {
-        let bi_p = self.branch_index[i];
-        let bi_s = bi_p + 1;
-        let (l1, l2, m) = transformer_inductances(e.value);
-        let (g1, g2, gm) = (l1 / DT, l2 / DT, m / DT);
-        // Winding resistances: primary fixed, secondary scaled by n^2 (so both
-        // windings share the same L/R time constant). They sit in series with each
-        // winding, so they add to that branch row's diagonal.
+        // Ideal-transformer "T" model (docs/sim/transformer-bridge-convergence.md §6):
+        // a magnetising inductance L1 (with primary winding resistance Rp) across the
+        // primary, an IDEAL turns-ratio coupling that *forces* the secondary EMF to
+        // n·V_Lm — n times the voltage across the magnetiser, a HARD differential
+        // exactly like a real voltage source — the secondary winding resistance Rs in
+        // series, and the secondary current reflected n·Is back into the primary. The
+        // hard ratio is what lets a diode bridge rectify full-wave: a raw coupled-
+        // inductor pair is only a SOFT differential (its winding voltage sags under the
+        // bridge's asymmetric load) and degenerates to half-wave. Coupling to V_Lm (not
+        // the terminal voltage V(a)-V(b)) is what keeps DC blocked — V_Lm -> 0 as the
+        // magnetiser saturates. It also drops the near-singular 1/(1-k²) coupled matrix
+        // entirely. Two branch unknowns: Im (magnetiser, a→b) and Is (secondary, c→d);
+        // only Im carries reactive memory.
+        let n = e.value;
+        let bi_m = self.branch_index[i]; // magnetising current Im (a -> b)
+        let bi_s = bi_m + 1; // secondary current Is (c -> d)
+        let g_mag = TRANSFORMER_L1 / DT; // backward-Euler companion of the magnetiser
         let rp = TRANSFORMER_RWIND;
-        let rs = e.value * e.value * TRANSFORMER_RWIND;
-        let ip_prev = self.reactive_state[i];
-        let is_prev = self.reactive_state_b[i];
+        let im_prev = self.reactive_state[i];
         let ia = Self::node_idx(e.a);
         let ib = Self::node_idx(e.b);
         let ic = Self::node_idx(e.c);
         let id = Self::node_idx(e.d);
-        // KCL: Ip injects a->b, Is injects c->d.
+        // KCL: the primary draws Im + n·Is (a -> b); the secondary carries Is (c -> d).
         if let Some(r) = ia {
-            mat[r * dim + bi_p] += 1.0;
+            mat[r * dim + bi_m] += 1.0;
+            mat[r * dim + bi_s] += n;
         }
         if let Some(r) = ib {
-            mat[r * dim + bi_p] -= 1.0;
+            mat[r * dim + bi_m] -= 1.0;
+            mat[r * dim + bi_s] -= n;
         }
         if let Some(r) = ic {
             mat[r * dim + bi_s] += 1.0;
@@ -3216,36 +3373,49 @@ impl Sim {
         if let Some(r) = id {
             mat[r * dim + bi_s] -= 1.0;
         }
-        // Primary branch row: V(a)-V(b) - g1*Ip - gm*Is = -(g1*Ip_prev + gm*Is_prev).
+        // Magnetising branch row: V(a)-V(b) - (g_mag + rp)·Im = -g_mag·Im_prev.
         if let Some(r) = ia {
-            mat[bi_p * dim + r] += 1.0;
+            mat[bi_m * dim + r] += 1.0;
         }
         if let Some(r) = ib {
-            mat[bi_p * dim + r] -= 1.0;
+            mat[bi_m * dim + r] -= 1.0;
         }
-        mat[bi_p * dim + bi_p] -= g1 + rp;
-        mat[bi_p * dim + bi_s] -= gm;
-        rhs[bi_p] -= g1 * ip_prev + gm * is_prev;
-        // Secondary branch row: V(c)-V(d) - gm*Ip - g2*Is = -(gm*Ip_prev + g2*Is_prev).
+        mat[bi_m * dim + bi_m] -= g_mag + rp;
+        rhs[bi_m] -= g_mag * im_prev;
+        // Ideal-transformer secondary row. The secondary EMF tracks the voltage
+        // across the MAGNETISING inductance (n·V_Lm), NOT the full primary terminal
+        // voltage: that is what lets the device still block DC (as Im saturates,
+        // V_Lm -> 0 and the secondary collapses) while passing AC. The differential is
+        // forced HARD (no series Is term, exactly like an ideal voltage source) so a
+        // diode bridge rectifies full-wave: any series winding resistance here would
+        // make V(c)-V(d) sag with Is, and a bridge charging a cap would then latch the
+        // wrong diode pair and run away (the cap voltage feeds positive into Is). The
+        // primary-side rp still gives the device loss and DC-blocking. Backward-Euler
+        // gives the inductor voltage V_Lm = g_mag·(Im - Im_prev), so
+        //   V(c) - V(d) = n·g_mag·(Im - Im_prev)
+        //   <=>  V(c) - V(d) - n·g_mag·Im = -n·g_mag·Im_prev.
         if let Some(r) = ic {
             mat[bi_s * dim + r] += 1.0;
         }
         if let Some(r) = id {
             mat[bi_s * dim + r] -= 1.0;
         }
-        mat[bi_s * dim + bi_s] -= g2 + rs;
-        mat[bi_s * dim + bi_p] -= gm;
-        rhs[bi_s] -= gm * ip_prev + g2 * is_prev;
-        // Ground floor on every winding terminal (isolation safety net).
+        mat[bi_s * dim + bi_m] -= n * g_mag;
+        rhs[bi_s] -= n * g_mag * im_prev;
+        // Anti-singularity floor on every winding terminal (isolation safety net). The
+        // hard forced differential keeps even a floating bridge load stable, so the
+        // secondary needs no stronger common-mode reference than the primary — the
+        // device stays galvanically isolated.
         for t in [ia, ib, ic, id].into_iter().flatten() {
             mat[t * dim + t] += GMIN;
         }
     }
 
     /// Stamp the transformer at the **operating point** (`t = 0` / DC priming),
-    /// where — exactly like an inductor — each winding is a current source carrying
-    /// its stored branch current (both `0` at `t = 0`, so the device primes open).
-    /// `dim` is the operating-point system size. The same `GMIN` floor keeps a
+    /// where — exactly like an inductor — the magnetising winding is a current source
+    /// carrying its stored current `Im` (`0` at `t = 0`, so the device primes open).
+    /// The secondary is algebraic (no reactive memory), so it primes open with just the
+    /// `GMIN` floor. `dim` is the operating-point system size; the floor keeps a
     /// floating winding non-singular.
     fn stamp_transformer_op(
         &self,
@@ -3255,54 +3425,111 @@ impl Sim {
         e: &Element,
         i: usize,
     ) {
-        let ip_prev = self.reactive_state[i];
-        let is_prev = self.reactive_state_b[i];
+        let im_prev = self.reactive_state[i];
         let ia = Self::node_idx(e.a);
         let ib = Self::node_idx(e.b);
         let ic = Self::node_idx(e.c);
         let id = Self::node_idx(e.d);
         if let Some(r) = ia {
-            rhs[r] -= ip_prev;
+            rhs[r] -= im_prev;
         }
         if let Some(r) = ib {
-            rhs[r] += ip_prev;
-        }
-        if let Some(r) = ic {
-            rhs[r] -= is_prev;
-        }
-        if let Some(r) = id {
-            rhs[r] += is_prev;
+            rhs[r] += im_prev;
         }
         for t in [ia, ib, ic, id].into_iter().flatten() {
             mat[t * dim + t] += GMIN;
         }
     }
 
-    /// Stamp the D flip-flop into an MNA system (`mat`/`rhs`, dimension `dim`): drive
-    /// `Q` (`a`) and `Q̄` (`d`) from the **committed** stored bit through [`GATE_GOUT`]
-    /// (the same constant Thevenin pull a logic gate uses), and floor the two
-    /// high-impedance inputs `D` (`b`) and `CLK` (`c`) to ground with [`GMIN`] so an
-    /// undriven input is non-singular. The bit itself is latched separately in the
-    /// commit phase (see [`Sim::step`]), so this stamp is constant for the whole solve
-    /// — no Newton work, no branch unknown. `value` is the logic-high rail.
-    fn stamp_dff(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize, e: &Element, i: usize) {
-        let vhigh = e.value.max(0.0);
-        let bit_high = self.ff_bit[i] >= 0.5;
-        let vq = if bit_high { vhigh } else { 0.0 };
-        let vqb = if bit_high { 0.0 } else { vhigh };
-        if let Some(r) = Self::node_idx(e.a) {
-            mat[r * dim + r] += GATE_GOUT;
-            rhs[r] += GATE_GOUT * vq;
+    /// Evaluate the digital domain for this tick — the unit-delay event engine
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.4). From the **committed** input
+    /// levels (`net_level`, one tick of delay) compute each gate's and flip-flop's
+    /// output [`Level`] and resolve every net's driven level into `digital_drive` by
+    /// folding its drivers via [`combine`] in element-index order (so the result is
+    /// order-independent and deterministic). Pure enum logic; runs once per solve,
+    /// before MNA assembly. Also records each gate's own driven voltage in `gate_target`
+    /// for the current readout, and the driver rail in `digital_vhigh`.
+    fn eval_digital(&mut self) {
+        for d in self.digital_drive.iter_mut() {
+            *d = Level::Z;
         }
-        if let Some(r) = Self::node_idx(e.d) {
-            mat[r * dim + r] += GATE_GOUT;
-            rhs[r] += GATE_GOUT * vqb;
+        for i in 0..self.elements.len() {
+            let e = self.elements[i];
+            match e.kind {
+                ELEM_GATE => {
+                    // This gate's selected logic family (packed in aux's upper bits).
+                    let fi = gate_family_index(e.aux);
+                    let fam = &FAMILIES[fi];
+                    // Receiver: quantise each input's committed (last-tick) voltage at
+                    // THIS gate's family + rail (per-reader threshold, one tick of delay).
+                    let in1 = fam.quantize(self.node_v[e.b], e.value);
+                    let in2 = fam.quantize(self.node_v[e.c], e.value);
+                    let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
+                    self.gate_target[i] = fam.drive_level(out, e.value).map_or(0.0, |(v, _)| v);
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], out);
+                    self.digital_vhigh[e.a] = e.value;
+                    self.digital_family[e.a] = fi as u8;
+                }
+                ELEM_DFF => {
+                    // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
+                    // in the commit phase, so the output is constant within the solve.
+                    let fi = gate_family_index(e.aux);
+                    let q = self.ff_q[i];
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], q);
+                    self.digital_vhigh[e.a] = e.value;
+                    self.digital_family[e.a] = fi as u8;
+                    self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
+                    self.digital_vhigh[e.d] = e.value;
+                    self.digital_family[e.d] = fi as u8;
+                }
+                _ => {}
+            }
         }
-        if let Some(r) = Self::node_idx(e.b) {
+    }
+
+    /// Commit each `Digital`/`Boundary` net's canonical [`Level`] — the receiver
+    /// quantising the net's just-solved voltage at its driver rail (`digital_vhigh`).
+    /// Run after every solve. Pure-digital nets fold this level (a `u8`) into the
+    /// snapshot hash instead of their `f64` voltage, which is cleaner and stays stable
+    /// when those nets later leave the MNA matrix. Undriven nets quantise at rail `0`,
+    /// so a floored (≈0 V) net reads `Low` — preserving floating-input-reads-low.
+    fn commit_net_levels(&mut self) {
+        for node in 0..self.node_count {
+            if matches!(
+                self.net_classes[node],
+                NetClass::Digital | NetClass::Boundary
+            ) {
+                let fam = &FAMILIES[self.digital_family[node] as usize];
+                self.net_level[node] = fam.quantize(self.node_v[node], self.digital_vhigh[node]);
+            }
+        }
+    }
+
+    /// Stamp the resolved digital drives ([`Sim::eval_digital`]) into an MNA system
+    /// (`mat`/`rhs`, dimension `dim`): for every `Digital`/`Boundary` net a `GMIN`
+    /// anti-singularity floor, plus — unless the net is released (`Z`) — the driver's
+    /// Thévenin (a conductance to ground and a current injection) for its resolved
+    /// [`Level`]. **One stamp per net**: the multi-driver resolution already happened in
+    /// `eval_digital`, so two outputs on a net resolve (wired-AND/conflict→X) instead of
+    /// fighting in the matrix. The stamp is constant within the solve, so a gate/FF-only
+    /// circuit stays on the linear fast path — no Newton, no branch unknown.
+    fn stamp_digital(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize) {
+        for node in 1..self.node_count {
+            if !matches!(
+                self.net_classes[node],
+                NetClass::Digital | NetClass::Boundary
+            ) {
+                continue;
+            }
+            let r = node - 1; // node n -> MNA row n-1 (ground excluded)
             mat[r * dim + r] += GMIN;
-        }
-        if let Some(r) = Self::node_idx(e.c) {
-            mat[r * dim + r] += GMIN;
+            let fam = &FAMILIES[self.digital_family[node] as usize];
+            if let Some((tv, g)) =
+                fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
+            {
+                mat[r * dim + r] += g;
+                rhs[r] += g * tv;
+            }
         }
     }
 
@@ -3352,6 +3579,9 @@ impl Sim {
     /// `f64`, fixed order.
     pub fn step(&mut self) {
         let x = self.solve_into_readout();
+        // Commit each digital/boundary net's level (the receiver, one tick of delay
+        // before the digital engine reads it next tick) for the hash and the renderer.
+        self.commit_net_levels();
         // Commit reactive state for the next step.
         for (i, e) in self.elements.iter().enumerate() {
             match e.kind {
@@ -3365,23 +3595,24 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                 }
                 ELEM_TRANSFORMER => {
-                    // Store both new winding currents: primary Ip at branch bi, the
-                    // secondary Is at bi + 1 (allocated consecutively in `install`).
+                    // Store the new magnetising current Im at branch bi — the only
+                    // winding current that carries reactive memory (the companion's
+                    // history term). The secondary Is (bi + 1) is algebraic: it is
+                    // re-derived each step from the solve, so nothing to store.
                     let bi = self.branch_index[i];
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
-                    self.reactive_state_b[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
                 ELEM_DFF => {
-                    // Edge-triggered latch: on a rising CLK edge (low -> high) sample
-                    // D into the stored bit, using the just-solved node voltages
-                    // thresholded at half the rail. Otherwise the bit holds.
-                    let vth = GATE_VTH_FRAC * e.value.max(0.0);
-                    let clk_high = self.node_v[e.c] > vth;
-                    let was_high = self.ff_clk_high[i] >= 0.5;
-                    if clk_high && !was_high {
-                        self.ff_bit[i] = if self.node_v[e.b] > vth { 1.0 } else { 0.0 };
+                    // Edge-triggered latch: on a rising CLK edge (Low -> High) sample
+                    // D into the stored level (the receiver quantises the just-solved
+                    // CLK/D voltages at the FF's rail). Otherwise the bit holds. Both
+                    // `ff_q` and `ff_clk_prev` are 4-state and enter the snapshot hash.
+                    let fam = &FAMILIES[gate_family_index(e.aux)];
+                    let clk = fam.quantize(self.node_v[e.c], e.value);
+                    if clk == Level::High && self.ff_clk_prev[i] != Level::High {
+                        self.ff_q[i] = fam.quantize(self.node_v[e.b], e.value);
                     }
-                    self.ff_clk_high[i] = if clk_high { 1.0 } else { 0.0 };
+                    self.ff_clk_prev[i] = clk;
                 }
                 _ => {}
             }
@@ -3455,14 +3686,38 @@ impl Sim {
         PROTOCOL_VERSION
     }
 
-    /// Stable hash of the full snapshot. Part of the replay contract. FNV-1a
-    /// over the tick (little-endian) followed by each node voltage
-    /// (little-endian `f64` bits), in fixed node order.
+    /// The analog/digital classification of node `n` as a small code: `0` = analog,
+    /// `1` = pure-digital, `2` = boundary (an out-of-range node reads `0` = analog).
+    /// Topology metadata for the separated digital domain — exposed for the renderer
+    /// to draw digital nets and boundary buffers distinctly. Deterministic, fixed at
+    /// install. See `docs/ui/logic-analog-digital-nets.md` §7.
+    pub fn net_class(&self, n: usize) -> u8 {
+        self.net_classes.get(n).copied().unwrap_or(NetClass::Analog) as u8
+    }
+
+    /// Stable hash of the full snapshot. Part of the replay contract. FNV-1a over, in
+    /// fixed order: the tick (little-endian); then each node — a pure-`Digital` net
+    /// folds its discrete [`Level`] (one `u8`, no float compares cross the boundary),
+    /// every other node (analog/boundary) folds its `node_v` (`f64` bits) as before;
+    /// then each flip-flop's `ff_q` and `ff_clk_prev` (one `u8` each), so sequential
+    /// state replays across a clock edge. Forward-stable and append-only: a pure-analog
+    /// circuit hashes exactly as it always did (the RC golden is unchanged). See
+    /// `docs/ui/logic-analog-digital-nets.md` §7.8.
     pub fn snapshot_hash(&self) -> u64 {
-        let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8);
+        let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8 + self.elements.len() * 2);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
-        for v in &self.node_v {
-            bytes.extend_from_slice(&v.to_le_bytes());
+        for (n, v) in self.node_v.iter().enumerate() {
+            if matches!(self.net_classes.get(n), Some(NetClass::Digital)) {
+                bytes.push(self.net_level[n] as u8);
+            } else {
+                bytes.extend_from_slice(&v.to_le_bytes());
+            }
+        }
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_DFF {
+                bytes.push(self.ff_q[i] as u8);
+                bytes.push(self.ff_clk_prev[i] as u8);
+            }
         }
         fnv1a(&bytes)
     }
@@ -3605,6 +3860,64 @@ mod tests {
             sim.step();
         }
         println!("golden = 0x{:016x}", sim.snapshot_hash());
+    }
+
+    /// Net classification separates the analog and digital domains deterministically
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.7): ground and analog-only nodes
+    /// read `0`, nodes touched only by digital pins read `1` (pure-digital), and a
+    /// node touched by both reads `2` (boundary). It is pure topology metadata and
+    /// does not perturb the solve (the goldens above stay bit-identical).
+    #[test]
+    fn net_classification_separates_domains() {
+        // Analog-only RC: every node analog.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 0.0],
+        ));
+        assert_eq!(
+            [sim.net_class(0), sim.net_class(1), sim.net_class(2)],
+            [0, 0, 0]
+        );
+
+        // Gate-only inverter ring (G1: out=1 in=2, G2: out=2 in=1): both internal
+        // nodes are pure-digital; ground stays analog.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            3,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 2],
+            &[2, 1],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 5.0],
+            &[6.0, 6.0], // NOT, NOT
+        ));
+        assert_eq!(
+            [sim.net_class(0), sim.net_class(1), sim.net_class(2)],
+            [0, 1, 1]
+        );
+
+        // Boundary: a buffer's output node is also loaded by a resistor to ground, so
+        // it is touched by a digital pin (gate out) and an analog element (resistor).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            2,
+            &[ELEM_GATE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 1000.0],
+            &[7.0, 0.0], // BUF, (resistor aux unused)
+        ));
+        assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
     }
 
     /// A resistive voltage divider's node voltage is exact (no dynamics): a 12 V
@@ -4936,17 +5249,23 @@ mod tests {
     #[test]
     fn legacy_family_matches_original_gate() {
         let fam = LogicFamily::LEGACY;
-        // Receiver: the half-rail threshold, at any rail.
-        assert!(fam.reads_high(3.0, 5.0)); // 3 V > 2.5 V
-        assert!(!fam.reads_high(2.0, 5.0)); // 2 V < 2.5 V
-        assert!(!fam.reads_high(2.5, 5.0)); // exactly half-rail is not "above"
-                                            // Driver: rail high, ground low, both through GATE_GOUT.
-        assert_eq!(fam.drive(true, 5.0), (5.0, GATE_GOUT));
-        assert_eq!(fam.drive(false, 5.0), (0.0, GATE_GOUT));
-        // End to end: gate_target_level still maps to exactly {rail, 0}.
-        assert_eq!(gate_target_level(0.0, 5.0, 5.0, 5.0), 5.0); // AND(1,1) = 1
-        assert_eq!(gate_target_level(0.0, 5.0, 5.0, 0.0), 0.0); // AND(1,0) = 0
-        assert_eq!(gate_target_level(1.0, 5.0, 0.0, 5.0), 5.0); // OR(0,1)  = 1
+        // Receiver (quantise): the half-rail threshold, at any rail, with NO forbidden
+        // band (v_il == v_ih) so it is exactly the old two-state decision.
+        assert_eq!(fam.quantize(3.0, 5.0), Level::High); // 3 V > 2.5 V
+        assert_eq!(fam.quantize(2.0, 5.0), Level::Low); // 2 V < 2.5 V
+        assert_eq!(fam.quantize(2.5, 5.0), Level::Low); // exactly half-rail is not "above"
+                                                        // Driver: rail high, ground low, both through GATE_GOUT; Z releases.
+        assert_eq!(fam.drive_level(Level::High, 5.0), Some((5.0, GATE_GOUT)));
+        assert_eq!(fam.drive_level(Level::Low, 5.0), Some((0.0, GATE_GOUT)));
+        assert_eq!(fam.drive_level(Level::Z, 5.0), None);
+        // End to end: the four-state gate logic maps {Low, High} inputs to {Low, High}
+        // exactly like the original boolean truth table.
+        assert_eq!(gate_logic_level(0.0, Level::High, Level::High), Level::High); // AND(1,1)
+        assert_eq!(gate_logic_level(0.0, Level::High, Level::Low), Level::Low); // AND(1,0)
+        assert_eq!(gate_logic_level(1.0, Level::Low, Level::High), Level::High); // OR(0,1)
+                                                                                 // X propagates per the IEEE four-state tables.
+        assert_eq!(gate_logic_level(0.0, Level::Low, Level::X), Level::Low); // AND(0,X)=0
+        assert_eq!(gate_logic_level(0.0, Level::High, Level::X), Level::X); // AND(1,X)=X
     }
 
     #[test]
@@ -5108,12 +5427,155 @@ mod tests {
         );
     }
 
-    // --- Transformer (coupled inductors, four-terminal) -----------------------
+    /// A ring of inverters (a feedback loop of gates) **oscillates** rather than
+    /// deadlocking — the whole point of the one-tick-delay model (no fixpoint, no
+    /// hang). A 3-inverter ring (G1 out=1 in=3, G2 out=2 in=1, G3 out=3 in=2) is a
+    /// purely digital circuit; its nodes must swing between logic high and low over
+    /// the run, and stay finite.
+    #[test]
+    fn gate_ring_oscillator_oscillates() {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE, ELEM_GATE],
+            &[1, 2, 3],
+            &[3, 1, 2],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 5.0, 5.0],
+            &[6.0, 6.0, 6.0], // NOT, NOT, NOT
+        ));
+        let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+        for _ in 0..40 {
+            sim.step();
+            let v = sim.state()[1];
+            assert!(v.is_finite(), "ring oscillator stays finite");
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        assert!(
+            hi > 4.0 && lo < 1.0,
+            "the ring oscillates between logic levels (lo {lo}, hi {hi}), not stuck"
+        );
+    }
+
+    /// Two gate outputs on one net **resolve** instead of fighting in the matrix
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.6): agreeing drivers give that level,
+    /// disagreeing strong drivers conflict to `X`, which the driver presents as a
+    /// mid-rail voltage. Both inputs (nodes 2, 3) float low.
+    #[test]
+    fn gate_multi_driver_resolves() {
+        // Agreement: two NOT gates both drive node 1 from a low (floating) input -> both
+        // High -> net resolves High (~5 V).
+        let mut agree = Sim::new(1);
+        assert!(agree.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 1],
+            &[2, 3],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 5.0],
+            &[6.0, 6.0], // NOT, NOT
+        ));
+        for _ in 0..5 {
+            agree.step();
+        }
+        assert!(
+            agree.state()[1] > 4.0,
+            "two agreeing High drivers resolve High: {}",
+            agree.state()[1]
+        );
+
+        // Conflict: a NOT (-> High) and a BUF (-> Low) both drive node 1 -> X -> mid-rail.
+        let mut conflict = Sim::new(1);
+        assert!(conflict.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 1],
+            &[2, 3],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 5.0],
+            &[6.0, 7.0], // NOT (-> High), BUF (-> Low)
+        ));
+        for _ in 0..5 {
+            conflict.step();
+        }
+        let v = conflict.state()[1];
+        assert!(
+            (1.5..=3.5).contains(&v),
+            "two disagreeing drivers conflict to X -> mid-rail (~2.5 V): {v}"
+        );
+    }
+
+    /// Real logic families (selected via the upper bits of `aux`, `func + 16*family`)
+    /// give honest levels and the mixed-rail "your high is too low" lesson
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.5). Family 1 = CMOS (V_OH = 0.95*rail,
+    /// V_IL = 0.3*rail). Family 0 = LEGACY drives to the full rail, so a non-rail output
+    /// proves the family is active.
+    #[test]
+    fn gate_family_levels_and_mixed_rail() {
+        // CMOS NOT at a 5 V rail: input floats low -> output High at V_OH = 0.95*5 =
+        // 4.75 V (NOT the full 5 V a LEGACY gate would drive — proof the family is live).
+        let mut cmos = Sim::new(1);
+        assert!(cmos.set_netlist(
+            3,
+            &[ELEM_GATE],
+            &[1],
+            &[2],
+            &[0],
+            &[0],
+            &[5.0],
+            &[6.0 + 16.0], // NOT (func 6) + family 1 (CMOS)
+        ));
+        for _ in 0..5 {
+            cmos.step();
+        }
+        let voh = cmos.state()[1];
+        assert!(
+            (4.5..4.95).contains(&voh),
+            "CMOS drives V_OH ~ 0.95*rail (4.75 V), not the full rail: {voh}"
+        );
+
+        // Mixed-rail: a CMOS NOT on a 1.8 V rail (output High = 0.95*1.8 = 1.71 V) feeds
+        // a CMOS BUF on a 12 V rail (V_IL = 0.3*12 = 3.6 V). 1.71 V < 3.6 V, so the high
+        // is *lost* — the 12 V gate reads it LOW and drives its output low. The classic
+        // "you need a level shifter" failure.
+        let mut mixed = Sim::new(1);
+        assert!(mixed.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 3],
+            &[2, 1],
+            &[0, 0],
+            &[0, 0],
+            &[1.8, 12.0],
+            &[6.0 + 16.0, 7.0 + 16.0], // NOT@1.8V CMOS, BUF@12V CMOS
+        ));
+        for _ in 0..6 {
+            mixed.step();
+        }
+        let lo_high = mixed.state()[1];
+        let lost = mixed.state()[3];
+        assert!(
+            (1.5..1.9).contains(&lo_high),
+            "the 1.8 V CMOS high is ~1.71 V: {lo_high}"
+        );
+        assert!(
+            lost < 2.0,
+            "the 1.8 V high is below the 12 V part's V_IL, so it reads LOW (high lost): {lost}"
+        );
+    }
+
+    // --- Transformer (ideal-T model, four-terminal) ---------------------------
     //
-    // The transformer (type 18) is two magnetically coupled inductors: primary
-    // a/b, secondary c/d, `value` = turns ratio n. It carries two coupled branch
-    // currents, blocks DC (winding resistance lets the primary current saturate),
-    // and scales AC by ~k*n. Linear (no Newton), two reactive states.
+    // The transformer (type 18) is an ideal-T model: a magnetising inductance
+    // across the primary a/b and a secondary c/d whose EMF is forced to n·V_Lm,
+    // `value` = turns ratio n. It carries a magnetising branch current and an
+    // algebraic secondary current, blocks DC (winding resistance lets the
+    // magnetising current saturate, collapsing V_Lm), and scales AC by n. Linear
+    // (no Newton), one reactive state (the magnetiser).
 
     /// Drive the transformer primary with a 1 kHz, 5 V AC source and a near-open
     /// (10 k) secondary referenced to ground, run past the start-up transient, and
@@ -5146,20 +5608,20 @@ mod tests {
         ((p_hi - p_lo) / 2.0, (s_hi - s_lo) / 2.0)
     }
 
-    /// The secondary AC voltage is the primary's, scaled by ~k*n: a step-up (n = 2)
-    /// roughly doubles it and a step-down (n = 0.5) roughly halves it.
+    /// The secondary AC voltage is the primary's, scaled by the turns ratio n: a
+    /// step-up (n = 2) roughly doubles it and a step-down (n = 0.5) roughly halves it.
     #[test]
     fn transformer_scales_ac_by_turns_ratio() {
         let (vp, vs) = transformer_ac_amps(2.0);
         let ratio = vs / vp;
         assert!(
-            (ratio - TRANSFORMER_K * 2.0).abs() < 0.25,
+            (ratio - 2.0).abs() < 0.25,
             "step-up x2: secondary/primary = {ratio} (expected ~2)"
         );
         let (vp2, vs2) = transformer_ac_amps(0.5);
         let ratio2 = vs2 / vp2;
         assert!(
-            (ratio2 - TRANSFORMER_K * 0.5).abs() < 0.15,
+            (ratio2 - 0.5).abs() < 0.15,
             "step-down x0.5: secondary/primary = {ratio2} (expected ~0.5)"
         );
     }
@@ -5256,6 +5718,159 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "transformer circuit must reproduce exactly");
+    }
+
+    /// Build a transformer (turns ratio `n`) feeding a 4-diode full bridge into a
+    /// 100 uF / 1 k smoothed load from a 60 Hz AC source of peak `amp`, run ~9 line
+    /// cycles (60 Hz -> 8333 ticks/cycle at dt = 2 us) so the output settles, and
+    /// return the steady measurements over the last ~1.5 cycles:
+    /// `(out_lo, out_hi, sp_span, sn_span, d_peak[4], i_primary_peak)`. Nodes:
+    /// 0 = gnd = OUT-, 1 = AC+/primary+, 2 = secondary P, 3 = secondary N, 4 = OUT+.
+    /// Bridge: D1 sp->out+, D2 sn->out+, D3 gnd->sp, D4 gnd->sn (elements 2..=5).
+    fn bridge_rectifier_run(n: f64, amp: f64) -> (f64, f64, f64, f64, [f64; 4], f64) {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            5,
+            &[
+                ELEM_ACSOURCE,
+                ELEM_TRANSFORMER,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_DIODE,
+                ELEM_CAPACITOR,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 0, 0, 4, 4], // a
+            &[0, 0, 4, 4, 2, 3, 0, 0], // b
+            &[0, 2, 0, 0, 0, 0, 0, 0], // c (transformer secondary +)
+            &[0, 3, 0, 0, 0, 0, 0, 0], // d (transformer secondary -)
+            &[60.0, n, 0.0, 0.0, 0.0, 0.0, 1.0e-4, 1000.0],
+            &[amp, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        ));
+        let (mut out_hi, mut out_lo) = (f64::MIN, f64::MAX);
+        let (mut sp_hi, mut sp_lo) = (f64::MIN, f64::MAX);
+        let (mut sn_hi, mut sn_lo) = (f64::MIN, f64::MAX);
+        let mut d_peak = [0.0f64; 4]; // peak forward current per diode (elems 2..=5)
+        let mut i_primary_peak = 0.0f64;
+        for tk in 0..75_000 {
+            sim.step();
+            if tk >= 62_000 {
+                let v = sim.state();
+                out_hi = out_hi.max(v[4]);
+                out_lo = out_lo.min(v[4]);
+                sp_hi = sp_hi.max(v[2]);
+                sp_lo = sp_lo.min(v[2]);
+                sn_hi = sn_hi.max(v[3]);
+                sn_lo = sn_lo.min(v[3]);
+                let ic = sim.element_currents();
+                for k in 0..4 {
+                    d_peak[k] = d_peak[k].max(ic[2 + k]);
+                }
+                i_primary_peak = i_primary_peak.max(ic[1].abs());
+            }
+        }
+        (
+            out_lo,
+            out_hi,
+            sp_hi - sp_lo,
+            sn_hi - sn_lo,
+            d_peak,
+            i_primary_peak,
+        )
+    }
+
+    /// A transformer feeding a diode **full bridge** must rectify **full-wave**: all
+    /// four diodes conduct (each half-cycle uses a diagonal pair), both secondary
+    /// terminals swing symmetrically about the output common-mode, and the smoothed
+    /// output settles near `Vsec_peak - 2*Vf` with low ripple. This is the regression
+    /// that drove the move from a coupled-inductor model (a soft differential that
+    /// sagged to half-wave under the bridge's asymmetric load) to the ideal-T model
+    /// (a hard forced ratio). See `docs/sim/transformer-bridge-convergence.md`.
+    #[test]
+    fn transformer_bridge_rectifies_full_wave() {
+        let (out_lo, out_hi, sp_span, sn_span, d_peak, i_primary_peak) =
+            bridge_rectifier_run(1.0, 12.0);
+        let ripple = out_hi - out_lo;
+        // 1) Every diode conducts a real forward current (full bridge, not half-wave).
+        for (k, &p) in d_peak.iter().enumerate() {
+            assert!(
+                p > 1.0e-3,
+                "diode D{} barely conducts ({p} A): not full-wave",
+                k + 1
+            );
+        }
+        // 2) Both secondary terminals swing through a comparable span (neither is
+        //    pinned near a constant level the way the broken soft-differential did).
+        assert!(
+            sp_span > 5.0 && sn_span > 5.0,
+            "a secondary terminal is pinned (sp span {sp_span}, sn span {sn_span})"
+        );
+        assert!(
+            (sp_span - sn_span).abs() < 0.25 * sp_span.max(sn_span),
+            "secondary terminals swing asymmetrically (sp {sp_span}, sn {sn_span})"
+        );
+        // 3) Output is a sensible smoothed DC near Vsec_peak - 2*Vf with low ripple,
+        //    and the primary current stays bounded (no DC runaway / inrush blow-up).
+        assert!(
+            out_lo > 6.0 && out_hi < 12.0,
+            "output not a sane rectified DC level (lo {out_lo}, hi {out_hi})"
+        );
+        assert!(
+            ripple < 2.0,
+            "output ripple too large for full-wave smoothing: {ripple} V"
+        );
+        assert!(
+            i_primary_peak < 20.0,
+            "primary current ran away (peak {i_primary_peak} A)"
+        );
+    }
+
+    /// Full-wave rectification holds across the **turns ratio**: a step-up (n = 2) and
+    /// a step-down (n = 0.5) bridge each still conduct all four diodes, scale the DC
+    /// output by `n` (`Vout ~ n*Vsec_pk - 2*Vf`), and stay bounded. These exercise the
+    /// `n*g_mag` secondary coupling and the `n*Is` primary reflection — the exact terms
+    /// the ideal-T rewrite changed — at ratios away from unity.
+    #[test]
+    fn transformer_bridge_full_wave_scales_with_ratio() {
+        let amp = 12.0;
+        for &n in &[2.0_f64, 0.5_f64] {
+            let (out_lo, out_hi, sp_span, sn_span, d_peak, i_primary_peak) =
+                bridge_rectifier_run(n, amp);
+            // All four diodes conduct (full-wave at any ratio).
+            for (k, &p) in d_peak.iter().enumerate() {
+                assert!(
+                    p > 1.0e-4,
+                    "n={n}: diode D{} barely conducts ({p} A)",
+                    k + 1
+                );
+            }
+            // Neither secondary terminal is pinned; the two swing comparably.
+            assert!(
+                sp_span > 1.0
+                    && sn_span > 1.0
+                    && (sp_span - sn_span).abs() < 0.25 * sp_span.max(sn_span),
+                "n={n}: secondary terminals pinned/asymmetric (sp {sp_span}, sn {sn_span})"
+            );
+            // DC output tracks the turns ratio: just under the n-scaled secondary peak,
+            // and within ~2*Vf of it (two diode drops).
+            let ideal_pk = n * amp;
+            assert!(
+                out_hi < ideal_pk && out_hi > ideal_pk - 2.0,
+                "n={n}: peak DC {out_hi} not near n*Vsec_pk - 2*Vf (~{:.1})",
+                ideal_pk - 1.3
+            );
+            // Ripple stays a small fraction of the output; primary current bounded.
+            assert!(
+                (out_hi - out_lo) < 0.2 * out_hi,
+                "n={n}: ripple too large ({} V)",
+                out_hi - out_lo
+            );
+            assert!(
+                i_primary_peak < 20.0,
+                "n={n}: primary current ran away (peak {i_primary_peak} A)"
+            );
+        }
     }
 
     // --- D flip-flop (edge-triggered one-bit memory) --------------------------
@@ -5379,6 +5994,40 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "flip-flop circuit must reproduce exactly");
+    }
+
+    /// The flip-flop's sequential state (`ff_q` + `ff_clk_prev`) now enters the snapshot
+    /// hash, so two fresh runs of a clocked flip-flop must agree on the hash at **every**
+    /// tick — including the exact ticks where a clock edge latches. This is the
+    /// per-tick lockstep replay guarantee (the keyframe/rewind contract): a divergence
+    /// at any single edge tick would show here even though the XOR-fold above might mask
+    /// it. The switch clocks the flip-flop across many edges over the run.
+    #[test]
+    fn dff_clocked_replay_is_lockstep() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                6,
+                &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_RESISTOR, ELEM_DFF],
+                &[5, 5, 2, 3],
+                &[0, 2, 0, 4],
+                &[0, 0, 0, 2],
+                &[0, 0, 0, 4],
+                &[5.0, 0.5, 1000.0, 5.0],
+                &[0.0; 4],
+            ));
+            sim
+        };
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "clocked flip-flop diverged at tick {tk} (sequential state must be hashed)"
+            );
+        }
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------

@@ -189,6 +189,9 @@ export interface SelectedPart {
   /** A potentiometer's wiper position in [0,1] (its second scalar, beside `value` =
    * total resistance). Undefined for kinds with no wiper. */
   wiper?: number;
+  /** A digital part's logic-family index (0 = Ideal, 1 = CMOS, 2 = TTL). Undefined
+   * for non-digital kinds. */
+  family?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -205,6 +208,7 @@ interface ClipboardSnippet {
     rot: number;
     amp?: number;
     wiper?: number;
+    family?: number;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1527,6 +1531,7 @@ export class Board {
           rot: c.rot,
           amp: c.amp,
           wiper: c.wiper,
+          family: c.family,
         };
     }
     this.cb.onSelect?.({
@@ -1610,6 +1615,21 @@ export class Board {
     c.amp = amp;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed amplitude
+  }
+
+  /**
+   * Set a digital part's logic-family index (0 = Ideal, 1 = CMOS, 2 = TTL) from the
+   * inspector. The family is packed into `aux` by {@link buildNetlist}, so this
+   * rebuilds the netlist (the gate's thresholds and output levels change). No-op if
+   * unchanged.
+   */
+  setComponentFamily(id: number, family: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.family ?? 0) === family) return;
+    this.pushUndo(this.graph.serialize());
+    c.family = family;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed family
   }
 
   /**
@@ -2414,6 +2434,7 @@ export class Board {
         rot: c.rot,
         amp: c.amp,
         wiper: c.wiper,
+        family: c.family,
       });
     }
     if (comps.length === 0) return;
@@ -2493,6 +2514,7 @@ export class Board {
       nc.rot = (cc.rot + p.rot) % 4;
       if (cc.amp !== undefined) nc.amp = cc.amp;
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
+      if (cc.family !== undefined) nc.family = cc.family;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {

@@ -1147,8 +1147,14 @@ function drawNOR(g: Graphics, o: GlyphOpts): void {
 function drawXOR(g: Graphics, o: GlyphOpts): void {
   gateSchematic(g, o, "or", false, true);
 }
+function drawXNOR(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "or", true, true);
+}
 function drawNOT(g: Graphics, o: GlyphOpts): void {
   gateSchematic(g, o, "not", true, false);
+}
+function drawBUF(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "not", false, false);
 }
 
 // --- Transformer (two windings coupled through a core) ------------------------
@@ -2125,8 +2131,14 @@ function drawFNOR(g: Graphics, o: GlyphOpts): void {
 function drawFXOR(g: Graphics, o: GlyphOpts): void {
   gateFactory(g, o, "or", false, true);
 }
+function drawFXNOR(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "or", true, true);
+}
 function drawFNOT(g: Graphics, o: GlyphOpts): void {
   gateFactory(g, o, "not", true, false);
+}
+function drawFBUF(g: Graphics, o: GlyphOpts): void {
+  gateFactory(g, o, "not", false, false);
 }
 
 // The transformer as a Factorio voltage-converter station: the primary belt pair
@@ -2308,7 +2320,9 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NAND: drawNAND,
   NOR: drawNOR,
   XOR: drawXOR,
+  XNOR: drawXNOR,
   NOT: drawNOT,
+  BUF: drawBUF,
   TR: drawTR,
   POT: drawPOT,
   FF: drawFF,
@@ -2340,7 +2354,9 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NAND: drawFNAND,
   NOR: drawFNOR,
   XOR: drawFXOR,
+  XNOR: drawFXNOR,
   NOT: drawFNOT,
+  BUF: drawFBUF,
   TR: drawFTR,
   POT: drawFPOT,
   FF: drawFFF,

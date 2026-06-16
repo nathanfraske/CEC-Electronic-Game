@@ -672,3 +672,164 @@ step regenerates the gate/DFF goldens)
    inspector, noise-margin/forbidden-band readouts (presentation), and surface the
    already-implemented **XNOR (5)/BUF (7)** as parts while here (`GATE_AUX` gap).
 4. **Open-drain / Z / wired-AND** parts + the **level-shifter** (golden-additive).
+
+---
+
+## 7. RESEARCH-VALIDATED DESIGN & BUILD PLAN (2026-06-16)
+
+Before building, six parallel research agents surveyed the academic literature and
+shipping implementations (HDL-simulator scheduling semantics, discrete-event-sim data
+structures, mixed-signal co-simulation, and real tools: Verilator, Icarus, digitaljs,
+Logisim/-Evolution, Digital, CircuitVerse, Falstad, XSPICE/ngspice, CedarLogic,
+nand2tetris). The decided Option-A2 design (§6) is **validated**; this section records
+the synthesis, the corrections it surfaced, and the concrete build plan we are executing.
+
+### 7.1 The one structural fact that makes this tractable
+
+**Every hard part of production mixed-signal simulation exists only because real analog
+solvers use a _variable_ timestep that can _reject and re-take_ steps.** The Verilog-AMS
+LRM §8.4.7 names the two assumptions that force all the machinery: the analog grid is not
+on a fixed granularity, and "the analog engine can either accept or reject [a] solution."
+Those drive XSPICE's `cm_analog_set_temp_breakpoint`, the §8.4.5 "recalculating from T3"
+back-up, the iterate-until-digital-stable loop, and ngspice's event-queue rollback
+(`EVTbackup_output_queue`).
+
+**We have a fixed `DT = 2 µs` step that never rejects.** So both domains share one integer
+grid and the ping-pong collapses to a strict per-tick **lock-step** with one tick of delay
+across the boundary in both directions. We need none of: breakpoints, A2D/D2A time
+interpolation, accept/reject, or iterate-to-fixpoint. This is the single biggest
+simplification the fixed-step core buys, and it is why the design is only as hard as a
+deterministic digital engine, not a full mixed-signal kernel.
+
+### 7.2 Validation from shipping tools (and the anti-patterns)
+
+- **digitaljs** already ships our exact target model in a browser: event-driven, an
+  **integer-tick** queue (`FastPriorityQueue`, `tick + propagation`), **unit-delay**
+  (`propagation: 1`), 3-valued, **deterministic (no RNG)**. Existence proof.
+- **Falstad CircuitJS is our _current_ architecture** — gates stamped as voltage sources
+  into the analog matrix — and it is the cautionary tale: multiple drivers → "Singular
+  matrix!", and it uses an **RNG (`getrand`) inside gate logic** to break oscillation, so
+  it is *not* bit-reproducible. This is the strongest argument for moving digital nets out
+  of MNA.
+- **Logisim/Digital** confirm zero-delay settling is order-dependent: Logisim-Evolution
+  maintainers close symmetric-latch "oscillation" reports as *inherent to zero-delay DES*
+  (#2454); Digital must **shuffle node order at startup** (a deliberate nondeterminism
+  hole) to settle metastable latches. Unit-delay avoids both.
+- **Cycle vs event-driven:** Verilator (cycle-based, deterministic-per-build by pinning
+  one compile-time order) vs Icarus (event-driven 4-state, where a **zero-delay loop hangs**
+  because time never advances). Our element-index order is the analog of Verilator's pinned
+  order; our unit-delay is what makes loops advance time instead of hanging.
+
+### 7.3 The determinism proof (why two-pass evaluate→commit is order-independent)
+
+Model one tick as a synchronous-automaton update: `level_next[net] = f_net(level_committed[*])`
+for every net, computed entirely from the **immutable committed** (previous-tick) levels,
+then a single commit `level_committed ← level_next`. Because every read is from the frozen
+snapshot and every write goes to a separate buffer, no gate can observe another's pass-1
+output — so the map `committed → next` is a **pure function**, whose result is independent
+of evaluation order. Permuting element order cannot change any value, hence cannot change
+the FNV-1a hash of the committed levels. This is identical to VHDL's two-phase
+signal-update guarantee and to the Verilog NBA region that makes flip-flops race-free.
+
+### 7.4 The per-tick lock-step (the engine)
+
+All phases read the **committed** state of tick N−1 and write a *next* buffer committed
+atomically at end-of-tick; everything iterates in **element-index order**:
+
+1. **Receivers quantize** committed boundary `node_v[N−1]` → `Level` (family `V_IL`/`V_IH`;
+   forbidden band → `X`). The only place a float becomes a level.
+2. **Edge-detect** each clock (committed level t−1 vs t−2), then **evaluate flip-flops**
+   (D sampled from committed levels; Q→next), then **evaluate combinational gates**
+   (from committed levels; out→next). FF updates are invisible to comb eval this tick →
+   shift registers shift exactly one stage (NBA semantics).
+3. **Drivers stamp** a *constant* Thévenin into MNA from committed levels (open-drain
+   releases the high side to `GMIN`); analog MNA+Newton solves **once** (gate-only nets
+   stay on the linear fast path — no Newton, no branch unknown).
+4. **Commit + hash:** fold `node_v` (analog/boundary nodes) **plus** pure-digital net
+   `Level`s **plus** flip-flop state into FNV-1a, all in fixed index order.
+
+### 7.5 Data structures & models (decided)
+
+- **`Level`:** `#[repr(u8)] enum { Low=0, High=1, Z=2, X=3 }`. No float compares inside the
+  digital domain.
+- **Scheduler:** start with **evaluate-all** double-buffered cycle-update (cheap at our gate
+  counts, trivially deterministic). The event-driven dirty-set is a *later* optimization
+  behind a bit-equality assertion. **Never** a float-keyed `BinaryHeap` (the #1 DES
+  determinism trap — simultaneous-event order is unspecified; OMNeT++). If a multi-tick
+  delay is ever needed, a small integer-tick ring buffer (`W` buckets, `tick mod W`,
+  drained in element-index order) — never a calendar/ladder queue (their resize-and-copy is
+  an extra determinism surface).
+- **Net classification** (in-core, fixed element order = a discipline-resolution pass,
+  Verilog-AMS Annex F): node touched by any analog element → **analog**; touched only by
+  digital pins → **pure-digital** (leaves MNA); touched by both → **boundary** (stays in
+  MNA; receiver reads, driver writes). Auto-classify **and render** the boundary buffers
+  (better pedagogy than the LRM's invisible-by-default connect modules).
+- **Receiver (A→D)** ≡ XSPICE `adc_bridge`: `v ≥ V_IH → High`, `v ≤ V_IL → Low`, between →
+  `X`. (Schmitt mode: two trips + one persistent bit, no X band — a later receiver mode.)
+- **Driver (D→A)** ≡ XSPICE `dac_bridge` but as a real **Thévenin** (`V_OL/V_OH` behind
+  `g_ol/g_oh`) for honest IR-drop sag; `X → mid-rail ((V_OL+V_OH)/2)` so an unknown is
+  *visible*; open-drain releases high to `GMIN`. Under `LEGACY` this is byte-identical to
+  today's `GATE_GOUT` Thévenin.
+- **Multi-driver resolution:**
+  - *pure-digital net* → an associative/commutative **4-state table** folded in element
+    order: `Z` yields to any driver; two disagreeing strong drivers → `X` (the IEEE-1164 /
+    Logisim `combine()` / XSPICE-strength rule).
+  - *boundary net* → the **MNA solve is the resolver** (conductance-weighted average =
+    correct contention physics). **Open-drain + pull-up = wired-AND** done by Ohm's law
+    (canonical I²C). Push-pull contention: keep the physics but **compute cross-current and
+    flag over-current** (the "magic smoke" hook) — never silently average to a meaningless
+    half-rail.
+- **Hash:** FNV-1a folds, in fixed order, `node_v` for analog/boundary nodes (as today)
+  **plus** one `u8` `Level` per pure-digital net **plus** each FF's `Q` and `last_clk`
+  (`Level` each). Forward-stable (append-only); pure-analog circuits hash exactly as today,
+  so the main analog golden `0xeaac…` is untouched.
+
+### 7.6 Corrections the research surfaced (fix while building)
+
+1. **"Unit-delay everywhere" is necessary but not sufficient** — there must be an explicit
+   intra-tick **phase order** (receivers → edge-detect → FFs → comb → drivers), or a
+   gated/derived clock is ambiguous. (Most important correction.)
+2. **Flip-flop state must be 4-state `Level` and must include the clock's previous level**;
+   **both** enter the hash *and* the rewind keyframe, or a rewind landing on a clock edge
+   desyncs. Add a dedicated **rewind-across-edge** replay test.
+3. **`LogicFamily` needs `v_il_frac`** (it has only `v_ih_frac`) so a receiver can originate
+   `X` in the forbidden band.
+4. **Sequence the two breaks separately:** the family-index change (golden-stable) and the
+   hash-format change (deliberate) go in **different commits** so any golden diff is
+   attributable.
+5. **X must propagate through sequential elements** — store all sequential state as `Level`,
+   not `bool`, or X is lost at the first flip-flop.
+6. **Open-drain release must stamp `GMIN`** (not nothing) so an all-released boundary node
+   isn't singular; surface "open-drain net with no pull-up" as an incomplete-circuit warning.
+7. **No stochastic metastability** — a setup/hold or forbidden-band input resolves to `X`
+   deterministically. Tempting for realism, fatal for the golden contract.
+
+### 7.7 Test bar (deterministic Rust first)
+
+Per-family threshold/level tables (input at `V_IH+ε`→1, `V_IL−ε`→0, between→`X`; loaded
+`V_OL` rises / `V_OH` sags); mixed-rail (1.8 V out → 5 V in reads **low**; with a shifter,
+**high**); open-drain wired-AND (high iff all release, low iff any pulls; finite/non-singular);
+4-state resolution table; ring oscillator oscillates (doesn't hang or deadlock); gate-only
+netlist takes the **linear fast path** (no Newton); per-family `*_run_is_reproducible`;
+and the **rewind-across-edge → identical hash** replay test (the keyframe contract).
+
+### 7.8 Build plan being executed (owner chose Stages 1–2 now; 3–4 follow)
+
+- **Stage 1 — boundary abstraction + net classification, golden-STABLE.** Add `v_il_frac`
+  + the real-family table; add the deterministic analog/digital/boundary classification pass
+  in `install` (computed, not yet acted on); route the gate's receiver/driver formally
+  through `LogicFamily`. Still in MNA, still `LEGACY` → **goldens unchanged**. Tests:
+  classification correctness + legacy-equivalence.
+- **Stage 2 — scheduler + level-bearing hash (the one deliberate break).** `Level` enum;
+  lift pure-digital nets out of MNA; the per-tick phase engine; 4-state DFF (`Q` +
+  `last_clk`); fold levels + FF state into FNV-1a; **regenerate gate/DFF goldens** (main
+  analog golden untouched). Full §7.7 test bar.
+- **Stage 3 (follow-up)** — web threading: family chips, noise-margin / forbidden-band
+  readouts, surface XNOR/BUF.
+- **Stage 4 (follow-up)** — open-drain / wired-AND parts + level-shifter (golden-additive).
+
+Primary sources: Verilog-AMS LRM 2.4.0 §7.8/§8.4.5/§8.4.7/Annex F; ngspice XSPICE
+adc_bridge/dac_bridge + 12-state strength model; IEEE 1164 std_logic resolution; IEEE
+1364 strength table; Varghese & Lauck timing wheels (SOSP'87); OMNeT++ simultaneous-event
+determinism; digitaljs `circuit.js`; Verilator `internals.rst`; Cummings SNUG-2000
+(nonblocking assignments); Gaffer/AoE/Factorio lockstep-determinism canon.

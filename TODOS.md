@@ -6,33 +6,58 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16
+
+- **Digital scheduler (owner ask) — research done + Stage 1 shipped; Stage 2 next.**
+  Six research agents synthesized into `docs/ui/logic-analog-digital-nets.md` §7 (the
+  authoritative design + build plan). Owner chose scope **Stages 1–2**.
+  - ~~**Stage 1 — net classification (golden-stable).** `classify_nets`/`is_digital`/
+    `NetClass`/`Sim::net_class` label each node Analog/Digital/Boundary; computed but not
+    yet acted on, so every golden is bit-identical. Test added.~~
+  - ~~**Stage 2 — event engine + level-bearing hash (the deliberate break).** Shipped:
+    `Level` {Low,High,Z,X} + `combine` table + 4-state `gate_logic_level`;
+    `LogicFamily.quantize`/`drive_level` + `v_il_frac`; net-centric `eval_digital` +
+    `stamp_digital` (one resolved drive per net, replacing the 4 per-gate stamps + 4
+    `stamp_dff`); 4-state DFF (`ff_q`+`ff_clk_prev`) hashed; `snapshot_hash` folds
+    pure-digital Levels + DFF state. Multi-driver now resolves instead of fighting.
+    Needed **no golden regen** (digital tests are behaviour + self-consistency; RC/0xeaac
+    has no digital parts and is untouched). New tests: ring oscillator, multi-driver
+    resolve, per-tick lockstep DFF replay. All gates green.~~
+  - ~~**Stage 3 — logic families + XNOR/BUF.** Shipped: XNOR/BUF surfaced on the board
+    (PART_KINDS, type-17 map, codes 5/7, glyphs, palette, partInfo, pinout, values);
+    sim-core `FAMILIES` (Ideal/CMOS/TTL) packed in aux upper bits (`func + 16*family`),
+    wired through eval_digital/stamp_digital/commit/DFF via per-net `digital_family`,
+    golden-stable (Ideal default); web `families.ts` mirror + `Component.family` +
+    buildNetlist aux pack + `setComponentFamily` + App.svelte family chip picker & noise-
+    margin readout. Test `gate_family_levels_and_mixed_rail` (the level-shifter lesson).~~
+  - [ ] **Stage 4 (follow-up)** — open-drain driver (release high → Z) + wired-AND bus
+    (open-drain + pull-up, resolved by MNA) + level-shifter part (all golden-additive).
+
 ## 2026-06-15
 
 ### Bugs found via the full-bridge-rectifier review (2026-06-15 eve)
 - ~~**`formatValue` ate integer trailing zeros** → 470 µF shown as "47 µF", 100 Ω as
   "1 Ω", 120 V as "12 V", 100 kΩ as "1 kΩ" (any 100–999 mantissa ending in 0, 10×
   too small). Fixed: only strip zeros after a decimal point. Web-only.~~
-- [ ] **sim-core: a diode bridge off a transformer doesn't rectify (HARD).** The
-  user's bridge topology is CORRECT, but the sim produces a half-wave artifact (or 0 V
-  with no cap): the two diodes on one secondary terminal (the S+ pair, D10/D11) NEVER
-  conduct, while the other terminal's diode draws a huge ~3.5 A spike. Reproduced at
-  n=0.25 AND n=1.0, **with and without the smoothing cap**, and **affects the shipped
-  `tr-bridge-supply` example** (2 of its 4 diodes read 0 mA). **Ruled out:** it is NOT
-  a cap-charge lock-in (broken without the cap) and NOT fixed by a symmetric
-  common-mode reference (tested c+d→GND at 1 MΩ … 100 Ω: no effect — a conducting
-  diode at ~0.1 Ω overwhelms any sane reference). **Root cause: NOT yet pinned down.**
-  The ~3.5 A D12 spike is a numerical/transient artifact (it can't be steady — the
-  secondary's backward-Euler companion impedance is `L₂/DT ≈ 15.6 kΩ`, so steady diode
-  current must be sub-mA; 3.5 A through that would need ~55 kV). So this looks like a
-  transient symmetry-breaking / Newton-conditioning issue in the floating-secondary +
-  nonlinear-bridge interaction, not a steady-state topology or floating-node problem.
-  **Next-step investigation:** instrument the first few cycles (does it ever conduct
-  full-wave then lock?), check Newton convergence/iteration counts near diode turn-on,
-  try a DC/gmin-stepped operating point or source-stepping at startup, and consider
-  whether the diode turn-on into the high-impedance secondary needs voltage limiting.
-  **Dedicated, golden-touching sim-core effort** (on par with the digital scheduler).
-  Acceptance: all 4 diodes conduct alternately, output ≈ Vsec_pk − 2·Vf, no spurious
-  current spikes, golden regenerated deliberately. Symptoms reproduced via the harness.
+- ~~**sim-core: a diode bridge off a transformer doesn't rectify (HARD) — FIXED.**
+  Rewrote `stamp_transformer`/`stamp_transformer_op` from coupled-inductor to the
+  **ideal-T model**: a magnetising inductance `Im` (+ primary winding R `rp`) across the
+  primary, the secondary EMF forced **hard** to `n·V_Lm` (n × the *magnetiser* voltage,
+  NOT the terminal voltage — that's what keeps DC blocked), the secondary current
+  reflected `n·Is` into the primary KCL. Readout = `Im + n·Is`. Two refinements the
+  build forced (see `transformer-bridge-convergence.md` §7): (1) the secondary carries
+  **zero** series resistance — a `rs·Is` term softens the differential and the bridge
+  runs away (positive feedback `Is = [n·V_Lm+Vcap+2Vf]/rs` grows with the cap); `rp` on
+  the primary still gives loss + DC-block saturation. (2) **No** secondary→ground
+  common-mode resistor is needed (§4 was a red herring) — a floating AC-source baseline
+  rectifies full-wave on the GMIN-only floor, so isolation is preserved. Removed the now-
+  unused `TRANSFORMER_K`/`transformer_inductances`. New regression
+  `transformer_bridge_rectifies_full_wave` (all 4 diodes conduct, Vout ≈ Vsec_pk−2Vf ≈
+  10.4 V, ripple ~0.9 V, Iprim ~0.19 A, no spike/runaway) + `..._scales_with_ratio` (step-up
+  n=2 / step-down n=0.5); `transformer_scales_ac` now expects ratio = n (no k). Main
+  analog-RC golden untouched. **Audit agent passed** (owner asked): stamp math correct
+  sign-by-sign, no determinism risk; findings folded in (ratio test, dead `reactive_state_b`
+  removed, stale comments fixed). All gates green.~~
 
 ### QoL / fixes batch (owner, 2026-06-15 pm)
 - ~~**Draggable net labels** (KiCad-style): drag the tag pill; the dot + leader stay

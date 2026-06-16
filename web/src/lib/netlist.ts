@@ -77,7 +77,9 @@ const TYPE_OF: Record<string, number> = {
   NAND: 17,
   NOR: 17,
   XOR: 17,
+  XNOR: 17,
   NOT: 17,
+  BUF: 17,
   // Transformer: the first FOUR-terminal element (coupled inductors). Pins are
   // ordered primary+, primary−, secondary+, secondary− → pin 0 → a, 1 → b, 2 → c,
   // 3 → d. `value` is the turns ratio n = Ns/Np.
@@ -119,7 +121,9 @@ const GATE_AUX: Record<string, number> = {
   NAND: 2,
   NOR: 3,
   XOR: 4,
+  XNOR: 5,
   NOT: 6,
+  BUF: 7,
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
@@ -425,11 +429,15 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
         ? (nodeIndex.get(find(key(c.id, 3))) ?? 0)
         : 0;
     // The second scalar: an AC source emits its peak amplitude (volts, defaulting
-    // to 5 V when a legacy source carries none); a logic gate emits its boolean
-    // function code (GATE_AUX); every other kind emits 0, which the core ignores.
-    // Kept parallel to `values`.
+    // to 5 V when a legacy source carries none); a logic gate / flip-flop emits its
+    // function code (GATE_AUX) in the low bits PLUS its logic-family index in the
+    // upper bits (`func + 16*family`, matching `gate_family_index`/`gate_func_code`
+    // in sim-core); every other kind emits 0, which the core ignores. Kept parallel
+    // to `values`.
     const aux =
-      c.kind === "AC" ? (c.amp ?? AC_DEFAULT_AMP) : (GATE_AUX[c.kind] ?? 0);
+      c.kind === "AC"
+        ? (c.amp ?? AC_DEFAULT_AMP)
+        : (GATE_AUX[c.kind] ?? 0) + 16 * (c.family ?? 0);
     const idx = types.length;
     types.push(t);
     aArr.push(na);
