@@ -38,6 +38,26 @@ import {
 const WATER = mix(PALETTE.cyan, PALETTE.violet, 0.22); // the medium in the pipes
 const WARM = mix(PALETTE.bronze, 0xffffff, 0.45); // moving current / hot energy
 const PRESS = PALETTE.violet; // pressure / resistance / return
+const PLATE = mix(PALETTE.dim, 0xffffff, 0.5); // bright metal (piston / tank plates)
+const SPRING = PALETTE.accent; // the capacitor pushing back (rose)
+
+/** A zig-zag spring polyline from (x0,yc) to (x1,yc), `coils` zig-zags at ±amp. */
+function springPts(
+  x0: number,
+  x1: number,
+  yc: number,
+  amp: number,
+  coils: number,
+): number[] {
+  const n = coils * 2;
+  const pts: number[] = [x0, yc];
+  for (let k = 1; k <= n; k++) {
+    const x = x0 + ((x1 - x0) * k) / n;
+    const y = k === n ? yc : yc + (k % 2 ? -amp : amp);
+    pts.push(x, y);
+  }
+  return pts;
+}
 
 // ============================================================================
 // Inductor — ported from inductor-tiers.html tier 2: a heavy PADDLE-WHEEL FLYWHEEL
@@ -330,6 +350,201 @@ function drawAnalogyResistor(g: Graphics, o: AnalogyOpts): void {
   stud(g, bX, 0, PALETTE.bronze);
 }
 
+// ============================================================================
+// Ceramic capacitor — ported from capacitor-ceramic-tiers.html tier 2: a sealing
+// PISTON ON A SPRING in a pipe. Water flows on both sides but nothing crosses the
+// piston (the displacement current — charge in == charge out, yet nothing passes
+// the dielectric). The piston slides as the cap charges; the spring is the
+// capacitor pushing back (Vc); a taller pipe is a larger capacitance.
+//
+// Live mapping (cap ElectricalState: current a→b, vAcross = Vc):
+//   • charge / Vc = vAcross → piston displacement + spring compression.
+//   • flow        = norm(|I|) → water-dot density/alpha both sides; sign sets dir.
+//   • capacitance = value (F) → the pipe (piston) height.
+// ============================================================================
+function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const charge = Math.max(
+    -1,
+    Math.min(1, o.electrical.vAcross / (V_SCALE * 1.3)),
+  );
+
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const pipeL = aX + 4;
+  const pipeR = bX - 4;
+  const pipeHH = hh * (0.2 + 0.22 * (o.value ? norm(o.value, 5e-6) : 0.5));
+  const pumpX = -hw * 0.74;
+  const valveX = -hw * 0.52;
+  const anchorX = hw * 0.6; // fixed wall the spring pushes against
+  const restX = -hw * 0.08;
+  const throwX = hw * 0.34;
+  const pistonX = Math.max(
+    valveX + 22,
+    Math.min(anchorX - 40, restX + charge * throwX),
+  );
+
+  // --- pipe walls --------------------------------------------------------------
+  for (const s of [-1, 1]) {
+    g.moveTo(pipeL, s * pipeHH)
+      .lineTo(pipeR, s * pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+  }
+
+  // --- pump (left) + valve = series R throat -----------------------------------
+  g.roundRect(pumpX - 9, -pipeHH - 8, 18, pipeHH * 2 + 16, 4).fill({
+    color: 0x141a2c,
+    alpha: 0.95,
+  });
+  g.roundRect(pumpX - 9, -pipeHH - 8, 18, pipeHH * 2 + 16, 4).stroke({
+    width: 1.6,
+    color: PALETTE.cyan,
+    alpha: 0.65,
+  });
+  g.roundRect(pumpX - 3 + 5 * flow, -pipeHH, 6, pipeHH * 2, 2).fill({
+    color: PALETTE.cyan,
+    alpha: 0.5,
+  });
+  for (const s of [-1, 1]) {
+    g.poly([
+      valveX - 8,
+      s * pipeHH,
+      valveX,
+      s * pipeHH * 0.5,
+      valveX + 8,
+      s * pipeHH,
+    ]).fill({ color: PRESS, alpha: 0.5 });
+  }
+
+  // --- the spring (piston → fixed anchor): tighter as Vc grows ------------------
+  const compressed = (charge + 1) / 2; // 0..1
+  g.moveTo(anchorX, -pipeHH)
+    .lineTo(anchorX, pipeHH)
+    .stroke({ width: 4, color: PALETTE.rail, alpha: 0.9 });
+  g.poly(springPts(pistonX + 4, anchorX, 0, pipeHH * 0.42, 7), false).stroke({
+    width: 2.6,
+    color: SPRING,
+    alpha: 0.55 + 0.4 * compressed,
+  });
+
+  // --- the sealing piston ------------------------------------------------------
+  g.roundRect(pistonX - 4, -pipeHH, 8, pipeHH * 2, 1).fill({
+    color: PLATE,
+    alpha: 0.95,
+  });
+  g.roundRect(pistonX - 4, -pipeHH, 8, pipeHH * 2, 1).stroke({
+    width: 1,
+    color: 0xdfe3ee,
+    alpha: 0.6,
+  });
+
+  // --- water both sides (nothing crosses the piston) ---------------------------
+  belt(g, valveX + 8, 0, pistonX - 6, 0, flow, dir, o.phase, WATER, 2.6);
+  belt(g, anchorX + 6, 0, pipeR, 0, flow, dir, o.phase, WATER, 2.6);
+
+  stud(g, aX, 0, PALETTE.bronze);
+  stud(g, bX, 0, PALETTE.bronze);
+}
+
+// ============================================================================
+// Electrolytic capacitor — ported from capacitor-electrolytic-tiers.html tier 2:
+// TWO CONNECTED TANKS. The source tank feeds the capacitor tank through a valve
+// (= series R); water flows until the two levels match, then stops. The level in
+// the cap tank is Vc; a WIDER tank holds more for the same level — more capacitance.
+//
+// Live mapping (cap ElectricalState: current a→b, vAcross = Vc):
+//   • level / Vc  = vAcross → the cap-tank water height.
+//   • flow        = norm(|I|) → connecting-pipe dot density; sign sets dir + which
+//     tank stands higher (charging: source above cap; discharging: below).
+//   • capacitance = value (F) → the cap-tank width.
+// ============================================================================
+function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const level = Math.max(
+    0,
+    Math.min(1, o.electrical.vAcross / (V_SCALE * 1.6)),
+  );
+
+  const baseY = hh * 0.72; // tank floor
+  const maxH = hh * 1.5; // full-scale water column
+  const srcX = -hw * 0.66;
+  const srcW = hw * 0.34;
+  const capCx = hw * 0.34;
+  const capHalf = hw * (0.12 + 0.2 * (o.value ? norm(o.value, 5e-4) : 0.5));
+  const valveX = -hw * 0.02;
+  const pipeY = baseY - 6;
+
+  // Source level leads/lags the cap by the flow (drives the equalisation).
+  const srcLevel = Math.max(0, Math.min(1, level + dir * 0.18 * flow));
+  const capSurf = baseY - level * maxH;
+  const srcSurf = baseY - srcLevel * maxH;
+
+  // --- source tank (left) ------------------------------------------------------
+  g.moveTo(srcX, baseY - maxH)
+    .lineTo(srcX, baseY)
+    .lineTo(srcX + srcW, baseY)
+    .lineTo(srcX + srcW, baseY - maxH)
+    .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.9 });
+  g.rect(srcX + 2, srcSurf, srcW - 4, baseY - srcSurf).fill({
+    color: WATER,
+    alpha: 0.5,
+  });
+
+  // --- capacitor tank (right): width = capacitance -----------------------------
+  const capL = capCx - capHalf;
+  const capR = capCx + capHalf;
+  g.moveTo(capL, baseY - maxH)
+    .lineTo(capL, baseY)
+    .lineTo(capR, baseY)
+    .lineTo(capR, baseY - maxH)
+    .stroke({ width: 3, color: PLATE, alpha: 0.92 });
+  g.rect(capL + 2, capSurf, 2 * capHalf - 4, baseY - capSurf).fill({
+    color: WATER,
+    alpha: 0.6,
+  });
+  // the matched-level guide (when flow stops, the surfaces line up)
+  g.moveTo(srcX, capSurf)
+    .lineTo(capR, capSurf)
+    .stroke({
+      width: 1.2,
+      color: PALETTE.cyan,
+      alpha: 0.25 + 0.35 * (1 - flow),
+    });
+
+  // --- connecting pipe at the bottom + valve = series R ------------------------
+  for (const yy of [pipeY - 6, pipeY + 6]) {
+    g.moveTo(srcX + srcW, yy)
+      .lineTo(capL, yy)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  g.moveTo(valveX, pipeY - 6)
+    .lineTo(valveX, pipeY - 20)
+    .stroke({ width: 4, color: PRESS, alpha: 0.85 });
+
+  // --- the current through the connecting pipe ---------------------------------
+  belt(
+    g,
+    srcX + srcW + 4,
+    pipeY,
+    capL - 4,
+    pipeY,
+    flow,
+    dir,
+    o.phase,
+    WATER,
+    2.6,
+  );
+
+  stud(g, srcX, baseY, PALETTE.bronze);
+  stud(g, capR, baseY, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -337,6 +552,8 @@ function drawAnalogyResistor(g: Graphics, o: AnalogyOpts): void {
  */
 const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   R: drawAnalogyResistor,
+  C: drawAnalogyCeramicCap,
+  EC: drawAnalogyElectrolyticCap,
   L: drawAnalogyInductor,
 };
 
