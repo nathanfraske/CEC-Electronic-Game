@@ -1022,6 +1022,248 @@ function drawDetailTransformer(g: Graphics, o: DetailOpts): void {
   stud(g, loadX, 0, PALETTE.bronze);
 }
 
+// ============================================================================
+// Bipolar transistor (BJT) — ported from transistor-tiers.html tier 3: two junctions
+// in one slab of silicon, EMITTER | thin BASE | COLLECTOR. The heavily-doped emitter
+// injects majority carriers; because the base is THIN almost all of them cross it and
+// are swept into the collector (that stream is I_C). A FEW recombine in the base — that
+// trickle is I_B — and the ratio is the gain β. NPN carries electrons, PNP holes.
+//
+// Live mapping (BJT ElectricalState: current = I_C, vAcross = V_CE; value = β):
+//   • conduction = norm(|I_C|) → the main carrier stream's density/alpha.
+//   • base       = conduction/β → the sparse recombination flashes in the base.
+//   • carrier    = kind (Q=NPN electrons, QP=PNP holes) → stream colour + doping.
+// ============================================================================
+function drawDetailBJT(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const npn = o.kind !== "QP";
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const HOLE = mix(PALETTE.bad, PALETTE.warn, 0.4);
+  const maj = npn ? ELEC : HOLE; // the carrier the main stream is made of
+  const beta = o.value && o.value > 1 ? o.value : 100;
+
+  const ic = norm(o.electrical.current, CUR_SCALE);
+  const ib = Math.min(1, (ic / beta) * 40); // a small, visible base trickle
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+
+  const regT = -hh * 0.5;
+  const regB = hh * 0.5;
+  const x0 = -hw * 0.7;
+  const x1 = hw * 0.7;
+  const eB = -hw * 0.12; // emitter|base boundary
+  const bC = hw * 0.0; // base|collector boundary (base is the thin slab eB..bC)
+  // n+/p/n (NPN) or p+/n/p (PNP) region tints
+  const emCol = npn ? PALETTE.cyan : HOLE;
+  const bsCol = npn ? HOLE : PALETTE.cyan;
+  g.rect(x0, regT, eB - x0, regB - regT).fill({ color: emCol, alpha: 0.12 });
+  g.rect(eB, regT, bC - eB, regB - regT).fill({ color: bsCol, alpha: 0.16 });
+  g.rect(bC, regT, x1 - bC, regB - regT).fill({ color: emCol, alpha: 0.09 });
+  g.rect(x0, regT, x1 - x0, regB - regT).stroke({
+    width: 1.5,
+    color: PALETTE.border,
+    alpha: 0.8,
+  });
+  // the two junction lines (EB forward, BC reverse)
+  for (const jx of [eB, bC]) {
+    g.moveTo(jx, regT)
+      .lineTo(jx, regB)
+      .stroke({ width: 1.2, color: PALETTE.rail, alpha: 0.8 });
+  }
+
+  // --- contacts + leads: emitter (left), collector (right), base (top) ---------
+  const eX = -hw + 8;
+  const cX = hw - 8;
+  const bX = (eB + bC) / 2;
+  g.roundRect(x0 - 4, -hh * 0.2, 6, hh * 0.4, 2).fill({ color: PALETTE.dim });
+  g.roundRect(x1 - 2, -hh * 0.2, 6, hh * 0.4, 2).fill({ color: PALETTE.dim });
+  g.roundRect(bX - hw * 0.04, regT - 8, hw * 0.08, 8, 2).fill({
+    color: PALETTE.dim,
+  });
+  g.moveTo(eX, 0)
+    .lineTo(x0, 0)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(x1, 0)
+    .lineTo(cX, 0)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(bX, regT - 8)
+    .lineTo(bX, -hh + 6)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the main carrier stream: emitter → across the thin base → collector ------
+  if (ic > 0.02) {
+    const lanes = [-0.55, -0.18, 0.18, 0.55];
+    for (const lane of lanes) {
+      const ly = lane * (regB - regT) * 0.5;
+      const nC = FLOW_DOTS_MAX;
+      for (let k = 0; k < nC; k++) {
+        const present = dotPresence(k, ic);
+        if (present <= 0) continue;
+        const t = (((k / nC + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+        g.circle(x0 + 8 + t * (x1 - x0 - 16), ly, 2.4).fill({
+          color: maj,
+          alpha: (0.3 + 0.55 * ic) * present,
+        });
+      }
+    }
+  }
+
+  // --- a few carriers recombine in the base (= I_B), flashing ------------------
+  if (ib > 0.02) {
+    const nR = 3;
+    for (let k = 0; k < nR; k++) {
+      const t = (((k / nR + o.phase * 0.5) % 1) + 1) % 1;
+      const ry = (((k * 0.37) % 1) - 0.5) * (regB - regT) * 0.8;
+      const rx = x0 + 8 + t * (bX - x0 - 8);
+      const atBase = t > 0.82;
+      g.circle(rx, ry, 2.4).fill({ color: maj, alpha: atBase ? 0 : 0.8 });
+      if (atBase) {
+        const f = (t - 0.82) / 0.18;
+        g.circle(bX, ry, 3 + 5 * f).fill({
+          color: 0xffffff,
+          alpha: 0.6 * (1 - f),
+        });
+      }
+    }
+    // the base contact supplies the recombination partner from the top
+    belt(g, bX, -hh + 6, bX, 0, ib, 1, o.phase, bsCol, 2.2);
+  }
+
+  // --- lead currents -----------------------------------------------------------
+  belt(g, eX, 0, x0, 0, ic, dir, o.phase, maj, 2.4);
+  belt(g, x1, 0, cX, 0, ic, dir, o.phase, maj, 2.4);
+  stud(g, eX, 0, PALETTE.bronze);
+  stud(g, cX, 0, PALETTE.bronze);
+  stud(g, bX, -hh + 6, PALETTE.bronze);
+}
+
+// ============================================================================
+// MOSFET — ported from mosfet-tiers.html tier 3: metal-oxide-silicon. The metal GATE
+// sits behind a thin OXIDE over a doped body, between a SOURCE and a DRAIN. The gate
+// draws no current — it only sets up a FIELD. Once that field is strong enough it
+// pulls minority carriers up to the surface and inverts a CHANNEL between source and
+// drain; current then flows, and the channel widens with more gate drive. None of
+// the gate charge ever crosses the oxide. NM is n-channel (electrons), PM p-channel
+// (holes).
+//
+// Live mapping (MOSFET ElectricalState: current = I_D, vAcross = V_DS):
+//   • drive = norm(|I_D|) → channel brightness/width + gate-plate charge + the field.
+//     (A conducting device has an inverted channel and a charged gate — the live
+//     drain current is the visible proxy for "the gate has cleared threshold".)
+//   • carrier = kind (NM electrons / PM holes) → channel + stream colour, gate sign.
+// ============================================================================
+function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const nch = o.kind !== "PM";
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const HOLE = mix(PALETTE.bad, PALETTE.warn, 0.4);
+  const carrier = nch ? ELEC : HOLE;
+  const OXIDE = mix(PALETTE.warn, 0xffffff, 0.2);
+
+  const id = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const on = id > 0.03;
+
+  const bodyT = -hh * 0.16;
+  const bodyB = hh * 0.6;
+  const x0 = -hw * 0.74;
+  const x1 = hw * 0.74;
+  const xL = -hw * 0.3; // channel left (source/channel edge)
+  const xR = hw * 0.3; // channel right (drain/channel edge)
+  const surf = bodyT; // the silicon surface
+
+  // --- the doped body (p-type for n-channel, n-type for p-channel) -------------
+  housing(g, x0, bodyT, x1 - x0, bodyB - bodyT, PALETTE.dim, 6);
+  // source + drain wells (n+/p+) at the surface
+  const wellH = (bodyB - bodyT) * 0.42;
+  g.rect(x0 + 3, surf, xL - x0 - 5, wellH).fill({
+    color: carrier,
+    alpha: 0.18,
+  });
+  g.rect(xR + 2, surf, x1 - xR - 5, wellH).fill({
+    color: carrier,
+    alpha: 0.18,
+  });
+
+  // --- the inversion channel (tapered), lit once the gate inverts it ------------
+  if (on) {
+    const w = 4 + 8 * id;
+    // tapered toward the drain in saturation (pinch-off) — taper rides drive
+    g.poly([
+      xL,
+      surf + 2,
+      xR,
+      surf + 2,
+      xR,
+      surf + 2 + w * 0.4,
+      xL,
+      surf + 2 + w,
+    ]).fill({ color: carrier, alpha: 0.25 + 0.4 * id });
+  }
+
+  // --- thin oxide + metal gate on top of the channel ---------------------------
+  g.rect(xL - 5, surf - 9, xR - xL + 10, 7).fill({ color: OXIDE, alpha: 0.6 });
+  g.rect(xL - 5, surf - 9, xR - xL + 10, 7).stroke({
+    width: 1,
+    color: OXIDE,
+    alpha: 0.9,
+  });
+  g.roundRect(xL - 5, surf - 26, xR - xL + 10, 17, 2).fill({
+    color: 0x2a2740,
+    alpha: 0.95,
+  });
+  g.roundRect(xL - 5, surf - 26, xR - xL + 10, 17, 2).stroke({
+    width: 1.2,
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+
+  // --- gate-plate charge + field lines through the oxide (none cross) ----------
+  const gateCharge = id; // a conducting device has a charged gate
+  const nMarks = 6;
+  for (let k = 0; k < nMarks; k++) {
+    const gx = xL + 8 + ((k + 0.5) / nMarks) * (xR - xL - 16);
+    const a = Math.min(1, gateCharge * 1.2);
+    if (a <= 0.03) continue;
+    // + on the gate for n-channel (electrons pulled up), − for p-channel
+    g.moveTo(gx - 3, surf - 17).lineTo(gx + 3, surf - 17);
+    if (nch) g.moveTo(gx, surf - 20).lineTo(gx, surf - 14);
+    g.stroke({ width: 1.5, color: PALETTE.accent, alpha: a });
+    // dashed field line reaching down through the oxide (charge does NOT cross)
+    g.moveTo(gx, surf - 8)
+      .lineTo(gx, surf)
+      .stroke({ width: 1, color: OXIDE, alpha: 0.2 + 0.6 * gateCharge });
+  }
+
+  // --- gate / source / drain leads + studs -------------------------------------
+  const gX = (xL + xR) / 2;
+  const sX = -hw + 8;
+  const dX = hw - 8;
+  g.moveTo(gX, surf - 26)
+    .lineTo(gX, -hh + 6)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(sX, surf + wellH / 2)
+    .lineTo(x0, surf + wellH / 2)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(x1, surf + wellH / 2)
+    .lineTo(dX, surf + wellH / 2)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the carrier stream: source → through the channel → drain ----------------
+  if (on) {
+    const sy = surf + wellH / 2;
+    const cy = surf + 4;
+    // source lead in
+    belt(g, sX, sy, x0 + 6, sy, id, dir, o.phase, carrier, 2.4);
+    // up into the channel, across, and down to the drain (3 hops)
+    belt(g, xL, cy, xR, cy, id, dir, o.phase, carrier, 2.4);
+    belt(g, x1 - 6, sy, dX, sy, id, dir, o.phase, carrier, 2.4);
+  }
+
+  stud(g, sX, surf + wellH / 2, PALETTE.bronze);
+  stud(g, dX, surf + wellH / 2, PALETTE.bronze);
+  stud(g, gX, -hh + 6, PALETTE.bronze);
+}
+
 /**
  * The construction-detail drawers, keyed by kind — the third sibling map to
  * DRAWERS / FACTORY_DRAWERS. A kind absent here has no detail view yet; the host
@@ -1038,6 +1280,10 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   EC: drawDetailElectrolyticCap,
   L: drawDetailInductor,
   TR: drawDetailTransformer,
+  Q: drawDetailBJT,
+  QP: drawDetailBJT,
+  NM: drawDetailMOSFET,
+  PM: drawDetailMOSFET,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */
