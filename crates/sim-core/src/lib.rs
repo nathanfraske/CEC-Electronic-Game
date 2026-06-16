@@ -1119,6 +1119,20 @@ const NEWTON_I_ABSTOL: f64 = 1.0e-12;
 /// forward operating point at our tolerances.
 const GMIN: f64 = 1.0e-12;
 
+/// A solved magnitude at or beyond this (or non-finite) is a **FAIL**: a non-physical
+/// result, the signature of an *ideal* part with no series impedance pushed past what
+/// physics allows — an ideal diode charging a cap, an ideal source into a short. The
+/// engine clamps any such value to this finite bound so it can never propagate as a
+/// `NaN` (the wasm-only blow-up that deleted traces), flags the whole-sim FAIL state,
+/// and marks the offending elements so the renderer can box them. `1e9` (1 GV / 1 GA)
+/// sits far above any real bench reading yet well inside the range where an `f64`
+/// clamp is exact, so the FAIL is bit-identical on every platform — turning the
+/// native-vs-wasm divergence that caused every "live-only" crash into a deterministic,
+/// legible failure. A well-behaved circuit never reaches it, so the snapshot hash and
+/// the golden are untouched. (The honest fix in-circuit is real series impedance — a
+/// "real" part, or a literal resistor — which is the Ideal-vs-Real lesson.)
+const FAIL_LIMIT: f64 = 1.0e9;
+
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
 /// use the control terminal `c`.
@@ -1599,6 +1613,15 @@ pub struct Sim {
     /// `elements`. Like `reactive_state` it is reflected in `node_v` (not hashed
     /// directly), so it never perturbs the snapshot hash format.
     secondary_state: Vec<f64>,
+    /// Whole-sim **FAIL** flag: set when the most recent solve produced a non-physical
+    /// result (non-finite or beyond [`FAIL_LIMIT`]) that was clamped. The renderer
+    /// surfaces this as the global FAIL state. Derived from the (clamped) solved state,
+    /// so it is not itself hashed — a well-behaved circuit leaves it `false`.
+    failed: bool,
+    /// Per-element FAIL mask (length = `elements.len()`): `true` for each element whose
+    /// own reading hit the FAIL bound this step, so the renderer can box exactly the
+    /// offending parts. Recomputed every step.
+    failed_elements: Vec<bool>,
     /// The D flip-flop's stored output [`Level`]: the bit latched at the last rising
     /// clock edge, which drives `Q` (and inverted, `Q̄`) every tick until the next edge.
     /// Used only by [`ELEM_DFF`]; `Level::Low` for every other element. Persistent
@@ -1721,6 +1744,8 @@ impl Sim {
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             secondary_state: Vec::new(),
+            failed: false,
+            failed_elements: Vec::new(),
             ff_q: Vec::new(),
             ff_clk_prev: Vec::new(),
             net_level: vec![Level::Low],
@@ -1912,6 +1937,8 @@ impl Sim {
         self.net_classes = net_classes;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
+        self.failed = false;
+        self.failed_elements = vec![false; elements.len()];
         self.ff_q = vec![Level::Low; elements.len()];
         self.ff_clk_prev = vec![Level::Low; elements.len()];
         self.net_level = vec![Level::Low; node_count];
@@ -1946,6 +1973,10 @@ impl Sim {
         }
         for s in &mut self.secondary_state {
             *s = 0.0;
+        }
+        self.failed = false;
+        for s in &mut self.failed_elements {
+            *s = false;
         }
         for s in &mut self.ff_q {
             *s = Level::Low;
@@ -3785,7 +3816,61 @@ impl Sim {
                 _ => {}
             }
         }
+        // Screen the committed state for a non-physical (FAIL) result and clamp it so
+        // it can never propagate as a NaN, before the tick advances.
+        self.flag_and_clamp_fails();
         self.tick += 1;
+    }
+
+    /// After a solve, screen every quantity that displays or propagates — node
+    /// voltages, per-element currents, and the reactive history (`reactive_state`,
+    /// `secondary_state`) — for a non-physical value: non-finite, or beyond
+    /// [`FAIL_LIMIT`]. Clamp any such value to `±FAIL_LIMIT` (so a NaN can never carry
+    /// into the next step and delete traces — and so native and wasm agree exactly),
+    /// raise the whole-sim [`Sim::failed`] flag, and mark each offending element in
+    /// `failed_elements` for the renderer's FAIL box. A circuit that stays within
+    /// physical bounds is untouched, so the snapshot hash and the golden don't move.
+    fn flag_and_clamp_fails(&mut self) {
+        // Clamp one value in place; return whether it was out of bounds.
+        fn clamp(v: &mut f64) -> bool {
+            if v.is_finite() && v.abs() <= FAIL_LIMIT {
+                false
+            } else {
+                *v = if *v < 0.0 { -FAIL_LIMIT } else { FAIL_LIMIT };
+                true
+            }
+        }
+        let mut failed = false;
+        for v in self.node_v.iter_mut() {
+            failed |= clamp(v);
+        }
+        for s in self.reactive_state.iter_mut() {
+            failed |= clamp(s);
+        }
+        for s in self.secondary_state.iter_mut() {
+            failed |= clamp(s);
+        }
+        for i in 0..self.currents.len() {
+            let bad = clamp(&mut self.currents[i]);
+            self.failed_elements[i] = bad;
+            failed |= bad;
+        }
+        self.failed = failed;
+    }
+
+    /// Whether the most recent step produced a non-physical **FAIL** — a non-finite or
+    /// beyond-[`FAIL_LIMIT`] reading, the signature of an ideal part driven past what
+    /// physics allows (no series impedance). The renderer shows the whole-sim FAIL
+    /// state; the cure in-circuit is real series impedance.
+    pub fn failed(&self) -> bool {
+        self.failed
+    }
+
+    /// Per-element FAIL mask, parallel to [`Sim::element_currents`]: `1` for each
+    /// element whose reading hit the FAIL bound this step, so the renderer can box the
+    /// offending parts. Empty until the first step after a netlist is installed.
+    pub fn failed_element_mask(&self) -> Vec<u8> {
+        self.failed_elements.iter().map(|&b| b as u8).collect()
     }
 
     /// Current tick count since the netlist was installed or reset.
@@ -6270,6 +6355,62 @@ mod tests {
                 "n={n}: bridge output not a sane rectified DC (hi {out_hi} V)"
             );
         }
+    }
+
+    /// An ideal voltage source forcing forward bias across a diode with NO series
+    /// resistance drives an unbounded current — the "ideal, zero-impedance" condition
+    /// the owner wants to read as a failure rather than a crash. The engine must raise
+    /// the FAIL flag, mark the diode, and clamp every reading finite (never a NaN).
+    #[test]
+    fn ideal_source_into_bare_diode_fails_bounded() {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            2,
+            &[ELEM_VSOURCE, ELEM_DIODE],
+            &[1, 1], // a: source+, diode anode
+            &[0, 0], // b: gnd, diode cathode
+            &[0, 0],
+            &[0, 0],
+            &[10.0, 0.0], // 10 V hard across the junction -> unbounded current
+            &[0.0, 0.0],
+        ));
+        for _ in 0..16 {
+            sim.step();
+        }
+        assert!(sim.failed(), "ideal source across a bare diode should FAIL");
+        for &v in sim.state().iter() {
+            assert!(v.is_finite(), "node voltage went non-finite: {v}");
+        }
+        for &i in sim.element_currents().iter() {
+            assert!(
+                i.is_finite() && i.abs() <= FAIL_LIMIT,
+                "current not clamped: {i}"
+            );
+        }
+        // The diode (element 1) is flagged as an offending part.
+        assert_eq!(sim.failed_element_mask().get(1).copied(), Some(1u8));
+    }
+
+    /// A well-behaved resistive loop never trips FAIL — so the flag stays off for every
+    /// normal circuit and the golden / snapshot hash are untouched.
+    #[test]
+    fn well_behaved_circuit_does_not_fail() {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            2,
+            &[ELEM_VSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[5.0, 1000.0],
+            &[0.0, 0.0],
+        ));
+        for _ in 0..16 {
+            sim.step();
+        }
+        assert!(!sim.failed(), "a 5 V / 1 kΩ loop must not FAIL");
+        assert!(sim.failed_element_mask().iter().all(|&b| b == 0));
     }
 
     // --- D flip-flop (edge-triggered one-bit memory) --------------------------
