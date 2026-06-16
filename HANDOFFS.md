@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Component labels built + FAIL UI merged (PR #71)
+
+**State:** 🟢 Green (web check/lint/build; no Rust change this stretch). Branch
+`claude/kind-turing-hdelb3`, ahead of `main` by the labels commit. **The FAIL UI from the
+entry below merged via PR #71** (deployed — owner can see the pulsing red box live).
+
+**Component labels / renaming (owner ask, "a big one") — built (pending merge):**
+- `web/src/lib/graph.ts`: `Component.label?: string`. Persists for **free** — `serialize`/`restore`
+  spread the whole component, and the `cec-circuit` save format wraps `serialize`. Old JSON
+  round-trips (optional field), so the owner's current exports stay valid.
+- `web/src/lib/board.ts`: `ComponentNode` renders `component.label ?? kindTag`; `setLabel()`;
+  `setComponentLabel()` — undoable, routed through **`onPersist`** (cosmetic save; **NO netlist
+  rebuild, NO sim rewind**, like a net-label drag); `SelectedPart.label` + `emitSelect`; copy/paste
+  preserves it (`ClipboardSnippet` + `copySelection` + paste restore).
+- `web/src/App.svelte`: the value popover now opens for **every** selected part (dropped the
+  `hasValue` gate on the outer `{#if}`; wrapped the value UI in `{#if hasValue(kind)}`), with a
+  label `<input>` at the top that commits on blur (`onchange`); `setLabelText` handler; `.insp-name`
+  CSS. (`onAnchor` already fires for any single-selected part, so diodes/GND get the popover too.)
+- **Couldn't verify live** (no browser here): the popover-for-all-parts, the input UX, the on-board
+  render. Gates green; logic sound. Owner can use it to label the examples in-UI.
+
+**NEXT:** merge/deploy labels (owner said "parts labels next"). Then back to Ideal-vs-Real
+(curriculum tiering + additive Real-variant upgrades). Owner is hand-cleaning the **examples**
+(exports JSON via the save fn) — keep off `web/src/lib/examples.ts`.
+
+---
+
 ## 2026-06-16 (night) — Visible FAIL UI built (pushed, NOT yet merged)
 
 **State:** 🟢 Green (fmt, build:wasm, web check/lint/build). Branch `claude/kind-turing-hdelb3`,

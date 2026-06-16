@@ -89,6 +89,13 @@ export interface Component {
   openDrain?: boolean;
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
+  /**
+   * Optional custom label the player gives this part (e.g. `"R1"`, `"Vin"`, `"Load"`).
+   * Shown on the board in place of the kind tag when set. **Pure presentation** — it has
+   * no effect on the netlist or the sim. Optional, so older snapshots and parts that were
+   * never named round-trip unchanged (`serialize`/`restore` spread it through for free).
+   */
+  label?: string;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
