@@ -74,13 +74,19 @@
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
   // so 500_000 ticks/s = real time (one sim-second per second); the rest run
   // proportionally slower so fast dynamics are watchable.
-  const RATES = [50, 500, 5000, 50000, 500000];
+  // Playback rate in sim-ticks per real second (NOT the fixed physics step DT, which
+  // is the determinism contract). The slow end goes to 1 tick/s — one 2 µs step per
+  // second, i.e. 500,000× slow motion — so you can watch every detail; the fast end
+  // is near/above real time. Slowing down never changes the physics, only the pace.
+  const RATES = [1, 5, 50, 500, 5000, 50000, 500000];
   const fmtRate = (n: number): string =>
     n >= 1000 ? n / 1000 + "k/s" : n + "/s";
-  // Sim-seconds advanced per real second, as a friendly "× real time" label.
+  // Friendly "how fast you're watching" label: slow-mo factor when below real time,
+  // a "× real time" multiple at/above it.
   const fmtRealtime = (rate: number): string => {
-    const f = rate * DT_SECONDS;
-    return f >= 1 ? f + "× real time" : "1/" + Math.round(1 / f) + " real time";
+    const f = rate * DT_SECONDS; // sim-seconds advanced per real second
+    if (f >= 1) return `${f % 1 === 0 ? f : f.toFixed(1)}× real time`;
+    return `${Math.round(1 / f).toLocaleString()}× slow-mo`;
   };
   // A tick count as a wall-clock duration (tick × DT).
   const fmtTime = (s: number): string => {

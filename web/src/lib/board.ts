@@ -86,6 +86,11 @@ const DT_SECONDS = 2e-6;
 // longer spans are *decimated* down to ~MAX_SAMPLES points so a low-frequency AC
 // cycle (which the short window can't fit) becomes visible without a huge buffer.
 const SCOPE_SPAN_TICKS = [240, 2400, 24000, 240000];
+// Auto time-base: fit this many full periods of the dominant trace in the window,
+// clamped to a sane tick range (≈ the preset extremes, a touch wider).
+const AUTO_CYCLES = 3;
+const AUTO_SPAN_MIN = 120;
+const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
 const MAX_SCALE = 3.5;
 const UNDO_LIMIT = 60;
@@ -357,7 +362,6 @@ export class Board {
   // Per-tick scope history (one entry per simulated tick, not per render frame)
   // so the scope freezes when paused and aligns to the timeline.
   private scopeSamples: { tick: number; values: number[] }[] = [];
-  private scopeCursor = 0;
   // Per-node scope controls, driven from the telemetry panel: custom names,
   // hidden traces, and an enlarged scope.
   private readonly nodeLabels = new Map<number, string>();
@@ -365,6 +369,14 @@ export class Board {
   private scopeExpanded = false;
   // Index into SCOPE_SPAN_TICKS — the visible scope time window (decimated record).
   private scopeSpanIdx = 0;
+  // The latest displayed tick (true sim tick, advances every frame — not just when a
+  // decimated sample lands). The scope's x-axis maps by TICK against this, so the
+  // trace pans smoothly at any span/rate instead of stepping once per decimated sample.
+  private scopeTick = 0;
+  // Auto time-base: when on, the span is set so ~AUTO_CYCLES periods of the
+  // biggest-swinging trace are visible; `scopeAutoSpan` is the smoothed live value.
+  private scopeAuto = false;
+  private scopeAutoSpan = SCOPE_SPAN_TICKS[1]!;
   // Net names per node from the netlist's net labels (e.g. node 3 → "VCC"): the
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
@@ -869,20 +881,102 @@ export class Board {
     return this.scopeExpanded;
   }
 
-  /** Advance the scope's visible time window to the next preset (wrapping) and clear
-   * the trace so it refills at the new decimation. Returns the new span's label. */
+  /** Advance the scope's visible time window to the next preset, then to AUTO, then
+   * wrap. Clears the trace so it refills at the new decimation. Returns the new label. */
   cycleScopeSpan(): string {
-    this.scopeSpanIdx = (this.scopeSpanIdx + 1) % SCOPE_SPAN_TICKS.length;
+    if (this.scopeAuto) {
+      this.scopeAuto = false;
+      this.scopeSpanIdx = 0;
+    } else if (this.scopeSpanIdx >= SCOPE_SPAN_TICKS.length - 1) {
+      this.scopeAuto = true; // last preset → auto time-base
+    } else {
+      this.scopeSpanIdx += 1;
+    }
     this.clearScope();
-    return this.scopeSpanLabel();
+    // The button shows a static "auto" (the live, adapting window is drawn in the
+    // scope overlay instead); presets show their fixed window.
+    return this.scopeAuto ? "auto" : this.scopeSpanLabel();
   }
 
-  /** Human label for the current scope time window (e.g. "4.8 ms"). */
+  /** The visible window in ticks: the auto-fit span when AUTO, else the preset. */
+  private effectiveScopeSpan(): number {
+    return this.scopeAuto
+      ? Math.max(1, Math.round(this.scopeAutoSpan))
+      : SCOPE_SPAN_TICKS[this.scopeSpanIdx]!;
+  }
+
+  /** Human label for the current scope time window (e.g. "4.8 ms" or "auto · 60 ms"). */
   scopeSpanLabel(): string {
-    const s = SCOPE_SPAN_TICKS[this.scopeSpanIdx]! * DT_SECONDS;
-    if (s < 1e-3) return `${(s * 1e6).toFixed(0)} µs`;
-    if (s < 1) return `${(s * 1e3).toFixed(s * 1e3 < 10 ? 1 : 0)} ms`;
-    return `${s.toFixed(2)} s`;
+    const s = this.effectiveScopeSpan() * DT_SECONDS;
+    const win =
+      s < 1e-3
+        ? `${(s * 1e6).toFixed(0)} µs`
+        : s < 1
+          ? `${(s * 1e3).toFixed(s * 1e3 < 10 ? 1 : 0)} ms`
+          : `${s.toFixed(2)} s`;
+    return this.scopeAuto ? `auto · ${win}` : win;
+  }
+
+  /**
+   * Auto time-base: size the window to ~{@link AUTO_CYCLES} periods of the
+   * biggest-swinging visible trace. The period comes from the average spacing of its
+   * upward mid-crossings (interpolated to sub-tick); the span eases toward the target
+   * so it doesn't twitch. No oscillation (DC / flat) ⇒ leave the span as-is; too few
+   * crossings (window too short) ⇒ widen to search. Pure display — no sim coupling.
+   */
+  private updateAutoSpan(): void {
+    const samples = this.scopeSamples;
+    if (samples.length < 4) return;
+    const chans = samples[samples.length - 1]!.values.length;
+    let bestC = -1;
+    let bestPP = 0;
+    let bestLo = 0;
+    let bestHi = 0;
+    for (let c = 1; c < chans; c++) {
+      if (this.nodeHidden.has(c)) continue;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (const s of samples) {
+        const v = s.values[c] ?? 0;
+        if (v < lo) lo = v;
+        if (v > hi) hi = v;
+      }
+      if (hi - lo > bestPP) {
+        bestPP = hi - lo;
+        bestC = c;
+        bestLo = lo;
+        bestHi = hi;
+      }
+    }
+    if (bestC < 0 || bestPP < 0.05) return; // DC / flat: keep the current span
+    const mid = (bestLo + bestHi) / 2;
+    let firstT = -1;
+    let lastT = -1;
+    let n = 0;
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1]!.values[bestC] ?? 0;
+      const b = samples[i]!.values[bestC] ?? 0;
+      if (a < mid && b >= mid) {
+        const ta = samples[i - 1]!.tick;
+        const tb = samples[i]!.tick;
+        const tc = ta + (tb - ta) * ((mid - a) / (b - a || 1));
+        if (firstT < 0) firstT = tc;
+        lastT = tc;
+        n++;
+      }
+    }
+    if (n < 2 || lastT <= firstT) {
+      // too few crossings: the window may be shorter than a period — widen to search.
+      const target = Math.min(AUTO_SPAN_MAX, this.scopeAutoSpan * 1.8);
+      this.scopeAutoSpan += (target - this.scopeAutoSpan) * 0.1;
+      return;
+    }
+    const period = (lastT - firstT) / (n - 1);
+    const target = Math.max(
+      AUTO_SPAN_MIN,
+      Math.min(AUTO_SPAN_MAX, period * AUTO_CYCLES),
+    );
+    this.scopeAutoSpan += (target - this.scopeAutoSpan) * 0.15;
   }
 
   /**
@@ -914,7 +1008,6 @@ export class Board {
    */
   clearScope(): void {
     this.scopeSamples = [];
-    this.scopeCursor = 0;
   }
 
   placeAt(
@@ -3720,19 +3813,12 @@ export class Board {
    */
   private recordScope(snap: Snapshot, batch?: SubFrameSample[]): void {
     const tick = Number(snap.tick);
+    this.scopeTick = tick; // the true displayed tick, for the tick-based x-axis
     if (batch && batch.length > 0) {
       for (const s of batch) this.pushScopeSample(s.tick, s.state);
     } else {
       this.pushScopeSample(tick, snap.state);
     }
-    let idx = this.scopeSamples.length - 1;
-    for (let i = this.scopeSamples.length - 1; i >= 0; i--) {
-      if (this.scopeSamples[i]!.tick <= tick) {
-        idx = i;
-        break;
-      }
-    }
-    this.scopeCursor = idx;
   }
 
   /** Append one scope sample for an advancing tick (or restart the window if the
@@ -3744,7 +3830,7 @@ export class Board {
     // per-tick behaviour; wider spans skip the in-between ticks.
     const stride = Math.max(
       1,
-      Math.floor(SCOPE_SPAN_TICKS[this.scopeSpanIdx]! / MAX_SAMPLES),
+      Math.floor(this.effectiveScopeSpan() / MAX_SAMPLES),
     );
     if (!last || tick >= last.tick + stride) {
       this.scopeSamples.push({ tick, values: Array.from(state) });
@@ -3837,7 +3923,16 @@ export class Board {
     const lo = vlo - pad;
     const hi = vhi + pad;
     const span = hi - lo || 1;
-    const xAt = (i: number): number => x0 + (i / (MAX_SAMPLES - 1)) * iw;
+    // Tick-based x-axis: map each sample by its TICK within the window
+    // [winEnd − spanTicks, winEnd], winEnd = the live displayed tick. The window
+    // slides every frame (winEnd advances continuously), so the trace PANS smoothly
+    // instead of stepping once per decimated sample — the slow/zoomed-out jitter fix.
+    if (this.scopeAuto) this.updateAutoSpan();
+    const spanTicks = Math.max(1, this.effectiveScopeSpan());
+    const winEnd = this.scopeTick;
+    const winStart = winEnd - spanTicks;
+    const xAt = (tick: number): number =>
+      x0 + ((tick - winStart) / spanTicks) * iw;
     const yAt = (v: number): number => y0 + (1 - (v - lo) / span) * ih;
 
     if (lo < 0 && hi > 0) {
@@ -3846,29 +3941,36 @@ export class Board {
       g.stroke({ width: 1, color: PALETTE.border, alpha: 0.4 });
     }
 
-    // Channel traces (skip node 0, the flat ground reference, and hidden nodes).
+    // Channel traces (skip node 0 ground + hidden nodes). Only in-window samples are
+    // drawn, so when scrubbed back the not-yet-reached 'future' samples stay hidden.
     for (let c = 1; c < chans; c++) {
       if (this.nodeHidden.has(c)) continue;
       const color = CHANNEL_COLORS[(c - 1) % CHANNEL_COLORS.length] ?? 0xffffff;
+      let started = false;
       for (let i = 0; i < samples.length; i++) {
+        const t = samples[i]!.tick;
+        if (t < winStart || t > winEnd) continue;
         const v = samples[i]!.values[c] ?? 0;
-        if (i === 0) g.moveTo(xAt(i), yAt(v));
-        else g.lineTo(xAt(i), yAt(v));
+        if (!started) {
+          g.moveTo(xAt(t), yAt(v));
+          started = true;
+        } else {
+          g.lineTo(xAt(t), yAt(v));
+        }
       }
-      g.stroke({ width: 1.4, color, alpha: 0.95 });
+      if (started) g.stroke({ width: 1.4, color, alpha: 0.95 });
     }
 
-    // Cursor at the displayed tick.
-    const cx = xAt(this.scopeCursor);
+    // Cursor at the displayed tick (the window's right edge).
+    const cx = xAt(winEnd);
     g.moveTo(cx, y0).lineTo(cx, y0 + ih);
     g.stroke({ width: 1, color: PALETTE.accent, alpha: 0.85 });
 
-    const cur = samples[this.scopeCursor]!;
     this.scopeLabel(0, fmtSI(hi, "V"), r.x + 4, y0 - 5);
     this.scopeLabel(1, fmtSI(lo, "V"), r.x + 4, y0 + ih - 5);
     this.scopeLabel(
       2,
-      "t " + cur.tick,
+      "t " + winEnd,
       Math.min(cx + 3, r.x + r.width - 42),
       r.y + r.height - 12,
     );
