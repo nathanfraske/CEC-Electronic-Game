@@ -310,6 +310,20 @@
       color: "var(--cyan)",
     },
     {
+      tag: "LS",
+      name: "Level Shifter",
+      desc: "Translates rail A → rail B",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
+      tag: "PU",
+      name: "Pull-up",
+      desc: "Resistor to Vcc · open-drain bus",
+      tier: "II",
+      color: "var(--bronze)",
+    },
+    {
       tag: "FP",
       name: "FPGA Fabric",
       desc: "Spatial, parallel logic",
@@ -368,6 +382,8 @@
     NOT: "Logic & ICs",
     BUF: "Logic & ICs",
     FF: "Logic & ICs",
+    LS: "Logic & ICs",
+    PU: "Logic & ICs",
     FP: "Logic & ICs",
     uC: "Logic & ICs",
   };
@@ -1077,6 +1093,17 @@
   }
   function setFamily(idx: number): void {
     if (selPart) board?.setComponentFamily(selPart.id, idx);
+  }
+  // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
+  // releases high — needs an external pull-up). The D flip-flop is always push-pull.
+  function isGatePart(kind: string): boolean {
+    return isDigitalPart(kind) && kind !== "FF";
+  }
+  function selOpenDrain(): boolean {
+    return selPart?.openDrain ?? false;
+  }
+  function setOpenDrain(v: boolean): void {
+    if (selPart) board?.setComponentOpenDrain(selPart.id, v);
   }
   // The potentiometer's wiper position (its second scalar): 0..1, centred by
   // default. Presented as a continuous slider that sets the exact position.
@@ -1978,6 +2005,40 @@
                     "V",
                   )} lo</span
                 >
+              </div>
+            {/if}
+            {#if isGatePart(kind)}
+              <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+                   releases high (needs an external pull-up) — open-drain outputs on one
+                   net make a wired-AND bus (I²C / interrupt-line idiom). -->
+              <div class="insp-sub">output</div>
+              <div class="insp-chips">
+                <button
+                  class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+                  onclick={() => setOpenDrain(false)}>Push-pull</button
+                >
+                <button
+                  class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+                  onclick={() => setOpenDrain(true)}>Open-drain</button
+                >
+              </div>
+              {#if selOpenDrain()}
+                <div class="insp-sub">
+                  releases high · <span class="mono">add a pull-up to Vcc</span>
+                </div>
+              {/if}
+            {/if}
+            {#if kind === "LS"}
+              <!-- The level shifter's OUTPUT rail (rail B); the value chips above set
+                   the INPUT rail (rail A). Pick both to shift up (A < B) or down. -->
+              <div class="insp-sub">output rail (B)</div>
+              <div class="insp-chips wrap">
+                {#each [1.8, 2.5, 3.3, 5, 12] as v (v)}
+                  <button
+                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                    onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                  >
+                {/each}
               </div>
             {/if}
             {#if kind === "AC"}

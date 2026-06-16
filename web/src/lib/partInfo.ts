@@ -535,6 +535,31 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  LS: {
+    name: "Level Shifter",
+    equation: "OUT @ rail B = IN @ rail A",
+    headline: (e, railA, railB) =>
+      `In ${f(railA, "V")} → out ${f(railB ?? 5, "V")} · ${f(e.current, "A")}`,
+    plain: () =>
+      "A level shifter (level translator) bridges two logic-voltage domains: it reads its input against the INPUT rail's threshold and re-drives its output cleanly at the OUTPUT rail. That is what lets a 1.8 V sensor talk to a 5 V microcontroller and back — a low-rail high that would be marginal or lost at the higher rail is restored to a full high, and a high-rail signal is brought down without over-driving the low-rail part. Set the input rail (A) and the output rail (B); it does no logic, just translation, with one tick of delay.",
+    derived: (e, railA, railB) => [
+      { label: "Input rail (A)", value: f(railA, "V") },
+      { label: "Output rail (B)", value: f(railB ?? 5, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  PU: {
+    name: "Pull-up",
+    equation: "I = (Vcc − V) / R",
+    headline: (e, vcc) => `Pull-up to ${f(vcc, "V")} · ${f(e.current, "A")}`,
+    plain: () =>
+      "A pull-up resistor ties a net to Vcc through a (here 4.7 kΩ) resistance. On its own it holds the net high; its real job is to partner an open-drain / open-collector output, which can only pull LOW or release (high-Z) — the pull-up provides the HIGH. Put several open-drain outputs and one pull-up on a net and you get a wired-AND bus: any driver pulling low takes the whole net low (its stiff ~1 Ω beats the pull-up), and the net floats high only when every driver releases. That is how I²C, 1-Wire, and shared interrupt lines work.",
+    derived: (e, vcc) => [
+      { label: "Pulls to (Vcc)", value: f(vcc, "V") },
+      { label: "Resistance", value: "4.7 kΩ" },
+      { label: "Source current", value: f(e.current, "A") },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",

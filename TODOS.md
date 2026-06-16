@@ -30,8 +30,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
     golden-stable (Ideal default); web `families.ts` mirror + `Component.family` +
     buildNetlist aux pack + `setComponentFamily` + App.svelte family chip picker & noise-
     margin readout. Test `gate_family_levels_and_mixed_rail` (the level-shifter lesson).~~
-  - [ ] **Stage 4 (follow-up)** — open-drain driver (release high → Z) + wired-AND bus
-    (open-drain + pull-up, resolved by MNA) + level-shifter part (all golden-additive).
+  - **Stage 4 — digital-interface ground rules.** (Prior batch SHIPPED to live via **PR #67**.)
+    - ~~**Open-drain output mode + wired-AND bus.** Per-gate open-drain (aux bit 8): pulls
+      low, releases high → an external pull-up forms a wired-AND bus, resolved by the MNA
+      solve. `aux` now masks func/family/open-drain; new `gate_gout` for a mode-aware
+      current readout. Default push-pull → golden-stable. Inspector output toggle + web
+      threading. Test `gate_open_drain_wired_and_bus` (bus = A AND B).~~
+    - ~~**Level-shifter (`ELEM_LEVELSHIFT=20`) + pull-up (`ELEM_PULLUP=21`).** Level
+      shifter: 2-pin, reads input at rail A (`value`), re-drives at rail B (`aux`) —
+      conversion in its pins (Ideal receiver/driver); web `value`=input rail, `amp`=output
+      rail picker. Pull-up: 1-pin resistor to internal Vcc through 4.7k, constant Thévenin
+      in the 4 assembly sites. Both golden-additive; tier-1 schematic glyphs (LS = buffer
+      placeholder, PU = resistor-to-Vcc). Tests `level_shifter_translates_rails`,
+      `pullup_takes_net_to_vcc_unless_pulled`.~~
+    - [ ] **Tier-2 (factory) + tier-3 (real) glyphs for LS/PU** — owner's symbol pass
+      (LS currently aliases the buffer; factory falls back to schematic).
 
 ## 2026-06-15
 

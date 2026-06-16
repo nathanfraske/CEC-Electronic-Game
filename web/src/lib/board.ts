@@ -192,6 +192,9 @@ export interface SelectedPart {
   /** A digital part's logic-family index (0 = Ideal, 1 = CMOS, 2 = TTL). Undefined
    * for non-digital kinds. */
   family?: number;
+  /** A logic gate's open-drain output mode (true = open-drain, else push-pull).
+   * Undefined for non-gate kinds. */
+  openDrain?: boolean;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -209,6 +212,7 @@ interface ClipboardSnippet {
     amp?: number;
     wiper?: number;
     family?: number;
+    openDrain?: boolean;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1532,6 +1536,7 @@ export class Board {
           amp: c.amp,
           wiper: c.wiper,
           family: c.family,
+          openDrain: c.openDrain,
         };
     }
     this.cb.onSelect?.({
@@ -1630,6 +1635,20 @@ export class Board {
     c.family = family;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed family
+  }
+
+  /**
+   * Set a logic gate's open-drain output mode from the inspector. Packed into `aux`
+   * bit 8 by {@link buildNetlist}, so this rebuilds the netlist (an open-drain output
+   * releases its high side instead of driving it). No-op if unchanged.
+   */
+  setComponentOpenDrain(id: number, openDrain: boolean): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.openDrain ?? false) === openDrain) return;
+    this.pushUndo(this.graph.serialize());
+    c.openDrain = openDrain;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed output mode
   }
 
   /**
@@ -2435,6 +2454,7 @@ export class Board {
         amp: c.amp,
         wiper: c.wiper,
         family: c.family,
+        openDrain: c.openDrain,
       });
     }
     if (comps.length === 0) return;
@@ -2515,6 +2535,7 @@ export class Board {
       if (cc.amp !== undefined) nc.amp = cc.amp;
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
       if (cc.family !== undefined) nc.family = cc.family;
+      if (cc.openDrain !== undefined) nc.openDrain = cc.openDrain;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {

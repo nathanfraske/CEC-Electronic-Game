@@ -5,6 +5,72 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Stage 4 COMPLETE: open-drain + level-shifter + pull-up
+
+**State:** 🟢 Green (fmt, clippy, **98 sim-core tests**, wasm, web). Branch
+`claude/kind-turing-hdelb3`, a few commits ahead of `main` (PR #67's big batch is already
+live). Stage 4's digital-interface ground rules are **all in**, with **tier-1 schematic
+symbols** (owner will do a tier 2/3 art pass later — that was the explicit ask).
+
+**The set:**
+- **Open-drain output mode** (per-gate toggle, aux bit 8) → wired-AND bus with a pull-up.
+- **Level shifter** (`ELEM_LEVELSHIFT=20`, digital, 2-pin OUT/IN): reads input at rail A
+  (`value`), re-drives at rail B (`aux`) — the conversion lives in its pins (Ideal
+  receiver/driver). Web: `value` = input rail (chips), `amp` = output rail (a dedicated
+  picker); glyph = the buffer triangle (placeholder). Test `level_shifter_translates_rails`.
+- **Pull-up** (`ELEM_PULLUP=21`, analog, 1-pin): resistor to internal Vcc (`value`) through
+  `PULLUP_R=4.7k`, stamped as a constant Thévenin in the 4 assembly sites. Glyph = a
+  resistor up to a Vcc bar. Test `pullup_takes_net_to_vcc_unless_pulled`.
+
+**Architecture note (confirmed with owner):** the analog↔digital boundary lives in the
+gate/FF/shifter **pins** (receiver = quantize voltage→Level on inputs; driver = stamp
+Level→voltage on outputs). The pull-up is a **plain analog resistor**, NOT a boundary
+marker — it just sets a net's voltage so an all-released open-drain bus reads high.
+
+**aux bit layout (digital elements):** func bits 0–3 · family bits 4–7 · open-drain bit 8
+(masked by `aux_bits`/`gate_func_code`/`gate_family_index`/`gate_open_drain`). The level
+shifter (a non-gate) instead uses `aux` = output rail B (like AC uses aux for amplitude).
+
+**NEXT:** owner is drafting **new symbols** — when they land, do the **tier-2 (factory) +
+tier-3 (real) glyph pass** for LS/PU (currently LS aliases the buffer, PU is a custom
+schematic; factory falls back to schematic). Also still open: lifting pure-digital nets
+out of MNA (hash-neutral perf), the FBR curriculum example, the digital Tier-A ladder
+(counters/shift registers/decoders — now all golden-**additive** on this foundation).
+Ship Stage 4 whenever the owner wants (a few commits ahead of `main`; merge via PR like #67).
+
+---
+
+## 2026-06-16 (night) — Big batch SHIPPED (PR #67) + Stage 4 open-drain ground rule
+
+**State:** 🟢 Green (fmt, clippy, **96 sim-core tests**, wasm, web). **The whole prior
+batch is LIVE** — audit cleared it (ship-ready), and it merged to `main` via **PR #67**
+(`main` couldn't take a direct push — branch-protected — so the "merge to main now" ask
+went through a PR + immediate merge). That shipped: transformer ideal-T bridge fix,
+digital scheduler Stages 1–2, XNOR/BUF, logic families + picker. Owner reviews on live.
+
+**Stage 4 — open-drain / wired-AND ground rule (DONE, on branch, 1 commit ahead of main):**
+The owner asked to "get the ground rules going before we add more stuff," so this lands the
+open-drain mechanic (the foundation for buses / I²C / interrupt lines) as a per-gate
+*output-mode toggle* — **no new part or symbol** (the owner is drafting symbols separately).
+- **sim-core:** `aux` now packs three masked fields — func (bits 0–3), family (4–7),
+  **open-drain (bit 8)** — via `aux_bits`/`gate_func_code`/`gate_family_index`/
+  `gate_open_drain` (the family decode now masks, fixing a latent leak). `eval_digital`
+  maps an open-drain High → `Z` (release); `stamp_digital` leaves the net to an external
+  pull-up. New per-gate `gate_gout` makes the displayed gate current family/mode-aware
+  (a released output reads ~0 A; also tidies the audit's gate-current note). Default
+  push-pull → goldens unchanged. Test `gate_open_drain_wired_and_bus` (bus = A AND B).
+- **web:** `Component.openDrain` → `aux` bit 8 in `buildNetlist`; `board.setComponentOpenDrain`
+  + emitSelect/clipboard/serialize threading; inspector "output" toggle (Push-pull /
+  Open-drain) for gates + a "add a pull-up" hint.
+
+**NEXT (Stage 4 remainder, deferred per "ground rules first"):** a **level-shifter** part
+(reads a logic level at rail A, re-drives at rail B — needs a two-rail design, e.g. a
+4-pin VccA/IN/VccB/OUT element or a 2-pin part whose `value` is the output rail); maybe a
+convenience **pull-up** part. Hold on these until the owner's new symbols land. Also still
+open: lifting pure-digital nets out of MNA (hash-neutral perf), the FBR curriculum example.
+
+---
+
 ## 2026-06-16 (eve) — Stage 3 DONE; whole batch ready to ship (review audit pending)
 
 **State:** 🟢 Green (fmt, clippy, **95 sim-core tests**, wasm, web check/lint/build).
