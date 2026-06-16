@@ -549,6 +549,57 @@ impl LogicFamily {
     }
 }
 
+/// The selectable logic families, indexed by a small per-element code carried in the
+/// upper bits of a gate/flip-flop's `aux` (see [`gate_family_index`]). Index `0` is
+/// always [`LogicFamily::LEGACY`] (the idealised default every existing circuit uses,
+/// so the goldens are unchanged); the rest are real families with honest thresholds
+/// and noise margins. All are fixed `const` data → golden-reproducible. Levels are
+/// rail fractions so one entry serves any rail (`value`); the rail + family together
+/// give the absolute `V_IL`/`V_IH`/`V_OL`/`V_OH`. See
+/// `docs/ui/logic-analog-digital-nets.md` §7.
+const FAMILIES: [LogicFamily; 3] = [
+    // 0: LEGACY / ideal — half-rail threshold, rail-to-ground output, no forbidden band.
+    LogicFamily::LEGACY,
+    // 1: CMOS — ~30%/70% input thresholds, near rail-to-rail output. Rail-independent,
+    //    so it serves 5 V CMOS, 3.3 V LVCMOS, 1.8 V, … by choosing the rail. Symmetric
+    //    ~0.25·rail noise margins.
+    LogicFamily {
+        v_il_frac: 0.3,
+        v_ih_frac: 0.7,
+        v_ol_frac: 0.05,
+        v_oh_frac: 0.95,
+        g_ol: GATE_GOUT,
+        g_oh: GATE_GOUT,
+    },
+    // 2: TTL — 0.8 V / 2.0 V inputs and 0.4 V / 3.4 V outputs at a 5 V rail (the classic
+    //    asymmetric thresholds with a notoriously thin low-side margin). Tuned for 5 V.
+    LogicFamily {
+        v_il_frac: 0.16,
+        v_ih_frac: 0.4,
+        v_ol_frac: 0.08,
+        v_oh_frac: 0.68,
+        g_ol: GATE_GOUT,
+        g_oh: GATE_GOUT,
+    },
+];
+
+/// Decode a gate/flip-flop's logic-family index from its `aux` scalar. The family rides
+/// in the **upper bits** (`aux / 16`) while the gate function code occupies the low bits
+/// ([`gate_func_code`]); a flip-flop has no function code, so its low bits are `0`. An
+/// out-of-range index clamps to the last family. For a legacy element (`aux` in `0..8`,
+/// no family bits) this is `0` = [`LogicFamily::LEGACY`], so behaviour is unchanged.
+#[inline]
+fn gate_family_index(aux: f64) -> usize {
+    ((aux.round().max(0.0) as usize) / 16).min(FAMILIES.len() - 1)
+}
+
+/// Decode a gate's function code (`0..8`, the low bits of `aux`) from a packed `aux`
+/// that may also carry a family index in its upper bits ([`gate_family_index`]).
+#[inline]
+fn gate_func_code(aux: f64) -> f64 {
+    (aux.round().max(0.0) as i64).rem_euclid(16) as f64
+}
+
 /// **Transformer** (ideal-T model). The first four-terminal element: primary
 /// `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio `n = Ns/Np`. A
 /// magnetising inductance [`TRANSFORMER_L1`] in series with the primary winding
@@ -1501,6 +1552,11 @@ pub struct Sim {
     /// Scratch: the rail (`vhigh`) of each node's digital driver, paired with
     /// `digital_drive` so the stamp can turn a [`Level`] into a Thévenin voltage.
     digital_vhigh: Vec<f64>,
+    /// Scratch: the [`FAMILIES`] index of each node's digital driver, so the driver
+    /// stamp ([`Sim::stamp_digital`]) and the canonical-level commit
+    /// ([`Sim::commit_net_levels`]) use that driver's family levels. Paired with
+    /// `digital_drive`/`digital_vhigh`; recomputed every solve. `0` (LEGACY) if undriven.
+    digital_family: Vec<u8>,
     /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
     /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
     /// previous-iterate reference, so each step starts from the converged
@@ -1594,6 +1650,7 @@ impl Sim {
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
+            digital_family: vec![0],
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
@@ -1780,6 +1837,7 @@ impl Sim {
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
+        self.digital_family = vec![0; node_count];
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
         self.mosfet_vds = vec![0.0; elements.len()];
@@ -3391,28 +3449,34 @@ impl Sim {
         for d in self.digital_drive.iter_mut() {
             *d = Level::Z;
         }
-        let fam = LogicFamily::LEGACY;
         for i in 0..self.elements.len() {
             let e = self.elements[i];
             match e.kind {
                 ELEM_GATE => {
+                    // This gate's selected logic family (packed in aux's upper bits).
+                    let fi = gate_family_index(e.aux);
+                    let fam = &FAMILIES[fi];
                     // Receiver: quantise each input's committed (last-tick) voltage at
-                    // THIS gate's rail (per-reader threshold, one tick of delay).
+                    // THIS gate's family + rail (per-reader threshold, one tick of delay).
                     let in1 = fam.quantize(self.node_v[e.b], e.value);
                     let in2 = fam.quantize(self.node_v[e.c], e.value);
-                    let out = gate_logic_level(e.aux, in1, in2);
+                    let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
                     self.gate_target[i] = fam.drive_level(out, e.value).map_or(0.0, |(v, _)| v);
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], out);
                     self.digital_vhigh[e.a] = e.value;
+                    self.digital_family[e.a] = fi as u8;
                 }
                 ELEM_DFF => {
                     // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
                     // in the commit phase, so the output is constant within the solve.
+                    let fi = gate_family_index(e.aux);
                     let q = self.ff_q[i];
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], q);
                     self.digital_vhigh[e.a] = e.value;
+                    self.digital_family[e.a] = fi as u8;
                     self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
                     self.digital_vhigh[e.d] = e.value;
+                    self.digital_family[e.d] = fi as u8;
                 }
                 _ => {}
             }
@@ -3426,12 +3490,12 @@ impl Sim {
     /// when those nets later leave the MNA matrix. Undriven nets quantise at rail `0`,
     /// so a floored (≈0 V) net reads `Low` — preserving floating-input-reads-low.
     fn commit_net_levels(&mut self) {
-        let fam = LogicFamily::LEGACY;
         for node in 0..self.node_count {
             if matches!(
                 self.net_classes[node],
                 NetClass::Digital | NetClass::Boundary
             ) {
+                let fam = &FAMILIES[self.digital_family[node] as usize];
                 self.net_level[node] = fam.quantize(self.node_v[node], self.digital_vhigh[node]);
             }
         }
@@ -3446,7 +3510,6 @@ impl Sim {
     /// fighting in the matrix. The stamp is constant within the solve, so a gate/FF-only
     /// circuit stays on the linear fast path — no Newton, no branch unknown.
     fn stamp_digital(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize) {
-        let fam = LogicFamily::LEGACY;
         for node in 1..self.node_count {
             if !matches!(
                 self.net_classes[node],
@@ -3456,6 +3519,7 @@ impl Sim {
             }
             let r = node - 1; // node n -> MNA row n-1 (ground excluded)
             mat[r * dim + r] += GMIN;
+            let fam = &FAMILIES[self.digital_family[node] as usize];
             if let Some((tv, g)) =
                 fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
             {
@@ -3539,7 +3603,7 @@ impl Sim {
                     // D into the stored level (the receiver quantises the just-solved
                     // CLK/D voltages at the FF's rail). Otherwise the bit holds. Both
                     // `ff_q` and `ff_clk_prev` are 4-state and enter the snapshot hash.
-                    let fam = LogicFamily::LEGACY;
+                    let fam = &FAMILIES[gate_family_index(e.aux)];
                     let clk = fam.quantize(self.node_v[e.c], e.value);
                     if clk == Level::High && self.ff_clk_prev[i] != Level::High {
                         self.ff_q[i] = fam.quantize(self.node_v[e.b], e.value);
@@ -5438,6 +5502,65 @@ mod tests {
         assert!(
             (1.5..=3.5).contains(&v),
             "two disagreeing drivers conflict to X -> mid-rail (~2.5 V): {v}"
+        );
+    }
+
+    /// Real logic families (selected via the upper bits of `aux`, `func + 16*family`)
+    /// give honest levels and the mixed-rail "your high is too low" lesson
+    /// (`docs/ui/logic-analog-digital-nets.md` §7.5). Family 1 = CMOS (V_OH = 0.95*rail,
+    /// V_IL = 0.3*rail). Family 0 = LEGACY drives to the full rail, so a non-rail output
+    /// proves the family is active.
+    #[test]
+    fn gate_family_levels_and_mixed_rail() {
+        // CMOS NOT at a 5 V rail: input floats low -> output High at V_OH = 0.95*5 =
+        // 4.75 V (NOT the full 5 V a LEGACY gate would drive — proof the family is live).
+        let mut cmos = Sim::new(1);
+        assert!(cmos.set_netlist(
+            3,
+            &[ELEM_GATE],
+            &[1],
+            &[2],
+            &[0],
+            &[0],
+            &[5.0],
+            &[6.0 + 16.0], // NOT (func 6) + family 1 (CMOS)
+        ));
+        for _ in 0..5 {
+            cmos.step();
+        }
+        let voh = cmos.state()[1];
+        assert!(
+            (4.5..4.95).contains(&voh),
+            "CMOS drives V_OH ~ 0.95*rail (4.75 V), not the full rail: {voh}"
+        );
+
+        // Mixed-rail: a CMOS NOT on a 1.8 V rail (output High = 0.95*1.8 = 1.71 V) feeds
+        // a CMOS BUF on a 12 V rail (V_IL = 0.3*12 = 3.6 V). 1.71 V < 3.6 V, so the high
+        // is *lost* — the 12 V gate reads it LOW and drives its output low. The classic
+        // "you need a level shifter" failure.
+        let mut mixed = Sim::new(1);
+        assert!(mixed.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE],
+            &[1, 3],
+            &[2, 1],
+            &[0, 0],
+            &[0, 0],
+            &[1.8, 12.0],
+            &[6.0 + 16.0, 7.0 + 16.0], // NOT@1.8V CMOS, BUF@12V CMOS
+        ));
+        for _ in 0..6 {
+            mixed.step();
+        }
+        let lo_high = mixed.state()[1];
+        let lost = mixed.state()[3];
+        assert!(
+            (1.5..1.9).contains(&lo_high),
+            "the 1.8 V CMOS high is ~1.71 V: {lo_high}"
+        );
+        assert!(
+            lost < 2.0,
+            "the 1.8 V high is below the 12 V part's V_IL, so it reads LOW (high lost): {lost}"
         );
     }
 
