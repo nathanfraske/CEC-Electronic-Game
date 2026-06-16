@@ -1522,6 +1522,296 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
+  // ── Logic from transistors track ──────────────────────────────────────────
+  // The gates you place as one part, built from the raw MOSFETs (NM/PM, 3-pin:
+  // pin 0 = D drain, pin 1 = S source, pin 2 = G gate). A complementary CMOS pair
+  // drives the output rail-to-rail, and the *shape* of the transistor network —
+  // series vs parallel — is the boolean. These are real analog devices on the
+  // Newton path, so the output settles to a true voltage you can probe, not a
+  // forced logic level: the bridge from "what a transistor does" to "what a gate
+  // is." (A cross-coupled *latch* belongs to the gate track below, not here —
+  // built from behavioral gates it settles deterministically by the one-tick
+  // delay, where a raw-transistor bistable can hang at a metastable midpoint.)
+  {
+    id: "cmos-inverter",
+    name: "CMOS Inverter (2 Transistors)",
+    blurb:
+      "The inverter you've been placing as one part — built from two transistors. A P-MOSFET on top pulls the output up to the rail; an N-MOSFET below pulls it down to ground; their gates are tied together as the input. Drive the input low and only the top device conducts, so the output is pulled HIGH; drive it high and only the bottom one conducts, pulling it LOW. Whichever way the input goes, exactly one transistor is on — so the output swings fully to the opposite rail and almost no current flows straight through. That 'one on, one off' is why CMOS logic sips power, and it's the same NOT the gate part performs, now in silicon.",
+    watch:
+      "the LED lit while the input source sits at 0 V — the P-MOSFET is on and pulls the output to ~5 V (a logic 1) out of a 0 V input. Raise the input past ~2.5 V (half the rail, the toggle below) and the pair flips: the N-MOSFET takes over, the output snaps to ~0 V and the LED goes dark. The switch happens right at VDD/2.",
+    build() {
+      // CMOS NOT: PMOS pull-up (source→VDD, drain→OUT) over NMOS pull-down
+      // (drain→OUT, source→GND), gates tied as the input. IN low ⇒ PMOS on,
+      // NMOS off ⇒ OUT high ⇒ LED lit. The MOSFETs are nonlinear → Newton path.
+      //   nets: VDD = PM.S ; OUT = PM.D = NM.D = R.A ; GND = NM.S = LED.K = Vin− ;
+      //         IN = Vin+ = PM.G = NM.G.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // 5 V rail, + at top
+      const vin = comp(g, "V", 0, 6, 0, 1); // input, LOW by default
+      const pm = comp(g, "PM", 5, 0, 0); // pull-up
+      const nm = comp(g, "NM", 5, 5, 0); // pull-down
+      const r = comp(g, "R", 10, 0, 330); // LED current-limit
+      const led = comp(g, "LED", 14, 0, 0);
+      const gnd = comp(g, "GND", 10, 7, 0);
+      wire(g, vdd, 0, pm, 1); // VDD+ → PMOS.source (pin 1)
+      wire(g, pm, 0, nm, 0); // PMOS.drain ─ NMOS.drain (pin 0 each) = OUTPUT
+      wire(g, nm, 1, gnd, 0); // NMOS.source (pin 1) → GND
+      wire(g, vin, 0, pm, 2); // IN → PMOS.gate (pin 2)
+      wire(g, vin, 0, nm, 2); // IN → NMOS.gate (pin 2)
+      wire(g, pm, 0, r, 0); // OUT → R.A
+      wire(g, r, 1, led, 0); // R.B → LED.A
+      wire(g, led, 1, gnd, 0); // LED.K → GND
+      wire(g, vdd, 1, gnd, 0); // VDD− → GND (reference)
+      wire(g, vin, 1, gnd, 0); // IN− → GND
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a 5 V Voltage Source (V) for the rail and a Ground. Add a P-MOSFET (PM) for the pull-up, an N-MOSFET (NM) for the pull-down, and a second Voltage Source (V) for the input.",
+        why: "The two transistors are a complementary pair: the P-MOSFET conducts when its gate is low, the N-MOSFET when its gate is high. Stacked between the rail and ground, they take turns driving the output.",
+        done: (p) => at(p, "V") >= 2 && at(p, "PM") >= 1 && at(p, "NM") >= 1,
+      },
+      {
+        do: "Wire VDD → PMOS SOURCE, PMOS DRAIN → NMOS DRAIN (that junction is the OUTPUT), NMOS SOURCE → GND. Tie the input source to BOTH gates. Add an LED + Resistor (~330 Ω) from the output to Ground. Leave the input at 0 V and Run.",
+        why: "With the input low, the P-MOSFET is on and the N-MOSFET is off, so the output is pulled up to the rail — a logic 1 out of a logic 0 — and the LED lights. One transistor on, one off.",
+        done: (p) =>
+          at(p, "PM") >= 1 &&
+          at(p, "NM") >= 1 &&
+          at(p, "LED") >= 1 &&
+          p.complete,
+      },
+      {
+        do: "Select the input source and set it to 5 V (or use the toggle below).",
+        why: "Now the N-MOSFET is on and the P-MOSFET is off, so the output is pulled down to ground and the LED goes dark. The roles swapped at half the rail — and because one device is always off, there's no straight-through path from rail to ground: that's why CMOS barely draws current holding a level.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Input low / high",
+      on: "Input 0 V — P-MOSFET on, output HIGH, the LED is lit.",
+      off: "Input 5 V — N-MOSFET on, output LOW, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const vdd = comp(g, "V", 0, 0, 5, 1);
+        const vin = comp(g, "V", 0, 6, 5, 1); // input driven HIGH
+        const pm = comp(g, "PM", 5, 0, 0);
+        const nm = comp(g, "NM", 5, 5, 0);
+        const r = comp(g, "R", 10, 0, 330);
+        const led = comp(g, "LED", 14, 0, 0);
+        const gnd = comp(g, "GND", 10, 7, 0);
+        wire(g, vdd, 0, pm, 1);
+        wire(g, pm, 0, nm, 0);
+        wire(g, nm, 1, gnd, 0);
+        wire(g, vin, 0, pm, 2);
+        wire(g, vin, 0, nm, 2);
+        wire(g, pm, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vdd, 1, gnd, 0);
+        wire(g, vin, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "cmos-nand",
+    name: "NAND from 4 Transistors",
+    blurb:
+      "A NAND gate from four transistors — and NAND is universal, so this is the seed of all logic. Two N-MOSFETs in series form the pull-down; two P-MOSFETs in parallel form the pull-up. The output is yanked LOW only when BOTH inputs are high (both series transistors conduct and complete the path to ground); if either input is low, that series path breaks and a parallel pull-up holds the output HIGH. Series-for-AND, parallel-for-OR is the whole trick — the shape of the transistor network IS the boolean.",
+    watch:
+      "the LED lit because one input is low — the two series pull-down transistors can't both conduct, so the path to ground is broken and a parallel pull-up holds the output high. Raise the other input (the toggle) so BOTH are high, the series path completes, and the output is pulled cleanly to 0 V — the LED goes dark. Only both-high turns it off: that's NAND.",
+    build() {
+      // CMOS NAND: 2 NMOS in series (OUT→MID→GND) + 2 PMOS in parallel (VDD→OUT).
+      // A,B each drive one PMOS gate and one NMOS gate. A=1,B=0 ⇒ pull-down broken,
+      // a PMOS holds OUT high ⇒ LED lit. Both high ⇒ OUT pulled to 0 ⇒ dark.
+      //   nets: VDD = PM1.S = PM2.S ; OUT = PM1.D = PM2.D = NM1.D = R.A ;
+      //         MID = NM1.S = NM2.D ; GND = NM2.S = LED.K = refs ;
+      //         A = PM1.G = NM1.G ; B = PM2.G = NM2.G.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // 5 V rail
+      const va = comp(g, "V", 0, 5, 5, 1); // input A = HIGH
+      const vb = comp(g, "V", 0, 10, 0, 1); // input B = LOW
+      const pm1 = comp(g, "PM", 5, 0, 0); // parallel pull-up (A)
+      const pm2 = comp(g, "PM", 9, 0, 0); // parallel pull-up (B)
+      const nm1 = comp(g, "NM", 5, 5, 0); // series pull-down, top (A)
+      const nm2 = comp(g, "NM", 5, 10, 0); // series pull-down, bottom (B)
+      const r = comp(g, "R", 14, 0, 330);
+      const led = comp(g, "LED", 18, 0, 0);
+      const gnd = comp(g, "GND", 14, 12, 0);
+      wire(g, vdd, 0, pm1, 1); // VDD → PM1.source
+      wire(g, vdd, 0, pm2, 1); // VDD → PM2.source
+      wire(g, pm1, 0, pm2, 0); // PM1.drain ─ PM2.drain = OUT (pull-ups in parallel)
+      wire(g, pm1, 0, nm1, 0); // OUT ─ NM1.drain
+      wire(g, nm1, 1, nm2, 0); // NM1.source ─ NM2.drain = MID (pull-downs in series)
+      wire(g, nm2, 1, gnd, 0); // NM2.source → GND
+      wire(g, va, 0, pm1, 2); // A → PM1.gate
+      wire(g, va, 0, nm1, 2); // A → NM1.gate
+      wire(g, vb, 0, pm2, 2); // B → PM2.gate
+      wire(g, vb, 0, nm2, 2); // B → NM2.gate
+      wire(g, pm1, 0, r, 0); // OUT → R.A
+      wire(g, r, 1, led, 0);
+      wire(g, led, 1, gnd, 0);
+      wire(g, vdd, 1, gnd, 0);
+      wire(g, va, 1, gnd, 0);
+      wire(g, vb, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a 5 V rail (V) and Ground, two input Voltage Sources (V), then two P-MOSFETs (PM) for the pull-up and two N-MOSFETs (NM) for the pull-down.",
+        why: "Four transistors make one NAND: the P-MOSFETs will pull the output up, the N-MOSFETs will pull it down, and how they're wired — series vs parallel — decides the logic.",
+        done: (p) => at(p, "V") >= 3 && at(p, "PM") >= 2 && at(p, "NM") >= 2,
+      },
+      {
+        do: "Wire the two N-MOSFETs in SERIES from the output down to ground (OUT → NM1 → NM2 → GND) and the two P-MOSFETs in PARALLEL from the rail to the output. Tie input A to one P and one N gate, input B to the other pair. Add an LED + Resistor from the output to Ground. Set A = 5 V, B = 0 V and Run.",
+        why: "With B low, its series N-MOSFET is off so the pull-down can't reach ground, while B's parallel P-MOSFET is on and pulls the output high — the LED lights. The output is high because the inputs are NOT both high.",
+        done: (p) =>
+          at(p, "PM") >= 2 &&
+          at(p, "NM") >= 2 &&
+          at(p, "LED") >= 1 &&
+          p.complete,
+      },
+      {
+        do: "Raise input B to 5 V (or use the toggle) so both inputs are high.",
+        why: "Now both series N-MOSFETs conduct, completing the path to ground and pulling the output to a clean 0 V; both parallel P-MOSFETs are off. The LED goes dark only when every input is high — NAND(1,1) = 0. You just built what's inside the single NAND part in your bin.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "One low / both high",
+      on: "A = 1, B = 0 — the series pull-down is broken, output HIGH, the LED is lit.",
+      off: "A = 1, B = 1 — the series path completes, output LOW, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const vdd = comp(g, "V", 0, 0, 5, 1);
+        const va = comp(g, "V", 0, 5, 5, 1);
+        const vb = comp(g, "V", 0, 10, 5, 1); // B raised HIGH → both high
+        const pm1 = comp(g, "PM", 5, 0, 0);
+        const pm2 = comp(g, "PM", 9, 0, 0);
+        const nm1 = comp(g, "NM", 5, 5, 0);
+        const nm2 = comp(g, "NM", 5, 10, 0);
+        const r = comp(g, "R", 14, 0, 330);
+        const led = comp(g, "LED", 18, 0, 0);
+        const gnd = comp(g, "GND", 14, 12, 0);
+        wire(g, vdd, 0, pm1, 1);
+        wire(g, vdd, 0, pm2, 1);
+        wire(g, pm1, 0, pm2, 0);
+        wire(g, pm1, 0, nm1, 0);
+        wire(g, nm1, 1, nm2, 0);
+        wire(g, nm2, 1, gnd, 0);
+        wire(g, va, 0, pm1, 2);
+        wire(g, va, 0, nm1, 2);
+        wire(g, vb, 0, pm2, 2);
+        wire(g, vb, 0, nm2, 2);
+        wire(g, pm1, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vdd, 1, gnd, 0);
+        wire(g, va, 1, gnd, 0);
+        wire(g, vb, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "cmos-nor",
+    name: "NOR from 4 Transistors",
+    blurb:
+      "NOR is NAND's mirror image — swap the series and parallel networks and the logic flips. Here two P-MOSFETs in SERIES form the pull-up and two N-MOSFETs in PARALLEL form the pull-down. The output is HIGH only when BOTH inputs are low (both series pull-ups conduct); raise either input and its parallel N-MOSFET yanks the output to ground. Seeing NAND and NOR side by side makes the rule concrete: a series network is an AND of conditions, a parallel network an OR — and which one you put on top decides the gate.",
+    watch:
+      "the LED lit because both inputs sit at 0 V — both series P-MOSFETs conduct and pull the output up to the rail. Raise either input (the toggle) and its parallel N-MOSFET grounds the output, breaking the series pull-up: the LED goes dark. Any input high turns it off — that's NOR.",
+    build() {
+      // CMOS NOR: 2 PMOS in series (VDD→OUT) + 2 NMOS in parallel (OUT→GND).
+      // Both inputs low ⇒ series pull-up conducts ⇒ OUT high ⇒ LED lit. Any input
+      // high ⇒ its parallel NMOS grounds OUT ⇒ dark.
+      //   nets: VDD = PM1.S ; MIDP = PM1.D = PM2.S ; OUT = PM2.D = NM1.D = NM2.D = R.A ;
+      //         GND = NM1.S = NM2.S = LED.K = refs ; A = PM1.G = NM1.G ; B = PM2.G = NM2.G.
+      const g = new BoardGraph();
+      const vdd = comp(g, "V", 0, 0, 5, 1); // 5 V rail
+      const va = comp(g, "V", 0, 5, 0, 1); // input A = LOW
+      const vb = comp(g, "V", 0, 10, 0, 1); // input B = LOW
+      const pm1 = comp(g, "PM", 5, 0, 0); // series pull-up, top (A)
+      const pm2 = comp(g, "PM", 5, 4, 0); // series pull-up, bottom (B)
+      const nm1 = comp(g, "NM", 5, 9, 0); // parallel pull-down (A)
+      const nm2 = comp(g, "NM", 9, 9, 0); // parallel pull-down (B)
+      const r = comp(g, "R", 14, 0, 330);
+      const led = comp(g, "LED", 18, 0, 0);
+      const gnd = comp(g, "GND", 14, 12, 0);
+      wire(g, vdd, 0, pm1, 1); // VDD → PM1.source
+      wire(g, pm1, 0, pm2, 1); // PM1.drain ─ PM2.source = MIDP (pull-ups in series)
+      wire(g, pm2, 0, nm1, 0); // PM2.drain ─ NM1.drain = OUT
+      wire(g, pm2, 0, nm2, 0); // OUT ─ NM2.drain (pull-downs in parallel)
+      wire(g, nm1, 1, gnd, 0); // NM1.source → GND
+      wire(g, nm2, 1, gnd, 0); // NM2.source → GND
+      wire(g, va, 0, pm1, 2); // A → PM1.gate
+      wire(g, va, 0, nm1, 2); // A → NM1.gate
+      wire(g, vb, 0, pm2, 2); // B → PM2.gate
+      wire(g, vb, 0, nm2, 2); // B → NM2.gate
+      wire(g, pm2, 0, r, 0); // OUT → R.A
+      wire(g, r, 1, led, 0);
+      wire(g, led, 1, gnd, 0);
+      wire(g, vdd, 1, gnd, 0);
+      wire(g, va, 1, gnd, 0);
+      wire(g, vb, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a 5 V rail (V) and Ground, two input Voltage Sources (V), two P-MOSFETs (PM), and two N-MOSFETs (NM).",
+        why: "Same four-transistor kit as the NAND — but this time the P-MOSFETs go in series and the N-MOSFETs in parallel. The swap is the whole lesson.",
+        done: (p) => at(p, "V") >= 3 && at(p, "PM") >= 2 && at(p, "NM") >= 2,
+      },
+      {
+        do: "Wire the two P-MOSFETs in SERIES from the rail to the output (VDD → PM1 → PM2 → OUT) and the two N-MOSFETs in PARALLEL from the output to ground. Tie input A to one P and one N gate, input B to the other pair. Add an LED + Resistor from the output to Ground. Set both inputs to 0 V and Run.",
+        why: "With both inputs low, both series P-MOSFETs conduct and pull the output up to the rail, while both parallel N-MOSFETs are off — the LED lights. The output is high only when neither input is.",
+        done: (p) =>
+          at(p, "PM") >= 2 &&
+          at(p, "NM") >= 2 &&
+          at(p, "LED") >= 1 &&
+          p.complete,
+      },
+      {
+        do: "Raise either input to 5 V (or use the toggle).",
+        why: "That input's parallel N-MOSFET turns on and pulls the output straight to ground, and the broken series pull-up can't fight it — the LED goes dark. Any single high input forces the output low: NOR. Compare it to the NAND and the series = AND, parallel = OR pattern is unmistakable.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Both low / one high",
+      on: "A = 0, B = 0 — the series pull-up conducts, output HIGH, the LED is lit.",
+      off: "A = 1, B = 0 — a parallel pull-down grounds it, output LOW, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const vdd = comp(g, "V", 0, 0, 5, 1);
+        const va = comp(g, "V", 0, 5, 5, 1); // A raised HIGH
+        const vb = comp(g, "V", 0, 10, 0, 1);
+        const pm1 = comp(g, "PM", 5, 0, 0);
+        const pm2 = comp(g, "PM", 5, 4, 0);
+        const nm1 = comp(g, "NM", 5, 9, 0);
+        const nm2 = comp(g, "NM", 9, 9, 0);
+        const r = comp(g, "R", 14, 0, 330);
+        const led = comp(g, "LED", 18, 0, 0);
+        const gnd = comp(g, "GND", 14, 12, 0);
+        wire(g, vdd, 0, pm1, 1);
+        wire(g, pm1, 0, pm2, 1);
+        wire(g, pm2, 0, nm1, 0);
+        wire(g, pm2, 0, nm2, 0);
+        wire(g, nm1, 1, gnd, 0);
+        wire(g, nm2, 1, gnd, 0);
+        wire(g, va, 0, pm1, 2);
+        wire(g, va, 0, nm1, 2);
+        wire(g, vb, 0, pm2, 2);
+        wire(g, vb, 0, nm2, 2);
+        wire(g, pm2, 0, r, 0);
+        wire(g, r, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vdd, 1, gnd, 0);
+        wire(g, va, 1, gnd, 0);
+        wire(g, vb, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
   // ── Logic track ───────────────────────────────────────────────────────────
   // Logic gates are kinds AND/OR/NAND/NOR/XOR (3-pin: pin 0 = Y output, pin 1 = A,
   // pin 2 = B) and NOT (2-pin: pin 0 = Y, pin 1 = A). All map to solver type 17;
@@ -1752,6 +2042,82 @@ export const EXAMPLES: ExampleSpec[] = [
         wire(g, ledc, 1, gnd, 0);
         wire(g, va, 1, gnd, 0);
         wire(g, vb, 1, gnd, 0);
+        return g.serialize();
+      },
+    },
+  },
+  {
+    id: "logic-sr-latch",
+    name: "SR Latch (Memory from Gates)",
+    blurb:
+      "Two gates that remember. Cross-couple two NOR gates — each one's output feeds back into the other's input — and you get the first circuit with memory: an SR latch. Assert SET and the output Q latches HIGH and holds; assert RESET and it latches LOW and holds. With both inputs at 0 it simply keeps its last value — that held bit is one unit of memory, and it's the leap from combinational logic (output follows input) to sequential logic (output remembers). Every flip-flop and memory cell grows from this loop.",
+    watch:
+      "the Q LED holding its state. With SET asserted it's latched ON — the feedback loop keeps it lit, not any live input. Flip to RESET (the toggle) and Q latches OFF and stays dark. The latch isn't following its input moment to moment; it's remembering what you last told it.",
+    build() {
+      // SR latch from two cross-coupled NOR gates (behavioral gate parts, which
+      // settle deterministically by the one-tick delay). NOR1.Y = Q, NOR2.Y = Q̄;
+      // each output feeds the other's free input. R→NOR1.A, S→NOR2.A. SET=1,RESET=0
+      // ⇒ Q̄ forced low ⇒ Q high (lit), held by the loop.
+      //   nets: R = Vr+ = NOR1.A ; S = Vs+ = NOR2.A ; Q = NOR1.Y = NOR2.B = Rq.A ;
+      //         Q̄ = NOR2.Y = NOR1.B ; GND = LED.K = refs.
+      const g = new BoardGraph();
+      const vr = comp(g, "V", 0, 0, 0, 1); // RESET = 0
+      const vs = comp(g, "V", 0, 6, 5, 1); // SET = 1
+      const nor1 = comp(g, "NOR", 5, 0, 5); // output Q
+      const nor2 = comp(g, "NOR", 5, 6, 5); // output Q̄
+      const rq = comp(g, "R", 10, 0, 330); // Q LED limit
+      const led = comp(g, "LED", 14, 0, 0);
+      const gnd = comp(g, "GND", 10, 8, 0);
+      wire(g, vr, 0, nor1, 1); // RESET → NOR1.A
+      wire(g, vs, 0, nor2, 1); // SET → NOR2.A
+      wire(g, nor1, 0, nor2, 2); // Q → NOR2.B  (cross-couple)
+      wire(g, nor2, 0, nor1, 2); // Q̄ → NOR1.B  (cross-couple)
+      wire(g, nor1, 0, rq, 0); // Q → R
+      wire(g, rq, 1, led, 0);
+      wire(g, led, 1, gnd, 0);
+      wire(g, vr, 1, gnd, 0);
+      wire(g, vs, 1, gnd, 0);
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place two NOR gates and a Voltage Source (V) for each input — one SET, one RESET — plus an LED + Resistor on Q and a Ground.",
+        why: "A latch is just two gates wired to feed each other. The cross-coupling is what turns a pair of NORs into a memory cell.",
+        done: (p) => at(p, "NOR") >= 2 && at(p, "V") >= 2 && at(p, "LED") >= 1,
+      },
+      {
+        do: "Cross-couple them: the first NOR's output (Q) into the second NOR's free input, and the second NOR's output (Q̄) back into the first NOR's free input. Wire RESET to the first gate's other input, SET to the second gate's other input, and an LED + Resistor from Q to Ground. Set SET = 5 V, RESET = 0 V and Run.",
+        why: "Asserting SET forces Q̄ low, which releases Q high — and the feedback then holds it. Q is lit, latched on by the loop, not by a live input.",
+        done: (p) => at(p, "NOR") >= 2 && at(p, "LED") >= 1 && p.complete,
+      },
+      {
+        do: "Swap the inputs: SET = 0 V, RESET = 5 V (or use the toggle below).",
+        why: "RESET forces Q low and the loop holds it there — the LED goes dark and stays dark even once you'd drop the input. Set, reset, and in between it remembers: that's one bit of memory, and the seed of the flip-flop in the next example.",
+        done: (p) => p.complete,
+      },
+    ],
+    demo: {
+      label: "Set / reset",
+      on: "SET = 1, RESET = 0 — Q latched HIGH, the LED is lit.",
+      off: "SET = 0, RESET = 1 — Q latched LOW, the LED is dark.",
+      alt() {
+        const g = new BoardGraph();
+        const vr = comp(g, "V", 0, 0, 5, 1); // RESET asserted
+        const vs = comp(g, "V", 0, 6, 0, 1); // SET released
+        const nor1 = comp(g, "NOR", 5, 0, 5);
+        const nor2 = comp(g, "NOR", 5, 6, 5);
+        const rq = comp(g, "R", 10, 0, 330);
+        const led = comp(g, "LED", 14, 0, 0);
+        const gnd = comp(g, "GND", 10, 8, 0);
+        wire(g, vr, 0, nor1, 1);
+        wire(g, vs, 0, nor2, 1);
+        wire(g, nor1, 0, nor2, 2);
+        wire(g, nor2, 0, nor1, 2);
+        wire(g, nor1, 0, rq, 0);
+        wire(g, rq, 1, led, 0);
+        wire(g, led, 1, gnd, 0);
+        wire(g, vr, 1, gnd, 0);
+        wire(g, vs, 1, gnd, 0);
         return g.serialize();
       },
     },
@@ -2717,6 +3083,7 @@ export const EXAMPLE_CATEGORIES = [
   "Diodes",
   "Power & Switching",
   "Op-Amps",
+  "Logic from Transistors",
   "Logic & ICs",
   "AC Fundamentals",
   "Reactance",
@@ -2754,9 +3121,13 @@ export const EXAMPLE_CATEGORY: Record<string, string> = {
   "opamp-follower": "Op-Amps",
   "opamp-noninverting": "Op-Amps",
   "opamp-comparator": "Op-Amps",
+  "cmos-inverter": "Logic from Transistors",
+  "cmos-nand": "Logic from Transistors",
+  "cmos-nor": "Logic from Transistors",
   "logic-inverter": "Logic & ICs",
   "logic-and": "Logic & ICs",
   "logic-half-adder": "Logic & ICs",
+  "logic-sr-latch": "Logic & ICs",
   "dff-register": "Logic & ICs",
   "dff-toggle": "Logic & ICs",
   "ac-resistor": "AC Fundamentals",
