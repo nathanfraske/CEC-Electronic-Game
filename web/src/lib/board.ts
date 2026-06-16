@@ -195,6 +195,9 @@ export interface SelectedPart {
   /** A logic gate's open-drain output mode (true = open-drain, else push-pull).
    * Undefined for non-gate kinds. */
   openDrain?: boolean;
+  /** The player's custom label for this part (shown in place of the kind tag).
+   * Undefined when unnamed. */
+  label?: string;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -213,6 +216,7 @@ interface ClipboardSnippet {
     wiper?: number;
     family?: number;
     openDrain?: boolean;
+    label?: string;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1537,6 +1541,7 @@ export class Board {
           wiper: c.wiper,
           family: c.family,
           openDrain: c.openDrain,
+          label: c.label,
         };
     }
     this.cb.onSelect?.({
@@ -1590,6 +1595,21 @@ export class Board {
     this.nodes.get(id)?.setValue(value);
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed value
+  }
+
+  /** Set a placed component's custom label (from the inspector). Pure presentation: it
+   *  isn't in the netlist, so this goes through `onPersist` (cosmetic — save + refresh
+   *  undo, NO netlist rebuild and NO sim rewind), exactly like a net-label drag. Empty/
+   *  blank clears it back to the kind tag. Undoable. */
+  setComponentLabel(id: number, label: string): void {
+    const c = this.graph.components.get(id);
+    const next = label.trim() || undefined;
+    if (!c || c.label === next) return;
+    this.pushUndo(this.graph.serialize());
+    c.label = next;
+    this.nodes.get(id)?.setLabel(next);
+    this.cb.onPersist?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed label
   }
 
   /**
@@ -2455,6 +2475,7 @@ export class Board {
         wiper: c.wiper,
         family: c.family,
         openDrain: c.openDrain,
+        label: c.label,
       });
     }
     if (comps.length === 0) return;
@@ -2536,6 +2557,7 @@ export class Board {
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
       if (cc.family !== undefined) nc.family = cc.family;
       if (cc.openDrain !== undefined) nc.openDrain = cc.openDrain;
+      if (cc.label !== undefined) nc.label = cc.label;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {
@@ -3884,7 +3906,8 @@ class ComponentNode {
     this.view.addChild(this.glyphHolder);
     const symbol = isSymbol(this.kindTag);
     this.label = new Text({
-      text: this.kindTag,
+      // The custom label if the player named this part, else the kind tag.
+      text: this.component.label ?? this.kindTag,
       style: {
         fill: this.color,
         fontFamily: "IBM Plex Mono, monospace",
@@ -3997,6 +4020,13 @@ class ComponentNode {
   /** Refresh the on-board value label after an inspector edit. */
   setValue(value: number): void {
     if (this.value) this.value.text = formatValue(value, this.unit);
+  }
+
+  /** Refresh the on-board label after an inspector rename: the custom name if set,
+   *  else the kind tag. */
+  setLabel(label: string | undefined): void {
+    this.label.text = label && label.length > 0 ? label : this.kindTag;
+    this.layoutLabels();
   }
 
   update(electrical: ElectricalState, phase: number, selected: boolean): void {

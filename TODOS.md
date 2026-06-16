@@ -18,10 +18,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
     run is frozen); `loop.ts` **freezes the run on FAIL** (the whole-sim FAIL state). Deferred
     polish: the `+FAIL/−FAIL` numeric-readout swap and a global banner (box+pause already read
     clearly).~~
-  - [ ] **Component labels / renaming** (owner ask — "a big one"): let the player name/label a
-    placed component (custom text by the ref-des), like net labels but per-part. Inspector
-    field + on-board label + persists in the graph snapshot. *(Owner is also doing a manual
-    pass to label/clean the examples — keep hands off `examples.ts`.)*
+  - ~~**Component labels / renaming** (owner ask — "a big one") — DONE. `Component.label`
+    (free persistence via the serialize/restore spread + the save format); the value popover
+    now opens for **every** part (not just valued ones — diodes/GND too) with a label text
+    field at the top (commits on blur; routed through `onPersist`, so naming never rebuilds the
+    netlist or rewinds the running sim); on-board label shows the custom name in place of the
+    kind tag; preserved through copy/paste + undo. (Couldn't verify live — no browser here;
+    gates green.)~~ *(Owner is doing a manual pass to label/clean the examples — kept hands off
+    `examples.ts`.)*
   - [ ] **Curriculum tiering**: sort examples/contracts into "ideal basics" vs "reality carried".
   - [ ] **Additive Real-variant upgrades** (tech-tree/Lux gated, golden-safe additive): diode
     Rs + junction cap, R tolerance/power, C/EC ESR/ESL + ratings, FET/BJT caps + SOA, op-amp

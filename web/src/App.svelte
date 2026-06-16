@@ -1063,6 +1063,9 @@
   function setVal(v: number): void {
     if (selPart) board?.setComponentValue(selPart.id, v);
   }
+  function setLabelText(t: string): void {
+    if (selPart) board?.setComponentLabel(selPart.id, t);
+  }
   function stepVal(dir: number): void {
     if (selPart) setVal(stepValue(selPart.kind, selPart.value, dir));
   }
@@ -1913,9 +1916,8 @@
         {/if}
       </div>
 
-      {#if popPos && selPart && hasValue(selPart.kind)}
+      {#if popPos && selPart}
         {@const kind = selPart.kind}
-        {@const cd = valueDecade(kind, selPart.value)}
         <div
           class="value-pop {popPos.below ? 'below' : 'above'}"
           style="left: {popPos.left}px; {popPos.top !== null
@@ -1940,218 +1942,242 @@
               )} through
             </div>
           {/if}
-          {#if kind === "MSW"}
-            <!-- Manual switch: a bespoke two-state toggle, not a numeric sweep.
+          <!-- Custom label: name this part (shown on the board in place of the kind
+               tag). Pure presentation; persists in the save. Commits on blur/enter. -->
+          <div class="insp-row">
+            <input
+              class="insp-name mono"
+              type="text"
+              placeholder="label (e.g. R1, Vin)"
+              value={selPart.label ?? ""}
+              maxlength="20"
+              aria-label="Name this component"
+              onchange={(e) => setLabelText(e.currentTarget.value)}
+            />
+          </div>
+          {#if hasValue(kind)}
+            {@const cd = valueDecade(kind, selPart.value)}
+            {#if kind === "MSW"}
+              <!-- Manual switch: a bespoke two-state toggle, not a numeric sweep.
                  Open (value 0) / Closed (value 1) chips, mirroring how the other
                  parts' value chips read — and matching the click-to-flip on the
                  board. Both go through setComponentValue, so they're undoable and
                  rebuild the netlist immediately. -->
-            <div class="insp-chips">
-              <button
-                class="chip-val {selPart.value < 0.5 ? 'is-active' : ''}"
-                onclick={() => setVal(0)}>Open</button
-              >
-              <button
-                class="chip-val {selPart.value >= 0.5 ? 'is-active' : ''}"
-                onclick={() => setVal(1)}>Closed</button
-              >
-            </div>
-          {:else}
-            <div class="insp-row">
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepVal(-1)}
-                title="Next smaller standard value">−</button
-              >
-              <div class="insp-chips">
-                {#each chipsOf(kind) as v (v)}
-                  <button
-                    class="chip-val {selPart.value === v ? 'is-active' : ''}"
-                    onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-                  >
-                {/each}
-              </div>
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepVal(1)}
-                title="Next larger standard value">+</button
-              >
-            </div>
-            {#if isDigitalPart(kind)}
-              {@const lv = familyLevels(selFamily(), selPart.value)}
-              <!-- The logic family sets the input thresholds and output levels:
-                   Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
-                   margins. Packed into `aux` for the solver (func + 16*family). -->
-              <div class="insp-sub">logic family</div>
-              <div class="insp-chips wrap">
-                {#each LOGIC_FAMILIES as fam, i (fam.name)}
-                  <button
-                    class="chip-val {selFamily() === i ? 'is-active' : ''}"
-                    onclick={() => setFamily(i)}>{fam.name}</button
-                  >
-                {/each}
-              </div>
-              <div class="insp-sub">
-                thresholds · <span class="mono"
-                  >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
-                    lv.vIh,
-                    "V",
-                  )}</span
-                >
-              </div>
-              <div class="insp-sub">
-                output · <span class="mono"
-                  >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
-                >
-                · noise margin
-                <span class="mono"
-                  >{formatValue(lv.nmHigh, "V")} hi · {formatValue(
-                    lv.nmLow,
-                    "V",
-                  )} lo</span
-                >
-              </div>
-            {/if}
-            {#if isGatePart(kind)}
-              <!-- Output stage: push-pull drives both rails; open-drain pulls low and
-                   releases high (needs an external pull-up) — open-drain outputs on one
-                   net make a wired-AND bus (I²C / interrupt-line idiom). -->
-              <div class="insp-sub">output</div>
               <div class="insp-chips">
                 <button
-                  class="chip-val {selOpenDrain() ? '' : 'is-active'}"
-                  onclick={() => setOpenDrain(false)}>Push-pull</button
+                  class="chip-val {selPart.value < 0.5 ? 'is-active' : ''}"
+                  onclick={() => setVal(0)}>Open</button
                 >
                 <button
-                  class="chip-val {selOpenDrain() ? 'is-active' : ''}"
-                  onclick={() => setOpenDrain(true)}>Open-drain</button
+                  class="chip-val {selPart.value >= 0.5 ? 'is-active' : ''}"
+                  onclick={() => setVal(1)}>Closed</button
                 >
               </div>
-              {#if selOpenDrain()}
-                <div class="insp-sub">
-                  releases high · <span class="mono">add a pull-up to Vcc</span>
-                </div>
-              {/if}
-            {/if}
-            {#if kind === "LS"}
-              <!-- The level shifter's OUTPUT rail (rail B); the value chips above set
-                   the INPUT rail (rail A). Pick both to shift up (A < B) or down. -->
-              <div class="insp-sub">output rail (B)</div>
-              <div class="insp-chips wrap">
-                {#each [1.8, 2.5, 3.3, 5, 12] as v (v)}
-                  <button
-                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                    onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
-                  >
-                {/each}
-              </div>
-            {/if}
-            {#if kind === "AC"}
-              <!-- The AC source's second scalar: its peak amplitude (volts),
-                 presented exactly like the frequency chips above. The row above
-                 sets the frequency (Hz); this one the peak voltage. -->
-              <!-- Amplitude is the PEAK; show the RMS beside it since mains and most
-                   real specs are RMS (Vpk = Vrms·√2). -->
-              <div class="insp-sub">
-                amplitude · <span class="mono"
-                  >≈ {formatValue(selAmp() / Math.SQRT2, "V")} rms</span
-                >
-              </div>
+            {:else}
               <div class="insp-row">
                 <button
                   class="btn btn-ghost insp-step"
-                  onclick={() => stepAmpVal(-1)}
-                  title="Next smaller amplitude">−</button
+                  onclick={() => stepVal(-1)}
+                  title="Next smaller standard value">−</button
                 >
+                <div class="insp-chips">
+                  {#each chipsOf(kind) as v (v)}
+                    <button
+                      class="chip-val {selPart.value === v ? 'is-active' : ''}"
+                      onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+                    >
+                  {/each}
+                </div>
+                <button
+                  class="btn btn-ghost insp-step"
+                  onclick={() => stepVal(1)}
+                  title="Next larger standard value">+</button
+                >
+              </div>
+              {#if isDigitalPart(kind)}
+                {@const lv = familyLevels(selFamily(), selPart.value)}
+                <!-- The logic family sets the input thresholds and output levels:
+                   Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
+                   margins. Packed into `aux` for the solver (func + 16*family). -->
+                <div class="insp-sub">logic family</div>
                 <div class="insp-chips wrap">
-                  {#each acAmpChips() as v (v)}
+                  {#each LOGIC_FAMILIES as fam, i (fam.name)}
+                    <button
+                      class="chip-val {selFamily() === i ? 'is-active' : ''}"
+                      onclick={() => setFamily(i)}>{fam.name}</button
+                    >
+                  {/each}
+                </div>
+                <div class="insp-sub">
+                  thresholds · <span class="mono"
+                    >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
+                      lv.vIh,
+                      "V",
+                    )}</span
+                  >
+                </div>
+                <div class="insp-sub">
+                  output · <span class="mono"
+                    >{formatValue(lv.vOl, "V")} / {formatValue(
+                      lv.vOh,
+                      "V",
+                    )}</span
+                  >
+                  · noise margin
+                  <span class="mono"
+                    >{formatValue(lv.nmHigh, "V")} hi · {formatValue(
+                      lv.nmLow,
+                      "V",
+                    )} lo</span
+                  >
+                </div>
+              {/if}
+              {#if isGatePart(kind)}
+                <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+                   releases high (needs an external pull-up) — open-drain outputs on one
+                   net make a wired-AND bus (I²C / interrupt-line idiom). -->
+                <div class="insp-sub">output</div>
+                <div class="insp-chips">
+                  <button
+                    class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+                    onclick={() => setOpenDrain(false)}>Push-pull</button
+                  >
+                  <button
+                    class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+                    onclick={() => setOpenDrain(true)}>Open-drain</button
+                  >
+                </div>
+                {#if selOpenDrain()}
+                  <div class="insp-sub">
+                    releases high · <span class="mono"
+                      >add a pull-up to Vcc</span
+                    >
+                  </div>
+                {/if}
+              {/if}
+              {#if kind === "LS"}
+                <!-- The level shifter's OUTPUT rail (rail B); the value chips above set
+                   the INPUT rail (rail A). Pick both to shift up (A < B) or down. -->
+                <div class="insp-sub">output rail (B)</div>
+                <div class="insp-chips wrap">
+                  {#each [1.8, 2.5, 3.3, 5, 12] as v (v)}
                     <button
                       class="chip-val {selAmp() === v ? 'is-active' : ''}"
                       onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
                     >
                   {/each}
                 </div>
-                <button
-                  class="btn btn-ghost insp-step"
-                  onclick={() => stepAmpVal(1)}
-                  title="Next larger amplitude">+</button
-                >
-              </div>
-              <!-- One-click mains presets: set the peak amplitude AND line frequency
+              {/if}
+              {#if kind === "AC"}
+                <!-- The AC source's second scalar: its peak amplitude (volts),
+                 presented exactly like the frequency chips above. The row above
+                 sets the frequency (Hz); this one the peak voltage. -->
+                <!-- Amplitude is the PEAK; show the RMS beside it since mains and most
+                   real specs are RMS (Vpk = Vrms·√2). -->
+                <div class="insp-sub">
+                  amplitude · <span class="mono"
+                    >≈ {formatValue(selAmp() / Math.SQRT2, "V")} rms</span
+                  >
+                </div>
+                <div class="insp-row">
+                  <button
+                    class="btn btn-ghost insp-step"
+                    onclick={() => stepAmpVal(-1)}
+                    title="Next smaller amplitude">−</button
+                  >
+                  <div class="insp-chips wrap">
+                    {#each acAmpChips() as v (v)}
+                      <button
+                        class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                        onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                      >
+                    {/each}
+                  </div>
+                  <button
+                    class="btn btn-ghost insp-step"
+                    onclick={() => stepAmpVal(1)}
+                    title="Next larger amplitude">+</button
+                  >
+                </div>
+                <!-- One-click mains presets: set the peak amplitude AND line frequency
                    together to emulate real US / EU line voltage. -->
-              <div class="insp-sub">mains presets</div>
-              <div class="insp-chips wrap">
-                {#each AC_MAINS_PRESETS as p (p.label)}
-                  <button
-                    class="chip-val {selAmp() === p.amp &&
-                    selPart.value === p.freq
-                      ? 'is-active'
-                      : ''}"
-                    onclick={() => {
-                      setAmp(p.amp);
-                      setVal(p.freq);
-                    }}
-                    title="Set {p.label} (peak {p.amp} V)">{p.label}</button
-                  >
-                {/each}
-              </div>
-            {/if}
-            {#if kind === "POT"}
-              <!-- The potentiometer's wiper position (0 = A end, 1 = B end) as a
+                <div class="insp-sub">mains presets</div>
+                <div class="insp-chips wrap">
+                  {#each AC_MAINS_PRESETS as p (p.label)}
+                    <button
+                      class="chip-val {selAmp() === p.amp &&
+                      selPart.value === p.freq
+                        ? 'is-active'
+                        : ''}"
+                      onclick={() => {
+                        setAmp(p.amp);
+                        setVal(p.freq);
+                      }}
+                      title="Set {p.label} (peak {p.amp} V)">{p.label}</button
+                    >
+                  {/each}
+                </div>
+              {/if}
+              {#if kind === "POT"}
+                <!-- The potentiometer's wiper position (0 = A end, 1 = B end) as a
                  continuous slider; drag it to set the exact split of the track. -->
-              <div class="insp-sub">
-                wiper · {Math.round(selWiper() * 100)}%
-              </div>
-              <div class="insp-row">
-                <span class="wiper-end">A</span>
-                <input
-                  class="wiper-slider"
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.01"
-                  value={selWiper()}
-                  aria-label="Potentiometer wiper position"
-                  oninput={(e) => setWiper(Number(e.currentTarget.value))}
-                  onchange={endWiperDrag}
-                  onpointerup={endWiperDrag}
-                />
-                <span class="wiper-end">B</span>
-              </div>
-            {/if}
-            <button class="insp-more" onclick={() => (showMore = !showMore)}>
-              {showMore ? "▾ fewer" : "▸ more values"}
-            </button>
-            {#if showMore && isESeries(kind)}
-              <div class="insp-sub">decade</div>
-              <div class="insp-chips wrap">
-                {#each decadesOf(kind) as d (d)}
-                  <button
-                    class="chip-val sm {cd === d ? 'is-active' : ''}"
-                    onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
-                  >
-                {/each}
-              </div>
-              <div class="insp-sub">significand (E-series)</div>
-              <div class="insp-chips wrap">
-                {#each significandsOf(kind) as s (s)}
-                  <button
-                    class="chip-val sm {Math.abs(selPart.value / cd - s) < 0.05
-                      ? 'is-active'
-                      : ''}"
-                    onclick={() => setSig(s)}>{s.toFixed(1)}</button
-                  >
-                {/each}
-              </div>
-            {:else if showMore}
-              <div class="insp-chips wrap">
-                {#each standardValues(kind) as v (v)}
-                  <button
-                    class="chip-val sm {selPart.value === v ? 'is-active' : ''}"
-                    onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
-                  >
-                {/each}
-              </div>
+                <div class="insp-sub">
+                  wiper · {Math.round(selWiper() * 100)}%
+                </div>
+                <div class="insp-row">
+                  <span class="wiper-end">A</span>
+                  <input
+                    class="wiper-slider"
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={selWiper()}
+                    aria-label="Potentiometer wiper position"
+                    oninput={(e) => setWiper(Number(e.currentTarget.value))}
+                    onchange={endWiperDrag}
+                    onpointerup={endWiperDrag}
+                  />
+                  <span class="wiper-end">B</span>
+                </div>
+              {/if}
+              <button class="insp-more" onclick={() => (showMore = !showMore)}>
+                {showMore ? "▾ fewer" : "▸ more values"}
+              </button>
+              {#if showMore && isESeries(kind)}
+                <div class="insp-sub">decade</div>
+                <div class="insp-chips wrap">
+                  {#each decadesOf(kind) as d (d)}
+                    <button
+                      class="chip-val sm {cd === d ? 'is-active' : ''}"
+                      onclick={() => setDecade(d)}>{fmtVal(kind, d)}</button
+                    >
+                  {/each}
+                </div>
+                <div class="insp-sub">significand (E-series)</div>
+                <div class="insp-chips wrap">
+                  {#each significandsOf(kind) as s (s)}
+                    <button
+                      class="chip-val sm {Math.abs(selPart.value / cd - s) <
+                      0.05
+                        ? 'is-active'
+                        : ''}"
+                      onclick={() => setSig(s)}>{s.toFixed(1)}</button
+                    >
+                  {/each}
+                </div>
+              {:else if showMore}
+                <div class="insp-chips wrap">
+                  {#each standardValues(kind) as v (v)}
+                    <button
+                      class="chip-val sm {selPart.value === v
+                        ? 'is-active'
+                        : ''}"
+                      onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
+                    >
+                  {/each}
+                </div>
+              {/if}
             {/if}
           {/if}
           <span class="value-pop-caret" style="left: {popPos.caretLeft}px"
@@ -2736,6 +2762,25 @@
     font-size: 12.5px;
     color: var(--ok);
     margin-bottom: 8px;
+  }
+  /* The custom-label text field at the top of the value popover (name this part). */
+  .insp-name {
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 8px;
+    padding: 3px 7px;
+    font-size: 12px;
+    color: var(--text);
+    background: oklch(0.16 0.028 285 / 0.7);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    outline: none;
+  }
+  .insp-name::placeholder {
+    color: var(--dim);
+  }
+  .insp-name:focus {
+    border-color: var(--accent);
   }
   .value-pop-caret {
     position: absolute;
