@@ -4240,6 +4240,18 @@ class ComponentNode {
       // of alignment with the info panel. Rendering big + scaling keeps them matched.
       const REF_HW = 130;
       const REF_HH = 80;
+      const targetHW = this.wPx / 2 + PITCH * 0.7;
+      const scale = targetHW / REF_HW;
+      // Each real pin's position in the illustration's REF space, so a multi-terminal
+      // drawer can route its leads onto the actual footprint pins (the alignment the
+      // owner asked for). The tier glyph is centred on the footprint and scaled by
+      // `scale`, so a pin at glyph-local (p − footprint-centre) is (that / scale) in
+      // REF px. Carries each pin's label so the drawer matches them up by name.
+      const anchors = this.pinPositions.map((p, i) => ({
+        label: this.pinLabels[i] ?? "",
+        x: (p.x - this.wPx / 2) / scale,
+        y: (p.y - this.hPx / 2) / scale,
+      }));
       const opts = {
         kind: this.kindTag,
         bounds: { hw: REF_HW, hh: REF_HH },
@@ -4248,6 +4260,7 @@ class ComponentNode {
         phase,
         value: this.component.value,
         wiper: this.component.wiper,
+        anchors,
       };
       // Hide the illustration's own decorative studs on the board — the real pin
       // dots below mark the connections (and avoid the doubled-terminal clutter).
@@ -4255,8 +4268,7 @@ class ComponentNode {
       if (tier === "reality") drawDetail(tg, opts);
       else drawAnalogy(tg, opts);
       setStudsVisible(true);
-      const targetHW = this.wPx / 2 + PITCH * 0.7;
-      tg.scale.set(targetHW / REF_HW);
+      tg.scale.set(scale);
       tg.visible = true;
     } else {
       this.tierGlyph.visible = false;

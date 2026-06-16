@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (evening 4) — Analogy tier: pin-anchoring + faithful re-port (PM/NM/OA/ZD/MOV)
+
+**State:** 🟢 Green — web check/lint/build (no Rust change; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner: the analogy tiers for **PM, NM, OA, ZD, MOV** were
+under-detailed, "didn't make sense / align with their pins," and didn't move with the
+right values. Fixed.
+
+- **Terminal anchoring (the alignment fix).** New `TierOpts.anchors` (`tierKit.ts`):
+  the host hands each drawer the real pin positions **in the illustration's own REF
+  space**, and a multi-terminal drawer routes every lead to its anchor by pin label.
+  - `board.ts` computes them from the footprint: `anchor = (pin − footprintCentre) /
+    scale`, where `scale = targetHW/REF_HW`. Verified exact: e.g. NM drain anchor
+    `(76.5,−76.5)` ⇒ glyph-local `(52,0)` = the real drain pin. So leads land on the
+    pin dots (board hides the drawer's own studs).
+  - `infoDiagram.ts` passes the same per-pin layout mapped into its panel (0.6·hw /
+    0.82·hh), so the board and info views are consistent.
+  - `anchorPt(o, label, fxFrac, fyFrac)` helper resolves an anchor or a fraction
+    fallback. Drawers that don't read `anchors` (R/C/L/D/TR/**Q/QP**) are unchanged.
+- **Faithful re-ports (analogyDrawers.ts), all anchored + proportional:**
+  - **MOSFET NM/PM** — pressure-pilot valve: drain↔source pipe (drain top, source
+    bottom — real pin order), seated throat + lifting plug, threshold spring/piston +
+    long rod, **sealed** gate pilot line + pressure gauge, supply reservoir = |V_DS|,
+    throat choke (saturation proxy). P-channel mirrors: supply = SOURCE, flow up.
+    Plug/piston ride a steep `norm(I_D)` (Vgs isn't exposed — the through-current is
+    the visible proxy).
+  - **Op-amp OA** — pilot spool valve anchored OUT-right / IN+-top-left / IN−-bot-left:
+    two sealed input pilots, spool with two lands bounding the ported channel (centre =
+    output swing), +rail/−rail bars (glow on clip), output tank = swing, ported flow =
+    |Iout|, gain knob.
+  - **Zener ZD** — check valve **on the pin axis** (was offset to 0.42·hh, off the
+    centred pins) + taller spillway standpipe (level = |Vrev|, weir = Vz) with a
+    reverse-return path that carries the clamp current back to the anode.
+  - **Varistor MOV** — restructured to the relief-valve ref: vessel (fill = |V| +
+    phase-clock molecule jiggle), neck/seat, body chamber with **side vent pipes**,
+    bonnet + set-screw (depth = Vclamp) + threshold spring, poppet that cracks at
+    `|V|>Vclamp` and vents (flow = |I|). Both leads feed the vessel (bidirectional).
+
+**Open / possible next:** **Q/QP (BJT) analogy** still uses its old hardcoded terminal
+positions (not anchored) — same low-cost fix if the owner wants it consistent. Visual
+polish is eyeball-only (can't render Pixi headlessly here).
+
+---
+
 ## 2026-06-16 (evening 3) — Board LOD + remaining review-batch fixes (DONE)
 
 **State:** 🟢 Green — web check/lint/build (no Rust change this batch; golden untouched).

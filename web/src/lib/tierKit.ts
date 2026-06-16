@@ -32,12 +32,45 @@ export interface TierOpts {
   value?: number;
   /** A potentiometer's wiper in [0,1]; only the POT drawer reads it. */
   wiper?: number;
+  /**
+   * Terminal anchor points in the drawer's OWN bounds space (pre-scale px), one per
+   * catalog pin (carrying its `label`). The host computes where each real pin lands
+   * inside the illustration's box — on the board, the actual footprint pin; in the
+   * info panel, the laid-out terminal — and a multi-terminal drawer routes each lead
+   * to its anchor so the picture's connections sit exactly on the part's pins. Absent
+   * ⇒ the drawer uses its own default edge placement (see {@link anchorPt}).
+   */
+  anchors?: TierAnchor[];
+}
+
+/** One terminal's anchor: where a named pin lands inside the illustration's box. */
+export interface TierAnchor {
+  label: string;
+  x: number;
+  y: number;
 }
 
 /** Half-extents of the centred drawing region, in local (pre-scale) px. */
 export interface TierBounds {
   hw: number;
   hh: number;
+}
+
+/**
+ * Resolve a named terminal's anchor point. Returns the host-supplied anchor when one
+ * exists for `label` (so the lead lands on the real pin), else a fallback at the given
+ * fraction of the bounds — letting a drawer be written purely against anchors while
+ * still degrading gracefully when none are passed.
+ */
+export function anchorPt(
+  o: TierOpts,
+  label: string,
+  fxFrac: number,
+  fyFrac: number,
+): { x: number; y: number } {
+  const a = o.anchors?.find((p) => p.label === label);
+  if (a) return { x: a.x, y: a.y };
+  return { x: fxFrac * o.bounds.hw, y: fyFrac * o.bounds.hh };
 }
 
 // --- shared scales ------------------------------------------------------------

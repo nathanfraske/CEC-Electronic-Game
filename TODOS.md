@@ -6,6 +6,17 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (evening) — analogy tier: pin-anchoring + faithful re-port
+
+- ~~**Analogy tiers PM/NM/OA/ZD/MOV** — DONE. Re-ported faithfully to the design sheets and
+  **anchored to the real pins** (new `TierOpts.anchors`, computed in board.ts/infoDiagram.ts,
+  resolved via `tierKit.anchorPt`). MOSFET = pressure-pilot valve (N/P mirror); OA = pilot
+  spool valve (OUT/IN±); ZD = check-valve on the pin axis + spillway w/ reverse return; MOV =
+  relief valve (vessel+vents+bonnet/screw). All move from the right live values.~~
+- [ ] **BJT (Q/QP) analogy** — not anchored yet (still hardcoded terminal x/y like the old
+  MOSFET). Apply the same `anchors` routing if the owner wants it consistent with PM/NM.
+- [ ] **Owner eyeball** the five re-ported analogy tiers on the board (deep zoom) + info panel.
+
 ## 2026-06-16 (afternoon) — tiers on the board + owner review fixes
 
 - ~~**Tiers on the board (LOD)** — DONE. 3-way board lens (Schematic/Analogy/Reality); a part
