@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (night) — Part-demo tiers: refs + design landed, implementation starting
+
+**State:** 🟢 Green (docs only this stretch; web/Rust untouched). Branch `claude/kind-turing-hdelb3`.
+Component labels merged via **PR #72** (deployed).
+
+**New MAJOR feature kicked off — three-tier part demos** (owner's design): every part shown
+**schematic / analogy / reality**, animating live, revealed by **zooming into a placed part** or via
+the **info panel**. Owner uploaded 5 detailed design sheets → saved as **`docs/ui/parts/*-tiers.html`**
+(resistor, ceramic cap, electrolytic cap, inductor, transformer — standalone HTML, the authoritative
+visual/animation spec). Design + phased plan: **`docs/ui/part-demos-tiers.md`**. **More part sheets
+coming once this batch is implemented** (owner will upload the next batch then).
+
+**Existing scaffolding to extend (don't duplicate):** App.svelte's `infoDiagram` (`setMode`/`setState`),
+`hasDetail`/`hasFactory`, `diagramMode`/`effectiveDiagramMode` (schematic vs reality). A background
+Explore agent is mapping its exact API + renderer + the board zoom/LOD hook.
+
+**Progress + NEXT:** Mapping done — the three-tier system already exists (~70-80%): `InfoDiagram`
+(PixiJS) + `DRAWERS`/`FACTORY_DRAWERS`/`DETAIL_DRAWERS` + tier switcher + live feed; reality drawers
+for OA/D/SD/LED/ZD/R. **Inductor reality tier DONE** (`drawDetailInductor`, registered; gates green —
+needs a live eyeball). Remaining reality drawers: **C, EC, TR** (same `drawDetail<Kind>` pattern in
+`detailDrawers.ts` → `DETAIL_DRAWERS`). Then the **board LOD** — owner clarified it's a *working* LOD,
+**NOT** hide-to-reveal: the part is always visible/animating, zoom-IN adds factory→reality detail,
+zoom-OUT simplifies for clarity + render cost, nothing hidden; tune on visual review. **Batch 2 queued**
+(`docs/ui/parts/`): `diode-factory`, `diode-tier2-study`, `zener-tier2` (analogy → `FACTORY_DRAWERS`),
+`transistor-tiers` (Q/QP/NM/PM reality) — implement after batch 1, in order, no rush. Pure presentation
+→ no golden impact. (Ideal-vs-Real fidelity work remains queued below; the tier demos are its visual
+companion.)
+
+---
+
 ## 2026-06-16 (night) — Component labels built + FAIL UI merged (PR #71)
 
 **State:** 🟢 Green (web check/lint/build; no Rust change this stretch). Branch

@@ -1,0 +1,329 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zener tier 2, check valve plus spillway</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    --pos:#46d2e6; --neg:#d8a24a;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;} p.intro b{color:var(--text);}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:210px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].vz::-webkit-slider-thumb{background:var(--accent); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].vz::-moz-range-thumb{background:var(--accent);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">tier 2 study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent">ZENER DIODE</span><span class="chip" id="chipReg">REVERSE CLAMP</span></div>
+  </div>
+
+  <h1 class="lede">The Zener diode, a check valve with a spillway</h1>
+  <p class="intro">A Zener is an ordinary silicon diode in the forward direction and a controlled clamp in reverse. The forward path is the same <b>spring loaded check valve</b> as before, the ball lifting off its seat once the push beats the spring at about 0.7 V. The reverse path is a <b>standpipe with a spillway</b>, where the water level is the reverse voltage and the height of the spillway wall is the Zener voltage Vz. Push the bias negative and the level climbs until it reaches the wall, then it pours over and holds there, which is the clamp. Raise Vz to build the wall higher. Everything is driven by the real diode equation with a sharp reverse breakdown and a 100 ohm series limiter.</p>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">reverse: spillway clamp</span>
+      <span class="scope-tag r" id="stTag">Vz 3.3 V</span>
+      <svg id="scene" viewBox="0 0 860 560" xmlns="http://www.w3.org/2000/svg" aria-label="zener diode tier two, check valve plus spillway"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">What you are seeing</h2><div class="panel-body" id="legend"></div></div>
+      <div class="panel"><h2 class="panel-title">Operating point</h2><div class="panel-body" id="telemetry"></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">applied voltage</span><span class="ic-val" id="labV">-4.5 V</span></div><input type="range" class="volt" id="volt" min="-600" max="600" value="-450"></div>
+    <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">Zener voltage Vz (wall height)</span><span class="ic-val" id="labVz">3.3 V</span></div><input type="range" class="vz" id="vz" min="200" max="600" value="330"></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function rnd(seed){var x=Math.sin(seed*127.1+31.7)*43758.5;return x-Math.floor(x);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function coilPath(xa,xb,cy,amp,coils,phase,squash){var L=xb-xa,steps=Math.max(8,Math.round(coils*16)),d='';for(var i=0;i<=steps;i++){var t=i/steps,x=xa+L*t,y=cy+amp*squash*Math.sin(t*coils*6.28318+phase);d+=(i===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function pressArrow(Va,cy){var mag=clamp(Math.abs(Va)/6,0,1);if(mag<0.02){return '';}var L=34+mag*78;if(Va>0){var x0=90,xt=x0+L,xh=xt-16;return poly([[x0,cy-5],[xh,cy-5],[xh,cy-12],[xt,cy],[xh,cy+12],[xh,cy+5],[x0,cy+5]]);}var a=190,b=a-L,bh=b+16;return poly([[a,cy-5],[bh,cy-5],[bh,cy-12],[b,cy],[bh,cy+12],[bh,cy+5],[a,cy+5]]);}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',BLUE='#7fc6ff',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0';
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'4'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== Zener model: silicon forward (Shockley) + sharp reverse breakdown at adjustable Vz =====
+  var FWD={Is:1e-14,n:1}, VT=0.02585, RS=100, RZ=2;
+  function diodeI(Vd,Vz){var x=Vd/(FWD.n*VT);if(x>80){x=80;}var fwd=FWD.Is*(Math.exp(x)-1);var bd=0;if(Vd<-Vz){bd=(Vd+Vz)/RZ;}return fwd+bd;}
+  function solve(Va,Vz){
+    var lo=-Vz-7,hi=2.0,mid,f;
+    for(var k=0;k<60;k++){mid=(lo+hi)*0.5;f=mid+RS*diodeI(mid,Vz)-Va;if(f>0){hi=mid;}else{lo=mid;}}
+    var Vd=(lo+hi)*0.5,I=diodeI(Vd,Vz),region;
+    if(I>2e-6){region='forward';}else if(Vd<-Vz+0.05){region='clamp';}else{region='block';}
+    return {Vd:Vd,I:I,region:region};
+  }
+  function fmtI(I){var a=Math.abs(I);if(a<1e-4){return '~0 A';}if(a<1){return (I*1000).toFixed(1)+' mA';}return I.toFixed(2)+' A';}
+
+  var gValve=el('g',{}),gSpill=el('g',{});
+  svg.appendChild(gValve);svg.appendChild(gSpill);
+
+  var VCY=430;            // valve centerline (lower area)
+  var SP={l:566,r:626,y0:400,top:90,scale:46}; // standpipe geometry; level_y = y0 - level*scale
+
+  var valve={};
+  function buildValve(cy){
+    var x0=70,x1=790,top=cy-57,bot=cy+57,seatX=402,bodyL=330,bodyR=566;
+    valve.cy=cy; valve.seatedX=422; valve.bx=540; valve.seatX=seatX;
+    var bg=el('radialGradient',{id:'zballg',cx:'0.36',cy:'0.30',r:'0.82'});
+    bg.appendChild(el('stop',{offset:'0','stop-color':'#f4f7fc'}));bg.appendChild(el('stop',{offset:'0.45','stop-color':'#b7c1d4'}));bg.appendChild(el('stop',{offset:'1','stop-color':'#586280'}));defs.appendChild(bg);
+    var vb=el('linearGradient',{id:'zbody',x1:'0',y1:'0',x2:'0',y2:'1'});
+    vb.appendChild(el('stop',{offset:'0','stop-color':'oklch(0.40 0.02 285)'}));vb.appendChild(el('stop',{offset:'0.5','stop-color':'oklch(0.29 0.02 285)'}));vb.appendChild(el('stop',{offset:'1','stop-color':'oklch(0.21 0.02 285)'}));defs.appendChild(vb);
+    var pm=el('linearGradient',{id:'zpipe',x1:'0',y1:'0',x2:'0',y2:'1'});
+    pm.appendChild(el('stop',{offset:'0','stop-color':'oklch(0.35 0.02 285)'}));pm.appendChild(el('stop',{offset:'0.5','stop-color':'oklch(0.25 0.02 285)'}));pm.appendChild(el('stop',{offset:'1','stop-color':'oklch(0.19 0.02 285)'}));defs.appendChild(pm);
+    gValve.appendChild(el('rect',{x:x0,y:cy-32,width:bodyL-x0+6,height:64,fill:'url(#zpipe)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:bodyR-6,y:cy-32,width:x1-bodyR+6,height:64,fill:'url(#zpipe)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x0-7,y:cy-42,width:11,height:84,rx:2,fill:'url(#zpipe)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x1-4,y:cy-42,width:11,height:84,rx:2,fill:'url(#zpipe)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x0,y:cy-16,width:bodyL-x0+10,height:32,fill:'oklch(0.155 0.02 285)'}));
+    gValve.appendChild(el('rect',{x:bodyR-10,y:cy-16,width:x1-bodyR+10,height:32,fill:'oklch(0.155 0.02 285)'}));
+    gValve.appendChild(el('rect',{x:bodyL,y:top-8,width:bodyR-bodyL,height:(bot+8)-(top-8),rx:14,fill:'url(#zbody)',stroke:'#b0b8cb','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:bodyL+12,y:top+6,width:bodyR-bodyL-24,height:(bot-6)-(top+6),rx:8,fill:'oklch(0.155 0.02 285)',stroke:'oklch(0.30 0.03 285)','stroke-width':1.5}));
+    var lipTop=[[seatX-20,top+8],[seatX+12,top+8],[seatX+5,cy-14],[seatX-9,cy-14]];
+    var lipBot=[[seatX-20,bot-8],[seatX+12,bot-8],[seatX+5,cy+14],[seatX-9,cy+14]];
+    gValve.appendChild(el('polygon',{points:poly(lipTop),fill:'#c9a45a',stroke:'#e0c488','stroke-width':1.2}));
+    gValve.appendChild(el('polygon',{points:poly(lipBot),fill:'#c9a45a',stroke:'#e0c488','stroke-width':1.2}));
+    valve.flowg=el('g',{opacity:0.16});gValve.appendChild(valve.flowg);
+    [-20,0,20].forEach(function(o){var p='M 86 '+(cy+o)+' Q 360 '+(cy+o)+' 430 '+(cy+o*1.7)+' Q 500 '+(cy+o)+' 760 '+(cy+o);valve.flowg.appendChild(el('path',{d:p,fill:'none',stroke:WATER,'stroke-width':2}));});
+    valve.dam=[];valve.damg=el('g',{});gValve.appendChild(valve.damg);
+    for(var k=0;k<8;k++){var dd=el('circle',{r:3.2,fill:WATER,opacity:0});valve.damg.appendChild(dd);valve.dam.push({el:dd,bx:344+rnd(k)*52,by:cy-22+rnd(k+4)*44,ph:rnd(k+2)*6.28});}
+    valve.parts=[];valve.pg=el('g',{});gValve.appendChild(valve.pg);valve.pdots=[];
+    for(var i=0;i<26;i++){valve.parts.push({u:rnd(i),lane:(rnd(i+9)<0.5?-1:1)*(8+rnd(i+3)*13),sp:0.65+rnd(i+5)*0.7});var d=el('circle',{r:3.3,fill:WATER,opacity:0});valve.pg.appendChild(d);valve.pdots.push(d);}
+    valve.coilBack=el('path',{d:'',fill:'none',stroke:'#9a7a4a','stroke-width':2.2,'stroke-linecap':'round','stroke-linejoin':'round',opacity:0.7});gValve.appendChild(valve.coilBack);
+    valve.coil=el('path',{d:'',fill:'none',stroke:WARM,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'});gValve.appendChild(valve.coil);
+    gValve.appendChild(el('rect',{x:valve.bx,y:cy-30,width:14,height:60,rx:3,fill:'url(#zbody)',stroke:'#b0b8cb','stroke-width':2}));
+    valve.ball=el('circle',{cx:valve.seatedX,cy:cy,r:26,fill:'url(#zballg)',stroke:'#dce3f0','stroke-width':1.5});gValve.appendChild(valve.ball);
+    valve.spec=el('ellipse',{cx:valve.seatedX-9,cy:cy-10,rx:6,ry:4,fill:'#ffffff',opacity:0.8});gValve.appendChild(valve.spec);
+    valve.parrow=el('polygon',{points:'',fill:CYAN,opacity:0.92});gValve.appendChild(valve.parrow);
+    gValve.appendChild(el('text',{x:x0+2,y:cy-50,'font-family':'var(--font-mono)','font-size':11,fill:CYAN},'anode +'));
+    gValve.appendChild(el('text',{x:x1+2,y:cy-50,'font-family':'var(--font-mono)','font-size':11,fill:DIM,'text-anchor':'end'},'cathode'));
+    gValve.appendChild(el('text',{x:seatX-2,y:bot+24,'font-family':'var(--font-mono)','font-size':10,fill:'#d8b56a','text-anchor':'middle'},'seat'));
+    gValve.appendChild(el('text',{x:476,y:cy+48,'font-family':'var(--font-mono)','font-size':10,fill:WARM,'text-anchor':'middle'},'spring sets forward Vf'));
+    valve.lab=el('text',{x:300,y:bot+44,'font-family':'var(--font-mono)','font-size':13,fill:DIM,'text-anchor':'middle'},'');gValve.appendChild(valve.lab);
+    valve.lab2=el('text',{x:300,y:bot+62,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'');gValve.appendChild(valve.lab2);
+  }
+  function updateValve(s){
+    var cy=valve.cy, maxLift=52, lift=s.fwdN*maxLift, ballX=valve.seatedX+lift;
+    if(s.region!=='forward'){ballX=valve.seatedX-4;}
+    valve.ball.setAttribute('cx',ballX.toFixed(1));
+    valve.spec.setAttribute('cx',(ballX-9).toFixed(1));
+    var xa=ballX+26, xb=valve.bx, span=xb-xa, full=valve.bx-(valve.seatedX+26);
+    var squash=clamp(span/full,0.35,1), compressed=clamp(1-span/full,0,1);
+    valve.coilBack.setAttribute('d',coilPath(xa,xb,cy,17,8,Math.PI,squash*0.62));
+    valve.coil.setAttribute('d',coilPath(xa,xb,cy,17,8,0,squash));
+    valve.coil.setAttribute('stroke',compressed>0.5?'#ffd29c':WARM);
+    valve.parrow.setAttribute('points',pressArrow(s.Va,cy));
+    valve.parrow.setAttribute('fill',s.Va>=0?CYAN:'#b9a6e8');
+    var fwd=s.fwdN;
+    for(var i=0;i<valve.parts.length;i++){var p=valve.parts[i],d=valve.pdots[i];
+      if(s.run&&fwd>0.02){p.u=(p.u+fwd*p.sp*0.013)%1;}
+      var x=lerp(80,780,p.u),y=cy+p.lane;if(Math.abs(x-ballX)<36){y=cy+(p.lane<0?-1:1)*38;}
+      d.setAttribute('cx',x.toFixed(1));d.setAttribute('cy',y.toFixed(1));
+      d.setAttribute('opacity',(fwd>0.04?clamp(fwd,0,0.95):0).toFixed(2));d.setAttribute('r',(fwd>0.6?4.0:3.3).toFixed(1));}
+    var damp=clamp((s.Va>0.15?1:0)-fwd,0,1)*0.9;
+    for(i=0;i<valve.dam.length;i++){var dm=valve.dam[i];var jx=s.run?Math.sin(s.tick*0.06+dm.ph)*3:0,jy=s.run?Math.cos(s.tick*0.05+dm.ph)*3:0;dm.el.setAttribute('cx',(dm.bx+jx).toFixed(1));dm.el.setAttribute('cy',(dm.by+jy).toFixed(1));dm.el.setAttribute('opacity',damp.toFixed(2));dm.el.setAttribute('fill',WATER);}
+    valve.lab.textContent='forward drop \u2248 '+(s.Vd>0?s.Vd.toFixed(2):'0.00')+' V';
+    valve.lab2.textContent=(s.region==='forward')?('flow \u2248 '+fmtI(s.I)):'ball sealed, reverse goes to the spillway';
+  }
+
+  var spill={};
+  function buildSpill(){
+    var L=SP.l,R=SP.r,y0=SP.y0,tp=SP.top;
+    // glass column
+    gSpill.appendChild(el('rect',{x:L,y:tp,width:R-L,height:y0-tp,fill:'rgba(90,150,210,0.06)',stroke:'oklch(0.34 0.03 285)','stroke-width':1.5}));
+    // connection down into the cathode pipe
+    gSpill.appendChild(el('rect',{x:L+3,y:y0-4,width:R-L-6,height:18,fill:'oklch(0.155 0.02 285)'}));
+    // right wall (full height)
+    gSpill.appendChild(el('line',{x1:R,y1:tp,x2:R,y2:y0,stroke:STEEL,'stroke-width':3}));
+    // return tube: secondary path that carries the spill back to the anode side of the pipe
+    var TY=338,TRX=560,TLX=175,TBY=428;
+    spill.TY=TY;spill.TRX=TRX;spill.TLX=TLX;
+    spill.tubeD='M '+TRX+' '+TY+' L '+TLX+' '+TY+' L '+TLX+' '+TBY;
+    spill.tubeWall=el('path',{d:spill.tubeD,fill:'none',stroke:'#8f98ad','stroke-width':20,'stroke-linecap':'round','stroke-linejoin':'round'});gSpill.appendChild(spill.tubeWall);
+    spill.tubeBore=el('path',{d:spill.tubeD,fill:'none',stroke:'oklch(0.16 0.02 285)','stroke-width':15,'stroke-linecap':'round','stroke-linejoin':'round'});gSpill.appendChild(spill.tubeBore);
+    spill.tubeLen=spill.tubeBore.getTotalLength();
+    // water (dynamic), behind the walls
+    spill.water=el('rect',{x:L+2,y:y0,width:R-L-4,height:0,fill:'rgba(70,182,240,0.55)'});gSpill.appendChild(spill.water);
+    spill.surf=el('line',{x1:L+2,y1:y0,x2:R-2,y2:y0,stroke:WATER2,'stroke-width':2.4,opacity:0});gSpill.appendChild(spill.surf);
+    // cascade particles over the crest (dynamic)
+    spill.casc=[];spill.cg=el('g',{});gSpill.appendChild(spill.cg);
+    for(var c=0;c<14;c++){var cc=el('circle',{r:3,fill:WATER2,opacity:0});spill.cg.appendChild(cc);spill.casc.push({el:cc,u:rnd(c),sp:0.7+rnd(c+3)*0.6});}
+    // dam / spillway wall (left, dynamic height = Vz)
+    spill.dam=el('line',{x1:L,y1:y0,x2:L,y2:y0,stroke:'#c9a45a','stroke-width':5,'stroke-linecap':'round'});gSpill.appendChild(spill.dam);
+    spill.crest=el('rect',{x:L-9,y:y0,width:16,height:4,rx:1,fill:'#e0c488'});gSpill.appendChild(spill.crest);
+    // Vz dashed line + label (dynamic)
+    spill.vzline=el('line',{x1:L-58,y1:y0,x2:R+34,y2:y0,stroke:ACCENT,'stroke-width':1.4,'stroke-dasharray':'5 4',opacity:0.8});gSpill.appendChild(spill.vzline);
+    spill.vzlab=el('text',{x:R+40,y:y0,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT},'');gSpill.appendChild(spill.vzlab);
+    // volt scale on the right
+    for(var v=1;v<=6;v++){var yy=y0-v*SP.scale;if(yy<tp){continue;}gSpill.appendChild(el('line',{x1:R+2,y1:yy,x2:R+11,y2:yy,stroke:FAINT,'stroke-width':1.4}));gSpill.appendChild(el('text',{x:R+15,y:yy+3.5,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},v+' V'));}
+    // level pointer + value (dynamic)
+    spill.levlab=el('text',{x:L-62,y:y0,'font-family':'var(--font-mono)','font-size':12,fill:WATER2,'text-anchor':'end'},'');gSpill.appendChild(spill.levlab);
+    // flow inside the return tube (dynamic)
+    spill.tflow=[];spill.tfg=el('g',{});gSpill.appendChild(spill.tfg);
+    for(var tf=0;tf<13;tf++){var td=el('circle',{r:3,fill:WATER2,opacity:0});spill.tfg.appendChild(td);spill.tflow.push({el:td,u:rnd(tf+7),sp:0.7+rnd(tf+2)*0.5});}
+    spill.retlab=el('text',{x:352,y:328,'font-family':'var(--font-mono)','font-size':10,fill:WATER2,'text-anchor':'middle',opacity:0},'reverse current returns to anode');gSpill.appendChild(spill.retlab);
+    // titles
+    gSpill.appendChild(el('text',{x:(L+R)/2,y:tp-12,'font-family':'var(--font-mono)','font-size':10,fill:WATER2,'text-anchor':'middle'},'reverse voltage'));
+    gSpill.appendChild(el('text',{x:(L+R)/2,y:tp-26,'font-family':'var(--font-display)','font-size':12,fill:DIM,'text-anchor':'middle','letter-spacing':'0.12em'},'SPILLWAY'));
+    spill.statelab=el('text',{x:596,y:500,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'');gSpill.appendChild(spill.statelab);
+  }
+  function updateSpill(s){
+    var y0=SP.y0,scale=SP.scale,tp=SP.top,L=SP.l,R=SP.r;
+    var level=s.level, level_y=clamp(y0-level*scale,tp,y0), y_weir=clamp(y0-s.Vz*scale,tp,y0);
+    spill.water.setAttribute('y',level_y.toFixed(1));
+    spill.water.setAttribute('height',Math.max(0,y0-level_y).toFixed(1));
+    var wet=(level>0.05);
+    spill.surf.setAttribute('y1',level_y.toFixed(1));spill.surf.setAttribute('y2',level_y.toFixed(1));spill.surf.setAttribute('opacity',wet?0.9:0);
+    spill.dam.setAttribute('y2',y_weir.toFixed(1));
+    spill.crest.setAttribute('y',(y_weir-2).toFixed(1));
+    var spilling=(s.region==='clamp'), spN=s.spillN;
+    spill.dam.setAttribute('stroke',spilling?'#e08a6a':'#c9a45a');
+    spill.crest.setAttribute('fill',spilling?ACCENT:'#e0c488');
+    spill.vzline.setAttribute('y1',y_weir.toFixed(1));spill.vzline.setAttribute('y2',y_weir.toFixed(1));
+    spill.vzlab.setAttribute('y',(y_weir+4).toFixed(1));spill.vzlab.textContent='Vz '+s.Vz.toFixed(1)+' V';
+    spill.levlab.setAttribute('y',(level_y+4).toFixed(1));spill.levlab.setAttribute('opacity',wet?1:0);spill.levlab.textContent='reverse '+level.toFixed(1)+' V';
+    var TY=spill.TY;
+    for(var c=0;c<spill.casc.length;c++){var q=spill.casc[c],e=q.el;
+      if(s.run&&spilling&&spN>0.02){q.u=(q.u+(0.4+spN*0.6)*q.sp*0.02)%1;}
+      var u=q.u,x=spill.TRX-2-u*5,y=lerp(y_weir,TY,u*u);
+      e.setAttribute('cx',x.toFixed(1));e.setAttribute('cy',y.toFixed(1));
+      e.setAttribute('opacity',(spilling?clamp((0.45+0.55*(1-u))*clamp(0.32+spN,0,1),0,0.95):0).toFixed(2));}
+    for(var tf=0;tf<spill.tflow.length;tf++){var qq=spill.tflow[tf],ee=qq.el;
+      if(s.run&&spilling&&spN>0.02){qq.u=(qq.u+(0.35+spN*0.6)*qq.sp*0.006)%1;}
+      var pt=spill.tubeBore.getPointAtLength(qq.u*spill.tubeLen);
+      ee.setAttribute('cx',pt.x.toFixed(1));ee.setAttribute('cy',pt.y.toFixed(1));
+      ee.setAttribute('opacity',(spilling?clamp(0.4+spN*0.5,0,0.92):0).toFixed(2));}
+    spill.retlab.setAttribute('opacity',spilling?clamp(0.4+spN*0.5,0,0.9).toFixed(2):0);
+    spill.statelab.textContent=(s.region==='forward')?'':(spilling?'clamping, spilling over':'blocked, level rising');
+  }
+
+  buildValve(VCY);buildSpill();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=el('div',{});w.className='ro';var a=el('span',{});a.className='ro-k';a.textContent=k;var b=el('span',{});b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roV=trow('applied V'),roVd=trow('device drop'),roI=trow('current'),roReg=trow('state');
+
+  // ===== legend =====
+  var legend=document.getElementById('legend');
+  legend.innerHTML='<p style="margin:0 0 8px">Forward, on the left to right path, the spring loaded ball lifts off its seat once the push beats the spring near 0.7 V and water flows, the same check valve as the plain diode.</p><p style="margin:0 0 8px">Reverse, the ball seals and the right hand standpipe fills. The water level is the reverse voltage. While the level sits below the spillway wall the device blocks.</p><p style="margin:0">When the level reaches the wall, set by Vz, water pours over the crest and the level holds there. That overflow is the reverse current and the held level is the clamp. A taller wall means a higher Vz.</p>';
+
+  // ===== controls =====
+  var voltEl=document.getElementById('volt'),labV=document.getElementById('labV'),
+      vzEl=document.getElementById('vz'),labVz=document.getElementById('labVz'),
+      btnRun=document.getElementById('btnRun'),visTag=document.getElementById('visTag'),stTag=document.getElementById('stTag'),
+      chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true;
+  footnote.innerHTML='<b>Notes.</b> The device is driven by the diode equation with a 100 ohm series limiter and a sharp reverse breakdown at Vz, dynamic resistance about 2 ohm, so the forward turn on near 0.7 V and the reverse clamp at Vz are both real. The water level reads the device voltage to scale. The spill rate, the spring travel, and the particle counts are illustrative.';
+
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+
+  // ===== loop =====
+  var tick=0;
+  function frame(){
+    if(running){tick++;}
+    var Va=(+voltEl.value)/100, Vz=(+vzEl.value)/100, sol=solve(Va,Vz);
+    var I=sol.I, Vd=sol.Vd;
+    var fwdN=(I>0)?clamp(I/0.05,0,1.2):0, spillN=(I<0)?clamp(-I/0.04,0,1.2):0;
+    var level=Math.max(0,-Vd);
+    var s={Va:Va,Vz:Vz,Vd:Vd,I:I,region:sol.region,fwdN:fwdN,spillN:spillN,level:level,run:running,tick:tick};
+    updateValve(s);updateSpill(s);
+    labV.textContent=(Va>=0?'+':'')+Va.toFixed(1)+' V';
+    labVz.textContent=Vz.toFixed(1)+' V';
+    roV.textContent=(Va>=0?'+':'')+Va.toFixed(2)+' V';
+    roVd.textContent=Vd.toFixed(2)+' V';
+    roI.textContent=fmtI(I);
+    var rn=(sol.region==='forward')?'forward (conducting)':((sol.region==='clamp')?'reverse (clamped at Vz)':'reverse (blocked)');
+    roReg.textContent=rn;
+    roReg.style.color=(sol.region==='forward')?WARM:((sol.region==='clamp')?ACCENT:'#9a78ff');
+    chipReg.textContent=(sol.region==='forward')?'FORWARD':((sol.region==='clamp')?'REVERSE CLAMP':'REVERSE BLOCK');
+    stTag.textContent='Vz '+Vz.toFixed(1)+' V';
+    visTag.textContent=(sol.region==='forward')?'forward: check valve':((sol.region==='clamp')?'reverse: spillway clamp':'reverse: below Vz, blocked');
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>

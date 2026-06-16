@@ -2214,11 +2214,11 @@
                 {#if info}
                   {@const e = selElectrical ?? ZERO_ELECTRICAL}
                   {#if diagramHasDetail || diagramHasFactory}
-                    <!-- The 3-tier view selector: Symbol (datasheet schematic) →
-                         Factory (the machine-metaphor analogy) → Real (the live
+                    <!-- The 3-tier view selector: Schematic (the datasheet symbol) →
+                         Analogy (the machine-metaphor view) → Reality (the live
                          construction-internals, "as close to reality as possible").
                          A tier's button only appears when that kind has its own art;
-                         the diagram clamps outward to the symbol otherwise. -->
+                         the diagram clamps outward to the schematic otherwise. -->
                     <div
                       class="diagram-toggle"
                       role="group"
@@ -2231,7 +2231,7 @@
                         onclick={() => (diagramMode = "schematic")}
                         title="Schematic — the symbol you'll meet on a datasheet"
                       >
-                        Symbol
+                        Schematic
                       </button>
                       {#if diagramHasFactory}
                         <button
@@ -2239,9 +2239,9 @@
                             ? 'is-active'
                             : ''}"
                           onclick={() => (diagramMode = "analogy")}
-                          title="Factory — the machine-metaphor analogy"
+                          title="Analogy — the machine-metaphor view"
                         >
-                          Factory
+                          Analogy
                         </button>
                       {/if}
                       {#if diagramHasDetail}
@@ -2250,9 +2250,9 @@
                             ? 'is-active'
                             : ''}"
                           onclick={() => (diagramMode = "reality")}
-                          title="Real — a zoomed-in view of what's happening inside, live"
+                          title="Reality — what's literally happening inside, live"
                         >
-                          Real
+                          Reality
                         </button>
                       {/if}
                     </div>

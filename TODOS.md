@@ -6,6 +6,30 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (night) — part-demo tiers (owner design)
+
+- **Three-tier part demos — STARTED (refs + design).** Every part shown schematic / analogy /
+  reality, live-animated, revealed by zooming into a placed part or via the info panel. Refs:
+  `docs/ui/parts/*-tiers.html` (5: R, ceramic C, electrolytic C, L, TR — authoritative spec).
+  Design + plan: `docs/ui/part-demos-tiers.md`. Extends App.svelte `infoDiagram` / `hasFactory` /
+  `diagramMode`. Pure presentation → no golden impact. **Next batch of part sheets arrives once
+  this 5 is implemented.**
+  - ~~Map the existing system — DONE (agent): three-tier `InfoDiagram` (PixiJS) + `DRAWERS` /
+    `FACTORY_DRAWERS` / `DETAIL_DRAWERS` is ~70-80% built; tier switcher (`Symbol/Factory/Real`) +
+    live per-frame feed already exist. Reality drawers exist for OA/D/SD/LED/ZD/R.~~
+  - **Reality-tier drawers** (`detailDrawers.ts` → `DETAIL_DRAWERS`, the `drawDetail<Kind>` pattern):
+    - ~~**Inductor (L)** — DONE (`drawDetailInductor`; solenoid + field loops + flux + spiral + dI/dt
+      shimmer). Gates green; needs an eyeball on the live render.~~
+    - [ ] **Ceramic cap (C)**, [ ] **electrolytic cap (EC)**, [ ] **transformer (TR)**. (R pre-existing —
+      diff vs its ref + enrich later.)
+  - [ ] **Board LOD — a *working* LOD, NOT hide-to-reveal** (owner clarified): the part is always
+    visible + animating; zoom-IN progressively reveals factory→reality detail (same live state),
+    zoom-OUT simplifies for clarity + render cost; nothing hidden. Tune thresholds/blend on visual review.
+  - [ ] **Batch 2 (queued)** in `docs/ui/parts/`: `diode-factory`, `diode-tier2-study`, `zener-tier2`
+    (analogy → `FACTORY_DRAWERS`), `transistor-tiers` + `mosfet-tiers` (Q/QP/NM/PM reality — the N-MOSFET
+    sheet has the full schematic/valve/silicon set). Implement after batch 1, in order. More may follow.
+  - Switcher relabelled **Schematic / Analogy / Reality** (was Symbol / Factory / Real).
+
 ## 2026-06-16 (night) — design (Ideal-vs-Real + multi-rate)
 
 - **Ideal-vs-Real RESOLVED** as a progression-driven **fidelity gradient** (not a global

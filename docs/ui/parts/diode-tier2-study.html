@@ -1,0 +1,355 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Diode tier 2, two visuals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    --pos:#46d2e6; --neg:#d8a24a;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:92ch;} p.intro b{color:var(--text);}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:7px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .tg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint);}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn:focus-visible{outline:none; box-shadow:0 0 0 1px var(--accent), 0 0 12px -2px var(--accent);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:220px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">tier 2 study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent">DIODE</span><span class="chip" id="chipType">SILICON</span></div>
+  </div>
+
+  <h1 class="lede">Diode tier 2, two ways to picture it</h1>
+  <p class="intro">Two candidate analogies for the same diode, both driven by the real Shockley junction equation with a 100 ohm series limiter, so the motion is honest. <b>Spring valve</b> is the hydraulic picture, a spring loaded ball that lifts off its seat once the forward push beats the spring. <b>Gravity hill</b> is the barrier picture, a crowd of charge balls held back by a hill that the voltage raises and lowers. Flip between them and sweep the voltage from reverse to forward. The type buttons change the threshold.</p>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">spring valve</span>
+      <span class="scope-tag r" id="stTag">forward</span>
+      <svg id="scene" viewBox="0 0 860 470" xmlns="http://www.w3.org/2000/svg" aria-label="diode tier two visuals"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">What you are seeing</h2><div class="panel-body" id="legend"></div></div>
+      <div class="panel"><h2 class="panel-title">Operating point</h2><div class="panel-body" id="telemetry"></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><span class="tg-label">visual</span><button class="btn btn-ghost is-active" id="btnValve">spring valve</button><button class="btn btn-ghost" id="btnHill">gravity hill</button></div>
+    <div class="tg"><span class="tg-label">type</span><button class="btn btn-ghost is-active" id="btnSi">Si</button><button class="btn btn-ghost" id="btnSch">Schottky</button><button class="btn btn-ghost" id="btnLed">LED</button></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">applied voltage</span><span class="ic-val" id="labV">+2.0 V</span></div><input type="range" class="volt" id="volt" min="-600" max="600" value="200"></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function rnd(seed){var x=Math.sin(seed*127.1+31.7)*43758.5;return x-Math.floor(x);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function coilPath(xa,xb,cy,amp,coils,phase,squash){var L=xb-xa,steps=Math.max(8,Math.round(coils*16)),d='';for(var i=0;i<=steps;i++){var t=i/steps,x=xa+L*t,y=cy+amp*squash*Math.sin(t*coils*6.28318+phase);d+=(i===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function pressArrow(Va){var cy=235,mag=clamp(Math.abs(Va)/6,0,1);if(mag<0.02){return '';}var L=34+mag*78;if(Va>0){var x0=90,xt=x0+L,xh=xt-16;return poly([[x0,cy-5],[xh,cy-5],[xh,cy-12],[xt,cy],[xh,cy+12],[xh,cy+5],[x0,cy+5]]);}var a=190,b=a-L,bh=b+16;return poly([[a,cy-5],[bh,cy-5],[bh,cy-12],[b,cy],[bh,cy+12],[bh,cy+5],[a,cy+5]]);}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',ORANGE='#ff9a4d',BLUE='#7fc6ff',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0';
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'4'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // diode types: Shockley parameters
+  var TYPES={
+    Si:{key:'Si',label:'silicon',chip:'SILICON',Is:1e-14,n:1,Vbi:0.7,Vf:'0.7',Vbr:5,Rbr:3,col:ORANGE,leak:1,emit:false},
+    Schottky:{key:'Schottky',label:'Schottky',chip:'SCHOTTKY',Is:1e-7,n:1,Vbi:0.3,Vf:'0.3',Vbr:4,Rbr:3,col:BLUE,leak:7,emit:false},
+    LED:{key:'LED',label:'LED',chip:'LED',Is:1e-12,n:3.2,Vbi:2.0,Vf:'2.0',Vbr:5,Rbr:3,col:'#ffd24a',leak:1,emit:true}
+  };
+  var VT=0.02585, RS=100;
+  function diodeI(Vd,t){var x=Vd/(t.n*VT);if(x>80){x=80;}var fwd=t.Is*(Math.exp(x)-1);var bd=0;if(Vd<-t.Vbr){bd=(Vd+t.Vbr)/t.Rbr;}return fwd+bd;}
+  function solve(Va,t){
+    var lo=-t.Vbr-7,hi=2.0,mid,f;
+    for(var k=0;k<58;k++){mid=(lo+hi)*0.5;f=mid+RS*diodeI(mid,t)-Va;if(f>0){hi=mid;}else{lo=mid;}}
+    var Vd=(lo+hi)*0.5,I=diodeI(Vd,t);
+    var region=(I>2e-6)?'forward':((Vd<-t.Vbr+0.06)?'breakdown':'reverse');
+    return {Vd:Vd,I:I,region:region};
+  }
+  function fmtI(I){var a=Math.abs(I);if(a<1e-4){return I>=0?'~0 A':'~0 A';}if(a<1){return (I*1000).toFixed(1)+' mA';}return I.toFixed(2)+' A';}
+
+  var gValve=el('g',{}),gHill=el('g',{});
+  svg.appendChild(gValve);svg.appendChild(gHill);
+
+  // ============ VALVE (stub, filled below) ============
+  function springPath(xa,xb,cy,amp,segs){var n=segs*2,dx=(xb-xa)/n,d='M '+xa.toFixed(1)+' '+cy;for(var i=1;i<=n;i++){var x=xa+dx*i,y=cy+((i%2===1)?-amp:amp);if(i===n){y=cy;}d+=' L '+x.toFixed(1)+' '+y.toFixed(1);}return d;}
+  function pressArrows(Va){var cy=235,mag=clamp(Math.abs(Va)/6,0,1),L=28+mag*74;if(Math.abs(Va)<0.05){return '';}if(Va>0){var x0=92,x1=x0+L;return 'M '+x0+' '+cy+' L '+(x1-11)+' '+cy+' M '+(x1-11)+' '+(cy-7)+' L '+x1+' '+cy+' L '+(x1-11)+' '+(cy+7);}var a=188,b=a-L;return 'M '+a+' '+cy+' L '+(b+11)+' '+cy+' M '+(b+11)+' '+(cy-7)+' L '+b+' '+cy+' L '+(b+11)+' '+(cy+7);}
+  var valve={};
+  function buildValve(){
+    var cy=235,x0=70,x1=790,top=178,bot=292,seatX=402,bodyL=330,bodyR=566;
+    valve.cy=cy; valve.seatedX=422; valve.bx=540; valve.seatX=seatX;
+    var bg=el('radialGradient',{id:'ballg2',cx:'0.36',cy:'0.30',r:'0.82'});
+    bg.appendChild(el('stop',{offset:'0','stop-color':'#f4f7fc'}));bg.appendChild(el('stop',{offset:'0.45','stop-color':'#b7c1d4'}));bg.appendChild(el('stop',{offset:'1','stop-color':'#586280'}));defs.appendChild(bg);
+    var vb=el('linearGradient',{id:'valvebody',x1:'0',y1:'0',x2:'0',y2:'1'});
+    vb.appendChild(el('stop',{offset:'0','stop-color':'oklch(0.40 0.02 285)'}));vb.appendChild(el('stop',{offset:'0.5','stop-color':'oklch(0.29 0.02 285)'}));vb.appendChild(el('stop',{offset:'1','stop-color':'oklch(0.21 0.02 285)'}));defs.appendChild(vb);
+    var pm=el('linearGradient',{id:'pipemetal',x1:'0',y1:'0',x2:'0',y2:'1'});
+    pm.appendChild(el('stop',{offset:'0','stop-color':'oklch(0.35 0.02 285)'}));pm.appendChild(el('stop',{offset:'0.5','stop-color':'oklch(0.25 0.02 285)'}));pm.appendChild(el('stop',{offset:'1','stop-color':'oklch(0.19 0.02 285)'}));defs.appendChild(pm);
+    gValve.appendChild(el('rect',{x:x0,y:cy-32,width:bodyL-x0+6,height:64,fill:'url(#pipemetal)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:bodyR-6,y:cy-32,width:x1-bodyR+6,height:64,fill:'url(#pipemetal)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x0-7,y:cy-42,width:11,height:84,rx:2,fill:'url(#pipemetal)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x1-4,y:cy-42,width:11,height:84,rx:2,fill:'url(#pipemetal)',stroke:'#8f98ad','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:x0,y:cy-16,width:bodyL-x0+10,height:32,fill:'oklch(0.155 0.02 285)'}));
+    gValve.appendChild(el('rect',{x:bodyR-10,y:cy-16,width:x1-bodyR+10,height:32,fill:'oklch(0.155 0.02 285)'}));
+    gValve.appendChild(el('rect',{x:bodyL,y:top-8,width:bodyR-bodyL,height:(bot+8)-(top-8),rx:14,fill:'url(#valvebody)',stroke:'#b0b8cb','stroke-width':2}));
+    gValve.appendChild(el('rect',{x:bodyL+12,y:top+6,width:bodyR-bodyL-24,height:(bot-6)-(top+6),rx:8,fill:'oklch(0.155 0.02 285)',stroke:'oklch(0.30 0.03 285)','stroke-width':1.5}));
+    var lipTop=[[seatX-20,top+8],[seatX+12,top+8],[seatX+5,221],[seatX-9,221]];
+    var lipBot=[[seatX-20,bot-8],[seatX+12,bot-8],[seatX+5,249],[seatX-9,249]];
+    gValve.appendChild(el('polygon',{points:poly(lipTop),fill:'#c9a45a',stroke:'#e0c488','stroke-width':1.2}));
+    gValve.appendChild(el('polygon',{points:poly(lipBot),fill:'#c9a45a',stroke:'#e0c488','stroke-width':1.2}));
+    valve.flowg=el('g',{opacity:0.16});gValve.appendChild(valve.flowg);
+    [-20,0,20].forEach(function(o){var p='M 86 '+(cy+o)+' Q 360 '+(cy+o)+' 430 '+(cy+o*1.7)+' Q 500 '+(cy+o)+' 760 '+(cy+o);valve.flowg.appendChild(el('path',{d:p,fill:'none',stroke:WATER,'stroke-width':2}));});
+    valve.dam=[];valve.damg=el('g',{});gValve.appendChild(valve.damg);
+    for(var k=0;k<8;k++){var dd=el('circle',{r:3.2,fill:WATER,opacity:0});valve.damg.appendChild(dd);valve.dam.push({el:dd,bx:344+rnd(k)*52,by:cy-22+rnd(k+4)*44,ph:rnd(k+2)*6.28});}
+    valve.parts=[];valve.pg=el('g',{});gValve.appendChild(valve.pg);valve.pdots=[];
+    for(var i=0;i<28;i++){valve.parts.push({u:rnd(i),lane:(rnd(i+9)<0.5?-1:1)*(8+rnd(i+3)*13),sp:0.65+rnd(i+5)*0.7});var d=el('circle',{r:3.3,fill:WATER,opacity:0});valve.pg.appendChild(d);valve.pdots.push(d);}
+    valve.coilBack=el('path',{d:'',fill:'none',stroke:'#9a7a4a','stroke-width':2.2,'stroke-linecap':'round','stroke-linejoin':'round',opacity:0.7});gValve.appendChild(valve.coilBack);
+    valve.coil=el('path',{d:'',fill:'none',stroke:WARM,'stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'});gValve.appendChild(valve.coil);
+    gValve.appendChild(el('rect',{x:valve.bx,y:cy-30,width:14,height:60,rx:3,fill:'url(#valvebody)',stroke:'#b0b8cb','stroke-width':2}));
+    valve.ball=el('circle',{cx:valve.seatedX,cy:cy,r:26,fill:'url(#ballg2)',stroke:'#dce3f0','stroke-width':1.5});gValve.appendChild(valve.ball);
+    valve.spec=el('ellipse',{cx:valve.seatedX-9,cy:cy-10,rx:6,ry:4,fill:'#ffffff',opacity:0.8});gValve.appendChild(valve.spec);
+    // breakdown stress glow over the seat
+    valve.stress=el('ellipse',{cx:seatX,cy:cy,rx:30,ry:36,fill:ACCENT,opacity:0,filter:'url(#glow)'});gValve.appendChild(valve.stress);
+    // LED light emission from the junction (brightens with forward current)
+    valve.ledg=el('g',{});gValve.appendChild(valve.ledg);
+    valve.bodyGlow=el('rect',{x:bodyL,y:top-8,width:bodyR-bodyL,height:(bot+8)-(top-8),rx:14,fill:TYPES.LED.col,opacity:0,filter:'url(#glow)'});valve.ledg.appendChild(valve.bodyGlow);
+    valve.cx0=430;valve.cy0=cy;
+    valve.halo=el('circle',{cx:valve.cx0,cy:cy,r:42,fill:TYPES.LED.col,opacity:0,filter:'url(#glow)'});valve.ledg.appendChild(valve.halo);
+    valve.rays=[];for(var rr=0;rr<10;rr++){var ang=rr/10*6.28318;var ray=el('line',{x1:valve.cx0,y1:cy,x2:valve.cx0,y2:cy,stroke:TYPES.LED.col,'stroke-width':2.6,'stroke-linecap':'round',opacity:0});valve.ledg.appendChild(ray);valve.rays.push({el:ray,a:ang});}
+    valve.phot=[];for(var pp=0;pp<9;pp++){var pd=el('circle',{r:3.1,fill:TYPES.LED.col,opacity:0,filter:'url(#glow)'});valve.ledg.appendChild(pd);valve.phot.push({el:pd,a:rnd(pp)*6.28318,pr:rnd(pp+4)});}
+    valve.bdlab=el('text',{x:430,y:150,'font-family':'var(--font-mono)','font-size':13,fill:ACCENT,'text-anchor':'middle',opacity:0},'reverse breakdown: valve forced open');gValve.appendChild(valve.bdlab);
+    valve.parrow=el('polygon',{points:'',fill:CYAN,opacity:0.92});gValve.appendChild(valve.parrow);
+    gValve.appendChild(el('text',{x:x0+2,y:cy-50,'font-family':'var(--font-mono)','font-size':11,fill:CYAN},'anode +'));
+    gValve.appendChild(el('text',{x:x1+2,y:cy-50,'font-family':'var(--font-mono)','font-size':11,fill:DIM,'text-anchor':'end'},'cathode'));
+    gValve.appendChild(el('text',{x:seatX-2,y:bot+26,'font-family':'var(--font-mono)','font-size':10,fill:'#d8b56a','text-anchor':'middle'},'seat'));
+    gValve.appendChild(el('text',{x:524,y:160,'font-family':'var(--font-mono)','font-size':10,fill:WARM,'text-anchor':'middle'},'spring sets Vf'));
+    valve.lab=el('text',{x:430,y:368,'font-family':'var(--font-mono)','font-size':13,fill:DIM,'text-anchor':'middle'},'');gValve.appendChild(valve.lab);
+    valve.lab2=el('text',{x:430,y:388,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'');gValve.appendChild(valve.lab2);
+    gValve.appendChild(el('text',{x:430,y:414,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'the drop holds near Vf while the flow climbs, which a switch never does'));
+  }
+  function updateValve(s){
+    var cy=valve.cy, maxLift=52, lift=s.fwdN*maxLift, ballX=valve.seatedX+lift;
+    var rev=(s.region==='breakdown')?clamp((Math.abs(s.Va)-s.t.Vbr)/1.0,0,1):0;
+    var rflow=(s.region==='breakdown')?clamp(0.32+rev*0.63,0,0.95):0;
+    if(s.region==='reverse'){ballX=valve.seatedX-4;}
+    if(s.region==='breakdown'){ballX=valve.seatedX-4-rev*70;}
+    var shake=(s.region==='breakdown'&&s.run)?Math.sin(s.tick*0.95)*2.1*rev:0;
+    valve.ball.setAttribute('cx',ballX.toFixed(1));valve.ball.setAttribute('cy',(cy+shake).toFixed(1));
+    valve.spec.setAttribute('cx',(ballX-9).toFixed(1));valve.spec.setAttribute('cy',(cy-10+shake).toFixed(1));
+    var xa=ballX+26, xb=valve.bx, span=xb-xa, full=valve.bx-(valve.seatedX+26);
+    var squash=clamp(span/full,0.35,1), compressed=clamp(1-span/full,0,1);
+    valve.coilBack.setAttribute('d',coilPath(xa,xb,cy,17,8,Math.PI,squash*0.62));
+    valve.coil.setAttribute('d',coilPath(xa,xb,cy,17,8,0,squash));
+    valve.coil.setAttribute('stroke',compressed>0.5?'#ffd29c':WARM);
+    valve.parrow.setAttribute('points',pressArrow(s.Va));
+    valve.parrow.setAttribute('fill',s.Va>=0?CYAN:'#9a78ff');
+    var fwd=s.fwdN;
+    for(var i=0;i<valve.parts.length;i++){var p=valve.parts[i],d=valve.pdots[i];
+      if(s.run){if(fwd>0.02){p.u=(p.u+fwd*p.sp*0.013)%1;}else if(rflow>0.02){p.u=(p.u-rflow*p.sp*0.017+1)%1;}}
+      var x=lerp(80,780,p.u),y=cy+p.lane;if(Math.abs(x-ballX)<38){y=cy+(p.lane<0?-1:1)*39;}
+      d.setAttribute('cx',x.toFixed(1));d.setAttribute('cy',y.toFixed(1));
+      var op=Math.max(fwd,rflow);d.setAttribute('opacity',(op>0.04?clamp(op,0,0.95):0).toFixed(2));d.setAttribute('fill',rflow>0.02?ACCENT:WATER);d.setAttribute('r',(op>0.6?4.0:3.3).toFixed(1));}
+    var damp=clamp((Math.abs(s.Va)>0.15?1:0)-fwd-rev,0,1)*0.9;
+    for(i=0;i<valve.dam.length;i++){var dm=valve.dam[i];var baseX=(s.Va<0)?(468+(dm.bx-344)):dm.bx;var jx=s.run?Math.sin(s.tick*0.06+dm.ph)*3:0,jy=s.run?Math.cos(s.tick*0.05+dm.ph)*3:0;dm.el.setAttribute('cx',(baseX+jx).toFixed(1));dm.el.setAttribute('cy',(dm.by+jy).toFixed(1));dm.el.setAttribute('opacity',damp.toFixed(2));dm.el.setAttribute('fill',s.Va<0?'#b9a6e8':WATER);}
+    var stress=0;if(s.Va<0){var near=clamp((Math.abs(s.Va)-s.t.Vbr*0.5)/(s.t.Vbr*0.5),0,1);stress=Math.max(near*0.5,(s.region==='breakdown'?0.8+0.2*rev:0));}
+    valve.stress.setAttribute('opacity',stress.toFixed(2));
+    var emit=(s.t.emit?fwd:0);
+    valve.bodyGlow.setAttribute('opacity',(emit*0.3).toFixed(2));valve.bodyGlow.setAttribute('fill',s.t.col);
+    valve.halo.setAttribute('opacity',(emit*0.5).toFixed(2));valve.halo.setAttribute('fill',s.t.col);valve.halo.setAttribute('r',(40+emit*22).toFixed(1));
+    for(i=0;i<valve.rays.length;i++){var ry=valve.rays[i],rout=52+emit*54;var x1=valve.cx0+Math.cos(ry.a)*28,y1=valve.cy0+Math.sin(ry.a)*28,x2=valve.cx0+Math.cos(ry.a)*rout,y2=valve.cy0+Math.sin(ry.a)*rout;ry.el.setAttribute('x1',x1.toFixed(1));ry.el.setAttribute('y1',y1.toFixed(1));ry.el.setAttribute('x2',x2.toFixed(1));ry.el.setAttribute('y2',y2.toFixed(1));ry.el.setAttribute('opacity',(emit>0.05?emit*0.72:0).toFixed(2));ry.el.setAttribute('stroke',s.t.col);}
+    for(i=0;i<valve.phot.length;i++){var ph=valve.phot[i],pel=ph.el;if(s.run&&emit>0.05){ph.pr+=0.016+emit*0.02;if(ph.pr>=1){ph.pr=0;ph.a=rnd(i+s.tick*0.013)*6.28318;}}var dist=28+ph.pr*72;var px=valve.cx0+Math.cos(ph.a)*dist,py=valve.cy0+Math.sin(ph.a)*dist;pel.setAttribute('cx',px.toFixed(1));pel.setAttribute('cy',py.toFixed(1));pel.setAttribute('opacity',(emit>0.05?(1-ph.pr)*emit*0.95:0).toFixed(2));pel.setAttribute('fill',s.t.col);}
+    valve.bdlab.setAttribute('opacity',(s.region==='breakdown'?clamp(0.4+rev,0,1):0).toFixed(2));
+    valve.lab.textContent='valve drop \u2248 '+s.Vd.toFixed(2)+' V';
+    valve.lab2.textContent='flow \u2248 '+fmtI(s.I);
+  }
+
+  // ============ HILL (stub, filled below) ============
+  var hill={};
+  function surfaceY(x,H){return hill.baseY - H*Math.exp(-Math.pow((x-hill.cx)/hill.spread,2));}
+  function terrainPath(H){var d='M 30 '+(hill.baseY+100);for(var x=30;x<=830;x+=8){d+=' L '+x+' '+surfaceY(x,H).toFixed(1);}d+=' L 830 '+(hill.baseY+100)+' Z';return d;}
+  function rimPath(H){var d='M 30 '+surfaceY(30,H).toFixed(1);for(var x=38;x<=830;x+=8){d+=' L '+x+' '+surfaceY(x,H).toFixed(1);}return d;}
+  function humpPath(H){var x0=hill.cx-176,x1=hill.cx+176,d='M '+x0+' '+surfaceY(x0,H).toFixed(1);for(var x=x0+8;x<=x1;x+=8){d+=' L '+x+' '+surfaceY(x,H).toFixed(1);}return d;}
+  function buildHill(){
+    hill.baseY=360; hill.cx=430; hill.spread=88;
+    var gg=el('linearGradient',{id:'ground',x1:'0',y1:'0',x2:'0',y2:'1'});gg.appendChild(el('stop',{offset:'0','stop-color':'oklch(0.30 0.05 285)'}));gg.appendChild(el('stop',{offset:'1','stop-color':'oklch(0.18 0.03 285)'}));defs.appendChild(gg);
+    hill.terrain=el('path',{d:'',fill:'url(#ground)'});gHill.appendChild(hill.terrain);
+    hill.rim=el('path',{d:'',fill:'none',stroke:STEEL,'stroke-width':2.4,'stroke-linejoin':'round'});gHill.appendChild(hill.rim);
+    // barrier height marker
+    hill.bline=el('line',{x1:hill.cx,y1:hill.baseY,x2:hill.cx,y2:hill.baseY,stroke:ACCENT,'stroke-width':1.6,'stroke-dasharray':'4 4',opacity:0.7});gHill.appendChild(hill.bline);
+    hill.blab=el('text',{x:hill.cx,y:120,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gHill.appendChild(hill.blab);
+    hill.blab2=el('text',{x:hill.cx,y:138,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'barrier');gHill.appendChild(hill.blab2);
+    // reverse-leak balls (drawn under stream)
+    hill.rev=[];hill.revg=el('g',{});gHill.appendChild(hill.revg);
+    for(var r=0;r<6;r++){var rb=el('circle',{r:5,fill:BLUE,opacity:0});hill.revg.appendChild(rb);hill.rev.push({el:rb,u:rnd(r)*1.0,sp:0.5+rnd(r+2)*0.6});}
+    // crowd reservoir (left)
+    hill.crowd=[];hill.cg=el('g',{});gHill.appendChild(hill.cg);
+    for(var c=0;c<13;c++){var cb=el('circle',{r:6,fill:BLUE,stroke:'#bfe0ff','stroke-width':1,opacity:0.92});hill.cg.appendChild(cb);hill.crowd.push({el:cb,bx:80+(c%7)*32+rnd(c)*8,row:(c<7?0:1),ph:rnd(c+1)*6.28});}
+    // stream balls (flow over)
+    hill.stream=[];hill.sg=el('g',{});gHill.appendChild(hill.sg);
+    for(var i=0;i<16;i++){var sb=el('circle',{r:6,fill:BLUE,stroke:'#bfe0ff','stroke-width':1,opacity:0});hill.sg.appendChild(sb);hill.stream.push({el:sb,u:i/16,sp:0.7+rnd(i+6)*0.5});}
+    // photons (LED, off the downslope)
+    hill.phot=[];hill.pg2=el('g',{});gHill.appendChild(hill.pg2);
+    for(var p=0;p<8;p++){var pb=el('circle',{r:3.4,fill:TYPES.LED.col,opacity:0,filter:'url(#glow)'});hill.pg2.appendChild(pb);hill.phot.push({el:pb,pr:rnd(p),bx:hill.cx+24+rnd(p)*86});}
+    // labels
+    gHill.appendChild(el('text',{x:60,y:hill.baseY+40,'font-family':'var(--font-mono)','font-size':11,fill:CYAN},'anode +'));
+    gHill.appendChild(el('text',{x:800,y:hill.baseY+40,'font-family':'var(--font-mono)','font-size':11,fill:DIM,'text-anchor':'end'},'cathode'));
+    gHill.appendChild(el('text',{x:160,y:hill.baseY+62,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'carrier crowd'));
+    hill.cap=el('text',{x:hill.cx,y:hill.baseY+62,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'');gHill.appendChild(hill.cap);
+    gHill.appendChild(el('text',{x:hill.cx,y:hill.baseY+82,'font-family':'var(--font-mono)','font-size':11,fill:FAINT,'text-anchor':'middle'},'forward voltage lowers the hill, reverse raises it'));
+  }
+  function updateHill(s){
+    var b=clamp(s.t.Vbi - s.Vd,0,5), H=b*34+8, baseY=hill.baseY, cx=hill.cx;
+    hill.terrain.setAttribute('d',terrainPath(H));
+    hill.rim.setAttribute('d',rimPath(H));
+    var peakY=surfaceY(cx,H);
+    hill.bline.setAttribute('y1',baseY);hill.bline.setAttribute('y2',peakY.toFixed(1));
+    hill.blab.textContent='barrier \u2248 '+b.toFixed(2)+' V';
+    // crowd jiggle, sitting on left plateau
+    for(var c=0;c<hill.crowd.length;c++){var q=hill.crowd[c];var jx=s.run?Math.sin(s.tick*0.05+q.ph)*2.2:0,jy=s.run?Math.cos(s.tick*0.07+q.ph)*2.2:0;var yy=surfaceY(q.bx,H)-6-q.row*12;q.el.setAttribute('cx',(q.bx+jx).toFixed(1));q.el.setAttribute('cy',(yy+jy).toFixed(1));}
+    // stream over the hill
+    var fwd=s.fwdN;
+    for(var i=0;i<hill.stream.length;i++){var st=hill.stream[i],e=st.el;if(s.run&&fwd>0.02){st.u=(st.u+fwd*st.sp*0.01)%1;}var x=lerp(112,762,st.u),y=surfaceY(x,H)-6;e.setAttribute('cx',x.toFixed(1));e.setAttribute('cy',y.toFixed(1));e.setAttribute('opacity',(fwd>0.04?clamp(fwd,0,0.95):0).toFixed(2));}
+    // reverse leak, low through the base, right to left
+    var revVis=(s.region==='breakdown')?clamp(s.revN,0,0.95):((s.region==='reverse')?clamp(0.05*s.t.leak,0,0.5):0);
+    var revSp=(s.region==='breakdown')?s.revN:0.25;
+    for(i=0;i<hill.rev.length;i++){var rv=hill.rev[i],re=rv.el;if(s.run&&revVis>0.01){rv.u=(rv.u+revSp*rv.sp*0.01)%1;}var rx=lerp(762,112,rv.u),ry=baseY-8;re.setAttribute('cx',rx.toFixed(1));re.setAttribute('cy',ry.toFixed(1));re.setAttribute('opacity',revVis.toFixed(2));re.setAttribute('fill',s.region==='breakdown'?ACCENT:BLUE);}
+    // photons off the downslope (LED forward)
+    var pe=(s.t.emit?fwd:0);
+    for(i=0;i<hill.phot.length;i++){var ph=hill.phot[i],pel=ph.el;if(s.run&&pe>0.05){ph.pr+=0.02+pe*0.02;if(ph.pr>=1){ph.pr=0;ph.bx=cx+24+rnd(i+s.tick*0.01)*92;}}var px=ph.bx+ph.pr*26,py=surfaceY(ph.bx,H)-6-ph.pr*72;pel.setAttribute('cx',px.toFixed(1));pel.setAttribute('cy',py.toFixed(1));pel.setAttribute('opacity',(pe>0.05?((1-ph.pr)*pe*0.95):0).toFixed(2));pel.setAttribute('fill',s.t.col);}
+    hill.cap.textContent=(s.region==='forward')?'crowd pours over':((s.region==='breakdown')?'torn through':'crowd held back');
+  }
+
+  buildValve();buildHill();
+
+  // ============ telemetry rows ============
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=el('div',{});w.className='ro';var a=el('span',{});a.className='ro-k';a.textContent=k;var b=el('span',{});b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roV=trow('applied V'),roVd=trow('diode drop'),roI=trow('current'),roReg=trow('bias');
+
+  // ============ legend ============
+  var legend=document.getElementById('legend');
+  function setLegend(){
+    if(curVisual==='valve'){legend.innerHTML='<p style="margin:0 0 8px">A spring loaded ball check valve. The spring sets the cracking pressure, which is the forward voltage. Push forward past it and the ball lifts off its seat and water flows around it, more push opening it wider. Below it only a trickle gets by.</p><p style="margin:0">Reverse the push and the ball is driven into the seat and seals, so nothing crosses. The valve drop reading stays near the threshold while the flow climbs, which is the part that separates a diode from a plain switch.</p>';}
+    else{legend.innerHTML='<p style="margin:0 0 8px">A crowd of charge balls on a slope, held back by a hill. The voltage raises and lowers the hill. Lower it past the threshold and the crowd pours over and down to the cathode, faster the lower it goes, which is the exponential turn on made visible.</p><p style="margin:0">Reverse the voltage and the hill grows tall, the crowd piles up, and only a few strays leak the other way. For the LED, a ball flashes light as it rolls down the far side, standing in for forward current becoming photons.</p>';}
+  }
+
+  // ============ controls ============
+  var voltEl=document.getElementById('volt'),labV=document.getElementById('labV'),
+      btnValve=document.getElementById('btnValve'),btnHill=document.getElementById('btnHill'),
+      btnSi=document.getElementById('btnSi'),btnSch=document.getElementById('btnSch'),btnLed=document.getElementById('btnLed'),
+      btnRun=document.getElementById('btnRun'),visTag=document.getElementById('visTag'),stTag=document.getElementById('stTag'),
+      chipType=document.getElementById('chipType'),footnote=document.getElementById('footnote');
+  var curVisual='valve',curType='Si',running=true;
+  footnote.innerHTML='<b>Notes.</b> Both pictures are driven by the Shockley diode equation with a 100 ohm series current limiter, so the threshold, the soft turn on, and the breakdown are real. The ball counts, the glow, and the reverse leakage are illustrative and not to scale. Reverse breakdown is set low so the slider can reach it.';
+
+  function setVisual(v){
+    curVisual=v;
+    gValve.style.display=(v==='valve')?'':'none';gHill.style.display=(v==='hill')?'':'none';
+    btnValve.classList.toggle('is-active',v==='valve');btnHill.classList.toggle('is-active',v==='hill');
+    visTag.textContent=(v==='valve')?'spring valve':'gravity hill';
+    setLegend();
+  }
+  function setType(k,btn){curType=k;[btnSi,btnSch,btnLed].forEach(function(b){b.classList.remove('is-active');});btn.classList.add('is-active');chipType.textContent=TYPES[k].chip;}
+  btnValve.addEventListener('click',function(){setVisual('valve');});
+  btnHill.addEventListener('click',function(){setVisual('hill');});
+  btnSi.addEventListener('click',function(){setType('Si',this);});
+  btnSch.addEventListener('click',function(){setType('Schottky',this);});
+  btnLed.addEventListener('click',function(){setType('LED',this);});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+
+  setVisual('valve');setType('Si',btnSi);
+
+  // ============ loop ============
+  var tick=0;
+  function frame(){
+    if(running){tick++;}
+    var t=TYPES[curType], Va=(+voltEl.value)/100, sol=solve(Va,t);
+    var I=sol.I, Vd=sol.Vd;
+    var fwdN=(I>0)?clamp(I/0.05,0,1.2):0, revN=(I<0)?clamp(-I/0.05,0,1.2):0;
+    var s={t:t,Va:Va,Vd:Vd,I:I,region:sol.region,fwdN:fwdN,revN:revN,run:running,tick:tick};
+    if(curVisual==='valve'){updateValve(s);}else{updateHill(s);}
+    labV.textContent=(Va>=0?'+':'')+Va.toFixed(1)+' V';
+    roV.textContent=(Va>=0?'+':'')+Va.toFixed(2)+' V';
+    roVd.textContent=Vd.toFixed(2)+' V';
+    roI.textContent=fmtI(I);
+    roReg.textContent=sol.region;
+    roReg.style.color=(sol.region==='forward')?WARM:((sol.region==='breakdown')?ACCENT:'#9a78ff');
+    stTag.textContent=sol.region;
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
