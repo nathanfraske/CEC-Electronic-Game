@@ -149,6 +149,42 @@ export interface SubFrameSample {
 const MAX_STEPS_PER_FRAME = 10000;
 
 /**
+ * A display-only snapshot blended `f`∈[0,1) of the way from `a` to `b` (node voltages
+ * AND per-element currents). Lets playback GLIDE between the fixed sim steps instead
+ * of snapping to each one — the difference between a smooth slow-mo and a once-a-step
+ * jump at low rates. Tick / hash / FAIL carry from `b` (the later, real tick); the
+ * blended electrical values are presentation only and never re-enter the sim. Cheap:
+ * the node + element arrays are a few tens of floats.
+ */
+function lerpSnapshot(a: Snapshot, b: Snapshot, f: number): Snapshot {
+  const n = b.state.length;
+  const state = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    const av = a.state[i] ?? 0;
+    state[i] = av + ((b.state[i] ?? av) - av) * f;
+  }
+  let elementCurrents = b.elementCurrents;
+  const ac = a.elementCurrents;
+  if (ac && elementCurrents && ac.length === elementCurrents.length) {
+    const m = elementCurrents.length;
+    const blended = new Float64Array(m);
+    for (let i = 0; i < m; i++) {
+      const av = ac[i] ?? 0;
+      blended[i] = av + ((elementCurrents[i] ?? av) - av) * f;
+    }
+    elementCurrents = blended;
+  }
+  return {
+    tick: b.tick,
+    snapshotHash: b.snapshotHash,
+    state,
+    elementCurrents,
+    failed: b.failed,
+    failedMask: b.failedMask,
+  };
+}
+
+/**
  * Cap on samples reported per frame in the sub-frame batch. The frame may step
  * thousands of ticks (e.g. tps=500000 at 60fps ≈ 8333/frame); the batch is
  * deterministically downsampled to this many evenly-spaced ticks (always including
@@ -249,8 +285,19 @@ export function runLoop(
         scopeBatch = sampleSubFrame(Math.max(0, live() - steps + 1), live());
       }
     }
-    const snap = at(cursor);
-    if (snap) onFrame(snap, scopeBatch);
+    // Display: while running, GLIDE between the two latest computed ticks by the
+    // fractional accumulator `acc` so slow playback moves smoothly (≤1-tick lag)
+    // instead of snapping once per discrete step. Pure presentation — the sim still
+    // advances at the fixed step; this only interpolates what's drawn between steps.
+    // At high tps the two ticks are ~one step apart so it's imperceptible; at 1 tps
+    // it turns the once-a-second jump into a continuous slide. Paused/scrubbing shows
+    // the exact snapshot (no blend).
+    let disp = at(cursor);
+    if (running && cursor >= 1 && acc > 1e-4) {
+      const prev = at(cursor - 1);
+      if (prev && disp) disp = lerpSnapshot(prev, disp, acc);
+    }
+    if (disp) onFrame(disp, scopeBatch);
     raf = requestAnimationFrame(frame);
   };
   raf = requestAnimationFrame(frame);
