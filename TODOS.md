@@ -6,7 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-16 (late)
+## 2026-06-16 (later)
+
+- ~~**Four-pin c-terminal grounded — FIXED + SHIPPED (PR #70).** `nc` (pin 2 → node c) was
+  computed only for `THREE_PIN_TYPES`, so the transformer's S+ and the DFF's CLK mapped to
+  ground → half-wave bridge ("one diode conducts") + a flip-flop that never clocks. `nc` now
+  includes `FOUR_PIN_TYPES`. Owner found the root cause.~~
+- ~~**FAIL state foundation — SHIPPED (PR #70).** `flag_and_clamp_fails()` clamps non-finite/
+  `>FAIL_LIMIT` to a finite bound (no more NaN propagation/trace-deletion), raises `failed()` +
+  `failed_element_mask()`; native==wasm now. Golden stable; +2 tests (102 total).~~
+- **Ideal-vs-Real parts (owner ask) — design doc written; build pending a policy decision.**
+  Doc: `docs/sim/ideal-vs-real-parts.md`. Parts audit done (only 6 purely ideal: V/AC/R/C/L/I).
+  - [ ] **DECIDE ideal-mode policy A vs B** (research agent running): (A) pure ideal, FAILs / you
+    add impedance; (B) tiny universal lead R(+L) baked in so it just works, Real adds full
+    parasitics. Root cause is fixed-Δt transient (SPICE uses adaptive Δt; we can't — determinism).
+  - [ ] **Ideal transformer** (leakage floor depends on A/B). Bridge example already bounded+full-wave.
+  - [ ] **Visible FAIL UI:** wasm exposes `failed()`+mask → `board.ts` pulsing red FAIL box →
+    `loop.ts` pauses on FAIL; show `+FAIL/−FAIL` on the readout.
+  - [ ] **Bin Ideal/Real toggle** + per-part inspector toggle + allow-but-warn mixing in `connect()`.
+  - [ ] **Roll out Real variants** (diode Rs, source output-Z first; then R tolerance/power, C/EC, FETs/BJT/op-amp, L saturation).
+  - [ ] **Web netlist test harness** — the c-terminal bug had zero web coverage (sim-core hand-wires c/d).
 
 - ~~**Transformer bridge inrush runaway — FIXED + SHIPPED (PR #69).** Owner-reported live
   bug: `tr-bridge-supply` diverged to ~61 kA on wasm (bounded ~50 A native — an ill-conditioned

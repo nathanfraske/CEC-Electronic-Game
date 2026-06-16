@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-16 (later) — c-terminal + FAIL fixes SHIPPED (PR #70); Ideal-vs-Real design underway
+
+**State:** 🟢 Green (fmt, clippy, **102 sim-core tests**, golden stable, wasm, web). **Merged to
+`main` via PR #70**. Branch `claude/kind-turing-hdelb3`.
+
+**Two fixes shipped (PR #70):**
+1. **Four-pin c-terminal grounded** (`web/src/lib/netlist.ts`): pin 2 → node `c` was computed
+   only for `THREE_PIN_TYPES`, so the transformer's **S+** and the DFF's **CLK** (both pin 2 on
+   four-pin devices) silently mapped to **ground**. Transformer → bridge collapsed to **half-wave**
+   (the owner's "top-right terminal does nothing / one diode conducts"); DFF → never clocked. Fix:
+   `nc` now includes `FOUR_PIN_TYPES`, mirroring `nd`. The sim-core bridge tests passed because they
+   hand-wire c/d, bypassing the web netlist — **a real web-side coverage gap (no netlist test exists).**
+2. **FAIL state** (`crates/sim-core/src/lib.rs`): `flag_and_clamp_fails()` at the end of `step()`
+   clamps any non-finite/`> FAIL_LIMIT` (1e9) value to a finite bound (so a NaN can't propagate and
+   delete traces), raises `failed()`, and marks `failed_element_mask()`. Deterministic → **native and
+   wasm now agree** (NaN was the platform split behind every "live-only" failure). Golden untouched.
+
+**Ideal-vs-Real direction (owner's framing):** two part families toggled in the bin. Ideal = no
+parasitics, reads **+FAIL/−FAIL** (whole-sim FAIL state + pulsing red box on the culprit) when pushed
+past physics. Real = realistic parasitics, bounded. Mixing **allowed but warned**. Design doc:
+**`docs/sim/ideal-vs-real-parts.md`** (mechanic + FAIL foundation + per-part catalogue/brainstorm +
+build order). Parts audit done: only **6 parts purely ideal** — V, AC, R, C, L, I; the rest carry
+incidental parasitics (TR leakage+RWIND, EC ESR, op-amp output-Z, switch Ron, gate drive, POT wiper,
+pull-up). The TR and EC seed their Real variant.
+
+**OPEN DESIGN QUESTION (owner raised, being researched):** the divergence is a **fixed-Δt transient**
+artifact (SPICE dodges it with *adaptive* timestepping, which we can't use — it'd break determinism).
+Real parts always have inherent R/L, so requiring users to add resistors is counterintuitive. Two
+reconciliations: **(A)** purist ideal = zero parasitics, FAILs (you add impedance); **(B)** ideal
+carries a tiny *universal* lead/wire R(+L) so it just works, Real adds full parasitics; FAIL becomes a
+rare backstop. Possibly both via an Ideal-mode toggle. **A background research agent is investigating
+how ngspice/LTspice, Falstad CircuitJS, Multisim, and EE curricula handle this** — decide A/B/both on
+its findings.
+
+**NEXT:** (1) research lands → pick A/B/both for ideal-mode; (2) build the **ideal transformer**
+(its leakage floor depends on A vs B — the `tr-bridge-supply` example is already bounded+full-wave
+post-#70, so it won't insta-die); (3) the **visible FAIL UI** — wasm boundary exposes `failed()` +
+mask, `board.ts` draws the pulsing red FAIL box, `loop.ts` pauses on FAIL; (4) the bin Ideal/Real
+toggle + allow-but-warn mixing; (5) roll out Real variants (diode Rs, source output-Z first). Also
+worth adding: a **web-side netlist test harness** (the c-terminal bug had zero web coverage).
+
+---
+
 ## 2026-06-16 (late) — Transformer inrush fix SHIPPED (PR #69) + transistor curriculum
 
 **State:** 🟢 Green (fmt, clippy, **100 sim-core tests**, golden stable, wasm, web). **Merged
