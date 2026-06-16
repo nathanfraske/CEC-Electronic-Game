@@ -26,8 +26,9 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
     visible + animating; zoom-IN progressively reveals factory→reality detail (same live state),
     zoom-OUT simplifies for clarity + render cost; nothing hidden. Tune thresholds/blend on visual review.
   - [ ] **Batch 2 (queued)** in `docs/ui/parts/`: `diode-factory`, `diode-tier2-study`, `zener-tier2`
-    (analogy → `FACTORY_DRAWERS`), `transistor-tiers` (Q/QP/NM/PM reality). Implement after batch 1, in
-    order. More batches may follow.
+    (analogy → `FACTORY_DRAWERS`), `transistor-tiers` + `mosfet-tiers` (Q/QP/NM/PM reality — the N-MOSFET
+    sheet has the full schematic/valve/silicon set). Implement after batch 1, in order. More may follow.
+  - Switcher relabelled **Schematic / Analogy / Reality** (was Symbol / Factory / Real).
 
 ## 2026-06-16 (night) — design (Ideal-vs-Real + multi-rate)
 
