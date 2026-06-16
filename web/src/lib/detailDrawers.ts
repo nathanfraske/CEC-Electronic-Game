@@ -1313,6 +1313,84 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   stud(g, gX, -hh + 6, PALETTE.bronze);
 }
 
+// ============================================================================
+// Varistor (MOV) — ported from varistor-tiers.html tier 3: ZINC OXIDE GRAINS. A MOV
+// is a pressed block of ZnO grains: each grain is conductive n-type, but the BOUNDARY
+// between two grains holds off ~3.2 V like a back-to-back diode pair. Stack N of them
+// in series and the block blocks until the voltage clears ≈ N×3.2 V (the clamp); past
+// that the boundaries break down and it conducts hard, both polarities.
+//
+// Live mapping (MOV ElectricalState: current a→b, vAcross = V across; value = Vclamp):
+//   • clamp  = value → the boundary count N ≈ Vclamp/3.2 (capped for display).
+//   • broken = |vAcross| ≥ Vclamp → boundaries glow + electrons stream through.
+//   • flow   = norm(|I|) → electron density; sign sets the drift direction.
+// ============================================================================
+function drawDetailVaristor(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const ZINC = mix(PALETTE.cyan, PALETTE.dim, 0.5);
+
+  const applied = Math.abs(o.electrical.vAcross);
+  const vclamp = o.value && o.value > 0 ? o.value : 5;
+  const cur = norm(o.electrical.current, CUR_SCALE * 0.3);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const broken = applied >= vclamp * 0.9;
+  const N = Math.max(1, Math.min(6, Math.round(vclamp / 3.2)));
+
+  const cx = 0;
+  const elecHW = hw * 0.48;
+  const topY = -hh * 0.74;
+  const botY = hh * 0.74;
+  // --- electrodes + leads ------------------------------------------------------
+  g.roundRect(cx - elecHW, topY - 8, elecHW * 2, 8, 2).fill({
+    color: PALETTE.dim,
+  });
+  g.roundRect(cx - elecHW, botY, elecHW * 2, 8, 2).fill({ color: PALETTE.dim });
+  g.moveTo(cx, topY - 8)
+    .lineTo(cx, -hh + 4)
+    .moveTo(cx, botY + 8)
+    .lineTo(cx, hh - 4)
+    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the ZnO grain chain: N+1 grains, N boundaries ---------------------------
+  const H = botY - topY;
+  const bh = H / (N + 1);
+  const grainHW = hw * 0.34;
+  for (let gi = 0; gi <= N; gi++) {
+    const gy0 = topY + gi * bh;
+    const gy1 = topY + (gi + 1) * bh;
+    g.poly([
+      cx - grainHW,
+      gy0 + 3,
+      cx + grainHW,
+      gy0 + 1,
+      cx + grainHW * 0.9,
+      gy1 - 2,
+      cx - grainHW * 0.9,
+      gy1 - 1,
+    ])
+      .fill({ color: ZINC, alpha: 0.16 + (broken ? 0.14 * cur : 0) })
+      .stroke({ width: 1.2, color: ZINC, alpha: 0.7 });
+  }
+  for (let b = 1; b <= N; b++) {
+    const by = topY + b * bh;
+    g.moveTo(cx - grainHW * 0.95, by)
+      .lineTo(cx + grainHW * 0.95, by)
+      .stroke({
+        width: 3.4,
+        color: broken ? PALETTE.warn : mix(PALETTE.bad, 0x000000, 0.35),
+        alpha: broken ? 0.6 + 0.4 * cur : 0.85,
+      });
+  }
+
+  // --- electrons stream through once the boundaries break down -----------------
+  if (broken && cur > 0.02) {
+    belt(g, cx, topY, cx, botY, cur, dir, o.phase, ELEC, 2.8);
+  }
+  stud(g, cx, -hh + 4, PALETTE.bronze);
+  stud(g, cx, hh - 4, PALETTE.bronze);
+}
+
 /**
  * The construction-detail drawers, keyed by kind — the third sibling map to
  * DRAWERS / FACTORY_DRAWERS. A kind absent here has no detail view yet; the host
@@ -1333,6 +1411,7 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   QP: drawDetailBJT,
   NM: drawDetailMOSFET,
   PM: drawDetailMOSFET,
+  MOV: drawDetailVaristor,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */

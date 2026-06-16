@@ -31,6 +31,7 @@ import {
   CUR_SCALE,
   FLOW_SPEED,
   FLOW_DOTS_MAX,
+  OUT_SCALE,
   V_SCALE,
 } from "./tierKit";
 
@@ -1226,6 +1227,241 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
   stud(g, pipeX, pipeBot, PALETTE.bronze);
 }
 
+// ============================================================================
+// Op-amp — ported from opamp-tiers.html tier 2: a pilot SPOOL VALVE. Two sealed
+// pilots push on a spool — V+ from one end, V− the other — and their tiny
+// difference, times the gain, slides the spool, porting the +rail or −rail supply
+// to the output. Push far enough and the spool hits an end stop: the output clips
+// at a rail. The inputs are sealed (high-Z); they draw no flow.
+//
+// Live mapping (op-amp ElectricalState: current = Iout, vAcross = V(OUT)−V(IN−);
+// value = ±Vsat rail):
+//   • output = vAcross/Vsat → spool offset + the output-tank level (clamped at rails).
+//   • drive  = norm(|Iout|) → ported flow to the tank; sign sets the direction.
+//   • the WINNING input pushes harder (reconstructed from the output's sign).
+// ============================================================================
+function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const POS = PALETTE.pos;
+  const NEG = PALETTE.neg;
+  const OUT = PALETTE.out;
+  const railV = o.value && o.value > 0.5 ? o.value : OUT_SCALE;
+  const swing = Math.max(-1, Math.min(1, o.electrical.vAcross / railV));
+  const sat = Math.abs(o.electrical.vAcross / railV) >= 0.985;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const posWins = swing >= 0;
+
+  const inX = -hw + 8;
+  const spX = -hw * 0.18;
+  const spHW = hw * 0.09;
+  const spTop = -hh * 0.66;
+  const spBot = hh * 0.66;
+  const spoolY = -swing * (hh * 0.44); // spool slides up (+) / down (−)
+
+  // --- input pilots (left): V+ top, V− bottom, pushing toward the spool ---------
+  const inPy = -hh * 0.5;
+  const inMy = hh * 0.5;
+  g.moveTo(inX, inPy)
+    .lineTo(spX - spHW, inPy)
+    .stroke({ width: 2, color: POS, alpha: 0.4 });
+  g.moveTo(inX, inMy)
+    .lineTo(spX - spHW, inMy)
+    .stroke({ width: 2, color: NEG, alpha: 0.4 });
+  const pushP = posWins ? 0.45 + 0.5 * Math.abs(swing) : 0.32;
+  const pushN = posWins ? 0.32 : 0.45 + 0.5 * Math.abs(swing);
+  for (const [py, push, col] of [
+    [inPy, pushP, POS],
+    [inMy, pushN, NEG],
+  ] as const) {
+    const tipX = spX - spHW - 2;
+    const tailX = tipX - 8 - 12 * push;
+    g.poly([tailX, py - 4, tailX, py + 4, tipX, py]).fill({
+      color: col,
+      alpha: 0.85,
+    });
+  }
+  stud(g, inX, inPy, POS);
+  stud(g, inX, inMy, NEG);
+
+  // --- spool body (vertical) with two lands bounding the ported channel ---------
+  for (const s of [-1, 1]) {
+    g.moveTo(spX + s * spHW, spTop)
+      .lineTo(spX + s * spHW, spBot)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  const gap = hh * 0.16;
+  g.roundRect(
+    spX - spHW + 2,
+    spTop,
+    spHW * 2 - 4,
+    spoolY - gap - spTop,
+    2,
+  ).fill({
+    color: PLATE,
+    alpha: 0.92,
+  });
+  g.roundRect(
+    spX - spHW + 2,
+    spoolY + gap,
+    spHW * 2 - 4,
+    spBot - (spoolY + gap),
+    2,
+  ).fill({ color: PLATE, alpha: 0.92 });
+
+  // --- output tank (right): level = output, clamped at the supply rails ---------
+  const tankX = hw * 0.5;
+  const tankHW = hw * 0.16;
+  const tankT = -hh * 0.72;
+  const tankB = hh * 0.72;
+  for (const s of [-1, 1]) {
+    g.moveTo(tankX + s * tankHW, tankT)
+      .lineTo(tankX + s * tankHW, tankB)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  for (const ry of [tankT, tankB]) {
+    g.moveTo(tankX - tankHW - 3, ry)
+      .lineTo(tankX + tankHW + 3, ry)
+      .stroke({ width: 2.5, color: PALETTE.rail, alpha: 0.8 });
+  }
+  const lvlY = -swing * (hh * 0.62);
+  if (swing >= 0) {
+    g.rect(tankX - tankHW + 2, lvlY, tankHW * 2 - 4, -lvlY).fill({
+      color: OUT,
+      alpha: sat ? 0.5 : 0.3,
+    });
+  } else {
+    g.rect(tankX - tankHW + 2, 0, tankHW * 2 - 4, lvlY).fill({
+      color: OUT,
+      alpha: sat ? 0.5 : 0.3,
+    });
+  }
+  g.moveTo(tankX - tankHW - 3, lvlY)
+    .lineTo(tankX + tankHW + 3, lvlY)
+    .stroke({ width: 2.5, color: sat ? PALETTE.accent : WARM, alpha: 0.95 });
+
+  // --- ported channel → output lead -------------------------------------------
+  if (drive > 0.03) {
+    belt(
+      g,
+      spX + spHW,
+      spoolY,
+      tankX - tankHW,
+      0,
+      drive,
+      dir,
+      o.phase,
+      WATER,
+      2.6,
+    );
+  }
+  const outX = hw - 8;
+  g.moveTo(tankX + tankHW, 0)
+    .lineTo(outX, 0)
+    .stroke({ width: 2, color: OUT, alpha: 0.5 });
+  stud(g, outX, 0, OUT);
+}
+
+// ============================================================================
+// Varistor (MOV) — ported from varistor-tiers.html tier 2: a PRESSURE RELIEF VALVE.
+// Applied pressure (the voltage) pushes up under a poppet held shut by a spring set
+// to the clamp voltage. Below the clamp it stays sealed — no flow. Past the clamp it
+// cracks open and vents hard, dumping the surplus to hold the pressure near the set
+// point. It works for either polarity (no diode-like direction).
+//
+// Live mapping (MOV ElectricalState: current a→b, vAcross = V across; value = Vclamp):
+//   • applied = |vAcross|        → inlet-pressure arrow + chamber fill.
+//   • over    = |vAcross|/Vclamp → poppet lift; once >1 it cracks open and vents.
+//   • flow    = norm(|I|)        → the vent flow out both sides.
+// ============================================================================
+function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const applied = Math.abs(o.electrical.vAcross);
+  const vclamp = o.value && o.value > 0 ? o.value : 5;
+  const over = applied / vclamp;
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const venting = over > 0.95 && flow > 0.02;
+
+  const cx = 0;
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const seatY = hh * 0.18;
+  const lift = Math.min(1, Math.max(0, (over - 1) * 2)) * hh * 0.34;
+  const poppetY = seatY - lift;
+
+  // --- pressure vessel (below the seat), filling with the applied voltage -------
+  const vesT = seatY + 4;
+  const vesB = hh * 0.82;
+  const vesHW = hw * 0.17;
+  g.moveTo(cx - vesHW, vesT)
+    .lineTo(cx - vesHW, vesB)
+    .lineTo(cx + vesHW, vesB)
+    .lineTo(cx + vesHW, vesT)
+    .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
+  const fillFrac = Math.min(1, applied / (vclamp * 1.5));
+  g.rect(
+    cx - vesHW + 2,
+    vesB - fillFrac * (vesB - vesT),
+    vesHW * 2 - 4,
+    fillFrac * (vesB - vesT),
+  ).fill({ color: WATER, alpha: 0.35 });
+
+  // --- the two leads feed the vessel from each side (bidirectional) -------------
+  g.moveTo(aX, hh * 0.5)
+    .lineTo(cx - vesHW, hh * 0.5)
+    .moveTo(cx + vesHW, hh * 0.5)
+    .lineTo(bX, hh * 0.5)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.8 });
+  stud(g, aX, hh * 0.5, PALETTE.bronze);
+  stud(g, bX, hh * 0.5, PALETTE.bronze);
+
+  // --- seat lips + poppet + the threshold spring to a fixed bonnet --------------
+  for (const s of [-1, 1]) {
+    g.moveTo(cx + s * vesHW, seatY)
+      .lineTo(cx + s * hw * 0.1, seatY)
+      .stroke({ width: 2.5, color: PALETTE.rail, alpha: 0.9 });
+  }
+  const popHW = hw * 0.13;
+  g.poly([
+    cx - popHW,
+    poppetY,
+    cx + popHW,
+    poppetY,
+    cx + popHW * 0.6,
+    poppetY - hh * 0.16,
+    cx - popHW * 0.6,
+    poppetY - hh * 0.16,
+  ]).fill({ color: venting ? PALETTE.warn : PLATE, alpha: 0.92 });
+  const bonnetY = -hh * 0.72;
+  g.moveTo(cx - hw * 0.12, bonnetY)
+    .lineTo(cx + hw * 0.12, bonnetY)
+    .stroke({ width: 3, color: PALETTE.rail, alpha: 0.9 });
+  // vertical zig-zag spring (set point = clamp): poppet top → bonnet
+  const sTop = poppetY - hh * 0.16;
+  const coils = 6;
+  const pts: number[] = [cx, sTop];
+  for (let k = 1; k <= coils * 2; k++) {
+    const yy = sTop + ((bonnetY - sTop) * k) / (coils * 2);
+    pts.push(k === coils * 2 ? cx : cx + (k % 2 ? -1 : 1) * hw * 0.07, yy);
+  }
+  g.poly(pts, false).stroke({ width: 2.4, color: SPRING, alpha: 0.85 });
+
+  // --- venting: flow bursts out both side vents once cracked open ---------------
+  if (venting) {
+    const ventY = seatY - hh * 0.08;
+    for (const s of [-1, 1]) {
+      for (let k = 0; k < 4; k++) {
+        const t = (((k / 4 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+        g.circle(
+          cx + s * (popHW + 4 + t * hw * 0.28),
+          ventY - t * hh * 0.1,
+          2.4,
+        ).fill({ color: WATER, alpha: (0.3 + 0.5 * flow) * (1 - t * 0.5) });
+      }
+    }
+  }
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -1245,6 +1481,8 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   QP: drawAnalogyBjt,
   NM: drawAnalogyMosfet,
   PM: drawAnalogyMosfet,
+  OA: drawAnalogyOA,
+  MOV: drawAnalogyVaristor,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */

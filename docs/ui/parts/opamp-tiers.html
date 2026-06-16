@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Op-amp, three ways</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+:root{
+  --bg:oklch(0.135 0.022 285); --surface:oklch(0.19 0.025 285); --surface-2:oklch(0.25 0.03 285);
+  --border:oklch(0.32 0.03 285); --text:oklch(0.93 0.02 285); --muted:oklch(0.72 0.03 285);
+  --accent:oklch(0.64 0.255 350); --cyan:oklch(0.82 0.13 215); --bronze:oklch(0.74 0.085 72); --ok:oklch(0.8 0.17 150);
+  --font-display:'Saira Condensed',sans-serif; --font-body:'Saira',sans-serif; --font-mono:'IBM Plex Mono',monospace;
+}
+*{box-sizing:border-box;}
+body{margin:0;background:var(--bg);color:var(--text);font-family:var(--font-body);line-height:1.5;
+  padding:22px 26px 40px;max-width:1180px;margin:0 auto;
+  background-image:radial-gradient(ellipse 80% 50% at 50% -10%, oklch(0.2 0.04 320 / 0.4), transparent);}
+.hud-header{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--border);padding-bottom:12px;margin-bottom:18px;}
+.brand{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-weight:700;
+  letter-spacing:0.14em;font-size:14px;color:var(--muted);text-transform:uppercase;}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--accent);box-shadow:0 0 10px var(--accent);}
+.header-meta{display:flex;gap:8px;}
+.chip{font-family:var(--font-mono);font-size:11px;padding:3px 9px;border-radius:20px;
+  border:1px solid var(--border);color:var(--muted);background:var(--surface);}
+.chip-accent{border-color:color-mix(in oklch,var(--accent),transparent 55%);color:var(--accent);}
+h1.lede{font-family:var(--font-display);font-weight:600;font-size:31px;letter-spacing:0.01em;margin:0 0 6px;}
+p.intro{color:var(--muted);font-size:15px;margin:0 0 18px;max-width:74ch;}
+.modebar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;}
+.seg-label{font-family:var(--font-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--muted);}
+.seg{display:inline-flex;background:var(--surface);border:1px solid var(--border);border-radius:9px;padding:3px;gap:2px;}
+.seg button{font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:0.03em;
+  color:var(--muted);background:transparent;border:none;border-radius:6px;padding:6px 13px;cursor:pointer;transition:all .15s;}
+.seg button:hover{color:var(--text);}
+.seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+.grid{display:grid;grid-template-columns:1fr 312px;gap:18px;align-items:start;}
+.board-frame{background:linear-gradient(160deg,oklch(0.16 0.025 285),oklch(0.13 0.02 285));
+  border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:inset 0 1px 0 oklch(0.4 0.04 285 / 0.3);}
+.board-frame svg{display:block;width:100%;height:auto;}
+.panels{display:flex;flex-direction:column;gap:14px;}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 15px;}
+.panel h2{font-family:var(--font-mono);font-weight:500;font-size:11px;letter-spacing:0.14em;text-transform:uppercase;
+  color:var(--muted);margin:0 0 11px;display:flex;align-items:center;gap:7px;}
+.panel h2::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--accent);}
+#scope{display:block;width:100%;height:auto;}
+.ro{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--font-mono);font-size:12.5px;
+  padding:5px 0;border-bottom:1px solid oklch(0.26 0.025 285 / 0.6);}
+.ro:last-child{border-bottom:none;}
+.ro-k{color:var(--muted);}
+.ro-v{color:var(--text);font-weight:500;}
+.ro-v.hot{color:var(--accent);}
+.transport{display:flex;flex-wrap:wrap;gap:20px;align-items:flex-end;margin-top:18px;
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 18px;}
+.ctl{display:flex;flex-direction:column;gap:6px;min-width:180px;flex:1;}
+.ctl-head{display:flex;justify-content:space-between;align-items:baseline;}
+.ctl label{font-family:var(--font-mono);font-size:11px;letter-spacing:0.06em;color:var(--muted);text-transform:uppercase;}
+.ctl .val{font-family:var(--font-mono);font-size:12.5px;color:var(--cyan);font-weight:500;}
+input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:5px;border-radius:3px;
+  background:var(--surface-2);outline:none;cursor:pointer;}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;
+  background:var(--cyan);border:2px solid var(--bg);box-shadow:0 0 0 1px var(--cyan);}
+input[type=range]::-moz-range-thumb{width:16px;height:16px;border-radius:50%;background:var(--cyan);border:2px solid var(--bg);}
+input.ta::-webkit-slider-thumb{background:var(--accent);box-shadow:0 0 0 1px var(--accent);}
+input.ta::-moz-range-thumb{background:var(--accent);}
+input.tb::-webkit-slider-thumb{background:var(--bronze);box-shadow:0 0 0 1px var(--bronze);}
+input.tb::-moz-range-thumb{background:var(--bronze);}
+.btn{font-family:var(--font-display);font-weight:600;font-size:13px;letter-spacing:0.04em;color:var(--text);
+  background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:9px 18px;cursor:pointer;transition:all .15s;}
+.btn:hover{border-color:var(--accent);}
+.btn.is-active{box-shadow:inset 0 -2px 0 var(--accent);}
+footer{margin-top:20px;padding-top:14px;border-top:1px solid var(--border);
+  font-family:var(--font-body);font-size:12.5px;color:var(--muted);max-width:84ch;}
+footer b{color:var(--muted);font-weight:600;}
+@media(max-width:880px){.grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+  <div class="hud-header">
+    <div class="brand"><span class="dot"></span>Critical Error Computing &middot; component lab</div>
+    <div class="header-meta"><span class="chip chip-accent">operational amplifier</span><span class="chip" id="chipReg">LINEAR</span></div>
+  </div>
+  <h1 class="lede">Op-amp, three ways</h1>
+  <p class="intro">An operational amplifier watches two input voltages, V+ and V−, and drives its output to their difference multiplied by a large gain. Because the gain is large, a tiny difference between the inputs makes a big swing at the output, until that swing runs into a supply rail and clips. Switch tiers to see it as a schematic, as a spool valve the two inputs push on, and as the real silicon underneath.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; schematic</button>
+      <button data-t="t2">2 &middot; analogy</button>
+      <button data-t="t3">3 &middot; reality</button>
+    </div>
+  </div>
+
+  <main class="grid">
+    <div class="board-frame">
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg">
+        <text x="20" y="34" font-family="var(--font-display)" font-size="13" fill="#80798f" letter-spacing="0.1em" id="visTag">SCHEMATIC</text>
+        <rect x="1142" y="14" width="0" height="0" fill="none"/>
+        <g id="gT1"></g>
+        <g id="gT2" style="display:none"></g>
+        <g id="gT3" style="display:none"></g>
+      </svg>
+    </div>
+    <aside class="panels">
+      <section class="panel"><h2>telemetry</h2><div id="telemetry"></div></section>
+      <section class="panel"><h2>characteristic</h2>
+        <svg id="scope" viewBox="0 0 300 230" xmlns="http://www.w3.org/2000/svg"></svg>
+      </section>
+    </aside>
+  </main>
+
+  <div style="font-family:var(--font-mono);font-size:12px;color:var(--muted);margin:14px 0 -4px;text-align:center;">Pull <span style="color:var(--cyan)">V+</span> and <span style="color:var(--bronze)">V−</span> apart to make a difference. The output is that difference times the <span style="color:var(--accent)">gain</span>, until it hits a supply rail and clips.</div>
+  <div class="transport">
+    <div class="ctl">
+      <div class="ctl-head"><label>V+ input</label><span class="val" id="vpLab">+1.5 V</span></div>
+      <input type="range" id="vpIn" min="-500" max="500" value="150">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label>V− input</label><span class="val" id="vnLab">0.0 V</span></div>
+      <input type="range" id="vnIn" min="-500" max="500" value="0" class="tb">
+    </div>
+    <div class="ctl">
+      <div class="ctl-head"><label>gain</label><span class="val" id="aLab">×5</span></div>
+      <input type="range" id="aIn" min="0" max="300" value="70" class="ta">
+    </div>
+    <button class="btn is-active" id="btnRun">pause</button>
+  </div>
+
+  <footer id="footnote"></footer>
+
+<script>
+(function(){
+  "use strict";
+  var SVGNS='http://www.w3.org/2000/svg';
+  function el(tag,attrs,txt){var e=document.createElementNS(SVGNS,tag);if(attrs){for(var k in attrs){e.setAttribute(k,attrs[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function poly(pts){return pts.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function th(i){return (i*0.61803398875)%1;}
+  function dens(n){return clamp(Math.pow(n,0.6)*1.25,0,1);}
+  function hcoil(xa,xb,y,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,x=lerp(xa,xb,t),yy=y+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+yy.toFixed(1)+' ';}return d;}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function fmtI(I){var a=Math.abs(I);var s=(I<0?'\u2212':'');if(a<1e-9)return '0 A';if(a<1e-3)return s+(a*1e6).toFixed(a<1e-4?1:0)+' \u00b5A';if(a<1)return s+(a*1e3).toFixed(a<1e-2?1:0)+' mA';if(a<1000)return s+a.toFixed(a<10?2:1)+' A';return s+(a/1000).toFixed(2)+' kA';}
+  function fmtV(v){return (v<0?'\u2212':'')+Math.abs(v).toFixed(1);}
+  function fmtR(R){if(R>=1e12)return (R/1e12).toFixed(R<1e13?1:0)+' T\u03a9';if(R>=1e9)return (R/1e9).toFixed(R<1e10?2:0)+' G\u03a9';if(R>=1e6)return (R/1e6).toFixed(R<1e7?2:0)+' M\u03a9';if(R>=1e3)return (R/1e3).toFixed(R<1e4?2:0)+' k\u03a9';if(R>=1)return R.toFixed(R<10?2:1)+' \u03a9';return (R*1000).toFixed(0)+' m\u03a9';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',BLUE='#7fc6ff',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',HOLE='#ff7a59',OXIDE='#caa46a',ZINC='#8fb6c9',RAIL='#6b6488',POS='#46d2e6',NEG='#d6a866',OUTC='#ff5c8a';
+
+  // ===== metal oxide varistor model, power law =====
+  var IREF=0.001, ICAP=50, VGB=3.2;                          // current at the knee (1 mA at V=Vn), surge-current display cap, volts per grain boundary
+  var VSAT=12;
+  function model(Vp, Vn, A){
+    var vd=Vp-Vn, vi=A*vd, vo=clamp(vi,-VSAT,VSAT), sat=(vi>VSAT)?1:((vi<-VSAT)?-1:0);
+    return {Vp:Vp, Vn:Vn, A:A, vd:vd, vi:vi, vo:vo, sat:sat};
+  }
+
+  var scene=document.getElementById('scene');
+  var gT1=document.getElementById('gT1'),gT2=document.getElementById('gT2'),gT3=document.getElementById('gT3');
+  var t1={},t2={},t3={},sc={};
+
+  /*FILL_BUILD_T1*/
+  function buildT1(){
+    gT1.appendChild(el('polygon',{points:poly([[298,182],[298,358],[446,270]]),fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':2}));
+    gT1.appendChild(el('line',{x1:298,y1:222,x2:212,y2:222,stroke:POS,'stroke-width':2}));
+    gT1.appendChild(el('line',{x1:298,y1:318,x2:212,y2:318,stroke:NEG,'stroke-width':2}));
+    gT1.appendChild(el('circle',{cx:212,cy:222,r:4,fill:POS}));
+    gT1.appendChild(el('circle',{cx:212,cy:318,r:4,fill:NEG}));
+    gT1.appendChild(el('text',{x:316,y:228,'font-family':'var(--font-mono)','font-size':17,fill:POS},'+'));
+    gT1.appendChild(el('text',{x:316,y:324,'font-family':'var(--font-mono)','font-size':17,fill:NEG},'\u2212'));
+    gT1.appendChild(el('text',{x:206,y:214,'font-family':'var(--font-display)','font-size':13,fill:POS,'text-anchor':'end'},'V+'));
+    gT1.appendChild(el('text',{x:206,y:332,'font-family':'var(--font-display)','font-size':13,fill:NEG,'text-anchor':'end'},'V\u2212'));
+    t1.vpLab=el('text',{x:248,y:214,'font-family':'var(--font-mono)','font-size':11,fill:POS,'text-anchor':'start'},'');gT1.appendChild(t1.vpLab);
+    t1.vnLab=el('text',{x:248,y:332,'font-family':'var(--font-mono)','font-size':11,fill:NEG,'text-anchor':'start'},'');gT1.appendChild(t1.vnLab);
+    t1.gLab=el('text',{x:356,y:268,'font-family':'var(--font-mono)','font-size':15,fill:DIM,'text-anchor':'middle'},'');gT1.appendChild(t1.gLab);
+    gT1.appendChild(el('text',{x:356,y:284,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'middle'},'gain'));
+    gT1.appendChild(el('line',{x1:372,y1:216,x2:372,y2:150,stroke:RAIL,'stroke-width':2}));
+    gT1.appendChild(el('line',{x1:372,y1:324,x2:372,y2:392,stroke:RAIL,'stroke-width':2}));
+    gT1.appendChild(el('text',{x:372,y:142,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'+12 V'));
+    gT1.appendChild(el('text',{x:372,y:404,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'\u221212 V'));
+    gT1.appendChild(el('line',{x1:446,y1:270,x2:516,y2:270,stroke:OUTC,'stroke-width':2}));
+    gT1.appendChild(el('text',{x:474,y:260,'font-family':'var(--font-display)','font-size':13,fill:OUTC,'text-anchor':'middle'},'Vout'));
+    var mX=540,mTop=150,mBot=390,m0=270;
+    t1.mX=mX;t1.m0=m0;
+    t1.mY=function(v){return m0-(clamp(v,-VSAT,VSAT)/VSAT)*120;};
+    gT1.appendChild(el('rect',{x:mX,y:mTop,width:34,height:mBot-mTop,rx:4,fill:'oklch(0.165 0.022 285)',stroke:STEEL,'stroke-width':1.5}));
+    gT1.appendChild(el('line',{x1:mX-5,y1:mTop,x2:mX+39,y2:mTop,stroke:RAIL,'stroke-width':2.5}));
+    gT1.appendChild(el('line',{x1:mX-5,y1:mBot,x2:mX+39,y2:mBot,stroke:RAIL,'stroke-width':2.5}));
+    gT1.appendChild(el('line',{x1:mX,y1:m0,x2:mX+34,y2:m0,stroke:FAINT,'stroke-width':1,'stroke-dasharray':'2 2'}));
+    gT1.appendChild(el('text',{x:mX+44,y:mTop+4,'font-family':'var(--font-mono)','font-size':8.5,fill:RAIL,'text-anchor':'start'},'+rail'));
+    gT1.appendChild(el('text',{x:mX+44,y:mBot+3,'font-family':'var(--font-mono)','font-size':8.5,fill:RAIL,'text-anchor':'start'},'\u2212rail'));
+    gT1.appendChild(el('text',{x:mX+44,y:m0+3,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'start'},'0'));
+    gT1.appendChild(el('text',{x:mX+17,y:mTop-8,'font-family':'var(--font-mono)','font-size':9.5,fill:OUTC,'text-anchor':'middle'},'output'));
+    t1.oFill=el('rect',{x:mX+2,y:m0,width:30,height:0,fill:OUTC,opacity:0.5});gT1.appendChild(t1.oFill);
+    t1.oMark=el('line',{x1:mX-4,y1:m0,x2:mX+38,y2:m0,stroke:WARM,'stroke-width':2.5});gT1.appendChild(t1.oMark);
+    gT1.appendChild(el('text',{x:626,y:182,'font-family':'var(--font-display)','font-size':13,fill:DIM,'letter-spacing':'0.05em'},'WHAT IT DOES'));
+    gT1.appendChild(el('text',{x:626,y:208,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'(V+ \u2212 V\u2212) \u00d7 gain'));
+    t1.rEq=el('text',{x:626,y:234,'font-family':'var(--font-mono)','font-size':15,fill:DIM},'');gT1.appendChild(t1.rEq);
+    gT1.appendChild(el('text',{x:626,y:276,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'output, held by the rails'));
+    t1.rOut=el('text',{x:626,y:304,'font-family':'var(--font-mono)','font-size':21,fill:OUTC},'');gT1.appendChild(t1.rOut);
+    t1.stateLab=el('text',{x:626,y:342,'font-family':'var(--font-body)','font-size':14,fill:OK},'');gT1.appendChild(t1.stateLab);
+    gT1.appendChild(el('text',{x:626,y:370,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT},'the inputs draw no current'));
+  }
+  /*FILL_UPDATE_T1*/
+  function updateT1(s){
+    t1.vpLab.textContent='= '+fmtV(s.Vp)+' V';
+    t1.vnLab.textContent='= '+fmtV(s.Vn)+' V';
+    t1.gLab.textContent='\u00d7'+(s.A<10?s.A.toFixed(1):Math.round(s.A));
+    var oy=t1.mY(s.vo);
+    if(s.vo>=0){t1.oFill.setAttribute('y',oy.toFixed(1));t1.oFill.setAttribute('height',(t1.m0-oy).toFixed(1));}
+    else{t1.oFill.setAttribute('y',t1.m0);t1.oFill.setAttribute('height',(oy-t1.m0).toFixed(1));}
+    t1.oFill.setAttribute('opacity', s.sat!==0?'0.85':'0.5');
+    t1.oMark.setAttribute('y1',oy.toFixed(1));t1.oMark.setAttribute('y2',oy.toFixed(1));
+    t1.oMark.setAttribute('stroke', s.sat!==0?ACCENT:WARM);
+    t1.rEq.textContent=fmtV(s.vi)+' V';
+    t1.rEq.setAttribute('fill', s.sat!==0?WARM:DIM);
+    t1.rOut.textContent=fmtV(s.vo)+' V';
+    t1.rOut.setAttribute('fill', s.sat!==0?ACCENT:OUTC);
+    t1.stateLab.textContent=(s.sat>0)?'clipped at the + rail':((s.sat<0)?'clipped at the \u2212 rail':'amplifying, in range');
+    t1.stateLab.setAttribute('fill', s.sat!==0?ACCENT:OK);
+  }
+  /*FILL_BUILD_T2*/
+  function buildT2(){
+    var bx0=306, bx1=362, bTop=190, bBot=400, sx=334;
+    var yRail=228, yOut=294, yNRail=360;
+    t2.bx0=bx0;t2.bx1=bx1;t2.sx=sx;t2.bTop=bTop;t2.bBot=bBot;t2.yOut=yOut;
+    // ---- V- pilot (top, pushes down) ----
+    gT2.appendChild(el('rect',{x:sx-16,y:96,width:32,height:46,rx:3,fill:'oklch(0.165 0.022 285)',stroke:STEEL,'stroke-width':1.5}));
+    t2.gN=el('rect',{x:sx-14,y:119,width:28,height:0,fill:NEG,opacity:0.65});gT2.appendChild(t2.gN);
+    gT2.appendChild(el('text',{x:sx-22,y:112,'font-family':'var(--font-display)','font-size':12,fill:NEG,'text-anchor':'end'},'V\u2212'));
+    gT2.appendChild(el('line',{x1:sx,y1:142,x2:sx,y2:170,stroke:STEEL,'stroke-width':2.5,'stroke-dasharray':'4 3'}));
+    gT2.appendChild(el('rect',{x:bx0,y:170,width:bx1-bx0,height:20,rx:2,fill:'oklch(0.21 0.03 285)',stroke:STEEL,'stroke-width':1}));
+    t2.arrN=el('line',{x1:sx,y1:174,x2:sx,y2:184,stroke:NEG,'stroke-width':2.5});gT2.appendChild(t2.arrN);
+    t2.arrNh=el('polygon',{points:'',fill:NEG});gT2.appendChild(t2.arrNh);
+    gT2.appendChild(el('text',{x:370,y:180,'font-family':'var(--font-mono)','font-size':9,fill:NEG,'text-anchor':'start'},'pushes down'));
+    // ---- V+ pilot (bottom, pushes up) ----
+    gT2.appendChild(el('rect',{x:sx-16,y:448,width:32,height:46,rx:3,fill:'oklch(0.165 0.022 285)',stroke:STEEL,'stroke-width':1.5}));
+    t2.gP=el('rect',{x:sx-14,y:471,width:28,height:0,fill:POS,opacity:0.65});gT2.appendChild(t2.gP);
+    gT2.appendChild(el('text',{x:sx-22,y:476,'font-family':'var(--font-display)','font-size':12,fill:POS,'text-anchor':'end'},'V+'));
+    gT2.appendChild(el('line',{x1:sx,y1:448,x2:sx,y2:420,stroke:STEEL,'stroke-width':2.5,'stroke-dasharray':'4 3'}));
+    gT2.appendChild(el('rect',{x:bx0,y:400,width:bx1-bx0,height:20,rx:2,fill:'oklch(0.21 0.03 285)',stroke:STEEL,'stroke-width':1}));
+    t2.arrP=el('line',{x1:sx,y1:416,x2:sx,y2:406,stroke:POS,'stroke-width':2.5});gT2.appendChild(t2.arrP);
+    t2.arrPh=el('polygon',{points:'',fill:POS});gT2.appendChild(t2.arrPh);
+    gT2.appendChild(el('text',{x:370,y:416,'font-family':'var(--font-mono)','font-size':9,fill:POS,'text-anchor':'start'},'pushes up'));
+    // ---- spool body ----
+    gT2.appendChild(el('rect',{x:bx0,y:bTop,width:bx1-bx0,height:bBot-bTop,fill:'oklch(0.15 0.02 285)',stroke:STEEL,'stroke-width':1.5}));
+    // ---- supply reservoirs (left) ----
+    gT2.appendChild(el('rect',{x:168,y:yRail-11,width:108,height:22,rx:3,fill:WATER,opacity:0.32}));
+    gT2.appendChild(el('rect',{x:168,y:yRail-11,width:108,height:22,rx:3,fill:'none',stroke:STEEL,'stroke-width':1.5}));
+    gT2.appendChild(el('text',{x:222,y:yRail+4,'font-family':'var(--font-mono)','font-size':9.5,fill:WATER2,'text-anchor':'middle'},'+12 V supply'));
+    gT2.appendChild(el('line',{x1:276,y1:yRail,x2:bx0,y2:yRail,stroke:STEEL,'stroke-width':3}));
+    gT2.appendChild(el('rect',{x:168,y:yNRail-11,width:108,height:22,rx:3,fill:WATER,opacity:0.16}));
+    gT2.appendChild(el('rect',{x:168,y:yNRail-11,width:108,height:22,rx:3,fill:'none',stroke:STEEL,'stroke-width':1.5}));
+    gT2.appendChild(el('text',{x:222,y:yNRail+4,'font-family':'var(--font-mono)','font-size':9.5,fill:WATER2,'text-anchor':'middle'},'\u221212 V supply'));
+    gT2.appendChild(el('line',{x1:276,y1:yNRail,x2:bx0,y2:yNRail,stroke:STEEL,'stroke-width':3}));
+    // ---- output port pipe ----
+    gT2.appendChild(el('line',{x1:bx1,y1:yOut,x2:442,y2:yOut,stroke:STEEL,'stroke-width':3}));
+    // ---- gain knob ----
+    gT2.appendChild(el('circle',{cx:289,cy:yOut,r:13,fill:'oklch(0.25 0.03 285)',stroke:ACCENT,'stroke-width':2}));
+    t2.gLab=el('text',{x:289,y:yOut+4,'font-family':'var(--font-mono)','font-size':9.5,fill:ACCENT,'text-anchor':'middle'},'');gT2.appendChild(t2.gLab);
+    gT2.appendChild(el('text',{x:289,y:yOut-18,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'gain'));
+    // ---- spool lands + channel (updated) ----
+    t2.spStem=el('line',{x1:sx,y1:bTop+4,x2:sx,y2:bBot-4,stroke:STEEL,'stroke-width':3,opacity:0.45});gT2.appendChild(t2.spStem);
+    gT2.appendChild(el('text',{x:sx,y:bBot+34,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'middle'},'spool'));
+    t2.spU=el('rect',{x:bx0+3,y:bTop,width:bx1-bx0-6,height:10,rx:2,fill:BRONZE,stroke:WARM,'stroke-width':1});gT2.appendChild(t2.spU);
+    t2.spL=el('rect',{x:bx0+3,y:bBot-10,width:bx1-bx0-6,height:10,rx:2,fill:BRONZE,stroke:WARM,'stroke-width':1});gT2.appendChild(t2.spL);
+    // port markers
+    gT2.appendChild(el('text',{x:bx0-4,y:yRail-4,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'+'));
+    gT2.appendChild(el('text',{x:bx0-4,y:yNRail+10,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'\u2212'));
+    
+    // ---- output tank ----
+    var oTx=442, oTw=78, oT=160, oB=400, o0=280;
+    t2.oTx=oTx;t2.oTw=oTw;t2.o0=o0;
+    t2.outY=function(v){return o0-(clamp(v,-VSAT,VSAT)/VSAT)*120;};
+    gT2.appendChild(el('rect',{x:oTx,y:oT,width:oTw,height:oB-oT,rx:4,fill:'oklch(0.165 0.022 285)',stroke:STEEL,'stroke-width':1.5}));
+    gT2.appendChild(el('line',{x1:oTx-4,y1:oT,x2:oTx+oTw+4,y2:oT,stroke:RAIL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:oTx-4,y1:oB,x2:oTx+oTw+4,y2:oB,stroke:RAIL,'stroke-width':2.5}));
+    gT2.appendChild(el('line',{x1:oTx,y1:o0,x2:oTx+oTw,y2:o0,stroke:FAINT,'stroke-width':1,'stroke-dasharray':'2 2'}));
+    gT2.appendChild(el('text',{x:oTx+oTw+8,y:oT+4,'font-family':'var(--font-mono)','font-size':8.5,fill:RAIL},'+rail'));
+    gT2.appendChild(el('text',{x:oTx+oTw+8,y:oB+3,'font-family':'var(--font-mono)','font-size':8.5,fill:RAIL},'\u2212rail'));
+    gT2.appendChild(el('text',{x:oTx+oTw/2,y:oT-8,'font-family':'var(--font-mono)','font-size':10,fill:OUTC,'text-anchor':'middle'},'output'));
+    t2.oFill=el('rect',{x:oTx+2,y:o0,width:oTw-4,height:0,fill:OUTC,opacity:0.55});gT2.appendChild(t2.oFill);
+    t2.oMark=el('line',{x1:oTx-3,y1:o0,x2:oTx+oTw+3,y2:o0,stroke:WARM,'stroke-width':2.5});gT2.appendChild(t2.oMark);
+    // ---- flow paths through the spool channel ----
+    t2.pFill=el('path',{d:'M 240 228 L '+bx0+' 228 L '+sx+' 261 L '+bx1+' 294 L 442 294',fill:'none',stroke:'none'});gT2.appendChild(t2.pFill);t2.lenFill=t2.pFill.getTotalLength();
+    t2.pDrain=el('path',{d:'M 442 294 L '+bx1+' 294 L '+sx+' 327 L '+bx0+' 360 L 240 360',fill:'none',stroke:'none'});gT2.appendChild(t2.pDrain);t2.lenDrain=t2.pDrain.getTotalLength();
+    t2.flow=[];for(var i=0;i<12;i++){var c=el('circle',{r:4,fill:WATER,opacity:0});gT2.appendChild(c);t2.flow.push({el:c,u:i/12,th:th(i)});}
+    // ---- readout ----
+    gT2.appendChild(el('text',{x:566,y:188,'font-family':'var(--font-display)','font-size':13,fill:DIM,'letter-spacing':'0.05em'},'PILOT SPOOL VALVE'));
+    t2.l1=el('text',{x:566,y:220,'font-family':'var(--font-mono)','font-size':11.5,fill:DIM},'');gT2.appendChild(t2.l1);
+    t2.l2=el('text',{x:566,y:242,'font-family':'var(--font-mono)','font-size':11.5,fill:DIM},'');gT2.appendChild(t2.l2);
+    gT2.appendChild(el('text',{x:566,y:278,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'output'));
+    t2.rOut=el('text',{x:566,y:306,'font-family':'var(--font-mono)','font-size':20,fill:OUTC},'');gT2.appendChild(t2.rOut);
+    t2.stateLab=el('text',{x:566,y:342,'font-family':'var(--font-body)','font-size':13.5,fill:OK},'');gT2.appendChild(t2.stateLab);
+    gT2.appendChild(el('text',{x:566,y:370,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT},'inputs are sealed, they draw no flow'));
+  }
+  /*FILL_UPDATE_T2*/
+  function updateT2(s){
+    var sx=t2.sx, bx0=t2.bx0, bx1=t2.bx1, bTop=t2.bTop, bBot=t2.bBot;
+    // input gauges (levels ~ inputs, -5..5)
+    var gP=clamp((s.Vp+5)/10,0,1), gN=clamp((s.Vn+5)/10,0,1);
+    t2.gN.setAttribute('y',(142-gN*46).toFixed(1));t2.gN.setAttribute('height',(gN*46).toFixed(1));
+    t2.gP.setAttribute('y',(494-gP*46).toFixed(1));t2.gP.setAttribute('height',(gP*46).toFixed(1));
+    // pilot push arrows ~ each input level (the difference in lengths = vdiff)
+    var lenN=6+gN*16, lenP=6+gP*16;
+    t2.arrN.setAttribute('y2',(172+lenN).toFixed(1));
+    t2.arrNh.setAttribute('points',poly([[sx-5,172+lenN-6],[sx+5,172+lenN-6],[sx,172+lenN]]));
+    t2.arrP.setAttribute('y2',(418-lenP).toFixed(1));
+    t2.arrPh.setAttribute('points',poly([[sx-5,418-lenP+6],[sx+5,418-lenP+6],[sx,418-lenP]]));
+    t2.gLab.textContent='\u00d7'+(s.A<10?s.A.toFixed(1):Math.round(s.A));
+    // spool channel center ~ vo (up for +). lands bound the channel.
+    var cy=294-clamp(s.vo/VSAT,-1,1)*33, gap=36;
+    var uTop=bTop, uBot=cy-gap; t2.spU.setAttribute('y',uTop);t2.spU.setAttribute('height',Math.max(0,uBot-uTop).toFixed(1));
+    var lTop=cy+gap, lBot=bBot; t2.spL.setAttribute('y',lTop.toFixed(1));t2.spL.setAttribute('height',Math.max(0,lBot-lTop).toFixed(1));
+    // output tank
+    var oy=t2.outY(s.vo);
+    if(s.vo>=0){t2.oFill.setAttribute('y',oy.toFixed(1));t2.oFill.setAttribute('height',(t2.o0-oy).toFixed(1));}
+    else{t2.oFill.setAttribute('y',t2.o0);t2.oFill.setAttribute('height',(oy-t2.o0).toFixed(1));}
+    t2.oFill.setAttribute('opacity', s.sat!==0?'0.85':'0.55');
+    t2.oMark.setAttribute('y1',oy.toFixed(1));t2.oMark.setAttribute('y2',oy.toFixed(1));
+    t2.oMark.setAttribute('stroke', s.sat!==0?ACCENT:WARM);
+    // flow: fill if vo>0, drain if vo<0, rate ~ |vo|/VSAT
+    var drive=clamp(Math.abs(s.vo)/VSAT,0,1), filling=(s.vo>=0);
+    var path=filling?t2.pFill:t2.pDrain, plen=filling?t2.lenFill:t2.lenDrain;
+    for(var i=0;i<t2.flow.length;i++){var d=t2.flow[i],vis=(dens(drive)>d.th && drive>0.02);if(s.run&&vis){d.u=(d.u+0.006+0.02*drive)%1;}var p=path.getPointAtLength(d.u*plen);d.el.setAttribute('cx',p.x.toFixed(1));d.el.setAttribute('cy',p.y.toFixed(1));d.el.setAttribute('fill',filling?WATER:OUTC);d.el.setAttribute('opacity',vis?'0.9':'0');}
+    // readout
+    t2.l1.textContent='V+ push '+(gP*100|0)+'%  up';
+    t2.l2.textContent='V\u2212 push '+(gN*100|0)+'%  down';
+    t2.rOut.textContent=fmtV(s.vo)+' V';
+    t2.rOut.setAttribute('fill', s.sat!==0?ACCENT:OUTC);
+    t2.stateLab.textContent=(s.sat>0)?'spool full up, +rail to output':((s.sat<0)?'spool full down, \u2212rail to output':((Math.abs(s.vd)<0.02)?'balanced, spool centered':'spool offset by the difference'));
+    t2.stateLab.setAttribute('fill', s.sat!==0?ACCENT:OK);
+  }
+  /*FILL_BUILD_T3*/
+  function buildT3(){
+    var qpx=214, qnx=430, w=104, hw=52;
+    var yC0=152, yC1=262, yB0=262, yB1=290, yE0=290, yE1=380;
+    var ySup=98, yTail=428, yNeg=502, tnx=322;
+    t3.qpx=qpx;t3.qnx=qnx;t3.hw=hw;t3.yC0=yC0;t3.yE1=yE1;t3.tnx=tnx;t3.yTail=yTail;t3.ySup=ySup;t3.yNeg=yNeg;
+    gT3.appendChild(el('line',{x1:128,y1:ySup,x2:516,y2:ySup,stroke:RAIL,'stroke-width':2.5}));
+    gT3.appendChild(el('text',{x:128,y:ySup-6,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT,'text-anchor':'start'},'+12 V supply'));
+    gT3.appendChild(el('line',{x1:128,y1:yNeg,x2:516,y2:yNeg,stroke:RAIL,'stroke-width':2.5}));
+    gT3.appendChild(el('text',{x:128,y:yNeg+16,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT,'text-anchor':'start'},'\u221212 V (tail return)'));
+    [qpx,qnx].forEach(function(cx){
+      gT3.appendChild(el('rect',{x:cx-8,y:ySup+14,width:16,height:28,fill:'none',stroke:STEEL,'stroke-width':1.5}));
+      gT3.appendChild(el('line',{x1:cx,y1:ySup,x2:cx,y2:ySup+14,stroke:STEEL,'stroke-width':2}));
+      gT3.appendChild(el('line',{x1:cx,y1:ySup+42,x2:cx,y2:yC0,stroke:STEEL,'stroke-width':2}));
+    });
+    t3.qPcol=el('rect',{x:qpx-hw,y:yC0,width:w,height:yC1-yC0,fill:'rgba(95,208,255,0.09)'});gT3.appendChild(t3.qPcol);
+    t3.qPbas=el('rect',{x:qpx-hw,y:yB0,width:w,height:yB1-yB0,fill:'rgba(255,122,89,0.14)'});gT3.appendChild(t3.qPbas);
+    t3.qPemi=el('rect',{x:qpx-hw,y:yE0,width:w,height:yE1-yE0,fill:'rgba(95,208,255,0.12)'});gT3.appendChild(t3.qPemi);
+    t3.qPeb=el('rect',{x:qpx-hw,y:yB1-3,width:w,height:6,fill:OK,opacity:0});gT3.appendChild(t3.qPeb);
+    gT3.appendChild(el('rect',{x:qpx-hw,y:yC0,width:w,height:yE1-yC0,fill:'none',stroke:'oklch(0.42 0.05 285)','stroke-width':1.5}));
+    t3.qNcol=el('rect',{x:qnx-hw,y:yC0,width:w,height:yC1-yC0,fill:'rgba(95,208,255,0.09)'});gT3.appendChild(t3.qNcol);
+    t3.qNbas=el('rect',{x:qnx-hw,y:yB0,width:w,height:yB1-yB0,fill:'rgba(255,122,89,0.14)'});gT3.appendChild(t3.qNbas);
+    t3.qNemi=el('rect',{x:qnx-hw,y:yE0,width:w,height:yE1-yE0,fill:'rgba(95,208,255,0.12)'});gT3.appendChild(t3.qNemi);
+    t3.qNeb=el('rect',{x:qnx-hw,y:yB1-3,width:w,height:6,fill:OK,opacity:0});gT3.appendChild(t3.qNeb);
+    gT3.appendChild(el('rect',{x:qnx-hw,y:yC0,width:w,height:yE1-yC0,fill:'none',stroke:'oklch(0.42 0.05 285)','stroke-width':1.5}));
+    [qpx,qnx].forEach(function(cx){
+      gT3.appendChild(el('text',{x:cx,y:yC0+30,'font-family':'var(--font-mono)','font-size':12,fill:ELEC,'text-anchor':'middle'},'n'));
+      gT3.appendChild(el('text',{x:cx,y:yB0+20,'font-family':'var(--font-mono)','font-size':11,fill:HOLE,'text-anchor':'middle'},'p'));
+      gT3.appendChild(el('text',{x:cx,y:yE0+34,'font-family':'var(--font-mono)','font-size':12,fill:ELEC,'text-anchor':'middle'},'n+'));
+    });
+    gT3.appendChild(el('text',{x:tnx,y:yC0+34,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'collector'));
+    gT3.appendChild(el('text',{x:tnx,y:yB0+19,'font-family':'var(--font-mono)','font-size':9.5,fill:FAINT,'text-anchor':'middle'},'base'));
+    gT3.appendChild(el('text',{x:tnx,y:yE0+34,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},'emitter'));
+    gT3.appendChild(el('text',{x:qpx,y:yE1+18,'font-family':'var(--font-display)','font-size':13,fill:POS,'text-anchor':'middle'},'Q+'));
+    gT3.appendChild(el('text',{x:qnx,y:yE1+18,'font-family':'var(--font-display)','font-size':13,fill:NEG,'text-anchor':'middle'},'Q\u2212'));
+    gT3.appendChild(el('line',{x1:qpx,y1:yE1,x2:tnx,y2:yTail,stroke:STEEL,'stroke-width':2}));
+    gT3.appendChild(el('line',{x1:qnx,y1:yE1,x2:tnx,y2:yTail,stroke:STEEL,'stroke-width':2}));
+    gT3.appendChild(el('text',{x:tnx,y:yTail-22,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'emitters joined'));
+    gT3.appendChild(el('line',{x1:tnx,y1:yTail,x2:tnx,y2:yTail+9,stroke:STEEL,'stroke-width':2}));
+    gT3.appendChild(el('circle',{cx:tnx,cy:yTail+26,r:17,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1.5}));
+    gT3.appendChild(el('line',{x1:tnx,y1:yTail+37,x2:tnx,y2:yTail+15,stroke:OK,'stroke-width':2}));
+    gT3.appendChild(el('polygon',{points:poly([[tnx,yTail+13],[tnx-4,yTail+20],[tnx+4,yTail+20]]),fill:OK}));
+    gT3.appendChild(el('line',{x1:tnx,y1:yTail+43,x2:tnx,y2:yNeg,stroke:STEEL,'stroke-width':2}));
+    gT3.appendChild(el('text',{x:tnx+24,y:yTail+24,'font-family':'var(--font-mono)','font-size':9.5,fill:OK,'text-anchor':'start'},'tail current'));
+    gT3.appendChild(el('text',{x:tnx+24,y:yTail+36,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'start'},'(constant)'));
+    gT3.appendChild(el('line',{x1:qpx-hw,y1:yB0+14,x2:qpx-hw-56,y2:yB0+14,stroke:POS,'stroke-width':2}));
+    gT3.appendChild(el('circle',{cx:qpx-hw-56,cy:yB0+14,r:4,fill:POS}));
+    gT3.appendChild(el('text',{x:qpx-hw-62,y:yB0+10,'font-family':'var(--font-display)','font-size':12,fill:POS,'text-anchor':'end'},'V+'));
+    gT3.appendChild(el('line',{x1:qnx+hw,y1:yB0+14,x2:qnx+hw+56,y2:yB0+14,stroke:NEG,'stroke-width':2}));
+    gT3.appendChild(el('circle',{cx:qnx+hw+56,cy:yB0+14,r:4,fill:NEG}));
+    gT3.appendChild(el('text',{x:qnx+hw+62,y:yB0+10,'font-family':'var(--font-display)','font-size':12,fill:NEG,'text-anchor':'start'},'V\u2212'));
+    gT3.appendChild(el('line',{x1:qnx+hw,y1:yC0+22,x2:qnx+hw+40,y2:yC0+22,stroke:OUTC,'stroke-width':2,'stroke-dasharray':'4 2'}));
+    gT3.appendChild(el('circle',{cx:qnx+hw+40,cy:yC0+22,r:4,fill:OUTC}));
+    gT3.appendChild(el('text',{x:qnx+hw+46,y:yC0+18,'font-family':'var(--font-display)','font-size':12,fill:OUTC,'text-anchor':'start'},'Vout'));
+    // electron stream paths: tail (constant), then up each transistor
+    t3.pTail=el('path',{d:'M '+tnx+' '+(yNeg-6)+' L '+tnx+' '+yTail,fill:'none',stroke:'none'});gT3.appendChild(t3.pTail);t3.lenTail=t3.pTail.getTotalLength();
+    t3.pQP=el('path',{d:'M '+tnx+' '+yTail+' L '+qpx+' '+(yE1-8)+' L '+qpx+' '+(ySup+44),fill:'none',stroke:'none'});gT3.appendChild(t3.pQP);t3.lenQP=t3.pQP.getTotalLength();
+    t3.pQN=el('path',{d:'M '+tnx+' '+yTail+' L '+qnx+' '+(yE1-8)+' L '+qnx+' '+(ySup+44),fill:'none',stroke:'none'});gT3.appendChild(t3.pQN);t3.lenQN=t3.pQN.getTotalLength();
+    t3.dTail=[];for(var i=0;i<7;i++){var c=el('circle',{r:4.2,fill:OK,opacity:0});gT3.appendChild(c);t3.dTail.push({el:c,u:i/7,th:th(i)});}
+    t3.dQP=[];for(i=0;i<11;i++){var cp=el('circle',{r:4.2,fill:ELEC,opacity:0});gT3.appendChild(cp);t3.dQP.push({el:cp,u:i/11,th:th(i)});}
+    t3.dQN=[];for(i=0;i<11;i++){var cn=el('circle',{r:4.2,fill:ELEC,opacity:0});gT3.appendChild(cn);t3.dQN.push({el:cn,u:i/11,th:th(i)});}
+    gT3.appendChild(el('text',{x:tnx,y:138,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'middle'},'the base is thin, so most carriers cross it'));
+    t3.steerLab=el('text',{x:tnx,y:yNeg-14,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'middle'},'');gT3.appendChild(t3.steerLab);
+    gT3.appendChild(el('text',{x:602,y:188,'font-family':'var(--font-display)','font-size':13,fill:DIM,'letter-spacing':'0.05em'},'REAL SILICON'));
+    t3.l1=el('text',{x:602,y:220,'font-family':'var(--font-mono)','font-size':11.5,fill:POS},'');gT3.appendChild(t3.l1);
+    t3.l2=el('text',{x:602,y:242,'font-family':'var(--font-mono)','font-size':11.5,fill:NEG},'');gT3.appendChild(t3.l2);
+    gT3.appendChild(el('text',{x:602,y:278,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'output'));
+    t3.rOut=el('text',{x:602,y:306,'font-family':'var(--font-mono)','font-size':19,fill:OUTC},'');gT3.appendChild(t3.rOut);
+    t3.stateLab=el('text',{x:602,y:342,'font-family':'var(--font-body)','font-size':13,fill:OK},'');gT3.appendChild(t3.stateLab);
+    gT3.appendChild(el('text',{x:602,y:370,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'the higher base takes the current'));
+  }
+  function rebuildChain(N){
+    while(t3.chainG.firstChild){t3.chainG.removeChild(t3.chainG.firstChild);}
+    t3.grains=[]; t3.bounds=[];
+    var cx=t3.cx, lw=t3.lw, yTop=t3.yTop, yBot=t3.yBot, H=yBot-yTop, bh=H/(N+1), np=6, g, b, j;
+    function linePts(k){var pts=[];for(var jj=0;jj<np;jj++){var t=jj/(np-1),x=cx-lw+t*2*lw+Math.sin(k*2.1+jj*1.3)*5,jit=Math.sin(k*1.7+jj*2.3)*6,y=yTop+k*bh+jit;pts.push([x,y]);}return pts;}
+    for(g=0;g<=N;g++){
+      var top=linePts(g), bot=linePts(g+1).slice().reverse();
+      var poh=el('polygon',{points:poly(top.concat(bot)),fill:'oklch(0.31 0.045 240)',stroke:ZINC,'stroke-width':1.2,opacity:0.9});
+      t3.chainG.appendChild(poh); t3.grains.push(poh);
+    }
+    for(b=1;b<=N;b++){
+      var lp=linePts(b),d='';for(j=0;j<lp.length;j++){d+=(j===0?'M ':'L ')+lp[j][0].toFixed(1)+' '+lp[j][1].toFixed(1)+' ';}
+      var be=el('path',{d:d,fill:'none',stroke:HOLE,'stroke-width':3.5,'stroke-linecap':'round'});
+      t3.chainG.appendChild(be); t3.bounds.push(be);
+    }
+  }
+  /*FILL_UPDATE_T3*/
+  function updateT3(s){
+    var f=0.5+0.5*clamp(s.vo/VSAT,-1,1), rL=f, rR=1-f, i;
+    t3.qPemi.setAttribute('fill','rgba(95,208,255,'+(0.10+0.16*rL).toFixed(3)+')');
+    t3.qPcol.setAttribute('fill','rgba(95,208,255,'+(0.07+0.14*rL).toFixed(3)+')');
+    t3.qNemi.setAttribute('fill','rgba(95,208,255,'+(0.10+0.16*rR).toFixed(3)+')');
+    t3.qNcol.setAttribute('fill','rgba(95,208,255,'+(0.07+0.14*rR).toFixed(3)+')');
+    t3.qPeb.setAttribute('opacity',(0.15+0.5*rL).toFixed(2));
+    t3.qNeb.setAttribute('opacity',(0.15+0.5*rR).toFixed(2));
+    for(i=0;i<t3.dTail.length;i++){var d=t3.dTail[i],vis=(dens(1)>d.th);if(s.run&&vis){d.u=(d.u+0.017)%1;}var p=t3.pTail.getPointAtLength(d.u*t3.lenTail);d.el.setAttribute('cx',p.x.toFixed(1));d.el.setAttribute('cy',p.y.toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');}
+    for(i=0;i<t3.dQP.length;i++){var dp=t3.dQP[i],vp=(dens(rL)>dp.th && rL>0.02);if(s.run&&vp){dp.u=(dp.u+0.006+0.02*rL)%1;}var pp=t3.pQP.getPointAtLength(dp.u*t3.lenQP);dp.el.setAttribute('cx',pp.x.toFixed(1));dp.el.setAttribute('cy',pp.y.toFixed(1));dp.el.setAttribute('opacity',vp?'0.92':'0');}
+    for(i=0;i<t3.dQN.length;i++){var dn=t3.dQN[i],vn=(dens(rR)>dn.th && rR>0.02);if(s.run&&vn){dn.u=(dn.u+0.006+0.02*rR)%1;}var pn=t3.pQN.getPointAtLength(dn.u*t3.lenQN);dn.el.setAttribute('cx',pn.x.toFixed(1));dn.el.setAttribute('cy',pn.y.toFixed(1));dn.el.setAttribute('opacity',vn?'0.92':'0');}
+    t3.steerLab.textContent=(Math.abs(s.vd)<0.02)?'bases equal, current splits evenly':(s.vd>0?'V+ base higher, current crowds into Q+':'V\u2212 base higher, current crowds into Q\u2212');
+    t3.l1.textContent='V+ base '+fmtV(s.Vp)+' V';
+    t3.l2.textContent='V\u2212 base '+fmtV(s.Vn)+' V';
+    t3.rOut.textContent=fmtV(s.vo)+' V';
+    t3.rOut.setAttribute('fill', s.sat!==0?ACCENT:OUTC);
+    t3.stateLab.textContent=(s.sat>0)?'all current in Q+':((s.sat<0)?'all current in Q\u2212':'amplifying, in range');
+    t3.stateLab.setAttribute('fill', s.sat!==0?ACCENT:OK);
+  }
+
+  // ===== scope : current against voltage characteristic =====
+  function buildScope(){
+    var S=document.getElementById('scope'),W=300,H=230,L=42,R=288,T=16,B=196;
+    sc.S=S;sc.L=L;sc.R=R;sc.T=T;sc.B=B;sc.CY=(T+B)/2;sc.CX=(L+R)/2;sc.Xs=10;sc.Ys=VSAT;
+    function syc(v){return sc.CY-(v/sc.Ys)*((B-T)/2);}
+    sc.rP=el('line',{x1:L,y1:syc(VSAT),x2:R,y2:syc(VSAT),stroke:RAIL,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.75});S.appendChild(sc.rP);
+    sc.rN=el('line',{x1:L,y1:syc(-VSAT),x2:R,y2:syc(-VSAT),stroke:RAIL,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.75});S.appendChild(sc.rN);
+    S.appendChild(el('text',{x:R-2,y:syc(VSAT)+10,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'+rail'));
+    S.appendChild(el('text',{x:R-2,y:syc(-VSAT)-3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'\u2212rail'));
+    S.appendChild(el('line',{x1:L,y1:sc.CY,x2:R,y2:sc.CY,stroke:'oklch(0.42 0.03 285)','stroke-width':1}));
+    S.appendChild(el('line',{x1:sc.CX,y1:T,x2:sc.CX,y2:B,stroke:'oklch(0.42 0.03 285)','stroke-width':1}));
+    S.appendChild(el('text',{x:R,y:sc.CY+12,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'end'},'V+ minus V\u2212'));
+    S.appendChild(el('text',{x:sc.CX+5,y:T+8,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'start'},'Vout'));
+    sc.curve=el('path',{d:'',fill:'none',stroke:CYAN,'stroke-width':2});S.appendChild(sc.curve);
+    sc.dot=el('circle',{cx:sc.CX,cy:sc.CY,r:4.5,fill:ACCENT});S.appendChild(sc.dot);
+    S.appendChild(el('text',{x:sc.CX,y:H-3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'output vs input difference'));
+  }
+
+  function drawScope(s){
+    var L=sc.L,R=sc.R,T=sc.T,B=sc.B,CY=sc.CY,Xs=sc.Xs,Ys=sc.Ys;
+    function sx(v){return L+(clamp(v,-Xs,Xs)+Xs)/(2*Xs)*(R-L);}
+    function sy(v){return CY-(clamp(v,-Ys,Ys)/Ys)*((B-T)/2);}
+    var d='';for(var k=0;k<=120;k++){var x=-Xs+k/120*2*Xs,y=clamp(s.A*x,-Ys,Ys);d+=(k===0?'M ':'L ')+sx(x).toFixed(1)+' '+sy(y).toFixed(1)+' ';}
+    sc.curve.setAttribute('d',d);
+    sc.dot.setAttribute('cx',sx(s.vd).toFixed(1));
+    sc.dot.setAttribute('cy',sy(s.vo).toFixed(1));
+  }
+
+
+  // ===== telemetry =====
+  var telem=document.getElementById('telemetry');
+  function trow(label){var row=document.createElement('div');row.className='ro';var k=document.createElement('span');k.className='ro-k';k.textContent=label;var v=document.createElement('span');v.className='ro-v';row.appendChild(k);row.appendChild(v);telem.appendChild(row);return v;}
+  var roVp=trow('V+ input'),roVn=trow('V\u2212 input'),roVd=trow('difference'),roA=trow('gain'),roVo=trow('output'),roReg=trow('state');
+
+  // ===== loop =====
+  var vpIn=document.getElementById('vpIn'),vnIn=document.getElementById('vnIn'),aIn=document.getElementById('aIn');
+  var vpLab=document.getElementById('vpLab'),vnLab=document.getElementById('vnLab'),aLab=document.getElementById('aLab');
+  var chipReg=document.getElementById('chipReg'),visTag=document.getElementById('visTag'),footnote=document.getElementById('footnote');
+  var btnRun=document.getElementById('btnRun');
+  var running=true, tier='t1', tick=0;
+
+  function frame(){
+    if(running){tick++;}
+    var Vp=(+vpIn.value)*0.01, Vn=(+vnIn.value)*0.01, A=Math.pow(10,(+aIn.value)/100);
+    var m=model(Vp,Vn,A);
+    var s={Vp:Vp,Vn:Vn,A:A,vd:m.vd,vi:m.vi,vo:m.vo,sat:m.sat,run:running,tick:tick};
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else{updateT3(s);}
+    drawScope(s);
+    function gtxt(a){return '\u00d7'+(a<10?a.toFixed(1):Math.round(a));}
+    vpLab.textContent=fmtV(Vp)+' V';
+    vnLab.textContent=fmtV(Vn)+' V';
+    aLab.textContent=gtxt(A);
+    roVp.textContent=fmtV(Vp)+' V';
+    roVn.textContent=fmtV(Vn)+' V';
+    roVd.textContent=fmtV(m.vd)+' V';
+    roA.textContent=gtxt(A);
+    roVo.textContent=fmtV(m.vo)+' V';roVo.className='ro-v'+(m.sat!==0?' hot':'');
+    var st=(m.sat>0)?'saturated high':((m.sat<0)?'saturated low':'linear');
+    roReg.textContent=st;roReg.style.color=(m.sat!==0)?ACCENT:OK;
+    chipReg.textContent=st.toUpperCase();
+    requestAnimationFrame(frame);
+  }
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';
+    var names={t1:'schematic',t2:'pilot spool valve',t3:'the real silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+
+  footnote.innerHTML='<b>Notes.</b> An op-amp outputs the difference between its two inputs multiplied by a large gain. It cannot swing past its supply rails, so once the amplified difference reaches a rail the output clips and holds there. Turn the gain up and a smaller and smaller difference is enough to drive the output all the way to a rail, which is why a real op-amp, with a gain in the hundreds of thousands, behaves like a comparator on its own and is almost always wrapped in feedback to tame it. Pressures stand for voltages, as in the other components.';
+
+  buildT1();buildT2();buildT3();buildScope();
+  setTier('t1');
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
