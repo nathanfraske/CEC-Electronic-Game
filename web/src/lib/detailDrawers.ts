@@ -601,6 +601,145 @@ function drawDetailResistor(g: Graphics, o: DetailOpts): void {
   belt(g, boxR, busY, bX, busY, cur, dir, o.phase, CUR, 2.8);
 }
 
+// ============================================================================
+// Inductor — ported from inductor-tiers.html (tier 3, the air-core solenoid). The
+// current spiralling through the turns builds a magnetic field that loops through
+// the core and back around, and that field is where the energy is held. The coil
+// only shows a voltage while the current is CHANGING (V = L·dI/dt), so V_L drives a
+// "dI/dt" shimmer on the core while |I| drives the field, the flux, and the flow.
+//
+// Live mapping (the inductor ElectricalState carries I (a→b) and V_L = V(a)−V(b)):
+//   • field / energy = norm(|I|, CUR_SCALE) → flux-loop brightness + core flux dots.
+//   • flow / spiral  = same; sign of I sets the belt + spiral direction.
+//   • "changing"     = norm(|V_L|, V_SCALE) → the dI/dt shimmer rising off the core.
+// ============================================================================
+function drawDetailInductor(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const BRONZE = PALETTE.bronze;
+  const LEAD = PALETTE.violet;
+  const FIELD = PALETTE.cyan;
+  const FLUX = mix(PALETTE.cyan, 0xffffff, 0.4);
+  const CUR = mix(BRONZE, 0xffffff, 0.55);
+
+  const i = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const changing = norm(o.electrical.vAcross, V_SCALE);
+
+  const axisY = 0;
+  const coilL = -hw * 0.46;
+  const coilR = hw * 0.46;
+  const ry = hh * 0.5;
+  const rx = 9;
+  // More turns links more field per amp — so more inductance shows as more turns.
+  const turns = o.value
+    ? Math.max(5, Math.min(9, Math.round(5 + 4 * norm(o.value, 0.2))))
+    : 7;
+
+  // --- magnetic field loops behind the coil, blooming with |I| ------------------
+  if (i > 0.03) {
+    const loops = [
+      { h: hh * 1.0, ext: hw * 0.12 },
+      { h: hh * 1.7, ext: hw * 0.26 },
+    ];
+    for (const lp of loops) {
+      for (const s of [-1, 1]) {
+        g.moveTo(coilL, axisY)
+          .bezierCurveTo(
+            coilL - lp.ext,
+            axisY + s * lp.h,
+            coilR + lp.ext,
+            axisY + s * lp.h,
+            coilR,
+            axisY,
+          )
+          .stroke({
+            width: 1.4,
+            color: FIELD,
+            alpha: Math.min(0.5, 0.08 + i * 0.4),
+          });
+      }
+    }
+    // flux dots running the core axis (the field through the centre)
+    const nf = FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * i);
+    for (let k = 0; k < nf; k++) {
+      const t = (((k / nf + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      g.circle(coilL + (coilR - coilL) * t, axisY, 2.4).fill({
+        color: FLUX,
+        alpha: 0.3 + 0.5 * i,
+      });
+    }
+    // axis arrow — the field direction through the core
+    const ax = (coilL + coilR) / 2 + dir * hw * 0.08;
+    g.moveTo(ax - dir * 7, axisY - 5)
+      .lineTo(ax + dir * 7, axisY)
+      .lineTo(ax - dir * 7, axisY + 5)
+      .fill({ color: FIELD, alpha: 0.3 + 0.6 * i });
+  }
+
+  // --- leads + terminal studs ---------------------------------------------------
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  g.moveTo(aX, axisY)
+    .lineTo(coilL, axisY)
+    .stroke({ width: 4, color: LEAD, alpha: 0.85 });
+  g.moveTo(coilR, axisY)
+    .lineTo(bX, axisY)
+    .stroke({ width: 4, color: LEAD, alpha: 0.85 });
+  stud(g, aX, axisY, BRONZE);
+  stud(g, bX, axisY, BRONZE);
+
+  // --- the coil: N turns as ellipses --------------------------------------------
+  for (let k = 0; k < turns; k++) {
+    const x = coilL + (turns === 1 ? 0.5 : k / (turns - 1)) * (coilR - coilL);
+    g.ellipse(x, axisY, rx, ry).stroke({
+      width: 3.2,
+      color: BRONZE,
+      alpha: 0.92,
+    });
+  }
+
+  // --- dI/dt shimmer rising off the core while the current changes --------------
+  if (changing > 0.06) {
+    const amp = 2 + 5 * changing;
+    for (let s = -1; s <= 1; s += 2) {
+      const sx = (coilL + coilR) / 2 + s * (coilR - coilL) * 0.18;
+      g.moveTo(sx, axisY - ry);
+      for (let k = 1; k <= 4; k++) {
+        const xx = sx + Math.sin(o.phase * 4 + s * 1.3 + k * 0.9) * amp;
+        g.lineTo(xx, axisY - ry - k * hh * 0.18);
+      }
+      g.stroke({
+        width: 1.8,
+        color: FLUX,
+        alpha: Math.min(0.6, 0.5 * changing),
+      });
+    }
+  }
+
+  // --- electrons spiralling through the turns (front bright, back dim) ----------
+  if (i > 0.02) {
+    const ne =
+      FLOW_DOTS_MIN + 2 + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * i);
+    for (let k = 0; k < ne; k++) {
+      const t = (((k / ne + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const theta = t * turns * Math.PI * 2;
+      const front = Math.sin(theta) > 0;
+      g.circle(
+        coilL + t * (coilR - coilL),
+        axisY - ry * Math.cos(theta),
+        2.6,
+      ).fill({
+        color: FIELD,
+        alpha: (front ? 0.9 : 0.32) * (0.4 + 0.6 * i),
+      });
+    }
+  }
+
+  // --- electron flow on the leads (same magnitude both sides) -------------------
+  belt(g, aX, axisY, coilL, axisY, i, dir, o.phase, CUR, 2.4);
+  belt(g, coilR, axisY, bX, axisY, i, dir, o.phase, CUR, 2.4);
+}
+
 /**
  * The construction-detail drawers, keyed by kind — the third sibling map to
  * DRAWERS / FACTORY_DRAWERS. A kind absent here has no detail view yet; the host
@@ -613,6 +752,7 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   LED: drawDetailDiode,
   ZD: drawDetailDiode,
   R: drawDetailResistor,
+  L: drawDetailInductor,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */

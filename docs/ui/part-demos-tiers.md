@@ -57,31 +57,49 @@ gives us) plus the part value — **no new sim state, pure presentation, zero go
 - Transformer: `Vp/Vs`, `Ip/Is`, turns ratio, core-flux %/saturation (the magnetising flux
   we already integrate — see the energization transient discussion).
 
-## Existing scaffolding (to extend, not duplicate)
+## What already exists (~70–80% — confirmed by the codebase map)
 
-`web/src/App.svelte` already has an info-panel diagram: an `infoDiagram` object
-(`setMode(...)` / `setState(kind, electrical, value, wiper)`), `hasDetail` / `hasFactory`
-kind flags, and a `diagramMode` / `effectiveDiagramMode` (schematic vs. "reality"). The
-three-tier system **extends this** — adding the analogy tier and the richer reality tier from
-the refs, reusing the per-frame `setState` feed. *(A background agent is mapping the exact API
-+ renderer; integration specifics land from that map.)*
+The three-tier system is **already built**, not a green field — the refs slot into it:
+
+- **`web/src/lib/infoDiagram.ts`** — `InfoDiagram`, a small PixiJS sub-app.
+  `setMode("schematic" | "analogy" | "reality")` + `setState(kind, electrical, value?, wiper?)`,
+  driven every frame while the info drawer is open (`App.svelte` ~957).
+- **Three drawer maps**, all the same `(g: Graphics, o) => void` shape:
+  - `DRAWERS` — schematic symbols (`glyphs.ts`) — every part.
+  - `FACTORY_DRAWERS` — the **analogy** ("Factory" machine-metaphor) (`glyphs.ts`) — 20+ parts.
+  - `DETAIL_DRAWERS` — the **reality** internals (`detailDrawers.ts`) — **6 parts so far:
+    `OA`, `D`, `SD`, `LED`, `ZD`, `R`** (op-amp/diode/resistor are full exemplars, themselves
+    ported from this same kind of HTML ref).
+- **Tier switcher UI** in the info drawer (`Symbol` / `Factory` / `Real` segmented buttons,
+  `App.svelte` ~2216) auto-gates on `hasFactory`/`hasDetail`; `effectiveDiagramMode` clamps
+  outward when a tier's art is missing.
+- **Live + derived state**: `electricalMap` feeds `ElectricalState` (V, I) per frame;
+  `partInfo.ts` computes the derived rows (power, energy, τ, operating region, …).
+- **Port target — the detail-drawer pattern**: `drawDetail<Kind>(g, o: DetailOpts)` paints into
+  a centred `bounds` (hw/hh), reads `o.electrical` + `o.phase`, uses helpers `belt` / `stud` /
+  `housing` / `mix` / `norm`, recolours from `PALETTE` (no hardcoded colours), magnitude on
+  alpha/density/thickness — never speed. Register in `DETAIL_DRAWERS` → the info panel
+  auto-unlocks "Real". Pure presentation; no sim / netlist / golden touch.
+
+So the five refs reduce to: **reality-tier drawers for `C`, `EC`, `L`, `TR`** (`R` already has
+`drawDetailResistor` — diff it against the ref and enrich if the ref is richer), plus their
+**Factory/analogy** drawers (verify each — `TR` may be missing), plus the new **board
+zoom-to-reveal**.
 
 ## Implementation plan (phased)
 
-1. **Map the existing `infoDiagram` / factory system** (in flight).
-2. **One component as the pattern — the resistor**, ported into a reusable, live-wired tier
-   view mounted first in the **info panel** (the existing mount point). Establish a `TierView`
-   that takes `(kind, tier, live)` and animates the three tiers from the ref. This is the
-   template the other four follow.
-3. **Tier switcher** (schematic / analogy / reality) + the **live per-frame feed** (from
-   `electricalMap` + the derived quantities) wired into the panel.
-4. **Board zoom-to-reveal.** When zoomed past a threshold onto a single selected part, render
-   its `TierView` in place of the glyph — an LOD swap in `board.ts` keyed off `world.scale`.
-   Pure presentation; the glyph and the tier view share the same live state.
-5. **Port the remaining four** (ceramic cap, electrolytic cap, inductor, transformer) onto the
-   same `TierView` pattern.
-6. **Polish:** smooth glyph→tier transition on zoom, the on-board tier switcher, a telemetry
-   overlay, and (later) the next batch of part sheets.
+1. **Port the reality tier** for the missing parts into `detailDrawers.ts`, one
+   `drawDetail<Kind>` at a time, faithful to each ref's Tier 3 — order **inductor → ceramic cap
+   → electrolytic cap → transformer** (resistor exists; revisit against its ref last). Register
+   each in `DETAIL_DRAWERS`; the panel auto-unlocks it. Verify with `pnpm -C web check/lint/build`.
+2. **Verify/port the Factory (analogy) tier** for these kinds against each ref's Tier 2 (water
+   throat / tank+piston / flywheel / belted wheels). Most exist; fill gaps (esp. `TR`).
+3. **Board zoom-to-reveal** (the new mechanic): there's no component LOD swap today. Hook
+   `Board.update()` at `world.scale ≥ ~3` with a single selected part → render the detail drawer
+   in place of the glyph (LOD swap) so you literally "zoom into the part and watch it work." (The
+   simpler fallback is an `onZoomDetail` callback that auto-opens the info drawer.)
+4. **Polish**: telemetry + tier switcher on the board at high zoom; smooth glyph→detail fade.
+5. **Next batch** of part sheets once these five land.
 
 ## Architecture notes
 
