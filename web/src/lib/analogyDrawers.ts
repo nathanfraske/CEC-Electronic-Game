@@ -510,14 +510,6 @@ function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
     color: WATER,
     alpha: 0.6,
   });
-  // the matched-level guide (when flow stops, the surfaces line up)
-  g.moveTo(srcX, capSurf)
-    .lineTo(capR, capSurf)
-    .stroke({
-      width: 1.2,
-      color: PALETTE.cyan,
-      alpha: 0.25 + 0.35 * (1 - flow),
-    });
 
   // --- connecting pipe at the bottom + valve = series R ------------------------
   for (const yy of [pipeY - 6, pipeY + 6]) {
@@ -986,7 +978,10 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
 
   const ic = norm(o.electrical.current, CUR_SCALE);
   const vce = norm(o.electrical.vAcross, V_SCALE);
-  const lvl = Math.min(1, ic); // base flow fills the chamber, setting the gate
+  // Gate opening: a SENSITIVE response to the collector current (steep near zero,
+  // saturating) so the plug + chamber visibly track even small currents instead of
+  // barely budging — the gate-lift is the teaching point.
+  const lvl = norm(o.electrical.current, CUR_SCALE * 0.3);
   const conducting = ic > 0.03;
 
   const pipeX = hw * 0.34;
@@ -994,7 +989,7 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
   const pipeTop = -hh * 0.56;
   const pipeBot = hh * 0.56;
   const throatY = 0;
-  const plugY = throatY - lvl * hh * 0.3; // lifts up off the seat as it opens
+  const plugY = throatY - lvl * hh * 0.42; // lifts up off the seat as it opens
   const chamX = -hw * 0.42;
   const chamHW = hw * 0.16;
   const chamTop = -hh * 0.3;
@@ -1139,13 +1134,16 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
   const id = norm(o.electrical.current, CUR_SCALE);
   const vds = norm(o.electrical.vAcross, V_SCALE);
   const conducting = id > 0.03;
+  // Gate opening: a SENSITIVE response to the drain current so the plug + piston
+  // visibly track even a small I_D (the valve lift is the teaching point).
+  const open = norm(o.electrical.current, CUR_SCALE * 0.3);
 
   const pipeX = hw * 0.36;
   const pipeHW = hw * 0.1;
   const pipeTop = -hh * 0.56;
   const pipeBot = hh * 0.74;
   const throatY = 0;
-  const plugY = throatY - id * hh * 0.3;
+  const plugY = throatY - open * hh * 0.42;
 
   // --- drain reservoir (pressure = V_DS), just above the drain end -------------
   const resH = hh * 0.16;
@@ -1191,7 +1189,7 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
     color: PALETTE.rail,
     alpha: 0.85,
   });
-  const pistonY = cylBot - id * (cylBot - cylTop) * 0.7;
+  const pistonY = cylBot - open * (cylBot - cylTop) * 0.7;
   g.poly(
     springPts(cylX - hw * 0.1, cylX + hw * 0.02, cylBot, 6, 5),
     false,
