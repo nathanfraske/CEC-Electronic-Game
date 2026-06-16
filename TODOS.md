@@ -6,6 +6,33 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-16 (late)
+
+- ~~**Transformer bridge inrush runaway — FIXED + SHIPPED (PR #69).** Owner-reported live
+  bug: `tr-bridge-supply` diverged to ~61 kA on wasm (bounded ~50 A native — an ill-conditioned
+  inrush, not stale cache). The hard zero-impedance secondary drove a near-impulse charging the
+  empty reservoir cap. Fix: secondary **leakage inductance** `TRANSFORMER_LLEAK = 5 mH` (BE
+  companion, **negative** branch diagonal like the magnetiser's `rp`; zero DC drop → full-wave
+  intact). `Is` now a 2nd reactive state (`secondary_state`); golden + hash format unchanged.
+  n=4/1 kHz: 49.8 A → 4.3 A. +2 regressions (high-step-up sweep, floating-primary bridge).~~
+- ~~**"Logic from Transistors" curriculum (owner ask) — SHIPPED (PR #69).** CMOS inverter/NAND/
+  NOR from raw MOSFETs + SR latch (cross-coupled NOR) in `examples.ts`; new example category.
+  Pure content (MOSFET model does CMOS rail-to-rail as-is).~~
+- **Catalogue roadmap (4 research agents synthesized) — owner picked transistor curriculum
+  first (done above). Remaining, in build order:**
+  - [ ] **>4-terminal `Element` keystone** — optional per-element extra-nodes side-table
+    (golden-neutral). Unlocks wide counters/muxes/decoders, the BCD→7-seg decoder, RAM.
+  - [ ] **7-segment display** (`S7` = 7-LED netlist expansion) + per-segment `GlyphOpts`; then
+    **BCD→7-seg decoder** (`ELEM_BCD7`, rides the keystone) → "watch a digit count" chain.
+  - [ ] Small ≤4-pin (B) digital parts: transparent D-latch, Schmitt buf/inv, tri-state buffer,
+    2-bit counter (all golden-additive).
+  - [ ] Analog: **reusable magnetic core** (generalize ideal-T to N windings → autotransformer/
+    variac, common-mode choke, center-tap); **relay** (P6 latch pioneer); buildable-today wins
+    (battery V+R, CC programmable load, crystal-as-RLC).
+  - Economy (owner-confirmed): seal = FPGA only; everyday ICs unlock via **Lux-gated tech tree**
+    after a build-from-primitives contract; IC = Lux once / cheaper Credits-per-placement than
+    discrete (the integration lesson). Matches `ic-buildings-ideation.md` + `game-contracts-economy.md`.
+
 ## 2026-06-16
 
 - **Digital scheduler (owner ask) — research done + Stage 1 shipped; Stage 2 next.**
