@@ -1,6 +1,6 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { Application } from "pixi.js";
   import {
     createSimulation,
@@ -415,8 +415,9 @@
   let armedPart = $state<string | null>(null);
   // The multimeter function in Measure mode: voltmeter or ammeter.
   let probeMode = $state<"V" | "A">("V");
-  // Component art style: real schematic symbols, or the Factorio machine lens.
-  let boardStyle = $state<"schematic" | "factory">("schematic");
+  // The board's detail lens (the owner's three tiers): schematic symbols always; in
+  // analogy/reality a part morphs into its full-panel illustration once zoomed in.
+  let boardLens = $state<DiagramMode>("schematic");
   // Fallback kind for native drag-and-drop from the bin (set on dragstart).
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
@@ -498,7 +499,11 @@
   // them — so double-clicking an op-amp opens straight to "what's happening inside."
   $effect(() => {
     const kind = selPart?.kind;
-    if (kind) diagramMode = hasDetail(kind) ? "reality" : "schematic";
+    // Default the info diagram to the board's active lens on each new selection
+    // (still freely toggleable after). The lens is read untracked so changing the
+    // board lens alone doesn't yank a manually-chosen info tab; effectiveDiagramMode
+    // clamps outward to schematic when that tier's art doesn't exist for the kind.
+    if (kind) diagramMode = untrack(() => boardLens);
   });
 
   /** Persist just the onboarding slice of settings (mute + which cards have fired). */
@@ -909,11 +914,10 @@
         },
         onInspect: () => {
           // Double-click on a part: the board already made it the lone selection
-          // (onSelect fired first). Open the deep info drawer and land straight on
-          // the reality internals when the part has them — even if it was already
-          // selected, so a double-click always re-asserts the "what's inside" view.
+          // (onSelect fired first). Open the deep info drawer on the board's active
+          // lens (effectiveDiagramMode clamps to schematic if that tier is absent).
           infoOpen = true;
-          if (selPart && hasDetail(selPart.kind)) diagramMode = "reality";
+          if (selPart) diagramMode = boardLens;
         },
         onLabelEdit: (req) => {
           if (req) {
@@ -1215,9 +1219,16 @@
     probeMode = m;
     board?.setProbeMode(m);
   }
-  function toggleStyle(): void {
-    boardStyle = boardStyle === "schematic" ? "factory" : "schematic";
-    board?.setStyle(boardStyle);
+  // Cycle the board lens schematic → analogy → reality → schematic. Analogy/reality
+  // reveal their full-panel illustration once a part is zoomed in (see Board.setLens).
+  function cycleLens(): void {
+    boardLens =
+      boardLens === "schematic"
+        ? "analogy"
+        : boardLens === "analogy"
+          ? "reality"
+          : "schematic";
+    board?.setLens(boardLens);
   }
   function clearBoard(): void {
     board?.clear();
@@ -1680,12 +1691,16 @@
         ⓘ Info
       </button>
       <button
-        class="btn btn-ghost {boardStyle === 'factory' ? 'is-active' : ''}"
-        onclick={toggleStyle}
+        class="btn btn-ghost {boardLens !== 'schematic' ? 'is-active' : ''}"
+        onclick={cycleLens}
         disabled={!ready}
-        title="Toggle component art: schematic symbols ↔ factory machines"
+        title="Board lens: schematic → analogy → reality. Zoom in on a part to see its analogy/reality detail."
       >
-        {boardStyle === "factory" ? "⚙ Factory" : "⎍ Schematic"}
+        {boardLens === "reality"
+          ? "⬡ Reality"
+          : boardLens === "analogy"
+            ? "◆ Analogy"
+            : "⎍ Schematic"}
       </button>
       {#if armedPart}
         <span class="armed-chip" title="Armed for placement">

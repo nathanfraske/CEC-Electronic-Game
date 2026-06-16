@@ -41,6 +41,8 @@ import {
   type GlyphStyle,
 } from "./glyphs";
 import { hasValue } from "./values";
+import { drawDetail, hasDetail } from "./detailDrawers";
+import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -63,6 +65,16 @@ interface ProbePoint {
 /** Grid pitch in pixels — the cell size everything snaps to. */
 const PITCH = 26;
 const PIN_R = 4.5;
+/**
+ * The board's detail LENS — which of the owner's three fidelity tiers placed parts
+ * render in. "schematic" is the always-on board symbol; "analogy"/"reality" swap a
+ * part to its full-panel illustration ONCE zoomed in past {@link TIER_ZOOM} (a
+ * working level-of-detail: zoom in to add factory/reality detail, zoom out for a
+ * clean, cheap overview). Mirrors the info panel's `DiagramMode`.
+ */
+export type BoardLens = "schematic" | "analogy" | "reality";
+/** World zoom at/above which analogy/reality parts swap to the full illustration. */
+const TIER_ZOOM = 2.2;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
@@ -820,10 +832,21 @@ export class Board {
     this.clearProbe();
   }
 
+  /** The active detail lens (schematic / analogy / reality); see {@link BoardLens}. */
+  private lens: BoardLens = "schematic";
+
   /** Switch the component art style (schematic symbols ↔ factory machines). The
    * glyphs redraw with it next frame; pins and wiring are unchanged. */
   setStyle(style: GlyphStyle): void {
     setGlyphStyle(style);
+  }
+
+  /** Set the board's detail lens. The small on-board glyph is always the schematic
+   * symbol; analogy/reality only change which full-panel illustration a part morphs
+   * into when zoomed in past {@link TIER_ZOOM}. Parts pick it up next frame. */
+  setLens(lens: BoardLens): void {
+    this.lens = lens;
+    setGlyphStyle("schematic");
   }
 
   /** Rename a scope node; an empty name restores the default "Node i". */
@@ -1272,6 +1295,8 @@ export class Board {
         electrical?.get(id) ?? ZERO_ELECTRICAL,
         this.phase,
         this.selected.has(id),
+        this.lens,
+        this.world.scale.x,
       );
     }
 
@@ -3885,6 +3910,9 @@ const FAIL_PULSE_HZ = 1.4;
 class ComponentNode {
   readonly view = new Container();
   private readonly glyphHolder = new Container();
+  // The full-panel analogy/reality illustration, centred on the part and shown only
+  // when the lens + zoom call for it (below the schematic glyph so pin dots sit on top).
+  private readonly tierGlyph = new Graphics();
   private readonly glyph = new Graphics();
   private readonly failBox = new Graphics();
   private readonly label: Text;
@@ -3913,6 +3941,8 @@ class ComponentNode {
       this.pinPositions.push({ x: p.dx * PITCH, y: p.dy * PITCH });
     }
 
+    this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
+    this.glyphHolder.addChild(this.tierGlyph);
     this.glyphHolder.addChild(this.glyph);
     this.view.addChild(this.glyphHolder);
     const symbol = isSymbol(this.kindTag);
@@ -4040,26 +4070,65 @@ class ComponentNode {
     this.layoutLabels();
   }
 
-  update(electrical: ElectricalState, phase: number, selected: boolean): void {
+  update(
+    electrical: ElectricalState,
+    phase: number,
+    selected: boolean,
+    lens: BoardLens,
+    zoom: number,
+  ): void {
     const g = this.glyph;
     g.clear();
-    drawGlyph(g, {
-      kind: this.kindTag,
-      pins: this.pinPositions,
-      wPx: this.wPx,
-      hPx: this.hPx,
-      color: this.color,
-      electrical,
-      phase,
-      // The manual switch draws its open/closed blade from its commanded state
-      // rather than inferring it from the voltage across (so it reads right with
-      // no current). Pass the live value through; other glyphs ignore it.
-      value: this.component.value,
-      // The potentiometer draws its wiper where it actually sits; other glyphs
-      // ignore this.
-      wiper: this.component.wiper,
-    });
-    // pin dots on top of the glyph
+
+    // LOD: zoomed in under an analogy/reality lens, the part morphs into its
+    // full-panel tier illustration (centred on the part, animated from the same live
+    // state + phase); zoomed out — or in the schematic lens, or for a kind with no
+    // such tier — it stays the clean, cheap schematic symbol. So the board overview
+    // reads, and zooming into a part reveals the chosen tier.
+    const tier =
+      lens === "reality" && hasDetail(this.kindTag)
+        ? "reality"
+        : lens === "analogy" && hasAnalogy(this.kindTag)
+          ? "analogy"
+          : null;
+    if (tier !== null && zoom >= TIER_ZOOM) {
+      const tg = this.tierGlyph;
+      tg.clear();
+      const hw = this.wPx / 2 + PITCH * 0.7;
+      const hh = Math.max(this.hPx / 2 + PITCH * 0.7, hw * 0.6);
+      const opts = {
+        kind: this.kindTag,
+        bounds: { hw, hh },
+        color: this.color,
+        electrical,
+        phase,
+        value: this.component.value,
+        wiper: this.component.wiper,
+      };
+      if (tier === "reality") drawDetail(tg, opts);
+      else drawAnalogy(tg, opts);
+      tg.visible = true;
+    } else {
+      this.tierGlyph.visible = false;
+      drawGlyph(g, {
+        kind: this.kindTag,
+        pins: this.pinPositions,
+        wPx: this.wPx,
+        hPx: this.hPx,
+        color: this.color,
+        electrical,
+        phase,
+        // The manual switch draws its open/closed blade from its commanded state
+        // rather than inferring it from the voltage across (so it reads right with
+        // no current). Pass the live value through; other glyphs ignore it.
+        value: this.component.value,
+        // The potentiometer draws its wiper where it actually sits; other glyphs
+        // ignore this.
+        wiper: this.component.wiper,
+      });
+    }
+    // pin dots on top (over either the schematic glyph or the tier illustration) —
+    // they mark the real connection points the wires meet.
     for (const p of this.pinPositions) {
       g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
       g.circle(p.x, p.y, PIN_R).fill({ color: this.color });

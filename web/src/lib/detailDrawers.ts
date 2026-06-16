@@ -205,41 +205,26 @@ function drawDetailOA(g: Graphics, o: DetailOpts): void {
 }
 
 // ============================================================================
-// Diode — ported from a0e2e2c0-diodefactory.html: a one-way valve. The bus runs
-// in on the anode (left) and out the cathode (right); the gate at the cathode bar
-// OPENS (green) when forward-biased past the knee and current streams through,
-// SHUTS (bronze) when blocking, and FAILS (red, smoking) in reverse breakdown.
+// Diode — ported from diode-factory.html: a PN-JUNCTION cutaway. The P side (holes)
+// meets the N side (electrons) across a DEPLETION zone. Forward bias narrows the
+// depletion and carriers pour across and RECOMBINE at the junction (an LED radiates
+// that energy as light); reverse bias widens it and the flow stops (ordinary reverse
+// breakdown forces a backward avalanche). A Schottky (SD) is a metal→N junction
+// carried by electrons alone.
 //
 // Live mapping (diode ElectricalState: current a→b = anode→cathode, vAcross =
-// V(anode)−V(cathode)):
-//   • forward conduction = norm(max(0, current))  → gate opens green, body glows,
-//     warm packets stream anode→cathode.
-//   • reverse breakdown  = norm(max(0, -current)) → gate fails red, smoke rises,
-//     packets run backward.
-//   • blocking (tiny |I|) → gate shut, packets stall against it.
-//   • bias colour: anode bus cyan / cathode bus violet when forward; swapped in
-//     reverse — the polarity read.
+// V(anode)−V(cathode); the kind picks the junction type):
+//   • forward = norm(max(0, I)) → carrier density across the junction + recombination
+//     flashes (LED: photons leaving); the depletion narrows.
+//   • reverse = norm(max(0,−I)) → depletion widens; breakdown drives a backward flow.
+//   • bias    = sign(vAcross)   → which lead runs high + the depletion width.
 // ============================================================================
 function drawDetailDiode(g: Graphics, o: DetailOpts): void {
   const { hw, hh } = o.bounds;
-  const POS = PALETTE.pos; // forward / high-side bus tint
-  const LOW = PALETTE.violet; // low-side bus tint
-  const BRONZE = PALETTE.bronze;
-  const GREEN = PALETTE.ok;
-  const RED = PALETTE.bad;
   const isLED = o.kind === "LED";
-  const emitCol = isLED ? o.color : BRONZE;
-
-  const busY = 0;
-  const aX = -hw + 8; // anode stud
-  const kX = hw - 8; // cathode stud
-  const boxL = -hw * 0.34;
-  const boxR = hw * 0.34;
-  const boxT = -hh * 0.62;
-  const boxB = hh * 0.62;
-  const triL = boxL + 8;
-  const triR = boxR - 14;
-  const gateX = boxR - 8; // cathode bar (the gate)
+  const isSchottky = o.kind === "SD";
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const HOLE = mix(PALETTE.bad, PALETTE.warn, 0.4);
 
   const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
   const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
@@ -247,34 +232,58 @@ function drawDetailDiode(g: Graphics, o: DetailOpts): void {
   const breakdown = rev > 0.03;
   const forwardBias = o.electrical.vAcross >= 0;
 
-  // --- breakdown / emission halo behind the body -------------------------------
-  if (breakdown) {
-    const breathe = 0.8 + 0.2 * Math.sin(o.phase * PULSE_K);
-    g.circle((boxL + boxR) / 2, busY, hh * 0.95).fill({
-      color: RED,
-      alpha: (0.18 + 0.4 * rev) * breathe,
-    });
-  } else if (conducting && isLED) {
-    // The LED lamp: it visibly lights, the most rewarding detail to ship.
+  const busY = 0;
+  const aX = -hw + 8;
+  const kX = hw - 8;
+  const boxL = -hw * 0.58;
+  const boxR = hw * 0.58;
+  const boxT = -hh * 0.58;
+  const boxB = hh * 0.58;
+  const xJ = 0; // the junction, centre
+  // depletion half-width: narrow under forward bias, wide under reverse
+  const biasN = Math.max(-1, Math.min(1, o.electrical.vAcross / 2));
+  const depHW = (boxR - boxL) * (0.13 - 0.1 * biasN) * 0.5;
+  const laneSpan = (boxB - boxT) * 0.42;
+
+  // --- emission / breakdown halo behind the body -------------------------------
+  if (conducting && isLED) {
     const breathe = 0.82 + 0.18 * Math.sin(o.phase * PULSE_K);
-    g.circle((boxL + boxR) / 2, busY, hh * 1.05).fill({
+    g.circle(xJ, busY, Math.min(hh * 0.95, hh * (0.7 + 0.4 * fwd))).fill({
       color: o.color,
-      alpha: 0.22 * fwd * breathe,
+      alpha: 0.24 * fwd * breathe,
     });
-    g.circle((boxL + boxR) / 2, busY, hh * 0.6).fill({
-      color: o.color,
-      alpha: 0.3 * fwd * breathe,
-    });
-  } else if (conducting) {
-    g.circle((boxL + boxR) / 2, busY, hh * 0.7).fill({
-      color: emitCol,
-      alpha: 0.14 * fwd,
+  } else if (breakdown) {
+    const breathe = 0.8 + 0.2 * Math.sin(o.phase * PULSE_K);
+    g.circle(xJ, busY, hh * 0.85).fill({
+      color: PALETTE.bad,
+      alpha: (0.16 + 0.4 * rev) * breathe,
     });
   }
 
-  // --- the two bus segments, recoloured by bias --------------------------------
-  const leftCol = forwardBias ? POS : LOW;
-  const rightCol = forwardBias ? LOW : POS;
+  // --- the silicon body, split P | depletion | N -------------------------------
+  housing(g, boxL, boxT, boxR - boxL, boxB - boxT, PALETTE.bronze, 8);
+  const pCol = isSchottky ? PALETTE.dim : HOLE; // P side (metal for Schottky)
+  g.rect(boxL + 2, boxT + 2, xJ - depHW - boxL - 2, boxB - boxT - 4).fill({
+    color: pCol,
+    alpha: 0.16,
+  });
+  g.rect(xJ + depHW, boxT + 2, boxR - 2 - (xJ + depHW), boxB - boxT - 4).fill({
+    color: PALETTE.cyan,
+    alpha: 0.12,
+  });
+  g.rect(xJ - depHW, boxT + 2, depHW * 2, boxB - boxT - 4).fill({
+    color: 0x0e1018,
+    alpha: 0.6,
+  });
+  for (const ex of [xJ - depHW, xJ + depHW]) {
+    g.moveTo(ex, boxT + 2)
+      .lineTo(ex, boxB - 2)
+      .stroke({ width: 1, color: PALETTE.rail, alpha: 0.5 });
+  }
+
+  // --- leads, recoloured by bias -----------------------------------------------
+  const leftCol = forwardBias ? PALETTE.pos : PALETTE.violet;
+  const rightCol = forwardBias ? PALETTE.violet : PALETTE.pos;
   g.moveTo(aX, busY)
     .lineTo(boxL, busY)
     .stroke({ width: 6, color: leftCol, alpha: 0.85 });
@@ -282,142 +291,136 @@ function drawDetailDiode(g: Graphics, o: DetailOpts): void {
     .lineTo(kX, busY)
     .stroke({ width: 6, color: rightCol, alpha: 0.85 });
 
-  // --- the bronze epoxy body ---------------------------------------------------
-  housing(g, boxL, boxT, boxR - boxL, boxB - boxT, BRONZE, 10);
-
-  // --- the triangle (anode →) inside, glowing with forward current -------------
-  const triPts = [triL, busY - hh * 0.34, triL, busY + hh * 0.34, triR, busY];
-  g.poly(triPts).fill({ color: 0x2a1d12, alpha: 0.95 });
+  // --- carriers: holes (P→junction) + electrons (N→junction), recombining ------
+  const lanes = [-0.5, 0, 0.5];
   if (conducting) {
-    g.poly(triPts).fill({ color: emitCol, alpha: 0.22 + 0.5 * fwd });
+    for (const lane of lanes) {
+      const ly = busY + lane * laneSpan;
+      if (!isSchottky) {
+        belt(g, boxL + 6, ly, xJ - depHW, ly, fwd, 1, o.phase, HOLE, 2.6);
+      }
+      belt(g, boxR - 6, ly, xJ + depHW, ly, fwd, 1, o.phase, ELEC, 2.6);
+    }
+    // recombination flashes at the junction (LED: photons leave the body)
+    const nF = 3;
+    for (let k = 0; k < nF; k++) {
+      const t = (((k / nF + o.phase * 0.6) % 1) + 1) % 1;
+      const fy = busY + (((k * 0.37) % 1) - 0.5) * (boxB - boxT) * 0.7;
+      const a = (1 - t) * fwd;
+      g.circle(xJ, fy, 2 + 5 * t).fill({
+        color: isLED ? o.color : 0xffffff,
+        alpha: 0.7 * a,
+      });
+      if (isLED) {
+        g.circle(
+          xJ + Math.cos(k * 2) * t * hw * 0.5,
+          fy - t * hh * 0.7,
+          2,
+        ).fill({
+          color: o.color,
+          alpha: 0.7 * a,
+        });
+      }
+    }
   } else if (breakdown) {
-    g.poly(triPts).fill({ color: RED, alpha: 0.3 + 0.45 * rev });
-  }
-  g.poly(triPts).stroke({ width: 2, color: BRONZE, alpha: 0.95 });
-
-  // --- the cathode bar = the gate: green open / bronze shut / red failed --------
-  const gateCol = conducting ? GREEN : breakdown ? RED : BRONZE;
-  const gateGlow = conducting
-    ? 0.4 + 0.45 * fwd
-    : breakdown
-      ? 0.5 + 0.4 * rev
-      : 0;
-  if (gateGlow > 0) {
-    g.moveTo(gateX, busY - hh * 0.42)
-      .lineTo(gateX, busY + hh * 0.42)
-      .stroke({ width: 7, color: gateCol, alpha: gateGlow });
-  }
-  g.moveTo(gateX, busY - hh * 0.42)
-    .lineTo(gateX, busY + hh * 0.42)
-    .stroke({ width: 3.5, color: gateCol, alpha: 0.95 });
-
-  // --- anode / cathode studs ---------------------------------------------------
-  stud(g, aX, busY, BRONZE);
-  stud(g, kX, busY, BRONZE);
-
-  // --- smoke on breakdown (the "ordinary diode is destroyed" cue) --------------
-  if (breakdown) {
-    const n = 5;
-    for (let i = 0; i < n; i++) {
-      const t = (((i / n + o.phase * 0.4) % 1) + 1) % 1;
-      const sx =
-        (boxL + boxR) / 2 + Math.sin(o.phase * 2 + i * 7) * hw * 0.12 * t;
-      const sy = boxT - t * hh * 0.9;
-      g.circle(sx, sy, 3 + 7 * t).fill({
-        color: PALETTE.dim,
-        alpha: 0.4 * rev * (1 - t),
+    for (const lane of lanes) {
+      const ly = busY + lane * laneSpan;
+      belt(g, boxR - 6, ly, boxL + 6, ly, rev, 1, o.phase, PALETTE.bad, 2.6);
+    }
+  } else {
+    // blocked: carriers sit back in their regions (a faint, static fill)
+    for (const lane of lanes) {
+      const ly = busY + lane * laneSpan;
+      g.circle(boxL + (xJ - depHW - boxL) * 0.4, ly, 2).fill({
+        color: pCol,
+        alpha: 0.4,
+      });
+      g.circle(boxR - (boxR - (xJ + depHW)) * 0.4, ly, 2).fill({
+        color: ELEC,
+        alpha: 0.4,
       });
     }
   }
 
-  // --- the current packets along the bus ---------------------------------------
-  // Forward: anode→cathode. Reverse breakdown: cathode→anode. Blocking: a sparse
-  // trickle that stalls AT the gate (it can't pass), on the biased side.
+  // --- lead current + studs ----------------------------------------------------
   if (conducting) {
     belt(
       g,
       aX,
       busY,
-      kX,
+      boxL,
       busY,
       fwd,
       1,
       o.phase,
-      mix(emitCol, 0xffffff, 0.3),
-      2.8,
+      mix(ELEC, 0xffffff, 0.2),
+      2.6,
     );
   } else if (breakdown) {
-    belt(g, aX, busY, kX, busY, rev, -1, o.phase, RED, 2.8);
-  } else {
-    // blocked: packets crawl up to the gate from the biased side and stop.
-    const fromX = forwardBias ? aX : kX;
-    const toX = gateX;
-    const n = 3;
-    for (let i = 0; i < n; i++) {
-      const t = (((i / n + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(fromX + (toX - fromX) * t, busY, 2.2).fill({
-        color: PALETTE.dim,
-        alpha: 0.32 * (1 - t),
-      });
-    }
+    belt(g, kX, busY, boxR, busY, rev, 1, o.phase, PALETTE.bad, 2.6);
   }
+  stud(g, aX, busY, PALETTE.bronze);
+  stud(g, kX, busY, PALETTE.bronze);
 }
 
 // ============================================================================
-// Resistor — ported from 167fafa7-resistorfactory.html: current passes straight
-// through at the SAME rate both sides (a resistor impedes, it doesn't consume),
-// while the POTENTIAL drops across it (bus cyan-high in → violet-low out) and the
-// lost energy leaves as HEAT — the body glows hotter, then shimmers, then smokes
-// the harder it's pushed (P = I²R = V·I).
+// Resistor — ported from resistor-tiers.html tier 3: a CONDUCTOR LATTICE with
+// DRIFTING ELECTRONS. Fixed + ion cores form a lattice; the field pushes electrons
+// through it and they keep SCATTERING off the (thermally jiggling) ions — that
+// resistance dissipates the energy as HEAT (the lattice glows, then smokes when
+// over-driven). The field points + → −; electrons drift toward +.
 //
 // Live mapping (resistor ElectricalState: current a→b, vAcross = V(a)−V(b)):
-//   • current   = norm(current)  → warm packets, same rate + brightness both ends.
-//   • heat/power= a power proxy norm(|V·I|) → the body's heat colour + halo +
-//     shimmer + (over-driven) smoke. Magnitude rides colour/alpha, never speed.
-//   • the bus tints high (cyan) on the high-potential end, low (violet) on the
-//     low — the IR-drop read, oriented by the sign of vAcross.
+//   • current = norm(|I|)   → electron density/alpha drifting through the lattice.
+//   • heat    = norm(|V·I|)  → ion glow + jiggle + heat halo + (over-driven) smoke.
+//   • field   = norm(|V|)    → the E-field lines; sign of vAcross sets the drift and
+//     which lead runs high (cyan) vs low (violet) — the IR-drop read.
 // ============================================================================
 function drawDetailResistor(g: Graphics, o: DetailOpts): void {
   const { hw, hh } = o.bounds;
-  const HI = PALETTE.pos; // high-potential bus tint (cyan)
-  const LOW = PALETTE.violet; // low-potential bus tint (violet)
-  const BRONZE = PALETTE.bronze;
-  const CUR = mix(BRONZE, 0xffffff, 0.55); // warm current packets
-  const HOT = PALETTE.bad; // heat colour ceiling
-
-  const busY = 0;
-  const aX = -hw + 8;
-  const bX = hw - 8;
-  const boxL = -hw * 0.34;
-  const boxR = hw * 0.34;
-  const boxT = -hh * 0.62;
-  const boxB = hh * 0.62;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const ION = PALETTE.bronze;
 
   const cur = norm(o.electrical.current, CUR_SCALE);
-  // Power proxy: |V·I| normalised on V_SCALE·CUR_SCALE so a hard-pushed resistor
-  // (volts AND tens of mA) reads near full heat. Calm, qualitative — not calibrated.
+  const dir = o.electrical.current >= 0 ? 1 : -1; // conventional current a→b
   const power = norm(
     Math.abs(o.electrical.vAcross * o.electrical.current),
     V_SCALE * CUR_SCALE,
   );
-  const hot = power; // 0..1 heat fraction
-  const heatCol = mix(BRONZE, HOT, hot);
-  // Orient the IR drop: the higher-potential terminal end runs cyan, the lower violet.
+  const vfield = norm(o.electrical.vAcross, V_SCALE);
   const aHigh = o.electrical.vAcross >= 0;
-  const dir = aHigh ? 1 : -1; // packet travel follows conventional current a→b sign
-  const leftCol = aHigh ? HI : LOW;
-  const rightCol = aHigh ? LOW : HI;
+  const heatCol = mix(PALETTE.warn, PALETTE.bad, power);
 
-  // --- heat halo behind the body -----------------------------------------------
-  if (hot > 0.04) {
-    const r = hh * (0.9 + 0.5 * hot);
-    g.circle((boxL + boxR) / 2, busY, r).fill({
+  const busY = 0;
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const boxL = -hw * 0.62;
+  const boxR = hw * 0.62;
+  const boxT = -hh * 0.56;
+  const boxB = hh * 0.56;
+  const inL = boxL + 10;
+  const inR = boxR - 10;
+  const inT = boxT + 8;
+  const inB = boxB - 8;
+
+  // --- heat halo behind the lattice --------------------------------------------
+  if (power > 0.04) {
+    g.roundRect(
+      boxL - 6,
+      boxT - 6,
+      boxR - boxL + 12,
+      boxB - boxT + 12,
+      10,
+    ).fill({
       color: heatCol,
-      alpha: Math.min(0.45, 0.5 * hot),
+      alpha: Math.min(0.4, 0.5 * power),
     });
   }
 
-  // --- the bus: high-potential in, low-potential out ---------------------------
+  // --- the conductor body + leads (high-potential in cyan, low out violet) -----
+  housing(g, boxL, boxT, boxR - boxL, boxB - boxT, PALETTE.dim, 6);
+  const leftCol = aHigh ? PALETTE.pos : PALETTE.violet;
+  const rightCol = aHigh ? PALETTE.violet : PALETTE.pos;
   g.moveTo(aX, busY)
     .lineTo(boxL, busY)
     .stroke({ width: 6, color: leftCol, alpha: 0.85 });
@@ -425,61 +428,74 @@ function drawDetailResistor(g: Graphics, o: DetailOpts): void {
     .lineTo(bX, busY)
     .stroke({ width: 6, color: rightCol, alpha: 0.85 });
 
-  // --- the ceramic body, heating with power ------------------------------------
-  housing(g, boxL, boxT, boxR - boxL, boxB - boxT, BRONZE, 10);
-  if (hot > 0.02) {
-    g.roundRect(boxL + 5, boxT + 5, boxR - boxL - 10, boxB - boxT - 10, 7).fill(
-      {
-        color: heatCol,
-        alpha: Math.min(0.7, 0.6 * hot),
-      },
-    );
-  }
-  // the resistive element: a colour-band rod with a hot core through the cutaway.
-  const rodT = busY - hh * 0.16;
-  const rodB = busY + hh * 0.16;
-  g.roundRect(boxL + 8, rodT, boxR - boxL - 16, rodB - rodT, 3).fill({
-    color: 0x2a1d12,
-    alpha: 0.95,
-  });
-  // four colour bands (purely decorative "read the value" teach — token-coloured).
-  const bands = [PALETTE.warn, PALETTE.bad, PALETTE.violet, PALETTE.bronze];
-  const span = boxR - boxL - 28;
-  for (let i = 0; i < bands.length; i++) {
-    const bx = boxL + 16 + (span * (i + 0.5)) / bands.length;
-    g.roundRect(bx - 2, rodT + 1, 3.5, rodB - rodT - 2, 1).fill({
-      color: bands[i]!,
-      alpha: 0.92,
-    });
-  }
-  // the hot core glow at the element centre.
-  if (hot > 0.02) {
-    g.circle((boxL + boxR) / 2, busY, hh * (0.18 + 0.18 * hot)).fill({
-      color: heatCol,
-      alpha: Math.min(0.95, 0.3 + 0.6 * hot),
-    });
+  // --- E-field lines through the lattice (+ → −) -------------------------------
+  if (vfield > 0.04) {
+    const frows = 3;
+    const segs = 7;
+    for (let r = 0; r < frows; r++) {
+      const fy = inT + ((r + 0.5) / frows) * (inB - inT);
+      for (let s = 0; s < segs; s++) {
+        const sx = inL + ((s + 0.2) / segs) * (inR - inL);
+        g.moveTo(sx, fy).lineTo(sx + (inR - inL) / segs / 2, fy);
+      }
+    }
+    g.stroke({ width: 1, color: PALETTE.violet, alpha: 0.1 + 0.4 * vfield });
   }
 
-  // --- heat shimmer rising off the body (appears once warm) --------------------
-  if (hot > 0.2) {
-    const amp = 2 + 5 * hot;
-    for (let s = -1; s <= 1; s++) {
-      const sx = (boxL + boxR) / 2 + s * (boxR - boxL) * 0.22;
-      g.moveTo(sx, boxT);
-      for (let k = 1; k <= 4; k++) {
-        const yy = boxT - k * hh * 0.2;
-        const xx = sx + Math.sin(o.phase * 4 + s * 1.3 + k * 0.9) * amp;
-        g.lineTo(xx, yy);
+  // --- the lattice of thermally jiggling + ions --------------------------------
+  const cols = 6;
+  const rows = 3;
+  const jig = 1 + power * 2.5;
+  for (let c = 0; c < cols; c++) {
+    for (let r = 0; r < rows; r++) {
+      const bx = inL + ((c + 0.5) / cols) * (inR - inL);
+      const by = inT + ((r + 0.5) / rows) * (inB - inT);
+      const ph = c * 1.7 + r * 2.3;
+      const ix = bx + Math.sin(o.phase * 0.9 + ph) * jig;
+      const iy = by + Math.cos(o.phase * 1.1 + ph) * jig;
+      if (power > 0.03) {
+        g.circle(ix, iy, 7 + power * 4).fill({
+          color: heatCol,
+          alpha: 0.12 + 0.35 * power,
+        });
       }
-      g.stroke({ width: 2, color: heatCol, alpha: Math.min(0.6, 0.4 * hot) });
+      g.circle(ix, iy, 4).fill({ color: 0x231a0e });
+      g.circle(ix, iy, 4).stroke({ width: 1.4, color: ION, alpha: 0.9 });
+      g.moveTo(ix - 2, iy)
+        .lineTo(ix + 2, iy)
+        .moveTo(ix, iy - 2)
+        .lineTo(ix, iy + 2)
+        .stroke({ width: 1, color: mix(ION, 0xffffff, 0.4), alpha: 0.8 });
     }
   }
+
+  // --- drifting electrons: through the lattice, toward + (against current) ------
+  if (cur > 0.02) {
+    const lanes = [-0.66, 0, 0.66];
+    const eDir = -dir; // electrons drift opposite to conventional current
+    const n = FLOW_DOTS_MAX;
+    for (const lane of lanes) {
+      const ly = busY + lane * (inB - inT) * 0.5;
+      for (let k = 0; k < n; k++) {
+        const present = dotPresence(k, cur);
+        if (present <= 0) continue;
+        const t = (((k / n + o.phase * FLOW_SPEED * eDir) % 1) + 1) % 1;
+        const x = inL + t * (inR - inL);
+        const y =
+          ly + Math.sin(o.phase * 3 + k * 2 + lane * 4) * (2 + power * 3);
+        g.circle(x, y, 2.6).fill({
+          color: ELEC,
+          alpha: (0.3 + 0.55 * cur) * present,
+        });
+      }
+    }
+  }
+
   // --- smoke when over-driven (past the rating) --------------------------------
-  if (hot > 0.85) {
-    const over = (hot - 0.85) / 0.15;
-    const n = 5;
-    for (let i = 0; i < n; i++) {
-      const t = (((i / n + o.phase * 0.35) % 1) + 1) % 1;
+  if (power > 0.85) {
+    const over = (power - 0.85) / 0.15;
+    for (let i = 0; i < 5; i++) {
+      const t = (((i / 5 + o.phase * 0.35) % 1) + 1) % 1;
       const sx =
         (boxL + boxR) / 2 + Math.sin(o.phase * 2 + i * 7) * hw * 0.12 * t;
       const sy = boxT - t * hh * 0.9;
@@ -490,15 +506,33 @@ function drawDetailResistor(g: Graphics, o: DetailOpts): void {
     }
   }
 
-  // --- terminal studs ----------------------------------------------------------
-  stud(g, aX, busY, BRONZE);
-  stud(g, bX, busY, BRONZE);
-
-  // --- the current packets: SAME rate + brightness both sides (continuity) -----
-  // Drawn with identical magnitude on both legs, so "current in == current out"
-  // (a resistor impedes, it does not consume) reads straight off the matched belts.
-  belt(g, aX, busY, boxL, busY, cur, dir, o.phase, CUR, 2.8);
-  belt(g, boxR, busY, bX, busY, cur, dir, o.phase, CUR, 2.8);
+  // --- terminal studs + lead current -------------------------------------------
+  stud(g, aX, busY, PALETTE.bronze);
+  stud(g, bX, busY, PALETTE.bronze);
+  belt(
+    g,
+    aX,
+    busY,
+    boxL,
+    busY,
+    cur,
+    dir,
+    o.phase,
+    mix(ELEC, 0xffffff, 0.2),
+    2.6,
+  );
+  belt(
+    g,
+    boxR,
+    busY,
+    bX,
+    busY,
+    cur,
+    dir,
+    o.phase,
+    mix(ELEC, 0xffffff, 0.2),
+    2.6,
+  );
 }
 
 // ============================================================================
