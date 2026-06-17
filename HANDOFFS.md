@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (3) — Board traces as conduits (analogy pipes / reality copper)
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner OK'd "traces as pipes" for the analogy tier and asked
+how to handle the reality tier — recommendation + impl: BOTH, one renderer, two skins.
+
+- **`board.ts` `redrawWires` now re-skins bare traces as conduits** when zoomed into the
+  analogy/reality lens (gated `effLens !== schematic && zoom ≥ TIER_ZOOM`, same as the
+  parts morphing). New `drawConduitSkin` + carrier branch:
+  - **Analogy = water pipe**: steel wall (`PIPE_WALL`) + dark bore + voltage-tinted
+    water core; round water carriers flowing **WITH** the current.
+  - **Reality = copper conductor**: copper sheath (`COND_CASING` 0xc8915a) + glowing
+    voltage-tinted core + white sheen; cyan electron carriers drifting **AGAINST** the
+    current (electrons vs conventional current — the physics).
+  - Both keep the bus language (colour = net voltage, density/width = current) and ride
+    the existing `carrierOffset`/`flowDelta` clock; energy (warm) dots unchanged. Round
+    stroke caps/joins handle the bends; a port collar at each route end is the
+    lightweight "taper into the part" (no per-part port geometry needed yet).
+  - Constant-width strokes (Pixi rounds bends/ends). Schematic lens + zoomed-out are
+    untouched (the original chevron trace).
+- Verified by a standalone replica render (same strokes/colours) — pipe vs copper read
+  clearly distinct; bend + end collars correct.
+
+**Possible next:** true per-part port-width taper (flare the conduit to each component's
+port) — needs parts to expose a port radius; junction tees as pipe/wire branches; perf
+pass if big boards feel heavy at the conduit zoom.
+
+---
+
 ## 2026-06-17 (2) — Reality transistors rotated to the pins + flow parts around the plug
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch

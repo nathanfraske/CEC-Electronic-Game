@@ -12,8 +12,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   source/emitter bottom, gate/base left) so they match the board orientation.~~
 - ~~**Flow parts around the plug** in the MOSFET/BJT analogies (`tierKit.flowAroundPlug`);
   plug narrowed to a disc thinner than the pipe so there's a side gap to flow through.~~
-- [ ] **Idea to think on (owner):** board traces as PIPES to match the component metaphor,
-  with an adaptive taper into each part. board.ts wire-rendering change — not started.
+- ~~**Board traces as conduits** — DONE. `redrawWires` re-skins bare traces when zoomed into
+  the analogy/reality lens: analogy = steel water pipe (carriers WITH current), reality =
+  copper conductor with electrons drifting AGAINST current. Bus language kept; port collars
+  at the ends are the lightweight taper. (`drawConduitSkin`, gated at `TIER_ZOOM`.)~~
+- [ ] **Conduit follow-ups (optional):** true per-part port-width taper (flare into each part —
+  needs a port radius from the parts); junction tees as branches; perf check on big boards.
 - [ ] **Owner eyeball** the rotated reality transistors + the plug-skirting flow.
 
 ## 2026-06-17 — op-amp: doc-faithful analogy + reality
