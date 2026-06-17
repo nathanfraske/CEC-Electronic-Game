@@ -39,20 +39,21 @@ import {
 // drawers below.
 
 // ============================================================================
-// Op-amp — THE exemplar. Ported from 1069ef5b-opampfactory.html: the two inputs
-// stream in on the left (V+ cyan on top, V− amber on bottom), a differential core
-// compares them, and the output puck slams toward whichever input is winning,
-// pinning against ±Vsat — the enormous gain. The rose output belt leaves the apex.
+// Op-amp — THE exemplar. Ported from opamp-tiers.html tier 3: the real silicon is a
+// LONG-TAILED DIFFERENTIAL PAIR. Two transistors Q+ and Q− share a constant tail
+// current sunk to the −12 V rail; their collectors pull up to +12 V. Each base is one
+// input. The pair is a current see-saw: whichever base sits higher steals the tail
+// current, so the tail crowds into Q+ (V+ higher) or Q− (V− higher), and the output
+// taps Q−'s collector — the tiny base difference swings the whole tail, the enormous
+// gain, until one side hogs it all and the output pins to a rail. Anchored to the
+// real pins (IN+ top-left base of Q+, IN− bottom-left base of Q−, OUT right).
 //
-// Live mapping (the op-amp ElectricalState carries Iout and V(OUT)−V(IN−)):
-//   • output swing  = norm(vAcross, OUT_SCALE), sign → which rail it leans to.
-//     This is the puck deflection + the rail-pin / saturation cue.
-//   • output drive  = norm(current, CUR_SCALE)  → the output belt density + the
-//     body's worked-glow. Sign sets the belt direction.
-//   • the WINNING input (the side dragging the output) is the one whose belt runs
-//     bright/dense; the other dims — reconstructed from the output's sign, so the
-//     "inputs compete, output chases the difference" lesson animates from real
-//     state. Both inputs always sense (high-Z), so both belts are present.
+// Live mapping (op-amp ElectricalState: current = Iout, vAcross = V(OUT)−V(IN−);
+// value = ±Vsat rail):
+//   • steer = ½ + ½·(vAcross/Vsat) → the tail split f into Q+ vs (1−f) into Q−:
+//     region glow + branch-stream density on each transistor.
+//   • drive = norm(|Iout|)         → the output belt off Q−'s collector; sign = dir.
+//   • sat   = |swing|≈1            → all tail in one side; the rose rail-pin halo.
 // ============================================================================
 function drawDetailOA(g: Graphics, o: DetailOpts): void {
   const { hw, hh } = o.bounds;
@@ -60,148 +61,175 @@ function drawDetailOA(g: Graphics, o: DetailOpts): void {
   const NEG = PALETTE.neg;
   const OUT = PALETTE.out;
   const RAIL = PALETTE.rail;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const HOLE = mix(PALETTE.bad, PALETTE.warn, 0.4);
 
-  // Layout (local coords, origin = centre). Inputs enter far left; the capsule
-  // body sits centre; the output column + apex + output belt run right.
-  const inX = -hw + 8; // input terminal studs
-  const capL = -hw * 0.42; // capsule left wall
-  const capR = hw * 0.18; // capsule right wall
-  const capT = -hh * 0.74;
-  const capB = hh * 0.74;
-  const inPy = -hh * 0.42; // V+ lead height (top)
-  const inMy = hh * 0.42; // V− lead height (bottom)
-  const colX = hw * 0.02; // internal output column x
-  const colT = -hh * 0.52;
-  const colB = hh * 0.52;
-  const apexX = capR + 6;
-  const outX = hw - 8; // output terminal stud
-
-  // The output swing relative to its supply rail. `vAcross` = V(OUT)−V(IN−), and
-  // `value` = ±Vsat (the rail), so normalise against Vsat when it's known so the
-  // puck pins to the rail exactly when the real output saturates; fall back to a
-  // teaching scale otherwise. Pure read of live state — no sim coupling.
   const railV = o.value && o.value > 0.5 ? o.value : OUT_SCALE;
-  const swing = o.electrical.vAcross / railV; // signed, ~[-1,1] past the rail
+  const swing = o.electrical.vAcross / railV;
   const swingC = Math.max(-1, Math.min(1, swing));
-  const sat = Math.abs(swing) >= 0.985; // pinned to a rail (comparator regime)
+  const sat = Math.abs(swing) >= 0.985;
   const drive = norm(o.electrical.current, CUR_SCALE);
   const driveDir = o.electrical.current >= 0 ? 1 : -1;
-  // Which input is winning: output high ⇒ + input is on top, so the + belt is hot.
-  const posWins = swingC >= 0;
-  const winMag = 0.35 + 0.55 * Math.abs(swingC);
-  const loseMag = 0.2 + 0.15 * (1 - Math.abs(swingC));
-  const iPos = posWins ? winMag : loseMag;
-  const iNeg = posWins ? loseMag : winMag;
+  // The tail current splits between Q+ (f) and Q− (1−f); the higher base steals it.
+  const f = 0.5 + 0.5 * swingC;
+  const rL = f; // Q+ share
+  const rR = 1 - f; // Q− share
 
-  // --- faint signal-path guides (the belts' lanes), color-coded ----------------
-  g.moveTo(inX, inPy)
-    .lineTo(capL, inPy)
-    .stroke({ width: 5, color: POS, alpha: 0.14 });
-  g.moveTo(inX, inMy)
-    .lineTo(capL, inMy)
-    .stroke({ width: 5, color: NEG, alpha: 0.14 });
-  g.moveTo(apexX, 0)
-    .lineTo(outX, 0)
-    .stroke({ width: 5, color: OUT, alpha: 0.14 });
+  // Terminals on the real pins: IN+ top-left → Q+ base, IN− bottom-left → Q− base,
+  // OUT right → Q−'s collector tap.
+  const pick = (
+    frag: string,
+    neg: boolean,
+    fx: number,
+    fy: number,
+  ): { x: number; y: number } => {
+    const hit = o.anchors?.find((p) =>
+      neg
+        ? p.label.includes("IN") && !p.label.includes("+")
+        : p.label.includes(frag),
+    );
+    return hit ? { x: hit.x, y: hit.y } : { x: fx * hw, y: fy * hh };
+  };
+  const IP = pick("+", false, -0.588, -0.95);
+  const IM = pick("", true, -0.588, 0.95);
+  const OU = pick("OUT", false, 0.588, 0);
 
-  // --- the rose saturation halo behind the body when railed --------------------
+  // --- geometry: two transistor stacks between the supply rails ----------------
+  const ySup = -hh * 0.8; // +12 V rail
+  const yNeg = hh * 0.88; // −12 V (tail return)
+  const qpx = -hw * 0.24;
+  const qnx = hw * 0.16;
+  const regHW = hw * 0.15;
+  const yC0 = -hh * 0.44; // collector top
+  const yC1 = -hh * 0.06; // collector / base
+  const yB1 = hh * 0.06; // base / emitter
+  const yE1 = hh * 0.44; // emitter bottom
+  const tailX = (qpx + qnx) / 2;
+  const yTail = hh * 0.5;
+
+  // --- rose rail-pin halo when the output is railed ----------------------------
   if (sat) {
     const breathe = 0.8 + 0.2 * Math.sin(o.phase * PULSE_K);
     g.roundRect(
-      capL - 6,
-      capT - 6,
-      capR - capL + 12,
-      capB - capT + 12,
-      16,
+      qpx - regHW - 8,
+      yC0 - 8,
+      qnx - qpx + 2 * regHW + 16,
+      yE1 - yC0 + 16,
+      14,
     ).fill({
       color: OUT,
-      alpha: 0.1 * breathe,
+      alpha: 0.09 * breathe,
     });
   }
 
-  // --- the cyan capsule shell (the op-amp building) ----------------------------
-  housing(g, capL, capT, capR - capL, capB - capT, POS, 16);
-  // status light on the roof: green in the linear regime, rose when saturated.
-  const statusCol = sat ? OUT : PALETTE.ok;
-  g.circle((capL + capR) / 2, capT + 7, 4).fill({
-    color: statusCol,
-    alpha: 0.55 + 0.4 * Math.max(Math.abs(swingC), 0.3),
-  });
+  // --- supply rails ------------------------------------------------------------
+  g.moveTo(qpx - regHW - 10, ySup)
+    .lineTo(qnx + regHW + 10, ySup)
+    .stroke({ width: 2.5, color: RAIL, alpha: 0.85 });
+  g.moveTo(tailX - 34, yNeg)
+    .lineTo(tailX + 34, yNeg)
+    .stroke({ width: 2.5, color: RAIL, alpha: 0.85 });
 
-  // --- input leads + studs + polarity marks ------------------------------------
-  g.moveTo(inX, inPy).lineTo(capL, inPy);
-  g.moveTo(inX, inMy).lineTo(capL, inMy);
-  g.stroke({ width: 2, color: RAIL, alpha: 0.85 });
-  stud(g, inX, inPy, POS);
-  stud(g, inX, inMy, NEG);
-  // '+' at the non-inverting input, '−' at the inverting input (inside the wall).
-  const mk = capL + 9;
-  g.moveTo(mk - 3, inPy)
-    .lineTo(mk + 3, inPy)
-    .moveTo(mk, inPy - 3)
-    .lineTo(mk, inPy + 3);
-  g.stroke({ width: 1.8, color: POS, alpha: 0.9 });
-  g.moveTo(mk - 3, inMy).lineTo(mk + 3, inMy);
-  g.stroke({ width: 1.8, color: NEG, alpha: 0.9 });
+  // --- base leads from the pins (drawn first; the silicon overlays them) --------
+  // IN+ runs straight to Q+'s left; IN− routes down the centre gap to Q−'s left.
+  g.moveTo(IP.x, IP.y)
+    .lineTo(qpx - regHW, 0)
+    .stroke({ width: 2, color: POS, alpha: 0.7 });
+  const gapX = (qpx + regHW + (qnx - regHW)) / 2;
+  g.moveTo(IM.x, IM.y)
+    .lineTo(gapX, IM.y)
+    .lineTo(gapX, 0)
+    .lineTo(qnx - regHW, 0)
+    .stroke({ width: 2, color: NEG, alpha: 0.7 });
 
-  // --- the differential core: the two input taps + a DIFF read-bar -------------
-  const tapX = capL + 16;
-  g.circle(tapX, inPy, 2).fill({ color: POS, alpha: 0.5 + 0.4 * iPos });
-  g.circle(tapX, inMy, 2).fill({ color: NEG, alpha: 0.5 + 0.4 * iNeg });
-  // a vertical "comparator gauge" between the taps, tinted toward the winner.
-  const gaugeCol = mix(NEG, POS, (swingC + 1) / 2);
-  g.moveTo(tapX, inPy + 3)
-    .lineTo(tapX, inMy - 3)
-    .stroke({
-      width: 2,
-      color: gaugeCol,
-      alpha: 0.4 + 0.35 * Math.abs(swingC),
+  // --- the two transistor stacks (collector n / base p / emitter n+) -----------
+  for (const [cx, r] of [
+    [qpx, rL],
+    [qnx, rR],
+  ] as const) {
+    g.rect(cx - regHW, yC0, regHW * 2, yC1 - yC0).fill({
+      color: ELEC,
+      alpha: 0.08 + 0.2 * r,
     });
+    g.rect(cx - regHW, yC1, regHW * 2, yB1 - yC1).fill({
+      color: HOLE,
+      alpha: 0.12 + 0.16 * r,
+    });
+    g.rect(cx - regHW, yB1, regHW * 2, yE1 - yB1).fill({
+      color: ELEC,
+      alpha: 0.1 + 0.2 * r,
+    });
+    g.rect(cx - regHW, yC0, regHW * 2, yE1 - yC0).stroke({
+      width: 1.5,
+      color: 0x4a4470,
+      alpha: 0.9,
+    });
+    // base-emitter junction glow (brighter the harder this side conducts)
+    g.rect(cx - regHW, yB1 - 3, regHW * 2, 6).fill({
+      color: PALETTE.ok,
+      alpha: 0.12 + 0.5 * r,
+    });
+    // collector lead up to the +rail, emitter lead down to the shared tail node
+    g.moveTo(cx, yC0)
+      .lineTo(cx, ySup)
+      .stroke({ width: 2, color: RAIL, alpha: 0.7 });
+    g.moveTo(cx, yE1)
+      .lineTo(tailX, yTail)
+      .stroke({ width: 2, color: RAIL, alpha: 0.7 });
+  }
 
-  // --- the internal output column with ±Vsat rails -----------------------------
-  g.moveTo(colX, colT).lineTo(colX, colB).stroke({ width: 2, color: 0x3b3560 });
-  // rail caps: glow on the rail the output is pinned to.
-  const railHiA = sat && swingC > 0 ? 0.9 : 0.32;
-  const railLoA = sat && swingC < 0 ? 0.9 : 0.32;
-  g.moveTo(colX - 9, colT)
-    .lineTo(colX + 9, colT)
-    .stroke({ width: 2, color: OUT, alpha: railHiA });
-  g.moveTo(colX - 9, colB)
-    .lineTo(colX + 9, colB)
-    .stroke({ width: 2, color: OUT, alpha: railLoA });
-
-  // --- the output puck: rides the column toward the winning input, pins to rail -
-  // y maps swing −1..+1 to colB..colT (output high = up = + wins, like the mockup).
-  const puckY = colT + ((1 - swingC) / 2) * (colB - colT);
-  const mag = Math.abs(swingC);
-  // connector from the puck to the apex (the output tap).
-  g.moveTo(colX, puckY)
-    .lineTo(apexX, 0)
-    .stroke({ width: 2, color: OUT, alpha: 0.45 });
-  g.circle(colX, puckY, 11 + 2 * mag).stroke({
+  // --- the constant tail current source, sunk to the −rail ---------------------
+  g.moveTo(tailX, yTail)
+    .lineTo(tailX, yTail + 6)
+    .stroke({ width: 2, color: RAIL, alpha: 0.7 });
+  g.circle(tailX, yTail + 18, 11).fill({ color: 0x10131f, alpha: 0.8 });
+  g.circle(tailX, yTail + 18, 11).stroke({
     width: 1.5,
-    color: OUT,
-    alpha: 0.25 + 0.4 * mag,
+    color: RAIL,
+    alpha: 0.85,
   });
-  g.circle(colX, puckY, 7 + 2 * mag).fill({ color: OUT, alpha: 0.85 });
+  g.moveTo(tailX, yTail + 25)
+    .lineTo(tailX, yTail + 11)
+    .stroke({ width: 2, color: PALETTE.ok, alpha: 0.85 });
+  g.poly([tailX - 4, yTail + 15, tailX + 4, yTail + 15, tailX, yTail + 9]).fill(
+    {
+      color: PALETTE.ok,
+      alpha: 0.85,
+    },
+  );
+  g.moveTo(tailX, yTail + 29)
+    .lineTo(tailX, yNeg)
+    .stroke({ width: 2, color: RAIL, alpha: 0.7 });
 
-  // --- output spur + stud, and the FAT output belt (width + density ~ |Iout|) --
-  g.moveTo(apexX, 0)
-    .lineTo(outX, 0)
-    .stroke({ width: 2, color: RAIL, alpha: 0.85 });
-  stud(g, outX, 0, OUT);
+  // --- base tap markers (brighten with each side's drive) ----------------------
+  g.circle(qpx - regHW, 0, 2.4).fill({ color: POS, alpha: 0.55 + 0.4 * rL });
+  g.circle(qnx - regHW, 0, 2.4).fill({ color: NEG, alpha: 0.55 + 0.4 * rR });
+
+  // --- Vout taps Q−'s collector and runs to the OUT pin ------------------------
+  g.moveTo(qnx, yC0 + 10)
+    .lineTo(qnx + regHW, yC0 + 10)
+    .lineTo(OU.x, OU.y)
+    .stroke({ width: 2, color: OUT, alpha: 0.55 });
   const beltW = 2 + 8 * drive;
   if (drive > 0.02) {
-    g.roundRect(apexX, -beltW / 2, outX - apexX, beltW, 2).fill({
-      color: OUT,
-      alpha: 0.18 + 0.28 * drive,
-    });
+    g.roundRect(
+      qnx + regHW,
+      OU.y - beltW / 2,
+      OU.x - qnx - regHW,
+      beltW,
+      2,
+    ).fill({ color: OUT, alpha: 0.16 + 0.26 * drive });
   }
 
-  // --- the live belts: inputs sense (sparse/bright by who's winning), output drives
-  belt(g, inX, inPy, capL, inPy, iPos, 1, o.phase, POS, 2.6);
-  belt(g, inX, inMy, capL, inMy, iNeg, 1, o.phase, NEG, 2.6);
-  belt(g, apexX, 0, outX, 0, drive, driveDir, o.phase, OUT, 3.2);
+  // --- electron streams: constant tail up, then split up each transistor -------
+  belt(g, tailX, yNeg, tailX, yTail, 0.6, 1, o.phase, PALETTE.ok, 3);
+  belt(g, qpx, yE1, qpx, ySup, rL, 1, o.phase, ELEC, 3);
+  belt(g, qnx, yE1, qnx, ySup, rR, 1, o.phase, ELEC, 3);
+  belt(g, qnx + regHW, OU.y, OU.x, OU.y, drive, driveDir, o.phase, OUT, 3.2);
+
+  stud(g, IP.x, IP.y, POS);
+  stud(g, IM.x, IM.y, NEG);
+  stud(g, OU.x, OU.y, OUT);
 }
 
 // ============================================================================
