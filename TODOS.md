@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (4) — NTC + PTC thermistors (schematic + analogy, temperature knob)
+
+- ~~**NTC + PTC thermistor kinds** added end-to-end, web-only (no sim-core/golden):
+  catalog (`PART_KINDS`), schematic glyph (`drawThermistor` — IEC box + the temperature
+  arrow, −/+ for NTC/PTC), heat-valve analogy (`drawAnalogyThermistor`), partInfo, and a
+  per-part **temperature knob** in the inspector (mirrors the POT wiper).~~
+- ~~**Shared R(T) model** in `web/src/lib/thermistor.ts` (NTC exponential; PTC switching
+  ceramic with a Curie snap). `buildNetlist` stamps R(T) as a plain resistor — the POT
+  pattern — so temperature changes rebuild the sim with no new element.~~
+- ~~`temp` scalar threaded like `wiper` (Component, SelectedPart, clipboard, serialize/
+  restore, board opts, infoDiagram).~~
+- [ ] **Thermistor reality (tier 3)** — the oxide-lattice / grain-boundary internals from
+  the ref sheets (deferred this pass; owner chose "schematic + analogy first").
+- [ ] **Thermistor params** — expose B (NTC) and the Curie point (PTC) as part scalars;
+  fixed defaults for now. Optional silistor PTC variant.
+
+---
+
 ## 2026-06-17 (3) — Zener closed loop, diode valve template, conduit fittings
 
 - ~~**Zener analogy rebuilt** as a closed-loop spillway (`drawAnalogyZener`): forward check
@@ -454,8 +472,11 @@ the enabling primitive from the catalog's §0 / §9 roadmap):
   untouched.~~
 - [ ] **Fuse** (catalog §6.1) — latched "blown" state (P6, + I²t thermal P7): once
   the current·time threshold trips, it stays open until replaced. **Med.**
-- [ ] **Thermistor NTC/PTC** (catalog §6.3) — resistance vs temperature; needs the
-  thermal scalar state P7 (self-heating from I²R, evolved on the tick grid). **Med.**
+- ~~**Thermistor NTC/PTC** (catalog §6.3) — placeable now: catalog + schematic glyph +
+  heat-valve analogy + temperature knob, with R(T) stamped as a plain resistor (web-only,
+  the POT pattern). See 2026-06-17 (4).~~ Still open: the SIM-SIDE thermal state P7
+  (self-heating from I²R) so temperature is modelled, not just a knob — the `temp` field
+  and `thermistor.ts` curves are already shaped for it. **Med.**
 - [ ] **LDR / photoresistor** (catalog §7.1) — resistance vs light; needs the
   light/display I/O channel P8 (a player- or contract-driven light input). **Med.**
 - [ ] **Photodiode** (catalog §1.4) — light-controlled current source (P8 + Newton). **Med.**

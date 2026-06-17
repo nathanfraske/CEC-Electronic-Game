@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (9) — NTC + PTC thermistors (schematic + analogy, temperature knob)
+
+**State:** 🟢 Green — web format/check/lint/build all pass. **No Rust / no golden touch**
+(determinism intact). Branch `claude/kind-turing-hdelb3`. Added the NTC + PTC thermistors
+end-to-end, the POT way — a per-part temperature scalar the netlist turns into R(T) and
+stamps as a plain resistor, so the sim sees an ordinary resistor.
+
+Owner's calls: **knob now but prep for a future temperature model**, **PTC = switching
+ceramic (Curie snap)**, **schematic + analogy first** (reality tier deferred).
+
+- **`web/src/lib/thermistor.ts`** (NEW) — the shared R(T) model: NTC `R0·exp(B(1/T−1/T0))`;
+  PTC switching ceramic (low R, then a several-decade jump above the 100 °C Curie point).
+  Also `thermistorOpenness` (valve gap), `tempNorm`, `THERMISTOR_TEMP` ranges. One place so
+  the netlist, the drawer, AND a future SIM self-heating model share the curves.
+- **netlist.ts** — NTC/PTC branch (beside POT): stamps ONE `ELEM_RESISTOR` with R(T) from
+  `value` (nominal R) + `temp`. R(T) rides `values`, so changing temp rebuilds the sim.
+- **`temp` scalar** threaded like `wiper`: `Component.temp`, default 25 °C on placement,
+  `SelectedPart`, clipboard snippet + paste, serialize/restore (spread), `Board.setComponentTemp`,
+  tier opts, `TierOpts.temp`, `infoDiagram.setState`.
+- **glyphs.ts** `drawThermistor` (NTC/PTC → DRAWERS): IEC box + the diagonal temperature
+  arrow, a small −/+ telling NTC (R falls) from PTC (R rises).
+- **analogyDrawers.ts** `drawAnalogyThermistor` (NTC/PTC) — a HEAT-ACTUATED SHUTTER VALVE:
+  heater coil+glow+waves under the orifice = temperature; shutter gap = openness(R(T)); flow
+  = current. NTC opens as it heats; PTC snaps shut past Curie. One drawer, mirror behaviour
+  straight from R(T).
+- **App.svelte** — a temperature slider in the inspector (`{#if kind==="NTC"||"PTC"}`),
+  mirroring the wiper (single-undo-per-drag). **partInfo.ts** — NTC/PTC entries (live R from
+  V/I).
+
+**Verify:** `/tmp/harness` — `dumpTherm.js` (analogy grid: NTC opens / PTC snaps shut across
+temperature) and `dumpGlyph.js` (the schematic symbols). compile.js now also transpiles
+`thermistor`. Deferred (in TODOS): the reality/tier-3 internals, and exposing B / Curie as
+part params.
+
+---
+
 ## 2026-06-17 (8) — Zener closed-loop rebuild, diode check-valve template, conduit fittings
 
 **State:** 🟢 Green — web format/check/lint/build all pass (no Rust; golden untouched).
