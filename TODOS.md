@@ -6,6 +6,16 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (2) — reality transistors rotated + flow around the plug
+
+- ~~**Reality MOSFET + BJT rotated to vertical**, anchored to the pins (drain/collector top,
+  source/emitter bottom, gate/base left) so they match the board orientation.~~
+- ~~**Flow parts around the plug** in the MOSFET/BJT analogies (`tierKit.flowAroundPlug`);
+  plug narrowed to a disc thinner than the pipe so there's a side gap to flow through.~~
+- [ ] **Idea to think on (owner):** board traces as PIPES to match the component metaphor,
+  with an adaptive taper into each part. board.ts wire-rendering change — not started.
+- [ ] **Owner eyeball** the rotated reality transistors + the plug-skirting flow.
+
 ## 2026-06-17 — op-amp: doc-faithful analogy + reality
 
 - ~~**OA analogy** rebuilt to the opamp-tiers.html tier-2 spool valve (input reservoirs,

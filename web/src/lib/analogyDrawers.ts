@@ -25,6 +25,7 @@ import {
   anchorPt,
   belt,
   dotPresence,
+  flowAroundPlug,
   housing,
   mix,
   norm,
@@ -1076,16 +1077,27 @@ function drawAnalogyBjt(g: Graphics, o: AnalogyOpts): void {
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
 
-  // --- collector → emitter stream around the plug ------------------------------
+  // --- collector → emitter stream PARTING around the plug ----------------------
   if (conducting) {
-    belt(g, pipeX, supplyY, pipeX, plugY - 12, ic, 1, o.phase, WATER, 2.8);
-    belt(g, pipeX, plugY + 12, pipeX, outletY, ic, 1, o.phase, WATER, 2.8);
+    flowAroundPlug(
+      g,
+      pipeX,
+      pipeHW,
+      supplyY,
+      outletY,
+      plugY,
+      16,
+      ic,
+      o.phase,
+      WATER,
+      2.6,
+    );
   }
-  g.ellipse(pipeX, plugY, pipeHW * 1.25, 10).fill({
+  g.ellipse(pipeX, plugY, pipeHW * 0.62, 11).fill({
     color: conducting ? PLATE : mix(PLATE, PALETTE.dim, 0.5),
     alpha: 0.95,
   });
-  g.ellipse(pipeX, plugY, pipeHW * 1.25, 10).stroke({
+  g.ellipse(pipeX, plugY, pipeHW * 0.62, 11).stroke({
     width: 1.1,
     color: 0xdfe3ee,
     alpha: 0.5,
@@ -1252,18 +1264,29 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
 
-  // --- supply→outlet stream around the plug, when the valve is open ------------
+  // --- supply→outlet stream PARTING around the plug, when the valve is open -----
   if (conducting) {
-    belt(g, pipeX, supplyY, pipeX, plugY - 12, id, 1, o.phase, WATER, 2.8);
-    belt(g, pipeX, plugY + 12, pipeX, outletY, id, 1, o.phase, WATER, 2.8);
+    flowAroundPlug(
+      g,
+      pipeX,
+      pipeHW,
+      supplyY,
+      outletY,
+      plugY,
+      16,
+      id,
+      o.phase,
+      WATER,
+      2.6,
+    );
   }
 
-  // --- the plug (lifts off the seat toward the supply) -------------------------
-  g.ellipse(pipeX, plugY, pipeHW * 1.18, 11).fill({
+  // --- the plug (a disc narrower than the pipe, so flow skirts it) --------------
+  g.ellipse(pipeX, plugY, pipeHW * 0.62, 12).fill({
     color: conducting ? PLATE : mix(PLATE, PALETTE.dim, 0.5),
     alpha: 0.95,
   });
-  g.ellipse(pipeX, plugY, pipeHW * 1.18, 11).stroke({
+  g.ellipse(pipeX, plugY, pipeHW * 0.62, 12).stroke({
     width: 1.1,
     color: 0xdfe3ee,
     alpha: 0.55,
