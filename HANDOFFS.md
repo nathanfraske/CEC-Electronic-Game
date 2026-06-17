@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (12) — Flow-cohesion sweep (dam, slalom, MOV, connector pipe, caps/EC)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Branch
+`claude/kind-turing-hdelb3`. A push to make every part's particles interact with what
+affects them and to make terminals flow into the board's wire-pipes (never "broken up").
+
+Shipped (drawer-render-verified in `/tmp/harness`):
+- **Diode** reverse-block DAMS UP; **POT** slaloms around the posts (`tierKit.scatterY`)
+  + snags the divider tap at the wiper; **MOV** reads open/sealed with flowing
+  `pipeLead` terminals + polarity-correct flow; **ceramic cap + inductor** pipe bodies
+  water-filled terminal-to-terminal; **electrolytic cap** redesigned to ONE big tank
+  (flow in +/out −, level = voltage + gauge marker — per owner).
+- New shared helpers in `tierKit`: `scatterY` (slalom around obstacles), `pipeLead`
+  (steel-wall + water-core + flowing dots terminal), `PIPE_STEEL`.
+
+Shipped but needs an in-app look (board canvas, not covered by the drawer harness):
+- **Connector pipe** (board.ts ComponentNode): a stub from each pin into the body on a
+  layer BEHIND the tier illustration, bridging the wire-pipes to the part universally.
+  Tunables if it reads off: the `0.62` length factor and the `0.3`/`0.16` alphas.
+
+Open (see TODOS 7): finish the sweep for the REMAINING parts (transformer, BJT/MOSFET,
+op-amp, V/I/AC sources, level shifter, switches, gates, flip-flop); "get at wires behind
+components" (owner wants discoverable click-through); junction delete/move (no rush);
+orientation audit across rotated parts.
+
+Harness dumps added: `dumpMov.js`, `dumpAudit.js` (2-pin analogy grid), `dumpDiode.js`,
+`dumpPot.js`, `dumpFire.js`, `dumpThermR.js`.
+
+---
+
 ## 2026-06-17 (11) — Thermistor reality tier · POT flow respects wiper · resistor fire
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch

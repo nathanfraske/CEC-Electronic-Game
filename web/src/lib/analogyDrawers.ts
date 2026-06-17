@@ -211,7 +211,6 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
   const pipeHH = hh * 0.17; // pipe half-height
   const aX = -hw + 8; // left terminal (lead) stud
   const bX = hw - 8; // right terminal stud
-  const pipeL = aX + 4;
   const pipeR = bX - 4;
   const pumpX = -hw * 0.72; // the driving pump
   const valveX = -hw * 0.4; // the throttling valve (= series R)
@@ -228,11 +227,13 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
     });
   }
 
-  // --- the pipe walls ----------------------------------------------------------
+  // --- the pipe walls + water-filled body, terminal-to-terminal (one continuous
+  // flowing pipe that meets the board's wire-pipes, not a thin wireframe) ---------
+  g.rect(aX, -pipeHH, bX - aX, 2 * pipeHH).fill({ color: WATER, alpha: 0.08 });
   for (const s of [-1, 1]) {
-    g.moveTo(pipeL, s * pipeHH)
-      .lineTo(pipeR, s * pipeHH)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+    g.moveTo(aX, s * pipeHH)
+      .lineTo(bX, s * pipeHH)
+      .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
   }
 
   // --- the pump (left): a cyan piston that nudges out with the flow ------------
@@ -494,7 +495,6 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 
   const aX = -hw + 8;
   const bX = hw - 8;
-  const pipeL = aX + 4;
   const pipeR = bX - 4;
   const pipeHH = hh * (0.2 + 0.22 * (o.value ? norm(o.value, 5e-6) : 0.5));
   const pumpX = -hw * 0.74;
@@ -507,11 +507,13 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
     Math.min(anchorX - 40, restX + charge * throwX),
   );
 
-  // --- pipe walls --------------------------------------------------------------
+  // --- pipe walls + water-filled body, run terminal-to-terminal so the part reads as
+  // one continuous flowing pipe that meets the board's wire-pipes (not a thin frame) --
+  g.rect(aX, -pipeHH, bX - aX, 2 * pipeHH).fill({ color: WATER, alpha: 0.08 });
   for (const s of [-1, 1]) {
-    g.moveTo(pipeL, s * pipeHH)
-      .lineTo(pipeR, s * pipeHH)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+    g.moveTo(aX, s * pipeHH)
+      .lineTo(bX, s * pipeHH)
+      .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
   }
 
   // --- pump (left) + valve = series R throat -----------------------------------
@@ -570,91 +572,96 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 }
 
 // ============================================================================
-// Electrolytic capacitor — ported from capacitor-electrolytic-tiers.html tier 2:
-// TWO CONNECTED TANKS. The source tank feeds the capacitor tank through a valve
-// (= series R); water flows until the two levels match, then stops. The level in
-// the cap tank is Vc; a WIDER tank holds more for the same level — more capacitance.
+// Electrolytic capacitor — ONE BIG RESERVOIR. The current flows IN the + lead and OUT
+// the − lead (the charge current), filling/draining the tank; the water LEVEL is the
+// voltage across it (Vc) — a gauge marker rides the surface so the stored voltage reads
+// directly. A wider tank holds more charge per volt (more capacitance). The flow fades
+// to nothing as it charges up (|I| → 0 at steady state), the level holding where it sits.
 //
 // Live mapping (cap ElectricalState: current a→b, vAcross = Vc):
-//   • level / Vc  = vAcross → the cap-tank water height.
-//   • flow        = norm(|I|) → connecting-pipe dot density; sign sets dir + which
-//     tank stands higher (charging: source above cap; discharging: below).
-//   • capacitance = value (F) → the cap-tank width.
+//   • level / Vc  = vAcross   → water-column height + the gauge marker (the voltage).
+//   • flow        = norm(|I|) → in/out lead dot density; sign = charge vs discharge.
+//   • capacitance = value (F) → the tank width.
 // ============================================================================
 function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
-
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const dir = o.electrical.current >= 0 ? 1 : -1; // + = charging (in via the + lead)
   const level = Math.max(
     0,
     Math.min(1, o.electrical.vAcross / (V_SCALE * 1.6)),
   );
 
-  const baseY = hh * 0.5; // tank floor
-  const maxH = hh * 0.92; // full-scale water column (kept within bounds)
-  const srcX = -hw * 0.66;
-  const srcW = hw * 0.34;
-  const capCx = hw * 0.34;
-  const capHalf = hw * (0.12 + 0.2 * (o.value ? norm(o.value, 5e-4) : 0.5));
-  const valveX = -hw * 0.02;
-  const pipeY = baseY - 6;
+  const A = anchorPt(o, "+", -0.85, 0);
+  const B = anchorPt(o, "−", 0.85, 0);
 
-  // Source level leads/lags the cap by the flow (drives the equalisation).
-  const srcLevel = Math.max(0, Math.min(1, level + dir * 0.18 * flow));
-  const capSurf = baseY - level * maxH;
-  const srcSurf = baseY - srcLevel * maxH;
+  // one big reservoir; a WIDER tank holds more charge per volt (more capacitance)
+  const tankHW = hw * (0.24 + 0.2 * (o.value ? norm(o.value, 5e-4) : 0.5));
+  const tankT = -hh * 0.5;
+  const tankB = hh * 0.62;
+  const tankL = -tankHW;
+  const tankR = tankHW;
+  const fillY = tankB - level * (tankB - tankT);
 
-  // --- source tank (left) ------------------------------------------------------
-  g.moveTo(srcX, baseY - maxH)
-    .lineTo(srcX, baseY)
-    .lineTo(srcX + srcW, baseY)
-    .lineTo(srcX + srcW, baseY - maxH)
-    .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.9 });
-  g.rect(srcX + 2, srcSurf, srcW - 4, baseY - srcSurf).fill({
+  // --- flowing pipe leads: IN the + terminal, OUT the − terminal (the charge current).
+  // They meet the tank at mid-height where the pins sit, so the part flows continuously
+  // into the board's wire-pipes; the dots fade as |I| → 0 (fully charged). -----------
+  const lc = mix(WATER, PALETTE.cyan, 0.3);
+  pipeLead(g, [A, { x: tankL, y: 0 }], 9, lc, WATER2, flow, dir, o.phase);
+  pipeLead(g, [{ x: tankR, y: 0 }, B], 9, lc, WATER2, flow, dir, o.phase);
+
+  // --- the reservoir + its water column (height = the voltage Vc) ---------------
+  housing(g, tankL, tankT, tankR - tankL, tankB - tankT, PALETTE.cyan, 5);
+  g.rect(tankL + 3, fillY, tankR - tankL - 6, tankB - fillY).fill({
     color: WATER,
-    alpha: 0.5,
+    alpha: 0.45,
   });
-
-  // --- capacitor tank (right): width = capacitance -----------------------------
-  const capL = capCx - capHalf;
-  const capR = capCx + capHalf;
-  g.moveTo(capL, baseY - maxH)
-    .lineTo(capL, baseY)
-    .lineTo(capR, baseY)
-    .lineTo(capR, baseY - maxH)
-    .stroke({ width: 3, color: PLATE, alpha: 0.92 });
-  g.rect(capL + 2, capSurf, 2 * capHalf - 4, baseY - capSurf).fill({
-    color: WATER,
-    alpha: 0.6,
-  });
-
-  // --- connecting pipe at the bottom + valve = series R ------------------------
-  for (const yy of [pipeY - 6, pipeY + 6]) {
-    g.moveTo(srcX + srcW, yy)
-      .lineTo(capL, yy)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  // stored charge jiggling in the water
+  for (let k = 0; k < 12; k++) {
+    const bx = tankL + 9 + ((k * 0.61803) % 1) * (tankR - tankL - 18);
+    const by = fillY + 8 + ((k * 0.41 + 0.2) % 1) * (tankB - fillY - 14);
+    if (by > tankB - 5 || by < fillY + 4) continue;
+    g.circle(bx + Math.sin(o.phase * PULSE_K + k) * 1.4, by, 1.8).fill({
+      color: WATER2,
+      alpha: 0.7,
+    });
   }
-  g.moveTo(valveX, pipeY - 6)
-    .lineTo(valveX, pipeY - 20)
-    .stroke({ width: 4, color: PRESS, alpha: 0.85 });
+  // the live surface = the voltage line (a bright band so the level reads at a glance)
+  if (level > 0.015) {
+    g.rect(tankL + 3, fillY - 1.5, tankR - tankL - 6, 3).fill({
+      color: WATER2,
+      alpha: 0.55,
+    });
+  }
+  g.moveTo(tankL + 3, fillY)
+    .lineTo(tankR - 3, fillY)
+    .stroke({ width: 2.2, color: WATER2, alpha: 0.95 });
 
-  // --- the current through the connecting pipe ---------------------------------
-  belt(
-    g,
-    srcX + srcW + 4,
-    pipeY,
-    capL - 4,
-    pipeY,
-    flow,
-    dir,
-    o.phase,
-    WATER,
-    2.6,
-  );
+  // --- voltage gauge inside the right wall: ticks + a marker riding the level ----
+  const gx = tankR - 7;
+  for (let t = 0; t <= 4; t++) {
+    const ty = tankB - (t / 4) * (tankB - tankT - 6);
+    g.moveTo(gx - 4, ty)
+      .lineTo(gx, ty)
+      .stroke({ width: 1.1, color: PALETTE.border, alpha: 0.5 });
+  }
+  g.poly([gx, fillY, gx - 9, fillY - 4.5, gx - 9, fillY + 4.5]).fill({
+    color: PALETTE.warn,
+    alpha: 0.95,
+  });
 
-  stud(g, srcX, baseY, PALETTE.bronze);
-  stud(g, capR, baseY, PALETTE.bronze);
+  // --- polarity tags so the directional in/out reads (+ inlet, − outlet) --------
+  g.moveTo(A.x + 9, A.y - 4)
+    .lineTo(A.x + 9, A.y + 4)
+    .moveTo(A.x + 5, A.y)
+    .lineTo(A.x + 13, A.y)
+    .stroke({ width: 1.6, color: PALETTE.warn, alpha: 0.85 });
+  g.moveTo(B.x - 13, B.y)
+    .lineTo(B.x - 5, B.y)
+    .stroke({ width: 1.8, color: PALETTE.violet, alpha: 0.85 });
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
 }
 
 // A spoked pulley wheel centred at (cx,cy), radius r, rotated by `spin`; one WARM

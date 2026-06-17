@@ -6,6 +6,37 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (7) — Flow cohesion sweep: dam, slalom, MOV, connector pipe, caps
+
+Owner push: every part's particles should interact with what affects them, terminals
+should look like flowing pipes that join the wire-pipes (never "broken up"), and flow
+should respect orientation.
+
+- ~~**Diode** reverse-block now DAMS UP (packed jittering column + pressure chevrons).~~
+- ~~**POT** stream SLALOMS around the resistance posts (`tierKit.scatterY`) and SNAGS
+  carriers off at the wiper down the hose to W (the divider).~~
+- ~~**MOV** reads open/sealed (poppet cracks + seat glow), flowing **pipe leads**
+  (`tierKit.pipeLead`), polarity-correct through-flow.~~
+- ~~**Connector pipe** (board): a stub from each pin into the body BEHIND the tier
+  illustration, bridging the wire-pipes to the part universally. (Needs in-app look.)~~
+- ~~**Ceramic cap + inductor**: pipe bodies water-filled terminal-to-terminal.~~
+- ~~**Electrolytic cap** redesigned to ONE big tank — flow in the +/out the − lead,
+  water level = the voltage with a gauge marker.~~
+- [ ] **Finish the flow sweep** (owner: "finish the part sweep") — give the REMAINING
+  parts flowing pipe-leads + interacting particles: transformer, BJT/MOSFET, op-amp,
+  sources (V/I/AC), level shifter, switches (SW/MSW), gates, flip-flop. Pattern: anchor
+  to real pins, `pipeLead` terminals, particles that react to the inline mechanism.
+- [ ] **Get at wires behind components** — a component hit always wins (board.ts ~2507),
+  so an occluded wire (op-amp example) is unreachable. Owner chose modifier **click-
+  through**, BUT wants it discoverable without knowing the hotkey (hover-fade/right-
+  click/handle all rejected as distracting/gimmicky — open question how).
+- [ ] **Junctions: delete + move** — a way to remove a junction and drag it around (no
+  rush). (Owner request 2026-06-17.)
+- [ ] **Orientation audit** — confirm flow direction on every part when rotated (MOV is
+  fixed via polarity + the rotating glyph holder; verify the class).
+
+---
+
 ## 2026-06-17 (6) — Thermistor reality tier, POT flow respects wiper, resistor fire
 
 - ~~**Thermistor reality (tier 3)** `drawDetailThermistor` (NTC/PTC) — polycrystalline
