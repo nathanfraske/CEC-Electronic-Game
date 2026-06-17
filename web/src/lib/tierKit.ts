@@ -367,6 +367,36 @@ export function scatterY(
 
 // --- machine furniture --------------------------------------------------------
 
+/** Steel wall colour of a pipe (mirrors the board's wire-conduit wall, PIPE_WALL). */
+export const PIPE_STEEL = 0x6b6488;
+
+/**
+ * A PIPE-style lead along a polyline: a steel wall stroke + a coloured core + flowing
+ * carrier dots when `mag` > 0 — so a part's terminal reads as a continuous flowing pipe
+ * that meets the board's wire-pipes, instead of a thin schematic line that looks broken
+ * off from the system. `dir` is the flow sense along the path (+1 = pts[0]→last).
+ */
+export function pipeLead(
+  g: Graphics,
+  pts: { x: number; y: number }[],
+  width: number,
+  core: number,
+  water: number,
+  mag: number,
+  dir: number,
+  phase: number,
+): void {
+  if (pts.length < 2) return;
+  const trace = (w: number, c: number, a: number): void => {
+    g.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+    g.stroke({ width: w, color: c, alpha: a, cap: "round", join: "round" });
+  };
+  trace(width + 4, PIPE_STEEL, 0.45); // wall
+  trace(width, core, 0.3); // voltage-tinted core
+  if (mag > 0.02) flowAlongPath(g, pts, mag, dir, phase, water, 2.2);
+}
+
 // Whether stud() actually paints. On the board the illustration's decorative studs
 // are redundant with (and offset from) the real pin dots the wires meet, so the
 // board hides them while the info panel keeps them (it has no separate pins). A

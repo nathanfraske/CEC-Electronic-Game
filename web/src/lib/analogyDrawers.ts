@@ -39,6 +39,7 @@ import {
   housing,
   mix,
   norm,
+  pipeLead,
   scatterY,
   stud,
   CUR_SCALE,
@@ -1698,8 +1699,9 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const vclamp = o.value && o.value > 0 ? o.value : 5;
   const over = applied / vclamp;
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const venting = over > 0.95 && flow > 0.02;
+  const venting = over > 0.85 && flow > 0.02;
   const appN = Math.min(1, applied / (vclamp * 1.5));
+  const aHigh = o.electrical.vAcross >= 0; // A is the high-pressure lead
 
   // Both leads ride the real A/B pins (on the part's axis) and feed the vessel.
   const A = anchorPt(o, "A", -0.588, 0);
@@ -1712,7 +1714,9 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const vesT = lineY + hh * 0.16;
   const vesB = lineY + hh * 0.86;
   const seatY = vesT;
-  const lift = Math.min(1, Math.max(0, (over - 1) * 2)) * hh * 0.26;
+  // Cracks open as the pressure approaches the clamp (not only past it) so the
+  // open/sealed state reads clearly: 0 lift at 0.8·Vclamp, fully cracked by 1.2·Vclamp.
+  const lift = Math.min(1, Math.max(0, (over - 0.8) / 0.4)) * hh * 0.3;
   const poppetY = seatY - lift;
   const popHW = hw * 0.12;
   const chamHW = hw * 0.15;
@@ -1720,16 +1724,33 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const ventY = lineY - hh * 0.24;
   const bonnetY = chamT - hh * 0.06;
 
-  // --- the two leads feed the vessel from each side (bidirectional) -------------
+  // --- the two leads feed the vessel from each side as flowing PIPES (so the part
+  // joins the board's wire-pipes as one continuous run, not a thin broken-off line).
+  // When it clamps, the surge runs IN the high lead and OUT the low one — so the flow
+  // follows the real polarity (and, with the glyph holder, the part's orientation). --
   for (const [an, s] of [
     [A, -1],
     [B, 1],
   ] as const) {
-    g.moveTo(an.x, an.y)
-      .lineTo(cx + s * (vesHW + 12), an.y)
-      .lineTo(cx + s * (vesHW + 12), vesT + hh * 0.18)
-      .lineTo(cx + s * vesHW, vesT + hh * 0.18)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.8 });
+    const path = [
+      { x: an.x, y: an.y },
+      { x: cx + s * (vesHW + 12), y: an.y },
+      { x: cx + s * (vesHW + 12), y: vesT + hh * 0.18 },
+      { x: cx + s * vesHW, y: vesT + hh * 0.18 },
+    ];
+    // inflow on the HIGH lead (pin→vessel = +1), outflow on the low one
+    const isHigh = s < 0 ? aHigh : !aHigh;
+    const leadDir = isHigh ? 1 : -1;
+    pipeLead(
+      g,
+      path,
+      9,
+      mix(WATER, PALETTE.cyan, 0.3),
+      WATER2,
+      flow,
+      leadDir,
+      o.phase,
+    );
     stud(g, an.x, an.y, PALETTE.bronze);
   }
 
@@ -1780,6 +1801,16 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   g.moveTo(cx - chamHW, chamT)
     .lineTo(cx + chamHW, chamT)
     .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the OPEN crack: a bright gap glowing at the seat as the poppet lifts off it,
+  // so "sealed" vs "open" reads at a glance (grows with the lift). ----------------
+  if (lift > 1) {
+    const liftN = Math.min(1, lift / (hh * 0.3));
+    g.ellipse(cx, seatY, popHW * (1.1 + 0.3 * liftN), lift * 0.6).fill({
+      color: mix(PALETTE.warn, 0xffffff, 0.3),
+      alpha: 0.25 + 0.5 * liftN,
+    });
+  }
 
   // --- the poppet (cone) at the seat, lifting when it cracks open --------------
   g.poly([
