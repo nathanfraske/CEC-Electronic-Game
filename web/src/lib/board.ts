@@ -196,10 +196,8 @@ const MAX_BELT_DOTS = 64;
 // keep the bus language — colour = net voltage, density/thickness = current — just
 // re-skinned to match the part illustrations. Kicks in at the same `TIER_ZOOM`.
 const PIPE_WALL = 0x6b6488; // steel pipe wall
-const PIPE_BORE = 0x0d0b16; // dark pipe interior
 const PIPE_WATER = 0x8fd6ff; // bright water carriers
 const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
-const COND_CORE_DK = 0x1a1410; // conductor backing
 const COND_ELEC = 0x9fe6ff; // electron carriers (drift against the current)
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
@@ -3462,36 +3460,24 @@ export class Board {
     const cap = "round" as const;
     const join = "round" as const;
     const r = pw * 1.1; // bend radius ≈ pipe width
-    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
+    const coreAlpha = lens === "analogy" ? 0.32 : 0.36;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    if (lens === "analogy") {
+    // Two translucent layers only — a faint wall rim + a voltage-tinted fill (no dark
+    // bore; the stacked bore is what muddied the pipe and made crossings read opaque).
+    // The grid + overlaps show through; the fill colour + the carriers stay readable.
+    roundedPolyline(g, route, r);
+    g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap, join });
+    roundedPolyline(g, route, r);
+    g.stroke({
+      width: Math.max(1, pw - 1),
+      color,
+      alpha: coreAlpha,
+      cap,
+      join,
+    });
+    if (lens === "reality") {
       roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.5, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.32, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({
-        width: Math.max(1, pw - 2),
-        color,
-        alpha: coreAlpha,
-        cap,
-        join,
-      });
-    } else {
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.5, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.3, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({
-        width: Math.max(1, pw - 1),
-        color,
-        alpha: coreAlpha,
-        cap,
-        join,
-      });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.1, cap, join });
+      g.stroke({ width: 1.2, color: 0xffffff, alpha: 0.08, cap, join });
     }
     // Taper each end into a port mouth, oriented along the end segment — the conduit
     // flares open where it plugs into a part (or junction), so it reads as connected.
@@ -3521,7 +3507,7 @@ export class Board {
         by - py * ph,
         bx + px * ph,
         by + py * ph,
-      ]).fill({ color: wallCol, alpha: 0.55 });
+      ]).fill({ color: wallCol, alpha: 0.32 });
       const im = mouthR - 2.5;
       const ip = Math.max(0.5, ph - 2.5);
       g.poly([
@@ -3578,9 +3564,10 @@ export class Board {
   }
 
   /**
-   * A conduit junction: a 4-way fitting. The arms a wire actually uses ARE the wire
-   * conduits; the unused cardinal arms get a short capped blanking stub, and a hub disc
-   * (net-voltage core) sits at the centre. Reads as a real pipe / bus tee.
+   * A conduit junction: a clean rounded hub where the wire conduits meet. Each unused
+   * cardinal direction gets a SHORT round-capped blanking nub (the rounded end is the
+   * cap — no harsh perpendicular plate, which read as a cluttered asterisk). Kept
+   * translucent to match the pipes.
    */
   private drawJunctionConduit(
     g: Graphics,
@@ -3591,9 +3578,9 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
+    const coreAlpha = lens === "analogy" ? 0.34 : 0.38;
     const pw = 6;
-    const arm = PITCH * 0.46;
+    const arm = PITCH * 0.32;
     const dirs: [number, number, number][] = [
       [1, 0, -1],
       [2, 1, 0],
@@ -3605,19 +3592,17 @@ export class Board {
       const ex = p.x + ux * arm;
       const ey = p.y + uy * arm;
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 5, color: wallCol, alpha: 0.5, cap });
+      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap });
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: Math.max(1, pw - 2), color, alpha: coreAlpha, cap });
-      // blanking cap: a perpendicular plate across the stub mouth
-      const qx = -uy;
-      const qy = ux;
-      const h = (pw + 5) / 2;
-      g.moveTo(ex + qx * h, ey + qy * h)
-        .lineTo(ex - qx * h, ey - qy * h)
-        .stroke({ width: 3, color: wallCol, alpha: 0.65, cap });
+      g.stroke({
+        width: Math.max(1, pw - 2),
+        color,
+        alpha: coreAlpha * 0.7,
+        cap,
+      });
     }
     // hub
-    g.circle(p.x, p.y, pw / 2 + 4).fill({ color: wallCol, alpha: 0.55 });
+    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: wallCol, alpha: 0.4 });
     g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha });
   }
 
