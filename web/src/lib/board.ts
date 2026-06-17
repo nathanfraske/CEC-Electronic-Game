@@ -3308,7 +3308,10 @@ export class Board {
     // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
     // share a channel, computed once up front so the per-wire draw below just uses them.
     const condRoutes = new Map<number, Point[]>();
+    let conduitCrossDots: { x: number; y: number; color: number }[] = [];
     if (conduit) {
+      const nets = new Map<number, number | null>();
+      const wireColor = new Map<number, number>();
       for (const w of this.graph.wires.values()) {
         const route = this.routeForWire(w);
         if (route.length < 2) continue;
@@ -3320,8 +3323,19 @@ export class Board {
             this.pinOutward(w.to),
           ),
         );
+        const node = this.endpointNode(w.from);
+        nets.set(w.id, node);
+        const nv = node === null ? null : this.nodeVoltage(node);
+        wireColor.set(w.id, nv === null ? PALETTE.cyan : voltageColor(nv));
       }
       nudgeParallel(condRoutes);
+      // Same-net crossings → junction dots; different-net crossings → a bridge hop
+      // baked into the horizontal wire's route.
+      conduitCrossDots = applyCrossings(
+        condRoutes,
+        nets,
+        (id) => wireColor.get(id) ?? PALETTE.cyan,
+      );
     }
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
@@ -3455,6 +3469,12 @@ export class Board {
       }
     }
     this.drawJunctions(g, conduit, junctionDirs);
+    // Same-net conduit crossings tie with a junction dot (the different-net ones bridged
+    // over via the baked-in hop).
+    for (const d of conduitCrossDots) {
+      g.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
+      g.circle(d.x, d.y, 3).fill({ color: d.color });
+    }
     // Drop offsets for wires that no longer exist (after a delete), so the maps
     // can't grow without bound across a long editing session.
     if (this.carrierOffset.size > this.graph.wires.size) {
@@ -4883,6 +4903,118 @@ function nudgeParallel(routes: Map<number, Point[]>): void {
   };
   apply(hGroups, "y");
   apply(vGroups, "x");
+}
+
+const BUMP_W = 8; // hop half-width
+const BUMP_H = 11; // hop height
+
+interface ConduitSeg {
+  i: number;
+  axis: "H" | "V";
+  fixed: number;
+  lo: number;
+  hi: number;
+}
+function conduitSegs(pts: Point[]): ConduitSeg[] {
+  const out: ConduitSeg[] = [];
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const a = pts[i]!;
+    const b = pts[i + 1]!;
+    if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) > 2)
+      out.push({
+        i,
+        axis: "H",
+        fixed: a.y,
+        lo: Math.min(a.x, b.x),
+        hi: Math.max(a.x, b.x),
+      });
+    else if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) > 2)
+      out.push({
+        i,
+        axis: "V",
+        fixed: a.x,
+        lo: Math.min(a.y, b.y),
+        hi: Math.max(a.y, b.y),
+      });
+  }
+  return out;
+}
+
+/**
+ * Resolve conduit crossings (a perpendicular intersection of two DIFFERENT wires' draw
+ * routes): a SAME-net crossing becomes a junction dot (returned); a DIFFERENT-net
+ * crossing gets a "bridge" — the horizontal wire hops over the vertical one, a small
+ * up-bump inserted into its route (so the pipe and its carriers ride over, not through).
+ * Mutates `routes` with the bumps; the crossing must be interior to both segments (a
+ * shared endpoint already connects, so it is skipped).
+ */
+function applyCrossings(
+  routes: Map<number, Point[]>,
+  nets: Map<number, number | null>,
+  colorOf: (id: number) => number,
+): { x: number; y: number; color: number }[] {
+  const ids = [...routes.keys()];
+  const cache = new Map(ids.map((id) => [id, conduitSegs(routes.get(id)!)]));
+  const dots: { x: number; y: number; color: number }[] = [];
+  const bumps = new Map<number, Map<number, number[]>>(); // wireId → segIdx → x list
+  const addBump = (id: number, seg: number, x: number): void => {
+    let m = bumps.get(id);
+    if (!m) bumps.set(id, (m = new Map()));
+    const arr = m.get(seg);
+    if (arr) arr.push(x);
+    else m.set(seg, [x]);
+  };
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const A = ids[i]!;
+      const B = ids[j]!;
+      const na = nets.get(A);
+      const sameNet = na != null && na === nets.get(B);
+      for (const sa of cache.get(A)!) {
+        for (const sb of cache.get(B)!) {
+          if (sa.axis === sb.axis) continue;
+          const h = sa.axis === "H" ? sa : sb;
+          const vv = sa.axis === "H" ? sb : sa;
+          if (
+            vv.fixed > h.lo + 3 &&
+            vv.fixed < h.hi - 3 &&
+            h.fixed > vv.lo + 3 &&
+            h.fixed < vv.hi - 3
+          ) {
+            if (sameNet) {
+              dots.push({ x: vv.fixed, y: h.fixed, color: colorOf(A) });
+            } else {
+              addBump(sa.axis === "H" ? A : B, h.i, vv.fixed);
+            }
+          }
+        }
+      }
+    }
+  }
+  for (const [id, segMap] of bumps) {
+    const pts = routes.get(id)!;
+    const out: Point[] = [pts[0]!];
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      const xs = segMap.get(i);
+      if (xs && xs.length) {
+        const dir = Math.sign(b.x - a.x) || 1;
+        const hy = a.y;
+        const inter: Point[] = [];
+        for (const bx of xs) {
+          inter.push(new Point(bx - BUMP_W, hy));
+          inter.push(new Point(bx, hy - BUMP_H));
+          inter.push(new Point(bx + BUMP_W, hy));
+        }
+        inter.sort((p, q) => dir * (p.x - q.x));
+        for (const p of inter) out.push(p);
+      }
+      out.push(b);
+    }
+    routes.set(id, out);
+  }
+  return dots;
 }
 
 /** The short aligning stub from a pin: when the route leaves the pin perpendicular to
