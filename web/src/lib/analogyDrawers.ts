@@ -26,6 +26,7 @@ import {
   belt,
   dotPresence,
   flowAlongPath,
+  flowAroundBall,
   flowAroundPlug,
   housing,
   mix,
@@ -82,6 +83,89 @@ function vSpringPts(
     pts.push(x, y);
   }
   return pts;
+}
+
+/**
+ * The diode family's forward CHECK VALVE — bronze seat lips, a spring to a plunger, and a
+ * ball the forward push lifts off its seat; when OPEN the water PARTS AROUND the ball (an
+ * obstacle it skirts, not a hole it pours through). Shared by every diode (plain,
+ * Schottky, LED, Zener) so they read identically and the ball size + flow tune in ONE
+ * place. Draws the seat, spring, forward flow, then the ball on the axis at `cy`; the
+ * caller owns the housing + pipes and any reverse / blocked flow (those differ per part).
+ */
+function forwardCheckValve(
+  g: Graphics,
+  v: {
+    cy: number;
+    pipeHH: number; // the thin pipe half-height (sets the seat throat)
+    chamberHH: number; // the valve chamber half-height (how far the flow may bulge)
+    seatX: number;
+    plungerX: number;
+    ballR: number;
+    liftX: number; // ball centre, already lifted by the caller's forward amount
+    inX: number; // forward inlet x (anode side)
+    outX: number; // forward outlet x (cathode side)
+    open: number; // 0..1 forward openness → flow density (≤0.03 ⇒ no forward flow)
+    phase: number;
+    ballColor: number;
+  },
+): void {
+  const { cy, pipeHH, seatX, plungerX, ballR, liftX } = v;
+  // seat lips — two bronze lips; the ball seals the throat between them
+  for (const s of [-1, 1]) {
+    g.poly([
+      seatX - 10,
+      cy + s * (pipeHH + 6),
+      seatX + 8,
+      cy + s * (pipeHH + 6),
+      seatX + 3,
+      cy + s * pipeHH * 0.4,
+      seatX - 5,
+      cy + s * pipeHH * 0.4,
+    ]).fill({ color: PALETTE.bronze, alpha: 0.9 });
+  }
+  // plunger backstop + spring (compresses as the ball lifts toward it)
+  g.roundRect(plungerX, cy - ballR, 8, ballR * 2, 2).fill({
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+  g.poly(springPts(liftX + ballR, plungerX, cy, ballR * 0.5, 6), false).stroke({
+    width: 2.4,
+    color: WARM,
+    alpha: 0.85,
+  });
+  // forward flow: belts along the inlet + outlet pipe, PARTING around the ball between
+  // (so the parting stays dense and legible instead of a few dots lost over the run).
+  if (v.open > 0.03) {
+    const w0 = seatX - ballR;
+    const w1 = plungerX + ballR;
+    belt(g, v.inX, cy, w0, cy, v.open, 1, v.phase, WATER, 2.4);
+    flowAroundBall(
+      g,
+      w0,
+      w1,
+      cy,
+      v.chamberHH,
+      liftX,
+      ballR,
+      v.open,
+      v.phase,
+      WATER,
+      2.4,
+    );
+    belt(g, w1, cy, v.outX, cy, v.open, 1, v.phase, WATER, 2.4);
+  }
+  // the ball + its highlight (drawn last, on top of the flow)
+  g.circle(liftX, cy, ballR).fill({ color: v.ballColor, alpha: 0.92 });
+  g.circle(liftX, cy, ballR).stroke({
+    width: 1.4,
+    color: 0xdce3f0,
+    alpha: 0.6,
+  });
+  g.circle(liftX - ballR * 0.34, cy - ballR * 0.34, ballR * 0.22).fill({
+    color: 0xffffff,
+    alpha: 0.7,
+  });
 }
 
 // ============================================================================
@@ -747,7 +831,7 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
   const bodyL = -hw * 0.34;
   const bodyR = hw * 0.46;
   const seatX = bodyL + 16; // the seat, just inside the anode inlet
-  const ballR = hh * 0.2;
+  const ballR = hh * 0.13; // small enough that the open flow parts AROUND it
   const plungerX = bodyR - 6; // fixed spring backing, downstream of the ball
   const ballRest = seatX + ballR + 3; // ball sits just downstream of the seat
   // Forward flow pushes the ball DOWNSTREAM (toward the cathode) off its seat,
@@ -795,38 +879,10 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
     );
   }
 
-  // --- the seat (two lips the ball seals against) ------------------------------
-  for (const s of [-1, 1]) {
-    g.poly([
-      seatX - 10,
-      s * (pipeHH + 6),
-      seatX + 8,
-      s * (pipeHH + 6),
-      seatX + 3,
-      s * pipeHH * 0.4,
-      seatX - 5,
-      s * pipeHH * 0.4,
-    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
-  }
-
-  // --- the spring (plunger → ball), compressed when the ball lifts --------------
-  g.roundRect(plungerX, -ballR, 8, ballR * 2, 2).fill({
-    color: PALETTE.rail,
-    alpha: 0.9,
-  });
-  g.poly(springPts(liftX + ballR, plungerX, 0, ballR * 0.45, 6), false).stroke({
-    width: 2.6,
-    color: WARM,
-    alpha: 0.85,
-  });
-
-  // --- water through when open, or a dammed trickle stalled at the seat ---------
-  if (conducting) {
-    belt(g, aX, 0, seatX - ballR, 0, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX + ballR, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
-  } else if (breakdown) {
+  // --- reverse / blocked flow (the forward flow is the shared valve's, below) ----
+  if (breakdown) {
     belt(g, bX, 0, aX, 0, rev, -1, o.phase, PALETTE.bad, 2.6);
-  } else {
+  } else if (!conducting) {
     // blocked: a few dots pile up against the seat from the anode side
     for (let k = 0; k < 3; k++) {
       const t = (((k / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
@@ -837,13 +893,20 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
     }
   }
 
-  // --- the ball + its highlight ------------------------------------------------
-  const ballCol = conducting ? PALETTE.ok : breakdown ? PALETTE.bad : PLATE;
-  g.circle(liftX, 0, ballR).fill({ color: ballCol, alpha: 0.92 });
-  g.circle(liftX, 0, ballR).stroke({ width: 1.5, color: 0xdce3f0, alpha: 0.6 });
-  g.circle(liftX - ballR * 0.34, -ballR * 0.34, ballR * 0.22).fill({
-    color: 0xffffff,
-    alpha: 0.7,
+  // --- the forward check valve (seat + spring + ball, water parting around it) ---
+  forwardCheckValve(g, {
+    cy: 0,
+    pipeHH,
+    chamberHH: pipeHH + 12,
+    seatX,
+    plungerX,
+    ballR,
+    liftX,
+    inX: aX,
+    outX: bX,
+    open: fwd,
+    phase: o.phase,
+    ballColor: conducting ? PALETTE.ok : breakdown ? PALETTE.bad : PLATE,
   });
 
   stud(g, aX, 0, PALETTE.bronze);
@@ -868,30 +931,52 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
   const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
   const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
   const conducting = fwd > 0.03;
-  const clamping = rev > 0.03;
+  const clamping = rev > 0.03; // reverse current only flows once it tops the weir
   const vrev = Math.max(0, -o.electrical.vAcross); // reverse volts across the part
   const vz = o.value && o.value > 0 ? o.value : 5.1;
-  const wall = Math.min(0.92, vz / (V_SCALE * 1.6)); // spillway-wall height frac
-  const lvl = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe level
+  const wallF = Math.min(0.9, vz / (V_SCALE * 1.6)); // weir height (Vz) as a fraction
+  const lvlF = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe fill (reverse volts)
 
   // Terminals on the real pins: anode left, cathode right, both on the part's axis.
   const A = anchorPt(o, "A", -0.588, 0);
   const K = anchorPt(o, "K", 0.588, 0);
   const lineY = (A.y + K.y) / 2; // the forward valve runs along the pin axis
-  const pipeHH = hh * 0.12;
+  const pipeHH = hh * 0.11;
 
-  // --- forward check valve (left of centre): a compact spring valve on the axis --
-  const bodyL = A.x + hw * 0.16;
-  const bodyR = -hw * 0.04;
-  const seatX = bodyL + 14;
-  const ballR = hh * 0.15;
-  const plungerX = bodyR - 6;
-  const liftX = Math.min(
-    plungerX - ballR - 4,
-    seatX + ballR + 3 + hw * 0.12 * fwd,
-  );
-  // standpipe tap sits between the valve and the cathode
-  const spX = hw * 0.34;
+  // --- forward check valve (roomy, on the anode half of the axis) ---------------
+  const bodyL = A.x + hw * 0.22;
+  const bodyR = bodyL + hw * 0.48; // wide enough for seat + ball travel + spring
+  const seatX = bodyL + hw * 0.08;
+  const ballR = hh * 0.11; // small enough that the open flow parts AROUND it
+  const plungerX = bodyR - hw * 0.045;
+  const valveHalfH = ballR + 14; // chamber stands clear above + below the ball + flow
+  const liftSpan = Math.max(0, plungerX - seatX - ballR * 2 - 8);
+  const liftX = seatX + ballR + 4 + liftSpan * fwd; // the ball lifts toward cathode
+
+  // --- standpipe + spillway (cathode side, between the valve and the cathode) ----
+  const standCx = bodyR + (K.x - bodyR) * 0.44;
+  const spW = hw * 0.16;
+  const standL = standCx - spW / 2;
+  const standR = standCx + spW / 2;
+  const standBot = lineY - pipeHH;
+  const fullH = hh * 0.55; // column height that represents the full reverse-volt scale
+  const weirY = standBot - wallF * fullH; // the crest (left lip) at height Vz
+  const lvlY = standBot - Math.min(lvlF, wallF) * fullH; // held at the crest when full
+  const standTop = Math.min(lineY - hh * 0.4, weirY - hh * 0.05); // rim just above crest
+
+  // --- the return tube: spill pours over the crest and runs back to the anode ----
+  const retRunY = Math.min(weirY + hh * 0.1, lineY - ballR - hh * 0.1);
+  const xChan = standL - hw * 0.03; // the catch just left of the column
+  const xRet = A.x + hw * 0.14; // the down-leg into the anode pipe (before the valve)
+  const retPath = [
+    { x: standL, y: weirY },
+    { x: xChan, y: weirY },
+    { x: xChan, y: retRunY },
+    { x: xRet, y: retRunY },
+    { x: xRet, y: lineY },
+  ];
+
+  // ---- horizontal pipe walls along the axis (anode A→valve, cathode valve→K) ----
   for (const s of [-1, 1]) {
     g.moveTo(A.x, lineY + s * pipeHH)
       .lineTo(bodyL, lineY + s * pipeHH)
@@ -905,96 +990,93 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
       .lineTo(x, lineY + pipeHH)
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
+
+  // ---- the return tube (drawn first so the valve + column sit over its mouth) ---
+  const retFlat = retPath.flatMap((p) => [p.x, p.y]);
+  const retW = pipeHH * 1.3 + 2;
+  g.poly(retFlat, false).stroke({
+    width: retW,
+    color: PALETTE.rail,
+    alpha: 0.3,
+    cap: "round",
+    join: "round",
+  });
+  g.poly(retFlat, false).stroke({
+    width: Math.max(1, retW - 5),
+    color: WATER,
+    alpha: clamping ? 0.2 : 0.1,
+    cap: "round",
+    join: "round",
+  });
+
+  // ---- forward check valve: housing, seat lips, spring, plunger, ball -----------
   housing(
     g,
     bodyL,
-    lineY - pipeHH - 9,
+    lineY - valveHalfH,
     bodyR - bodyL,
-    (pipeHH + 9) * 2,
+    valveHalfH * 2,
     PALETTE.bronze,
     9,
   );
-  for (const s of [-1, 1]) {
-    g.poly([
-      seatX - 8,
-      lineY + s * (pipeHH + 5),
-      seatX + 10,
-      lineY + s * (pipeHH + 5),
-      seatX + 4,
-      lineY + s * pipeHH * 0.4,
-      seatX - 4,
-      lineY + s * pipeHH * 0.4,
-    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
-  }
-  g.roundRect(plungerX, lineY - ballR, 7, ballR * 2, 2).fill({
-    color: PALETTE.rail,
-    alpha: 0.9,
-  });
-  g.poly(
-    springPts(liftX + ballR, plungerX, lineY, ballR * 0.4, 6),
-    false,
-  ).stroke({ width: 2.4, color: WARM, alpha: 0.85 });
-  const ballCol = conducting ? PALETTE.ok : clamping ? PALETTE.warn : PLATE;
-  g.circle(liftX, lineY, ballR).fill({ color: ballCol, alpha: 0.92 });
-  g.circle(liftX, lineY, ballR).stroke({
-    width: 1.4,
-    color: 0xdce3f0,
-    alpha: 0.6,
+  forwardCheckValve(g, {
+    cy: lineY,
+    pipeHH,
+    chamberHH: valveHalfH,
+    seatX,
+    plungerX,
+    ballR,
+    liftX,
+    inX: A.x,
+    outX: K.x,
+    open: fwd,
+    phase: o.phase,
+    ballColor: conducting ? PALETTE.ok : clamping ? PALETTE.accent : PLATE,
   });
 
-  // --- reverse standpipe + spillway (rises up from the tap toward the cathode) ---
-  const spW = hw * 0.2;
-  const spBot = lineY - pipeHH;
-  const spTop = -hh * 0.88;
-  const span = spBot - spTop;
-  g.moveTo(spX, lineY)
-    .lineTo(spX, spBot)
-    .stroke({ width: 2, color: PALETTE.border, alpha: 0.5 });
-  for (const s of [-1, 1]) {
-    g.moveTo(spX + (s * spW) / 2, spBot)
-      .lineTo(spX + (s * spW) / 2, spTop)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
-  }
-  // the spillway wall at height Vz (the right lip the water pours over)
-  const wallY = spBot - wall * span;
-  g.moveTo(spX + spW / 2, wallY)
-    .lineTo(spX + spW / 2 + 14, wallY)
-    .stroke({ width: 3, color: PALETTE.accent, alpha: 0.9 });
-  // water level = reverse voltage, held at the wall once reached (the clamp)
-  const lvlY = spBot - Math.min(lvl, wall) * span;
-  g.rect(spX - spW / 2 + 2, lvlY, spW - 4, spBot - lvlY).fill({
+  // ---- the standpipe glass column rising from the cathode pipe ------------------
+  g.rect(standL, standTop, spW, standBot - standTop).fill({
     color: WATER,
-    alpha: 0.6,
+    alpha: 0.06,
   });
-  g.moveTo(spX - spW / 2 + 2, lvlY)
-    .lineTo(spX + spW / 2 - 2, lvlY)
-    .stroke({ width: 1.6, color: WATER2, alpha: lvl > 0.05 ? 0.85 : 0 });
+  // right wall full height; left wall only up to the weir crest (the dam)
+  g.moveTo(standR, standBot)
+    .lineTo(standR, standTop)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(standL, standBot)
+    .lineTo(standL, weirY)
+    .stroke({
+      width: 3,
+      color: clamping ? PALETTE.accent : PALETTE.bronze,
+      alpha: 0.9,
+    });
+  // the crest the water pours over (height = Vz) + a faint Vz reference line
+  g.rect(standL - 7, weirY - 2, 14, 4).fill({
+    color: clamping ? PALETTE.accent : PALETTE.bronze,
+    alpha: 0.95,
+  });
+  g.moveTo(standL - 10, weirY)
+    .lineTo(standR + 8, weirY)
+    .stroke({ width: 1.2, color: PALETTE.accent, alpha: 0.4 });
+  // water fill = reverse voltage, held at the crest once it tops out (the clamp)
+  g.rect(standL + 2, lvlY, spW - 4, standBot - lvlY).fill({
+    color: WATER,
+    alpha: 0.55,
+  });
+  g.moveTo(standL + 2, lvlY)
+    .lineTo(standR - 2, lvlY)
+    .stroke({ width: 1.6, color: WATER2, alpha: lvlF > 0.04 ? 0.85 : 0 });
 
-  // --- the cascade over the crest + the return path back to the anode -----------
-  // (reverse current returns to the anode side once the level tops the Vz wall)
-  if (clamping && lvl >= wall - 0.03) {
-    const retY = -hh * 0.66;
-    g.moveTo(spX + spW / 2 + 14, wallY)
-      .lineTo(spX + spW / 2 + 14, retY)
-      .lineTo(A.x + hw * 0.08, retY)
-      .lineTo(A.x + hw * 0.08, lineY - pipeHH)
-      .stroke({ width: 2, color: PALETTE.warn, alpha: 0.4 });
-    for (let k = 0; k < 4; k++) {
-      const t = (((k / 4 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(
-        spX + spW / 2 + 8 + t * 10,
-        wallY + t * t * (spBot - wallY) * 0.7,
-        2.4,
-      ).fill({ color: WATER2, alpha: 0.75 * (1 - t * 0.5) });
-    }
-  }
-
-  // --- flow: forward through the valve, or reverse backing up to the standpipe ---
-  if (conducting) {
-    belt(g, A.x, lineY, seatX - ballR, lineY, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX + ballR, lineY, K.x, lineY, fwd, 1, o.phase, WATER, 2.6);
-  } else if (clamping) {
-    belt(g, K.x, lineY, spX, lineY, rev, -1, o.phase, PALETTE.warn, 2.4);
+  // ---- reverse spill-and-return loop (forward flow is the shared valve's, above) -
+  if (clamping) {
+    const loop = [
+      { x: K.x, y: lineY },
+      { x: standCx, y: lineY },
+      { x: standCx, y: weirY },
+      ...retPath,
+      { x: A.x, y: lineY },
+    ];
+    flowAlongPath(g, loop, rev, 1, o.phase, WATER2, 2.4);
   }
 
   stud(g, A.x, A.y, PALETTE.bronze);

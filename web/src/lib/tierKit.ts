@@ -247,6 +247,48 @@ export function flowAroundPlug(
   }
 }
 
+/**
+ * Carriers streaming along a HORIZONTAL pipe that PART around a ball obstacle — two
+ * symmetric lanes that ride the axis, then bulge out toward the chamber walls as they
+ * skirt the ball and rejoin past it (the open check valve: water flows AROUND the lifted
+ * ball, not through it). Density + alpha ride `mag` (0..1); motion is on the bounded
+ * `phase` (never speed). `xFrom`→`xTo` is the travel direction along the axis at `cy`;
+ * the ball is at (`ballX`, cy) radius `ballR`; `chamberHH` is how far the lanes may bulge
+ * (the valve chamber half-height, wider than the thin pipe).
+ */
+export function flowAroundBall(
+  g: Graphics,
+  xFrom: number,
+  xTo: number,
+  cy: number,
+  chamberHH: number,
+  ballX: number,
+  ballR: number,
+  mag: number,
+  phase: number,
+  color: number,
+  r = 2.4,
+): void {
+  if (mag < 0.02) return;
+  const n = FLOW_DOTS_MAX;
+  // Sit the bulged lane just outside the ball but inside the chamber walls.
+  const lane = Math.min(chamberHH - r - 2, ballR + r + 4);
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      const t = (((i / n + phase * FLOW_SPEED) % 1) + 1) % 1;
+      const x = xFrom + (xTo - xFrom) * t;
+      // hug the axis away from the ball, swing out to the lane only as it passes.
+      const bump = Math.exp(-(((x - ballX) / (ballR * 1.25)) ** 2));
+      g.circle(x, cy + side * lane * bump, r).fill({
+        color,
+        alpha: (0.3 + 0.5 * mag) * present,
+      });
+    }
+  }
+}
+
 // --- machine furniture --------------------------------------------------------
 
 // Whether stud() actually paints. On the board the illustration's decorative studs
