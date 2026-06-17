@@ -3333,16 +3333,20 @@ export class Board {
       // Thickness tracks current over a wide range so amperage is legible at a
       // glance (bounded by the saturating normC — a huge current stays on-screen).
       const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
+      // The path actually drawn (and walked by the carriers): in conduit mode it is the
+      // logical route + aligning pin stubs, rounded into elbows; in schematic mode the
+      // plain route. Sampling the carriers on THIS keeps the particles on the pipe
+      // through its bends.
+      let sampleRoute = route;
       if (conduit) {
-        this.drawConduitSkin(
-          g,
+        const pw = 5 + 6 * normC;
+        const rd = conduitDrawRoute(
           route,
-          color,
-          5 + 6 * normC,
-          conduit,
           this.pinOutward(w.from),
           this.pinOutward(w.to),
         );
+        sampleRoute = roundedPoints(rd, Math.min(pw * 2, PITCH * 0.7));
+        this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
       } else {
         polyline(g, route);
         g.stroke({ width: width + 4, color, alpha: 0.16 });
@@ -3350,7 +3354,7 @@ export class Board {
         g.stroke({ width, color, alpha: 0.95 });
       }
 
-      const len = routeLength(route);
+      const len = routeLength(sampleRoute);
       if (len <= 0) continue;
       const iNorm = Math.max(-1, Math.min(1, cur / I_REF));
       const vNorm = Math.max(-1, Math.min(1, (v ?? 0) / V_REF));
@@ -3388,7 +3392,7 @@ export class Board {
         const alpha = 0.32 + 0.42 * normC;
         const dir = cur >= 0 ? 1 : -1;
         for (const d of beltDots(len, spacing, co)) {
-          const s = sampleRouteAt(route, d);
+          const s = sampleRouteAt(sampleRoute, d);
           if (!conduit) {
             drawChevron(
               g,
@@ -3428,7 +3432,7 @@ export class Board {
         );
         this.energyOffset.set(w.id, eo);
         for (const d of beltDots(len, ENERGY_SPACING, eo)) {
-          const s = sampleRouteAt(route, d);
+          const s = sampleRouteAt(sampleRoute, d);
           g.circle(s.x, s.y, 2.4).fill({
             color: ENERGY_COLOR,
             alpha: 0.5 + 0.4 * pNorm,
@@ -3485,28 +3489,23 @@ export class Board {
    */
   private drawConduitSkin(
     g: Graphics,
-    route: Point[],
+    rp: Point[],
     color: number,
     pw: number,
     lens: BoardLens,
-    out0: Dir | null = null,
-    out1: Dir | null = null,
   ): void {
     const cap = "round" as const;
     const join = "round" as const;
-    const r = pw * 1.1; // bend radius ≈ pipe width
     const coreAlpha = lens === "analogy" ? 0.32 : 0.36;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    // A small ALIGNING stub at each pin end so the conduit (and its flared mouth) exit
-    // the part straight along the pin's facing, then bend — the "small bend that aligns
-    // it with the input". Rendering-only; the logical route is untouched.
-    const rd = conduitDrawRoute(route, out0, out1);
-    // Two translucent layers only — a faint wall rim + a voltage-tinted fill (no dark
-    // bore; the stacked bore is what muddied the pipe and made crossings read opaque).
-    // The grid + overlaps show through; the fill colour + the carriers stay readable.
-    roundedPolyline(g, rd, r);
+    // `rp` is the already-rounded draw path (aligning stubs + rounded elbows). Two
+    // translucent layers only — a faint wall rim + a voltage-tinted fill (no dark bore;
+    // the stacked bore muddied the pipe and made crossings read opaque). The grid +
+    // overlaps show through; the fill colour + the carriers (which walk this same path)
+    // stay the readable part.
+    polyline(g, rp);
     g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap, join });
-    roundedPolyline(g, rd, r);
+    polyline(g, rp);
     g.stroke({
       width: Math.max(1, pw - 1),
       color,
@@ -3515,7 +3514,7 @@ export class Board {
       join,
     });
     if (lens === "reality") {
-      roundedPolyline(g, rd, r);
+      polyline(g, rp);
       g.stroke({ width: 1.2, color: 0xffffff, alpha: 0.08, cap, join });
     }
     // Taper each end into a port mouth, oriented along the end segment — the conduit
@@ -3524,10 +3523,10 @@ export class Board {
     const ph = (pw + 5) / 2;
     for (const [ei, ni] of [
       [0, 1],
-      [rd.length - 1, rd.length - 2],
+      [rp.length - 1, rp.length - 2],
     ] as const) {
-      const e = rd[ei];
-      const nb = rd[ni];
+      const e = rp[ei];
+      const nb = rp[ni];
       if (!e || !nb) continue;
       const d = Math.hypot(nb.x - e.x, nb.y - e.y) || 1;
       const ux = (nb.x - e.x) / d;
@@ -4742,17 +4741,15 @@ function polyline(g: Graphics, pts: Point[]): void {
 }
 
 /**
- * Like {@link polyline} but with rounded corners: each interior vertex becomes a
- * quadratic arc tangent to both incident segments, pulled back by up to `r` (capped at
- * half the shorter leg). The conduit skins route through this so a bend reads as a
- * smooth pipe elbow rather than a hard mitre/clip.
+ * A rounded version of `pts` as a tessellated polyline: each interior vertex becomes a
+ * quadratic-arc elbow (tangent to both legs, pulled back by up to `r`, capped at half
+ * the shorter leg), sampled into `steps` segments. Returning points (not drawing) lets
+ * the conduit be BOTH stroked and walked by the carriers along the exact same path, so
+ * the particles follow the rounded pipe through its bends.
  */
-function roundedPolyline(g: Graphics, pts: Point[], r: number): void {
-  if (pts.length < 3 || r <= 0.5) {
-    polyline(g, pts);
-    return;
-  }
-  g.moveTo(pts[0]!.x, pts[0]!.y);
+function roundedPoints(pts: Point[], r: number, steps = 6): Point[] {
+  if (pts.length < 3 || r <= 0.5) return pts.slice();
+  const out: Point[] = [pts[0]!];
   for (let i = 1; i < pts.length - 1; i++) {
     const p = pts[i - 1]!;
     const v = pts[i]!;
@@ -4761,15 +4758,24 @@ function roundedPolyline(g: Graphics, pts: Point[], r: number): void {
     const d2 = Math.hypot(n.x - v.x, n.y - v.y) || 1;
     const r1 = Math.min(r, d1 / 2);
     const r2 = Math.min(r, d2 / 2);
-    g.lineTo(v.x + ((p.x - v.x) / d1) * r1, v.y + ((p.y - v.y) / d1) * r1);
-    g.quadraticCurveTo(
-      v.x,
-      v.y,
-      v.x + ((n.x - v.x) / d2) * r2,
-      v.y + ((n.y - v.y) / d2) * r2,
-    );
+    const ax = v.x + ((p.x - v.x) / d1) * r1;
+    const ay = v.y + ((p.y - v.y) / d1) * r1;
+    const bx = v.x + ((n.x - v.x) / d2) * r2;
+    const by = v.y + ((n.y - v.y) / d2) * r2;
+    out.push(new Point(ax, ay));
+    for (let s = 1; s <= steps; s++) {
+      const t = s / steps;
+      const u = 1 - t;
+      out.push(
+        new Point(
+          u * u * ax + 2 * u * t * v.x + t * t * bx,
+          u * u * ay + 2 * u * t * v.y + t * t * by,
+        ),
+      );
+    }
   }
-  g.lineTo(pts[pts.length - 1]!.x, pts[pts.length - 1]!.y);
+  out.push(pts[pts.length - 1]!);
+  return out;
 }
 
 /** Cardinal-direction bit (N=1,E=2,S=4,W=8) of the step from `a` toward `b`. */
@@ -4792,7 +4798,7 @@ function alignStub(pin: Point, other: Point, out: Dir): Point | null {
   const d = Math.hypot(dx, dy) || 1;
   const dot = (dx / d) * out.x + (dy / d) * out.y;
   if (Math.abs(dot) > 0.5) return null;
-  const len = Math.min(PITCH * 0.55, d * 0.45);
+  const len = Math.min(PITCH * 0.9, d * 0.5);
   return new Point(pin.x + out.x * len, pin.y + out.y * len);
 }
 
