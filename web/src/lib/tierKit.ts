@@ -161,6 +161,52 @@ export function belt(
 }
 
 /**
+ * Like {@link belt} but along an arbitrary polyline `pts` (e.g. a tessellated bezier —
+ * a flexible hose). Carriers ride the bounded `phase` at constant rate; density + alpha
+ * ride `mag`; `dir` (+1/−1) sets travel along the path.
+ */
+export function flowAlongPath(
+  g: Graphics,
+  pts: { x: number; y: number }[],
+  mag: number,
+  dir: number,
+  phase: number,
+  color: number,
+  r = 2.4,
+): void {
+  if (mag < 0.02 || pts.length < 2) return;
+  const cum = [0];
+  for (let i = 0; i < pts.length - 1; i++) {
+    cum.push(
+      cum[i]! +
+        Math.hypot(pts[i + 1]!.x - pts[i]!.x, pts[i + 1]!.y - pts[i]!.y),
+    );
+  }
+  const total = cum[cum.length - 1]!;
+  if (total <= 0) return;
+  const at = (d: number): { x: number; y: number } => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (d <= cum[i + 1]!) {
+        const t = (d - cum[i]!) / (cum[i + 1]! - cum[i]! || 1);
+        return {
+          x: pts[i]!.x + (pts[i + 1]!.x - pts[i]!.x) * t,
+          y: pts[i]!.y + (pts[i + 1]!.y - pts[i]!.y) * t,
+        };
+      }
+    }
+    return pts[pts.length - 1]!;
+  };
+  const n = FLOW_DOTS_MAX;
+  for (let i = 0; i < n; i++) {
+    const present = dotPresence(i, mag);
+    if (present <= 0) continue;
+    const t = (((i / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+    const p = at(t * total);
+    g.circle(p.x, p.y, r).fill({ color, alpha: (0.3 + 0.55 * mag) * present });
+  }
+}
+
+/**
  * Flowing carriers down a vertical pipe that PART around a central plug — the two
  * symmetric streams hug the centre away from the obstacle and bulge out toward the
  * walls as they pass it, so the plug visibly throttles the flow (the valve-control
