@@ -3305,6 +3305,24 @@ export class Board {
     // Which cardinal arms each junction actually uses, so a conduit junction can cap
     // the unused ones (a 4-way fitting). Accumulated from the wires' end directions.
     const junctionDirs = new Map<number, number>();
+    // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
+    // share a channel, computed once up front so the per-wire draw below just uses them.
+    const condRoutes = new Map<number, Point[]>();
+    if (conduit) {
+      for (const w of this.graph.wires.values()) {
+        const route = this.routeForWire(w);
+        if (route.length < 2) continue;
+        condRoutes.set(
+          w.id,
+          conduitDrawRoute(
+            route,
+            this.pinOutward(w.from),
+            this.pinOutward(w.to),
+          ),
+        );
+      }
+      nudgeParallel(condRoutes);
+    }
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
@@ -3340,11 +3358,7 @@ export class Board {
       let sampleRoute = route;
       if (conduit) {
         const pw = 5 + 6 * normC;
-        const rd = conduitDrawRoute(
-          route,
-          this.pinOutward(w.from),
-          this.pinOutward(w.to),
-        );
+        const rd = condRoutes.get(w.id) ?? route;
         sampleRoute = roundedPoints(rd, Math.min(pw * 2, PITCH * 0.7));
         this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
       } else {
@@ -4787,6 +4801,89 @@ function dirBit(a: Point, b: Point): number {
 }
 
 type Dir = { x: number; y: number };
+
+const NUDGE_SPACING = 9; // px between conduits sharing a channel
+
+/**
+ * Fan apart conduits that run along the SAME grid line (overlapping collinear segments)
+ * so parallel pipes don't stack into one muddy band. Operates on the orthogonal draw
+ * routes (before rounding), perpendicular-offsetting each overlapping INTERIOR segment
+ * into its own lane. Because an orthogonal route alternates H/V, moving a segment's two
+ * corner points along the perpendicular axis just lengthens the adjacent (perpendicular)
+ * legs — the route stays orthogonal and the pin terminals stay put. Render-only:
+ * `routes` holds per-wire Point copies, never the graph.
+ */
+function nudgeParallel(routes: Map<number, Point[]>): void {
+  type Seg = { id: number; iA: number; iB: number; lo: number; hi: number };
+  const hGroups = new Map<number, Seg[]>();
+  const vGroups = new Map<number, Seg[]>();
+  const push = (m: Map<number, Seg[]>, key: number, s: Seg): void => {
+    const arr = m.get(key);
+    if (arr) arr.push(s);
+    else m.set(key, [s]);
+  };
+  for (const [id, pts] of routes) {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      // Skip the two end legs so the pin terminals never move.
+      if (i === 0 || i + 1 === pts.length - 1) continue;
+      const a = pts[i]!;
+      const b = pts[i + 1]!;
+      if (Math.abs(a.y - b.y) < 0.5 && Math.abs(a.x - b.x) > 2) {
+        push(hGroups, Math.round(a.y / 4) * 4, {
+          id,
+          iA: i,
+          iB: i + 1,
+          lo: Math.min(a.x, b.x),
+          hi: Math.max(a.x, b.x),
+        });
+      } else if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) > 2) {
+        push(vGroups, Math.round(a.x / 4) * 4, {
+          id,
+          iA: i,
+          iB: i + 1,
+          lo: Math.min(a.y, b.y),
+          hi: Math.max(a.y, b.y),
+        });
+      }
+    }
+  }
+  const apply = (groups: Map<number, Seg[]>, axis: "x" | "y"): void => {
+    for (const segs of groups.values()) {
+      if (segs.length < 2) continue;
+      segs.sort((p, q) => p.lo - q.lo);
+      let cluster: Seg[] = [];
+      let hi = -Infinity;
+      const flush = (): void => {
+        const ids = [...new Set(cluster.map((s) => s.id))].sort(
+          (p, q) => p - q,
+        );
+        if (cluster.length >= 2 && ids.length >= 2) {
+          const lane = new Map(
+            ids.map((id, k) => [
+              id,
+              (k - (ids.length - 1) / 2) * NUDGE_SPACING,
+            ]),
+          );
+          for (const s of cluster) {
+            const off = lane.get(s.id) ?? 0;
+            const pts = routes.get(s.id)!;
+            pts[s.iA]![axis] += off;
+            pts[s.iB]![axis] += off;
+          }
+        }
+        cluster = [];
+      };
+      for (const s of segs) {
+        if (cluster.length && s.lo > hi + 2) flush();
+        cluster.push(s);
+        hi = Math.max(hi, s.hi);
+      }
+      flush();
+    }
+  };
+  apply(hGroups, "y");
+  apply(vGroups, "x");
+}
 
 /** The short aligning stub from a pin: when the route leaves the pin perpendicular to
  *  the pin's facing `out`, return a point a little way along `out` (so the conduit
