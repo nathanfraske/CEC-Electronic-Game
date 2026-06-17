@@ -224,6 +224,9 @@ export interface SelectedPart {
   /** A potentiometer's wiper position in [0,1] (its second scalar, beside `value` =
    * total resistance). Undefined for kinds with no wiper. */
   wiper?: number;
+  /** A thermistor's body temperature in °C (its second scalar, beside `value` =
+   * nominal resistance). Undefined for non-thermistor kinds. */
+  temp?: number;
   /** A digital part's logic-family index (0 = Ideal, 1 = CMOS, 2 = TTL). Undefined
    * for non-digital kinds. */
   family?: number;
@@ -249,6 +252,7 @@ interface ClipboardSnippet {
     rot: number;
     amp?: number;
     wiper?: number;
+    temp?: number;
     family?: number;
     openDrain?: boolean;
     label?: string;
@@ -1714,6 +1718,7 @@ export class Board {
           rot: c.rot,
           amp: c.amp,
           wiper: c.wiper,
+          temp: c.temp,
           family: c.family,
           openDrain: c.openDrain,
           label: c.label,
@@ -1864,6 +1869,21 @@ export class Board {
     c.wiper = wiper;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed wiper position
+  }
+
+  /**
+   * Set a thermistor's body temperature (°C) — its second scalar. Mirrors
+   * {@link setComponentWiper}: one undo per drag (recorded on the first move), live
+   * thereafter. {@link buildNetlist} turns the new temperature into R(T), so the sim
+   * rebuilds and the reading follows.
+   */
+  setComponentTemp(id: number, temp: number, recordUndo = true): void {
+    const c = this.graph.components.get(id);
+    if (!c || c.temp === temp) return;
+    if (recordUndo) this.pushUndo(this.graph.serialize());
+    c.temp = temp;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed temperature
   }
 
   /**
@@ -2648,6 +2668,7 @@ export class Board {
         rot: c.rot,
         amp: c.amp,
         wiper: c.wiper,
+        temp: c.temp,
         family: c.family,
         openDrain: c.openDrain,
         label: c.label,
@@ -2730,6 +2751,7 @@ export class Board {
       nc.rot = (cc.rot + p.rot) % 4;
       if (cc.amp !== undefined) nc.amp = cc.amp;
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
+      if (cc.temp !== undefined) nc.temp = cc.temp;
       if (cc.family !== undefined) nc.family = cc.family;
       if (cc.openDrain !== undefined) nc.openDrain = cc.openDrain;
       if (cc.label !== undefined) nc.label = cc.label;
@@ -4664,6 +4686,7 @@ class ComponentNode {
         phase,
         value: this.component.value,
         wiper: this.component.wiper,
+        temp: this.component.temp,
         anchors,
       };
       // Hide the illustration's own decorative studs on the board — the real pin

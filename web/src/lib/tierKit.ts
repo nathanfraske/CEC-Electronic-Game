@@ -32,6 +32,8 @@ export interface TierOpts {
   value?: number;
   /** A potentiometer's wiper in [0,1]; only the POT drawer reads it. */
   wiper?: number;
+  /** A thermistor's body temperature in °C; only the NTC/PTC drawer reads it. */
+  temp?: number;
   /**
    * Terminal anchor points in the drawer's OWN bounds space (pre-scale px), one per
    * catalog pin (carrying its `label`). The host computes where each real pin lands

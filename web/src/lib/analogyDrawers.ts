@@ -21,6 +21,13 @@
 import { Graphics } from "pixi.js";
 import { PALETTE } from "./graph";
 import {
+  THERMISTOR_TEMP,
+  type ThermistorKind,
+  tempNorm,
+  thermistorOpenness,
+  thermistorResistance,
+} from "./thermistor";
+import {
   type TierOpts as AnalogyOpts,
   anchorPt,
   belt,
@@ -1955,6 +1962,119 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
   stud(g, W.x, W.y, PALETTE.accent);
 }
 
+// ============================================================================
+// Thermistor (NTC/PTC) — a HEAT-ACTUATED SHUTTER VALVE on the pipe (ported from the
+// thermistor-tiers reference sheets). A heater under the orifice is the temperature; the
+// shutter plates set the channel width = the resistance. An NTC OPENS as it heats (R
+// falls); the switching-ceramic PTC stays open until its Curie point then SNAPS shut (R
+// jumps decades). One drawer serves both: the openness comes straight from R(T) via the
+// shared thermistor model, so the two read as mirror images.
+//
+// Live mapping (thermistor ElectricalState + the temperature knob, value = nominal R):
+//   • openness = openness(R(kind, value, temp))  → the shutter gap.
+//   • heat     = tempNorm(kind, temp)            → heater glow + rising waves.
+//   • flow     = norm(|I|)                       → carriers through the gap (sign = dir).
+// ============================================================================
+function drawAnalogyThermistor(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const kind: ThermistorKind = o.kind === "PTC" ? "PTC" : "NTC";
+  const tempC = o.temp ?? THERMISTOR_TEMP[kind].def;
+  const r0 = o.value && o.value > 0 ? o.value : kind === "NTC" ? 10000 : 100;
+  const open = thermistorOpenness(thermistorResistance(kind, r0, tempC));
+  const tN = tempNorm(kind, tempC);
+  const cur = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+
+  const A = anchorPt(o, "A", -0.588, 0);
+  const B = anchorPt(o, "B", 0.588, 0);
+  const lineY = (A.y + B.y) / 2;
+  const cx = (A.x + B.x) / 2;
+  const pipeHH = hh * 0.18;
+  const bodyHW = hw * 0.2;
+  const EMBER = PALETTE.bad;
+
+  // --- pipe walls (A→chamber, chamber→B) + flange caps at the pins ---------------
+  for (const s of [-1, 1]) {
+    g.moveTo(A.x, lineY + s * pipeHH)
+      .lineTo(cx - bodyHW, lineY + s * pipeHH)
+      .moveTo(cx + bodyHW, lineY + s * pipeHH)
+      .lineTo(B.x, lineY + s * pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  for (const x of [A.x, B.x]) {
+    g.moveTo(x, lineY - pipeHH)
+      .lineTo(x, lineY + pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  housing(
+    g,
+    cx - bodyHW,
+    lineY - pipeHH - 8,
+    bodyHW * 2,
+    (pipeHH + 8) * 2,
+    PALETTE.warn,
+    7,
+  );
+
+  // --- heater under the orifice: coil + glow + rising waves (the temperature) -----
+  const coilY = lineY + pipeHH + hh * 0.24;
+  if (tN > 0.02) {
+    g.circle(cx, coilY, hh * (0.13 + 0.26 * tN)).fill({
+      color: EMBER,
+      alpha: 0.1 + 0.3 * tN,
+    });
+  }
+  g.poly(
+    springPts(cx - bodyHW * 0.7, cx + bodyHW * 0.7, coilY, 5, 4),
+    false,
+  ).stroke({ width: 3, color: mix(PALETTE.rail, EMBER, tN), alpha: 0.9 });
+  for (let i = 0; i < 3; i++) {
+    const a = Math.max(0, (tN - 0.18) / 0.82) * 0.6 * (1 - i * 0.22);
+    if (a <= 0) continue;
+    const baseY = coilY - 9 - i * 9;
+    const d: number[] = [];
+    for (let k = 0; k <= 6; k++) {
+      d.push(
+        cx - 14 + k * 5,
+        baseY + Math.sin(k * 0.9 + o.phase * PULSE_K + i) * 3,
+      );
+    }
+    g.poly(d, false).stroke({
+      width: 2,
+      color: mix(EMBER, 0xffffff, 0.25),
+      alpha: a,
+    });
+  }
+
+  // --- the shutter plates: close toward the axis as the valve shuts ---------------
+  const fullGap = pipeHH * 1.8;
+  const half = (4 + open * (fullGap - 4)) / 2;
+  const plateCol = mix(PLATE, PALETTE.warn, tN * 0.6);
+  const plateW = bodyHW * 1.2;
+  for (const s of [-1, 1]) {
+    const yInner = lineY + s * half;
+    const yOuter = lineY + s * (pipeHH + 2);
+    g.rect(
+      cx - plateW / 2,
+      Math.min(yInner, yOuter),
+      plateW,
+      Math.abs(yOuter - yInner),
+    ).fill({ color: plateCol, alpha: 0.92 });
+    g.rect(
+      cx - plateW / 2,
+      Math.min(yInner, yOuter),
+      plateW,
+      Math.abs(yOuter - yInner),
+    ).stroke({ width: 1.2, color: 0x8893a6, alpha: 0.6 });
+  }
+
+  // --- flow through the gap (current) --------------------------------------------
+  belt(g, A.x, lineY, B.x, lineY, cur, dir, o.phase, WATER, 2.6);
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -1977,6 +2097,8 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   OA: drawAnalogyOA,
   MOV: drawAnalogyVaristor,
   POT: drawAnalogyPOT,
+  NTC: drawAnalogyThermistor,
+  PTC: drawAnalogyThermistor,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */
