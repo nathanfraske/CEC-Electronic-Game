@@ -178,6 +178,14 @@ export interface BuiltNetlist {
   aux: Float64Array;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
+  /**
+   * component id → the EXTRA element indices for a part that splits into several legs,
+   * so the renderer can read each leg's current and show the split proportionally (the
+   * POT's W→B leg beside its A→W main; a future device's per-branch currents). The
+   * main current stays in {@link BuiltNetlist.elemOfComponent}; these are the rest, in
+   * a part-specific order the drawer knows. Absent for ordinary single-element parts.
+   */
+  legsOfComponent: Map<number, number[]>;
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
   nodesOfComponent: Map<number, [number, number]>;
   /**
@@ -346,6 +354,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   // kinds, so a 0 there cannot change anything.
   const auxArr: number[] = [];
   const elemOfComponent = new Map<number, number>();
+  const legsOfComponent = new Map<number, number[]>();
   const nodesOfComponent = new Map<number, [number, number]>();
   for (const c of sorted) {
     const kind = graph.kindOf(c);
@@ -407,7 +416,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       dArr.push(0);
       values.push(rWB);
       auxArr.push(0);
-      elemOfComponent.set(c.id, upIdx); // A→W leg current
+      elemOfComponent.set(c.id, upIdx); // A→W leg current (the main)
+      legsOfComponent.set(c.id, [upIdx + 1]); // W→B leg → wiper tap = A→W − W→B
       nodesOfComponent.set(c.id, [na, nb]); // V across the whole track
       continue;
     }
@@ -623,6 +633,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     elemOfComponent,
+    legsOfComponent,
     nodesOfComponent,
     nodeNames,
     floatingSources,
@@ -673,9 +684,14 @@ export function electricalMap(
     const vAcross = nodes
       ? (nodeVoltages[nodes[0]] ?? 0) - (nodeVoltages[nodes[1]] ?? 0)
       : 0;
+    // Extra per-leg currents for parts that split (POT: its W→B leg), so the drawer
+    // can show the current dividing between exits in proportion. Absent for the rest.
+    const legIdx = netlist.legsOfComponent.get(compId);
+    const legs = legIdx?.map((i) => elementCurrents[i] ?? 0);
     map.set(compId, {
       current: elementCurrents[ei] ?? 0,
       vAcross,
+      ...(legs ? { legs } : {}),
       // The transformer's magnetising current / inductor branch current (its real
       // flux), when the core exposes it — lets the transformer tier read true flux.
       flux: reactiveCurrents ? (reactiveCurrents[ei] ?? 0) : undefined,

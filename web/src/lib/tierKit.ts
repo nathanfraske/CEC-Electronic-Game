@@ -208,6 +208,83 @@ export function flowAlongPath(
   }
 }
 
+/** An arc-length sampler over a polyline: `at(d)` returns the point `d` pixels along. */
+function arcSampler(pts: { x: number; y: number }[]): {
+  total: number;
+  at: (d: number) => { x: number; y: number };
+} {
+  const cum = [0];
+  for (let i = 0; i < pts.length - 1; i++) {
+    cum.push(
+      cum[i]! +
+        Math.hypot(pts[i + 1]!.x - pts[i]!.x, pts[i + 1]!.y - pts[i]!.y),
+    );
+  }
+  const total = cum[cum.length - 1]!;
+  const at = (d: number): { x: number; y: number } => {
+    for (let i = 0; i < pts.length - 1; i++) {
+      if (d <= cum[i + 1]!) {
+        const t = (d - cum[i]!) / (cum[i + 1]! - cum[i]! || 1);
+        return {
+          x: pts[i]!.x + (pts[i + 1]!.x - pts[i]!.x) * t,
+          y: pts[i]!.y + (pts[i + 1]!.y - pts[i]!.y) * t,
+        };
+      }
+    }
+    return pts[pts.length - 1] ?? { x: 0, y: 0 };
+  };
+  return { total, at };
+}
+
+/**
+ * The general PROPORTIONAL-SPLIT flow: carriers stream IN along `inPath` to its end (a
+ * junction), then continue down one of the `exits` — each carrier committed to an exit
+ * in proportion to that exit's `weight` (its share of the current). So the split is
+ * VISIBLE: more carriers take the higher-current exit, and you watch a tap (the POT
+ * wiper, a divider) STEAL its share off the main run as you change it. Density rides the
+ * total in-current `mag`; motion is on the bounded `phase` (never speed). Zero-weight
+ * exits get nothing; if every weight is ~0 it draws nothing.
+ *
+ * The reusable framework for "particles go to the exits proportionally": feed it the
+ * per-leg currents from {@link ElectricalState.legs} as the exit weights.
+ */
+export function flowSplit(
+  g: Graphics,
+  inPath: { x: number; y: number }[],
+  exits: { path: { x: number; y: number }[]; weight: number }[],
+  mag: number,
+  dir: number,
+  phase: number,
+  color: number,
+  r = 2.4,
+): void {
+  if (mag < 0.02 || exits.length === 0 || inPath.length < 1) return;
+  const weights = exits.map((e) => Math.max(0, e.weight));
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 1e-9) return;
+  // cumulative fractions partition the carriers among the exits by weight
+  const cumFrac: number[] = [];
+  let acc = 0;
+  for (const w of weights) {
+    acc += w / total;
+    cumFrac.push(acc);
+  }
+  // an arc-length sampler over each full route (the shared inPath + that exit)
+  const routes = exits.map((e) => arcSampler([...inPath, ...e.path]));
+  const n = FLOW_DOTS_MAX * 2;
+  for (let k = 0; k < n; k++) {
+    const present = dotPresence(Math.floor((k * FLOW_DOTS_MAX) / n), mag);
+    if (present <= 0) continue;
+    const lane = (k + 0.5) / n;
+    let ei = 0;
+    while (ei < cumFrac.length - 1 && lane > cumFrac[ei]!) ei++;
+    const route = routes[ei]!;
+    const t = (((k / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+    const p = route.at(t * route.total);
+    g.circle(p.x, p.y, r).fill({ color, alpha: (0.3 + 0.5 * mag) * present });
+  }
+}
+
 /**
  * Flowing carriers down a vertical pipe that PART around a central plug — the two
  * symmetric streams hug the centre away from the obstacle and bulge out toward the

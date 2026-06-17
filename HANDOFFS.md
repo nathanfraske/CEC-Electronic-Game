@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (14) — Proportional-split flow framework (the POT wiper "steals" carriers)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. The owner's "particles
+go to the exits proportionally" ask, built as a general framework + applied to the POT.
+
+**Framework (general, reusable):**
+- **Data** — per-leg currents. `BuiltNetlist.legsOfComponent: Map<id, number[]>` carries
+  the EXTRA element indices for a part that splits; `electricalMap` reads them into the
+  new `ElectricalState.legs?: number[]`. Threads to drawers for free (electrical is
+  already in the opts; computed fresh each frame from the blended `elementCurrents`, so
+  no loop.ts change). The POT registers its W→B leg, so the wiper tap = `current − legs[0]`.
+- **Primitive** — `tierKit.flowSplit(g, inPath, exits[{path,weight}], mag, dir, phase,
+  color, r)`: carriers stream in along `inPath`, then commit to an exit in proportion to
+  its weight (its |current|), so the higher-current exit visibly takes more. Plus a small
+  private `arcSampler` (shared arc-length helper).
+
+**Applied:**
+- **POT analogy** (`drawAnalogyPOT`): the stream slaloms A→wiper, then `flowSplit`s to B
+  vs the tap hose to W, weighted by `|I(W→B)|` and `|tap|`. Verified: no load ⇒ empty
+  hose; heavy load ⇒ most carriers peel to W.
+- **POT reality** (`drawDetailPOT`): the arm tap flow is scaled by the tap fraction
+  (`|A→W − W→B| / |A→W|`), so a loaded wiper steals more.
+
+**Which other parts can use it (TODOS):** needs per-terminal currents. Transformer —
+secondary `Is = n·Ip` is derivable (no new element) → a candidate. Transistors — `Ib`
+isn't a separate solver element (β-derived, ~1% — low value). Others are single-path.
+
+---
+
 ## 2026-06-17 (13) — Post-merge fixes: thermistors in the bin, MOV no-bypass
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. PR #96 already

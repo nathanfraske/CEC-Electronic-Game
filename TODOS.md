@@ -6,6 +6,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (9) — Proportional-split flow framework
+
+- ~~**Framework**: per-leg currents (`BuiltNetlist.legsOfComponent` → `ElectricalState.legs`)
+  + `tierKit.flowSplit` (carriers commit to an exit in proportion to its current). General;
+  feed it `electrical.legs` as exit weights.~~
+- ~~**POT** analogy + reality: the wiper now STEALS its share of the carriers in proportion
+  to the tapped current (KCL: tap = A→W − W→B). Verified across no/half/heavy tap.~~
+- [ ] **Extend the split to more parts** as their per-terminal currents become available:
+  transformer (secondary `Is = n·Ip`, derivable now — good next candidate); transistors
+  (`Ib` would need the solver to expose the base branch; β-derived ≈1%, low value).
+
+---
+
 ## 2026-06-17 (8) — Owner-review fixes + proportional-flow plan
 
 - ~~**Thermistors missing from the bin** — were in `PART_KINDS` but not App.svelte's UI
