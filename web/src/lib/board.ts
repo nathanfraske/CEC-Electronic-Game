@@ -196,10 +196,8 @@ const MAX_BELT_DOTS = 64;
 // keep the bus language — colour = net voltage, density/thickness = current — just
 // re-skinned to match the part illustrations. Kicks in at the same `TIER_ZOOM`.
 const PIPE_WALL = 0x6b6488; // steel pipe wall
-const PIPE_BORE = 0x0d0b16; // dark pipe interior
 const PIPE_WATER = 0x8fd6ff; // bright water carriers
 const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
-const COND_CORE_DK = 0x1a1410; // conductor backing
 const COND_ELEC = 0x9fe6ff; // electron carriers (drift against the current)
 
 /** Trace palette for the scope widget; cycled over a variable-length state. */
@@ -3336,7 +3334,15 @@ export class Board {
       // glance (bounded by the saturating normC — a huge current stays on-screen).
       const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
       if (conduit) {
-        this.drawConduitSkin(g, route, color, 5 + 6 * normC, conduit);
+        this.drawConduitSkin(
+          g,
+          route,
+          color,
+          5 + 6 * normC,
+          conduit,
+          this.pinOutward(w.from),
+          this.pinOutward(w.to),
+        );
       } else {
         polyline(g, route);
         g.stroke({ width: width + 4, color, alpha: 0.16 });
@@ -3446,6 +3452,31 @@ export class Board {
   }
 
   /**
+   * The outward (away-from-the-body) cardinal direction of a pin endpoint in world
+   * space — the pin's facing, rotated with the part. Null for a junction, a centred
+   * lone pin, or a corner pin with no clear single facing. Used to add the small
+   * aligning stub so a conduit enters a part straight along its pin axis.
+   */
+  private pinOutward(ep: Endpoint): Dir | null {
+    if (isJunctionRef(ep)) return null;
+    const c = this.graph.components.get(ep.componentId);
+    if (!c) return null;
+    const kind = this.graph.kindOf(c);
+    const pin = kind?.pins[ep.pinIndex];
+    if (!kind || !pin) return null;
+    const ox = pin.dx - (kind.w - 1) / 2;
+    const oy = pin.dy - (kind.h - 1) / 2;
+    if (ox === 0 && oy === 0) return null;
+    const rr = rotateOffset(ox, oy, c.rot);
+    const ax = Math.abs(rr.col);
+    const ay = Math.abs(rr.row);
+    if (Math.abs(ax - ay) < 0.4) return null; // corner pin → ambiguous facing
+    return ax > ay
+      ? { x: Math.sign(rr.col), y: 0 }
+      : { x: 0, y: Math.sign(rr.row) };
+  }
+
+  /**
    * Re-skin a bare trace as a conduit: an ANALOGY pipe (steel wall, dark bore,
    * voltage-tinted water) or a REALITY metal conductor (bright sheath, glowing core, a
    * sheen highlight). Constant-width strokes — Pixi rounds the bends and the ends —
@@ -3458,40 +3489,34 @@ export class Board {
     color: number,
     pw: number,
     lens: BoardLens,
+    out0: Dir | null = null,
+    out1: Dir | null = null,
   ): void {
     const cap = "round" as const;
     const join = "round" as const;
     const r = pw * 1.1; // bend radius ≈ pipe width
-    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
+    const coreAlpha = lens === "analogy" ? 0.32 : 0.36;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    if (lens === "analogy") {
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.5, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.32, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({
-        width: Math.max(1, pw - 2),
-        color,
-        alpha: coreAlpha,
-        cap,
-        join,
-      });
-    } else {
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.5, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.3, cap, join });
-      roundedPolyline(g, route, r);
-      g.stroke({
-        width: Math.max(1, pw - 1),
-        color,
-        alpha: coreAlpha,
-        cap,
-        join,
-      });
-      roundedPolyline(g, route, r);
-      g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.1, cap, join });
+    // A small ALIGNING stub at each pin end so the conduit (and its flared mouth) exit
+    // the part straight along the pin's facing, then bend — the "small bend that aligns
+    // it with the input". Rendering-only; the logical route is untouched.
+    const rd = conduitDrawRoute(route, out0, out1);
+    // Two translucent layers only — a faint wall rim + a voltage-tinted fill (no dark
+    // bore; the stacked bore is what muddied the pipe and made crossings read opaque).
+    // The grid + overlaps show through; the fill colour + the carriers stay readable.
+    roundedPolyline(g, rd, r);
+    g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap, join });
+    roundedPolyline(g, rd, r);
+    g.stroke({
+      width: Math.max(1, pw - 1),
+      color,
+      alpha: coreAlpha,
+      cap,
+      join,
+    });
+    if (lens === "reality") {
+      roundedPolyline(g, rd, r);
+      g.stroke({ width: 1.2, color: 0xffffff, alpha: 0.08, cap, join });
     }
     // Taper each end into a port mouth, oriented along the end segment — the conduit
     // flares open where it plugs into a part (or junction), so it reads as connected.
@@ -3499,10 +3524,10 @@ export class Board {
     const ph = (pw + 5) / 2;
     for (const [ei, ni] of [
       [0, 1],
-      [route.length - 1, route.length - 2],
+      [rd.length - 1, rd.length - 2],
     ] as const) {
-      const e = route[ei];
-      const nb = route[ni];
+      const e = rd[ei];
+      const nb = rd[ni];
       if (!e || !nb) continue;
       const d = Math.hypot(nb.x - e.x, nb.y - e.y) || 1;
       const ux = (nb.x - e.x) / d;
@@ -3521,7 +3546,7 @@ export class Board {
         by - py * ph,
         bx + px * ph,
         by + py * ph,
-      ]).fill({ color: wallCol, alpha: 0.55 });
+      ]).fill({ color: wallCol, alpha: 0.32 });
       const im = mouthR - 2.5;
       const ip = Math.max(0.5, ph - 2.5);
       g.poly([
@@ -3578,9 +3603,10 @@ export class Board {
   }
 
   /**
-   * A conduit junction: a 4-way fitting. The arms a wire actually uses ARE the wire
-   * conduits; the unused cardinal arms get a short capped blanking stub, and a hub disc
-   * (net-voltage core) sits at the centre. Reads as a real pipe / bus tee.
+   * A conduit junction: a clean rounded hub where the wire conduits meet. Each unused
+   * cardinal direction gets a SHORT round-capped blanking nub (the rounded end is the
+   * cap — no harsh perpendicular plate, which read as a cluttered asterisk). Kept
+   * translucent to match the pipes.
    */
   private drawJunctionConduit(
     g: Graphics,
@@ -3591,9 +3617,9 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
+    const coreAlpha = lens === "analogy" ? 0.34 : 0.38;
     const pw = 6;
-    const arm = PITCH * 0.46;
+    const arm = PITCH * 0.32;
     const dirs: [number, number, number][] = [
       [1, 0, -1],
       [2, 1, 0],
@@ -3605,19 +3631,17 @@ export class Board {
       const ex = p.x + ux * arm;
       const ey = p.y + uy * arm;
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 5, color: wallCol, alpha: 0.5, cap });
+      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap });
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: Math.max(1, pw - 2), color, alpha: coreAlpha, cap });
-      // blanking cap: a perpendicular plate across the stub mouth
-      const qx = -uy;
-      const qy = ux;
-      const h = (pw + 5) / 2;
-      g.moveTo(ex + qx * h, ey + qy * h)
-        .lineTo(ex - qx * h, ey - qy * h)
-        .stroke({ width: 3, color: wallCol, alpha: 0.65, cap });
+      g.stroke({
+        width: Math.max(1, pw - 2),
+        color,
+        alpha: coreAlpha * 0.7,
+        cap,
+      });
     }
     // hub
-    g.circle(p.x, p.y, pw / 2 + 4).fill({ color: wallCol, alpha: 0.55 });
+    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: wallCol, alpha: 0.4 });
     g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha });
   }
 
@@ -4754,6 +4778,43 @@ function dirBit(a: Point, b: Point): number {
   const dy = b.y - a.y;
   if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 2 : 8;
   return dy >= 0 ? 4 : 1;
+}
+
+type Dir = { x: number; y: number };
+
+/** The short aligning stub from a pin: when the route leaves the pin perpendicular to
+ *  the pin's facing `out`, return a point a little way along `out` (so the conduit
+ *  exits straight, then bends). Null when it already leaves aligned (or opposite, which
+ *  would hairpin). */
+function alignStub(pin: Point, other: Point, out: Dir): Point | null {
+  const dx = other.x - pin.x;
+  const dy = other.y - pin.y;
+  const d = Math.hypot(dx, dy) || 1;
+  const dot = (dx / d) * out.x + (dy / d) * out.y;
+  if (Math.abs(dot) > 0.5) return null;
+  const len = Math.min(PITCH * 0.55, d * 0.45);
+  return new Point(pin.x + out.x * len, pin.y + out.y * len);
+}
+
+/** The route a conduit is DRAWN along: the logical route plus a small aligning stub at
+ *  each pin end (see {@link alignStub}). Rendering-only — the logical route (hit-test,
+ *  waypoints, carriers) is unchanged. */
+function conduitDrawRoute(
+  route: Point[],
+  out0: Dir | null,
+  out1: Dir | null,
+): Point[] {
+  if (route.length < 2 || (!out0 && !out1)) return route;
+  const pts = route.slice();
+  if (out1) {
+    const s = alignStub(pts[pts.length - 1]!, pts[pts.length - 2]!, out1);
+    if (s) pts.splice(pts.length - 1, 0, s);
+  }
+  if (out0) {
+    const s = alignStub(pts[0]!, pts[1]!, out0);
+    if (s) pts.splice(1, 0, s);
+  }
+  return pts;
 }
 
 function routeLength(pts: Point[]): number {

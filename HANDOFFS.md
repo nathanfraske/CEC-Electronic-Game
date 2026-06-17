@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (6) — Conduit: cleaner translucency, softer junctions, pin auto-bend
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner: conduits "not ideal" (weird translucency / more
+opaque), junctions "odd", + clarified the auto-bend = "a small bend that aligns it with
+the input" (not grid-snapped routing-around).
+
+- **Cleaner pipes:** dropped the dark bore (the stacked 3 layers, esp. the near-opaque
+  bore, composited to ~0.8 and muddy grey). Now two translucent layers — faint wall rim
+  (`pw+3`, 0.3) + voltage fill (`pw−1`, 0.32/0.36), reality + faint white sheen. Grid +
+  crossings show through. Flare alphas lowered. Removed unused `PIPE_BORE`/`COND_CORE_DK`.
+- **Softer junctions:** `drawJunctionConduit` — short **round-capped** nubs on unused
+  arms (the rounded end is the cap; the perpendicular plates read as cluttered
+  asterisks), shorter arms, translucent hub.
+- **Pin auto-bend:** `pinOutward(ep)` (the pin's outward cardinal, footprint offset
+  rotated with the part; null for junctions/centred/corner pins) + `conduitDrawRoute`/
+  `alignStub` insert a short stub along the facing when the wire leaves/enters a pin
+  perpendicular, so the conduit + flare exit/enter straight then bend. **Rendering-only**
+  (shapes the conduit DRAW route; logical route / hit-test / waypoints / carriers
+  untouched), conduit mode only.
+- Verified via the replica render (translucent crossings over a grid; before/after the
+  align stub).
+
+**Still open:** the **channel-routing "nudge parallel pipes apart"** (the bigger
+declutter) is still deferred — it's an actual routing change, unlike the rendering-only
+items above.
+
+---
+
 ## 2026-06-17 (5) — Conduit translucency + free wire-ends + Potentiometer tiers
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
