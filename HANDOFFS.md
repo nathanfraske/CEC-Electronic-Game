@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (8) — Zener closed-loop rebuild, diode check-valve template, conduit fittings
+
+**State:** 🟢 Green — web format/check/lint/build all pass (no Rust; golden untouched).
+Branch `claude/kind-turing-hdelb3`. Four owner asks this session, two subsystems:
+
+**Analogy drawers (`analogyDrawers.ts`, `tierKit.ts`):**
+- **Zener rebuilt** to match `docs/ui/parts/zener-tier2.html`: a CLOSED-LOOP spillway —
+  forward check valve on the axis, a standpipe on the cathode side that fills to the Vz
+  weir, and a **return tube** that catches the spill over the crest and runs it back to
+  the anode side (reverse current returns to the anode — no more "spilling into nothing").
+  Column rim tracks the crest (taller wall = taller column, no dead freeboard). Reverse
+  loop drawn with `flowAlongPath`.
+- **Shared `forwardCheckValve()` template** (the diode family: D / SD / LED / ZD): bronze
+  seat lips + spring/plunger + ball, with the **ball made smaller** and the open-flow
+  **parting AROUND the ball** via new `tierKit.flowAroundBall` (horizontal mirror of
+  `flowAroundPlug`) — belts up the inlet/outlet pipe, bulged lanes through the chamber.
+  Tune the ball/flow once, every diode follows.
+- Valve un-crammed: chamber stands clear above/below the ball; body widened for
+  seat + travel + spring.
+
+**Conduit (`board.ts`):**
+- **Translucent tapers + junction fittings**: the port-taper flares and the junction
+  hub/nubs were STACKING fills over the 2-layer pipe → cloudy. Lowered their alphas
+  (flare 0.32→0.16 wall, inner ×0.4; hub 0.4→0.2; nub 0.3→0.22) so they read translucent.
+- **Junctions nudge with their runs**: a junction is a free vertex, so when its runs fan
+  into lanes the hub now rides along. Follow-pass in `redrawWires` derives each junction's
+  shift from the nudge (the perpendicular offset of each run's first interior point),
+  averaged PER AXIS (T/+ compose; parallel conflicts split the difference), then snaps the
+  hub + every connected run-end onto it. Derived FROM the nudge ⇒ never fights it.
+  `drawJunctions` now takes a `junctionPos` map. Verified numerically (`/tmp/harness/junctest.js`).
+
+**Verify:** headless render harness in `/tmp/harness` (compile.js transpiles drawers →
+CJS; dumpPart.js / dumpZener1.js → shapes.json → raster.py → PNG). NOTE: raster harness
+now keys stroke width on `lw` (rect geom width was colliding on `w`).
+
+---
+
 ## 2026-06-17 (7) — Conduit channel routing: nudge parallel + crossing bridges/junctions
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch

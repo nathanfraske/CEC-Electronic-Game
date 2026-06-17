@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (3) — Zener closed loop, diode valve template, conduit fittings
+
+- ~~**Zener analogy rebuilt** as a closed-loop spillway (`drawAnalogyZener`): forward check
+  valve + cathode-side standpipe filling to the Vz weir + a **return tube** that carries the
+  spill back to the anode (matches `zener-tier2.html`; no more "spilling into nothing").
+  Column rim tracks the crest, so no dead freeboard.~~
+- ~~**Shared `forwardCheckValve()` diode template** (D/SD/LED/ZD): bronze seat + spring + ball;
+  **smaller ball**; open flow **parts around the ball** via new `tierKit.flowAroundBall`
+  (horizontal `flowAroundPlug`). Valve un-crammed (taller chamber, wider body).~~
+- ~~**Conduit tapers + junction fittings made translucent** — the port-flare + hub/nub fills
+  were stacking over the pipe and reading cloudy; lowered their alphas.~~
+- ~~**Junctions nudge with their runs** — follow-pass in `redrawWires` shifts each junction hub
+  (and snaps its run-ends) by the per-axis-averaged nudge offset of its runs; derived FROM the
+  nudge so it never fights `nudgeParallel`. `drawJunctions` takes a `junctionPos` map.~~
+
+---
+
 ## 2026-06-17 (2) — reality transistors rotated + flow around the plug
 
 - ~~**Reality MOSFET + BJT rotated to vertical**, anchored to the pins (drain/collector top,
