@@ -1687,18 +1687,18 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
 
 // ============================================================================
 // Varistor (MOV) — ported from varistor-tiers.html tier 2: a PRESSURE RELIEF VALVE.
-// The two leads pressurise a vessel; the pressure (the voltage) pushes up under a
-// poppet held shut by a spring whose set point (a screw) is the clamp voltage. Below
-// the clamp it stays sealed — no flow. Past the clamp the poppet cracks open and the
-// body chamber vents hard out its side pipes, dumping the surplus to hold the pressure
-// near the set point. It works for either polarity (no diode-like direction), so both
-// leads feed the same vessel.
+// The applied voltage pressurises a vessel from below; the pressure pushes up under a
+// poppet held shut by a spring whose set-screw is the clamp voltage. Below the clamp it
+// stays SEALED — nothing passes. Past the clamp the poppet cracks and the surge rises UP
+// THROUGH the valve and bursts out the two side vents — which ARE the part's leads. The
+// leads tap the VENTS, never the vessel, so nothing can bypass the valve. Either
+// polarity pops it (no diode-like direction).
 //
 // Live mapping (MOV ElectricalState: current a→b, vAcross = V across; value = Vclamp):
-//   • applied = |vAcross|         → vessel fill + the molecules' jiggle amplitude.
-//   • over    = |vAcross|/Vclamp  → poppet lift; once >1 it cracks open and vents.
+//   • applied = |vAcross|         → vessel fill + molecule jiggle + the inlet arrow.
+//   • over    = |vAcross|/Vclamp  → poppet lift; once it cracks, it vents.
 //   • clamp   = Vclamp            → the set-screw depth (spring preload).
-//   • flow    = norm(|I|)         → the vent flow out the side pipes.
+//   • flow    = norm(|I|)         → the surge up through the valve and out the vents.
 // ============================================================================
 function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
@@ -1709,59 +1709,59 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const venting = over > 0.85 && flow > 0.02;
   const appN = Math.min(1, applied / (vclamp * 1.5));
 
-  // Both leads ride the real A/B pins (on the part's axis) and feed the vessel.
   const A = anchorPt(o, "A", -0.588, 0);
   const B = anchorPt(o, "B", 0.588, 0);
   const cx = (A.x + B.x) / 2;
   const lineY = (A.y + B.y) / 2;
 
-  // Vertical stack: vessel (below) → neck/seat → body chamber w/ side vents → bonnet.
-  const vesHW = hw * 0.2;
-  const vesT = lineY + hh * 0.16;
-  const vesB = lineY + hh * 0.86;
-  const seatY = vesT;
-  // Cracks open as the pressure approaches the clamp (not only past it) so the
-  // open/sealed state reads clearly: 0 lift at 0.8·Vclamp, fully cracked by 1.2·Vclamp.
-  const lift = Math.min(1, Math.max(0, (over - 0.8) / 0.4)) * hh * 0.32;
-  const poppetY = seatY - lift;
+  // Vertical stack centred on the pin line: bonnet + spring (top) → chamber whose side
+  // vents sit AT the pin line (the leads tap here) → seat + poppet → vessel (the bottom
+  // reservoir the applied pressure fills). The pins connect ONLY to the vents.
+  const chamHW = hw * 0.16;
+  const ventY = lineY;
+  const chamT = lineY - hh * 0.18;
+  const bonnetY = lineY - hh * 0.36;
+  const seatY = lineY + hh * 0.16;
+  const vesT = seatY;
+  const vesB = lineY + hh * 0.8;
+  const vesHW = hw * 0.22;
   const popHW = hw * 0.12;
-  const chamHW = hw * 0.15;
-  const chamT = lineY - hh * 0.52;
-  const ventY = lineY - hh * 0.24;
-  const bonnetY = chamT - hh * 0.06;
+  // Cracks as the pressure passes the clamp; the lift compresses the spring above it.
+  const lift = Math.min(1, Math.max(0, (over - 0.85) / 0.4)) * hh * 0.22;
+  const poppetBaseY = seatY - lift;
+  const poppetTopY = poppetBaseY - hh * 0.12;
 
-  // --- the two leads feed the tank from BELOW (the applied pressure across A–B). They
-  // do NOT bypass the valve — the only way out is UP through the popped poppet to the
-  // side vents, so a sealed valve passes nothing at all. The surge flows IN both leads
-  // only while it vents (current ≈ 0 when sealed, so the leads sit quiet). ----------
-  const yIn = vesB - hh * 0.14;
-  for (const [an, s] of [
-    [A, -1],
-    [B, 1],
-  ] as const) {
-    const path = [
-      { x: an.x, y: an.y },
-      { x: cx + s * (vesHW + 14), y: an.y },
-      { x: cx + s * (vesHW + 14), y: yIn },
-      { x: cx + s * vesHW, y: yIn },
-    ];
-    pipeLead(
-      g,
-      path,
-      9,
-      mix(WATER, PALETTE.cyan, 0.3),
-      WATER2,
-      flow,
-      1,
-      o.phase,
-    );
-    stud(g, an.x, an.y, PALETTE.bronze);
-  }
+  // --- applied-pressure inlet arrow below the vessel (the voltage pushing up) -------
+  const aBot = vesB + hh * 0.16;
+  const aLen = hh * (0.05 + 0.16 * appN);
+  g.moveTo(cx, aBot)
+    .lineTo(cx, aBot - aLen)
+    .stroke({ width: 3, color: WATER, alpha: 0.7 });
+  g.poly([
+    cx - 5,
+    aBot - aLen + 7,
+    cx + 5,
+    aBot - aLen + 7,
+    cx,
+    aBot - aLen,
+  ]).fill({ color: WATER, alpha: 0.7 });
 
-  // --- pressure vessel + fill + jiggling molecules -----------------------------
+  // --- the leads: pipes from A/B to the side VENTS — the only outlet, never the tank.
+  // Structural (no dots); the surge dots ride the full vessel→valve→vent path when it
+  // cracks (below), so a sealed valve shows nothing reaching the pins. --------------
+  const lc = mix(WATER, PALETTE.cyan, 0.3);
+  pipeLead(g, [A, { x: cx - chamHW, y: ventY }], 9, lc, WATER2, 0, 1, o.phase);
+  pipeLead(g, [B, { x: cx + chamHW, y: ventY }], 9, lc, WATER2, 0, 1, o.phase);
+
+  // --- the vessel + fill (= |V|) + jiggling molecules, open at the top-centre seat ---
   g.moveTo(cx - vesHW, vesT)
     .lineTo(cx - vesHW, vesB)
     .lineTo(cx + vesHW, vesB)
+    .lineTo(cx + vesHW, vesT)
+    .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
+  g.moveTo(cx - vesHW, vesT)
+    .lineTo(cx - popHW, vesT)
+    .moveTo(cx + popHW, vesT)
     .lineTo(cx + vesHW, vesT)
     .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
   g.rect(
@@ -1769,11 +1769,11 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
     vesB - appN * (vesB - vesT),
     vesHW * 2 - 4,
     appN * (vesB - vesT),
-  ).fill({ color: WATER, alpha: 0.35 });
+  ).fill({ color: WATER, alpha: 0.38 });
   const amp = 1.5 + 5 * appN;
   for (let k = 0; k < 9; k++) {
-    const bx = cx + (-1 + (k % 3)) * vesHW * 0.6;
-    const by = vesB - hh * 0.12 - Math.floor(k / 3) * hh * 0.18;
+    const bx = cx + (-1 + (k % 3)) * vesHW * 0.55;
+    const by = vesB - hh * 0.1 - Math.floor(k / 3) * hh * 0.2;
     const ph = k * 1.7;
     g.circle(
       bx + Math.sin(o.phase * PULSE_K + ph) * amp,
@@ -1782,86 +1782,77 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
     ).fill({ color: WATER2, alpha: 0.85 });
   }
 
-  // --- neck + seat lips the poppet seals against -------------------------------
+  // --- chamber walls (with the vent gaps at the pin line) + chamber top -------------
   for (const s of [-1, 1]) {
-    g.moveTo(cx + s * vesHW, vesT)
-      .lineTo(cx + s * popHW, seatY)
-      .stroke({ width: 2.5, color: PALETTE.rail, alpha: 0.9 });
-  }
-
-  // --- body chamber walls (with a vent gap) + the two side vent pipes ----------
-  for (const s of [-1, 1]) {
-    g.moveTo(cx + s * chamHW, seatY - 4)
-      .lineTo(cx + s * chamHW, ventY + 7)
-      .moveTo(cx + s * chamHW, ventY - 7)
+    g.moveTo(cx + s * chamHW, seatY)
+      .lineTo(cx + s * chamHW, ventY + 6)
+      .moveTo(cx + s * chamHW, ventY - 6)
       .lineTo(cx + s * chamHW, chamT)
-      .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
-    g.moveTo(cx + s * chamHW, ventY - 5)
-      .lineTo(cx + s * (chamHW + hw * 0.18), ventY - 5)
-      .moveTo(cx + s * chamHW, ventY + 5)
-      .lineTo(cx + s * (chamHW + hw * 0.18), ventY + 5)
       .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
   }
   g.moveTo(cx - chamHW, chamT)
     .lineTo(cx + chamHW, chamT)
     .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
 
-  // --- the OPEN crack: a bright gap glowing at the seat as the poppet lifts off it,
-  // so "sealed" vs "open" reads at a glance (grows with the lift). ----------------
+  // --- the open-crack glow at the seat + the poppet plugging it (lifts when cracked) -
   if (lift > 1) {
-    const liftN = Math.min(1, lift / (hh * 0.3));
-    g.ellipse(cx, seatY, popHW * (1.1 + 0.3 * liftN), lift * 0.6).fill({
+    g.ellipse(cx, seatY, popHW * 1.2, lift * 0.7).fill({
       color: mix(PALETTE.warn, 0xffffff, 0.3),
-      alpha: 0.25 + 0.5 * liftN,
+      alpha: 0.3 + 0.4 * Math.min(1, lift / (hh * 0.22)),
     });
   }
-
-  // --- the poppet (cone) at the seat, lifting when it cracks open --------------
   g.poly([
     cx - popHW,
-    poppetY,
+    poppetBaseY,
     cx + popHW,
-    poppetY,
-    cx + popHW * 0.55,
-    poppetY - hh * 0.13,
-    cx - popHW * 0.55,
-    poppetY - hh * 0.13,
-  ]).fill({ color: venting ? PALETTE.warn : PLATE, alpha: 0.92 });
+    poppetBaseY,
+    cx + popHW * 0.5,
+    poppetTopY,
+    cx - popHW * 0.5,
+    poppetTopY,
+  ]).fill({ color: venting ? PALETTE.warn : PLATE, alpha: 0.95 });
 
-  // --- bonnet + set screw (depth = clamp) + the threshold spring ---------------
+  // --- bonnet + set screw (depth = clamp) + the threshold spring (compresses on lift) -
   g.moveTo(cx - hw * 0.13, bonnetY)
     .lineTo(cx + hw * 0.13, bonnetY)
     .stroke({ width: 3, color: PALETTE.rail, alpha: 0.9 });
   const screwBot =
-    bonnetY + 6 + Math.min(1, vclamp / (V_SCALE * 4)) * hh * 0.16;
+    bonnetY + 5 + Math.min(1, vclamp / (V_SCALE * 4)) * hh * 0.12;
   g.roundRect(cx - hw * 0.05, bonnetY, hw * 0.1, screwBot - bonnetY, 2).fill({
     color: PALETTE.bronze,
     alpha: 0.9,
   });
-  g.poly(
-    vSpringPts(cx, screwBot, poppetY - hh * 0.13, hw * 0.07, 5),
-    false,
-  ).stroke({ width: 2.4, color: SPRING, alpha: 0.85 });
+  g.poly(vSpringPts(cx, screwBot, poppetTopY, hw * 0.06, 5), false).stroke({
+    width: 2.4,
+    color: SPRING,
+    alpha: 0.85,
+  });
 
-  // --- venting: when the poppet cracks, the surge rises from the tank UP through the
-  // open seat and bursts OUT the side vents — the only path, never around the valve. --
+  // --- the surge: once cracked, it rises from the vessel UP through the open seat and
+  // out BOTH vents to the leads — visibly through the valve, never around it. --------
   if (venting) {
-    belt(g, cx, seatY, cx, ventY, flow, 1, o.phase, WATER, 2.4);
-    for (const s of [-1, 1]) {
-      belt(
+    for (const [pin, s] of [
+      [A, -1],
+      [B, 1],
+    ] as const) {
+      flowAlongPath(
         g,
-        cx + s * chamHW,
-        ventY,
-        cx + s * (chamHW + hw * 0.18),
-        ventY,
+        [
+          { x: cx, y: (vesT + vesB) / 2 },
+          { x: cx, y: seatY },
+          { x: cx + s * chamHW, y: ventY },
+          { x: pin.x, y: ventY },
+        ],
         flow,
-        s,
+        1,
         o.phase,
         WATER,
-        2.4,
+        2.6,
       );
     }
   }
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
 }
 
 // ============================================================================
