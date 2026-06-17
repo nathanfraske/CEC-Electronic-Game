@@ -1708,7 +1708,6 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const flow = norm(o.electrical.current, CUR_SCALE);
   const venting = over > 0.85 && flow > 0.02;
   const appN = Math.min(1, applied / (vclamp * 1.5));
-  const aHigh = o.electrical.vAcross >= 0; // A is the high-pressure lead
 
   // Both leads ride the real A/B pins (on the part's axis) and feed the vessel.
   const A = anchorPt(o, "A", -0.588, 0);
@@ -1723,7 +1722,7 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const seatY = vesT;
   // Cracks open as the pressure approaches the clamp (not only past it) so the
   // open/sealed state reads clearly: 0 lift at 0.8·Vclamp, fully cracked by 1.2·Vclamp.
-  const lift = Math.min(1, Math.max(0, (over - 0.8) / 0.4)) * hh * 0.3;
+  const lift = Math.min(1, Math.max(0, (over - 0.8) / 0.4)) * hh * 0.32;
   const poppetY = seatY - lift;
   const popHW = hw * 0.12;
   const chamHW = hw * 0.15;
@@ -1731,23 +1730,21 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const ventY = lineY - hh * 0.24;
   const bonnetY = chamT - hh * 0.06;
 
-  // --- the two leads feed the vessel from each side as flowing PIPES (so the part
-  // joins the board's wire-pipes as one continuous run, not a thin broken-off line).
-  // When it clamps, the surge runs IN the high lead and OUT the low one — so the flow
-  // follows the real polarity (and, with the glyph holder, the part's orientation). --
+  // --- the two leads feed the tank from BELOW (the applied pressure across A–B). They
+  // do NOT bypass the valve — the only way out is UP through the popped poppet to the
+  // side vents, so a sealed valve passes nothing at all. The surge flows IN both leads
+  // only while it vents (current ≈ 0 when sealed, so the leads sit quiet). ----------
+  const yIn = vesB - hh * 0.14;
   for (const [an, s] of [
     [A, -1],
     [B, 1],
   ] as const) {
     const path = [
       { x: an.x, y: an.y },
-      { x: cx + s * (vesHW + 12), y: an.y },
-      { x: cx + s * (vesHW + 12), y: vesT + hh * 0.18 },
-      { x: cx + s * vesHW, y: vesT + hh * 0.18 },
+      { x: cx + s * (vesHW + 14), y: an.y },
+      { x: cx + s * (vesHW + 14), y: yIn },
+      { x: cx + s * vesHW, y: yIn },
     ];
-    // inflow on the HIGH lead (pin→vessel = +1), outflow on the low one
-    const isHigh = s < 0 ? aHigh : !aHigh;
-    const leadDir = isHigh ? 1 : -1;
     pipeLead(
       g,
       path,
@@ -1755,7 +1752,7 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
       mix(WATER, PALETTE.cyan, 0.3),
       WATER2,
       flow,
-      leadDir,
+      1,
       o.phase,
     );
     stud(g, an.x, an.y, PALETTE.bronze);
@@ -1846,8 +1843,10 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
     false,
   ).stroke({ width: 2.4, color: SPRING, alpha: 0.85 });
 
-  // --- venting: flow bursts out the side vent pipes once cracked open ----------
+  // --- venting: when the poppet cracks, the surge rises from the tank UP through the
+  // open seat and bursts OUT the side vents — the only path, never around the valve. --
   if (venting) {
+    belt(g, cx, seatY, cx, ventY, flow, 1, o.phase, WATER, 2.4);
     for (const s of [-1, 1]) {
       belt(
         g,

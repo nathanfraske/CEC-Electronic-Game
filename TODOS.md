@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (8) — Owner-review fixes + proportional-flow plan
+
+- ~~**Thermistors missing from the bin** — were in `PART_KINDS` but not App.svelte's UI
+  `PARTS`/`PART_CAT_OF`. Added under Passives.~~
+- ~~**MOV bypass** — leads bypassed the poppet (A→tank→B). Reworked: leads pressurize the
+  tank from below, flow only exits UP through the popped valve to the vents; spring
+  compresses sealed→popped.~~
+- [ ] **Particles to the exits, proportionally** (owner "would be cool"): split each
+  part's internal particle streams by the per-exit currents so you can SEE the POT wiper
+  stealing them (and per-output splits on transistors etc.). FEASIBLE — all per-element
+  currents are in `elementCurrents` (loop.ts); the POT already stamps both legs (A→W,
+  W→B). Add an optional secondary-current to `ElectricalState`, thread netlist→loop→board
+  →drawer, split the streams. Also align internal dot count with the in/out pipe counts.
+
+---
+
 ## 2026-06-17 (7) — Flow cohesion sweep: dam, slalom, MOV, connector pipe, caps
 
 Owner push: every part's particles should interact with what affects them, terminals
