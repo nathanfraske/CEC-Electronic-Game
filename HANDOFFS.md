@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (7) — Conduit channel routing: nudge parallel + crossing bridges/junctions
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. The owner's two routing asks, both render-only on the
+conduit draw routes (precomputed once per redraw in `redrawWires`, before rounding):
+
+- **Nudge parallel** (#92): `nudgeParallel()` fans conduits sharing a grid line into
+  separate lanes — groups interior segments by their line, clusters overlaps, offsets
+  each perpendicular (corner points move along the perp axis ⇒ route stays orthogonal,
+  terminals fixed).
+- **Crossings** (this PR): `applyCrossings()` — a perpendicular crossing of two
+  DIFFERENT-net wires bridges (the horizontal wire gets an up-hop baked into its route,
+  so pipe + carriers ride over); a SAME-net crossing returns a junction dot (drawn after
+  the wires). Skips shared-endpoint touches. Net id via `endpointNode` (cached per redraw
+  alongside the wire colour, so no extra BFS in the hop classifier).
+- Verified via the replica (parallel → lanes; diff-net → hop; same-net → dot).
+
+**Conduit feature set now:** translucent 2-layer pipes, copper-vs-water skins, rounded
+elbows + pin-align stubs (carriers follow), soft 4-way junction fittings, port tapers,
+parallel-nudge, crossing bridges/junctions. (All rendering-only; logical routing
+untouched.)
+
+---
+
 ## 2026-06-17 (6) — Conduit: cleaner translucency, softer junctions, pin auto-bend
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
