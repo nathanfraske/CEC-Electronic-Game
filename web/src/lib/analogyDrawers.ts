@@ -1708,6 +1708,126 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   }
 }
 
+// ============================================================================
+// Potentiometer (POT) — ported from potentiometer-tiers.html tier 2: a PACKED PIPE.
+// The full track is a pipe between the two ends (A↔B) packed with resistance posts;
+// water (the current) is forced through and loses head along the way. A sliding WIPER
+// taps the head at its position — the tapped level is the divider output at W. The
+// posts set how fast the head falls (the track resistance). Anchored A top-left, B
+// top-right, W bottom-centre (the real pins).
+//
+// Live mapping (POT ElectricalState: current a→b = A→B, vAcross = V(A)−V(B); value =
+// track Ω; wiper = tap position 0..1):
+//   • wiper = o.wiper      → the wiper contact's x along the track.
+//   • flow  = norm(|I|)    → water streaming A↔B, weaving past the posts.
+//   • head  = vAcross      → the high end glows + the tapped level at the wiper.
+//   • R     = value        → post density (more posts = more resistance per length).
+// ============================================================================
+function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const A = anchorPt(o, "A", -0.588, -0.95);
+  const B = anchorPt(o, "B", 0.588, -0.95);
+  const W = anchorPt(o, "W", 0, 0.95);
+  const wiper = Math.max(0, Math.min(1, o.wiper ?? 0.5));
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const drop = Math.max(-1, Math.min(1, o.electrical.vAcross / V_SCALE));
+
+  const yTrack = -hh * 0.34;
+  const ph = Math.min(hw, hh) * 0.12;
+  const xL = A.x;
+  const xR = B.x;
+  const xW = xL + (xR - xL) * wiper;
+
+  // --- leads from the A / B pins down to the track ends ------------------------
+  g.moveTo(A.x, A.y)
+    .lineTo(A.x, yTrack)
+    .moveTo(B.x, B.y)
+    .lineTo(B.x, yTrack)
+    .stroke({ width: 2.4, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the high end glows with the head (A if V(A)>V(B), else B) ---------------
+  if (Math.abs(drop) > 0.04) {
+    const hx = drop >= 0 ? xL : xR;
+    g.circle(hx, yTrack, ph * 2.4).fill({
+      color: WARM,
+      alpha: 0.06 + 0.12 * Math.abs(drop),
+    });
+  }
+
+  // --- track pipe walls + end flanges + faint water fill -----------------------
+  for (const s of [-1, 1]) {
+    g.moveTo(xL, yTrack + s * ph)
+      .lineTo(xR, yTrack + s * ph)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  for (const x of [xL, xR]) {
+    g.moveTo(x, yTrack - ph)
+      .lineTo(x, yTrack + ph)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  g.rect(xL, yTrack - ph + 1, xR - xL, 2 * ph - 2).fill({
+    color: WATER,
+    alpha: 0.12,
+  });
+
+  // --- resistance posts (density ~ track resistance) ---------------------------
+  const rNorm = o.value ? norm(o.value, 50000) : 0.5;
+  const NP = Math.round(9 + 13 * rNorm);
+  const postCol = mix(PALETTE.bronze, 0x8a6a40, 0.5);
+  for (let k = 0; k < NP; k++) {
+    const px = xL + ((k + 0.5) / NP) * (xR - xL);
+    g.circle(px, yTrack + (k % 2 ? -1 : 1) * ph * 0.34, 2.6).fill({
+      color: postCol,
+      alpha: 0.9,
+    });
+  }
+
+  // --- water streaming A↔B, weaving around the posts ---------------------------
+  if (flow > 0.02) {
+    const n = FLOW_DOTS_MAX;
+    for (const side of [-1, 1]) {
+      for (let k = 0; k < n; k++) {
+        const present = dotPresence(k, flow);
+        if (present <= 0) continue;
+        const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+        const x = xL + t * (xR - xL);
+        const weave =
+          side * ph * 0.5 * Math.cos(((x - xL) / (xR - xL)) * NP * Math.PI);
+        g.circle(x, yTrack + weave, 2.4).fill({
+          color: WATER2,
+          alpha: (0.3 + 0.5 * flow) * present,
+        });
+      }
+    }
+  }
+
+  // --- the sliding wiper: contact on the track → arm down to the W pin ---------
+  const tap = drop >= 0 ? 1 - wiper : wiper; // tapped fraction from the low end
+  const midY = (yTrack + ph + W.y) / 2;
+  g.moveTo(xW, yTrack + ph)
+    .lineTo(xW, midY)
+    .lineTo(W.x, midY)
+    .lineTo(W.x, W.y)
+    .stroke({ width: 2.6, color: PALETTE.accent, alpha: 0.6 });
+  g.circle(xW, yTrack, 4.5).fill({ color: PALETTE.accent, alpha: 0.95 });
+  g.circle(xW, yTrack, 4.5).stroke({ width: 1, color: WARM, alpha: 0.7 });
+  // a small tapped-level gauge beside the contact (the divider output)
+  g.roundRect(xW + 7, yTrack - ph, 5, 2 * ph, 1).stroke({
+    width: 1,
+    color: PALETTE.rail,
+    alpha: 0.6,
+  });
+  g.rect(xW + 8, yTrack + ph - tap * (2 * ph - 2), 3, tap * (2 * ph - 2)).fill({
+    color: PALETTE.accent,
+    alpha: 0.5,
+  });
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
+  stud(g, W.x, W.y, PALETTE.accent);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -1729,6 +1849,7 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   PM: drawAnalogyMosfet,
   OA: drawAnalogyOA,
   MOV: drawAnalogyVaristor,
+  POT: drawAnalogyPOT,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */

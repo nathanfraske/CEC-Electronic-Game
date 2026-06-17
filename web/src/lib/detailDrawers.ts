@@ -1458,6 +1458,122 @@ function drawDetailVaristor(g: Graphics, o: DetailOpts): void {
   stud(g, cx, hh - 4, PALETTE.bronze);
 }
 
+// ============================================================================
+// Potentiometer (POT) — ported from potentiometer-tiers.html tier 3: a RESISTIVE
+// FILM. The track is a strip of carbon film between the two ends (A↔B); a potential
+// gradient falls across it, electrons drift through, scattering off the fixed atom
+// lattice (that scattering IS the resistance), and a sprung metal WIPER presses on
+// the film and picks off the local potential. Anchored A top-left, B top-right, W
+// bottom-centre (the real pins).
+//
+// Live mapping (POT ElectricalState: current a→b = A→B, vAcross = V(A)−V(B); value =
+// track Ω; wiper = 0..1):
+//   • wiper = o.wiper   → the wiper contact's x on the film.
+//   • flow  = norm(|I|) → drifting-electron density (they drift toward the + end,
+//     opposite the conventional current).
+//   • grad  = vAcross   → the potential gradient brightening toward the high end.
+//   • R     = value     → atom-lattice density (more scattering centres).
+// ============================================================================
+function drawDetailPOT(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+  const OXIDE = mix(PALETTE.warn, 0xffffff, 0.2);
+  const WARM = mix(PALETTE.bronze, 0xffffff, 0.4);
+  const FILM = mix(PALETTE.bronze, 0x000000, 0.45);
+
+  const A = anchorPt(o, "A", -0.588, -0.95);
+  const B = anchorPt(o, "B", 0.588, -0.95);
+  const W = anchorPt(o, "W", 0, 0.95);
+  const wiper = Math.max(0, Math.min(1, o.wiper ?? 0.5));
+  const flow = norm(o.electrical.current, CUR_SCALE);
+  const drop = Math.max(-1, Math.min(1, o.electrical.vAcross / V_SCALE));
+
+  const yF = -hh * 0.34;
+  const fhh = Math.min(hw, hh) * 0.16;
+  const xL = A.x;
+  const xR = B.x;
+  const xW = xL + (xR - xL) * wiper;
+
+  // --- leads from the A / B pins down to the film ends -------------------------
+  g.moveTo(A.x, A.y)
+    .lineTo(A.x, yF - fhh)
+    .moveTo(B.x, B.y)
+    .lineTo(B.x, yF - fhh)
+    .stroke({ width: 2.4, color: PALETTE.border, alpha: 0.85 });
+
+  // --- carbon film body + potential-gradient bands (brighter toward + end) -----
+  g.rect(xL, yF - fhh, xR - xL, 2 * fhh).fill({ color: FILM, alpha: 0.32 });
+  const NB = 14;
+  for (let i = 0; i < NB; i++) {
+    const pv = drop >= 0 ? 1 - (i + 0.5) / NB : (i + 0.5) / NB;
+    g.rect(
+      xL + (i / NB) * (xR - xL),
+      yF - fhh,
+      (xR - xL) / NB + 0.6,
+      2 * fhh,
+    ).fill({ color: WARM, alpha: 0.04 + 0.22 * pv * Math.abs(drop) });
+  }
+  g.rect(xL, yF - fhh, xR - xL, 2 * fhh).stroke({
+    width: 1.5,
+    color: PALETTE.border,
+    alpha: 0.8,
+  });
+
+  // --- the fixed atom lattice (density ~ resistance) ---------------------------
+  const rNorm = o.value ? norm(o.value, 50000) : 0.5;
+  const NA = Math.round(34 + 50 * rNorm);
+  for (let k = 0; k < NA; k++) {
+    const ax = xL + 4 + ((k * 0.61803398875) % 1) * (xR - xL - 8);
+    const ay = yF - fhh + 4 + ((k * 0.39 + 0.13) % 1) * (2 * fhh - 8);
+    g.circle(ax, ay, 1.3).fill({ color: OXIDE, alpha: 0.5 });
+  }
+
+  // --- drifting electrons toward the + end (opposite the conventional current) --
+  if (flow > 0.02) {
+    const n = FLOW_DOTS_MAX;
+    const ddir = o.electrical.current >= 0 ? -1 : 1; // e⁻ drift opposes I
+    for (const lane of [-0.5, 0, 0.5]) {
+      for (let k = 0; k < n; k++) {
+        const present = dotPresence(k, flow);
+        if (present <= 0) continue;
+        const t = (((k / n + o.phase * FLOW_SPEED * ddir) % 1) + 1) % 1;
+        const x = xL + t * (xR - xL);
+        const jig = Math.sin(o.phase * PULSE_K * 3 + k * 1.7 + lane * 5) * 2;
+        g.circle(x, yF + lane * fhh + jig, 2.3).fill({
+          color: ELEC,
+          alpha: (0.35 + 0.5 * flow) * present,
+        });
+      }
+    }
+  }
+
+  // --- the sprung metal wiper: contact on the film → spring → arm to the W pin --
+  const cy = yF + fhh;
+  // spring (a short zig-zag) just below the contact
+  const sTop = cy + 2;
+  const sBot = cy + 14;
+  const sp: number[] = [xW, sTop];
+  for (let k = 1; k <= 6; k++) {
+    const yy = sTop + ((sBot - sTop) * k) / 6;
+    sp.push(k === 6 ? xW : xW + (k % 2 ? -5 : 5), yy);
+  }
+  g.poly(sp, false).stroke({ width: 1.6, color: PALETTE.dim, alpha: 0.85 });
+  // arm down to the fixed wiper terminal W
+  const midY = (sBot + W.y) / 2;
+  g.moveTo(xW, sBot)
+    .lineTo(xW, midY)
+    .lineTo(W.x, midY)
+    .lineTo(W.x, W.y)
+    .stroke({ width: 2.5, color: PALETTE.dim, alpha: 0.85 });
+  // contact bead on the film
+  g.circle(xW, cy, 4).fill({ color: WARM, alpha: 0.95 });
+  g.circle(xW, cy, 4).stroke({ width: 0.8, color: 0xffffff, alpha: 0.5 });
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
+  stud(g, W.x, W.y, PALETTE.accent);
+}
+
 /**
  * The construction-detail drawers, keyed by kind — the third sibling map to
  * DRAWERS / FACTORY_DRAWERS. A kind absent here has no detail view yet; the host
@@ -1479,6 +1595,7 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   NM: drawDetailMOSFET,
   PM: drawDetailMOSFET,
   MOV: drawDetailVaristor,
+  POT: drawDetailPOT,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */
