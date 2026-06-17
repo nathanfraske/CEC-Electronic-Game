@@ -19,6 +19,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Conduit polish** — DONE. Auto bend radius (`roundedPolyline`), port taper (flared mouths
   oriented along the end segment), 4-way junction fittings with capped unused arms
   (`drawJunctionConduit` + `junctionDirs`).~~
+- ~~**Conduit translucency** (#88) — lowered wall/bore/casing/flare/junction alphas so pipes
+  read translucent.~~
+- ~~**Free wire-ends** (#88) — empty-space click while routing drops a `free` junction and keeps
+  routing from it.~~
+- ~~**Potentiometer tiers** — `drawAnalogyPOT` (packed pipe) + `drawDetailPOT` (resistive film),
+  anchored A/B/W, driven by wiper + current + vAcross.~~
+- [ ] **Auto-bend to the input** (owner) — `wireRoute` mid-split Z ignores pin orientation; make
+  it pin-direction-aware (or do the channel-routing nudge-apart). Bigger; not started.
 - [ ] **Conduit: nudge parallel pipes apart** (owner) — a render-offset channel-routing pass for
   overlapping collinear segments. Bigger/riskier; deferred.
 - [ ] **Conduit: true per-part port-width taper** — flare each conduit to the component's actual

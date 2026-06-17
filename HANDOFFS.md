@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (5) — Conduit translucency + free wire-ends + Potentiometer tiers
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner review of the conduits + POT ref delivered.
+
+- **Conduit translucency** (#88): the pipes read solid; dropped the wall/bore/casing/
+  flare/junction alphas (~0.3–0.5) so the grid + overlaps show through, voltage core +
+  carriers stay readable.
+- **Free wire-ends** (#88): a click in empty space while routing drops a `free` junction
+  (KiCad dangling end) and keeps routing from it; `continueOrFinishWiring` empty-space
+  branch. Drag-release-into-space still abandons. (Model already supported `free`
+  junctions — `pruneJunctions` keeps them with one wire.)
+- **Potentiometer tiers** (this PR): `drawAnalogyPOT` (packed pipe — track A↔B with
+  resistance posts, weaving water = current, sliding wiper contact → arm to W, tapped-
+  level gauge) + `drawDetailPOT` (resistive carbon film — potential-gradient bands, atom
+  lattice = R, electrons drifting toward the + end, sprung wiper → arm to W). Anchored A
+  top-left / B top-right / W bottom-centre; driven by `o.wiper` + current + vAcross +
+  value. Registered POT in both maps. Verified (harness pins/bounds/wiper-response +
+  render).
+
+**Still open from the owner's message:** **auto-bend to the input** — `wireRoute` is a
+fixed mid-split Z ignoring pin orientation; the real fix is pin-direction-aware routing
+(or the deferred channel-routing "nudge apart"). Bigger; proposed, not done.
+
+---
+
 ## 2026-06-17 (4) — Conduit polish: rounded bends + port taper + 4-way junction fittings
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
