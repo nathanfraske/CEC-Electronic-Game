@@ -39,6 +39,7 @@ import {
   housing,
   mix,
   norm,
+  scatterY,
   stud,
   CUR_SCALE,
   FLOW_SPEED,
@@ -891,13 +892,40 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
   if (breakdown) {
     belt(g, bX, 0, aX, 0, rev, -1, o.phase, PALETTE.bad, 2.6);
   } else if (!conducting) {
-    // blocked: a few dots pile up against the seat from the anode side
-    for (let k = 0; k < 3; k++) {
-      const t = (((k / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(aX + (seatX - ballR - aX) * t, 0, 2.2).fill({
-        color: WATER,
-        alpha: 0.3 * (1 - t),
-      });
+    // reverse-biased & blocked: the water DAMS UP against the seated ball — a packed,
+    // jittering column backed up from the anode inlet, denser/taller the harder you push
+    // reverse (pressure = |reverse V|). Nothing crosses the valve.
+    const press = Math.min(1, Math.max(0, -o.electrical.vAcross) / V_SCALE);
+    const damR = seatX - ballR - 3; // right edge of the dam, up against the ball
+    g.rect(aX + 2, -pipeHH + 1, damR - aX - 2, 2 * pipeHH - 2).fill({
+      color: WATER,
+      alpha: 0.08 + 0.16 * press,
+    });
+    const cols = 3 + Math.round(3 * press);
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < 3; r++) {
+        const jx = Math.abs(Math.sin(o.phase * 3 + c * 1.3 + r)) * 2; // Brownian press
+        const px = damR - 3 - c * 5.5 + jx;
+        const py = -pipeHH + 4 + r * (pipeHH - 4);
+        g.circle(px, py, 2.1).fill({
+          color: WATER2,
+          alpha: 0.3 + 0.5 * press,
+        });
+      }
+    }
+    // pressure chevrons shoving toward the (closed) seat
+    if (press > 0.2) {
+      for (let i = 0; i < 2; i++) {
+        const cxv = aX + 7 + i * 7;
+        g.moveTo(cxv, -4)
+          .lineTo(cxv + 4, 0)
+          .lineTo(cxv, 4)
+          .stroke({
+            width: 1.6,
+            color: mix(WATER2, 0xffffff, 0.3),
+            alpha: 0.3 + 0.4 * press,
+          });
+      }
     }
   }
 
@@ -1873,38 +1901,53 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     alpha: 0.12,
   });
 
-  // --- resistance posts (density ~ track resistance) ---------------------------
+  // --- resistance posts (density ~ track resistance): the obstacles the water must
+  // weave around — MORE posts = more resistance per length. ----------------------
   const rNorm = o.value ? norm(o.value, 50000) : 0.5;
   const NP = Math.round(9 + 13 * rNorm);
   const postCol = mix(PALETTE.bronze, 0x8a6a40, 0.5);
+  const posts: { x: number; y: number }[] = [];
   for (let k = 0; k < NP; k++) {
-    const px = xL + ((k + 0.5) / NP) * (xR - xL);
-    g.circle(px, yTrack + (k % 2 ? -1 : 1) * ph * 0.34, 2.6).fill({
-      color: postCol,
-      alpha: 0.9,
+    posts.push({
+      x: xL + ((k + 0.5) / NP) * (xR - xL),
+      y: yTrack + (k % 2 ? -1 : 1) * ph * 0.34,
     });
   }
+  for (const p of posts) {
+    g.circle(p.x, p.y, 2.6).fill({ color: postCol, alpha: 0.9 });
+  }
 
-  // --- water streaming A↔B, weaving around the posts and NECKING through the wiper
-  // contact — the tap presses on the track, so the channel pinches under it and the
-  // pinch slides with the wiper (the flow RESPECTS the inline tap; the tapped draw
-  // itself runs down the hose to W, below). --------------------------------------
+  // --- water streaming A↔B, SLALOMING around the posts (the scattering that makes the
+  // resistance) and NECKING through the wiper contact (the pinch tracks the wiper). The
+  // tapped draw is snagged off at the wiper and runs down the hose to W, below. -----
+  const postSpread = ((xR - xL) / NP) * 0.62;
   if (flow > 0.02) {
-    const n = FLOW_DOTS_MAX;
-    for (const side of [-1, 1]) {
-      for (let k = 0; k < n; k++) {
-        const present = dotPresence(k, flow);
-        if (present <= 0) continue;
-        const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
-        const x = xL + t * (xR - xL);
-        const weave =
-          side * ph * 0.5 * Math.cos(((x - xL) / (xR - xL)) * NP * Math.PI);
-        const neck = 1 - 0.55 * Math.exp(-(((x - xW) / (ph * 1.6)) ** 2));
-        g.circle(x, yTrack + weave * neck, 2.4).fill({
-          color: WATER2,
-          alpha: (0.3 + 0.5 * flow) * present,
-        });
-      }
+    const n = FLOW_DOTS_MAX * 2;
+    for (let k = 0; k < n; k++) {
+      const present = dotPresence(k % FLOW_DOTS_MAX, flow);
+      if (present <= 0) continue;
+      const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const x = xL + t * (xR - xL);
+      const neck = 1 - 0.55 * Math.exp(-(((x - xW) / (ph * 1.6)) ** 2));
+      const dy = scatterY(x, posts, postSpread, yTrack) * ph * 0.62 * neck;
+      g.circle(x, yTrack + dy, 2.4).fill({
+        color: WATER2,
+        alpha: (0.3 + 0.5 * flow) * present,
+      });
+    }
+  }
+  // carriers SNAGGED off the track at the wiper, peeling down into the tap hose mouth —
+  // the voltage divider being made (the hose then carries them to W, below).
+  if (flow > 0.02) {
+    const ns = FLOW_DOTS_MAX;
+    for (let k = 0; k < ns; k++) {
+      const present = dotPresence(k, flow * 0.85);
+      if (present <= 0) continue;
+      const t = (((k / ns + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(xW, yTrack + t * ph, 2.3).fill({
+        color: PALETTE.accent,
+        alpha: (0.3 + 0.5 * flow) * present * (1 - 0.3 * t),
+      });
     }
   }
 

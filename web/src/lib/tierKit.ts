@@ -343,6 +343,28 @@ export function flowThroughGap(
   }
 }
 
+/**
+ * A y-deflection in [-1, 1] that steers a carrier AROUND a row of obstacles: every
+ * obstacle it passes shoves it to the far side (relative to the channel centre `cy`),
+ * so a stream multiplied by this slaloms between the obstacles — the picture of carriers
+ * scattering off a lattice, which IS resistance. Sum of signed Gaussian bumps (cheap; far
+ * obstacles skipped). Multiply the result by the amplitude you want.
+ */
+export function scatterY(
+  x: number,
+  obstacles: { x: number; y: number }[],
+  spread: number,
+  cy = 0,
+): number {
+  let dy = 0;
+  for (const ob of obstacles) {
+    const dx = (x - ob.x) / spread;
+    if (dx < -3 || dx > 3) continue;
+    dy += (ob.y <= cy ? 1 : -1) * Math.exp(-dx * dx);
+  }
+  return Math.max(-1, Math.min(1, dy));
+}
+
 // --- machine furniture --------------------------------------------------------
 
 // Whether stud() actually paints. On the board the illustration's decorative studs
