@@ -433,6 +433,11 @@ export class Board {
   // (streams to the load on a resistor, sloshes on a reactive part). Keyed by wire.
   private carrierOffset = new Map<number, number>();
   private energyOffset = new Map<number, number>();
+  // The last conduit DRAW path per wire (nudged + bridged + rounded), cached each
+  // redraw so hit-testing can pick the pipe where it's actually drawn — not the logical
+  // route it was offset from (otherwise the nudged pipe feels unclickable / floating).
+  // Empty in schematic mode, where the logical route is exactly what's drawn.
+  private conduitDrawRoutes = new Map<number, Point[]>();
   private lastTime = 0;
   private textRes = DPR;
   private lastAnchorKey = ""; // change-detect the popover anchor rect
@@ -1564,6 +1569,20 @@ export class Board {
   }
 
   private wireHitTest(wx: number, wy: number): number | null {
+    // In conduit mode, test against the DRAWN pipe path (nudged + bridged + rounded)
+    // with a tolerance covering the pipe's width, so clicking the pipe selects its wire
+    // even though that pipe was offset from the logical route. Schematic mode tests the
+    // logical route, which is exactly what's drawn.
+    if (this.conduitDrawRoutes.size > 0) {
+      for (const [id, route] of this.conduitDrawRoutes) {
+        for (let i = 0; i + 1 < route.length; i++) {
+          const p0 = route[i]!;
+          const p1 = route[i + 1]!;
+          if (distToSegment(wx, wy, p0.x, p0.y, p1.x, p1.y) <= 11) return id;
+        }
+      }
+      return null;
+    }
     const tol = 7;
     let best: number | null = null;
     for (const w of this.graph.wires.values()) {
@@ -3302,6 +3321,7 @@ export class Board {
       effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
         ? effLens
         : null;
+    this.conduitDrawRoutes.clear();
     // Which cardinal arms each junction actually uses, so a conduit junction can cap
     // the unused ones (a 4-way fitting). Accumulated from the wires' end directions.
     const junctionDirs = new Map<number, number>();
@@ -3375,6 +3395,7 @@ export class Board {
         const rd = condRoutes.get(w.id) ?? route;
         sampleRoute = roundedPoints(rd, Math.min(pw * 2, PITCH * 0.7));
         this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
+        this.conduitDrawRoutes.set(w.id, sampleRoute);
       } else {
         polyline(g, route);
         g.stroke({ width: width + 4, color, alpha: 0.16 });
