@@ -3155,8 +3155,33 @@ export class Board {
       this.drawPendingWire();
       return;
     }
-    // Empty space: keep rubber-banding for a click; abandon for a drag-into-nothing.
-    if (abandonOnEmpty) this.cancelWiring();
+    // Empty space: a CLICK drops a free-floating wire-end — a `free` junction at the
+    // grid point (KiCad dangling end) — and keeps routing from it, so a wire can end
+    // at, or bend through, a point wired to nothing. A drag that releases into space is
+    // an accidental gesture, so it's abandoned as before.
+    if (abandonOnEmpty) {
+      this.cancelWiring();
+      return;
+    }
+    const cell = { col: snap(wx, PITCH), row: snap(wy, PITCH) };
+    const fromCell = this.graph.endpointCell(this.wiring.from);
+    if (fromCell && fromCell.col === cell.col && fromCell.row === cell.row) {
+      return; // dropping on the start cell is a no-op — keep routing
+    }
+    const before = this.graph.serialize();
+    const j = this.graph.addJunction(cell, true);
+    const wire = this.graph.connect(this.wiring.from, { junctionId: j.id });
+    if (!wire) {
+      this.graph.removeJunction(j.id);
+      return;
+    }
+    this.pushUndo(before);
+    this.wiring = { from: { junctionId: j.id } };
+    this.wiringDownCell = { ...cell };
+    this.wiringMoved = false;
+    this.redrawWires();
+    this.cb.onChange?.(this.graph);
+    this.drawPendingWire();
   }
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
@@ -3437,13 +3462,13 @@ export class Board {
     const cap = "round" as const;
     const join = "round" as const;
     const r = pw * 1.1; // bend radius ≈ pipe width
-    const coreAlpha = lens === "analogy" ? 0.42 : 0.55;
+    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
     if (lens === "analogy") {
       roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.85, cap, join });
+      g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.5, cap, join });
       roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.92, cap, join });
+      g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.32, cap, join });
       roundedPolyline(g, route, r);
       g.stroke({
         width: Math.max(1, pw - 2),
@@ -3454,9 +3479,9 @@ export class Board {
       });
     } else {
       roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.8, cap, join });
+      g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.5, cap, join });
       roundedPolyline(g, route, r);
-      g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.85, cap, join });
+      g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.3, cap, join });
       roundedPolyline(g, route, r);
       g.stroke({
         width: Math.max(1, pw - 1),
@@ -3466,7 +3491,7 @@ export class Board {
         join,
       });
       roundedPolyline(g, route, r);
-      g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.12, cap, join });
+      g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.1, cap, join });
     }
     // Taper each end into a port mouth, oriented along the end segment — the conduit
     // flares open where it plugs into a part (or junction), so it reads as connected.
@@ -3496,7 +3521,7 @@ export class Board {
         by - py * ph,
         bx + px * ph,
         by + py * ph,
-      ]).fill({ color: wallCol, alpha: 0.9 });
+      ]).fill({ color: wallCol, alpha: 0.55 });
       const im = mouthR - 2.5;
       const ip = Math.max(0.5, ph - 2.5);
       g.poly([
@@ -3566,7 +3591,7 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    const coreAlpha = lens === "analogy" ? 0.45 : 0.6;
+    const coreAlpha = lens === "analogy" ? 0.4 : 0.46;
     const pw = 6;
     const arm = PITCH * 0.46;
     const dirs: [number, number, number][] = [
@@ -3580,7 +3605,7 @@ export class Board {
       const ex = p.x + ux * arm;
       const ey = p.y + uy * arm;
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 5, color: wallCol, alpha: 0.85, cap });
+      g.stroke({ width: pw + 5, color: wallCol, alpha: 0.5, cap });
       g.moveTo(p.x, p.y).lineTo(ex, ey);
       g.stroke({ width: Math.max(1, pw - 2), color, alpha: coreAlpha, cap });
       // blanking cap: a perpendicular plate across the stub mouth
@@ -3589,10 +3614,10 @@ export class Board {
       const h = (pw + 5) / 2;
       g.moveTo(ex + qx * h, ey + qy * h)
         .lineTo(ex - qx * h, ey - qy * h)
-        .stroke({ width: 3, color: wallCol, alpha: 0.95, cap });
+        .stroke({ width: 3, color: wallCol, alpha: 0.65, cap });
     }
     // hub
-    g.circle(p.x, p.y, pw / 2 + 4).fill({ color: wallCol, alpha: 0.9 });
+    g.circle(p.x, p.y, pw / 2 + 4).fill({ color: wallCol, alpha: 0.55 });
     g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha });
   }
 
