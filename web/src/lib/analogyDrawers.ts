@@ -1326,17 +1326,21 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
 }
 
 // ============================================================================
-// Op-amp — ported from opamp-tiers.html tier 2: a pilot SPOOL VALVE. Two sealed
-// pilots push on a spool — V+ from one end, V− the other — and their tiny
-// difference, times the gain, slides the spool, porting the +rail or −rail supply
-// to the output. Push far enough and the spool hits an end stop: the output clips
-// at a rail. The inputs are sealed (high-Z); they draw no flow.
+// Op-amp — ported from opamp-tiers.html tier 2: a pilot SPOOL VALVE. Two input
+// reservoirs feed pilots that steer a spool; the spool ports one of the two supply
+// rails (±12 V) through to the output tank, geared up by the gain. The tiny input
+// difference slides the spool a lot — the huge open-loop gain — until it bottoms out
+// on a rail and the output clips. Each input steers the spool toward the rail on ITS
+// own side: the non-inverting IN+ (top) toward the +rail, the inverting IN− (bottom)
+// toward the −rail — which is exactly their electrical sense and keeps the +rail up.
+// Anchored to the real pins (IN+ top-left, IN− bottom-left, OUT right).
 //
 // Live mapping (op-amp ElectricalState: current = Iout, vAcross = V(OUT)−V(IN−);
 // value = ±Vsat rail):
-//   • output = vAcross/Vsat → spool offset + the output-tank level (clamped at rails).
-//   • drive  = norm(|Iout|) → ported flow to the tank; sign sets the direction.
-//   • the WINNING input pushes harder (reconstructed from the output's sign).
+//   • swing  = vAcross/Vsat → spool offset + output-tank level (clamped at rails).
+//   • inputs = ½ ± ½·swing  → the two reservoir levels (reconstructed; the difference
+//     is what's observable) + which steer arrow drives.
+//   • drive  = norm(|Iout|) → the ported supply→channel→tank flow; sign sets dir.
 // ============================================================================
 function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
@@ -1369,44 +1373,94 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
   const IM = pick("", true, -0.588, 0.95);
   const OU = pick("OUT", false, 0.588, 0);
 
-  const spX = -hw * 0.08; // spool between the inputs (left) and the output (right)
+  // --- spool geometry ----------------------------------------------------------
+  const spX = -hw * 0.06;
   const spHW = hw * 0.085;
-  const spTop = -hh * 0.6;
-  const spBot = hh * 0.6;
-  const cy = -swing * (hh * 0.4); // ported-channel centre: up for +out, down for −
-  const gap = hh * 0.15;
+  const spTop = -hh * 0.72;
+  const spBot = hh * 0.72;
+  const range = hh * 0.4;
+  const cy = -swing * range; // ported-channel centre: up for +out, down for −
+  const gap = hh * 0.13;
 
-  // --- supply rails: +rail bar at the top, −rail at the bottom (glow when clipped)
-  for (const [ry, glow] of [
-    [spTop, sat && posWins],
-    [spBot, sat && !posWins],
+  // --- ±supply reservoirs feeding the spool's left ports -----------------------
+  // +rail (the non-inverting side) sits upper, −rail lower; the one being ported
+  // (by the output's sign) glows toward the output colour.
+  const supX = spX - hw * 0.34;
+  const supHW = hw * 0.1;
+  for (const [py, isPlus] of [
+    [-hh * 0.3, true],
+    [hh * 0.3, false],
   ] as const) {
-    g.moveTo(spX - spHW - 5, ry)
-      .lineTo(spX + spHW + 5, ry)
+    const active = isPlus === posWins && drive > 0.03;
+    g.roundRect(supX - supHW, py - 10, supHW * 2, 20, 2).stroke({
+      width: 1.5,
+      color: PALETTE.rail,
+      alpha: 0.8,
+    });
+    g.rect(supX - supHW + 2, py - 8, supHW * 2 - 4, 16).fill({
+      color: active ? OUT : PALETTE.rail,
+      alpha: active ? 0.5 : 0.22,
+    });
+    g.moveTo(supX + supHW, py)
+      .lineTo(spX - spHW, py)
       .stroke({
-        width: 3,
-        color: glow ? PALETTE.accent : PALETTE.rail,
-        alpha: glow ? 0.95 : 0.7,
+        width: 2,
+        color: active ? OUT : PALETTE.rail,
+        alpha: active ? 0.85 : 0.5,
       });
   }
 
-  // --- input pilots (sealed, no flow): IN+ → top end, IN− → bottom end ----------
-  const pushP = posWins ? 0.45 + 0.5 * Math.abs(swing) : 0.3;
-  const pushN = posWins ? 0.3 : 0.45 + 0.5 * Math.abs(swing);
-  for (const [an, end, push, col, s] of [
-    [IP, spTop, pushP, POS, 1],
-    [IM, spBot, pushN, NEG, -1],
+  // --- the gain knob (geared step-up between the supplies and the spool) -------
+  const knobX = supX + hw * 0.18;
+  g.circle(knobX, 0, hw * 0.06).fill({ color: 0x10131f, alpha: 0.85 });
+  g.circle(knobX, 0, hw * 0.06).stroke({
+    width: 2,
+    color: PALETTE.accent,
+    alpha: 0.9,
+  });
+  for (let k = 0; k < 6; k++) {
+    const a = (k / 6) * Math.PI * 2;
+    g.moveTo(knobX + Math.cos(a) * hw * 0.045, Math.sin(a) * hw * 0.045)
+      .lineTo(knobX + Math.cos(a) * hw * 0.06, Math.sin(a) * hw * 0.06)
+      .stroke({ width: 1.2, color: PALETTE.accent, alpha: 0.7 });
+  }
+
+  // --- input reservoirs at the pins + steer arrows at the spool ends -----------
+  const ipLevel = Math.max(0, Math.min(1, 0.5 + 0.5 * swing));
+  const imLevel = Math.max(0, Math.min(1, 0.5 - 0.5 * swing));
+  for (const [an, lvl, end, col, steer, win] of [
+    [IP, ipLevel, spTop, POS, -1, Math.max(0, swing)],
+    [IM, imLevel, spBot, NEG, 1, Math.max(0, -swing)],
   ] as const) {
-    const portY = end + s * 8;
+    const tkW = hw * 0.13;
+    const tkH = hh * 0.34;
+    const tkx = an.x + hw * 0.04;
+    const tky = an.y - steer * (hh * 0.28); // pulled inboard so it clears the edge
+    // lead from the pin to the tank (vertex at the pin)
     g.moveTo(an.x, an.y)
-      .lineTo(spX - spHW - 6, portY)
-      .stroke({ width: 2, color: col, alpha: 0.4 });
-    // pilot piston pressing on the spool end; the winner presses harder
-    const tipX = spX - spHW - 3;
-    const tailX = tipX - 7 - 12 * push;
-    g.poly([tailX, portY - 4, tailX, portY + 4, tipX, portY]).fill({
+      .lineTo(tkx, an.y)
+      .lineTo(tkx, tky - steer * (tkH / 2))
+      .stroke({ width: 2, color: col, alpha: 0.45 });
+    g.roundRect(tkx - tkW / 2, tky - tkH / 2, tkW, tkH, 2).stroke({
+      width: 1.6,
+      color: PALETTE.rail,
+      alpha: 0.8,
+    });
+    const fillH = lvl * (tkH - 4);
+    g.rect(tkx - tkW / 2 + 2, tky + tkH / 2 - 2 - fillH, tkW - 4, fillH).fill({
       color: col,
-      alpha: 0.9,
+      alpha: 0.5,
+    });
+    // dashed connector from the tank toward the spool end
+    g.moveTo(tkx, tky + steer * (tkH / 2))
+      .lineTo(spX, end)
+      .stroke({ width: 1.8, color: col, alpha: 0.32 });
+    // steer arrow just outside the spool end, pointing toward this input's rail
+    const aw = 4 + 7 * win;
+    const baseY = end + steer * 3;
+    g.poly([spX - 5, baseY, spX + 5, baseY, spX, baseY + steer * aw]).fill({
+      color: col,
+      alpha: 0.45 + 0.45 * win,
     });
     stud(g, an.x, an.y, col);
   }
@@ -1422,22 +1476,19 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
     [cy + gap, spBot],
   ] as const) {
     g.roundRect(spX - spHW + 2, y0, spHW * 2 - 4, Math.max(0, y1 - y0), 2).fill(
-      {
-        color: PLATE,
-        alpha: 0.92,
-      },
+      { color: PALETTE.bronze, alpha: 0.8 },
     );
+    g.roundRect(
+      spX - spHW + 2,
+      y0,
+      spHW * 2 - 4,
+      Math.max(0, y1 - y0),
+      2,
+    ).stroke({ width: 1, color: WARM, alpha: 0.6 });
   }
-  // spool stem + gain knob (the difference, geared up by the open-loop gain)
   g.moveTo(spX, spTop)
     .lineTo(spX, spBot)
-    .stroke({ width: 2.5, color: PLATE, alpha: 0.4 });
-  g.circle(spX, cy, 6).fill({ color: 0x10131f, alpha: 0.8 });
-  g.circle(spX, cy, 6).stroke({
-    width: 1.6,
-    color: PALETTE.accent,
-    alpha: 0.85,
-  });
+    .stroke({ width: 2, color: PLATE, alpha: 0.35 });
 
   // --- output tank (right): level = output, clamped at the supply rails ---------
   const tankX = OU.x - hw * 0.2;
@@ -1449,12 +1500,19 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
       .lineTo(tankX + s * tankHW, tankB)
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
-  for (const ry of [tankT, tankB]) {
+  for (const [ry, glow] of [
+    [tankT, sat && posWins],
+    [tankB, sat && !posWins],
+  ] as const) {
     g.moveTo(tankX - tankHW - 3, ry)
       .lineTo(tankX + tankHW + 3, ry)
-      .stroke({ width: 2.5, color: PALETTE.rail, alpha: 0.8 });
+      .stroke({
+        width: 2.5,
+        color: glow ? PALETTE.accent : PALETTE.rail,
+        alpha: glow ? 0.95 : 0.8,
+      });
   }
-  const lvlY = -swing * (hh * 0.62);
+  const lvlY = -swing * (hh * 0.66);
   g.rect(
     tankX - tankHW + 2,
     Math.min(0, lvlY),
@@ -1465,8 +1523,10 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
     .lineTo(tankX + tankHW + 3, lvlY)
     .stroke({ width: 2.5, color: sat ? PALETTE.accent : WARM, alpha: 0.95 });
 
-  // --- ported channel → output tank → the OUT lead -----------------------------
+  // --- ported flow: active supply → channel → output tank → the OUT lead --------
   if (drive > 0.03) {
+    const supActiveY = posWins ? -hh * 0.3 : hh * 0.3;
+    belt(g, spX - spHW, supActiveY, spX, cy, drive, 1, o.phase, WATER, 2.2);
     belt(g, spX + spHW, cy, tankX - tankHW, 0, drive, dir, o.phase, WATER, 2.6);
   }
   g.moveTo(tankX + tankHW, 0)

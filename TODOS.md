@@ -6,6 +6,17 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 — op-amp: doc-faithful analogy + reality
+
+- ~~**OA analogy** rebuilt to the opamp-tiers.html tier-2 spool valve (input reservoirs,
+  ±supply reservoirs, gain knob, bronze spool lands, output tank, ported flow), anchored to
+  the real pins. Each input steers the spool toward its own rail (IN+→+rail up, IN−→−rail down).~~
+- ~~**OA reality** replaced the capsule/puck with the doc's tier-3 long-tailed differential pair
+  (Q+/Q−, constant tail current to −12 V, collectors to +12 V, Vout taps Q− collector).~~
+- [ ] **Owner eyeball** the new OA analogy + reality on the board (deep zoom) + info panel.
+- [ ] If wanted: the other reality tiers are still the older "factory" style — only OA was
+  switched to its exact design-doc tier-3 this pass.
+
 ## 2026-06-16 (evening) — analogy tier: pin-anchoring + faithful re-port
 
 - ~~**Analogy tiers PM/NM/OA/ZD/MOV** — DONE. Re-ported faithfully to the design sheets and

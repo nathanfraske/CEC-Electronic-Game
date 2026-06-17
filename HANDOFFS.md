@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 — Op-amp: doc-faithful analogy spool valve + reality differential pair
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner showed the opamp-tiers.html tier-2 (left) vs our
+board OA (right) and asked to reconcile the LOOK to the design doc — keeping the pins
+in their real orientation — and to implement the doc's tier-3 for the **reality** tier.
+
+- **Analogy (`drawAnalogyOA`)** rebuilt to the doc's pilot SPOOL VALVE: two input
+  reservoirs (fill = reconstructed ½±½·swing) at the IN+/IN− pins, ±supply reservoirs
+  feeding the spool's left ports (the ported one glows), a geared GAIN KNOB, the spool
+  with two **bronze** lands bounding the ported channel, the output tank (level =
+  swing, rail caps glow on clip), and supply→channel→tank ported flow. Orientation
+  reconciled with the pins via the right mental model: **each input steers the spool
+  toward the rail on its own side** — non-inverting IN+ (top) → +rail up, inverting
+  IN− (bottom) → −rail down — which is pin-correct, doc-faithful (+ up), and the
+  correct inverting/non-inverting sense, with no force-balance contradiction.
+- **Reality (`drawDetailOA`)** replaced the old capsule/puck with the doc's tier-3
+  LONG-TAILED DIFFERENTIAL PAIR: Q+ / Q− stacks (collector n / base p / emitter n+)
+  between the +12 V rail and a constant tail current source to −12 V; bases = the two
+  inputs, emitters joined at the tail, Vout taps Q−'s collector → OUT. The tail split
+  `f = ½+½·swing` crowds into the higher-base side (region glow + branch-stream
+  density); output belt = |Iout|; rose rail-pin halo at saturation. Anchored to the
+  pins (IN+→Q+ base, IN−→Q− base, OUT→Q− collector).
+- **Verified headlessly**: extended the `/tmp` harness to the reality tier too (pins
+  reached, in-bounds, responds) AND added a pure-JS shape-dump → Python rasterizer to
+  actually *render* both tiers to a PNG and eyeball them (input tanks / supplies /
+  gain knob / spool / output tank for analogy; diff-pair + tail source + Vout for
+  reality). Sent the preview to the owner.
+
+**Note on the look:** the input tanks sit at the corner pins (top-left / bottom-left)
+rather than the doc's top/bottom-centre — the deliberate consequence of "keep pins in
+the correct orientation." Everything else mirrors the doc.
+
+---
+
 ## 2026-06-16 (evening 4) — Analogy tier: pin-anchoring + faithful re-port (PM/NM/OA/ZD/MOV)
 
 **State:** 🟢 Green — web check/lint/build (no Rust change; golden untouched). Branch
