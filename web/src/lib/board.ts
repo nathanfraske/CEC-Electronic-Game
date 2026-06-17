@@ -188,6 +188,20 @@ const ENERGY_SPACING = 34; // energy-dot spacing in px (absolute arc-length)
 // Safety cap on dots per belt so a very long trace can't spawn unbounded graphics.
 const MAX_BELT_DOTS = 64;
 
+// --- conduit skin (analogy/reality LOD) --------------------------------------
+// Zoomed in under the analogy/reality lens, a bare trace is re-skinned as the same
+// conduit the components become: an ANALOGY pipe (steel wall + dark bore + voltage-
+// tinted water, carriers flowing WITH the current) or a REALITY metal conductor
+// (bright sheath + glowing core, an electron gas drifting AGAINST the current). Both
+// keep the bus language — colour = net voltage, density/thickness = current — just
+// re-skinned to match the part illustrations. Kicks in at the same `TIER_ZOOM`.
+const PIPE_WALL = 0x6b6488; // steel pipe wall
+const PIPE_BORE = 0x0d0b16; // dark pipe interior
+const PIPE_WATER = 0x8fd6ff; // bright water carriers
+const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
+const COND_CORE_DK = 0x1a1410; // conductor backing
+const COND_ELEC = 0x9fe6ff; // electron carriers (drift against the current)
+
 /** Trace palette for the scope widget; cycled over a variable-length state. */
 const CHANNEL_COLORS = [
   PALETTE.accent,
@@ -3258,6 +3272,13 @@ export class Board {
     const currents = this.computeWireCurrents();
     this.lastWireCurrents = currents;
     const fd = this.flowDelta;
+    // Re-skin bare traces as conduits (pipes / metal conductors) when zoomed into the
+    // analogy/reality lens — the same threshold + gating the parts morph at.
+    const effLens = this.lodEnabled ? this.lens : "schematic";
+    const conduit: BoardLens | null =
+      effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
+        ? effLens
+        : null;
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
@@ -3269,10 +3290,14 @@ export class Board {
       // Thickness tracks current over a wide range so amperage is legible at a
       // glance (bounded by the saturating normC — a huge current stays on-screen).
       const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
-      polyline(g, route);
-      g.stroke({ width: width + 4, color, alpha: 0.16 });
-      polyline(g, route);
-      g.stroke({ width, color, alpha: 0.95 });
+      if (conduit) {
+        this.drawConduitSkin(g, route, color, 5 + 6 * normC, conduit);
+      } else {
+        polyline(g, route);
+        g.stroke({ width: width + 4, color, alpha: 0.16 });
+        polyline(g, route);
+        g.stroke({ width, color, alpha: 0.95 });
+      }
 
       const len = routeLength(route);
       if (len <= 0) continue;
@@ -3295,9 +3320,12 @@ export class Board {
       // jumping. Arrow size grows with current; spacing shrinks with current (so the
       // arrows-per-pixel is constant for equal current, matching across lengths).
       if (normC > 0.02) {
+        // Reality electrons drift AGAINST the conventional current; the analogy water
+        // and the schematic chevrons stream WITH it.
+        const adv = conduit === "reality" ? -carrierDir : carrierDir;
         const co = advanceBeltOffset(
           this.carrierOffset.get(w.id) ?? 0,
-          carrierDir * fd * CARRIER_PX_RATE,
+          adv * fd * CARRIER_PX_RATE,
           len,
         );
         this.carrierOffset.set(w.id, co);
@@ -3310,7 +3338,28 @@ export class Board {
         const dir = cur >= 0 ? 1 : -1;
         for (const d of beltDots(len, spacing, co)) {
           const s = sampleRouteAt(route, d);
-          drawChevron(g, s.x, s.y, s.dx * dir, s.dy * dir, color, alpha, size);
+          if (!conduit) {
+            drawChevron(
+              g,
+              s.x,
+              s.y,
+              s.dx * dir,
+              s.dy * dir,
+              color,
+              alpha,
+              size,
+            );
+          } else if (conduit === "analogy") {
+            g.circle(s.x, s.y, 2 + 1.6 * normC).fill({
+              color: PIPE_WATER,
+              alpha: 0.45 + 0.4 * normC,
+            });
+          } else {
+            g.circle(s.x, s.y, 1.7 + 1.2 * normC).fill({
+              color: COND_ELEC,
+              alpha: 0.5 + 0.4 * normC,
+            });
+          }
         }
       }
 
@@ -3349,6 +3398,51 @@ export class Board {
     }
     // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
     this.flowDelta = 0;
+  }
+
+  /**
+   * Re-skin a bare trace as a conduit: an ANALOGY pipe (steel wall, dark bore,
+   * voltage-tinted water) or a REALITY metal conductor (bright sheath, glowing core, a
+   * sheen highlight). Constant-width strokes — Pixi rounds the bends and the ends —
+   * plus a port collar at each end so the conduit merges smoothly into the part (or
+   * junction) it plugs into, the "adaptive taper" without per-part port geometry.
+   */
+  private drawConduitSkin(
+    g: Graphics,
+    route: Point[],
+    color: number,
+    pw: number,
+    lens: BoardLens,
+  ): void {
+    const cap = "round" as const;
+    const join = "round" as const;
+    if (lens === "analogy") {
+      polyline(g, route);
+      g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.85, cap, join });
+      polyline(g, route);
+      g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.92, cap, join });
+      polyline(g, route);
+      g.stroke({ width: Math.max(1, pw - 2), color, alpha: 0.42, cap, join });
+    } else {
+      polyline(g, route);
+      g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.8, cap, join });
+      polyline(g, route);
+      g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.85, cap, join });
+      polyline(g, route);
+      g.stroke({ width: Math.max(1, pw - 1), color, alpha: 0.55, cap, join });
+      polyline(g, route);
+      g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.12, cap, join });
+    }
+    // port collars: a rounded mouth where the conduit meets each part / junction.
+    const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
+    for (const end of [route[0], route[route.length - 1]]) {
+      if (!end) continue;
+      g.circle(end.x, end.y, (pw + 5) / 2).fill({ color: wallCol, alpha: 0.9 });
+      g.circle(end.x, end.y, Math.max(1, (pw - 2) / 2)).fill({
+        color,
+        alpha: lens === "analogy" ? 0.42 : 0.55,
+      });
+    }
   }
 
   /**
