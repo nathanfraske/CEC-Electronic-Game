@@ -21,6 +21,15 @@ export interface ElectricalState {
    */
   flux?: number;
   /**
+   * Extra per-leg currents (amps) for a part whose current SPLITS between several
+   * exits, in a part-specific order the drawer knows — so the analogy can divide its
+   * particle streams in proportion (the picture of a divider tapping current). For the
+   * potentiometer this is `[I(W→B)]`, so the wiper's tapped current is `current −
+   * legs[0]` (KCL at the wiper). Absent for ordinary single-path parts. See
+   * {@link BuiltNetlist.legsOfComponent} and `tierKit.flowSplit`.
+   */
+  legs?: number[];
+  /**
    * Set when this part hit the FAIL bound this tick — an ideal part driven past
    * what physics allows (no series impedance). The renderer boxes it in pulsing
    * red. Absent/false for every well-behaved part.

@@ -1662,9 +1662,14 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
     .lineTo(W.x, midY)
     .lineTo(W.x, W.y)
     .stroke({ width: 2.5, color: PALETTE.dim, alpha: 0.85 });
-  // carriers TAPPED off at the contact run down the spring + arm to W — the wiper
-  // collects part of the stream (so the flow leaves at the tap, not just A↔B).
-  if (flow > 0.02) {
+  // carriers TAPPED off at the contact run down the spring + arm to W — and the wiper
+  // collects its SHARE in proportion to the tapped current (KCL: tap = A→W − W→B), so a
+  // loaded wiper visibly steals more carriers and an unloaded one steals none.
+  const iAW = o.electrical.current;
+  const iWB = o.electrical.legs?.[0] ?? iAW;
+  const tapFrac =
+    Math.abs(iAW) > 1e-9 ? Math.min(1, Math.abs(iAW - iWB) / Math.abs(iAW)) : 0;
+  if (flow * tapFrac > 0.02) {
     flowAlongPath(
       g,
       [
@@ -1674,7 +1679,7 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
         { x: W.x, y: midY },
         { x: W.x, y: W.y },
       ],
-      flow,
+      flow * tapFrac,
       1,
       o.phase,
       ELEC,

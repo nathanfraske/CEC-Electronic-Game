@@ -35,6 +35,7 @@ import {
   flowAlongPath,
   flowAroundBall,
   flowAroundPlug,
+  flowSplit,
   flowThroughGap,
   housing,
   mix,
@@ -1945,39 +1946,69 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     g.circle(p.x, p.y, 2.6).fill({ color: postCol, alpha: 0.9 });
   }
 
-  // --- water streaming A↔B, SLALOMING around the posts (the scattering that makes the
-  // resistance) and NECKING through the wiper contact (the pinch tracks the wiper). The
-  // tapped draw is snagged off at the wiper and runs down the hose to W, below. -----
+  // --- the flow: water slaloms A→wiper around the posts (the resistance) and then
+  // SPLITS at the wiper — part carries on to B, part is tapped down the hose to W — in
+  // exact proportion to each leg's current (the divider, made visible). The wiper
+  // "steals" its share: more current out of W ⇒ more carriers peel off, fewer reach B.
   const postSpread = ((xR - xL) / NP) * 0.62;
-  if (flow > 0.02) {
-    const n = FLOW_DOTS_MAX * 2;
-    for (let k = 0; k < n; k++) {
-      const present = dotPresence(k % FLOW_DOTS_MAX, flow);
-      if (present <= 0) continue;
-      const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
-      const x = xL + t * (xR - xL);
+  const slalomPts = (x0: number, x1: number): { x: number; y: number }[] => {
+    const steps = Math.max(2, Math.round((Math.abs(x1 - x0) / (xR - xL)) * 18));
+    const pts: { x: number; y: number }[] = [];
+    for (let i = 0; i <= steps; i++) {
+      const x = x0 + (x1 - x0) * (i / steps);
       const neck = 1 - 0.55 * Math.exp(-(((x - xW) / (ph * 1.6)) ** 2));
-      const dy = scatterY(x, posts, postSpread, yTrack) * ph * 0.62 * neck;
-      g.circle(x, yTrack + dy, 2.4).fill({
-        color: WATER2,
-        alpha: (0.3 + 0.5 * flow) * present,
+      pts.push({
+        x,
+        y: yTrack + scatterY(x, posts, postSpread, yTrack) * ph * 0.62 * neck,
       });
     }
+    return pts;
+  };
+  // the flexible tap hose from the wiper contact down to the W pin (a cubic bezier)
+  const c1 = { x: xW, y: yTrack + ph + hh * 0.3 };
+  const c2 = { x: W.x, y: W.y - hh * 0.3 };
+  const hose: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    const u = 1 - t;
+    hose.push({
+      x:
+        u * u * u * xW +
+        3 * u * u * t * c1.x +
+        3 * u * t * t * c2.x +
+        t ** 3 * W.x,
+      y:
+        u * u * u * yTrack +
+        3 * u * u * t * c1.y +
+        3 * u * t * t * c2.y +
+        t ** 3 * W.y,
+    });
   }
-  // carriers SNAGGED off the track at the wiper, peeling down into the tap hose mouth —
-  // the voltage divider being made (the hose then carries them to W, below).
-  if (flow > 0.02) {
-    const ns = FLOW_DOTS_MAX;
-    for (let k = 0; k < ns; k++) {
-      const present = dotPresence(k, flow * 0.85);
-      if (present <= 0) continue;
-      const t = (((k / ns + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(xW, yTrack + t * ph, 2.3).fill({
-        color: PALETTE.accent,
-        alpha: (0.3 + 0.5 * flow) * present * (1 - 0.3 * t),
-      });
-    }
-  }
+  // hose structure (the tapped carriers ride it via the split below)
+  g.poly(
+    hose.flatMap((p) => [p.x, p.y]),
+    false,
+  ).stroke({ width: 7, color: PALETTE.rail, alpha: 0.5, cap: "round" });
+  g.poly(
+    hose.flatMap((p) => [p.x, p.y]),
+    false,
+  ).stroke({ width: 4, color: PALETTE.accent, alpha: 0.32, cap: "round" });
+  // the proportional split, weighted by each leg's current (KCL: tap = A→W − W→B)
+  const iAW = o.electrical.current;
+  const iWB = o.electrical.legs?.[0] ?? iAW;
+  flowSplit(
+    g,
+    slalomPts(xL, xW),
+    [
+      { path: slalomPts(xW, xR), weight: Math.abs(iWB) },
+      { path: hose, weight: Math.abs(iAW - iWB) },
+    ],
+    flow,
+    dir,
+    o.phase,
+    WATER2,
+    2.4,
+  );
 
   // --- the wiper STANDPIPE (rises to the tapped head) + contact -----------------
   // the head the wiper taps: the divider fraction (from the LOW end) of the supply head
@@ -1999,39 +2030,6 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     .stroke({ width: 1.8, color: PALETTE.accent, alpha: 0.9 });
   g.circle(xW, yTrack, 4).fill({ color: PALETTE.accent, alpha: 0.95 });
   g.circle(xW, yTrack, 4).stroke({ width: 1, color: WARM, alpha: 0.7 });
-
-  // --- the FLEXIBLE HOSE: tapped current runs down it to the W node ------------
-  // a cubic bezier from the wiper contact, drooping down to the W pin; it flexes as
-  // the wiper slides, and the tapped current visibly streams down it (the load draw).
-  const h0 = { x: xW, y: yTrack + ph };
-  const c1 = { x: xW, y: yTrack + ph + hh * 0.3 };
-  const c2 = { x: W.x, y: W.y - hh * 0.3 };
-  const hose: { x: number; y: number }[] = [];
-  for (let i = 0; i <= 16; i++) {
-    const t = i / 16;
-    const u = 1 - t;
-    hose.push({
-      x:
-        u * u * u * h0.x +
-        3 * u * u * t * c1.x +
-        3 * u * t * t * c2.x +
-        t * t * t * W.x,
-      y:
-        u * u * u * h0.y +
-        3 * u * u * t * c1.y +
-        3 * u * t * t * c2.y +
-        t * t * t * W.y,
-    });
-  }
-  g.poly(
-    hose.flatMap((p) => [p.x, p.y]),
-    false,
-  ).stroke({ width: 7, color: PALETTE.rail, alpha: 0.5, cap: "round" });
-  g.poly(
-    hose.flatMap((p) => [p.x, p.y]),
-    false,
-  ).stroke({ width: 4, color: PALETTE.accent, alpha: 0.32, cap: "round" });
-  flowAlongPath(g, hose, flow, dir, o.phase, WATER2, 2.4);
 
   stud(g, A.x, A.y, PALETTE.bronze);
   stud(g, B.x, B.y, PALETTE.bronze);
