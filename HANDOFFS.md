@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (4) — Conduit polish: rounded bends + port taper + 4-way junction fittings
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner review of the conduits (R2/GND screenshot): clipping
+at parts + plain junction dot. Implemented the connect-cleanly trio (all rendering,
+`board.ts`, conduit mode only):
+
+- **Auto bend radius** — `roundedPolyline(g, pts, r)` (quadratic arcs at each interior
+  vertex, r ≈ pipe width); the conduit strokes route through it so bends read as smooth
+  elbows instead of hard mitres. (The owner's "more elegant" clipping fix.)
+- **Port taper** — `drawConduitSkin` flares each end into a port mouth (a filled
+  trapezoid, wall + voltage-core, oriented along the end segment) instead of a flat disc
+  collar, so the conduit opens INTO the part it plugs into. Mouth = `PITCH*0.34` (a
+  standard size; a true per-part port-width match still needs parts to expose a radius).
+- **4-way junction fittings** — `drawJunctionConduit`: the arms a wire uses ARE the wire
+  conduits; the UNUSED cardinal arms get a short **capped** blanking stub + a hub disc.
+  Used dirs collected in the wire loop (`junctionDirs` bitmask via `dirBit`), passed to
+  `drawJunctions(g, conduit, junctionDirs)`. Schematic lens keeps the plain dot.
+- Verified via the standalone replica render (rounded bend + flared mouths + capped
+  T-junction all correct).
+
+**Deferred + proposed (owner's other idea):** "pipes running along each other → nudge
+apart" — a render-offset **channel-routing** pass (group collinear overlapping segments,
+offset perpendicular). Bigger + riskier (touches routing continuity at bends); left as a
+follow-up. Also: true per-part port-width taper (needs parts to expose a port radius).
+
+---
+
 ## 2026-06-17 (3) — Board traces as conduits (analogy pipes / reality copper)
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch

@@ -3279,9 +3279,29 @@ export class Board {
       effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
         ? effLens
         : null;
+    // Which cardinal arms each junction actually uses, so a conduit junction can cap
+    // the unused ones (a 4-way fitting). Accumulated from the wires' end directions.
+    const junctionDirs = new Map<number, number>();
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
+      if (conduit) {
+        if (isJunctionRef(w.from)) {
+          const id = w.from.junctionId;
+          junctionDirs.set(
+            id,
+            (junctionDirs.get(id) ?? 0) | dirBit(route[0]!, route[1]!),
+          );
+        }
+        if (isJunctionRef(w.to)) {
+          const id = w.to.junctionId;
+          junctionDirs.set(
+            id,
+            (junctionDirs.get(id) ?? 0) |
+              dirBit(route[route.length - 1]!, route[route.length - 2]!),
+          );
+        }
+      }
       const v = this.pinVoltage(w.from);
       const color = v === null ? PALETTE.cyan : voltageColor(v);
 
@@ -3385,7 +3405,7 @@ export class Board {
         }
       }
     }
-    this.drawJunctions(g);
+    this.drawJunctions(g, conduit, junctionDirs);
     // Drop offsets for wires that no longer exist (after a delete), so the maps
     // can't grow without bound across a long editing session.
     if (this.carrierOffset.size > this.graph.wires.size) {
@@ -3416,32 +3436,79 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const join = "round" as const;
+    const r = pw * 1.1; // bend radius ≈ pipe width
+    const coreAlpha = lens === "analogy" ? 0.42 : 0.55;
+    const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
     if (lens === "analogy") {
-      polyline(g, route);
+      roundedPolyline(g, route, r);
       g.stroke({ width: pw + 5, color: PIPE_WALL, alpha: 0.85, cap, join });
-      polyline(g, route);
+      roundedPolyline(g, route, r);
       g.stroke({ width: pw + 1, color: PIPE_BORE, alpha: 0.92, cap, join });
-      polyline(g, route);
-      g.stroke({ width: Math.max(1, pw - 2), color, alpha: 0.42, cap, join });
+      roundedPolyline(g, route, r);
+      g.stroke({
+        width: Math.max(1, pw - 2),
+        color,
+        alpha: coreAlpha,
+        cap,
+        join,
+      });
     } else {
-      polyline(g, route);
+      roundedPolyline(g, route, r);
       g.stroke({ width: pw + 5, color: COND_CASING, alpha: 0.8, cap, join });
-      polyline(g, route);
+      roundedPolyline(g, route, r);
       g.stroke({ width: pw + 1, color: COND_CORE_DK, alpha: 0.85, cap, join });
-      polyline(g, route);
-      g.stroke({ width: Math.max(1, pw - 1), color, alpha: 0.55, cap, join });
-      polyline(g, route);
+      roundedPolyline(g, route, r);
+      g.stroke({
+        width: Math.max(1, pw - 1),
+        color,
+        alpha: coreAlpha,
+        cap,
+        join,
+      });
+      roundedPolyline(g, route, r);
       g.stroke({ width: 1.4, color: 0xffffff, alpha: 0.12, cap, join });
     }
-    // port collars: a rounded mouth where the conduit meets each part / junction.
-    const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    for (const end of [route[0], route[route.length - 1]]) {
-      if (!end) continue;
-      g.circle(end.x, end.y, (pw + 5) / 2).fill({ color: wallCol, alpha: 0.9 });
-      g.circle(end.x, end.y, Math.max(1, (pw - 2) / 2)).fill({
-        color,
-        alpha: lens === "analogy" ? 0.42 : 0.55,
-      });
+    // Taper each end into a port mouth, oriented along the end segment — the conduit
+    // flares open where it plugs into a part (or junction), so it reads as connected.
+    const mouthR = PITCH * 0.34;
+    const ph = (pw + 5) / 2;
+    for (const [ei, ni] of [
+      [0, 1],
+      [route.length - 1, route.length - 2],
+    ] as const) {
+      const e = route[ei];
+      const nb = route[ni];
+      if (!e || !nb) continue;
+      const d = Math.hypot(nb.x - e.x, nb.y - e.y) || 1;
+      const ux = (nb.x - e.x) / d;
+      const uy = (nb.y - e.y) / d;
+      const px = -uy;
+      const py = ux;
+      const fl = Math.min(14, d * 0.8);
+      const bx = e.x + ux * fl;
+      const by = e.y + uy * fl;
+      g.poly([
+        e.x + px * mouthR,
+        e.y + py * mouthR,
+        e.x - px * mouthR,
+        e.y - py * mouthR,
+        bx - px * ph,
+        by - py * ph,
+        bx + px * ph,
+        by + py * ph,
+      ]).fill({ color: wallCol, alpha: 0.9 });
+      const im = mouthR - 2.5;
+      const ip = Math.max(0.5, ph - 2.5);
+      g.poly([
+        e.x + px * im,
+        e.y + py * im,
+        e.x - px * im,
+        e.y - py * im,
+        bx - px * ip,
+        by - py * ip,
+        bx + px * ip,
+        by + py * ip,
+      ]).fill({ color, alpha: coreAlpha });
     }
   }
 
@@ -3450,22 +3517,83 @@ export class Board {
    * three+ wire-ends tie together, in the net's voltage colour so it reads as one
    * with the belt. A dark backing ring keeps it legible over the flowing belt.
    */
-  private drawJunctions(g: Graphics): void {
+  private drawJunctions(
+    g: Graphics,
+    conduit: BoardLens | null,
+    junctionDirs: Map<number, number>,
+  ): void {
     for (const j of this.graph.junctions.values()) {
       const p = this.cellToWorld(j.cell);
       const v = this.pinVoltage({ junctionId: j.id });
       const color = v === null ? PALETTE.cyan : voltageColor(v);
       const hot = this.selectedJunctions.has(j.id);
-      g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({ color: 0x0d0b16, alpha: 1 });
-      g.circle(p.x, p.y, JUNCTION_R).fill({ color });
+      if (conduit) {
+        this.drawJunctionConduit(
+          g,
+          p,
+          color,
+          junctionDirs.get(j.id) ?? 0,
+          conduit,
+        );
+      } else {
+        g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({
+          color: 0x0d0b16,
+          alpha: 1,
+        });
+        g.circle(p.x, p.y, JUNCTION_R).fill({ color });
+      }
       if (hot) {
-        g.circle(p.x, p.y, JUNCTION_R + 3).stroke({
+        g.circle(p.x, p.y, (conduit ? 9 : JUNCTION_R) + 3).stroke({
           width: 1.5,
           color: PALETTE.accent,
           alpha: 0.9,
         });
       }
     }
+  }
+
+  /**
+   * A conduit junction: a 4-way fitting. The arms a wire actually uses ARE the wire
+   * conduits; the unused cardinal arms get a short capped blanking stub, and a hub disc
+   * (net-voltage core) sits at the centre. Reads as a real pipe / bus tee.
+   */
+  private drawJunctionConduit(
+    g: Graphics,
+    p: Point,
+    color: number,
+    used: number,
+    lens: BoardLens,
+  ): void {
+    const cap = "round" as const;
+    const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
+    const coreAlpha = lens === "analogy" ? 0.45 : 0.6;
+    const pw = 6;
+    const arm = PITCH * 0.46;
+    const dirs: [number, number, number][] = [
+      [1, 0, -1],
+      [2, 1, 0],
+      [4, 0, 1],
+      [8, -1, 0],
+    ];
+    for (const [bit, ux, uy] of dirs) {
+      if (used & bit) continue; // a used arm is the wire conduit itself
+      const ex = p.x + ux * arm;
+      const ey = p.y + uy * arm;
+      g.moveTo(p.x, p.y).lineTo(ex, ey);
+      g.stroke({ width: pw + 5, color: wallCol, alpha: 0.85, cap });
+      g.moveTo(p.x, p.y).lineTo(ex, ey);
+      g.stroke({ width: Math.max(1, pw - 2), color, alpha: coreAlpha, cap });
+      // blanking cap: a perpendicular plate across the stub mouth
+      const qx = -uy;
+      const qy = ux;
+      const h = (pw + 5) / 2;
+      g.moveTo(ex + qx * h, ey + qy * h)
+        .lineTo(ex - qx * h, ey - qy * h)
+        .stroke({ width: 3, color: wallCol, alpha: 0.95, cap });
+    }
+    // hub
+    g.circle(p.x, p.y, pw / 2 + 4).fill({ color: wallCol, alpha: 0.9 });
+    g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha });
   }
 
   /**
@@ -4562,6 +4690,45 @@ function polyline(g: Graphics, pts: Point[]): void {
   if (pts.length < 2) return;
   g.moveTo(pts[0]!.x, pts[0]!.y);
   for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+}
+
+/**
+ * Like {@link polyline} but with rounded corners: each interior vertex becomes a
+ * quadratic arc tangent to both incident segments, pulled back by up to `r` (capped at
+ * half the shorter leg). The conduit skins route through this so a bend reads as a
+ * smooth pipe elbow rather than a hard mitre/clip.
+ */
+function roundedPolyline(g: Graphics, pts: Point[], r: number): void {
+  if (pts.length < 3 || r <= 0.5) {
+    polyline(g, pts);
+    return;
+  }
+  g.moveTo(pts[0]!.x, pts[0]!.y);
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i - 1]!;
+    const v = pts[i]!;
+    const n = pts[i + 1]!;
+    const d1 = Math.hypot(v.x - p.x, v.y - p.y) || 1;
+    const d2 = Math.hypot(n.x - v.x, n.y - v.y) || 1;
+    const r1 = Math.min(r, d1 / 2);
+    const r2 = Math.min(r, d2 / 2);
+    g.lineTo(v.x + ((p.x - v.x) / d1) * r1, v.y + ((p.y - v.y) / d1) * r1);
+    g.quadraticCurveTo(
+      v.x,
+      v.y,
+      v.x + ((n.x - v.x) / d2) * r2,
+      v.y + ((n.y - v.y) / d2) * r2,
+    );
+  }
+  g.lineTo(pts[pts.length - 1]!.x, pts[pts.length - 1]!.y);
+}
+
+/** Cardinal-direction bit (N=1,E=2,S=4,W=8) of the step from `a` toward `b`. */
+function dirBit(a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  if (Math.abs(dx) >= Math.abs(dy)) return dx >= 0 ? 2 : 8;
+  return dy >= 0 ? 4 : 1;
 }
 
 function routeLength(pts: Point[]): number {
