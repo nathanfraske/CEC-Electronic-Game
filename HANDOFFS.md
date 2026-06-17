@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (13) — Post-merge fixes: thermistors in the bin, MOV no-bypass
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. PR #96 already
+squash-merged to `main`; this is follow-up on owner review. Branch reset to `main`
+(358be63) then these commits on top.
+
+- **Thermistors now appear in the parts bin.** They were in `PART_KINDS` (catalog) but
+  never in App.svelte's UI `PARTS` list or `PART_CAT_OF` — so they never showed. Added
+  both (under Passives). *This was why "I don't see the thermistors on the website."*
+- **MOV reworked to a real relief valve** (owner ref sheet). The old leads bypassed the
+  valve (both fed the vessel side with through-flow → water ran A→tank→B past the poppet).
+  Now the leads feed the tank from BELOW; the only way out is UP through the popped poppet
+  to the side vents (sealed ⇒ nothing passes). The spring visibly compresses sealed→popped.
+
+**Feasibility found for the owner's "particles go to the exits proportionally" ask:**
+all per-element currents are already in the web layer — `sim.element_currents()` →
+`elementCurrents` (loop.ts), mapped in `netlist.ts` `readComponentElectrical` via
+`elemOfComponent`. The POT stamps TWO resistor legs (A→W = `upIdx`, W→B = `upIdx+1`); only
+A→W is read today. Reading the W→B leg too gives the wiper tap = A→W − W→B. Plan: add an
+optional secondary-current field to `ElectricalState`, thread it (netlist → loop → board
+opts → drawer), and split the particle streams by the per-exit currents. See TODOS.
+
+---
+
 ## 2026-06-17 (12) — Flow-cohesion sweep (dam, slalom, MOV, connector pipe, caps/EC)
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Branch
