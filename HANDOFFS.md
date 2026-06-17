@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (11) — Thermistor reality tier · POT flow respects wiper · resistor fire
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch
+`claude/kind-turing-hdelb3`. Three things this pass:
+
+1. **Thermistor reality (tier 3)** — `drawDetailThermistor` (NTC/PTC), registered in
+   `DETAIL_DRAWERS`. A polycrystalline ceramic: a 4-grain chain between the electrodes,
+   carriers FUNNEL through the grain-boundary necks (same inline lesson as the analogy).
+   NTC shows its mechanism as a freed-carrier population that grows with heat (sparkle +
+   denser drift + glow); PTC rears up RED grain-boundary barriers that close the necks
+   past the Curie point (the switching-ceramic snap). Reuses the shared `thermistor.ts`
+   model, so all three tiers agree. The info panel's reality tab + the board reality lens
+   pick it up automatically (`hasDetail` now true for NTC/PTC; `infoDiagram` already
+   threads `temp`).
+
+2. **POT flow now RESPECTS the wiper** (the owner-flagged audit fix; an Explore-agent
+   audit confirmed POT was the one clear offender — MOSFET/BJT/diode/zener/caps already
+   gate their flow). Both tiers: the A↔B drift/stream NECKS through the wiper contact (a
+   Gaussian pinch that tracks `xW` as the wiper slides) and a TAP branch drains down the
+   arm/hose to W. Added `flowAlongPath` to the detail-tier import for the tap.
+
+3. **Resistor CATCHES FIRE** past the smoke — `drawDetailResistor` + new `flameTongue`
+   helper. Layered flickering flame tongues (cool-red outside → white-hot core) + rising
+   embers, driven by the RAW `|V·I|/(V·I scale)` ratio (un-saturated, so there's real
+   headroom past `power`'s soft clamp): smolder → flames → blaze → inferno.
+
+**Verify:** `/tmp/harness` — `dumpThermR.js` (NTC/PTC reality grid), `dumpPot.js` (POT
+both tiers × 3 wiper positions — pinch + tap track the wiper), `dumpFire.js` (resistor
+escalation). All four `flowThroughGap`/funnel helpers in `tierKit`.
+
+**Deferred (TODOS):** thermistor B/Curie as part params; diode reverse-block density is
+borderline-sparse but acceptable.
+
+---
+
 ## 2026-06-17 (10) — Thermistor flow funnels through the gate (open vs snap-shut)
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch

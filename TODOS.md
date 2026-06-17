@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (6) — Thermistor reality tier, POT flow respects wiper, resistor fire
+
+- ~~**Thermistor reality (tier 3)** `drawDetailThermistor` (NTC/PTC) — polycrystalline
+  ceramic: a grain chain with grain-boundary necks the carriers funnel through. NTC =
+  carrier population grows with heat (freed-carrier sparkle + denser drift); PTC = red
+  boundary barriers close the necks past the Curie point (the switching-ceramic snap).~~
+- ~~**POT flow now RESPECTS the wiper** (audit fix). Analogy + detail: the drift/stream
+  NECKS through the wiper contact (pinch tracks the wiper as it slides) and a tap branch
+  drains down the arm/hose to W. `tierKit.flowAlongPath` now used in the detail tier too.~~
+- ~~**Resistor CATCHES FIRE** past the smoke (`drawDetailResistor` + `flameTongue`): layered
+  flickering flame tongues + embers off the body, driven by the raw |V·I| ratio (real
+  headroom past the saturating `power`) — smolder → flames → blaze → inferno.~~
+- Audit (Explore agent) of all analogy/detail flow vs inline constrictions: POT was the
+  one clear offender (now fixed); MOSFET/BJT/diode/zener/caps/thermistor already gate
+  their flow on conduction/obstacle/valve state. Diode reverse-block is borderline-sparse
+  but acceptable — left as-is.
+
+---
+
 ## 2026-06-17 (5) — Thermistor flow funnels through the gate
 
 - ~~**`tierKit.flowThroughGap`** + `drawAnalogyThermistor` rework: carriers now funnel
@@ -25,8 +44,10 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   pattern — so temperature changes rebuild the sim with no new element.~~
 - ~~`temp` scalar threaded like `wiper` (Component, SelectedPart, clipboard, serialize/
   restore, board opts, infoDiagram).~~
-- [ ] **Thermistor reality (tier 3)** — the oxide-lattice / grain-boundary internals from
-  the ref sheets (deferred this pass; owner chose "schematic + analogy first").
+- ~~**Thermistor reality (tier 3)** — `drawDetailThermistor`: a polycrystalline grain
+  chain; carriers funnel through grain-boundary necks; NTC grows its freed-carrier
+  population with heat, PTC rears up red boundary barriers past Curie (the snap). See
+  2026-06-17 (6).~~
 - [ ] **Thermistor params** — expose B (NTC) and the Curie point (PTC) as part scalars;
   fixed defaults for now. Optional silistor PTC variant.
 
