@@ -160,6 +160,47 @@ export function belt(
   }
 }
 
+/**
+ * Flowing carriers down a vertical pipe that PART around a central plug — the two
+ * symmetric streams hug the centre away from the obstacle and bulge out toward the
+ * walls as they pass it, so the plug visibly throttles the flow (the valve-control
+ * lesson the transistor/MOSFET analogies teach). Density + alpha ride `mag`; motion is
+ * on the bounded `phase` (never speed). `yFrom`→`yTo` is the travel direction along the
+ * pipe at `pipeX` (half-width `pipeHW`); `plugY`/`plugHalf` is the obstacle to skirt.
+ */
+export function flowAroundPlug(
+  g: Graphics,
+  pipeX: number,
+  pipeHW: number,
+  yFrom: number,
+  yTo: number,
+  plugY: number,
+  plugHalf: number,
+  mag: number,
+  phase: number,
+  color: number,
+  r = 2.6,
+): void {
+  if (mag < 0.02) return;
+  const n = FLOW_DOTS_MAX;
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      const t = (((i / n + phase * FLOW_SPEED) % 1) + 1) % 1;
+      const y = yFrom + (yTo - yFrom) * t;
+      // a single centred stream that swings out toward the walls only as it skirts
+      // the plug, then rejoins — so the obstacle visibly splits the flow.
+      const bump = Math.exp(-(((y - plugY) / plugHalf) ** 2));
+      const lane = pipeHW * 0.82 * bump;
+      g.circle(pipeX + side * lane, y, r).fill({
+        color,
+        alpha: (0.3 + 0.5 * mag) * present,
+      });
+    }
+  }
+}
+
 // --- machine furniture --------------------------------------------------------
 
 // Whether stud() actually paints. On the board the illustration's decorative studs

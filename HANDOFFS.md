@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (2) — Reality transistors rotated to the pins + flow parts around the plug
+
+**State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch
+`claude/kind-turing-hdelb3`. Owner review after merging #84: OA + the PM/NM analogy look
+solid; the **reality tier needed rotating** to match the pins, and asked to show the
+flow **moving around the stopper** in the valve analogies.
+
+- **Reality MOSFET + BJT rotated to vertical + anchored** (`drawDetailMOSFET`,
+  `drawDetailBJT`). They were drawn horizontally (terminals left/right, control on top)
+  but the pins are terminal-top / terminal-bottom / control-left. Rebuilt vertical:
+  - MOSFET: drain well TOP, source well BOTTOM, vertical inversion channel down the
+    LEFT surface (pinched at the drain), oxide + metal gate on the left → G pin;
+    carrier stream source→channel→drain. Anchored D/S/G.
+  - BJT: collector (top) / thin base (middle) / emitter (bottom) bands, base contact on
+    the LEFT → B pin; carriers cross the thin base bottom→top, recombination flashes.
+    Anchored C/E/B. (`anchorPt` re-imported into detailDrawers.)
+- **Flow parts around the plug** — new `tierKit.flowAroundPlug`: a single centred
+  carrier stream that swings out to the pipe walls only as it skirts the plug, then
+  rejoins, so the obstacle visibly throttles the flow. Wired into the MOSFET + BJT
+  analogies (replacing the two straight gapped belts); the **plug is now a disc
+  NARROWER than the pipe** (was wider, leaving no side gap) so the stream has room to
+  go around it.
+- Verified headlessly (harness: all reality + analogy tiers reach pins, in-bounds,
+  respond) and re-rendered the PNG to eyeball the rotation + the plug-skirting flow.
+
+**Idea parked (owner, "think on"):** render the board **traces as pipes** to match the
+component pipe-metaphor, with an adaptive taper into each part. Not started — it's a
+board.ts wire-rendering change (see reply for the sketch / trade-offs).
+
+---
+
 ## 2026-06-17 — Op-amp: doc-faithful analogy spool valve + reality differential pair
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch

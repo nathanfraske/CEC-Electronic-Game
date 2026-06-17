@@ -19,6 +19,7 @@ import { PALETTE } from "./graph";
 import { ZERO_ELECTRICAL } from "./glyphs";
 import {
   type TierOpts as DetailOpts,
+  anchorPt,
   belt,
   dotPresence,
   housing,
@@ -1121,68 +1122,79 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
   const ib = Math.min(1, (ic / beta) * 40); // a small, visible base trickle
   const dir = o.electrical.current >= 0 ? 1 : -1;
 
-  const regT = -hh * 0.5;
-  const regB = hh * 0.5;
-  const x0 = -hw * 0.7;
-  const x1 = hw * 0.7;
-  const eB = -hw * 0.12; // emitter|base boundary
-  const bC = hw * 0.0; // base|collector boundary (base is the thin slab eB..bC)
-  // n+/p/n (NPN) or p+/n/p (PNP) region tints — they brighten as the device
-  // conducts (the live response), strongest in the heavily-doped emitter.
+  // Oriented to the real pins: collector TOP, emitter BOTTOM (carriers cross the thin
+  // base vertically between them), base on the LEFT. Regions stack top→bottom:
+  // collector / thin base / emitter.
+  const C = anchorPt(o, "C", 0.588, -0.95);
+  const E = anchorPt(o, "E", 0.588, 0.95);
+  const B = anchorPt(o, "B", -0.588, 0);
+
+  const regL = -hw * 0.06;
+  const regR = hw * 0.6;
+  const bodyT = -hh * 0.52;
+  const bodyB = hh * 0.52;
+  const Hb = bodyB - bodyT;
+  const yCB = bodyT + Hb * 0.44; // collector|base boundary
+  const yBE = yCB + Hb * 0.12; // base|emitter boundary (thin base between)
+  const byMid = (yCB + yBE) / 2;
+  const midX = (regL + regR) / 2;
+  const cLeadX = Math.min(regR - 8, C.x);
+  const eLeadX = Math.min(regR - 8, E.x);
+  // n/p/n (NPN) or p/n/p (PNP) region tints — they brighten as the device conducts.
   const emCol = npn ? PALETTE.cyan : HOLE;
   const bsCol = npn ? HOLE : PALETTE.cyan;
   const glow = 0.1 + 0.24 * ic;
-  g.rect(x0, regT, eB - x0, regB - regT).fill({ color: emCol, alpha: glow });
-  g.rect(eB, regT, bC - eB, regB - regT).fill({
-    color: bsCol,
-    alpha: glow + 0.05,
-  });
-  g.rect(bC, regT, x1 - bC, regB - regT).fill({
+  g.rect(regL, bodyT, regR - regL, yCB - bodyT).fill({
     color: emCol,
     alpha: glow * 0.8,
   });
-  g.rect(x0, regT, x1 - x0, regB - regT).stroke({
+  g.rect(regL, yCB, regR - regL, yBE - yCB).fill({
+    color: bsCol,
+    alpha: glow + 0.05,
+  });
+  g.rect(regL, yBE, regR - regL, bodyB - yBE).fill({
+    color: emCol,
+    alpha: glow,
+  });
+  g.rect(regL, bodyT, regR - regL, bodyB - bodyT).stroke({
     width: 1.5,
     color: PALETTE.border,
     alpha: 0.8,
   });
-  // the two junction lines (EB forward, BC reverse)
-  for (const jx of [eB, bC]) {
-    g.moveTo(jx, regT)
-      .lineTo(jx, regB)
+  // the two junction lines (BC reverse on top, EB forward below)
+  for (const jy of [yCB, yBE]) {
+    g.moveTo(regL, jy)
+      .lineTo(regR, jy)
       .stroke({ width: 1.2, color: PALETTE.rail, alpha: 0.8 });
   }
 
-  // --- contacts + leads: emitter (left), collector (right), base (top) ---------
-  const eX = -hw + 8;
-  const cX = hw - 8;
-  const bX = (eB + bC) / 2;
-  g.roundRect(x0 - 4, -hh * 0.2, 6, hh * 0.4, 2).fill({ color: PALETTE.dim });
-  g.roundRect(x1 - 2, -hh * 0.2, 6, hh * 0.4, 2).fill({ color: PALETTE.dim });
-  g.roundRect(bX - hw * 0.04, regT - 8, hw * 0.08, 8, 2).fill({
+  // --- contacts + leads: collector (top), emitter (bottom), base (left) --------
+  g.roundRect(regL, bodyT - 4, regR - regL, 6, 2).fill({ color: PALETTE.dim });
+  g.roundRect(regL, bodyB - 2, regR - regL, 6, 2).fill({ color: PALETTE.dim });
+  g.roundRect(regL - 8, byMid - hh * 0.04, 8, hh * 0.08, 2).fill({
     color: PALETTE.dim,
   });
-  g.moveTo(eX, 0)
-    .lineTo(x0, 0)
+  g.moveTo(cLeadX, bodyT)
+    .lineTo(C.x, C.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
-  g.moveTo(x1, 0)
-    .lineTo(cX, 0)
+  g.moveTo(eLeadX, bodyB)
+    .lineTo(E.x, E.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
-  g.moveTo(bX, regT - 8)
-    .lineTo(bX, -hh + 6)
+  g.moveTo(regL - 8, byMid)
+    .lineTo(B.x, B.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
 
-  // --- the main carrier stream: emitter → across the thin base → collector ------
+  // --- the main carrier stream: emitter (bottom) → thin base → collector (top) --
   if (ic > 0.02) {
     const lanes = [-0.55, -0.18, 0.18, 0.55];
     for (const lane of lanes) {
-      const ly = lane * (regB - regT) * 0.5;
+      const lx = midX + lane * (regR - regL) * 0.5;
       const nC = FLOW_DOTS_MAX;
       for (let k = 0; k < nC; k++) {
         const present = dotPresence(k, ic);
         if (present <= 0) continue;
         const t = (((k / nC + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
-        g.circle(x0 + 8 + t * (x1 - x0 - 16), ly, 2.4).fill({
+        g.circle(lx, bodyB - 8 - t * (bodyB - bodyT - 16), 2.4).fill({
           color: maj,
           alpha: (0.3 + 0.55 * ic) * present,
         });
@@ -1195,28 +1207,28 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
     const nR = 3;
     for (let k = 0; k < nR; k++) {
       const t = (((k / nR + o.phase * 0.5) % 1) + 1) % 1;
-      const ry = (((k * 0.37) % 1) - 0.5) * (regB - regT) * 0.8;
-      const rx = x0 + 8 + t * (bX - x0 - 8);
+      const rx = midX + (((k * 0.37) % 1) - 0.5) * (regR - regL) * 0.8;
+      const ry = bodyB - 8 - t * (bodyB - byMid - 8);
       const atBase = t > 0.82;
       g.circle(rx, ry, 2.4).fill({ color: maj, alpha: atBase ? 0 : 0.8 });
       if (atBase) {
         const f = (t - 0.82) / 0.18;
-        g.circle(bX, ry, 3 + 5 * f).fill({
+        g.circle(rx, byMid, 3 + 5 * f).fill({
           color: 0xffffff,
           alpha: 0.6 * (1 - f),
         });
       }
     }
-    // the base contact supplies the recombination partner from the top
-    belt(g, bX, -hh + 6, bX, 0, ib, 1, o.phase, bsCol, 2.2);
+    // the base contact supplies the recombination partner from the left
+    belt(g, B.x, B.y, regL, byMid, ib, 1, o.phase, bsCol, 2.2);
   }
 
   // --- lead currents -----------------------------------------------------------
-  belt(g, eX, 0, x0, 0, ic, dir, o.phase, maj, 2.4);
-  belt(g, x1, 0, cX, 0, ic, dir, o.phase, maj, 2.4);
-  stud(g, eX, 0, PALETTE.bronze);
-  stud(g, cX, 0, PALETTE.bronze);
-  stud(g, bX, -hh + 6, PALETTE.bronze);
+  belt(g, E.x, E.y, eLeadX, bodyB, ic, dir, o.phase, maj, 2.4);
+  belt(g, cLeadX, bodyT, C.x, C.y, ic, dir, o.phase, maj, 2.4);
+  stud(g, C.x, C.y, PALETTE.bronze);
+  stud(g, E.x, E.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
 }
 
 // ============================================================================
@@ -1248,121 +1260,124 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   const dir = o.electrical.current >= 0 ? 1 : -1;
   const on = id > 0.03;
 
-  const bodyT = -hh * 0.16;
-  const bodyB = hh * 0.6;
-  const x0 = -hw * 0.74;
-  const x1 = hw * 0.74;
-  const xL = -hw * 0.3; // channel left (source/channel edge)
-  const xR = hw * 0.3; // channel right (drain/channel edge)
-  const surf = bodyT; // the silicon surface
+  // Oriented to the real pins: drain TOP, source BOTTOM (the vertical channel runs
+  // between them down the surface), gate on the LEFT (its plate faces the channel).
+  const D = anchorPt(o, "D", 0.588, -0.95);
+  const S = anchorPt(o, "S", 0.588, 0.95);
+  const G = anchorPt(o, "G", -0.588, 0);
 
-  // --- the doped body (p-type for n-channel, n-type for p-channel) -------------
-  housing(g, x0, bodyT, x1 - x0, bodyB - bodyT, PALETTE.dim, 6);
-  // source + drain wells (n+/p+) at the surface
-  const wellH = (bodyB - bodyT) * 0.42;
-  g.rect(x0 + 3, surf, xL - x0 - 5, wellH).fill({
+  const bodyL = -hw * 0.06; // the silicon surface (channel face, toward the gate)
+  const bodyR = hw * 0.6; // into the bulk
+  const bodyT = -hh * 0.56;
+  const bodyB = hh * 0.56;
+  const bandH = (bodyB - bodyT) * 0.2;
+  const dBandB = bodyT + bandH; // drain well (top) lower edge
+  const sBandT = bodyB - bandH; // source well (bottom) upper edge
+  const surf = bodyL; // channel hugs the left (surface) face
+  const dLeadX = Math.min(bodyR - 8, D.x);
+  const sLeadX = Math.min(bodyR - 8, S.x);
+
+  // --- the doped body + the drain (top) / source (bottom) wells ----------------
+  housing(g, bodyL, bodyT, bodyR - bodyL, bodyB - bodyT, PALETTE.dim, 6);
+  g.rect(bodyL + 2, bodyT + 3, bodyR - bodyL - 4, bandH - 3).fill({
     color: carrier,
     alpha: 0.18,
   });
-  g.rect(xR + 2, surf, x1 - xR - 5, wellH).fill({
+  g.rect(bodyL + 2, sBandT, bodyR - bodyL - 4, bandH - 3).fill({
     color: carrier,
     alpha: 0.18,
   });
 
-  // --- the inversion channel (tapered, PINCHED at the drain), lit by the gate ----
+  // --- the inversion channel (vertical, PINCHED at the drain), lit by the gate ---
   if (on) {
-    // Both the channel depth and its brightness ride the drain current: it is full
-    // at the source and pinches toward the drain (pinch-off) the harder it's driven.
-    const wS = 3 + 16 * id; // source-side depth
-    const wD = wS * (0.62 - 0.4 * id); // drain-side depth (pinches with drive)
+    // Full at the source (bottom) and pinching toward the drain (top) the harder
+    // it's driven; both width and brightness ride the drain current.
+    const wS = 3 + 16 * id; // source-side (bottom) width
+    const wD = wS * (0.62 - 0.4 * id); // drain-side (top) width (pinch-off)
     g.poly([
-      xL,
       surf + 2,
-      xR,
-      surf + 2,
-      xR,
-      surf + 2 + wD,
-      xL,
+      sBandT,
       surf + 2 + wS,
-    ]).fill({
-      color: carrier,
-      alpha: 0.3 + 0.5 * id,
-    });
-    // a thin depletion band hugging the inversion layer underneath
+      sBandT,
+      surf + 2 + wD,
+      dBandB,
+      surf + 2,
+      dBandB,
+    ]).fill({ color: carrier, alpha: 0.3 + 0.5 * id });
+    // a thin depletion band hugging the inversion layer to the right
     g.poly([
-      xL,
       surf + 2 + wS,
-      xR,
-      surf + 2 + wD,
-      xR,
-      surf + 2 + wD + 10,
-      xL,
+      sBandT,
       surf + 2 + wS + 13,
+      sBandT,
+      surf + 2 + wD + 10,
+      dBandB,
+      surf + 2 + wD,
+      dBandB,
     ]).fill({ color: PALETTE.violet, alpha: 0.1 + 0.1 * id });
   }
 
-  // --- thin oxide + metal gate on top of the channel ---------------------------
-  g.rect(xL - 5, surf - 9, xR - xL + 10, 7).fill({ color: OXIDE, alpha: 0.6 });
-  g.rect(xL - 5, surf - 9, xR - xL + 10, 7).stroke({
+  // --- thin oxide + metal gate on the LEFT face of the channel ------------------
+  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).fill({
+    color: OXIDE,
+    alpha: 0.6,
+  });
+  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).stroke({
     width: 1,
     color: OXIDE,
     alpha: 0.9,
   });
-  g.roundRect(xL - 5, surf - 26, xR - xL + 10, 17, 2).fill({
+  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).fill({
     color: 0x2a2740,
     alpha: 0.95,
   });
-  g.roundRect(xL - 5, surf - 26, xR - xL + 10, 17, 2).stroke({
+  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).stroke({
     width: 1.2,
     color: PALETTE.rail,
     alpha: 0.9,
   });
 
   // --- gate-plate charge + field lines through the oxide (none cross) ----------
-  const gateCharge = id; // a conducting device has a charged gate
-  const nMarks = 6;
+  const gateCharge = id;
+  const nMarks = 5;
   for (let k = 0; k < nMarks; k++) {
-    const gx = xL + 8 + ((k + 0.5) / nMarks) * (xR - xL - 16);
+    const gy = dBandB + 8 + ((k + 0.5) / nMarks) * (sBandT - dBandB - 16);
     const a = Math.min(1, gateCharge * 1.2);
     if (a <= 0.03) continue;
-    // + on the gate for n-channel (electrons pulled up), − for p-channel
-    g.moveTo(gx - 3, surf - 17).lineTo(gx + 3, surf - 17);
-    if (nch) g.moveTo(gx, surf - 20).lineTo(gx, surf - 14);
+    // + on the gate for n-channel (carriers pulled to the surface), − for p-channel
+    g.moveTo(surf - 18, gy).lineTo(surf - 12, gy);
+    if (nch) g.moveTo(surf - 15, gy - 3).lineTo(surf - 15, gy + 3);
     g.stroke({ width: 1.5, color: PALETTE.accent, alpha: a });
-    // dashed field line reaching down through the oxide (charge does NOT cross)
-    g.moveTo(gx, surf - 8)
-      .lineTo(gx, surf)
+    // field line reaching right through the oxide (charge does NOT cross)
+    g.moveTo(surf - 7, gy)
+      .lineTo(surf, gy)
       .stroke({ width: 1, color: OXIDE, alpha: 0.2 + 0.6 * gateCharge });
   }
 
-  // --- gate / source / drain leads + studs -------------------------------------
-  const gX = (xL + xR) / 2;
-  const sX = -hw + 8;
-  const dX = hw - 8;
-  g.moveTo(gX, surf - 26)
-    .lineTo(gX, -hh + 6)
+  // --- gate / drain / source leads + studs -------------------------------------
+  g.moveTo(surf - 24, 0)
+    .lineTo(G.x, G.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
-  g.moveTo(sX, surf + wellH / 2)
-    .lineTo(x0, surf + wellH / 2)
+  g.moveTo(dLeadX, bodyT)
+    .lineTo(D.x, D.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
-  g.moveTo(x1, surf + wellH / 2)
-    .lineTo(dX, surf + wellH / 2)
+  g.moveTo(sLeadX, bodyB)
+    .lineTo(S.x, S.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
 
-  // --- the carrier stream: source → through the channel → drain ----------------
+  // --- carrier stream: source (bottom) → up the channel → drain (top) ----------
   if (on) {
-    const sy = surf + wellH / 2;
-    const cy = surf + 4;
-    // source lead in
-    belt(g, sX, sy, x0 + 6, sy, id, dir, o.phase, carrier, 2.4);
-    // up into the channel, across, and down to the drain (3 hops)
-    belt(g, xL, cy, xR, cy, id, dir, o.phase, carrier, 2.4);
-    belt(g, x1 - 6, sy, dX, sy, id, dir, o.phase, carrier, 2.4);
+    const cx = surf + 4;
+    belt(g, S.x, S.y, sLeadX, sBandT, id, dir, o.phase, carrier, 2.4);
+    belt(g, sLeadX, sBandT, cx, sBandT, id, dir, o.phase, carrier, 2.4);
+    belt(g, cx, sBandT, cx, dBandB, id, dir, o.phase, carrier, 2.4);
+    belt(g, cx, dBandB, dLeadX, dBandB, id, dir, o.phase, carrier, 2.4);
+    belt(g, dLeadX, dBandB, D.x, D.y, id, dir, o.phase, carrier, 2.4);
   }
 
-  stud(g, sX, surf + wellH / 2, PALETTE.bronze);
-  stud(g, dX, surf + wellH / 2, PALETTE.bronze);
-  stud(g, gX, -hh + 6, PALETTE.bronze);
+  stud(g, D.x, D.y, PALETTE.bronze);
+  stud(g, S.x, S.y, PALETTE.bronze);
+  stud(g, G.x, G.y, PALETTE.bronze);
 }
 
 // ============================================================================
