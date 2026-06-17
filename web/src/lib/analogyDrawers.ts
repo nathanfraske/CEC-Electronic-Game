@@ -1885,7 +1885,10 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     });
   }
 
-  // --- water streaming A↔B, weaving around the posts ---------------------------
+  // --- water streaming A↔B, weaving around the posts and NECKING through the wiper
+  // contact — the tap presses on the track, so the channel pinches under it and the
+  // pinch slides with the wiper (the flow RESPECTS the inline tap; the tapped draw
+  // itself runs down the hose to W, below). --------------------------------------
   if (flow > 0.02) {
     const n = FLOW_DOTS_MAX;
     for (const side of [-1, 1]) {
@@ -1896,7 +1899,8 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
         const x = xL + t * (xR - xL);
         const weave =
           side * ph * 0.5 * Math.cos(((x - xL) / (xR - xL)) * NP * Math.PI);
-        g.circle(x, yTrack + weave, 2.4).fill({
+        const neck = 1 - 0.55 * Math.exp(-(((x - xW) / (ph * 1.6)) ** 2));
+        g.circle(x, yTrack + weave * neck, 2.4).fill({
           color: WATER2,
           alpha: (0.3 + 0.5 * flow) * present,
         });
