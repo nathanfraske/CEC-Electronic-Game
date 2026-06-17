@@ -16,8 +16,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   the analogy/reality lens: analogy = steel water pipe (carriers WITH current), reality =
   copper conductor with electrons drifting AGAINST current. Bus language kept; port collars
   at the ends are the lightweight taper. (`drawConduitSkin`, gated at `TIER_ZOOM`.)~~
-- [ ] **Conduit follow-ups (optional):** true per-part port-width taper (flare into each part —
-  needs a port radius from the parts); junction tees as branches; perf check on big boards.
+- ~~**Conduit polish** — DONE. Auto bend radius (`roundedPolyline`), port taper (flared mouths
+  oriented along the end segment), 4-way junction fittings with capped unused arms
+  (`drawJunctionConduit` + `junctionDirs`).~~
+- [ ] **Conduit: nudge parallel pipes apart** (owner) — a render-offset channel-routing pass for
+  overlapping collinear segments. Bigger/riskier; deferred.
+- [ ] **Conduit: true per-part port-width taper** — flare each conduit to the component's actual
+  port radius (needs parts to expose it). The current taper is a standard `PITCH*0.34` mouth.
 - [ ] **Owner eyeball** the rotated reality transistors + the plug-skirting flow.
 
 ## 2026-06-17 — op-amp: doc-faithful analogy + reality
