@@ -25,6 +25,7 @@ import {
   anchorPt,
   belt,
   dotPresence,
+  flowAlongPath,
   flowAroundPlug,
   housing,
   mix,
@@ -1731,10 +1732,14 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
   const wiper = Math.max(0, Math.min(1, o.wiper ?? 0.5));
   const flow = norm(o.electrical.current, CUR_SCALE);
   const dir = o.electrical.current >= 0 ? 1 : -1;
-  const drop = Math.max(-1, Math.min(1, o.electrical.vAcross / V_SCALE));
+  const head = Math.max(
+    0,
+    Math.min(1, Math.abs(o.electrical.vAcross) / V_SCALE),
+  );
+  const aHigh = o.electrical.vAcross >= 0; // A is the high-pressure end
 
-  const yTrack = -hh * 0.34;
-  const ph = Math.min(hw, hh) * 0.12;
+  const yTrack = -hh * 0.16;
+  const ph = Math.min(hw, hh) * 0.1;
   const xL = A.x;
   const xR = B.x;
   const xW = xL + (xR - xL) * wiper;
@@ -1746,14 +1751,21 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     .lineTo(B.x, yTrack)
     .stroke({ width: 2.4, color: PALETTE.border, alpha: 0.85 });
 
-  // --- the high end glows with the head (A if V(A)>V(B), else B) ---------------
-  if (Math.abs(drop) > 0.04) {
-    const hx = drop >= 0 ? xL : xR;
-    g.circle(hx, yTrack, ph * 2.4).fill({
-      color: WARM,
-      alpha: 0.06 + 0.12 * Math.abs(drop),
-    });
-  }
+  // --- source tank at the HIGH end (the supply head, fills with |V|) -----------
+  const srcX = aHigh ? xL : xR;
+  const tankTop = -hh * 0.7;
+  const tankBot = yTrack - ph;
+  const tw = hw * 0.16;
+  g.roundRect(srcX - tw / 2, tankTop, tw, tankBot - tankTop, 3).stroke({
+    width: 1.6,
+    color: PALETTE.rail,
+    alpha: 0.85,
+  });
+  const srcFill = head * (tankBot - tankTop);
+  g.rect(srcX - tw / 2 + 2, tankBot - srcFill, tw - 4, srcFill).fill({
+    color: WATER,
+    alpha: 0.4,
+  });
 
   // --- track pipe walls + end flanges + faint water fill -----------------------
   for (const s of [-1, 1]) {
@@ -1802,26 +1814,59 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     }
   }
 
-  // --- the sliding wiper: contact on the track → arm down to the W pin ---------
-  const tap = drop >= 0 ? 1 - wiper : wiper; // tapped fraction from the low end
-  const midY = (yTrack + ph + W.y) / 2;
-  g.moveTo(xW, yTrack + ph)
-    .lineTo(xW, midY)
-    .lineTo(W.x, midY)
-    .lineTo(W.x, W.y)
-    .stroke({ width: 2.6, color: PALETTE.accent, alpha: 0.6 });
-  g.circle(xW, yTrack, 4.5).fill({ color: PALETTE.accent, alpha: 0.95 });
-  g.circle(xW, yTrack, 4.5).stroke({ width: 1, color: WARM, alpha: 0.7 });
-  // a small tapped-level gauge beside the contact (the divider output)
-  g.roundRect(xW + 7, yTrack - ph, 5, 2 * ph, 1).stroke({
-    width: 1,
-    color: PALETTE.rail,
-    alpha: 0.6,
-  });
-  g.rect(xW + 8, yTrack + ph - tap * (2 * ph - 2), 3, tap * (2 * ph - 2)).fill({
+  // --- the wiper STANDPIPE (rises to the tapped head) + contact -----------------
+  // the head the wiper taps: the divider fraction (from the LOW end) of the supply head
+  const tapped = (aHigh ? 1 - wiper : wiper) * head;
+  const spTop = yTrack - hh * 0.46;
+  const spW = hw * 0.05;
+  const spLevel = yTrack - tapped * (yTrack - spTop);
+  for (const s of [-1, 1]) {
+    g.moveTo(xW + s * spW, yTrack)
+      .lineTo(xW + s * spW, spTop)
+      .stroke({ width: 1.6, color: PALETTE.rail, alpha: 0.8 });
+  }
+  g.rect(xW - spW + 1, spLevel, 2 * spW - 2, yTrack - spLevel).fill({
     color: PALETTE.accent,
-    alpha: 0.5,
+    alpha: 0.4,
   });
+  g.moveTo(xW - spW, spLevel)
+    .lineTo(xW + spW, spLevel)
+    .stroke({ width: 1.8, color: PALETTE.accent, alpha: 0.9 });
+  g.circle(xW, yTrack, 4).fill({ color: PALETTE.accent, alpha: 0.95 });
+  g.circle(xW, yTrack, 4).stroke({ width: 1, color: WARM, alpha: 0.7 });
+
+  // --- the FLEXIBLE HOSE: tapped current runs down it to the W node ------------
+  // a cubic bezier from the wiper contact, drooping down to the W pin; it flexes as
+  // the wiper slides, and the tapped current visibly streams down it (the load draw).
+  const h0 = { x: xW, y: yTrack + ph };
+  const c1 = { x: xW, y: yTrack + ph + hh * 0.3 };
+  const c2 = { x: W.x, y: W.y - hh * 0.3 };
+  const hose: { x: number; y: number }[] = [];
+  for (let i = 0; i <= 16; i++) {
+    const t = i / 16;
+    const u = 1 - t;
+    hose.push({
+      x:
+        u * u * u * h0.x +
+        3 * u * u * t * c1.x +
+        3 * u * t * t * c2.x +
+        t * t * t * W.x,
+      y:
+        u * u * u * h0.y +
+        3 * u * u * t * c1.y +
+        3 * u * t * t * c2.y +
+        t * t * t * W.y,
+    });
+  }
+  g.poly(
+    hose.flatMap((p) => [p.x, p.y]),
+    false,
+  ).stroke({ width: 7, color: PALETTE.rail, alpha: 0.5, cap: "round" });
+  g.poly(
+    hose.flatMap((p) => [p.x, p.y]),
+    false,
+  ).stroke({ width: 4, color: PALETTE.accent, alpha: 0.32, cap: "round" });
+  flowAlongPath(g, hose, flow, dir, o.phase, WATER2, 2.4);
 
   stud(g, A.x, A.y, PALETTE.bronze);
   stud(g, B.x, B.y, PALETTE.bronze);
