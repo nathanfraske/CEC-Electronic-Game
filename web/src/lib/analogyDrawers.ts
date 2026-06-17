@@ -35,6 +35,7 @@ import {
   flowAlongPath,
   flowAroundBall,
   flowAroundPlug,
+  flowThroughGap,
   housing,
   mix,
   norm,
@@ -2046,30 +2047,57 @@ function drawAnalogyThermistor(g: Graphics, o: AnalogyOpts): void {
     });
   }
 
-  // --- the shutter plates: close toward the axis as the valve shuts ---------------
-  const fullGap = pipeHH * 1.8;
+  // The shutter gap (half-height): a fully-open valve clears the whole channel (the
+  // plates retract out of sight), a shut one closes to a ~2 px slit. `fullGap` past the
+  // pipe so the achievable openness range opens *all the way* before it pinches.
+  const fullGap = pipeHH * 2.6;
   const half = (4 + open * (fullGap - 4)) / 2;
-  const plateCol = mix(PLATE, PALETTE.warn, tN * 0.6);
-  const plateW = bodyHW * 1.2;
-  for (const s of [-1, 1]) {
-    const yInner = lineY + s * half;
-    const yOuter = lineY + s * (pipeHH + 2);
-    g.rect(
-      cx - plateW / 2,
-      Math.min(yInner, yOuter),
-      plateW,
-      Math.abs(yOuter - yInner),
-    ).fill({ color: plateCol, alpha: 0.92 });
-    g.rect(
-      cx - plateW / 2,
-      Math.min(yInner, yOuter),
-      plateW,
-      Math.abs(yOuter - yInner),
-    ).stroke({ width: 1.2, color: 0x8893a6, alpha: 0.6 });
-  }
+  // What the STREAM may use is bounded by the pipe; so when the gate is wider than the
+  // pipe (fully open) the flow fills it uniformly — no residual pinch, "really open".
+  const flowGap = Math.min(half, pipeHH - 1);
 
-  // --- flow through the gap (current) --------------------------------------------
-  belt(g, A.x, lineY, B.x, lineY, cur, dir, o.phase, WATER, 2.6);
+  // --- flow funnelling THROUGH the gap (current) — carriers ride the full channel,
+  // squeeze through the gate, fan back out; the pinch IS the resistance. Drawn under
+  // the plates so the plate edges crisply bound the gap. ---------------------------
+  flowThroughGap(
+    g,
+    A.x,
+    B.x,
+    lineY,
+    pipeHH,
+    flowGap,
+    cx,
+    bodyHW * 1.7,
+    cur,
+    dir,
+    o.phase,
+    WATER,
+    2.4,
+  );
+
+  // --- the shutter plates: close from each wall toward the axis as the valve shuts;
+  // fully retracted (nothing drawn) once the gate clears the pipe. -----------------
+  const plateInner = Math.min(half, pipeHH);
+  if (pipeHH - plateInner > 0.5) {
+    const plateCol = mix(PLATE, PALETTE.warn, tN * 0.6);
+    const plateW = bodyHW * 1.2;
+    for (const s of [-1, 1]) {
+      const yEdge = lineY + s * plateInner; // inner (gap-side) edge
+      const yWall = lineY + s * (pipeHH + 2); // outer (wall) edge, slight overhang
+      g.rect(
+        cx - plateW / 2,
+        Math.min(yEdge, yWall),
+        plateW,
+        Math.abs(yWall - yEdge),
+      ).fill({ color: plateCol, alpha: 0.92 });
+      g.rect(
+        cx - plateW / 2,
+        Math.min(yEdge, yWall),
+        plateW,
+        Math.abs(yWall - yEdge),
+      ).stroke({ width: 1.2, color: 0x8893a6, alpha: 0.6 });
+    }
+  }
 
   stud(g, A.x, A.y, PALETTE.bronze);
   stud(g, B.x, B.y, PALETTE.bronze);

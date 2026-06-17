@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (10) — Thermistor flow funnels through the gate (open vs snap-shut)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch
+`claude/kind-turing-hdelb3`. Follow-up to (9): the heat-valve flow now reads the
+*openness in the stream itself*, per owner feedback ("make the particles move around the
+gate — when it's open it's really open, when it shuts it can snap down really tight").
+
+- **`tierKit.flowThroughGap`** (NEW) — the inverse of `flowAroundPlug`: several lanes ride
+  the full channel then SQUEEZE toward the axis through the gate and fan back out. A
+  wide-open valve passes a fat uniform stream (no pinch); a shutting one pinches the
+  carriers to a thin thread (→ a near-line as the gap → 0).
+- **`drawAnalogyThermistor`** swaps the straight `belt` for `flowThroughGap`. `fullGap`
+  widened to `pipeHH*2.6` so the achievable openness opens *all the way* (plates retract
+  out of sight, `flowGap` clamped to the pipe → uniform stream) before it throttles; the
+  plates now draw only when partly closed and never bulge past the pipe.
+- NTC opens as it heats; the switching-ceramic PTC snaps the stream to a thread past its
+  Curie point — both straight from R(T).
+
+**Verify:** `/tmp/harness/dumpTherm.js` (the NTC/PTC × cold/warm/hot grid).
+
+---
+
 ## 2026-06-17 (9) — NTC + PTC thermistors (schematic + analogy, temperature knob)
 
 **State:** 🟢 Green — web format/check/lint/build all pass. **No Rust / no golden touch**

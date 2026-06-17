@@ -291,6 +291,58 @@ export function flowAroundBall(
   }
 }
 
+/**
+ * Carriers funnelling THROUGH a central gap between two shutter plates on a HORIZONTAL
+ * pipe — the inverse of {@link flowAroundPlug}. Several lanes ride the full channel,
+ * then SQUEEZE toward the axis as they pass the gate and fan back out, so a wide-open
+ * valve passes a fat stream while a shutting one pinches it to a thin thread (and snaps
+ * to a near-line as the gap → 0). The thermistor heat-valve lesson: openness is read in
+ * the stream itself, not just the plate positions. Density + alpha ride `mag`; motion is
+ * on the bounded `phase` (never speed). `xFrom`→`xTo` is travel along the axis at `cy`;
+ * the channel half-height is `pipeHH`; the gate sits at `gateX` leaving half-gap
+ * `gapHalf`; the funnel eases over `throat` on each side.
+ */
+export function flowThroughGap(
+  g: Graphics,
+  xFrom: number,
+  xTo: number,
+  cy: number,
+  pipeHH: number,
+  gapHalf: number,
+  gateX: number,
+  throat: number,
+  mag: number,
+  dir: number,
+  phase: number,
+  color: number,
+  r = 2.3,
+): void {
+  if (mag < 0.02) return;
+  const lanes = [-0.85, -0.5, -0.17, 0.17, 0.5, 0.85];
+  const n = FLOW_DOTS_MAX;
+  for (let li = 0; li < lanes.length; li++) {
+    const u = lanes[li]!;
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      // stagger lanes so the dots read as a stream, not a marching grid
+      const t =
+        (((i / n + (li / lanes.length) * 0.5 + phase * FLOW_SPEED * dir) % 1) +
+          1) %
+        1;
+      const x = xFrom + (xTo - xFrom) * t;
+      // available half-height funnels from pipeHH (outside the throat) to gapHalf (at
+      // the gate), so every lane is pulled through the gap and released past it.
+      const k = Math.min(1, Math.abs(x - gateX) / throat);
+      const hAvail = gapHalf + (pipeHH - gapHalf) * k;
+      g.circle(x, cy + u * hAvail, r * (0.72 + 0.28 * k)).fill({
+        color,
+        alpha: (0.28 + 0.5 * mag) * present,
+      });
+    }
+  }
+}
+
 // --- machine furniture --------------------------------------------------------
 
 // Whether stud() actually paints. On the board the illustration's decorative studs

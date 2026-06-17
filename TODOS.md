@@ -6,6 +6,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (5) — Thermistor flow funnels through the gate
+
+- ~~**`tierKit.flowThroughGap`** + `drawAnalogyThermistor` rework: carriers now funnel
+  THROUGH the shutter gap (wide uniform stream when open, pinched to a thread when shut —
+  the PTC snaps tight past Curie). Plates retract fully when wide open. See HANDOFFS (10).~~
+
+---
+
 ## 2026-06-17 (4) — NTC + PTC thermistors (schematic + analogy, temperature knob)
 
 - ~~**NTC + PTC thermistor kinds** added end-to-end, web-only (no sim-core/golden):
