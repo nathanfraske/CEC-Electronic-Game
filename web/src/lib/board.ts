@@ -3328,10 +3328,22 @@ export class Board {
     // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
     // share a channel, computed once up front so the per-wire draw below just uses them.
     const condRoutes = new Map<number, Point[]>();
+    // Where each junction hub actually draws: a junction is a free routing vertex, so
+    // when its runs are fanned into lanes the hub rides along (filled in below). Empty ⇒
+    // the hub stays on its cell (schematic, or an unnudged junction).
+    const junctionPos = new Map<number, Point>();
     let conduitCrossDots: { x: number; y: number; color: number }[] = [];
     if (conduit) {
       const nets = new Map<number, number | null>();
       const wireColor = new Map<number, number>();
+      // Junction run-ends, with the connecting leg's axis (recorded pre-nudge from the
+      // logical route), so the follow-pass below can shift the hub by each run's offset.
+      const jRecs: {
+        wid: number;
+        jid: number;
+        from: boolean;
+        vertical: boolean;
+      }[] = [];
       for (const w of this.graph.wires.values()) {
         const route = this.routeForWire(w);
         if (route.length < 2) continue;
@@ -3343,12 +3355,72 @@ export class Board {
             this.pinOutward(w.to),
           ),
         );
+        if (isJunctionRef(w.from))
+          jRecs.push({
+            wid: w.id,
+            jid: w.from.junctionId,
+            from: true,
+            vertical: (dirBit(route[0]!, route[1]!) & 5) !== 0,
+          });
+        if (isJunctionRef(w.to))
+          jRecs.push({
+            wid: w.id,
+            jid: w.to.junctionId,
+            from: false,
+            vertical:
+              (dirBit(route[route.length - 1]!, route[route.length - 2]!) &
+                5) !==
+              0,
+          });
         const node = this.endpointNode(w.from);
         nets.set(w.id, node);
         const nv = node === null ? null : this.nodeVoltage(node);
         wireColor.set(w.id, nv === null ? PALETTE.cyan : voltageColor(nv));
       }
       nudgeParallel(condRoutes);
+      // Follow-pass: each junction's shift = the perpendicular offset its runs picked up
+      // in nudgeParallel, averaged PER AXIS (so a T/+ where runs enter on different axes
+      // composes, and parallel runs into one hub split the difference). Derived from the
+      // nudge, so it never fights it. Then snap the hub AND every connected run-end onto
+      // that point so they stay joined.
+      const jAcc = new Map<
+        number,
+        { dx: number; dy: number; nx: number; ny: number }
+      >();
+      for (const rec of jRecs) {
+        const pts = condRoutes.get(rec.wid);
+        if (!pts || pts.length < 2) continue;
+        const ei = rec.from ? 0 : pts.length - 1;
+        const J = pts[ei]!;
+        const nb = pts[rec.from ? 1 : pts.length - 2]!;
+        const acc = jAcc.get(rec.jid) ?? { dx: 0, dy: 0, nx: 0, ny: 0 };
+        if (rec.vertical) {
+          acc.dx += nb.x - J.x;
+          acc.nx++;
+        } else {
+          acc.dy += nb.y - J.y;
+          acc.ny++;
+        }
+        jAcc.set(rec.jid, acc);
+      }
+      for (const [jid, acc] of jAcc) {
+        const j = this.graph.junctions.get(jid);
+        if (!j) continue;
+        const base = this.cellToWorld(j.cell);
+        junctionPos.set(
+          jid,
+          new Point(
+            base.x + (acc.nx ? acc.dx / acc.nx : 0),
+            base.y + (acc.ny ? acc.dy / acc.ny : 0),
+          ),
+        );
+      }
+      for (const rec of jRecs) {
+        const jp = junctionPos.get(rec.jid);
+        const pts = condRoutes.get(rec.wid);
+        if (!jp || !pts || pts.length < 2) continue;
+        pts[rec.from ? 0 : pts.length - 1] = new Point(jp.x, jp.y);
+      }
       // Same-net crossings → junction dots; different-net crossings → a bridge hop
       // baked into the horizontal wire's route.
       conduitCrossDots = applyCrossings(
@@ -3489,7 +3561,7 @@ export class Board {
         }
       }
     }
-    this.drawJunctions(g, conduit, junctionDirs);
+    this.drawJunctions(g, conduit, junctionDirs, junctionPos);
     // Same-net conduit crossings tie with a junction dot (the different-net ones bridged
     // over via the baked-in hop).
     for (const d of conduitCrossDots) {
@@ -3591,6 +3663,9 @@ export class Board {
       const fl = Math.min(14, d * 0.8);
       const bx = e.x + ux * fl;
       const by = e.y + uy * fl;
+      // Keep the flare translucent: it STACKS over the two pipe-body strokes, so a
+      // heavy fill here composites far denser than the run and reads as a cloudy blob.
+      // Light wall + a faint voltage tint just hint the port mouth opening.
       g.poly([
         e.x + px * mouthR,
         e.y + py * mouthR,
@@ -3600,7 +3675,7 @@ export class Board {
         by - py * ph,
         bx + px * ph,
         by + py * ph,
-      ]).fill({ color: wallCol, alpha: 0.32 });
+      ]).fill({ color: wallCol, alpha: 0.16 });
       const im = mouthR - 2.5;
       const ip = Math.max(0.5, ph - 2.5);
       g.poly([
@@ -3612,7 +3687,7 @@ export class Board {
         by - py * ip,
         bx + px * ip,
         by + py * ip,
-      ]).fill({ color, alpha: coreAlpha });
+      ]).fill({ color, alpha: coreAlpha * 0.4 });
     }
   }
 
@@ -3625,9 +3700,12 @@ export class Board {
     g: Graphics,
     conduit: BoardLens | null,
     junctionDirs: Map<number, number>,
+    junctionPos: Map<number, Point>,
   ): void {
     for (const j of this.graph.junctions.values()) {
-      const p = this.cellToWorld(j.cell);
+      // Use the nudged hub position when its runs were fanned into lanes (so the hub
+      // sits on its pipes), else the plain cell.
+      const p = junctionPos.get(j.id) ?? this.cellToWorld(j.cell);
       const v = this.pinVoltage({ junctionId: j.id });
       const color = v === null ? PALETTE.cyan : voltageColor(v);
       const hot = this.selectedJunctions.has(j.id);
@@ -3685,18 +3763,19 @@ export class Board {
       const ex = p.x + ux * arm;
       const ey = p.y + uy * arm;
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap });
+      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.22, cap });
       g.moveTo(p.x, p.y).lineTo(ex, ey);
       g.stroke({
         width: Math.max(1, pw - 2),
         color,
-        alpha: coreAlpha * 0.7,
+        alpha: coreAlpha * 0.5,
         cap,
       });
     }
-    // hub
-    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: wallCol, alpha: 0.4 });
-    g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha });
+    // Hub: the nubs already overlap here (up to four arms over the run ends), so a
+    // heavy fill piles into an opaque dot. Keep it translucent to match the pipes.
+    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: wallCol, alpha: 0.2 });
+    g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha * 0.5 });
   }
 
   /**
