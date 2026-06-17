@@ -1724,11 +1724,11 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const { hh } = o.bounds;
   const applied = Math.abs(o.electrical.vAcross);
   const vclamp = o.value && o.value > 0 ? o.value : 5;
-  const over = applied / vclamp;
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const conducting = over > 1;
-  // a real 2-terminal part conducts ONE way — in the direction of the voltage across it
-  const vdir = o.electrical.vAcross >= 0 ? 1 : -1;
+  // The varistor CLAMPS the voltage to ≈Vclamp, so |V| can't say how hard it is working —
+  // the SURGE CURRENT does. Drive the poppet lift + the relief flow off that, not |V|.
+  const conducting = flow > 0.03;
+  const aHigh = o.electrical.vAcross >= 0; // which lead is the inlet (auto-maps polarity)
 
   const A = anchorPt(o, "A", -0.588, 0);
   const B = anchorPt(o, "B", 0.588, 0);
@@ -1744,8 +1744,9 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const STEEL = 0x9aa6bd;
   const ORANGE = 0xff9a4d;
 
-  // live geometry, straight from updateT2 (reference px): poppet lift, spring, screw
-  const lift = Math.min(1, Math.max(0, (over - 1) * 2)) * 40;
+  // live geometry (reference px). The poppet lift rides the RELIEF CURRENT (how hard it
+  // is venting), so it visibly cracks open and stays up while the surge flows.
+  const lift = Math.min(1, flow * 1.4) * 40;
   const by = 296 - lift; // poppet base
   const ptop = by - 22; // poppet apex
   const screwBottom = 166 + Math.min(1, Math.max(0, (vclamp - 3) / 9)) * 24;
@@ -1843,22 +1844,26 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   });
   g.poly(poppet).stroke({ width: 1.4, color: WARM, alpha: 0.7 });
 
-  // --- the current ACROSS the open valve: in the high vent, dip through the cracked
-  // seat, out the low vent — ONE way, in the direction of the voltage. Only conducting.
-  if (flow > 0.02 && conducting) {
+  // --- the current as a relief valve: the INLET (the higher lead) runs DOWN INTO THE
+  // TANK, building the pressure; the OUTLET (the lower lead) is the relief — the surge
+  // venting UP through the cracked seat and out. One continuous stream, auto-mapped to
+  // polarity (inlet = whichever lead is higher), riding the relief current. --------
+  if (flow > 0.02) {
+    const inV = aHigh ? 250 : 350; // inlet vent x (ref)
+    const outV = aHigh ? 350 : 250; // outlet (relief) vent x (ref)
     flowAlongPath(
       g,
       [
-        A,
-        { x: px(250), y: py(258) },
-        { x: px(285), y: py(266) },
-        { x: px(300), y: py(by + 6) },
-        { x: px(315), y: py(266) },
-        { x: px(350), y: py(258) },
-        B,
+        aHigh ? A : B,
+        { x: px(inV), y: py(258) },
+        { x: px(inV < 300 ? 270 : 330), y: py(336) }, // into the tank top, inlet side
+        { x: px(300), y: py(420) }, // down to the tank bottom — pressure building
+        { x: px(300), y: py(by + 6) }, // up through the cracked seat — the relief
+        { x: px(outV), y: py(258) }, // out the relief vent
+        aHigh ? B : A,
       ],
       flow,
-      vdir,
+      1,
       o.phase,
       WATER,
       2.6,

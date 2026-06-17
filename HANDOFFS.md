@@ -5,6 +5,24 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (16) — MOV: lift rides the relief current; inlet→tank / outlet→relief
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Two owner fixes:
+
+- **Poppet wouldn't lift.** A varistor CLAMPS the voltage to ≈Vclamp, so `over=|V|/Vclamp`
+  pins near 1.0 and the lift (keyed to `over`) never moved — e.g. a 48 V loop with a 12 V
+  MOV. Now the lift + `conducting` ride the SURGE CURRENT (`flow`), which is the real
+  measure of how hard it's relieving. `lift = min(1, flow*1.4)*40`; full lift on a hard
+  clamp.
+- **Inlet→tank, outlet→relief (auto-mapped).** One continuous stream: the higher lead
+  (inlet) runs DOWN INTO THE TANK (pressure building), then UP through the cracked seat
+  and OUT the lower lead (the relief). `aHigh = vAcross≥0` picks the inlet, so it swaps
+  with polarity. Replaces the across-the-valve dip.
+
+Verify: `/tmp/harness/dumpMov.js` (clamp 12 V; I = 0 / 12 mA / 0.3 A / −0.3 A).
+
+---
+
 ## 2026-06-17 (15) — MOV: faithful refsheet port (readable spring) + one-way flow
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Two owner fixes to the
