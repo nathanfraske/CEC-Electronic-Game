@@ -5,6 +5,166 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (12) — Flow-cohesion sweep (dam, slalom, MOV, connector pipe, caps/EC)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Branch
+`claude/kind-turing-hdelb3`. A push to make every part's particles interact with what
+affects them and to make terminals flow into the board's wire-pipes (never "broken up").
+
+Shipped (drawer-render-verified in `/tmp/harness`):
+- **Diode** reverse-block DAMS UP; **POT** slaloms around the posts (`tierKit.scatterY`)
+  + snags the divider tap at the wiper; **MOV** reads open/sealed with flowing
+  `pipeLead` terminals + polarity-correct flow; **ceramic cap + inductor** pipe bodies
+  water-filled terminal-to-terminal; **electrolytic cap** redesigned to ONE big tank
+  (flow in +/out −, level = voltage + gauge marker — per owner).
+- New shared helpers in `tierKit`: `scatterY` (slalom around obstacles), `pipeLead`
+  (steel-wall + water-core + flowing dots terminal), `PIPE_STEEL`.
+
+Shipped but needs an in-app look (board canvas, not covered by the drawer harness):
+- **Connector pipe** (board.ts ComponentNode): a stub from each pin into the body on a
+  layer BEHIND the tier illustration, bridging the wire-pipes to the part universally.
+  Tunables if it reads off: the `0.62` length factor and the `0.3`/`0.16` alphas.
+
+Open (see TODOS 7): finish the sweep for the REMAINING parts (transformer, BJT/MOSFET,
+op-amp, V/I/AC sources, level shifter, switches, gates, flip-flop); "get at wires behind
+components" (owner wants discoverable click-through); junction delete/move (no rush);
+orientation audit across rotated parts.
+
+Harness dumps added: `dumpMov.js`, `dumpAudit.js` (2-pin analogy grid), `dumpDiode.js`,
+`dumpPot.js`, `dumpFire.js`, `dumpThermR.js`.
+
+---
+
+## 2026-06-17 (11) — Thermistor reality tier · POT flow respects wiper · resistor fire
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch
+`claude/kind-turing-hdelb3`. Three things this pass:
+
+1. **Thermistor reality (tier 3)** — `drawDetailThermistor` (NTC/PTC), registered in
+   `DETAIL_DRAWERS`. A polycrystalline ceramic: a 4-grain chain between the electrodes,
+   carriers FUNNEL through the grain-boundary necks (same inline lesson as the analogy).
+   NTC shows its mechanism as a freed-carrier population that grows with heat (sparkle +
+   denser drift + glow); PTC rears up RED grain-boundary barriers that close the necks
+   past the Curie point (the switching-ceramic snap). Reuses the shared `thermistor.ts`
+   model, so all three tiers agree. The info panel's reality tab + the board reality lens
+   pick it up automatically (`hasDetail` now true for NTC/PTC; `infoDiagram` already
+   threads `temp`).
+
+2. **POT flow now RESPECTS the wiper** (the owner-flagged audit fix; an Explore-agent
+   audit confirmed POT was the one clear offender — MOSFET/BJT/diode/zener/caps already
+   gate their flow). Both tiers: the A↔B drift/stream NECKS through the wiper contact (a
+   Gaussian pinch that tracks `xW` as the wiper slides) and a TAP branch drains down the
+   arm/hose to W. Added `flowAlongPath` to the detail-tier import for the tap.
+
+3. **Resistor CATCHES FIRE** past the smoke — `drawDetailResistor` + new `flameTongue`
+   helper. Layered flickering flame tongues (cool-red outside → white-hot core) + rising
+   embers, driven by the RAW `|V·I|/(V·I scale)` ratio (un-saturated, so there's real
+   headroom past `power`'s soft clamp): smolder → flames → blaze → inferno.
+
+**Verify:** `/tmp/harness` — `dumpThermR.js` (NTC/PTC reality grid), `dumpPot.js` (POT
+both tiers × 3 wiper positions — pinch + tap track the wiper), `dumpFire.js` (resistor
+escalation). All four `flowThroughGap`/funnel helpers in `tierKit`.
+
+**Deferred (TODOS):** thermistor B/Curie as part params; diode reverse-block density is
+borderline-sparse but acceptable.
+
+---
+
+## 2026-06-17 (10) — Thermistor flow funnels through the gate (open vs snap-shut)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden touch. Branch
+`claude/kind-turing-hdelb3`. Follow-up to (9): the heat-valve flow now reads the
+*openness in the stream itself*, per owner feedback ("make the particles move around the
+gate — when it's open it's really open, when it shuts it can snap down really tight").
+
+- **`tierKit.flowThroughGap`** (NEW) — the inverse of `flowAroundPlug`: several lanes ride
+  the full channel then SQUEEZE toward the axis through the gate and fan back out. A
+  wide-open valve passes a fat uniform stream (no pinch); a shutting one pinches the
+  carriers to a thin thread (→ a near-line as the gap → 0).
+- **`drawAnalogyThermistor`** swaps the straight `belt` for `flowThroughGap`. `fullGap`
+  widened to `pipeHH*2.6` so the achievable openness opens *all the way* (plates retract
+  out of sight, `flowGap` clamped to the pipe → uniform stream) before it throttles; the
+  plates now draw only when partly closed and never bulge past the pipe.
+- NTC opens as it heats; the switching-ceramic PTC snaps the stream to a thread past its
+  Curie point — both straight from R(T).
+
+**Verify:** `/tmp/harness/dumpTherm.js` (the NTC/PTC × cold/warm/hot grid).
+
+---
+
+## 2026-06-17 (9) — NTC + PTC thermistors (schematic + analogy, temperature knob)
+
+**State:** 🟢 Green — web format/check/lint/build all pass. **No Rust / no golden touch**
+(determinism intact). Branch `claude/kind-turing-hdelb3`. Added the NTC + PTC thermistors
+end-to-end, the POT way — a per-part temperature scalar the netlist turns into R(T) and
+stamps as a plain resistor, so the sim sees an ordinary resistor.
+
+Owner's calls: **knob now but prep for a future temperature model**, **PTC = switching
+ceramic (Curie snap)**, **schematic + analogy first** (reality tier deferred).
+
+- **`web/src/lib/thermistor.ts`** (NEW) — the shared R(T) model: NTC `R0·exp(B(1/T−1/T0))`;
+  PTC switching ceramic (low R, then a several-decade jump above the 100 °C Curie point).
+  Also `thermistorOpenness` (valve gap), `tempNorm`, `THERMISTOR_TEMP` ranges. One place so
+  the netlist, the drawer, AND a future SIM self-heating model share the curves.
+- **netlist.ts** — NTC/PTC branch (beside POT): stamps ONE `ELEM_RESISTOR` with R(T) from
+  `value` (nominal R) + `temp`. R(T) rides `values`, so changing temp rebuilds the sim.
+- **`temp` scalar** threaded like `wiper`: `Component.temp`, default 25 °C on placement,
+  `SelectedPart`, clipboard snippet + paste, serialize/restore (spread), `Board.setComponentTemp`,
+  tier opts, `TierOpts.temp`, `infoDiagram.setState`.
+- **glyphs.ts** `drawThermistor` (NTC/PTC → DRAWERS): IEC box + the diagonal temperature
+  arrow, a small −/+ telling NTC (R falls) from PTC (R rises).
+- **analogyDrawers.ts** `drawAnalogyThermistor` (NTC/PTC) — a HEAT-ACTUATED SHUTTER VALVE:
+  heater coil+glow+waves under the orifice = temperature; shutter gap = openness(R(T)); flow
+  = current. NTC opens as it heats; PTC snaps shut past Curie. One drawer, mirror behaviour
+  straight from R(T).
+- **App.svelte** — a temperature slider in the inspector (`{#if kind==="NTC"||"PTC"}`),
+  mirroring the wiper (single-undo-per-drag). **partInfo.ts** — NTC/PTC entries (live R from
+  V/I).
+
+**Verify:** `/tmp/harness` — `dumpTherm.js` (analogy grid: NTC opens / PTC snaps shut across
+temperature) and `dumpGlyph.js` (the schematic symbols). compile.js now also transpiles
+`thermistor`. Deferred (in TODOS): the reality/tier-3 internals, and exposing B / Curie as
+part params.
+
+---
+
+## 2026-06-17 (8) — Zener closed-loop rebuild, diode check-valve template, conduit fittings
+
+**State:** 🟢 Green — web format/check/lint/build all pass (no Rust; golden untouched).
+Branch `claude/kind-turing-hdelb3`. Four owner asks this session, two subsystems:
+
+**Analogy drawers (`analogyDrawers.ts`, `tierKit.ts`):**
+- **Zener rebuilt** to match `docs/ui/parts/zener-tier2.html`: a CLOSED-LOOP spillway —
+  forward check valve on the axis, a standpipe on the cathode side that fills to the Vz
+  weir, and a **return tube** that catches the spill over the crest and runs it back to
+  the anode side (reverse current returns to the anode — no more "spilling into nothing").
+  Column rim tracks the crest (taller wall = taller column, no dead freeboard). Reverse
+  loop drawn with `flowAlongPath`.
+- **Shared `forwardCheckValve()` template** (the diode family: D / SD / LED / ZD): bronze
+  seat lips + spring/plunger + ball, with the **ball made smaller** and the open-flow
+  **parting AROUND the ball** via new `tierKit.flowAroundBall` (horizontal mirror of
+  `flowAroundPlug`) — belts up the inlet/outlet pipe, bulged lanes through the chamber.
+  Tune the ball/flow once, every diode follows.
+- Valve un-crammed: chamber stands clear above/below the ball; body widened for
+  seat + travel + spring.
+
+**Conduit (`board.ts`):**
+- **Translucent tapers + junction fittings**: the port-taper flares and the junction
+  hub/nubs were STACKING fills over the 2-layer pipe → cloudy. Lowered their alphas
+  (flare 0.32→0.16 wall, inner ×0.4; hub 0.4→0.2; nub 0.3→0.22) so they read translucent.
+- **Junctions nudge with their runs**: a junction is a free vertex, so when its runs fan
+  into lanes the hub now rides along. Follow-pass in `redrawWires` derives each junction's
+  shift from the nudge (the perpendicular offset of each run's first interior point),
+  averaged PER AXIS (T/+ compose; parallel conflicts split the difference), then snaps the
+  hub + every connected run-end onto it. Derived FROM the nudge ⇒ never fights it.
+  `drawJunctions` now takes a `junctionPos` map. Verified numerically (`/tmp/harness/junctest.js`).
+
+**Verify:** headless render harness in `/tmp/harness` (compile.js transpiles drawers →
+CJS; dumpPart.js / dumpZener1.js → shapes.json → raster.py → PNG). NOTE: raster harness
+now keys stroke width on `lw` (rect geom width was colliding on `w`).
+
+---
+
 ## 2026-06-17 (7) — Conduit channel routing: nudge parallel + crossing bridges/junctions
 
 **State:** 🟢 Green — web check/lint/build (no Rust; golden untouched). Branch

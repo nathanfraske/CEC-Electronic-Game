@@ -16,6 +16,7 @@ import {
 } from "./graph";
 import type { Endpoint } from "./graph";
 import type { ElectricalState } from "./glyphs";
+import { isThermistor, thermistorResistance } from "./thermistor";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
@@ -408,6 +409,30 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       auxArr.push(0);
       elemOfComponent.set(c.id, upIdx); // A→W leg current
       nodesOfComponent.set(c.id, [na, nb]); // V across the whole track
+      continue;
+    }
+
+    // Thermistor (NTC/PTC): stamp ONE plain resistor whose resistance is the live R(T)
+    // computed from the part's nominal value and its body temperature — the same web-
+    // only expansion as the POT, so the sim sees an ordinary resistor (no new element,
+    // no golden change). R(T) rides into `values`, so changing the temperature rebuilds
+    // the sim via the value signature. (Today the temperature is the inspector knob;
+    // a future self-heating model would feed the same field — see thermistor.ts.)
+    if (isThermistor(c.kind)) {
+      const reff = Math.max(
+        1e-3,
+        thermistorResistance(c.kind, c.value, c.temp ?? 25),
+      );
+      const idx = types.length;
+      types.push(ELEM_RESISTOR);
+      aArr.push(na);
+      bArr.push(nb);
+      cArr.push(0);
+      dArr.push(0);
+      values.push(reff);
+      auxArr.push(0);
+      elemOfComponent.set(c.id, idx);
+      nodesOfComponent.set(c.id, [na, nb]);
       continue;
     }
 

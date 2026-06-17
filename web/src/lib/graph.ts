@@ -68,6 +68,16 @@ export interface Component {
    */
   wiper?: number;
   /**
+   * A thermistor's body temperature in °C: the second scalar for kinds `"NTC"` and
+   * `"PTC"` (where {@link Component.value} is the nominal resistance). The user sets it
+   * directly for now (the inspector's temperature knob); {@link buildNetlist} turns it
+   * into the live R(T) and stamps a plain resistor — the same web-only expansion as the
+   * POT's wiper, so no sim-core/golden change. Left undefined on other kinds; a new
+   * thermistor defaults to 25 °C. Optional so older snapshots round-trip to the default.
+   * (Prep for a future self-heating model: this same field would then be sim-driven.)
+   */
+  temp?: number;
+  /**
    * The logic family of a digital part (gate or flip-flop): an index into the
    * {@link LOGIC_FAMILIES} table — `0` = Ideal (the half-rail default), `1` = CMOS,
    * `2` = TTL. Only meaningful for the logic gates and the D flip-flop; other kinds
@@ -334,6 +344,24 @@ export const PART_KINDS: Record<string, PartKind> = {
   // `warn` reads as the protective/caution hue and sets the Protection family
   // apart from the silicon-junction diodes.
   MOV: kind("MOV", "Varistor", "warn", twoPin("A", "B"), 18, "V", true),
+  // NTC thermistor: a metal-oxide resistor whose resistance FALLS as it heats
+  // (R = R0·exp(B(1/T−1/T0))). `value` is the nominal R at 25 °C (default 10 kΩ); the
+  // second scalar {@link Component.temp} is its body temperature, set by the inspector
+  // knob for now. buildNetlist turns R(T) into a plain resistor — web-only, like the
+  // POT, so no sim-core/golden change. Amber `warn` reads as the thermal/sensing hue.
+  NTC: kind(
+    "NTC",
+    "NTC Thermistor",
+    "warn",
+    twoPin("A", "B"),
+    10000,
+    "Ω",
+    true,
+  ),
+  // PTC thermistor (switching ceramic): low R until its Curie point, then a several-
+  // decade JUMP (the resettable-fuse snap). `value` is the low-state R (default 100 Ω);
+  // `temp` is the body temperature. Same web-only R(T) expansion as the NTC.
+  PTC: kind("PTC", "PTC Thermistor", "warn", twoPin("A", "B"), 100, "Ω", true),
   // Clock-driven (PWM) switch; `value` is the duty cycle in [0,1].
   SW: kind("SW", "Switch", "ok", twoPin("A", "B"), 0.5, "", true),
   // Manual switch: a player-operated SPST switch. Reuses the SW solver element
@@ -714,6 +742,8 @@ export class BoardGraph {
       ...(kind === "LS" ? { amp: 5 } : {}),
       // A potentiometer carries its wiper position, defaulting to centred (0.5).
       ...(kind === "POT" ? { wiper: 0.5 } : {}),
+      // A thermistor carries its body temperature, defaulting to 25 °C.
+      ...(kind === "NTC" || kind === "PTC" ? { temp: 25 } : {}),
     };
     this.components.set(component.id, component);
     return component;

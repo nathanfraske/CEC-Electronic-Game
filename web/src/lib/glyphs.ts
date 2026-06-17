@@ -174,6 +174,73 @@ function drawR(g: Graphics, o: GlyphOpts): void {
   flow(g, x0, a.y, x1, b.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// Thermistor (NTC/PTC): the IEC box resistor crossed by the temperature-dependence
+// arrow — the standard symbol. PTC's arrow points UP (R rises with heat), NTC's DOWN
+// (R falls). Drawn warm (the thermal hue). Both kinds share this drawer.
+function drawThermistor(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const x0 = a.x + 9;
+  const x1 = b.x - 9;
+  const h = 9; // body half-height
+  const ptc = o.kind === "PTC";
+  const heat = norm(o.electrical.current, CUR_SCALE);
+  // dissipation halo grows with current
+  if (heat > 0.03) {
+    g.roundRect(x0 - 2, a.y - h - 4, x1 - x0 + 4, 2 * h + 8, 4).fill({
+      color: 0xe0533a,
+      alpha: 0.16 * heat,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(x0, a.y);
+  g.moveTo(x1, b.y).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // IEC box body
+  g.roundRect(x0, a.y - h, x1 - x0, 2 * h, 2).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.roundRect(x0, a.y - h, x1 - x0, 2 * h, 2).stroke({
+    width: 2,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // the temperature-dependence arrow (the standard thermistor mark): a foot at the
+  // bottom-left, a diagonal slashing up through the body, an arrowhead at the top-right.
+  // A small sign beside it tells the two apart — "−" NTC (R falls with heat), "+" PTC.
+  const warm = 0xffe6c0;
+  const fx = x0 - 5;
+  const fy = a.y + h + 7;
+  const kx = fx + 7;
+  const tx = x1 + 3;
+  const ty = a.y - h - 7;
+  g.moveTo(fx, fy).lineTo(kx, fy).lineTo(tx, ty);
+  g.stroke({ width: 2, color: warm, alpha: 0.95 });
+  const adx = tx - kx;
+  const ady = ty - fy;
+  const al = Math.hypot(adx, ady) || 1;
+  const ux = adx / al;
+  const uy = ady / al;
+  const px = -uy;
+  const py = ux;
+  g.poly([
+    tx,
+    ty,
+    tx - ux * 8 + px * 4.5,
+    ty - uy * 8 + py * 4.5,
+    tx - ux * 8 - px * 4.5,
+    ty - uy * 8 - py * 4.5,
+  ]).fill({ color: warm, alpha: 0.95 });
+  const sgx = x1 - 8;
+  const sgy = a.y - h - 8;
+  g.moveTo(sgx, sgy).lineTo(sgx + 6, sgy);
+  if (ptc) g.moveTo(sgx + 3, sgy - 3).lineTo(sgx + 3, sgy + 3);
+  g.stroke({ width: 1.6, color: warm, alpha: 0.95 });
+  flow(g, x0, a.y, x1, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawC(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -2354,6 +2421,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   LED: drawLED,
   ZD: drawZD,
   MOV: drawMOV,
+  NTC: drawThermistor,
+  PTC: drawThermistor,
   SW: drawSW,
   MSW: drawMSW,
   NM: drawNM,

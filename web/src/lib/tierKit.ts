@@ -32,6 +32,8 @@ export interface TierOpts {
   value?: number;
   /** A potentiometer's wiper in [0,1]; only the POT drawer reads it. */
   wiper?: number;
+  /** A thermistor's body temperature in °C; only the NTC/PTC drawer reads it. */
+  temp?: number;
   /**
    * Terminal anchor points in the drawer's OWN bounds space (pre-scale px), one per
    * catalog pin (carrying its `label`). The host computes where each real pin lands
@@ -247,7 +249,153 @@ export function flowAroundPlug(
   }
 }
 
+/**
+ * Carriers streaming along a HORIZONTAL pipe that PART around a ball obstacle — two
+ * symmetric lanes that ride the axis, then bulge out toward the chamber walls as they
+ * skirt the ball and rejoin past it (the open check valve: water flows AROUND the lifted
+ * ball, not through it). Density + alpha ride `mag` (0..1); motion is on the bounded
+ * `phase` (never speed). `xFrom`→`xTo` is the travel direction along the axis at `cy`;
+ * the ball is at (`ballX`, cy) radius `ballR`; `chamberHH` is how far the lanes may bulge
+ * (the valve chamber half-height, wider than the thin pipe).
+ */
+export function flowAroundBall(
+  g: Graphics,
+  xFrom: number,
+  xTo: number,
+  cy: number,
+  chamberHH: number,
+  ballX: number,
+  ballR: number,
+  mag: number,
+  phase: number,
+  color: number,
+  r = 2.4,
+): void {
+  if (mag < 0.02) return;
+  const n = FLOW_DOTS_MAX;
+  // Sit the bulged lane just outside the ball but inside the chamber walls.
+  const lane = Math.min(chamberHH - r - 2, ballR + r + 4);
+  for (const side of [-1, 1]) {
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      const t = (((i / n + phase * FLOW_SPEED) % 1) + 1) % 1;
+      const x = xFrom + (xTo - xFrom) * t;
+      // hug the axis away from the ball, swing out to the lane only as it passes.
+      const bump = Math.exp(-(((x - ballX) / (ballR * 1.25)) ** 2));
+      g.circle(x, cy + side * lane * bump, r).fill({
+        color,
+        alpha: (0.3 + 0.5 * mag) * present,
+      });
+    }
+  }
+}
+
+/**
+ * Carriers funnelling THROUGH a central gap between two shutter plates on a HORIZONTAL
+ * pipe — the inverse of {@link flowAroundPlug}. Several lanes ride the full channel,
+ * then SQUEEZE toward the axis as they pass the gate and fan back out, so a wide-open
+ * valve passes a fat stream while a shutting one pinches it to a thin thread (and snaps
+ * to a near-line as the gap → 0). The thermistor heat-valve lesson: openness is read in
+ * the stream itself, not just the plate positions. Density + alpha ride `mag`; motion is
+ * on the bounded `phase` (never speed). `xFrom`→`xTo` is travel along the axis at `cy`;
+ * the channel half-height is `pipeHH`; the gate sits at `gateX` leaving half-gap
+ * `gapHalf`; the funnel eases over `throat` on each side.
+ */
+export function flowThroughGap(
+  g: Graphics,
+  xFrom: number,
+  xTo: number,
+  cy: number,
+  pipeHH: number,
+  gapHalf: number,
+  gateX: number,
+  throat: number,
+  mag: number,
+  dir: number,
+  phase: number,
+  color: number,
+  r = 2.3,
+): void {
+  if (mag < 0.02) return;
+  const lanes = [-0.85, -0.5, -0.17, 0.17, 0.5, 0.85];
+  const n = FLOW_DOTS_MAX;
+  for (let li = 0; li < lanes.length; li++) {
+    const u = lanes[li]!;
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      // stagger lanes so the dots read as a stream, not a marching grid
+      const t =
+        (((i / n + (li / lanes.length) * 0.5 + phase * FLOW_SPEED * dir) % 1) +
+          1) %
+        1;
+      const x = xFrom + (xTo - xFrom) * t;
+      // available half-height funnels from pipeHH (outside the throat) to gapHalf (at
+      // the gate), so every lane is pulled through the gap and released past it.
+      const k = Math.min(1, Math.abs(x - gateX) / throat);
+      const hAvail = gapHalf + (pipeHH - gapHalf) * k;
+      g.circle(x, cy + u * hAvail, r * (0.72 + 0.28 * k)).fill({
+        color,
+        alpha: (0.28 + 0.5 * mag) * present,
+      });
+    }
+  }
+}
+
+/**
+ * A y-deflection in [-1, 1] that steers a carrier AROUND a row of obstacles: every
+ * obstacle it passes shoves it to the far side (relative to the channel centre `cy`),
+ * so a stream multiplied by this slaloms between the obstacles — the picture of carriers
+ * scattering off a lattice, which IS resistance. Sum of signed Gaussian bumps (cheap; far
+ * obstacles skipped). Multiply the result by the amplitude you want.
+ */
+export function scatterY(
+  x: number,
+  obstacles: { x: number; y: number }[],
+  spread: number,
+  cy = 0,
+): number {
+  let dy = 0;
+  for (const ob of obstacles) {
+    const dx = (x - ob.x) / spread;
+    if (dx < -3 || dx > 3) continue;
+    dy += (ob.y <= cy ? 1 : -1) * Math.exp(-dx * dx);
+  }
+  return Math.max(-1, Math.min(1, dy));
+}
+
 // --- machine furniture --------------------------------------------------------
+
+/** Steel wall colour of a pipe (mirrors the board's wire-conduit wall, PIPE_WALL). */
+export const PIPE_STEEL = 0x6b6488;
+
+/**
+ * A PIPE-style lead along a polyline: a steel wall stroke + a coloured core + flowing
+ * carrier dots when `mag` > 0 — so a part's terminal reads as a continuous flowing pipe
+ * that meets the board's wire-pipes, instead of a thin schematic line that looks broken
+ * off from the system. `dir` is the flow sense along the path (+1 = pts[0]→last).
+ */
+export function pipeLead(
+  g: Graphics,
+  pts: { x: number; y: number }[],
+  width: number,
+  core: number,
+  water: number,
+  mag: number,
+  dir: number,
+  phase: number,
+): void {
+  if (pts.length < 2) return;
+  const trace = (w: number, c: number, a: number): void => {
+    g.moveTo(pts[0]!.x, pts[0]!.y);
+    for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+    g.stroke({ width: w, color: c, alpha: a, cap: "round", join: "round" });
+  };
+  trace(width + 4, PIPE_STEEL, 0.45); // wall
+  trace(width, core, 0.3); // voltage-tinted core
+  if (mag > 0.02) flowAlongPath(g, pts, mag, dir, phase, water, 2.2);
+}
 
 // Whether stud() actually paints. On the board the illustration's decorative studs
 // are redundant with (and offset from) the real pin dots the wires meet, so the

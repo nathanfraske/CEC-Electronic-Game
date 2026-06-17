@@ -18,9 +18,17 @@ import { Graphics } from "pixi.js";
 import { PALETTE } from "./graph";
 import { ZERO_ELECTRICAL } from "./glyphs";
 import {
+  THERMISTOR_TEMP,
+  type ThermistorKind,
+  tempNorm,
+  thermistorOpenness,
+  thermistorResistance,
+} from "./thermistor";
+import {
   type TierOpts as DetailOpts,
   anchorPt,
   belt,
+  flowAlongPath,
   dotPresence,
   housing,
   mix,
@@ -393,11 +401,39 @@ function drawDetailDiode(g: Graphics, o: DetailOpts): void {
 }
 
 // ============================================================================
+// One flickering flame tongue (a wobbling teardrop pointing up from `baseY`). Layered
+// a few times — wide cool red outside, narrow white-hot inside — it reads as fire.
+function flameTongue(
+  g: Graphics,
+  cx: number,
+  baseY: number,
+  w: number,
+  h: number,
+  wob: number,
+  col: number,
+  alpha: number,
+): void {
+  if (alpha <= 0 || h <= 0) return;
+  g.poly([
+    cx - w / 2,
+    baseY,
+    cx - w * 0.32,
+    baseY - h * 0.4,
+    cx + wob,
+    baseY - h, // the licking tip, bent by `wob`
+    cx + w * 0.32,
+    baseY - h * 0.4,
+    cx + w / 2,
+    baseY,
+  ]).fill({ color: col, alpha });
+}
+
 // Resistor — ported from resistor-tiers.html tier 3: a CONDUCTOR LATTICE with
 // DRIFTING ELECTRONS. Fixed + ion cores form a lattice; the field pushes electrons
 // through it and they keep SCATTERING off the (thermally jiggling) ions — that
-// resistance dissipates the energy as HEAT (the lattice glows, then smokes when
-// over-driven). The field points + → −; electrons drift toward +.
+// resistance dissipates the energy as HEAT (the lattice glows, smokes when
+// over-driven, then CATCHES FIRE if you keep pushing). Field points + → −; electrons
+// drift toward +.
 //
 // Live mapping (resistor ElectricalState: current a→b, vAcross = V(a)−V(b)):
 //   • current = norm(|I|)   → electron density/alpha drifting through the lattice.
@@ -517,6 +553,63 @@ function drawDetailResistor(g: Graphics, o: DetailOpts): void {
           alpha: (0.3 + 0.55 * cur) * present,
         });
       }
+    }
+  }
+
+  // --- keep pushing past the smoke and it CATCHES FIRE: flame tongues lick up off
+  // the body, embers fly. Driven by the RAW dissipation ratio (not the saturating
+  // `power`), so there's real headroom — the worse you over-drive it, the bigger the
+  // blaze. Drawn under the smoke, which then billows up off the flames. ------------
+  const rawHeat =
+    Math.abs(o.electrical.vAcross * o.electrical.current) /
+    (V_SCALE * CUR_SCALE);
+  const fireI = Math.max(0, Math.min(1, (rawHeat - 10) / 40));
+  if (fireI > 0) {
+    // a hot bed glow soaking the whole body
+    g.roundRect(boxL - 4, boxT - 2, boxR - boxL + 8, boxB - boxT + 4, 8).fill({
+      color: mix(PALETTE.bad, PALETTE.warn, 0.4),
+      alpha: 0.22 * fireI,
+    });
+    const nF = 8;
+    for (let i = 0; i < nF; i++) {
+      const fx = boxL + ((i + 0.5) / nF) * (boxR - boxL);
+      const flick = 0.55 + 0.45 * Math.sin(o.phase * 6 + i * 1.9);
+      const fhgt = (hh * 0.5 + hh * 0.65 * fireI) * (0.55 + 0.5 * flick);
+      const fw = (boxR - boxL) / nF + 7;
+      const wob = Math.sin(o.phase * 5 + i * 2.3) * fw * 0.2;
+      // tongues rise off the TOP edge: cool red outside → white-hot core inside
+      flameTongue(g, fx, boxT + 3, fw, fhgt, wob, PALETTE.bad, 0.5 * fireI);
+      flameTongue(
+        g,
+        fx,
+        boxT + 3,
+        fw * 0.62,
+        fhgt * 0.82,
+        wob * 0.8,
+        mix(PALETTE.bad, PALETTE.warn, 0.6),
+        0.6 * fireI,
+      );
+      flameTongue(
+        g,
+        fx,
+        boxT + 3,
+        fw * 0.32,
+        fhgt * 0.55,
+        wob * 0.6,
+        mix(PALETTE.warn, 0xffffff, 0.5),
+        0.75 * fireI,
+      );
+    }
+    // embers streaming up and burning out
+    for (let i = 0; i < 7; i++) {
+      const t = (((i / 7 + o.phase * 0.6) % 1) + 1) % 1;
+      const ex =
+        (boxL + boxR) / 2 + Math.sin(o.phase * 3 + i * 5) * hw * 0.5 * t;
+      const ey = boxT - t * hh * 1.1;
+      g.circle(ex, ey, 1.8 * (1 - t)).fill({
+        color: mix(PALETTE.warn, 0xffffff, 0.4),
+        alpha: fireI * (1 - t),
+      });
     }
   }
 
@@ -1528,7 +1621,10 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
     g.circle(ax, ay, 1.3).fill({ color: OXIDE, alpha: 0.5 });
   }
 
-  // --- drifting electrons toward the + end (opposite the conventional current) --
+  // --- drifting electrons toward the + end (opposite the conventional current),
+  // NECKING through the wiper contact — the sprung bead presses on the film, so the
+  // conductive cross-section pinches right under it (and the pinch tracks the wiper as
+  // it slides: it RESPECTS the inline tap). --------------------------------------
   if (flow > 0.02) {
     const n = FLOW_DOTS_MAX;
     const ddir = o.electrical.current >= 0 ? -1 : 1; // e⁻ drift opposes I
@@ -1538,8 +1634,9 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
         if (present <= 0) continue;
         const t = (((k / n + o.phase * FLOW_SPEED * ddir) % 1) + 1) % 1;
         const x = xL + t * (xR - xL);
+        const neck = 1 - 0.6 * Math.exp(-(((x - xW) / (fhh * 1.3)) ** 2));
         const jig = Math.sin(o.phase * PULSE_K * 3 + k * 1.7 + lane * 5) * 2;
-        g.circle(x, yF + lane * fhh + jig, 2.3).fill({
+        g.circle(x, yF + lane * fhh * neck + jig, 2.3).fill({
           color: ELEC,
           alpha: (0.35 + 0.5 * flow) * present,
         });
@@ -1565,6 +1662,25 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
     .lineTo(W.x, midY)
     .lineTo(W.x, W.y)
     .stroke({ width: 2.5, color: PALETTE.dim, alpha: 0.85 });
+  // carriers TAPPED off at the contact run down the spring + arm to W — the wiper
+  // collects part of the stream (so the flow leaves at the tap, not just A↔B).
+  if (flow > 0.02) {
+    flowAlongPath(
+      g,
+      [
+        { x: xW, y: cy },
+        { x: xW, y: sBot },
+        { x: xW, y: midY },
+        { x: W.x, y: midY },
+        { x: W.x, y: W.y },
+      ],
+      flow,
+      1,
+      o.phase,
+      ELEC,
+      2,
+    );
+  }
   // contact bead on the film
   g.circle(xW, cy, 4).fill({ color: WARM, alpha: 0.95 });
   g.circle(xW, cy, 4).stroke({ width: 0.8, color: 0xffffff, alpha: 0.5 });
@@ -1572,6 +1688,176 @@ function drawDetailPOT(g: Graphics, o: DetailOpts): void {
   stud(g, A.x, A.y, PALETTE.bronze);
   stud(g, B.x, B.y, PALETTE.bronze);
   stud(g, W.x, W.y, PALETTE.accent);
+}
+
+// ============================================================================
+// Thermistor (NTC/PTC) — the reality tier: a POLYCRYSTALLINE CERAMIC. A chain of
+// sintered grains bridges the two electrodes; the current must squeeze through the
+// GRAIN-BOUNDARY necks between them. Temperature works the two kinds oppositely, and
+// each shows its own mechanism:
+//   • NTC (metal-oxide semiconductor): heat SHAKES CHARGE CARRIERS FREE — the carrier
+//     population climbs with temperature, so it conducts better hot. Shown as electrons
+//     boiling off the grains (density ∝ temperature) plus the drift current.
+//   • PTC (switching ceramic, doped BaTiO₃): below the Curie point the grain boundaries
+//     are transparent; above it, boundary BARRIERS rear up and choke the necks — the
+//     several-decade snap. Shown as the neck plates closing (reddening) past Curie.
+// Either way the carriers FUNNEL through the necks (the inline constriction), so a wide
+// neck flows freely and a shut one pinches to a thread — the same lesson as the analogy.
+//
+// Live mapping (thermistor ElectricalState + the temperature knob; value = nominal R):
+//   • neck  = openness(R(kind, value, temp)) → grain-boundary gap (PTC snaps it shut).
+//   • heat  = tempNorm(kind, temp)           → halo + grain jitter + freed-carrier pop.
+//   • drift = norm(|I|)                       → electrons funnelling through the necks.
+// ============================================================================
+function drawDetailThermistor(g: Graphics, o: DetailOpts): void {
+  const { hw, hh } = o.bounds;
+  const kind: ThermistorKind = o.kind === "PTC" ? "PTC" : "NTC";
+  const tempC = o.temp ?? THERMISTOR_TEMP[kind].def;
+  const r0 = o.value && o.value > 0 ? o.value : kind === "NTC" ? 10000 : 100;
+  const open = thermistorOpenness(thermistorResistance(kind, r0, tempC));
+  const tN = tempNorm(kind, tempC);
+  const cur = norm(o.electrical.current, CUR_SCALE);
+  const eDir = o.electrical.current >= 0 ? -1 : 1; // electrons oppose conventional I
+  const heatCol = mix(PALETTE.warn, PALETTE.bad, tN);
+  const ELEC = mix(PALETTE.cyan, 0xffffff, 0.3);
+
+  const busY = 0;
+  const aX = -hw + 8;
+  const bX = hw - 8;
+  const boxL = -hw * 0.62;
+  const boxR = hw * 0.62;
+  const bodyHalf = hh * 0.44;
+
+  // --- heat halo soaking the body ----------------------------------------------
+  if (tN > 0.05) {
+    g.roundRect(
+      boxL - 6,
+      -bodyHalf - 6,
+      boxR - boxL + 12,
+      2 * bodyHalf + 12,
+      10,
+    ).fill({ color: heatCol, alpha: 0.1 + 0.32 * tN });
+  }
+
+  // --- ceramic body + metal electrode caps + leads -----------------------------
+  housing(g, boxL, -bodyHalf, boxR - boxL, 2 * bodyHalf, PALETTE.dim, 7);
+  const capW = (boxR - boxL) * 0.08;
+  const capCol = mix(PALETTE.rail, 0xffffff, 0.25);
+  for (const sx of [boxL, boxR - capW]) {
+    g.rect(sx, -bodyHalf, capW, 2 * bodyHalf).fill({
+      color: capCol,
+      alpha: 0.8,
+    });
+  }
+  g.moveTo(aX, busY)
+    .lineTo(boxL, busY)
+    .moveTo(boxR, busY)
+    .lineTo(bX, busY)
+    .stroke({ width: 6, color: PALETTE.rail, alpha: 0.85 });
+
+  // --- the grain chain + boundary geometry -------------------------------------
+  const innerL = boxL + capW + 4;
+  const innerR = boxR - capW - 4;
+  const NG = 4;
+  const grainR = (innerR - innerL) / (2 * NG);
+  const grainCx: number[] = [];
+  for (let i = 0; i < NG; i++) grainCx.push(innerL + grainR * (2 * i + 1));
+  const boundaries: number[] = [];
+  for (let i = 0; i < NG - 1; i++)
+    boundaries.push((grainCx[i]! + grainCx[i + 1]!) / 2);
+  const grainHalf = bodyHalf * 0.82;
+  // PTC: the neck closes from `open` (snaps shut past Curie). NTC: necks stay open —
+  // its mechanism is carrier population, not the boundaries.
+  const neckHalf =
+    kind === "PTC" ? 2 + open * (grainHalf - 2) : grainHalf * 0.74;
+  const throat = grainR * 0.85;
+  const hAvailAt = (x: number): number => {
+    let d = Infinity;
+    for (const bx of boundaries) d = Math.min(d, Math.abs(x - bx));
+    const k = Math.min(1, d / throat);
+    return neckHalf + (grainHalf - neckHalf) * k;
+  };
+
+  // --- grains (sintered blobs, jittering with heat) ----------------------------
+  const jig = tN * 1.6;
+  for (let i = 0; i < NG; i++) {
+    const gx = grainCx[i]! + Math.sin(o.phase * 0.9 + i * 1.7) * jig;
+    const gy = busY + Math.cos(o.phase * 1.1 + i * 2.3) * jig;
+    g.circle(gx, gy, grainR * 0.94).fill({
+      color: mix(0x231a0e, heatCol, 0.3 * tN),
+      alpha: 0.55,
+    });
+    g.circle(gx, gy, grainR * 0.94).stroke({
+      width: 1.4,
+      color: mix(PALETTE.bronze, heatCol, tN),
+      alpha: 0.75,
+    });
+  }
+
+  // --- grain-boundary necks: PTC barriers close (redden) past Curie ------------
+  for (const bx of boundaries) {
+    const barrier = Math.max(0, grainHalf - neckHalf);
+    const barCol =
+      kind === "PTC"
+        ? mix(PALETTE.dim, PALETTE.bad, 1 - open)
+        : mix(PALETTE.dim, PALETTE.bronze, 0.5);
+    for (const s of [-1, 1]) {
+      const yIn = busY + s * neckHalf;
+      const yOut = busY + s * (grainHalf + 2);
+      if (barrier > 0.5 || kind === "NTC") {
+        g.rect(bx - 2.5, Math.min(yIn, yOut), 5, Math.abs(yOut - yIn)).fill({
+          color: barCol,
+          alpha: kind === "PTC" ? 0.85 : 0.5,
+        });
+      }
+    }
+  }
+
+  // --- carriers FUNNELLING through the necks (drift current) -------------------
+  if (cur > 0.02) {
+    const lanes = [-0.8, -0.45, -0.15, 0.15, 0.45, 0.8];
+    const n = FLOW_DOTS_MAX;
+    for (let li = 0; li < lanes.length; li++) {
+      const u = lanes[li]!;
+      for (let k = 0; k < n; k++) {
+        const present = dotPresence(k, cur);
+        if (present <= 0) continue;
+        const t =
+          (((k / n + (li / lanes.length) * 0.5 + o.phase * FLOW_SPEED * eDir) %
+            1) +
+            1) %
+          1;
+        const x = innerL + t * (innerR - innerL);
+        const hA = hAvailAt(x);
+        g.circle(x, busY + u * hA, 2.2 * (0.7 + 0.3 * (hA / grainHalf))).fill({
+          color: ELEC,
+          alpha: (0.3 + 0.5 * cur) * present,
+        });
+      }
+    }
+  }
+
+  // --- NTC physics: thermally-freed carriers boil off the grains (∝ temperature) -
+  if (kind === "NTC" && tN > 0.12) {
+    const nf = Math.round(2 + 7 * tN);
+    for (let i = 0; i < nf; i++) {
+      const gx = grainCx[i % NG]!;
+      const a = (((i * 0.37 + o.phase * 0.4) % 1) + 1) % 1;
+      const ex = gx + Math.sin(o.phase * 2 + i * 2.1) * grainR * 0.6;
+      const ey = busY + Math.cos(o.phase * 1.6 + i * 1.3) * grainHalf * 0.7 * a;
+      g.circle(ex, ey, 1.6).fill({
+        color: mix(ELEC, 0xffffff, 0.3),
+        alpha: 0.5 * tN * (1 - 0.4 * a),
+      });
+    }
+  }
+
+  // --- terminal studs + lead current -------------------------------------------
+  stud(g, aX, busY, PALETTE.bronze);
+  stud(g, bX, busY, PALETTE.bronze);
+  const leadCol = mix(ELEC, 0xffffff, 0.2);
+  belt(g, aX, busY, boxL, busY, cur, -eDir, o.phase, leadCol, 2.6);
+  belt(g, boxR, busY, bX, busY, cur, -eDir, o.phase, leadCol, 2.6);
 }
 
 /**
@@ -1596,6 +1882,8 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   PM: drawDetailMOSFET,
   MOV: drawDetailVaristor,
   POT: drawDetailPOT,
+  NTC: drawDetailThermistor,
+  PTC: drawDetailThermistor,
 };
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */

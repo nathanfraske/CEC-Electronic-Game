@@ -47,6 +47,8 @@ export class InfoDiagram {
   private value: number | undefined = undefined;
   // The potentiometer's wiper position, forwarded for the same reason. Optional.
   private wiper: number | undefined = undefined;
+  // A thermistor's body temperature (°C), forwarded so the preview tracks the knob.
+  private temp: number | undefined = undefined;
   // The shared visual flow clock, handed in each frame from the board
   // (`Board.flowPhase()`) rather than free-run here. Riding the board's clock
   // makes the internals animation advance at the same calm rate, freeze when the
@@ -75,11 +77,13 @@ export class InfoDiagram {
     e: ElectricalState,
     value?: number,
     wiper?: number,
+    temp?: number,
   ): void {
     this.kind = kind;
     this.electrical = e;
     this.value = value;
     this.wiper = wiper;
+    this.temp = temp;
   }
 
   /** Switch the view tier: schematic symbol / Factory analogy / reality internals. */
@@ -140,6 +144,7 @@ export class InfoDiagram {
         phase: this.phase,
         value: this.value,
         wiper: this.wiper,
+        temp: this.temp,
         anchors,
       };
       // The info panel has no separate pin dots, so the illustration's own studs

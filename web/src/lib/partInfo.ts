@@ -36,6 +36,11 @@ export interface PartInfo {
 
 const f = formatValue;
 const conducting = (e: ElectricalState): boolean => Math.abs(e.current) > 1e-7;
+// A thermistor's LIVE resistance from Ohm's law (V/I) — which reflects its R(T) since
+// the netlist stamps R(T). Falls back to the nominal value when no current flows (R is
+// unmeasurable open-circuit).
+const liveR = (e: ElectricalState, nominal: number): number =>
+  Math.abs(e.current) > 1e-9 ? Math.abs(e.vAcross / e.current) : nominal;
 
 // MOSFET level-1 square-law constants, mirrored from crates/sim-core/src/lib.rs
 // (MOS_KP, MOS_LAMBDA). The gate node isn't exposed to the inspector, so Vgs is
@@ -127,6 +132,34 @@ export const PART_INFO: Record<string, PartInfo> = {
     plain: () =>
       "A resistor drops voltage in proportion to the current through it (Ohm's law), turning the V·I product into heat. It has no memory — the current tracks the voltage instantly.",
     derived: (e) => [
+      { label: "Power P = V·I", value: f(e.vAcross * e.current, "W") },
+    ],
+  },
+  NTC: {
+    name: "NTC Thermistor",
+    equation: "R(T) = R₀·exp(B(1/T − 1/T₀))",
+    headline: (e, r0) =>
+      conducting(e)
+        ? `${f(liveR(e, r0), "Ω")} now · ${f(e.current, "A")} through`
+        : `${f(r0, "Ω")} nominal @ 25 °C`,
+    plain: () =>
+      "An NTC thermistor is a metal-oxide resistor whose resistance falls steeply as it heats — warmth shakes more charge carriers free, so it conducts better hot than cold. Cold it chokes the current; warm it and the current climbs. Set its temperature with the inspector knob.",
+    derived: (e, r0) => [
+      { label: "Resistance now", value: f(liveR(e, r0), "Ω") },
+      { label: "Power P = V·I", value: f(e.vAcross * e.current, "W") },
+    ],
+  },
+  PTC: {
+    name: "PTC Thermistor",
+    equation: "low R, then a jump above the Curie point",
+    headline: (e, r0) =>
+      conducting(e)
+        ? `${f(liveR(e, r0), "Ω")} now · ${f(e.current, "A")} through`
+        : `${f(r0, "Ω")} low-state @ 25 °C`,
+    plain: () =>
+      "A switching-ceramic PTC thermistor holds a low resistance until its Curie point, then snaps up several orders of magnitude over a few tens of degrees — the self-resetting fuse. Below Curie it passes current freely; cross it and the resistance jumps and chokes the current off. Set its temperature with the inspector knob.",
+    derived: (e, r0) => [
+      { label: "Resistance now", value: f(liveR(e, r0), "Ω") },
       { label: "Power P = V·I", value: f(e.vAcross * e.current, "W") },
     ],
   },

@@ -21,15 +21,26 @@
 import { Graphics } from "pixi.js";
 import { PALETTE } from "./graph";
 import {
+  THERMISTOR_TEMP,
+  type ThermistorKind,
+  tempNorm,
+  thermistorOpenness,
+  thermistorResistance,
+} from "./thermistor";
+import {
   type TierOpts as AnalogyOpts,
   anchorPt,
   belt,
   dotPresence,
   flowAlongPath,
+  flowAroundBall,
   flowAroundPlug,
+  flowThroughGap,
   housing,
   mix,
   norm,
+  pipeLead,
+  scatterY,
   stud,
   CUR_SCALE,
   FLOW_SPEED,
@@ -84,6 +95,89 @@ function vSpringPts(
   return pts;
 }
 
+/**
+ * The diode family's forward CHECK VALVE — bronze seat lips, a spring to a plunger, and a
+ * ball the forward push lifts off its seat; when OPEN the water PARTS AROUND the ball (an
+ * obstacle it skirts, not a hole it pours through). Shared by every diode (plain,
+ * Schottky, LED, Zener) so they read identically and the ball size + flow tune in ONE
+ * place. Draws the seat, spring, forward flow, then the ball on the axis at `cy`; the
+ * caller owns the housing + pipes and any reverse / blocked flow (those differ per part).
+ */
+function forwardCheckValve(
+  g: Graphics,
+  v: {
+    cy: number;
+    pipeHH: number; // the thin pipe half-height (sets the seat throat)
+    chamberHH: number; // the valve chamber half-height (how far the flow may bulge)
+    seatX: number;
+    plungerX: number;
+    ballR: number;
+    liftX: number; // ball centre, already lifted by the caller's forward amount
+    inX: number; // forward inlet x (anode side)
+    outX: number; // forward outlet x (cathode side)
+    open: number; // 0..1 forward openness → flow density (≤0.03 ⇒ no forward flow)
+    phase: number;
+    ballColor: number;
+  },
+): void {
+  const { cy, pipeHH, seatX, plungerX, ballR, liftX } = v;
+  // seat lips — two bronze lips; the ball seals the throat between them
+  for (const s of [-1, 1]) {
+    g.poly([
+      seatX - 10,
+      cy + s * (pipeHH + 6),
+      seatX + 8,
+      cy + s * (pipeHH + 6),
+      seatX + 3,
+      cy + s * pipeHH * 0.4,
+      seatX - 5,
+      cy + s * pipeHH * 0.4,
+    ]).fill({ color: PALETTE.bronze, alpha: 0.9 });
+  }
+  // plunger backstop + spring (compresses as the ball lifts toward it)
+  g.roundRect(plungerX, cy - ballR, 8, ballR * 2, 2).fill({
+    color: PALETTE.rail,
+    alpha: 0.9,
+  });
+  g.poly(springPts(liftX + ballR, plungerX, cy, ballR * 0.5, 6), false).stroke({
+    width: 2.4,
+    color: WARM,
+    alpha: 0.85,
+  });
+  // forward flow: belts along the inlet + outlet pipe, PARTING around the ball between
+  // (so the parting stays dense and legible instead of a few dots lost over the run).
+  if (v.open > 0.03) {
+    const w0 = seatX - ballR;
+    const w1 = plungerX + ballR;
+    belt(g, v.inX, cy, w0, cy, v.open, 1, v.phase, WATER, 2.4);
+    flowAroundBall(
+      g,
+      w0,
+      w1,
+      cy,
+      v.chamberHH,
+      liftX,
+      ballR,
+      v.open,
+      v.phase,
+      WATER,
+      2.4,
+    );
+    belt(g, w1, cy, v.outX, cy, v.open, 1, v.phase, WATER, 2.4);
+  }
+  // the ball + its highlight (drawn last, on top of the flow)
+  g.circle(liftX, cy, ballR).fill({ color: v.ballColor, alpha: 0.92 });
+  g.circle(liftX, cy, ballR).stroke({
+    width: 1.4,
+    color: 0xdce3f0,
+    alpha: 0.6,
+  });
+  g.circle(liftX - ballR * 0.34, cy - ballR * 0.34, ballR * 0.22).fill({
+    color: 0xffffff,
+    alpha: 0.7,
+  });
+}
+
 // ============================================================================
 // Inductor — ported from inductor-tiers.html tier 2: a heavy PADDLE-WHEEL FLYWHEEL
 // in a pipe. The pump (left) drives water through; a valve (= series R) throttles
@@ -117,7 +211,6 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
   const pipeHH = hh * 0.17; // pipe half-height
   const aX = -hw + 8; // left terminal (lead) stud
   const bX = hw - 8; // right terminal stud
-  const pipeL = aX + 4;
   const pipeR = bX - 4;
   const pumpX = -hw * 0.72; // the driving pump
   const valveX = -hw * 0.4; // the throttling valve (= series R)
@@ -134,11 +227,13 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
     });
   }
 
-  // --- the pipe walls ----------------------------------------------------------
+  // --- the pipe walls + water-filled body, terminal-to-terminal (one continuous
+  // flowing pipe that meets the board's wire-pipes, not a thin wireframe) ---------
+  g.rect(aX, -pipeHH, bX - aX, 2 * pipeHH).fill({ color: WATER, alpha: 0.08 });
   for (const s of [-1, 1]) {
-    g.moveTo(pipeL, s * pipeHH)
-      .lineTo(pipeR, s * pipeHH)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+    g.moveTo(aX, s * pipeHH)
+      .lineTo(bX, s * pipeHH)
+      .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
   }
 
   // --- the pump (left): a cyan piston that nudges out with the flow ------------
@@ -400,7 +495,6 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 
   const aX = -hw + 8;
   const bX = hw - 8;
-  const pipeL = aX + 4;
   const pipeR = bX - 4;
   const pipeHH = hh * (0.2 + 0.22 * (o.value ? norm(o.value, 5e-6) : 0.5));
   const pumpX = -hw * 0.74;
@@ -413,11 +507,13 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
     Math.min(anchorX - 40, restX + charge * throwX),
   );
 
-  // --- pipe walls --------------------------------------------------------------
+  // --- pipe walls + water-filled body, run terminal-to-terminal so the part reads as
+  // one continuous flowing pipe that meets the board's wire-pipes (not a thin frame) --
+  g.rect(aX, -pipeHH, bX - aX, 2 * pipeHH).fill({ color: WATER, alpha: 0.08 });
   for (const s of [-1, 1]) {
-    g.moveTo(pipeL, s * pipeHH)
-      .lineTo(pipeR, s * pipeHH)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.9 });
+    g.moveTo(aX, s * pipeHH)
+      .lineTo(bX, s * pipeHH)
+      .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
   }
 
   // --- pump (left) + valve = series R throat -----------------------------------
@@ -476,91 +572,96 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 }
 
 // ============================================================================
-// Electrolytic capacitor — ported from capacitor-electrolytic-tiers.html tier 2:
-// TWO CONNECTED TANKS. The source tank feeds the capacitor tank through a valve
-// (= series R); water flows until the two levels match, then stops. The level in
-// the cap tank is Vc; a WIDER tank holds more for the same level — more capacitance.
+// Electrolytic capacitor — ONE BIG RESERVOIR. The current flows IN the + lead and OUT
+// the − lead (the charge current), filling/draining the tank; the water LEVEL is the
+// voltage across it (Vc) — a gauge marker rides the surface so the stored voltage reads
+// directly. A wider tank holds more charge per volt (more capacitance). The flow fades
+// to nothing as it charges up (|I| → 0 at steady state), the level holding where it sits.
 //
 // Live mapping (cap ElectricalState: current a→b, vAcross = Vc):
-//   • level / Vc  = vAcross → the cap-tank water height.
-//   • flow        = norm(|I|) → connecting-pipe dot density; sign sets dir + which
-//     tank stands higher (charging: source above cap; discharging: below).
-//   • capacitance = value (F) → the cap-tank width.
+//   • level / Vc  = vAcross   → water-column height + the gauge marker (the voltage).
+//   • flow        = norm(|I|) → in/out lead dot density; sign = charge vs discharge.
+//   • capacitance = value (F) → the tank width.
 // ============================================================================
 function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
-
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const dir = o.electrical.current >= 0 ? 1 : -1;
+  const dir = o.electrical.current >= 0 ? 1 : -1; // + = charging (in via the + lead)
   const level = Math.max(
     0,
     Math.min(1, o.electrical.vAcross / (V_SCALE * 1.6)),
   );
 
-  const baseY = hh * 0.5; // tank floor
-  const maxH = hh * 0.92; // full-scale water column (kept within bounds)
-  const srcX = -hw * 0.66;
-  const srcW = hw * 0.34;
-  const capCx = hw * 0.34;
-  const capHalf = hw * (0.12 + 0.2 * (o.value ? norm(o.value, 5e-4) : 0.5));
-  const valveX = -hw * 0.02;
-  const pipeY = baseY - 6;
+  const A = anchorPt(o, "+", -0.85, 0);
+  const B = anchorPt(o, "−", 0.85, 0);
 
-  // Source level leads/lags the cap by the flow (drives the equalisation).
-  const srcLevel = Math.max(0, Math.min(1, level + dir * 0.18 * flow));
-  const capSurf = baseY - level * maxH;
-  const srcSurf = baseY - srcLevel * maxH;
+  // one big reservoir; a WIDER tank holds more charge per volt (more capacitance)
+  const tankHW = hw * (0.24 + 0.2 * (o.value ? norm(o.value, 5e-4) : 0.5));
+  const tankT = -hh * 0.5;
+  const tankB = hh * 0.62;
+  const tankL = -tankHW;
+  const tankR = tankHW;
+  const fillY = tankB - level * (tankB - tankT);
 
-  // --- source tank (left) ------------------------------------------------------
-  g.moveTo(srcX, baseY - maxH)
-    .lineTo(srcX, baseY)
-    .lineTo(srcX + srcW, baseY)
-    .lineTo(srcX + srcW, baseY - maxH)
-    .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.9 });
-  g.rect(srcX + 2, srcSurf, srcW - 4, baseY - srcSurf).fill({
+  // --- flowing pipe leads: IN the + terminal, OUT the − terminal (the charge current).
+  // They meet the tank at mid-height where the pins sit, so the part flows continuously
+  // into the board's wire-pipes; the dots fade as |I| → 0 (fully charged). -----------
+  const lc = mix(WATER, PALETTE.cyan, 0.3);
+  pipeLead(g, [A, { x: tankL, y: 0 }], 9, lc, WATER2, flow, dir, o.phase);
+  pipeLead(g, [{ x: tankR, y: 0 }, B], 9, lc, WATER2, flow, dir, o.phase);
+
+  // --- the reservoir + its water column (height = the voltage Vc) ---------------
+  housing(g, tankL, tankT, tankR - tankL, tankB - tankT, PALETTE.cyan, 5);
+  g.rect(tankL + 3, fillY, tankR - tankL - 6, tankB - fillY).fill({
     color: WATER,
-    alpha: 0.5,
+    alpha: 0.45,
   });
-
-  // --- capacitor tank (right): width = capacitance -----------------------------
-  const capL = capCx - capHalf;
-  const capR = capCx + capHalf;
-  g.moveTo(capL, baseY - maxH)
-    .lineTo(capL, baseY)
-    .lineTo(capR, baseY)
-    .lineTo(capR, baseY - maxH)
-    .stroke({ width: 3, color: PLATE, alpha: 0.92 });
-  g.rect(capL + 2, capSurf, 2 * capHalf - 4, baseY - capSurf).fill({
-    color: WATER,
-    alpha: 0.6,
-  });
-
-  // --- connecting pipe at the bottom + valve = series R ------------------------
-  for (const yy of [pipeY - 6, pipeY + 6]) {
-    g.moveTo(srcX + srcW, yy)
-      .lineTo(capL, yy)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  // stored charge jiggling in the water
+  for (let k = 0; k < 12; k++) {
+    const bx = tankL + 9 + ((k * 0.61803) % 1) * (tankR - tankL - 18);
+    const by = fillY + 8 + ((k * 0.41 + 0.2) % 1) * (tankB - fillY - 14);
+    if (by > tankB - 5 || by < fillY + 4) continue;
+    g.circle(bx + Math.sin(o.phase * PULSE_K + k) * 1.4, by, 1.8).fill({
+      color: WATER2,
+      alpha: 0.7,
+    });
   }
-  g.moveTo(valveX, pipeY - 6)
-    .lineTo(valveX, pipeY - 20)
-    .stroke({ width: 4, color: PRESS, alpha: 0.85 });
+  // the live surface = the voltage line (a bright band so the level reads at a glance)
+  if (level > 0.015) {
+    g.rect(tankL + 3, fillY - 1.5, tankR - tankL - 6, 3).fill({
+      color: WATER2,
+      alpha: 0.55,
+    });
+  }
+  g.moveTo(tankL + 3, fillY)
+    .lineTo(tankR - 3, fillY)
+    .stroke({ width: 2.2, color: WATER2, alpha: 0.95 });
 
-  // --- the current through the connecting pipe ---------------------------------
-  belt(
-    g,
-    srcX + srcW + 4,
-    pipeY,
-    capL - 4,
-    pipeY,
-    flow,
-    dir,
-    o.phase,
-    WATER,
-    2.6,
-  );
+  // --- voltage gauge inside the right wall: ticks + a marker riding the level ----
+  const gx = tankR - 7;
+  for (let t = 0; t <= 4; t++) {
+    const ty = tankB - (t / 4) * (tankB - tankT - 6);
+    g.moveTo(gx - 4, ty)
+      .lineTo(gx, ty)
+      .stroke({ width: 1.1, color: PALETTE.border, alpha: 0.5 });
+  }
+  g.poly([gx, fillY, gx - 9, fillY - 4.5, gx - 9, fillY + 4.5]).fill({
+    color: PALETTE.warn,
+    alpha: 0.95,
+  });
 
-  stud(g, srcX, baseY, PALETTE.bronze);
-  stud(g, capR, baseY, PALETTE.bronze);
+  // --- polarity tags so the directional in/out reads (+ inlet, − outlet) --------
+  g.moveTo(A.x + 9, A.y - 4)
+    .lineTo(A.x + 9, A.y + 4)
+    .moveTo(A.x + 5, A.y)
+    .lineTo(A.x + 13, A.y)
+    .stroke({ width: 1.6, color: PALETTE.warn, alpha: 0.85 });
+  g.moveTo(B.x - 13, B.y)
+    .lineTo(B.x - 5, B.y)
+    .stroke({ width: 1.8, color: PALETTE.violet, alpha: 0.85 });
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
 }
 
 // A spoked pulley wheel centred at (cx,cy), radius r, rotated by `spin`; one WARM
@@ -747,7 +848,7 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
   const bodyL = -hw * 0.34;
   const bodyR = hw * 0.46;
   const seatX = bodyL + 16; // the seat, just inside the anode inlet
-  const ballR = hh * 0.2;
+  const ballR = hh * 0.13; // small enough that the open flow parts AROUND it
   const plungerX = bodyR - 6; // fixed spring backing, downstream of the ball
   const ballRest = seatX + ballR + 3; // ball sits just downstream of the seat
   // Forward flow pushes the ball DOWNSTREAM (toward the cathode) off its seat,
@@ -795,55 +896,61 @@ function drawAnalogyDiode(g: Graphics, o: AnalogyOpts): void {
     );
   }
 
-  // --- the seat (two lips the ball seals against) ------------------------------
-  for (const s of [-1, 1]) {
-    g.poly([
-      seatX - 10,
-      s * (pipeHH + 6),
-      seatX + 8,
-      s * (pipeHH + 6),
-      seatX + 3,
-      s * pipeHH * 0.4,
-      seatX - 5,
-      s * pipeHH * 0.4,
-    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
-  }
-
-  // --- the spring (plunger → ball), compressed when the ball lifts --------------
-  g.roundRect(plungerX, -ballR, 8, ballR * 2, 2).fill({
-    color: PALETTE.rail,
-    alpha: 0.9,
-  });
-  g.poly(springPts(liftX + ballR, plungerX, 0, ballR * 0.45, 6), false).stroke({
-    width: 2.6,
-    color: WARM,
-    alpha: 0.85,
-  });
-
-  // --- water through when open, or a dammed trickle stalled at the seat ---------
-  if (conducting) {
-    belt(g, aX, 0, seatX - ballR, 0, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX + ballR, 0, bX, 0, fwd, 1, o.phase, WATER, 2.6);
-  } else if (breakdown) {
+  // --- reverse / blocked flow (the forward flow is the shared valve's, below) ----
+  if (breakdown) {
     belt(g, bX, 0, aX, 0, rev, -1, o.phase, PALETTE.bad, 2.6);
-  } else {
-    // blocked: a few dots pile up against the seat from the anode side
-    for (let k = 0; k < 3; k++) {
-      const t = (((k / 3 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(aX + (seatX - ballR - aX) * t, 0, 2.2).fill({
-        color: WATER,
-        alpha: 0.3 * (1 - t),
-      });
+  } else if (!conducting) {
+    // reverse-biased & blocked: the water DAMS UP against the seated ball — a packed,
+    // jittering column backed up from the anode inlet, denser/taller the harder you push
+    // reverse (pressure = |reverse V|). Nothing crosses the valve.
+    const press = Math.min(1, Math.max(0, -o.electrical.vAcross) / V_SCALE);
+    const damR = seatX - ballR - 3; // right edge of the dam, up against the ball
+    g.rect(aX + 2, -pipeHH + 1, damR - aX - 2, 2 * pipeHH - 2).fill({
+      color: WATER,
+      alpha: 0.08 + 0.16 * press,
+    });
+    const cols = 3 + Math.round(3 * press);
+    for (let c = 0; c < cols; c++) {
+      for (let r = 0; r < 3; r++) {
+        const jx = Math.abs(Math.sin(o.phase * 3 + c * 1.3 + r)) * 2; // Brownian press
+        const px = damR - 3 - c * 5.5 + jx;
+        const py = -pipeHH + 4 + r * (pipeHH - 4);
+        g.circle(px, py, 2.1).fill({
+          color: WATER2,
+          alpha: 0.3 + 0.5 * press,
+        });
+      }
+    }
+    // pressure chevrons shoving toward the (closed) seat
+    if (press > 0.2) {
+      for (let i = 0; i < 2; i++) {
+        const cxv = aX + 7 + i * 7;
+        g.moveTo(cxv, -4)
+          .lineTo(cxv + 4, 0)
+          .lineTo(cxv, 4)
+          .stroke({
+            width: 1.6,
+            color: mix(WATER2, 0xffffff, 0.3),
+            alpha: 0.3 + 0.4 * press,
+          });
+      }
     }
   }
 
-  // --- the ball + its highlight ------------------------------------------------
-  const ballCol = conducting ? PALETTE.ok : breakdown ? PALETTE.bad : PLATE;
-  g.circle(liftX, 0, ballR).fill({ color: ballCol, alpha: 0.92 });
-  g.circle(liftX, 0, ballR).stroke({ width: 1.5, color: 0xdce3f0, alpha: 0.6 });
-  g.circle(liftX - ballR * 0.34, -ballR * 0.34, ballR * 0.22).fill({
-    color: 0xffffff,
-    alpha: 0.7,
+  // --- the forward check valve (seat + spring + ball, water parting around it) ---
+  forwardCheckValve(g, {
+    cy: 0,
+    pipeHH,
+    chamberHH: pipeHH + 12,
+    seatX,
+    plungerX,
+    ballR,
+    liftX,
+    inX: aX,
+    outX: bX,
+    open: fwd,
+    phase: o.phase,
+    ballColor: conducting ? PALETTE.ok : breakdown ? PALETTE.bad : PLATE,
   });
 
   stud(g, aX, 0, PALETTE.bronze);
@@ -868,30 +975,52 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
   const fwd = norm(Math.max(0, o.electrical.current), CUR_SCALE);
   const rev = norm(Math.max(0, -o.electrical.current), CUR_SCALE);
   const conducting = fwd > 0.03;
-  const clamping = rev > 0.03;
+  const clamping = rev > 0.03; // reverse current only flows once it tops the weir
   const vrev = Math.max(0, -o.electrical.vAcross); // reverse volts across the part
   const vz = o.value && o.value > 0 ? o.value : 5.1;
-  const wall = Math.min(0.92, vz / (V_SCALE * 1.6)); // spillway-wall height frac
-  const lvl = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe level
+  const wallF = Math.min(0.9, vz / (V_SCALE * 1.6)); // weir height (Vz) as a fraction
+  const lvlF = Math.min(1, vrev / (V_SCALE * 1.6)); // standpipe fill (reverse volts)
 
   // Terminals on the real pins: anode left, cathode right, both on the part's axis.
   const A = anchorPt(o, "A", -0.588, 0);
   const K = anchorPt(o, "K", 0.588, 0);
   const lineY = (A.y + K.y) / 2; // the forward valve runs along the pin axis
-  const pipeHH = hh * 0.12;
+  const pipeHH = hh * 0.11;
 
-  // --- forward check valve (left of centre): a compact spring valve on the axis --
-  const bodyL = A.x + hw * 0.16;
-  const bodyR = -hw * 0.04;
-  const seatX = bodyL + 14;
-  const ballR = hh * 0.15;
-  const plungerX = bodyR - 6;
-  const liftX = Math.min(
-    plungerX - ballR - 4,
-    seatX + ballR + 3 + hw * 0.12 * fwd,
-  );
-  // standpipe tap sits between the valve and the cathode
-  const spX = hw * 0.34;
+  // --- forward check valve (roomy, on the anode half of the axis) ---------------
+  const bodyL = A.x + hw * 0.22;
+  const bodyR = bodyL + hw * 0.48; // wide enough for seat + ball travel + spring
+  const seatX = bodyL + hw * 0.08;
+  const ballR = hh * 0.11; // small enough that the open flow parts AROUND it
+  const plungerX = bodyR - hw * 0.045;
+  const valveHalfH = ballR + 14; // chamber stands clear above + below the ball + flow
+  const liftSpan = Math.max(0, plungerX - seatX - ballR * 2 - 8);
+  const liftX = seatX + ballR + 4 + liftSpan * fwd; // the ball lifts toward cathode
+
+  // --- standpipe + spillway (cathode side, between the valve and the cathode) ----
+  const standCx = bodyR + (K.x - bodyR) * 0.44;
+  const spW = hw * 0.16;
+  const standL = standCx - spW / 2;
+  const standR = standCx + spW / 2;
+  const standBot = lineY - pipeHH;
+  const fullH = hh * 0.55; // column height that represents the full reverse-volt scale
+  const weirY = standBot - wallF * fullH; // the crest (left lip) at height Vz
+  const lvlY = standBot - Math.min(lvlF, wallF) * fullH; // held at the crest when full
+  const standTop = Math.min(lineY - hh * 0.4, weirY - hh * 0.05); // rim just above crest
+
+  // --- the return tube: spill pours over the crest and runs back to the anode ----
+  const retRunY = Math.min(weirY + hh * 0.1, lineY - ballR - hh * 0.1);
+  const xChan = standL - hw * 0.03; // the catch just left of the column
+  const xRet = A.x + hw * 0.14; // the down-leg into the anode pipe (before the valve)
+  const retPath = [
+    { x: standL, y: weirY },
+    { x: xChan, y: weirY },
+    { x: xChan, y: retRunY },
+    { x: xRet, y: retRunY },
+    { x: xRet, y: lineY },
+  ];
+
+  // ---- horizontal pipe walls along the axis (anode A→valve, cathode valve→K) ----
   for (const s of [-1, 1]) {
     g.moveTo(A.x, lineY + s * pipeHH)
       .lineTo(bodyL, lineY + s * pipeHH)
@@ -905,96 +1034,93 @@ function drawAnalogyZener(g: Graphics, o: AnalogyOpts): void {
       .lineTo(x, lineY + pipeHH)
       .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
   }
+
+  // ---- the return tube (drawn first so the valve + column sit over its mouth) ---
+  const retFlat = retPath.flatMap((p) => [p.x, p.y]);
+  const retW = pipeHH * 1.3 + 2;
+  g.poly(retFlat, false).stroke({
+    width: retW,
+    color: PALETTE.rail,
+    alpha: 0.3,
+    cap: "round",
+    join: "round",
+  });
+  g.poly(retFlat, false).stroke({
+    width: Math.max(1, retW - 5),
+    color: WATER,
+    alpha: clamping ? 0.2 : 0.1,
+    cap: "round",
+    join: "round",
+  });
+
+  // ---- forward check valve: housing, seat lips, spring, plunger, ball -----------
   housing(
     g,
     bodyL,
-    lineY - pipeHH - 9,
+    lineY - valveHalfH,
     bodyR - bodyL,
-    (pipeHH + 9) * 2,
+    valveHalfH * 2,
     PALETTE.bronze,
     9,
   );
-  for (const s of [-1, 1]) {
-    g.poly([
-      seatX - 8,
-      lineY + s * (pipeHH + 5),
-      seatX + 10,
-      lineY + s * (pipeHH + 5),
-      seatX + 4,
-      lineY + s * pipeHH * 0.4,
-      seatX - 4,
-      lineY + s * pipeHH * 0.4,
-    ]).fill({ color: PALETTE.rail, alpha: 0.9 });
-  }
-  g.roundRect(plungerX, lineY - ballR, 7, ballR * 2, 2).fill({
-    color: PALETTE.rail,
-    alpha: 0.9,
-  });
-  g.poly(
-    springPts(liftX + ballR, plungerX, lineY, ballR * 0.4, 6),
-    false,
-  ).stroke({ width: 2.4, color: WARM, alpha: 0.85 });
-  const ballCol = conducting ? PALETTE.ok : clamping ? PALETTE.warn : PLATE;
-  g.circle(liftX, lineY, ballR).fill({ color: ballCol, alpha: 0.92 });
-  g.circle(liftX, lineY, ballR).stroke({
-    width: 1.4,
-    color: 0xdce3f0,
-    alpha: 0.6,
+  forwardCheckValve(g, {
+    cy: lineY,
+    pipeHH,
+    chamberHH: valveHalfH,
+    seatX,
+    plungerX,
+    ballR,
+    liftX,
+    inX: A.x,
+    outX: K.x,
+    open: fwd,
+    phase: o.phase,
+    ballColor: conducting ? PALETTE.ok : clamping ? PALETTE.accent : PLATE,
   });
 
-  // --- reverse standpipe + spillway (rises up from the tap toward the cathode) ---
-  const spW = hw * 0.2;
-  const spBot = lineY - pipeHH;
-  const spTop = -hh * 0.88;
-  const span = spBot - spTop;
-  g.moveTo(spX, lineY)
-    .lineTo(spX, spBot)
-    .stroke({ width: 2, color: PALETTE.border, alpha: 0.5 });
-  for (const s of [-1, 1]) {
-    g.moveTo(spX + (s * spW) / 2, spBot)
-      .lineTo(spX + (s * spW) / 2, spTop)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
-  }
-  // the spillway wall at height Vz (the right lip the water pours over)
-  const wallY = spBot - wall * span;
-  g.moveTo(spX + spW / 2, wallY)
-    .lineTo(spX + spW / 2 + 14, wallY)
-    .stroke({ width: 3, color: PALETTE.accent, alpha: 0.9 });
-  // water level = reverse voltage, held at the wall once reached (the clamp)
-  const lvlY = spBot - Math.min(lvl, wall) * span;
-  g.rect(spX - spW / 2 + 2, lvlY, spW - 4, spBot - lvlY).fill({
+  // ---- the standpipe glass column rising from the cathode pipe ------------------
+  g.rect(standL, standTop, spW, standBot - standTop).fill({
     color: WATER,
-    alpha: 0.6,
+    alpha: 0.06,
   });
-  g.moveTo(spX - spW / 2 + 2, lvlY)
-    .lineTo(spX + spW / 2 - 2, lvlY)
-    .stroke({ width: 1.6, color: WATER2, alpha: lvl > 0.05 ? 0.85 : 0 });
+  // right wall full height; left wall only up to the weir crest (the dam)
+  g.moveTo(standR, standBot)
+    .lineTo(standR, standTop)
+    .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  g.moveTo(standL, standBot)
+    .lineTo(standL, weirY)
+    .stroke({
+      width: 3,
+      color: clamping ? PALETTE.accent : PALETTE.bronze,
+      alpha: 0.9,
+    });
+  // the crest the water pours over (height = Vz) + a faint Vz reference line
+  g.rect(standL - 7, weirY - 2, 14, 4).fill({
+    color: clamping ? PALETTE.accent : PALETTE.bronze,
+    alpha: 0.95,
+  });
+  g.moveTo(standL - 10, weirY)
+    .lineTo(standR + 8, weirY)
+    .stroke({ width: 1.2, color: PALETTE.accent, alpha: 0.4 });
+  // water fill = reverse voltage, held at the crest once it tops out (the clamp)
+  g.rect(standL + 2, lvlY, spW - 4, standBot - lvlY).fill({
+    color: WATER,
+    alpha: 0.55,
+  });
+  g.moveTo(standL + 2, lvlY)
+    .lineTo(standR - 2, lvlY)
+    .stroke({ width: 1.6, color: WATER2, alpha: lvlF > 0.04 ? 0.85 : 0 });
 
-  // --- the cascade over the crest + the return path back to the anode -----------
-  // (reverse current returns to the anode side once the level tops the Vz wall)
-  if (clamping && lvl >= wall - 0.03) {
-    const retY = -hh * 0.66;
-    g.moveTo(spX + spW / 2 + 14, wallY)
-      .lineTo(spX + spW / 2 + 14, retY)
-      .lineTo(A.x + hw * 0.08, retY)
-      .lineTo(A.x + hw * 0.08, lineY - pipeHH)
-      .stroke({ width: 2, color: PALETTE.warn, alpha: 0.4 });
-    for (let k = 0; k < 4; k++) {
-      const t = (((k / 4 + o.phase * FLOW_SPEED) % 1) + 1) % 1;
-      g.circle(
-        spX + spW / 2 + 8 + t * 10,
-        wallY + t * t * (spBot - wallY) * 0.7,
-        2.4,
-      ).fill({ color: WATER2, alpha: 0.75 * (1 - t * 0.5) });
-    }
-  }
-
-  // --- flow: forward through the valve, or reverse backing up to the standpipe ---
-  if (conducting) {
-    belt(g, A.x, lineY, seatX - ballR, lineY, fwd, 1, o.phase, WATER, 2.6);
-    belt(g, liftX + ballR, lineY, K.x, lineY, fwd, 1, o.phase, WATER, 2.6);
-  } else if (clamping) {
-    belt(g, K.x, lineY, spX, lineY, rev, -1, o.phase, PALETTE.warn, 2.4);
+  // ---- reverse spill-and-return loop (forward flow is the shared valve's, above) -
+  if (clamping) {
+    const loop = [
+      { x: K.x, y: lineY },
+      { x: standCx, y: lineY },
+      { x: standCx, y: weirY },
+      ...retPath,
+      { x: A.x, y: lineY },
+    ];
+    flowAlongPath(g, loop, rev, 1, o.phase, WATER2, 2.4);
   }
 
   stud(g, A.x, A.y, PALETTE.bronze);
@@ -1580,8 +1706,9 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const vclamp = o.value && o.value > 0 ? o.value : 5;
   const over = applied / vclamp;
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const venting = over > 0.95 && flow > 0.02;
+  const venting = over > 0.85 && flow > 0.02;
   const appN = Math.min(1, applied / (vclamp * 1.5));
+  const aHigh = o.electrical.vAcross >= 0; // A is the high-pressure lead
 
   // Both leads ride the real A/B pins (on the part's axis) and feed the vessel.
   const A = anchorPt(o, "A", -0.588, 0);
@@ -1594,7 +1721,9 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const vesT = lineY + hh * 0.16;
   const vesB = lineY + hh * 0.86;
   const seatY = vesT;
-  const lift = Math.min(1, Math.max(0, (over - 1) * 2)) * hh * 0.26;
+  // Cracks open as the pressure approaches the clamp (not only past it) so the
+  // open/sealed state reads clearly: 0 lift at 0.8·Vclamp, fully cracked by 1.2·Vclamp.
+  const lift = Math.min(1, Math.max(0, (over - 0.8) / 0.4)) * hh * 0.3;
   const poppetY = seatY - lift;
   const popHW = hw * 0.12;
   const chamHW = hw * 0.15;
@@ -1602,16 +1731,33 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   const ventY = lineY - hh * 0.24;
   const bonnetY = chamT - hh * 0.06;
 
-  // --- the two leads feed the vessel from each side (bidirectional) -------------
+  // --- the two leads feed the vessel from each side as flowing PIPES (so the part
+  // joins the board's wire-pipes as one continuous run, not a thin broken-off line).
+  // When it clamps, the surge runs IN the high lead and OUT the low one — so the flow
+  // follows the real polarity (and, with the glyph holder, the part's orientation). --
   for (const [an, s] of [
     [A, -1],
     [B, 1],
   ] as const) {
-    g.moveTo(an.x, an.y)
-      .lineTo(cx + s * (vesHW + 12), an.y)
-      .lineTo(cx + s * (vesHW + 12), vesT + hh * 0.18)
-      .lineTo(cx + s * vesHW, vesT + hh * 0.18)
-      .stroke({ width: 2, color: PALETTE.border, alpha: 0.8 });
+    const path = [
+      { x: an.x, y: an.y },
+      { x: cx + s * (vesHW + 12), y: an.y },
+      { x: cx + s * (vesHW + 12), y: vesT + hh * 0.18 },
+      { x: cx + s * vesHW, y: vesT + hh * 0.18 },
+    ];
+    // inflow on the HIGH lead (pin→vessel = +1), outflow on the low one
+    const isHigh = s < 0 ? aHigh : !aHigh;
+    const leadDir = isHigh ? 1 : -1;
+    pipeLead(
+      g,
+      path,
+      9,
+      mix(WATER, PALETTE.cyan, 0.3),
+      WATER2,
+      flow,
+      leadDir,
+      o.phase,
+    );
     stud(g, an.x, an.y, PALETTE.bronze);
   }
 
@@ -1662,6 +1808,16 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   g.moveTo(cx - chamHW, chamT)
     .lineTo(cx + chamHW, chamT)
     .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
+
+  // --- the OPEN crack: a bright gap glowing at the seat as the poppet lifts off it,
+  // so "sealed" vs "open" reads at a glance (grows with the lift). ----------------
+  if (lift > 1) {
+    const liftN = Math.min(1, lift / (hh * 0.3));
+    g.ellipse(cx, seatY, popHW * (1.1 + 0.3 * liftN), lift * 0.6).fill({
+      color: mix(PALETTE.warn, 0xffffff, 0.3),
+      alpha: 0.25 + 0.5 * liftN,
+    });
+  }
 
   // --- the poppet (cone) at the seat, lifting when it cracks open --------------
   g.poly([
@@ -1783,34 +1939,53 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
     alpha: 0.12,
   });
 
-  // --- resistance posts (density ~ track resistance) ---------------------------
+  // --- resistance posts (density ~ track resistance): the obstacles the water must
+  // weave around — MORE posts = more resistance per length. ----------------------
   const rNorm = o.value ? norm(o.value, 50000) : 0.5;
   const NP = Math.round(9 + 13 * rNorm);
   const postCol = mix(PALETTE.bronze, 0x8a6a40, 0.5);
+  const posts: { x: number; y: number }[] = [];
   for (let k = 0; k < NP; k++) {
-    const px = xL + ((k + 0.5) / NP) * (xR - xL);
-    g.circle(px, yTrack + (k % 2 ? -1 : 1) * ph * 0.34, 2.6).fill({
-      color: postCol,
-      alpha: 0.9,
+    posts.push({
+      x: xL + ((k + 0.5) / NP) * (xR - xL),
+      y: yTrack + (k % 2 ? -1 : 1) * ph * 0.34,
     });
   }
+  for (const p of posts) {
+    g.circle(p.x, p.y, 2.6).fill({ color: postCol, alpha: 0.9 });
+  }
 
-  // --- water streaming A↔B, weaving around the posts ---------------------------
+  // --- water streaming A↔B, SLALOMING around the posts (the scattering that makes the
+  // resistance) and NECKING through the wiper contact (the pinch tracks the wiper). The
+  // tapped draw is snagged off at the wiper and runs down the hose to W, below. -----
+  const postSpread = ((xR - xL) / NP) * 0.62;
   if (flow > 0.02) {
-    const n = FLOW_DOTS_MAX;
-    for (const side of [-1, 1]) {
-      for (let k = 0; k < n; k++) {
-        const present = dotPresence(k, flow);
-        if (present <= 0) continue;
-        const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
-        const x = xL + t * (xR - xL);
-        const weave =
-          side * ph * 0.5 * Math.cos(((x - xL) / (xR - xL)) * NP * Math.PI);
-        g.circle(x, yTrack + weave, 2.4).fill({
-          color: WATER2,
-          alpha: (0.3 + 0.5 * flow) * present,
-        });
-      }
+    const n = FLOW_DOTS_MAX * 2;
+    for (let k = 0; k < n; k++) {
+      const present = dotPresence(k % FLOW_DOTS_MAX, flow);
+      if (present <= 0) continue;
+      const t = (((k / n + o.phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const x = xL + t * (xR - xL);
+      const neck = 1 - 0.55 * Math.exp(-(((x - xW) / (ph * 1.6)) ** 2));
+      const dy = scatterY(x, posts, postSpread, yTrack) * ph * 0.62 * neck;
+      g.circle(x, yTrack + dy, 2.4).fill({
+        color: WATER2,
+        alpha: (0.3 + 0.5 * flow) * present,
+      });
+    }
+  }
+  // carriers SNAGGED off the track at the wiper, peeling down into the tap hose mouth —
+  // the voltage divider being made (the hose then carries them to W, below).
+  if (flow > 0.02) {
+    const ns = FLOW_DOTS_MAX;
+    for (let k = 0; k < ns; k++) {
+      const present = dotPresence(k, flow * 0.85);
+      if (present <= 0) continue;
+      const t = (((k / ns + o.phase * FLOW_SPEED) % 1) + 1) % 1;
+      g.circle(xW, yTrack + t * ph, 2.3).fill({
+        color: PALETTE.accent,
+        alpha: (0.3 + 0.5 * flow) * present * (1 - 0.3 * t),
+      });
     }
   }
 
@@ -1873,6 +2048,146 @@ function drawAnalogyPOT(g: Graphics, o: AnalogyOpts): void {
   stud(g, W.x, W.y, PALETTE.accent);
 }
 
+// ============================================================================
+// Thermistor (NTC/PTC) — a HEAT-ACTUATED SHUTTER VALVE on the pipe (ported from the
+// thermistor-tiers reference sheets). A heater under the orifice is the temperature; the
+// shutter plates set the channel width = the resistance. An NTC OPENS as it heats (R
+// falls); the switching-ceramic PTC stays open until its Curie point then SNAPS shut (R
+// jumps decades). One drawer serves both: the openness comes straight from R(T) via the
+// shared thermistor model, so the two read as mirror images.
+//
+// Live mapping (thermistor ElectricalState + the temperature knob, value = nominal R):
+//   • openness = openness(R(kind, value, temp))  → the shutter gap.
+//   • heat     = tempNorm(kind, temp)            → heater glow + rising waves.
+//   • flow     = norm(|I|)                       → carriers through the gap (sign = dir).
+// ============================================================================
+function drawAnalogyThermistor(g: Graphics, o: AnalogyOpts): void {
+  const { hw, hh } = o.bounds;
+  const kind: ThermistorKind = o.kind === "PTC" ? "PTC" : "NTC";
+  const tempC = o.temp ?? THERMISTOR_TEMP[kind].def;
+  const r0 = o.value && o.value > 0 ? o.value : kind === "NTC" ? 10000 : 100;
+  const open = thermistorOpenness(thermistorResistance(kind, r0, tempC));
+  const tN = tempNorm(kind, tempC);
+  const cur = norm(o.electrical.current, CUR_SCALE);
+  const dir = o.electrical.current >= 0 ? 1 : -1;
+
+  const A = anchorPt(o, "A", -0.588, 0);
+  const B = anchorPt(o, "B", 0.588, 0);
+  const lineY = (A.y + B.y) / 2;
+  const cx = (A.x + B.x) / 2;
+  const pipeHH = hh * 0.18;
+  const bodyHW = hw * 0.2;
+  const EMBER = PALETTE.bad;
+
+  // --- pipe walls (A→chamber, chamber→B) + flange caps at the pins ---------------
+  for (const s of [-1, 1]) {
+    g.moveTo(A.x, lineY + s * pipeHH)
+      .lineTo(cx - bodyHW, lineY + s * pipeHH)
+      .moveTo(cx + bodyHW, lineY + s * pipeHH)
+      .lineTo(B.x, lineY + s * pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  for (const x of [A.x, B.x]) {
+    g.moveTo(x, lineY - pipeHH)
+      .lineTo(x, lineY + pipeHH)
+      .stroke({ width: 2, color: PALETTE.border, alpha: 0.85 });
+  }
+  housing(
+    g,
+    cx - bodyHW,
+    lineY - pipeHH - 8,
+    bodyHW * 2,
+    (pipeHH + 8) * 2,
+    PALETTE.warn,
+    7,
+  );
+
+  // --- heater under the orifice: coil + glow + rising waves (the temperature) -----
+  const coilY = lineY + pipeHH + hh * 0.24;
+  if (tN > 0.02) {
+    g.circle(cx, coilY, hh * (0.13 + 0.26 * tN)).fill({
+      color: EMBER,
+      alpha: 0.1 + 0.3 * tN,
+    });
+  }
+  g.poly(
+    springPts(cx - bodyHW * 0.7, cx + bodyHW * 0.7, coilY, 5, 4),
+    false,
+  ).stroke({ width: 3, color: mix(PALETTE.rail, EMBER, tN), alpha: 0.9 });
+  for (let i = 0; i < 3; i++) {
+    const a = Math.max(0, (tN - 0.18) / 0.82) * 0.6 * (1 - i * 0.22);
+    if (a <= 0) continue;
+    const baseY = coilY - 9 - i * 9;
+    const d: number[] = [];
+    for (let k = 0; k <= 6; k++) {
+      d.push(
+        cx - 14 + k * 5,
+        baseY + Math.sin(k * 0.9 + o.phase * PULSE_K + i) * 3,
+      );
+    }
+    g.poly(d, false).stroke({
+      width: 2,
+      color: mix(EMBER, 0xffffff, 0.25),
+      alpha: a,
+    });
+  }
+
+  // The shutter gap (half-height): a fully-open valve clears the whole channel (the
+  // plates retract out of sight), a shut one closes to a ~2 px slit. `fullGap` past the
+  // pipe so the achievable openness range opens *all the way* before it pinches.
+  const fullGap = pipeHH * 2.6;
+  const half = (4 + open * (fullGap - 4)) / 2;
+  // What the STREAM may use is bounded by the pipe; so when the gate is wider than the
+  // pipe (fully open) the flow fills it uniformly — no residual pinch, "really open".
+  const flowGap = Math.min(half, pipeHH - 1);
+
+  // --- flow funnelling THROUGH the gap (current) — carriers ride the full channel,
+  // squeeze through the gate, fan back out; the pinch IS the resistance. Drawn under
+  // the plates so the plate edges crisply bound the gap. ---------------------------
+  flowThroughGap(
+    g,
+    A.x,
+    B.x,
+    lineY,
+    pipeHH,
+    flowGap,
+    cx,
+    bodyHW * 1.7,
+    cur,
+    dir,
+    o.phase,
+    WATER,
+    2.4,
+  );
+
+  // --- the shutter plates: close from each wall toward the axis as the valve shuts;
+  // fully retracted (nothing drawn) once the gate clears the pipe. -----------------
+  const plateInner = Math.min(half, pipeHH);
+  if (pipeHH - plateInner > 0.5) {
+    const plateCol = mix(PLATE, PALETTE.warn, tN * 0.6);
+    const plateW = bodyHW * 1.2;
+    for (const s of [-1, 1]) {
+      const yEdge = lineY + s * plateInner; // inner (gap-side) edge
+      const yWall = lineY + s * (pipeHH + 2); // outer (wall) edge, slight overhang
+      g.rect(
+        cx - plateW / 2,
+        Math.min(yEdge, yWall),
+        plateW,
+        Math.abs(yWall - yEdge),
+      ).fill({ color: plateCol, alpha: 0.92 });
+      g.rect(
+        cx - plateW / 2,
+        Math.min(yEdge, yWall),
+        plateW,
+        Math.abs(yWall - yEdge),
+      ).stroke({ width: 1.2, color: 0x8893a6, alpha: 0.6 });
+    }
+  }
+
+  stud(g, A.x, A.y, PALETTE.bronze);
+  stud(g, B.x, B.y, PALETTE.bronze);
+}
+
 /**
  * The analogy-tier drawers, keyed by kind — the middle sibling to DRAWERS /
  * DETAIL_DRAWERS, rendered full-panel like the reality tier. A kind absent here has
@@ -1895,6 +2210,8 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   OA: drawAnalogyOA,
   MOV: drawAnalogyVaristor,
   POT: drawAnalogyPOT,
+  NTC: drawAnalogyThermistor,
+  PTC: drawAnalogyThermistor,
 };
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */

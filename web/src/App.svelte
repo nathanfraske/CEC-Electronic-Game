@@ -67,6 +67,7 @@
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
   import { partInfo } from "./lib/partInfo";
+  import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
   import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
 
@@ -976,6 +977,7 @@
                 e,
                 selPart.value,
                 selPart.wiper,
+                selPart.temp,
               );
             }
           } else {
@@ -1144,6 +1146,24 @@
   }
   function endWiperDrag(): void {
     wiperDragging = false;
+  }
+  // The thermistor's body temperature (°C): its second scalar, set directly by a
+  // slider (the "knob for now" — a future self-heating model would drive it instead).
+  // Same single-undo-per-drag pattern as the wiper.
+  function selTemp(): number {
+    return selPart?.temp ?? 25;
+  }
+  function tempRange(kind: string): { min: number; max: number } {
+    return kind === "PTC" ? THERMISTOR_TEMP.PTC : THERMISTOR_TEMP.NTC;
+  }
+  let tempDragging = false;
+  function setTemp(v: number): void {
+    if (!selPart) return;
+    board?.setComponentTemp(selPart.id, v, !tempDragging);
+    tempDragging = true;
+  }
+  function endTempDrag(): void {
+    tempDragging = false;
   }
   // The decade the current value sits in (for the decade × significand picker).
   function valueDecade(kind: string, value: number): number {
@@ -2181,6 +2201,30 @@
                     onpointerup={endWiperDrag}
                   />
                   <span class="wiper-end">B</span>
+                </div>
+              {/if}
+              {#if kind === "NTC" || kind === "PTC"}
+                <!-- The thermistor's body temperature (its second scalar) as a slider;
+                 the netlist turns it into R(T). Set directly for now (a future model
+                 could self-heat it from dissipated power). -->
+                <div class="insp-sub">
+                  temperature · {Math.round(selTemp())} °C
+                </div>
+                <div class="insp-row">
+                  <span class="wiper-end">{tempRange(kind).min}°</span>
+                  <input
+                    class="wiper-slider"
+                    type="range"
+                    min={tempRange(kind).min}
+                    max={tempRange(kind).max}
+                    step="1"
+                    value={selTemp()}
+                    aria-label="Thermistor body temperature"
+                    oninput={(e) => setTemp(Number(e.currentTarget.value))}
+                    onchange={endTempDrag}
+                    onpointerup={endTempDrag}
+                  />
+                  <span class="wiper-end">{tempRange(kind).max}°</span>
                 </div>
               {/if}
               <button class="insp-more" onclick={() => (showMore = !showMore)}>

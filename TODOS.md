@@ -6,6 +6,101 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (7) — Flow cohesion sweep: dam, slalom, MOV, connector pipe, caps
+
+Owner push: every part's particles should interact with what affects them, terminals
+should look like flowing pipes that join the wire-pipes (never "broken up"), and flow
+should respect orientation.
+
+- ~~**Diode** reverse-block now DAMS UP (packed jittering column + pressure chevrons).~~
+- ~~**POT** stream SLALOMS around the resistance posts (`tierKit.scatterY`) and SNAGS
+  carriers off at the wiper down the hose to W (the divider).~~
+- ~~**MOV** reads open/sealed (poppet cracks + seat glow), flowing **pipe leads**
+  (`tierKit.pipeLead`), polarity-correct through-flow.~~
+- ~~**Connector pipe** (board): a stub from each pin into the body BEHIND the tier
+  illustration, bridging the wire-pipes to the part universally. (Needs in-app look.)~~
+- ~~**Ceramic cap + inductor**: pipe bodies water-filled terminal-to-terminal.~~
+- ~~**Electrolytic cap** redesigned to ONE big tank — flow in the +/out the − lead,
+  water level = the voltage with a gauge marker.~~
+- [ ] **Finish the flow sweep** (owner: "finish the part sweep") — give the REMAINING
+  parts flowing pipe-leads + interacting particles: transformer, BJT/MOSFET, op-amp,
+  sources (V/I/AC), level shifter, switches (SW/MSW), gates, flip-flop. Pattern: anchor
+  to real pins, `pipeLead` terminals, particles that react to the inline mechanism.
+- [ ] **Get at wires behind components** — a component hit always wins (board.ts ~2507),
+  so an occluded wire (op-amp example) is unreachable. Owner chose modifier **click-
+  through**, BUT wants it discoverable without knowing the hotkey (hover-fade/right-
+  click/handle all rejected as distracting/gimmicky — open question how).
+- [ ] **Junctions: delete + move** — a way to remove a junction and drag it around (no
+  rush). (Owner request 2026-06-17.)
+- [ ] **Orientation audit** — confirm flow direction on every part when rotated (MOV is
+  fixed via polarity + the rotating glyph holder; verify the class).
+
+---
+
+## 2026-06-17 (6) — Thermistor reality tier, POT flow respects wiper, resistor fire
+
+- ~~**Thermistor reality (tier 3)** `drawDetailThermistor` (NTC/PTC) — polycrystalline
+  ceramic: a grain chain with grain-boundary necks the carriers funnel through. NTC =
+  carrier population grows with heat (freed-carrier sparkle + denser drift); PTC = red
+  boundary barriers close the necks past the Curie point (the switching-ceramic snap).~~
+- ~~**POT flow now RESPECTS the wiper** (audit fix). Analogy + detail: the drift/stream
+  NECKS through the wiper contact (pinch tracks the wiper as it slides) and a tap branch
+  drains down the arm/hose to W. `tierKit.flowAlongPath` now used in the detail tier too.~~
+- ~~**Resistor CATCHES FIRE** past the smoke (`drawDetailResistor` + `flameTongue`): layered
+  flickering flame tongues + embers off the body, driven by the raw |V·I| ratio (real
+  headroom past the saturating `power`) — smolder → flames → blaze → inferno.~~
+- Audit (Explore agent) of all analogy/detail flow vs inline constrictions: POT was the
+  one clear offender (now fixed); MOSFET/BJT/diode/zener/caps/thermistor already gate
+  their flow on conduction/obstacle/valve state. Diode reverse-block is borderline-sparse
+  but acceptable — left as-is.
+
+---
+
+## 2026-06-17 (5) — Thermistor flow funnels through the gate
+
+- ~~**`tierKit.flowThroughGap`** + `drawAnalogyThermistor` rework: carriers now funnel
+  THROUGH the shutter gap (wide uniform stream when open, pinched to a thread when shut —
+  the PTC snaps tight past Curie). Plates retract fully when wide open. See HANDOFFS (10).~~
+
+---
+
+## 2026-06-17 (4) — NTC + PTC thermistors (schematic + analogy, temperature knob)
+
+- ~~**NTC + PTC thermistor kinds** added end-to-end, web-only (no sim-core/golden):
+  catalog (`PART_KINDS`), schematic glyph (`drawThermistor` — IEC box + the temperature
+  arrow, −/+ for NTC/PTC), heat-valve analogy (`drawAnalogyThermistor`), partInfo, and a
+  per-part **temperature knob** in the inspector (mirrors the POT wiper).~~
+- ~~**Shared R(T) model** in `web/src/lib/thermistor.ts` (NTC exponential; PTC switching
+  ceramic with a Curie snap). `buildNetlist` stamps R(T) as a plain resistor — the POT
+  pattern — so temperature changes rebuild the sim with no new element.~~
+- ~~`temp` scalar threaded like `wiper` (Component, SelectedPart, clipboard, serialize/
+  restore, board opts, infoDiagram).~~
+- ~~**Thermistor reality (tier 3)** — `drawDetailThermistor`: a polycrystalline grain
+  chain; carriers funnel through grain-boundary necks; NTC grows its freed-carrier
+  population with heat, PTC rears up red boundary barriers past Curie (the snap). See
+  2026-06-17 (6).~~
+- [ ] **Thermistor params** — expose B (NTC) and the Curie point (PTC) as part scalars;
+  fixed defaults for now. Optional silistor PTC variant.
+
+---
+
+## 2026-06-17 (3) — Zener closed loop, diode valve template, conduit fittings
+
+- ~~**Zener analogy rebuilt** as a closed-loop spillway (`drawAnalogyZener`): forward check
+  valve + cathode-side standpipe filling to the Vz weir + a **return tube** that carries the
+  spill back to the anode (matches `zener-tier2.html`; no more "spilling into nothing").
+  Column rim tracks the crest, so no dead freeboard.~~
+- ~~**Shared `forwardCheckValve()` diode template** (D/SD/LED/ZD): bronze seat + spring + ball;
+  **smaller ball**; open flow **parts around the ball** via new `tierKit.flowAroundBall`
+  (horizontal `flowAroundPlug`). Valve un-crammed (taller chamber, wider body).~~
+- ~~**Conduit tapers + junction fittings made translucent** — the port-flare + hub/nub fills
+  were stacking over the pipe and reading cloudy; lowered their alphas.~~
+- ~~**Junctions nudge with their runs** — follow-pass in `redrawWires` shifts each junction hub
+  (and snaps its run-ends) by the per-axis-averaged nudge offset of its runs; derived FROM the
+  nudge so it never fights `nudgeParallel`. `drawJunctions` takes a `junctionPos` map.~~
+
+---
+
 ## 2026-06-17 (2) — reality transistors rotated + flow around the plug
 
 - ~~**Reality MOSFET + BJT rotated to vertical**, anchored to the pins (drain/collector top,
@@ -437,8 +532,11 @@ the enabling primitive from the catalog's §0 / §9 roadmap):
   untouched.~~
 - [ ] **Fuse** (catalog §6.1) — latched "blown" state (P6, + I²t thermal P7): once
   the current·time threshold trips, it stays open until replaced. **Med.**
-- [ ] **Thermistor NTC/PTC** (catalog §6.3) — resistance vs temperature; needs the
-  thermal scalar state P7 (self-heating from I²R, evolved on the tick grid). **Med.**
+- ~~**Thermistor NTC/PTC** (catalog §6.3) — placeable now: catalog + schematic glyph +
+  heat-valve analogy + temperature knob, with R(T) stamped as a plain resistor (web-only,
+  the POT pattern). See 2026-06-17 (4).~~ Still open: the SIM-SIDE thermal state P7
+  (self-heating from I²R) so temperature is modelled, not just a knob — the `temp` field
+  and `thermistor.ts` curves are already shaped for it. **Med.**
 - [ ] **LDR / photoresistor** (catalog §7.1) — resistance vs light; needs the
   light/display I/O channel P8 (a player- or contract-driven light input). **Med.**
 - [ ] **Photodiode** (catalog §1.4) — light-controlled current source (P8 + Newton). **Med.**
