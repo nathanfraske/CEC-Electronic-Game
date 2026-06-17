@@ -96,6 +96,24 @@ function vSpringPts(
   return pts;
 }
 
+/** A smooth vertical coil spring (a sine, like varistor-tiers.html's `vcoil`) from
+ * (xc,y0) to (xc,y1) — `coils` full turns of half-width `amp`. Reads as a real spring. */
+function vcoilPts(
+  xc: number,
+  y0: number,
+  y1: number,
+  amp: number,
+  coils: number,
+): number[] {
+  const n = Math.max(2, Math.round(coils * 8));
+  const pts: number[] = [];
+  for (let k = 0; k <= n; k++) {
+    const t = k / n;
+    pts.push(xc + Math.sin(t * coils * Math.PI * 2) * amp, y0 + (y1 - y0) * t);
+  }
+  return pts;
+}
+
 /**
  * The diode family's forward CHECK VALVE — bronze seat lips, a spring to a plunger, and a
  * ball the forward push lifts off its seat; when OPEN the water PARTS AROUND the ball (an
@@ -1687,171 +1705,166 @@ function drawAnalogyOA(g: Graphics, o: AnalogyOpts): void {
 }
 
 // ============================================================================
-// Varistor (MOV) — ported from varistor-tiers.html tier 2: a PRESSURE RELIEF VALVE.
-// The applied voltage pressurises a vessel from below; the pressure pushes up under a
-// poppet held shut by a spring whose set-screw is the clamp voltage. Below the clamp it
-// stays SEALED — nothing passes. Past the clamp the poppet cracks and the surge rises UP
-// THROUGH the valve and bursts out the two side vents — which ARE the part's leads. The
-// leads tap the VENTS, never the vessel, so nothing can bypass the valve. Either
-// polarity pops it (no diode-like direction).
+// Varistor (MOV) — ported FAITHFULLY from varistor-tiers.html tier 2: a PRESSURE
+// RELIEF VALVE. The applied voltage pressurises a vessel from below; that pressure
+// pushes up under a poppet held shut by a spring whose set-screw is the clamp voltage.
+// Below the clamp the poppet stays seated and nothing passes. Past the clamp it cracks,
+// and the current flows ACROSS the open valve — A↔B in the direction of the voltage (a
+// real 2-terminal part conducts one way, not out to "atmosphere"). The reference's exact
+// coordinates are scaled into the bounds so the SPRING stays the tall, readable coil it
+// is in the sheet, not a squashed zigzag.
 //
 // Live mapping (MOV ElectricalState: current a→b, vAcross = V across; value = Vclamp):
 //   • applied = |vAcross|         → vessel fill + molecule jiggle + the inlet arrow.
-//   • over    = |vAcross|/Vclamp  → poppet lift; once it cracks, it vents.
+//   • over    = |vAcross|/Vclamp  → poppet lift (pushes up); the spring compresses.
 //   • clamp   = Vclamp            → the set-screw depth (spring preload).
-//   • flow    = norm(|I|)         → the surge up through the valve and out the vents.
+//   • flow    = norm(|I|)         → the current across the open valve; dir = sign(V).
 // ============================================================================
 function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
-  const { hw, hh } = o.bounds;
+  const { hh } = o.bounds;
   const applied = Math.abs(o.electrical.vAcross);
   const vclamp = o.value && o.value > 0 ? o.value : 5;
   const over = applied / vclamp;
   const flow = norm(o.electrical.current, CUR_SCALE);
-  const venting = over > 0.85 && flow > 0.02;
-  const appN = Math.min(1, applied / (vclamp * 1.5));
+  const conducting = over > 1;
+  // a real 2-terminal part conducts ONE way — in the direction of the voltage across it
+  const vdir = o.electrical.vAcross >= 0 ? 1 : -1;
 
   const A = anchorPt(o, "A", -0.588, 0);
   const B = anchorPt(o, "B", 0.588, 0);
   const cx = (A.x + B.x) / 2;
   const lineY = (A.y + B.y) / 2;
 
-  // Vertical stack centred on the pin line: bonnet + spring (top) → chamber whose side
-  // vents sit AT the pin line (the leads tap here) → seat + poppet → vessel (the bottom
-  // reservoir the applied pressure fills). The pins connect ONLY to the vents.
-  const chamHW = hw * 0.16;
-  const ventY = lineY;
-  const chamT = lineY - hh * 0.18;
-  const bonnetY = lineY - hh * 0.36;
-  const seatY = lineY + hh * 0.16;
-  const vesT = seatY;
-  const vesB = lineY + hh * 0.8;
-  const vesHW = hw * 0.22;
-  const popHW = hw * 0.12;
-  // Cracks as the pressure passes the clamp; the lift compresses the spring above it.
-  const lift = Math.min(1, Math.max(0, (over - 0.85) / 0.4)) * hh * 0.22;
-  const poppetBaseY = seatY - lift;
-  const poppetTopY = poppetBaseY - hh * 0.12;
+  // Port the reference's tier-2 coordinates (its valve spans viewBox y≈150..500) into the
+  // bounds, centred and scaled to FILL the vertical space — so the spring keeps its real
+  // proportions instead of being squashed. px/py map a reference point to ours.
+  const S = (1.85 * hh) / 346;
+  const px = (rx: number): number => cx + (rx - 300) * S;
+  const py = (ry: number): number => lineY + (ry - 327) * S;
+  const STEEL = 0x9aa6bd;
+  const ORANGE = 0xff9a4d;
 
-  // --- applied-pressure inlet arrow below the vessel (the voltage pushing up) -------
-  const aBot = vesB + hh * 0.16;
-  const aLen = hh * (0.05 + 0.16 * appN);
-  g.moveTo(cx, aBot)
-    .lineTo(cx, aBot - aLen)
-    .stroke({ width: 3, color: WATER, alpha: 0.7 });
+  // live geometry, straight from updateT2 (reference px): poppet lift, spring, screw
+  const lift = Math.min(1, Math.max(0, (over - 1) * 2)) * 40;
+  const by = 296 - lift; // poppet base
+  const ptop = by - 22; // poppet apex
+  const screwBottom = 166 + Math.min(1, Math.max(0, (vclamp - 3) / 9)) * 24;
+
+  // --- applied-pressure inlet arrow below the vessel (grows with |V|) ---------------
+  const aLen = 12 + Math.min(1, applied / 10) * 26;
+  g.moveTo(px(300), py(516))
+    .lineTo(px(300), py(516 - aLen))
+    .stroke({ width: 2.4, color: WATER, alpha: 0.75 });
   g.poly([
-    cx - 5,
-    aBot - aLen + 7,
-    cx + 5,
-    aBot - aLen + 7,
-    cx,
-    aBot - aLen,
-  ]).fill({ color: WATER, alpha: 0.7 });
+    px(294),
+    py(516 - aLen + 9),
+    px(306),
+    py(516 - aLen + 9),
+    px(300),
+    py(516 - aLen),
+  ]).fill({ color: WATER, alpha: 0.75 });
 
-  // --- the leads: pipes from A/B to the side VENTS — the only outlet, never the tank.
-  // Structural (no dots); the surge dots ride the full vessel→valve→vent path when it
-  // cracks (below), so a sealed valve shows nothing reaching the pins. --------------
-  const lc = mix(WATER, PALETTE.cyan, 0.3);
-  pipeLead(g, [A, { x: cx - chamHW, y: ventY }], 9, lc, WATER2, 0, 1, o.phase);
-  pipeLead(g, [B, { x: cx + chamHW, y: ventY }], 9, lc, WATER2, 0, 1, o.phase);
-
-  // --- the vessel + fill (= |V|) + jiggling molecules, open at the top-centre seat ---
-  g.moveTo(cx - vesHW, vesT)
-    .lineTo(cx - vesHW, vesB)
-    .lineTo(cx + vesHW, vesB)
-    .lineTo(cx + vesHW, vesT)
-    .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
-  g.moveTo(cx - vesHW, vesT)
-    .lineTo(cx - popHW, vesT)
-    .moveTo(cx + popHW, vesT)
-    .lineTo(cx + vesHW, vesT)
-    .stroke({ width: 2.5, color: PALETTE.border, alpha: 0.9 });
-  g.rect(
-    cx - vesHW + 2,
-    vesB - appN * (vesB - vesT),
-    vesHW * 2 - 4,
-    appN * (vesB - vesT),
-  ).fill({ color: WATER, alpha: 0.38 });
-  const amp = 1.5 + 5 * appN;
-  for (let k = 0; k < 9; k++) {
-    const bx = cx + (-1 + (k % 3)) * vesHW * 0.55;
-    const by = vesB - hh * 0.1 - Math.floor(k / 3) * hh * 0.2;
-    const ph = k * 1.7;
+  // --- the vessel + fill (= |V|) + jiggling molecules -------------------------------
+  g.roundRect(px(234), py(320), 132 * S, 148 * S, 14 * S).fill({
+    color: WATER,
+    alpha: Math.min(1, applied / 10) * 0.42,
+  });
+  g.roundRect(px(234), py(320), 132 * S, 148 * S, 14 * S).stroke({
+    width: 2.5,
+    color: STEEL,
+    alpha: 0.9,
+  });
+  const mAmp = (2 + Math.min(1, applied / 10) * 5) * S;
+  for (let i = 0; i < 9; i++) {
+    const mx = 260 + (i % 3) * 40;
+    const my = 352 + Math.floor(i / 3) * 38;
+    const ph = i * 1.7;
     g.circle(
-      bx + Math.sin(o.phase * PULSE_K + ph) * amp,
-      by + Math.cos(o.phase * PULSE_K + ph * 1.4) * amp,
+      px(mx) + Math.sin(o.phase * PULSE_K + ph) * mAmp,
+      py(my) + Math.cos(o.phase * PULSE_K + ph * 1.4) * mAmp,
       2.4,
     ).fill({ color: WATER2, alpha: 0.85 });
   }
 
-  // --- chamber walls (with the vent gaps at the pin line) + chamber top -------------
-  for (const s of [-1, 1]) {
-    g.moveTo(cx + s * chamHW, seatY)
-      .lineTo(cx + s * chamHW, ventY + 6)
-      .moveTo(cx + s * chamHW, ventY - 6)
-      .lineTo(cx + s * chamHW, chamT)
-      .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
-  }
-  g.moveTo(cx - chamHW, chamT)
-    .lineTo(cx + chamHW, chamT)
-    .stroke({ width: 2.2, color: PALETTE.border, alpha: 0.85 });
+  // --- neck + seat lips, chamber walls (vent gaps y 250..266), bonnet --------------
+  const steel = (segs: [number, number, number, number][]): void => {
+    for (const [x1, y1, x2, y2] of segs)
+      g.moveTo(px(x1), py(y1)).lineTo(px(x2), py(y2));
+    g.stroke({ width: 2.2, color: STEEL, alpha: 0.88 });
+  };
+  steel([
+    [285, 320, 285, 296],
+    [315, 320, 315, 296],
+    [272, 296, 285, 296],
+    [315, 296, 328, 296], // neck + seat
+    [250, 296, 250, 266],
+    [250, 250, 250, 224],
+    [350, 296, 350, 266],
+    [350, 250, 350, 224], // chamber walls w/ vent gaps
+    [250, 296, 272, 296],
+    [328, 296, 350, 296],
+    [250, 224, 272, 224],
+    [328, 224, 350, 224], // chamber top/bottom corners
+    [272, 224, 272, 154],
+    [328, 224, 328, 154],
+    [266, 154, 334, 154], // bonnet
+  ]);
 
-  // --- the open-crack glow at the seat + the poppet plugging it (lifts when cracked) -
-  if (lift > 1) {
-    g.ellipse(cx, seatY, popHW * 1.2, lift * 0.7).fill({
-      color: mix(PALETTE.warn, 0xffffff, 0.3),
-      alpha: 0.3 + 0.4 * Math.min(1, lift / (hh * 0.22)),
-    });
-  }
-  g.poly([
-    cx - popHW,
-    poppetBaseY,
-    cx + popHW,
-    poppetBaseY,
-    cx + popHW * 0.5,
-    poppetTopY,
-    cx - popHW * 0.5,
-    poppetTopY,
-  ]).fill({ color: venting ? PALETTE.warn : PLATE, alpha: 0.95 });
+  // --- A/B leads to the side vents (structural pipes; current rides them below) -----
+  const lc = mix(WATER, PALETTE.cyan, 0.3);
+  pipeLead(g, [A, { x: px(250), y: py(258) }], 8, lc, WATER2, 0, 1, o.phase);
+  pipeLead(g, [B, { x: px(350), y: py(258) }], 8, lc, WATER2, 0, 1, o.phase);
 
-  // --- bonnet + set screw (depth = clamp) + the threshold spring (compresses on lift) -
-  g.moveTo(cx - hw * 0.13, bonnetY)
-    .lineTo(cx + hw * 0.13, bonnetY)
-    .stroke({ width: 3, color: PALETTE.rail, alpha: 0.9 });
-  const screwBot =
-    bonnetY + 5 + Math.min(1, vclamp / (V_SCALE * 4)) * hh * 0.12;
-  g.roundRect(cx - hw * 0.05, bonnetY, hw * 0.1, screwBot - bonnetY, 2).fill({
+  // --- set screw (depth = clamp) + the THRESHOLD SPRING (tall readable coil) --------
+  g.rect(px(300) - 7 * S, py(154), 14 * S, (screwBottom - 154) * S).fill({
     color: PALETTE.bronze,
     alpha: 0.9,
   });
-  g.poly(vSpringPts(cx, screwBot, poppetTopY, hw * 0.06, 5), false).stroke({
-    width: 2.4,
-    color: SPRING,
-    alpha: 0.85,
+  g.poly(vcoilPts(px(300), py(screwBottom), py(ptop), 7 * S, 5), false).stroke({
+    width: 2.2,
+    color: STEEL,
+    alpha: 0.92,
   });
 
-  // --- the surge: once cracked, it rises from the vessel UP through the open seat and
-  // out BOTH vents to the leads — visibly through the valve, never around it. --------
-  if (venting) {
-    for (const [pin, s] of [
-      [A, -1],
-      [B, 1],
-    ] as const) {
-      flowAlongPath(
-        g,
-        [
-          { x: cx, y: (vesT + vesB) / 2 },
-          { x: cx, y: seatY },
-          { x: cx + s * chamHW, y: ventY },
-          { x: pin.x, y: ventY },
-        ],
-        flow,
-        1,
-        o.phase,
-        WATER,
-        2.6,
-      );
-    }
+  // --- the poppet (cone) plugging the seat; pushed UP when it cracks ----------------
+  const poppet = [
+    px(278),
+    py(by),
+    px(322),
+    py(by),
+    px(314),
+    py(ptop),
+    px(286),
+    py(ptop),
+  ];
+  g.poly(poppet).fill({
+    color: conducting ? ORANGE : PALETTE.bronze,
+    alpha: 0.95,
+  });
+  g.poly(poppet).stroke({ width: 1.4, color: WARM, alpha: 0.7 });
+
+  // --- the current ACROSS the open valve: in the high vent, dip through the cracked
+  // seat, out the low vent — ONE way, in the direction of the voltage. Only conducting.
+  if (flow > 0.02 && conducting) {
+    flowAlongPath(
+      g,
+      [
+        A,
+        { x: px(250), y: py(258) },
+        { x: px(285), y: py(266) },
+        { x: px(300), y: py(by + 6) },
+        { x: px(315), y: py(266) },
+        { x: px(350), y: py(258) },
+        B,
+      ],
+      flow,
+      vdir,
+      o.phase,
+      WATER,
+      2.6,
+    );
   }
+
   stud(g, A.x, A.y, PALETTE.bronze);
   stud(g, B.x, B.y, PALETTE.bronze);
 }

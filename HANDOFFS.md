@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (15) — MOV: faithful refsheet port (readable spring) + one-way flow
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Two owner fixes to the
+varistor analogy:
+
+- **Squashed spring → faithful port.** I'd rebuilt the MOV with my own proportions and
+  the tall spring collapsed to a tiny zigzag. Now `drawAnalogyVaristor` ports the
+  reference sheet's tier-2 coordinates LITERALLY: a `px(rx)/py(ry)` map scales the ref's
+  valve span (viewBox y≈150..500) to fill the bounds, so the spring stays the tall,
+  readable coil. New `vcoilPts` = the ref's smooth sine `vcoil` (vs the coarse zigzag
+  `vSpringPts`). Vessel/poppet/chamber/vents/screw/inlet-arrow all from the ref px.
+- **Flow one-way by voltage sign.** The ref vents out BOTH sides (single-port demo); a
+  real 2-terminal part conducts ONE way. Now a single `flowAlongPath` runs A→B across
+  the cracked valve with `dir = sign(vAcross)` — only while `over>1 && flow>0.02`.
+
+Verify: `/tmp/harness/dumpMov.js` (clamp 5 V; sealed 3.5 / cracking 4.6 / popped ±8).
+
+---
+
 ## 2026-06-17 (14) — Proportional-split flow framework (the POT wiper "steals" carriers)
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. The owner's "particles
