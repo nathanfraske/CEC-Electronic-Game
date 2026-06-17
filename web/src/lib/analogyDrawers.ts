@@ -1811,10 +1811,31 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
     [266, 154, 334, 154], // bonnet
   ]);
 
-  // --- A/B leads to the side vents (structural pipes; current rides them below) -----
+  // --- the leads route to their ROLES and SWAP with polarity: the INLET (the higher
+  // lead) bends DOWN INTO THE TANK (so it physically fills it, building the pressure);
+  // the OUTLET (the lower lead) comes out of the RELIEF area at the top. Bendy pipes so
+  // each reaches around the body to its end. ---------------------------------------
   const lc = mix(WATER, PALETTE.cyan, 0.3);
-  pipeLead(g, [A, { x: px(250), y: py(258) }], 8, lc, WATER2, 0, 1, o.phase);
-  pipeLead(g, [B, { x: px(350), y: py(258) }], 8, lc, WATER2, 0, 1, o.phase);
+  const inPin = aHigh ? A : B;
+  const outPin = aHigh ? B : A;
+  const inSign = aHigh ? -1 : 1;
+  const outSign = -inSign;
+  const inEntryX = px(300 + inSign * 42); // a point inside the tank, on the inlet side
+  const outVentX = px(300 + outSign * 50); // the relief vent on the outlet side
+  const outElbowX = outPin.x - outSign * 6;
+  const inletPipe = [
+    inPin,
+    { x: inEntryX, y: lineY },
+    { x: inEntryX, y: py(392) }, // down INTO the tank
+  ];
+  const outletPipe = [
+    { x: outVentX, y: py(258) }, // out of the RELIEF area at the top
+    { x: outElbowX, y: py(258) },
+    { x: outElbowX, y: lineY },
+    outPin,
+  ];
+  pipeLead(g, inletPipe, 8, lc, WATER2, 0, 1, o.phase);
+  pipeLead(g, outletPipe, 8, lc, WATER2, 0, 1, o.phase);
 
   // --- set screw (depth = clamp) + the THRESHOLD SPRING (tall readable coil) --------
   g.rect(px(300) - 7 * S, py(154), 14 * S, (screwBottom - 154) * S).fill({
@@ -1844,23 +1865,22 @@ function drawAnalogyVaristor(g: Graphics, o: AnalogyOpts): void {
   });
   g.poly(poppet).stroke({ width: 1.4, color: WARM, alpha: 0.7 });
 
-  // --- the current as a relief valve: the INLET (the higher lead) runs DOWN INTO THE
-  // TANK, building the pressure; the OUTLET (the lower lead) is the relief — the surge
-  // venting UP through the cracked seat and out. One continuous stream, auto-mapped to
-  // polarity (inlet = whichever lead is higher), riding the relief current. --------
+  // --- the relief current rides the very pipes above: in the INLET pipe, down into the
+  // tank (pressure building), UP through the cracked seat, and out the RELIEF pipe — one
+  // continuous stream, auto-mapped to polarity. ------------------------------------
   if (flow > 0.02) {
-    const inV = aHigh ? 250 : 350; // inlet vent x (ref)
-    const outV = aHigh ? 350 : 250; // outlet (relief) vent x (ref)
     flowAlongPath(
       g,
       [
-        aHigh ? A : B,
-        { x: px(inV), y: py(258) },
-        { x: px(inV < 300 ? 270 : 330), y: py(336) }, // into the tank top, inlet side
-        { x: px(300), y: py(420) }, // down to the tank bottom — pressure building
+        inPin,
+        { x: inEntryX, y: lineY },
+        { x: inEntryX, y: py(392) },
+        { x: px(300), y: py(440) }, // across the tank bottom — pressure building
         { x: px(300), y: py(by + 6) }, // up through the cracked seat — the relief
-        { x: px(outV), y: py(258) }, // out the relief vent
-        aHigh ? B : A,
+        { x: outVentX, y: py(258) },
+        { x: outElbowX, y: py(258) },
+        { x: outElbowX, y: lineY },
+        outPin,
       ],
       flow,
       1,

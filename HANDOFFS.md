@@ -5,6 +5,19 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (17) — MOV: the leads physically route (inlet INTO tank, outlet from relief)
+
+**State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Owner wanted the PIPES
+themselves to route to their roles (not just the flow): the inlet lead now bends DOWN
+INTO the tank (bendy L-pipe), the outlet lead comes out of the RELIEF area at the top,
+and the two SWAP with polarity (`inPin/outPin` from `aHigh`). The relief current rides
+the very same pipes (inlet→tank→cracked seat→outlet). `drawAnalogyVaristor` builds
+`inletPipe`/`outletPipe` polylines, draws them with `pipeLead`, and the flow reuses them.
+
+Verify: `/tmp/harness/dumpMov.js` (forward vs reverse shows the pipes swap sides).
+
+---
+
 ## 2026-06-17 (16) — MOV: lift rides the relief current; inlet→tank / outlet→relief
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Two owner fixes:
