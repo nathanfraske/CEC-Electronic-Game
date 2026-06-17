@@ -4453,6 +4453,11 @@ const FAIL_PULSE_HZ = 1.4;
 class ComponentNode {
   readonly view = new Container();
   private readonly glyphHolder = new Container();
+  // A short pipe stub from each pin toward the body, drawn BEHIND the tier illustration
+  // so it bridges the gap between the board's wire-pipes and the part — the illustration
+  // masks it wherever it has its own detail, so a zoomed-in part reads as one continuous
+  // flowing run with its wires instead of a body floating free of the pipes.
+  private readonly connectorGlyph = new Graphics();
   // The full-panel analogy/reality illustration, centred on the part and shown only
   // when the lens + zoom call for it (below the schematic glyph so pin dots sit on top).
   private readonly tierGlyph = new Graphics();
@@ -4489,6 +4494,7 @@ class ComponentNode {
     }
 
     this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
+    this.glyphHolder.addChild(this.connectorGlyph);
     this.glyphHolder.addChild(this.tierGlyph);
     this.glyphHolder.addChild(this.glyph);
     this.view.addChild(this.glyphHolder);
@@ -4697,7 +4703,32 @@ class ComponentNode {
       setStudsVisible(true);
       tg.scale.set(scale);
       tg.visible = true;
+      // Bridge each pin to the body with a pipe stub BEHIND the illustration, so the
+      // wire-pipes flow continuously into the part (the illustration masks the inner
+      // length where it has its own detail; only the pin→body gap shows). Matches the
+      // wire conduit: steel wall + a faint water/electron core, width tracking current.
+      const cg = this.connectorGlyph;
+      cg.clear();
+      const bodyCx = this.wPx / 2;
+      const bodyCy = this.hPx / 2;
+      const pw = 5 + 5 * Math.min(1, Math.abs(electrical.current) / 0.02);
+      const core = tier === "reality" ? COND_ELEC : PIPE_WATER;
+      for (const p of this.pinPositions) {
+        const ex = p.x + (bodyCx - p.x) * 0.62;
+        const ey = p.y + (bodyCy - p.y) * 0.62;
+        cg.moveTo(p.x, p.y).lineTo(ex, ey);
+        cg.stroke({
+          width: pw + 3,
+          color: PIPE_WALL,
+          alpha: 0.3,
+          cap: "round",
+        });
+        cg.moveTo(p.x, p.y).lineTo(ex, ey);
+        cg.stroke({ width: pw, color: core, alpha: 0.16, cap: "round" });
+      }
+      cg.visible = true;
     } else {
+      this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
       drawGlyph(g, {
         kind: this.kindTag,
