@@ -16,10 +16,15 @@ regression (`run.js`) both pass. No sim-core change.
   `electricalMap` slices the flat `acMeasurements` per element (new `acMeasurements?`/
   `acFields?` params); `App.svelte` passes `snap.acMeasurements`/`snap.acFields`.
 - **`tierKit.shimmerFlow(g, ax,ay,bx,by, mag, b, dir, phase, color, r?)`** — the
-  carrier→band handoff. `b = blurFactor(freq)` (smoothstep `AC_SHIMMER_LO=15`→`HI=300` Hz).
-  At `b=0` it is **byte-for-byte `belt`** (so DC/slow circuits are unchanged — the inductor
-  regression confirms it); as `b→1` carriers fatten + fade and a soft glow band whose
-  half-thickness rides `mag` fades in, with a faint `SHIMMER_K` bounded-phase vibration.
+  carrier→band handoff. `b = blurFactor(apparentFreq(f))` (smoothstep `AC_SHIMMER_LO=15`→
+  `HI=300` **apparent** Hz). The blur tracks the **on-screen apparent rate, not the raw
+  signal Hz**: `apparentFreq = f · apparentRateScale`, and the host sets that scale each
+  frame to `tps · DT` (`setApparentRateScale`, from the live playback tickrate, wired in
+  `App.svelte`). So slowing the tickrate drops a fast AC back to visible sloshing carriers
+  and speeding up returns it to a shimmer (the owner's ask). At `b=0` it is **byte-for-byte
+  `belt`** (DC/slow circuits unchanged — the inductor regression confirms it); as `b→1`
+  carriers fatten + fade and a soft glow band whose half-thickness rides `mag` fades in,
+  with a faint `SHIMMER_K` bounded-phase vibration.
 - **`tierKit.phasorInset(g, cx,cy, radius, ac, phase)`** — the V (warm) / I (cyan) dial.
   Arrow lengths = AC amplitudes (with a visible floor), the **angle between them = the
   measured V–I phase** (`>0` lag/inductive, `<0` lead/capacitive), a filled wedge fills the

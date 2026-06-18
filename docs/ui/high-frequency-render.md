@@ -138,9 +138,13 @@ as the FAIL box and the ideal-into-cap blow-up).
    crosses the boundary as `Snapshot.acMeasurements` and is attributed per component by
    `electricalMap` into `ElectricalState.ac` (`AcReadout`).
 2. **Flow framework:** ✅ **built** — `tierKit.shimmerFlow(...)` (the carrier↔band handoff
-   on the blur factor `b = blurFactor(freq)`, byte-for-byte `belt` at `b = 0`) beside
+   on `b = blurFactor(apparentFreq(f))`, byte-for-byte `belt` at `b = 0`) beside
    `belt`/`flowAlongPath`, and the `tierKit.phasorInset(...)` widget (V/I arrows + phase
-   arc + decaying-alpha I-tip trail, a pure function of the bounded phase → rewinds).
+   arc + decaying-alpha I-tip trail, a pure function of the bounded phase → rewinds). The
+   blur tracks the **apparent** rate, not the raw signal Hz: the host sets the sim-Hz →
+   apparent-Hz scale `tps · DT` each frame (`setApparentRateScale`, from the playback
+   tickrate), so deep slow-mo drops a fast signal back to visible sloshing carriers and
+   speeding past the eye's band returns it to a shimmer — the owner's tickrate behaviour.
 3. **Wire-pipe + tier drawers:** ◐ **partial** — the **inductor** analogy drawer is the
    reference home (its pipe flow hands off to the shimmer band at high apparent frequency),
    and the **phasor inset** overlays the info panel for reactive parts (C, EC, L, TR) once

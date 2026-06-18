@@ -168,8 +168,14 @@ export function belt(
 // once the cycle rate outruns the eye (~10–15 Hz) animating every reversal aliases
 // into jitter. The fix is a frequency-driven BLUR FACTOR that hands the discrete
 // carriers off to a soft shimmer band whose thickness rides |I| — magnitude on
-// thickness/alpha, never speed (visual-language). `b` comes from the apparent rate,
-// not the solver clock, so it is pure presentation and frequency-stable.
+// thickness/alpha, never speed (visual-language).
+//
+// Crucially the blur is driven by the APPARENT rate the player actually sees, not the
+// raw signal frequency: a fast signal watched in deep slow-mo slips back below the eye's
+// tracking band and reads as honest sloshing carriers, then returns to a shimmer as the
+// playback speeds past it. The apparent rate = signal Hz × (sim-seconds advanced per
+// real second) = `f · tps · DT`; the host sets that scale once per frame via
+// {@link setApparentRateScale}, and {@link apparentFreq} applies it.
 
 /** Apparent-rate band below which flow reads as discrete carriers (Hz). */
 export const AC_SHIMMER_LO = 15;
@@ -183,10 +189,34 @@ function clamp01(x: number): number {
   return x < 0 ? 0 : x > 1 ? 1 : x;
 }
 
+// Sim-Hz → apparent-Hz scale: (sim-seconds advanced per real second) = `tps · DT`. The
+// host sets it each frame from the live playback tickrate; `1` = real-time playback (so
+// it defaults to "signal Hz IS apparent Hz", the no-host fallback the harness uses).
+let apparentRateScale = 1;
+
 /**
- * The blur factor `b ∈ [0,1]` for an apparent cycle rate `freq` (Hz): a smoothstep
- * from discrete carriers (`b → 0` below {@link AC_SHIMMER_LO}) to a full shimmer band
- * (`b → 1` above {@link AC_SHIMMER_HI}). The single knob behind {@link shimmerFlow}.
+ * Set the sim-Hz → apparent-Hz scale: `tps · DT` (sim-seconds advanced per real second),
+ * from the current playback tickrate. Slowing playback shrinks it, so a fast signal's
+ * apparent rate drops back into the sloshing-carrier band; real-time playback is `1`.
+ * A module flag set once per frame before drawing (the `setStudsVisible` pattern), read
+ * synchronously by {@link apparentFreq} on the same single-threaded frame.
+ */
+export function setApparentRateScale(scale: number): void {
+  apparentRateScale = scale > 0 ? scale : 0;
+}
+
+/** Convert a signal frequency (sim-Hz) to its on-screen apparent rate (Hz) at the
+ * current playback speed — `simHz · apparentRateScale`. Feed the result to
+ * {@link blurFactor}. */
+export function apparentFreq(simHz: number): number {
+  return simHz * apparentRateScale;
+}
+
+/**
+ * The blur factor `b ∈ [0,1]` for an **apparent** cycle rate `freq` (Hz, i.e. already
+ * scaled by playback speed via {@link apparentFreq}): a smoothstep from discrete
+ * carriers (`b → 0` below {@link AC_SHIMMER_LO}) to a full shimmer band (`b → 1` above
+ * {@link AC_SHIMMER_HI}). The single knob behind {@link shimmerFlow}.
  */
 export function blurFactor(freq: number): number {
   const t = clamp01((freq - AC_SHIMMER_LO) / (AC_SHIMMER_HI - AC_SHIMMER_LO));

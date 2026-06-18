@@ -8,12 +8,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-18 (14) — High-frequency AC render primitives (Layer 3) shipped
 
-- ~~**`tierKit.shimmerFlow`** — the carrier→shimmer-band handoff on `blurFactor(freq)`
-  (smoothstep 15→300 Hz). At `b=0` it is byte-for-byte `belt` (no DC regression); as `b→1`
-  carriers fatten/fade and a soft band whose half-thickness rides |I| fades in, with a faint
-  bounded-phase vibration. **`tierKit.phasorInset`** — V/I arrows on a dial, angle = measured
-  V–I phase, lengths = AC amplitudes, filled phase arc, decaying-alpha I-tip phosphor trail;
-  a pure function of the bounded phase (rewinds, no mutable buffer).~~
+- ~~**`tierKit.shimmerFlow`** — the carrier→shimmer-band handoff on
+  `blurFactor(apparentFreq(f))` (smoothstep 15→300 **apparent** Hz). The handoff tracks the
+  on-screen apparent rate `f·tps·DT` (`setApparentRateScale` set each frame from the playback
+  tickrate in App.svelte), so slowing the tickrate drops a fast AC back to visible sloshing
+  and speeding up returns it to a shimmer. At `b=0` byte-for-byte `belt` (no DC regression).
+  **`tierKit.phasorInset`** — V/I arrows on a dial, angle = measured V–I phase, lengths = AC
+  amplitudes, filled phase arc, decaying-alpha I-tip phosphor trail; a pure function of the
+  bounded phase (rewinds, no mutable buffer).~~
 - ~~Data path: `ElectricalState.ac` (`AcReadout`) added (glyphs); `electricalMap` slices the
   flat `acMeasurements` per element; `App.svelte` passes `snap.acMeasurements`/`acFields`.~~
 - ~~Applied: the **inductor** analogy drawer's pipe flow uses `shimmerFlow` (reference home);

@@ -66,6 +66,7 @@
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
+  import { setApparentRateScale } from "./lib/tierKit";
   import { partInfo } from "./lib/partInfo";
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
@@ -961,6 +962,11 @@
       controls = runLoop(
         sim,
         (snap: Snapshot, scopeBatch?: SubFrameSample[]) => {
+          // Tell the render the on-screen apparent-rate scale (sim-seconds advanced per
+          // real second = tps · DT), so the shimmer↔carrier handoff tracks the playback
+          // speed: slow the tickrate and a fast AC slips back to visible sloshing; speed
+          // it up and it returns to a shimmer. Module flag read by the tier drawers.
+          setApparentRateScale(tps * DT_SECONDS);
           // Attribute per-element current and per-net voltage to each component
           // so the glyphs animate with what is actually happening to them.
           const electrical: Map<number, ElectricalState> | undefined =
