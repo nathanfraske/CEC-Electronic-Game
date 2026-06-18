@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (29) — Phasor in the inspector HUD + broadened to any AC part + brainstorm
+
+**State:** 🟢 Web, PNG-verified. Owner asked (AskUserQuestion) for: phasor in the inspector
+HUD, broaden which parts, and an agent brainstorm. Did all three.
+
+- **`web/src/lib/hudPhasor.ts`** — a lightweight **Canvas2D** twin of tierKit's Pixi
+  `phasorInset` (a Pixi app per inspector would be wasteful). Same picture: dial + ticks,
+  V (warm) / I (cyan) arrows length-coded to `vamp`/`iamp`, a phase wedge, a decaying-alpha
+  I-tip phosphor trail; cosmetic spin on the bounded `phase`. Folded in a brainstorm win:
+  **quadrant-tinted wedge** — amber = lagging/inductive, violet = leading/capacitive, grey =
+  in-phase/resistive.
+- **App.svelte** — `hudPhasorAction` captures the canvas; `drawHudPhasor(b.flowPhase())` runs
+  each frame in the loop (no-op unless the canvas is mounted + `ac.valid`). Canvas added to the
+  value popover, shown for **any part with `selDisplay.ac.valid`** (the broadening — a resistor
+  shows in-phase). CSS `.insp-phasor`.
+- **infoDiagram.ts** — broadened the info-panel phasor gate from `PHASOR_KINDS` (C/EC/L/TR) to
+  any part with `ac.valid`. Removed the now-dead set.
+- Verified by a Canvas2D-mock PNG render (`/tmp/harness/render-hudphasor.js` → `hudphasor.png`:
+  inductive shows the amber-wedge separation, resistive fuses in-phase, capacitive leads). Gates green.
+
+**Brainstorm agent ideas (do-next, all run on existing `AcReadout` unless noted):** (1) quadrant
+tint ✅ done; (2) sign-aware lead/lag; (3) **impedance triangle** (R–X legs from `zmag`/`phase`)
++ (6) projection drop-lines (I·cosϕ / I·sinϕ) — the strongest pedagogy; (4) PF ring + (5)
+real-vs-reactive **P/Q bar** (Q = √(S²−P²), S = vrms·irms); (7) tie spin to the shared flow
+clock; (8) resonance "lock" cue; (10/11) honest DC / purely-resistive states; (12) freq badge;
+(14) L/C corner glyph. (9) SRF species-flip ghost **needs** the Real-model parasitics
+(frequency-morph). Top picks: quadrant-tint+sign trail, impedance/power triangle, honest edge
+cases.
+
+---
+
 ## 2026-06-18 (28) — DMM-style RMS inspector readouts (flailing V/I numbers fixed)
 
 **State:** 🟢 Web. The readout twin of the RMS-colour / shimmer work: the inspector numbers
