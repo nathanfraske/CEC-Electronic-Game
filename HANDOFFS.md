@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (18) — Design docs: floating networks / Rogowski + the fidelity ceiling
+
+**State:** 🟢 Docs only, no code. Answered the owner's two questions in `docs/sim/`:
+
+- **`floating-networks.md`** — yes we can simulate a floating network/Rogowski coil, in
+  two `sim-core` parts: (1) **floating-component `GMIN`** (the netlist's single global
+  ground leaves an isolated subnet's common-mode singular; stamp one GMIN to ground per
+  floating connected component — golden-safe, also fixes a floating transformer
+  secondary); (2) **`ELEM_ROGOWSKI`**, a non-loading current-sense that forces
+  `M·dI/dt` onto an isolated output (reuses the transformer secondary stamp + inductor
+  dI/dt companion + part 1). Build part 1 first.
+- **`fidelity-ceiling.md`** — "how real, where's the stopping point": fidelity has TWO
+  homes. The **solver** is lumped/deterministic/real-time → ceiling ≈ SPICE L1–3 compact
+  models + parasitics + lumped coupling + slow thermal + GHz digital; NOT adaptive Δt,
+  distributed/EM, RF, VLSI nets, or device physics. The **reality tiers** are a drawing →
+  effectively unbounded, depict physics the solver never computes. The seam: terminal
+  behaviour → solver; explanation → reality tier.
+
+TODOS (10) tracks the two sim-core build items.
+
+---
+
 ## 2026-06-17 (17) — MOV: the leads physically route (inlet INTO tank, outlet from relief)
 
 **State:** 🟢 Green — web check/lint/build pass. No Rust/golden. Owner wanted the PIPES
