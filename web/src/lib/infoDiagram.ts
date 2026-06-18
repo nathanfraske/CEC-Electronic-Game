@@ -20,9 +20,6 @@ import { phasorInset, setStudsVisible } from "./tierKit";
 
 const PITCH = 26; // mirrors the board's grid pitch
 const SCALE = 2.8; // blow the schematic symbol up to fill the drawer
-// Reactive kinds that get the AC phasor inset overlay (V–I clock + phosphor trail):
-// capacitor, electrolytic, inductor, transformer (docs/ui/high-frequency-render.md).
-const PHASOR_KINDS = new Set(["C", "EC", "L", "TR"]);
 // The detail illustration fills the canvas to this fraction of its half-size, so
 // the factory internals read big (the headline visual) with a little breathing room.
 const DETAIL_FILL = 0.92;
@@ -118,17 +115,20 @@ export class InfoDiagram {
   };
 
   /**
-   * The AC phasor inset for reactive parts (capacitor / inductor / transformer), drawn
-   * in a fixed bottom-right corner once a full AC cycle has been measured — the V–I
-   * clock with phosphor persistence (docs/ui/high-frequency-render.md). Independent of
-   * the tier illustration, so it shows in every mode; cleared every frame.
+   * The AC phasor inset for any part carrying AC, drawn in a fixed bottom-right corner
+   * once a full cycle has been measured — the V–I clock with phosphor persistence
+   * (docs/ui/high-frequency-render.md). A reactive part opens an angle; a resistor reads
+   * in-phase. Independent of the tier illustration, so it shows in every mode; cleared
+   * every frame.
    */
   private drawOverlay(): void {
     const app = this.app;
     if (!app) return;
     this.overlay.clear();
     const ac = this.electrical.ac;
-    if (!ac?.valid || !PHASOR_KINDS.has(this.kind)) return;
+    // Shown for any part with a measured AC cycle (a resistor reads in-phase) — not just
+    // the reactive kinds, so the phase lesson is available wherever AC flows.
+    if (!ac?.valid) return;
     const radius = Math.max(
       28,
       Math.min(64, Math.min(app.screen.width, app.screen.height) * 0.16),

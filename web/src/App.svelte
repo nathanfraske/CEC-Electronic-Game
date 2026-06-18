@@ -68,6 +68,7 @@
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
   import { apparentFreq, setApparentRateScale } from "./lib/tierKit";
+  import { drawPhasor2D } from "./lib/hudPhasor";
   import { partInfo } from "./lib/partInfo";
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
@@ -666,6 +667,39 @@
       },
     };
   }
+  // The floating-inspector phasor (Canvas2D): the action just captures the canvas; the
+  // frame loop redraws it from the selected part's AC reading + the board's flow clock.
+  let hudPhasorCanvas: HTMLCanvasElement | undefined;
+  let hudPhasorCtx: CanvasRenderingContext2D | undefined;
+  function hudPhasorAction(node: HTMLCanvasElement) {
+    hudPhasorCanvas = node;
+    hudPhasorCtx = node.getContext("2d") ?? undefined;
+    return {
+      destroy() {
+        if (hudPhasorCanvas === node) {
+          hudPhasorCanvas = undefined;
+          hudPhasorCtx = undefined;
+        }
+      },
+    };
+  }
+  function drawHudPhasor(phase: number): void {
+    const c = hudPhasorCanvas;
+    const ctx = hudPhasorCtx;
+    const ac = selDisplay?.ac;
+    if (!c || !ctx || !ac?.valid) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cssW = c.clientWidth || 64;
+    const cssH = c.clientHeight || 64;
+    const bw = Math.round(cssW * dpr);
+    const bh = Math.round(cssH * dpr);
+    if (c.width !== bw || c.height !== bh) {
+      c.width = bw;
+      c.height = bh;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawPhasor2D(ctx, cssW, cssH, ac, phase);
+  }
   let canUndo = $state(false);
   let scrubFrac = $state(0);
   // Scope/telemetry controls: an enlarged scope, plus per-node visibility + names.
@@ -1026,6 +1060,8 @@
             selRmsMode =
               !!e.ac?.valid && apparentFreq(e.ac.freq) > READOUT_RMS_HZ;
             selDisplay = selRmsMode ? rmsStabilized(e) : e;
+            // Redraw the inspector phasor (no-op unless its canvas is mounted + AC valid).
+            drawHudPhasor(b.flowPhase());
             if (infoOpen) {
               // Keep the picture (symbol vs internals) and the live state current
               // every frame, so a mode flip or a re-mounted canvas is always right.
@@ -2075,6 +2111,16 @@
               )} through
             </div>
           {/if}
+          {#if selDisplay?.ac?.valid}
+            <!-- Phasor inset: the V (warm) / I (cyan) clock with phosphor afterglow,
+                 shown for any part carrying AC — the angle between the arrows is the
+                 measured V–I phase (amber wedge = lagging/inductive, violet = leading/
+                 capacitive, grey = in-phase/resistive). -->
+            <div class="insp-phasor">
+              <canvas use:hudPhasorAction aria-hidden="true"></canvas>
+              <span class="insp-phasor-cap mono">phase ϕ</span>
+            </div>
+          {/if}
           <!-- Custom label: name this part (shown on the board in place of the kind
                tag). Pure presentation; persists in the save. Commits on blur/enter. -->
           <div class="insp-row">
@@ -2936,6 +2982,24 @@
     text-transform: uppercase;
     color: var(--accent);
     vertical-align: 1px;
+  }
+  /* The V–I phasor inset shown in the inspector popover for AC-carrying parts. */
+  .insp-phasor {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .insp-phasor canvas {
+    width: 60px;
+    height: 60px;
+    flex: 0 0 auto;
+  }
+  .insp-phasor-cap {
+    font-size: 9px;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--dim);
   }
   /* The custom-label text field at the top of the value popover (name this part). */
   .insp-name {

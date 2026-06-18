@@ -38,10 +38,16 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   `rms` badge. Self-adapts to signal freq AND playback speed (apparent rate). For DC, ac.valid
   is false → live value (already steady). Resistive P=V·I rows stay correct (Vrms·Irms = real
   power); reactive dV/dt-style formulas are stable but abstract (future: use Preal/PF).~~
-- [ ] **Phasor placement** (owner) — `phasorInset` already overlays the info-panel diagram for
-  reactive parts (C/EC/L/TR); was hidden by the lerp bug, now visible. Owner asked to "add the
-  phasor/phosphor indicator" — clarify whether they want it broadened (resistor = in-phase) or
-  relocated (inspector HUD / on the board). ASKED.
+- ~~**Phasor placement** (owner answered: inspector HUD + broaden parts + brainstorm). Added a
+  Canvas2D `hudPhasor.drawPhasor2D` (lightweight twin of the Pixi `phasorInset`) to the
+  inspector value popover for any part with `ac.valid` (a resistor reads in-phase); broadened
+  the info-panel phasor gate from reactive-only to any AC part. Quadrant-tinted wedge (amber =
+  lagging/inductive, violet = leading/capacitive, grey = resistive) folded in from the
+  brainstorm. Verified with a Canvas2D-mock PNG render (`/tmp/harness/render-hudphasor.js`).~~
+- [ ] **Phasor upgrades (brainstormed, not yet done)** — impedance/power triangle (R–X legs +
+  projection drop-lines from `zmag`/`phase`/`iamp`); PF ring + real-vs-reactive (P/Q) bar; tie
+  the cosmetic spin to the shared flow clock; L/C corner glyph. SRF "species-flip" ghost needs
+  the Real-model parasitics (frequency-morph). Full list in the (29) handoff.
 
 ---
 
