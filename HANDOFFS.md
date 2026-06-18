@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (20) — Floating-component GMIN implemented (floating-networks Part 1)
+
+**State:** 🟢 Code shipped in `crates/sim-core`. First framework off the roadmap critical
+path. All gates green; analog golden bit-identical.
+
+The single-global-ground model left any subnet with no galvanic path to ground with a
+singular common-mode row (it limped along on the dense solver's zero-pivot fallback).
+Now generalised the per-node op-amp/MOSFET GMIN to **components**:
+
+- **`floating_refs(node_count, &elements)`** (new free fn, next to `classify_nets`) +
+  `uf_find`/`uf_union` helpers. Deterministic **union-by-min** union-find over
+  *potential-defining* ties only: R/C/L/V/AC/switch/diode-family/varistor union a–b;
+  FET/BJT channel a–b (gate/base marked device-referenced, not unioned); transformer
+  unions each winding **separately** (so an isolated secondary stays its own component);
+  op-amp + digital (gate/DFF/level-shift) + pull-up terminals marked referenced (the
+  device pins them); **ISOURCE skipped** (current constraint, not a potential — the dual
+  the netlist incomplete-circuit check already handles). Returns the lowest node of every
+  component that contains neither ground nor a device-referenced terminal.
+- **`stamp_floating_refs(&self, mat, n)`** stamps one `GMIN` (1e-12) on each such node's
+  diagonal, called in **all four** assembly paths (linear OP + transient, Newton OP +
+  transient base — into `base_mat` once, so it rides every Newton iteration). New
+  `floating_refs: Vec<usize>` field, computed once in `install`.
+- **Golden-safe by construction:** a grounded circuit is one component (the grounded one)
+  → empty list → no stamp → `golden_snapshot_hash_is_stable` unchanged. Verified.
+- **Tests:** `floating_refs_identifies_isolated_subnets`, `floating_divider_solves_with_
+  defined_common_mode` (exact differential, common-mode pinned ~0 at lowest node),
+  `floating_transformer_secondary_is_reproducible` (isolated secondary energises + bit-
+  reproducible). 105 sim-core tests pass.
+
+**Next (per roadmap):** `ELEM_ROGOWSKI` is now unblocked (floating-networks Part 2), but
+the critical path continues to **AC analysis (Layer 2)** → the `shimmerFlow`/`phasorInset`
+high-frequency render primitives. Owner's call which to take first.
+
+---
+
 ## 2026-06-17 (19) — Frameworks roadmap + the high-frequency AC render framework
 
 **State:** 🟢 Docs only, no code. Owner wants to build ALL the substrate frameworks, then

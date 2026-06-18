@@ -1098,6 +1098,137 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
         .collect()
 }
 
+/// Union-find `find` with path halving over the `parent` table. The table is kept
+/// **union-by-min** by [`floating_refs`], so the returned root is always the
+/// lowest node index in `x`'s connected component — a deterministic, stable choice.
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Union the components of `a` and `b`, attaching the larger root under the smaller
+/// so every component's root stays its **minimum** node index (the deterministic
+/// reference [`floating_refs`] reports).
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        let (lo, hi) = if ra < rb { (ra, rb) } else { (rb, ra) };
+        parent[hi] = lo;
+    }
+}
+
+/// Compute the **floating-component reference nodes**: one circuit node for each
+/// connected component that has no galvanic path to ground (node `0`) and no terminal
+/// a device already pins to ground on its own. Each returned node is weakly tied to
+/// ground with a single [`GMIN`] during assembly ([`Sim::stamp_floating_refs`]),
+/// removing the singular common-mode degree of freedom an isolated subnet would
+/// otherwise carry under the single-global-ground model — the generalisation of the
+/// per-node gate/op-amp `GMIN` from *nodes* to *components* (see
+/// `docs/sim/floating-networks.md`).
+///
+/// Union-find runs over the **potential-defining** ties only: every element that
+/// conducts or constrains a voltage between two of its terminals unions those nodes
+/// (resistor, capacitor, inductor, voltage/AC source, switch, every diode-family
+/// junction and the varistor; the MOSFET/BJT channel `a`–`b`; both transformer
+/// windings `a`–`b` and `c`–`d` **separately**, preserving galvanic isolation). The
+/// ideal current source is skipped — it injects current without defining a potential
+/// (the dual case the netlist's incomplete-circuit check already handles). Terminals a
+/// device pins to ground on its own are marked **referenced** directly (the MOSFET/BJT
+/// gate/base, both op-amp inputs and its driven output, every logic-gate / level-shifter
+/// / flip-flop terminal, and the pull-up's node), so the component holding one is never
+/// double-tied.
+///
+/// A component is *referenced* iff it contains ground or any such terminal; every other
+/// component contributes its **lowest-index node** (the union-by-min root). Determinism:
+/// fixed element order, union-by-min, no hashing — the list reproduces bit-for-bit, and
+/// a fully grounded circuit yields an **empty** list (one component, the grounded one),
+/// leaving its solve and the analog golden untouched.
+fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
+    if node_count <= 1 {
+        return Vec::new();
+    }
+    let mut parent: Vec<usize> = (0..node_count).collect();
+    let mut referenced = vec![false; node_count];
+    referenced[0] = true; // ground is the global reference
+    let mark = |referenced: &mut [bool], t: usize| {
+        if t < node_count {
+            referenced[t] = true;
+        }
+    };
+    for e in elements {
+        match e.kind {
+            ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR | ELEM_VSOURCE | ELEM_ACSOURCE
+            | ELEM_SWITCH | ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER | ELEM_VARISTOR => {
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+            }
+            ELEM_NMOS | ELEM_PMOS | ELEM_NPN | ELEM_PNP => {
+                // The channel / main current ties drain–source (collector–emitter);
+                // the gate/base draws no DC current and is GMIN-pinned by the device,
+                // so mark it referenced rather than union it.
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+                mark(&mut referenced, e.c);
+            }
+            ELEM_OPAMP => {
+                // Output is GOUT-referenced to ground, both inputs GMIN-referenced —
+                // all three terminals are pinned by the device itself.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+            }
+            ELEM_GATE | ELEM_DFF | ELEM_LEVELSHIFT => {
+                // Digital drivers reference their nets to ground via GATE_GOUT; treat
+                // every pin as pinned (receivers included — a driven net is referenced).
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+                mark(&mut referenced, e.d);
+            }
+            ELEM_PULLUP => {
+                // Pulled to an internal rail through PULLUP_R — a real conductance to
+                // ground, so the node is referenced.
+                mark(&mut referenced, e.a);
+            }
+            ELEM_TRANSFORMER => {
+                // Two galvanically isolated windings: union within each, never across,
+                // so a floating secondary stays its own component.
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+                if e.c < node_count && e.d < node_count {
+                    uf_union(&mut parent, e.c, e.d);
+                }
+            }
+            // ELEM_ISOURCE and anything else define no potential between terminals.
+            _ => {}
+        }
+    }
+    // Propagate each referenced node to its component root (the min node).
+    let mut root_ref = vec![false; node_count];
+    for (n, &is_ref) in referenced.iter().enumerate() {
+        if is_ref {
+            let r = uf_find(&mut parent, n);
+            root_ref[r] = true;
+        }
+    }
+    // Each unreferenced component contributes its root = lowest-index node. Iterating
+    // ascending and taking roots yields a sorted, deduplicated list.
+    let mut refs = Vec::new();
+    for (n, &reffed) in root_ref.iter().enumerate().skip(1) {
+        if !reffed && uf_find(&mut parent, n) == n {
+            refs.push(n);
+        }
+    }
+    refs
+}
+
 // --- Newton outer-loop constants ----------------------------------------------
 
 /// Hard cap on Newton iterations per solve. If the loop has not converged by
@@ -1595,6 +1726,15 @@ pub struct Sim {
     /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
     /// the event scheduler lands. Exposed via [`Sim::net_class`].
     net_classes: Vec<NetClass>,
+    /// Circuit nodes (1-based; ground is never listed) that each anchor a **floating
+    /// connected component** — a subnet with no galvanic path to ground and no
+    /// device-pinned terminal. Computed once at install by [`floating_refs`]; each is
+    /// weakly tied to ground with one [`GMIN`] in every assembly path
+    /// ([`Sim::stamp_floating_refs`]) so an isolated subnet (a floating transformer
+    /// secondary, an isolated sensor) has a defined common-mode instead of a singular
+    /// row. Empty for any fully grounded circuit, so the analog golden is unchanged.
+    /// See `docs/sim/floating-networks.md`.
+    floating_refs: Vec<usize>,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
     node_v: Vec<f64>,
@@ -1741,6 +1881,7 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             net_classes: vec![NetClass::Analog],
+            floating_refs: Vec::new(),
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             secondary_state: Vec::new(),
@@ -1929,12 +2070,14 @@ impl Sim {
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
         let net_classes = classify_nets(node_count, &elements);
+        let floating = floating_refs(node_count, &elements);
 
         self.node_count = node_count;
         self.dim = next;
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
+        self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
@@ -2031,6 +2174,24 @@ impl Sim {
         if let (Some(r), Some(c)) = (p, q) {
             mat[r * n + c] -= GMIN;
             mat[c * n + r] -= GMIN;
+        }
+    }
+
+    /// Stamp the weak [`GMIN`] common-mode tie for each floating-component reference
+    /// node (`self.floating_refs`, computed at install by [`floating_refs`]) into an
+    /// assembled MNA matrix of dimension `n`. Each reference is a circuit node whose
+    /// component has no galvanic path to ground; a single `GMIN` on its diagonal
+    /// removes that component's singular common-mode row without disturbing the physics
+    /// (1 pS is twelve orders below any real conductance) — the component-level analogue
+    /// of the per-gate/op-amp `GMIN`. A grounded circuit has no floating component, so
+    /// the list is empty and this is a no-op (the analog golden is unchanged). Each
+    /// node is `>= 1` (ground is never floating), so its MNA row `node - 1` is always a
+    /// valid node-voltage index `< n`. See `docs/sim/floating-networks.md`.
+    #[inline]
+    fn stamp_floating_refs(&self, mat: &mut [f64], n: usize) {
+        for &node in &self.floating_refs {
+            let r = node - 1;
+            mat[r * n + r] += GMIN;
         }
     }
 
@@ -2243,6 +2404,8 @@ impl Sim {
         // Digital gates and flip-flops drive their nets through the resolved digital
         // domain (one stamp per net), not per element.
         self.stamp_digital(&mut mat, &mut rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
+        self.stamp_floating_refs(&mut mat, n);
 
         let x = solve_dense(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
@@ -2446,6 +2609,8 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut mat, &mut rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
+        self.stamp_floating_refs(&mut mat, n);
 
         let x = solve_dense(mat, rhs, n);
 
@@ -3183,6 +3348,9 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
+        // base (copied into every iteration's matrix); a no-op when fully grounded.
+        self.stamp_floating_refs(&mut base_mat, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -3399,6 +3567,9 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
+        // base (copied into every iteration's matrix); a no-op when fully grounded.
+        self.stamp_floating_refs(&mut base_mat, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -4182,6 +4353,152 @@ mod tests {
             &[7.0, 0.0], // BUF, (resistor aux unused)
         ));
         assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
+    }
+
+    /// [`floating_refs`] identifies exactly the connected components with no galvanic
+    /// path to ground and no device-pinned terminal — the topology behind the
+    /// per-component `GMIN` (`docs/sim/floating-networks.md`). A grounded circuit yields
+    /// an empty list (so the golden is untouched); an isolated transformer secondary
+    /// yields its lowest node; a *grounded* secondary yields nothing.
+    #[test]
+    fn floating_refs_identifies_isolated_subnets() {
+        let el = |kind, a, b, c, d, value| Element {
+            kind,
+            a,
+            b,
+            c,
+            d,
+            value,
+            aux: 0.0,
+        };
+
+        // Fully grounded RC → one (grounded) component → no floating ref.
+        let rc = [
+            el(ELEM_VSOURCE, 1, 0, 0, 0, 5.0),
+            el(ELEM_RESISTOR, 1, 2, 0, 0, 1.0e3),
+            el(ELEM_CAPACITOR, 2, 0, 0, 0, 1.0e-6),
+        ];
+        assert!(
+            floating_refs(3, &rc).is_empty(),
+            "grounded circuit has no floating reference"
+        );
+
+        // Isolated transformer secondary: primary 1-0 grounded, secondary 2-3 floats
+        // with a 1k load. The {2,3} component refs its lowest node, node 2.
+        let xfmr = [
+            el(ELEM_ACSOURCE, 1, 0, 0, 0, 1.0e3),
+            el(ELEM_TRANSFORMER, 1, 0, 2, 3, 2.0),
+            el(ELEM_RESISTOR, 2, 3, 0, 0, 1.0e3),
+        ];
+        assert_eq!(
+            floating_refs(4, &xfmr),
+            vec![2],
+            "floating secondary references its lowest node"
+        );
+
+        // Same transformer with the secondary tied to ground (d = 0) is NOT floating.
+        let grounded_sec = [
+            el(ELEM_ACSOURCE, 1, 0, 0, 0, 1.0e3),
+            el(ELEM_TRANSFORMER, 1, 0, 2, 0, 2.0),
+            el(ELEM_RESISTOR, 2, 0, 0, 0, 1.0e3),
+        ];
+        assert!(
+            floating_refs(3, &grounded_sec).is_empty(),
+            "grounded secondary has no floating reference"
+        );
+
+        // A MOSFET whose channel floats but whose gate is the device's own pinned
+        // terminal: the channel pair {1,2} floats (refs node 1); the gate (node 3) is
+        // device-referenced, never floated.
+        let fet = [el(ELEM_NMOS, 1, 2, 3, 0, 0.0)];
+        assert_eq!(
+            floating_refs(4, &fet),
+            vec![1],
+            "FET channel floats; the GMIN-pinned gate does not"
+        );
+    }
+
+    /// A **floating** resistive divider — no node touches ground — still solves with a
+    /// defined common mode. The single-global-ground model leaves such a subnet's
+    /// absolute potential singular; the per-component `GMIN` ([`floating_refs`]) ties it
+    /// weakly to ground so the *differential* divider answer is exact and the common
+    /// mode is finite (pinned near 0 at the lowest-index node). Part 1 of
+    /// `docs/sim/floating-networks.md`.
+    #[test]
+    fn floating_divider_solves_with_defined_common_mode() {
+        // Ground (node 0) is unused: a 10 V source across two equal series resistors,
+        // entirely isolated. E0: Vsrc 1->3 = 10 V; E1: R 1->2 = 1k; E2: R 2->3 = 1k.
+        let sim = build(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[3, 2, 3],
+            &[10.0, 1_000.0, 1_000.0],
+        );
+        let v = sim.node_voltages();
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "floating solve must be finite: {v:?}"
+        );
+        // The differential divider is exact: each equal resistor drops half the 10 V.
+        assert!(
+            ((v[1] - v[2]) - 5.0).abs() < 1e-6,
+            "top half not 5 V: {v:?}"
+        );
+        assert!(
+            ((v[2] - v[3]) - 5.0).abs() < 1e-6,
+            "bottom half not 5 V: {v:?}"
+        );
+        // Common mode is pinned near 0 at the lowest-index floating node (node 1).
+        assert!(v[1].abs() < 1e-3, "common mode not pinned near 0: {v:?}");
+    }
+
+    /// A transformer secondary left **floating** — galvanically isolated, no ground tie
+    /// — energizes its isolated load and the run reproduces bit-for-bit. The isolated
+    /// secondary subnet ({sec+, sec-} = nodes 2, 3) gets a defined common mode from the
+    /// per-component `GMIN`; the headline Part-1 win (`docs/sim/floating-networks.md`).
+    #[test]
+    fn floating_transformer_secondary_is_reproducible() {
+        // node 0 = gnd, 1 = AC+/primary+, 2 = secondary+, 3 = secondary-. Primary a=1,
+        // b=0; secondary c=2, d=3 with a 1k load 2->3 — neither secondary node touches
+        // ground, so {2,3} floats.
+        let run = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_ACSOURCE, ELEM_TRANSFORMER, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 0, 3],
+                &[0, 2, 0],
+                &[0, 3, 0],
+                &[1000.0, 2.0, 1000.0],
+                &[5.0, 0.0, 0.0],
+            ));
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+                let v = sim.node_voltages();
+                let load = v[2] - v[3];
+                assert!(load.is_finite(), "floating secondary must stay finite");
+                lo = lo.min(load);
+                hi = hi.max(load);
+            }
+            (acc, hi - lo)
+        };
+        let (acc1, swing) = run();
+        let (acc2, _) = run();
+        assert_eq!(
+            acc1, acc2,
+            "floating transformer secondary must reproduce exactly"
+        );
+        // The isolated secondary actually delivers AC to its load (turns ratio 2 on a
+        // 5 V peak primary → a multi-volt swing across the 1k load).
+        assert!(
+            swing > 1.0,
+            "isolated secondary should energize its load: {swing}"
+        );
     }
 
     /// A resistive voltage divider's node voltage is exact (no dynamics): a 12 V

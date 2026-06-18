@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (12) — Floating-component GMIN (Part 1 of floating networks) shipped
+
+- ~~**Floating-component `GMIN`** (sim-core) — implemented in `crates/sim-core/src/lib.rs`.
+  New `floating_refs(node_count, elements)` runs union-find (union-by-min, deterministic)
+  over potential-defining ties (R/C/L/V/AC/switch/diode-family/varistor union a–b;
+  FET/BJT channel a–b with the gate/base marked device-referenced; transformer unions each
+  winding separately; op-amp/digital/pull-up terminals marked referenced; ISOURCE skipped),
+  then returns the lowest node of every component with no path to ground. Stamped as one
+  `GMIN` per floating component in all four assembly paths via `stamp_floating_refs`. New
+  `floating_refs` field on `Sim`, computed at install.~~
+- ~~Tests: `floating_refs_identifies_isolated_subnets` (topology), `floating_divider_solves_
+  with_defined_common_mode` (exact differential, common-mode pinned), `floating_transformer_
+  secondary_is_reproducible` (the headline win). Golden bit-identical; all gates green.~~
+- [ ] **`ELEM_ROGOWSKI`** is now UNBLOCKED (Part 2 of `floating-networks.md`) — the
+  floating-reference prerequisite is in. Next sim-core element after AC analysis if the
+  owner wants the Rogowski path, else continue the critical path (AC analysis → render).
+
+---
+
 ## 2026-06-17 (11) — Frameworks roadmap + high-frequency AC render
 
 - ~~`docs/frameworks-roadmap.md` — the master "build the frameworks, then the game"
@@ -29,11 +48,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Design docs written: `docs/sim/floating-networks.md` (floating subnets + Rogowski
   coil) and `docs/sim/fidelity-ceiling.md` (how real the solver vs the reality tiers can
   get — the "where's the stopping point" map).~~
-- [ ] **Floating-component `GMIN`** (sim-core) — the netlist picks ONE global ground, so
+- ~~**Floating-component `GMIN`** (sim-core) — the netlist picks ONE global ground, so
   an isolated subnet has a singular common-mode. Stamp one `GMIN` to ground per floating
   connected component (generalises the op-amp/MOSFET-input GMIN). Small, golden-safe
   (grounded circuits unaffected), and on its own it fixes a floating transformer
-  secondary + any isolation circuit. **Do first.** See `docs/sim/floating-networks.md`.
+  secondary + any isolation circuit. **Do first.**~~ **Done — see (12) below.**
 - [ ] **`ELEM_ROGOWSKI`** (sim-core) — a non-loading current-sense, derivative source:
   sense a pass-through branch's current, force `V_out = M·dI/dt` onto an isolated output
   winding (reuses the transformer's hard-secondary stamp + the inductor `dI/dt`
