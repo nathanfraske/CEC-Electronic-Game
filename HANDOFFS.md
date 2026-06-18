@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (25) — Shimmer band ACTUALLY visible (the real bug) + lens/camera persistence
+
+**State:** 🟢 Web. Owner still didn't see the shimmer after the calibration fix — found the
+real bug by building a headless renderer. Plus the requested persistence.
+
+**The real bug: the band was the same colour as the wire.** Built a pure-Node RGBA
+rasterizer + PNG encoder (`/tmp/harness/raster.js`, `render-band.js`) — no browser needed —
+and rendered the wire carrier→band handoff. The old band was a same-`color` (voltage-tinted),
+low-alpha stroke, so at high blur it was **indistinguishable from a plain wire**: the
+chevrons just vanished and nothing visibly replaced them. Calibration was only half the
+story.
+- **Redesigned the band** (board.ts + tierKit `shimmerFlow`): a voltage-tinted **aura**
+  around a **WHITE-HOT core** (`mix(color,white,0.35/0.75)`) + drifting white **sparkle
+  specks** — reads as an energised, glowing wire, clearly ≠ a plain trace. Verified in the
+  PNG (`/tmp/harness/band.png`). Shown in **all three lenses** (the band block sits after the
+  carrier loop, outside the conduit branches).
+- The earlier calibration (`AC_SHIMMER_LO=10/HI=60`) + this redesign together: an AC source
+  at tps≥50000 now clearly shimmers.
+
+**Persistence (owner ask):** the tier **lens toggle** (`boardLens`), the **LOD** toggle, and
+the **camera** (pan + zoom) now survive a refresh. Added `boardLens`/`lodOn`/`camera` to the
+`Settings` type (storage.ts), `Board.getCamera()`/`setCamera()` (clamped, malformed-safe),
+restore on init, save on lens/lod toggle, and a **debounced** camera save (600 ms trailing,
+keyed off a rounded-pose signature in the frame loop).
+
+**Next (owner flagged, IN PROGRESS):** the **wire COLOUR flickers** on fast AC (voltage is
+aliased frame-to-frame just like the carriers were) — owner wants it averaged ("just shows
+RMS"). Plan: the sub-frame `scopeBatch` (`SubFrameSample.state` = node voltages at sub-frame
+resolution) lets the board compute a **non-aliased per-net Vrms/Vmean** web-side and blend the
+wire colour from instantaneous → RMS as `blur` rises — no core change. Do this next.
+
+---
+
 ## 2026-06-18 (24) — Shimmer reachable on screen (calibration) + frequency-morph design doc
 
 **State:** 🟢 Code (web calibration) + a new design doc. Owner reported the shimmer "not

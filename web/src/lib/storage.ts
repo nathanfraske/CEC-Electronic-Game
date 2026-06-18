@@ -26,6 +26,12 @@ export interface Settings {
   explainAsYouGo?: boolean;
   /** Ids of one-time concept cards already shown, so each fires once. */
   seenConcepts?: string[];
+  /** Board lens (tier toggle) to restore across refreshes. */
+  boardLens?: "schematic" | "analogy" | "reality";
+  /** Whether the zoom level-of-detail is on, restored across refreshes. */
+  lodOn?: boolean;
+  /** Last camera (pan + zoom), restored across refreshes. */
+  camera?: { x: number; y: number; scale: number };
 }
 
 const SETTINGS_VERSION = 1;

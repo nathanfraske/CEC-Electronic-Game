@@ -28,6 +28,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (17) — Shimmer band visible (real bug) + lens/camera persistence
+
+- ~~**Shimmer band was invisible** — not just calibration: the band was the same voltage
+  colour as the wire + low alpha, so at high blur it looked like a plain wire (chevrons just
+  vanished). Found via a new pure-Node PNG rasterizer (`/tmp/harness/raster.js` +
+  `render-band.js`, verified `band.png`). Redesigned the band (board.ts + tierKit
+  `shimmerFlow`): voltage aura + WHITE-HOT core + sparkle specks → reads as an energised wire.
+  Shown on all three lenses.~~
+- ~~**Persistence**: tier lens toggle, LOD toggle, and camera (pan+zoom) survive refresh —
+  `Settings` (storage.ts) gains `boardLens`/`lodOn`/`camera`; `Board.getCamera()`/`setCamera()`;
+  restore on init; debounced camera save in the frame loop.~~
+- [ ] **Wire colour flicker on fast AC** (owner) — voltage is aliased like the carriers were;
+  blend the wire colour from instantaneous → per-net **Vrms** as blur rises, computed
+  web-side from the sub-frame `scopeBatch` (no core change). NEXT.
+
+---
+
 ## 2026-06-18 (16) — Shimmer calibration fix + frequency-morph doc
 
 - ~~**Shimmer not visible on screen** — calibration cliff: with `AC_SHIMMER_HI=300`
