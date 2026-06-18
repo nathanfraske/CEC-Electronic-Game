@@ -61,12 +61,13 @@
   import {
     ZERO_ELECTRICAL,
     hasFactory,
+    rmsStabilized,
     type ElectricalState,
   } from "./lib/glyphs";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
-  import { setApparentRateScale } from "./lib/tierKit";
+  import { apparentFreq, setApparentRateScale } from "./lib/tierKit";
   import { partInfo } from "./lib/partInfo";
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
@@ -494,7 +495,15 @@
   // Info drawer: the deep explanatory view of the selected part + calculators.
   let infoOpen = $state(false);
   let infoTab = $state<"info" | "calc">("info");
-  let selElectrical = $state<ElectricalState | null>(null);
+  // The numbers shown in the inspector/HUD: the selected part's live state, but swapped
+  // for its measured RMS values once the part's AC reverses faster than the eye can read
+  // (`selRmsMode`), so a clean number stays legible at speed — like a DMM (which can't
+  // track it either). Null when no part is selected.
+  let selDisplay = $state<ElectricalState | null>(null);
+  let selRmsMode = $state(false);
+  // Apparent rate (Hz, scaled by playback speed) above which the live numbers flail
+  // unreadably and the inspector switches to the RMS read.
+  const READOUT_RMS_HZ = 4;
   let infoDiagram: InfoDiagram | undefined;
   // The diagram picture: the schematic symbol, or the construction-internals
   // ("what's happening inside") view. Defaults to the detail view; the toggle
@@ -1011,7 +1020,12 @@
           );
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
-            selElectrical = e;
+            // Once the part's AC reverses faster than the eye/meter can track, swap the
+            // inspector to its RMS read so the number is legible (self-adapts to both the
+            // signal frequency and the playback speed via the apparent rate).
+            selRmsMode =
+              !!e.ac?.valid && apparentFreq(e.ac.freq) > READOUT_RMS_HZ;
+            selDisplay = selRmsMode ? rmsStabilized(e) : e;
             if (infoOpen) {
               // Keep the picture (symbol vs internals) and the live state current
               // every frame, so a mode flip or a re-mounted canvas is always right.
@@ -1027,7 +1041,8 @@
               );
             }
           } else {
-            selElectrical = null;
+            selDisplay = null;
+            selRmsMode = false;
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
@@ -2051,10 +2066,11 @@
               onclick={() => (infoOpen = true)}>ⓘ</button
             >
           </div>
-          {#if selElectrical}
+          {#if selDisplay}
             <div class="insp-meter mono">
-              {formatValue(selElectrical.vAcross, "V")} across · {formatValue(
-                selElectrical.current,
+              {#if selRmsMode}<span class="rms-tag">rms</span>{/if}
+              {formatValue(selDisplay.vAcross, "V")} across · {formatValue(
+                selDisplay.current,
                 "A",
               )} through
             </div>
@@ -2353,7 +2369,7 @@
               {#if selPart}
                 {@const info = partInfo(selPart.kind)}
                 {#if info}
-                  {@const e = selElectrical ?? ZERO_ELECTRICAL}
+                  {@const e = selDisplay ?? ZERO_ELECTRICAL}
                   {#if diagramHasDetail || diagramHasFactory}
                     <!-- The 3-tier view selector: Schematic (the datasheet symbol) →
                          Analogy (the machine-metaphor view) → Reality (the live
@@ -2465,7 +2481,10 @@
                   <div class="info-eq mono">{info.equation}</div>
                   <p class="info-plain">{info.plain()}</p>
                   <div class="info-live">
-                    <div class="info-live-head">Right now</div>
+                    <div class="info-live-head">
+                      Right now{#if selRmsMode}<span class="rms-tag">rms</span
+                        >{/if}
+                    </div>
                     <div class="info-sub mono">
                       {info.headline(e, selPart.value, selPart.amp)}
                     </div>
@@ -2903,6 +2922,20 @@
     font-size: 12.5px;
     color: var(--ok);
     margin-bottom: 8px;
+  }
+  /* "rms" badge shown when the inspector switches to the averaged (RMS) read because
+     the live value is reversing too fast to read — the DMM-mode tell. */
+  .rms-tag {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 5px;
+    border: 1px solid color-mix(in oklch, var(--accent) 60%, transparent);
+    border-radius: 3px;
+    font-size: 9px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    vertical-align: 1px;
   }
   /* The custom-label text field at the top of the value popover (name this part). */
   .insp-name {
