@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # Floating networks and the Rogowski coil
 
 Status: **design** (2026-06-17). Forward-looking. Answers the owner question

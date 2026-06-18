@@ -5,6 +5,29 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-17 (19) — Frameworks roadmap + the high-frequency AC render framework
+
+**State:** 🟢 Docs only, no code. Owner wants to build ALL the substrate frameworks, then
+the game ("the game is just systems"). Drafted the master plan + a new render framework:
+
+- **`docs/frameworks-roadmap.md`** — the dependency-ordered map of every substrate
+  framework in 4 layers (solver core → measurement → render → game systems), each tagged
+  built/specced/open, with a critical path (floating GMIN → AC analysis+render → ideal/real
+  flag → thermal → sensors/Rogowski → multi-rate → render sweeps → THEN game). Stitches the
+  per-system docs together; doesn't replace them.
+- **`docs/ui/high-frequency-render.md`** — the owner's AC render invention (from their
+  `acrender.html` study). Decouple fast current into THREE non-aliasing channels: shimmer
+  width = amplitude, energy drift = real power, phasor angle = phase — plus a phosphor-
+  persistence phasor (I-tip trail lagging V) and a phase-domain scope. Needs a new Layer-2
+  **AC analysis** (RMS/phase/PF/|Z| measured from the live waveforms) — that's the build
+  dependency. TODOS (11) tracks AC analysis + the `shimmerFlow`/`phasorInset` primitives.
+- Retrofitted SPDX headers onto the two prior sim docs.
+
+Next high-leverage cluster (per the roadmap): floating-component GMIN, then AC analysis +
+high-frequency render.
+
+---
+
 ## 2026-06-17 (18) — Design docs: floating networks / Rogowski + the fidelity ceiling
 
 **State:** 🟢 Docs only, no code. Answered the owner's two questions in `docs/sim/`:
