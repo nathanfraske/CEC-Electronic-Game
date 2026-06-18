@@ -530,15 +530,29 @@
     if (kind) diagramMode = untrack(() => boardLens);
   });
 
-  /** Persist just the onboarding slice of settings (mute + which cards have fired). */
+  /** Persist settings: the onboarding slice (mute + which cards have fired) plus the
+   * board lens (tier toggle), the LOD toggle, and the camera (pan + zoom) — so the
+   * view and the toggles survive a refresh. */
   function persistSettings(): void {
     saveSettings({
       v: 1,
       seenIntro: !showIntro,
       explainAsYouGo,
       seenConcepts: [...seenConcepts],
+      boardLens,
+      lodOn,
+      camera: board?.getCamera(),
     });
   }
+  // Debounced settings save for the camera (pan/zoom fire many events per second);
+  // a trailing timer collapses a whole gesture into one write.
+  let settingsSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  function scheduleSettingsSave(): void {
+    if (settingsSaveTimer) clearTimeout(settingsSaveTimer);
+    settingsSaveTimer = setTimeout(persistSettings, 600);
+  }
+  // Last camera signature seen, so a moved view triggers exactly one debounced save.
+  let lastCamKey = "";
   /** Offer a first-encounter concept card (deduped): ignored when muted or already
    * seen/queued; otherwise it joins the queue and is shown one at a time. */
   function offerConcept(id: string): void {
@@ -967,6 +981,14 @@
           // speed: slow the tickrate and a fast AC slips back to visible sloshing; speed
           // it up and it returns to a shimmer. Module flag read by the tier drawers.
           setApparentRateScale(tps * DT_SECONDS);
+          // Persist the camera (pan + zoom) when it moves — debounced so a pan/zoom
+          // gesture collapses into one write, and the view is restored on refresh.
+          const cam = b.getCamera();
+          const camKey = `${Math.round(cam.x)},${Math.round(cam.y)},${cam.scale.toFixed(3)}`;
+          if (camKey !== lastCamKey) {
+            lastCamKey = camKey;
+            scheduleSettingsSave();
+          }
           // Attribute per-element current and per-net voltage to each component
           // so the glyphs animate with what is actually happening to them.
           const electrical: Map<number, ElectricalState> | undefined =
@@ -1030,6 +1052,13 @@
       seenConcepts.clear();
       for (const id of settings.seenConcepts ?? []) seenConcepts.add(id);
       showIntro = !settings.seenIntro;
+      // Restore the tier lens, the LOD toggle, and the camera (pan + zoom) so the
+      // view and the toggles survive a refresh.
+      boardLens = settings.boardLens ?? "schematic";
+      lodOn = settings.lodOn ?? true;
+      board?.setLens(boardLens);
+      board?.setLod(lodOn);
+      board?.setCamera(settings.camera);
 
       const saved = loadBoard();
       if (saved) {
@@ -1280,6 +1309,7 @@
           ? "reality"
           : "schematic";
     board?.setLens(boardLens);
+    persistSettings();
   }
   // Master on/off for the zoom level-of-detail (the tier reveal). Off ⇒ plain
   // schematic symbols at any zoom, whatever the lens.
@@ -1287,6 +1317,7 @@
   function toggleLod(): void {
     lodOn = !lodOn;
     board?.setLod(lodOn);
+    persistSettings();
   }
   function clearBoard(): void {
     board?.clear();

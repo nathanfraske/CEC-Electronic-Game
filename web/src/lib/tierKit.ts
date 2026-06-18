@@ -265,26 +265,21 @@ export function shimmerFlow(
       });
     }
   }
-  // Shimmer band: a soft glow whose half-thickness tracks |I|, with a faint vibration.
+  // Shimmer band: a voltage-tinted aura around a WHITE-HOT core whose half-thickness
+  // tracks |I| (so it reads as an energised line, not just a fatter dot), faint vib.
   if (blur > 0.02) {
-    const vib = 0.85 + 0.15 * Math.sin(phase * SHIMMER_K);
-    const half = (r + r * 2.0 * mag) * vib;
-    g.moveTo(ax, ay)
-      .lineTo(bx, by)
-      .stroke({
-        width: 2 * half,
-        color,
-        alpha: blur * (0.1 + 0.16 * mag),
-        cap: "round",
-      });
-    g.moveTo(ax, ay)
-      .lineTo(bx, by)
-      .stroke({
-        width: Math.max(1, half * 0.7),
-        color,
-        alpha: blur * (0.2 + 0.32 * mag),
-        cap: "round",
-      });
+    const vib = 0.9 + 0.1 * Math.sin(phase * SHIMMER_K);
+    const half = (r * 1.2 + r * 2.0 * mag) * vib;
+    const glow = mix(color, 0xffffff, 0.35);
+    const hot = mix(color, 0xffffff, 0.75);
+    const band = (w: number, c: number, a: number): void => {
+      g.moveTo(ax, ay)
+        .lineTo(bx, by)
+        .stroke({ width: w, color: c, alpha: a, cap: "round" });
+    };
+    band(3 * half, color, blur * (0.1 + 0.08 * mag)); // wide aura
+    band(2 * half, glow, blur * (0.2 + 0.18 * mag)); // brightened glow
+    band(Math.max(1.2, 0.84 * half), hot, blur * (0.5 + 0.3 * mag)); // hot core
   }
 }
 

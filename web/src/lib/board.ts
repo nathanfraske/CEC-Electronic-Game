@@ -43,7 +43,7 @@ import {
 import { hasValue } from "./values";
 import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
-import { apparentFreq, blurFactor, setStudsVisible } from "./tierKit";
+import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -1361,6 +1361,33 @@ export class Board {
   resetView(): void {
     this.world.scale.set(1);
     this.world.position.set(0, 0);
+    this.viewportDirty = true;
+    this.applyTextRes();
+  }
+
+  /** The current camera (pan + zoom) as plain numbers, for persistence. */
+  getCamera(): { x: number; y: number; scale: number } {
+    return {
+      x: this.world.position.x,
+      y: this.world.position.y,
+      scale: this.world.scale.x,
+    };
+  }
+
+  /** Restore a saved camera (pan + zoom), clamped to the valid zoom range and
+   * ignoring a malformed value (so a corrupt save can't break the view). */
+  setCamera(cam: { x: number; y: number; scale: number } | undefined): void {
+    if (
+      !cam ||
+      !Number.isFinite(cam.scale) ||
+      !Number.isFinite(cam.x) ||
+      !Number.isFinite(cam.y)
+    ) {
+      return;
+    }
+    const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, cam.scale));
+    this.world.scale.set(s);
+    this.world.position.set(cam.x, cam.y);
     this.viewportDirty = true;
     this.applyTextRes();
   }
@@ -3576,29 +3603,38 @@ export class Board {
             }
           }
         }
-        // Shimmer band: at a high apparent rate the carriers dissolve into a soft
-        // glowing band along the wire whose half-thickness rides the current, with a
-        // faint bounded-phase vibration — fast AC reads as a calm band, not aliased
-        // strobing dots. Voltage-tinted like the wire so it stays the same identity.
+        // Shimmer band: at a high apparent rate the carriers dissolve into a bright
+        // glowing band — a voltage-tinted aura around a WHITE-HOT core (so it reads as
+        // an energised wire, clearly different from a plain trace, not just "the
+        // chevrons vanished"), plus a few drifting sparkle specks. Fast AC reads as a
+        // live band, not aliased strobing dots. Shown in every lens.
         if (blur > 0.02) {
-          const vib = 0.85 + 0.15 * Math.sin(this.phase * SHIMMER_VIB);
-          const half = (width * 0.5 + 3 + 4 * normC) * vib;
-          polyline(g, sampleRoute);
-          g.stroke({
-            width: 2 * half,
-            color,
-            alpha: blur * (0.14 + 0.2 * normC),
-            cap: "round",
-            join: "round",
-          });
-          polyline(g, sampleRoute);
-          g.stroke({
-            width: Math.max(1, half * 0.7),
-            color,
-            alpha: blur * (0.3 + 0.34 * normC),
-            cap: "round",
-            join: "round",
-          });
+          const vib = 0.9 + 0.1 * Math.sin(this.phase * SHIMMER_VIB);
+          const half = (width * 0.6 + 4 + 5 * normC) * vib;
+          const glow = mix(color, 0xffffff, 0.35);
+          const hot = mix(color, 0xffffff, 0.75);
+          const stroke = (w: number, c: number, a: number): void => {
+            polyline(g, sampleRoute);
+            g.stroke({
+              width: w,
+              color: c,
+              alpha: a,
+              cap: "round",
+              join: "round",
+            });
+          };
+          stroke(3 * half, color, blur * (0.1 + 0.08 * normC)); // wide voltage aura
+          stroke(2 * half, glow, blur * (0.2 + 0.18 * normC)); // brightened glow
+          stroke(Math.max(1.2, 0.84 * half), hot, blur * (0.5 + 0.3 * normC)); // hot core
+          const sparks = 3 + Math.round(3 * normC);
+          for (let k = 0; k < sparks; k++) {
+            const d = (((k / sparks + this.phase * 0.3) % 1) + 1) % 1;
+            const s = sampleRouteAt(sampleRoute, d * len);
+            g.circle(s.x, s.y, 1.6).fill({
+              color: 0xffffff,
+              alpha: blur * 0.55,
+            });
+          }
         }
       }
 
