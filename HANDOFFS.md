@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (26) — Wire colour RMS-stabilised on fast AC (no more strobing hue)
+
+**State:** 🟢 Web, verified by PNG render. Completes the owner's "voltage flickers too / just
+shows RMS" ask — the voltage-domain twin of the carrier→shimmer handoff.
+
+`voltageColor` is **magnitude-based** (clamps to [0,12]), so a mean-zero AC net's hue strobes
+grey↔peak frame to frame (the once-per-frame `snap.state` is aliased). Fix, web-only:
+- `Board.nodeVrms` — per-node RMS computed each frame from the **sub-frame `scopeBatch`**
+  (`SubFrameSample.state` = node voltages at sub-frame resolution → non-aliased). Undefined
+  when there's no batch (paused/scrubbing) → falls back to the instantaneous colour.
+- In `redrawWires`, blend the wire colour `lerpColor(voltageColor(v_inst),
+  voltageColor(nodeVrms[node]), blur)` — so as the shimmer blur rises the hue locks to the
+  RMS level (no sign issue: `voltageColor` ignores sign). Drives the wire stroke, the band
+  aura, and the carriers (one `color` var), so the whole wire stops strobing.
+- Verified: `/tmp/harness/render-color.js` → `color.png` shows the instantaneous row
+  flickering cyan→violet→grey vs a single steady RMS hue. Gates green.
+
+**Render-verification tooling now exists:** `/tmp/harness/raster.js` (pure-Node RGBA →
+PNG, `zlib.crc32`) + `render-band.js` / `render-color.js`. Use it to actually SEE board/tier
+render changes headlessly (the board isn't in the numeric `run.js`/`dumpPhasor.js` harnesses).
+
+**Open / next:** owner to eyeball the shimmer + colour on live. Then the **Ideal/Real
+fidelity flag** (Layer 1) — the progression lever + the unblock for the *computed* frequency
+morph (`docs/ui/frequency-morph.md`).
+
+---
+
 ## 2026-06-18 (25) — Shimmer band ACTUALLY visible (the real bug) + lens/camera persistence
 
 **State:** 🟢 Web. Owner still didn't see the shimmer after the calibration fix — found the
