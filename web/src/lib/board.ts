@@ -538,6 +538,11 @@ export class Board {
   private probeNodes: Map<number, [number, number]> | null = null;
   private lastState: Float64Array = new Float64Array();
   private electrical: Map<number, ElectricalState> | undefined;
+  // Per-node RMS voltage over this frame's sub-frame batch (non-aliased, unlike the
+  // once-per-frame `snap.state`). Used to stabilise the wire colour on fast AC so a
+  // rapidly-reversing voltage stops strobing the hue. Undefined when no batch (paused
+  // / scrubbing) — the colour then tracks the instantaneous voltage as before.
+  private nodeVrms: Float64Array | undefined;
 
   constructor(
     private readonly app: Application,
@@ -1444,6 +1449,24 @@ export class Board {
 
     this.lastState = snap.state;
     this.electrical = electrical;
+    // Per-net RMS over the sub-frame batch: at high tps a frame spans many AC cycles,
+    // so this is a stable voltage level where the instantaneous sample aliases. O(batch
+    // × nodes), tiny for teaching boards. Absent batch ⇒ no stabilisation this frame.
+    if (scopeBatch && scopeBatch.length > 0) {
+      const n = snap.state.length;
+      const sumsq = new Float64Array(n);
+      for (const s of scopeBatch) {
+        const st = s.state;
+        const m = Math.min(n, st.length);
+        for (let i = 0; i < m; i++) sumsq[i] += st[i]! * st[i]!;
+      }
+      const vrms = new Float64Array(n);
+      for (let i = 0; i < n; i++)
+        vrms[i] = Math.sqrt(sumsq[i]! / scopeBatch.length);
+      this.nodeVrms = vrms;
+    } else {
+      this.nodeVrms = undefined;
+    }
     this.redrawWires();
     this.drawGround();
     this.drawNetLabels();
@@ -3504,7 +3527,7 @@ export class Board {
         }
       }
       const v = this.pinVoltage(w.from);
-      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      let color = v === null ? PALETTE.cyan : voltageColor(v);
 
       const cur = currents.get(w.id) ?? 0;
       const normC = saturate(Math.abs(cur) / I_REF);
@@ -3519,6 +3542,16 @@ export class Board {
       const wf = flow.get(w.id);
       const blur =
         wf && wf.freq > 0 ? blurFactor(apparentFreq(wf.freq)) * wf.acFrac : 0;
+      // Stabilise the colour the SAME way as the carriers: voltage aliases frame-to-
+      // frame on fast AC (`voltageColor` is magnitude-based, so the hue strobes 0↔peak),
+      // so blend toward the net's RMS voltage (from the non-aliased sub-frame batch) as
+      // the blur rises — the voltage-domain twin of the carrier→shimmer handoff.
+      if (blur > 0.02 && v !== null && this.nodeVrms) {
+        const node = this.endpointNode(w.from);
+        if (node !== null && node >= 0 && node < this.nodeVrms.length) {
+          color = lerpColor(color, voltageColor(this.nodeVrms[node]!), blur);
+        }
+      }
       // The path actually drawn (and walked by the carriers): in conduit mode it is the
       // logical route + aligning pin stubs, rounded into elbows; in schematic mode the
       // plain route. Sampling the carriers on THIS keeps the particles on the pipe

@@ -39,9 +39,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Persistence**: tier lens toggle, LOD toggle, and camera (pan+zoom) survive refresh —
   `Settings` (storage.ts) gains `boardLens`/`lodOn`/`camera`; `Board.getCamera()`/`setCamera()`;
   restore on init; debounced camera save in the frame loop.~~
-- [ ] **Wire colour flicker on fast AC** (owner) — voltage is aliased like the carriers were;
-  blend the wire colour from instantaneous → per-net **Vrms** as blur rises, computed
-  web-side from the sub-frame `scopeBatch` (no core change). NEXT.
+- ~~**Wire colour flicker on fast AC** (owner) — voltage aliases like the carriers did
+  (`voltageColor` is magnitude-based, so the hue strobes 0↔peak). Fixed: blend the wire
+  colour toward the net's **Vrms** as blur rises, Vrms computed web-side from the non-aliased
+  sub-frame `scopeBatch` (`Board.nodeVrms`); no core change. Verified with a PNG render
+  (`/tmp/harness/render-color.js` → flicker row vs steady RMS row).~~
 
 ---
 
