@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (10) — Floating networks + Rogowski coil + fidelity-ceiling docs
+
+- ~~Design docs written: `docs/sim/floating-networks.md` (floating subnets + Rogowski
+  coil) and `docs/sim/fidelity-ceiling.md` (how real the solver vs the reality tiers can
+  get — the "where's the stopping point" map).~~
+- [ ] **Floating-component `GMIN`** (sim-core) — the netlist picks ONE global ground, so
+  an isolated subnet has a singular common-mode. Stamp one `GMIN` to ground per floating
+  connected component (generalises the op-amp/MOSFET-input GMIN). Small, golden-safe
+  (grounded circuits unaffected), and on its own it fixes a floating transformer
+  secondary + any isolation circuit. **Do first.** See `docs/sim/floating-networks.md`.
+- [ ] **`ELEM_ROGOWSKI`** (sim-core) — a non-loading current-sense, derivative source:
+  sense a pass-through branch's current, force `V_out = M·dI/dt` onto an isolated output
+  winding (reuses the transformer's hard-secondary stamp + the inductor `dI/dt`
+  companion + the floating-component GMIN). Ideal first; Real bandwidth/droop later.
+  Needs the floating fix first. Determinism: new `*_run_is_reproducible` coverage; the
+  ideal analog golden stays untouched.
+
+---
+
 ## 2026-06-17 (9) — Proportional-split flow framework
 
 - ~~**Framework**: per-leg currents (`BuiltNetlist.legsOfComponent` → `ElectricalState.legs`)
