@@ -3587,7 +3587,7 @@ export class Board {
           g.stroke({
             width: 2 * half,
             color,
-            alpha: blur * (0.1 + 0.16 * normC),
+            alpha: blur * (0.14 + 0.2 * normC),
             cap: "round",
             join: "round",
           });
@@ -3595,7 +3595,7 @@ export class Board {
           g.stroke({
             width: Math.max(1, half * 0.7),
             color,
-            alpha: blur * (0.18 + 0.28 * normC),
+            alpha: blur * (0.3 + 0.34 * normC),
             cap: "round",
             join: "round",
           });

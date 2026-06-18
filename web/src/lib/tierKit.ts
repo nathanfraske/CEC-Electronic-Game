@@ -177,10 +177,13 @@ export function belt(
 // real second) = `f · tps · DT`; the host sets that scale once per frame via
 // {@link setApparentRateScale}, and {@link apparentFreq} applies it.
 
-/** Apparent-rate band below which flow reads as discrete carriers (Hz). */
-export const AC_SHIMMER_LO = 15;
-/** Apparent rate above which flow reads as a pure shimmer band (Hz). */
-export const AC_SHIMMER_HI = 300;
+/** Apparent-rate (Hz) at which the carrier→shimmer handoff begins — just under the
+ * eye's ~10–15 Hz tracking limit, so carriers stay legible below it. */
+export const AC_SHIMMER_LO = 10;
+/** Apparent rate (Hz) above which flow reads as a pure shimmer band — a few× past the
+ * tracking limit (a 60 Hz apparent flicker is already a blur). Kept low enough that the
+ * handoff lands inside the usable playback-speed range, not only at the very top. */
+export const AC_SHIMMER_HI = 60;
 // Faint shimmer vibration rate on the bounded phase — a "too fast to resolve" wobble,
 // NOT a real cycle (it never tracks the signal frequency).
 const SHIMMER_K = 9.0;

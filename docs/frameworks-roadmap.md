@@ -77,6 +77,7 @@ The tier illustrations and the flow language. Governed by `docs/ui/visual-langua
 | ✅ | Proportional-split flow (`flowSplit` + `legs`) | divider/sense splits drawn to scale | (PR #99) |
 | ✅ | Connector pipe (parts join the wire-pipes) | nothing looks "broken up" | (PR #96) |
 | ◐ | **High-frequency AC render** — the carrier→shimmer handoff + phasor pair + phosphor persistence | switching/AC legible without aliasing | `docs/ui/high-frequency-render.md` |
+| 📐 | **Frequency morph** — parts visibly becoming their HF selves at SRF (cap ⇄ inductor, shunt → shunt + L), on the same apparent-rate signal | the render of *why ideal parts stop being ideal* — the payoff of the Real flag | `docs/ui/frequency-morph.md` |
 | ◐ | Per-part flowing pipe-leads sweep (MOV/POT/caps/EC done) | transformer, transistors, op-amp, sources, switches still thin | (TODOS) |
 | ☐ | FAIL box (pulsing red + `FAIL`) on flagged parts | the honest failure signal | `docs/sim/ideal-vs-real-parts.md` |
 
