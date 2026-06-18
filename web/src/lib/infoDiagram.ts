@@ -16,10 +16,13 @@ import { PART_KINDS, PALETTE } from "./graph";
 import { drawGlyphIn, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
 import { drawDetail } from "./detailDrawers";
 import { drawAnalogy } from "./analogyDrawers";
-import { setStudsVisible } from "./tierKit";
+import { phasorInset, setStudsVisible } from "./tierKit";
 
 const PITCH = 26; // mirrors the board's grid pitch
 const SCALE = 2.8; // blow the schematic symbol up to fill the drawer
+// Reactive kinds that get the AC phasor inset overlay (V–I clock + phosphor trail):
+// capacitor, electrolytic, inductor, transformer (docs/ui/high-frequency-render.md).
+const PHASOR_KINDS = new Set(["C", "EC", "L", "TR"]);
 // The detail illustration fills the canvas to this fraction of its half-size, so
 // the factory internals read big (the headline visual) with a little breathing room.
 const DETAIL_FILL = 0.92;
@@ -38,6 +41,9 @@ export class InfoDiagram {
   private app: Application | undefined;
   private readonly holder = new Container();
   private readonly glyph = new Graphics();
+  // The AC phasor inset, drawn OUTSIDE the centred/scaled holder so it sits in a fixed
+  // corner at panel pixels regardless of the tier's scale.
+  private readonly overlay = new Graphics();
   private kind = "";
   private mode: DiagramMode = "schematic";
   private electrical: ElectricalState = ZERO_ELECTRICAL;
@@ -69,6 +75,7 @@ export class InfoDiagram {
     this.app = app;
     this.holder.addChild(this.glyph);
     app.stage.addChild(this.holder);
+    app.stage.addChild(this.overlay); // on top, in screen space
     this.loop();
   }
 
@@ -106,8 +113,36 @@ export class InfoDiagram {
     if (!app) return;
     this.holder.position.set(app.screen.width / 2, app.screen.height / 2);
     this.draw();
+    this.drawOverlay();
     this.raf = requestAnimationFrame(this.loop);
   };
+
+  /**
+   * The AC phasor inset for reactive parts (capacitor / inductor / transformer), drawn
+   * in a fixed bottom-right corner once a full AC cycle has been measured — the V–I
+   * clock with phosphor persistence (docs/ui/high-frequency-render.md). Independent of
+   * the tier illustration, so it shows in every mode; cleared every frame.
+   */
+  private drawOverlay(): void {
+    const app = this.app;
+    if (!app) return;
+    this.overlay.clear();
+    const ac = this.electrical.ac;
+    if (!ac?.valid || !PHASOR_KINDS.has(this.kind)) return;
+    const radius = Math.max(
+      28,
+      Math.min(64, Math.min(app.screen.width, app.screen.height) * 0.16),
+    );
+    const margin = 12;
+    phasorInset(
+      this.overlay,
+      app.screen.width - margin - radius,
+      app.screen.height - margin - radius,
+      radius,
+      ac,
+      this.phase,
+    );
+  }
 
   private draw(): void {
     const app = this.app;

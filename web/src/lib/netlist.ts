@@ -15,7 +15,7 @@ import {
   isJunctionRef,
 } from "./graph";
 import type { Endpoint } from "./graph";
-import type { ElectricalState } from "./glyphs";
+import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
@@ -677,6 +677,8 @@ export function electricalMap(
   elementCurrents: Float64Array,
   failedMask?: Uint8Array,
   reactiveCurrents?: Float64Array,
+  acMeasurements?: Float64Array,
+  acFields?: number,
 ): Map<number, ElectricalState> {
   const map = new Map<number, ElectricalState>();
   for (const [compId, ei] of netlist.elemOfComponent) {
@@ -695,10 +697,45 @@ export function electricalMap(
       // The transformer's magnetising current / inductor branch current (its real
       // flux), when the core exposes it — lets the transformer tier read true flux.
       flux: reactiveCurrents ? (reactiveCurrents[ei] ?? 0) : undefined,
+      // The per-element AC measurements over the last cycle (RMS/power/phase/freq),
+      // sliced from the flat boundary array — drives the shimmer/phasor render.
+      ...(acReadout(acMeasurements, acFields, ei) ?? {}),
       // The element-indexed FAIL mask, mapped back to its component (the renderer
       // boxes any part whose element hit the bound).
       failed: failedMask ? (failedMask[ei] ?? 0) !== 0 : false,
     });
   }
   return map;
+}
+
+/**
+ * Slice element `ei`'s {@link AcReadout} out of the flat `ac_measurements` boundary
+ * array (`AC_FIELDS` values per element, in the documented order). Returns `{ ac }`
+ * for spreading into an {@link ElectricalState}, or `undefined` when the core sent no
+ * AC data (so the field stays absent).
+ */
+function acReadout(
+  ac: Float64Array | undefined,
+  fields: number | undefined,
+  ei: number,
+): { ac: AcReadout } | undefined {
+  if (!ac || !fields || fields < 12) return undefined;
+  const o = ei * fields;
+  if (o + 12 > ac.length) return undefined;
+  return {
+    ac: {
+      vrms: ac[o]!,
+      irms: ac[o + 1]!,
+      vmean: ac[o + 2]!,
+      imean: ac[o + 3]!,
+      vamp: ac[o + 4]!,
+      iamp: ac[o + 5]!,
+      preal: ac[o + 6]!,
+      pf: ac[o + 7]!,
+      zmag: ac[o + 8]!,
+      phase: ac[o + 9]!,
+      freq: ac[o + 10]!,
+      valid: (ac[o + 11] ?? 0) !== 0,
+    },
+  };
 }

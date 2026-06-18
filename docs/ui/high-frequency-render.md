@@ -105,9 +105,13 @@ Layer 2):
 - **P_real**, power factor, \|Z\| → the energy drift + telemetry.
 
 In the standalone study these come from a closed-form R–L model (`ϕ = atan(f/f_c)`);
-on the real board they're **measured** from the solver's V/I (zero-crossing / quadrature
-phase detect + RMS over the last full cycle). That measurement is the framework piece to
-build; the render above is then pure presentation of it.
+on the real board they're **measured** from the solver's V/I (zero-crossing phase detect +
+synchronous RMS over the last full cycle). **That measurement is now built** — a per-element
+running analyzer (`AcMeas`) in `crates/sim-core`, read out by `Sim::ac_measurements()` as a
+flat `[nElements × AC_FIELDS]` array (Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|,
+phase, freq, valid). It is unhashed/golden-safe and crosses the wasm boundary once per frame
+(`loop.ts` → `Snapshot.acMeasurements`). The render below is the **remaining Layer-3 piece**:
+pure presentation of those numbers.
 
 ## Determinism
 
@@ -129,15 +133,28 @@ as the FAIL box and the ideal-into-cap blow-up).
 
 ## Implementation sketch
 
-1. **Layer 2:** add AC analysis — per measured net/element, a ring over the last cycle
-   yielding \|V\|, \|I\|, ϕ, P_real, PF, \|Z\|, f_apparent. Deterministic, snapshot-only.
-2. **Flow framework:** add a `shimmerFlow(...)` primitive (the carrier↔band handoff on
-   `b`) beside `belt`/`flowAlongPath`, and a `phasorInset(...)` widget (two arrows + arc
-   + decaying-alpha tip trail) for the info panel / a board overlay.
-3. **Wire-pipe + tier drawers:** at high `b`, swap a wire/branch's carrier dots for the
-   shimmer band; keep the energy belt as-is. Reactive parts (L, C, transformer) gain the
-   phasor inset in their info panel.
-4. **Scope:** plot V/I vs phase (already the right idea in `ac-curriculum.md`).
+1. **Layer 2:** ✅ **built** — AC analysis per element (`AcMeas` → `Sim::ac_measurements`),
+   yielding RMS, \|V\|/\|I\|, ϕ, P_real, PF, \|Z\|, freq. Deterministic, snapshot-only;
+   crosses the boundary as `Snapshot.acMeasurements` and is attributed per component by
+   `electricalMap` into `ElectricalState.ac` (`AcReadout`).
+2. **Flow framework:** ✅ **built** — `tierKit.shimmerFlow(...)` (the carrier↔band handoff
+   on `b = blurFactor(apparentFreq(f))`, byte-for-byte `belt` at `b = 0`) beside
+   `belt`/`flowAlongPath`, and the `tierKit.phasorInset(...)` widget (V/I arrows + phase
+   arc + decaying-alpha I-tip trail, a pure function of the bounded phase → rewinds). The
+   blur tracks the **apparent** rate, not the raw signal Hz: the host sets the sim-Hz →
+   apparent-Hz scale `tps · DT` each frame (`setApparentRateScale`, from the playback
+   tickrate), so deep slow-mo drops a fast signal back to visible sloshing carriers and
+   speeding past the eye's band returns it to a shimmer — the owner's tickrate behaviour.
+3. **Wire-pipe + tier drawers:** ◐ **mostly built** — the **board wires** hand off
+   carriers→shimmer per wire: `Board.computeWireFlow` attributes each wire an apparent AC
+   frequency (AC-amplitude-weighted mean of the element `ac.freq` in its KCL subtree) and
+   an AC-fraction (AC amplitude vs DC current, so a rectifier's DC rail stays carriers),
+   and `redrawWires` fades the chevrons/dots into a voltage-tinted glow band at high blur —
+   in all three lenses, energy belt unchanged. The **inductor** analogy drawer does the
+   same on its pipe; the **phasor inset** overlays the info panel for reactive parts
+   (C, EC, L, TR) once a cycle is measured. *Still open:* the cap/transformer drawers
+   adopting `shimmerFlow`.
+4. **Scope:** ☐ plot V/I vs phase (already the right idea in `ac-curriculum.md`).
 
 ## See also
 

@@ -7,12 +7,49 @@
 
 import { Graphics } from "pixi.js";
 
+/**
+ * Per-element **AC measurements** for the last full cycle, measured by the solver
+ * (`Sim::ac_measurements`, field order `AC_FIELDS`) and attributed per component by
+ * {@link electricalMap}. Drives the high-frequency render: the carrier→shimmer
+ * handoff (on `freq`/amplitude) and the phasor inset (on `phase`/amplitudes). Absent
+ * until the core supplies it; `valid` is false until a cycle has been measured.
+ */
+export interface AcReadout {
+  /** True RMS of the terminal voltage / current over the cycle (incl. any DC). */
+  vrms: number;
+  irms: number;
+  /** DC (mean) component of the voltage / current. */
+  vmean: number;
+  imean: number;
+  /** AC peak amplitude `(max − min)/2` of the voltage / current. */
+  vamp: number;
+  iamp: number;
+  /** Average real power `⟨V·I⟩` (W). */
+  preal: number;
+  /** Power factor (the V–I correlation, −1..1; `cos φ` for a clean sinusoid pair). */
+  pf: number;
+  /** AC impedance magnitude `Vac_rms / Iac_rms` (Ω). */
+  zmag: number;
+  /** V–I phase lag in radians: `>0` current lags (inductive), `<0` leads (capacitive). */
+  phase: number;
+  /** Detected fundamental frequency (Hz); `0` for DC / no detected cycle. */
+  freq: number;
+  /** True once a full AC cycle has been measured (else the fields read as 0/DC). */
+  valid: boolean;
+}
+
 /** Per-element electrical readout used to drive the animation. */
 export interface ElectricalState {
   /** Amps through the element, signed in the a→b direction. */
   current: number;
   /** Volts across the element, V(a) − V(b). */
   vAcross: number;
+  /**
+   * AC measurements for this element over the last cycle, when the core supplies
+   * them — the source for the shimmer/phasor high-frequency render. Absent for a
+   * snapshot taken before any AC analysis, or when the netlist has no element here.
+   */
+  ac?: AcReadout;
   /**
    * Reactive branch current: a transformer's **magnetising current `Im`** — its
    * core-flux proxy (`Φ = L1·Im`) carrying the real flux level + DC bias — or an

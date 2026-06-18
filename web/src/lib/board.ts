@@ -43,7 +43,7 @@ import {
 import { hasValue } from "./values";
 import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
-import { setStudsVisible } from "./tierKit";
+import { apparentFreq, blurFactor, setStudsVisible } from "./tierKit";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -187,6 +187,9 @@ const CARRIER_SPACING_MIN = 16; // dense at high current
 const ENERGY_SPACING = 34; // energy-dot spacing in px (absolute arc-length)
 // Safety cap on dots per belt so a very long trace can't spawn unbounded graphics.
 const MAX_BELT_DOTS = 64;
+// Faint shimmer-band vibration rate on the bounded flow clock — a "too fast to
+// resolve" wobble for the high-frequency carrier→band handoff, NOT a real cycle.
+const SHIMMER_VIB = 9;
 
 // --- conduit skin (analogy/reality LOD) --------------------------------------
 // Zoomed in under the analogy/reality lens, a bare trace is re-skinned as the same
@@ -3333,7 +3336,9 @@ export class Board {
   private redrawWires(): void {
     const g = this.wireLayer;
     g.clear();
-    const currents = this.computeWireCurrents();
+    const flow = this.computeWireFlow();
+    const currents = new Map<number, number>();
+    for (const [id, f] of flow) currents.set(id, f.current);
     this.lastWireCurrents = currents;
     const fd = this.flowDelta;
     // Re-skin bare traces as conduits (pipes / metal conductors) when zoomed into the
@@ -3479,6 +3484,14 @@ export class Board {
       // Thickness tracks current over a wide range so amperage is legible at a
       // glance (bounded by the saturating normC — a huge current stays on-screen).
       const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
+      // The carrier→shimmer blur for this wire: its AC current's APPARENT rate
+      // (signal Hz × playback-speed scale) handed through the same smoothstep the tier
+      // drawers use. DC/slow wires → 0 (carriers stream/slosh as before); fast AC under
+      // a high tickrate → 1 (a shimmer band, no aliased strobing). Slowing the tickrate
+      // drops it back to visible sloshing (see tierKit `apparentFreq`).
+      const wf = flow.get(w.id);
+      const blur =
+        wf && wf.freq > 0 ? blurFactor(apparentFreq(wf.freq)) * wf.acFrac : 0;
       // The path actually drawn (and walked by the carriers): in conduit mode it is the
       // logical route + aligning pin stubs, rounded into elbows; in schematic mode the
       // plain route. Sampling the carriers on THIS keeps the particles on the pipe
@@ -3532,32 +3545,60 @@ export class Board {
           (CARRIER_SPACING_MAX - CARRIER_SPACING_MIN) * normC;
         const size =
           CHEVRON_SIZE_MIN + (CHEVRON_SIZE_MAX - CHEVRON_SIZE_MIN) * normC;
-        const alpha = 0.32 + 0.42 * normC;
+        // Fade the discrete carriers out as the shimmer band fades in (blur → 1).
+        const fade = 1 - blur;
+        const alpha = (0.32 + 0.42 * normC) * fade;
         const dir = cur >= 0 ? 1 : -1;
-        for (const d of beltDots(len, spacing, co)) {
-          const s = sampleRouteAt(sampleRoute, d);
-          if (!conduit) {
-            drawChevron(
-              g,
-              s.x,
-              s.y,
-              s.dx * dir,
-              s.dy * dir,
-              color,
-              alpha,
-              size,
-            );
-          } else if (conduit === "analogy") {
-            g.circle(s.x, s.y, 2 + 1.6 * normC).fill({
-              color: PIPE_WATER,
-              alpha: 0.45 + 0.4 * normC,
-            });
-          } else {
-            g.circle(s.x, s.y, 1.7 + 1.2 * normC).fill({
-              color: COND_ELEC,
-              alpha: 0.5 + 0.4 * normC,
-            });
+        if (blur < 0.98) {
+          for (const d of beltDots(len, spacing, co)) {
+            const s = sampleRouteAt(sampleRoute, d);
+            if (!conduit) {
+              drawChevron(
+                g,
+                s.x,
+                s.y,
+                s.dx * dir,
+                s.dy * dir,
+                color,
+                alpha,
+                size,
+              );
+            } else if (conduit === "analogy") {
+              g.circle(s.x, s.y, 2 + 1.6 * normC).fill({
+                color: PIPE_WATER,
+                alpha: (0.45 + 0.4 * normC) * fade,
+              });
+            } else {
+              g.circle(s.x, s.y, 1.7 + 1.2 * normC).fill({
+                color: COND_ELEC,
+                alpha: (0.5 + 0.4 * normC) * fade,
+              });
+            }
           }
+        }
+        // Shimmer band: at a high apparent rate the carriers dissolve into a soft
+        // glowing band along the wire whose half-thickness rides the current, with a
+        // faint bounded-phase vibration — fast AC reads as a calm band, not aliased
+        // strobing dots. Voltage-tinted like the wire so it stays the same identity.
+        if (blur > 0.02) {
+          const vib = 0.85 + 0.15 * Math.sin(this.phase * SHIMMER_VIB);
+          const half = (width * 0.5 + 3 + 4 * normC) * vib;
+          polyline(g, sampleRoute);
+          g.stroke({
+            width: 2 * half,
+            color,
+            alpha: blur * (0.1 + 0.16 * normC),
+            cap: "round",
+            join: "round",
+          });
+          polyline(g, sampleRoute);
+          g.stroke({
+            width: Math.max(1, half * 0.7),
+            color,
+            alpha: blur * (0.18 + 0.28 * normC),
+            cap: "round",
+            join: "round",
+          });
         }
       }
 
@@ -4036,27 +4077,53 @@ export class Board {
   }
 
   /**
-   * KCL-aware per-wire current. Each element injects its current into the net at
-   * its two pins (−i at pin a, +i at pin b). Within a net the wires form a graph;
-   * routing those injections along a spanning tree gives the true branch current
-   * in every wire segment (it accumulates toward a source and splits at taps),
-   * with cycle (redundant) wires left at 0. Render-only — never touches the sim.
-   * Returns wireId → current oriented from→to.
+   * Per-wire flow from one KCL spanning-forest pass over the per-component injections:
+   * the branch current (signed, from→to — accumulating toward a source, splitting at
+   * taps, redundant cycle wires at 0), the **apparent AC frequency** of that current
+   * (the AC-amplitude-weighted mean of the elements' measured `ac.freq` in the wire's
+   * subtree — `0` for a DC branch, the source freq on a single-source AC path), and the
+   * **AC fraction** (how AC-dominated the wire is: AC amplitude vs |DC current|, so a
+   * rectifier's DC rail with a little 2f ripple does not shimmer like a true AC line).
+   * Render-only — never touches the sim. The shimmer handoff (`redrawWires`) reads all
+   * three; the ammeter still reads the cached currents (`lastWireCurrents`).
    */
-  private computeWireCurrents(): Map<number, number> {
-    const out = new Map<number, number>();
+  private computeWireFlow(): Map<
+    number,
+    { current: number; freq: number; acFrac: number }
+  > {
+    const out = new Map<
+      number,
+      { current: number; freq: number; acFrac: number }
+    >();
     const wires = [...this.graph.wires.values()].sort((p, q) => p.id - q.id);
-    for (const w of wires) out.set(w.id, 0);
+    for (const w of wires) out.set(w.id, { current: 0, freq: 0, acFrac: 0 });
     if (!this.electrical || wires.length === 0) return out;
 
-    // Current each element pushes into the net at each pin (the "injection").
+    // Per-pin injections routed through the forest: signed current (`inj`), AC-amplitude
+    // weight (`fm`), freq-weighted amplitude (`fw`), and signed DC/mean current (`dm`).
     const inj = new Map<string, number>();
-    const bump = (k: string, v: number): void => {
-      inj.set(k, (inj.get(k) ?? 0) + v);
+    const fm = new Map<string, number>();
+    const fw = new Map<string, number>();
+    const dm = new Map<string, number>();
+    const add = (m: Map<string, number>, k: string, v: number): void => {
+      m.set(k, (m.get(k) ?? 0) + v);
     };
     for (const [compId, e] of this.electrical) {
-      bump(compId + ":0", -e.current); // pin a: current leaves the net
-      bump(compId + ":1", +e.current); // pin b: current enters the net
+      add(inj, compId + ":0", -e.current); // pin a: current leaves the net
+      add(inj, compId + ":1", +e.current); // pin b: current enters the net
+      // AC weight: the element's measured AC current amplitude carries its frequency;
+      // DC elements contribute amplitude ~0 (and freq 0), so they don't tint a wire AC.
+      const amp = e.ac?.valid ? Math.abs(e.ac.iamp) : 0;
+      const f = e.ac?.valid ? e.ac.freq : 0;
+      // DC (mean) current: the element's own DC component when measured, else its plain
+      // current — separates a true AC line from a DC rail carrying a little ripple.
+      const dc = e.ac?.valid ? e.ac.imean : e.current;
+      add(dm, compId + ":0", -dc);
+      add(dm, compId + ":1", +dc);
+      for (const pin of [":0", ":1"]) {
+        add(fm, compId + pin, amp);
+        add(fw, compId + pin, amp * f);
+      }
     }
 
     // Adjacency over pins, edges = wires (record from/to orientation per edge).
@@ -4085,7 +4152,7 @@ export class Board {
     }
 
     // Spanning forest by BFS; each tree edge carries the injection sum of the
-    // subtree beyond it (oriented child → parent).
+    // subtree beyond it (oriented child → parent), plus the unsigned AC-weight sums.
     const visited = new Set<string>();
     for (const root of [...adj.keys()].sort()) {
       if (visited.has(root)) continue;
@@ -4112,17 +4179,35 @@ export class Board {
           queue.push(e.other);
         }
       }
-      // Reverse-BFS (post-order): each node's subtree sum is final by the time we
-      // reach it, so record its parent edge's current, then roll it up.
+      // Reverse-BFS (post-order): each node's subtree sums are final by the time we
+      // reach it, so record its parent edge's flow, then roll it up.
       const sub = new Map<string, number>();
-      for (const u of order) sub.set(u, inj.get(u) ?? 0);
+      const subFM = new Map<string, number>();
+      const subFW = new Map<string, number>();
+      const subDM = new Map<string, number>();
+      for (const u of order) {
+        sub.set(u, inj.get(u) ?? 0);
+        subFM.set(u, fm.get(u) ?? 0);
+        subFW.set(u, fw.get(u) ?? 0);
+        subDM.set(u, dm.get(u) ?? 0);
+      }
       for (let i = order.length - 1; i >= 0; i--) {
         const u = order[i]!;
         const p = parent.get(u);
         if (!p) continue;
         const s = sub.get(u)!;
-        out.set(p.wireId, p.childIsFrom ? s : -s); // child→parent mapped to from→to
+        const sm = subFM.get(u)!;
+        const sfw = subFW.get(u)!;
+        const sdc = Math.abs(subDM.get(u)!);
+        out.set(p.wireId, {
+          current: p.childIsFrom ? s : -s, // child→parent mapped to from→to
+          freq: sm > 1e-12 ? sfw / sm : 0, // AC-amplitude-weighted mean frequency
+          acFrac: sm + sdc > 1e-12 ? sm / (sm + sdc) : 0, // AC vs DC dominance
+        });
         sub.set(p.pin, (sub.get(p.pin) ?? 0) + s);
+        subFM.set(p.pin, (subFM.get(p.pin) ?? 0) + sm);
+        subFW.set(p.pin, (subFW.get(p.pin) ?? 0) + sfw);
+        subDM.set(p.pin, (subDM.get(p.pin) ?? 0) + (subDM.get(u) ?? 0));
       }
     }
     return out;

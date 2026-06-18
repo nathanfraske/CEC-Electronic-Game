@@ -5,6 +5,157 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (23) — Board-wide carrier→shimmer handoff
+
+**State:** 🟢 Shipped in `web/lib/board.ts`. The high-frequency render now applies to the
+**board wires**, not just the inductor drawer. All web gates green; tierKit + drawer
+harnesses pass. No sim-core change.
+
+- **`Board.computeWireFlow`** (renamed from `computeWireCurrents`) now returns
+  `{ current, freq, acFrac }` per wire from one KCL spanning-forest pass: the branch
+  current (as before), an **apparent AC frequency** (AC-amplitude-weighted mean of the
+  elements' measured `ac.freq` in the wire's subtree — 0 for DC, source freq on an AC
+  path), and an **AC fraction** (subtree AC amplitude vs |DC current|). The ammeter still
+  reads `lastWireCurrents` (built from `.current`).
+- **`redrawWires`** computes `blur = blurFactor(apparentFreq(freq)) * acFrac` per wire and
+  fades the carriers (chevrons / analogy water / reality electrons) out by `(1−blur)` while
+  fading in a **voltage-tinted glow band** along the wire route (a `SHIMMER_VIB` bounded-
+  phase wobble), in all three lenses. The energy belt is untouched (per the doc). The
+  `acFrac` gate keeps a rectifier's DC rail (tiny 2f ripple) on streaming carriers.
+- **Tickrate-coupled** via the same tierKit `apparentRateScale` App.svelte already sets each
+  frame, so slowing playback drops fast AC back to visible sloshing carriers board-wide.
+- Verification: `pnpm -C web check/lint/build` green; `/tmp/harness/dumpPhasor.js` (the
+  shimmer primitive + tickrate coupling) and `run.js` (drawer regression) pass. The board
+  itself isn't in the harness; the freq propagation mirrors the proven current forest.
+
+**Next ask from owner (brainstorm — not yet started):** components visibly **morphing into
+their high-frequency counterparts** at high apparent rate — a resistor sprouting a series
+inductor, a cap growing ESR+ESL, etc. The Ideal/Real fidelity ladder
+(`docs/sim/ideal-vs-real-parts.md`) already frames the *parasitics*; this is the **render of
+the transition** (the symbol/illustration morph), driven by the same apparent-rate signal
+the shimmer uses. Wants to brainstorm; likely a new design doc + a Layer-3 morph hook.
+
+---
+
+## 2026-06-18 (22) — High-frequency AC render primitives (Layer 3)
+
+**State:** 🟢 Shipped in `web/` (tierKit primitives + data path + two integration points).
+The owner's shimmer/phasor design, on top of the Layer-2 AC analysis. All web gates green;
+the phasor/shimmer harness (`/tmp/harness/dumpPhasor.js`) and the existing drawer
+regression (`run.js`) both pass. No sim-core change.
+
+- **Data path:** `ElectricalState.ac` (`AcReadout`, the 12 AC fields) added in `glyphs.ts`;
+  `electricalMap` slices the flat `acMeasurements` per element (new `acMeasurements?`/
+  `acFields?` params); `App.svelte` passes `snap.acMeasurements`/`snap.acFields`.
+- **`tierKit.shimmerFlow(g, ax,ay,bx,by, mag, b, dir, phase, color, r?)`** — the
+  carrier→band handoff. `b = blurFactor(apparentFreq(f))` (smoothstep `AC_SHIMMER_LO=15`→
+  `HI=300` **apparent** Hz). The blur tracks the **on-screen apparent rate, not the raw
+  signal Hz**: `apparentFreq = f · apparentRateScale`, and the host sets that scale each
+  frame to `tps · DT` (`setApparentRateScale`, from the live playback tickrate, wired in
+  `App.svelte`). So slowing the tickrate drops a fast AC back to visible sloshing carriers
+  and speeding up returns it to a shimmer (the owner's ask). At `b=0` it is **byte-for-byte
+  `belt`** (DC/slow circuits unchanged — the inductor regression confirms it); as `b→1`
+  carriers fatten + fade and a soft glow band whose half-thickness rides `mag` fades in,
+  with a faint `SHIMMER_K` bounded-phase vibration.
+- **`tierKit.phasorInset(g, cx,cy, radius, ac, phase)`** — the V (warm) / I (cyan) dial.
+  Arrow lengths = AC amplitudes (with a visible floor), the **angle between them = the
+  measured V–I phase** (`>0` lag/inductive, `<0` lead/capacitive), a filled wedge fills the
+  phase, and the I tip drags a **decaying-alpha phosphor trail** computed as past tip angles
+  `thI − k·dθ` — a pure function of the bounded phase, so it rewinds with no mutable buffer.
+  Cosmetic dial spin only; magnitude never rides speed (visual-language clean).
+- **Applied:** the **inductor** analogy drawer swaps its two `belt(...)` for `shimmerFlow`
+  keyed to `ac.freq` (the reference home); the **phasor inset** overlays the `InfoDiagram`
+  (a separate unscaled `overlay` Graphics, bottom-right corner) for reactive kinds
+  `{C,EC,L,TR}` once `ac.valid`.
+
+**Determinism/discipline:** all presentation on the bounded `phase`, reads `ElectricalState`
+only — no sim/golden touch. Magnitude on thickness/alpha/length; frequency drives the blur
+(presentation), not speed.
+
+**Open (render adoption — TODOS 14):** board wire-pipes' carrier→shimmer swap (needs a
+per-wire apparent frequency); the cap/transformer drawers adopting `shimmerFlow`; the
+phase-domain scope (V/I vs phase). **Next on the roadmap critical path:** the Ideal/Real
+fidelity flag (L1) — the progression lever.
+
+---
+
+## 2026-06-18 (21) — AC analysis (Layer 2 measurement) implemented
+
+**State:** 🟢 Code shipped in `crates/sim-core` + boundary + `loop.ts`. The second
+critical-path framework. All gates green; analog golden bit-identical.
+
+Built the measurement layer that turns the solver's raw V/I waveforms into the AC
+quantities the phasor/shimmer render (and later AC grading) need. It **must** live in
+the core — only the core sees every 2 µs tick; the web reads one snapshot per frame.
+
+- **`AcMeas`** (new struct, before `Sim`) — a per-element running analyzer. Each
+  committed `step()`, `update_ac_analysis()` folds the element's terminal voltage
+  `V(a)−V(b)` and through-current into it. A **synchronous detector**: cycles are
+  delimited by rising zero-crossings of `V` about the previous window's mean; it keeps
+  O(1) running sums (Σv, Σi, Σv², Σi², Σvi, min/max) and finalizes a held result set at
+  each boundary. Phase = signed sub-sample offset of the current's rising crossing
+  (wrapped to (−π,π]: **>0 inductive lag, <0 capacitive lead**); PF = the V–I
+  correlation (= cos φ); |Z| = Vac_rms/Iac_rms; freq from the period. O(1)/tick, O(1)
+  storage, no per-tick trig.
+- **`Sim::ac_measurements()`** → flat `[nElements × AC_FIELDS]`, `AC_FIELDS = 12`:
+  `[Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|, phase, freq, valid]`. New
+  unhashed `ac: Vec<AcMeas>` field (like `currents`) → **golden-safe**; reset at
+  install/reset so a rewind re-accumulates from t=0. `valid` is 0 until the first full
+  cycle completes (render falls back to DC cues).
+- **Boundary:** `ac_measurements()` + `ac_fields()` on `sim-wasm`; `loop.ts` `Snapshot`
+  gains `acMeasurements` + `acFields` (one batched read/frame — the coarse-boundary rule).
+- **Tests (109 total):** resistor → PF≈1/φ≈0/|Z|≈R/freq✓; capacitor → φ≈−π/2; inductor
+  → φ≈+π/2; `ac_analysis_run_is_reproducible` folds the measurement bits into the replay
+  accumulator. Golden untouched.
+
+**Determinism note:** the analyzer is a pure function of the (clamped, finite) V/I
+trajectory + fixed constants; it's unhashed so it can't move the golden, and it
+reproduces/rewinds with the run. Variance uses Σx²−mean² (mild cancellation for
+high-DC-low-AC signals; the phasor circuits are mean-zero AC so it's a non-issue — noted
+for a possible Welford upgrade later).
+
+**Next (critical path):** the **`shimmerFlow` + `phasorInset` render primitives** (L3) now
+have their data source (`Snapshot.acMeasurements`) — the carrier→shimmer handoff on the
+blur factor + the two-arrow/arc/decaying-tip phasor, plus the phase-domain scope. Then the
+Ideal/Real fidelity flag (L1). See `docs/ui/high-frequency-render.md`.
+
+---
+
+## 2026-06-18 (20) — Floating-component GMIN implemented (floating-networks Part 1)
+
+**State:** 🟢 Code shipped in `crates/sim-core`. First framework off the roadmap critical
+path. All gates green; analog golden bit-identical.
+
+The single-global-ground model left any subnet with no galvanic path to ground with a
+singular common-mode row (it limped along on the dense solver's zero-pivot fallback).
+Now generalised the per-node op-amp/MOSFET GMIN to **components**:
+
+- **`floating_refs(node_count, &elements)`** (new free fn, next to `classify_nets`) +
+  `uf_find`/`uf_union` helpers. Deterministic **union-by-min** union-find over
+  *potential-defining* ties only: R/C/L/V/AC/switch/diode-family/varistor union a–b;
+  FET/BJT channel a–b (gate/base marked device-referenced, not unioned); transformer
+  unions each winding **separately** (so an isolated secondary stays its own component);
+  op-amp + digital (gate/DFF/level-shift) + pull-up terminals marked referenced (the
+  device pins them); **ISOURCE skipped** (current constraint, not a potential — the dual
+  the netlist incomplete-circuit check already handles). Returns the lowest node of every
+  component that contains neither ground nor a device-referenced terminal.
+- **`stamp_floating_refs(&self, mat, n)`** stamps one `GMIN` (1e-12) on each such node's
+  diagonal, called in **all four** assembly paths (linear OP + transient, Newton OP +
+  transient base — into `base_mat` once, so it rides every Newton iteration). New
+  `floating_refs: Vec<usize>` field, computed once in `install`.
+- **Golden-safe by construction:** a grounded circuit is one component (the grounded one)
+  → empty list → no stamp → `golden_snapshot_hash_is_stable` unchanged. Verified.
+- **Tests:** `floating_refs_identifies_isolated_subnets`, `floating_divider_solves_with_
+  defined_common_mode` (exact differential, common-mode pinned ~0 at lowest node),
+  `floating_transformer_secondary_is_reproducible` (isolated secondary energises + bit-
+  reproducible). 105 sim-core tests pass.
+
+**Next (per roadmap):** `ELEM_ROGOWSKI` is now unblocked (floating-networks Part 2), but
+the critical path continues to **AC analysis (Layer 2)** → the `shimmerFlow`/`phasorInset`
+high-frequency render primitives. Owner's call which to take first.
+
+---
+
 ## 2026-06-17 (19) — Frameworks roadmap + the high-frequency AC render framework
 
 **State:** 🟢 Docs only, no code. Owner wants to build ALL the substrate frameworks, then

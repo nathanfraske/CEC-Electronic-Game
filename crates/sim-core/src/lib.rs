@@ -1098,6 +1098,137 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
         .collect()
 }
 
+/// Union-find `find` with path halving over the `parent` table. The table is kept
+/// **union-by-min** by [`floating_refs`], so the returned root is always the
+/// lowest node index in `x`'s connected component — a deterministic, stable choice.
+fn uf_find(parent: &mut [usize], mut x: usize) -> usize {
+    while parent[x] != x {
+        parent[x] = parent[parent[x]];
+        x = parent[x];
+    }
+    x
+}
+
+/// Union the components of `a` and `b`, attaching the larger root under the smaller
+/// so every component's root stays its **minimum** node index (the deterministic
+/// reference [`floating_refs`] reports).
+fn uf_union(parent: &mut [usize], a: usize, b: usize) {
+    let ra = uf_find(parent, a);
+    let rb = uf_find(parent, b);
+    if ra != rb {
+        let (lo, hi) = if ra < rb { (ra, rb) } else { (rb, ra) };
+        parent[hi] = lo;
+    }
+}
+
+/// Compute the **floating-component reference nodes**: one circuit node for each
+/// connected component that has no galvanic path to ground (node `0`) and no terminal
+/// a device already pins to ground on its own. Each returned node is weakly tied to
+/// ground with a single [`GMIN`] during assembly ([`Sim::stamp_floating_refs`]),
+/// removing the singular common-mode degree of freedom an isolated subnet would
+/// otherwise carry under the single-global-ground model — the generalisation of the
+/// per-node gate/op-amp `GMIN` from *nodes* to *components* (see
+/// `docs/sim/floating-networks.md`).
+///
+/// Union-find runs over the **potential-defining** ties only: every element that
+/// conducts or constrains a voltage between two of its terminals unions those nodes
+/// (resistor, capacitor, inductor, voltage/AC source, switch, every diode-family
+/// junction and the varistor; the MOSFET/BJT channel `a`–`b`; both transformer
+/// windings `a`–`b` and `c`–`d` **separately**, preserving galvanic isolation). The
+/// ideal current source is skipped — it injects current without defining a potential
+/// (the dual case the netlist's incomplete-circuit check already handles). Terminals a
+/// device pins to ground on its own are marked **referenced** directly (the MOSFET/BJT
+/// gate/base, both op-amp inputs and its driven output, every logic-gate / level-shifter
+/// / flip-flop terminal, and the pull-up's node), so the component holding one is never
+/// double-tied.
+///
+/// A component is *referenced* iff it contains ground or any such terminal; every other
+/// component contributes its **lowest-index node** (the union-by-min root). Determinism:
+/// fixed element order, union-by-min, no hashing — the list reproduces bit-for-bit, and
+/// a fully grounded circuit yields an **empty** list (one component, the grounded one),
+/// leaving its solve and the analog golden untouched.
+fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
+    if node_count <= 1 {
+        return Vec::new();
+    }
+    let mut parent: Vec<usize> = (0..node_count).collect();
+    let mut referenced = vec![false; node_count];
+    referenced[0] = true; // ground is the global reference
+    let mark = |referenced: &mut [bool], t: usize| {
+        if t < node_count {
+            referenced[t] = true;
+        }
+    };
+    for e in elements {
+        match e.kind {
+            ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR | ELEM_VSOURCE | ELEM_ACSOURCE
+            | ELEM_SWITCH | ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER | ELEM_VARISTOR => {
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+            }
+            ELEM_NMOS | ELEM_PMOS | ELEM_NPN | ELEM_PNP => {
+                // The channel / main current ties drain–source (collector–emitter);
+                // the gate/base draws no DC current and is GMIN-pinned by the device,
+                // so mark it referenced rather than union it.
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+                mark(&mut referenced, e.c);
+            }
+            ELEM_OPAMP => {
+                // Output is GOUT-referenced to ground, both inputs GMIN-referenced —
+                // all three terminals are pinned by the device itself.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+            }
+            ELEM_GATE | ELEM_DFF | ELEM_LEVELSHIFT => {
+                // Digital drivers reference their nets to ground via GATE_GOUT; treat
+                // every pin as pinned (receivers included — a driven net is referenced).
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+                mark(&mut referenced, e.d);
+            }
+            ELEM_PULLUP => {
+                // Pulled to an internal rail through PULLUP_R — a real conductance to
+                // ground, so the node is referenced.
+                mark(&mut referenced, e.a);
+            }
+            ELEM_TRANSFORMER => {
+                // Two galvanically isolated windings: union within each, never across,
+                // so a floating secondary stays its own component.
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+                if e.c < node_count && e.d < node_count {
+                    uf_union(&mut parent, e.c, e.d);
+                }
+            }
+            // ELEM_ISOURCE and anything else define no potential between terminals.
+            _ => {}
+        }
+    }
+    // Propagate each referenced node to its component root (the min node).
+    let mut root_ref = vec![false; node_count];
+    for (n, &is_ref) in referenced.iter().enumerate() {
+        if is_ref {
+            let r = uf_find(&mut parent, n);
+            root_ref[r] = true;
+        }
+    }
+    // Each unreferenced component contributes its root = lowest-index node. Iterating
+    // ascending and taking roots yields a sorted, deduplicated list.
+    let mut refs = Vec::new();
+    for (n, &reffed) in root_ref.iter().enumerate().skip(1) {
+        if !reffed && uf_find(&mut parent, n) == n {
+            refs.push(n);
+        }
+    }
+    refs
+}
+
 // --- Newton outer-loop constants ----------------------------------------------
 
 /// Hard cap on Newton iterations per solve. If the loop has not converged by
@@ -1565,6 +1696,244 @@ fn opamp_limit(vnew: f64, vold: f64) -> f64 {
     }
 }
 
+// --- AC analysis (Layer 2 measurement) ----------------------------------------
+
+/// Number of `f64` fields [`Sim::ac_measurements`] reports per element, in this
+/// fixed order:
+///
+/// `0` Vrms, `1` Irms (true RMS incl. DC) · `2` Vmean, `3` Imean (DC component) ·
+/// `4` Vamp, `5` Iamp (AC peak amplitude, `(max−min)/2`) · `6` Preal (mean `V·I`, W) ·
+/// `7` PF (power factor / V–I correlation, `−1..1`) · `8` |Z| (AC, `Vac/Iac`, Ω) ·
+/// `9` phase (V−I lag, signed radians: `>0` inductive lag, `<0` capacitive lead) ·
+/// `10` freq (fundamental, Hz) · `11` valid (`1.0` once a full AC cycle has been
+/// measured, else `0.0`).
+///
+/// Derived from the live V/I waveforms (snapshot-only, deterministic), **not** part
+/// of the snapshot hash — like [`Sim::element_currents`]. The render reads these for
+/// the shimmer/phasor handoff. See `docs/ui/high-frequency-render.md`.
+pub const AC_FIELDS: usize = 12;
+
+/// Debounce floor on samples per detected cycle: a rising zero-cross is only accepted
+/// as a cycle boundary after this many samples, which also caps the detectable
+/// fundamental at `1 / (AC_MIN_CYCLE_SAMPLES · DT)` (~62.5 kHz at the 2 µs step — far
+/// above the teaching range).
+const AC_MIN_CYCLE_SAMPLES: u32 = 8;
+
+/// Hard cap on a window with no accepted `V` zero-cross: a slow/DC signal finalizes as
+/// a DC reading (freq 0) every this-many samples instead of accumulating unbounded.
+/// 250_000 samples ≈ 0.5 s at `DT`, an ~2 Hz floor on AC detection.
+const AC_MAX_CYCLE_SAMPLES: u32 = 250_000;
+
+/// Variance (V² or A²) at or below which a window's signal is treated as flat/DC: no
+/// meaningful AC phase or power factor (phase 0, PF 1), and |Z| left 0 if the current
+/// is flat. A small fixed floor that also guards the correlation's divide.
+const AC_VAR_FLOOR: f64 = 1.0e-18;
+
+/// Per-element running AC measurement: accumulates the terminal voltage `V(a)−V(b)`
+/// and the through-current over each detected cycle of `V`, then finalizes a held set
+/// of measurements ([`AC_FIELDS`]) at every cycle boundary — a deterministic,
+/// O(1)-per-tick synchronous RMS / power / phase detector reading the solver's
+/// waveforms. Cycles are delimited by rising zero-crossings of `V` about the previous
+/// window's mean; phase is the signed sub-sample offset of the current's rising
+/// crossing. All `f64`, fixed order — it reproduces bit-for-bit and rewinds with the
+/// run, and being unhashed it never moves the analog golden.
+#[derive(Clone, Debug)]
+struct AcMeas {
+    /// Whether at least one sample has been seen (seeds the crossing detector).
+    primed: bool,
+    /// Zero-reference for `V`'s crossing detection: the last completed window's mean
+    /// (`0` until the first completes).
+    ref_v: f64,
+    /// Zero-reference for `I`'s crossing detection: the last completed window's mean.
+    ref_i: f64,
+    /// Previous sample's `V − ref_v`, for rising-edge detection of the cycle boundary.
+    prev_vac: f64,
+    /// Previous sample's `I − ref_i`, for the current's rising-crossing detection.
+    prev_iac: f64,
+    /// Samples accumulated in the in-progress window.
+    n: u32,
+    sum_v: f64,
+    sum_i: f64,
+    sum_vv: f64,
+    sum_ii: f64,
+    sum_vi: f64,
+    vmin: f64,
+    vmax: f64,
+    imin: f64,
+    imax: f64,
+    /// Fractional sample index of `I`'s first rising crossing in the window (`−1` =
+    /// none yet), the phase reference relative to the window start (`V`'s crossing).
+    i_cross: f64,
+    /// Finalized, held measurements in [`AC_FIELDS`] order.
+    out: [f64; AC_FIELDS],
+}
+
+impl Default for AcMeas {
+    fn default() -> Self {
+        AcMeas {
+            primed: false,
+            ref_v: 0.0,
+            ref_i: 0.0,
+            prev_vac: 0.0,
+            prev_iac: 0.0,
+            n: 0,
+            sum_v: 0.0,
+            sum_i: 0.0,
+            sum_vv: 0.0,
+            sum_ii: 0.0,
+            sum_vi: 0.0,
+            vmin: f64::INFINITY,
+            vmax: f64::NEG_INFINITY,
+            imin: f64::INFINITY,
+            imax: f64::NEG_INFINITY,
+            i_cross: -1.0,
+            out: [0.0; AC_FIELDS],
+        }
+    }
+}
+
+impl AcMeas {
+    /// Fold one solved sample (`v = V(a)−V(b)`, `i` = through-current) into the
+    /// in-progress window, detecting cycle boundaries and finalizing held results.
+    fn update(&mut self, v: f64, i: f64) {
+        let vac = v - self.ref_v;
+        let iac = i - self.ref_i;
+        if !self.primed {
+            // First ever sample: seed the previous-iterate references, start window.
+            self.primed = true;
+            self.prev_vac = vac;
+            self.prev_iac = iac;
+            self.accumulate(v, i);
+            return;
+        }
+        // Record `I`'s first rising zero-crossing within the window. It sits between
+        // accumulated sample `n-1` (prev_iac) and the sample about to be added (`n`);
+        // linear interpolation gives the sub-sample fractional index.
+        if self.i_cross < 0.0 && self.prev_iac < 0.0 && iac >= 0.0 && self.n > 0 {
+            let frac = -self.prev_iac / (iac - self.prev_iac);
+            self.i_cross = (self.n - 1) as f64 + frac;
+        }
+        // A rising zero-crossing of `V` (about the window mean) closes the cycle.
+        if self.prev_vac < 0.0 && vac >= 0.0 && self.n >= AC_MIN_CYCLE_SAMPLES {
+            self.finalize(self.n);
+            self.reset_window();
+        } else if self.n >= AC_MAX_CYCLE_SAMPLES {
+            // Slow/DC signal: finalize a DC reading (period 0 → freq 0) and start fresh.
+            self.finalize(0);
+            self.reset_window();
+        }
+        self.prev_vac = vac;
+        self.prev_iac = iac;
+        self.accumulate(v, i);
+    }
+
+    /// Add a sample to the running window sums and peak trackers.
+    fn accumulate(&mut self, v: f64, i: f64) {
+        self.n += 1;
+        self.sum_v += v;
+        self.sum_i += i;
+        self.sum_vv += v * v;
+        self.sum_ii += i * i;
+        self.sum_vi += v * i;
+        if v < self.vmin {
+            self.vmin = v;
+        }
+        if v > self.vmax {
+            self.vmax = v;
+        }
+        if i < self.imin {
+            self.imin = i;
+        }
+        if i > self.imax {
+            self.imax = i;
+        }
+    }
+
+    /// Compute and store the held measurements for the just-completed window.
+    /// `period` is the cycle length in samples; `period == 0` marks a DC/slow
+    /// finalize (freq 0, phase 0).
+    fn finalize(&mut self, period: u32) {
+        let n = self.n.max(1) as f64;
+        let mean_v = self.sum_v / n;
+        let mean_i = self.sum_i / n;
+        let ms_v = self.sum_vv / n;
+        let ms_i = self.sum_ii / n;
+        let vrms = ms_v.max(0.0).sqrt();
+        let irms = ms_i.max(0.0).sqrt();
+        let var_v = (ms_v - mean_v * mean_v).max(0.0);
+        let var_i = (ms_i - mean_i * mean_i).max(0.0);
+        let cov = self.sum_vi / n - mean_v * mean_i;
+        let preal = self.sum_vi / n;
+        let vamp = if self.vmax >= self.vmin {
+            (self.vmax - self.vmin) * 0.5
+        } else {
+            0.0
+        };
+        let iamp = if self.imax >= self.imin {
+            (self.imax - self.imin) * 0.5
+        } else {
+            0.0
+        };
+        // Power factor = the V–I correlation coefficient (= cos φ for a single-frequency
+        // pair), guarded against the flat-signal divide.
+        let pf = if var_v > AC_VAR_FLOOR && var_i > AC_VAR_FLOOR {
+            (cov / (var_v * var_i).sqrt()).clamp(-1.0, 1.0)
+        } else {
+            1.0
+        };
+        // AC impedance magnitude (Vac_rms / Iac_rms); 0 when the current is flat.
+        let zmag = if var_i > AC_VAR_FLOOR {
+            (var_v / var_i).sqrt()
+        } else {
+            0.0
+        };
+        // Phase: signed V−I lag from the current's rising-crossing offset within the
+        // cycle, wrapped to (−π, π]. Needs a real cycle and a clean current crossing.
+        let phase =
+            if period > 0 && var_v > AC_VAR_FLOOR && var_i > AC_VAR_FLOOR && self.i_cross >= 0.0 {
+                let mut ph = std::f64::consts::TAU * (self.i_cross / period as f64);
+                if ph > std::f64::consts::PI {
+                    ph -= std::f64::consts::TAU;
+                }
+                ph
+            } else {
+                0.0
+            };
+        let freq = if period > 0 {
+            1.0 / (period as f64 * DT)
+        } else {
+            0.0
+        };
+        let valid = if period > 0 && var_v > AC_VAR_FLOOR {
+            1.0
+        } else {
+            0.0
+        };
+        self.out = [
+            vrms, irms, mean_v, mean_i, vamp, iamp, preal, pf, zmag, phase, freq, valid,
+        ];
+    }
+
+    /// Carry the just-finalized window's means as the next window's zero references
+    /// and clear the accumulators for the new cycle.
+    fn reset_window(&mut self) {
+        let n = self.n.max(1) as f64;
+        self.ref_v = self.sum_v / n;
+        self.ref_i = self.sum_i / n;
+        self.n = 0;
+        self.sum_v = 0.0;
+        self.sum_i = 0.0;
+        self.sum_vv = 0.0;
+        self.sum_ii = 0.0;
+        self.sum_vi = 0.0;
+        self.vmin = f64::INFINITY;
+        self.vmax = f64::NEG_INFINITY;
+        self.imin = f64::INFINITY;
+        self.imax = f64::NEG_INFINITY;
+        self.i_cross = -1.0;
+    }
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -1595,6 +1964,15 @@ pub struct Sim {
     /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
     /// the event scheduler lands. Exposed via [`Sim::net_class`].
     net_classes: Vec<NetClass>,
+    /// Circuit nodes (1-based; ground is never listed) that each anchor a **floating
+    /// connected component** — a subnet with no galvanic path to ground and no
+    /// device-pinned terminal. Computed once at install by [`floating_refs`]; each is
+    /// weakly tied to ground with one [`GMIN`] in every assembly path
+    /// ([`Sim::stamp_floating_refs`]) so an isolated subnet (a floating transformer
+    /// secondary, an isolated sensor) has a defined common-mode instead of a singular
+    /// row. Empty for any fully grounded circuit, so the analog golden is unchanged.
+    /// See `docs/sim/floating-networks.md`.
+    floating_refs: Vec<usize>,
 
     /// Latest solved node voltages, length `node_count`, index `0` always `0.0`.
     node_v: Vec<f64>,
@@ -1705,6 +2083,13 @@ pub struct Sim {
     /// pure function of the committed readout and consistent with `node_v` at
     /// the same tick. See [`Sim::element_currents`] for the per-kind formulas.
     currents: Vec<f64>,
+    /// Per-element running **AC analyzer** (one [`AcMeas`] per element, in submission
+    /// order), updated each committed step from that element's terminal voltage and
+    /// current. Holds the last full cycle's RMS / power / phase measurements
+    /// ([`AC_FIELDS`]), read out by [`Sim::ac_measurements`]. Derived, snapshot-only,
+    /// and **not hashed** (like `currents`), so it never moves the analog golden; it
+    /// reproduces because it is a pure function of the V/I trajectory.
+    ac: Vec<AcMeas>,
 }
 
 impl Sim {
@@ -1741,6 +2126,7 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             net_classes: vec![NetClass::Analog],
+            floating_refs: Vec::new(),
             node_v: vec![0.0],
             reactive_state: Vec::new(),
             secondary_state: Vec::new(),
@@ -1762,6 +2148,7 @@ impl Sim {
             gate_target: Vec::new(),
             gate_gout: Vec::new(),
             currents: Vec::new(),
+            ac: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
         // 1 = source/R junction, 2 = R/C junction. Two-terminal elements set the
@@ -1929,12 +2316,14 @@ impl Sim {
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
         let net_classes = classify_nets(node_count, &elements);
+        let floating = floating_refs(node_count, &elements);
 
         self.node_count = node_count;
         self.dim = next;
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
+        self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
@@ -1955,6 +2344,7 @@ impl Sim {
         self.gate_target = vec![0.0; elements.len()];
         self.gate_gout = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
+        self.ac = vec![AcMeas::default(); elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
         self.tick = 0;
@@ -2011,6 +2401,10 @@ impl Sim {
         for v in &mut self.node_v {
             *v = 0.0;
         }
+        // Clear the per-element AC analyzers so a rewind re-accumulates from t = 0.
+        for a in &mut self.ac {
+            *a = AcMeas::default();
+        }
         self.solve_operating_point();
         self.commit_net_levels();
     }
@@ -2031,6 +2425,24 @@ impl Sim {
         if let (Some(r), Some(c)) = (p, q) {
             mat[r * n + c] -= GMIN;
             mat[c * n + r] -= GMIN;
+        }
+    }
+
+    /// Stamp the weak [`GMIN`] common-mode tie for each floating-component reference
+    /// node (`self.floating_refs`, computed at install by [`floating_refs`]) into an
+    /// assembled MNA matrix of dimension `n`. Each reference is a circuit node whose
+    /// component has no galvanic path to ground; a single `GMIN` on its diagonal
+    /// removes that component's singular common-mode row without disturbing the physics
+    /// (1 pS is twelve orders below any real conductance) — the component-level analogue
+    /// of the per-gate/op-amp `GMIN`. A grounded circuit has no floating component, so
+    /// the list is empty and this is a no-op (the analog golden is unchanged). Each
+    /// node is `>= 1` (ground is never floating), so its MNA row `node - 1` is always a
+    /// valid node-voltage index `< n`. See `docs/sim/floating-networks.md`.
+    #[inline]
+    fn stamp_floating_refs(&self, mat: &mut [f64], n: usize) {
+        for &node in &self.floating_refs {
+            let r = node - 1;
+            mat[r * n + r] += GMIN;
         }
     }
 
@@ -2243,6 +2655,8 @@ impl Sim {
         // Digital gates and flip-flops drive their nets through the resolved digital
         // domain (one stamp per net), not per element.
         self.stamp_digital(&mut mat, &mut rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
+        self.stamp_floating_refs(&mut mat, n);
 
         let x = solve_dense(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
@@ -2446,6 +2860,8 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut mat, &mut rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
+        self.stamp_floating_refs(&mut mat, n);
 
         let x = solve_dense(mat, rhs, n);
 
@@ -3183,6 +3599,9 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
+        // base (copied into every iteration's matrix); a no-op when fully grounded.
+        self.stamp_floating_refs(&mut base_mat, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -3399,6 +3818,9 @@ impl Sim {
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
+        // base (copied into every iteration's matrix); a no-op when fully grounded.
+        self.stamp_floating_refs(&mut base_mat, n);
 
         let x = self.newton_iterate(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
@@ -3819,7 +4241,23 @@ impl Sim {
         // Screen the committed state for a non-physical (FAIL) result and clamp it so
         // it can never propagate as a NaN, before the tick advances.
         self.flag_and_clamp_fails();
+        // Fold this tick's per-element V/I sample into the running AC analyzers, after
+        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
+        self.update_ac_analysis();
         self.tick += 1;
+    }
+
+    /// Fold this tick's solved per-element waveform sample — terminal voltage
+    /// `V(a)−V(b)` and through-current — into each element's running AC analyzer
+    /// ([`AcMeas`]). Called once per committed [`Sim::step`] (never at the install/reset
+    /// operating point, so the analyzers start from the first real step). Pure function
+    /// of the committed readout; the held results are exposed by [`Sim::ac_measurements`]
+    /// and are **not** part of the snapshot hash, so they never move the golden.
+    fn update_ac_analysis(&mut self) {
+        for (i, e) in self.elements.iter().enumerate() {
+            let v = self.node_v[e.a] - self.node_v[e.b];
+            self.ac[i].update(v, self.currents[i]);
+        }
     }
 
     /// After a solve, screen every quantity that displays or propagates — node
@@ -3935,6 +4373,31 @@ impl Sim {
     /// transformer's real flux level + bias rather than a free-running animation.
     pub fn reactive_currents(&self) -> Vec<f64> {
         self.reactive_state.clone()
+    }
+
+    /// Per-element **AC measurements**, flattened in installed-netlist order: element
+    /// `i` occupies `[i*AC_FIELDS .. (i+1)*AC_FIELDS]`, with the field layout documented
+    /// on [`AC_FIELDS`] (Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|, phase,
+    /// freq, valid). Each element's analyzer holds the **last full AC cycle** measured
+    /// from its terminal voltage and through-current; `valid` is `0.0` until the first
+    /// cycle completes (the render then falls back to the instantaneous DC cues).
+    ///
+    /// A pure, side-effect-free read of the running analyzers, consistent with
+    /// [`Sim::element_currents`] at the same tick and **not** part of the snapshot hash
+    /// (like the currents) — so exposing it is replay-safe and golden-neutral. The
+    /// length is `element_count * AC_FIELDS`. See `docs/ui/high-frequency-render.md`.
+    pub fn ac_measurements(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.ac.len() * AC_FIELDS);
+        for a in &self.ac {
+            out.extend_from_slice(&a.out);
+        }
+        out
+    }
+
+    /// The number of `f64` fields [`Sim::ac_measurements`] reports per element
+    /// ([`AC_FIELDS`]), so the front end can stride the flat array without hardcoding.
+    pub fn ac_fields(&self) -> usize {
+        AC_FIELDS
     }
 
     /// Read-only snapshot of the exposed state vector, for rendering and the
@@ -4182,6 +4645,152 @@ mod tests {
             &[7.0, 0.0], // BUF, (resistor aux unused)
         ));
         assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
+    }
+
+    /// [`floating_refs`] identifies exactly the connected components with no galvanic
+    /// path to ground and no device-pinned terminal — the topology behind the
+    /// per-component `GMIN` (`docs/sim/floating-networks.md`). A grounded circuit yields
+    /// an empty list (so the golden is untouched); an isolated transformer secondary
+    /// yields its lowest node; a *grounded* secondary yields nothing.
+    #[test]
+    fn floating_refs_identifies_isolated_subnets() {
+        let el = |kind, a, b, c, d, value| Element {
+            kind,
+            a,
+            b,
+            c,
+            d,
+            value,
+            aux: 0.0,
+        };
+
+        // Fully grounded RC → one (grounded) component → no floating ref.
+        let rc = [
+            el(ELEM_VSOURCE, 1, 0, 0, 0, 5.0),
+            el(ELEM_RESISTOR, 1, 2, 0, 0, 1.0e3),
+            el(ELEM_CAPACITOR, 2, 0, 0, 0, 1.0e-6),
+        ];
+        assert!(
+            floating_refs(3, &rc).is_empty(),
+            "grounded circuit has no floating reference"
+        );
+
+        // Isolated transformer secondary: primary 1-0 grounded, secondary 2-3 floats
+        // with a 1k load. The {2,3} component refs its lowest node, node 2.
+        let xfmr = [
+            el(ELEM_ACSOURCE, 1, 0, 0, 0, 1.0e3),
+            el(ELEM_TRANSFORMER, 1, 0, 2, 3, 2.0),
+            el(ELEM_RESISTOR, 2, 3, 0, 0, 1.0e3),
+        ];
+        assert_eq!(
+            floating_refs(4, &xfmr),
+            vec![2],
+            "floating secondary references its lowest node"
+        );
+
+        // Same transformer with the secondary tied to ground (d = 0) is NOT floating.
+        let grounded_sec = [
+            el(ELEM_ACSOURCE, 1, 0, 0, 0, 1.0e3),
+            el(ELEM_TRANSFORMER, 1, 0, 2, 0, 2.0),
+            el(ELEM_RESISTOR, 2, 0, 0, 0, 1.0e3),
+        ];
+        assert!(
+            floating_refs(3, &grounded_sec).is_empty(),
+            "grounded secondary has no floating reference"
+        );
+
+        // A MOSFET whose channel floats but whose gate is the device's own pinned
+        // terminal: the channel pair {1,2} floats (refs node 1); the gate (node 3) is
+        // device-referenced, never floated.
+        let fet = [el(ELEM_NMOS, 1, 2, 3, 0, 0.0)];
+        assert_eq!(
+            floating_refs(4, &fet),
+            vec![1],
+            "FET channel floats; the GMIN-pinned gate does not"
+        );
+    }
+
+    /// A **floating** resistive divider — no node touches ground — still solves with a
+    /// defined common mode. The single-global-ground model leaves such a subnet's
+    /// absolute potential singular; the per-component `GMIN` ([`floating_refs`]) ties it
+    /// weakly to ground so the *differential* divider answer is exact and the common
+    /// mode is finite (pinned near 0 at the lowest-index node). Part 1 of
+    /// `docs/sim/floating-networks.md`.
+    #[test]
+    fn floating_divider_solves_with_defined_common_mode() {
+        // Ground (node 0) is unused: a 10 V source across two equal series resistors,
+        // entirely isolated. E0: Vsrc 1->3 = 10 V; E1: R 1->2 = 1k; E2: R 2->3 = 1k.
+        let sim = build(
+            4,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[3, 2, 3],
+            &[10.0, 1_000.0, 1_000.0],
+        );
+        let v = sim.node_voltages();
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "floating solve must be finite: {v:?}"
+        );
+        // The differential divider is exact: each equal resistor drops half the 10 V.
+        assert!(
+            ((v[1] - v[2]) - 5.0).abs() < 1e-6,
+            "top half not 5 V: {v:?}"
+        );
+        assert!(
+            ((v[2] - v[3]) - 5.0).abs() < 1e-6,
+            "bottom half not 5 V: {v:?}"
+        );
+        // Common mode is pinned near 0 at the lowest-index floating node (node 1).
+        assert!(v[1].abs() < 1e-3, "common mode not pinned near 0: {v:?}");
+    }
+
+    /// A transformer secondary left **floating** — galvanically isolated, no ground tie
+    /// — energizes its isolated load and the run reproduces bit-for-bit. The isolated
+    /// secondary subnet ({sec+, sec-} = nodes 2, 3) gets a defined common mode from the
+    /// per-component `GMIN`; the headline Part-1 win (`docs/sim/floating-networks.md`).
+    #[test]
+    fn floating_transformer_secondary_is_reproducible() {
+        // node 0 = gnd, 1 = AC+/primary+, 2 = secondary+, 3 = secondary-. Primary a=1,
+        // b=0; secondary c=2, d=3 with a 1k load 2->3 — neither secondary node touches
+        // ground, so {2,3} floats.
+        let run = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_ACSOURCE, ELEM_TRANSFORMER, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 0, 3],
+                &[0, 2, 0],
+                &[0, 3, 0],
+                &[1000.0, 2.0, 1000.0],
+                &[5.0, 0.0, 0.0],
+            ));
+            let (mut lo, mut hi) = (f64::MAX, f64::MIN);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+                let v = sim.node_voltages();
+                let load = v[2] - v[3];
+                assert!(load.is_finite(), "floating secondary must stay finite");
+                lo = lo.min(load);
+                hi = hi.max(load);
+            }
+            (acc, hi - lo)
+        };
+        let (acc1, swing) = run();
+        let (acc2, _) = run();
+        assert_eq!(
+            acc1, acc2,
+            "floating transformer secondary must reproduce exactly"
+        );
+        // The isolated secondary actually delivers AC to its load (turns ratio 2 on a
+        // 5 V peak primary → a multi-volt swing across the 1k load).
+        assert!(
+            swing > 1.0,
+            "isolated secondary should energize its load: {swing}"
+        );
     }
 
     /// A resistive voltage divider's node voltage is exact (no dynamics): a 12 V
@@ -7110,6 +7719,130 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "AC circuit must reproduce exactly");
+    }
+
+    // --- AC analysis (Layer 2 measurement) ------------------------------------
+    //
+    // The per-element AC analyzer accumulates each element's terminal voltage and
+    // through-current over a detected cycle and finalizes RMS / power / phase
+    // measurements (`AC_FIELDS`), read out by `ac_measurements`. These tests drive
+    // known R / C / L loads at a fixed frequency and check the measured phase, power
+    // factor, impedance, and frequency against physics — plus the replay invariant.
+    // Field indices match `AC_FIELDS`: 0 Vrms, 1 Irms, 6 Preal, 7 PF, 8 |Z|, 9 phase,
+    // 10 freq, 11 valid.
+
+    /// A resistor reads as purely resistive: power factor ≈ 1, V–I phase ≈ 0, the
+    /// measured |Z| ≈ R, the detected frequency ≈ the source, and Vrms ≈ amp/√2.
+    #[test]
+    fn ac_analysis_resistor_is_resistive() {
+        // 5 V-peak (default), 1 kHz AC source straight across a 1 k resistor.
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[1000.0, 1000.0],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let r = &m[AC_FIELDS..2 * AC_FIELDS]; // the resistor (element 1)
+        assert!(
+            r.iter().all(|x| x.is_finite()),
+            "finite measurements: {r:?}"
+        );
+        assert_eq!(r[11], 1.0, "a full AC cycle has been measured");
+        assert!(r[7] > 0.98, "power factor near unity: {}", r[7]);
+        assert!(r[9].abs() < 0.05, "phase near zero: {}", r[9]);
+        assert!((r[8] - 1000.0).abs() < 30.0, "|Z| ~ 1 k: {}", r[8]);
+        assert!((r[10] - 1000.0).abs() < 5.0, "freq ~ 1 kHz: {}", r[10]);
+        assert!(
+            (r[0] - 5.0 / 2f64.sqrt()).abs() < 0.1,
+            "Vrms ~ amp/sqrt(2): {}",
+            r[0]
+        );
+    }
+
+    /// A capacitor's current **leads** its voltage by ~90°: the measured phase is
+    /// near −π/2 and the power factor near 0 (the reactive corner).
+    #[test]
+    fn ac_analysis_capacitor_current_leads() {
+        // AC 1->0, R 1->2 (1 k), C 2->0 (0.1 uF) at 1 kHz; measure the capacitor.
+        let mut sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[1000.0, 1000.0, 0.1e-6],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let c = &m[2 * AC_FIELDS..3 * AC_FIELDS]; // the capacitor (element 2)
+        assert_eq!(c[11], 1.0, "a full AC cycle has been measured");
+        assert!(
+            c[9] > -1.7 && c[9] < -1.4,
+            "capacitor current leads (~ -pi/2): {}",
+            c[9]
+        );
+        assert!(c[7].abs() < 0.1, "power factor near zero: {}", c[7]);
+    }
+
+    /// An inductor's current **lags** its voltage by ~90°: the measured phase is near
+    /// +π/2 and the power factor near 0.
+    #[test]
+    fn ac_analysis_inductor_current_lags() {
+        // AC 1->0, R 1->2 (1 k), L 2->0 (0.1 H) at 1 kHz; measure the inductor.
+        let mut sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_INDUCTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[1000.0, 1000.0, 0.1],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let l = &m[2 * AC_FIELDS..3 * AC_FIELDS]; // the inductor (element 2)
+        assert_eq!(l[11], 1.0, "a full AC cycle has been measured");
+        assert!(
+            l[9] > 1.4 && l[9] < 1.7,
+            "inductor current lags (~ +pi/2): {}",
+            l[9]
+        );
+        assert!(l[7].abs() < 0.1, "power factor near zero: {}", l[7]);
+    }
+
+    /// The AC analysis reproduces bit-for-bit across runs (the measurements are a pure
+    /// function of the V/I trajectory) and stays finite. A series R–L–C from a 500 Hz
+    /// source exercises every analyzer at once; the measurement bits are folded into
+    /// the replay accumulator so a divergence would be caught.
+    #[test]
+    fn ac_analysis_run_is_reproducible() {
+        let run = || {
+            // Series R–L–C: AC 1->0, R 1->2, L 2->3, C 3->0.
+            let mut sim = build(
+                4,
+                &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_INDUCTOR, ELEM_CAPACITOR],
+                &[1, 1, 2, 3],
+                &[0, 2, 3, 0],
+                &[500.0, 470.0, 0.05, 0.22e-6],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..4000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+                for &x in &sim.ac_measurements() {
+                    assert!(x.is_finite(), "AC measurement stays finite");
+                    acc ^= x.to_bits().rotate_left(13);
+                }
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "AC analysis must reproduce exactly");
     }
 
     /// `set_netlist` accepts the AC source element type (type 7); a malformed

@@ -6,6 +6,85 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (14) — High-frequency AC render primitives (Layer 3) shipped
+
+- ~~**`tierKit.shimmerFlow`** — the carrier→shimmer-band handoff on
+  `blurFactor(apparentFreq(f))` (smoothstep 15→300 **apparent** Hz). The handoff tracks the
+  on-screen apparent rate `f·tps·DT` (`setApparentRateScale` set each frame from the playback
+  tickrate in App.svelte), so slowing the tickrate drops a fast AC back to visible sloshing
+  and speeding up returns it to a shimmer. At `b=0` byte-for-byte `belt` (no DC regression).
+  **`tierKit.phasorInset`** — V/I arrows on a dial, angle = measured V–I phase, lengths = AC
+  amplitudes, filled phase arc, decaying-alpha I-tip phosphor trail; a pure function of the
+  bounded phase (rewinds, no mutable buffer).~~
+- ~~Data path: `ElectricalState.ac` (`AcReadout`) added (glyphs); `electricalMap` slices the
+  flat `acMeasurements` per element; `App.svelte` passes `snap.acMeasurements`/`acFields`.~~
+- ~~Applied: the **inductor** analogy drawer's pipe flow uses `shimmerFlow` (reference home);
+  the **phasor inset** overlays the InfoDiagram for reactive parts (C/EC/L/TR) once a cycle
+  is measured. Verified with `/tmp/harness/dumpPhasor.js` (handoff + phase encoding) and the
+  existing `run.js` drawer regression. All web gates green.~~
+- [ ] **Open (render adoption):** ~~board wire-pipes' carrier→shimmer swap~~ **done (15)**;
+  the cap/transformer drawers adopting `shimmerFlow`; the phase-domain scope (V/I vs phase).
+  See `docs/ui/high-frequency-render.md` §implementation-sketch 3–4.
+
+---
+
+## 2026-06-18 (15) — Board-wide carrier→shimmer handoff
+
+- ~~`Board.computeWireFlow` (was `computeWireCurrents`) now also attributes each wire an
+  **apparent AC frequency** (AC-amplitude-weighted mean of the elements' `ac.freq` in the
+  wire's KCL subtree) and an **AC fraction** (AC amp vs |DC current|), from the one
+  spanning-forest pass. `redrawWires` fades the chevrons/water/electron carriers into a
+  voltage-tinted glow band (`SHIMMER_VIB` wobble) at high `blurFactor(apparentFreq(freq))`
+  — in all three lenses; the energy belt is untouched. The AC-fraction gate keeps a
+  rectifier's DC rail (small 2f ripple) reading as streaming carriers, not a shimmer.~~
+- ~~Tickrate-coupled like the tier drawers (shares tierKit's `apparentRateScale`), so
+  slowing playback drops fast AC back to visible sloshing. All web gates green; tierKit +
+  drawer harnesses pass.~~
+- [ ] **Brainstorm (owner):** components visibly **morphing into their high-frequency
+  counterparts** (parasitics) at high apparent rate — e.g. a resistor → R + series L, a
+  cap → C + ESR + ESL. Needs a design doc (the Ideal/Real fidelity ladder already frames
+  the parasitics; this is the *render* of the transition). See HANDOFFS.
+
+---
+
+## 2026-06-18 (13) — AC analysis (Layer 2 measurement) shipped
+
+- ~~**AC analysis** (sim-core) — new `AcMeas` per-element running analyzer + `Sim::
+  ac_measurements()` (flat `[nElements × AC_FIELDS=12]`: Vrms, Irms, Vmean, Imean, Vamp,
+  Iamp, Preal, PF, |Z|, phase, freq, valid). Synchronous RMS/power/phase detector: cycles
+  delimited by rising zero-crossings of V about the running mean; phase = signed sub-sample
+  offset of I's crossing (>0 inductive lag, <0 capacitive lead); PF = V–I correlation; freq
+  from the period. O(1)/tick, O(1) storage. Updated each `step()` after the FAIL clamp;
+  unhashed (golden bit-identical), deterministic (reproduces + rewinds).~~
+- ~~Boundary: `ac_measurements()` + `ac_fields()` on sim-wasm; `loop.ts` `Snapshot` gains
+  `acMeasurements` + `acFields` (one batched read/frame).~~
+- ~~Tests: `ac_analysis_resistor_is_resistive` (PF≈1, φ≈0, |Z|≈R, freq✓), `…capacitor_
+  current_leads` (φ≈−π/2), `…inductor_current_lags` (φ≈+π/2), `…run_is_reproducible`
+  (measurement bits folded into the replay accumulator). 109 sim-core tests; all gates green.~~
+- [ ] **Next:** the `shimmerFlow` + `phasorInset` render primitives (L3) now have their data
+  source. Phase-domain scope (V/I vs phase) also reads these.
+
+---
+
+## 2026-06-18 (12) — Floating-component GMIN (Part 1 of floating networks) shipped
+
+- ~~**Floating-component `GMIN`** (sim-core) — implemented in `crates/sim-core/src/lib.rs`.
+  New `floating_refs(node_count, elements)` runs union-find (union-by-min, deterministic)
+  over potential-defining ties (R/C/L/V/AC/switch/diode-family/varistor union a–b;
+  FET/BJT channel a–b with the gate/base marked device-referenced; transformer unions each
+  winding separately; op-amp/digital/pull-up terminals marked referenced; ISOURCE skipped),
+  then returns the lowest node of every component with no path to ground. Stamped as one
+  `GMIN` per floating component in all four assembly paths via `stamp_floating_refs`. New
+  `floating_refs` field on `Sim`, computed at install.~~
+- ~~Tests: `floating_refs_identifies_isolated_subnets` (topology), `floating_divider_solves_
+  with_defined_common_mode` (exact differential, common-mode pinned), `floating_transformer_
+  secondary_is_reproducible` (the headline win). Golden bit-identical; all gates green.~~
+- [ ] **`ELEM_ROGOWSKI`** is now UNBLOCKED (Part 2 of `floating-networks.md`) — the
+  floating-reference prerequisite is in. Next sim-core element after AC analysis if the
+  owner wants the Rogowski path, else continue the critical path (AC analysis → render).
+
+---
+
 ## 2026-06-17 (11) — Frameworks roadmap + high-frequency AC render
 
 - ~~`docs/frameworks-roadmap.md` — the master "build the frameworks, then the game"
@@ -15,12 +94,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   three non-aliasing channels (shimmer width = amplitude, energy drift = real power,
   phasor angle = phase) + a phosphor-persistence phasor + a phase-domain scope.~~
 - ~~SPDX headers retrofitted onto `floating-networks.md` + `fidelity-ceiling.md`.~~
-- [ ] **AC analysis (Layer 2)** — running per-net/element RMS, peak, V–I phase ϕ, real/
+- ~~**AC analysis (Layer 2)** — running per-net/element RMS, peak, V–I phase ϕ, real/
   reactive power, PF, |Z|, apparent frequency from the live waveforms (snapshot-only,
-  deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.
-- [ ] **`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
-  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget. See
-  `docs/ui/high-frequency-render.md`.
+  deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.~~ **Done
+  — see (13) below.**
+- ~~**`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
+  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget.~~ **Done
+  — see (14) below.**
 
 ---
 
@@ -29,11 +109,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~Design docs written: `docs/sim/floating-networks.md` (floating subnets + Rogowski
   coil) and `docs/sim/fidelity-ceiling.md` (how real the solver vs the reality tiers can
   get — the "where's the stopping point" map).~~
-- [ ] **Floating-component `GMIN`** (sim-core) — the netlist picks ONE global ground, so
+- ~~**Floating-component `GMIN`** (sim-core) — the netlist picks ONE global ground, so
   an isolated subnet has a singular common-mode. Stamp one `GMIN` to ground per floating
   connected component (generalises the op-amp/MOSFET-input GMIN). Small, golden-safe
   (grounded circuits unaffected), and on its own it fixes a floating transformer
-  secondary + any isolation circuit. **Do first.** See `docs/sim/floating-networks.md`.
+  secondary + any isolation circuit. **Do first.**~~ **Done — see (12) below.**
 - [ ] **`ELEM_ROGOWSKI`** (sim-core) — a non-loading current-sense, derivative source:
   sense a pass-through branch's current, force `V_out = M·dI/dt` onto an isolated output
   winding (reuses the transformer's hard-secondary stamp + the inductor `dI/dt`
