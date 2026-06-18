@@ -28,6 +28,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (16) — Shimmer calibration fix + frequency-morph doc
+
+- ~~**Shimmer not visible on screen** — calibration cliff: with `AC_SHIMMER_HI=300`
+  apparent Hz, the default 500 Hz source only shimmered at the very top tickrate. Recalibrated
+  to `AC_SHIMMER_LO=10` / `HI=60` so the carrier→shimmer transition lands in the reachable
+  speed range (500 Hz flips between tps 5000↔50000); bumped the board band alpha. Verified by
+  a blur-vs-tps calc + a `computeWireFlow` freq/acFrac replication (`/tmp/harness`).~~ NB: not
+  screenshot-verified live (no headless-browser tooling) — owner to re-test at ≥50k ticks/s.
+- ~~**`docs/ui/frequency-morph.md`** — the owner's "parts morph into their HF counterparts"
+  idea written up: SRF flip (cap ⇄ inductor, shunt → shunt + L), depicted vs computed, as the
+  payoff of the Ideal/Real flag. Added to the roadmap (Layer 3).~~
+- [ ] **Frequency morph implementation** — blocked on the Ideal/Real fidelity flag (Layer 1)
+  for the honest/computed version; a render-only preview could come first. See the doc.
+
+---
+
 ## 2026-06-18 (15) — Board-wide carrier→shimmer handoff
 
 - ~~`Board.computeWireFlow` (was `computeWireCurrents`) now also attributes each wire an

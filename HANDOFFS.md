@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (24) — Shimmer reachable on screen (calibration) + frequency-morph design doc
+
+**State:** 🟢 Code (web calibration) + a new design doc. Owner reported the shimmer "not
+working on screen." Root cause found and fixed; the morph idea written up.
+
+**Shimmer fix — it was a calibration cliff, not a hard bug.** The blur is
+`blurFactor(apparentFreq(freq))` and apparent = `freq · tps · DT`. With the old band
+(`AC_SHIMMER_LO=15`, `HI=300` apparent Hz), a 500 Hz source (the AC-source default) hit
+blur 0 at every tickrate **except the very top** (tps 500000 → 1.0; tps 50000 → 0.04;
+below → 0), and 60 Hz never reached it. So at any normal setting nothing showed. Verified
+with a blur-vs-tps calc in `/tmp/harness`.
+- Recalibrated to **`AC_SHIMMER_LO=10`, `HI=60`** (apparent Hz — just over the eye's
+  ~10–15 Hz tracking limit). Now 500 Hz transitions carriers→shimmer between tps 5000
+  (blur 0) and 50000 (blur 0.90), full at 500000; 5 kHz at tps 5000; 60 Hz at the top.
+  Reachable across the usable speed range.
+- Bumped the board shimmer-band alpha (`board.ts`, core stroke 0.18→0.30 base) so it
+  reads clearly once the carriers fade.
+- **Caveat:** verified by the blur calc, a from-scratch replication of `computeWireFlow`'s
+  freq/acFrac (`/tmp/harness/wireFlow.js` — AC line → 500 Hz/acFrac 1; DC and DC-rail-with-
+  ripple → no shimmer), and the existing gates/harness. **No live browser screenshot** —
+  the repo has no headless-browser tooling (no Playwright/Puppeteer) and the board class
+  isn't in the harness. Owner should re-test: place an AC source (defaults to 500 Hz) and
+  push the speed to ≥50 000 ticks/s; the wires should go from sloshing carriers to a glow
+  band. Iterate on thresholds/alpha if it still reads weak.
+
+**`docs/ui/frequency-morph.md` (new).** The owner's "components morph into their HF
+counterparts" idea: every passive flips to its **dual at SRF** (cap ⇄ inductor, shunt →
+shunt + L); the morph is the *render of that flip* on the same apparent-rate signal. Key
+fork = **depicted (render-only) vs computed (solver-backed)**; the honest version is the
+**payoff of the Ideal/Real fidelity flag** (Layer 1, next on the critical path). Lead with
+the cap⇄inductor flip; anchor the first build on the current shunt. Added to the roadmap
+(Layer 3, 📐). Determinism: depicted = presentation on the bounded phase; computed = Real-
+model stamps (golden-safe, additive). Build order in the doc.
+
+**Next:** the **Ideal/Real fidelity flag** (Layer 1) — unblocks both the depicted→computed
+morph and the broader "fidelity is the progression" pillar.
+
+---
+
 ## 2026-06-18 (23) — Board-wide carrier→shimmer handoff
 
 **State:** 🟢 Shipped in `web/lib/board.ts`. The high-frequency render now applies to the
