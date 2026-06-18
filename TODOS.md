@@ -28,6 +28,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (19) — Auto-averaging (RMS) inspector readouts; flailing numbers fixed
+
+- ~~**V/I numbers flail at high speed** (owner) — the inspector/HUD + partInfo formulas read
+  the instantaneous `e.vAcross`/`e.current`, so they're unreadable once the AC reverses fast.
+  Fixed DMM-style: `glyphs.rmsStabilized(e)` swaps in the measured RMS (`ac.vrms`/`ac.irms`);
+  App.svelte computes `selRmsMode = ac.valid && apparentFreq(ac.freq) > READOUT_RMS_HZ(4)` each
+  frame and feeds `selDisplay` (RMS or live) to the HUD + the "Right now" partInfo, with an
+  `rms` badge. Self-adapts to signal freq AND playback speed (apparent rate). For DC, ac.valid
+  is false → live value (already steady). Resistive P=V·I rows stay correct (Vrms·Irms = real
+  power); reactive dV/dt-style formulas are stable but abstract (future: use Preal/PF).~~
+- [ ] **Phasor placement** (owner) — `phasorInset` already overlays the info-panel diagram for
+  reactive parts (C/EC/L/TR); was hidden by the lerp bug, now visible. Owner asked to "add the
+  phasor/phosphor indicator" — clarify whether they want it broadened (resistor = in-phase) or
+  relocated (inspector HUD / on the board). ASKED.
+
+---
+
 ## 2026-06-18 (18) — Shimmer deactivated while running (the lerp dropped acMeasurements)
 
 - ~~**Root cause of "shimmer deactivates on slow-down, only a t=0 reset brings it back"**:

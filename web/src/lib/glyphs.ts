@@ -76,6 +76,20 @@ export interface ElectricalState {
 
 export const ZERO_ELECTRICAL: ElectricalState = { current: 0, vAcross: 0 };
 
+/**
+ * A copy of `e` whose `vAcross`/`current` are replaced by the measured **RMS**
+ * magnitudes when the part has a valid AC reading — a DMM-style stable read for the
+ * numeric inspector, so the headline numbers stop flailing once the waveform reverses
+ * faster than the eye (or a real meter) can follow. The host only swaps to this when
+ * the *apparent* rate is high; a DC part has no valid AC reading, so it passes through
+ * unchanged (its instantaneous value is already steady). Presentation only.
+ */
+export function rmsStabilized(e: ElectricalState): ElectricalState {
+  const ac = e.ac;
+  if (!ac?.valid) return e;
+  return { ...e, vAcross: ac.vrms, current: ac.irms };
+}
+
 export interface GlyphPin {
   x: number;
   y: number;

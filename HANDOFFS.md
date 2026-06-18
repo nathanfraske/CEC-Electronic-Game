@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (28) — DMM-style RMS inspector readouts (flailing V/I numbers fixed)
+
+**State:** 🟢 Web. The readout twin of the RMS-colour / shimmer work: the inspector numbers
+stop flailing on fast AC by showing the measured RMS, self-adapting to the apparent rate.
+
+Owner: "V and A flail at high speed, can't get a clean read — a DMM can't see that either;
+auto-average/auto-range that self-adapts." Done:
+- `glyphs.rmsStabilized(e)` → a copy of the ElectricalState with `vAcross`/`current` replaced
+  by `ac.vrms`/`ac.irms` when `ac.valid`, else pass-through (DC is already steady).
+- `App.svelte`: each frame, `selRmsMode = ac.valid && apparentFreq(ac.freq) > READOUT_RMS_HZ`
+  (4 apparent Hz — where numbers get unreadable, a touch before the shimmer's visual band).
+  `selDisplay` (RMS-or-live) feeds the HUD meter (`{rms} V across · A through`) and the "Right
+  now" partInfo headline/derived; a small `.rms-tag` badge marks RMS mode. Removed the now-dead
+  `selElectrical`.
+- Self-adapts to BOTH the signal frequency and the playback speed (via `apparentFreq`). For DC
+  the part has no valid AC read → live value shown.
+- Resistive `P = V·I` rows stay correct (Vrms·Irms = real power on a resistor). Reactive parts'
+  dV/dt-style formulas are stable but a bit abstract under RMS — refine later with Preal/PF.
+
+**Phasor (the other half of the ask):** `phasorInset` already overlays the InfoDiagram for
+reactive parts (C/EC/L/TR) — the owner's screenshot was a **resistor** (correctly none), and
+the **lerp bug** was hiding it on running frames (now fixed). Asked the owner whether to
+broaden it (resistor → in-phase arrows) or relocate it (inspector HUD / board) before building
+more — don't want another blind iteration.
+
+---
+
 ## 2026-06-18 (27) — THE shimmer bug: lerpSnapshot dropped acMeasurements while running
 
 **State:** 🟢 Web one-liner fix. This is why the owner "could never really see it" — the
