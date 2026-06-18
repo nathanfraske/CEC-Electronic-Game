@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-17 (11) — Frameworks roadmap + high-frequency AC render
+
+- ~~`docs/frameworks-roadmap.md` — the master "build the frameworks, then the game"
+  dependency map (4 layers: solver core → measurement → render → game systems), with
+  status + critical path. Stitches the per-system docs together.~~
+- ~~`docs/ui/high-frequency-render.md` — the owner's AC render framework: decouple into
+  three non-aliasing channels (shimmer width = amplitude, energy drift = real power,
+  phasor angle = phase) + a phosphor-persistence phasor + a phase-domain scope.~~
+- ~~SPDX headers retrofitted onto `floating-networks.md` + `fidelity-ceiling.md`.~~
+- [ ] **AC analysis (Layer 2)** — running per-net/element RMS, peak, V–I phase ϕ, real/
+  reactive power, PF, |Z|, apparent frequency from the live waveforms (snapshot-only,
+  deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.
+- [ ] **`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
+  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget. See
+  `docs/ui/high-frequency-render.md`.
+
+---
+
 ## 2026-06-17 (10) — Floating networks + Rogowski coil + fidelity-ceiling docs
 
 - ~~Design docs written: `docs/sim/floating-networks.md` (floating subnets + Rogowski

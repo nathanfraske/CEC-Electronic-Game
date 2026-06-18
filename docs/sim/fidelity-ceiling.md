@@ -1,3 +1,5 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
 # The fidelity ceiling — how real can this sim get, and where it stops
 
 Status: **architecture note** (2026-06-17). Answers the owner question "how *real*
