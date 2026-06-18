@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (14) — High-frequency AC render primitives (Layer 3) shipped
+
+- ~~**`tierKit.shimmerFlow`** — the carrier→shimmer-band handoff on `blurFactor(freq)`
+  (smoothstep 15→300 Hz). At `b=0` it is byte-for-byte `belt` (no DC regression); as `b→1`
+  carriers fatten/fade and a soft band whose half-thickness rides |I| fades in, with a faint
+  bounded-phase vibration. **`tierKit.phasorInset`** — V/I arrows on a dial, angle = measured
+  V–I phase, lengths = AC amplitudes, filled phase arc, decaying-alpha I-tip phosphor trail;
+  a pure function of the bounded phase (rewinds, no mutable buffer).~~
+- ~~Data path: `ElectricalState.ac` (`AcReadout`) added (glyphs); `electricalMap` slices the
+  flat `acMeasurements` per element; `App.svelte` passes `snap.acMeasurements`/`acFields`.~~
+- ~~Applied: the **inductor** analogy drawer's pipe flow uses `shimmerFlow` (reference home);
+  the **phasor inset** overlays the InfoDiagram for reactive parts (C/EC/L/TR) once a cycle
+  is measured. Verified with `/tmp/harness/dumpPhasor.js` (handoff + phase encoding) and the
+  existing `run.js` drawer regression. All web gates green.~~
+- [ ] **Open (render adoption):** board wire-pipes' carrier→shimmer swap (needs per-wire
+  apparent freq); the cap/transformer drawers adopting `shimmerFlow`; the phase-domain scope
+  (V/I vs phase). See `docs/ui/high-frequency-render.md` §implementation-sketch 3–4.
+
+---
+
 ## 2026-06-18 (13) — AC analysis (Layer 2 measurement) shipped
 
 - ~~**AC analysis** (sim-core) — new `AcMeas` per-element running analyzer + `Sim::
@@ -57,9 +77,9 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   reactive power, PF, |Z|, apparent frequency from the live waveforms (snapshot-only,
   deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.~~ **Done
   — see (13) below.**
-- [ ] **`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
-  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget. Now
-  UNBLOCKED (consume `Snapshot.acMeasurements`). See `docs/ui/high-frequency-render.md`.
+- ~~**`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
+  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget.~~ **Done
+  — see (14) below.**
 
 ---
 

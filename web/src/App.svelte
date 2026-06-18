@@ -971,6 +971,8 @@
                   snap.elementCurrents,
                   snap.failedMask,
                   snap.reactiveCurrents,
+                  snap.acMeasurements,
+                  snap.acFields,
                 )
               : undefined;
           b.update(

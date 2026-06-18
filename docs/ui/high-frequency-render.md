@@ -133,15 +133,20 @@ as the FAIL box and the ideal-into-cap blow-up).
 
 ## Implementation sketch
 
-1. **Layer 2:** add AC analysis — per measured net/element, a ring over the last cycle
-   yielding \|V\|, \|I\|, ϕ, P_real, PF, \|Z\|, f_apparent. Deterministic, snapshot-only.
-2. **Flow framework:** add a `shimmerFlow(...)` primitive (the carrier↔band handoff on
-   `b`) beside `belt`/`flowAlongPath`, and a `phasorInset(...)` widget (two arrows + arc
-   + decaying-alpha tip trail) for the info panel / a board overlay.
-3. **Wire-pipe + tier drawers:** at high `b`, swap a wire/branch's carrier dots for the
-   shimmer band; keep the energy belt as-is. Reactive parts (L, C, transformer) gain the
-   phasor inset in their info panel.
-4. **Scope:** plot V/I vs phase (already the right idea in `ac-curriculum.md`).
+1. **Layer 2:** ✅ **built** — AC analysis per element (`AcMeas` → `Sim::ac_measurements`),
+   yielding RMS, \|V\|/\|I\|, ϕ, P_real, PF, \|Z\|, freq. Deterministic, snapshot-only;
+   crosses the boundary as `Snapshot.acMeasurements` and is attributed per component by
+   `electricalMap` into `ElectricalState.ac` (`AcReadout`).
+2. **Flow framework:** ✅ **built** — `tierKit.shimmerFlow(...)` (the carrier↔band handoff
+   on the blur factor `b = blurFactor(freq)`, byte-for-byte `belt` at `b = 0`) beside
+   `belt`/`flowAlongPath`, and the `tierKit.phasorInset(...)` widget (V/I arrows + phase
+   arc + decaying-alpha I-tip trail, a pure function of the bounded phase → rewinds).
+3. **Wire-pipe + tier drawers:** ◐ **partial** — the **inductor** analogy drawer is the
+   reference home (its pipe flow hands off to the shimmer band at high apparent frequency),
+   and the **phasor inset** overlays the info panel for reactive parts (C, EC, L, TR) once
+   a cycle is measured. *Still open:* the board wire-pipes' carrier→shimmer swap, and the
+   other reactive drawers (caps, transformer) adopting `shimmerFlow`.
+4. **Scope:** ☐ plot V/I vs phase (already the right idea in `ac-curriculum.md`).
 
 ## See also
 

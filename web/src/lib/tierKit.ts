@@ -9,7 +9,7 @@
 // magnitude rides alpha / density / thickness, NEVER speed.
 
 import { Graphics } from "pixi.js";
-import { type ElectricalState } from "./glyphs";
+import { type AcReadout, type ElectricalState } from "./glyphs";
 
 /**
  * What a tier drawer is handed. A superset of the glyph's draw inputs, but with a
@@ -159,6 +159,99 @@ export function belt(
     const x = ax + (bx - ax) * t;
     const y = ay + (by - ay) * t;
     g.circle(x, y, r).fill({ color, alpha: (0.35 + 0.55 * mag) * present });
+  }
+}
+
+// --- high-frequency AC render (the carrier→shimmer handoff) -------------------
+//
+// docs/ui/high-frequency-render.md: slow current reads as carriers sloshing, but
+// once the cycle rate outruns the eye (~10–15 Hz) animating every reversal aliases
+// into jitter. The fix is a frequency-driven BLUR FACTOR that hands the discrete
+// carriers off to a soft shimmer band whose thickness rides |I| — magnitude on
+// thickness/alpha, never speed (visual-language). `b` comes from the apparent rate,
+// not the solver clock, so it is pure presentation and frequency-stable.
+
+/** Apparent-rate band below which flow reads as discrete carriers (Hz). */
+export const AC_SHIMMER_LO = 15;
+/** Apparent rate above which flow reads as a pure shimmer band (Hz). */
+export const AC_SHIMMER_HI = 300;
+// Faint shimmer vibration rate on the bounded phase — a "too fast to resolve" wobble,
+// NOT a real cycle (it never tracks the signal frequency).
+const SHIMMER_K = 9.0;
+
+function clamp01(x: number): number {
+  return x < 0 ? 0 : x > 1 ? 1 : x;
+}
+
+/**
+ * The blur factor `b ∈ [0,1]` for an apparent cycle rate `freq` (Hz): a smoothstep
+ * from discrete carriers (`b → 0` below {@link AC_SHIMMER_LO}) to a full shimmer band
+ * (`b → 1` above {@link AC_SHIMMER_HI}). The single knob behind {@link shimmerFlow}.
+ */
+export function blurFactor(freq: number): number {
+  const t = clamp01((freq - AC_SHIMMER_LO) / (AC_SHIMMER_HI - AC_SHIMMER_LO));
+  return t * t * (3 - 2 * t);
+}
+
+/**
+ * Flow along a straight segment that HANDS OFF from discrete carriers to a shimmer
+ * band as the blur factor `b` rises — the high-frequency render of {@link belt}. At
+ * `b = 0` it is byte-for-byte a `belt` (sloshing carriers, density + alpha riding
+ * `mag`); as `b → 1` the carriers fatten and fade out while a soft glow band fades in,
+ * its half-thickness tracking `mag` (the current amplitude) with a faint fast vibration
+ * on the bounded `phase`. So a fast-AC branch reads as a calm glowing band instead of
+ * aliased strobing dots. `b` is `blurFactor(apparent_freq)`; `dir` (+1/−1) is travel.
+ */
+export function shimmerFlow(
+  g: Graphics,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  mag: number,
+  b: number,
+  dir: number,
+  phase: number,
+  color: number,
+  r = 2.4,
+): void {
+  if (mag < 0.02) return;
+  const blur = clamp01(b);
+  // Carriers: fade out and fatten as the band takes over (skip once fully blurred).
+  if (blur < 0.98) {
+    const n = FLOW_DOTS_MAX;
+    for (let i = 0; i < n; i++) {
+      const present = dotPresence(i, mag);
+      if (present <= 0) continue;
+      const t = (((i / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
+      const x = ax + (bx - ax) * t;
+      const y = ay + (by - ay) * t;
+      g.circle(x, y, r + blur * r * 1.6).fill({
+        color,
+        alpha: (0.35 + 0.55 * mag) * present * (1 - blur),
+      });
+    }
+  }
+  // Shimmer band: a soft glow whose half-thickness tracks |I|, with a faint vibration.
+  if (blur > 0.02) {
+    const vib = 0.85 + 0.15 * Math.sin(phase * SHIMMER_K);
+    const half = (r + r * 2.0 * mag) * vib;
+    g.moveTo(ax, ay)
+      .lineTo(bx, by)
+      .stroke({
+        width: 2 * half,
+        color,
+        alpha: blur * (0.1 + 0.16 * mag),
+        cap: "round",
+      });
+    g.moveTo(ax, ay)
+      .lineTo(bx, by)
+      .stroke({
+        width: Math.max(1, half * 0.7),
+        color,
+        alpha: blur * (0.2 + 0.32 * mag),
+        cap: "round",
+      });
   }
 }
 
@@ -491,6 +584,138 @@ export function stud(g: Graphics, x: number, y: number, color: number): void {
   g.circle(x, y, 5).fill({ color: 0x101820 });
   g.circle(x, y, 5).stroke({ width: 1.5, color });
   g.circle(x, y, 2.4).fill({ color });
+}
+
+// --- phasor inset (the V–I clock with phosphor persistence) -------------------
+//
+// docs/ui/high-frequency-render.md ch.3: the one frequency-stable picture of the V–I
+// relationship. Two arrows on a dial — V (warm) and I (cyan) — turning at a COSMETIC
+// fixed rate; the physics is the LENGTHS (amplitudes) and the ANGLE between them (the
+// phase the reactance adds, which opens past the reactive corner). The I tip leaves a
+// decaying phosphor trail, so you read current lead/lag at a glance. It reads the same
+// at 1 Hz and 1 MHz — frequency-agnostic by construction.
+
+const PHASOR_V = 0xd8a24a; // warm rail tone for voltage
+const PHASOR_I = 0x46d2e6; // cyan for current (mirrors the board V/I language)
+const PHASOR_SPIN = 1.1; // cosmetic dial rotation per unit bounded phase
+const PHASOR_TRAIL = 7; // fading samples behind the I tip
+const PHASOR_TRAIL_DANG = 0.17; // angular spacing of the phosphor trail (rad)
+
+/** A vector arrow from `(cx,cy)` at angle `ang`, length `len`, with a small head. */
+function phasorArrow(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  ang: number,
+  len: number,
+  color: number,
+  width: number,
+): void {
+  const tx = cx + Math.cos(ang) * len;
+  const ty = cy + Math.sin(ang) * len;
+  g.moveTo(cx, cy).lineTo(tx, ty).stroke({
+    width,
+    color,
+    alpha: 0.95,
+    cap: "round",
+  });
+  const head = Math.min(8, len * 0.32);
+  for (const s of [-1, 1]) {
+    const ha = ang + Math.PI + s * 0.42;
+    g.moveTo(tx, ty)
+      .lineTo(tx + Math.cos(ha) * head, ty + Math.sin(ha) * head)
+      .stroke({ width, color, alpha: 0.95, cap: "round" });
+  }
+}
+
+/** A filled pie wedge from angle `a0` to `a1` (shortest sweep) — the phase arc. */
+function phasorWedge(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  r: number,
+  a0: number,
+  a1: number,
+  color: number,
+  alpha: number,
+): void {
+  let d = a1 - a0;
+  while (d > Math.PI) d -= 2 * Math.PI;
+  while (d < -Math.PI) d += 2 * Math.PI;
+  const steps = Math.max(2, Math.round(Math.abs(d) / 0.2));
+  const pts: number[] = [cx, cy];
+  for (let i = 0; i <= steps; i++) {
+    const a = a0 + d * (i / steps);
+    pts.push(cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+  }
+  g.poly(pts, true).fill({ color, alpha });
+}
+
+/**
+ * The phasor inset: a dial at `(cx,cy)` radius `radius` showing the V (warm) and I
+ * (cyan) vectors for an {@link AcReadout}. Arrow lengths ride the AC amplitudes (with a
+ * visible floor so both always show); the angle between them is the measured V–I phase
+ * (`>0` current lags = inductive, `<0` leads = capacitive); a filled arc fills that
+ * phase; and the I tip drags a decaying phosphor trail. The whole dial turns at a
+ * cosmetic, frequency-agnostic rate on the bounded `phase`, so motion never encodes
+ * magnitude — a pure function of (`ac`, `phase`) that rewinds with the clock.
+ */
+export function phasorInset(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  radius: number,
+  ac: AcReadout,
+  phase: number,
+): void {
+  // Dial: bezel + tick ring.
+  g.circle(cx, cy, radius).fill({ color: 0x0c0f16, alpha: 0.82 });
+  g.circle(cx, cy, radius).stroke({ width: 1.6, color: 0x2a2440, alpha: 0.95 });
+  for (const ang of [0, Math.PI / 2, Math.PI, (3 * Math.PI) / 2]) {
+    g.moveTo(
+      cx + Math.cos(ang) * radius * 0.86,
+      cy + Math.sin(ang) * radius * 0.86,
+    )
+      .lineTo(
+        cx + Math.cos(ang) * radius * 0.98,
+        cy + Math.sin(ang) * radius * 0.98,
+      )
+      .stroke({ width: 1, color: 0x3a3358, alpha: 0.75 });
+  }
+
+  // Amplitudes → arrow lengths (visible floor; the angle carries the physics).
+  const vlen = radius * (0.34 + 0.6 * norm(ac.vamp, V_SCALE));
+  const ilen = radius * (0.34 + 0.6 * norm(ac.iamp, CUR_SCALE));
+  const spin = phase * PHASOR_SPIN; // cosmetic rotation
+  const thV = spin;
+  const thI = spin - ac.phase; // I lags V by the measured phase
+
+  // The phase arc (fills the V→I angle); fades up with the reactive content.
+  phasorWedge(
+    g,
+    cx,
+    cy,
+    radius * 0.3,
+    thV,
+    thI,
+    mix(PHASOR_V, PHASOR_I, 0.5),
+    0.22,
+  );
+
+  // Phosphor trail: the I tip's recent positions (a fixed-length history of a value-
+  // derived point → deterministic, rewinds with `phase`), decaying alpha.
+  for (let k = PHASOR_TRAIL; k >= 1; k--) {
+    const th = thI - k * PHASOR_TRAIL_DANG;
+    const a = 0.5 * (1 - k / (PHASOR_TRAIL + 1));
+    g.circle(cx + Math.cos(th) * ilen, cy + Math.sin(th) * ilen, 2.0).fill({
+      color: PHASOR_I,
+      alpha: a,
+    });
+  }
+
+  phasorArrow(g, cx, cy, thV, vlen, PHASOR_V, 2.4);
+  phasorArrow(g, cx, cy, thI, ilen, PHASOR_I, 2.4);
+  g.circle(cx, cy, 2.4).fill({ color: 0xbfb8d8 }); // hub
 }
 
 /** A factory machine-housing panel: dark body, accent edge, top depth highlight. */

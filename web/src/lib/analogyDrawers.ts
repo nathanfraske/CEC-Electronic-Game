@@ -31,6 +31,7 @@ import {
   type TierOpts as AnalogyOpts,
   anchorPt,
   belt,
+  blurFactor,
   dotPresence,
   flowAlongPath,
   flowAroundBall,
@@ -42,6 +43,7 @@ import {
   norm,
   pipeLead,
   scatterY,
+  shimmerFlow,
   stud,
   CUR_SCALE,
   FLOW_SPEED,
@@ -356,10 +358,26 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
   }
 
   // --- terminal studs + the water flowing along the pipe -----------------------
+  // At high apparent frequency the carriers hand off to a shimmer band (the inductor
+  // is the reference home for the high-frequency render); at DC/low freq `blur` is 0
+  // and `shimmerFlow` is byte-for-byte the old `belt` (no regression off AC).
   stud(g, aX, 0, PALETTE.bronze);
   stud(g, bX, 0, PALETTE.bronze);
-  belt(g, valveX + 9, 0, cx - chamR, 0, i, dir, o.phase, WATER, 2.6);
-  belt(g, cx + chamR, 0, pipeR, 0, i, dir, o.phase, WATER, 2.6);
+  const blur = o.electrical.ac?.valid ? blurFactor(o.electrical.ac.freq) : 0;
+  shimmerFlow(
+    g,
+    valveX + 9,
+    0,
+    cx - chamR,
+    0,
+    i,
+    blur,
+    dir,
+    o.phase,
+    WATER,
+    2.6,
+  );
+  shimmerFlow(g, cx + chamR, 0, pipeR, 0, i, blur, dir, o.phase, WATER, 2.6);
 }
 
 // ============================================================================

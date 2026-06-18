@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (22) — High-frequency AC render primitives (Layer 3)
+
+**State:** 🟢 Shipped in `web/` (tierKit primitives + data path + two integration points).
+The owner's shimmer/phasor design, on top of the Layer-2 AC analysis. All web gates green;
+the phasor/shimmer harness (`/tmp/harness/dumpPhasor.js`) and the existing drawer
+regression (`run.js`) both pass. No sim-core change.
+
+- **Data path:** `ElectricalState.ac` (`AcReadout`, the 12 AC fields) added in `glyphs.ts`;
+  `electricalMap` slices the flat `acMeasurements` per element (new `acMeasurements?`/
+  `acFields?` params); `App.svelte` passes `snap.acMeasurements`/`snap.acFields`.
+- **`tierKit.shimmerFlow(g, ax,ay,bx,by, mag, b, dir, phase, color, r?)`** — the
+  carrier→band handoff. `b = blurFactor(freq)` (smoothstep `AC_SHIMMER_LO=15`→`HI=300` Hz).
+  At `b=0` it is **byte-for-byte `belt`** (so DC/slow circuits are unchanged — the inductor
+  regression confirms it); as `b→1` carriers fatten + fade and a soft glow band whose
+  half-thickness rides `mag` fades in, with a faint `SHIMMER_K` bounded-phase vibration.
+- **`tierKit.phasorInset(g, cx,cy, radius, ac, phase)`** — the V (warm) / I (cyan) dial.
+  Arrow lengths = AC amplitudes (with a visible floor), the **angle between them = the
+  measured V–I phase** (`>0` lag/inductive, `<0` lead/capacitive), a filled wedge fills the
+  phase, and the I tip drags a **decaying-alpha phosphor trail** computed as past tip angles
+  `thI − k·dθ` — a pure function of the bounded phase, so it rewinds with no mutable buffer.
+  Cosmetic dial spin only; magnitude never rides speed (visual-language clean).
+- **Applied:** the **inductor** analogy drawer swaps its two `belt(...)` for `shimmerFlow`
+  keyed to `ac.freq` (the reference home); the **phasor inset** overlays the `InfoDiagram`
+  (a separate unscaled `overlay` Graphics, bottom-right corner) for reactive kinds
+  `{C,EC,L,TR}` once `ac.valid`.
+
+**Determinism/discipline:** all presentation on the bounded `phase`, reads `ElectricalState`
+only — no sim/golden touch. Magnitude on thickness/alpha/length; frequency drives the blur
+(presentation), not speed.
+
+**Open (render adoption — TODOS 14):** board wire-pipes' carrier→shimmer swap (needs a
+per-wire apparent frequency); the cap/transformer drawers adopting `shimmerFlow`; the
+phase-domain scope (V/I vs phase). **Next on the roadmap critical path:** the Ideal/Real
+fidelity flag (L1) — the progression lever.
+
+---
+
 ## 2026-06-18 (21) — AC analysis (Layer 2 measurement) implemented
 
 **State:** 🟢 Code shipped in `crates/sim-core` + boundary + `loop.ts`. The second
