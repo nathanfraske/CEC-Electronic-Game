@@ -117,6 +117,22 @@ impl Simulation {
         self.inner.reactive_currents()
     }
 
+    /// Per-element **AC measurements**, flattened in the **same element order** as
+    /// [`Simulation::element_currents`]: element `i` occupies the `ac_fields()`-long
+    /// slice `[i*K .. (i+1)*K]`. Per element, in order: Vrms, Irms, Vmean, Imean, Vamp,
+    /// Iamp, Preal, PF, |Z|, phase (V−I lag, radians), freq (Hz), valid (`1.0` once a
+    /// full AC cycle is measured). Measured from the live waveforms over the last cycle;
+    /// read once per frame for the shimmer/phasor render. Read-only, not hashed.
+    pub fn ac_measurements(&self) -> Vec<f64> {
+        self.inner.ac_measurements()
+    }
+
+    /// The stride `K` of [`Simulation::ac_measurements`] — the number of `f64` fields
+    /// per element — so the front end can slice the flat array without hardcoding it.
+    pub fn ac_fields(&self) -> usize {
+        self.inner.ac_fields()
+    }
+
     /// Protocol version, checked by the front end on load.
     pub fn protocol_version(&self) -> u32 {
         self.inner.protocol_version()

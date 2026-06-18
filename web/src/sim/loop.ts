@@ -29,6 +29,13 @@ export interface Snapshot {
   failed: boolean;
   /** Per-element FAIL mask, in set_netlist order (1 = that element hit the bound). */
   failedMask?: Uint8Array;
+  /** Per-element AC measurements, flattened in set_netlist order: element `i` occupies
+   * `[i*acFields .. (i+1)*acFields]` — Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF,
+   * |Z|, phase (V−I lag, rad), freq (Hz), valid. Measured over the last cycle from the
+   * live waveforms; drives the shimmer/phasor high-frequency render. */
+  acMeasurements?: Float64Array;
+  /** Stride of `acMeasurements` (fields per element); pairs with it to slice per part. */
+  acFields?: number;
 }
 
 export interface SimHandle {
@@ -75,6 +82,8 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       reactiveCurrents: sim.reactive_currents(),
       failed: sim.failed(),
       failedMask: sim.failed_element_mask(),
+      acMeasurements: sim.ac_measurements(),
+      acFields: sim.ac_fields(),
     }),
     protocolVersion: () => sim.protocol_version(),
     setNetlist: (nodeCount, types, a, b, values, c, aux, d) =>

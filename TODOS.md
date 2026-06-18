@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (13) — AC analysis (Layer 2 measurement) shipped
+
+- ~~**AC analysis** (sim-core) — new `AcMeas` per-element running analyzer + `Sim::
+  ac_measurements()` (flat `[nElements × AC_FIELDS=12]`: Vrms, Irms, Vmean, Imean, Vamp,
+  Iamp, Preal, PF, |Z|, phase, freq, valid). Synchronous RMS/power/phase detector: cycles
+  delimited by rising zero-crossings of V about the running mean; phase = signed sub-sample
+  offset of I's crossing (>0 inductive lag, <0 capacitive lead); PF = V–I correlation; freq
+  from the period. O(1)/tick, O(1) storage. Updated each `step()` after the FAIL clamp;
+  unhashed (golden bit-identical), deterministic (reproduces + rewinds).~~
+- ~~Boundary: `ac_measurements()` + `ac_fields()` on sim-wasm; `loop.ts` `Snapshot` gains
+  `acMeasurements` + `acFields` (one batched read/frame).~~
+- ~~Tests: `ac_analysis_resistor_is_resistive` (PF≈1, φ≈0, |Z|≈R, freq✓), `…capacitor_
+  current_leads` (φ≈−π/2), `…inductor_current_lags` (φ≈+π/2), `…run_is_reproducible`
+  (measurement bits folded into the replay accumulator). 109 sim-core tests; all gates green.~~
+- [ ] **Next:** the `shimmerFlow` + `phasorInset` render primitives (L3) now have their data
+  source. Phase-domain scope (V/I vs phase) also reads these.
+
+---
+
 ## 2026-06-18 (12) — Floating-component GMIN (Part 1 of floating networks) shipped
 
 - ~~**Floating-component `GMIN`** (sim-core) — implemented in `crates/sim-core/src/lib.rs`.
@@ -34,12 +53,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   three non-aliasing channels (shimmer width = amplitude, energy drift = real power,
   phasor angle = phase) + a phosphor-persistence phasor + a phase-domain scope.~~
 - ~~SPDX headers retrofitted onto `floating-networks.md` + `fidelity-ceiling.md`.~~
-- [ ] **AC analysis (Layer 2)** — running per-net/element RMS, peak, V–I phase ϕ, real/
+- ~~**AC analysis (Layer 2)** — running per-net/element RMS, peak, V–I phase ϕ, real/
   reactive power, PF, |Z|, apparent frequency from the live waveforms (snapshot-only,
-  deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.
+  deterministic). Feeds the phasor/high-freq render + AC telemetry + AC grading.~~ **Done
+  — see (13) below.**
 - [ ] **`shimmerFlow` + `phasorInset` render primitives** (tierKit/web) — the carrier↔band
-  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget. See
-  `docs/ui/high-frequency-render.md`.
+  handoff on the blur factor, and the two-arrow + arc + decaying-tip-trail widget. Now
+  UNBLOCKED (consume `Snapshot.acMeasurements`). See `docs/ui/high-frequency-render.md`.
 
 ---
 

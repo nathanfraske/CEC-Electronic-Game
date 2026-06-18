@@ -1696,6 +1696,244 @@ fn opamp_limit(vnew: f64, vold: f64) -> f64 {
     }
 }
 
+// --- AC analysis (Layer 2 measurement) ----------------------------------------
+
+/// Number of `f64` fields [`Sim::ac_measurements`] reports per element, in this
+/// fixed order:
+///
+/// `0` Vrms, `1` Irms (true RMS incl. DC) · `2` Vmean, `3` Imean (DC component) ·
+/// `4` Vamp, `5` Iamp (AC peak amplitude, `(max−min)/2`) · `6` Preal (mean `V·I`, W) ·
+/// `7` PF (power factor / V–I correlation, `−1..1`) · `8` |Z| (AC, `Vac/Iac`, Ω) ·
+/// `9` phase (V−I lag, signed radians: `>0` inductive lag, `<0` capacitive lead) ·
+/// `10` freq (fundamental, Hz) · `11` valid (`1.0` once a full AC cycle has been
+/// measured, else `0.0`).
+///
+/// Derived from the live V/I waveforms (snapshot-only, deterministic), **not** part
+/// of the snapshot hash — like [`Sim::element_currents`]. The render reads these for
+/// the shimmer/phasor handoff. See `docs/ui/high-frequency-render.md`.
+pub const AC_FIELDS: usize = 12;
+
+/// Debounce floor on samples per detected cycle: a rising zero-cross is only accepted
+/// as a cycle boundary after this many samples, which also caps the detectable
+/// fundamental at `1 / (AC_MIN_CYCLE_SAMPLES · DT)` (~62.5 kHz at the 2 µs step — far
+/// above the teaching range).
+const AC_MIN_CYCLE_SAMPLES: u32 = 8;
+
+/// Hard cap on a window with no accepted `V` zero-cross: a slow/DC signal finalizes as
+/// a DC reading (freq 0) every this-many samples instead of accumulating unbounded.
+/// 250_000 samples ≈ 0.5 s at `DT`, an ~2 Hz floor on AC detection.
+const AC_MAX_CYCLE_SAMPLES: u32 = 250_000;
+
+/// Variance (V² or A²) at or below which a window's signal is treated as flat/DC: no
+/// meaningful AC phase or power factor (phase 0, PF 1), and |Z| left 0 if the current
+/// is flat. A small fixed floor that also guards the correlation's divide.
+const AC_VAR_FLOOR: f64 = 1.0e-18;
+
+/// Per-element running AC measurement: accumulates the terminal voltage `V(a)−V(b)`
+/// and the through-current over each detected cycle of `V`, then finalizes a held set
+/// of measurements ([`AC_FIELDS`]) at every cycle boundary — a deterministic,
+/// O(1)-per-tick synchronous RMS / power / phase detector reading the solver's
+/// waveforms. Cycles are delimited by rising zero-crossings of `V` about the previous
+/// window's mean; phase is the signed sub-sample offset of the current's rising
+/// crossing. All `f64`, fixed order — it reproduces bit-for-bit and rewinds with the
+/// run, and being unhashed it never moves the analog golden.
+#[derive(Clone, Debug)]
+struct AcMeas {
+    /// Whether at least one sample has been seen (seeds the crossing detector).
+    primed: bool,
+    /// Zero-reference for `V`'s crossing detection: the last completed window's mean
+    /// (`0` until the first completes).
+    ref_v: f64,
+    /// Zero-reference for `I`'s crossing detection: the last completed window's mean.
+    ref_i: f64,
+    /// Previous sample's `V − ref_v`, for rising-edge detection of the cycle boundary.
+    prev_vac: f64,
+    /// Previous sample's `I − ref_i`, for the current's rising-crossing detection.
+    prev_iac: f64,
+    /// Samples accumulated in the in-progress window.
+    n: u32,
+    sum_v: f64,
+    sum_i: f64,
+    sum_vv: f64,
+    sum_ii: f64,
+    sum_vi: f64,
+    vmin: f64,
+    vmax: f64,
+    imin: f64,
+    imax: f64,
+    /// Fractional sample index of `I`'s first rising crossing in the window (`−1` =
+    /// none yet), the phase reference relative to the window start (`V`'s crossing).
+    i_cross: f64,
+    /// Finalized, held measurements in [`AC_FIELDS`] order.
+    out: [f64; AC_FIELDS],
+}
+
+impl Default for AcMeas {
+    fn default() -> Self {
+        AcMeas {
+            primed: false,
+            ref_v: 0.0,
+            ref_i: 0.0,
+            prev_vac: 0.0,
+            prev_iac: 0.0,
+            n: 0,
+            sum_v: 0.0,
+            sum_i: 0.0,
+            sum_vv: 0.0,
+            sum_ii: 0.0,
+            sum_vi: 0.0,
+            vmin: f64::INFINITY,
+            vmax: f64::NEG_INFINITY,
+            imin: f64::INFINITY,
+            imax: f64::NEG_INFINITY,
+            i_cross: -1.0,
+            out: [0.0; AC_FIELDS],
+        }
+    }
+}
+
+impl AcMeas {
+    /// Fold one solved sample (`v = V(a)−V(b)`, `i` = through-current) into the
+    /// in-progress window, detecting cycle boundaries and finalizing held results.
+    fn update(&mut self, v: f64, i: f64) {
+        let vac = v - self.ref_v;
+        let iac = i - self.ref_i;
+        if !self.primed {
+            // First ever sample: seed the previous-iterate references, start window.
+            self.primed = true;
+            self.prev_vac = vac;
+            self.prev_iac = iac;
+            self.accumulate(v, i);
+            return;
+        }
+        // Record `I`'s first rising zero-crossing within the window. It sits between
+        // accumulated sample `n-1` (prev_iac) and the sample about to be added (`n`);
+        // linear interpolation gives the sub-sample fractional index.
+        if self.i_cross < 0.0 && self.prev_iac < 0.0 && iac >= 0.0 && self.n > 0 {
+            let frac = -self.prev_iac / (iac - self.prev_iac);
+            self.i_cross = (self.n - 1) as f64 + frac;
+        }
+        // A rising zero-crossing of `V` (about the window mean) closes the cycle.
+        if self.prev_vac < 0.0 && vac >= 0.0 && self.n >= AC_MIN_CYCLE_SAMPLES {
+            self.finalize(self.n);
+            self.reset_window();
+        } else if self.n >= AC_MAX_CYCLE_SAMPLES {
+            // Slow/DC signal: finalize a DC reading (period 0 → freq 0) and start fresh.
+            self.finalize(0);
+            self.reset_window();
+        }
+        self.prev_vac = vac;
+        self.prev_iac = iac;
+        self.accumulate(v, i);
+    }
+
+    /// Add a sample to the running window sums and peak trackers.
+    fn accumulate(&mut self, v: f64, i: f64) {
+        self.n += 1;
+        self.sum_v += v;
+        self.sum_i += i;
+        self.sum_vv += v * v;
+        self.sum_ii += i * i;
+        self.sum_vi += v * i;
+        if v < self.vmin {
+            self.vmin = v;
+        }
+        if v > self.vmax {
+            self.vmax = v;
+        }
+        if i < self.imin {
+            self.imin = i;
+        }
+        if i > self.imax {
+            self.imax = i;
+        }
+    }
+
+    /// Compute and store the held measurements for the just-completed window.
+    /// `period` is the cycle length in samples; `period == 0` marks a DC/slow
+    /// finalize (freq 0, phase 0).
+    fn finalize(&mut self, period: u32) {
+        let n = self.n.max(1) as f64;
+        let mean_v = self.sum_v / n;
+        let mean_i = self.sum_i / n;
+        let ms_v = self.sum_vv / n;
+        let ms_i = self.sum_ii / n;
+        let vrms = ms_v.max(0.0).sqrt();
+        let irms = ms_i.max(0.0).sqrt();
+        let var_v = (ms_v - mean_v * mean_v).max(0.0);
+        let var_i = (ms_i - mean_i * mean_i).max(0.0);
+        let cov = self.sum_vi / n - mean_v * mean_i;
+        let preal = self.sum_vi / n;
+        let vamp = if self.vmax >= self.vmin {
+            (self.vmax - self.vmin) * 0.5
+        } else {
+            0.0
+        };
+        let iamp = if self.imax >= self.imin {
+            (self.imax - self.imin) * 0.5
+        } else {
+            0.0
+        };
+        // Power factor = the V–I correlation coefficient (= cos φ for a single-frequency
+        // pair), guarded against the flat-signal divide.
+        let pf = if var_v > AC_VAR_FLOOR && var_i > AC_VAR_FLOOR {
+            (cov / (var_v * var_i).sqrt()).clamp(-1.0, 1.0)
+        } else {
+            1.0
+        };
+        // AC impedance magnitude (Vac_rms / Iac_rms); 0 when the current is flat.
+        let zmag = if var_i > AC_VAR_FLOOR {
+            (var_v / var_i).sqrt()
+        } else {
+            0.0
+        };
+        // Phase: signed V−I lag from the current's rising-crossing offset within the
+        // cycle, wrapped to (−π, π]. Needs a real cycle and a clean current crossing.
+        let phase =
+            if period > 0 && var_v > AC_VAR_FLOOR && var_i > AC_VAR_FLOOR && self.i_cross >= 0.0 {
+                let mut ph = std::f64::consts::TAU * (self.i_cross / period as f64);
+                if ph > std::f64::consts::PI {
+                    ph -= std::f64::consts::TAU;
+                }
+                ph
+            } else {
+                0.0
+            };
+        let freq = if period > 0 {
+            1.0 / (period as f64 * DT)
+        } else {
+            0.0
+        };
+        let valid = if period > 0 && var_v > AC_VAR_FLOOR {
+            1.0
+        } else {
+            0.0
+        };
+        self.out = [
+            vrms, irms, mean_v, mean_i, vamp, iamp, preal, pf, zmag, phase, freq, valid,
+        ];
+    }
+
+    /// Carry the just-finalized window's means as the next window's zero references
+    /// and clear the accumulators for the new cycle.
+    fn reset_window(&mut self) {
+        let n = self.n.max(1) as f64;
+        self.ref_v = self.sum_v / n;
+        self.ref_i = self.sum_i / n;
+        self.n = 0;
+        self.sum_v = 0.0;
+        self.sum_i = 0.0;
+        self.sum_vv = 0.0;
+        self.sum_ii = 0.0;
+        self.sum_vi = 0.0;
+        self.vmin = f64::INFINITY;
+        self.vmax = f64::NEG_INFINITY;
+        self.imin = f64::INFINITY;
+        self.imax = f64::NEG_INFINITY;
+        self.i_cross = -1.0;
+    }
+}
+
 /// Deterministic fixed-step analog simulation of an arbitrary netlist.
 #[derive(Clone, Debug)]
 pub struct Sim {
@@ -1845,6 +2083,13 @@ pub struct Sim {
     /// pure function of the committed readout and consistent with `node_v` at
     /// the same tick. See [`Sim::element_currents`] for the per-kind formulas.
     currents: Vec<f64>,
+    /// Per-element running **AC analyzer** (one [`AcMeas`] per element, in submission
+    /// order), updated each committed step from that element's terminal voltage and
+    /// current. Holds the last full cycle's RMS / power / phase measurements
+    /// ([`AC_FIELDS`]), read out by [`Sim::ac_measurements`]. Derived, snapshot-only,
+    /// and **not hashed** (like `currents`), so it never moves the analog golden; it
+    /// reproduces because it is a pure function of the V/I trajectory.
+    ac: Vec<AcMeas>,
 }
 
 impl Sim {
@@ -1903,6 +2148,7 @@ impl Sim {
             gate_target: Vec::new(),
             gate_gout: Vec::new(),
             currents: Vec::new(),
+            ac: Vec::new(),
         };
         // Demo RC netlist: V(1->ground) -> R -> C -> ground. Nodes: 0 = gnd,
         // 1 = source/R junction, 2 = R/C junction. Two-terminal elements set the
@@ -2098,6 +2344,7 @@ impl Sim {
         self.gate_target = vec![0.0; elements.len()];
         self.gate_gout = vec![0.0; elements.len()];
         self.currents = vec![0.0; elements.len()];
+        self.ac = vec![AcMeas::default(); elements.len()];
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
         self.tick = 0;
@@ -2153,6 +2400,10 @@ impl Sim {
         }
         for v in &mut self.node_v {
             *v = 0.0;
+        }
+        // Clear the per-element AC analyzers so a rewind re-accumulates from t = 0.
+        for a in &mut self.ac {
+            *a = AcMeas::default();
         }
         self.solve_operating_point();
         self.commit_net_levels();
@@ -3990,7 +4241,23 @@ impl Sim {
         // Screen the committed state for a non-physical (FAIL) result and clamp it so
         // it can never propagate as a NaN, before the tick advances.
         self.flag_and_clamp_fails();
+        // Fold this tick's per-element V/I sample into the running AC analyzers, after
+        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
+        self.update_ac_analysis();
         self.tick += 1;
+    }
+
+    /// Fold this tick's solved per-element waveform sample — terminal voltage
+    /// `V(a)−V(b)` and through-current — into each element's running AC analyzer
+    /// ([`AcMeas`]). Called once per committed [`Sim::step`] (never at the install/reset
+    /// operating point, so the analyzers start from the first real step). Pure function
+    /// of the committed readout; the held results are exposed by [`Sim::ac_measurements`]
+    /// and are **not** part of the snapshot hash, so they never move the golden.
+    fn update_ac_analysis(&mut self) {
+        for (i, e) in self.elements.iter().enumerate() {
+            let v = self.node_v[e.a] - self.node_v[e.b];
+            self.ac[i].update(v, self.currents[i]);
+        }
     }
 
     /// After a solve, screen every quantity that displays or propagates — node
@@ -4106,6 +4373,31 @@ impl Sim {
     /// transformer's real flux level + bias rather than a free-running animation.
     pub fn reactive_currents(&self) -> Vec<f64> {
         self.reactive_state.clone()
+    }
+
+    /// Per-element **AC measurements**, flattened in installed-netlist order: element
+    /// `i` occupies `[i*AC_FIELDS .. (i+1)*AC_FIELDS]`, with the field layout documented
+    /// on [`AC_FIELDS`] (Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|, phase,
+    /// freq, valid). Each element's analyzer holds the **last full AC cycle** measured
+    /// from its terminal voltage and through-current; `valid` is `0.0` until the first
+    /// cycle completes (the render then falls back to the instantaneous DC cues).
+    ///
+    /// A pure, side-effect-free read of the running analyzers, consistent with
+    /// [`Sim::element_currents`] at the same tick and **not** part of the snapshot hash
+    /// (like the currents) — so exposing it is replay-safe and golden-neutral. The
+    /// length is `element_count * AC_FIELDS`. See `docs/ui/high-frequency-render.md`.
+    pub fn ac_measurements(&self) -> Vec<f64> {
+        let mut out = Vec::with_capacity(self.ac.len() * AC_FIELDS);
+        for a in &self.ac {
+            out.extend_from_slice(&a.out);
+        }
+        out
+    }
+
+    /// The number of `f64` fields [`Sim::ac_measurements`] reports per element
+    /// ([`AC_FIELDS`]), so the front end can stride the flat array without hardcoding.
+    pub fn ac_fields(&self) -> usize {
+        AC_FIELDS
     }
 
     /// Read-only snapshot of the exposed state vector, for rendering and the
@@ -7427,6 +7719,130 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "AC circuit must reproduce exactly");
+    }
+
+    // --- AC analysis (Layer 2 measurement) ------------------------------------
+    //
+    // The per-element AC analyzer accumulates each element's terminal voltage and
+    // through-current over a detected cycle and finalizes RMS / power / phase
+    // measurements (`AC_FIELDS`), read out by `ac_measurements`. These tests drive
+    // known R / C / L loads at a fixed frequency and check the measured phase, power
+    // factor, impedance, and frequency against physics — plus the replay invariant.
+    // Field indices match `AC_FIELDS`: 0 Vrms, 1 Irms, 6 Preal, 7 PF, 8 |Z|, 9 phase,
+    // 10 freq, 11 valid.
+
+    /// A resistor reads as purely resistive: power factor ≈ 1, V–I phase ≈ 0, the
+    /// measured |Z| ≈ R, the detected frequency ≈ the source, and Vrms ≈ amp/√2.
+    #[test]
+    fn ac_analysis_resistor_is_resistive() {
+        // 5 V-peak (default), 1 kHz AC source straight across a 1 k resistor.
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[1000.0, 1000.0],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let r = &m[AC_FIELDS..2 * AC_FIELDS]; // the resistor (element 1)
+        assert!(
+            r.iter().all(|x| x.is_finite()),
+            "finite measurements: {r:?}"
+        );
+        assert_eq!(r[11], 1.0, "a full AC cycle has been measured");
+        assert!(r[7] > 0.98, "power factor near unity: {}", r[7]);
+        assert!(r[9].abs() < 0.05, "phase near zero: {}", r[9]);
+        assert!((r[8] - 1000.0).abs() < 30.0, "|Z| ~ 1 k: {}", r[8]);
+        assert!((r[10] - 1000.0).abs() < 5.0, "freq ~ 1 kHz: {}", r[10]);
+        assert!(
+            (r[0] - 5.0 / 2f64.sqrt()).abs() < 0.1,
+            "Vrms ~ amp/sqrt(2): {}",
+            r[0]
+        );
+    }
+
+    /// A capacitor's current **leads** its voltage by ~90°: the measured phase is
+    /// near −π/2 and the power factor near 0 (the reactive corner).
+    #[test]
+    fn ac_analysis_capacitor_current_leads() {
+        // AC 1->0, R 1->2 (1 k), C 2->0 (0.1 uF) at 1 kHz; measure the capacitor.
+        let mut sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[1000.0, 1000.0, 0.1e-6],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let c = &m[2 * AC_FIELDS..3 * AC_FIELDS]; // the capacitor (element 2)
+        assert_eq!(c[11], 1.0, "a full AC cycle has been measured");
+        assert!(
+            c[9] > -1.7 && c[9] < -1.4,
+            "capacitor current leads (~ -pi/2): {}",
+            c[9]
+        );
+        assert!(c[7].abs() < 0.1, "power factor near zero: {}", c[7]);
+    }
+
+    /// An inductor's current **lags** its voltage by ~90°: the measured phase is near
+    /// +π/2 and the power factor near 0.
+    #[test]
+    fn ac_analysis_inductor_current_lags() {
+        // AC 1->0, R 1->2 (1 k), L 2->0 (0.1 H) at 1 kHz; measure the inductor.
+        let mut sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_INDUCTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[1000.0, 1000.0, 0.1],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let l = &m[2 * AC_FIELDS..3 * AC_FIELDS]; // the inductor (element 2)
+        assert_eq!(l[11], 1.0, "a full AC cycle has been measured");
+        assert!(
+            l[9] > 1.4 && l[9] < 1.7,
+            "inductor current lags (~ +pi/2): {}",
+            l[9]
+        );
+        assert!(l[7].abs() < 0.1, "power factor near zero: {}", l[7]);
+    }
+
+    /// The AC analysis reproduces bit-for-bit across runs (the measurements are a pure
+    /// function of the V/I trajectory) and stays finite. A series R–L–C from a 500 Hz
+    /// source exercises every analyzer at once; the measurement bits are folded into
+    /// the replay accumulator so a divergence would be caught.
+    #[test]
+    fn ac_analysis_run_is_reproducible() {
+        let run = || {
+            // Series R–L–C: AC 1->0, R 1->2, L 2->3, C 3->0.
+            let mut sim = build(
+                4,
+                &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_INDUCTOR, ELEM_CAPACITOR],
+                &[1, 1, 2, 3],
+                &[0, 2, 3, 0],
+                &[500.0, 470.0, 0.05, 0.22e-6],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..4000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+                for &x in &sim.ac_measurements() {
+                    assert!(x.is_finite(), "AC measurement stays finite");
+                    acc ^= x.to_bits().rotate_left(13);
+                }
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "AC analysis must reproduce exactly");
     }
 
     /// `set_netlist` accepts the AC source element type (type 7); a malformed

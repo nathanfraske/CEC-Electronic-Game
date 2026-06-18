@@ -105,9 +105,13 @@ Layer 2):
 - **P_real**, power factor, \|Z\| → the energy drift + telemetry.
 
 In the standalone study these come from a closed-form R–L model (`ϕ = atan(f/f_c)`);
-on the real board they're **measured** from the solver's V/I (zero-crossing / quadrature
-phase detect + RMS over the last full cycle). That measurement is the framework piece to
-build; the render above is then pure presentation of it.
+on the real board they're **measured** from the solver's V/I (zero-crossing phase detect +
+synchronous RMS over the last full cycle). **That measurement is now built** — a per-element
+running analyzer (`AcMeas`) in `crates/sim-core`, read out by `Sim::ac_measurements()` as a
+flat `[nElements × AC_FIELDS]` array (Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|,
+phase, freq, valid). It is unhashed/golden-safe and crosses the wasm boundary once per frame
+(`loop.ts` → `Snapshot.acMeasurements`). The render below is the **remaining Layer-3 piece**:
+pure presentation of those numbers.
 
 ## Determinism
 

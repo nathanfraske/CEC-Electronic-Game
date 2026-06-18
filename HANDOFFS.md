@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (21) — AC analysis (Layer 2 measurement) implemented
+
+**State:** 🟢 Code shipped in `crates/sim-core` + boundary + `loop.ts`. The second
+critical-path framework. All gates green; analog golden bit-identical.
+
+Built the measurement layer that turns the solver's raw V/I waveforms into the AC
+quantities the phasor/shimmer render (and later AC grading) need. It **must** live in
+the core — only the core sees every 2 µs tick; the web reads one snapshot per frame.
+
+- **`AcMeas`** (new struct, before `Sim`) — a per-element running analyzer. Each
+  committed `step()`, `update_ac_analysis()` folds the element's terminal voltage
+  `V(a)−V(b)` and through-current into it. A **synchronous detector**: cycles are
+  delimited by rising zero-crossings of `V` about the previous window's mean; it keeps
+  O(1) running sums (Σv, Σi, Σv², Σi², Σvi, min/max) and finalizes a held result set at
+  each boundary. Phase = signed sub-sample offset of the current's rising crossing
+  (wrapped to (−π,π]: **>0 inductive lag, <0 capacitive lead**); PF = the V–I
+  correlation (= cos φ); |Z| = Vac_rms/Iac_rms; freq from the period. O(1)/tick, O(1)
+  storage, no per-tick trig.
+- **`Sim::ac_measurements()`** → flat `[nElements × AC_FIELDS]`, `AC_FIELDS = 12`:
+  `[Vrms, Irms, Vmean, Imean, Vamp, Iamp, Preal, PF, |Z|, phase, freq, valid]`. New
+  unhashed `ac: Vec<AcMeas>` field (like `currents`) → **golden-safe**; reset at
+  install/reset so a rewind re-accumulates from t=0. `valid` is 0 until the first full
+  cycle completes (render falls back to DC cues).
+- **Boundary:** `ac_measurements()` + `ac_fields()` on `sim-wasm`; `loop.ts` `Snapshot`
+  gains `acMeasurements` + `acFields` (one batched read/frame — the coarse-boundary rule).
+- **Tests (109 total):** resistor → PF≈1/φ≈0/|Z|≈R/freq✓; capacitor → φ≈−π/2; inductor
+  → φ≈+π/2; `ac_analysis_run_is_reproducible` folds the measurement bits into the replay
+  accumulator. Golden untouched.
+
+**Determinism note:** the analyzer is a pure function of the (clamped, finite) V/I
+trajectory + fixed constants; it's unhashed so it can't move the golden, and it
+reproduces/rewinds with the run. Variance uses Σx²−mean² (mild cancellation for
+high-DC-low-AC signals; the phasor circuits are mean-zero AC so it's a non-issue — noted
+for a possible Welford upgrade later).
+
+**Next (critical path):** the **`shimmerFlow` + `phasorInset` render primitives** (L3) now
+have their data source (`Snapshot.acMeasurements`) — the carrier→shimmer handoff on the
+blur factor + the two-arrow/arc/decaying-tip phasor, plus the phase-domain scope. Then the
+Ideal/Real fidelity flag (L1). See `docs/ui/high-frequency-render.md`.
+
+---
+
 ## 2026-06-18 (20) — Floating-component GMIN implemented (floating-networks Part 1)
 
 **State:** 🟢 Code shipped in `crates/sim-core`. First framework off the roadmap critical

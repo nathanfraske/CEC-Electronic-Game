@@ -47,7 +47,7 @@ The deterministic engine and its extension points. Every item here is bounded by
 | ✅ | Element set (V/R/C/L/I, diodes, FET, BJT, op-amp, transformer, switch, gates, FF, MOV, zener; POT/EC/thermistor as netlist expansions) | today's catalog | `docs/parts-roadmap.md` |
 | ✅ | FAIL clamp (engine half — `FAIL_LIMIT`, `flag_and_clamp_fails`) | NaN-free, platform-identical failure | `docs/sim/ideal-vs-real-parts.md` |
 | 📐 | **Ideal/Real fidelity flag** — a `real?` bit per part selecting an Ideal vs Real stamp (parasitics element-internal or by netlist expansion) | **the progression lever** — the whole "fidelity is difficulty" pillar | `docs/sim/ideal-vs-real-parts.md` |
-| 📐 | **Floating-component `GMIN`** — one weak ground tie per floating connected component | isolation, floating transformer secondary, the Rogowski output | `docs/sim/floating-networks.md` |
+| ✅ | **Floating-component `GMIN`** — one weak ground tie per floating connected component (`floating_refs` → `stamp_floating_refs`, golden-safe) | isolation, floating transformer secondary, the Rogowski output | `crates/sim-core` · `docs/sim/floating-networks.md` |
 | 📐 | **Sensor / transducer framework** — current-sense (Rogowski), controlled sources (CCVS/VCVS), derivative sources | probes, isolation amps, sense elements | `docs/sim/floating-networks.md` |
 | 📐 | **Thermal / self-heating domain** — a lumped thermal node per part, a slow multi-rate domain coupled to the electrical (I²R in, R(T)/ratings out) | the thermistor payoff, resistor power rating, thermal runaway | (to write; seeded by the thermistor `temp` field + multi-rate) |
 | 📐 | **Multi-rate + mixed-signal** — digital clock domains; boundary converters (ADC/DAC/comparator/buffer); behavioral CPU/FPGA | the digital/IC tier without breaking the analog Δt | `docs/sim/multi-rate-domains.md` |
@@ -62,7 +62,7 @@ the grader want. Pure functions of the snapshot — no new physics.
 | --- | --- | --- | --- |
 | ✅ | Per-element current + per-net voltage attribution (`electricalMap`) | every glyph animating from its real state | `web/src/lib/netlist.ts` |
 | ✅ | **Per-leg currents** (`legsOfComponent` → `ElectricalState.legs`) | proportional-split flow (the POT wiper "stealing") | `docs/sim/...` (PR #99) |
-| ☐ | **AC analysis** — running RMS, peak, **phase lag (V vs I)**, real/reactive power, power factor, \|Z\| measured over a cycle from the live waveforms | the phasor + high-frequency render + AC telemetry + AC grading | `docs/ui/high-frequency-render.md` |
+| ✅ | **AC analysis** — per-element running RMS, peak, **phase lag (V vs I)**, real power, power factor, \|Z\|, frequency measured over a cycle from the live waveforms (`AcMeas` → `Sim::ac_measurements`, unhashed/golden-safe) | the phasor + high-frequency render + AC telemetry + AC grading | `crates/sim-core` · `docs/ui/high-frequency-render.md` |
 | ☐ | FAIL mask across the wasm boundary | the visible FAIL state | `docs/sim/ideal-vs-real-parts.md` |
 
 ## Layer 3 — render frameworks (`web/src/lib`)
