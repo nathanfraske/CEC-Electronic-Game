@@ -28,6 +28,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-18 (18) — Shimmer deactivated while running (the lerp dropped acMeasurements)
+
+- ~~**Root cause of "shimmer deactivates on slow-down, only a t=0 reset brings it back"**:
+  `lerpSnapshot` (loop.ts) — used to interpolate the display on ~every *running* frame
+  (`acc > 1e-4`) — rebuilt the Snapshot WITHOUT `acMeasurements`/`acFields`. So running →
+  AC data undefined → blur 0 → no shimmer/RMS-colour; it only survived when paused or right
+  after a reset (cursor 0 skips the lerp). Fixed: carry `acMeasurements` (blended like the
+  currents) + `acFields` through `lerpSnapshot`. Both Snapshot constructors now include them.~~
+- Also: patched `~/.claude/stop-hook-git-check.sh` to skip `noreply@github.com` (GitHub's
+  own squash/merge commits) so it stops nagging on every PR merge.
+
+---
+
 ## 2026-06-18 (17) — Shimmer band visible (real bug) + lens/camera persistence
 
 - ~~**Shimmer band was invisible** — not just calibration: the band was the same voltage

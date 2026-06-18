@@ -196,6 +196,12 @@ function lerpSnapshot(a: Snapshot, b: Snapshot, f: number): Snapshot {
     state,
     elementCurrents: blend(a.elementCurrents, b.elementCurrents),
     reactiveCurrents: blend(a.reactiveCurrents, b.reactiveCurrents),
+    // Carry the AC measurements through interpolation too — without this every
+    // interpolated (running) frame dropped them, so the shimmer / RMS-colour
+    // deactivated whenever the sim was running and only returned when paused or
+    // reset. Blended like the currents; the field stride passes through.
+    acMeasurements: blend(a.acMeasurements, b.acMeasurements),
+    acFields: b.acFields,
     failed: b.failed,
     failedMask: b.failedMask,
   };
