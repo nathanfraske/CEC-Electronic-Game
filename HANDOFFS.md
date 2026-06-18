@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-18 (23) — Board-wide carrier→shimmer handoff
+
+**State:** 🟢 Shipped in `web/lib/board.ts`. The high-frequency render now applies to the
+**board wires**, not just the inductor drawer. All web gates green; tierKit + drawer
+harnesses pass. No sim-core change.
+
+- **`Board.computeWireFlow`** (renamed from `computeWireCurrents`) now returns
+  `{ current, freq, acFrac }` per wire from one KCL spanning-forest pass: the branch
+  current (as before), an **apparent AC frequency** (AC-amplitude-weighted mean of the
+  elements' measured `ac.freq` in the wire's subtree — 0 for DC, source freq on an AC
+  path), and an **AC fraction** (subtree AC amplitude vs |DC current|). The ammeter still
+  reads `lastWireCurrents` (built from `.current`).
+- **`redrawWires`** computes `blur = blurFactor(apparentFreq(freq)) * acFrac` per wire and
+  fades the carriers (chevrons / analogy water / reality electrons) out by `(1−blur)` while
+  fading in a **voltage-tinted glow band** along the wire route (a `SHIMMER_VIB` bounded-
+  phase wobble), in all three lenses. The energy belt is untouched (per the doc). The
+  `acFrac` gate keeps a rectifier's DC rail (tiny 2f ripple) on streaming carriers.
+- **Tickrate-coupled** via the same tierKit `apparentRateScale` App.svelte already sets each
+  frame, so slowing playback drops fast AC back to visible sloshing carriers board-wide.
+- Verification: `pnpm -C web check/lint/build` green; `/tmp/harness/dumpPhasor.js` (the
+  shimmer primitive + tickrate coupling) and `run.js` (drawer regression) pass. The board
+  itself isn't in the harness; the freq propagation mirrors the proven current forest.
+
+**Next ask from owner (brainstorm — not yet started):** components visibly **morphing into
+their high-frequency counterparts** at high apparent rate — a resistor sprouting a series
+inductor, a cap growing ESR+ESL, etc. The Ideal/Real fidelity ladder
+(`docs/sim/ideal-vs-real-parts.md`) already frames the *parasitics*; this is the **render of
+the transition** (the symbol/illustration morph), driven by the same apparent-rate signal
+the shimmer uses. Wants to brainstorm; likely a new design doc + a Layer-3 morph hook.
+
+---
+
 ## 2026-06-18 (22) — High-frequency AC render primitives (Layer 3)
 
 **State:** 🟢 Shipped in `web/` (tierKit primitives + data path + two integration points).

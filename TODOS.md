@@ -22,9 +22,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   the **phasor inset** overlays the InfoDiagram for reactive parts (C/EC/L/TR) once a cycle
   is measured. Verified with `/tmp/harness/dumpPhasor.js` (handoff + phase encoding) and the
   existing `run.js` drawer regression. All web gates green.~~
-- [ ] **Open (render adoption):** board wire-pipes' carrier→shimmer swap (needs per-wire
-  apparent freq); the cap/transformer drawers adopting `shimmerFlow`; the phase-domain scope
-  (V/I vs phase). See `docs/ui/high-frequency-render.md` §implementation-sketch 3–4.
+- [ ] **Open (render adoption):** ~~board wire-pipes' carrier→shimmer swap~~ **done (15)**;
+  the cap/transformer drawers adopting `shimmerFlow`; the phase-domain scope (V/I vs phase).
+  See `docs/ui/high-frequency-render.md` §implementation-sketch 3–4.
+
+---
+
+## 2026-06-18 (15) — Board-wide carrier→shimmer handoff
+
+- ~~`Board.computeWireFlow` (was `computeWireCurrents`) now also attributes each wire an
+  **apparent AC frequency** (AC-amplitude-weighted mean of the elements' `ac.freq` in the
+  wire's KCL subtree) and an **AC fraction** (AC amp vs |DC current|), from the one
+  spanning-forest pass. `redrawWires` fades the chevrons/water/electron carriers into a
+  voltage-tinted glow band (`SHIMMER_VIB` wobble) at high `blurFactor(apparentFreq(freq))`
+  — in all three lenses; the energy belt is untouched. The AC-fraction gate keeps a
+  rectifier's DC rail (small 2f ripple) reading as streaming carriers, not a shimmer.~~
+- ~~Tickrate-coupled like the tier drawers (shares tierKit's `apparentRateScale`), so
+  slowing playback drops fast AC back to visible sloshing. All web gates green; tierKit +
+  drawer harnesses pass.~~
+- [ ] **Brainstorm (owner):** components visibly **morphing into their high-frequency
+  counterparts** (parasitics) at high apparent rate — e.g. a resistor → R + series L, a
+  cap → C + ESR + ESL. Needs a design doc (the Ideal/Real fidelity ladder already frames
+  the parasitics; this is the *render* of the transition). See HANDOFFS.
 
 ---
 

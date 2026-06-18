@@ -145,11 +145,15 @@ as the FAIL box and the ideal-into-cap blow-up).
    apparent-Hz scale `tps · DT` each frame (`setApparentRateScale`, from the playback
    tickrate), so deep slow-mo drops a fast signal back to visible sloshing carriers and
    speeding past the eye's band returns it to a shimmer — the owner's tickrate behaviour.
-3. **Wire-pipe + tier drawers:** ◐ **partial** — the **inductor** analogy drawer is the
-   reference home (its pipe flow hands off to the shimmer band at high apparent frequency),
-   and the **phasor inset** overlays the info panel for reactive parts (C, EC, L, TR) once
-   a cycle is measured. *Still open:* the board wire-pipes' carrier→shimmer swap, and the
-   other reactive drawers (caps, transformer) adopting `shimmerFlow`.
+3. **Wire-pipe + tier drawers:** ◐ **mostly built** — the **board wires** hand off
+   carriers→shimmer per wire: `Board.computeWireFlow` attributes each wire an apparent AC
+   frequency (AC-amplitude-weighted mean of the element `ac.freq` in its KCL subtree) and
+   an AC-fraction (AC amplitude vs DC current, so a rectifier's DC rail stays carriers),
+   and `redrawWires` fades the chevrons/dots into a voltage-tinted glow band at high blur —
+   in all three lenses, energy belt unchanged. The **inductor** analogy drawer does the
+   same on its pipe; the **phasor inset** overlays the info panel for reactive parts
+   (C, EC, L, TR) once a cycle is measured. *Still open:* the cap/transformer drawers
+   adopting `shimmerFlow`.
 4. **Scope:** ☐ plot V/I vs phase (already the right idea in `ac-curriculum.md`).
 
 ## See also
