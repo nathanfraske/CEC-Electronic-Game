@@ -1391,6 +1391,100 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Vec<f64> {
     x
 }
 
+// --- Small-signal AC analysis (frequency domain) -------------------------------
+
+/// Minimal complex number for the frequency-domain AC analysis ([`Sim::ac_solve`]).
+/// Dependency-free `f64`, so the AC solve is as deterministic as the transient one.
+#[derive(Clone, Copy)]
+struct Cplx {
+    re: f64,
+    im: f64,
+}
+
+impl Cplx {
+    const ZERO: Cplx = Cplx { re: 0.0, im: 0.0 };
+    const ONE: Cplx = Cplx { re: 1.0, im: 0.0 };
+    fn new(re: f64, im: f64) -> Cplx {
+        Cplx { re, im }
+    }
+    fn add(self, o: Cplx) -> Cplx {
+        Cplx::new(self.re + o.re, self.im + o.im)
+    }
+    fn sub(self, o: Cplx) -> Cplx {
+        Cplx::new(self.re - o.re, self.im - o.im)
+    }
+    fn mul(self, o: Cplx) -> Cplx {
+        Cplx::new(
+            self.re * o.re - self.im * o.im,
+            self.re * o.im + self.im * o.re,
+        )
+    }
+    fn div(self, o: Cplx) -> Cplx {
+        let d = o.re * o.re + o.im * o.im;
+        Cplx::new(
+            (self.re * o.re + self.im * o.im) / d,
+            (self.im * o.re - self.re * o.im) / d,
+        )
+    }
+    fn abs(self) -> f64 {
+        self.re.hypot(self.im)
+    }
+}
+
+/// Dense complex Gaussian elimination with partial pivoting — the [`Cplx`] twin of
+/// [`solve_dense`], for the small-signal AC solve. Same deterministic pivot rule
+/// (strictly-greater magnitude wins; a degenerate pivot falls back to `0`).
+fn solve_dense_complex(mut a: Vec<Cplx>, mut b: Vec<Cplx>, n: usize) -> Vec<Cplx> {
+    debug_assert_eq!(a.len(), n * n);
+    debug_assert_eq!(b.len(), n);
+    for col in 0..n {
+        let mut pivot = col;
+        let mut best = a[col * n + col].abs();
+        for row in (col + 1)..n {
+            let mag = a[row * n + col].abs();
+            if mag > best {
+                best = mag;
+                pivot = row;
+            }
+        }
+        if pivot != col {
+            for k in 0..n {
+                a.swap(col * n + k, pivot * n + k);
+            }
+            b.swap(col, pivot);
+        }
+        let diag = a[col * n + col];
+        if diag.abs() == 0.0 {
+            continue;
+        }
+        for row in (col + 1)..n {
+            let factor = a[row * n + col].div(diag);
+            if factor.abs() == 0.0 {
+                continue;
+            }
+            for k in col..n {
+                let v = a[col * n + k];
+                a[row * n + k] = a[row * n + k].sub(factor.mul(v));
+            }
+            b[row] = b[row].sub(factor.mul(b[col]));
+        }
+    }
+    let mut x = vec![Cplx::ZERO; n];
+    for col in (0..n).rev() {
+        let mut sum = b[col];
+        for k in (col + 1)..n {
+            sum = sum.sub(a[col * n + k].mul(x[k]));
+        }
+        let diag = a[col * n + col];
+        x[col] = if diag.abs() == 0.0 {
+            Cplx::ZERO
+        } else {
+            sum.div(diag)
+        };
+    }
+    x
+}
+
 // --- Diode (Shockley) device ---------------------------------------------------
 
 /// Evaluate the Shockley diode current and small-signal conductance at junction
@@ -4336,6 +4430,102 @@ impl Sim {
     /// ground and is always exactly `0.0`.
     pub fn node_voltages(&self) -> Vec<f64> {
         self.node_v.clone()
+    }
+
+    /// Small-signal **AC analysis** at angular frequency `omega` (rad/s). Assembles the
+    /// linear complex MNA — resistor → `G`, capacitor → `jωC`, inductor → a branch with
+    /// `jωL`, DC voltage source → a short (`0 V` constraint), AC source → the stimulus at
+    /// its peak amplitude, DC current source → an open — and solves it. Returns the complex
+    /// node voltages as `(re, im)` pairs, ground excluded (node `k ≥ 1` at index `k − 1`),
+    /// so a Bode / |Z| reader can take magnitudes and phases at **any** frequency — it never
+    /// time-steps, so the transient step's Nyquist ceiling does not apply.
+    ///
+    /// This first pass models the **passive network** (R/L/C + sources); nonlinear/active
+    /// parts are left open (a follow-up will stamp their operating-point small-signal model).
+    /// Pure analysis: it reads the netlist but never mutates sim state, so it cannot touch
+    /// the snapshot hash or determinism of the transient run.
+    pub fn ac_solve(&self, omega: f64) -> Vec<(f64, f64)> {
+        let node_unknowns = self.node_count.saturating_sub(1);
+        // Branch-current unknowns (appended after the node voltages), as in the transient
+        // MNA: one per voltage source and per inductor.
+        let mut branch = vec![usize::MAX; self.elements.len()];
+        let mut n = node_unknowns;
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE || e.kind == ELEM_INDUCTOR {
+                branch[i] = n;
+                n += 1;
+            }
+        }
+        if n == 0 {
+            return Vec::new();
+        }
+        let mut a = vec![Cplx::ZERO; n * n];
+        let mut b = vec![Cplx::ZERO; n];
+        // Symmetric admittance (resistor-shaped KCL): +Y on the diagonals, −Y off, skip ground.
+        let stamp_y = |a: &mut [Cplx], ia: Option<usize>, ib: Option<usize>, y: Cplx| {
+            if let Some(r) = ia {
+                a[r * n + r] = a[r * n + r].add(y);
+            }
+            if let Some(r) = ib {
+                a[r * n + r] = a[r * n + r].add(y);
+            }
+            if let (Some(r), Some(c)) = (ia, ib) {
+                a[r * n + c] = a[r * n + c].sub(y);
+                a[c * n + r] = a[c * n + r].sub(y);
+            }
+        };
+        // Branch-current incidence for a `V(a)−V(b)` constraint on row `k` (the complex twin
+        // of the transient voltage-source augmentation).
+        let stamp_branch = |a: &mut [Cplx], ia: Option<usize>, ib: Option<usize>, k: usize| {
+            if let Some(r) = ia {
+                a[r * n + k] = a[r * n + k].add(Cplx::ONE);
+                a[k * n + r] = a[k * n + r].add(Cplx::ONE);
+            }
+            if let Some(r) = ib {
+                a[r * n + k] = a[r * n + k].sub(Cplx::ONE);
+                a[k * n + r] = a[k * n + r].sub(Cplx::ONE);
+            }
+        };
+        for (i, e) in self.elements.iter().enumerate() {
+            let ia = Self::node_idx(e.a);
+            let ib = Self::node_idx(e.b);
+            match e.kind {
+                ELEM_RESISTOR => {
+                    if e.value > 0.0 {
+                        stamp_y(&mut a, ia, ib, Cplx::new(1.0 / e.value, 0.0));
+                    }
+                }
+                ELEM_SWITCH => {
+                    stamp_y(&mut a, ia, ib, Cplx::new(self.switch_conductance(e), 0.0));
+                }
+                ELEM_CAPACITOR => {
+                    if e.value > 0.0 {
+                        stamp_y(&mut a, ia, ib, Cplx::new(0.0, omega * e.value));
+                    }
+                }
+                ELEM_INDUCTOR => {
+                    let k = branch[i];
+                    stamp_branch(&mut a, ia, ib, k);
+                    // Branch equation: V(a) − V(b) − jωL·i = 0.
+                    a[k * n + k] = a[k * n + k].sub(Cplx::new(0.0, omega * e.value));
+                }
+                ELEM_VSOURCE => {
+                    let k = branch[i];
+                    stamp_branch(&mut a, ia, ib, k);
+                    // Independent DC source: a short in the small-signal model (rhs stays 0).
+                }
+                ELEM_ACSOURCE => {
+                    let k = branch[i];
+                    stamp_branch(&mut a, ia, ib, k);
+                    b[k] = Cplx::new(if e.aux > 0.0 { e.aux } else { AC_AMPLITUDE }, 0.0);
+                }
+                // ELEM_ISOURCE and nonlinear/active kinds: an open in this passive-network
+                // pass — they stamp nothing.
+                _ => {}
+            }
+        }
+        let x = solve_dense_complex(a, b, n);
+        x[..node_unknowns].iter().map(|c| (c.re, c.im)).collect()
     }
 
     /// Current through each element, in the **same order** as the installed
@@ -7453,6 +7643,95 @@ mod tests {
     /// rather than a fitted constant.
     fn ac_emf_at_tick(f: f64, tick: u64) -> f64 {
         AC_AMPLITUDE * (core::f64::consts::TAU * f * (tick as f64) * DT).sin()
+    }
+
+    /// Frequency-domain AC analysis: a first-order RC low-pass (AC source 1->0, R 1->2,
+    /// C 2->0) must hit its textbook corner — at omega = 1/(RC), |H| = 1/sqrt(2) (-3 dB)
+    /// and the phase is exactly -45 deg — then roll off at -20 dB/decade above it. This is
+    /// the "proper corner" the 2 us transient step can't reach for small parts; `ac_solve`
+    /// gets it exactly because it never time-steps.
+    #[test]
+    fn ac_rc_lowpass_corner() {
+        let r = 1_000.0;
+        let c = 1.0e-6; // RC = 1 ms -> corner omega = 1000 rad/s (f ~ 159 Hz).
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[100.0, r, c],
+        );
+        // H = V2 / V1 from the complex node voltages -> (magnitude, phase).
+        let gain = |w: f64| -> (f64, f64) {
+            let v = sim.ac_solve(w);
+            let (r1, i1) = v[0];
+            let (r2, i2) = v[1];
+            let d = r1 * r1 + i1 * i1;
+            let hr = (r2 * r1 + i2 * i1) / d;
+            let hi = (i2 * r1 - r2 * i1) / d;
+            (hr.hypot(hi), hi.atan2(hr))
+        };
+        let wc = 1.0 / (r * c);
+        let (mag, phase) = gain(wc);
+        assert!(
+            (mag - 1.0 / 2.0_f64.sqrt()).abs() < 1e-9,
+            "|H| at the corner is 1/sqrt(2): got {mag}"
+        );
+        assert!(
+            (phase + std::f64::consts::FRAC_PI_4).abs() < 1e-9,
+            "phase at the corner is -45 deg: got {phase} rad"
+        );
+        assert!(
+            gain(wc / 1000.0).0 > 0.999,
+            "passband |H| ~ 1 far below the corner"
+        );
+        // One decade up vs two decades up: a single pole drops ~10x per decade.
+        let ratio = gain(wc * 10.0).0 / gain(wc * 100.0).0;
+        assert!(
+            (ratio - 10.0).abs() < 0.2,
+            "-20 dB/decade rolloff: got ratio {ratio}"
+        );
+    }
+
+    /// AC analysis of a lossless L-C divider (AC source 1->0, L 1->2, C 2->0):
+    /// H = 1/(1 - omega^2 LC), a known finite multiple of the input off resonance that
+    /// blows up as omega -> 1/sqrt(LC). Verifies the inductor (jwL branch) and capacitor
+    /// (jwC) stamps interact correctly — a resonance a time-stepped solve at this
+    /// kHz/MHz-scale omega could never resolve.
+    #[test]
+    fn ac_lc_divider_resonance() {
+        let l = 1.0e-3;
+        let c = 1.0e-6; // LC = 1e-9 -> omega0 ~ 31623 rad/s.
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[100.0, l, c],
+        );
+        let gain = |w: f64| -> f64 {
+            let v = sim.ac_solve(w);
+            let (r1, i1) = v[0];
+            let (r2, i2) = v[1];
+            let d = r1 * r1 + i1 * i1;
+            let hr = (r2 * r1 + i2 * i1) / d;
+            let hi = (i2 * r1 - r2 * i1) / d;
+            hr.hypot(hi)
+        };
+        // At omega^2 LC = 0.1, |H| = 1/|1 - 0.1| = 1.1111...
+        let w = (0.1_f64 / (l * c)).sqrt();
+        assert!(
+            (gain(w) - 1.0 / 0.9).abs() < 1e-6,
+            "L-C divider |H| off resonance: got {}",
+            gain(w)
+        );
+        // Just below omega0 the output is many times the input (near-singular divider).
+        let w0 = 1.0 / (l * c).sqrt();
+        assert!(
+            gain(w0 * 0.999) > 100.0,
+            "|H| explodes near LC resonance: got {}",
+            gain(w0 * 0.999)
+        );
     }
 
     /// An AC source straight across a resistor puts the full source EMF on the

@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (32) — Frequency-domain AC analysis engine (the "proper corners" foundation)
+
+**State:** 🟢 Rust. Owner picked the **AC sweep / Bode engine** to get real component corners +
+PSU work past the 2 µs / 62.5 kHz transient wall. Increment 1 (the engine + tests) is in
+`sim-core`; the UI is next.
+
+- **`Cplx` + `solve_dense_complex`** (lib.rs, by `solve_dense`) — a minimal dependency-free
+  complex number + a complex Gaussian-elimination twin of the real solver. Same deterministic
+  pivot rule.
+- **`Sim::ac_solve(omega) -> Vec<(f64,f64)>`** — small-signal AC analysis: assembles a complex
+  MNA (R→G, C→jωC, L→branch w/ jωL, DC V-source→short, AC source→stimulus at its amplitude, I
+  source/nonlinear→open) and solves for the complex node voltages at **any** ω — it never
+  time-steps, so the Nyquist/2 µs ceiling doesn't apply. Reuses `node_idx` + the transient MNA
+  layout. **Pure analysis — reads the netlist, never mutates sim state, so it can't touch the
+  snapshot hash** (determinism golden intact; all 111 tests incl. reproducibility pass).
+- Tests: `ac_rc_lowpass_corner` (|H|=1/√2 & −45° at ω=1/RC, −20 dB/dec rolloff) and
+  `ac_lc_divider_resonance` (1/(1−ω²LC), blows up at ω₀) — corners verified analytically.
+
+**Next increments:** (a) wasm binding — `ac_sweep(freqs)` returning the complex node voltages
+(interleaved Float64Array) + per-element |Z|/phase; (b) a **Bode / |Z|-vs-f panel** in the web UI
+(log-f axis, magnitude+phase, corner markers) — pairs with the phasor; (c) **nonlinear
+small-signal**: stamp diode/BJT/MOSFET/op-amp operating-point conductances (reuse `*_eval`) so
+amplifier/filter Bode + loop gain work, not just passives. Then the Ideal/Real parasitics
+(ESR/ESL/DCR) give real self-resonant corners for the AC engine to measure. Transient time-base +
+PSU rating measurements remain the *other* track the owner flagged.
+
+---
+
 ## 2026-06-19 (31) — AC frequency range → 50 kHz; switching-flicker root-caused (separate)
 
 **State:** 🟢 Web. Owner: extend the AC source "out to 1 GHz for fun (if it doesn't cause
