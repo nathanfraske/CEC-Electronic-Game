@@ -154,7 +154,18 @@ as the FAIL box and the ideal-into-cap blow-up).
    same on its pipe; the **phasor inset** overlays the info panel for reactive parts
    (C, EC, L, TR) once a cycle is measured. *Still open:* the cap/transformer drawers
    adopting `shimmerFlow`.
-4. **Scope:** ☐ plot V/I vs phase (already the right idea in `ac-curriculum.md`).
+4. **Scope:** ✅ **built** — the **phase-domain scope** (`lib/phaseScope.ts` → `drawPhaseScope`)
+   plots each non-ground node's steady-state waveform over one cycle **vs phase (0…2π)**,
+   reconstructed from the complex node voltage at the dominant source frequency
+   (`acSweep` at one point — `v(θ) = re·cos θ − im·sin θ`). Because it is drawn against phase, it
+   is legible at **any** frequency (no Nyquist limit — the MHz a switcher lives at), and the
+   relative phase between nodes reads directly. A play-head sweeps on the frame clock. It sits
+   beside the Bode in the Frequency-response panel (shown whenever an AC/pulse source is placed),
+   recomputed on edits/fidelity toggle, repainted per frame for the cursor. The source value
+   pickers now reach into the **MHz** to set that analysis point (`values.ts`). *Still open:*
+   overlaying a selected element's **current** I(θ) beside V(θ) (the V–I phase pair the phasor
+   inset already shows for reactive parts); binning the *actual* (non-sinusoidal) waveform by
+   phase at frequencies the transient resolves (≤ ~50 kHz), vs today's small-signal sinusoid.
 
 ## See also
 

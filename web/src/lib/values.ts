@@ -27,12 +27,23 @@ const CURATED_FULL: Record<string, number[]> = {
   V: [1.2, 1.5, 1.8, 2.5, 3.3, 5, 9, 12, 15, 24, 48],
   I: [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2],
   SW: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9],
-  // AC frequency (Hz). 50 + 60 are the mains line frequencies (EU/US); the top end now
-  // runs to 50 kHz — deep into the "shimmer" render range, yet still under the solver's
-  // resolvable ceiling. The 2 µs step needs ≥8 samples/cycle, so AC detection caps near
-  // 62.5 kHz; a round MHz/GHz would make f·dt an integer and alias the sine to a dead
-  // 0 V source, so the curated list (which also clamps custom input) deliberately stops here.
-  AC: [50, 60, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000],
+  // AC frequency (Hz). 50 + 60 are the mains line frequencies (EU/US). The list now runs up
+  // into the **MHz** — where PSU switching lives — because frequency is also the analysis point
+  // for the frequency-domain tools (the Bode sweep and the phase scope), which have **no Nyquist
+  // limit** (`ac_solve` is analytic). Below ~62.5 kHz the 2 µs time-domain step also resolves it
+  // (≥8 samples/cycle) so the board/time-scope show the live waveform; above that the *time*
+  // domain aliases (expected — undersampling), and the MHz behaviour is read in the frequency
+  // domain instead. The source's frequency sets where the phase scope / Bode analyse.
+  AC: [
+    50, 60, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000,
+    100000, 250000, 500000, 1e6, 2e6, 5e6, 10e6,
+  ],
+  // Pulse / clock generator frequency (Hz): a clock/switcher, so its useful range is the
+  // switching band — kHz up into the MHz (same frequency-domain reach as the AC source).
+  PULSE: [
+    100, 1000, 5000, 10000, 25000, 50000, 100000, 250000, 500000, 1e6, 2e6, 5e6,
+    10e6,
+  ],
   // Zener breakdown voltage Vz (V): the common standard BZX-series values.
   ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
   // Varistor clamp voltage Vc (V): common MOV ratings, a superset of the chips.
@@ -72,7 +83,9 @@ const CURATED_CHIPS: Record<string, number[]> = {
   V: [3.3, 5, 9, 12],
   I: [0.001, 0.005, 0.01, 0.05],
   SW: [0.25, 0.5, 0.75],
-  AC: [100, 500, 1000, 2000, 10000],
+  AC: [100, 1000, 10000, 50000, 100000, 1e6],
+  // Pulse/clock first-reach frequencies: a clock and the common switching bands.
+  PULSE: [1000, 10000, 100000, 500000, 1e6],
   // The classic Zener reference voltages people reach for first.
   ZD: [3.3, 4.7, 5.1, 6.2, 9.1, 12],
   // The common varistor clamp voltages people reach for first.
