@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (41) — Realistic-mode = global Fidelity flag; resistor tier (tolerance) shipped
+
+**State:** 🟢 Rust + Web, gates green. Owner: every part's tier non-idealities bite **only in
+realistic mode**; keep going until all parts ship tiers. Increment 1 of that.
+
+- **Promoted `realModels`** from a Bode-panel toggle to a **global Fidelity toggle** (`○ Ideal /
+  ● Real`) in the Telemetry panel (always reachable, even on DC circuits). Flipping it now
+  `board.emitChange()`s (re-emits onChange → `rebuildNetlist`) AND re-runs the Bode.
+- **`buildNetlist(graph, real)`** — passed `realModels`. In real mode a **resistor's value
+  deviates** `value·(1 + tol·jitter(id))` (tier tolerance ±5/1/0.5/0.1 %, deterministic per
+  **component id** so it's stable across edits — `jitter()` in netlist.ts). Ideal mode = exact.
+  `resistorTolerance(tier)` + `R` in `hasTiers` (so the inspector shows the R tier picker).
+- **Op-amp GBW pole gated on `real`** (sim-core ac_solve) for consistency — ideal = flat/infinite
+  bandwidth, real = the GBW rolloff. Updated the 2 op-amp tests to the real path. 120 tests green.
+
+**Graded + realistic-mode-gated:** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC (ESR),
+**resistor (tolerance)**. **Remaining (keep going — each its own increment, all gate on `real`):**
+- **V / AC source — output impedance** (web expansion like EC: ideal V-source in series with a
+  tier R that sags under load; mid≈0 so existing circuits unchanged when ideal/mid).
+- **Diode family — Rs** (sim-core: add a series-R to the diode small-signal/companion).
+- **MOSFET / BJT — Vto/Kp / β** (sim-core: `mosfet_op`/`bjt_op` read `e.params`; ~6 call sites —
+  pass the element).
+**Follow-up polish:** inspector "actual value" readout for a deviated resistor (so it's not a
+mystery); copy/paste carrying `tier`.
+
+---
+
 ## 2026-06-19 (40) — Tiers: electrolytic added + the "all components get grades" convention
 
 **State:** 🟢 Web, gates green. Owner: expand grades to ALL gradeable components + every NEW
@@ -24,8 +51,16 @@ so: added the next clean one (EC) + established the **convention durably**.
 **Graded so far:** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC (ESR). **Remaining gradeable
 (the additive roadmap, each its own increment):**
 - **Resistor — tolerance** (web value-deviation `value·(1+tol·jitter(id))`, deterministic per id):
-  budget ±5% … lab ±0.1%. Needs a decision on the **mid/default deviation** (0 = no surprise vs
-  realistic ±1%) and ideally an inspector "actual value" readout — that's why it's deferred.
+  budget ±5% / mid ±1% / high ±0.5% / lab ±0.1%. **OWNER DECISION: all tiers deviate, but ONLY in
+  "realistic" mode** — i.e. gate it on the existing **Ideal/Real flag** (`realModels`), so Ideal =
+  every resistor exact, Real = tiered deviation. Implementation (next increment): (1) promote
+  `realModels` from a Bode-panel toggle to a **global realistic-mode** flag with a toggle reachable
+  without an AC source; (2) `buildNetlist(graph, real)` deviates R values when `real` (jitter from a
+  stable per-component hash, NOT the element index); (3) toggling the flag must **rebuild the
+  netlist** (e.g. a new `board.emitChange()` re-emitting onChange → rebuildNetlist reads
+  `realModels`; the deviated values are in the sig so it reinstalls); (4) ideally an inspector
+  "actual value" readout so the deviation never looks like a bug. Caps/inductors/op-amp tier params
+  already only bite in Real mode (their AC stamp), so this unifies cleanly.
 - **V / AC source — output impedance** (web expansion, EC pattern: a series R that sags under
   load; budget supply regulates poorly). Keep mid≈0 so existing circuits are unchanged.
 - **Diode family — Rs / Vf** and **MOSFET/BJT — Vto/Kp / β**: sim-core param wiring (the

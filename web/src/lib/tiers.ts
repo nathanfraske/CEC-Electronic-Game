@@ -59,6 +59,20 @@ export function ecEsr(tier: number): number {
   return EC_ESR_BY_TIER[t] ?? 0.5;
 }
 
+// A resistor's quality is its tolerance. In REALISTIC mode buildNetlist deviates its actual
+// value deterministically (per component id) within the band, so a budget part is imprecise
+// and a lab part is tight; ideal mode keeps every resistor exact. Standard E-series grades.
+const R_TOLERANCE_BY_TIER = [0.05, 0.01, 0.005, 0.001]; // ±fraction: budget … lab
+
+/** The tolerance (± fraction) of a resistor at the given tier — used by buildNetlist. */
+export function resistorTolerance(tier: number): number {
+  const t = Math.max(
+    0,
+    Math.min(R_TOLERANCE_BY_TIER.length - 1, Math.round(tier)),
+  );
+  return R_TOLERANCE_BY_TIER[t] ?? 0.01;
+}
+
 /** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
 export function tierParams(kind: string, tier: number): number[] | null {
   const grades = TIER_PARAMS[kind];
@@ -70,5 +84,5 @@ export function tierParams(kind: string, tier: number): number[] | null {
 /** Whether a kind has quality tiers (so the inspector shows the tier picker). Covers both
  * param-block kinds ({@link TIER_PARAMS}) and web-expansion kinds (EC). */
 export function hasTiers(kind: string): boolean {
-  return kind in TIER_PARAMS || kind === "EC";
+  return kind in TIER_PARAMS || kind === "EC" || kind === "R";
 }

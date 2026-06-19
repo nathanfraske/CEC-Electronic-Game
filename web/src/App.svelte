@@ -964,7 +964,7 @@
       let netlist: BuiltNetlist | null = null;
       let netlistSig = "";
       const rebuildNetlist = (graph: BoardGraph): void => {
-        const nl = buildNetlist(graph);
+        const nl = buildNetlist(graph, realModels);
         // Onboarding: a non-null netlist means the circuit forms a solvable loop —
         // the trigger for the "a circuit is a loop" / "reading a part" concept cards.
         solvable = nl !== null;
@@ -2706,6 +2706,23 @@
       <span class="readout-k">Sim time</span>
       <span class="readout-v mono">{fmtTime(simSeconds)}</span>
     </div>
+    <!-- Fidelity mode: Ideal = perfect parts; Real = every part's tier non-idealities bite
+         (resistor tolerance in the sim, cap/inductor/op-amp parasitics in the Bode). Flipping
+         it recompiles the netlist (board.emitChange) and re-runs the sweep. -->
+    <div class="readout">
+      <span class="readout-k">Fidelity</span>
+      <button
+        class="btn btn-ghost fidelity-toggle {realModels ? 'is-real' : ''}"
+        onclick={() => {
+          realModels = !realModels;
+          board?.emitChange();
+          recomputeBode(bodeNodeCount);
+        }}
+        title="Ideal = perfect components. Real = each part's quality tier bites: resistor tolerance, capacitor/inductor ESR/ESL/DCR + self-resonance, op-amp finite gain-bandwidth."
+      >
+        {realModels ? "● Real" : "○ Ideal"}
+      </button>
+    </div>
 
     {#if selPart && selDisplay?.ac?.valid}
       {@const ph = selDisplay.ac.phase}
@@ -2733,23 +2750,11 @@
            magnitude vs log frequency, so reactance corners / filter knees / LC resonance
            show at frequencies the 2 µs transient step can't reach. Node colours match the
            scope; toggling a node in the list below hides its trace. -->
-      <h3 class="sub-title nodes-head">
-        <span>Frequency response</span>
-        <button
-          class="btn btn-ghost scope-expand"
-          onclick={() => {
-            realModels = !realModels;
-            recomputeBode(bodeNodeCount);
-          }}
-          title="Ideal parts vs Real parts (caps/inductors carry ESR/ESL/DCR + winding C, so they self-resonate). Analysis-only — the running sim is unchanged."
-        >
-          {realModels ? "● Real" : "○ Ideal"}
-        </button>
-      </h3>
+      <h3 class="sub-title">Frequency response</h3>
       <div class="bode-panel">
         <canvas use:bodeAction aria-hidden="true"></canvas>
         <span class="bode-cap mono">
-          dBV vs f · 1 Hz – 1 GHz (log){realModels ? " · parasitics on" : ""}
+          dBV vs f · 1 Hz – 1 GHz (log){realModels ? " · Real parts" : ""}
         </span>
       </div>
     {/if}
@@ -3174,6 +3179,16 @@
     text-transform: uppercase;
     color: var(--dim);
     text-align: center;
+  }
+  /* The global Ideal/Real fidelity toggle in Telemetry. */
+  .fidelity-toggle {
+    padding: 0 7px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  .fidelity-toggle.is-real {
+    color: var(--accent);
+    border-color: color-mix(in oklch, var(--accent) 55%, transparent);
   }
   /* The custom-label text field at the top of the value popover (name this part). */
   .insp-name {
