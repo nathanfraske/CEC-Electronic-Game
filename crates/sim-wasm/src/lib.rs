@@ -140,8 +140,11 @@ impl Simulation {
     /// it reaches reactance/corner/resonance behaviour far above the transient step's
     /// Nyquist limit. On-demand (not per-frame) and one crossing per whole sweep. Read-only
     /// — never mutates sim state, so it cannot affect the snapshot hash.
-    pub fn ac_sweep(&self, freqs: &[f64]) -> Vec<f64> {
-        self.inner.ac_sweep(freqs)
+    /// `real`: `false` = ideal components, `true` = Real parasitics (cap ESL/ESR self-
+    /// resonance, inductor DCR + winding-capacitance self-resonance) — analysis only, the
+    /// transient solve and hash are unaffected.
+    pub fn ac_sweep(&self, freqs: &[f64], real: bool) -> Vec<f64> {
+        self.inner.ac_sweep(freqs, real)
     }
 
     /// Protocol version, checked by the front end on load.

@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (36) — Ideal/Real parasitics in the AC engine + Bode toggle (functional first)
+
+**State:** 🟢 Rust + Web, gates green. Owner picked **functional-first** + **subtle always-on**
+sleeve. This is the functional half (the Bode shows real self-resonant corners); the analogy
+"parasitic sleeve" rendering is next (brainstorm in (35)).
+
+Chose an **AC-stamp** approach over netlist expansion (far less plumbing — no internal nodes, no
+scope-hiding, no netlist test harness needed — and it's Rust-testable + determinism-safe):
+
+- **`Sim::ac_solve_models(omega, real)`** (lib.rs) — `ac_solve(omega)` is now a thin wrapper for
+  `(omega, false)`. When `real`: a **capacitor** stamps the series ESL+ESR+C admittance
+  `1/(ESR + j(ωL_esl − 1/ωC))` (self-resonates, goes inductive above SRF); an **inductor** stamps
+  series DCR in its branch impedance + a parallel winding cap `IND_CW` (self-resonates, goes
+  capacitive). Constants `CAP_ESL=1nH, CAP_ESR=50mΩ, IND_CW=1pF`, `ind_dcr(L)=max(0.1, L·1000)`.
+  **Analysis-only** — the transient solve never sees `real`, so the **golden is untouched** (118
+  tests green). Tests `ac_real_capacitor_self_resonates` / `ac_real_inductor_self_resonates`.
+- **`ac_sweep(freqs, real)`** (sim-core + sim-wasm) and **`SimHandle.acSweep(freqs, real)`**
+  (loop.ts) thread the flag. **App.svelte:** `realModels` $state + an **○ Ideal / ● Real toggle**
+  in the Bode header (re-runs the sweep); Bode range widened to **1 Hz – 1 GHz** (frequency-domain
+  has no Nyquist wall, so the MHz SRFs show — the legit "1 GHz" the time-domain source couldn't do).
+- PNG-verified (`/tmp/harness/render-bode.js`, real-cap divider): violet dives to a notch at the
+  SRF then rises (inductive), vs the ideal cap's monotonic rolloff.
+
+**Parasitic values are mirrored** in sim-core constants — the analogy sleeve (next) must read the
+same ESR/ESL/DCR/Cw so the visual matches the Bode. Sleeve plan (subtle always-on, brighten-by-
+contribution: ESR grit-throat, ESL inertia-paddle, parallel side-tank) in (35). Optional later:
+transient parasitics (netlist expansion) for time-domain ESR ripple — deferred.
+
+---
+
 ## 2026-06-19 (35) — Op-amp small-signal + GBW pole in the AC engine
 
 **State:** 🟢 Rust + Web, gates green. Owner asked for op-amps + GBW (and parasitics — that's

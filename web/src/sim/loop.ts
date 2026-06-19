@@ -73,7 +73,7 @@ export interface SimHandle {
    * it reaches reactance/corner/resonance behaviour above the transient step's Nyquist
    * limit. On-demand (not per-frame); read-only, never mutates sim state.
    */
-  acSweep(freqs: Float64Array): Float64Array;
+  acSweep(freqs: Float64Array, real: boolean): Float64Array;
 }
 
 export async function createSimulation(seed: number): Promise<SimHandle> {
@@ -111,7 +111,7 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
         aux ?? new Float64Array(types.length),
       ),
     reset: () => sim.reset(),
-    acSweep: (freqs) => sim.ac_sweep(freqs),
+    acSweep: (freqs, real) => sim.ac_sweep(freqs, real),
   };
 }
 
