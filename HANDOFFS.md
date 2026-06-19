@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (37) — Analogy parasitic sleeve v1 (ESR/DCR heat-glow) + engine gap analysis
+
+**State:** 🟢 Web, gates green. Owner: "get the sleeve down," then focus on making the **engine
+mostly feature-complete before building more game** (game advances through the engine; late
+engine changes risk breaking the built game).
+
+- **Parasitic sleeve v1** (`analogyDrawers.ts`) — both the cap and the inductor analogy drawers
+  already drew a "valve = series-R throat"; promoted them into the sleeve. New shared helper
+  `seriesRGrit(g, x, halfH, current)`: faint always-on bronze **grit** specks in the throat +
+  a friction **heat-glow** (warm→hot, `mix(warn,bad,heat)`) that brightens with the through-
+  current (`norm(I)`), near-invisible at rest. Mirrors the resistor's proven heat-glow. Called
+  from the cap (ESR) and inductor (DCR) drawers. Subtle-always-on per the (35) brainstorm + owner
+  pick. **Gate-verified only — needs a live eyeball** (zoom past TIER_ZOOM in the *analogy* lens).
+  Follow-ups (noted): ESL inertia-paddle + parallel side-tank (Cw); EC sleeve; cross-link to the
+  Bode SRF corner. Uses the same parasitic *concept* as sim-core's `CAP_ESR`/`ind_dcr` (could read
+  the literal values later for exact consistency).
+
+- **Engine feature-completeness gap analysis** — dispatched a background agent to survey sim-core
+  vs a "feature-complete teaching engine" and produce a phased roadmap (which gaps risk breaking
+  the game if added later). Result lands in the (37) chat; synthesize for the owner + pick the
+  next engine track (likely the **transient time-base + auto-measurements** for PSU rating, and/or
+  more **source waveforms** square/PWM/pulse — both flagged repeatedly).
+
+---
+
 ## 2026-06-19 (36) — Ideal/Real parasitics in the AC engine + Bode toggle (functional first)
 
 **State:** 🟢 Rust + Web, gates green. Owner picked **functional-first** + **subtle always-on**

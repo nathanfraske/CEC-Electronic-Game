@@ -62,6 +62,38 @@ const WARM = mix(PALETTE.bronze, 0xffffff, 0.45); // moving current / hot energy
 const PRESS = PALETTE.violet; // pressure / resistance / return
 const PLATE = mix(PALETTE.dim, 0xffffff, 0.5); // bright metal (piston / tank plates)
 const SPRING = PALETTE.accent; // the capacitor pushing back (rose)
+const GRIT = mix(PALETTE.bronze, PALETTE.warn, 0.4); // ESR/DCR series-R grit (warm, dirty)
+
+/**
+ * The series-resistance parasitic — ESR on a capacitor, DCR on an inductor — drawn as the
+ * analogy-tier "parasitic sleeve": a few always-faint bronze grit specks in the part's
+ * series-R throat that develop a friction HEAT-GLOW (warm → hot) as the through-current
+ * rises. Near-invisible at rest, brightening only by contribution, so it teaches "this is
+ * where a real part warms under current (ripple)" without cluttering the calm illustration.
+ * Reused by every part that has a throat, so the parasitic reads the same everywhere.
+ */
+function seriesRGrit(
+  g: Graphics,
+  x: number,
+  halfH: number,
+  current: number,
+): void {
+  const heat = norm(current, CUR_SCALE);
+  // Friction heat-glow first (behind), so the throat + grit sit on top of the halo.
+  if (heat > 0.03) {
+    g.ellipse(x, 0, 8 + 6 * heat, halfH * (1.2 + heat)).fill({
+      color: mix(PALETTE.warn, PALETTE.bad, heat),
+      alpha: Math.min(0.4, 0.5 * heat),
+    });
+  }
+  // The grit: a few faint bronze specks — the "dirty", lossy series resistance.
+  for (let k = -1; k <= 1; k++) {
+    g.circle(x + k * 3.5, k * halfH * 0.22, 1.1).fill({
+      color: GRIT,
+      alpha: 0.3,
+    });
+  }
+}
 
 /** A zig-zag spring polyline from (x0,yc) to (x1,yc), `coils` zig-zags at ±amp. */
 function springPts(
@@ -284,6 +316,8 @@ function drawAnalogyInductor(g: Graphics, o: AnalogyOpts): void {
     color: PRESS,
     alpha: 0.5,
   });
+  // DCR parasitic: the throat warms with the winding current (the sleeve).
+  seriesRGrit(g, valveX, pipeHH, o.electrical.current);
 
   // --- the wheel chamber -------------------------------------------------------
   g.circle(cx, 0, chamR).fill({ color: 0x10131f, alpha: 0.82 });
@@ -581,6 +615,8 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
       s * pipeHH,
     ]).fill({ color: PRESS, alpha: 0.5 });
   }
+  // ESR parasitic: the throat warms with the ripple current (the sleeve).
+  seriesRGrit(g, valveX, pipeHH, o.electrical.current);
 
   // --- the spring (piston → fixed anchor): tighter as Vc grows ------------------
   const compressed = (charge + 1) / 2; // 0..1
