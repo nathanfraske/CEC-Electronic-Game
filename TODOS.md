@@ -6,6 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+---
+
+## 2026-06-19 (21) — Current-channel legibility (3-part: A frozen-spring ✓, B flicker, C MHz)
+
+Owner: components flicker when sped up; the circuit "dies" above ~100 kHz; and a big charged cap's
+spring is frozen though it's still discharging. All one root: **current is its own render channel
+and keeps going invisible** when the voltage/waveform motion stops telling the story.
+
+- ~~**(A) Frozen-spring / always-show-current** — `trickleFlow(current, scale)` in
+  `analogyDrawers.ts`: a FLOOR (0.15) on the carrier flow so any real current (|I| > 1e-9) keeps a
+  faint slow trickle instead of fading to a frozen nothing; a true zero (no discharge path) stays
+  still. Applied to the ceramic-cap (piston/spring) and electrolytic (reservoir) analogy drawers.
+  A big cap bleeding down at µA now reads as "still discharging". PNG-verified (I=0 → bare leads;
+  5/50 µA → visible trickle).~~
+- [ ] **(B) Component shimmer** — the schematic glyphs (and the shared `flow()` in `glyphs.ts`,
+  which hard-returns under ~0.4 mA) adopt the wires' apparent-rate shimmer handoff (`blurFactor` /
+  `apparentFreq` / `shimmerFlow`), so they stop strobing when the playback is sped up. Render-only;
+  uses the existing AC readout (valid ≤ 62.5 kHz). Also lowers the `flow()` dead-zone so small
+  currents trickle everywhere (the schematic half of A).
+- [ ] **(C) Frequency-domain render** — `ac_solve` returns per-element AC **currents** (not just
+  node voltages); above the ~62.5 kHz time-domain `AcMeas` ceiling the render's per-element AC
+  state (|I|, phase) is driven from the frequency domain, so the circuit visibly acts at
+  100 kHz–MHz as shimmer + phasor (fixes "dies above 100 kHz", and makes B work at MHz). sim-core +
+  web; the big piece. Analysis-only → golden-safe.
+
 ## 2026-06-19 (20) — Phase-domain scope + MHz source range (display fast signals)
 
 Owner: "display signals at MHz+ (PSU switching), and let the sources bump up there." The

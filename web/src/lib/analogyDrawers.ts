@@ -64,6 +64,18 @@ const PLATE = mix(PALETTE.dim, 0xffffff, 0.5); // bright metal (piston / tank pl
 const SPRING = PALETTE.accent; // the capacitor pushing back (rose)
 const GRIT = mix(PALETTE.bronze, PALETTE.warn, 0.4); // ESR/DCR series-R grit (warm, dirty)
 
+// Carrier-flow visibility (0..1) for the density/alpha, but with a FLOOR so a small steady
+// current still reads as a slow trickle instead of fading to a frozen nothing. A big charged
+// cap bleeds down at µA for a long time: `norm(µA)` is ~0 so the part looks dead even though
+// it's discharging. This keeps a faint stream alive for ANY real current (`|I|` above the
+// numerical-noise floor) — "still flowing, slowly" — while a genuine zero (no discharge path)
+// stays still. The magnitude above the floor still scales, so a fast charge reads fast.
+const TRICKLE_FLOOR = 0.15;
+function trickleFlow(current: number, scale: number): number {
+  if (Math.abs(current) < 1e-9) return 0; // truly no current → frozen is honest
+  return Math.max(norm(current, scale), TRICKLE_FLOOR);
+}
+
 /**
  * The series-resistance parasitic — ESR on a capacitor, DCR on an inductor — drawn as the
  * analogy-tier "parasitic sleeve": a few always-faint bronze grit specks in the part's
@@ -560,7 +572,8 @@ function drawAnalogyResistor(g: Graphics, o: AnalogyOpts): void {
 function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
 
-  const flow = norm(o.electrical.current, CUR_SCALE);
+  // A slow discharge keeps a visible trickle (not a frozen part) — see `trickleFlow`.
+  const flow = trickleFlow(o.electrical.current, CUR_SCALE);
   const dir = o.electrical.current >= 0 ? 1 : -1;
   // Greatly EXAGGERATED, signed response: a sensitive knee so even a small Vc visibly
   // swings the piston and works the spring (the spring is the whole teaching point),
@@ -662,7 +675,9 @@ function drawAnalogyCeramicCap(g: Graphics, o: AnalogyOpts): void {
 // ============================================================================
 function drawAnalogyElectrolyticCap(g: Graphics, o: AnalogyOpts): void {
   const { hw, hh } = o.bounds;
-  const flow = norm(o.electrical.current, CUR_SCALE);
+  // A big reservoir bleeds down at µA for a long time — keep a slow trickle so it doesn't
+  // read as frozen while it's still discharging (see `trickleFlow`).
+  const flow = trickleFlow(o.electrical.current, CUR_SCALE);
   const dir = o.electrical.current >= 0 ? 1 : -1; // + = charging (in via the + lead)
   const level = Math.max(
     0,
