@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (15) — Magnitude-rides-RMS (thickness + flow) + phasor moved to Telemetry
+
+- ~~**Wire thickness/density flickered on AC** — `normC` rode `|i_instantaneous|`. Now eases
+  toward a per-wire running-RMS branch current (`wireMs`, EMA `WIRE_RMS_ALPHA=0.04`, advanced once
+  per frame in `advanceWireRms`) by the shimmer `blur`, mirroring the vrms colour blend. Sign kept
+  → carriers still slosh. (board.ts)~~
+- ~~**Component flow/heat strobed on AC** — new `glyphs.flowStabilized(e, blur)` eases the glyph
+  `current` magnitude toward measured `ac.irms` (sign kept) by the part's own apparent-rate blur.
+  Wired in the board.ts node loop.~~
+- ~~**Phasor placement** — moved out of the value popover into its own ~180 px `Phasor · <part>`
+  section in the Telemetry aside (beside the scope), with a V/I + ϕ°/lag/lead legend.
+  `drawPhasor2D` strokes now scale with radius.~~
+- [ ] **Flow stabilisation gaps** — diode/LED flow still strobes on fast AC (the `max(0,current)`
+  sign-gate zeroes the off-half); potentiometer `legs[]` divider flow isn't RMS-blended. Low
+  priority; honest-ish as-is.
+- [ ] **Pixel-verify the board** — wire/glyph averaging is read- + numerically-verified only (no
+  headless Pixi render). Confirm on live that thickness/flow are steady on fast AC.
+
 ## 2026-06-18 (14) — High-frequency AC render primitives (Layer 3) shipped
 
 - ~~**`tierKit.shimmerFlow`** — the carrier→shimmer-band handoff on

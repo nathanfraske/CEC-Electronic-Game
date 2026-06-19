@@ -2111,16 +2111,6 @@
               )} through
             </div>
           {/if}
-          {#if selDisplay?.ac?.valid}
-            <!-- Phasor inset: the V (warm) / I (cyan) clock with phosphor afterglow,
-                 shown for any part carrying AC — the angle between the arrows is the
-                 measured V–I phase (amber wedge = lagging/inductive, violet = leading/
-                 capacitive, grey = in-phase/resistive). -->
-            <div class="insp-phasor">
-              <canvas use:hudPhasorAction aria-hidden="true"></canvas>
-              <span class="insp-phasor-cap mono">phase ϕ</span>
-            </div>
-          {/if}
           <!-- Custom label: name this part (shown on the board in place of the kind
                tag). Pure presentation; persists in the save. Commits on blur/enter. -->
           <div class="insp-row">
@@ -2616,6 +2606,27 @@
       <span class="readout-v mono">{fmtTime(simSeconds)}</span>
     </div>
 
+    {#if selPart && selDisplay?.ac?.valid}
+      {@const ph = selDisplay.ac.phase}
+      {@const deg = (ph * 180) / Math.PI}
+      <!-- Phasor: the V (warm) / I (cyan) clock with phosphor afterglow for the selected
+           AC part — the angle between the arrows is the measured V–I phase. Its own panel
+           (bigger than a popover inset) beside the scope; the wedge tints amber = current
+           lags (inductive), violet = leads (capacitive), grey = in-phase (resistive). -->
+      <h3 class="sub-title">Phasor · {partName(selPart.kind)}</h3>
+      <div class="phasor-panel">
+        <canvas use:hudPhasorAction aria-hidden="true"></canvas>
+        <div class="phasor-legend mono">
+          <span><i style="background: #d8a24a"></i>V</span>
+          <span><i style="background: #46d2e6"></i>I</span>
+          <span class="phasor-phi">
+            ϕ {deg >= 0 ? "+" : "−"}{Math.abs(deg).toFixed(0)}°
+            {Math.abs(deg) < 4 ? "resistive" : ph > 0 ? "lag" : "lead"}
+          </span>
+        </div>
+      </div>
+    {/if}
+
     <h3 class="sub-title nodes-head">
       <span>Nodes · {channels.length}</span>
       <span class="scope-ctl">
@@ -2983,23 +2994,38 @@
     color: var(--accent);
     vertical-align: 1px;
   }
-  /* The V–I phasor inset shown in the inspector popover for AC-carrying parts. */
-  .insp-phasor {
+  /* The V–I phasor panel in Telemetry (its own section, for the selected AC part). */
+  .phasor-panel {
     display: flex;
+    flex-direction: column;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    gap: 7px;
+    margin: 2px 0 12px;
   }
-  .insp-phasor canvas {
-    width: 60px;
-    height: 60px;
-    flex: 0 0 auto;
+  .phasor-panel canvas {
+    width: 100%;
+    max-width: 180px;
+    aspect-ratio: 1;
   }
-  .insp-phasor-cap {
-    font-size: 9px;
-    letter-spacing: 0.09em;
-    text-transform: uppercase;
+  .phasor-legend {
+    display: flex;
+    gap: 13px;
+    align-items: center;
+    font-size: 10px;
+    letter-spacing: 0.04em;
     color: var(--dim);
+  }
+  .phasor-legend i {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    margin-right: 4px;
+    border-radius: 2px;
+    vertical-align: 0;
+  }
+  .phasor-phi {
+    color: var(--text);
+    text-transform: uppercase;
   }
   /* The custom-label text field at the top of the value popover (name this part). */
   .insp-name {

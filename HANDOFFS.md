@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (30) — Magnitude-rides-RMS for thickness + particle flow; phasor → own Telemetry panel
+
+**State:** 🟢 Web. Owner: phasor "bigger / its own section, not in the popout, alongside the
+scope"; "line thickness still flickers with current — average it like everything else"; "same
+treatment to the flow of particles across components." All three done; gates green.
+
+The "like everything else" = the wire **colour** already eases toward the net RMS voltage by the
+shimmer `blur` (apparent rate) on fast AC; thickness/density/flow did **not** — they rode
+`|i_instantaneous|`, which aliases 0↔peak. Fixed by mirroring the colour blend in the current
+domain:
+
+- **Wires (`board.ts redrawWires`)** — `normC` (drives belt thickness AND carrier
+  density/size/alpha) now uses `magC = lerp(|cur|, irmsW, blur)`. `irmsW = sqrt(wireMs)`, a
+  per-wire running mean-square branch current. The sub-frame batch carries only voltages (no
+  per-tick branch current), so it's an EMA (`WIRE_RMS_ALPHA = 0.04`) advanced **once per frame**
+  in new `advanceWireRms()` — NOT in redrawWires (which fires on every pan/drag/edit); redrawWires
+  only reads it. Sign stays instantaneous → carriers still slosh. Verified the EMA settles to RMS
+  with ≤~3% ripple at the blur onset (apparent ≥10 Hz) via `/tmp/harness/ema-rms.js`.
+- **Components (`glyphs.ts flowStabilized` + `board.ts` node loop)** — new `flowStabilized(e,
+  blur)` eases `current` magnitude toward the **measured** `ac.irms` (sign kept) by the part's own
+  `blur` (= `blurFactor(apparentFreq(freq)) · acFrac`, acFrac from iamp vs |imean|). Stops glyph
+  flow density/heat strobing on fast AC. DC / slow AC (blur≈0) ⇒ unchanged (still breathes).
+- **Phasor → Telemetry panel** — moved out of the value popover into its own `Phasor · <part>`
+  section in the right aside, ~180 px (was 60), with a V/I + `ϕ deg lag/lead/resistive` legend.
+  `hudPhasor.drawPhasor2D` strokes/dots/heads now scale with radius (crisp small or large).
+  Re-rendered at 180 px (`/tmp/harness/render-hudphasor.js`, S=180) — inductive/resistive/
+  capacitive all read clearly.
+
+**Known-minor / follow-ups:** a diode/LED's flow still strobes on fast AC (sign gates
+`max(0,current)` so the off-half zeroes it — honest but not stabilised); `legs[]` (pot divider)
+flow isn't stabilised. Couldn't headlessly render the full Pixi board, so the wire/glyph
+*integration* is read-verified + numerically verified, not pixel-verified — eyeball on live.
+Phasor brainstorm backlog (impedance/power triangle, PF ring, P/Q bar, etc.) still in (29).
+
+---
+
 ## 2026-06-18 (29) — Phasor in the inspector HUD + broadened to any AC part + brainstorm
 
 **State:** 🟢 Web, PNG-verified. Owner asked (AskUserQuestion) for: phasor in the inspector
