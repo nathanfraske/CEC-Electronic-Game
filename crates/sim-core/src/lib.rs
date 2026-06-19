@@ -2788,6 +2788,15 @@ impl Sim {
                         mat[bi * n + r] -= 1.0;
                     }
                     rhs[bi] += v;
+                    // Source output impedance (Real-mode tier): V(a)-V(b) = EMF - Rout·i, so
+                    // the supply sags under load. Rout is param slot 0 — 0 (the default, and
+                    // every ideal-mode source) is a perfect zero-impedance source. The
+                    // capacitor shares this branch arm but has no output resistance, so skip it.
+                    // (The branch current is signed so a sourcing source has `i < 0`, hence
+                    // `−Rout·i` is the positive sag term: V(a)−V(b) = EMF − Rout·i_load.)
+                    if e.kind != ELEM_CAPACITOR {
+                        mat[bi * n + bi] -= e.params[0];
+                    }
                 }
                 ELEM_INDUCTOR => {
                     // Current source injecting the stored branch current a -> b:
@@ -8317,6 +8326,49 @@ mod tests {
             notch(&with_esr(0.5)) > notch(&with_esr(0.005)) * 5.0,
             "a higher-ESR (budget) cap bottoms out at a much shallower SRF notch"
         );
+    }
+
+    /// Per-device parameter block on a source: a voltage source's output impedance is param
+    /// slot 0, so under load the node sags to `Vsrc·R/(R+Rout)` (a budget supply regulates
+    /// poorly). Param 0 — the default and every ideal-mode source — is a perfect zero-Ω source.
+    #[test]
+    fn vsource_output_impedance_sags_under_load() {
+        let vsrc = 5.0;
+        let rload = 100.0;
+        let rout = 10.0;
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 2 * PARAM_STRIDE];
+        params[0] = rout; // element 0 = the V source, slot 0 = Rout
+        assert!(sim.set_netlist_p(
+            2,
+            &[ELEM_VSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[vsrc, rload],
+            &[0.0, 0.0],
+            &params,
+        ));
+        let v1 = sim.node_voltages()[1];
+        let expected = vsrc * rload / (rload + rout);
+        assert!(
+            (v1 - expected).abs() < 1e-9,
+            "loaded source sags: got {v1}, want {expected}"
+        );
+        // A perfect (param-0) source holds the full EMF.
+        let mut ideal = Sim::new(1);
+        assert!(ideal.set_netlist(
+            2,
+            &[ELEM_VSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[vsrc, rload],
+            &[0.0, 0.0],
+        ));
+        assert!((ideal.node_voltages()[1] - vsrc).abs() < 1e-9);
     }
 
     /// An AC source straight across a resistor puts the full source EMF on the

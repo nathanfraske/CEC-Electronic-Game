@@ -26,6 +26,20 @@ export const DEFAULT_TIER = 1;
 //   L  (inductor): [0] = DCR (Ω), [1] = winding capacitance (F)
 // A kind absent here has no tiers (its params stay at the sim-core defaults).
 const TIER_PARAMS: Record<string, number[][]> = {
+  // Voltage / AC source: [0] = output impedance (Ω) — a budget supply sags under load, a
+  // lab supply is stiff. TRANSIENT-affecting, so buildNetlist only applies it in Real mode.
+  V: [
+    [1.0, 0, 0, 0], // budget: 1 Ω — visibly sags
+    [0.1, 0, 0, 0], // mid
+    [0.02, 0, 0, 0], // high
+    [0.005, 0, 0, 0], // lab: stiff
+  ],
+  AC: [
+    [1.0, 0, 0, 0],
+    [0.1, 0, 0, 0],
+    [0.02, 0, 0, 0],
+    [0.005, 0, 0, 0],
+  ],
   OA: [
     [3e5, 0, 0, 0], // budget: 300 kHz — slow
     [1e6, 0, 0, 0], // mid: 1 MHz (the 741-class default)
