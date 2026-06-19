@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (16) — AC frequency range → 50 kHz; switching flicker root-caused
+
+- ~~**AC source frequencies** extended to 50 kHz (`values.ts`: +10 k/20 k/50 k, +10 kHz chip).
+  1 GHz infeasible at the 2 µs step (AC detect caps 62.5 kHz; round MHz/GHz → `f·dt` int → dead
+  0 V source). 50 kHz already shimmers fully.~~
+- [ ] **Resistor flicker under high SWITCHING** (owner ask) — NOT the same bug as AC flicker.
+  `ELEM_SWITCH` = fixed 10 kHz chopper → unipolar PWM → sinusoidal AC detector says DC/invalid →
+  (30) RMS-averaging can't engage → strobes. Fix: (a) sim-core AC analysis report RMS+fundamental
+  for non-sinusoidal periodic signals, or (b) render-side ripple-gated magnitude stabiliser not
+  keyed on `ac.valid`. Offered to owner; awaiting pick.
+- [ ] **Phasor sweep ideas (round 2)** — Xc/Xl+R split (trig, cheapest); |Z|-vs-f sparkline the
+  phasor paints (needs HUD-side freq-history buffer, presentation-only); RMS-vs-peak shadow;
+  cap↔ind crossover anim; reactance-corner marker; resonance-hunt glow; two-part overlay (needs
+  2nd readout). Full round-1 list (impedance triangle, PF ring, P/Q bar) still open from (14)/(29).
+
 ## 2026-06-19 (15) — Magnitude-rides-RMS (thickness + flow) + phasor moved to Telemetry
 
 - ~~**Wire thickness/density flickered on AC** — `normC` rode `|i_instantaneous|`. Now eases
