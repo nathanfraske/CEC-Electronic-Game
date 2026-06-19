@@ -55,6 +55,10 @@ const TYPE_OF: Record<string, number> = {
   // player parks at one extreme. No new sim element; the golden is unchanged.
   MSW: 6, // manual switch; value = state (1 = closed, 0 = open) — duty 1/0
   AC: 7, // sinusoidal voltage source; value = frequency (Hz)
+  // Pulse / clock generator: the SAME solver element as AC (a time-varying voltage source),
+  // distinguished only by its waveform param (slot 1 = 1 square / 2 triangle) and duty (slot 3),
+  // written below. value = frequency (Hz), aux = amplitude (V). No new sim element.
+  PULSE: 7,
   SD: 8, // Schottky diode (nonlinear; low ~0.3 V forward drop)
   LED: 9, // LED (nonlinear; ~1.9 V drop, brightness tracks forward current)
   ZD: 10, // Zener diode (nonlinear; reverse breakdown clamps at value = Vz)
@@ -510,8 +514,8 @@ export function buildNetlist(
     // in sim-core); every other kind emits 0, which the core ignores. Kept parallel
     // to `values`.
     const aux =
-      c.kind === "AC"
-        ? (c.amp ?? AC_DEFAULT_AMP)
+      c.kind === "AC" || c.kind === "PULSE"
+        ? (c.amp ?? AC_DEFAULT_AMP) // source peak amplitude / pulse high level
         : c.kind === "LS"
           ? (c.amp ?? 5) // a level shifter's output rail B (its second scalar)
           : (GATE_AUX[c.kind] ?? 0) +
@@ -672,6 +676,13 @@ export function buildNetlist(
       params[ei * PARAM_STRIDE + 0] = dv.is;
       params[ei * PARAM_STRIDE + 1] = dv.n;
       if (real) params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
+    }
+    // Pulse / clock generator: the AC-source element's waveform (slot 1: 1 = square, 2 =
+    // triangle) and duty (slot 3). Part identity, so installed in both fidelity modes. (A plain
+    // AC source leaves slot 1 at 0 = sine, so it is untouched.)
+    if (comp.kind === "PULSE") {
+      params[ei * PARAM_STRIDE + 1] = (comp.variant ?? 0) === 1 ? 2 : 1;
+      params[ei * PARAM_STRIDE + 3] = comp.duty ?? 0.5;
     }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op

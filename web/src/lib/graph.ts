@@ -127,6 +127,14 @@ export interface Component {
    * untouched parts round-trip unchanged.
    */
   variant?: number;
+  /**
+   * The pulse / clock generator's **duty cycle** in `[0, 1]`: the fraction of each period the
+   * square output is high (and the symmetry point of the triangle). Only meaningful for kind
+   * `"PULSE"` (where {@link buildNetlist} writes it into the waveform param block); other kinds
+   * leave it undefined. A new pulse source defaults to 0.5 (50 %). Optional so older snapshots
+   * round-trip unchanged.
+   */
+  duty?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
@@ -324,6 +332,19 @@ export const PART_KINDS: Record<string, PartKind> = {
   V: kind("V", "Voltage Source", "warn", twoPin("+", "−"), 5, "V", true),
   // Sine source (ideal, 5 V peak); `value` is the frequency in Hz.
   AC: kind("AC", "AC Source", "accent", twoPin("+", "−"), 500, "Hz", true),
+  // Pulse / clock generator: a unipolar square (or triangle) source — `value` is the
+  // frequency (Hz), `amp` the high level (V), `variant` the waveform (0 square / 1 triangle),
+  // `duty` the duty cycle. In the netlist it is an AC-source element with the waveform param
+  // set (so the deterministic core treats it as one more time-varying voltage source).
+  PULSE: kind(
+    "PULSE",
+    "Pulse / Clock Gen",
+    "violet",
+    twoPin("+", "−"),
+    1000,
+    "Hz",
+    true,
+  ),
   R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
@@ -758,6 +779,7 @@ export class BoardGraph {
       // 5 V so a freshly placed source swings +/- 5 V exactly as before. Other
       // kinds leave it undefined.
       ...(kind === "AC" ? { amp: AC_DEFAULT_AMP } : {}),
+      ...(kind === "PULSE" ? { amp: AC_DEFAULT_AMP, duty: 0.5 } : {}),
       // A level shifter carries its OUTPUT rail (rail B) as the second scalar,
       // defaulting to 5 V — so a fresh shifter translates its 1.8 V input up to 5 V.
       ...(kind === "LS" ? { amp: 5 } : {}),
