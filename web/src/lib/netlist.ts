@@ -17,7 +17,7 @@ import {
 import type { Endpoint } from "./graph";
 import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
-import { tierParams, DEFAULT_TIER, PARAM_STRIDE } from "./tiers";
+import { tierParams, ecEsr, DEFAULT_TIER, PARAM_STRIDE } from "./tiers";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
@@ -138,12 +138,7 @@ const GATE_AUX: Record<string, number> = {
 const ELEM_RESISTOR = 1;
 const ELEM_CAPACITOR = 2;
 
-// Electrolytic-cap parasitic series resistance (ESR), in ohms. A real bulk
-// electrolytic has a few hundred mΩ of ESR; we model a fixed, small 0.5 Ω so the
-// honest "a real cap can't perfectly flatten ripple" lesson is visible without
-// dominating the operating point. Kept a fixed constant (not a function of C) for
-// simplicity — see docs/parts-catalog-ideation.md §2.1.
-const EC_ESR_OHMS = 0.5;
+// (Electrolytic-cap ESR is now graded by tier — see `ecEsr` in lib/tiers.ts.)
 
 // Minimum resistance of either potentiometer leg, in ohms — a small wiper-contact
 // floor so an end-stop wiper (t → 0 or 1) reads as a near-short rather than an
@@ -390,7 +385,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
       bArr.push(nb);
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
-      values.push(EC_ESR_OHMS); // parasitic series resistance
+      values.push(ecEsr(c.tier ?? DEFAULT_TIER)); // ESR (graded by the part's tier)
       auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
       nodesOfComponent.set(c.id, [na, nb]); // V across the whole part

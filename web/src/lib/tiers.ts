@@ -46,6 +46,19 @@ const TIER_PARAMS: Record<string, number[][]> = {
   ],
 };
 
+// The electrolytic cap (EC) is graded WEB-SIDE rather than through the sim-core param
+// block: buildNetlist already expands it into an ideal cap + a series ESR resistor, so its
+// tier just sets that resistor's value (a budget bulk cap is lossy; a polymer/lab cap is
+// tight). Mid-range = the old fixed `EC_ESR_OHMS` (0.5 Ω), so existing EC circuits are
+// unchanged. (Devices graded by an expansion like this don't go through `tierParams`.)
+const EC_ESR_BY_TIER = [1.0, 0.5, 0.1, 0.03]; // budget … lab, ohms
+
+/** The ESR (Ω) for an electrolytic cap at the given tier — used by buildNetlist. */
+export function ecEsr(tier: number): number {
+  const t = Math.max(0, Math.min(EC_ESR_BY_TIER.length - 1, Math.round(tier)));
+  return EC_ESR_BY_TIER[t] ?? 0.5;
+}
+
 /** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
 export function tierParams(kind: string, tier: number): number[] | null {
   const grades = TIER_PARAMS[kind];
@@ -54,7 +67,8 @@ export function tierParams(kind: string, tier: number): number[] | null {
   return grades[t] ?? null;
 }
 
-/** Whether a kind has quality tiers (so the inspector shows the tier picker). */
+/** Whether a kind has quality tiers (so the inspector shows the tier picker). Covers both
+ * param-block kinds ({@link TIER_PARAMS}) and web-expansion kinds (EC). */
 export function hasTiers(kind: string): boolean {
-  return kind in TIER_PARAMS;
+  return kind in TIER_PARAMS || kind === "EC";
 }

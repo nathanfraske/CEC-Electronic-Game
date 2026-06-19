@@ -73,6 +73,26 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
 | `web/src/wasm/` | **generated** by `build:wasm`; gitignored; never edit |
 | `docs/` | architecture, determinism contract, ADRs |
 
+## Component grades (tiers)
+
+Components with real quality grades carry a `tier` (budget / mid-range / high-end /
+lab-grade — `Component.tier`, default mid-range). The inspector shows a tier picker for any
+kind where `hasTiers` is true. Each tier is a **preset bundle of the device's model
+parameters**, defined in **`web/src/lib/tiers.ts`**:
+
+- **Param-block kinds** (op-amp GBW; cap ESR/ESL; inductor DCR/Cw): `tierParams(kind, tier)`
+  → the per-element `Element::params` block, **wired in `crates/sim-core`**. The slot map is
+  mirrored in `tiers.ts`; a `0` slot means the kind default, so mid-range ≈ the sim-core
+  default and the golden is untouched. The AC/Bode params are analysis-only (never touch the
+  transient).
+- **Web-expansion kinds** (electrolytic ESR via `ecEsr`): the tier sets a value used in
+  `buildNetlist`'s element expansion — no sim-core param.
+
+**Convention — every new component with real grades ships with its tier presets from the
+start:** add it to `tiers.ts` (wire its params in sim-core, or expand it web-side), make
+mid-range match the existing default, and keep the slot map in sync with `Element::params`
+in `crates/sim-core/src/lib.rs`.
+
 ## Gotchas
 
 - `web/src/wasm` is gitignored and excluded from `tsconfig.app.json`. Always run
