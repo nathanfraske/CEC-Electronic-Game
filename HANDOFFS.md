@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (42) — Transistor tiers shipped → quality-tier rollout COMPLETE
+
+**State:** 🟢 Rust + Web, all gates green (122 sim-core tests, 1 ignored). The owner directive —
+"keep going down the list until all parts have shipped tiers in their realistic mode" — is now
+**done for every gradeable component**.
+
+- **MOSFET Kp (NM/PM) + BJT β (Q/QP)** — the last transistor increment. `mosfet_op`/`bjt_op`
+  now take `&Element` and read `param_or(&e.params, 0, MOS_KP / BJT_BF)` (12 call sites updated).
+  Tiers added to `tiers.ts` (`NM`/`PM` Kp 0.01/0.02/0.04/0.08; `Q`/`QP` β 60/100/200/400, mid =
+  the sim-core default). Gated web-side in `buildNetlist` via the new **`TRANSIENT_TIER_KINDS`**
+  set (`V, AC, NM, PM, Q, QP`) — skipped when `!real`, like the source Zout. The inspector tier
+  picker shows automatically (`hasTiers` keys off `TIER_PARAMS`). Test
+  `bjt_beta_param_pulls_collector_lower` (base driven through RB so Ic = β·Ib actually moves Vc;
+  a fixed-Vbe drive would hide β behind the exponential).
+
+**Now graded + Real-gated (the full set):** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC
+(ESR), resistor (tolerance), V/AC source (output-Z), **MOSFET (Kp), BJT (β)**. AC-only params
+gate in sim-core's `ac_solve`; transient params gate web-side (`TRANSIENT_TIER_KINDS`).
+
+- **Transformer — assessed, deliberately NOT tiered (documented in CLAUDE.md + TODOS).** I
+  prototyped grading `rp`/`Lmag`, but the ideal-T model hard-couples the secondary (no series
+  Is term — required for full-wave bridge stability), so neither knob droops the loaded output
+  (a winding-resistance test showed budget 4.763 V vs lab 4.762 V — no effect). The only knob
+  that gives load regulation is the secondary **leakage**, which is the inrush-stability control
+  (lowering it risks the rectifier-into-empty-cap divergence). So a safe + observable transformer
+  tier isn't achievable without a model change; reverted the prototype, kept the model untouched.
+
+**Other kinds intentionally without quality tiers:** diodes/LED/Zener/Schottky/MOV (graded by
+TYPE = distinct `ELEM_*`), logic gates / flip-flop (graded by FAMILY = Ideal/CMOS/TTL). So the
+quality-tier axis is now genuinely complete.
+
+**Follow-up polish (small, not blocking):** inspector "actual value" readout for a Real-mode
+deviated resistor (so the deviation isn't a mystery); copy/paste carrying `tier`.
+
+---
+
 ## 2026-06-19 (41) — Realistic-mode = global Fidelity flag; resistor tier (tolerance) shipped
 
 **State:** 🟢 Rust + Web, gates green. Owner: every part's tier non-idealities bite **only in

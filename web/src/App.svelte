@@ -2250,8 +2250,11 @@
               {#if hasTiers(kind)}
                 <!-- Quality tier (main gameplay): each grade is a preset bundle of the
                      device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
-                     inductor's DCR/winding-C), so a better tier self-resonates higher / is
-                     faster (and, later, costs more). The sandbox keeps raw param editing. -->
+                     inductor's DCR/winding-C, a source's output impedance, a resistor's
+                     tolerance, a MOSFET's Kp, a BJT's β), so a better tier self-resonates
+                     higher / is faster / regulates stiffer / has more gain (and, later, costs
+                     more). The non-ideal grades bite only in Real mode; the sandbox keeps raw
+                     param editing. -->
                 <div class="insp-sub">quality tier</div>
                 <div class="insp-chips wrap">
                   {#each TIER_LABELS as label, i (label)}
