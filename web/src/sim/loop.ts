@@ -66,6 +66,14 @@ export interface SimHandle {
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
+  /**
+   * Small-signal AC sweep (Bode data): for each frequency in `freqs` (Hz), the complex
+   * node voltages from a frequency-domain solve, flattened `[re, im]` per non-ground node
+   * — a block of `2·(nodeCount − 1)` per frequency, in input order. Frequency-domain, so
+   * it reaches reactance/corner/resonance behaviour above the transient step's Nyquist
+   * limit. On-demand (not per-frame); read-only, never mutates sim state.
+   */
+  acSweep(freqs: Float64Array): Float64Array;
 }
 
 export async function createSimulation(seed: number): Promise<SimHandle> {
@@ -103,6 +111,7 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
         aux ?? new Float64Array(types.length),
       ),
     reset: () => sim.reset(),
+    acSweep: (freqs) => sim.ac_sweep(freqs),
   };
 }
 

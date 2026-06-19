@@ -4528,6 +4528,22 @@ impl Sim {
         x[..node_unknowns].iter().map(|c| (c.re, c.im)).collect()
     }
 
+    /// Run [`Sim::ac_solve`] across a list of frequencies (Hz), flattened for the JS↔wasm
+    /// boundary: per frequency, the `[re, im]` of each non-ground node (node `k ≥ 1` at
+    /// slot `k − 1`) — a block of `2·(node_count − 1)` `f64`s, in input frequency order.
+    /// One batched call keeps the boundary coarse (a whole Bode sweep in a single crossing).
+    pub fn ac_sweep(&self, freqs_hz: &[f64]) -> Vec<f64> {
+        let nu = self.node_count.saturating_sub(1);
+        let mut out = Vec::with_capacity(freqs_hz.len() * nu * 2);
+        for &f in freqs_hz {
+            for (re, im) in self.ac_solve(core::f64::consts::TAU * f) {
+                out.push(re);
+                out.push(im);
+            }
+        }
+        out
+    }
+
     /// Current through each element, in the **same order** as the installed
     /// netlist, with the sign defined `a -> b` (positive current flows from
     /// terminal `a` to terminal `b` inside the element). One entry per element.
@@ -7732,6 +7748,31 @@ mod tests {
             "|H| explodes near LC resonance: got {}",
             gain(w0 * 0.999)
         );
+    }
+
+    /// `ac_sweep` is `ac_solve` across a frequency list, flattened [re, im] per non-ground
+    /// node per frequency — verify the layout and that it agrees point by point.
+    #[test]
+    fn ac_sweep_matches_pointwise_solve() {
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[100.0, 1_000.0, 1.0e-6],
+        );
+        let freqs = [100.0, 1_000.0, 10_000.0];
+        let flat = sim.ac_sweep(&freqs);
+        let nu = 2; // node_count - 1
+        assert_eq!(flat.len(), freqs.len() * nu * 2);
+        for (k, &f) in freqs.iter().enumerate() {
+            let v = sim.ac_solve(std::f64::consts::TAU * f);
+            for (j, (re, im)) in v.iter().enumerate() {
+                let base = (k * nu + j) * 2;
+                assert_eq!(flat[base], *re);
+                assert_eq!(flat[base + 1], *im);
+            }
+        }
     }
 
     /// An AC source straight across a resistor puts the full source EMF on the
