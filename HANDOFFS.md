@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (34) — Nonlinear small-signal in the AC engine (amplifier Bode works)
+
+**State:** 🟢 Rust + Web, gates green. Continued the list: `ac_solve` now linearizes the
+nonlinear devices, so active circuits (diode dynamic resistance, MOSFET/BJT amplifiers) get a
+real frequency response — and the Bode panel shows it with **no UI change** (it already calls
+`ac_sweep`).
+
+- **`ac_solve` nonlinear arm** (lib.rs) — for each diode/varistor/MOSFET/BJT, stamps its
+  small-signal companion at the operating point the transient solver already holds (its limited
+  iterates `self.diode_vd` / `mosfet_vgs,vds` / `bjt_vbe,vbc` / `varistor_v` — the settled DC
+  bias). These models carry **no internal capacitance**, so the partials are real (the jω content
+  is entirely the external L/C); the conductance stamps **mirror the transient companions in
+  `newton_iterate`** minus the DC equivalent-current RHS. New `stamp_g` real-conductance helper.
+  Still read-only → no hash impact (all reproducibility tests pass; 115 sim-core tests green).
+- **Tests:** `ac_diode_small_signal_divider` (conductance divider `G1/(G1+G2+g_d)`),
+  `ac_mosfet_common_source_gain` (`−gm/(1/Rd+gds)` vs read-back gm/gds; checks inversion),
+  `ac_bjt_common_emitter_gain` (cross-checks `ac_solve` against the exact 2-node small-signal
+  system from the read-back Ebers-Moll Jacobian gpi/gmu/gif/gic_bc — the hardest stamp).
+
+**Deferred / next:** **op-amps** are still open in `ac_solve` (the output-row GOUT·dT stamp is
+easy to add, but the model has **no internal pole**, so op-amp AC would be flat high-gain — fine
+for active-filter corners set by external R/C, but not for honest loop-gain/phase-margin; pairs
+with adding a GBW pole). Then **Ideal/Real parasitics** (ESR/ESL/DCR → real self-resonant
+corners), **Bode polish** (phase trace, corner markers, transfer-function 0 dB mode), and the
+**transient time-base + PSU-rating** track.
+
+---
+
 ## 2026-06-19 (33) — Bode panel: the AC engine made visible (sweep → log-f plot)
 
 **State:** 🟢 Rust + Web, gates green. Continued down the list: wasm binding + a Bode panel so

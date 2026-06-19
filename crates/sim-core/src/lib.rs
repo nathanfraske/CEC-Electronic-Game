@@ -4486,6 +4486,14 @@ impl Sim {
                 a[k * n + r] = a[k * n + r].sub(Cplx::ONE);
             }
         };
+        // Real conductance stamp at (row, col), skipping any grounded terminal — for the
+        // small-signal companions of nonlinear devices (their partials are frequency
+        // independent, so they stamp as real entries into the complex matrix).
+        let stamp_g = |a: &mut [Cplx], r: Option<usize>, c: Option<usize>, g: f64| {
+            if let (Some(r), Some(c)) = (r, c) {
+                a[r * n + c] = a[r * n + c].add(Cplx::new(g, 0.0));
+            }
+        };
         for (i, e) in self.elements.iter().enumerate() {
             let ia = Self::node_idx(e.a);
             let ib = Self::node_idx(e.b);
@@ -4519,9 +4527,62 @@ impl Sim {
                     stamp_branch(&mut a, ia, ib, k);
                     b[k] = Cplx::new(if e.aux > 0.0 { e.aux } else { AC_AMPLITUDE }, 0.0);
                 }
-                // ELEM_ISOURCE and nonlinear/active kinds: an open in this passive-network
-                // pass — they stamp nothing.
-                _ => {}
+                // Nonlinear devices: stamp the small-signal companion at the operating
+                // point the transient solver already holds (its limited junction/control
+                // iterates — the DC bias once settled). These device models carry no
+                // internal capacitance, so the partials are real; the jω content is
+                // entirely the external L/C above. The conductance stamps mirror the
+                // transient companions in `newton_iterate`, minus the DC equivalent-current
+                // RHS (that is the bias point, not the small-signal AC response).
+                _ => {
+                    let ic = Self::node_idx(e.c);
+                    if is_diode(e.kind) {
+                        let g = diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).1 + GMIN;
+                        stamp_g(&mut a, ia, ia, g);
+                        stamp_g(&mut a, ib, ib, g);
+                        stamp_g(&mut a, ia, ib, -g);
+                        stamp_g(&mut a, ib, ia, -g);
+                    } else if is_varistor(e.kind) {
+                        let g = varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).1 + GMIN;
+                        stamp_g(&mut a, ia, ia, g);
+                        stamp_g(&mut a, ib, ib, g);
+                        stamp_g(&mut a, ia, ib, -g);
+                        stamp_g(&mut a, ib, ia, -g);
+                    } else if is_mosfet(e.kind) {
+                        // Drain a, source b, gate c: i_ds = gm·v_gs + gds·v_ds.
+                        let op = Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]);
+                        let (gm, gds) = (op.gm, op.gds);
+                        stamp_g(&mut a, ia, ia, gds);
+                        stamp_g(&mut a, ia, ic, gm);
+                        stamp_g(&mut a, ia, ib, -(gm + gds));
+                        stamp_g(&mut a, ib, ib, gm + gds);
+                        stamp_g(&mut a, ib, ia, -gds);
+                        stamp_g(&mut a, ib, ic, -gm);
+                        stamp_g(&mut a, ic, ic, GMIN);
+                    } else if is_bjt(e.kind) {
+                        // Collector a, emitter b, base c; Jacobian of (Ic, Ib) w.r.t.
+                        // (Vbe, Vbc), mapped onto the node voltages (see newton_iterate).
+                        let op = Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]);
+                        let (gpi, gmu, gif, gbc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
+                        stamp_g(&mut a, ia, ia, -gbc);
+                        stamp_g(&mut a, ia, ib, -gif);
+                        stamp_g(&mut a, ia, ic, gif + gbc);
+                        stamp_g(&mut a, ic, ic, gpi + gmu);
+                        stamp_g(&mut a, ic, ia, -gmu);
+                        stamp_g(&mut a, ic, ib, -gpi);
+                        stamp_g(&mut a, ib, ib, gif + gpi);
+                        stamp_g(&mut a, ib, ia, gbc + gmu);
+                        stamp_g(&mut a, ib, ic, -(gif + gbc + gpi + gmu));
+                        // GMIN across each junction (base-emitter, base-collector).
+                        for (p, q) in [(ic, ib), (ic, ia)] {
+                            stamp_g(&mut a, p, p, GMIN);
+                            stamp_g(&mut a, q, q, GMIN);
+                            stamp_g(&mut a, p, q, -GMIN);
+                            stamp_g(&mut a, q, p, -GMIN);
+                        }
+                    }
+                    // Op-amps / logic / transformer: still open in this pass (follow-up).
+                }
             }
         }
         let x = solve_dense_complex(a, b, n);
@@ -7773,6 +7834,147 @@ mod tests {
                 assert_eq!(flat[base + 1], *im);
             }
         }
+    }
+
+    /// Nonlinear small-signal AC: a diode DC-biased through R2 and perturbed by an AC
+    /// source through R1. The AC at the diode node is the conductance divider
+    /// `G1 / (G1 + G2 + g_d)`, where `g_d = dI/dV` is the diode's dynamic conductance at
+    /// the DC operating point the transient solve already settled (read back here). A
+    /// forward diode is a near-short in AC; this confirms the small-signal stamp uses the
+    /// live bias, not a fixed model.
+    #[test]
+    fn ac_diode_small_signal_divider() {
+        let r1 = 10_000.0;
+        let r2 = 1_000.0;
+        let sim = build(
+            4,
+            &[
+                ELEM_VSOURCE,
+                ELEM_ACSOURCE,
+                ELEM_RESISTOR,
+                ELEM_RESISTOR,
+                ELEM_DIODE,
+            ],
+            &[3, 1, 1, 3, 2],
+            &[0, 0, 2, 2, 0],
+            &[5.0, 100.0, r1, r2, 0.0],
+        );
+        // Operating point from build()'s t=0 solve — the diode is forward-biased.
+        let vd = sim.diode_vd[4];
+        assert!(
+            vd > 0.4,
+            "diode forward-biased at the bias point: vd = {vd}"
+        );
+        let (_, gd) = diode_eval(vd, diode_model(ELEM_DIODE, 0.0));
+        let g_d = gd + GMIN;
+        let expected = (1.0 / r1) / (1.0 / r1 + 1.0 / r2 + g_d);
+        let v = sim.ac_solve(std::f64::consts::TAU * 1_000.0);
+        let mag = |re: f64, im: f64| re.hypot(im);
+        let ratio = mag(v[1].0, v[1].1) / mag(v[0].0, v[0].1); // |V(node2)| / |V(node1)|
+        assert!(
+            (ratio - expected).abs() < 1e-9,
+            "diode small-signal divider: got {ratio}, want {expected}"
+        );
+    }
+
+    /// Nonlinear small-signal AC: an NMOS common-source amplifier. A gate divider (Rg1 =
+    /// Rg2, so ½) sets the AC at the gate; the stage gain is `−gm / (1/Rd + gds)` with `gm`,
+    /// `gds` read back from the device's settled operating point. Validates the 3-terminal
+    /// transconductance (VCCS) stamp — gate controls drain current with no gate current.
+    #[test]
+    fn ac_mosfet_common_source_gain() {
+        let rd = 10_000.0;
+        let rg = 100_000.0;
+        // n1 Vdd, n2 drain, n3 gate-bias, n4 gate, n5 ac.
+        let sim = build3(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_NMOS,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_ACSOURCE,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 3, 5, 5],
+            &[0, 2, 0, 0, 4, 0, 4],
+            &[0, 0, 4, 0, 0, 0, 0],
+            &[5.0, rd, 0.0, 4.2, rg, 100.0, rg],
+        );
+        let op = Sim::mosfet_op(ELEM_NMOS, sim.mosfet_vgs[2], sim.mosfet_vds[2]);
+        assert!(
+            op.gm > 0.0,
+            "MOSFET on (saturation) at the bias: gm = {}",
+            op.gm
+        );
+        let expected = 0.5 * op.gm / (1.0 / rd + op.gds); // ½ gate divider × CS stage
+        let v = sim.ac_solve(std::f64::consts::TAU * 1_000.0);
+        let mag = |re: f64, im: f64| re.hypot(im);
+        let gain = mag(v[1].0, v[1].1) / mag(v[4].0, v[4].1); // |V(drain)| / |V(ac)|
+        assert!(
+            (gain - expected).abs() / expected < 1e-5,
+            "common-source gain: got {gain}, want {expected}"
+        );
+        assert!(v[1].0 < 0.0, "CS stage inverts (drain AC opposes the gate)");
+    }
+
+    /// Nonlinear small-signal AC: an NPN common-emitter amplifier. Cross-checks `ac_solve`
+    /// against the exact two-node small-signal system (collector + base KCL) built from the
+    /// read-back Ebers-Moll Jacobian (`gpi, gmu, gif, gic_bc`) — validating the full
+    /// 9-entry BJT conductance block, the hardest stamp.
+    #[test]
+    fn ac_bjt_common_emitter_gain() {
+        let rc = 200.0;
+        let rb = 10_000.0;
+        // n1 Vcc, n2 collector, n3 base-bias, n4 base, n5 ac.
+        let sim = build3(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_NPN,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_ACSOURCE,
+                ELEM_RESISTOR,
+            ],
+            &[1, 1, 2, 3, 3, 5, 5],
+            &[0, 2, 0, 0, 4, 0, 4],
+            &[0, 0, 4, 0, 0, 0, 0],
+            &[5.0, rc, 0.0, 2.0, rb, 100.0, rb],
+        );
+        let op = Sim::bjt_op(ELEM_NPN, sim.bjt_vbe[2], sim.bjt_vbc[2]);
+        assert!(
+            sim.bjt_vbe[2] > 0.4 && sim.node_v[2] > sim.node_v[4],
+            "BJT in forward-active: vbe = {}, Vc = {}, Vb = {}",
+            sim.bjt_vbe[2],
+            sim.node_v[2],
+            sim.node_v[4]
+        );
+        // Solve the small-signal 2-node system by hand from the read-back partials:
+        //   collector: V2·(1/Rc − gic_bc) + V4·(gif + gic_bc) = 0
+        //   base:      V4·(2/Rb + gpi + gmu) − gmu·V2 = A/Rb   (Rb1 = Rb2 = Rb)
+        let a_amp = AC_AMPLITUDE;
+        let k = (op.gif + op.gic_bc) / (1.0 / rc - op.gic_bc); // V2 = −k·V4
+        let d = 2.0 / rb + op.gpi + op.gmu;
+        let v4 = (a_amp / rb) / (k * op.gmu + d);
+        let v2 = -k * v4;
+        let v = sim.ac_solve(std::f64::consts::TAU * 1_000.0);
+        assert!(
+            (v[1].0 - v2).abs() / v2.abs() < 1e-5 && v[1].1.abs() < 1e-9,
+            "collector AC: got {:?}, want {v2}",
+            v[1]
+        );
+        assert!(
+            (v[3].0 - v4).abs() / v4.abs() < 1e-5,
+            "base AC: got {:?}, want {v4}",
+            v[3]
+        );
+        assert!(
+            v2 < 0.0 && v4 > 0.0,
+            "CE stage inverts (collector opposes base)"
+        );
     }
 
     /// An AC source straight across a resistor puts the full source EMF on the

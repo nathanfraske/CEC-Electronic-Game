@@ -19,9 +19,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   PNG-verified (RC knee, LC peak). Not yet eyeballed live.~~
 - [ ] **Bode polish** — phase trace (second plot / toggle), corner-frequency markers, a
   transfer-function (Vout/Vin, 0 dB) mode, |Z|-of-selected-part mode. Hover readout.
-- [ ] **Nonlinear small-signal in `ac_solve`** — stamp diode/BJT/MOSFET/op-amp operating-point
-  conductances (reuse the `*_eval` linearizations) so amplifier/filter Bode + op-amp loop gain
-  work, not just R/L/C.
+- ~~**Nonlinear small-signal in `ac_solve`** — diode/varistor/MOSFET/BJT companions stamped at
+  the transient solver's settled operating point (mirrors `newton_iterate`, real partials, no jω
+  since no internal device C). Tests: diode divider, MOSFET CS gain, BJT CE (exact 2-node
+  cross-check). Bode panel shows amplifier response with no UI change.~~
+- [ ] **Op-amp small-signal in `ac_solve`** — add the output-row GOUT·dT stamp (easy). BUT the
+  op-amp has no internal pole, so AC gain is flat → fine for active-filter R/C corners, wrong for
+  loop-gain/phase-margin. Pair with a GBW pole model for honest PSU loop analysis.
 - [ ] **(other track) Transient time base + PSU rating** — selectable fine dt + auto-measurements
   (ripple Vpp, overshoot, settling, regulation). Still open; owner chose the AC engine first.
 
