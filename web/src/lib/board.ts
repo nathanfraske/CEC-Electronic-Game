@@ -34,6 +34,7 @@ import {
 } from "./graph";
 import {
   drawGlyph,
+  flowStabilized,
   isSymbol,
   setGlyphStyle,
   ZERO_ELECTRICAL,
@@ -159,6 +160,11 @@ const ENERGY_COLOR = 0xff8a3d;
 const CARRIER_PX_RATE = 100; // px advanced per phase-unit ⇒ ~60 px/s at FLOW_HZ
 const ENERGY_PX_RATE = 110; // slightly faster so the two layers stay distinguishable
 const I_REF = 0.01; // 10 mA — same reference the thickness/density use
+// EMA weight for the per-wire running RMS current (`wireMs`). Only consulted where the
+// shimmer blur is non-zero (apparent rate ≳10 Hz), and there one frame steps a large
+// fraction of a cycle, so this short tail still settles to a stable RMS within a few
+// frames (≤~3% residual ripple at the blur onset) while staying responsive to real changes.
+const WIRE_RMS_ALPHA = 0.04;
 const V_REF = 6; // ~one rail; net voltage above this saturates the energy layer
 // Saturate the direction factor: any current/power past this small fraction of the
 // reference moves at full constant speed; smaller values ramp smoothly so an AC
@@ -440,6 +446,11 @@ export class Board {
   // (streams to the load on a resistor, sloshes on a reactive part). Keyed by wire.
   private carrierOffset = new Map<number, number>();
   private energyOffset = new Map<number, number>();
+  // Per-wire running mean-square branch current → its RMS smooths the thickness/density
+  // off fast-AC aliasing (see `redrawWires`). Advanced once per frame in `advanceWireRms`
+  // (NOT in redrawWires, which fires on every interaction), so the EMA rate stays tied to
+  // wall-clock frames rather than redraw count.
+  private wireMs = new Map<number, number>();
   // The last conduit DRAW path per wire (nudged + bridged + rounded), cached each
   // redraw so hit-testing can pick the pipe where it's actually drawn — not the logical
   // route it was offset from (otherwise the nudged pipe feels unclickable / floating).
@@ -1468,13 +1479,26 @@ export class Board {
       this.nodeVrms = undefined;
     }
     this.redrawWires();
+    this.advanceWireRms();
     this.drawGround();
     this.drawNetLabels();
     // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
     const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
     for (const [id, node] of this.nodes) {
+      const e = electrical?.get(id) ?? ZERO_ELECTRICAL;
+      // Ease the glyph's flow/heat toward its measured RMS as the part's AC outruns the
+      // eye — the per-component twin of the wire stabilisation above. The blur tracks the
+      // part's own apparent rate, down-weighted by how AC-dominated it is (a DC rail with
+      // a little ripple keeps streaming), so it matches the carrier→shimmer handoff.
+      const ac = e.ac;
+      let blurC = 0;
+      if (ac?.valid) {
+        const mean = Math.abs(ac.imean);
+        const acFrac = ac.iamp + mean > 1e-12 ? ac.iamp / (ac.iamp + mean) : 0;
+        blurC = blurFactor(apparentFreq(ac.freq)) * acFrac;
+      }
       node.update(
-        electrical?.get(id) ?? ZERO_ELECTRICAL,
+        flowStabilized(e, blurC),
         this.phase,
         this.selected.has(id),
         effLens,
@@ -3367,6 +3391,28 @@ export class Board {
   }
 
   /**
+   * Step each wire's running mean-square branch current one frame toward the latest
+   * |i|² (from `lastWireCurrents`, which `redrawWires` just refreshed). Called exactly
+   * once per rendered frame — keeping it out of `redrawWires` (which also fires on every
+   * pan/drag/edit) so the EMA advances at a steady wall-clock rate. `redrawWires` only
+   * reads `wireMs`; this is the sole writer. Stale wires are pruned like the belt offsets.
+   */
+  private advanceWireRms(): void {
+    for (const [id, cur] of this.lastWireCurrents) {
+      const inst2 = cur * cur;
+      const prev = this.wireMs.get(id);
+      this.wireMs.set(
+        id,
+        prev === undefined ? inst2 : prev + (inst2 - prev) * WIRE_RMS_ALPHA,
+      );
+    }
+    if (this.wireMs.size > this.graph.wires.size) {
+      for (const id of this.wireMs.keys())
+        if (!this.graph.wires.has(id)) this.wireMs.delete(id);
+    }
+  }
+
+  /**
    * Orthogonal "belts": each trace routes at 90°, colours by its net voltage,
    * and carries the KCL branch current as thickness + two flowing layers —
    * charge carriers and the energy they deliver. So a shared rail visibly
@@ -3530,10 +3576,6 @@ export class Board {
       let color = v === null ? PALETTE.cyan : voltageColor(v);
 
       const cur = currents.get(w.id) ?? 0;
-      const normC = saturate(Math.abs(cur) / I_REF);
-      // Thickness tracks current over a wide range so amperage is legible at a
-      // glance (bounded by the saturating normC — a huge current stays on-screen).
-      const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
       // The carrier→shimmer blur for this wire: its AC current's APPARENT rate
       // (signal Hz × playback-speed scale) handed through the same smoothstep the tier
       // drawers use. DC/slow wires → 0 (carriers stream/slosh as before); fast AC under
@@ -3542,6 +3584,19 @@ export class Board {
       const wf = flow.get(w.id);
       const blur =
         wf && wf.freq > 0 ? blurFactor(apparentFreq(wf.freq)) * wf.acFrac : 0;
+      // Magnitude (thickness + carrier density/alpha) tracks current — but |i| aliases
+      // 0↔peak on fast AC exactly the way the colour does, so ease it toward the branch
+      // RMS current as the blur rises (the current-domain twin of the vrms colour blend
+      // below). The RMS is a running mean-square (`wireMs`, advanced once per frame in
+      // `advanceWireRms` — the sub-frame batch carries only voltages, so there is no
+      // per-tick branch current to average directly). The SIGN stays instantaneous, so
+      // the carriers still slosh; only the amount it draws stops strobing.
+      const irmsW = Math.sqrt(this.wireMs.get(w.id) ?? cur * cur);
+      const magC = Math.abs(cur) * (1 - blur) + irmsW * blur;
+      const normC = saturate(magC / I_REF);
+      // Thickness tracks current over a wide range so amperage is legible at a
+      // glance (bounded by the saturating normC — a huge current stays on-screen).
+      const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
       // Stabilise the colour the SAME way as the carriers: voltage aliases frame-to-
       // frame on fast AC (`voltageColor` is magnitude-based, so the hue strobes 0↔peak),
       // so blend toward the net's RMS voltage (from the non-aliased sub-frame batch) as

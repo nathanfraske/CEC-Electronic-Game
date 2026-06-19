@@ -90,6 +90,25 @@ export function rmsStabilized(e: ElectricalState): ElectricalState {
   return { ...e, vAcross: ac.vrms, current: ac.irms };
 }
 
+/**
+ * A render copy of `e` whose `current` MAGNITUDE is eased toward the measured RMS as
+ * `blur` rises (the apparent-rate handoff), while its SIGN stays instantaneous so the
+ * particle flow still slosh-reverses. This is the current-domain twin of the wire
+ * colour's vrms blend: it stops a glyph's flow density / heat from strobing 0↔peak once
+ * the waveform reverses faster than the eye can follow. `blur ≤ 0` (DC / slow AC) ⇒
+ * unchanged, so the flow visibly breathes while it's slow enough to read. Presentation only.
+ */
+export function flowStabilized(
+  e: ElectricalState,
+  blur: number,
+): ElectricalState {
+  const ac = e.ac;
+  if (!ac?.valid || blur <= 0.02) return e;
+  const sign = e.current >= 0 ? 1 : -1;
+  const mag = Math.abs(e.current) * (1 - blur) + ac.irms * blur;
+  return { ...e, current: sign * mag };
+}
+
 export interface GlyphPin {
   x: number;
   y: number;
