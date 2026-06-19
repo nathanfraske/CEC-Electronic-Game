@@ -72,6 +72,19 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
 | `web/src/app.css` | design tokens + component styles |
 | `web/src/wasm/` | **generated** by `build:wasm`; gitignored; never edit |
 | `docs/` | architecture, determinism contract, ADRs |
+| `docs/ui/ic-glyph-spec.md` | **authoring spec for the five-tier IC glyphs** (interactive teaching refsheets) — read it before building any IC glyph; refsheets live in `docs/ui/parts/` |
+
+## IC glyphs (teaching refsheets)
+
+Integrated circuits are taught with **five-tier IC glyphs**: self-contained interactive HTML
+files showing one chip at five zoom levels (symbol → flow → valves → device → silicon) over its
+real package/pinout. The complete build spec is **`docs/ui/ic-glyph-spec.md`** (house style,
+helpers, the device model, the shared package frame, per-tier patterns, validation gates, and a
+worked NAND example). The canonical template is the 74LVC1G04 inverter `inv-ic.html`; reference
+implementations are provided by the owner over time and live in **`docs/ui/parts/`** beside the
+existing per-part tier studies. When asked to build/extend an IC glyph, start from the spec and
+the nearest existing refsheet — do not recall pinouts from memory (the spec requires datasheet
+verification), and run the spec's validation gates (§10) before handing back.
 
 ## Component grades (tiers)
 

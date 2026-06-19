@@ -5,6 +5,26 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (51) — IC glyph authoring spec added (`docs/ui/ic-glyph-spec.md`)
+
+**State:** 🟢 docs-only. The owner provided the **five-tier IC glyph** authoring spec (the build
+recipe for the interactive teaching refsheets — symbol → flow → valves → device → silicon over a
+chip's real package). Added **verbatim** as `docs/ui/ic-glyph-spec.md` (SPDX header prepended;
+`docs/` is outside the web prettier scope, so no lint gate). CLAUDE.md now has a **"IC glyphs
+(teaching refsheets)"** section + a `Where things live` row pointing future agents at the spec.
+
+- **Reference implementations (refsheets) live in `docs/ui/parts/`** beside the existing per-part
+  tier studies. The canonical template is the 74LVC1G04 inverter `inv-ic.html`. The owner will
+  hand over refsheets built from the spec **as we go** — place each in `docs/ui/parts/`.
+- When building/extending an IC glyph: start from the spec + nearest existing refsheet; verify the
+  pinout from the datasheet (the spec forbids recalled pinouts); run the spec's validation gates
+  (§10: JS syntax, forbidden-glyph scan, structure counts, member consistency, Playwright render).
+- Note: the spec targets **standalone HTML study artifacts**, not the in-game PixiJS glyphs
+  (`web/src/lib/glyphs.ts`). They inform the game's reality/analogy tiers but are authored/validated
+  separately (no cargo/pnpm gates).
+
+---
+
 ## 2026-06-19 (50) — Current-channel legibility, part C: frequency-domain render → A–C COMPLETE
 
 **State:** 🟢 Rust + Web, all gates green (129 sim-core tests, all reproducibility green — analysis
