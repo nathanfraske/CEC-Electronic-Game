@@ -6,6 +6,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (20) — Phase-domain scope + MHz source range (display fast signals)
+
+Owner: "display signals at MHz+ (PSU switching), and let the sources bump up there." The
+honest path per the design docs (`high-frequency-render.md`, `fidelity-ceiling.md`): the
+*frequency domain* (no Nyquist limit), not chasing the waveform at one fixed Δt.
+
+- ~~**Phase-domain scope** (`lib/phaseScope.ts` `drawPhaseScope`) — each non-ground node's
+  steady-state waveform over one cycle **vs phase (0…2π)**, from `acSweep` at the dominant
+  source frequency (`v(θ)=re·cosθ−im·sinθ`). Stable at ANY frequency; relative phase between
+  nodes reads directly; play-head sweeps on the frame clock. Sits beside the Bode (shown when an
+  AC/PULSE source is placed); recomputed on edit/fidelity toggle, repainted per frame. PNG-
+  verified (`/tmp/harness/render-phasescope.js`). Web-only — `ac_solve` is golden-safe.~~
+- ~~**Sources reach MHz** (`values.ts`) — AC + PULSE frequency lists now run to 10 MHz (the
+  frequency-domain analysis point). **Fixed a gap from increment C: PULSE wasn't in `values.ts`
+  at all** (`hasValue("PULSE")` was false → no frequency picker); now it has curated chips +
+  full list. `bodeHasAc`/`phaseScopeFreq` detection includes PULSE. Above ~62.5 kHz the *time*
+  domain aliases (expected undersampling); the phase scope + Bode are the MHz tools.~~
+- [ ] **Follow-on:** overlay a selected element's **I(θ)** beside V(θ) (the V–I phase pair);
+  bin the *actual* (non-sinusoidal) waveform by phase for signals the transient resolves
+  (≤ ~50 kHz) vs today's small-signal sinusoid; a clearer "frequency-domain" indicator when a
+  source is above the time-domain ceiling.
+
 ## 2026-06-19 (19) — Device-variety frontier: diode types + current rating/FAIL (increment A)
 
 Owner audit flagged the engine's real gap is **device variety**, not the tier axis. Four

@@ -12,6 +12,7 @@
     type SimHandle,
   } from "./sim/loop";
   import { drawBode, logFreqs } from "./lib/bode";
+  import { drawPhaseScope } from "./lib/phaseScope";
   import {
     Board,
     type Mode,
@@ -735,6 +736,12 @@
   let bodeSweep = $state<Float64Array | undefined>(undefined);
   let bodeNodeCount = $state(0);
   let bodeHasAc = $state(false);
+  // Phase-domain scope state: the complex node voltages at the dominant source frequency (one
+  // `acSweep` point), the analysis frequency itself, and the sweeping play-head phase. Lets the
+  // scope draw V(θ) over one cycle at ANY frequency — including the MHz the transient can't step.
+  let phaseSweep = $state<Float64Array | undefined>(undefined);
+  let phaseScopeFreq = $state(0);
+  let phaseHead = 0; // play-head phase, advanced each frame (plain — not reactive)
   // Component fidelity for the AC analysis: false = ideal parts, true = Real parasitics
   // (cap ESL/ESR + inductor DCR/winding-C self-resonance). Analysis-only — never touches
   // the transient sim or the snapshot hash.
@@ -752,6 +759,19 @@
     }
     bodeNodeCount = nodeCount;
     bodeSweep = simHandle.acSweep(Float64Array.from(BODE_FREQS), realModels);
+  };
+  // Phase scope: one AC-solve point at the dominant source frequency → the complex node
+  // voltages the scope unrolls into V(θ). A no-op without an AC/pulse source or a frequency.
+  const recomputePhaseScope = (nodeCount: number): void => {
+    if (!simHandle || !bodeHasAc || phaseScopeFreq <= 0 || nodeCount < 2) {
+      phaseSweep = undefined;
+      return;
+    }
+    bodeNodeCount = nodeCount;
+    phaseSweep = simHandle.acSweep(
+      Float64Array.from([phaseScopeFreq]),
+      realModels,
+    );
   };
   // The Bode canvas: the action captures it; a redraw runs whenever the sweep or the
   // per-node visibility changes (not per-frame — the response is static between edits).
@@ -797,6 +817,51 @@
     void bodeSweep;
     void nodeVisible;
     drawBodeCanvas();
+  });
+  // The phase scope canvas: same action/redraw shape as the Bode, but it also repaints every
+  // frame so the play-head sweeps (the traces are static between edits; the cursor moves).
+  let phaseCanvas: HTMLCanvasElement | undefined;
+  let phaseCtx: CanvasRenderingContext2D | undefined;
+  function phaseScopeAction(node: HTMLCanvasElement) {
+    phaseCanvas = node;
+    phaseCtx = node.getContext("2d") ?? undefined;
+    drawPhaseScopeCanvas();
+    return {
+      destroy() {
+        if (phaseCanvas === node) {
+          phaseCanvas = undefined;
+          phaseCtx = undefined;
+        }
+      },
+    };
+  }
+  function drawPhaseScopeCanvas(): void {
+    const c = phaseCanvas;
+    const ctx = phaseCtx;
+    const data = phaseSweep;
+    if (!c || !ctx || !data) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cssW = c.clientWidth || 240;
+    const cssH = c.clientHeight || 110;
+    const bw = Math.round(cssW * dpr);
+    const bh = Math.round(cssH * dpr);
+    if (c.width !== bw || c.height !== bh) {
+      c.width = bw;
+      c.height = bh;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawPhaseScope(ctx, cssW, cssH, data, {
+      nodeCount: bodeNodeCount,
+      color: (node) => channelColor(node),
+      visible: (node) => nodeVisible[node] ?? true,
+      freq: phaseScopeFreq,
+      playhead: phaseHead,
+    });
+  }
+  $effect(() => {
+    void phaseSweep;
+    void nodeVisible;
+    drawPhaseScopeCanvas();
   });
   // Persist the board to localStorage a beat after edits settle, so a refresh keeps
   // your circuit (see lib/storage.ts). Debounced so a drag doesn't thrash storage.
@@ -1032,8 +1097,10 @@
           controls?.resync();
         }
         // else: empty board — keep the built-in demo circuit running.
-        // Refresh the Bode sweep off the netlist the sim now holds (no-op without AC).
+        // Refresh the Bode sweep + phase scope off the netlist the sim now holds (no-op without
+        // an AC/pulse source).
         recomputeBode(nl ? nl.nodeCount : 0);
+        recomputePhaseScope(nl ? nl.nodeCount : 0);
       };
 
       const b = new Board(a, {
@@ -1046,15 +1113,23 @@
           let src = false;
           let gnd = false;
           let acSrc = false;
+          let maxAcFreq = 0;
           for (const c of graph.components.values()) {
             if (c.kind === "V" || c.kind === "AC" || c.kind === "I") src = true;
-            if (c.kind === "AC") acSrc = true;
+            // Both the AC source and the pulse/clock generator are AC stimuli (PULSE maps to
+            // the AC-source element), so either drives the frequency-domain tools.
+            if (c.kind === "AC" || c.kind === "PULSE") {
+              acSrc = true;
+              maxAcFreq = Math.max(maxAcFreq, c.value);
+            }
             if (c.kind === "GND") gnd = true;
           }
           hasSource = src;
-          // The Bode sweep needs an AC source as its stimulus (set before rebuildNetlist
-          // below, which recomputes the sweep once the new netlist is installed).
+          // The Bode sweep and the phase scope need an AC stimulus (set before rebuildNetlist
+          // below, which recomputes them once the new netlist is installed). The phase scope
+          // analyses at the dominant source frequency (the highest AC/PULSE source).
           bodeHasAc = acSrc;
+          phaseScopeFreq = maxAcFreq;
           hasGround = gnd;
           rebuildNetlist(graph);
           advanceBuild(graph);
@@ -1177,6 +1252,12 @@
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
+          // Sweep the phase-scope play-head on the frame clock (cosmetic, fixed rate — the
+          // traces are static between edits) and repaint just that small canvas.
+          if (phaseSweep) {
+            phaseHead = (phaseHead + 0.05) % (2 * Math.PI);
+            drawPhaseScopeCanvas();
+          }
           const st = controls?.status();
           if (st) {
             tick = st.tick;
@@ -2849,6 +2930,7 @@
           realModels = !realModels;
           board?.emitChange();
           recomputeBode(bodeNodeCount);
+          recomputePhaseScope(bodeNodeCount);
         }}
         title="Ideal = perfect components. Real = each part's quality tier bites: resistor tolerance, capacitor/inductor ESR/ESL/DCR + self-resonance, op-amp finite gain-bandwidth."
       >
@@ -2887,6 +2969,16 @@
         <canvas use:bodeAction aria-hidden="true"></canvas>
         <span class="bode-cap mono">
           dBV vs f · 1 Hz – 1 GHz (log){realModels ? " · Real parts" : ""}
+        </span>
+      </div>
+      <!-- Phase scope: each node's steady-state waveform over one cycle vs PHASE (ac_solve at
+           the source frequency), stable at any frequency — the way to see MHz signals the 2 µs
+           transient step can't draw. Relative phase between nodes (a filter's input vs output
+           lag) reads directly; the play-head sweeps the cycle. -->
+      <div class="bode-panel">
+        <canvas use:phaseScopeAction aria-hidden="true"></canvas>
+        <span class="bode-cap mono">
+          V vs phase @ {formatValue(phaseScopeFreq, "Hz")} (no Nyquist limit)
         </span>
       </div>
     {/if}

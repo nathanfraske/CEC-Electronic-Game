@@ -138,6 +138,11 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   duty), and `ac_source_emf` branches on it. Slot 1 = 0 is sine, so a plain AC source is
   unchanged. This keeps the deterministic core from special-casing a new time-varying-source type
   in its ~15 source sites.
+- **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
+  alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
+  / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no
+  Nyquist limit**, so it displays MHz–GHz. Source frequency pickers (`values.ts` AC/PULSE) run to
+  10 MHz: above the time ceiling the value just sets where the frequency-domain tools analyse.
 - `web/src/wasm` is gitignored and excluded from `tsconfig.app.json`. Always run
   `pnpm run build:wasm` before `pnpm -C web check` (CI uses that order).
 - `wasm-opt` is disabled in `crates/sim-wasm/Cargo.toml` so `build:wasm` works

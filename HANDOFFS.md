@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (47) — Phase-domain scope + MHz source range (display fast signals)
+
+**State:** 🟢 Rust + Web, all gates green (128 sim-core tests, 1 ignored). Web-only feature; no
+sim-core change → golden untouched. Builds the unbuilt piece of `high-frequency-render.md` (the
+phase scope, step 4) and the "let sources bump to MHz" the owner asked for.
+
+- **Phase-domain scope** (`web/src/lib/phaseScope.ts`) — plots each non-ground node's
+  steady-state waveform over **one cycle vs phase (0…2π)**, reconstructed from the complex node
+  voltage at the dominant source frequency via `acSweep` at a single point
+  (`v(θ) = re·cos θ − im·sin θ`). **No Nyquist limit** (it's `ac_solve`, analytic) — so it draws
+  MHz signals the 2 µs transient can't. Relative phase between nodes (filter in vs out) reads
+  directly; a play-head sweeps the cycle on the frame clock. Lives beside the Bode in the
+  Frequency-response panel (shown when an AC/PULSE source exists). PNG-verified.
+- **Wiring:** `recomputePhaseScope(nodeCount)` calls `simHandle.acSweep([phaseScopeFreq], real)`
+  on edit / fidelity toggle (beside `recomputeBode`); the canvas repaints per frame for the
+  play-head (`phaseHead += 0.05` in `onFrame`). `phaseScopeFreq` = max AC/PULSE source `value`,
+  computed in the onChange source scan (which now also counts PULSE for `bodeHasAc`).
+- **Sources reach MHz** (`web/src/lib/values.ts`) — AC + PULSE curated frequency lists extended
+  to **10 MHz** (the frequency-domain analysis point). **Fixed an increment-C gap: PULSE was
+  absent from `values.ts`** so `hasValue("PULSE")` was false → it had NO frequency picker; now it
+  has chips + a full list. Above ~62.5 kHz the time domain aliases (expected); the phase
+  scope/Bode are the MHz tools, and the source freq sets where they analyse.
+- **What it shows (be honest):** the small-signal *sinusoidal* AC response at the frequency (the
+  unrolled phasor), **not** a literal non-sinusoidal switching square — that's inherently
+  un-time-step-able at MHz. For the actual shape at resolvable freqs (≤ ~50 kHz) the time scope
+  still serves; binning the real waveform by phase is a noted follow-on.
+
+**Follow-ons (logged in TODOS 20):** I(θ) overlay (the V–I pair); phase-binned actual waveform
+for low freq; a "frequency-domain" badge above the time-domain ceiling. Also still open from the
+design set: `frequency-morph.md` (parts → HF selves past SRF; its Ideal/Real prerequisite is now
+built) and the GHz digital event kernel (`multi-rate-domains.md`, waits on uC/FPGA/ADC parts).
+
+**Landing:** PR + squash-merge to main, same flow as #122–#130.
+
+---
+
 ## 2026-06-19 (46) — Device variety, increment D: diode reverse recovery → PLAN COMPLETE
 
 **State:** 🟢 Rust + Web, all gates green (128 sim-core tests, 1 ignored). **All four
