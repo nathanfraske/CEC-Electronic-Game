@@ -6,6 +6,7 @@
 // solved they sit near zero and the glyphs idle quietly.
 
 import { Graphics } from "pixi.js";
+import { apparentFreq, blurFactor, shimmerFlow } from "./tierKit";
 
 /**
  * Per-element **AC measurements** for the last full cycle, measured by the solver
@@ -165,7 +166,20 @@ const FLOW_DOTS_MAX = 6; // a dense stream at full current
 // amplitude, never the rate, so nothing speeds up as V/I climb.
 const PULSE_K = 2.2;
 
-/** Draw flowing dots along a straight segment to show current direction/amount. */
+// The AC readout of the glyph currently being drawn, set by `drawGlyphIn` before it calls the
+// kind's drawer, so the shared `flow()` can read this part's apparent rate without every drawer
+// having to thread it through. Undefined for the placement ghost / a DC-only snapshot.
+let glyphAc: AcReadout | undefined;
+
+/**
+ * Draw current along a straight lead segment — but as a carrier↔shimmer **handoff**, not raw
+ * sloshing dots. Slow current shows discrete carriers; once the AC current's *apparent* rate
+ * (signal Hz × playback speed) climbs past the eye's ~10–15 Hz, the carriers fade into a steady
+ * `|I|`-width shimmer band, so speeding up the playback no longer makes the dots strobe back and
+ * forth. DC (no AC fraction) just streams as carriers. A small steady current keeps a faint floor
+ * trickle so it reads as "still flowing" rather than freezing (the schematic cousin of the
+ * analogy `trickleFlow`). Mirrors the wires' shimmer (`board.ts`) and reuses `tierKit.shimmerFlow`.
+ */
 function flow(
   g: Graphics,
   ax: number,
@@ -176,18 +190,18 @@ function flow(
   phase: number,
   color: number,
 ): void {
-  const mag = norm(current, CUR_SCALE);
-  if (mag < 0.02) return;
+  if (Math.abs(current) < 1e-9) return; // truly no current → nothing (honest)
+  const mag = Math.max(norm(current, CUR_SCALE), 0.12); // floor: a slow current still trickles
   const dir = current >= 0 ? 1 : -1;
-  // Magnitude → density + alpha (speed stays constant): more current packs in more
-  // dots and brightens them, but the belt always recirculates at the same calm rate.
-  const n = FLOW_DOTS_MIN + Math.round((FLOW_DOTS_MAX - FLOW_DOTS_MIN) * mag);
-  for (let i = 0; i < n; i++) {
-    const t = (((i / n + phase * FLOW_SPEED * dir) % 1) + 1) % 1;
-    const x = ax + (bx - ax) * t;
-    const y = ay + (by - ay) * t;
-    g.circle(x, y, 1.7).fill({ color, alpha: 0.35 + 0.55 * mag });
-  }
+  // The carrier→band blur from this part's AC current: its AC fraction (vs any DC bias) times
+  // the blur of its apparent rate. DC or no measured cycle ⇒ 0 ⇒ plain carriers.
+  const ac = glyphAc;
+  const acFrac =
+    ac && ac.valid && ac.iamp + Math.abs(ac.imean) > 1e-12
+      ? ac.iamp / (ac.iamp + Math.abs(ac.imean))
+      : 0;
+  const b = acFrac > 0 ? blurFactor(apparentFreq(ac!.freq)) * acFrac : 0;
+  shimmerFlow(g, ax, ay, bx, by, mag, b, dir, phase, color, 1.7);
 }
 
 function drawV(g: Graphics, o: GlyphOpts): void {
@@ -2618,6 +2632,9 @@ export function drawGlyphIn(
   o: GlyphOpts,
   style: GlyphStyle,
 ): void {
+  // Expose this part's AC readout to the shared `flow()` (the carrier→shimmer handoff) without
+  // threading it through every drawer's signature; valid for the synchronous drawer call below.
+  glyphAc = o.electrical.ac;
   const map = style === "factory" ? FACTORY_DRAWERS : DRAWERS;
   const drawer = map[o.kind] ?? DRAWERS[o.kind];
   if (drawer) drawer(g, o);

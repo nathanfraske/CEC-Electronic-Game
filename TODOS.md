@@ -20,11 +20,13 @@ and keeps going invisible** when the voltage/waveform motion stops telling the s
   still. Applied to the ceramic-cap (piston/spring) and electrolytic (reservoir) analogy drawers.
   A big cap bleeding down at µA now reads as "still discharging". PNG-verified (I=0 → bare leads;
   5/50 µA → visible trickle).~~
-- [ ] **(B) Component shimmer** — the schematic glyphs (and the shared `flow()` in `glyphs.ts`,
-  which hard-returns under ~0.4 mA) adopt the wires' apparent-rate shimmer handoff (`blurFactor` /
-  `apparentFreq` / `shimmerFlow`), so they stop strobing when the playback is sped up. Render-only;
-  uses the existing AC readout (valid ≤ 62.5 kHz). Also lowers the `flow()` dead-zone so small
-  currents trickle everywhere (the schematic half of A).
+- ~~**(B) Component shimmer** — the shared schematic `flow()` (`glyphs.ts`) now does the wires'
+  carrier→band handoff via `shimmerFlow`: it reads the per-glyph AC readout from a module value
+  `drawGlyphIn` sets (no per-drawer churn across 52 call sites), computes the blur from the AC
+  current's apparent rate (`blurFactor(apparentFreq(ac.freq)) · acFrac`), so sped-up playback fades
+  the sloshing dots into a steady |I|-width band instead of strobing. Also floors small currents to
+  a faint trickle (the schematic half of A — was a hard `mag < 0.02` dead-zone). Verified the blur
+  flips 0→1 with apparent rate. Uses the existing AC readout (valid ≤ 62.5 kHz; > that needs C).~~
 - [ ] **(C) Frequency-domain render** — `ac_solve` returns per-element AC **currents** (not just
   node voltages); above the ~62.5 kHz time-domain `AcMeas` ceiling the render's per-element AC
   state (|I|, phase) is driven from the frequency domain, so the circuit visibly acts at
