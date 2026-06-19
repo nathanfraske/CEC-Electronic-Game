@@ -4707,15 +4707,21 @@ impl Sim {
                         // a saturated (clamped) op-amp correctly stops responding (dT → 0).
                         let vsat = e.value.max(OPAMP_VSAT_MIN);
                         let dt = opamp_target(self.opamp_vd[i], vsat).1;
-                        // Per-device gain-bandwidth: param slot 0 (Hz), else the default —
-                        // so a "slow" vs "fast" op-amp shows a different closed-loop bandwidth.
-                        let gbw = if e.params[0] > 0.0 {
-                            e.params[0]
+                        // The finite gain-bandwidth is a Real-mode non-ideality (like the cap
+                        // ESR / inductor DCR): in `real` mode the open-loop gain rolls off at
+                        // the GBW (param slot 0, Hz, else the default — a "slow" vs "fast" part);
+                        // in ideal mode the op-amp is infinite-bandwidth (flat).
+                        let gmc = if real {
+                            let gbw = if e.params[0] > 0.0 {
+                                e.params[0]
+                            } else {
+                                OPAMP_GBW
+                            };
+                            let wp = core::f64::consts::TAU * gbw / OPAMP_GAIN;
+                            Cplx::new(OPAMP_GOUT * dt, 0.0).div(Cplx::new(1.0, omega / wp))
                         } else {
-                            OPAMP_GBW
+                            Cplx::new(OPAMP_GOUT * dt, 0.0)
                         };
-                        let wp = core::f64::consts::TAU * gbw / OPAMP_GAIN;
-                        let gmc = Cplx::new(OPAMP_GOUT * dt, 0.0).div(Cplx::new(1.0, omega / wp));
                         stamp_g(&mut a, ia, ia, OPAMP_GOUT);
                         if let (Some(r), Some(col)) = (ia, ic) {
                             a[r * n + col] = a[r * n + col].add(gmc);
@@ -8145,7 +8151,8 @@ mod tests {
             &[100.0, rin, 12.0, rf],
         );
         let gain_at = |f: f64| {
-            let v = sim.ac_solve(std::f64::consts::TAU * f);
+            // The GBW pole is a Real-mode non-ideality, so test on the real path.
+            let v = sim.ac_solve_models(std::f64::consts::TAU * f, true);
             (v[2].0.hypot(v[2].1)) / (v[0].0.hypot(v[0].1)) // |V(out)| / |V(in)|
         };
         let g_lo = gain_at(1_000.0); // well below the corner
@@ -8260,7 +8267,7 @@ mod tests {
             "netlist with a param block installs"
         );
         let gain_at = |f: f64| {
-            let v = sim.ac_solve(std::f64::consts::TAU * f);
+            let v = sim.ac_solve_models(std::f64::consts::TAU * f, true);
             v[2].0.hypot(v[2].1) / v[0].0.hypot(v[0].1)
         };
         // −3 dB at the CUSTOM GBW / noise-gain (10× higher than the default part).

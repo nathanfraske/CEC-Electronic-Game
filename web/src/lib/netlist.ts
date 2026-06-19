@@ -17,7 +17,24 @@ import {
 import type { Endpoint } from "./graph";
 import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
-import { tierParams, ecEsr, DEFAULT_TIER, PARAM_STRIDE } from "./tiers";
+import {
+  tierParams,
+  ecEsr,
+  resistorTolerance,
+  DEFAULT_TIER,
+  PARAM_STRIDE,
+} from "./tiers";
+
+/** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
+ * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
+ * re-rolled on every edit and not tied to the (unstable) element index. */
+function jitter(id: number): number {
+  let h = (id ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return (h / 0x1_0000_0000) * 2 - 1;
+}
 
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
@@ -204,7 +221,10 @@ export interface BuiltNetlist {
   sig: string;
 }
 
-export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
+export function buildNetlist(
+  graph: BoardGraph,
+  real = false,
+): BuiltNetlist | null {
   // Union-find over wire endpoints: pins (keyed "componentId:pinIndex") AND
   // junctions (keyed "j<id>"). A junction is not an element — it only joins the
   // wire-ends that meet at it into one net, exactly like a wire does.
@@ -488,13 +508,21 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
           : (GATE_AUX[c.kind] ?? 0) +
             16 * (c.family ?? 0) +
             (c.openDrain ? 256 : 0);
+    // Resistor tolerance (Realistic mode only): the actual value deviates deterministically
+    // (per component id) within the tier's band — budget parts loose, lab parts tight. Ideal
+    // mode keeps every resistor exact.
+    const value =
+      real && c.kind === "R"
+        ? c.value *
+          (1 + resistorTolerance(c.tier ?? DEFAULT_TIER) * jitter(c.id))
+        : c.value;
     const idx = types.length;
     types.push(t);
     aArr.push(na);
     bArr.push(nb);
     cArr.push(nc);
     dArr.push(nd);
-    values.push(c.value);
+    values.push(value);
     auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
     nodesOfComponent.set(c.id, [na, nb]);

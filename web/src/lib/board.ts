@@ -1933,6 +1933,13 @@ export class Board {
     this.emitSelect(); // refresh the inspector's displayed tier
   }
 
+  /** Re-emit the current graph through `onChange` without any edit — used when the
+   * Ideal/Real fidelity mode flips, which recompiles the netlist (resistor tolerances
+   * appear/vanish, etc.) even though the board itself is unchanged. */
+  emitChange(): void {
+    this.cb.onChange?.(this.graph);
+  }
+
   /**
    * Set a logic gate's open-drain output mode from the inspector. Packed into `aux`
    * bit 8 by {@link buildNetlist}, so this rebuilds the netlist (an open-drain output

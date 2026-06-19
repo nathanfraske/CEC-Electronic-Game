@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (41) — Realistic-mode = global Fidelity flag; resistor tier (tolerance) shipped
+
+**State:** 🟢 Rust + Web, gates green. Owner: every part's tier non-idealities bite **only in
+realistic mode**; keep going until all parts ship tiers. Increment 1 of that.
+
+- **Promoted `realModels`** from a Bode-panel toggle to a **global Fidelity toggle** (`○ Ideal /
+  ● Real`) in the Telemetry panel (always reachable, even on DC circuits). Flipping it now
+  `board.emitChange()`s (re-emits onChange → `rebuildNetlist`) AND re-runs the Bode.
+- **`buildNetlist(graph, real)`** — passed `realModels`. In real mode a **resistor's value
+  deviates** `value·(1 + tol·jitter(id))` (tier tolerance ±5/1/0.5/0.1 %, deterministic per
+  **component id** so it's stable across edits — `jitter()` in netlist.ts). Ideal mode = exact.
+  `resistorTolerance(tier)` + `R` in `hasTiers` (so the inspector shows the R tier picker).
+- **Op-amp GBW pole gated on `real`** (sim-core ac_solve) for consistency — ideal = flat/infinite
+  bandwidth, real = the GBW rolloff. Updated the 2 op-amp tests to the real path. 120 tests green.
+
+**Graded + realistic-mode-gated:** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC (ESR),
+**resistor (tolerance)**. **Remaining (keep going — each its own increment, all gate on `real`):**
+- **V / AC source — output impedance** (web expansion like EC: ideal V-source in series with a
+  tier R that sags under load; mid≈0 so existing circuits unchanged when ideal/mid).
+- **Diode family — Rs** (sim-core: add a series-R to the diode small-signal/companion).
+- **MOSFET / BJT — Vto/Kp / β** (sim-core: `mosfet_op`/`bjt_op` read `e.params`; ~6 call sites —
+  pass the element).
+**Follow-up polish:** inspector "actual value" readout for a deviated resistor (so it's not a
+mystery); copy/paste carrying `tier`.
+
+---
+
 ## 2026-06-19 (40) — Tiers: electrolytic added + the "all components get grades" convention
 
 **State:** 🟢 Web, gates green. Owner: expand grades to ALL gradeable components + every NEW
