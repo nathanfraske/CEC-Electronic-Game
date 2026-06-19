@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (40) — Tiers: electrolytic added + the "all components get grades" convention
+
+**State:** 🟢 Web, gates green. Owner: expand grades to ALL gradeable components + every NEW
+component ships with grades. This is incremental (each device's params must be wired/expanded),
+so: added the next clean one (EC) + established the **convention durably**.
+
+- **Electrolytic cap (EC) grades** — graded **web-side** (it already expands to cap + series-ESR
+  resistor in buildNetlist): `tiers.ts ecEsr(tier)` (1.0/0.5/0.1/0.03 Ω; mid = the old fixed
+  0.5 Ω, so existing EC circuits are unchanged). `hasTiers` now covers EC, so the inspector picker
+  shows; `buildNetlist` reads `ecEsr(c.tier)` for the ESR value. Removed the `EC_ESR_OHMS` const.
+- **Convention in CLAUDE.md** (new "Component grades (tiers)" section): gradeable components carry
+  a `tier`; presets live in `tiers.ts`; **param-block kinds** (op-amp/cap/inductor) wire
+  `Element::params` in sim-core (slot map mirrored, 0 = default so mid ≈ default → golden safe),
+  **web-expansion kinds** (EC) set a value in buildNetlist. **Every new gradeable component ships
+  with its tier presets from the start.**
+
+**Graded so far:** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC (ESR). **Remaining gradeable
+(the additive roadmap, each its own increment):**
+- **Resistor — tolerance** (web value-deviation `value·(1+tol·jitter(id))`, deterministic per id):
+  budget ±5% … lab ±0.1%. Needs a decision on the **mid/default deviation** (0 = no surprise vs
+  realistic ±1%) and ideally an inspector "actual value" readout — that's why it's deferred.
+- **V / AC source — output impedance** (web expansion, EC pattern: a series R that sags under
+  load; budget supply regulates poorly). Keep mid≈0 so existing circuits are unchanged.
+- **Diode family — Rs / Vf** and **MOSFET/BJT — Vto/Kp / β**: sim-core param wiring (the
+  transistor `mosfet_op`/`bjt_op` have ~6 call sites; pass the element to read `e.params`).
+
+---
+
 ## 2026-06-19 (39) — Quality tiers (budget/mid/high/lab) on the per-device params
 
 **State:** 🟢 Rust + Web, gates green. Owner: parts come in four grades for main gameplay (a
