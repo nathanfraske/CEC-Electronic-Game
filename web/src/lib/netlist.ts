@@ -17,6 +17,7 @@ import {
 import type { Endpoint } from "./graph";
 import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
+import { tierParams, DEFAULT_TIER, PARAM_STRIDE } from "./tiers";
 
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
@@ -176,6 +177,12 @@ export interface BuiltNetlist {
    * element (where the core ignores it). Built in lockstep with `values`.
    */
   aux: Float64Array;
+  /**
+   * Per-element model-parameter block (`PARAM_STRIDE` f64s per element, in element order)
+   * from each component's quality tier — handed to `set_netlist_p`. All-zero for an
+   * untiered circuit (so the core uses every kind default). See {@link tierParams}.
+   */
+  params: Float64Array;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
   /**
@@ -607,6 +614,29 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
   // different net is recognised as a topology change and the sim is rebuilt —
   // while a pure move (which never changes any node) still leaves the whole
   // signature, c included, unchanged.
+  // Per-element model-parameter block from each component's quality tier (main gameplay),
+  // aligned to the MAIN element of each component (its `elemOfComponent` index); an
+  // expansion element (an EC's ESR resistor, a POT's legs) keeps its all-zero block, i.e.
+  // sim-core defaults. Empty-valued unless a tiered part is placed.
+  const params = new Float64Array(types.length * PARAM_STRIDE);
+  for (const comp of sorted) {
+    const tp = tierParams(comp.kind, comp.tier ?? DEFAULT_TIER);
+    const ei = elemOfComponent.get(comp.id);
+    if (!tp || ei === undefined) continue;
+    for (let k = 0; k < PARAM_STRIDE; k++) {
+      params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
+    }
+  }
+  // Fold the params into the signature so changing a tier reinstalls the sim (a no-op
+  // string when nothing tiered is placed, so plain circuits keep their old signature).
+  let paramsSig = "";
+  for (let i = 0; i < params.length; i++) {
+    if (params[i] !== 0) {
+      paramsSig = "|p:" + params.join(",");
+      break;
+    }
+  }
+
   const sig =
     nodeCount +
     "|" +
@@ -621,7 +651,8 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     values.join(",") +
     (labelSig ? "|" + labelSig : "") +
     (auxSig ? "|aux:" + auxSig : "") +
-    (dSig ? "|d:" + dSig : "");
+    (dSig ? "|d:" + dSig : "") +
+    paramsSig;
 
   return {
     nodeCount,
@@ -632,6 +663,7 @@ export function buildNetlist(graph: BoardGraph): BuiltNetlist | null {
     d: Uint32Array.from(dArr),
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
+    params,
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,

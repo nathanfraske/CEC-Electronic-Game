@@ -1430,6 +1430,18 @@ fn ind_dcr(henries: f64) -> f64 {
     (henries * 1000.0).max(0.1)
 }
 
+/// A device's [`Element::params`] slot `i`, or `default` when the slot is unset (`0.0`) —
+/// the "0 means the kind default" rule, so an all-zero block reproduces the built-in
+/// constants and a quality "tier" can override any subset by filling just those slots.
+fn param_or(params: &[f64; PARAM_STRIDE], i: usize, default: f64) -> f64 {
+    let v = params[i];
+    if v > 0.0 {
+        v
+    } else {
+        default
+    }
+}
+
 /// Minimal complex number for the frequency-domain AC analysis ([`Sim::ac_solve`]).
 /// Dependency-free `f64`, so the AC solve is as deterministic as the transient one.
 #[derive(Clone, Copy)]
@@ -4589,9 +4601,12 @@ impl Sim {
                         // Ideal: Y = jωC. Real: the series ESL+ESR+C string, so the part
                         // self-resonates at 1/(2π√(ESL·C)) and goes inductive above it.
                         let y = if real {
-                            let x = omega * CAP_ESL - 1.0 / (omega * e.value); // net reactance
-                            let z2 = CAP_ESR * CAP_ESR + x * x;
-                            Cplx::new(CAP_ESR / z2, -x / z2) // 1 / (ESR + jX)
+                            // ESR (slot 0) + ESL (slot 1), kind defaults when unset.
+                            let esr = param_or(&e.params, 0, CAP_ESR);
+                            let esl = param_or(&e.params, 1, CAP_ESL);
+                            let x = omega * esl - 1.0 / (omega * e.value); // net reactance
+                            let z2 = esr * esr + x * x;
+                            Cplx::new(esr / z2, -x / z2) // 1 / (ESR + jX)
                         } else {
                             Cplx::new(0.0, omega * e.value)
                         };
@@ -4605,13 +4620,15 @@ impl Sim {
                     // series winding resistance (DCR) and a parallel winding capacitance,
                     // so the part self-resonates and goes capacitive above its SRF.
                     let zl = if real {
-                        Cplx::new(ind_dcr(e.value), omega * e.value)
+                        // DCR (slot 0) + winding C (slot 1), kind defaults when unset.
+                        Cplx::new(param_or(&e.params, 0, ind_dcr(e.value)), omega * e.value)
                     } else {
                         Cplx::new(0.0, omega * e.value)
                     };
                     a[k * n + k] = a[k * n + k].sub(zl);
                     if real {
-                        stamp_y(&mut a, ia, ib, Cplx::new(0.0, omega * IND_CW));
+                        let cw = param_or(&e.params, 1, IND_CW);
+                        stamp_y(&mut a, ia, ib, Cplx::new(0.0, omega * cw));
                     }
                 }
                 ELEM_VSOURCE => {
@@ -8257,6 +8274,41 @@ mod tests {
         assert!(
             g_lo > 0.99 * rf / rin,
             "faster op-amp still flat at the default corner: got {g_lo}"
+        );
+    }
+
+    /// Per-device parameter block on a passive: a capacitor's ESR comes from param slot 0,
+    /// so at its self-resonance — where |Z| bottoms out at exactly the ESR — a budget
+    /// (high-ESR) cap has a much shallower notch than a lab-grade (low-ESR) one. Proves the
+    /// param plumbing reaches the Real-model AC stamp, the basis of the quality "tiers".
+    #[test]
+    fn ac_cap_esr_param_sets_resonance_depth() {
+        let c = 1.0e-6;
+        let with_esr = |esr: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE] = esr; // element 2 = cap, slot 0 = ESR
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[100.0, 10.0, c],
+                &[0.0, 0.0, 0.0],
+                &params,
+            ));
+            sim
+        };
+        let srf = 1.0 / (2.0 * std::f64::consts::PI * (CAP_ESL * c).sqrt());
+        let notch = |sim: &Sim| {
+            let v = sim.ac_solve_models(std::f64::consts::TAU * srf, true);
+            v[1].0.hypot(v[1].1) / v[0].0.hypot(v[0].1) // |V_cap|/|V_src| at SRF ∝ ESR
+        };
+        assert!(
+            notch(&with_esr(0.5)) > notch(&with_esr(0.005)) * 5.0,
+            "a higher-ESR (budget) cap bottoms out at a much shallower SRF notch"
         );
     }
 

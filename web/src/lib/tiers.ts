@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: Apache-2.0
+// Quality "tiers" for main gameplay: each tiered part kind comes in four grades — budget,
+// mid-range, high-end, lab-grade — and each grade is a preset bundle of the device's model
+// parameters (the per-element param block sim-core reads, PARAM_STRIDE wide). A better tier
+// means a better part (and, later, a higher cost). The param SLOT meanings mirror
+// `Element::params` in crates/sim-core/src/lib.rs; a slot of 0 means "use the kind default".
+// In the sandbox the raw params stay editable — this is the curated set for the game.
+
+/** Number of f64 model parameters per device — mirrors sim-core's `PARAM_STRIDE`. */
+export const PARAM_STRIDE = 4;
+
+/** The four grades, by index (0 budget … 3 lab-grade). */
+export const TIER_LABELS = [
+  "Budget",
+  "Mid-range",
+  "High-end",
+  "Lab-grade",
+] as const;
+
+/** Tier a placed part uses until the player picks one (mid-range). */
+export const DEFAULT_TIER = 1;
+
+// Per kind, the param block for each of the four tiers. Slot meanings per kind:
+//   OA (op-amp):   [0] = gain-bandwidth product (Hz)
+//   C  (cap):      [0] = ESR (Ω), [1] = ESL (H)
+//   L  (inductor): [0] = DCR (Ω), [1] = winding capacitance (F)
+// A kind absent here has no tiers (its params stay at the sim-core defaults).
+const TIER_PARAMS: Record<string, number[][]> = {
+  OA: [
+    [3e5, 0, 0, 0], // budget: 300 kHz — slow
+    [1e6, 0, 0, 0], // mid: 1 MHz (the 741-class default)
+    [1e7, 0, 0, 0], // high: 10 MHz
+    [5e7, 0, 0, 0], // lab: 50 MHz — fast precision part
+  ],
+  C: [
+    [0.3, 3.0e-9, 0, 0], // budget: lossy, high ESR/ESL → low self-resonance
+    [0.05, 1.5e-9, 0, 0], // mid
+    [0.01, 0.8e-9, 0, 0], // high
+    [0.003, 0.4e-9, 0, 0], // lab: very low ESR/ESL — clean to high frequency
+  ],
+  L: [
+    [1.0, 5.0e-12, 0, 0], // budget: resistive winding, high inter-turn C
+    [0.3, 1.5e-12, 0, 0], // mid
+    [0.1, 0.6e-12, 0, 0], // high
+    [0.03, 0.2e-12, 0, 0], // lab
+  ],
+};
+
+/** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
+export function tierParams(kind: string, tier: number): number[] | null {
+  const grades = TIER_PARAMS[kind];
+  if (!grades) return null;
+  const t = Math.max(0, Math.min(grades.length - 1, Math.round(tier)));
+  return grades[t] ?? null;
+}
+
+/** Whether a kind has quality tiers (so the inspector shows the tier picker). */
+export function hasTiers(kind: string): boolean {
+  return kind in TIER_PARAMS;
+}

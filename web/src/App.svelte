@@ -39,6 +39,7 @@
     AC_MAINS_PRESETS,
   } from "./lib/values";
   import { LOGIC_FAMILIES, familyLevels } from "./lib/families";
+  import { TIER_LABELS, DEFAULT_TIER, hasTiers } from "./lib/tiers";
   import {
     EXAMPLES,
     EXAMPLE_CATEGORIES,
@@ -999,6 +1000,7 @@
             nl.c,
             nl.aux,
             nl.d,
+            nl.params,
           );
           controls?.resync();
         } else if (graph.components.size > 0) {
@@ -1302,6 +1304,9 @@
   }
   function setFamily(idx: number): void {
     if (selPart) board?.setComponentFamily(selPart.id, idx);
+  }
+  function setTier(idx: number): void {
+    if (selPart) board?.setComponentTier(selPart.id, idx);
   }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
@@ -2242,6 +2247,23 @@
                   title="Next larger standard value">+</button
                 >
               </div>
+              {#if hasTiers(kind)}
+                <!-- Quality tier (main gameplay): each grade is a preset bundle of the
+                     device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
+                     inductor's DCR/winding-C), so a better tier self-resonates higher / is
+                     faster (and, later, costs more). The sandbox keeps raw param editing. -->
+                <div class="insp-sub">quality tier</div>
+                <div class="insp-chips wrap">
+                  {#each TIER_LABELS as label, i (label)}
+                    <button
+                      class="chip-val {(selPart.tier ?? DEFAULT_TIER) === i
+                        ? 'is-active'
+                        : ''}"
+                      onclick={() => setTier(i)}>{label}</button
+                    >
+                  {/each}
+                </div>
+              {/if}
               {#if isDigitalPart(kind)}
                 {@const lv = familyLevels(selFamily(), selPart.value)}
                 <!-- The logic family sets the input thresholds and output levels:

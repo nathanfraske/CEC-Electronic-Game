@@ -106,6 +106,17 @@ export interface Component {
    * never named round-trip unchanged (`serialize`/`restore` spread it through for free).
    */
   label?: string;
+  /**
+   * Quality **tier** of this part for main gameplay: an index into {@link TIER_LABELS}
+   * — `0` budget, `1` mid-range, `2` high-end, `3` lab-grade. Each tier is a preset
+   * bundle of the device's model parameters (an op-amp's GBW, a cap's ESR/ESL, an
+   * inductor's DCR/winding-C), mapped by {@link tierParams} into the per-element param
+   * block {@link buildNetlist} hands the core. A better tier = a better (and, later,
+   * pricier) part. Only the tiered kinds read it; others ignore it. Undefined → mid-range
+   * (the default), so older snapshots and untouched parts round-trip unchanged. In the
+   * sandbox the raw params are still editable; this is the curated choice for gameplay.
+   */
+  tier?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
