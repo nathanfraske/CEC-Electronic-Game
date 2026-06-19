@@ -5,6 +5,23 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (52) — First IC glyph refsheet: inverter (`docs/ui/parts/inv-ic.html`)
+
+**State:** 🟢 docs-only. Owner delivered the canonical **74LVC1G04 inverter** five-tier glyph (the
+template the spec is written around). Added verbatim as `docs/ui/parts/inv-ic.html`. Passed the
+spec's static §10 gates: JS `node --check` OK, **no forbidden glyphs** (em/en-dash, arrows, smart
+quotes, unicode minus, dash entities → none), structure counts `drawPkg(gT`=5 and `var t4=`=1.
+(Did not re-run the Playwright render gate — it's the owner's already-validated canonical file.)
+
+- **Pinout note (open):** owner asked to align the in-game NOT-gate pinout to this refsheet
+  (74LVC1G04 SOT-23-5: A·2, GND·3, Y·4, VCC·5, NC·1). The game's `NOT` is already a 2-pin **A→Y**
+  abstract gate (auto-powered by `value` = logic rail), so it matches the input/output convention;
+  the real difference is the **power pins**. Making gates true 5-pin powered ICs is a big, breaking
+  change (all gates need VCC/GND wired, sim reads rails from pins, glyph rework, existing circuits
+  break) — flagged to the owner to confirm scope before doing it. Pending their answer.
+
+---
+
 ## 2026-06-19 (51) — IC glyph authoring spec added (`docs/ui/ic-glyph-spec.md`)
 
 **State:** 🟢 docs-only. The owner provided the **five-tier IC glyph** authoring spec (the build
