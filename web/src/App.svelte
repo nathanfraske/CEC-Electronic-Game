@@ -720,9 +720,24 @@
   let bodeSweep = $state<Float64Array | undefined>(undefined);
   let bodeNodeCount = $state(0);
   let bodeHasAc = $state(false);
-  // 1 Hz … 10 MHz log sweep — wide enough to show the corners of small R/L/C the 2 µs
-  // transient step can't reach. Fixed list (presentation), reused every recompute.
-  const BODE_FREQS = logFreqs(1, 1e7, 160);
+  // Component fidelity for the AC analysis: false = ideal parts, true = Real parasitics
+  // (cap ESL/ESR + inductor DCR/winding-C self-resonance). Analysis-only — never touches
+  // the transient sim or the snapshot hash.
+  let realModels = $state(false);
+  // 1 Hz … 1 GHz log sweep — wide enough for both the low-frequency filter corners and the
+  // MHz-scale self-resonant frequencies the Real models expose. The frequency-domain solve
+  // has no Nyquist limit, so a "1 GHz" reading is honest here. Fixed list, reused each sweep.
+  const BODE_FREQS = logFreqs(1, 1e9, 240);
+  // Recompute the Bode sweep off the netlist the sim holds (component scope so the
+  // Ideal/Real toggle can re-run it too). A no-op without an AC source.
+  const recomputeBode = (nodeCount: number): void => {
+    if (!simHandle || !bodeHasAc || nodeCount < 2) {
+      bodeSweep = undefined;
+      return;
+    }
+    bodeNodeCount = nodeCount;
+    bodeSweep = simHandle.acSweep(Float64Array.from(BODE_FREQS), realModels);
+  };
   // The Bode canvas: the action captures it; a redraw runs whenever the sweep or the
   // per-node visibility changes (not per-frame — the response is static between edits).
   let bodeCanvas: HTMLCanvasElement | undefined;
@@ -941,16 +956,6 @@
       const sim = await createSimulation(SEED);
       simHandle = sim;
       proto = sim.protocolVersion();
-      // Run the frequency-domain AC sweep for the Bode panel (on demand, off the netlist
-      // the sim already holds). A no-op without an AC source — its stimulus is the input.
-      const recomputeBode = (nodeCount: number): void => {
-        if (!simHandle || !bodeHasAc || nodeCount < 2) {
-          bodeSweep = undefined;
-          return;
-        }
-        bodeNodeCount = nodeCount;
-        bodeSweep = simHandle.acSweep(Float64Array.from(BODE_FREQS));
-      };
 
       // Compile the board into a netlist and install it whenever the topology or
       // a value changes. Pure moves leave the signature unchanged, so dragging a
@@ -2706,10 +2711,24 @@
            magnitude vs log frequency, so reactance corners / filter knees / LC resonance
            show at frequencies the 2 µs transient step can't reach. Node colours match the
            scope; toggling a node in the list below hides its trace. -->
-      <h3 class="sub-title">Frequency response</h3>
+      <h3 class="sub-title nodes-head">
+        <span>Frequency response</span>
+        <button
+          class="btn btn-ghost scope-expand"
+          onclick={() => {
+            realModels = !realModels;
+            recomputeBode(bodeNodeCount);
+          }}
+          title="Ideal parts vs Real parts (caps/inductors carry ESR/ESL/DCR + winding C, so they self-resonate). Analysis-only — the running sim is unchanged."
+        >
+          {realModels ? "● Real" : "○ Ideal"}
+        </button>
+      </h3>
       <div class="bode-panel">
         <canvas use:bodeAction aria-hidden="true"></canvas>
-        <span class="bode-cap mono">dBV vs f · 1 Hz – 10 MHz (log)</span>
+        <span class="bode-cap mono">
+          dBV vs f · 1 Hz – 1 GHz (log){realModels ? " · parasitics on" : ""}
+        </span>
       </div>
     {/if}
 

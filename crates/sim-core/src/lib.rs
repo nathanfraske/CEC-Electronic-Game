@@ -1401,6 +1401,20 @@ fn solve_dense(mut a: Vec<f64>, mut b: Vec<f64>, n: usize) -> Vec<f64> {
 
 // --- Small-signal AC analysis (frequency domain) -------------------------------
 
+// Real-model AC parasitics (analysis only — the transient solve is unchanged, so the
+// golden is too). Representative lumped values that put each part's self-resonant frequency
+// in a sensible range: a ceramic cap's lead inductance + ESR, an inductor's winding
+// resistance + inter-turn capacitance. Mirrored web-side for the analogy "parasitic sleeve".
+const CAP_ESL: f64 = 1.0e-9; // 1 nH series lead inductance → SRF ≈ 5 MHz for a 1 µF cap
+const CAP_ESR: f64 = 0.05; // 50 mΩ series resistance (sets how sharp the resonance is)
+const IND_CW: f64 = 1.0e-12; // 1 pF parallel winding capacitance → the inductor's own SRF
+
+/// Inductor winding resistance (DCR), in ohms — grows with inductance (more turns of wire),
+/// floored so even a tiny inductor reads a hair of series resistance.
+fn ind_dcr(henries: f64) -> f64 {
+    (henries * 1000.0).max(0.1)
+}
+
 /// Minimal complex number for the frequency-domain AC analysis ([`Sim::ac_solve`]).
 /// Dependency-free `f64`, so the AC solve is as deterministic as the transient one.
 #[derive(Clone, Copy)]
@@ -4440,19 +4454,29 @@ impl Sim {
         self.node_v.clone()
     }
 
+    /// Small-signal **AC analysis** at angular frequency `omega` (rad/s) with **ideal**
+    /// components — see [`Sim::ac_solve_models`] for the full model and the `real` flag.
+    pub fn ac_solve(&self, omega: f64) -> Vec<(f64, f64)> {
+        self.ac_solve_models(omega, false)
+    }
+
     /// Small-signal **AC analysis** at angular frequency `omega` (rad/s). Assembles the
     /// linear complex MNA — resistor → `G`, capacitor → `jωC`, inductor → a branch with
     /// `jωL`, DC voltage source → a short (`0 V` constraint), AC source → the stimulus at
-    /// its peak amplitude, DC current source → an open — and solves it. Returns the complex
-    /// node voltages as `(re, im)` pairs, ground excluded (node `k ≥ 1` at index `k − 1`),
-    /// so a Bode / |Z| reader can take magnitudes and phases at **any** frequency — it never
+    /// its peak amplitude, DC current source → an open, nonlinear devices → their
+    /// operating-point small-signal companion — and solves it. Returns the complex node
+    /// voltages as `(re, im)` pairs, ground excluded (node `k ≥ 1` at index `k − 1`), so a
+    /// Bode / |Z| reader can take magnitudes and phases at **any** frequency — it never
     /// time-steps, so the transient step's Nyquist ceiling does not apply.
     ///
-    /// This first pass models the **passive network** (R/L/C + sources); nonlinear/active
-    /// parts are left open (a follow-up will stamp their operating-point small-signal model).
-    /// Pure analysis: it reads the netlist but never mutates sim state, so it cannot touch
-    /// the snapshot hash or determinism of the transient run.
-    pub fn ac_solve(&self, omega: f64) -> Vec<(f64, f64)> {
+    /// `real` selects the component fidelity: `false` = ideal (a capacitor is pure `jωC`,
+    /// an inductor pure `jωL`); `true` = **Real parasitics** — a capacitor carries series
+    /// ESL + ESR (so it self-resonates and goes inductive above its SRF), an inductor
+    /// carries series DCR and a parallel winding capacitance (so it self-resonates and goes
+    /// capacitive). This is an **analysis-only** distinction: the transient solve is
+    /// untouched either way, so the determinism golden is unaffected. Pure read of the
+    /// netlist — never mutates sim state.
+    fn ac_solve_models(&self, omega: f64, real: bool) -> Vec<(f64, f64)> {
         let node_unknowns = self.node_count.saturating_sub(1);
         // Branch-current unknowns (appended after the node voltages), as in the transient
         // MNA: one per voltage source and per inductor.
@@ -4516,14 +4540,33 @@ impl Sim {
                 }
                 ELEM_CAPACITOR => {
                     if e.value > 0.0 {
-                        stamp_y(&mut a, ia, ib, Cplx::new(0.0, omega * e.value));
+                        // Ideal: Y = jωC. Real: the series ESL+ESR+C string, so the part
+                        // self-resonates at 1/(2π√(ESL·C)) and goes inductive above it.
+                        let y = if real {
+                            let x = omega * CAP_ESL - 1.0 / (omega * e.value); // net reactance
+                            let z2 = CAP_ESR * CAP_ESR + x * x;
+                            Cplx::new(CAP_ESR / z2, -x / z2) // 1 / (ESR + jX)
+                        } else {
+                            Cplx::new(0.0, omega * e.value)
+                        };
+                        stamp_y(&mut a, ia, ib, y);
                     }
                 }
                 ELEM_INDUCTOR => {
                     let k = branch[i];
                     stamp_branch(&mut a, ia, ib, k);
-                    // Branch equation: V(a) − V(b) − jωL·i = 0.
-                    a[k * n + k] = a[k * n + k].sub(Cplx::new(0.0, omega * e.value));
+                    // Branch equation: V(a) − V(b) − Z·i = 0. Ideal Z = jωL; Real adds the
+                    // series winding resistance (DCR) and a parallel winding capacitance,
+                    // so the part self-resonates and goes capacitive above its SRF.
+                    let zl = if real {
+                        Cplx::new(ind_dcr(e.value), omega * e.value)
+                    } else {
+                        Cplx::new(0.0, omega * e.value)
+                    };
+                    a[k * n + k] = a[k * n + k].sub(zl);
+                    if real {
+                        stamp_y(&mut a, ia, ib, Cplx::new(0.0, omega * IND_CW));
+                    }
                 }
                 ELEM_VSOURCE => {
                     let k = branch[i];
@@ -4623,15 +4666,16 @@ impl Sim {
         x[..node_unknowns].iter().map(|c| (c.re, c.im)).collect()
     }
 
-    /// Run [`Sim::ac_solve`] across a list of frequencies (Hz), flattened for the JS↔wasm
+    /// Run the AC analysis across a list of frequencies (Hz), flattened for the JS↔wasm
     /// boundary: per frequency, the `[re, im]` of each non-ground node (node `k ≥ 1` at
     /// slot `k − 1`) — a block of `2·(node_count − 1)` `f64`s, in input frequency order.
     /// One batched call keeps the boundary coarse (a whole Bode sweep in a single crossing).
-    pub fn ac_sweep(&self, freqs_hz: &[f64]) -> Vec<f64> {
+    /// `real` selects ideal vs Real-parasitic component models (see [`Sim::ac_solve_models`]).
+    pub fn ac_sweep(&self, freqs_hz: &[f64], real: bool) -> Vec<f64> {
         let nu = self.node_count.saturating_sub(1);
         let mut out = Vec::with_capacity(freqs_hz.len() * nu * 2);
         for &f in freqs_hz {
-            for (re, im) in self.ac_solve(core::f64::consts::TAU * f) {
+            for (re, im) in self.ac_solve_models(core::f64::consts::TAU * f, real) {
                 out.push(re);
                 out.push(im);
             }
@@ -7857,7 +7901,7 @@ mod tests {
             &[100.0, 1_000.0, 1.0e-6],
         );
         let freqs = [100.0, 1_000.0, 10_000.0];
-        let flat = sim.ac_sweep(&freqs);
+        let flat = sim.ac_sweep(&freqs, false);
         let nu = 2; // node_count - 1
         assert_eq!(flat.len(), freqs.len() * nu * 2);
         for (k, &f) in freqs.iter().enumerate() {
@@ -8047,6 +8091,74 @@ mod tests {
             (g3 - (rf / rin) / 2.0_f64.sqrt()).abs() / (rf / rin) < 0.01,
             "−3 dB gain at GBW/noise-gain: got {g3}, want {}",
             (rf / rin) / 2.0_f64.sqrt()
+        );
+    }
+
+    /// Real-model parasitics: a capacitor carries series ESL, so above its self-resonant
+    /// frequency `SRF = 1/(2π√(ESL·C))` it goes **inductive** — in an R-C divider the output
+    /// (its impedance) bottoms out at the SRF and climbs again, where an ideal cap's keeps
+    /// falling. This is the cap-becomes-an-inductor lesson the Bode now shows in Real mode.
+    #[test]
+    fn ac_real_capacitor_self_resonates() {
+        let r = 10.0;
+        let c = 1.0e-6;
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[100.0, r, c],
+        );
+        let srf = 1.0 / (2.0 * std::f64::consts::PI * (CAP_ESL * c).sqrt());
+        let ratio = |f: f64, real: bool| {
+            let v = sim.ac_solve_models(std::f64::consts::TAU * f, real);
+            v[1].0.hypot(v[1].1) / v[0].0.hypot(v[0].1)
+        };
+        assert!(
+            ratio(srf * 10.0, false) < ratio(srf, false),
+            "ideal cap keeps shorting at higher frequency"
+        );
+        assert!(
+            ratio(srf, true) < ratio(srf * 0.1, true),
+            "real cap impedance dips toward the SRF"
+        );
+        assert!(
+            ratio(srf * 10.0, true) > ratio(srf, true) * 3.0,
+            "real cap rises above the SRF (gone inductive)"
+        );
+    }
+
+    /// Real-model parasitics: an inductor carries a parallel winding capacitance, so it has
+    /// a parallel-resonance impedance **peak** at `SRF = 1/(2π√(L·Cw))` and goes
+    /// **capacitive** above it — in an R-L divider the output peaks at the SRF then falls,
+    /// where an ideal inductor's keeps rising.
+    #[test]
+    fn ac_real_inductor_self_resonates() {
+        let r = 10_000.0;
+        let l = 1.0e-3;
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_INDUCTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[100.0, r, l],
+        );
+        let srf = 1.0 / (2.0 * std::f64::consts::PI * (l * IND_CW).sqrt());
+        let ratio = |f: f64, real: bool| {
+            let v = sim.ac_solve_models(std::f64::consts::TAU * f, real);
+            v[1].0.hypot(v[1].1) / v[0].0.hypot(v[0].1)
+        };
+        assert!(
+            ratio(srf * 10.0, false) > ratio(srf, false),
+            "ideal inductor keeps blocking at higher frequency"
+        );
+        assert!(
+            ratio(srf, true) > ratio(srf * 0.1, true),
+            "real inductor peaks toward the SRF"
+        );
+        assert!(
+            ratio(srf, true) > ratio(srf * 10.0, true) * 2.0,
+            "real inductor falls above the SRF (gone capacitive)"
         );
     }
 

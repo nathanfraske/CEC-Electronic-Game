@@ -23,9 +23,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   the transient solver's settled operating point (mirrors `newton_iterate`, real partials, no jω
   since no internal device C). Tests: diode divider, MOSFET CS gain, BJT CE (exact 2-node
   cross-check). Bode panel shows amplifier response with no UI change.~~
-- [ ] **Op-amp small-signal in `ac_solve`** — add the output-row GOUT·dT stamp (easy). BUT the
-  op-amp has no internal pole, so AC gain is flat → fine for active-filter R/C corners, wrong for
-  loop-gain/phase-margin. Pair with a GBW pole model for honest PSU loop analysis.
+- ~~**Op-amp small-signal + GBW pole in `ac_solve`** — output diag +Gout, transconductance
+  Gout·dT/(1+jω/ωp), ωp=2π·GBW/A0, GBW=1 MHz. AC-only (transient algebraic → golden safe). Test:
+  inverting amp gain Rf/Rin, −3 dB at GBW/(1+Rf/Rin). (#118)~~
+- ~~**Ideal/Real parasitics (AC, functional)** — `ac_solve_models(omega, real)`: cap ESL+ESR+C
+  series (SRF → inductive), inductor DCR + parallel Cw (SRF → capacitive). `ac_sweep`/`acSweep`
+  take `real`; App Bode "Ideal/Real" toggle; sweep widened to 1 GHz. Analysis-only (golden safe).
+  Tests + PNG (SRF notch+rise).~~
+- [ ] **Analogy "parasitic sleeve" rendering** (next) — subtle always-on ESR grit-throat / ESL
+  inertia-paddle / parallel side-tank in analogyDrawers.ts, brighten-by-contribution; read the
+  SAME parasitic values as sim-core (mirror the constants). Full plan in HANDOFFS (35).
+- [ ] **Transient parasitics (optional)** — netlist expansion (C→ESL+ESR+C, L→DCR+Cw, hidden
+  internal nodes) for time-domain ESR ripple/spikes. Deferred; the AC-stamp covers the Bode.
 - [ ] **(other track) Transient time base + PSU rating** — selectable fine dt + auto-measurements
   (ripple Vpp, overshoot, settling, regulation). Still open; owner chose the AC engine first.
 
