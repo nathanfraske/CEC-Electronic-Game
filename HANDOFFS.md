@@ -5,6 +5,46 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (46) — Device variety, increment D: diode reverse recovery → PLAN COMPLETE
+
+**State:** 🟢 Rust + Web, all gates green (128 sim-core tests, 1 ignored). **All four
+device-variety workstreams shipped** (A diode types ✓, B LED colour ✓, C pulse source ✓, D
+reverse recovery ✓). The owner's audit questions are now fully answered in code.
+
+- **Reverse recovery = a diffusion-charge backward-Euler companion on the diode**, the same
+  machinery as a capacitor. Transit time `TT` (param slot 3): a forward diode stores `q = TT·I`,
+  so its terminal current carries a `dq/dt` term; switched off, the stored charge sweeps out as a
+  reverse-current spike. Strongest under an inductive/bipolar drive (the bridge-rectifier /
+  freewheel case) where current is still flowing at the reversal.
+- **Determinism / golden — untouched.** `newton_iterate` gained an `inv_dt` arg: **0 at the
+  operating point** (so the DC solve has no charge term) and **1/DT** in the transient. The charge
+  term is gated `if kq = TT·inv_dt > 0`, so `TT = 0` (default / Ideal / Schottky) takes the exact
+  old memoryless stamp — bit-identical. The op-point **seeds** `reactive_state[diode] = TT·I` so
+  step 1 doesn't glitch. The transient current readout adds the `dq/dt` term so the spike shows in
+  `element_currents`. Per-step commit stores `q = TT·I`. **All reproducibility tests pass → no
+  golden regen** (per docs/determinism.md, a regen would be a deliberate reviewed act; not needed).
+- **Web:** `DIODE_TYPES` carry a game-scaled `tt` (Switching 0.5µs < Fast-recovery 1µs < Rectifier
+  5µs < Power 8µs; LEDs/Schottky 0). `buildNetlist` emits `tt` (slot 3) **Real-mode only** (an
+  ideal diode recovers instantly). Inspector shows "reverse recovery · none/fast/medium/slow".
+  Test `diode_reverse_recovery_sources_reverse_current` (sine + series L; the recovery diode is
+  driven ~48 mA into reverse vs the ideal's ~pA leakage).
+- **Note on scale:** `TT` is scaled up to the fixed `DT = 2µs` so the spike spans several ticks
+  and is legible — realistic *ordering*, not absolute ns (consistent with the 10 kHz clock and the
+  tuned transformer). It is visible in a bridge rectifier (bipolar transformer drive) or a diode +
+  switched inductor.
+
+**Device audit — fully resolved:** square waves ✓ (C), diode types + recovery ✓ (A/D), LED colour
+✓ (B); every part modelled except the `FP`/`uC` Tier III placeholders. The 4-PR arc is #127–#130.
+
+**Possible next steps (none in flight):** reverse-voltage (Vrrm) rating + avalanche FAIL; ratings
+on SD/LED/ZD; junction capacitance Cj (the other half of diode dynamics); a bipolar option on the
+pulse source; partInfo/pinout blurb for PULSE; inspector "actual value" readout for a deviated
+resistor. Otherwise the engine's device set is broad — a good point to return to **game** content.
+
+**Landing:** PR + squash-merge to main, same flow as #122–#129.
+
+---
+
 ## 2026-06-19 (45) — Device variety, increment C: pulse / clock generator
 
 **State:** 🟢 Rust + Web, all gates green (127 sim-core tests, 1 ignored). Increment C of 4

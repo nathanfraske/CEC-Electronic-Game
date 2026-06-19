@@ -2314,6 +2314,21 @@
                     >
                     {#if realModels}<span class="mono">(FAIL above)</span>{/if}
                   </div>
+                  {#if realModels}
+                    <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
+                         out more charge on switch-off — the reverse-current spike a switcher hates. -->
+                    <div class="insp-sub">
+                      reverse recovery · <span class="mono"
+                        >{dv.tt === 0
+                          ? "none"
+                          : dv.tt <= 1e-6
+                            ? "fast"
+                            : dv.tt <= 4e-6
+                              ? "medium"
+                              : "slow"}</span
+                      >
+                    </div>
+                  {/if}
                 {/if}
               {/if}
               {#if hasLedColors(kind)}

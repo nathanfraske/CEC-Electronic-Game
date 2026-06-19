@@ -1284,6 +1284,20 @@ const FAIL_LIMIT: f64 = 1.0e9;
 /// the FAIL flag — it never alters the solve — so it is purely additive and deterministic.
 const RATED_CURRENT_SLOT: usize = 2;
 
+/// Param slot carrying a **diode's transit time `TT`** (seconds): the diffusion-charge time
+/// constant that gives a junction diode its **reverse recovery**. A forward-conducting diode
+/// stores charge `q = TT·I`; when it is suddenly reverse-biased that charge must sweep out, so
+/// the diode briefly conducts in reverse (the recovery current spike) before it blocks. Modelled
+/// as a backward-Euler charge companion on the diode (the same machinery as a capacitor), so it
+/// stays deterministic. `0.0` (the default, every Ideal-mode diode, and a Schottky — a
+/// majority-carrier part with no stored charge) means **no recovery**: the charge term vanishes
+/// and the diode is bit-identical to before, so the golden is untouched. Like the rating, the
+/// web layer installs `TT` only in Real mode (reverse recovery is a non-ideality). It shares the
+/// diode's slot 3 with nothing else (Is = 0, n = 1, rating = 2). NOTE: the values are **scaled
+/// up** to the engine's fixed `DT` so the spike spans several ticks and is legible — the
+/// realistic ordering (Schottky < fast-recovery < rectifier) is what matters, not the absolute ns.
+const DIODE_TT_SLOT: usize = 3;
+
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
 /// use the control terminal `c`.
@@ -3198,6 +3212,9 @@ impl Sim {
         bjts: &[BjtMap],
         varistors: &[VaristorMap],
         opamps: &[OpampMap],
+        // Reciprocal of the timestep for the diode reverse-recovery charge companion: `1/DT` in
+        // a transient step, `0.0` at the operating point (so the DC solve has no charge term).
+        inv_dt: f64,
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -3215,8 +3232,21 @@ impl Sim {
                 let vd = self.diode_vd[ei];
                 let el = self.elements[ei];
                 let (id, gd) = diode_eval(vd, diode_model(&el));
-                let g = gd + GMIN;
-                let ieq = id - g * vd;
+                // Reverse-recovery charge companion: a forward diode stores `q = TT·id`, so its
+                // terminal current carries an extra `dq/dt`. Backward-Euler turns that into a
+                // scaled conductance and a history current (`q_prev` = the stored charge in
+                // `reactive_state[ei]`). `inv_dt` is 0 at the operating point (DC solve
+                // unchanged) and `1/DT` in the transient; `TT = 0` (Ideal / Schottky / default)
+                // makes `kq = 0`, falling back to the exact memoryless stamp — golden-safe.
+                let kq = el.params[DIODE_TT_SLOT] * inv_dt;
+                let (g, ieq) = if kq > 0.0 {
+                    let q_prev = self.reactive_state[ei];
+                    let g = gd * (1.0 + kq) + GMIN;
+                    (g, id * (1.0 + kq) - q_prev * inv_dt - g * vd)
+                } else {
+                    let g = gd + GMIN;
+                    (g, id - g * vd)
+                };
                 if let Some(r) = ia {
                     mat[r * n + r] += g;
                     rhs[r] -= ieq;
@@ -3812,8 +3842,10 @@ impl Sim {
         // base (copied into every iteration's matrix); a no-op when fully grounded.
         self.stamp_floating_refs(&mut base_mat, n);
 
+        // Operating point is a DC steady state: pass inv_dt = 0 so the diode reverse-recovery
+        // charge companion contributes nothing (dq/dt = 0), leaving the DC solve unchanged.
         let x = self.newton_iterate(
-            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
+            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps, 0.0,
         );
 
         // Commit per-element currents (oriented a -> b) at the operating point.
@@ -3872,6 +3904,18 @@ impl Sim {
                 }
                 _ => 0.0,
             };
+        }
+        // Seed each reverse-recovery diode's stored charge q = TT·I at the operating point, so
+        // the first transient step starts from the steady-state charge (no spurious t = 0 spike).
+        // TT = 0 (default / Ideal / Schottky) leaves it at 0, so the golden is untouched.
+        for (i, e) in self.elements.iter().enumerate() {
+            if matches!(e.kind, ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER) {
+                let tt = e.params[DIODE_TT_SLOT];
+                if tt > 0.0 {
+                    let id = diode_eval(self.diode_vd[i], diode_model(e)).0;
+                    self.reactive_state[i] = tt * id;
+                }
+            }
         }
     }
 
@@ -4031,8 +4075,17 @@ impl Sim {
         // base (copied into every iteration's matrix); a no-op when fully grounded.
         self.stamp_floating_refs(&mut base_mat, n);
 
+        // Transient step: inv_dt = 1/DT engages the diode reverse-recovery charge companion.
         let x = self.newton_iterate(
-            n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps,
+            n,
+            &base_mat,
+            &base_rhs,
+            &diodes,
+            &mosfets,
+            &bjts,
+            &varistors,
+            &opamps,
+            1.0 / DT,
         );
 
         // Commit per-element currents (oriented a -> b) while `reactive_state`
@@ -4061,7 +4114,16 @@ impl Sim {
                 }
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
-                    diode_eval(self.diode_vd[i], diode_model(e)).0
+                    let id = diode_eval(self.diode_vd[i], diode_model(e)).0;
+                    // Add the reverse-recovery charge current dq/dt (like the capacitor above)
+                    // so the *terminal* current shows the recovery spike. TT = 0 → kq = 0 →
+                    // plain id, unchanged. `reactive_state[i]` still holds q from the last step.
+                    let kq = e.params[DIODE_TT_SLOT] / DT;
+                    if kq > 0.0 {
+                        id * (1.0 + kq) - self.reactive_state[i] / DT
+                    } else {
+                        id
+                    }
                 }
                 ELEM_NMOS | ELEM_PMOS => {
                     Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]).id
@@ -4452,6 +4514,17 @@ impl Sim {
                 ELEM_CAPACITOR => {
                     // Store the new capacitor voltage V(a) - V(b).
                     self.reactive_state[i] = self.node_v[e.a] - self.node_v[e.b];
+                }
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
+                    // Reverse-recovery diffusion charge q = TT·I, stored so the next step's
+                    // backward-Euler companion can source the recovery current as it discharges.
+                    // TT = 0 (default / Ideal / Schottky) leaves the charge at 0 — the diode is
+                    // memoryless and bit-identical to before (golden-safe).
+                    let tt = e.params[DIODE_TT_SLOT];
+                    if tt > 0.0 {
+                        let id = diode_eval(self.diode_vd[i], diode_model(e)).0;
+                        self.reactive_state[i] = tt * id;
+                    }
                 }
                 ELEM_INDUCTOR => {
                     // Store the new inductor branch current (a -> b).
@@ -6147,6 +6220,52 @@ mod tests {
         assert!(
             vf_blue > vf_red + 0.6,
             "a blue LED drops well above red: red={vf_red}, blue={vf_blue}"
+        );
+    }
+
+    /// Reverse recovery (transit-time param, slot 3): a bipolar sine drives a diode through a
+    /// series inductor (the freewheel / bridge-rectifier case — the inductor keeps current
+    /// flowing into the diode as the source reverses, so the diode is switched off under load).
+    /// A diode with `TT > 0` stores diffusion charge `q = TT·I` while forward, and when forced
+    /// off it sweeps that charge out as a pronounced **reverse** current — so it conducts in
+    /// reverse far harder than an ideal (`TT = 0`) diode, which blocks at the current zero.
+    /// Layout: AC source 1->0, L 1->2, diode 2->0.
+    #[test]
+    fn diode_reverse_recovery_sources_reverse_current() {
+        let reverse_dip = |tt: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + DIODE_TT_SLOT] = tt; // diode (element 2): transit time
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[2000.0, 1.0e-3, 0.0], // 2 kHz sine; 1 mH series inductor
+                &[10.0, 0.0, 0.0],      // source amplitude 10 V
+                &params,
+            ));
+            let mut rev_dip = f64::INFINITY;
+            for _ in 0..600 {
+                sim.step();
+                rev_dip = rev_dip.min(sim.element_currents()[2]);
+            }
+            rev_dip
+        };
+        let rr_dip = reverse_dip(6.0e-6); // a slow rectifier — stores charge
+        let ideal_dip = reverse_dip(0.0); // ideal diode — no stored charge
+                                          // The ideal diode blocks at the current zero (only the ~pA saturation leakage flows
+                                          // backward); the recovery diode is driven tens of mA into reverse as its charge sweeps
+                                          // out — orders of magnitude deeper, the hallmark of reverse recovery.
+        assert!(
+            ideal_dip > -1.0e-6,
+            "an ideal diode barely conducts in reverse: {ideal_dip}"
+        );
+        assert!(
+            rr_dip < ideal_dip - 0.02,
+            "reverse recovery drives a real reverse current: recovery={rr_dip}, ideal={ideal_dip}"
         );
     }
 

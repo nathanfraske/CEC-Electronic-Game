@@ -35,8 +35,14 @@ diode reverse-recovery. This is **A**.
   3: duty) — `ac_source_emf` grew the square/triangle branches (default slot 1 = 0 = sine, so
   the AC source + golden are untouched). New `Component.duty` field, glyph `drawPulse`, inspector
   (level + waveform + duty slider). Tests `pulse_source_emits_square_wave` / `_triangle_wave`.~~
-- [ ] **(D) Diode reverse recovery (trr)** — dynamic stored-charge state; reverse-recovery
-  spike on switch-off. New reactive state, determinism-sensitive. Hardest; last.
+- ~~**(D) Diode reverse recovery (trr)** — a diffusion-charge backward-Euler companion on the
+  diode (transit time `TT`, slot 3): a forward diode stores `q = TT·I`; switched off it sweeps
+  that charge out as a reverse-current spike. Reuses `reactive_state[ei]`; `newton_iterate` gained
+  an `inv_dt` arg (0 at the op-point so DC is unchanged, 1/DT transiently); op-point seeds the
+  charge so t=0 doesn't glitch. `TT=0` (Ideal / Schottky / default) = today's diode, bit-for-bit
+  (all reproducibility tests pass — no golden regen). DIODE_TYPES carry game-scaled `tt`; emitted
+  Real-mode only. Inspector shows the recovery (none/fast/medium/slow). Test
+  `diode_reverse_recovery_sources_reverse_current`.~~ **DEVICE-VARIETY PLAN (A–D) COMPLETE.**
 - [ ] **Follow-on:** ratings for SD/LED/ZD (LED especially — easy burnout) once (B) lands;
   reverse-voltage (Vrrm) rating + avalanche FAIL; inspector "actual value" readout for a
   deviated resistor.
