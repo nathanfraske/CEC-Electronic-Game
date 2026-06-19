@@ -27,9 +27,12 @@ const CURATED_FULL: Record<string, number[]> = {
   V: [1.2, 1.5, 1.8, 2.5, 3.3, 5, 9, 12, 15, 24, 48],
   I: [0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2],
   SW: [0.1, 0.2, 0.25, 0.3, 0.4, 0.5, 0.6, 0.7, 0.75, 0.8, 0.9],
-  // AC frequency (Hz), kept in the ~50 Hz–5 kHz band the 2 µs step resolves well.
-  // 50 + 60 are the two mains line frequencies (EU/US).
-  AC: [50, 60, 100, 200, 300, 500, 1000, 2000, 3000, 5000],
+  // AC frequency (Hz). 50 + 60 are the mains line frequencies (EU/US); the top end now
+  // runs to 50 kHz — deep into the "shimmer" render range, yet still under the solver's
+  // resolvable ceiling. The 2 µs step needs ≥8 samples/cycle, so AC detection caps near
+  // 62.5 kHz; a round MHz/GHz would make f·dt an integer and alias the sine to a dead
+  // 0 V source, so the curated list (which also clamps custom input) deliberately stops here.
+  AC: [50, 60, 100, 200, 300, 500, 1000, 2000, 3000, 5000, 10000, 20000, 50000],
   // Zener breakdown voltage Vz (V): the common standard BZX-series values.
   ZD: [2.4, 3.0, 3.3, 3.6, 3.9, 4.3, 4.7, 5.1, 5.6, 6.2, 6.8, 7.5, 9.1, 12, 15],
   // Varistor clamp voltage Vc (V): common MOV ratings, a superset of the chips.
@@ -69,7 +72,7 @@ const CURATED_CHIPS: Record<string, number[]> = {
   V: [3.3, 5, 9, 12],
   I: [0.001, 0.005, 0.01, 0.05],
   SW: [0.25, 0.5, 0.75],
-  AC: [100, 500, 1000, 2000],
+  AC: [100, 500, 1000, 2000, 10000],
   // The classic Zener reference voltages people reach for first.
   ZD: [3.3, 4.7, 5.1, 6.2, 9.1, 12],
   // The common varistor clamp voltages people reach for first.

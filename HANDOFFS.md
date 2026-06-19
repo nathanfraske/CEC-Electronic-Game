@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (31) — AC frequency range → 50 kHz; switching-flicker root-caused (separate)
+
+**State:** 🟢 Web. Owner: extend the AC source "out to 1 GHz for fun (if it doesn't cause
+issues)"; also expects the resistor-flicker-under-high-switching to be fixed by this.
+
+- **AC frequencies (`values.ts`)** — extended `CURATED_FULL.AC` to add 10 k/20 k/50 kHz (was
+  capped 5 kHz) and a 10 kHz chip. **1 GHz is NOT feasible** at the fixed 2 µs step: AC detection
+  needs ≥8 samples/cycle so it caps at **62.5 kHz** (`AC_MIN_CYCLE_SAMPLES=8`), and a round
+  MHz/GHz makes `f·dt` an integer → `sin(2π·int·tick)=0` → a **dead 0 V source**. So the list
+  stops at 50 kHz (10 samples/cycle, safe; the curated list also clamps custom input via
+  `nearestStandard`). 50 kHz already shimmers fully at real-time playback. Web-only, no sim
+  change, no golden risk.
+- **Resistor flicker under high switching = SEPARATE root cause, NOT fixed by the above.**
+  `ELEM_SWITCH` is a fixed **10 kHz** clock chopper (`SWITCH_PERIOD_TICKS=50`). A DC→switch→R
+  makes a **unipolar PWM** current; the **sinusoidal** AC detector finds no symmetric V
+  zero-crossing → finalizes as DC (freq 0), so `ac.valid=false` → the (30) RMS-averaging never
+  engages → it strobes. Fix options (deferred, offered to owner): (a) sim-core — have the AC
+  analysis report a real RMS + fundamental for non-sinusoidal periodic signals (detect the
+  chopper period), or (b) render-side — a waveform-agnostic magnitude stabiliser gated on the
+  per-wire ripple/rate-of-change rather than on `ac.valid`. (b) is smaller; (a) is more correct.
+
+**Phasor brainstorm (round 2, high-freq/sweep angle) — done, in the (31) chat / below.** 12 new
+ideas building on (29)'s 15. Top 3: Xc/Xl+R split (pure trig, cheapest), |Z|-vs-f sparkline the
+phasor paints as you sweep (needs a HUD-side freq history buffer — presentation only), RMS-vs-peak
+"stability shadow". Several vs-f ideas need a client-side readout history (no sim/hash change).
+
+---
+
 ## 2026-06-19 (30) — Magnitude-rides-RMS for thickness + particle flow; phasor → own Telemetry panel
 
 **State:** 🟢 Web. Owner: phasor "bigger / its own section, not in the popout, alongside the
