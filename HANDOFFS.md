@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (50) — Current-channel legibility, part C: frequency-domain render → A–C COMPLETE
+
+**State:** 🟢 Rust + Web, all gates green (129 sim-core tests, all reproducibility green — analysis
+only, golden untouched). **The 3-part current-legibility initiative is done** (A frozen-spring ✓,
+B flicker ✓, C MHz ✓). The board now shows current/phase at 100 kHz–MHz instead of dying.
+
+- **sim-core `ac_element_measurements(ω, real)`** — the frequency-domain twin of `ac_measurements`,
+  same flat `[nElem × AC_FIELDS]` layout. Reuses `ac_solve_models` for the complex node voltages,
+  then `I = Y·ΔV` per 2-terminal kind (R `1/value`; switch `g`; cap ideal `jωC` / Real `1/(ESR+jX)`;
+  inductor `1/(DCR+jωL) (+jωCw)`; diode/varistor small-signal `g+GMIN`); **sources via KCL** at the
+  hot node. 3-terminal (MOSFET/BJT/op-amp) + transformer left `valid=0` (follow-on). Derives
+  vamp/iamp/vrms/irms/phase/preal/pf/zmag. **No solver refactor.** Test
+  `ac_element_measurements_series_rc`. Bound as `acElementMeasurements`.
+- **web** — App.svelte caches `fdAc = acElementMeasurements(2π·phaseScopeFreq, realModels)` in
+  `recomputePhaseScope` when `phaseScopeFreq > TIME_DOMAIN_AC_CEILING_HZ` (62 500); `onFrame`
+  substitutes `fdAc` for the (invalid) per-frame `snap.acMeasurements` in `electricalMap`. With a
+  valid AC readout above the ceiling, the **existing** `flowStabilized(e, blurC)` eases each glyph's
+  current toward its measured RMS and B's shimmer draws the band — so the passives, wires, and
+  source render their real current at MHz. Below the ceiling the live time-domain reading (real
+  waveform shape) is kept.
+- **What it shows / limits:** the small-signal **sinusoidal** amplitude/phase at the one source
+  frequency (like the phasor/phase scope), not the literal switching shape. Known follow-ons
+  (TODOS 21): 3-terminal/transformer AC currents; stabilise `vAcross` too (a cap's voltage *glow*
+  still flickers above the ceiling — only the *current* is stabilised); multi-source circuits use
+  the dominant frequency.
+
+**Landing:** PR + squash-merge to main, same flow as #122–#133.
+
+---
+
 ## 2026-06-19 (49) — Current-channel legibility, part B: component shimmer (no flicker)
 
 **State:** 🟢 Web, gates green (128 sim-core tests unchanged — web-only). Part B of the 3-part

@@ -27,11 +27,16 @@ and keeps going invisible** when the voltage/waveform motion stops telling the s
   the sloshing dots into a steady |I|-width band instead of strobing. Also floors small currents to
   a faint trickle (the schematic half of A — was a hard `mag < 0.02` dead-zone). Verified the blur
   flips 0→1 with apparent rate. Uses the existing AC readout (valid ≤ 62.5 kHz; > that needs C).~~
-- [ ] **(C) Frequency-domain render** — `ac_solve` returns per-element AC **currents** (not just
-  node voltages); above the ~62.5 kHz time-domain `AcMeas` ceiling the render's per-element AC
-  state (|I|, phase) is driven from the frequency domain, so the circuit visibly acts at
-  100 kHz–MHz as shimmer + phasor (fixes "dies above 100 kHz", and makes B work at MHz). sim-core +
-  web; the big piece. Analysis-only → golden-safe.
+- ~~**(C) Frequency-domain render** — `Sim::ac_element_measurements(ω, real)` (frequency-domain
+  twin of `ac_measurements`, same `[nElem × AC_FIELDS]` layout): `I = Y·ΔV` per 2-terminal kind
+  (R/C/L/switch/diode/varistor) from the AC node voltages, sources via KCL — **no solver refactor**.
+  Test `ac_element_measurements_series_rc` (series current equal, R in phase, C leads 90°). Bound
+  as `acElementMeasurements`. Web caches `fdAc` at the source freq when `> 62.5 kHz` and substitutes
+  it for the invalid time-domain `acMeasurements` in `electricalMap`, so the existing
+  `flowStabilized` + shimmer (B) show current/phase at 100 kHz–MHz instead of dying. Analysis-only →
+  golden-safe (129 sim-core tests, all reproducibility green).~~ **CURRENT-CHANNEL A–C COMPLETE.**
+  - [ ] Follow-on: 3-terminal/transformer AC currents (left `valid=0`); stabilise `vAcross` too so
+    a voltage glow (cap field) doesn't flicker above the ceiling; bin the actual waveform shape.
 
 ## 2026-06-19 (20) — Phase-domain scope + MHz source range (display fast signals)
 

@@ -80,6 +80,12 @@ export interface SimHandle {
    * limit. On-demand (not per-frame); read-only, never mutates sim state.
    */
   acSweep(freqs: Float64Array, real: boolean): Float64Array;
+  /**
+   * Frequency-domain per-element AC measurements at one angular frequency — the analytic twin of
+   * the per-frame `acMeasurements`, same stride. Used above the ~62.5 kHz time-domain measurement
+   * ceiling so the board still shows current/phase at MHz. On-demand; read-only.
+   */
+  acElementMeasurements(omega: number, real: boolean): Float64Array;
 }
 
 export async function createSimulation(seed: number): Promise<SimHandle> {
@@ -117,6 +123,8 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
     },
     reset: () => sim.reset(),
     acSweep: (freqs, real) => sim.ac_sweep(freqs, real),
+    acElementMeasurements: (omega, real) =>
+      sim.ac_element_measurements(omega, real),
   };
 }
 

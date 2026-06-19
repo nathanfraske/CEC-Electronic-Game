@@ -4911,6 +4911,134 @@ impl Sim {
         out
     }
 
+    /// **Frequency-domain** per-element AC measurements at a single frequency — the analytic twin
+    /// of the running [`Sim::ac_measurements`], in the same flat `[nElem × AC_FIELDS]` layout, so
+    /// the web render can swap it in **above the ~62.5 kHz time-domain measurement ceiling** and
+    /// the board still shows current/phase (shimmer + phasor) at 100 kHz–MHz, where the 2 µs step
+    /// can't measure a cycle. Pure analysis (no solver change, no hash) → golden-safe.
+    ///
+    /// It reuses [`Sim::ac_solve_models`] for the complex node voltages, then for each element
+    /// computes the small-signal AC current `I = Y·ΔV` (closed-form admittance per 2-terminal
+    /// kind, evaluated at the settled operating point for the nonlinear devices); a voltage
+    /// source's current comes from KCL at its hot node. Three-terminal devices (MOSFET/BJT/op-amp)
+    /// and the transformer are left `valid = 0` for now (they carry no shimmer at HF yet). Reports
+    /// the steady **sinusoidal** response (amplitude/phase at this one frequency), like the phasor.
+    pub fn ac_element_measurements(&self, omega: f64, real: bool) -> Vec<f64> {
+        let nv = self.ac_solve_models(omega, real); // complex node voltages, node k≥1 at slot k−1
+        let node_v = |node: usize| -> Cplx {
+            if node == 0 {
+                return Cplx::ZERO;
+            }
+            let idx = node - 1;
+            if idx < nv.len() {
+                Cplx::new(nv[idx].0, nv[idx].1)
+            } else {
+                Cplx::ZERO
+            }
+        };
+        let n_el = self.elements.len();
+        let mut curr = vec![Cplx::ZERO; n_el];
+        let mut has_ac = vec![false; n_el];
+        // Per-element admittance Y(ω) for the 2-terminal kinds; I = Y·ΔV.
+        for (i, e) in self.elements.iter().enumerate() {
+            let vd = node_v(e.a).sub(node_v(e.b));
+            let y = match e.kind {
+                ELEM_RESISTOR if e.value > 0.0 => Some(Cplx::new(1.0 / e.value, 0.0)),
+                ELEM_SWITCH => Some(Cplx::new(self.switch_conductance(e), 0.0)),
+                ELEM_CAPACITOR if e.value > 0.0 => Some(if real {
+                    let esr = param_or(&e.params, 0, CAP_ESR);
+                    let esl = param_or(&e.params, 1, CAP_ESL);
+                    let x = omega * esl - 1.0 / (omega * e.value);
+                    let z2 = esr * esr + x * x;
+                    Cplx::new(esr / z2, -x / z2)
+                } else {
+                    Cplx::new(0.0, omega * e.value)
+                }),
+                ELEM_INDUCTOR if e.value > 0.0 => {
+                    let zl = if real {
+                        Cplx::new(param_or(&e.params, 0, ind_dcr(e.value)), omega * e.value)
+                    } else {
+                        Cplx::new(0.0, omega * e.value)
+                    };
+                    let mut y = Cplx::ONE.div(zl);
+                    if real {
+                        y = y.add(Cplx::new(0.0, omega * param_or(&e.params, 1, IND_CW)));
+                    }
+                    Some(y)
+                }
+                ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
+                    let g = diode_eval(self.diode_vd[i], diode_model(e)).1;
+                    Some(Cplx::new(g + GMIN, 0.0))
+                }
+                ELEM_VARISTOR => {
+                    let g = varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).1;
+                    Some(Cplx::new(g + GMIN, 0.0))
+                }
+                _ => None,
+            };
+            if let Some(y) = y {
+                curr[i] = y.mul(vd);
+                has_ac[i] = true;
+            }
+        }
+        // Voltage / AC sources: current = KCL at the hot node `a` — the net current the other
+        // elements draw out of it (oriented to match `a -> b`).
+        for i in 0..n_el {
+            let e = &self.elements[i];
+            if e.kind != ELEM_VSOURCE && e.kind != ELEM_ACSOURCE {
+                continue;
+            }
+            let mut isum = Cplx::ZERO;
+            for (j, ej) in self.elements.iter().enumerate() {
+                if j == i || !has_ac[j] {
+                    continue;
+                }
+                if ej.a == e.a {
+                    isum = isum.add(curr[j]);
+                } else if ej.b == e.a {
+                    isum = isum.sub(curr[j]);
+                }
+            }
+            curr[i] = isum;
+            has_ac[i] = true;
+        }
+        // Derive the AcReadout fields (steady sinusoid) per element. Pure AC → no DC mean.
+        let root2 = core::f64::consts::SQRT_2;
+        let freq = omega / core::f64::consts::TAU;
+        let mut out = vec![0.0f64; n_el * AC_FIELDS];
+        for (i, e) in self.elements.iter().enumerate() {
+            if !has_ac[i] {
+                continue; // valid stays 0 → the web keeps the time-domain reading
+            }
+            let vd = node_v(e.a).sub(node_v(e.b));
+            let ci = curr[i];
+            let vamp = vd.abs();
+            let iamp = ci.abs();
+            // V−I phase (>0 lags / inductive), real power 0.5·Re(V·conj(I)).
+            let phase = vd.im.atan2(vd.re) - ci.im.atan2(ci.re);
+            let preal = 0.5 * (vd.re * ci.re + vd.im * ci.im);
+            let vrms = vamp / root2;
+            let irms = iamp / root2;
+            let o = i * AC_FIELDS;
+            out[o] = vrms;
+            out[o + 1] = irms;
+            // [2] vmean, [3] imean stay 0 (pure AC).
+            out[o + 4] = vamp;
+            out[o + 5] = iamp;
+            out[o + 6] = preal;
+            out[o + 7] = if vrms * irms > 1e-18 {
+                preal / (vrms * irms)
+            } else {
+                1.0
+            };
+            out[o + 8] = if iamp > 1e-18 { vamp / iamp } else { 0.0 };
+            out[o + 9] = phase;
+            out[o + 10] = freq;
+            out[o + 11] = 1.0; // valid
+        }
+        out
+    }
+
     /// Current through each element, in the **same order** as the installed
     /// netlist, with the sign defined `a -> b` (positive current flows from
     /// terminal `a` to terminal `b` inside the element). One entry per element.
@@ -8292,6 +8420,61 @@ mod tests {
                 assert_eq!(flat[base + 1], *im);
             }
         }
+    }
+
+    /// Frequency-domain per-element AC measurements on a series RC (source → R → C → gnd). The
+    /// series current is identical through the source, R, and C (KCL); the resistor's V and I are
+    /// in phase; the cap's current leads its voltage by 90°. Because it's analytic, it is valid at
+    /// ANY frequency — the whole point (the time-domain `AcMeas` quits above ~62.5 kHz).
+    #[test]
+    fn ac_element_measurements_series_rc() {
+        let r = 1_000.0;
+        let c = 159.0e-9; // corner ≈ 1 kHz
+        let f = 1_000.0;
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[f, r, c],
+        );
+        let m = sim.ac_element_measurements(std::f64::consts::TAU * f, false);
+        assert_eq!(m.len(), 3 * AC_FIELDS);
+        let iamp = |i: usize| m[i * AC_FIELDS + 5];
+        let phase = |i: usize| m[i * AC_FIELDS + 9];
+        let valid = |i: usize| m[i * AC_FIELDS + 11];
+        assert!(
+            valid(0) == 1.0 && valid(1) == 1.0 && valid(2) == 1.0,
+            "source, R and C are all measured"
+        );
+        let tol = 1e-6 * iamp(1).max(1e-9);
+        assert!(
+            (iamp(1) - iamp(2)).abs() < tol,
+            "R and C carry the one series current: {} vs {}",
+            iamp(1),
+            iamp(2)
+        );
+        assert!(
+            (iamp(0) - iamp(1)).abs() < tol,
+            "the source carries the same series current (KCL): {} vs {}",
+            iamp(0),
+            iamp(1)
+        );
+        assert!(
+            iamp(1) > 1e-4,
+            "a real current flows at the corner: {}",
+            iamp(1)
+        );
+        assert!(
+            phase(1).abs() < 0.05,
+            "resistor V and I are in phase: {}",
+            phase(1)
+        );
+        assert!(
+            (phase(2) + std::f64::consts::FRAC_PI_2).abs() < 0.1,
+            "cap current leads its voltage by 90°: {}",
+            phase(2)
+        );
     }
 
     /// Nonlinear small-signal AC: a diode DC-biased through R2 and perturbed by an AC
