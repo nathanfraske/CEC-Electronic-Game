@@ -47,7 +47,7 @@ function arrow(
   ctx.moveTo(cx, cy);
   ctx.lineTo(tx, ty);
   ctx.stroke();
-  const head = Math.min(7, len * 0.32);
+  const head = Math.min(width * 3.4, len * 0.34);
   for (const s of [-1, 1]) {
     const ha = ang + Math.PI + s * 0.42;
     ctx.beginPath();
@@ -74,6 +74,9 @@ export function drawPhasor2D(
   const cy = h / 2;
   const radius = Math.min(w, h) / 2 - 4;
   if (radius <= 2) return;
+  // Strokes/dots scale with the dial so it reads the same small (popover) or large (panel).
+  const lw = Math.max(1.8, radius * 0.04);
+  const dotR = Math.max(1.4, radius * 0.03);
 
   // Dial: filled bezel + tick ring.
   ctx.globalAlpha = 0.82;
@@ -135,18 +138,18 @@ export function drawPhasor2D(
     ctx.arc(
       cx + Math.cos(th) * ilen,
       cy + Math.sin(th) * ilen,
-      1.8,
+      dotR,
       0,
       Math.PI * 2,
     );
     ctx.fill();
   }
 
-  arrow(ctx, cx, cy, thV, vlen, 2.2, V_COLOR);
-  arrow(ctx, cx, cy, thI, ilen, 2.2, I_COLOR);
+  arrow(ctx, cx, cy, thV, vlen, lw, V_COLOR);
+  arrow(ctx, cx, cy, thI, ilen, lw, I_COLOR);
   ctx.globalAlpha = 1;
   ctx.fillStyle = "#bfb8d8";
   ctx.beginPath();
-  ctx.arc(cx, cy, 2.2, 0, Math.PI * 2);
+  ctx.arc(cx, cy, lw * 1.2, 0, Math.PI * 2);
   ctx.fill();
 }
