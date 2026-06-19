@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (48) — Current-channel legibility, part A: frozen-spring trickle
+
+**State:** 🟢 Web, gates green (128 sim-core tests unchanged — web-only). First of a 3-part owner
+initiative: **current must stay a legible render channel** when the voltage/waveform motion stops
+telling the story (sped-up flicker; "dies" above ~100 kHz; a charged cap's frozen spring). Owner
+chose small→big: **A frozen-spring ✓, B component flicker, C MHz frequency-domain render.**
+
+- **(A) done** — `trickleFlow(current, scale)` in `web/src/lib/analogyDrawers.ts`: floors the
+  carrier flow to 0.15 for any real current (|I| > 1e-9) so a slow discharge keeps a faint trickle
+  rather than freezing; a genuine zero (no path) stays still. Wired into the **ceramic-cap**
+  (piston/spring) and **electrolytic** (reservoir) analogy drawers. A big cap bleeding down at µA
+  now visibly trickles. PNG-verified.
+- **(B) next** — the schematic glyphs flicker when sped up because `flow()` (`glyphs.ts`) uses the
+  *instantaneous* current sign and hard-returns under ~0.4 mA (`mag < 0.02`). Make the glyphs adopt
+  the wires' apparent-rate shimmer handoff (`blurFactor(apparentFreq(ac.freq))` → fade sloshing
+  carriers into a |I|-width band past the eye's ~10–15 Hz), and lower the `flow()` dead-zone so
+  small currents trickle on the schematic too (the schematic half of A). The wires already do this
+  (`board.ts computeWireFlow`/`redrawWires`); mirror it on the glyphs. Uses the existing AC readout
+  (valid ≤ 62.5 kHz) — at MHz it needs C.
+- **(C) after** — `ac_solve` returns per-element AC **currents** (refactor `ac_solve_models` to
+  also do a per-element current readout, like the transient `element_currents`), exposed as a new
+  boundary method; above the ~62.5 kHz `AcMeas` ceiling (`AC_MIN_CYCLE_SAMPLES`, lib.rs ~1893) the
+  web drives `ElectricalState.ac` from the frequency domain so the board acts at MHz. Analysis-only
+  → golden-safe. The bigger piece.
+
+**Landing:** PR + squash-merge to main, same flow as #122–#131.
+
+---
+
 ## 2026-06-19 (47) — Phase-domain scope + MHz source range (display fast signals)
 
 **State:** 🟢 Rust + Web, all gates green (128 sim-core tests, 1 ignored). Web-only feature; no
