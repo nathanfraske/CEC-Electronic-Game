@@ -46,6 +46,7 @@ import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
 import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
 import { DEFAULT_TIER } from "./tiers";
+import { ledTint } from "./diodes";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -4994,7 +4995,12 @@ class ComponentNode {
         pins: this.pinPositions,
         wPx: this.wPx,
         hPx: this.hPx,
-        color: this.color,
+        // An LED is tinted by its colour variant (live, so the inspector updates it on the
+        // next frame); every other part uses its kind's palette colour.
+        color:
+          this.kindTag === "LED"
+            ? ledTint(this.component.variant ?? 0)
+            : this.color,
         electrical,
         phase,
         // The manual switch draws its open/closed blade from its commanded state

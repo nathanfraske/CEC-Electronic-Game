@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (44) — Device variety, increment B: LED colour
+
+**State:** 🟢 Rust + Web, all gates green (125 sim-core tests, 1 ignored). Increment B of the
+4-part device-variety plan (A diode types ✓, B LED colour ✓, C waveform source, D reverse
+recovery).
+
+- **LED colour** rides on the per-device diode forward-param hook from (A): `Component.variant`
+  → an `Is` (slot 0) chosen so the colour sits at a fixed forward drop (red ~1.9 V … blue/white
+  ~3 V; `Is = 20 mA / exp(Vf/(n·Vt))`, n = 2). Variant 0 = red at the `LED_IS` default, so
+  existing LEDs are unchanged. `web/src/lib/diodes.ts` gained `LED_COLORS`, a per-kind `VARIANTS`
+  map, `hasLedColors`, `variantList`, `ledTint`. **No sim-core change** beyond a test — the LED
+  is already a diode kind reading `Is`/`n` from params, and buildNetlist auto-emits once LED
+  joined the variants map.
+- **Glyph tint:** the board render colours an LED by `ledTint(variant)` (live — the inspector
+  updates it next frame) instead of the kind palette colour; the existing brightness-tracks-
+  current glow now glows in the part's colour. Each colour also carries a ~30 mA rating (the
+  (A) FAIL mechanism — LEDs burn out easily).
+- **Inspector:** a "colour" picker for LEDs (parallel to the "diode type" picker).
+- Test `led_colour_is_sets_higher_forward_drop` (blue's extreme small `Is` ≈ 8.7e-27 still
+  converges and drops > red + 0.6 V — guards the Newton numerics at the colour extremes).
+
+**Landing:** PR + squash-merge to main, same flow as #122–#127.
+
+**Next (C):** waveform / pulse source — a square/pulse/triangle generator with adjustable
+frequency + duty (new sim-core source element), and/or a multi-waveform AC source. Then (D)
+reverse recovery — the hard, determinism-sensitive one (new reactive stored-charge state);
+worth a fresh session with full context headroom given "determinism is sacred."
+
+---
+
 ## 2026-06-19 (43) — Device variety, increment A: diode types + current rating/FAIL
 
 **State:** 🟢 Rust + Web, all gates green (124 sim-core tests, 1 ignored). Owner audit (square
