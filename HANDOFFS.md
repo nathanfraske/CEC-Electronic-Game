@@ -21,12 +21,20 @@ realistic mode**; keep going until all parts ship tiers. Increment 1 of that.
   bandwidth, real = the GBW rolloff. Updated the 2 op-amp tests to the real path. 120 tests green.
 
 **Graded + realistic-mode-gated:** op-amp (GBW), cap (ESR/ESL), inductor (DCR/Cw), EC (ESR),
-**resistor (tolerance)**. **Remaining (keep going — each its own increment, all gate on `real`):**
-- **V / AC source — output impedance** (web expansion like EC: ideal V-source in series with a
-  tier R that sags under load; mid≈0 so existing circuits unchanged when ideal/mid).
-- **Diode family — Rs** (sim-core: add a series-R to the diode small-signal/companion).
-- **MOSFET / BJT — Vto/Kp / β** (sim-core: `mosfet_op`/`bjt_op` read `e.params`; ~6 call sites —
-  pass the element).
+resistor (tolerance), **V / AC source (output impedance)**. The source Zout is the FIRST
+transient param: sim-core's V/AC branch stamp does `mat[bi][bi] -= e.params[0]` (so
+`V(a)−V(b)=EMF−Rout·i_load`; the cap shares that arm and is skipped), and buildNetlist only puts
+the source param block in Real mode (transient params gate web-side; AC-only params gate in
+ac_solve). Test `vsource_output_impedance_sags_under_load`.
+
+**Remaining — the transistors (the last genuinely tier-gradeable kind; diode/logic grades are
+already TYPE/FAMILY-based):**
+- **MOSFET / BJT — Vto/Kp / β** (sim-core): change `mosfet_op(kind,…)`/`bjt_op(kind,…)` to take
+  `&Element` and read `e.params` (Kp/Vto/λ, βf) with the constant defaults (~6 call sites each).
+  Then add MOSFET/BJT to `tiers.ts` + `hasTiers`. Transient operating-point params, so gate them
+  web-side in buildNetlist (skip when !real), like the source Zout. Tests: a higher-β BJT / lower-
+  Vto MOSFET conducts more. Note: the AC source Zout is transient-only (ac_solve treats the source
+  as the ideal stimulus — fine, the Bode normalizes by the actual Vin).
 **Follow-up polish:** inspector "actual value" readout for a deviated resistor (so it's not a
 mystery); copy/paste carrying `tier`.
 

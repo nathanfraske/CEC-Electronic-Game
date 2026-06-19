@@ -646,6 +646,10 @@ export function buildNetlist(
     const tp = tierParams(comp.kind, comp.tier ?? DEFAULT_TIER);
     const ei = elemOfComponent.get(comp.id);
     if (!tp || ei === undefined) continue;
+    // A source's output impedance is TRANSIENT-affecting, so it only bites in Real mode
+    // (unlike the cap/inductor/op-amp params, whose use sim-core gates inside the AC
+    // analysis) — in Ideal mode leave the source perfect.
+    if ((comp.kind === "V" || comp.kind === "AC") && !real) continue;
     for (let k = 0; k < PARAM_STRIDE; k++) {
       params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
     }
