@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (17) — Frequency-domain AC analysis engine (sim-core)
+
+- ~~**AC sweep engine** (`Sim::ac_solve(omega)`) — complex MNA for the passive network (R→G,
+  C→jωC, L→jωL branch, V-source short, AC source stimulus); returns complex node voltages at any
+  frequency, no time-stepping / no Nyquist wall. `Cplx` + `solve_dense_complex` added. Pure
+  analysis, doesn't touch the hash. Tests: RC corner (−3 dB/−45°/−20 dB-dec), LC resonance.~~
+- [ ] **Wasm binding** — `ac_sweep(freqs[])` → interleaved Float64Array of complex node voltages
+  (+ derive per-element complex current → |Z|, phase) across the JS boundary.
+- [ ] **Bode / |Z|-vs-f panel** (web) — log-f magnitude + phase plot with corner markers; the
+  proper "get into the corners" instrument. Pairs with the phasor (the |Z|-vs-f sparkline idea).
+- [ ] **Nonlinear small-signal in `ac_solve`** — stamp diode/BJT/MOSFET/op-amp operating-point
+  conductances (reuse the `*_eval` linearizations) so amplifier/filter Bode + op-amp loop gain
+  work, not just R/L/C.
+- [ ] **(other track) Transient time base + PSU rating** — selectable fine dt + auto-measurements
+  (ripple Vpp, overshoot, settling, regulation). Still open; owner chose the AC engine first.
+
 ## 2026-06-19 (16) — AC frequency range → 50 kHz; switching flicker root-caused
 
 - ~~**AC source frequencies** extended to 50 kHz (`values.ts`: +10 k/20 k/50 k, +10 kHz chip).
