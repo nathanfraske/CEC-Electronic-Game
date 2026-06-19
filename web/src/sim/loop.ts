@@ -63,6 +63,12 @@ export interface SimHandle {
     c?: Uint32Array,
     aux?: Float64Array,
     d?: Uint32Array,
+    /**
+     * Optional per-device parameter block — `PARAM_STRIDE` (4) `f64`s per element, or
+     * omitted/empty for all model defaults (identical behaviour to today). Lets the save
+     * format carry per-device parameters (op-amp GBW now; MOSFET/BJT/diode params as wired).
+     */
+    params?: Float64Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -94,22 +100,21 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       acFields: sim.ac_fields(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values, c, aux, d) =>
+    setNetlist: (nodeCount, types, a, b, values, c, aux, d, params) => {
       // Default the control array `c` and the fourth terminal `d` to all-ground and
       // the aux scalars to all-zero when a caller omits them, then hand the wasm
       // boundary its native a,b,c,d,values,aux order. The core ignores c/d for
       // elements that don't use them and reads aux only for the AC source's
       // amplitude / a logic gate's function code (0 there = the default).
-      sim.set_netlist(
-        nodeCount,
-        types,
-        a,
-        b,
-        c ?? new Uint32Array(types.length),
-        d ?? new Uint32Array(types.length),
-        values,
-        aux ?? new Float64Array(types.length),
-      ),
+      const cc = c ?? new Uint32Array(types.length);
+      const dd = d ?? new Uint32Array(types.length);
+      const ax = aux ?? new Float64Array(types.length);
+      // Route to the param-aware boundary only when a non-empty param block is supplied,
+      // so the common (no-params) path stays byte-for-byte the default install.
+      return params && params.length > 0
+        ? sim.set_netlist_p(nodeCount, types, a, b, cc, dd, values, ax, params)
+        : sim.set_netlist(nodeCount, types, a, b, cc, dd, values, ax);
+    },
     reset: () => sim.reset(),
     acSweep: (freqs, real) => sim.ac_sweep(freqs, real),
   };

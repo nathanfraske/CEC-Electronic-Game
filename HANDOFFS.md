@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (38) — Per-device parameter block (engine foundation; the break-if-late gap)
+
+**State:** 🟢 Rust + Web, gates green. Engine-completeness gap analysis (agent, (37) chat) ranked
+this **#1** — it's a boundary/save-format change, so adding it after circuits + grading contracts
+are authored forces a migration. Did the **plumbing + a proof**; wiring more device params is now
+additive.
+
+- **`Element.params: [f64; PARAM_STRIDE]`** (`PARAM_STRIDE=4`) — a per-device model-parameter
+  block whose slot meaning is `kind`-specific. **A slot of `0.0` = "use the kind default"**, and
+  an empty/omitted block installs all-defaults → **reproduces today bit-for-bit** (additive,
+  golden-safe).
+- **`Sim::set_netlist_p(…, params: &[f64])`** is the param-aware install; **`set_netlist` is now a
+  thin wrapper** passing `&[]` (so the dozens of existing callers + the golden are untouched).
+  **sim-wasm `set_netlist_p`** + **web `SimHandle.setNetlist(…, params?)`** route to it only when a
+  non-empty block is supplied — the boundary + save format are now param-ready with zero change to
+  the common path.
+- **Proof:** op-amp **GBW** reads param slot 0 (`e.params[0] > 0 ? : OPAMP_GBW`) in `ac_solve`.
+  Test `ac_opamp_gbw_param_sets_bandwidth` — a 10× faster op-amp gives 10× the closed-loop
+  bandwidth. 119 sim-core tests green (incl. reproducibility goldens = empty-params path).
+
+**Slot map so far:** op-amp `[0]=GBW (Hz)`. **Reserved/next (additive):** MOSFET `[Kp,Vto,λ]`
+(6 `mosfet_op` call sites — change to read the element), BJT `[Is,βf,βr]`, diode `[Is,n,Rs]`. Then
+the **web side**: board components store per-device params, `buildNetlist` emits the block, save
+format carries it, and a small inspector UI to edit them. **Engine roadmap (37):** after the param
+families, the next big tracks are **transient measurements + fine time-base** (PSU rating) and the
+**mixed-signal boundary** (comparator→ADC/DAC).
+
+---
+
 ## 2026-06-19 (37) — Analogy parasitic sleeve v1 (ESR/DCR heat-glow) + engine gap analysis
 
 **State:** 🟢 Web, gates green. Owner: "get the sleeve down," then focus on making the **engine

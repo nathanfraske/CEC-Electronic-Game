@@ -70,6 +70,27 @@ impl Simulation {
             .set_netlist(node_count, types, a, b, c, d, values, aux)
     }
 
+    /// Install a netlist with an explicit per-device parameter block (`PARAM_STRIDE` f64s
+    /// per element, or empty for all defaults) — see `Sim::set_netlist_p`. The param-aware
+    /// boundary, so the save format can carry per-device model parameters (op-amp GBW, and
+    /// future MOSFET/BJT/diode params) without another wire-format change.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_p(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
+        self.inner
+            .set_netlist_p(node_count, types, a, b, c, d, values, aux, params)
+    }
+
     /// Reset to `t = 0` with reactive elements discharged, keeping the same
     /// netlist.
     pub fn reset(&mut self) {
