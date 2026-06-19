@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (49) — Current-channel legibility, part B: component shimmer (no flicker)
+
+**State:** 🟢 Web, gates green (128 sim-core tests unchanged — web-only). Part B of the 3-part
+current-legibility initiative (A frozen-spring ✓, **B component flicker ✓**, C MHz next).
+
+- The schematic glyphs flickered when the playback was sped up because the shared `flow()`
+  (`glyphs.ts`) drew carriers from the *instantaneous* current sign. It now does the wires'
+  **carrier→shimmer-band handoff** via `tierKit.shimmerFlow`: past the AC current's apparent rate
+  (`blurFactor(apparentFreq(ac.freq)) · acFrac`) the sloshing dots fade into a steady |I|-width
+  band, so speeding up stops the strobing. `flow()` reads the current glyph's `AcReadout` from a
+  module value `glyphAc` that `drawGlyphIn` sets before each drawer — so **no churn across the 52
+  `flow()` call sites**. Verified the blur flips 0→1 with the apparent rate.
+- Also floored small currents to a faint trickle (`max(norm, 0.12)`, true-zero stays still),
+  removing the old hard `mag < 0.02` (~0.4 mA) dead-zone — the schematic cousin of A, so a slow
+  current reads as "still flowing" on the schematic too.
+- **Scope:** uses the existing time-domain `AcReadout`, valid **≤ 62.5 kHz**. Above that
+  `ac.valid` is false → `acFrac` 0 → plain carriers; the 100 kHz+ case needs **C** (frequency-domain
+  AC currents). glyphs.ts now imports `apparentFreq`/`blurFactor`/`shimmerFlow` from tierKit
+  (tierKit imports only glyphs *types* → no runtime cycle).
+
+**(C) next** — `ac_solve` returns per-element AC **currents**; above the `AcMeas` ceiling drive
+`ElectricalState.ac` from the frequency domain so the board acts at MHz (and B's shimmer works
+there). sim-core (`ac_solve_models` → per-element current readout) + web; analysis-only, golden-safe.
+
+**Landing:** PR + squash-merge to main, same flow as #122–#132.
+
+---
+
 ## 2026-06-19 (48) — Current-channel legibility, part A: frozen-spring trickle
 
 **State:** 🟢 Web, gates green (128 sim-core tests unchanged — web-only). First of a 3-part owner
