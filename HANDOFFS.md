@@ -25,9 +25,26 @@ current-legibility initiative (A frozen-spring ✓, **B component flicker ✓**,
   AC currents). glyphs.ts now imports `apparentFreq`/`blurFactor`/`shimmerFlow` from tierKit
   (tierKit imports only glyphs *types* → no runtime cycle).
 
-**(C) next** — `ac_solve` returns per-element AC **currents**; above the `AcMeas` ceiling drive
-`ElectricalState.ac` from the frequency domain so the board acts at MHz (and B's shimmer works
-there). sim-core (`ac_solve_models` → per-element current readout) + web; analysis-only, golden-safe.
+**(C) next — concrete plan (fully scoped, ~half a day):**
+- **sim-core `ac_element_measurements(omega, real) -> Vec<f64>`** (flat `[nElem × AC_FIELDS]`, the
+  frequency-domain twin of `ac_measurements`). **No solver refactor** — call `ac_solve_models` for
+  the complex node voltages, then per element compute `I = Y·ΔV` (`ΔV` from the node voltages):
+  R `Y=1/value`; switch `Y=switch_conductance`; cap ideal `jωC` / Real `1/(ESR+jX)` (lib.rs
+  ~4759); inductor `Y=1/(DCR+jωL) (+jωCw Real)`; diode-family `Y=g+GMIN` (`diode_eval(diode_vd[i]).1`);
+  varistor `Y=g+GMIN`. **Sources** (V/AC) via KCL: sum the other elements' currents leaving the
+  source's hot node. 3-terminal (MOSFET/BJT/op-amp) + transformer → leave `valid=0` (follow-on).
+  Derive the AcReadout: `vamp=|ΔV|`, `iamp=|I|`, `vrms/irms=/√2`, `vmean/imean=0`, `phase=arg(ΔV)−arg(I)`,
+  `preal=0.5(ΔV.re·I.re+ΔV.im·I.im)`, `zmag=vamp/iamp`, `freq=omega/τ`, `valid=1`. Test: an RC
+  divider's R and C carry equal |I| at the corner, 45° apart. Analysis-only → golden-safe.
+- **wasm**: bind `ac_element_measurements` → `SimHandle.acElementMeasurements(omega, real)`.
+- **web**: App.svelte caches `fdAc = acElementMeasurements(2π·phaseScopeFreq, realModels)` on
+  edit/fidelity-toggle when `phaseScopeFreq > ~62.5 kHz`; route it to `electricalMap` as an
+  override for the snapshot's time-domain `acMeasurements`. The glyph/wire shimmer (B) then uses
+  the **AC amplitude** for the band: in `flow()` use `mag = norm(ac.valid ? ac.iamp : current)` so
+  the band width is right above the ceiling (the instantaneous current is aliased there). Net: the
+  passives + wires (and sources) shimmer correctly at 100 kHz–MHz instead of dying.
+- **Caveat**: shows the small-signal **sinusoidal** AC magnitude/phase (single frequency), like
+  the phasor/phase-scope; not the literal switching shape (un-time-step-able at MHz).
 
 **Landing:** PR + squash-merge to main, same flow as #122–#132.
 
