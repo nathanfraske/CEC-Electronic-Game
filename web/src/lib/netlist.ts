@@ -24,6 +24,7 @@ import {
   DEFAULT_TIER,
   PARAM_STRIDE,
 } from "./tiers";
+import { diodeVariant, RATED_CURRENT_SLOT } from "./diodes";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -651,16 +652,26 @@ export function buildNetlist(
   // sim-core defaults. Empty-valued unless a tiered part is placed.
   const params = new Float64Array(types.length * PARAM_STRIDE);
   for (const comp of sorted) {
-    const tp = tierParams(comp.kind, comp.tier ?? DEFAULT_TIER);
     const ei = elemOfComponent.get(comp.id);
-    if (!tp || ei === undefined) continue;
-    // The transient-affecting tier params (source output impedance, MOSFET Kp, BJT β) only
-    // bite in Real mode — in Ideal mode leave the part nominal. The AC-only params
-    // (cap/inductor/op-amp), which sim-core gates inside the AC analysis, are installed in
-    // both modes (harmless to the transient solve, which never reads those slots).
-    if (TRANSIENT_TIER_KINDS.has(comp.kind) && !real) continue;
-    for (let k = 0; k < PARAM_STRIDE; k++) {
-      params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
+    if (ei === undefined) continue;
+    // Quality-tier params (per-kind param block). The transient-affecting ones (source output
+    // impedance, MOSFET Kp, BJT β) only bite in Real mode — in Ideal mode leave the part
+    // nominal. The AC-only params (cap/inductor/op-amp), which sim-core gates inside the AC
+    // analysis, are installed in both modes (harmless to the transient solve).
+    const tp = tierParams(comp.kind, comp.tier ?? DEFAULT_TIER);
+    if (tp && !(TRANSIENT_TIER_KINDS.has(comp.kind) && !real)) {
+      for (let k = 0; k < PARAM_STRIDE; k++) {
+        params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
+      }
+    }
+    // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
+    // it is installed in both modes; the current rating is a Real-mode non-ideality (an
+    // over-rated diode FAILs), so it is omitted in Ideal mode (leaving the part unrated).
+    const dv = diodeVariant(comp.kind, comp.variant ?? 0);
+    if (dv) {
+      params[ei * PARAM_STRIDE + 0] = dv.is;
+      params[ei * PARAM_STRIDE + 1] = dv.n;
+      if (real) params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
     }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op

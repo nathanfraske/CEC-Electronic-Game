@@ -6,6 +6,35 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (19) — Device-variety frontier: diode types + current rating/FAIL (increment A)
+
+Owner audit flagged the engine's real gap is **device variety**, not the tier axis. Four
+workstreams chosen: (A) diode types + ratings, (B) LED colour, (C) waveform/pulse source, (D)
+diode reverse-recovery. This is **A**.
+
+- ~~**Per-device diode forward params** — `diode_model(&Element)` reads `Is` (slot 0) and `n`
+  (slot 1) via `param_or`, so one diode kind becomes a family. Golden-safe (slot 0 → kind
+  default). Test `diode_is_param_sets_forward_drop`.~~
+- ~~**Diode TYPE picker** (`web/src/lib/diodes.ts`): Rectifier / Switching / Fast-recovery /
+  Power, each a preset of forward `Is`/`n` + a current rating. `Component.variant` selects it;
+  inspector shows the picker + rating. Variant 0 = the silicon default (existing diodes
+  unchanged).~~
+- ~~**Component current rating → FAIL** — general `RATED_CURRENT_SLOT` (slot 2) read for every
+  element in `flag_and_clamp_fails`; `|I| > rated` boxes the part. `0` = unrated (Ideal mode +
+  default), so golden-safe (not hashed). Rating installed web-side only in Real mode. Test
+  `diode_over_rated_current_flags_fail`.~~
+- ~~**Copy/paste now carries `tier` + `variant`** (the noted polish) — clipboard snippet +
+  paste reconstruction.~~
+- [ ] **(B) LED colour** — `variant` → per-colour forward voltage (red/green/blue/white) +
+  visual tint; LED current rating. Reuses the diode forward-param + variant plumbing.
+- [ ] **(C) Waveform / pulse source** — square/pulse/triangle generator with adjustable freq +
+  duty (and/or a multi-waveform AC source). New sim-core source element.
+- [ ] **(D) Diode reverse recovery (trr)** — dynamic stored-charge state; reverse-recovery
+  spike on switch-off. New reactive state, determinism-sensitive. Hardest; last.
+- [ ] **Follow-on:** ratings for SD/LED/ZD (LED especially — easy burnout) once (B) lands;
+  reverse-voltage (Vrrm) rating + avalanche FAIL; inspector "actual value" readout for a
+  deviated resistor.
+
 ## 2026-06-19 (18) — Quality-tier rollout COMPLETE (all gradeable parts ship tiers)
 
 The budget/mid-range/high-end/lab-grade quality tiers now cover **every gradeable component**,
@@ -31,7 +60,7 @@ part regardless of tier). See CLAUDE.md "Component grades (tiers)".
 Remaining Real-variant work beyond tiers (separate from the quality grade): diode series Rs,
 inductor saturation — see (the now mostly-done) item below.
 - [ ] **Follow-up polish:** inspector "actual value" readout for a Real-mode deviated resistor
-  (so the deviation isn't a mystery); copy/paste carrying `tier`.
+  (so the deviation isn't a mystery); ~~copy/paste carrying `tier`~~ (done in (19)).
 
 ## 2026-06-19 (17) — Frequency-domain AC analysis engine (sim-core)
 
