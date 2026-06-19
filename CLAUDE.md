@@ -80,18 +80,33 @@ lab-grade — `Component.tier`, default mid-range). The inspector shows a tier p
 kind where `hasTiers` is true. Each tier is a **preset bundle of the device's model
 parameters**, defined in **`web/src/lib/tiers.ts`**:
 
-- **Param-block kinds** (op-amp GBW; cap ESR/ESL; inductor DCR/Cw): `tierParams(kind, tier)`
-  → the per-element `Element::params` block, **wired in `crates/sim-core`**. The slot map is
+- **Param-block kinds** (op-amp GBW; cap ESR/ESL; inductor DCR/Cw; source output impedance;
+  MOSFET Kp; BJT β): `tierParams(kind, tier)` → the per-element `Element::params` block,
+  **wired in `crates/sim-core`** via `param_or(&e.params, slot, default)`. The slot map is
   mirrored in `tiers.ts`; a `0` slot means the kind default, so mid-range ≈ the sim-core
-  default and the golden is untouched. The AC/Bode params are analysis-only (never touch the
-  transient).
-- **Web-expansion kinds** (electrolytic ESR via `ecEsr`): the tier sets a value used in
-  `buildNetlist`'s element expansion — no sim-core param.
+  default and the golden is untouched.
+- **Web-expansion kinds** (electrolytic ESR via `ecEsr`; resistor tolerance via
+  `resistorTolerance`): the tier sets a value used directly in `buildNetlist`'s element
+  emission/expansion — no sim-core param.
+
+**Realistic-mode gate.** A tier's non-idealities bite **only in Real (realistic) mode** — in
+Ideal mode every part is its nominal self regardless of tier. Where the gate lives depends on
+what the param affects:
+- **AC-only params** (op-amp GBW, cap ESR/ESL, inductor DCR/Cw) gate **inside sim-core**'s
+  `ac_solve_models(omega, real)`; their param block is installed in both modes (harmless to
+  the transient solve, which never reads those slots).
+- **Transient params** (source output impedance, MOSFET Kp, BJT β, resistor tolerance) gate
+  **web-side in `buildNetlist`** — skipped when `!real` (see `TRANSIENT_TIER_KINDS`). Resistor
+  tolerance also deviates the value deterministically per component id (`jitter`).
 
 **Convention — every new component with real grades ships with its tier presets from the
 start:** add it to `tiers.ts` (wire its params in sim-core, or expand it web-side), make
-mid-range match the existing default, and keep the slot map in sync with `Element::params`
-in `crates/sim-core/src/lib.rs`.
+mid-range match the existing default, decide AC-only vs transient (and add transient kinds to
+`TRANSIENT_TIER_KINDS`), and keep the slot map in sync with `Element::params` in
+`crates/sim-core/src/lib.rs`. (Some kinds resist a clean tier: e.g. the transformer's ideal-T
+model hard-couples its secondary for rectifier stability, so its safe knobs — `rp`/`Lmag` —
+don't droop the loaded output, and the knob that would — secondary leakage — is the
+inrush-stability control; it is deliberately left un-tiered.)
 
 ## Gotchas
 

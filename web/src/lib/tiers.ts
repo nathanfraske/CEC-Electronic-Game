@@ -21,9 +21,11 @@ export const TIER_LABELS = [
 export const DEFAULT_TIER = 1;
 
 // Per kind, the param block for each of the four tiers. Slot meanings per kind:
-//   OA (op-amp):   [0] = gain-bandwidth product (Hz)
-//   C  (cap):      [0] = ESR (Ω), [1] = ESL (H)
-//   L  (inductor): [0] = DCR (Ω), [1] = winding capacitance (F)
+//   OA (op-amp):       [0] = gain-bandwidth product (Hz)
+//   C  (cap):          [0] = ESR (Ω), [1] = ESL (H)
+//   L  (inductor):     [0] = DCR (Ω), [1] = winding capacitance (F)
+//   NM/PM (MOSFET):    [0] = transconductance Kp (A/V²)
+//   Q/QP  (BJT):       [0] = forward current gain β
 // A kind absent here has no tiers (its params stay at the sim-core defaults).
 const TIER_PARAMS: Record<string, number[][]> = {
   // Voltage / AC source: [0] = output impedance (Ω) — a budget supply sags under load, a
@@ -57,6 +59,36 @@ const TIER_PARAMS: Record<string, number[][]> = {
     [0.3, 1.5e-12, 0, 0], // mid
     [0.1, 0.6e-12, 0, 0], // high
     [0.03, 0.2e-12, 0, 0], // lab
+  ],
+  // MOSFET transconductance Kp (A/V²): a stronger part drives more current per gate volt
+  // (the analogue of a lower Rds(on)). Mid = the sim-core MOS_KP default (0.02), so existing
+  // circuits are unchanged. TRANSIENT (operating-point) — buildNetlist applies it in Real mode.
+  NM: [
+    [0.01, 0, 0, 0], // budget: weak
+    [0.02, 0, 0, 0], // mid (default)
+    [0.04, 0, 0, 0], // high
+    [0.08, 0, 0, 0], // lab: strong
+  ],
+  PM: [
+    [0.01, 0, 0, 0],
+    [0.02, 0, 0, 0],
+    [0.04, 0, 0, 0],
+    [0.08, 0, 0, 0],
+  ],
+  // BJT forward current gain β: a higher-gain part draws less base current for the same
+  // collector current. Mid = the sim-core BJT_BF default (100), so existing circuits are
+  // unchanged. TRANSIENT (operating-point) — buildNetlist applies it in Real mode.
+  Q: [
+    [60, 0, 0, 0], // budget: low gain
+    [100, 0, 0, 0], // mid (default)
+    [200, 0, 0, 0], // high
+    [400, 0, 0, 0], // lab: high gain
+  ],
+  QP: [
+    [60, 0, 0, 0],
+    [100, 0, 0, 0],
+    [200, 0, 0, 0],
+    [400, 0, 0, 0],
   ],
 };
 

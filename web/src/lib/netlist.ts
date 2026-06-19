@@ -163,6 +163,14 @@ const ELEM_CAPACITOR = 2;
 // node referenced through both legs at the extremes.
 const POT_WIPER_MIN = 0.5;
 
+// Tier params that change the TRANSIENT operating point — a source's output impedance, a
+// MOSFET's transconductance Kp, a BJT's gain β — and so are applied ONLY in Real (realistic)
+// mode; in Ideal mode every such part is its nominal self (the sim-core default) regardless of
+// tier. The other tiered kinds (op-amp GBW, cap ESR/ESL, inductor DCR/Cw) are AC-only and gate
+// inside sim-core's `ac_solve` instead, so their param block is installed in both modes (it is
+// harmless to the transient solve, which never reads those slots).
+const TRANSIENT_TIER_KINDS = new Set(["V", "AC", "NM", "PM", "Q", "QP"]);
+
 export interface BuiltNetlist {
   nodeCount: number;
   types: Uint8Array;
@@ -646,10 +654,11 @@ export function buildNetlist(
     const tp = tierParams(comp.kind, comp.tier ?? DEFAULT_TIER);
     const ei = elemOfComponent.get(comp.id);
     if (!tp || ei === undefined) continue;
-    // A source's output impedance is TRANSIENT-affecting, so it only bites in Real mode
-    // (unlike the cap/inductor/op-amp params, whose use sim-core gates inside the AC
-    // analysis) — in Ideal mode leave the source perfect.
-    if ((comp.kind === "V" || comp.kind === "AC") && !real) continue;
+    // The transient-affecting tier params (source output impedance, MOSFET Kp, BJT β) only
+    // bite in Real mode — in Ideal mode leave the part nominal. The AC-only params
+    // (cap/inductor/op-amp), which sim-core gates inside the AC analysis, are installed in
+    // both modes (harmless to the transient solve, which never reads those slots).
+    if (TRANSIENT_TIER_KINDS.has(comp.kind) && !real) continue;
     for (let k = 0; k < PARAM_STRIDE; k++) {
       params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
     }

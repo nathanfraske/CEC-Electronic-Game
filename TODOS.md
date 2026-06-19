@@ -6,6 +6,33 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-19 (18) — Quality-tier rollout COMPLETE (all gradeable parts ship tiers)
+
+The budget/mid-range/high-end/lab-grade quality tiers now cover **every gradeable component**,
+each non-ideality gated on the global **Real (realistic) fidelity flag** (Ideal mode = nominal
+part regardless of tier). See CLAUDE.md "Component grades (tiers)".
+
+- ~~**Op-amp GBW, cap ESR/ESL, inductor DCR/Cw** — AC-only params, gated in sim-core
+  `ac_solve_models(omega, real)`.~~
+- ~~**Electrolytic ESR (`ecEsr`), resistor tolerance (`resistorTolerance` + deterministic
+  per-id `jitter`)** — web-expansion kinds, applied in `buildNetlist` (R deviation Real-only).~~
+- ~~**Source output impedance (V / AC)** — first transient param; sim-core branch stamp
+  `mat[bi][bi] -= e.params[0]`; gated web-side in `buildNetlist` (Real only).~~
+- ~~**MOSFET Kp (NM/PM), BJT β (Q/QP)** — `mosfet_op`/`bjt_op` now take `&Element` and read
+  `param_or(&e.params, 0, MOS_KP/BJT_BF)`; tiers in `tiers.ts`; gated web-side via
+  `TRANSIENT_TIER_KINDS` (Real only). Tests: `bjt_beta_param_pulls_collector_lower` (base via
+  RB so Ic = β·Ib actually moves the collector). 122 sim-core tests green.~~
+- **Transformer — assessed, deliberately NOT tiered.** The ideal-T model hard-couples the
+  secondary (no series Is term) for full-wave-rectifier stability, so its safe knobs
+  (`rp`/`Lmag`) don't droop the loaded output, and the knob that would (secondary leakage) is
+  the inrush-stability control. A meaningful, safe transformer tier would need the model to
+  expose load regulation, which it intentionally doesn't. Left for a future model change.
+
+Remaining Real-variant work beyond tiers (separate from the quality grade): diode series Rs,
+inductor saturation — see (the now mostly-done) item below.
+- [ ] **Follow-up polish:** inspector "actual value" readout for a Real-mode deviated resistor
+  (so the deviation isn't a mystery); copy/paste carrying `tier`.
+
 ## 2026-06-19 (17) — Frequency-domain AC analysis engine (sim-core)
 
 - ~~**AC sweep engine** (`Sim::ac_solve(omega)`) — complex MNA for the passive network (R→G,
@@ -547,7 +574,10 @@ should respect orientation.
   - [ ] **Visible FAIL UI:** wasm exposes `failed()`+mask → `board.ts` pulsing red FAIL box →
     `loop.ts` pauses on FAIL; show `+FAIL/−FAIL` on the readout.
   - [ ] **Bin Ideal/Real toggle** + per-part inspector toggle + allow-but-warn mixing in `connect()`.
-  - [ ] **Roll out Real variants** (diode Rs, source output-Z first; then R tolerance/power, C/EC, FETs/BJT/op-amp, L saturation).
+  - **Roll out Real variants** — mostly DONE via the quality-tier system (see 2026-06-19 (18)):
+    ~~source output-Z, R tolerance, C/EC ESR/ESL, FETs Kp, BJT β, op-amp GBW, inductor DCR/Cw~~
+    all ship Real-gated tiers. Remaining: [ ] diode series Rs, [ ] inductor saturation (current-
+    dependent L). (Transformer tier deliberately deferred — model hard-couples the secondary.)
   - [ ] **Web netlist test harness** — the c-terminal bug had zero web coverage (sim-core hand-wires c/d).
 
 - ~~**Transformer bridge inrush runaway — FIXED + SHIPPED (PR #69).** Owner-reported live

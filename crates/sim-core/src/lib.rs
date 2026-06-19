@@ -2642,17 +2642,20 @@ impl Sim {
     /// (`gm = gm_n`, `gds = gds_n`) and only the current flips (`Id = -id_n`), so a
     /// single [`mosfet_eval`] serves both. Pure `f64`, deterministic.
     #[inline]
-    fn mosfet_op(kind: u8, vgs: f64, vds: f64) -> MosfetOp {
-        if kind == ELEM_PMOS {
+    fn mosfet_op(e: &Element, vgs: f64, vds: f64) -> MosfetOp {
+        // Transconductance parameter Kp from param slot 0 (a quality tier — a stronger part
+        // drives more current per volt), else the default.
+        let kp = param_or(&e.params, 0, MOS_KP);
+        if e.kind == ELEM_PMOS {
             // Evaluate the NMOS square law on the mirrored internal variables.
-            let op = mosfet_eval(-vgs, -vds, MOS_KP, -PMOS_VTO, MOS_LAMBDA);
+            let op = mosfet_eval(-vgs, -vds, kp, -PMOS_VTO, MOS_LAMBDA);
             MosfetOp {
                 id: -op.id,
                 gm: op.gm,
                 gds: op.gds,
             }
         } else {
-            mosfet_eval(vgs, vds, MOS_KP, NMOS_VTO, MOS_LAMBDA)
+            mosfet_eval(vgs, vds, kp, NMOS_VTO, MOS_LAMBDA)
         }
     }
 
@@ -2668,10 +2671,13 @@ impl Sim {
     /// currents flip, so a single [`bjt_eval`] serves both polarities — the BJT
     /// analogue of [`Sim::mosfet_op`]. Pure `f64`, deterministic.
     #[inline]
-    fn bjt_op(kind: u8, vbe: f64, vbc: f64) -> BjtOp {
-        if kind == ELEM_PNP {
+    fn bjt_op(e: &Element, vbe: f64, vbc: f64) -> BjtOp {
+        // Forward current gain β from param slot 0 (a quality tier — a higher-gain part),
+        // else the default.
+        let bf = param_or(&e.params, 0, BJT_BF);
+        if e.kind == ELEM_PNP {
             // Evaluate the NPN model on the mirrored internal junction voltages.
-            let op = bjt_eval(-vbe, -vbc, BJT_IS, DIODE_VT, BJT_BF, BJT_BR);
+            let op = bjt_eval(-vbe, -vbc, BJT_IS, DIODE_VT, bf, BJT_BR);
             BjtOp {
                 ic: -op.ic,
                 ib: -op.ib,
@@ -2682,7 +2688,7 @@ impl Sim {
                 gic_bc: op.gic_bc,
             }
         } else {
-            bjt_eval(vbe, vbc, BJT_IS, DIODE_VT, BJT_BF, BJT_BR)
+            bjt_eval(vbe, vbc, BJT_IS, DIODE_VT, bf, BJT_BR)
         }
     }
 
@@ -3243,7 +3249,7 @@ impl Sim {
                 let el = self.elements[ei];
                 let vgs = self.mosfet_vgs[ei];
                 let vds = self.mosfet_vds[ei];
-                let op = Self::mosfet_op(el.kind, vgs, vds);
+                let op = Self::mosfet_op(&el, vgs, vds);
                 let gm = op.gm;
                 let gds = op.gds;
                 let ieq = op.id - gm * vgs - gds * vds;
@@ -3295,7 +3301,7 @@ impl Sim {
                 let el = self.elements[ei];
                 let vbe = self.bjt_vbe[ei];
                 let vbc = self.bjt_vbc[ei];
-                let op = Self::bjt_op(el.kind, vbe, vbc);
+                let op = Self::bjt_op(&el, vbe, vbc);
                 let (gpi, gmu, gif, gic_bc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                 let ieq_c = op.ic - gif * vbe - gic_bc * vbc;
                 let ieq_b = op.ib - gpi * vbe - gmu * vbc;
@@ -3468,8 +3474,8 @@ impl Sim {
                     max_vd_gap = gap;
                 }
                 let el = self.elements[ei];
-                let i_old = Self::mosfet_op(el.kind, vgs_old, vds_old).id;
-                let i_new = Self::mosfet_op(el.kind, vgs_new, vds_new).id;
+                let i_old = Self::mosfet_op(&el, vgs_old, vds_old).id;
+                let i_new = Self::mosfet_op(&el, vgs_new, vds_new).id;
                 let di = (i_new - i_old).abs();
                 let tol = NEWTON_I_ABSTOL + NEWTON_RELTOL * i_new.abs().max(i_old.abs());
                 if di > tol {
@@ -3513,8 +3519,8 @@ impl Sim {
                     max_vd_gap = gap;
                 }
                 // Terminal-current residual across the limited step (Ic and Ib).
-                let op_old = Self::bjt_op(el.kind, vbe_old, vbc_old);
-                let op_new = Self::bjt_op(el.kind, vbe_new, vbc_new);
+                let op_old = Self::bjt_op(&el, vbe_old, vbc_old);
+                let op_new = Self::bjt_op(&el, vbe_new, vbc_new);
                 let dic = (op_new.ic - op_old.ic).abs();
                 let dib = (op_new.ib - op_old.ib).abs();
                 let tol_c = NEWTON_I_ABSTOL + NEWTON_RELTOL * op_new.ic.abs().max(op_old.ic.abs());
@@ -3808,11 +3814,11 @@ impl Sim {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
                 }
                 ELEM_NMOS | ELEM_PMOS => {
-                    Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
+                    Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -4038,11 +4044,11 @@ impl Sim {
                     diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
                 }
                 ELEM_NMOS | ELEM_PMOS => {
-                    Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]).id
+                    Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]).id
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -4673,7 +4679,7 @@ impl Sim {
                         stamp_g(&mut a, ib, ia, -g);
                     } else if is_mosfet(e.kind) {
                         // Drain a, source b, gate c: i_ds = gm·v_gs + gds·v_ds.
-                        let op = Self::mosfet_op(e.kind, self.mosfet_vgs[i], self.mosfet_vds[i]);
+                        let op = Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]);
                         let (gm, gds) = (op.gm, op.gds);
                         stamp_g(&mut a, ia, ia, gds);
                         stamp_g(&mut a, ia, ic, gm);
@@ -4685,7 +4691,7 @@ impl Sim {
                     } else if is_bjt(e.kind) {
                         // Collector a, emitter b, base c; Jacobian of (Ic, Ib) w.r.t.
                         // (Vbe, Vbc), mapped onto the node voltages (see newton_iterate).
-                        let op = Self::bjt_op(e.kind, self.bjt_vbe[i], self.bjt_vbc[i]);
+                        let op = Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]);
                         let (gpi, gmu, gif, gbc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                         stamp_g(&mut a, ia, ia, -gbc);
                         stamp_g(&mut a, ia, ib, -gif);
@@ -8066,7 +8072,8 @@ mod tests {
             &[0, 0, 4, 0, 0, 0, 0],
             &[5.0, rd, 0.0, 4.2, rg, 100.0, rg],
         );
-        let op = Sim::mosfet_op(ELEM_NMOS, sim.mosfet_vgs[2], sim.mosfet_vds[2]);
+        let m = sim.element_at(2);
+        let op = Sim::mosfet_op(&m, sim.mosfet_vgs[2], sim.mosfet_vds[2]);
         assert!(
             op.gm > 0.0,
             "MOSFET on (saturation) at the bias: gm = {}",
@@ -8108,7 +8115,8 @@ mod tests {
             &[0, 0, 4, 0, 0, 0, 0],
             &[5.0, rc, 0.0, 2.0, rb, 100.0, rb],
         );
-        let op = Sim::bjt_op(ELEM_NPN, sim.bjt_vbe[2], sim.bjt_vbc[2]);
+        let q = sim.element_at(2);
+        let op = Sim::bjt_op(&q, sim.bjt_vbe[2], sim.bjt_vbc[2]);
         assert!(
             sim.bjt_vbe[2] > 0.4 && sim.node_v[2] > sim.node_v[4],
             "BJT in forward-active: vbe = {}, Vc = {}, Vb = {}",
@@ -8369,6 +8377,54 @@ mod tests {
             &[0.0, 0.0],
         ));
         assert!((ideal.node_voltages()[1] - vsrc).abs() < 1e-9);
+    }
+
+    /// Per-device parameter block on a transistor: an NPN's forward current gain β is
+    /// param slot 0 (a quality tier — a better part has more gain). Driving the base
+    /// through a base resistor fixes the base current `Ib ≈ (Vbb − Vbe)/RB`, so the
+    /// collector current `Ic = β·Ib` scales with β and a higher-β part pulls the
+    /// collector node lower. (Driving the base with a fixed Vbe instead would set Ic by
+    /// the exponential and hide β, so the resistor is the point.) Param 0 — the default
+    /// and every ideal-mode transistor — uses the `BJT_BF` constant. Layout: VCC 1->0;
+    /// RC 1->2; Vbb 3->0; RB 3->4; NPN collector=2 emitter=0 base=4.
+    #[test]
+    fn bjt_beta_param_pulls_collector_lower() {
+        let collector_at = |beta: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 5 * PARAM_STRIDE];
+            params[4 * PARAM_STRIDE] = beta; // element 4 = the NPN, slot 0 = β
+            assert!(sim.set_netlist_p(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_NPN,
+                ],
+                &[1, 1, 3, 3, 2],
+                &[0, 2, 0, 4, 0],
+                &[0, 0, 0, 0, 4],
+                &[0, 0, 0, 0, 0],
+                &[10.0, 1_000.0, 1.0, 100_000.0, 0.0],
+                &[0.0, 0.0, 0.0, 0.0, 0.0],
+                &params,
+            ));
+            sim.node_voltages()[2] // collector voltage
+        };
+        let vc_lo_gain = collector_at(100.0);
+        let vc_hi_gain = collector_at(300.0);
+        // Both stay in the forward-active region (collector well above the base ~0.65 V),
+        // i.e. the part didn't saturate to the rail or the ground.
+        assert!(
+            vc_hi_gain > 1.0 && vc_lo_gain < 10.0,
+            "active region: Vc(β100)={vc_lo_gain}, Vc(β300)={vc_hi_gain}"
+        );
+        // Tripling β triples the collector current, so the collector node drops markedly.
+        assert!(
+            vc_hi_gain < vc_lo_gain - 0.2,
+            "higher β pulls the collector lower: Vc(β100)={vc_lo_gain}, Vc(β300)={vc_hi_gain}"
+        );
     }
 
     /// An AC source straight across a resistor puts the full source EMF on the
