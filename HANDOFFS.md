@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (43) — Device variety, increment A: diode types + current rating/FAIL
+
+**State:** 🟢 Rust + Web, all gates green (124 sim-core tests, 1 ignored). Owner audit (square
+waves? diode sub-types? LED colour? every part checked?) found the real frontier is **device
+variety**, not tiers. Plan: (A) diode types + ratings [THIS], (B) LED colour, (C) waveform/pulse
+source, (D) diode reverse-recovery. Audit answers: only `FP` (FPGA) + `uC` (µC) have NO sim
+model (Tier III placeholders); everything else (incl. POT/NTC/PTC) is genuinely modelled.
+
+- **Per-device diode forward params** — `diode_model(kind,value)` → `diode_model(&Element)`,
+  reading `Is` (slot 0) and `n` (slot 1) via `param_or` (5 call sites + 1 test). Golden-safe
+  (slot 0 → kind constant). This is the "one diode kind → the family" lever, and the LED-colour
+  mechanism for (B).
+- **Diode TYPE picker** — new `web/src/lib/diodes.ts`: `DIODE_TYPES` (Rectifier / Switching /
+  Fast-recovery / Power), `diodeVariant(kind,variant)`, `hasDiodeTypes`. New `Component.variant`
+  field (general device sub-type; round-trips via serialize). buildNetlist emits forward `Is`/`n`
+  in BOTH modes (part identity) + the rating only in Real. Inspector shows the picker + rating.
+  Variant 0 = silicon default ⇒ existing diodes unchanged.
+- **Component current rating → FAIL** — general `RATED_CURRENT_SLOT` (= 2) read for EVERY element
+  in `flag_and_clamp_fails`; `|I| > rated` sets `failed_elements[i]` (the existing FAIL box). `0`
+  = unrated (default + Ideal mode, since the rating is web-gated to Real). Golden-safe:
+  `failed_elements` is NOT in `snapshot_hash`, and the rating only flags — it never alters the
+  solve. Tests `diode_is_param_sets_forward_drop`, `diode_over_rated_current_flags_fail`.
+- **Copy/paste now carries `tier` + `variant`** (the previously-noted polish): clipboard snippet
+  type + copy + paste reconstruction.
+
+**Landing:** PR + squash-merge to main, same as #122–#126 (owner confirmed that flow).
+
+**Next (B):** LED colour — `variant` → per-colour Vf (red ~1.8 / green ~2.1 / blue ~3.0 / white
+~3.2) via the diode forward-param hook + a render tint; give the LED a current rating too (easy
+burnout). Then (C) waveform source, (D) reverse recovery (the hard, determinism-sensitive one).
+
+---
+
 ## 2026-06-19 (42) — Transistor tiers shipped → quality-tier rollout COMPLETE
 
 **State:** 🟢 Rust + Web, all gates green (122 sim-core tests, 1 ignored). The owner directive —

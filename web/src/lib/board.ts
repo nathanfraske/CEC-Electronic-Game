@@ -249,6 +249,9 @@ export interface SelectedPart {
   /** The part's quality tier (0 budget … 3 lab-grade). Undefined → mid-range. Only the
    * tiered kinds (see {@link hasTiers}) use it. */
   tier?: number;
+  /** The part's device variant (a diode's type / an LED's colour). Undefined → 0. Only the
+   * multi-variant kinds (see {@link hasDiodeTypes}) use it. */
+  variant?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -269,6 +272,8 @@ interface ClipboardSnippet {
     family?: number;
     openDrain?: boolean;
     label?: string;
+    tier?: number;
+    variant?: number;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1804,6 +1809,7 @@ export class Board {
           openDrain: c.openDrain,
           label: c.label,
           tier: c.tier,
+          variant: c.variant,
         };
     }
     this.cb.onSelect?.({
@@ -1931,6 +1937,20 @@ export class Board {
     c.tier = tier;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed tier
+  }
+
+  /**
+   * Set a part's device **variant** (a diode's type, an LED's colour) from the inspector. The
+   * variant maps to a per-device parameter preset in {@link buildNetlist} (forward Is/n + a
+   * current rating), so this rebuilds the netlist. No-op if unchanged.
+   */
+  setComponentVariant(id: number, variant: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.variant ?? 0) === variant) return;
+    this.pushUndo(this.graph.serialize());
+    c.variant = variant;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed variant
   }
 
   /** Re-emit the current graph through `onChange` without any edit — used when the
@@ -2775,6 +2795,8 @@ export class Board {
         family: c.family,
         openDrain: c.openDrain,
         label: c.label,
+        tier: c.tier,
+        variant: c.variant,
       });
     }
     if (comps.length === 0) return;
@@ -2858,6 +2880,8 @@ export class Board {
       if (cc.family !== undefined) nc.family = cc.family;
       if (cc.openDrain !== undefined) nc.openDrain = cc.openDrain;
       if (cc.label !== undefined) nc.label = cc.label;
+      if (cc.tier !== undefined) nc.tier = cc.tier;
+      if (cc.variant !== undefined) nc.variant = cc.variant;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {

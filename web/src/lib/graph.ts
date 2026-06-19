@@ -117,6 +117,16 @@ export interface Component {
    * sandbox the raw params are still editable; this is the curated choice for gameplay.
    */
   tier?: number;
+  /**
+   * The device **sub-type / variant** index, interpreted per kind: for a diode (`"D"`) it
+   * picks the diode TYPE (switching / rectifier / fast-recovery / power — each a preset of
+   * forward `Is`/`n` and a current rating); for an `"LED"` it picks the COLOUR (which sets its
+   * forward voltage and emitted tint). A param preset, mapped by {@link diodeVariant} into the
+   * per-element block {@link buildNetlist} hands the core. Only multi-variant kinds read it;
+   * others ignore it. Undefined → variant 0 (the first/default type), so older snapshots and
+   * untouched parts round-trip unchanged.
+   */
+  variant?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the

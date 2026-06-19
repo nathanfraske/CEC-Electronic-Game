@@ -108,6 +108,22 @@ model hard-couples its secondary for rectifier stability, so its safe knobs — 
 don't droop the loaded output, and the knob that would — secondary leakage — is the
 inrush-stability control; it is deliberately left un-tiered.)
 
+## Device variants & ratings (distinct from quality tiers)
+
+Some kinds vary by **type/identity**, not quality — a diode's family (switching / rectifier /
+fast-recovery / power), an LED's colour. That axis is **`Component.variant`** (a separate field
+from `tier`), mapped by `web/src/lib/diodes.ts` (`diodeVariant`, `hasDiodeTypes`) into the same
+`Element::params` block. Unlike a tier non-ideality, a variant's **forward** params (diode
+`Is`/`n` → forward drop) are the part's identity, so `buildNetlist` installs them in **both**
+fidelity modes; only the **rating** is Real-mode-gated.
+
+**Ratings → FAIL.** Param slot `RATED_CURRENT_SLOT` (= 2) is a **general** rated-current (A)
+read for *every* element in `Sim::flag_and_clamp_fails`: `|I| > rated` flags the element in the
+existing FAIL mask (the renderer boxes it). `0` = unrated (the default, and every Ideal-mode
+part — the web layer installs the rating only in Real mode). Golden-safe: `failed_elements` is
+**not** in `snapshot_hash`, and the rating only *flags* — it never alters the solve. To rate a
+new kind, just emit slot 2 from `buildNetlist` (Real mode); no sim-core change needed.
+
 ## Gotchas
 
 - `web/src/wasm` is gitignored and excluded from `tsconfig.app.json`. Always run

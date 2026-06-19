@@ -877,31 +877,34 @@ struct DiodeModel {
     vz: f64,
 }
 
-/// The junction model for a diode-family element kind. Pure function of `kind` and
-/// the element `value` (only the Zener reads `value`, as its breakdown voltage),
-/// so it never costs determinism.
+/// The junction model for a diode-family element kind. The forward junction's saturation
+/// current `Is` (param slot 0) and emission coefficient `n` (slot 1) can be tuned per device
+/// — that is the "one diode kind → the whole diode family" lever (a switching part vs a power
+/// rectifier; an LED's colour sets its forward drop). A `0` slot uses the kind's built-in
+/// constant, so an all-zero param block reproduces the old fixed model bit for bit. Only the
+/// Zener additionally reads `value` (its breakdown voltage). Pure function → no determinism cost.
 #[inline]
-fn diode_model(kind: u8, value: f64) -> DiodeModel {
-    match kind {
+fn diode_model(e: &Element) -> DiodeModel {
+    match e.kind {
         ELEM_SCHOTTKY => DiodeModel {
-            is: SCHOTTKY_IS,
-            vth: DIODE_N * DIODE_VT,
+            is: param_or(&e.params, 0, SCHOTTKY_IS),
+            vth: param_or(&e.params, 1, DIODE_N) * DIODE_VT,
             vz: f64::INFINITY,
         },
         ELEM_LED => DiodeModel {
-            is: LED_IS,
-            vth: LED_N * DIODE_VT,
+            is: param_or(&e.params, 0, LED_IS),
+            vth: param_or(&e.params, 1, LED_N) * DIODE_VT,
             vz: f64::INFINITY,
         },
         ELEM_ZENER => DiodeModel {
-            is: DIODE_IS,
-            vth: DIODE_N * DIODE_VT,
-            vz: value.max(ZENER_VZ_MIN),
+            is: param_or(&e.params, 0, DIODE_IS),
+            vth: param_or(&e.params, 1, DIODE_N) * DIODE_VT,
+            vz: e.value.max(ZENER_VZ_MIN),
         },
         // ELEM_DIODE and anything else: the silicon default, no breakdown.
         _ => DiodeModel {
-            is: DIODE_IS,
-            vth: DIODE_N * DIODE_VT,
+            is: param_or(&e.params, 0, DIODE_IS),
+            vth: param_or(&e.params, 1, DIODE_N) * DIODE_VT,
             vz: f64::INFINITY,
         },
     }
@@ -1272,6 +1275,15 @@ const GMIN: f64 = 1.0e-12;
 /// "real" part, or a literal resistor — which is the Ideal-vs-Real lesson.)
 const FAIL_LIMIT: f64 = 1.0e9;
 
+/// Param slot carrying a device's **rated current** (amps): the most current the part can
+/// pass before it FAILs (the renderer boxes it). It is a **general** slot — read for every
+/// element in [`Sim::flag_and_clamp_fails`], not kind-specific — so any future part can carry
+/// a rating in the same place. `0.0` (the default, and every part in Ideal mode, where the web
+/// layer omits the rating) means **unrated**: no check, so the snapshot hash and golden are
+/// untouched. A rating bites only when the web layer installs it (Real mode), and it only sets
+/// the FAIL flag — it never alters the solve — so it is purely additive and deterministic.
+const RATED_CURRENT_SLOT: usize = 2;
+
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
 /// use the control terminal `c`.
@@ -1308,10 +1320,18 @@ pub struct Element {
     /// constants (the "turn one diode into the diode family" lever). A slot of `0.0` means
     /// "use the kind's built-in default", so an all-zero block (the default, and what a
     /// caller that omits params installs) reproduces today's behaviour **bit for bit** —
-    /// the additive, golden-safe property. Current slot map:
+    /// the additive, golden-safe property. Current slot map (slot 0 is the kind's primary
+    /// knob, slot 1 its secondary; slot 2 is a **general** rating read for every kind):
     /// - [`ELEM_OPAMP`]: `[0]` = gain-bandwidth product (Hz; `0` → [`OPAMP_GBW`]).
-    /// - every other kind: unused for now (reserved for MOSFET `Kp/Vto/λ`, BJT `Is/β`,
-    ///   diode `Is/n/Rs`, … as they are wired up — each addition stays additive).
+    /// - [`ELEM_CAPACITOR`]: `[0]` = ESR (Ω), `[1]` = ESL (H) — AC parasitics.
+    /// - [`ELEM_INDUCTOR`]: `[0]` = DCR (Ω), `[1]` = winding capacitance (F) — AC parasitics.
+    /// - [`ELEM_VSOURCE`]/[`ELEM_ACSOURCE`]: `[0]` = output impedance (Ω).
+    /// - [`ELEM_NMOS`]/[`ELEM_PMOS`]: `[0]` = transconductance `Kp` (A/V²; `0` → [`MOS_KP`]).
+    /// - [`ELEM_NPN`]/[`ELEM_PNP`]: `[0]` = forward gain `β` (`0` → [`BJT_BF`]).
+    /// - diode family ([`ELEM_DIODE`]/[`ELEM_SCHOTTKY`]/[`ELEM_LED`]/[`ELEM_ZENER`]):
+    ///   `[0]` = saturation current `Is` (A), `[1]` = emission coefficient `n` — the
+    ///   forward drop, so a diode type / an LED colour is just a param preset.
+    /// - **all kinds**: `[`[`RATED_CURRENT_SLOT`]`]` = rated current (A; `0` = unrated).
     pub params: [f64; PARAM_STRIDE],
 }
 
@@ -3194,7 +3214,7 @@ impl Sim {
             for &(ei, ia, ib) in diodes {
                 let vd = self.diode_vd[ei];
                 let el = self.elements[ei];
-                let (id, gd) = diode_eval(vd, diode_model(el.kind, el.value));
+                let (id, gd) = diode_eval(vd, diode_model(&el));
                 let g = gd + GMIN;
                 let ieq = id - g * vd;
                 if let Some(r) = ia {
@@ -3423,7 +3443,7 @@ impl Sim {
                 let vd_raw = va - vb;
                 let vd_old = self.diode_vd[ei];
                 let el = self.elements[ei];
-                let m = diode_model(el.kind, el.value);
+                let m = diode_model(&el);
                 let vd_new = if m.vz.is_finite() {
                     // Zener: limit whichever junction is swinging. First the forward
                     // junction (caps large positive vd), then the breakdown junction
@@ -3811,7 +3831,7 @@ impl Sim {
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
-                    diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
+                    diode_eval(self.diode_vd[i], diode_model(e)).0
                 }
                 ELEM_NMOS | ELEM_PMOS => {
                     Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]).id
@@ -4041,7 +4061,7 @@ impl Sim {
                 }
                 ELEM_ISOURCE => e.value,
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
-                    diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).0
+                    diode_eval(self.diode_vd[i], diode_model(e)).0
                 }
                 ELEM_NMOS | ELEM_PMOS => {
                     Self::mosfet_op(e, self.mosfet_vgs[i], self.mosfet_vds[i]).id
@@ -4478,7 +4498,16 @@ impl Sim {
             failed |= clamp(s);
         }
         for i in 0..self.currents.len() {
-            let bad = clamp(&mut self.currents[i]);
+            let mut bad = clamp(&mut self.currents[i]);
+            // Component current rating: a part driven past its rated current FAILs (it would
+            // burn out). The rating lives in a general param slot; `0` = unrated (the default
+            // and every Ideal-mode part, since the web layer only installs the rating in Real
+            // mode), so this is a no-op for an untouched circuit — golden-safe. It only raises
+            // the FAIL flag; the solve itself is unchanged, so the snapshot hash never moves.
+            let rated = self.elements[i].params[RATED_CURRENT_SLOT];
+            if rated > 0.0 && self.currents[i].abs() > rated {
+                bad = true;
+            }
             self.failed_elements[i] = bad;
             failed |= bad;
         }
@@ -4666,7 +4695,7 @@ impl Sim {
                 _ => {
                     let ic = Self::node_idx(e.c);
                     if is_diode(e.kind) {
-                        let g = diode_eval(self.diode_vd[i], diode_model(e.kind, e.value)).1 + GMIN;
+                        let g = diode_eval(self.diode_vd[i], diode_model(e)).1 + GMIN;
                         stamp_g(&mut a, ia, ia, g);
                         stamp_g(&mut a, ib, ib, g);
                         stamp_g(&mut a, ia, ib, -g);
@@ -5979,6 +6008,74 @@ mod tests {
             &[5.0, 150.0, 0.0],
         );
         assert!(sim.element_currents()[2] > 0.0, "LED conducts forward");
+    }
+
+    /// Per-device diode params: the forward saturation current `Is` (param slot 0) sets the
+    /// forward drop — a leakier junction (higher `Is`) conducts the same current at a lower
+    /// voltage. This is the lever that turns one diode kind into a family (a switching part vs
+    /// a power rectifier) and an LED's colour into its forward drop. Slot 0 = the silicon
+    /// default, so an untouched diode is unchanged. Layout: source 1->0, R 1->2, diode 2->0.
+    #[test]
+    fn diode_is_param_sets_forward_drop() {
+        let vf = |is: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE] = is; // element 2 = the diode, slot 0 = Is
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 47.0, 0.0],
+                &[0.0, 0.0, 0.0],
+                &params,
+            ));
+            sim.node_voltages()[2]
+        };
+        let vf_default = vf(DIODE_IS); // the silicon default Is
+        let vf_leaky = vf(1.0e-7); // a much leakier junction → lower drop
+        assert!(
+            vf_leaky < vf_default - 0.1,
+            "a higher Is lowers the forward drop: default → {vf_default}, leaky → {vf_leaky}"
+        );
+    }
+
+    /// A part driven past its **rated current** FAILs (the renderer boxes it). The rating
+    /// lives in the general [`RATED_CURRENT_SLOT`]; `0` (the default, and every Ideal-mode
+    /// part) is unrated, so an untouched circuit never trips and the golden is untouched. A
+    /// ~0.44 A forward diode: a 1 A part is fine, a 0.1 A part is over-rated. Layout: source
+    /// 1->0 (5 V), R 1->2 (10 Ω), diode 2->0.
+    #[test]
+    fn diode_over_rated_current_flags_fail() {
+        let run_with_rating = |rated: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + RATED_CURRENT_SLOT] = rated; // diode (elem 2) rated current
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 10.0, 0.0],
+                &[0.0, 0.0, 0.0],
+                &params,
+            ));
+            sim.step();
+            (sim.failed(), sim.failed_element_mask())
+        };
+        let (within, _) = run_with_rating(1.0);
+        assert!(!within, "a diode within its current rating does not FAIL");
+        let (over, mask) = run_with_rating(0.1);
+        assert!(over, "a diode driven past its current rating FAILs");
+        assert_eq!(mask[2], 1, "the offending diode (element 2) is boxed");
+        // An UNrated diode (slot 0) carries the same current without FAILing — the rating is
+        // opt-in, so Ideal mode (no rating installed) never trips.
+        let (unrated, _) = run_with_rating(0.0);
+        assert!(!unrated, "an unrated diode never trips the rating FAIL");
     }
 
     /// The whole diode family on the Newton path reproduces bit-for-bit over a
@@ -8035,7 +8132,7 @@ mod tests {
             vd > 0.4,
             "diode forward-biased at the bias point: vd = {vd}"
         );
-        let (_, gd) = diode_eval(vd, diode_model(ELEM_DIODE, 0.0));
+        let (_, gd) = diode_eval(vd, diode_model(&sim.elements[4]));
         let g_d = gd + GMIN;
         let expected = (1.0 / r1) / (1.0 / r1 + 1.0 / r2 + g_d);
         let v = sim.ac_solve(std::f64::consts::TAU * 1_000.0);

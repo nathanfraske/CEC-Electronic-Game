@@ -40,6 +40,7 @@
   } from "./lib/values";
   import { LOGIC_FAMILIES, familyLevels } from "./lib/families";
   import { TIER_LABELS, DEFAULT_TIER, hasTiers } from "./lib/tiers";
+  import { hasDiodeTypes, DIODE_TYPES, diodeVariant } from "./lib/diodes";
   import {
     EXAMPLES,
     EXAMPLE_CATEGORIES,
@@ -1308,6 +1309,12 @@
   function setTier(idx: number): void {
     if (selPart) board?.setComponentTier(selPart.id, idx);
   }
+  function selVariant(): number {
+    return selPart?.variant ?? 0;
+  }
+  function setVariant(idx: number): void {
+    if (selPart) board?.setComponentVariant(selPart.id, idx);
+  }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
   function isGatePart(kind: string): boolean {
@@ -2266,6 +2273,29 @@
                     >
                   {/each}
                 </div>
+              {/if}
+              {#if hasDiodeTypes(kind)}
+                {@const dv = diodeVariant(kind, selVariant())}
+                <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
+                     Each preset sets the forward junction (Is/n → forward drop) and a current
+                     rating; the rating bites in Real mode (an over-rated diode FAILs). -->
+                <div class="insp-sub">diode type</div>
+                <div class="insp-chips wrap">
+                  {#each DIODE_TYPES as dt, i (dt.label)}
+                    <button
+                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
+                      onclick={() => setVariant(i)}>{dt.label}</button
+                    >
+                  {/each}
+                </div>
+                {#if dv}
+                  <div class="insp-sub">
+                    rated · <span class="mono"
+                      >{formatValue(dv.ratedA, "A")}</span
+                    >
+                    {#if realModels}<span class="mono">(FAIL above)</span>{/if}
+                  </div>
+                {/if}
               {/if}
               {#if isDigitalPart(kind)}
                 {@const lv = familyLevels(selFamily(), selPart.value)}
