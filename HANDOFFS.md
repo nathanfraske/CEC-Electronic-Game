@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (35) — Op-amp small-signal + GBW pole in the AC engine
+
+**State:** 🟢 Rust + Web, gates green. Owner asked for op-amps + GBW (and parasitics — that's
+next; analogy-view brainstorm captured below).
+
+- **`ac_solve` op-amp arm** (lib.rs) — stamps the op-amp small-signal companion: output diag
+  `+OPAMP_GOUT`, and a **frequency-dependent** transconductance `Gout·dT / (1 + jω/ω_p)` to the
+  inputs (`ω_p = 2π·OPAMP_GBW/OPAMP_GAIN`), so the open-loop gain rolls off at the GBW. New
+  `OPAMP_GBW = 1e6` (1 MHz, 741-class). `dT` is the slope at the bias (a saturated op-amp → dT→0,
+  stops responding). Test `ac_opamp_inverting_gbw_bandwidth`: low-f gain = Rf/Rin & inverting,
+  −3 dB at `GBW/(1+Rf/Rin)`.
+- **AC-only by design:** the GBW pole is read **only in `ac_solve`**; the transient op-amp stays
+  algebraic (infinite bandwidth), so the **determinism golden is untouched** (116 tests green). A
+  transient op-amp pole (Real-flag-gated reactive state) is a deliberate follow-up if honest
+  transient stability is wanted — noted but not done.
+
+**Parasitics (next) — analogy-view brainstorm result (agent, this session):** analogy tier is a
+literal **water/pipe** world (resistor=throat, inductor=paddle-wheel flywheel, ceramic cap=piston-
+on-spring, electrolytic=reservoir; the inductor + ceramic drawers **already draw a small upstream
+"valve=series-R throat"** — a ready ESR/DCR hook). Recommended scheme: a **contribution-scaled
+"parasitic sleeve"** — series-R **grit-throat** (ESR/DCR), series-L **mini inertia-paddle** (ESL),
+parallel **side-tank** (Cw) — rendered by ONE shared helper at the detail tier, each near-invisible
+until its own signal lifts it (|I| / dI-dt / apparentFreq), so DC/low-current looks exactly like
+today. Promote to labelled on hover/select or a "Parasitics" toggle; tie the morph to the existing
+`morphFactor`/`blur` (the cap-goes-inductive SRF flip the frequency-morph doc deferred for the
+analogy tier — this unblocks it); select-to-highlight the SRF corner on the Bode, cross-lit to the
+culprit parasitic. Full 14-idea list in the (35) chat.
+
+---
+
 ## 2026-06-19 (34) — Nonlinear small-signal in the AC engine (amplifier Bode works)
 
 **State:** 🟢 Rust + Web, gates green. Continued the list: `ac_solve` now linearizes the

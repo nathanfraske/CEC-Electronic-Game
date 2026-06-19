@@ -842,6 +842,14 @@ const OPAMP_GAIN: f64 = 1.0e5;
 /// gives the output row a real diagonal entry (well conditioned) and keeps the stiff
 /// pull `Iout = Gout*(Vtarget - V(a))` from being a singular ideal voltage source.
 const OPAMP_GOUT: f64 = 1.0;
+/// Op-amp gain-bandwidth product, in hertz — the unity-gain frequency of the open-loop
+/// gain. Real op-amps are not infinitely fast: the open-loop gain has a dominant pole at
+/// `OPAMP_GBW / OPAMP_GAIN` (~10 Hz here for the 1e5 gain), rolling off at −20 dB/decade
+/// so it crosses unity near `OPAMP_GBW` (~1 MHz, a 741-class part). This is **read only in
+/// the frequency-domain analysis** ([`Sim::ac_solve`]) so a closed-loop stage's Bode shows
+/// its true bandwidth (`GBW / closed-loop gain`) and the loop's phase margin; the transient
+/// op-amp stays algebraic (infinite-bandwidth), so the determinism golden is untouched.
+const OPAMP_GBW: f64 = 1.0e6;
 /// Floor on an op-amp's saturation rail `Vsat`, in volts, so `value <= 0` can't
 /// produce a degenerate device with a zero (or back-to-front) output swing. A
 /// supplied `value` below this is clamped up to it; the default 12 V passes through.
@@ -4580,8 +4588,34 @@ impl Sim {
                             stamp_g(&mut a, p, q, -GMIN);
                             stamp_g(&mut a, q, p, -GMIN);
                         }
+                    } else if is_opamp(e.kind) {
+                        // Output a, inverting input b, non-inverting input c. The output is
+                        // a transconductance `Iout = Gout·(A·Vd − Vout)` with `Vd = V(c) −
+                        // V(b)`; small-signal that is a `Gout` output conductance plus a
+                        // controlled source `Gout·dT·Vd`. UNLIKE the transient (algebraic,
+                        // infinite bandwidth), the AC gain rolls off at the op-amp's GBW: the
+                        // open-loop gain has a dominant pole, so the controlled term gets a
+                        // `1/(1 + jω/ω_p)` factor (`ω_p = 2π·GBW/A₀`). That gives a closed-loop
+                        // stage its true −3 dB bandwidth (GBW / closed-loop gain) and the
+                        // loop's phase shift on the Bode. dT is the slope at the bias point, so
+                        // a saturated (clamped) op-amp correctly stops responding (dT → 0).
+                        let vsat = e.value.max(OPAMP_VSAT_MIN);
+                        let dt = opamp_target(self.opamp_vd[i], vsat).1;
+                        let wp = core::f64::consts::TAU * OPAMP_GBW / OPAMP_GAIN;
+                        let gmc = Cplx::new(OPAMP_GOUT * dt, 0.0).div(Cplx::new(1.0, omega / wp));
+                        stamp_g(&mut a, ia, ia, OPAMP_GOUT);
+                        if let (Some(r), Some(col)) = (ia, ic) {
+                            a[r * n + col] = a[r * n + col].add(gmc);
+                        }
+                        if let (Some(r), Some(col)) = (ia, ib) {
+                            a[r * n + col] = a[r * n + col].sub(gmc);
+                        }
+                        // Ideal inputs draw no current; a GMIN floor keeps a floating input
+                        // non-singular (matches the transient op-amp's input handling).
+                        stamp_g(&mut a, ib, ib, GMIN);
+                        stamp_g(&mut a, ic, ic, GMIN);
                     }
-                    // Op-amps / logic / transformer: still open in this pass (follow-up).
+                    // Logic gates / transformer: still open in this pass (follow-up).
                 }
             }
         }
@@ -7974,6 +8008,45 @@ mod tests {
         assert!(
             v2 < 0.0 && v4 > 0.0,
             "CE stage inverts (collector opposes base)"
+        );
+    }
+
+    /// Op-amp small-signal AC with the GBW pole: an inverting amplifier (gain −Rf/Rin).
+    /// Its low-frequency closed-loop gain is `Rf/Rin` and inverting, and — because the
+    /// open-loop gain rolls off at the gain-bandwidth product — its −3 dB bandwidth is
+    /// `GBW / noise-gain = GBW / (1 + Rf/Rin)`, the textbook result. Confirms the op-amp is
+    /// stamped in `ac_solve` AND that the frequency-dependent (pole) term is correct.
+    #[test]
+    fn ac_opamp_inverting_gbw_bandwidth() {
+        let rin = 1_000.0;
+        let rf = 10_000.0;
+        // n1 Vin(ac), n2 inverting input, n3 output; non-inverting = ground.
+        let sim = build3(
+            4,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_OPAMP, ELEM_RESISTOR],
+            &[1, 1, 3, 3],
+            &[0, 2, 2, 2],
+            &[0, 0, 0, 0],
+            &[100.0, rin, 12.0, rf],
+        );
+        let gain_at = |f: f64| {
+            let v = sim.ac_solve(std::f64::consts::TAU * f);
+            (v[2].0.hypot(v[2].1)) / (v[0].0.hypot(v[0].1)) // |V(out)| / |V(in)|
+        };
+        let g_lo = gain_at(1_000.0); // well below the corner
+        assert!(
+            (g_lo - rf / rin).abs() / (rf / rin) < 1e-3,
+            "low-frequency gain ~ Rf/Rin: got {g_lo}"
+        );
+        let v = sim.ac_solve(std::f64::consts::TAU * 1_000.0);
+        assert!(v[2].0 < 0.0, "inverting amp: output opposes input");
+        // The single-pole closed-loop −3 dB frequency is GBW / (1 + Rf/Rin).
+        let f3db = OPAMP_GBW / (1.0 + rf / rin);
+        let g3 = gain_at(f3db);
+        assert!(
+            (g3 - (rf / rin) / 2.0_f64.sqrt()).abs() / (rf / rin) < 0.01,
+            "−3 dB gain at GBW/noise-gain: got {g3}, want {}",
+            (rf / rin) / 2.0_f64.sqrt()
         );
     }
 
