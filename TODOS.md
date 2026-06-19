@@ -29,8 +29,12 @@ diode reverse-recovery. This is **A**.
   blue / white ~3.1 V, via `Is`) + glyph tint (`ledTint` in the board render) + a ~30 mA rating.
   Reused the diode forward-param plumbing (buildNetlist auto-emits once LED joined the variants
   map). Test `led_colour_is_sets_higher_forward_drop` (blue's extreme small Is converges).~~
-- [ ] **(C) Waveform / pulse source** — square/pulse/triangle generator with adjustable freq +
-  duty (and/or a multi-waveform AC source). New sim-core source element.
+- ~~**(C) Waveform / pulse source** — a dedicated **Pulse / Clock Gen** part: unipolar square
+  (duty-controlled) + triangle, adjustable frequency + duty. Implemented by mapping the web
+  `PULSE` kind to `ELEM_ACSOURCE` with a **waveform param** (slot 1: 1 square / 2 triangle, slot
+  3: duty) — `ac_source_emf` grew the square/triangle branches (default slot 1 = 0 = sine, so
+  the AC source + golden are untouched). New `Component.duty` field, glyph `drawPulse`, inspector
+  (level + waveform + duty slider). Tests `pulse_source_emits_square_wave` / `_triangle_wave`.~~
 - [ ] **(D) Diode reverse recovery (trr)** — dynamic stored-charge state; reverse-recovery
   spike on switch-off. New reactive state, determinism-sensitive. Hardest; last.
 - [ ] **Follow-on:** ratings for SD/LED/ZD (LED especially — easy burnout) once (B) lands;

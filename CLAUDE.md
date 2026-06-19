@@ -126,6 +126,11 @@ new kind, just emit slot 2 from `buildNetlist` (Real mode); no sim-core change n
 
 ## Gotchas
 
+- The web **`PULSE`** (pulse/clock generator) part has **no sim element of its own** — it maps to
+  `ELEM_ACSOURCE` (type 7) with a **waveform param** (slot 1: 1 = square, 2 = triangle; slot 3 =
+  duty), and `ac_source_emf` branches on it. Slot 1 = 0 is sine, so a plain AC source is
+  unchanged. This keeps the deterministic core from special-casing a new time-varying-source type
+  in its ~15 source sites.
 - `web/src/wasm` is gitignored and excluded from `tsconfig.app.json`. Always run
   `pnpm run build:wasm` before `pnpm -C web check` (CI uses that order).
 - `wasm-opt` is disabled in `crates/sim-wasm/Cargo.toml` so `build:wasm` works

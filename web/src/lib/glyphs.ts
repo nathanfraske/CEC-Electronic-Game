@@ -533,6 +533,42 @@ function drawAC(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + r, my, b.x, b.y, o.electrical.current, o.phase, o.color);
 }
 
+// Pulse / clock generator: the AC symbol's cousin, with a SQUARE wave inside the body instead
+// of a sine. Same pulsing ring + reversing-current leads; the colour is the part's palette hue.
+function drawPulse(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const r = 11;
+  const lvl = norm(o.electrical.vAcross, V_SCALE);
+  const pulse = 0.5 + 0.5 * Math.sin(o.phase * PULSE_K);
+  g.circle(mx, my, r + 5).stroke({
+    width: 2,
+    color: o.color,
+    alpha: (0.12 + 0.4 * lvl) * (0.5 + 0.5 * pulse),
+  });
+  g.moveTo(a.x, a.y).lineTo(mx - r, my);
+  g.moveTo(mx + r, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.circle(mx, my, r).fill({ color: 0x161020, alpha: 0.95 });
+  g.circle(mx, my, r).stroke({ width: 1.6, color: o.color, alpha: 0.95 });
+  // A square wave inside the body: low → high → low → high across the width.
+  const sw = 7; // half-width
+  const amp = 4; // half-height
+  g.moveTo(mx - sw, my + amp)
+    .lineTo(mx - sw, my - amp)
+    .lineTo(mx - sw / 3, my - amp)
+    .lineTo(mx - sw / 3, my + amp)
+    .lineTo(mx + sw / 3, my + amp)
+    .lineTo(mx + sw / 3, my - amp)
+    .lineTo(mx + sw, my - amp);
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.95 });
+  flow(g, a.x, a.y, mx - r, my, o.electrical.current, o.phase, o.color);
+  flow(g, mx + r, my, b.x, b.y, o.electrical.current, o.phase, o.color);
+}
+
 function drawD(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   const b = o.pins[1];
@@ -2494,6 +2530,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   L: drawL,
   I: drawI,
   AC: drawAC,
+  PULSE: drawPulse,
   GND: drawGND,
   D: drawD,
   SD: drawSD,

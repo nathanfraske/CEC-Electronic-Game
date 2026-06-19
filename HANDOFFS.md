@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (45) — Device variety, increment C: pulse / clock generator
+
+**State:** 🟢 Rust + Web, all gates green (127 sim-core tests, 1 ignored). Increment C of 4
+(A diode types ✓, B LED colour ✓, C pulse source ✓, **D reverse recovery — deferred to a fresh
+session** at owner's request, determinism-critical). Closes the "square waves and whatnot" gap.
+
+- **Dedicated "Pulse / Clock Gen" part** producing a unipolar **square** (duty-controlled) or
+  **triangle**, with adjustable frequency + duty. Owner chose a dedicated part over extending AC.
+- **Implementation — reuses `ELEM_ACSOURCE`, no new solver element.** The web `PULSE` kind maps
+  to type 7; `ac_source_emf` gained square/triangle branches keyed off a **waveform param**
+  (slot 1: 0 = sine [default → AC + golden untouched], 1 = square, 2 = triangle; slot 3 = duty).
+  Square/triangle are pure mul/div/floor/compare of the cycle phase — deterministic, no
+  transcendental. This avoided threading a new ELEM type through the ~15 solver sites that
+  special-case `ELEM_ACSOURCE` (the determinism-risky path).
+- **Web:** new `Component.duty` field (round-trips + copy/paste); `buildNetlist` writes the
+  waveform (from `variant`: 0 square → code 1, 1 triangle → code 2) + duty params and emits the
+  amplitude in `aux` (like AC); glyph `drawPulse` (AC symbol with a square wave inside);
+  palette entry; inspector (high level + waveform picker + duty slider). `setComponentDuty` in
+  board.ts.
+- Tests `pulse_source_emits_square_wave` (tracks an independent scalar square across a full
+  period, agreeing even at the duty edge) and `pulse_source_emits_triangle_wave` (monotonic
+  rising leg, peaks near amplitude).
+
+**Polish not done (optional):** a `partInfo`/pinout blurb for PULSE (the info panel falls back
+gracefully); a bipolar (±) square option; wiring PULSE into the Bode/AC-analysis stimulus.
+
+**NEXT — (D) diode reverse recovery, FRESH SESSION.** The hard, determinism-sensitive one: a
+dynamic stored-charge state so a rectifier shows a reverse-recovery current spike on switch-off.
+Needs a new reactive state in sim-core (like the cap/inductor companion), careful golden
+handling (may need a regen + rationale), and full context headroom. Plan: add a charge state
+`Qd` per diode, a `trr`/`Qrr` param (tier/type-set), reverse-recovery current during the
+recovery window; gate web-side to Real mode; default (no param) = today's ideal diode → golden
+safe. See `docs/determinism.md` before touching the core.
+
+**Landing:** PR + squash-merge to main, same flow as #122–#128.
+
+---
+
 ## 2026-06-19 (44) — Device variety, increment B: LED colour
 
 **State:** 🟢 Rust + Web, all gates green (125 sim-core tests, 1 ignored). Increment B of the

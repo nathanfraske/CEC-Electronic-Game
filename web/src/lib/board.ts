@@ -253,6 +253,8 @@ export interface SelectedPart {
   /** The part's device variant (a diode's type / an LED's colour). Undefined → 0. Only the
    * multi-variant kinds (see {@link hasDiodeTypes}) use it. */
   variant?: number;
+  /** The pulse generator's duty cycle (0..1). Undefined → 0.5. Only kind `"PULSE"` uses it. */
+  duty?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -275,6 +277,7 @@ interface ClipboardSnippet {
     label?: string;
     tier?: number;
     variant?: number;
+    duty?: number;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1811,6 +1814,7 @@ export class Board {
           label: c.label,
           tier: c.tier,
           variant: c.variant,
+          duty: c.duty,
         };
     }
     this.cb.onSelect?.({
@@ -1952,6 +1956,21 @@ export class Board {
     c.variant = variant;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed variant
+  }
+
+  /**
+   * Set a pulse generator's **duty cycle** (0..1) from the inspector. Written into the AC-source
+   * element's waveform param in {@link buildNetlist}, so this rebuilds the netlist. No-op if
+   * unchanged (within a small epsilon, since it comes from a slider).
+   */
+  setComponentDuty(id: number, duty: number): void {
+    const c = this.graph.components.get(id);
+    const next = Math.max(0.01, Math.min(0.99, duty));
+    if (!c || Math.abs((c.duty ?? 0.5) - next) < 1e-4) return;
+    this.pushUndo(this.graph.serialize());
+    c.duty = next;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed duty
   }
 
   /** Re-emit the current graph through `onChange` without any edit — used when the
@@ -2798,6 +2817,7 @@ export class Board {
         label: c.label,
         tier: c.tier,
         variant: c.variant,
+        duty: c.duty,
       });
     }
     if (comps.length === 0) return;
@@ -2883,6 +2903,7 @@ export class Board {
       if (cc.label !== undefined) nc.label = cc.label;
       if (cc.tier !== undefined) nc.tier = cc.tier;
       if (cc.variant !== undefined) nc.variant = cc.variant;
+      if (cc.duty !== undefined) nc.duty = cc.duty;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {

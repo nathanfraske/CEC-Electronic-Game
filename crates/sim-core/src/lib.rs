@@ -4377,8 +4377,43 @@ impl Sim {
     fn ac_source_emf(&self, e: &Element) -> f64 {
         let amplitude = if e.aux > 0.0 { e.aux } else { AC_AMPLITUDE };
         let f = e.value.max(0.0);
-        let phase = core::f64::consts::TAU * f * (self.tick as f64) * DT;
-        amplitude * phase.sin()
+        let cycles = f * (self.tick as f64) * DT; // cycles elapsed since t = 0
+                                                  // Waveform select (param slot 1): 0 = sine (the default, so a plain AC source — and the
+                                                  // golden — is unchanged), 1 = square/pulse, 2 = triangle. The web "pulse/clock
+                                                  // generator" part is just this element with the waveform param set. Square and triangle
+                                                  // are deterministic functions of the cycle phase (mul/div/floor/compare only — no
+                                                  // transcendental), so they reproduce bit-for-bit on every platform.
+        let waveform = e.params[1];
+        if waveform <= 0.0 {
+            return amplitude * (core::f64::consts::TAU * cycles).sin();
+        }
+        let phase = cycles - cycles.floor(); // periodic phase in [0, 1)
+        let duty = {
+            let d = e.params[3]; // slot 3 = duty cycle / triangle symmetry
+            if d > 0.0 && d < 1.0 {
+                d
+            } else {
+                0.5
+            }
+        };
+        if waveform < 1.5 {
+            // Square / pulse: a unipolar clock — high (`amplitude`) for the first `duty` of each
+            // period, else 0. (Unipolar 0→V is the clock/logic idiom; the sine AC source covers
+            // the bipolar ±V case.)
+            if phase < duty {
+                amplitude
+            } else {
+                0.0
+            }
+        } else {
+            // Triangle: ramp up to the peak at `duty`, back down after — so `duty` doubles as the
+            // symmetry knob (0.5 = symmetric, →1 = ramp/sawtooth). Unipolar 0→amplitude.
+            if phase < duty {
+                amplitude * (phase / duty)
+            } else {
+                amplitude * (1.0 - phase) / (1.0 - duty)
+            }
+        }
     }
 
     /// The conductance of a clock-driven switch ([`ELEM_SWITCH`]) at the current
@@ -8600,6 +8635,96 @@ mod tests {
                 want
             );
         }
+    }
+
+    /// The pulse / clock generator is this same AC-source element with the **square** waveform
+    /// param set (slot 1 = 1): a unipolar clock that is `amplitude` for the first `duty` of each
+    /// period and `0` after. Across one full period the driven node must track that independent
+    /// scalar square tick for tick (the same `f*tick*DT` phase, so they agree even at the duty
+    /// edge). Layout: source 1->0 (value = f, aux = amplitude, params = square + duty), R 1->0.
+    #[test]
+    fn pulse_source_emits_square_wave() {
+        let f = 1_000.0; // period = 1 ms = 500 ticks at dt = 2 us
+        let amp = 5.0;
+        let duty = 0.5;
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 2 * PARAM_STRIDE];
+        params[1] = 1.0; // source (element 0): waveform slot = 1 (square)
+        params[3] = duty; // duty cycle
+        assert!(sim.set_netlist_p(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[f, 1_000.0],
+            &[amp, 0.0], // aux: source amplitude
+            &params,
+        ));
+        let want_at = |tick: u64| {
+            let c = f * tick as f64 * DT;
+            if c - c.floor() < duty {
+                amp
+            } else {
+                0.0
+            }
+        };
+        // Tick 0 (phase 0) is HIGH.
+        assert!(
+            (sim.node_voltages()[1] - amp).abs() < 1e-9,
+            "square is HIGH at tick 0: {}",
+            sim.node_voltages()[1]
+        );
+        let period_ticks = (1.0 / (f * DT)).round() as u64; // 500
+        for _ in 0..period_ticks {
+            sim.step();
+            let solved_tick = sim.tick() - 1;
+            let got = sim.node_voltages()[1];
+            let want = want_at(solved_tick);
+            assert!(
+                (got - want).abs() < 1e-9,
+                "square tracks at tick {solved_tick}: got {got}, want {want}"
+            );
+        }
+    }
+
+    /// The triangle waveform param (slot 1 = 2) ramps the node up to the peak at `duty` and back
+    /// down after, so `duty` is the symmetry knob. At the peak phase the node is ~`amplitude`,
+    /// near phase 0 it is ~0, and the rising leg is monotonic. Layout as the square test.
+    #[test]
+    fn pulse_source_emits_triangle_wave() {
+        let f = 1_000.0; // 500 ticks/period
+        let amp = 4.0;
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 2 * PARAM_STRIDE];
+        params[1] = 2.0; // waveform = triangle
+        params[3] = 0.5; // symmetric
+        assert!(sim.set_netlist_p(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[0, 0],
+            &[0, 0],
+            &[f, 1_000.0],
+            &[amp, 0.0],
+            &params,
+        ));
+        // Sample the rising leg (ticks 0..250 → phase 0..0.5): strictly increasing toward amp.
+        let mut prev = sim.node_voltages()[1]; // tick 0 ≈ 0
+        assert!(prev.abs() < 1e-9, "triangle starts at 0: {prev}");
+        for _ in 0..240 {
+            sim.step();
+            let got = sim.node_voltages()[1];
+            assert!(
+                got > prev - 1e-12,
+                "triangle rising leg is monotonic: {got} !>= {prev}"
+            );
+            prev = got;
+        }
+        // Near the peak (phase ~0.48) the node has climbed close to the amplitude.
+        assert!(prev > 0.9 * amp, "triangle peaks near amplitude: {prev}");
     }
 
     /// Across one period the AC node reaches both peaks near +/- AC_AMPLITUDE and

@@ -128,6 +128,13 @@
       color: "var(--accent)",
     },
     {
+      tag: "PULSE",
+      name: "Pulse / Clock Gen",
+      desc: "Square/triangle · Hz + duty",
+      tier: "I",
+      color: "var(--violet)",
+    },
+    {
       tag: "R",
       name: "Resistor",
       desc: "Ideal ohms, no tolerance",
@@ -1321,6 +1328,12 @@
   function setVariant(idx: number): void {
     if (selPart) board?.setComponentVariant(selPart.id, idx);
   }
+  function selDuty(): number {
+    return selPart?.duty ?? 0.5;
+  }
+  function setDuty(v: number): void {
+    if (selPart) board?.setComponentDuty(selPart.id, v);
+  }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
   function isGatePart(kind: string): boolean {
@@ -2439,6 +2452,57 @@
                       title="Set {p.label} (peak {p.amp} V)">{p.label}</button
                     >
                   {/each}
+                </div>
+              {/if}
+              {#if kind === "PULSE"}
+                <!-- The pulse / clock generator: high level (amplitude), waveform (square or
+                     triangle), and duty cycle. `value` (the frequency, Hz) uses the row above. -->
+                <div class="insp-sub">high level</div>
+                <div class="insp-row">
+                  <button
+                    class="btn btn-ghost insp-step"
+                    onclick={() => stepAmpVal(-1)}
+                    title="Next smaller level">−</button
+                  >
+                  <div class="insp-chips wrap">
+                    {#each acAmpChips() as v (v)}
+                      <button
+                        class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                        onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+                      >
+                    {/each}
+                  </div>
+                  <button
+                    class="btn btn-ghost insp-step"
+                    onclick={() => stepAmpVal(1)}
+                    title="Next larger level">+</button
+                  >
+                </div>
+                <div class="insp-sub">waveform</div>
+                <div class="insp-chips wrap">
+                  {#each ["Square", "Triangle"] as wf, i (wf)}
+                    <button
+                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
+                      onclick={() => setVariant(i)}>{wf}</button
+                    >
+                  {/each}
+                </div>
+                <div class="insp-sub">
+                  duty · {Math.round(selDuty() * 100)}%
+                </div>
+                <div class="insp-row">
+                  <span class="wiper-end">0</span>
+                  <input
+                    class="wiper-slider"
+                    type="range"
+                    min="0.05"
+                    max="0.95"
+                    step="0.01"
+                    value={selDuty()}
+                    aria-label="Pulse duty cycle"
+                    oninput={(e) => setDuty(Number(e.currentTarget.value))}
+                  />
+                  <span class="wiper-end">1</span>
                 </div>
               {/if}
               {#if kind === "POT"}
