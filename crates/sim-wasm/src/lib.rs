@@ -168,6 +168,15 @@ impl Simulation {
         self.inner.ac_sweep(freqs, real)
     }
 
+    /// Frequency-domain per-element AC measurements at one angular frequency `omega` — the
+    /// analytic twin of [`Simulation::ac_measurements`], same `ac_fields()` stride per element.
+    /// The web uses it above the ~62.5 kHz time-domain measurement ceiling so the board still
+    /// renders current/phase (shimmer + phasor) at 100 kHz–MHz. Read-only — never mutates sim
+    /// state, so it cannot affect the snapshot hash.
+    pub fn ac_element_measurements(&self, omega: f64, real: bool) -> Vec<f64> {
+        self.inner.ac_element_measurements(omega, real)
+    }
+
     /// Protocol version, checked by the front end on load.
     pub fn protocol_version(&self) -> u32 {
         self.inner.protocol_version()

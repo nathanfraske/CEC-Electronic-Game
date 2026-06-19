@@ -742,6 +742,13 @@
   let phaseSweep = $state<Float64Array | undefined>(undefined);
   let phaseScopeFreq = $state(0);
   let phaseHead = 0; // play-head phase, advanced each frame (plain — not reactive)
+  // Frequency-domain per-element AC measurements (same layout as the time-domain `acMeasurements`)
+  // at the source frequency, cached when the source is above the time-domain measurement ceiling.
+  // `onFrame` substitutes it so the board's shimmer/phasor render works at MHz. Plain (not $state):
+  // read each frame, written on edit/fidelity-toggle. The 2 µs step resolves AC to ~62.5 kHz
+  // (≥8 samples/cycle); above that the running `AcMeas` can't lock a cycle and reads invalid.
+  let fdAc: Float64Array | undefined;
+  const TIME_DOMAIN_AC_CEILING_HZ = 62_500;
   // Component fidelity for the AC analysis: false = ideal parts, true = Real parasitics
   // (cap ESL/ESR + inductor DCR/winding-C self-resonance). Analysis-only — never touches
   // the transient sim or the snapshot hash.
@@ -765,6 +772,7 @@
   const recomputePhaseScope = (nodeCount: number): void => {
     if (!simHandle || !bodeHasAc || phaseScopeFreq <= 0 || nodeCount < 2) {
       phaseSweep = undefined;
+      fdAc = undefined;
       return;
     }
     bodeNodeCount = nodeCount;
@@ -772,6 +780,18 @@
       Float64Array.from([phaseScopeFreq]),
       realModels,
     );
+    // Above the time-domain measurement ceiling (~62.5 kHz, where the 2 µs step can't resolve a
+    // cycle so the per-frame `acMeasurements` go invalid), precompute the FREQUENCY-domain
+    // per-element AC measurements at the source frequency. `onFrame` swaps these into the render
+    // so the board still shows current/phase (shimmer + phasor) at 100 kHz–MHz instead of dying.
+    // Recomputed only on edit / fidelity toggle (static between them), like the Bode/phase scope.
+    fdAc =
+      phaseScopeFreq > TIME_DOMAIN_AC_CEILING_HZ
+        ? simHandle.acElementMeasurements(
+            2 * Math.PI * phaseScopeFreq,
+            realModels,
+          )
+        : undefined;
   };
   // The Bode canvas: the action captures it; a redraw runs whenever the sweep or the
   // per-node visibility changes (not per-frame — the response is static between edits).
@@ -1204,6 +1224,12 @@
           }
           // Attribute per-element current and per-net voltage to each component
           // so the glyphs animate with what is actually happening to them.
+          // Above the time-domain measurement ceiling, the per-frame `acMeasurements` read invalid
+          // (the 2 µs step can't resolve a >62.5 kHz cycle), so substitute the cached
+          // frequency-domain per-element measurements (`fdAc`) — same layout — so the shimmer /
+          // phasor render has a valid amplitude/phase to draw at MHz. Below the ceiling the live
+          // time-domain reading (which carries the real waveform shape) is kept.
+          const acMeas = fdAc ?? snap.acMeasurements;
           const electrical: Map<number, ElectricalState> | undefined =
             netlist && snap.elementCurrents
               ? electricalMap(
@@ -1212,7 +1238,7 @@
                   snap.elementCurrents,
                   snap.failedMask,
                   snap.reactiveCurrents,
-                  snap.acMeasurements,
+                  acMeas,
                   snap.acFields,
                 )
               : undefined;
