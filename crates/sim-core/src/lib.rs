@@ -6078,6 +6078,43 @@ mod tests {
         assert!(!unrated, "an unrated diode never trips the rating FAIL");
     }
 
+    /// An LED's COLOUR rides on its forward saturation current `Is` (param slot 0): a
+    /// wider-bandgap colour (blue/white) has a far smaller `Is`, so it drops more. Even the
+    /// extreme small-`Is` blue value converges to a finite operating point and conducts — the
+    /// pn-junction limiting keeps Newton well behaved at any colour. Layout: source 1->0 (5 V),
+    /// R 1->2 (150 Ω), LED 2->0.
+    #[test]
+    fn led_colour_is_sets_higher_forward_drop() {
+        let op = |is: f64| {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE] = is; // LED (element 2) slot 0 = Is; slot 1 (n) → LED default
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_LED],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 150.0, 0.0],
+                &[0.0, 0.0, 0.0],
+                &params,
+            ));
+            (sim.node_voltages()[2], sim.element_currents()[2])
+        };
+        let (vf_red, i_red) = op(1.0e-18); // the LED default — red (~1.9 V)
+        let (vf_blue, i_blue) = op(8.7e-27); // blue (~2.9 V)
+        assert!(
+            vf_red.is_finite() && vf_blue.is_finite(),
+            "both colours converge to a finite operating point"
+        );
+        assert!(i_red > 0.0 && i_blue > 0.0, "both LEDs conduct forward");
+        assert!(
+            vf_blue > vf_red + 0.6,
+            "a blue LED drops well above red: red={vf_red}, blue={vf_blue}"
+        );
+    }
+
     /// The whole diode family on the Newton path reproduces bit-for-bit over a
     /// long run — the type-8/9 analogue of `diode_run_is_reproducible`. A source
     /// feeds a Schottky and an LED on parallel branches sharing the rail.

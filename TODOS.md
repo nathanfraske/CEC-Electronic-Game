@@ -25,8 +25,10 @@ diode reverse-recovery. This is **A**.
   `diode_over_rated_current_flags_fail`.~~
 - ~~**Copy/paste now carries `tier` + `variant`** (the noted polish) — clipboard snippet +
   paste reconstruction.~~
-- [ ] **(B) LED colour** — `variant` → per-colour forward voltage (red/green/blue/white) +
-  visual tint; LED current rating. Reuses the diode forward-param + variant plumbing.
+- ~~**(B) LED colour** — `variant` → per-colour forward voltage (red ~1.9 / yellow / green /
+  blue / white ~3.1 V, via `Is`) + glyph tint (`ledTint` in the board render) + a ~30 mA rating.
+  Reused the diode forward-param plumbing (buildNetlist auto-emits once LED joined the variants
+  map). Test `led_colour_is_sets_higher_forward_drop` (blue's extreme small Is converges).~~
 - [ ] **(C) Waveform / pulse source** — square/pulse/triangle generator with adjustable freq +
   duty (and/or a multi-waveform AC source). New sim-core source element.
 - [ ] **(D) Diode reverse recovery (trr)** — dynamic stored-charge state; reverse-recovery

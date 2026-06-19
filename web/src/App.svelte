@@ -40,7 +40,13 @@
   } from "./lib/values";
   import { LOGIC_FAMILIES, familyLevels } from "./lib/families";
   import { TIER_LABELS, DEFAULT_TIER, hasTiers } from "./lib/tiers";
-  import { hasDiodeTypes, DIODE_TYPES, diodeVariant } from "./lib/diodes";
+  import {
+    hasDiodeTypes,
+    hasLedColors,
+    DIODE_TYPES,
+    diodeVariant,
+    variantList,
+  } from "./lib/diodes";
   import {
     EXAMPLES,
     EXAMPLE_CATEGORIES,
@@ -2296,6 +2302,20 @@
                     {#if realModels}<span class="mono">(FAIL above)</span>{/if}
                   </div>
                 {/if}
+              {/if}
+              {#if hasLedColors(kind)}
+                {@const colors = variantList(kind) ?? []}
+                <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
+                     (red ~1.9 V … blue/white ~3 V) and tints the glyph. -->
+                <div class="insp-sub">colour</div>
+                <div class="insp-chips wrap">
+                  {#each colors as col, i (col.label)}
+                    <button
+                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
+                      onclick={() => setVariant(i)}>{col.label}</button
+                    >
+                  {/each}
+                </div>
               {/if}
               {#if isDigitalPart(kind)}
                 {@const lv = familyLevels(selFamily(), selPart.value)}
