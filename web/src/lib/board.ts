@@ -45,6 +45,7 @@ import { hasValue } from "./values";
 import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
 import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
+import { DEFAULT_TIER } from "./tiers";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -245,6 +246,9 @@ export interface SelectedPart {
   /** The player's custom label for this part (shown in place of the kind tag).
    * Undefined when unnamed. */
   label?: string;
+  /** The part's quality tier (0 budget … 3 lab-grade). Undefined → mid-range. Only the
+   * tiered kinds (see {@link hasTiers}) use it. */
+  tier?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -1799,6 +1803,7 @@ export class Board {
           family: c.family,
           openDrain: c.openDrain,
           label: c.label,
+          tier: c.tier,
         };
     }
     this.cb.onSelect?.({
@@ -1912,6 +1917,20 @@ export class Board {
     c.family = family;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed family
+  }
+
+  /**
+   * Set a part's quality **tier** (0 budget … 3 lab-grade) from the inspector. The tier
+   * maps to a per-device parameter preset in {@link buildNetlist}, so this rebuilds the
+   * netlist (the part's ESR/ESL/GBW/etc. change). No-op if unchanged.
+   */
+  setComponentTier(id: number, tier: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.tier ?? DEFAULT_TIER) === tier) return;
+    this.pushUndo(this.graph.serialize());
+    c.tier = tier;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed tier
   }
 
   /**

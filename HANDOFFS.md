@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (39) — Quality tiers (budget/mid/high/lab) on the per-device params
+
+**State:** 🟢 Rust + Web, gates green. Owner: parts come in four grades for main gameplay (a
+preset bundle of model params; cost later); sandbox keeps raw param editing. Built end-to-end.
+
+- **sim-core** — wired the cap (slot 0=ESR, 1=ESL) and inductor (slot 0=DCR, 1=Cw) Real-AC
+  parasitics to read `Element.params` via a new `param_or(params, i, default)` helper (op-amp GBW
+  already wired). Analysis-only → golden untouched. Test `ac_cap_esr_param_sets_resonance_depth`
+  (a budget high-ESR cap has a shallower SRF notch). 120 tests green.
+- **`web/src/lib/tiers.ts`** (new) — `TIER_LABELS` (Budget/Mid-range/High-end/Lab-grade),
+  `tierParams(kind, tier)` → the param block, `hasTiers(kind)`. Presets for **OA / C / L** (slot
+  meanings mirror sim-core). `DEFAULT_TIER=1` (mid). `PARAM_STRIDE=4`.
+- **Plumbing** — `Component.tier?` (graph.ts; round-trips via serialize's `{...c}` spread).
+  `buildNetlist` builds a `params: Float64Array` from each component's tier (keyed to its main
+  element via `elemOfComponent`) + folds it into the `sig` (so a tier change reinstalls).
+  App.svelte passes `nl.params` to `setNetlist` → routes to `set_netlist_p`.
+- **UI** — `board.setComponentTier`; `SelectedPart.tier` emitted; a "quality tier" chip row
+  (4 chips, mirrors the logic-family picker) in the inspector for tiered kinds. Gate-verified —
+  **wants a live eyeball** (select a cap/op-amp/inductor → pick a tier → the Bode SRF / sleeve
+  should shift).
+
+**Deferred (additive):** copy/paste doesn't carry `tier` yet (ClipboardSnippet lists fields
+explicitly — add it there); extend tiers to BJT/MOSFET/diode (wire their params first, like the
+cap); the **cost** per tier (owner flagged "increase in cost when we add that"). Next engine
+tracks (37): transient measurements + fine time-base; mixed-signal boundary.
+
+---
+
 ## 2026-06-19 (38) — Per-device parameter block (engine foundation; the break-if-late gap)
 
 **State:** 🟢 Rust + Web, gates green. Engine-completeness gap analysis (agent, (37) chat) ranked
