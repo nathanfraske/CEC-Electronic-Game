@@ -24,7 +24,7 @@ import {
   DEFAULT_TIER,
   PARAM_STRIDE,
 } from "./tiers";
-import { diodeVariant, RATED_CURRENT_SLOT } from "./diodes";
+import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -675,7 +675,12 @@ export function buildNetlist(
     if (dv) {
       params[ei * PARAM_STRIDE + 0] = dv.is;
       params[ei * PARAM_STRIDE + 1] = dv.n;
-      if (real) params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
+      // The current rating (FAIL) and the transit time (reverse recovery) are both Real-mode
+      // non-idealities — an Ideal diode is unrated and recovers instantly.
+      if (real) {
+        params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
+        params[ei * PARAM_STRIDE + DIODE_TT_SLOT] = dv.tt;
+      }
     }
     // Pulse / clock generator: the AC-source element's waveform (slot 1: 1 = square, 2 =
     // triangle) and duty (slot 3). Part identity, so installed in both fidelity modes. (A plain

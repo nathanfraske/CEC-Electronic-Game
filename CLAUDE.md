@@ -124,6 +124,13 @@ part — the web layer installs the rating only in Real mode). Golden-safe: `fai
 **not** in `snapshot_hash`, and the rating only *flags* — it never alters the solve. To rate a
 new kind, just emit slot 2 from `buildNetlist` (Real mode); no sim-core change needed.
 
+**Reverse recovery.** A diode's transit time `TT` (`DIODE_TT_SLOT` = 3, Real mode only) gives it
+a **diffusion-charge backward-Euler companion** — a forward diode stores `q = TT·I` in
+`reactive_state[ei]`, and on switch-off sweeps it out as a reverse-current spike. `newton_iterate`
+takes an `inv_dt` (0 at the operating point so DC is unchanged, `1/DT` transiently); `TT = 0`
+(default / Ideal / Schottky) zeroes the charge term → bit-identical, golden-safe. `TT` is
+game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns).
+
 ## Gotchas
 
 - The web **`PULSE`** (pulse/clock generator) part has **no sim element of its own** — it maps to

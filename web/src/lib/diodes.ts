@@ -11,8 +11,11 @@
 /** Param slot carrying a part's rated current (A) — mirrors sim-core's `RATED_CURRENT_SLOT`. */
 export const RATED_CURRENT_SLOT = 2;
 
-/** One diode-family flavour: a forward junction (Is/n → forward drop), a current rating, and —
- *  for an LED — the emitted colour (render tint). Plain diodes leave `tint` undefined. */
+/** Param slot carrying a diode's transit time TT (s) — mirrors sim-core's `DIODE_TT_SLOT`. */
+export const DIODE_TT_SLOT = 3;
+
+/** One diode-family flavour: a forward junction (Is/n → forward drop), a current rating, a
+ *  transit time (reverse recovery), and — for an LED — the emitted colour (render tint). */
 export interface DiodeType {
   label: string;
   /** Saturation current Is (A) — param slot 0. A higher Is conducts at a lower forward drop. */
@@ -21,6 +24,12 @@ export interface DiodeType {
   n: number;
   /** Forward current rating (A): above this the part FAILs (Real mode only). */
   ratedA: number;
+  /** Transit time `TT` (s) — the diffusion-charge time constant that gives the diode its
+   *  REVERSE RECOVERY (param slot 3, Real mode only). `0` = no recovery (Schottky-like). The
+   *  values are game-scaled to the engine's fixed timestep so the recovery spans several ticks
+   *  and is visible; the realistic ordering (switching < fast-recovery < rectifier < power) is
+   *  what matters. */
+  tt: number;
   /** LED emission colour (0xRRGGBB) for the glyph tint; undefined for a plain diode. */
   tint?: number;
 }
@@ -29,10 +38,11 @@ export interface DiodeType {
 // (DIODE_IS = 1e-12, DIODE_N = 1), so a freshly placed diode — and every older snapshot whose
 // diodes carry no `variant` — behaves exactly as before. The others trade rating for size.
 export const DIODE_TYPES: DiodeType[] = [
-  { label: "Rectifier", is: 1.0e-12, n: 1, ratedA: 1.0 }, // 1N400x-class — the default
-  { label: "Switching", is: 3.0e-12, n: 1, ratedA: 0.2 }, // 1N4148-class — small, fast, low current
-  { label: "Fast-recovery", is: 1.0e-12, n: 1, ratedA: 1.0 }, // UF400x — recovery modelled later
-  { label: "Power", is: 5.0e-13, n: 1, ratedA: 3.0 }, // heavy rectifier — higher drop, big current
+  // tt = transit time → reverse recovery (slow rectifier vs fast switching), game-scaled to µs.
+  { label: "Rectifier", is: 1.0e-12, n: 1, ratedA: 1.0, tt: 5.0e-6 }, // 1N400x — slow recovery
+  { label: "Switching", is: 3.0e-12, n: 1, ratedA: 0.2, tt: 0.5e-6 }, // 1N4148 — small, fast
+  { label: "Fast-recovery", is: 1.0e-12, n: 1, ratedA: 1.0, tt: 1.0e-6 }, // UF400x — fast
+  { label: "Power", is: 5.0e-13, n: 1, ratedA: 3.0, tt: 8.0e-6 }, // heavy rectifier — slowest, big
 ];
 
 // LED COLOURS. An LED's colour sets its forward voltage (a wider-bandgap junction drops more):
@@ -42,11 +52,12 @@ export const DIODE_TYPES: DiodeType[] = [
 // sim-core `LED_IS` default (Vf ≈ 1.94 V), so an LED that never picks a colour is unchanged.
 // LEDs are easy to burn out, so each carries a modest ~30 mA rating (bites in Real mode).
 const LED_COLORS: DiodeType[] = [
-  { label: "Red", is: 1.0e-18, n: 2, ratedA: 0.03, tint: 0xff4763 }, // ~1.94 V = the LED default
-  { label: "Yellow", is: 4.55e-20, n: 2, ratedA: 0.03, tint: 0xffc24a }, // ~2.1 V
-  { label: "Green", is: 6.62e-21, n: 2, ratedA: 0.03, tint: 0x49e07a }, // ~2.2 V
-  { label: "Blue", is: 8.7e-27, n: 2, ratedA: 0.03, tint: 0x4aa8ff }, // ~2.9 V
-  { label: "White", is: 1.82e-28, n: 2, ratedA: 0.03, tint: 0xeaeaff }, // ~3.1 V
+  // LEDs carry no modelled reverse recovery (tt = 0); colour sets Is (forward drop) + tint.
+  { label: "Red", is: 1.0e-18, n: 2, ratedA: 0.03, tt: 0, tint: 0xff4763 }, // ~1.94 V = LED default
+  { label: "Yellow", is: 4.55e-20, n: 2, ratedA: 0.03, tt: 0, tint: 0xffc24a }, // ~2.1 V
+  { label: "Green", is: 6.62e-21, n: 2, ratedA: 0.03, tt: 0, tint: 0x49e07a }, // ~2.2 V
+  { label: "Blue", is: 8.7e-27, n: 2, ratedA: 0.03, tt: 0, tint: 0x4aa8ff }, // ~2.9 V
+  { label: "White", is: 1.82e-28, n: 2, ratedA: 0.03, tt: 0, tint: 0xeaeaff }, // ~3.1 V
 ];
 
 // Per-kind variant tables. A part's `variant` indexes its kind's table (diode TYPE / LED COLOUR).
