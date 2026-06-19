@@ -1303,7 +1303,22 @@ pub struct Element {
     /// nothing on the existing paths, the scalar analogue of how the third
     /// terminal `c` is ignored by two-terminal elements.
     pub aux: f64,
+    /// Per-device **parameter block** — a fixed-width array of model parameters whose
+    /// meaning is `kind`-specific, so a device is no longer pinned to one set of fixed
+    /// constants (the "turn one diode into the diode family" lever). A slot of `0.0` means
+    /// "use the kind's built-in default", so an all-zero block (the default, and what a
+    /// caller that omits params installs) reproduces today's behaviour **bit for bit** —
+    /// the additive, golden-safe property. Current slot map:
+    /// - [`ELEM_OPAMP`]: `[0]` = gain-bandwidth product (Hz; `0` → [`OPAMP_GBW`]).
+    /// - every other kind: unused for now (reserved for MOSFET `Kp/Vto/λ`, BJT `Is/β`,
+    ///   diode `Is/n/Rs`, … as they are wired up — each addition stays additive).
+    pub params: [f64; PARAM_STRIDE],
 }
+
+/// Width of an [`Element::params`] block — the number of `f64` model parameters carried
+/// per device across the netlist boundary. Fixed so the wire/save format is predictable;
+/// generous enough for the richest device (a BJT / MOSFET needs ≤4).
+pub const PARAM_STRIDE: usize = 4;
 
 /// A diode's terminal map for the Newton companion: `(element_index, anode_mna,
 /// cathode_mna)`, each MNA index `None` for ground. Collected once per solve in
@@ -2278,6 +2293,7 @@ impl Sim {
                 d: 0,
                 value: v_source,
                 aux: 0.0,
+                params: [0.0; PARAM_STRIDE],
             },
             Element {
                 kind: ELEM_RESISTOR,
@@ -2287,6 +2303,7 @@ impl Sim {
                 d: 0,
                 value: 1_000.0,
                 aux: 0.0,
+                params: [0.0; PARAM_STRIDE],
             },
             Element {
                 kind: ELEM_CAPACITOR,
@@ -2296,6 +2313,7 @@ impl Sim {
                 d: 0,
                 value: 1.0e-6,
                 aux: 0.0,
+                params: [0.0; PARAM_STRIDE],
             },
         ];
         sim.install(3, demo);
@@ -2333,6 +2351,26 @@ impl Sim {
         values: &[f64],
         aux: &[f64],
     ) -> bool {
+        self.set_netlist_p(node_count, types, a, b, c, d, values, aux, &[])
+    }
+
+    /// Install a netlist with an explicit per-device [`Element::params`] block (see
+    /// [`Element::params`]). `params` is either empty (all kind defaults — identical to
+    /// [`Sim::set_netlist`]) or exactly `PARAM_STRIDE` `f64`s per element. Additive and
+    /// golden-safe: an all-zero block reproduces the default behaviour bit for bit.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_p(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
         let n = types.len();
         if a.len() != n
             || b.len() != n
@@ -2340,6 +2378,9 @@ impl Sim {
             || d.len() != n
             || values.len() != n
             || aux.len() != n
+            // Params are optional: an empty block means "all defaults"; otherwise it is
+            // exactly PARAM_STRIDE per element.
+            || (!params.is_empty() && params.len() != n * PARAM_STRIDE)
             || node_count == 0
         {
             self.install_empty();
@@ -2388,6 +2429,10 @@ impl Sim {
                 self.install_empty();
                 return false;
             }
+            let mut p = [0.0; PARAM_STRIDE];
+            if !params.is_empty() {
+                p.copy_from_slice(&params[i * PARAM_STRIDE..(i + 1) * PARAM_STRIDE]);
+            }
             elements.push(Element {
                 kind,
                 a: na,
@@ -2396,6 +2441,7 @@ impl Sim {
                 d: nd,
                 value: values[i],
                 aux: aux[i],
+                params: p,
             });
         }
 
@@ -4644,7 +4690,14 @@ impl Sim {
                         // a saturated (clamped) op-amp correctly stops responding (dT → 0).
                         let vsat = e.value.max(OPAMP_VSAT_MIN);
                         let dt = opamp_target(self.opamp_vd[i], vsat).1;
-                        let wp = core::f64::consts::TAU * OPAMP_GBW / OPAMP_GAIN;
+                        // Per-device gain-bandwidth: param slot 0 (Hz), else the default —
+                        // so a "slow" vs "fast" op-amp shows a different closed-loop bandwidth.
+                        let gbw = if e.params[0] > 0.0 {
+                            e.params[0]
+                        } else {
+                            OPAMP_GBW
+                        };
+                        let wp = core::f64::consts::TAU * gbw / OPAMP_GAIN;
                         let gmc = Cplx::new(OPAMP_GOUT * dt, 0.0).div(Cplx::new(1.0, omega / wp));
                         stamp_g(&mut a, ia, ia, OPAMP_GOUT);
                         if let (Some(r), Some(col)) = (ia, ic) {
@@ -5007,6 +5060,7 @@ mod tests {
             d,
             value,
             aux: 0.0,
+            params: [0.0; PARAM_STRIDE],
         };
 
         // Fully grounded RC → one (grounded) component → no floating ref.
@@ -8159,6 +8213,50 @@ mod tests {
         assert!(
             ratio(srf, true) > ratio(srf * 10.0, true) * 2.0,
             "real inductor falls above the SRF (gone capacitive)"
+        );
+    }
+
+    /// Per-device parameter block: an op-amp's gain-bandwidth product comes from its param
+    /// slot 0 (not the fixed default), so a 10× faster part gives 10× the closed-loop
+    /// bandwidth. Proves the `set_netlist_p` param plumbing reaches the device model; an
+    /// all-zero block (every other test) reproduces the default, so the golden is untouched.
+    #[test]
+    fn ac_opamp_gbw_param_sets_bandwidth() {
+        let rin = 1_000.0;
+        let rf = 10_000.0;
+        let gbw = 1.0e7; // 10 MHz — 10× the OPAMP_GBW default
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 4 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = gbw; // element 2 = the op-amp, slot 0 = GBW
+        assert!(
+            sim.set_netlist_p(
+                4,
+                &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_OPAMP, ELEM_RESISTOR],
+                &[1, 1, 3, 3],
+                &[0, 2, 2, 2],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[100.0, rin, 12.0, rf],
+                &[0.0, 0.0, 0.0, 0.0],
+                &params,
+            ),
+            "netlist with a param block installs"
+        );
+        let gain_at = |f: f64| {
+            let v = sim.ac_solve(std::f64::consts::TAU * f);
+            v[2].0.hypot(v[2].1) / v[0].0.hypot(v[0].1)
+        };
+        // −3 dB at the CUSTOM GBW / noise-gain (10× higher than the default part).
+        let g3 = gain_at(gbw / (1.0 + rf / rin));
+        assert!(
+            (g3 - (rf / rin) / 2.0_f64.sqrt()).abs() / (rf / rin) < 0.01,
+            "−3 dB at custom-GBW/noise-gain: got {g3}"
+        );
+        // At the DEFAULT part's corner the faster part is still in its flat passband.
+        let g_lo = gain_at(OPAMP_GBW / (1.0 + rf / rin));
+        assert!(
+            g_lo > 0.99 * rf / rin,
+            "faster op-amp still flat at the default corner: got {g_lo}"
         );
     }
 
