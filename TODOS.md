@@ -12,10 +12,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   C→jωC, L→jωL branch, V-source short, AC source stimulus); returns complex node voltages at any
   frequency, no time-stepping / no Nyquist wall. `Cplx` + `solve_dense_complex` added. Pure
   analysis, doesn't touch the hash. Tests: RC corner (−3 dB/−45°/−20 dB-dec), LC resonance.~~
-- [ ] **Wasm binding** — `ac_sweep(freqs[])` → interleaved Float64Array of complex node voltages
-  (+ derive per-element complex current → |Z|, phase) across the JS boundary.
-- [ ] **Bode / |Z|-vs-f panel** (web) — log-f magnitude + phase plot with corner markers; the
-  proper "get into the corners" instrument. Pairs with the phasor (the |Z|-vs-f sparkline idea).
+- ~~**Wasm binding** — `Sim::ac_sweep(freqs)` + `Simulation::ac_sweep` + `SimHandle.acSweep`;
+  flattened [re,im] per node per freq. Test `ac_sweep_matches_pointwise_solve`.~~
+- ~~**Bode panel** (web) — `lib/bode.ts drawBode` (dBV vs log-f, decade grid, scope colours) in a
+  Telemetry "Frequency response" section; recomputed on netlist change when an AC source exists.
+  PNG-verified (RC knee, LC peak). Not yet eyeballed live.~~
+- [ ] **Bode polish** — phase trace (second plot / toggle), corner-frequency markers, a
+  transfer-function (Vout/Vin, 0 dB) mode, |Z|-of-selected-part mode. Hover readout.
 - [ ] **Nonlinear small-signal in `ac_solve`** — stamp diode/BJT/MOSFET/op-amp operating-point
   conductances (reuse the `*_eval` linearizations) so amplifier/filter Bode + op-amp loop gain
   work, not just R/L/C.

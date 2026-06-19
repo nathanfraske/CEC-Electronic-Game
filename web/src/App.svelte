@@ -9,7 +9,9 @@
     type Snapshot,
     type SubFrameSample,
     type PlaybackControls,
+    type SimHandle,
   } from "./sim/loop";
+  import { drawBode, logFreqs } from "./lib/bode";
   import {
     Board,
     type Mode,
@@ -712,6 +714,60 @@
 
   let board: Board | undefined;
   let controls: PlaybackControls | undefined;
+  // The wasm handle, hoisted so the Bode panel can run an on-demand AC sweep.
+  let simHandle: SimHandle | undefined;
+  // Bode (frequency-domain) panel state, recomputed on each real circuit change.
+  let bodeSweep = $state<Float64Array | undefined>(undefined);
+  let bodeNodeCount = $state(0);
+  let bodeHasAc = $state(false);
+  // 1 Hz … 10 MHz log sweep — wide enough to show the corners of small R/L/C the 2 µs
+  // transient step can't reach. Fixed list (presentation), reused every recompute.
+  const BODE_FREQS = logFreqs(1, 1e7, 160);
+  // The Bode canvas: the action captures it; a redraw runs whenever the sweep or the
+  // per-node visibility changes (not per-frame — the response is static between edits).
+  let bodeCanvas: HTMLCanvasElement | undefined;
+  let bodeCtx: CanvasRenderingContext2D | undefined;
+  function bodeAction(node: HTMLCanvasElement) {
+    bodeCanvas = node;
+    bodeCtx = node.getContext("2d") ?? undefined;
+    drawBodeCanvas();
+    return {
+      destroy() {
+        if (bodeCanvas === node) {
+          bodeCanvas = undefined;
+          bodeCtx = undefined;
+        }
+      },
+    };
+  }
+  function drawBodeCanvas(): void {
+    const c = bodeCanvas;
+    const ctx = bodeCtx;
+    const sweep = bodeSweep;
+    if (!c || !ctx || !sweep) return;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const cssW = c.clientWidth || 240;
+    const cssH = c.clientHeight || 130;
+    const bw = Math.round(cssW * dpr);
+    const bh = Math.round(cssH * dpr);
+    if (c.width !== bw || c.height !== bh) {
+      c.width = bw;
+      c.height = bh;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    drawBode(ctx, cssW, cssH, sweep, {
+      freqs: BODE_FREQS,
+      nodeCount: bodeNodeCount,
+      color: (node) => channelColor(node),
+      visible: (node) => nodeVisible[node] ?? true,
+    });
+  }
+  $effect(() => {
+    // Track the inputs so an edit (new sweep) or a node toggle repaints the plot.
+    void bodeSweep;
+    void nodeVisible;
+    drawBodeCanvas();
+  });
   // Persist the board to localStorage a beat after edits settle, so a refresh keeps
   // your circuit (see lib/storage.ts). Debounced so a drag doesn't thrash storage.
   const saveBoardDebounced = makeDebouncedBoardSaver();
@@ -883,7 +939,18 @@
       app = a;
 
       const sim = await createSimulation(SEED);
+      simHandle = sim;
       proto = sim.protocolVersion();
+      // Run the frequency-domain AC sweep for the Bode panel (on demand, off the netlist
+      // the sim already holds). A no-op without an AC source — its stimulus is the input.
+      const recomputeBode = (nodeCount: number): void => {
+        if (!simHandle || !bodeHasAc || nodeCount < 2) {
+          bodeSweep = undefined;
+          return;
+        }
+        bodeNodeCount = nodeCount;
+        bodeSweep = simHandle.acSweep(Float64Array.from(BODE_FREQS));
+      };
 
       // Compile the board into a netlist and install it whenever the topology or
       // a value changes. Pure moves leave the signature unchanged, so dragging a
@@ -944,6 +1011,8 @@
           controls?.resync();
         }
         // else: empty board — keep the built-in demo circuit running.
+        // Refresh the Bode sweep off the netlist the sim now holds (no-op without AC).
+        recomputeBode(nl ? nl.nodeCount : 0);
       };
 
       const b = new Board(a, {
@@ -955,11 +1024,16 @@
           // the first-encounter concept cards via their $effect triggers.)
           let src = false;
           let gnd = false;
+          let acSrc = false;
           for (const c of graph.components.values()) {
             if (c.kind === "V" || c.kind === "AC" || c.kind === "I") src = true;
-            else if (c.kind === "GND") gnd = true;
+            if (c.kind === "AC") acSrc = true;
+            if (c.kind === "GND") gnd = true;
           }
           hasSource = src;
+          // The Bode sweep needs an AC source as its stimulus (set before rebuildNetlist
+          // below, which recomputes the sweep once the new netlist is installed).
+          bodeHasAc = acSrc;
           hasGround = gnd;
           rebuildNetlist(graph);
           advanceBuild(graph);
@@ -2627,6 +2701,18 @@
       </div>
     {/if}
 
+    {#if bodeHasAc}
+      <!-- Bode: the frequency-domain AC sweep (Sim::ac_sweep) — each node's response
+           magnitude vs log frequency, so reactance corners / filter knees / LC resonance
+           show at frequencies the 2 µs transient step can't reach. Node colours match the
+           scope; toggling a node in the list below hides its trace. -->
+      <h3 class="sub-title">Frequency response</h3>
+      <div class="bode-panel">
+        <canvas use:bodeAction aria-hidden="true"></canvas>
+        <span class="bode-cap mono">dBV vs f · 1 Hz – 10 MHz (log)</span>
+      </div>
+    {/if}
+
     <h3 class="sub-title nodes-head">
       <span>Nodes · {channels.length}</span>
       <span class="scope-ctl">
@@ -3026,6 +3112,27 @@
   .phasor-phi {
     color: var(--text);
     text-transform: uppercase;
+  }
+  /* The frequency-response (Bode) plot in Telemetry. */
+  .bode-panel {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 5px;
+    margin: 2px 0 12px;
+  }
+  .bode-panel canvas {
+    width: 100%;
+    height: 132px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+  }
+  .bode-cap {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--dim);
+    text-align: center;
   }
   /* The custom-label text field at the top of the value popover (name this part). */
   .insp-name {

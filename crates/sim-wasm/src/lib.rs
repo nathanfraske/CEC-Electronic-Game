@@ -133,6 +133,17 @@ impl Simulation {
         self.inner.ac_fields()
     }
 
+    /// Small-signal **AC sweep** (Bode data): for each frequency in `freqs` (Hz), the
+    /// complex node voltages from a frequency-domain solve, flattened as `[re, im]` per
+    /// non-ground node — a block of `2·(node_count − 1)` `f64`s per frequency, in input
+    /// order. Computed by solving the netlist as complex impedances at each frequency, so
+    /// it reaches reactance/corner/resonance behaviour far above the transient step's
+    /// Nyquist limit. On-demand (not per-frame) and one crossing per whole sweep. Read-only
+    /// — never mutates sim state, so it cannot affect the snapshot hash.
+    pub fn ac_sweep(&self, freqs: &[f64]) -> Vec<f64> {
+        self.inner.ac_sweep(freqs)
+    }
+
     /// Protocol version, checked by the front end on load.
     pub fn protocol_version(&self) -> u32 {
         self.inner.protocol_version()

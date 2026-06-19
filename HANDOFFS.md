@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-19 (33) — Bode panel: the AC engine made visible (sweep → log-f plot)
+
+**State:** 🟢 Rust + Web, gates green. Continued down the list: wasm binding + a Bode panel so
+the (32) AC engine is usable. The "get into the corners" instrument now exists.
+
+- **`Sim::ac_sweep(freqs_hz)`** (sim-core) — runs `ac_solve` across a frequency list, flattened
+  `[re,im]` per non-ground node per frequency (block = `2·(node_count−1)`). Test
+  `ac_sweep_matches_pointwise_solve`. **`Simulation::ac_sweep`** (sim-wasm) forwards it →
+  `Vec<f64>`/Float64Array; **`SimHandle.acSweep`** (loop.ts) exposes it. Read-only — no hash
+  impact (all reproducibility tests still pass).
+- **`web/src/lib/bode.ts`** — `drawBode` (Canvas2D): each non-ground node's magnitude (dBV =
+  20·log10|V|) vs **log frequency**, auto-scaled 80 dB window, decade grid, scope-matched trace
+  colours; `logFreqs(min,max,n)`. PNG-verified (`/tmp/harness/render-bode.js` → `bode.png`: RC
+  −3 dB knee at 1 kHz + −20 dB/dec, LC resonance peak at ~16 kHz, flat source).
+- **App.svelte** — hoisted `simHandle`; `recomputeBode(nodeCount)` runs the sweep on each real
+  netlist change (sig change) when an AC source is present (`bodeHasAc`, detected in onChange);
+  `bodeAction` canvas + an `$effect` that repaints on sweep / node-visibility change (NOT
+  per-frame — the response is static between edits). New Telemetry "Frequency response" section
+  (1 Hz–10 MHz), gated on `bodeHasAc`; node visibility toggles reuse the scope's.
+
+**Not yet eyeballed on live** — engine (Rust tests), sweep (test), draw (PNG), wiring (gates) are
+each verified independently, but the full place-AC-source→see-corners path needs a real look.
+
+**Next on the list:** (a) **nonlinear small-signal** in `ac_solve` — stamp diode/BJT/MOSFET/op-amp
+operating-point conductances (reuse the `*_eval` linearizations) so amplifier/filter Bode + op-amp
+loop gain work, not just passives; (b) **Ideal/Real parasitics** (ESR/ESL/DCR) → real
+self-resonant corners; (c) the **transient time-base + PSU-rating measurements** track. Phasor
+brainstorm vs-f ideas (|Z|-sparkline, Xc/Xl split) can now ride the same sweep buffer.
+
+---
+
 ## 2026-06-19 (32) — Frequency-domain AC analysis engine (the "proper corners" foundation)
 
 **State:** 🟢 Rust. Owner picked the **AC sweep / Bode engine** to get real component corners +
