@@ -80,6 +80,10 @@ hash should be implemented now so we don't have to rebuild later") targets most 
   pay the boundary/emitter churn once rather than per part.
 - **Keep the JS↔wasm boundary coarse** (ADR 0001): the wider arrays still cross once per
   frame in one batched netlist install.
+- **8 terminals is for the bulk, not for buses.** Devices with tens-to-hundreds of
+  independent pins (advanced ADCs, MCUs, FPGAs) are NOT solved by the terminal count — they
+  use the composite "core + per-pin elements" expansion in **ADR 0003**. The 8-terminal
+  core covers discrete + small-IC parts; everything wider composes.
 - **Sequencing:** the clocked-sampler keystone (`ELEM_SAMPLER`, the ADC/S&H foundation)
   fits the *current* 5-terminal / 4-param format and ships first, sim-core-only and
   Rust-tested. This wire-format change lands as its own focused, fully-verified PR, after
