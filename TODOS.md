@@ -8,6 +8,62 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (32) — Electronic load, part 2: the LOAD part (CC / CR + dynamic load-step)
+
+Part 2 of the electronic-load work (part 1 = the programmable current source, #145). The LOAD part
+is now placeable and fully wired, end to end. CP (constant power) is still a future part 3.
+
+- ~~**Data/sim (mine):** `graph.ts` kind `LOAD` (pins +/−, "bad" red); `Component.mode` (0=CC, 1=CR)
+  + `Component.loadHz` (dynamic step Hz), reusing `amp` (peak A) + `duty`. `place()` defaults
+  `{mode:0, amp:2, loadHz:0, duty:0.5}`. `loadUnit(mode)` → A/Ω/W. `netlist.ts` web-only mapping
+  (no sim element, like SHUNT/PULSE): **CC → `ELEM_ISOURCE`** (drains the + pin; static `value` A,
+  or steps `value`→`amp` at `loadHz`/`duty` via the source's `params[0]`/`params[3]` + `aux`=peak);
+  **CR → `ELEM_RESISTOR`** at `value` Ω. `eArr` pushed in lockstep (if/else → one element per LOAD).
+  `values.ts` `loadValues`/`loadChips` per mode (CC amps / CR ohms).~~
+- ~~**UI (subagent):** `drawLOAD` glyph (instrument box + sink arrow + heat halo); PARTS bin +
+  `PART_CAT_OF` (Active & Switching); inspector CC/CR mode picker, **mode-aware value unit** (Ω in CR
+  via `loadUnit`/`loadChips`), and the **dynamic load-step** controls (freq Off/100/1k/10k/50k, peak
+  amps, duty slider) shown in CC; board plumbing (`setComponentMode`/`setComponentLoadHz`, copy/paste,
+  emitSelect) mirroring `duty`/`variant`; `partInfo` LOAD entry. (`setLoadMode`, not `setMode` — the
+  latter is the tool-mode setter.)~~ **DONE.** All web gates green.
+  - [ ] Follow-ons: an **ATX rail-transient demo** (12 V + output-Z + hold-up cap + the dynamic load
+    stepping → watch the rail droop/recover); **CP mode** (`ELEM_CPLOAD` nonlinear, part 3); rating→
+    FAIL + a min-operating-voltage non-ideality; treat a CR load as a conductive path / a CC load as
+    a current-source for the web's floating-return-path checks (currently skipped — edge case).
+
+## 2026-06-20 (31) — QUEUED: voltage representation overhaul (owner-directed, "go big")
+
+Owner: the wire **color-coding** of voltage is unintuitive / not glance-readable. Brainstorm done
+(agent); full write-up + ranked proposals captured below. Decision: **go big**, and **demote hue to
+a distinct rail-identity channel** (not a magnitude ramp).
+
+- **Root cause:** `board.ts` `voltageColor(v)` maps volts → a HUE, **clamped to [0,12]** — so negatives
+  collapse to GND-grey (a −5 V rail *looks grounded* — a real bug), ≥12 V saturates, hue isn't
+  quantitative, it collides with rail identity, and the drop across a part is invisible. Color is the
+  ONLY net-potential channel; the per-part analogy drawers already use height/level well, but the
+  connecting wires fall back to the clamped hue.
+- **Direction (owner):** magnitude on a **pre-attentive position/height/fill** channel (current keeps
+  flow+thickness). **Analogy:** A1 standpipes (height = pressure = voltage; grows down for −, bobs for
+  AC; height step across a part = the drop) → later A2 2.5D height-field. **Reality:** R1 inline
+  **LED bar-gauge** per net (VU-style, zero-notch, peak-hold for AC, HIGH/LOW collapse) + R2 glow
+  brightness ramp. Fix the clamp (signed soft-saturate); always draw a zero baseline; drop-across-a-
+  part as a first-class caliper.
+- **Rail identity = conventional PC colors (owner):** **+12 V = yellow, +5 V = red, +3.3 V = orange**,
+  GND black, etc. (ATX wire code) — replace the current cyan/violet/amber rail tokens; OR a distinct
+  literal **per-net** color (KiCad-style net coloring) so nets are told apart by color, magnitude by
+  height/bar. (Confirm which with the owner when building; the rail-by-voltage colors and per-net
+  coloring are two different ideas the owner floated.)
+- **Net coloring (owner refinement):** the **default** should **auto-colorize every net a distinct
+  color** (conventional rail colors where they apply — +12 yellow / +5 red / +3.3 orange — and
+  distinct colors otherwise), i.e. color = NET IDENTITY out of the box. Then make the color
+  **per-net editable**: when you **label a net** (net labels already exist, `lib/graph.ts` NetLabel
+  + the net-label UI), you should also be able to **set that net's color**. So: a `color?` on
+  NetLabel / a per-net color override, a swatch in the net-label editor, and the renderer prefers
+  the override → else the conventional rail color → else an auto-assigned distinct color.
+- [ ] **Build order:** quick-win (luminance + identity hue + signed clamp) → auto per-net distinct
+  coloring + conventional rail palette + per-net color override (tie to net labels) → A1 standpipes →
+  R1 LED-bars. **Deferred until after the electronic-load web part** (owner chose the load next).
+
 ## 2026-06-20 (30) — FIX: POT (and EC / thermistor) circuits dead since the 5-pin gate PR
 
 Owner: "no value of POT wiper changes anything." Regression from the powered-gate PR (#142): it

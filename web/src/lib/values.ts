@@ -79,7 +79,26 @@ const CURATED_FULL: Record<string, number[]> = {
   // is the point — you read the current from the small V across it (V = I·R), and at high frequency
   // its ~10 nH lead inductance swings the phase (atan(ωL/R) is large only when R is tiny).
   SHUNT: [1e-3, 2e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3],
+  // Electronic load, constant-current draw (A) — the default mode's list (the inspector swaps to
+  // the resistance list in CR mode via `loadValues`). Spans bench-load currents.
+  LOAD: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 15, 20, 30, 50],
 };
+
+/** Electronic-load value lists by MODE: `0` = constant-current (amps), `1` = constant-resistance
+ * (ohms). The load's `value` means amps in CC and ohms in CR, so the inspector picks the list (and
+ * the unit, {@link loadUnit} in graph.ts) by the part's mode. CC reuses the curated `LOAD` list. */
+const LOAD_BY_MODE: Record<number, number[]> = {
+  0: [0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10, 15, 20, 30, 50], // CC: amps
+  1: [0.5, 1, 2, 5, 10, 22, 47, 100, 220, 470, 1e3], // CR: ohms
+};
+const LOAD_CHIPS_BY_MODE: Record<number, number[]> = {
+  0: [0.1, 0.5, 1, 5, 10],
+  1: [1, 10, 47, 100, 1e3],
+};
+export const loadValues = (mode: number): number[] =>
+  LOAD_BY_MODE[mode] ?? LOAD_BY_MODE[0]!;
+export const loadChips = (mode: number): number[] =>
+  LOAD_CHIPS_BY_MODE[mode] ?? LOAD_CHIPS_BY_MODE[0]!;
 
 /** The ~6–8 common values shown as chips up front (the calm default). */
 const CURATED_CHIPS: Record<string, number[]> = {
@@ -119,6 +138,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
   // The shunt values people reach for first; 10 mΩ default (≈32° lead-L phase at 100 kHz).
   SHUNT: [1e-3, 10e-3, 50e-3, 100e-3],
+  // The load currents people reach for first (CC mode); CR-mode chips come from `loadChips`.
+  LOAD: [0.1, 0.5, 1, 5, 10],
 };
 
 /**

@@ -619,6 +619,19 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Source current", value: f(e.current, "A") },
     ],
   },
+  LOAD: {
+    name: "Electronic Load",
+    equation: "I = V / R  (CC: I set · CR: I = V/R)",
+    headline: (e) =>
+      `${f(e.current, "A")} sunk · ${f(e.vAcross, "V")} across · ${f(e.vAcross * e.current, "W")}`,
+    plain: () =>
+      "A programmable electronic load is a controlled current/resistance sink — the bench instrument you wire across a supply to test it under load. In constant-current (CC) mode it draws a set current no matter the terminal voltage, so a supply sees a steady demand it must hold against; in constant-resistance (CR) mode it behaves like a fixed resistor, drawing I = V/R as the voltage moves. Its dynamic mode steps the current between a base and a peak level at a chosen rate — a square load-step that probes how a supply answers a sudden excursion: the rail sag, the recovery overshoot, the ringing. It dissipates everything it draws (V·I) as heat, which is the whole point — it stands in for a real load while you watch the source behave.",
+    derived: (e) => [
+      { label: "Current sunk", value: f(e.current, "A") },
+      { label: "Voltage across", value: f(e.vAcross, "V") },
+      { label: "Power dissipated V·I", value: f(e.vAcross * e.current, "W") },
+    ],
+  },
   GND: {
     name: "Ground",
     equation: "V = 0 (reference)",

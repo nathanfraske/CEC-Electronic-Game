@@ -132,9 +132,25 @@ export interface Component {
    * square output is high (and the symmetry point of the triangle). Only meaningful for kind
    * `"PULSE"` (where {@link buildNetlist} writes it into the waveform param block); other kinds
    * leave it undefined. A new pulse source defaults to 0.5 (50 %). Optional so older snapshots
-   * round-trip unchanged.
+   * round-trip unchanged. The electronic load `"LOAD"` reuses it as its dynamic step duty.
    */
   duty?: number;
+  /**
+   * The electronic load's **mode**: `0` = constant-current (CC), `1` = constant-resistance (CR).
+   * (Constant-power CP is a future mode `2`.) Only meaningful for kind `"LOAD"`, where it decides
+   * which element {@link buildNetlist} emits — CC → a current sink (`ELEM_ISOURCE`), CR → a resistor
+   * — and what {@link Component.value}'s unit means (A vs Ω). Undefined → CC (0). Optional so older
+   * snapshots round-trip.
+   */
+  mode?: number;
+  /**
+   * The electronic load's **dynamic step frequency** in Hz: `0`/undefined = a static (DC) load;
+   * `> 0` makes a CC load *step* between its base level ({@link Component.value}) and its peak level
+   * ({@link Component.amp}) at this frequency with duty {@link Component.duty} — the load-step /
+   * power-excursion test. Only meaningful for kind `"LOAD"` in CC mode (written into the current
+   * source's `params[0]`). Undefined → static. Optional so older snapshots round-trip.
+   */
+  loadHz?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
@@ -376,6 +392,13 @@ export const PART_KINDS: Record<string, PartKind> = {
   L: kind("L", "Inductor", "violet", twoPin("A", "B"), 1e-3, "H", true),
   // Ideal DC current source: arrow points a -> b, default 10 mA. Its dual is V.
   I: kind("I", "Current Source", "warn", twoPin("A", "B"), 1e-2, "A", true),
+  // Electronic load: a programmable current/resistance sink for testing supplies. Pin + (0) sinks
+  // current down to − (1). Its MODE (Component.mode) picks what buildNetlist emits and what `value`
+  // means: CC → a current sink (ELEM_ISOURCE) at `value` A — optionally STEPPING between a base
+  // (`value`) and peak (`amp`) at `loadHz`/`duty` for transient/excursion testing; CR → a resistor
+  // at `value` Ω. `unit` here is the CC default "A"; the inspector swaps it per mode (loadUnit).
+  // Red "bad" reads as the dissipating sink.
+  LOAD: kind("LOAD", "Electronic Load", "bad", twoPin("+", "−"), 1, "A", true),
   // Explicit ground reference: a single pin whose net becomes node 0. Not a
   // solver element (1 pin, absent from TYPE_OF) — it only anchors the reference.
   GND: kind("GND", "Ground", "dim", onePin("⏚"), 0, "", true),
@@ -851,6 +874,14 @@ export function formatValue(value: number, unit: string): string {
   return value.toExponential(1) + " " + unit;
 }
 
+/** The unit of an electronic load's primary value, which depends on its mode:
+ * `0` = constant-current (A), `1` = constant-resistance (Ω), `2` = constant-power (W, future).
+ * The inspector and telemetry pass this to {@link formatValue} for a `"LOAD"` so the same `value`
+ * field reads as amps, ohms, or watts. */
+export function loadUnit(mode: number | undefined): string {
+  return mode === 1 ? "Ω" : mode === 2 ? "W" : "A";
+}
+
 /**
  * The board graph: placed components and the wires between their pins. Pure
  * model — it allocates stable ids, prevents duplicate/self wires, and answers
@@ -882,6 +913,9 @@ export class BoardGraph {
       // kinds leave it undefined.
       ...(kind === "AC" ? { amp: AC_DEFAULT_AMP } : {}),
       ...(kind === "PULSE" ? { amp: AC_DEFAULT_AMP, duty: 0.5 } : {}),
+      // An electronic load starts in CC mode, static (loadHz 0), with a 2 A peak and 50 %
+      // duty ready for the dynamic load-step toggle.
+      ...(kind === "LOAD" ? { mode: 0, amp: 2, loadHz: 0, duty: 0.5 } : {}),
       // A level shifter carries its OUTPUT rail (rail B) as the second scalar,
       // defaulting to 5 V — so a fresh shifter translates its 1.8 V input up to 5 V.
       ...(kind === "LS" ? { amp: 5 } : {}),

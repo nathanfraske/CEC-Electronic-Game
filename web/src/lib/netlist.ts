@@ -176,6 +176,7 @@ const GATE_AUX: Record<string, number> = {
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
 const ELEM_CAPACITOR = 2;
+const ELEM_ISOURCE = 4;
 
 // (Electrolytic-cap ESR is now graded by tier — see `ecEsr` in lib/tiers.ts.)
 
@@ -423,6 +424,36 @@ export function buildNetlist(
     if (!kind || kind.pins.length < 2) continue;
     const na = nodeIndex.get(find(key(c.id, 0))) ?? 0;
     const nb = nodeIndex.get(find(key(c.id, 1))) ?? 0;
+
+    // Electronic load: a web-only mapping onto an existing element, chosen by its MODE —
+    // no sim-core "load" element (like SHUNT → resistor, PULSE → AC source). Pin + (a)
+    // sinks current down to − (b). CC → a current sink (ELEM_ISOURCE: a positive `value`
+    // drains terminal a); STEPPING between base (`value`) and peak (`amp`) when loadHz > 0
+    // (the dynamic params are written into the source's param block below). CR → a plain
+    // resistor at `value` Ω. The mode rides into `types`/`values`, so flipping it rebuilds
+    // the sim via the signature.
+    if (c.kind === "LOAD") {
+      const idx = types.length;
+      if ((c.mode ?? 0) === 1) {
+        // CR: a resistor (floored to a tiny positive R so an end-stop never opens).
+        types.push(ELEM_RESISTOR);
+        values.push(Math.max(c.value, 1e-3));
+        auxArr.push(0);
+      } else {
+        // CC: a current sink. Static = `value` A; dynamic = base `value` → peak `amp`.
+        types.push(ELEM_ISOURCE);
+        values.push(c.value);
+        auxArr.push((c.loadHz ?? 0) > 0 ? (c.amp ?? c.value) : 0); // peak (dynamic only)
+      }
+      aArr.push(na);
+      bArr.push(nb);
+      cArr.push(0);
+      dArr.push(0);
+      eArr.push(0);
+      elemOfComponent.set(c.id, idx);
+      nodesOfComponent.set(c.id, [na, nb]);
+      continue;
+    }
 
     // Electrolytic cap: expand into TWO elements on a shared internal node —
     // an ideal capacitor (+pin → internal, value = C) and the ESR resistor
@@ -734,6 +765,17 @@ export function buildNetlist(
     // AC source leaves slot 1 at 0 = sine, so it is untouched.)
     if (comp.kind === "PULSE") {
       params[ei * PARAM_STRIDE + 1] = (comp.variant ?? 0) === 1 ? 2 : 1;
+      params[ei * PARAM_STRIDE + 3] = comp.duty ?? 0.5;
+    }
+    // Electronic load, dynamic step (CC mode): the current sink's step frequency (slot 0)
+    // and duty (slot 3). loadHz = 0 leaves slot 0 at 0, so the sink holds its base `value`
+    // (a static load). Part behaviour, so installed in both fidelity modes.
+    if (
+      comp.kind === "LOAD" &&
+      (comp.mode ?? 0) === 0 &&
+      (comp.loadHz ?? 0) > 0
+    ) {
+      params[ei * PARAM_STRIDE + 0] = comp.loadHz!;
       params[ei * PARAM_STRIDE + 3] = comp.duty ?? 0.5;
     }
   }

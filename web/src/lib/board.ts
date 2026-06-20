@@ -253,8 +253,15 @@ export interface SelectedPart {
   /** The part's device variant (a diode's type / an LED's colour). Undefined → 0. Only the
    * multi-variant kinds (see {@link hasDiodeTypes}) use it. */
   variant?: number;
-  /** The pulse generator's duty cycle (0..1). Undefined → 0.5. Only kind `"PULSE"` uses it. */
+  /** The pulse generator's duty cycle (0..1). Undefined → 0.5. Only kind `"PULSE"` uses it.
+   * The electronic load `"LOAD"` reuses it as its dynamic load-step duty. */
   duty?: number;
+  /** The electronic load's mode (0 = constant-current CC, 1 = constant-resistance CR). Undefined
+   * → CC. Only kind `"LOAD"` uses it; it decides the value's unit and the netlist element. */
+  mode?: number;
+  /** The electronic load's dynamic step frequency in Hz (0 = static; > 0 steps base→peak current).
+   * Undefined → static. Only kind `"LOAD"` in CC mode uses it. */
+  loadHz?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -278,6 +285,8 @@ interface ClipboardSnippet {
     tier?: number;
     variant?: number;
     duty?: number;
+    mode?: number;
+    loadHz?: number;
   }[];
   wires: { aId: number; aPin: number; bId: number; bPin: number }[];
   labels: { compId: number; pin: number; name: string }[];
@@ -1815,6 +1824,8 @@ export class Board {
           tier: c.tier,
           variant: c.variant,
           duty: c.duty,
+          mode: c.mode,
+          loadHz: c.loadHz,
         };
     }
     this.cb.onSelect?.({
@@ -1971,6 +1982,35 @@ export class Board {
     c.duty = next;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed duty
+  }
+
+  /**
+   * Set an electronic load's **mode** (0 = constant-current CC, 1 = constant-resistance CR) from
+   * the inspector. The mode decides which element {@link buildNetlist} emits (a current sink vs a
+   * resistor) and what `value`'s unit means (A vs Ω), so this rebuilds the netlist. No-op if
+   * unchanged.
+   */
+  setComponentMode(id: number, mode: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.mode ?? 0) === mode) return;
+    this.pushUndo(this.graph.serialize());
+    c.mode = mode;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed mode
+  }
+
+  /**
+   * Set an electronic load's **dynamic step frequency** in Hz (0 = static, > 0 steps the CC draw
+   * between its base `value` and peak `amp`) from the inspector. Written into the current source's
+   * waveform param in {@link buildNetlist}, so this rebuilds the netlist. No-op if unchanged.
+   */
+  setComponentLoadHz(id: number, hz: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.loadHz ?? 0) === hz) return;
+    this.pushUndo(this.graph.serialize());
+    c.loadHz = hz;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed step frequency
   }
 
   /** Re-emit the current graph through `onChange` without any edit — used when the
@@ -2818,6 +2858,8 @@ export class Board {
         tier: c.tier,
         variant: c.variant,
         duty: c.duty,
+        mode: c.mode,
+        loadHz: c.loadHz,
       });
     }
     if (comps.length === 0) return;
@@ -2904,6 +2946,8 @@ export class Board {
       if (cc.tier !== undefined) nc.tier = cc.tier;
       if (cc.variant !== undefined) nc.variant = cc.variant;
       if (cc.duty !== undefined) nc.duty = cc.duty;
+      if (cc.mode !== undefined) nc.mode = cc.mode;
+      if (cc.loadHz !== undefined) nc.loadHz = cc.loadHz;
       map.set(cc.oldId, nc.id);
     }
     for (const w of p.snippet.wires) {

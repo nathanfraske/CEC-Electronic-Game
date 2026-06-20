@@ -489,6 +489,55 @@ function drawI(g: Graphics, o: GlyphOpts): void {
   flow(g, mx + r, my, b.x, b.y, o.electrical.current, o.phase, o.color);
 }
 
+// Electronic load: a programmable current/resistance sink for testing supplies. Drawn as a
+// rounded bench-instrument box between the two leads with a bold DOWNWARD sink arrow inside —
+// current flowing INTO the load (the "I drain the supply" mark that sets it apart from a plain
+// resistor). It dissipates the power it draws, so it carries the resistor's heat halo (keyed to
+// |current|) and the flow belt along the leads. Two-terminal: pin 0 = +, pin 1 = −.
+function drawLOAD(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const mx = (a.x + b.x) / 2;
+  const my = (a.y + b.y) / 2;
+  const hw = 11; // body half-width
+  const hh = 9; // body half-height
+  const heat = norm(o.electrical.current, CUR_SCALE);
+  // dissipation halo grows with the current it sinks (like the resistor)
+  if (heat > 0.03) {
+    g.roundRect(mx - hw - 4, my - hh - 4, 2 * hw + 8, 2 * hh + 8, 6).fill({
+      color: 0xe0533a,
+      alpha: 0.18 * heat,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(mx - hw, my);
+  g.moveTo(mx + hw, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // the rounded instrument box body
+  g.roundRect(mx - hw, my - hh, 2 * hw, 2 * hh, 3).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.roundRect(mx - hw, my - hh, 2 * hw, 2 * hh, 3).stroke({
+    width: 1.8,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // the downward sink arrow inside the box: current drains INTO the load, top → bottom.
+  const at = my - hh + 3; // arrow tail (top)
+  const ab = my + hh - 3; // arrow tip (bottom)
+  const head = 4;
+  g.moveTo(mx, at).lineTo(mx, ab);
+  g.moveTo(mx, ab)
+    .lineTo(mx - head, ab - head)
+    .moveTo(mx, ab)
+    .lineTo(mx + head, ab - head);
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.7 + 0.25 * heat });
+  flow(g, a.x, a.y, mx - hw, my, o.electrical.current, o.phase, 0x46d2e6);
+  flow(g, mx + hw, my, b.x, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 function drawGND(g: Graphics, o: GlyphOpts): void {
   const a = o.pins[0];
   if (!a) return;
@@ -2664,6 +2713,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   I: drawI,
   AC: drawAC,
   PULSE: drawPulse,
+  LOAD: drawLOAD,
   GND: drawGND,
   D: drawD,
   SD: drawSD,
