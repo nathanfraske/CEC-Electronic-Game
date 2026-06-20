@@ -1,6 +1,7 @@
 # ADR 0003: High-pin-count devices (advanced ADCs, MCUs, FPGAs)
 
-Status: accepted (design; implementation lands with the first wide device)
+Status: accepted (design; implementation lands with the first wide device). Stress-tested
+against the real worst case (~7,500-land CPUs / ~6,900-ball FPGAs) — see **Limits**.
 
 ## Context
 
@@ -90,3 +91,43 @@ core's index) plus the **behavioral-block engine** (M8) — not a wider element.
   hashed state of their own.
 - Keep the JS<->wasm boundary coarse (ADR 0001): the composite expands into the one
   batched netlist install; the back-references ride in existing scalar/param slots.
+
+## Limits and the worst case (stress-tested)
+
+Researched against the highest-pin real discrete ICs: **Intel LGA-7529** (7,529 socket
+lands — the record), **AMD Versal VP1902** (~6,865-ball package, but only ~2,000 user
+I/O), **AMD EPYC SP5 / LGA-6096**, and data-center GPU FCBGAs quoted to ~8,000 balls.
+**Design target: 8,000 pins; worst-case-future ~10,000.**
+
+The composite + packed-bus hybrid **captures even a 7,529-land CPU — structurally**: there
+is no *format* cap. Three honest qualifications the original decision was silent on:
+
+1. **Power-rail collapse (a netlist-build convention).** The large majority of any
+   high-pin part's balls are **power/ground** (one or two nets, replicated for current/IR)
+   plus **no-connect / thermal / mechanical** balls (no signal). At netlist build, **all of
+   one supply ties to a single net, NCs emit no pin-element, and a pin-element is created
+   only for an *independent signal* net.** That collapses a 7,529-land CPU to a **few
+   hundred** real nets, not 7,529. "Every pin is a probeable net" means every *signal* pin,
+   not every ball.
+2. **The binding limit is the dense solver, not the format.** `solve_dense` is **O(n³)**
+   with an **n²** matrix and every independent net is a row, so a few **hundred** live nets
+   is the practical interactive ceiling (a 7,500-net dense solve is ~450 MB and ~10¹¹ flops
+   — seconds per step, not 2 µs). A wide part is therefore modeled as a **behavioral core
+   exposing only its *taught* pins** (the relevant bus + clock + power), the rest abstracted
+   away — exactly what the "core element" enables. The composite removes the *format* cap;
+   it does not make thousands of hand-wired nets tractable or pedagogically meaningful, and
+   is not intended to. Treat **a few hundred independent signal nets per device** as a soft
+   guard, above which the part abstracts internally / uses `NetClass::Bus`.
+3. **High-speed differential / SerDes / analog-HF pins are out of scope for per-pin physical
+   sim.** The pin element is **four-state digital**; a PCIe / DDR-DQ / transceiver lane is a
+   coupled analog differential link at multi-GHz — above the **DT = 2 µs / ~62.5 kHz**
+   transient Nyquist ceiling. Model such interfaces **behaviorally at the core** (link
+   up/down, lane rate) or, for AC behaviour, via the analytic frequency-domain path — NOT as
+   digital `ELEM_IO` pins. A single low-speed analog pin uses an ordinary **analog** net, not
+   the digital pin path.
+
+**Bottom line:** the format genuinely has no pin cap (the wall this ADR set out to remove is
+removed). What remains is the **dense-solver cost** (abstract behaviorally above a few
+hundred taught nets) and the **differential/HF fidelity gap** (behavioral / frequency-domain,
+not per-pin) — neither fatal for a teaching sim, which abstracts a 6,000-ball part to its
+handful of taught pins regardless.
