@@ -5,6 +5,29 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (68) — LUT (CEC2064) refsheet guidesheet drafted (design-agent brief)
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted the design-agent build
+brief for the CEC2064 4-input LUT → `docs/ui/parts/lut-guidesheet.md` (target `lut-ic.html`),
+mirroring `jkff-guidesheet.md`.
+
+**Key guidance:** the LUT is more novel than the gates/FF — its through-line is **"logic is a memory
+you address with your inputs": 16 config-bit SRAM cells read out by a 16:1 mux tree** (the structure
+the CEC2031 mux teased). No clean single template, so take the **shell from `dff-ic.html`** (digital,
+timing scope) and **reuse two of its pieces** — its flip-flop for the registered-output mode, its
+cross-coupled-inverter cell for the config bits — but build the mux-tree device + tiers 2–4 fresh
+(keep legible: highlight the active path through the funnel, dim the rest). Covers the 8-pin pinout,
+the digital live model (`Y = T[address]`, optional CLK latch), the per-tier arc (truth-table star in
+T1, mux funnel T2–3, SRAM-bank + TG-tree + output-FF in T4, SRAM cross-section T5), verified gate
+presets (AND 0x8888, XOR 0x6666, MAJ3 0xE8E8, …), the sim map (`ELEM_BEHAVIORAL` prog 4, table→aux,
+mode→params[4]), §10 gates, and the title/leftover-grep reminder.
+
+**Both house parts now have full design-agent briefs:** CEC3076 (JK/T — guidesheet + landed refsheet)
+and CEC2064 (LUT — guidesheet, ready to draw). 555 verified. Reusable-brief pattern established
+(`jkff-guidesheet.md`, `lut-guidesheet.md`).
+
+---
+
 ## 2026-06-20 (67) — Landed the JK/T flip-flop refsheet (CEC3076)
 
 **State:** 🟢 owner's JK/T refsheet landed + pushed → `docs/ui/parts/jkff-ic.html` (built from the
