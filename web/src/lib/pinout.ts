@@ -44,7 +44,20 @@ const LABEL_GAP = 20;
 const DIODE = { A: "anode", K: "cathode" };
 const MOSFET = { D: "drain", S: "source", G: "gate" };
 const BJT = { C: "collector", E: "emitter", B: "base" };
-const GATE = { Y: "output", A: "input A", B: "input B" };
+const GATE = {
+  Y: "output",
+  A: "input A",
+  B: "input B",
+  VCC: "power + (supply rail)",
+  GND: "power − (0 V)",
+};
+const GATE1 = {
+  Y: "output",
+  A: "input",
+  NC: "no-connect",
+  VCC: "power + (supply rail)",
+  GND: "power − (0 V)",
+};
 const GLOSS: Record<string, Record<string, string>> = {
   D: DIODE,
   SD: DIODE,
@@ -72,8 +85,8 @@ const GLOSS: Record<string, Record<string, string>> = {
   NOR: GATE,
   XOR: GATE,
   XNOR: GATE,
-  NOT: { Y: "output", A: "input" },
-  BUF: { Y: "output", A: "input" },
+  NOT: GATE1,
+  BUF: GATE1,
   LS: { OUT: "shifted output (rail B)", IN: "input (rail A)" },
   PU: { "●": "to the net (pulls up to Vcc)" },
 };

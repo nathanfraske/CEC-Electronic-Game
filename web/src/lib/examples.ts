@@ -78,6 +78,20 @@ function wire(
   );
 }
 
+/** Wire a logic gate's power pins: VCC (pin 3) to a positive supply pin, GND (pin 4)
+ * to ground. A powered IC is dead until both are connected — an unwired VCC floats to
+ * ~0 V, so the chip is unpowered and releases its output. */
+function powerGate(
+  g: BoardGraph,
+  gate: Component,
+  supply: Component,
+  supplyPin: number,
+  gnd: Component,
+): void {
+  wire(g, gate, 3, supply, supplyPin); // VCC (pin 3) → +supply
+  wire(g, gate, 4, gnd, 0); // GND (pin 4) → ground
+}
+
 const at = (p: BuildProgress, kind: string): number => p.count[kind] ?? 0;
 
 /**
@@ -1871,46 +1885,53 @@ export const EXAMPLES: ExampleSpec[] = [
     },
   },
   // ── Logic track ───────────────────────────────────────────────────────────
-  // Logic gates are kinds AND/OR/NAND/NOR/XOR (3-pin: pin 0 = Y output, pin 1 = A,
-  // pin 2 = B) and NOT (2-pin: pin 0 = Y, pin 1 = A). All map to solver type 17;
-  // `value` is the logic-high rail (5 V here). Inputs are thresholded at half the
-  // rail, read from the previous tick (one tick of propagation delay); the output
-  // is driven hard to the rail or ground. A driven Voltage Source above the
-  // threshold is a logic 1, below it a logic 0.
+  // Logic gates are real powered 5-pin ICs (AND/OR/NAND/NOR/XOR, and NOT/BUF with
+  // pin 2 a no-connect). Pins: 0 = Y output, 1 = A, 2 = B, 3 = VCC (power +),
+  // 4 = GND (power −). All map to solver type 17. The gate takes its logic rail from
+  // V(VCC) − V(GND), so EVERY gate must have pin 3 wired to a positive supply and pin
+  // 4 to ground — an unwired VCC floats to ~0 V and the chip is dead, releasing its
+  // output. The old `value` field (the rail, 5 V) is vestigial once power is wired.
+  // Inputs are thresholded at half the rail, read from the previous tick (one tick of
+  // propagation delay); the output is driven hard to the rail or ground. A driven
+  // Voltage Source above the threshold is a logic 1, below it a logic 0.
   {
     id: "logic-inverter",
     name: "Inverter (NOT Gate)",
     blurb:
-      "The simplest logic: an inverter flips its input. Drive its input low and the output goes high; drive it high and the output goes low. Wired to an LED, the surprise is that the light is ON when you're NOT driving the input — the gate manufactures a high output from a low input. It reads the input as a 1 only above half the supply rail, so anything below counts as 0.",
+      "The simplest logic: an inverter flips its input. Drive its input low and the output goes high; drive it high and the output goes low. Wired to an LED, the surprise is that the light is ON when you're NOT driving the input — the gate manufactures a high output from a low input. It reads the input as a 1 only above half the supply rail, so anything below counts as 0. The gate is a real IC: it does nothing at all until its VCC and GND power pins are wired.",
     watch:
       "the LED lit even though the input source sits at 0 V — the inverter drives its output HIGH (5 V) because the input is LOW. Raise the input above ~2.5 V (the toggle below) and the output snaps low, and the LED goes dark: the opposite of its input, always.",
     build() {
       // Vin → NOT.A ; NOT.Y → R → LED → GND. Input LOW (0 V) ⇒ NOT drives Y high
       // (5 V) ⇒ the LED lights through the 330 Ω limiter (~9 mA). The LED makes the
-      // loop nonlinear, so the gate stamps on the Newton path.
+      // loop nonlinear, so the gate stamps on the Newton path. The NOT is a powered
+      // IC: a dedicated 5 V supply feeds its VCC pin or it is dead.
       //   nets: IN = Vin+ = NOT.A ; Y = NOT.Y = R.A ; R.B = LED.A ; GND = LED.K = Vin−.
       const g = new BoardGraph();
       const vin = comp(g, "V", 0, 0, 0, 1); // input source, LOW (0 V), + at top
       const inv = comp(g, "NOT", 4, 0, 5); // inverter, 5 V logic rail
       const r = comp(g, "R", 8, 0, 330); // LED current-limit
       const led = comp(g, "LED", 12, 0, 0);
+      const vcc = comp(g, "V", 4, 5, 5, 1); // 5 V logic supply for the gate, + at top
       const gnd = comp(g, "GND", 12, 4, 0);
       wire(g, vin, 0, inv, 1); // Vin+ → NOT.A (pin 1)
       wire(g, inv, 0, r, 0); // NOT.Y (pin 0) → R.A
       wire(g, r, 1, led, 0); // R.B → LED.A
       wire(g, led, 1, gnd, 0); // LED.K → GND
       wire(g, vin, 1, gnd, 0); // Vin− → GND
+      powerGate(g, inv, vcc, 0, gnd); // VCC ← +5 V supply, GND ← ground
+      wire(g, vcc, 1, gnd, 0); // supply − → GND
       return g.serialize();
     },
     steps: [
       {
-        do: "Place a Voltage Source (V) for the input, a NOT gate, then an LED with a series Resistor (R, ~330 Ω).",
-        why: "The source is the logic input — above half the rail it's a 1, below it a 0. The gate will invert whatever level it reads.",
-        done: (p) => at(p, "V") >= 1 && at(p, "NOT") >= 1 && at(p, "LED") >= 1,
+        do: "Place a Voltage Source (V) for the input, a second Voltage Source (V, 5 V) as the gate's power supply, a NOT gate, then an LED with a series Resistor (R, ~330 Ω).",
+        why: "One source is the logic input — above half the rail it's a 1, below it a 0. The other is the IC's power: a logic gate is a real chip and does nothing until its VCC and GND pins are fed.",
+        done: (p) => at(p, "V") >= 2 && at(p, "NOT") >= 1 && at(p, "LED") >= 1,
       },
       {
-        do: "Wire Vin+ → the gate's A input, the gate's Y output → R → LED → Ground, and Vin− → GND. Leave the input source at 0 V and press Run.",
-        why: "With the input at 0 V (a logic 0), the inverter drives its output to a logic 1 — about 5 V — and the LED lights. The output is the opposite of the input.",
+        do: "Power the gate first: wire the 5 V supply's + to the NOT's VCC pin and its GND pin to Ground (supply − → GND too). Then wire Vin+ → the gate's A input, the gate's Y output → R → LED → Ground, and Vin− → GND. Leave the input source at 0 V and press Run.",
+        why: "VCC and GND wake the chip up — without them it's dead and its output floats. With the input at 0 V (a logic 0), the powered inverter drives its output to a logic 1 — about 5 V — and the LED lights. The output is the opposite of the input.",
         done: (p) => at(p, "NOT") >= 1 && at(p, "LED") >= 1 && p.complete,
       },
       {
@@ -1929,12 +1950,15 @@ export const EXAMPLES: ExampleSpec[] = [
         const inv = comp(g, "NOT", 4, 0, 5);
         const r = comp(g, "R", 8, 0, 330);
         const led = comp(g, "LED", 12, 0, 0);
+        const vcc = comp(g, "V", 4, 5, 5, 1); // 5 V logic supply
         const gnd = comp(g, "GND", 12, 4, 0);
         wire(g, vin, 0, inv, 1);
         wire(g, inv, 0, r, 0);
         wire(g, r, 1, led, 0);
         wire(g, led, 1, gnd, 0);
         wire(g, vin, 1, gnd, 0);
+        powerGate(g, inv, vcc, 0, gnd);
+        wire(g, vcc, 1, gnd, 0);
         return g.serialize();
       },
     },
@@ -1943,12 +1967,13 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "logic-and",
     name: "AND Gate Interlock",
     blurb:
-      "An AND gate is a two-key interlock: its output goes high only when BOTH inputs are high. Tie its output to an LED and the light comes on only when both switches are thrown — exactly the safety logic that keeps a machine off unless every guard is in place. Drop either input and the output falls.",
+      "An AND gate is a two-key interlock: its output goes high only when BOTH inputs are high. Tie its output to an LED and the light comes on only when both switches are thrown — exactly the safety logic that keeps a machine off unless every guard is in place. Drop either input and the output falls. The gate is a real IC: it stays dead until its VCC and GND power pins are wired.",
     watch:
       "the LED lit because BOTH inputs sit at 5 V (logic 1) — AND(1,1) = 1. Drop either input to 0 V (the toggle below) and the output collapses to 0 and the LED goes dark: with an AND, every input must be high or nothing is.",
     build() {
       // V_A, V_B (both HIGH) → AND.A, AND.B ; AND.Y → R → LED → GND. AND(1,1)=1 ⇒
       // the LED lights. Drop an input and AND→0 ⇒ dark. Nonlinear (LED) ⇒ Newton.
+      // The AND is a powered IC: a dedicated 5 V supply feeds its VCC pin or it is dead.
       //   nets: A = Va+ = AND.A ; B = Vb+ = AND.B ; Y = AND.Y = R.A ;
       //         R.B = LED.A ; GND = LED.K = Va− = Vb−.
       const g = new BoardGraph();
@@ -1957,6 +1982,7 @@ export const EXAMPLES: ExampleSpec[] = [
       const and = comp(g, "AND", 4, 0, 5); // 5 V logic rail
       const r = comp(g, "R", 8, 0, 330);
       const led = comp(g, "LED", 12, 0, 0);
+      const vcc = comp(g, "V", 4, 5, 5, 1); // 5 V logic supply for the gate
       const gnd = comp(g, "GND", 8, 5, 0);
       wire(g, va, 0, and, 1); // Va+ → AND.A (pin 1)
       wire(g, vb, 0, and, 2); // Vb+ → AND.B (pin 2)
@@ -1965,18 +1991,20 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, led, 1, gnd, 0); // LED.K → GND
       wire(g, va, 1, gnd, 0); // Va− → GND
       wire(g, vb, 1, gnd, 0); // Vb− → GND
+      powerGate(g, and, vcc, 0, gnd); // VCC ← +5 V supply, GND ← ground
+      wire(g, vcc, 1, gnd, 0); // supply − → GND
       return g.serialize();
     },
     steps: [
       {
-        do: "Place two Voltage Sources (V) for the two inputs, an AND gate, and an LED with a series Resistor (R, ~330 Ω).",
-        why: "The two sources are the two conditions. The AND gate will light the LED only when both are satisfied (both above half the rail).",
-        done: (p) => at(p, "V") >= 2 && at(p, "AND") >= 1 && at(p, "LED") >= 1,
+        do: "Place two Voltage Sources (V) for the two inputs, a third Voltage Source (V, 5 V) as the gate's power supply, an AND gate, and an LED with a series Resistor (R, ~330 Ω).",
+        why: "Two sources are the two conditions. The third is the IC's power — a logic gate is a real chip and does nothing until its VCC and GND pins are fed. The AND will light the LED only when both conditions are satisfied (both above half the rail).",
+        done: (p) => at(p, "V") >= 3 && at(p, "AND") >= 1 && at(p, "LED") >= 1,
       },
       {
-        do: "Wire each source's + into one of the gate's inputs (A and B), the gate's Y output → R → LED → Ground, and both sources' −'s → GND. Set both sources to 5 V and Run.",
-        why: "Both inputs are now logic 1, so AND(1,1) = 1: the gate drives its output high and the LED lights. Both keys are in.",
-        done: (p) => at(p, "V") >= 2 && at(p, "AND") >= 1 && p.complete,
+        do: "Power the gate: wire the 5 V supply's + to the AND's VCC pin and its GND pin to Ground (supply − → GND). Then wire each input source's + into one of the gate's inputs (A and B), the gate's Y output → R → LED → Ground, and both inputs' −'s → GND. Set both inputs to 5 V and Run.",
+        why: "VCC and GND power the chip; without them it's dead. With both inputs now logic 1, AND(1,1) = 1: the gate drives its output high and the LED lights. Both keys are in.",
+        done: (p) => at(p, "V") >= 3 && at(p, "AND") >= 1 && p.complete,
       },
       {
         do: "Select one input source and set it to 0 V (or use the toggle below).",
@@ -1995,6 +2023,7 @@ export const EXAMPLES: ExampleSpec[] = [
         const and = comp(g, "AND", 4, 0, 5);
         const r = comp(g, "R", 8, 0, 330);
         const led = comp(g, "LED", 12, 0, 0);
+        const vcc = comp(g, "V", 4, 5, 5, 1); // 5 V logic supply
         const gnd = comp(g, "GND", 8, 5, 0);
         wire(g, va, 0, and, 1);
         wire(g, vb, 0, and, 2);
@@ -2003,6 +2032,8 @@ export const EXAMPLES: ExampleSpec[] = [
         wire(g, led, 1, gnd, 0);
         wire(g, va, 1, gnd, 0);
         wire(g, vb, 1, gnd, 0);
+        powerGate(g, and, vcc, 0, gnd);
+        wire(g, vcc, 1, gnd, 0);
         return g.serialize();
       },
     },
@@ -2011,12 +2042,13 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "logic-half-adder",
     name: "Half-Adder (XOR + AND)",
     blurb:
-      "Two gates add two bits. An XOR gives the SUM (high when the inputs differ) and an AND gives the CARRY (high only when both are 1) — together they compute 1 + 1 = binary 10. It's the first real datapath: feed the same two inputs to both gates and read the two-bit answer off their outputs. Every adder in every CPU is built from this cell.",
+      "Two gates add two bits. An XOR gives the SUM (high when the inputs differ) and an AND gives the CARRY (high only when both are 1) — together they compute 1 + 1 = binary 10. It's the first real datapath: feed the same two inputs to both gates and read the two-bit answer off their outputs. Every adder in every CPU is built from this cell. Both gates are real ICs: each needs its VCC and GND power pins wired or it does nothing.",
     watch:
       "with both inputs high (1 + 1), the CARRY LED lit and the SUM LED dark — binary 10, which is two. The XOR sees its inputs matching, so the sum bit is 0; the AND sees both high, so the carry is 1. Flip one input low (the toggle) and it swaps: 1 + 0 = 01, sum lit, carry dark.",
     build() {
       // Half-adder: Sum = A XOR B, Carry = A AND B. A and B each fan out to both
-      // gates; each gate output drives its own LED through a limiter.
+      // gates; each gate output drives its own LED through a limiter. Both gates are
+      // powered ICs sharing one 5 V supply on their VCC pins, or they are dead.
       //   nets: A = Va+ = XOR.A = AND.A ; B = Vb+ = XOR.B = AND.B ;
       //         SUM = XOR.Y = Rs.A ; CARRY = AND.Y = Rc.A ; GND common.
       // A=1,B=1 ⇒ Sum=XOR(1,1)=0 (dark), Carry=AND(1,1)=1 (lit): 1+1 = 10.
@@ -2029,6 +2061,7 @@ export const EXAMPLES: ExampleSpec[] = [
       const leds = comp(g, "LED", 11, 0, 0); // SUM
       const rc = comp(g, "R", 8, 6, 330); // carry LED limiter
       const ledc = comp(g, "LED", 11, 6, 0); // CARRY
+      const vcc = comp(g, "V", 1, 4, 5, 1); // shared 5 V logic supply for both gates
       const gnd = comp(g, "GND", 14, 4, 0);
       // Inputs fan out to both gates.
       wire(g, va, 0, xor, 1); // A → XOR.A
@@ -2043,6 +2076,10 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, and, 0, rc, 0); // AND.Y → Rc
       wire(g, rc, 1, ledc, 0);
       wire(g, ledc, 1, gnd, 0);
+      // Power both gates from the shared supply.
+      powerGate(g, xor, vcc, 0, gnd); // XOR.VCC ← +5 V, XOR.GND ← ground
+      powerGate(g, and, vcc, 0, gnd); // AND.VCC ← +5 V, AND.GND ← ground
+      wire(g, vcc, 1, gnd, 0); // supply − → GND
       // References.
       wire(g, va, 1, gnd, 0);
       wire(g, vb, 1, gnd, 0);
@@ -2050,17 +2087,17 @@ export const EXAMPLES: ExampleSpec[] = [
     },
     steps: [
       {
-        do: "Place two Voltage Sources (V) for inputs A and B, an XOR gate (the sum) and an AND gate (the carry), and an LED + Resistor for each gate's output.",
-        why: "The same two input bits feed both gates: XOR computes the sum bit, AND computes the carry bit. Two gates, a two-bit answer.",
+        do: "Place two Voltage Sources (V) for inputs A and B, a third Voltage Source (V, 5 V) to power both gates, an XOR gate (the sum) and an AND gate (the carry), and an LED + Resistor for each gate's output.",
+        why: "The same two input bits feed both gates: XOR computes the sum bit, AND computes the carry bit. The third source is shared power — each gate is a real IC and does nothing until its VCC and GND pins are fed. Two gates, a two-bit answer.",
         done: (p) =>
-          at(p, "V") >= 2 &&
+          at(p, "V") >= 3 &&
           at(p, "XOR") >= 1 &&
           at(p, "AND") >= 1 &&
           at(p, "LED") >= 2,
       },
       {
-        do: "Wire input A to BOTH gates' A inputs and input B to BOTH gates' B inputs (each input fans out to two pins). Send XOR.Y → Rs → SUM LED → GND and AND.Y → Rc → CARRY LED → GND, then both sources' −'s → GND. Set both inputs to 5 V and Run.",
-        why: "Both inputs are 1. XOR(1,1) = 0 so the SUM LED is dark; AND(1,1) = 1 so the CARRY LED lights. That's 1 + 1 = binary 10 — two — read off the two LEDs.",
+        do: "Power both gates: wire the 5 V supply's + to each gate's VCC pin and each gate's GND pin to Ground (supply − → GND). Then wire input A to BOTH gates' A inputs and input B to BOTH gates' B inputs (each input fans out to two pins). Send XOR.Y → Rs → SUM LED → GND and AND.Y → Rc → CARRY LED → GND, then both inputs' −'s → GND. Set both inputs to 5 V and Run.",
+        why: "VCC and GND wake both chips up. Both inputs are 1: XOR(1,1) = 0 so the SUM LED is dark; AND(1,1) = 1 so the CARRY LED lights. That's 1 + 1 = binary 10 — two — read off the two LEDs.",
         done: (p) =>
           at(p, "XOR") >= 1 &&
           at(p, "AND") >= 1 &&
@@ -2087,6 +2124,7 @@ export const EXAMPLES: ExampleSpec[] = [
         const leds = comp(g, "LED", 11, 0, 0);
         const rc = comp(g, "R", 8, 6, 330);
         const ledc = comp(g, "LED", 11, 6, 0);
+        const vcc = comp(g, "V", 1, 4, 5, 1); // shared 5 V logic supply
         const gnd = comp(g, "GND", 14, 4, 0);
         wire(g, va, 0, xor, 1);
         wire(g, va, 0, and, 1);
@@ -2098,6 +2136,9 @@ export const EXAMPLES: ExampleSpec[] = [
         wire(g, and, 0, rc, 0);
         wire(g, rc, 1, ledc, 0);
         wire(g, ledc, 1, gnd, 0);
+        powerGate(g, xor, vcc, 0, gnd);
+        powerGate(g, and, vcc, 0, gnd);
+        wire(g, vcc, 1, gnd, 0);
         wire(g, va, 1, gnd, 0);
         wire(g, vb, 1, gnd, 0);
         return g.serialize();
@@ -2108,14 +2149,15 @@ export const EXAMPLES: ExampleSpec[] = [
     id: "logic-sr-latch",
     name: "SR Latch (Memory from Gates)",
     blurb:
-      "Two gates that remember. Cross-couple two NOR gates — each one's output feeds back into the other's input — and you get the first circuit with memory: an SR latch. Assert SET and the output Q latches HIGH and holds; assert RESET and it latches LOW and holds. With both inputs at 0 it simply keeps its last value — that held bit is one unit of memory, and it's the leap from combinational logic (output follows input) to sequential logic (output remembers). Every flip-flop and memory cell grows from this loop.",
+      "Two gates that remember. Cross-couple two NOR gates — each one's output feeds back into the other's input — and you get the first circuit with memory: an SR latch. Assert SET and the output Q latches HIGH and holds; assert RESET and it latches LOW and holds. With both inputs at 0 it simply keeps its last value — that held bit is one unit of memory, and it's the leap from combinational logic (output follows input) to sequential logic (output remembers). Every flip-flop and memory cell grows from this loop. Both NORs are real ICs: each needs its VCC and GND power pins wired or the latch is dead.",
     watch:
       "the Q LED holding its state. With SET asserted it's latched ON — the feedback loop keeps it lit, not any live input. Flip to RESET (the toggle) and Q latches OFF and stays dark. The latch isn't following its input moment to moment; it's remembering what you last told it.",
     build() {
       // SR latch from two cross-coupled NOR gates (behavioral gate parts, which
       // settle deterministically by the one-tick delay). NOR1.Y = Q, NOR2.Y = Q̄;
       // each output feeds the other's free input. R→NOR1.A, S→NOR2.A. SET=1,RESET=0
-      // ⇒ Q̄ forced low ⇒ Q high (lit), held by the loop.
+      // ⇒ Q̄ forced low ⇒ Q high (lit), held by the loop. Both NORs are powered ICs
+      // sharing one 5 V supply on their VCC pins, or the latch is dead.
       //   nets: R = Vr+ = NOR1.A ; S = Vs+ = NOR2.A ; Q = NOR1.Y = NOR2.B = Rq.A ;
       //         Q̄ = NOR2.Y = NOR1.B ; GND = LED.K = refs.
       const g = new BoardGraph();
@@ -2125,6 +2167,7 @@ export const EXAMPLES: ExampleSpec[] = [
       const nor2 = comp(g, "NOR", 5, 6, 5); // output Q̄
       const rq = comp(g, "R", 10, 0, 330); // Q LED limit
       const led = comp(g, "LED", 14, 0, 0);
+      const vcc = comp(g, "V", 2, 3, 5, 1); // shared 5 V logic supply for both NORs
       const gnd = comp(g, "GND", 10, 8, 0);
       wire(g, vr, 0, nor1, 1); // RESET → NOR1.A
       wire(g, vs, 0, nor2, 1); // SET → NOR2.A
@@ -2133,19 +2176,22 @@ export const EXAMPLES: ExampleSpec[] = [
       wire(g, nor1, 0, rq, 0); // Q → R
       wire(g, rq, 1, led, 0);
       wire(g, led, 1, gnd, 0);
+      powerGate(g, nor1, vcc, 0, gnd); // NOR1.VCC ← +5 V, NOR1.GND ← ground
+      powerGate(g, nor2, vcc, 0, gnd); // NOR2.VCC ← +5 V, NOR2.GND ← ground
+      wire(g, vcc, 1, gnd, 0); // supply − → GND
       wire(g, vr, 1, gnd, 0);
       wire(g, vs, 1, gnd, 0);
       return g.serialize();
     },
     steps: [
       {
-        do: "Place two NOR gates and a Voltage Source (V) for each input — one SET, one RESET — plus an LED + Resistor on Q and a Ground.",
-        why: "A latch is just two gates wired to feed each other. The cross-coupling is what turns a pair of NORs into a memory cell.",
-        done: (p) => at(p, "NOR") >= 2 && at(p, "V") >= 2 && at(p, "LED") >= 1,
+        do: "Place two NOR gates, a Voltage Source (V) for each input — one SET, one RESET — a third Voltage Source (V, 5 V) to power both gates, plus an LED + Resistor on Q and a Ground.",
+        why: "A latch is just two gates wired to feed each other. The cross-coupling is what turns a pair of NORs into a memory cell — but each NOR is a real IC and does nothing until its VCC and GND pins are fed, so the third source is shared power.",
+        done: (p) => at(p, "NOR") >= 2 && at(p, "V") >= 3 && at(p, "LED") >= 1,
       },
       {
-        do: "Cross-couple them: the first NOR's output (Q) into the second NOR's free input, and the second NOR's output (Q̄) back into the first NOR's free input. Wire RESET to the first gate's other input, SET to the second gate's other input, and an LED + Resistor from Q to Ground. Set SET = 5 V, RESET = 0 V and Run.",
-        why: "Asserting SET forces Q̄ low, which releases Q high — and the feedback then holds it. Q is lit, latched on by the loop, not by a live input.",
+        do: "Power both gates: wire the 5 V supply's + to each NOR's VCC pin and each NOR's GND pin to Ground (supply − → GND). Then cross-couple them: the first NOR's output (Q) into the second NOR's free input, and the second NOR's output (Q̄) back into the first NOR's free input. Wire RESET to the first gate's other input, SET to the second gate's other input, and an LED + Resistor from Q to Ground. Set SET = 5 V, RESET = 0 V and Run.",
+        why: "VCC and GND wake both chips up. Asserting SET forces Q̄ low, which releases Q high — and the feedback then holds it. Q is lit, latched on by the loop, not by a live input.",
         done: (p) => at(p, "NOR") >= 2 && at(p, "LED") >= 1 && p.complete,
       },
       {
@@ -2166,6 +2212,7 @@ export const EXAMPLES: ExampleSpec[] = [
         const nor2 = comp(g, "NOR", 5, 6, 5);
         const rq = comp(g, "R", 10, 0, 330);
         const led = comp(g, "LED", 14, 0, 0);
+        const vcc = comp(g, "V", 2, 3, 5, 1); // shared 5 V logic supply
         const gnd = comp(g, "GND", 10, 8, 0);
         wire(g, vr, 0, nor1, 1);
         wire(g, vs, 0, nor2, 1);
@@ -2174,6 +2221,9 @@ export const EXAMPLES: ExampleSpec[] = [
         wire(g, nor1, 0, rq, 0);
         wire(g, rq, 1, led, 0);
         wire(g, led, 1, gnd, 0);
+        powerGate(g, nor1, vcc, 0, gnd);
+        powerGate(g, nor2, vcc, 0, gnd);
+        wire(g, vcc, 1, gnd, 0);
         wire(g, vr, 1, gnd, 0);
         wire(g, vs, 1, gnd, 0);
         return g.serialize();

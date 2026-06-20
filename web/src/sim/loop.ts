@@ -69,6 +69,12 @@ export interface SimHandle {
      * format carry per-device parameters (op-amp GBW now; MOSFET/BJT/diode params as wired).
      */
     params?: Float64Array,
+    /**
+     * Optional **fifth terminal** per element — a powered logic gate's GND pin (its VCC
+     * rides on `d`). Omitted/empty means every fifth terminal is ground (the legacy
+     * 4-terminal shape). Trails `params` so existing callers stay source-compatible.
+     */
+    e?: Uint32Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -106,7 +112,7 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       acFields: sim.ac_fields(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values, c, aux, d, params) => {
+    setNetlist: (nodeCount, types, a, b, values, c, aux, d, params, e) => {
       // Default the control array `c` and the fourth terminal `d` to all-ground and
       // the aux scalars to all-zero when a caller omits them, then hand the wasm
       // boundary its native a,b,c,d,values,aux order. The core ignores c/d for
@@ -115,11 +121,29 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       const cc = c ?? new Uint32Array(types.length);
       const dd = d ?? new Uint32Array(types.length);
       const ax = aux ?? new Float64Array(types.length);
-      // Route to the param-aware boundary only when a non-empty param block is supplied,
-      // so the common (no-params) path stays byte-for-byte the default install.
-      return params && params.length > 0
-        ? sim.set_netlist_p(nodeCount, types, a, b, cc, dd, values, ax, params)
-        : sim.set_netlist(nodeCount, types, a, b, cc, dd, values, ax);
+      // Route to the full boundary (`set_netlist_pe`) when either a fifth terminal
+      // (a powered gate's GND pin) or a param block is supplied; pass the missing one
+      // as empty (= all ground / all defaults). Otherwise keep the common path
+      // byte-for-byte the default install.
+      const hasParams = params != null && params.length > 0;
+      const hasE = e != null && e.length > 0;
+      if (hasParams || hasE) {
+        const ee = e ?? new Uint32Array(0);
+        const pp = params ?? new Float64Array(0);
+        return sim.set_netlist_pe(
+          nodeCount,
+          types,
+          a,
+          b,
+          cc,
+          dd,
+          ee,
+          values,
+          ax,
+          pp,
+        );
+      }
+      return sim.set_netlist(nodeCount, types, a, b, cc, dd, values, ax);
     },
     reset: () => sim.reset(),
     acSweep: (freqs, real) => sim.ac_sweep(freqs, real),

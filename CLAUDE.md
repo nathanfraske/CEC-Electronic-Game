@@ -148,6 +148,16 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
 
 ## Gotchas
 
+- **Powered logic gates** (`ELEM_GATE`) are real **5-pin ICs** using the **5th `Element` terminal**:
+  a=OUT, b=IN1, c=IN2, **d=VCC, e=GND**. The rail is `V(VCC) − V(GND)` (`gate_rails`), inputs
+  threshold relative to `V(GND)`, and the output swings `V(GND)..V(VCC)` (the `digital_vlow`
+  GND-offset array). A gate with **no** power pins (`d==0 && e==0`) falls back to the legacy `value`
+  rail referenced to ground, so old netlists/the golden are **bit-identical**. An unwired VCC floats
+  to ~0 → rail `< GATE_MIN_RAIL` → the gate is **dead** (output released). The 5th terminal crosses
+  the boundary via `set_netlist_pe(... e ...)`; the old `set_netlist`/`_p` delegate with `e=&[]`
+  (all ground). Web: gates are 5-pin `[Y, A, B, VCC, GND]` (NOT/BUF's pin 2 is the package **NC**,
+  ignored); `buildNetlist` emits the `e` array and `loop.ts` calls `set_netlist_pe`. The gate
+  `value` (logic rail) is now vestigial once powered — the family (CMOS/TTL) still sets thresholds.
 - The web **`PULSE`** (pulse/clock generator) part has **no sim element of its own** — it maps to
   `ELEM_ACSOURCE` (type 7) with a **waveform param** (slot 1: 1 = square, 2 = triangle; slot 3 =
   duty), and `ac_source_emf` branches on it. Slot 1 = 0 is sine, so a plain AC source is
