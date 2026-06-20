@@ -890,6 +890,44 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // JK / T flip-flop (CEC3076): the universal flip-flop — a D flip-flop fed by JK
+  // steering (D = J·Q̄ + ¬K·Q). Pins Q, GND, J, K, CLK, Q̅, VCC. hold/set/reset/toggle on
+  // the rising edge; tie J=K for a T flip-flop (divide-by-2). Cyan, the memory family.
+  JKFF: kind(
+    "JKFF",
+    "JK Flip-Flop",
+    "cyan",
+    [
+      pin("Q", 2, 0),
+      pin("GND", 1, 2),
+      pin("J", 0, 0),
+      pin("K", 0, 1),
+      pin("CLK", 0, 2),
+      pin("Q̅", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Tri-state buffer (CEC2057): Y = A when OE high, high-impedance (Z) when OE low — the
+  // bus driver. Pins Y, GND, A, OE, VCC. Built as an OE-gated rail feeding a buffer (the
+  // dead-rail-Z trick). Green, the logic family.
+  TRI: kind(
+    "TRI",
+    "Tri-State Buffer",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("GND", 1, 2),
+      pin("A", 0, 1),
+      pin("OE", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
   // Clocked sampler (sim type 22): the ADC atom — a clocked 1-bit quantizer. Pins
   // are ordered OUT, IN, CLK so buildNetlist's pin→terminal map is direct (pin 0 → a
   // = OUT digital, 1 → b = IN analog sense, 2 → c = CLK), matching the core. On each

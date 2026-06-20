@@ -685,6 +685,35 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  JKFF: {
+    name: "JK Flip-Flop",
+    equation: "Q⁺ = J·Q̄ + K̄·Q · (tie J=K ⇒ T)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · edge-triggered J/K · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "The JK is the universal flip-flop: on each rising clock edge J and K decide the next state — hold (0 0), set (1 0), reset (0 1), or TOGGLE (1 1), the one flip-flop that does all four. The toggle is the prize: tie J and K together as a single T input and it flips on every clock while T is high, so Q comes out at half the clock frequency — the divide-by-2 cell every binary counter and frequency divider is built from. It is the SR latch with its forbidden state redeemed: where set = reset = 1 was illegal, here J = K = 1 is the most useful case. Internally it is a D flip-flop fed by steering logic that computes D = J·Q̄ + ¬K·Q from the flop's own outputs; the edge trigger makes the toggle race-free. Wire VCC/GND to power the steering and clock it on the rising edge.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  TRI: {
+    name: "Tri-State Buffer",
+    equation: "Y = A when OE=1 · Hi-Z when OE=0",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · ${Math.abs(e.current) > 1e-7 ? "enabled" : "Hi-Z / idle"} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A tri-state buffer is a buffer with a third output state: high-impedance. When OE (output enable) is high it passes A to Y as a clean logic level; when OE is low it RELEASES Y entirely — neither high nor low, just disconnected (Hi-Z). That third state is the whole idea of a shared bus: many tri-state drivers on one wire, only one enabled at a time, the rest electrically absent. It is the part that makes a data bus, a wired backplane, and the output-enable pin on every memory and register possible. Two enabled drivers fighting on one net is a bus conflict (the sim resolves it to the unknown state X). Internally the enable gates the buffer's supply rail — OE low collapses it so the output goes dark (Hi-Z) — the honest dead-rail realization of the third state.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      {
+        label: "State",
+        value: Math.abs(e.current) > 1e-7 ? "driving" : "Hi-Z / idle",
+      },
+    ],
+  },
   SAMP: {
     name: "Clocked Sampler",
     equation: "OUT ← (IN > Vth) on ↑CLK",

@@ -208,15 +208,32 @@ const ELEM_GATE = 17;
  * the step whose element backs the part's glyph/inspector current; `voutPin` the pin read for
  * `vAcross`. (Gate func codes mirror `GATE_AUX`: AND 0, OR 1, NOR 3, XOR 4, NOT 6. A NOT step
  * ignores `in2`, so it is set equal to `in1`.)
+ *
+ * A few composites need **non-gate** elements too (the JK flip-flop's `ELEM_DFF`, the tri-state
+ * buffer's `ELEM_ASWITCH` + pull-down resistor + an internally-railed buffer). Those go in the
+ * optional `extra` list as **raw element steps** — `{ t, a, b, c, d, e, value, aux }` with every
+ * terminal an explicit ref (pin index or internal node) — emitted verbatim after the gates. `primary`
+ * indexes the COMBINED emission order (gates first, then extra), so it can point at a raw element.
  */
 type GateStep = [func: number, out: number, in1: number, in2: number];
+interface RawStep {
+  t: number; // sim element type
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  value: number;
+  aux: number;
+}
 interface CecComp {
   internal: number; // private internal node count
   vccPin: number;
   gndPin: number;
   voutPin: number; // pin whose voltage is the part's "output" (for vAcross)
-  primary: number; // index into gates[] backing the part current
+  primary: number; // index into the combined (gates then extra) emission backing the part current
   gates: GateStep[];
+  extra?: RawStep[]; // non-gate elements (DFF, analog switch, resistor), emitted after the gates
 }
 // Internal-node ref helper: internal node k → the ref value the expander resolves.
 const NI = (k: number): number => -(k + 1);
@@ -321,6 +338,51 @@ const CEC_COMP: Record<string, CecComp> = {
       [0, NI(2), 3, 0], // t2 = AND(C, A)
       [1, NI(3), NI(0), NI(1)], // t3 = OR(t0, t1)
       [1, 4, NI(3), NI(2)], // Y = OR(t3, t2)
+    ],
+  },
+  // JK / T flip-flop (CEC3076): pins Q(0) GND(1) J(2) K(3) CLK(4) Q̄(5) VCC(6). A D
+  // flip-flop fed by JK steering: D = J·Q̄ + ¬K·Q. The steering is four powered gates;
+  // the memory is a raw ELEM_DFF (Q=a, D=b, CLK=c, Q̄=d). The edge trigger makes J=K=1
+  // a clean toggle. Tie J=K for a T flip-flop. Internals: nk, t1, t2, D = 4 nodes.
+  JKFF: {
+    internal: 4,
+    vccPin: 6,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 4, // the DFF (4 gate steps precede it in the combined order)
+    gates: [
+      [6, NI(0), 3, 3], // nk = NOT(K)
+      [0, NI(1), 2, 5], // t1 = AND(J, Q̄)
+      [0, NI(2), NI(0), 0], // t2 = AND(nk, Q)
+      [1, NI(3), NI(1), NI(2)], // D = OR(t1, t2)
+    ],
+    extra: [
+      // ELEM_DFF (19): Q=a, D=b, CLK=c, Q̄=d. Powered by its `value` logic rail (it has
+      // no VCC/GND pins); the steering gates use the part's wired VCC/GND.
+      { t: 19, a: 0, b: NI(3), c: 4, d: 5, e: 0, value: 5, aux: 0 },
+    ],
+  },
+  // Tri-state buffer (CEC2057): pins Y(0) GND(1) A(2) OE(3) VCC(4). A buffer whose VCC
+  // rail is gated by OE (the dead-rail-Z trick): an ELEM_ASWITCH passes VCC onto a private
+  // rail node when OE is high, a large pull-down collapses that rail when OE is low, and a
+  // BUF gate powered from that rail drives Y = A (OE high) or releases to Z (OE low, rail
+  // below the gate's operating minimum). Internal: the gated rail node = 1.
+  TRI: {
+    internal: 1,
+    vccPin: 4,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 2, // the buffer (the two raw switch/resistor steps precede it; 0 gates)
+    gates: [],
+    extra: [
+      // ASWITCH (24): a/b = VCC↔rail, c = OE (control), d = VCC, e = GND. Small R_on so the
+      // rail sits at ~VCC when closed.
+      { t: 24, a: 4, b: NI(0), c: 3, d: 4, e: 1, value: 10, aux: 0 },
+      // Pull-down resistor (1) rail→GND: large, so an open switch collapses the rail to ~0.
+      { t: 1, a: NI(0), b: 1, c: 0, d: 0, e: 0, value: 1e5, aux: 0 },
+      // BUF gate (17, func 7) Y = A, powered from the GATED rail (d = rail, e = GND): dead
+      // (output Z) when the rail collapses, drives A when the rail is up.
+      { t: 17, a: 0, b: 2, c: 2, d: NI(0), e: 1, value: 5, aux: 7 },
     ],
   },
 };
@@ -787,6 +849,19 @@ export function buildNetlist(
         pushFGH();
         values.push(c.value); // vestigial logic rail (the gate is powered through d/e)
         auxArr.push(func + 16 * family);
+      }
+      // Non-gate elements (a DFF, an analog switch, a pull-down resistor, an internally-railed
+      // buffer): each raw step lists every terminal explicitly, emitted verbatim after the gates.
+      for (const rs of comp.extra ?? []) {
+        types.push(rs.t);
+        aArr.push(resolve(rs.a));
+        bArr.push(resolve(rs.b));
+        cArr.push(resolve(rs.c));
+        dArr.push(resolve(rs.d));
+        eArr.push(resolve(rs.e));
+        pushFGH();
+        values.push(rs.value);
+        auxArr.push(rs.aux);
       }
       elemOfComponent.set(c.id, firstIdx + comp.primary);
       nodesOfComponent.set(c.id, [nodeOfPin(comp.voutPin), nGnd]);
