@@ -14,10 +14,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   182 tests pass debug+release; fmt/clippy clean; wasm builds. Combinational = gate-like live drive;
   registered = DFF-pattern latch on the sub-tick kernel. Rationale (LUT fabric over a baked ISA) in
   ADR 0004. The whole engine chain is now landed: SPI master/slave, UART, sub-ticking, FPGA LE.
-- [ ] **Web-wire the backed behavioral/mixed-signal parts** (deferred per owner until refsheets):
-  comparator, sampler, gated switch, SPI/UART/LUT behavioral blocks, CEC catalog → PART_KINDS +
-  `buildNetlist` + bin glyphs. The LUT is a great first web part (config = one 16-bit number / a
-  truth-table grid; combinational vs registered = a checkbox).
+- ~~**Web-wire the backed behavioral/mixed-signal parts**~~ — DONE (2026-06-20, see HANDOFFS 70-72).
+  All placeable now: SAMP (sampler), ASW (gated switch), CMP (comparator); the 9 CEC composites
+  (HADD/FADD/MUX2/DMUX/MAJ3/SRL/DLATCH/JKFF/TRI via a data-driven gate-network expander); and the 4
+  behavioral blocks LUT/SPIM/SPIS/UART (8-terminal, `BEH_SPEC` term maps, `f/g/h` emission +
+  signature). LUT editor = presets + hex truth table + combinational/registered toggle. Generic
+  IC-card glyphs (bespoke glyphs/refsheets remain optional follow-ups). Remaining sub-items:
+  comparator 6-pin LATCHED (LE=f, now unblocked, needs an unconnected-pin check); SPI/UART config
+  knobs (nbits/baud/half-period — sim params left at defaults today).
 - [ ] Minor cleanup: move `BEH_SUBTICK_RATE_SLOT` off the shared `RATED_CURRENT_SLOT` (slot 2) to a
   free slot (5-7); the LUT mode now occupies slot 4.
 
