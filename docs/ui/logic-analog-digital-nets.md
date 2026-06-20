@@ -77,10 +77,10 @@ matrix as every other element. Reading the code:
 The front end mirrors this with a single number: `value` is the logic-high rail
 (`web/src/lib/graph.ts:370-374`), and `gateInfo` teaches exactly one threshold —
 `threshold = rail / 2` (`web/src/lib/partInfo.ts:110-116`). Note also a latent
-gap: `GATE_AUX` in `web/src/lib/netlist.ts:116-123` only defines AND/OR/NAND/
-NOR/XOR/NOT — **XNOR (5) and BUF (7) exist in the core but are unreachable from
-the board** because no part maps to them. (Minor, but relevant: any redesign
-should decide whether to surface them.)
+gap (**RESOLVED 2026-06**): `GATE_AUX` now defines all ten functions (AND/OR/
+NAND/NOR/XOR/XNOR/NOT/BUF/IMPLY/NIMPLY), and **XNOR and BUF are placeable parts**
+(in `PART_KINDS` + the `PARTS` bin + `DIGITAL_KINDS`). The note below about
+"surfacing them" is kept for history but is done.
 
 ### 1.2 The single sentence that captures the limitation
 
