@@ -20,16 +20,19 @@ added a CEC branch to the floating-source connectivity check (treat the IC as a 
 **Adding a new composite = one `CEC_COMP` table entry + a PART_KINDS pinout + UI rows.** No bespoke
 glyph — composites use the generic IC-card fallback (the five-tier refsheets carry the detail).
 
-**LANDED (5 combinational composites):** HADD (half-adder), FADD (full-adder), MUX2 (2:1 mux), DMUX
-(1:2 demux/decoder), MAJ3 (majority/voter). Pins match the CEC catalog (CEC2024/2018/2031/2032/2046);
-equations verified against truth tables (FADD reuses t0=A⊕B for SUM and carry; MAJ3 = AND-OR voter).
+**LANDED (7 composites):** combinational — HADD (half-adder), FADD (full-adder), MUX2 (2:1 mux), DMUX
+(1:2 demux/decoder), MAJ3 (majority/voter); sequential — **SRL (SR latch, cross-coupled NOR)**,
+**DLATCH (D-latch, gated SR)**. Pins match the CEC catalog (CEC2024/2018/2031/2032/2046/3007/3014);
+equations verified against truth tables (FADD reuses t0=A⊕B for SUM and carry; the latches' cross-coupled
+feedback settles in the digital sub-solve — all gate-only, so they fit the expander as-is).
 
 **NEXT chunks (ordered, per owner "Both, CEC first"):**
-1. **Sequential CEC composites** — SR latch (cross-coupled NOR), D-latch (gated SR), JK/T (DFF +
-   steering), tri-state buffer (OE-gated power). The latches need cross-coupled gates (digital feedback;
-   the engine handles it since gates read committed levels); JK needs a DFF element in the macro (extend
-   `GateStep`/the expander to allow a DFF step, or special-case); tri-state = a gate whose VCC is gated
-   by OE (the dead-rail Z trick — needs an OE-gated rail, may need a small expander tweak).
+1. **Remaining CEC composites** — **JK/T flip-flop** (DFF + steering) and **tri-state buffer** (OE-gated
+   power). Both need the expander GENERALIZED beyond gate-only steps: JK needs a DFF element step
+   (`ELEM_DFF`=19, a=Q b=D c=CLK d=Q̄); tri-state needs an `ELEM_ASWITCH` passing VCC→an internal rail
+   gated by OE + a pull-down + a BUF gate powered off that rail (the dead-rail Z trick). Plan: make a
+   `Step` carry an element type + explicit a/b/c/d/e refs (gates keep auto VCC/GND; DFF/switch set their
+   own). Then JK pins Q/GND/J/K/CLK/Q̄/VCC (CEC3076), tri-state pins Y/GND/A/OE/VCC (CEC2057).
 2. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin → needs the f/g/h emission
    infra: generalize `pushFGH(nf,ng,nh)` + SIX/SEVEN/EIGHT_PIN sets; prog id in `value`; **LUT truth
    table edited via PRESETS + HEX** per owner; mode in `params[4]`). Also unblocks the comparator's

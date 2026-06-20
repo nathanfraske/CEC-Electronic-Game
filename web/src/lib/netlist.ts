@@ -276,6 +276,37 @@ const CEC_COMP: Record<string, CecComp> = {
       [0, 2, 3, 4], // Y1 = AND(D, SEL)
     ],
   },
+  // SR latch (CEC3007): pins Q(0) GND(1) S(2) R(3) VCC(4). Two cross-coupled NORs —
+  // Q = NOR(R, Qbar), Qbar = NOR(S, Q). Qbar is the one internal node. The digital
+  // sub-solve settles the feedback; S=R=1 drives both low (the forbidden state).
+  SRL: {
+    internal: 1,
+    vccPin: 4,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [3, NI(0), 2, 0], // Qbar = NOR(S, Q)
+      [3, 0, 3, NI(0)], // Q = NOR(R, Qbar)
+    ],
+  },
+  // D-latch (CEC3014): pins Q(0) GND(1) D(2) EN(3) Qbar(4) VCC(5). A gated SR latch —
+  // steering ANDs (S = D·EN, R = ¬D·EN) into the cross-coupled NOR pair. Transparent
+  // (Q follows D) while EN high; holds when EN low (both steering terms forced low).
+  DLATCH: {
+    internal: 3,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 3,
+    gates: [
+      [6, NI(0), 2, 2], // nd = NOT(D)
+      [0, NI(1), 2, 3], // s = AND(D, EN)
+      [0, NI(2), NI(0), 3], // r = AND(nd, EN)
+      [3, 0, NI(2), 4], // Q = NOR(r, Qbar)
+      [3, 4, NI(1), 0], // Qbar = NOR(s, Q)
+    ],
+  },
   // Majority / voter (CEC2046, 74-series gate order): pins A(0) B(1) GND(2) C(3) Y(4) VCC(5).
   // Y = AB + BC + CA.
   MAJ3: {

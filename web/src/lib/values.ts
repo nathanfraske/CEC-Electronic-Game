@@ -72,6 +72,8 @@ const CURATED_FULL: Record<string, number[]> = {
   MUX2: [1.8, 2.5, 3.3, 5, 12, 15],
   DMUX: [1.8, 2.5, 3.3, 5, 12, 15],
   MAJ3: [1.8, 2.5, 3.3, 5, 12, 15],
+  SRL: [1.8, 2.5, 3.3, 5, 12, 15],
+  DLATCH: [1.8, 2.5, 3.3, 5, 12, 15],
   // Clocked sampler comparison threshold (V): the level the input is quantized
   // against on each clock edge — sub-volt up through a 5 V logic mid-rail.
   SAMP: [0.5, 1, 1.65, 2.5, 3.3, 4, 5],
@@ -151,6 +153,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   MUX2: [3.3, 5, 12],
   DMUX: [3.3, 5, 12],
   MAJ3: [3.3, 5, 12],
+  SRL: [3.3, 5, 12],
+  DLATCH: [3.3, 5, 12],
   // The sampler thresholds people reach for first (a 3.3 V mid, a 5 V mid).
   SAMP: [1.65, 2.5, 3.3],
   // The analog-switch on-resistances people reach for first (lab / typical / cheap).

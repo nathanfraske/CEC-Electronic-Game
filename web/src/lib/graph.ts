@@ -855,6 +855,41 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // SR latch (CEC3007): cross-coupled NORs — the first bit of memory. Pins Q, GND, S,
+  // R, VCC. Set/Reset with hold (S=R=1 is the forbidden state). Cyan, the memory family.
+  SRL: kind(
+    "SRL",
+    "SR Latch",
+    "cyan",
+    [
+      pin("Q", 2, 1),
+      pin("GND", 1, 2),
+      pin("S", 0, 0),
+      pin("R", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // D-latch (CEC3014): a level-sensitive gated latch — transparent (Q follows D) while
+  // EN high, holds when EN low. Pins Q, GND, D, EN, Q̅, VCC. The level-vs-edge teacher.
+  DLATCH: kind(
+    "DLATCH",
+    "D-Latch",
+    "cyan",
+    [
+      pin("Q", 2, 0),
+      pin("GND", 1, 2),
+      pin("D", 0, 0),
+      pin("EN", 0, 2),
+      pin("Q̅", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
   // Clocked sampler (sim type 22): the ADC atom — a clocked 1-bit quantizer. Pins
   // are ordered OUT, IN, CLK so buildNetlist's pin→terminal map is direct (pin 0 → a
   // = OUT digital, 1 → b = IN analog sense, 2 → c = CLK), matching the core. On each

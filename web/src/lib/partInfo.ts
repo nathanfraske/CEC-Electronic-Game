@@ -659,6 +659,32 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  SRL: {
+    name: "SR Latch",
+    equation: "Q = NOR(R, Q̄) · Q̄ = NOR(S, Q)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · set/reset memory · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "An SR latch is the first thing a circuit ever remembered: one bit of memory made of feedback. A pulse on SET drives the output high and it STAYS high after SET releases; a pulse on RESET drives it low and it stays. Hold both low and it remembers its last value. That persistence comes from two cross-coupled NOR gates, each feeding the other's input, so the pair has two stable states it locks into — the bistable cell every flip-flop, register, and SRAM bit grows from. The one rule: do not assert SET and RESET together (both high forces both outputs low and the next state is undefined as they release) — the forbidden state the clocked flip-flops were invented to tame. A real powered IC: wire VCC/GND and the output swings that rail.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  DLATCH: {
+    name: "D-Latch",
+    equation: "Q follows D while EN=1, holds when EN=0",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · transparent when EN high · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A D-latch stores one bit, but unlike a flip-flop it is LEVEL-sensitive: while its enable EN is high the latch is transparent — Q simply follows D — and the instant EN goes low it freezes the last value of D and holds it. It is the missing middle term between the SR latch (feedback memory, but no clean data input) and the edge-triggered D flip-flop (which samples D only on a clock EDGE). Meeting the transparent latch beside the edge flip-flop is the cleanest way to learn level- vs. edge-triggered — the single most confused distinction in sequential logic, and the source of every latch-vs-flop timing bug. Internally it is a gated SR latch: two steering AND gates (D·EN, ¬D·EN) feeding the cross-coupled NOR pair, so EN low forces both terms low and the latch holds. A real powered IC: wire VCC/GND and the outputs swing that rail.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
   SAMP: {
     name: "Clocked Sampler",
     equation: "OUT ← (IN > Vth) on ↑CLK",
