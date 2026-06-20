@@ -228,6 +228,26 @@ const BAR_OFF_ALPHA = 0.14; // unlit segment track (the "off LED")
 const BAR_OFF_COLOR = 0x6b6488; // unlit track / notch colour (the rail muted-violet)
 const BAR_NOTCH_COLOR = 0xe9e4ff; // the always-drawn zero-notch line
 
+// --- analogy water standpipe voltage gauge -----------------------------------
+// The analogy twin of the reality LED bar: one thin glass/steel STANDPIPE per NET, drawn
+// at the same per-net anchor in the ANALOGY lens only. HEIGHT = water pressure = VOLTAGE
+// (via `voltsToPx`, reusing `BAR_HALF` so the standpipe and the bar agree on volts→px). A
+// horizontal ground line at the anchor is the zero level; a positive rail fills UP, a
+// negative rail drains into a SUMP below the line. The calm fill rises to the RMS level
+// (the effective pressure — matches the bar + the inspector number) with a bright surface
+// band at the waterline; a translucent "splash zone" (the tide / wet-mark) reaches on up to
+// the peak (Vmax) and down to Vmin in the sump. DC ⇒ no wet-mark, just the calm level.
+const SP_W = 9; // standpipe inner bore width (px)
+const SP_WALL_W = 1.3; // housing wall stroke width (px)
+const SP_WALL_ALPHA = 0.55; // housing wall (PIPE_WALL) alpha
+const SP_RADIUS = 2; // small radius on the glass housing
+const SP_WATER_ALPHA = 0.92; // calm RMS water fill
+const SP_WET_ALPHA = 0.26; // translucent splash/tide band (peak envelope)
+const SP_SURFACE_ALPHA = 0.95; // the bright surface band at the calm waterline
+const SP_SURFACE_H = 2.2; // surface-band thickness (px)
+const SP_GROUND_ALPHA = 0.8; // the always-drawn ground (zero-level) line
+const SP_TINT = 0.5; // blend the surface band PIPE_WATER→rail colour by this much
+
 // --- conduit skin (analogy/reality LOD) --------------------------------------
 // Zoomed in under the analogy/reality lens, a bare trace is re-skinned as the same
 // conduit the components become: an ANALOGY pipe (steel wall + dark bore + voltage-
@@ -3953,9 +3973,11 @@ export class Board {
       g.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
       g.circle(d.x, d.y, 3).fill({ color: d.color });
     }
-    // Reality lens only: one per-net LED voltage bar-gauge (the pre-attentive MAGNITUDE
-    // channel), drawn on top of the conduit at each net's representative anchor.
+    // Per-net voltage MAGNITUDE gauge, drawn on top of the conduit at each net's anchor:
+    // the reality lens gets the LED bar, the analogy lens its water-standpipe twin (height =
+    // pressure = voltage). Schematic shows neither. Both share `netGaugeAnchors`.
     if (conduit === "reality") this.drawNetBars(g, nets, condRoutes);
+    else if (conduit === "analogy") this.drawNetStandpipes(g, nets, condRoutes);
     // Drop offsets for wires that no longer exist (after a delete), so the maps
     // can't grow without bound across a long editing session.
     if (this.carrierOffset.size > this.graph.wires.size) {
@@ -4002,6 +4024,41 @@ export class Board {
   }
 
   /**
+   * One representative gauge anchor per NET — the single source of truth shared by the
+   * reality LED bar ({@link drawNetBars}) and the analogy water standpipe
+   * ({@link drawNetStandpipes}) so the two lenses agree on where a net's gauge sits.
+   * Wires are grouped by node; each net's longest drawn conduit route wins, and the anchor
+   * is that route's midpoint plus the perpendicular **unit normal** (`nx`,`ny`) the caller
+   * offsets along to clear the pipe. The ground net (node 0) and unconnected wires (null)
+   * get no gauge.
+   */
+  private netGaugeAnchors(
+    nets: Map<number, number | null>,
+    condRoutes: Map<number, Point[]>,
+  ): Map<number, { x: number; y: number; nx: number; ny: number }> {
+    const longest = new Map<number, { route: Point[]; len: number }>();
+    for (const [wid, node] of nets) {
+      if (node === null || node <= 0) continue;
+      const route = condRoutes.get(wid);
+      if (!route || route.length < 2) continue;
+      const len = routeLength(route);
+      if (len <= 0) continue;
+      const cur = longest.get(node);
+      if (!cur || len > cur.len) longest.set(node, { route, len });
+    }
+    const anchors = new Map<
+      number,
+      { x: number; y: number; nx: number; ny: number }
+    >();
+    for (const [node, best] of longest) {
+      const s = sampleRouteAt(best.route, best.len / 2);
+      // Perpendicular unit normal to the route at the midpoint (the side the gauge offsets to).
+      anchors.set(node, { x: s.x, y: s.y, nx: -s.dy, ny: s.dx });
+    }
+    return anchors;
+  }
+
+  /**
    * Reality-lens pass: one segmented **LED voltage bar-gauge** per NET — the pre-attentive
    * MAGNITUDE channel for voltage (the rail-identity COLOUR already rides the conduit). Nets
    * are grouped from the wire→node map; the bar anchors at the midpoint of the net's longest
@@ -4015,30 +4072,16 @@ export class Board {
     nets: Map<number, number | null>,
     condRoutes: Map<number, Point[]>,
   ): void {
-    // Group wires by net, tracking each net's longest drawn route as its anchor candidate.
-    // Skip the ground net (node 0) and unconnected wires (null) — neither gets a gauge.
-    const longest = new Map<number, { route: Point[]; len: number }>();
-    for (const [wid, node] of nets) {
-      if (node === null || node <= 0) continue;
-      const route = condRoutes.get(wid);
-      if (!route || route.length < 2) continue;
-      const len = routeLength(route);
-      if (len <= 0) continue;
-      const cur = longest.get(node);
-      if (!cur || len > cur.len) longest.set(node, { route, len });
-    }
+    const anchors = this.netGaugeAnchors(nets, condRoutes);
 
     const H = 2 * BAR_HALF; // full container height (px)
     const segH = H / BAR_SEGS; // one segment slot's height
     const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
 
-    for (const [node, best] of longest) {
-      const s = sampleRouteAt(best.route, best.len / 2);
+    for (const [node, a] of anchors) {
       // Offset perpendicular to the route at the midpoint so the bar never sits on the pipe.
-      const px = -s.dy;
-      const py = s.dx;
-      const bx = s.x + px * BAR_OFFSET;
-      const by = s.y + py * BAR_OFFSET;
+      const bx = a.x + a.nx * BAR_OFFSET;
+      const by = a.y + a.ny * BAR_OFFSET;
 
       const { vrms, vmean, vmin, vmax } = this.netVStats(node);
       const color = voltageColor(this.nodeColorVoltage(node));
@@ -4120,6 +4163,151 @@ export class Board {
 
       // "~" AC badge beside the bar iff the net has an appreciable swing (DC ⇒ none).
       if (swinging) this.drawTildeBadge(g, x0 + BAR_W + 5, by, color);
+    }
+  }
+
+  /**
+   * Analogy-lens pass: one **water standpipe** voltage gauge per NET — the analogy twin of
+   * the reality LED bar. HEIGHT = water pressure = VOLTAGE. A thin glass/steel housing sits
+   * at the net's anchor (shared with the bar via {@link netGaugeAnchors}); a horizontal
+   * ground line marks the zero level. The calm water rises to the RMS level (the effective
+   * pressure) with a bright rail-tinted surface band at the waterline; a translucent splash
+   * zone (the tide / wet-mark) reaches up to the peak (Vmax) and, for a bipolar AC net,
+   * down to Vmin in the SUMP below the line. A positive rail fills UP; a negative rail
+   * empties DOWNWARD into the sump. DC degrades cleanly — no wet-mark, just the calm level,
+   * the surface band, and the ground line (the swing→0 limit of the same path).
+   */
+  private drawNetStandpipes(
+    g: Graphics,
+    nets: Map<number, number | null>,
+    condRoutes: Map<number, Point[]>,
+  ): void {
+    const anchors = this.netGaugeAnchors(nets, condRoutes);
+
+    const H = 2 * BAR_HALF; // full unipolar column reach (px) — matches the bar
+    const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
+
+    for (const [node, a] of anchors) {
+      // Offset perpendicular to the route so the standpipe never sits on the pipe.
+      const bx = a.x + a.nx * BAR_OFFSET;
+      const by = a.y + a.ny * BAR_OFFSET; // the ground (zero) level
+
+      const { vrms, vmean, vmin, vmax } = this.netVStats(node);
+      const color = voltageColor(this.nodeColorVoltage(node));
+
+      // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline): swings through
+      // ground AND the DC mean is small versus the swing — the SAME test the LED bar uses.
+      const halfPtp = (vmax - vmin) / 2;
+      const bipolar =
+        vmin < 0 &&
+        vmax > 0 &&
+        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
+      // Appreciable swing (the wet-mark / tide band shows) only when a batch ran and the
+      // peak-to-peak passes a small fraction of full scale — same gates as the bar.
+      const ptpFrac = (voltsToPx(vmax, H) - voltsToPx(vmin, H)) / H;
+      const swinging = live && ptpFrac > BAR_SWING_EPS;
+
+      // Water heights (px) UP / DOWN from the ground line. `calm*` is the RMS waterline; the
+      // `wet*` extents are the splash/tide envelope (peak). The bipolar case centres the
+      // calm band on the baseline and lets the envelope slosh symmetrically into the sump;
+      // the unipolar case fills one side only, growing in the mean's (rail) direction. When
+      // the swing is ~0 the wet extents collapse onto the calm fill → a plain calm column.
+      let calmUp = 0,
+        calmDn = 0,
+        wetUp = 0,
+        wetDn = 0;
+      if (bipolar) {
+        // Calm RMS brackets a near-zero mean → show a thin calm band each side of the
+        // baseline; the envelope (up to Vmax / down to Vmin) is the dominant feature.
+        const rms = voltsToPx(vrms, BAR_HALF);
+        calmUp = rms;
+        calmDn = rms;
+        wetUp = Math.max(rms, voltsToPx(vmax, BAR_HALF));
+        wetDn = Math.max(rms, voltsToPx(-vmin, BAR_HALF));
+      } else {
+        // Unipolar: sign from the mean (rail identity); ≈0 reads as a positive rail filling up.
+        const up = vmean >= 0;
+        const rms = voltsToPx(vrms, H);
+        const peak = voltsToPx(up ? vmax : -vmin, H);
+        if (up) {
+          calmUp = rms;
+          wetUp = Math.max(rms, peak);
+        } else {
+          calmDn = rms;
+          wetDn = Math.max(rms, peak);
+        }
+      }
+
+      // Housing height encloses the full reach (the deeper of the calm/wet extents each way,
+      // with a little headroom) so the glass always contains the water + the tide line.
+      const upExt = Math.max(calmUp, swinging ? wetUp : 0);
+      const dnExt = Math.max(calmDn, swinging ? wetDn : 0);
+      const top = by - Math.max(upExt, 4) - 3;
+      const bot = by + Math.max(dnExt, 4) + 3;
+      const x0 = bx - SP_W / 2;
+      const surfCol = mix(PIPE_WATER, color, SP_TINT); // rail-tinted surface band + cap
+
+      // 1) The splash / tide band (translucent) — the swing envelope, drawn FIRST so the
+      //    calm fill and the surface band sit crisply on top. From the calm waterline up to
+      //    the peak, and (bipolar) down to Vmin in the sump.
+      if (swinging) {
+        if (wetUp > calmUp) {
+          g.roundRect(x0, by - wetUp, SP_W, wetUp - calmUp, SP_RADIUS).fill({
+            color: PIPE_WATER,
+            alpha: SP_WET_ALPHA,
+          });
+        }
+        if (wetDn > calmDn) {
+          g.roundRect(x0, by + calmDn, SP_W, wetDn - calmDn, SP_RADIUS).fill({
+            color: PIPE_WATER,
+            alpha: SP_WET_ALPHA,
+          });
+        }
+      }
+
+      // 2) The calm water — solid RMS fill from the baseline up to calmUp and into the sump
+      //    down to calmDn.
+      if (calmUp > 0) {
+        g.roundRect(x0, by - calmUp, SP_W, calmUp, SP_RADIUS).fill({
+          color: PIPE_WATER,
+          alpha: SP_WATER_ALPHA,
+        });
+      }
+      if (calmDn > 0) {
+        g.roundRect(x0, by, SP_W, calmDn, SP_RADIUS).fill({
+          color: PIPE_WATER,
+          alpha: SP_WATER_ALPHA,
+        });
+      }
+
+      // 3) The bright rail-tinted surface band at each calm waterline (the meniscus that
+      //    carries the rail identity). Drawn where there is calm water on that side.
+      if (calmUp > 0) {
+        g.rect(x0, by - calmUp - SP_SURFACE_H / 2, SP_W, SP_SURFACE_H).fill({
+          color: surfCol,
+          alpha: SP_SURFACE_ALPHA,
+        });
+      }
+      if (calmDn > 0) {
+        g.rect(x0, by + calmDn - SP_SURFACE_H / 2, SP_W, SP_SURFACE_H).fill({
+          color: surfCol,
+          alpha: SP_SURFACE_ALPHA,
+        });
+      }
+
+      // 4) The glass/steel housing outline (PIPE_WALL) over the whole reach.
+      g.roundRect(x0, top, SP_W, bot - top, SP_RADIUS).stroke({
+        width: SP_WALL_W,
+        color: PIPE_WALL,
+        alpha: SP_WALL_ALPHA,
+      });
+
+      // 5) The ground (zero-level) line — always drawn — across the housing at the baseline.
+      g.moveTo(x0 - 1.5, by).lineTo(x0 + SP_W + 1.5, by);
+      g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: SP_GROUND_ALPHA });
+
+      // "~" AC badge beside the standpipe iff the net has an appreciable swing (DC ⇒ none).
+      if (swinging) this.drawTildeBadge(g, x0 + SP_W + 5, by, surfCol);
     }
   }
 
