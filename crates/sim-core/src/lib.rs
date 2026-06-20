@@ -57,10 +57,11 @@
 //! as logic levels, advances a fixed `[u32; 8]` block of internal state, and drives its powered
 //! digital outputs from that committed state — the digital twin of the gate/sampler/DFF, made
 //! programmable. Its `value` is a **program id** dispatching which firmware it runs (`1` = SPI
-//! master; the dispatch is open for SPI slave / UART / I2C / a tiny MCU later), `aux` is the data
-//! word to transmit, and its timing is **structural** (`params[0]` = SCLK half-period in ticks,
-//! `params[1]` = bit count) — never a function of a solved voltage. This is **phase 1**: it runs
-//! at the **base tick rate** (multi-rate sub-ticking is phase 2). The **SPI master** (program 1)
+//! master, `2` = SPI slave, `3` = UART, `4` = FPGA logic element; the dispatch stays open for I2C
+//! and a tiny MCU later), `aux` is the data word / truth table, and its timing is **structural**
+//! (`params[0]` = SCLK half-period in ticks, `params[1]` = bit count) — never a function of a
+//! solved voltage. Sub-ticking (phase 3) lets a block run many digital sub-ticks per analog tick at
+//! a declared rate, so protocols clock at MHz against the µs analog tick. The **SPI master** (program 1)
 //! is Mode 0 (CPOL = 0, CPHA = 0): a rising `START` (`g`) asserts `CS` (`c`) low and shifts the
 //! word out on `MOSI` (`b`) MSB-first, clocked by `SCLK` (`a`) at the structural divider, sampling
 //! `MISO` (`f`) on each rising edge; the three outputs are powered (swing the `GND` (`e`) .. `VCC`
@@ -955,10 +956,11 @@ const ASWITCH_FIXED_THRESH: f64 = 1.5;
 /// the engine end to end.
 ///
 /// **Program-id dispatch.** Its `value` is a **program id** selecting which firmware the block
-/// runs (`1` = SPI master; the dispatch is left open for future programs — SPI slave, UART,
-/// I2C, a tiny MCU — one engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD` overload an
-/// existing element). Its `aux` is the **data word to transmit** (treated as an integer,
-/// `aux as u64`). Timing is structural: `params[0]` is the SCLK **half-period in analog ticks**
+/// runs (`1` = SPI master, `2` = SPI slave, `3` = UART, `4` = FPGA logic element; the dispatch
+/// stays open for I2C and a tiny MCU — one engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD`
+/// overload an existing element). Its `aux` is the **data word to transmit** (treated as an
+/// integer, `aux as u64`) for the serial programs, or the **16-entry truth table** for the LUT
+/// (program 4). Timing is structural: `params[0]` is the SCLK **half-period in analog ticks**
 /// (the clock divider; `<= 0` defaults to [`BEH_SPI_HALF_DEFAULT`]) and `params[1]` is the
 /// **bit count** (`<= 0` defaults to [`BEH_SPI_NBITS_DEFAULT`]). Timing comes **only** from
 /// these declared params — never from a solved voltage (the determinism contract:
@@ -971,9 +973,11 @@ const ASWITCH_FIXED_THRESH: f64 = 1.5;
 /// **zero** extra bytes and the golden is byte-identical by construction. The SPI **master**
 /// program (1) uses the first eight words as `[0]=fsm`, `[1]=bit_index`, `[2]=shift_out`,
 /// `[3]=shift_in`, `[4]=clk_counter`, `[5]=sclk_level`, `[6]=cs_level`, `[7]=start_prev` (see
-/// [`beh_spi_step`]); the SPI **slave** (2, [`beh_spi_slave_step`]) and the **UART** (3,
-/// [`beh_uart_step`]) each lay the same `[u32; `[`BEH_STATE_WORDS`]`]` block out their own way —
-/// every program runs alone in its element, so the word maps need not agree.
+/// [`beh_spi_step`]); the SPI **slave** (2, [`beh_spi_slave_step`]), the **UART** (3,
+/// [`beh_uart_step`]) and the **FPGA logic element** (4, [`beh_lut_step`] — words `[0]=Q`,
+/// `[1]=clk_prev`, or none at all in combinational mode) each lay the same
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block out their own way — every program runs alone in its
+/// element, so the word maps need not agree.
 ///
 /// **SPI master pinout (program 1)** — uses the wider 8-terminal format: `a` = `SCLK` (out),
 /// `b` = `MOSI` (out), `c` = `CS` (out, active-low), `d` = `VCC`, `e` = `GND`, `f` = `MISO`
@@ -993,6 +997,22 @@ const ASWITCH_FIXED_THRESH: f64 = 1.5;
 /// **samples MISO on each rising SCLK edge** (shift-left + OR) and **advances the bit on each
 /// falling edge**, and after the configured bit count deasserts CS and returns to idle with the
 /// received word in `shift_in`. See [`beh_spi_step`] for the exact Mode-0 edge bookkeeping.
+///
+/// **FPGA logic element (program 4)** — the universal digital primitive (ADR 0004 phase 4, the
+/// `FP` part): a **4-input lookup table** whose 16-entry **truth table** is `aux`'s low 16 bits.
+/// The output `a` is `bit[index]` of the table, `index = IN0 | IN1<<1 | IN2<<2 | IN3<<3` from the
+/// inputs `IN0` = `f`, `IN1` = `g`, `IN2` = `h`, `IN3` = `c` (each a digital level at half-rail
+/// relative to `GND`). Every ≤4-input gate is one particular truth table, so a single element
+/// teaches *all* of them (AND = `0x8888`, XOR = `0x6666`, the 3-input majority = `0xE8E8`, …).
+/// `params[`[`BEH_LUT_MODE_SLOT`]`]` selects the **output mode**: combinational (the default — the
+/// output follows the live inputs through the **same digital sub-solve** a gate settles in, no
+/// clock-to-output delay) or **registered** (`>= 1` — the lookup is latched into `Q` on each rising
+/// `CLK` = `b` edge and the output drives that held bit, a LUT followed by a flip-flop). A LUT+FF
+/// "logic element" is the fundamental FPGA building block; a fabric of them is **any** sequential
+/// machine — the honest realization of phase 4's "cycle-stepped state machine / soft core" (an FPGA
+/// has no ISA; it has LUTs). The output is powered exactly like the serial programs (swings
+/// `V(e) .. V(d)`, released below [`GATE_MIN_RAIL`]); a combinational LUT folds a zero state block
+/// (golden-safe by construction), a registered one folds `Q`/`clk_prev`. See [`beh_lut_step`].
 pub const ELEM_BEHAVIORAL: u8 = 25;
 
 /// Width of an [`ELEM_BEHAVIORAL`] block's integer internal-state array — the number of `u32`
@@ -1045,6 +1065,9 @@ const BEH_PROG_SPI_SLAVE: u32 = 2;
 /// Program id selecting the **UART** firmware (program 3) — async TX+RX in one block. See
 /// [`beh_uart_step`].
 const BEH_PROG_UART: u32 = 3;
+/// Program id selecting the **FPGA logic element** firmware (program 4) — a 4-input lookup table
+/// with an optional registered output (ADR 0004 phase 4, the `FP` part). See [`beh_lut_step`].
+const BEH_PROG_LUT: u32 = 4;
 
 // --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
 
@@ -1431,6 +1454,79 @@ fn beh_spi_step(
         }
     }
     state[BEH_SPI_START_PREV] = start as u32;
+}
+
+// --- Behavioral program 4: FPGA logic element (4-input LUT + optional register) ----
+
+/// FPGA-logic-element internal-state word indices (program 4) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block. Only the **registered** mode carries state — the
+/// registered output bit `Q` and its clock-edge companion `CLK_PREV`; a purely **combinational**
+/// LUT advances no state (all words stay zero, folding exactly like an inert block, so it is
+/// golden-safe by construction). A fresh layout (every program runs alone in its element).
+const BEH_LUT_Q: usize = 0;
+const BEH_LUT_CLK_PREV: usize = 1;
+
+/// `params` slot selecting an [`ELEM_BEHAVIORAL`] LUT's **output mode** (program 4): `>= 1` ⇒
+/// **registered** (the LUT result is latched into `Q` on each rising `CLK` edge and the output
+/// drives that held bit, a LUT+flip-flop "logic element"); otherwise **combinational** (the output
+/// follows the live inputs with no clock, a plain gate). Slot 4 is otherwise unused by a behavioral
+/// block (slots 0/1 are the SPI/UART config, slot 2 the sub-tick rate). Structural, never a solved
+/// value.
+const BEH_LUT_MODE_SLOT: usize = 4;
+
+/// Whether an [`ELEM_BEHAVIORAL`] LUT (program 4) is in **registered** mode (`params[`
+/// [`BEH_LUT_MODE_SLOT`]`] >= 1`) versus combinational. Structural config.
+#[inline]
+fn beh_lut_registered(e: &Element) -> bool {
+    e.params[BEH_LUT_MODE_SLOT] >= 1.0
+}
+
+/// The output bit of a 4-input LUT given its 16-entry **truth table** (`truth`, low 16 bits) and a
+/// 4-bit input `index` (`IN0` = bit 0 … `IN3` = bit 3): bit `index` of the table. The index is
+/// masked to `0..16` so the shift can never exceed the table width (a LUT4 is exactly 16 entries).
+/// Pure integer arithmetic — the universal combinational primitive (every ≤4-input gate is one
+/// particular truth table).
+#[inline]
+fn beh_lut_bit(truth: u32, index: u32) -> bool {
+    (truth >> (index & 0xF)) & 1 != 0
+}
+
+/// The 4-bit LUT input index assembled from a behavioral block's **live** input pins — `IN0` = `f`
+/// (bit 0, the LSB), `IN1` = `g`, `IN2` = `h`, `IN3` = `c` (bit 3, the MSB) — each read as a digital
+/// level at half the chip's rail relative to its `GND` pin (`vlow`/`rail`, via [`beh_level`]). Used
+/// by the **combinational** LUT in [`Sim::eval_digital`], exactly the gate receiver path (the output
+/// then settles within the digital sub-solve with no clock-to-output delay). The clock pin `b` is
+/// not an input here — it matters only to the registered latch.
+#[inline]
+fn beh_lut_live_index(node_v: &[f64], e: &Element, vlow: f64, rail: f64) -> u32 {
+    let q = |pin: usize| beh_level(node_v, pin, vlow, rail) as u32;
+    q(e.f) | (q(e.g) << 1) | (q(e.h) << 2) | (q(e.c) << 3)
+}
+
+/// Advance a behavioral **FPGA logic element**'s integer state by one tick (program 4). A
+/// **combinational** LUT (`registered == false`) holds no state — its output follows the live
+/// inputs in [`Sim::eval_digital`], so there is nothing to commit and this returns immediately
+/// (every state word stays zero). A **registered** LUT latches the truth-table lookup of its
+/// committed input levels into `Q` on each **rising `CLK` edge** (`clk && !clk_prev`) — a LUT
+/// followed by a D flip-flop, the fundamental FPGA building block (a network of these is any
+/// sequential machine / soft core). `index` is the committed-input LUT index (the SAME
+/// [`beh_lut_live_index`] the combinational output uses, so the two paths can't drift), `clk` the
+/// committed clock level (`b`). `CLK_PREV` is updated last for the next tick's edge detection.
+/// Mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_lut_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    truth: u32,
+    registered: bool,
+    index: u32,
+    clk: bool,
+) {
+    if !registered {
+        return; // combinational LUT carries no state (output is live in eval_digital)
+    }
+    if clk && state[BEH_LUT_CLK_PREV] == 0 {
+        state[BEH_LUT_Q] = beh_lut_bit(truth, index) as u32; // latch on the rising clock edge
+    }
+    state[BEH_LUT_CLK_PREV] = clk as u32;
 }
 
 // --- AC voltage source model constants ----------------------------------------
@@ -5689,6 +5785,32 @@ impl Sim {
                     let vlow = self.node_v[e.e];
                     let rail = (self.node_v[e.d] - vlow).max(0.0);
                     let bit = |hi: bool| if hi { Level::High } else { Level::Low };
+                    // Program 4 (the FPGA logic element) drives a SINGLE powered output on `a` and
+                    // reads its inputs on b/c/f/g/h — so it must NOT touch b/c (the generic a/b/c
+                    // drive loop below unconditionally overwrites each pin's quantisation rail, which
+                    // would clobber an input net driven by an external clock/gate). Handle it here
+                    // and skip the generic output path. Combinational mode looks the truth table up
+                    // from the LIVE inputs (gate-like, settling within the digital sub-solve, no
+                    // clock-to-output delay); registered mode drives the committed `Q` (a LUT+FF,
+                    // one tick of clock-to-output delay like the DFF). Unpowered ⇒ released (Z).
+                    if prog == BEH_PROG_LUT {
+                        let la = if rail < GATE_MIN_RAIL {
+                            Level::Z
+                        } else if beh_lut_registered(&e) {
+                            bit(self.beh_state[i][BEH_LUT_Q] != 0)
+                        } else {
+                            let idx = beh_lut_live_index(&self.node_v, &e, vlow, rail);
+                            bit(beh_lut_bit(e.aux as u32, idx))
+                        };
+                        let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
+                        self.gate_target[i] = vlow + tvf;
+                        self.gate_gout[i] = g;
+                        self.digital_drive[e.a] = combine(self.digital_drive[e.a], la);
+                        self.digital_vhigh[e.a] = rail;
+                        self.digital_vlow[e.a] = vlow;
+                        self.digital_family[e.a] = 0;
+                        continue;
+                    }
                     // (a, b, c) output levels for this program (Z = released). Unpowered or an
                     // inert/unknown program releases everything.
                     let (la, lb, lc) = if rail < GATE_MIN_RAIL {
@@ -6241,6 +6363,23 @@ impl Sim {
                                     nbits,
                                     lvl(e.g), // SEND (trigger)
                                     lvl(e.f), // RX
+                                );
+                            }
+                            BEH_PROG_LUT => {
+                                // FPGA logic element: a combinational LUT advances no state (its
+                                // output is live in eval_digital); a registered LUT latches the
+                                // truth-table lookup of its committed inputs into Q on the rising
+                                // CLK (b) edge. The index (IN0..IN3 = f/g/h/c, LSB..MSB) is the SAME
+                                // helper the combinational output uses, so the two paths agree.
+                                let index = beh_lut_live_index(&self.node_v, e, vlow, rail);
+                                let registered = beh_lut_registered(e);
+                                let clk = lvl(e.b);
+                                beh_lut_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u32,
+                                    registered,
+                                    index,
+                                    clk,
                                 );
                             }
                             // Inert / unknown program: no state advance.
@@ -6997,6 +7136,11 @@ impl Sim {
     /// pulse.)
     fn beh_uart_rxvalid(&self, i: usize) -> u32 {
         self.beh_state[i][BEH_UART_RXVALID]
+    }
+    /// The behavioral **FPGA logic element**'s registered output bit (`Q`, state word 0) for
+    /// element `i` — the value a registered LUT latched on its last rising clock edge.
+    fn beh_lut_q(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_LUT_Q]
     }
 }
 
@@ -11349,6 +11493,231 @@ mod tests {
             sim.state()[2],
             sim.state()[4]
         );
+    }
+
+    /// Build a powered **combinational** LUT (program 4) with truth table `truth`, its four inputs
+    /// IN0..IN3 = f/g/h/c driven to the given volts (5 = high, 0 = low) and CLK grounded, then run
+    /// to settle and return the OUT voltage. Nodes: 0 = gnd (= GND pin), 1 = VCC (5 V), 2..5 =
+    /// IN0..IN3, 6 = OUT (= LUT element index 5).
+    fn lut_comb(truth: u32, in0: f64, in1: f64, in2: f64, in3: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE]; // mode slot left 0 ⇒ combinational
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 3, 4, 5, 6], // a: rails + IN sources; LUT OUT = node 6
+            &[0, 0, 0, 0, 0, 0], // b: src grounds; LUT CLK = gnd (unused)
+            &[0, 0, 0, 0, 0, 5], // c: LUT IN3 = node 5
+            &[0, 0, 0, 0, 0, 1], // d: LUT VCC = node 1 (5 V)
+            &[0, 0, 0, 0, 0, 0], // e: LUT GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: LUT IN0 = node 2
+            &[0, 0, 0, 0, 0, 3], // g: LUT IN1 = node 3
+            &[0, 0, 0, 0, 0, 4], // h: LUT IN2 = node 4
+            &[5.0, in0, in1, in2, in3, BEH_PROG_LUT as f64], // values: rails + program id 4
+            &[0.0, 0.0, 0.0, 0.0, 0.0, truth as f64], // aux: LUT truth table (low 16 bits)
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        sim.state()[6]
+    }
+
+    /// A combinational LUT IS a programmable gate: every ≤4-input boolean is one truth table. With
+    /// the inputs grounded except IN0/IN1, the XOR table `0x6666`, AND `0x8888` and OR `0xEEEE`
+    /// each compute their function on (IN0, IN1) — proof the output is `bit[index]` of the table.
+    #[test]
+    fn behavioral_lut_combinational_is_a_programmable_gate() {
+        let hi = |v: f64| v > 2.5;
+        // XOR(IN0, IN1): 0,1,1,0 per nibble ⇒ 0x6666.
+        assert!(!hi(lut_comb(0x6666, 0.0, 0.0, 0.0, 0.0)), "0 XOR 0 = 0");
+        assert!(hi(lut_comb(0x6666, 5.0, 0.0, 0.0, 0.0)), "1 XOR 0 = 1");
+        assert!(hi(lut_comb(0x6666, 0.0, 5.0, 0.0, 0.0)), "0 XOR 1 = 1");
+        assert!(!hi(lut_comb(0x6666, 5.0, 5.0, 0.0, 0.0)), "1 XOR 1 = 0");
+        // AND(IN0, IN1): 0,0,0,1 ⇒ 0x8888.
+        assert!(!hi(lut_comb(0x8888, 5.0, 0.0, 0.0, 0.0)), "1 AND 0 = 0");
+        assert!(hi(lut_comb(0x8888, 5.0, 5.0, 0.0, 0.0)), "1 AND 1 = 1");
+        // OR(IN0, IN1): 0,1,1,1 ⇒ 0xEEEE.
+        assert!(!hi(lut_comb(0xEEEE, 0.0, 0.0, 0.0, 0.0)), "0 OR 0 = 0");
+        assert!(hi(lut_comb(0xEEEE, 5.0, 0.0, 0.0, 0.0)), "1 OR 0 = 1");
+    }
+
+    /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth
+    /// table `1 << k` drives OUT high for EXACTLY the input combination whose index is `k` and low
+    /// for any other — checked at index 13 (`1101`: IN0,IN2,IN3 high, IN1 low) and index 1 (only
+    /// IN0 high), so both the LSB (`f`) and the MSB (`c`) genuinely move the index.
+    #[test]
+    fn behavioral_lut_four_input_index_ordering() {
+        let hi = |v: f64| v > 2.5;
+        // truth = 1<<13: high only at index 13 = IN0|IN2|IN3 (f,h,c high; g low).
+        assert!(
+            hi(lut_comb(1 << 13, 5.0, 0.0, 5.0, 5.0)),
+            "index 13 (1101) selects the only set entry ⇒ OUT high"
+        );
+        // Drop IN3 (c, the MSB) ⇒ index 5, a different entry ⇒ OUT low (proves c is bit 3).
+        assert!(
+            !hi(lut_comb(1 << 13, 5.0, 0.0, 5.0, 0.0)),
+            "clearing the MSB c moves the index off the set entry ⇒ OUT low"
+        );
+        // truth = 1<<1: high only at index 1 = IN0 alone (proves f is bit 0).
+        assert!(
+            hi(lut_comb(1 << 1, 5.0, 0.0, 0.0, 0.0)),
+            "index 1 ⇒ OUT high"
+        );
+        assert!(
+            !hi(lut_comb(1 << 1, 0.0, 0.0, 0.0, 0.0)),
+            "index 0 with the 1<<1 table ⇒ OUT low"
+        );
+    }
+
+    /// Build a powered **registered** LUT (program 4, mode slot set) whose truth table passes IN0
+    /// (`0xAAAA` ⇒ OUT = IN0), with IN0 (`f`) held at `in0_v` and CLK (`b`) chopped from a 5 V rail
+    /// by a 50 %-duty switch (pulled down between windows) so it sees rising edges. Nodes: 0 = gnd,
+    /// 1 = VCC (5 V), 2 = IN0, 3 = CLK, 4 = clock rail, 5 = OUT (LUT element index 5).
+    fn lut_registered_clocked(in0_v: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1.0; // LUT (elem 5) registered
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, IN0, clk-rail srcs; SWITCH a=4; R a=3; LUT OUT=5
+            &[0, 0, 0, 3, 0, 3], // b: src grounds; SWITCH b=3 (CLK); R b=0; LUT CLK=3
+            &[0, 0, 0, 0, 0, 0], // c: LUT IN3 = gnd
+            &[0, 0, 0, 0, 0, 1], // d: LUT VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: LUT GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: LUT IN0 = node 2
+            &[0, 0, 0, 0, 0, 0], // g: LUT IN1 = gnd
+            &[0, 0, 0, 0, 0, 0], // h: LUT IN2 = gnd
+            &[5.0, in0_v, 5.0, 0.5, 1000.0, BEH_PROG_LUT as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0xAAAA as f64],            // aux: pass-IN0 truth table
+            &params,
+        ));
+        sim
+    }
+
+    /// A registered LUT is a LUT followed by a flip-flop: with CLK held low it never latches (Q
+    /// holds its reset 0 even though IN0 is high), and under a real clock it latches IN0 onto Q and
+    /// drives OUT high — the building block of all sequential FPGA logic.
+    #[test]
+    fn behavioral_lut_registered_latches_on_clock() {
+        // No clock edge ever (CLK grounded via the switched node never rising)? Use a dedicated
+        // held-low clock: reuse the combinational rig but in registered mode with CLK at gnd.
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1.0; // registered
+                                                            // Nodes: 0 = gnd, 1 = VCC, 2 = IN0 (5 V), 3 = OUT. CLK (b) = gnd ⇒ no edge.
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],
+            &[0, 0, 0], // LUT CLK (b) = gnd ⇒ never rises
+            &[0, 0, 0], // IN3 = gnd
+            &[0, 0, 1], // VCC = node 1
+            &[0, 0, 0], // GND = node 0
+            &[0, 0, 2], // IN0 = node 2 (held high)
+            &[0, 0, 0], // IN1 = gnd
+            &[0, 0, 0], // IN2 = gnd
+            &[5.0, 5.0, BEH_PROG_LUT as f64],
+            &[0.0, 0.0, 0xAAAA as f64], // out = IN0
+            &params,
+        ));
+        for _ in 0..80 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.beh_lut_q(2),
+            0,
+            "a registered LUT with no clock edge must hold its reset Q=0 despite IN0 high"
+        );
+        assert!(
+            sim.state()[3].abs() < 0.5,
+            "OUT follows the held Q=0 (driven low, not the live IN0): {}",
+            sim.state()[3]
+        );
+
+        // Under a real clock the registered LUT latches IN0 (high) onto Q and drives OUT high.
+        let mut clocked = lut_registered_clocked(5.0);
+        for _ in 0..300 {
+            clocked.step();
+        }
+        assert_eq!(
+            clocked.beh_lut_q(5),
+            1,
+            "a clocked registered LUT latches IN0=1 onto Q"
+        );
+        assert!(
+            clocked.state()[5] > 4.0,
+            "registered OUT drives high once Q latches: {}",
+            clocked.state()[5]
+        );
+    }
+
+    /// An unpowered LUT releases its output (high-Z, ~0 V) regardless of its truth table — even the
+    /// all-ones table `0xFFFF` (which would drive high if powered) reads released when VCC is unwired.
+    #[test]
+    fn behavioral_lut_unpowered_is_released() {
+        // VCC pin (d) = node 0 ⇒ rail collapses ⇒ output released even though the table is all-ones.
+        let out = {
+            let mut sim = Sim::new(1);
+            let params = vec![0.0; 2 * PARAM_STRIDE];
+            assert!(sim.set_netlist_pefgh(
+                3,
+                &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+                &[1, 2], // a: a 5 V source on node 1; LUT OUT = node 2
+                &[0, 0], // b: LUT CLK = gnd
+                &[0, 0], // c: IN3 = gnd
+                &[0, 0], // d: LUT VCC = node 0 ⇒ unpowered
+                &[0, 0], // e: LUT GND = node 0
+                &[0, 1], // f: IN0 = node 1 (high) — but the chip is dead
+                &[0, 0], // g
+                &[0, 0], // h
+                &[5.0, BEH_PROG_LUT as f64],
+                &[0.0, 0xFFFF as f64], // all-ones table
+                &params,
+            ));
+            for _ in 0..40 {
+                sim.step();
+            }
+            sim.state()[2]
+        };
+        assert!(
+            out.abs() < 0.5,
+            "an unpowered LUT releases its output (~0 V), not a driven rail: {out}"
+        );
+    }
+
+    /// A registered LUT under an active clock (live sequential state) reproduces bit-for-bit: two
+    /// fresh `Sim`s run the same netlist and agree on the snapshot-hash sequence at EVERY tick,
+    /// including the exact ticks a clock edge latches Q. The determinism guarantee with the FPGA
+    /// logic element ACTIVE.
+    #[test]
+    fn behavioral_lut_run_is_reproducible() {
+        let mut a = lut_registered_clocked(5.0);
+        let mut b = lut_registered_clocked(5.0);
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "a registered-LUT circuit must replay bit-for-bit (diverged at tick {tk})"
+            );
+        }
     }
 
     /// A six-/seven-terminal behavioral netlist installs; an out-of-range terminal is rejected

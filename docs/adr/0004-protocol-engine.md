@@ -1,6 +1,7 @@
 # ADR 0004: The protocol / behavioral engine
 
-Status: accepted (design + phase 1 underway)
+Status: accepted — **all phases implemented** (SPI master, SPI slave, UART, the partitioned
+sub-tick kernel, and the FPGA logic element). Web wiring of the backed parts is the remaining work.
 
 ## Context
 
@@ -79,8 +80,23 @@ engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD` overload an existing elem
 4. **More protocols + endpoints (phase 3):** SPI slave (→ the serial DAC081S101 / ADC081S021),
    UART (async framing + a baud divider — works at the base rate too), I2C (the open-drain +
    pull-up wired-AND bus is already half of it).
-5. **Behavioral CPU / FPGA (phase 4):** larger cycle-stepped state machines / a tiny ISA at the
-   `uC`/`FP` pins, on the sub-tick kernel.
+5. **Behavioral CPU / FPGA — DONE: the FPGA logic element (program 4).** Landed as the universal
+   user-programmable digital primitive: a **4-input lookup table** (16-entry truth table in `aux`)
+   with an optional **registered output** (a LUT followed by a flip-flop, the fundamental FPGA
+   "logic element"). Pins `a`=OUT, `f`/`g`/`h`/`c`=IN0..IN3 (LSB..MSB), `b`=CLK, `d`/`e`=VCC/GND;
+   `params[4] >= 1` selects registered vs combinational. A combinational LUT settles in the **same
+   digital sub-solve** a gate does (no clock-to-output delay); a registered LUT latches on the
+   rising CLK edge through the sub-tick kernel (step 3b), so it clocks at the declared fast rate.
+   This is the honest realization of "a cycle-stepped state machine / soft core": an FPGA has **no
+   ISA** — it has LUTs, and a fabric of registered LUTs is *any* sequential machine (a soft CPU is
+   built from them, not baked in). It also subsumes the gate zoo pedagogically — every ≤4-input
+   gate is one particular truth table (AND `0x8888`, XOR `0x6666`, 3-input majority `0xE8E8`, …).
+   Chosen over a cramped params-encoded ISA (the per-element data model holds no program ROM
+   without expanding the `Element`/wire format, and a baked-firmware "blink ROM" sequencer would be
+   arbitrary filler); a stored-program micro-core remains a clean future addition behind a new
+   program id if a ROM payload is ever provisioned across the boundary. Integer state only (`Q`,
+   `clk_prev`, or none in combinational mode), folded by the existing `beh_state` loop → **golden
+   byte-identical by construction** (no golden circuit carries a behavioral block).
 
 ## Notes
 

@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (61) — Protocol engine phase 4 DONE (FPGA logic element) — ALL PHASES COMPLETE
+
+**State:** 🟢 the protocol/behavioral engine is **fully implemented through every ADR-0004 phase** and
+pushed. Branch `claude/kind-turing-hdelb3`. No PR (owner hasn't asked). Golden byte-identical
+`0xeaac_3764_99e4_fa24`; 182 tests pass debug **and** release; fmt/clippy clean; wasm builds.
+
+**Phase 4 = the FPGA logic element (`BEH_PROG_LUT = 4`)** — the universal user-programmable digital
+primitive, the last protocol-engine phase (commit on this branch). A **4-input LUT** (16-entry truth
+table in `aux`) with an **optional registered output** (LUT+FF = the fundamental FPGA "logic element"):
+- Pins: `a`=OUT, `f`/`g`/`h`/`c`=IN0..IN3 (LSB..MSB), `b`=CLK, `d`/`e`=VCC/GND. `params[4]≥1` ⇒ registered.
+- **Combinational** mode drives `a` from the **live** inputs in `eval_digital` (gate-like, settles in
+  the digital sub-solve, no clock-to-output delay) — it must NOT touch b/c (they're inputs), so it
+  takes its own single-`a` drive path and skips the generic a/b/c output loop (`continue`).
+- **Registered** mode latches `bit[index]` into `Q` on the rising CLK edge in `commit_sequential_digital_state`
+  (DFF pattern), driven from committed `Q`; clocks at the declared sub-tick rate (step 3b).
+- **Golden-safe by construction:** integer state only (`Q`,`clk_prev`, or none combinational), folded by
+  the **existing** `beh_state` hash loop (no new fold) — no golden circuit has a behavioral block.
+- New tests: `behavioral_lut_combinational_is_a_programmable_gate` (XOR/AND/OR truth tables),
+  `…_four_input_index_ordering` (f=LSB, c=MSB), `…_registered_latches_on_clock` (acts as a DFF),
+  `…_unpowered_is_released`, `…_run_is_reproducible`.
+- **Why a LUT, not a baked ISA:** an FPGA has no ISA — it's LUTs, and a fabric of registered LUTs is
+  *any* sequential machine (the honest "soft core"). The per-element data model holds no program ROM
+  without expanding the `Element`/wire format; a stored-program micro-core stays a clean future
+  program-id if a ROM payload is ever provisioned. Rationale recorded in ADR 0004 (phase-4 bullet).
+
+**Protocol engine — ALL PHASES ✅:** Phase 1 SPI master · Phase 2 SPI slave + UART · Step 3a partition
+(diagonal proof) · Step 3b sub-tick loop (megabaud) · **Phase 4 FPGA logic element.** ADR 0004 Status =
+"all phases implemented." The `value`=program-id dispatch stays open for I2C / a tiny MCU later.
+
+**Remaining (deferred per owner — refsheets first, then web):** web-wire the now-backed parts
+(comparator, sampler, gated switch, SPI/UART/LUT behavioral blocks, CEC catalog) into placeable web
+parts (PART_KINDS + buildNetlist + bin glyph). Standing: land owner refsheets as they arrive (only BUF
+gate left of the 10; the FF refsheet the owner is drawing). Minor: `BEH_SUBTICK_RATE_SLOT` still shares
+slot 2 with `RATED_CURRENT_SLOT` (harmless; free slots 5-7 exist — LUT mode now uses slot 4).
+
+---
+
 ## 2026-06-20 (60) — "More reality" engine + CEC catalog; protocol engine phases (DRIVE ALL)
 
 **State:** 🟢 lots landed + pushed; 🟡 protocol engine phase 1 in flight. Branch `claude/kind-turing-hdelb3`.

@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (37) — Protocol engine COMPLETE (all ADR-0004 phases)
+
+- ~~**Phase 4: behavioral CPU / FPGA**~~ — DONE as the **FPGA logic element** (`BEH_PROG_LUT=4`):
+  a 4-input LUT (truth table in `aux`) + optional registered output (LUT+FF), the universal
+  user-programmable digital primitive. Golden byte-identical (existing `beh_state` fold covers it);
+  182 tests pass debug+release; fmt/clippy clean; wasm builds. Combinational = gate-like live drive;
+  registered = DFF-pattern latch on the sub-tick kernel. Rationale (LUT fabric over a baked ISA) in
+  ADR 0004. The whole engine chain is now landed: SPI master/slave, UART, sub-ticking, FPGA LE.
+- [ ] **Web-wire the backed behavioral/mixed-signal parts** (deferred per owner until refsheets):
+  comparator, sampler, gated switch, SPI/UART/LUT behavioral blocks, CEC catalog → PART_KINDS +
+  `buildNetlist` + bin glyphs. The LUT is a great first web part (config = one 16-bit number / a
+  truth-table grid; combinational vs registered = a checkbox).
+- [ ] Minor cleanup: move `BEH_SUBTICK_RATE_SLOT` off the shared `RATED_CURRENT_SLOT` (slot 2) to a
+  free slot (5-7); the LUT mode now occupies slot 4.
+
+---
+
 ## 2026-06-20 (36) — "More reality" roadmap scoped (owner: "ADCs… what else?")
 
 Architecture-grounded feasibility pass over `crates/sim-core` (22 element types, the
