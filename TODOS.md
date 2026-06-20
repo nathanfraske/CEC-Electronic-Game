@@ -8,6 +8,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (23) — Resistor lead inductance (Real mode) + a current-sense SHUNT part
+
+Owner (same thread as 22): "we should probably also have shunts then so we can show that… But it
+should have *some* inductance at 100 kHz, no?" Yes — a real resistor carries a small lead/body
+inductance; it just never shows on a normal R until GHz, but a milliohm shunt makes it visible.
+
+- ~~**sim-core lead inductance (AC-only, Real mode).** New `R_ESL = 10 nH` constant beside
+  `CAP_ESL`. In `ac_solve_models` and `ac_element_measurements`, a Real-mode resistor stamps
+  `Y = 1/(R + jωL)` (Ideal stays `1/R`). Same geometric parasitic on every resistor; only a
+  low-value part swings the phase: ~+32° on a 10 mΩ shunt at 100 kHz, ~0° on a 10 kΩ. AC-only,
+  unhashed → golden-safe. Test `resistor_lead_inductance_shows_only_on_a_shunt` (Real shunt ≈ 32°
+  lag, the 10 kΩ ≈ 0°, Ideal shunt = 0). 131 sim-core tests green.~~
+- ~~**SHUNT part (web).** A `"SHUNT"` kind that maps to `ELEM_RESISTOR` (type 1) with milliohm
+  values — so it inherits the lead inductance for free, no sim-core part. `graph.ts` (PART_KINDS,
+  default 10 mΩ), `netlist.ts` (`SHUNT: 1`), `values.ts` (1 mΩ…250 mΩ curated + chips),
+  `glyphs.ts` (`drawSHUNT` — a thick metal strap with Kelvin sense taps, not the R zigzag),
+  detail/analogy drawers (reuse the resistor's), `partInfo.ts` (current-sense teaching + the
+  lead-inductance gotcha), `App.svelte` bin (Passives). Resistor-tolerance jitter is keyed on
+  `kind === "R"`, so a shunt stays exact (precision part).~~
+- ~~**Drive-by fix:** `PULSE` was missing from `App.svelte`'s `PART_CAT_OF`, so it only appeared in
+  the bin via search, never in the categorised folders. Added `PULSE: "Sources"`.~~ **DONE.**
+  - [ ] Follow-on: a graded "measure the current with a shunt" challenge; optional shunt tiers
+    (precision class → tighter tolerance + lower lead-L); a 4-terminal Kelvin shunt once the
+    Element gains a 5th terminal.
+
 ## 2026-06-20 (22) — AC phase artifact fix: a resistor read −14° LEAD at high frequency
 
 Owner screenshot: a 10 kΩ resistor on a 20 kHz AC source showed **−14° LEAD** in the phasor inset,

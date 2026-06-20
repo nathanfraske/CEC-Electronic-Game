@@ -267,6 +267,47 @@ function drawR(g: Graphics, o: GlyphOpts): void {
   flow(g, x0, a.y, x1, b.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// Current-sense shunt: a precision milliohm resistor drawn as a thick metal strap (not the
+// zigzag of a general resistor — a shunt is a low-ohm bar of resistance alloy), with two Kelvin
+// sense taps on top: the "I measure current" mark that sets it apart. Carries the heat halo and
+// the current flow like any resistor.
+function drawSHUNT(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  if (!a || !b) return;
+  const x0 = a.x + 9;
+  const x1 = b.x - 9;
+  const h = 5; // low + wide = "few milliohms"
+  const heat = norm(o.electrical.current, CUR_SCALE);
+  if (heat > 0.03) {
+    g.roundRect(x0 - 2, a.y - h - 4, x1 - x0 + 4, 2 * h + 8, 4).fill({
+      color: 0xe0533a,
+      alpha: 0.16 * heat,
+    });
+  }
+  // leads
+  g.moveTo(a.x, a.y).lineTo(x0, a.y);
+  g.moveTo(x1, b.y).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // the metal strap body (thick, rounded — a bar, not a zigzag)
+  g.roundRect(x0, a.y - h, x1 - x0, 2 * h, 3).fill({
+    color: 0x161020,
+    alpha: 0.95,
+  });
+  g.roundRect(x0, a.y - h, x1 - x0, 2 * h, 3).stroke({
+    width: 2.4,
+    color: o.color,
+    alpha: 0.95,
+  });
+  // two Kelvin sense taps on top (the current-measurement identity)
+  for (const f of [0.3, 0.7]) {
+    const sx = x0 + (x1 - x0) * f;
+    g.moveTo(sx, a.y - h).lineTo(sx, a.y - h - 6);
+  }
+  g.stroke({ width: 1.5, color: o.color, alpha: 0.7 });
+  flow(g, x0, a.y, x1, b.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 // Thermistor (NTC/PTC): the IEC box resistor crossed by the temperature-dependence
 // arrow — the standard symbol. PTC's arrow points UP (R rises with heat), NTC's DOWN
 // (R falls). Drawn warm (the thermal hue). Both kinds share this drawer.
@@ -2539,6 +2580,7 @@ function drawFGND(g: Graphics, o: GlyphOpts): void {
 const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   V: drawV,
   R: drawR,
+  SHUNT: drawSHUNT,
   C: drawC,
   EC: drawEC,
   L: drawL,

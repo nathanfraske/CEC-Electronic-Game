@@ -143,6 +143,13 @@
       color: "var(--bronze)",
     },
     {
+      tag: "SHUNT",
+      name: "Current Shunt",
+      desc: "Milliohm sense · reads I from V",
+      tier: "II",
+      color: "var(--bronze)",
+    },
+    {
       tag: "C",
       name: "Capacitor",
       desc: "RC charge curves",
@@ -396,9 +403,11 @@
   const PART_CAT_OF: Record<string, string> = {
     V: "Sources",
     AC: "Sources",
+    PULSE: "Sources",
     I: "Sources",
     GND: "Sources",
     R: "Passives",
+    SHUNT: "Passives",
     C: "Passives",
     EC: "Passives",
     L: "Passives",

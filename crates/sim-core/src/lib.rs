@@ -1458,6 +1458,11 @@ const CAP_ESL: f64 = 1.0e-9; // 1 nH series lead inductance → SRF ≈ 5 MHz fo
 const CAP_ESR: f64 = 0.05; // 50 mΩ series resistance (sets how sharp the resonance is)
 const IND_CW: f64 = 1.0e-12; // 1 pF parallel winding capacitance → the inductor's own SRF
 
+// 10 nH resistor lead/body inductance — the same geometric parasitic on every resistor; only a
+// *low-value* part (a current-sense shunt) has a small enough R for the ωL term to swing the phase
+// (~32° on a 10 mΩ shunt at 100 kHz, but ~0° on a 10 kΩ).
+const R_ESL: f64 = 1.0e-8;
+
 /// Inductor winding resistance (DCR), in ohms — grows with inductance (more turns of wire),
 /// floored so even a tiny inductor reads a hair of series resistance.
 fn ind_dcr(henries: f64) -> f64 {
@@ -4749,7 +4754,17 @@ impl Sim {
             match e.kind {
                 ELEM_RESISTOR => {
                     if e.value > 0.0 {
-                        stamp_y(&mut a, ia, ib, Cplx::new(1.0 / e.value, 0.0));
+                        // Ideal: Y = 1/R. Real: a series lead inductance, Z = R + jωL, so the
+                        // current lags (a positive/inductive phase). Negligible on a normal R but
+                        // visible on a low-value current-sense shunt at high frequency.
+                        let y = if real {
+                            let x = omega * R_ESL; // lead reactance
+                            let z2 = e.value * e.value + x * x;
+                            Cplx::new(e.value / z2, -x / z2) // 1 / (R + jX)
+                        } else {
+                            Cplx::new(1.0 / e.value, 0.0)
+                        };
+                        stamp_y(&mut a, ia, ib, y);
                     }
                 }
                 ELEM_SWITCH => {
@@ -4950,7 +4965,14 @@ impl Sim {
         for (i, e) in self.elements.iter().enumerate() {
             let vd = node_v(e.a).sub(node_v(e.b));
             let y = match e.kind {
-                ELEM_RESISTOR if e.value > 0.0 => Some(Cplx::new(1.0 / e.value, 0.0)),
+                ELEM_RESISTOR if e.value > 0.0 => Some(if real {
+                    // Series lead inductance Z = R + jωL (matches `ac_solve_models`).
+                    let x = omega * R_ESL;
+                    let z2 = e.value * e.value + x * x;
+                    Cplx::new(e.value / z2, -x / z2)
+                } else {
+                    Cplx::new(1.0 / e.value, 0.0)
+                }),
                 ELEM_SWITCH => Some(Cplx::new(self.switch_conductance(e), 0.0)),
                 ELEM_CAPACITOR if e.value > 0.0 => Some(if real {
                     let esr = param_or(&e.params, 0, CAP_ESR);
@@ -8481,6 +8503,50 @@ mod tests {
             (phase(2) + std::f64::consts::FRAC_PI_2).abs() < 0.1,
             "cap current leads its voltage by 90°: {}",
             phase(2)
+        );
+    }
+
+    /// Resistor lead inductance (Real mode AC): every resistor carries the same ~10 nH lead/body
+    /// inductance, but only a *low-value* part — a current-sense shunt — has a small enough R for
+    /// `ωL` to swing the phase. A 10 mΩ shunt at 100 kHz reads ~+32° (inductive lag), while a 10 kΩ
+    /// in the same series string stays ~0°. In Ideal mode both are purely resistive (phase 0).
+    #[test]
+    fn resistor_lead_inductance_shows_only_on_a_shunt() {
+        let f = 100_000.0;
+        let omega = std::f64::consts::TAU * f;
+        // AC 1->0; shunt (10 mΩ) 1->2; load (10 kΩ) 2->0. The two resistors carry one series current.
+        let sim = build(
+            3,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[f, 0.01, 10_000.0],
+        );
+        let phase = |m: &[f64], i: usize| m[i * AC_FIELDS + 9];
+        // Real mode: shunt lags by atan(ωL/R) = atan(2π·1e5·1e-8 / 0.01) ≈ 0.561 rad (32°).
+        let real = sim.ac_element_measurements(omega, true);
+        let expect = (omega * 1.0e-8 / 0.01).atan();
+        assert!(
+            (expect - 0.561).abs() < 0.01,
+            "sanity: expected ~32°: {expect}"
+        );
+        assert!(
+            (phase(&real, 1) - expect).abs() < 0.02,
+            "10 mΩ shunt lags ~32° in Real mode: {} vs {}",
+            phase(&real, 1),
+            expect
+        );
+        assert!(
+            phase(&real, 2).abs() < 0.01,
+            "the 10 kΩ stays ~0° — the same parasitic is invisible at high R: {}",
+            phase(&real, 2)
+        );
+        // Ideal mode: the lead inductance is gated off, so the shunt is purely resistive.
+        let ideal = sim.ac_element_measurements(omega, false);
+        assert!(
+            phase(&ideal, 1).abs() < 1e-6,
+            "Ideal mode: the shunt is a pure resistor (phase 0): {}",
+            phase(&ideal, 1)
         );
     }
 

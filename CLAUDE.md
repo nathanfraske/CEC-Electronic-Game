@@ -150,7 +150,13 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   `ELEM_ACSOURCE` (type 7) with a **waveform param** (slot 1: 1 = square, 2 = triangle; slot 3 =
   duty), and `ac_source_emf` branches on it. Slot 1 = 0 is sine, so a plain AC source is
   unchanged. This keeps the deterministic core from special-casing a new time-varying-source type
-  in its ~15 source sites.
+  in its ~15 source sites. (Same trick for **`SHUNT`** — a current-sense shunt is just `ELEM_RESISTOR`
+  with milliohm values, no sim element of its own.)
+- **Resistor lead inductance** (`R_ESL = 10 nH`, beside `CAP_ESL`): in **Real** mode the AC paths
+  (`ac_solve_models` / `ac_element_measurements`) stamp a resistor as `Y = 1/(R + jωL)`, not `1/R`.
+  The same geometric parasitic on *every* resistor, but the `ωL` term only swings the phase when R
+  is tiny — invisible on a 10 kΩ, ~+32° on a 10 mΩ **SHUNT** at 100 kHz (hence the shunt part).
+  AC-only + unhashed → the transient golden is untouched (resistors stay pure R in the time domain).
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

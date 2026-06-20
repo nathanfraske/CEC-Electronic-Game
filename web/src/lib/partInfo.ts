@@ -135,6 +135,20 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Power P = V·I", value: f(e.vAcross * e.current, "W") },
     ],
   },
+  SHUNT: {
+    name: "Current Shunt",
+    equation: "I = V / R",
+    headline: (e, R) =>
+      `${f(e.current, "A")} = ${f(e.vAcross, "V")} ÷ ${f(R, "Ω")}`,
+    plain: () =>
+      "A current-sense shunt is a precision low-value resistor (a few milliohms) placed in series with a load. You don't use it to drop voltage — you read the tiny voltage across it and divide by its known resistance to measure the current (V = I·R, run backwards). Keeping R small keeps the inserted loss small. The catch: every resistor also has a little lead inductance, and because the shunt's R is so small, that ωL term swings the phase at high frequency — in Real mode a shunt reads an inductive lag where an ordinary resistor stays flat.",
+    derived: (e, R) => [
+      { label: "Sensed current I = V/R", value: f(e.current, "A") },
+      { label: "Sense resistance", value: f(R, "Ω") },
+      { label: "Burden voltage", value: f(e.vAcross, "V") },
+      { label: "Power burden P = V·I", value: f(e.vAcross * e.current, "W") },
+    ],
+  },
   NTC: {
     name: "NTC Thermistor",
     equation: "R(T) = R₀·exp(B(1/T − 1/T₀))",

@@ -43,6 +43,11 @@ function jitter(id: number): number {
 const TYPE_OF: Record<string, number> = {
   V: 0,
   R: 1,
+  // Current-sense shunt: the SAME solver element as R (a plain resistor), distinguished only by
+  // its milliohm value. In Real mode every resistor carries a ~10 nH lead inductance in the AC
+  // solve, so a low-value shunt develops a visible high-frequency phase lag while a normal R does
+  // not. No new sim element; the golden is unchanged.
+  SHUNT: 1,
   C: 2,
   L: 3,
   I: 4,
