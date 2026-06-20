@@ -518,6 +518,7 @@ J = K = 1 case is a clean **toggle** with no latch race — the master-slave pro
 solved, here solved for free by the edge trigger. No new sim-core element; golden-safe additive.
 **Teaches:** the universal flip-flop and its four modes, toggle / divide-by-2 (the counter cell),
 how D and T are JK special cases, and why the SR forbidden state becomes JK's most useful one.
+**Refsheet:** `jkff-ic.html`.
 
 ---
 

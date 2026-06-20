@@ -30,8 +30,9 @@ concepts the part teaches best.
   The full IC-glyph examples are `inv-ic.html` (canonical template), `buf-ic.html`, `nand-ic.html`,
   `nand3-ic.html`, `nor-ic.html`, `or-ic.html`, `and-ic.html`, `xor-ic.html`, `xnor-ic.html`,
   `xorpass-ic.html`, `imply-ic.html`, `nimply-ic.html`, `schmitt-ic.html` (Schmitt inverter),
-  `comparator-ic.html` (ADCMP601, the first analog/boundary part), and `dff-ic.html` (74AUP1G79,
-  the first **sequential** part — master-slave latches + a live timing diagram). When a card below
+  `comparator-ic.html` (ADCMP601, the first analog/boundary part), `dff-ic.html` (74AUP1G79,
+  the first **sequential** part — master-slave latches + a live timing diagram), and `jkff-ic.html`
+  (CEC3076 JK/T — the D flip-flop with a JK steering front-end; toggle / divide-by-2). When a card below
   says "non-IC: follow the part-study precedent," it means use those, not the five logic-tier arc,
   for the package frame and slider set.
 

@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (67) — Landed the JK/T flip-flop refsheet (CEC3076)
+
+**State:** 🟢 owner's JK/T refsheet landed + pushed → `docs/ui/parts/jkff-ic.html` (built from the
+`jkff-guidesheet.md` brief). Branch `claude/kind-turing-hdelb3`. The agent followed the guidesheet
+well: SPDX present, **title correct** (no leftover-title bug this time), CEC3076 identity throughout,
+the master-slave core + JK steering front-end + Q/Q̄ feedback, ASCII-safe entities (`&#x0305;` overbar,
+`&#x2295;` XOR, `&middot;`), and a correct CEC3076 footnote (duals 7476/74112/CD4027, the
+characteristic eq, T-mode, the 7-pin pinout).
+
+**§10 validation:** static gates 1–4 all pass — 5 tiers (`buildT1..5`, all tier names), glyphs CLEAN,
+JS parses, **member-consistency clean across all 5 tiers** (the runtime-crash catcher). Gate 5 (render)
+needs Playwright (not in this container — like poppler; the design agent runs it pre-upload). **One fix
+on landing:** removed a stale comment block (lines 170/172/173 still described the dff-ic template's
+74AUP1G79 5-lead pinout, contradicting the correct CEC3076 lines below) — internal comments only, not
+rendered. Added `jkff-ic.html` to the example list + cross-reffed the CEC3076 catalog entry.
+
+**Refsheet tally:** 10-gate set + variants, D-FF, comparator, Schmitt, **and now JK/T** all done. CEC
+house parts: CEC3076 (JK/T) now has spec + guidesheet + **landed refsheet**; CEC2064 (LUT) has spec +
+is the next natural draw (offer to write its guidesheet, mirroring `jkff-guidesheet.md`). 555 verified.
+
+---
+
 ## 2026-06-20 (66) — JK/T flip-flop refsheet guidesheet drafted (design-agent brief)
 
 **State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted a standalone build brief
