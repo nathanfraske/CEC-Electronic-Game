@@ -48,6 +48,7 @@
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
 //! | 22   | clocked sampler    | threshold V   | edge-triggered 1-bit comparator, linear (OUT=a IN=b CLK=c)|
 //! | 23   | latched comparator | hysteresis V_H| level-latched analog comparator, powered rail-to-rail (OUT=a IN+=b IN-=c VCC=d GND=e LE=f)|
+//! | 24   | analog switch (TG) | R_on ohms     | node-gated transmission gate, time-varying conductance a<->b (CTRL=c VCC=d GND=e)|
 //!
 //! Type 22 is the **clocked sampler** (a 1-bit clocked comparator — the keystone of the
 //! ADC / sample-and-hold / SAR cluster): a near-twin of the D flip-flop whose data input
@@ -188,6 +189,20 @@
 //! computed once per solve from the tick before any iterating. This makes a buck
 //! converter (switch into an inductor + freewheel diode + output cap) expressible
 //! as an ordinary netlist.
+//!
+//! ## Gated analog switch (transmission gate)
+//!
+//! The **analog switch** ([`ELEM_ASWITCH`]) is the *node-controlled* cousin of the clock-driven
+//! switch — a CD4066-style transmission gate. It is the same time-varying *linear* conductance
+//! between `a` and `b` (so it shares the switch's fixed-linear-base, no-Newton machinery), but
+//! its open/closed state comes from a **control node** `c` rather than the tick: the control is
+//! read from the **committed previous-tick** node voltages (a one-tick delay, exactly like a
+//! logic gate's input), so the conductance is still a constant within the solve. Powered from
+//! `d` (VCC) / `e` (GND) it thresholds at half-rail and goes dead on an unpowered rail (the
+//! powered-gate rule); with no power pins it falls back to a fixed control threshold. Its
+//! `value` is the on-resistance `R_on`. Because its state is *derived* from the already-hashed
+//! `node_v` it adds no hashed state, so the snapshot hash and golden are unchanged. This is the
+//! switch the sample-and-hold / switched-capacitor / analog-mux clusters are built from.
 //!
 //! ## MNA layout
 //!
@@ -855,6 +870,61 @@ fn sampler_rail(el: &Element) -> f64 {
 /// replays identically.
 pub const ELEM_COMPARATOR: u8 = 23;
 
+/// **Gated analog switch / transmission gate** (a CD4066-style bilateral switch) — the
+/// signal-gated pass element the sample-and-hold, switched-capacitor, analog-mux, and VCO
+/// clusters need. It is the **node-controlled** cousin of the clock-driven [`ELEM_SWITCH`]:
+/// where that switch's conductance is a pure function of [`Sim::tick`] (a fixed-period PWM),
+/// this one's open/closed state is driven by a **control node** carrying a logic signal — so
+/// it can be steered by a clock generator, a flip-flop, a comparator, or any digital pin.
+///
+/// **Five terminals:** the **switched analog path** is `a` ↔ `b` (a resistor between them when
+/// the switch is ON, symmetric like [`ELEM_RESISTOR`]/[`ELEM_SWITCH`]); `c` = `CTRL` (the
+/// digital control input that opens/closes the path); `d` = `VCC`; `e` = `GND` (the supply
+/// pins, read exactly like a powered gate's). `f`/`g`/`h` are unused (ground). Its `value` is
+/// the **on-resistance `R_on`** in ohms; `value <= 0` defaults to [`ASWITCH_RON`].
+///
+/// **A LINEAR, time-varying conductance — not Newton.** Exactly like [`ELEM_SWITCH`], it stamps
+/// a symmetric conductance between `a` and `b` (no branch unknown, no reactive state), so it
+/// stays on the linear fast path and composes with nonlinear devices by sitting in the fixed
+/// Newton base. The only difference from the clock switch is **where the on/off comes from**:
+/// the control is read from the **committed previous-tick** node voltages ([`Sim::node_v`], the
+/// same one-tick delay the digital engine uses for a gate input), so the conductance is a
+/// *constant within the solve* (it never makes the system non-linear or iterate). Determinism:
+/// the state is a deterministic function of the committed `node_v` — itself already hashed — so
+/// the switch introduces **no new hashed state** and the snapshot hash is unchanged.
+///
+/// **The on/off rule** (see [`Sim::aswitch_closed`]), mirroring [`gate_rails`] /
+/// [`GATE_MIN_RAIL`]:
+/// - **Powered, active-high** (the normal case): `rail = V(d) − V(e)`; when
+///   `rail >= `[`GATE_MIN_RAIL`] the switch is **ON** iff `V(c) − V(e) > 0.5·rail` (control
+///   above half-rail, referenced to the chip's GND), exactly like a powered gate's input
+///   threshold. An unwired VCC floats to ~0 V → `rail < GATE_MIN_RAIL` → the switch is **dead**
+///   (forced open), the "you must power the chip" lesson the powered gate teaches.
+/// - **Unpowered fallback** (`d == 0 && e == 0`, no power pins wired): the switch is **ON** iff
+///   `V(c) > `[`ASWITCH_FIXED_THRESH`] — a bare control level against a fixed threshold, so an
+///   unwired-rail analog switch still works off a plain logic signal (mirrors how a powerless
+///   gate falls back to its legacy `value` rail).
+///
+/// **ON** stamps `g = 1/R_on` between `a` and `b` (the standard symmetric resistor stamp);
+/// **OFF** stamps the tiny [`SWITCH_GOFF`] leak (matching [`ELEM_SWITCH`]'s open behaviour) so
+/// the node stays non-singular. Wire a source → ASWITCH → a capacitor and pulse `CTRL` to build
+/// a sample-and-hold: the cap charges toward the source while the switch is ON and **holds** its
+/// voltage (its backward-Euler companion keeps the charge) once the switch opens and isolates it.
+pub const ELEM_ASWITCH: u8 = 24;
+
+/// Default on-resistance of a closed [`ELEM_ASWITCH`], in ohms, used when its `value <= 0`.
+/// Larger than the clock switch's near-ideal [`SWITCH_RON`] because a real transmission gate
+/// (CD4066 ~ 80–125 Ω, 74HC4066 similar) has a non-trivial channel resistance — small enough to
+/// pass a signal cleanly into a high-impedance load, large enough to be a teachable non-ideality.
+const ASWITCH_RON: f64 = 100.0;
+
+/// Fixed control threshold (volts) for an **unpowered** [`ELEM_ASWITCH`] (no VCC/GND pins wired,
+/// `d == 0 && e == 0`): the switch closes when its control `V(c)` exceeds this. A sane logic
+/// mid-level so a bare control swing (0 V / 3.3–5 V) drives it cleanly. A powered analog switch
+/// instead thresholds at half its actual rail (see [`ELEM_ASWITCH`] / [`GATE_MIN_RAIL`]); this is
+/// only the fallback, the analogue of a powerless gate's legacy `value`-rail threshold.
+const ASWITCH_FIXED_THRESH: f64 = 1.5;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -1278,6 +1348,21 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                     }
                 }
             }
+        } else if e.kind == ELEM_ASWITCH {
+            // Gated analog switch: the switched path (a, b) and the supply pins (VCC = d,
+            // GND = e) are analog (a, b carry the passed signal; d/e are an ordinary
+            // supply, handled exactly like a powered gate's power pins). CTRL (c) is the
+            // digital control input — a logic signal the switch reads, so it is
+            // digital-touching (the sampler-CLK / comparator pattern: a net touching only
+            // CTRL is Digital, and a CTRL net shared with an analog driver is Boundary).
+            for t in [e.a, e.b, e.d, e.e] {
+                if t < node_count {
+                    analog_touched[t] = true;
+                }
+            }
+            if e.c < node_count {
+                digital_touched[e.c] = true;
+            }
         } else {
             for t in [e.a, e.b, e.c, e.d] {
                 if t < node_count {
@@ -1366,6 +1451,18 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
         match e.kind {
             ELEM_RESISTOR | ELEM_CAPACITOR | ELEM_INDUCTOR | ELEM_VSOURCE | ELEM_ACSOURCE
             | ELEM_SWITCH | ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER | ELEM_VARISTOR => {
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+            }
+            ELEM_ASWITCH => {
+                // The switched analog path (a, b) is a conductance between them (a finite
+                // path even when open, like the clock switch's SWITCH_GOFF) — union it. The
+                // control CTRL (c) and the supply pins VCC (d) / GND (e) are read-only: the
+                // switch reads them as voltages but pins none of them, so (mirroring a
+                // powered gate's VCC/GND and the sampler's IN) they are left to be referenced
+                // by their own source/driver — an unwired one gets a proper floating-ref tie,
+                // and an unwired VCC floats to ~0 V → the switch reads dead.
                 if e.a < node_count && e.b < node_count {
                     uf_union(&mut parent, e.a, e.b);
                 }
@@ -2841,6 +2938,7 @@ impl Sim {
                     | ELEM_PULLUP
                     | ELEM_SAMPLER
                     | ELEM_COMPARATOR
+                    | ELEM_ASWITCH
             ) {
                 self.install_empty();
                 return false;
@@ -3203,11 +3301,16 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a time-varying conductance computed
-                    // from the tick (tick 0 at the operating point). Stamped
-                    // exactly like a resistor of that conductance.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a time-varying conductance computed from the
+                    // tick, tick 0 at the operating point) or node-gated analog switch
+                    // (its conductance derived from the control node's committed voltage).
+                    // Either way a symmetric conductance stamped exactly like a resistor.
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -3314,6 +3417,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => self.i_source_current(e),
@@ -3396,12 +3502,17 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a time-varying conductance that is a
-                    // pure function of the current tick. Stamped exactly like a
-                    // resistor of that conductance (symmetric, no branch unknown,
-                    // no reactive state).
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a time-varying conductance, a pure function of
+                    // the current tick) or node-gated analog switch (its conductance from
+                    // the control node's committed previous-tick voltage). Either way a
+                    // symmetric conductance stamped exactly like a resistor — no branch
+                    // unknown, no reactive state.
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -3529,6 +3640,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -4244,12 +4358,18 @@ impl Sim {
                         base_rhs[r] += e.value / PULLUP_R;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a tick-determined conductance stamped
-                    // into the fixed linear base (computed once from tick 0 here),
-                    // exactly like a resistor. Carries no branch unknown, so the
-                    // Newton loop sees it as part of the constant base.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a tick-determined conductance) or node-gated
+                    // analog switch (its conductance from the control node's committed
+                    // voltage) stamped into the fixed linear base — exactly like a
+                    // resistor. Carries no branch unknown, so the Newton loop sees it as
+                    // part of the constant base (it works in circuits that also contain
+                    // nonlinear devices).
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -4292,6 +4412,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => self.i_source_current(e),
@@ -4485,13 +4608,18 @@ impl Sim {
                         base_rhs[r] += e.value / PULLUP_R;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a tick-determined conductance stamped
-                    // into the fixed linear base (computed once per step from the
-                    // current tick before any Newton iterating), exactly like a
-                    // resistor. No branch unknown and no reactive state, so the
-                    // Newton loop treats it as part of the constant base.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a tick-determined conductance) or node-gated
+                    // analog switch (its conductance from the control node's committed
+                    // previous-tick voltage) stamped into the fixed linear base, computed
+                    // once per step before any Newton iterating — exactly like a resistor.
+                    // No branch unknown and no reactive state, so the Newton loop treats it
+                    // as part of the constant base (it works alongside nonlinear devices).
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -4542,6 +4670,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -5047,6 +5178,47 @@ impl Sim {
         }
     }
 
+    /// Whether a gated analog switch ([`ELEM_ASWITCH`]) is **closed** (conducting), derived
+    /// from its control node read off the **committed previous-tick** [`Sim::node_v`] — the
+    /// one-tick control delay that keeps the conductance constant within the solve (the same
+    /// receiver delay the digital engine uses). Mirrors the powered-gate rail/threshold logic
+    /// ([`gate_rails`] / [`GATE_MIN_RAIL`]):
+    /// - Powered (`d` or `e` wired): `rail = V(d) − V(e)`; closed iff `rail >= `[`GATE_MIN_RAIL`]
+    ///   **and** the control is above half-rail relative to GND (`V(c) − V(e) > 0.5·rail`). An
+    ///   unwired VCC floats the rail below the minimum → forced open (dead chip).
+    /// - Unpowered fallback (`d == 0 && e == 0`): closed iff `V(c) > `[`ASWITCH_FIXED_THRESH`].
+    ///
+    /// Pure `f64`, no PRNG, no hashing — a deterministic function of the committed node voltages.
+    #[inline]
+    fn aswitch_closed(&self, e: &Element) -> bool {
+        if e.d == 0 && e.e == 0 {
+            // No power pins: a bare control level against a fixed threshold (the powerless-gate
+            // fallback), so an unwired-rail switch still follows a plain logic signal.
+            self.node_v[e.c] > ASWITCH_FIXED_THRESH
+        } else {
+            let rail = self.node_v[e.d] - self.node_v[e.e];
+            // An unpowered/under-powered rail forces the switch open (dead), matching a powered
+            // gate whose VCC floats below GATE_MIN_RAIL.
+            rail >= GATE_MIN_RAIL && (self.node_v[e.c] - self.node_v[e.e]) > 0.5 * rail
+        }
+    }
+
+    /// The conductance of a gated analog switch ([`ELEM_ASWITCH`]) at the current tick: closed
+    /// (control asserted, [`Sim::aswitch_closed`]) returns `1/R_on` (its `value`, or
+    /// [`ASWITCH_RON`] when `value <= 0`); open returns the tiny [`SWITCH_GOFF`] leak (matching
+    /// the clock switch's open behaviour so the node stays non-singular). A time-varying *linear*
+    /// conductance read from the committed `node_v`, stamped exactly like a resistor — no Newton,
+    /// no branch unknown, no reactive state.
+    #[inline]
+    fn aswitch_conductance(&self, e: &Element) -> f64 {
+        if self.aswitch_closed(e) {
+            let ron = if e.value > 0.0 { e.value } else { ASWITCH_RON };
+            1.0 / ron
+        } else {
+            SWITCH_GOFF
+        }
+    }
+
     /// Advance exactly one fixed-size tick. Solves the implicit system, commits
     /// the new reactive state from the solution, and increments the tick. Pure
     /// `f64`, fixed order.
@@ -5355,6 +5527,12 @@ impl Sim {
                 ELEM_SWITCH => {
                     stamp_y(&mut a, ia, ib, Cplx::new(self.switch_conductance(e), 0.0));
                 }
+                ELEM_ASWITCH => {
+                    // Node-gated analog switch: a real conductance (its R_on or the open
+                    // leak), the small-signal twin of the clock switch's stamp. Its state
+                    // comes from the control node's committed voltage (aswitch_conductance).
+                    stamp_y(&mut a, ia, ib, Cplx::new(self.aswitch_conductance(e), 0.0));
+                }
                 ELEM_CAPACITOR => {
                     if e.value > 0.0 {
                         // Ideal: Y = jωC. Real: the series ESL+ESR+C string, so the part
@@ -5559,6 +5737,7 @@ impl Sim {
                     Cplx::new(1.0 / e.value, 0.0)
                 }),
                 ELEM_SWITCH => Some(Cplx::new(self.switch_conductance(e), 0.0)),
+                ELEM_ASWITCH => Some(Cplx::new(self.aswitch_conductance(e), 0.0)),
                 ELEM_CAPACITOR if e.value > 0.0 => Some(if real {
                     let esr = param_or(&e.params, 0, CAP_ESR);
                     let esl = param_or(&e.params, 1, CAP_ESL);
@@ -9778,6 +9957,356 @@ mod tests {
         let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0], &[0.5], &[0.0]);
         assert!(!bad, "out-of-range switch node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    // --- Gated analog switch / transmission gate (ELEM_ASWITCH = 24) -----------
+    //
+    // The node-controlled cousin of the clock switch: a time-varying LINEAR conductance
+    // between a and b whose on/off comes from a control NODE (read off the committed
+    // previous-tick node_v, a one-tick delay), powered from VCC=d / GND=e (half-rail
+    // threshold, dead below GATE_MIN_RAIL) or — with no power pins — off a fixed control
+    // threshold. R_on = `value` (default ASWITCH_RON). It stays on the linear fast path
+    // (no Newton, no branch unknown, no new hashed state) so the golden is untouched. It is
+    // the switch the sample-and-hold / switched-capacitor / mux / VCO clusters need.
+
+    /// `set_netlist` accepts the analog-switch element type (type 24); a malformed netlist
+    /// containing one still fails safe through the same validation.
+    #[test]
+    fn aswitch_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // a=1, b=2, CTRL=3, VCC=4, GND=0 (a powered five-terminal install).
+        let ok = sim.set_netlist_pe(
+            5,
+            &[ELEM_ASWITCH],
+            &[1],
+            &[2],
+            &[3],
+            &[4],
+            &[0],
+            &[100.0],
+            &[0.0],
+            &[],
+        );
+        assert!(ok, "valid analog-switch netlist installs");
+        assert_eq!(sim.element_count(), 1);
+        assert_eq!(
+            sim.element_at(0).kind,
+            ELEM_ASWITCH,
+            "analog switch stored as type 24"
+        );
+        // Out-of-range control node is still rejected (fail-safe).
+        let bad = sim.set_netlist_pe(
+            5,
+            &[ELEM_ASWITCH],
+            &[1],
+            &[2],
+            &[9],
+            &[4],
+            &[0],
+            &[100.0],
+            &[0.0],
+            &[],
+        );
+        assert!(!bad, "out-of-range CTRL node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    /// Build a powered analog switch passing a source into a resistive divider, with CTRL held
+    /// at `ctrl_v` and VCC at `rail`. Nodes: 0 = gnd, 1 = source (Vsrc), 2 = switch output / load
+    /// top, 3 = CTRL, 4 = VCC. The switch is a=1↔b=2 (R_on `ron`); a load resistor 2->0 pulls the
+    /// output down when the switch opens. After settling, returns the load-node (2) voltage.
+    fn aswitch_divider(vsrc: f64, ctrl_v: f64, rail: f64, ron: f64, rload: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            5,
+            &[
+                ELEM_VSOURCE,  // source at node 1
+                ELEM_VSOURCE,  // CTRL level at node 3
+                ELEM_VSOURCE,  // VCC rail at node 4
+                ELEM_ASWITCH,  // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_RESISTOR, // load 2->0
+            ],
+            &[1, 3, 4, 1, 2],
+            &[0, 0, 0, 2, 0],
+            &[0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[vsrc, ctrl_v, rail, ron, rload],
+            &[0.0; 5],
+            &[],
+        ));
+        // Purely resistive: the node settles within a couple of ticks (CTRL has a one-tick
+        // delay, so step a handful of times to clear it).
+        for _ in 0..10 {
+            sim.step();
+        }
+        sim.node_voltages()[2]
+    }
+
+    /// Driving CTRL above half-rail closes the switch (the load node rises toward the source,
+    /// a low end-to-end resistance ~R_on); driving CTRL low opens it (the load node decouples
+    /// to ~0 through the pull-down, the source isolated).
+    #[test]
+    fn aswitch_control_opens_and_closes_path() {
+        let vsrc = 5.0;
+        let rail = 5.0;
+        let ron = 100.0;
+        let rload = 100_000.0; // >> R_on, so a closed switch barely drops the signal
+                               // CTRL high (5 V > half of the 5 V rail) → closed → node 2 ≈ source.
+        let closed = aswitch_divider(vsrc, 5.0, rail, ron, rload);
+        // Divider: V2 = vsrc * Rload/(Ron+Rload) ≈ 4.995 V.
+        let expected_closed = vsrc * rload / (ron + rload);
+        assert!(
+            (closed - expected_closed).abs() < 0.05 && closed > 4.9,
+            "CTRL high closes the switch: node rises to ~source ({closed}, want ~{expected_closed})"
+        );
+        // CTRL low (0 V < half-rail) → open → node 2 decoupled to ~0 by the pull-down.
+        let open = aswitch_divider(vsrc, 0.0, rail, ron, rload);
+        assert!(
+            open.abs() < 1e-3,
+            "CTRL low opens the switch: load node decouples to ~0 ({open})"
+        );
+        // The closed-path through-current is the divider current (a real conducting path);
+        // sanity that closing actually conducts and opening does not.
+        assert!(
+            closed > 1000.0 * open + 1.0,
+            "closed conducts far more than open ({closed} vs {open})"
+        );
+    }
+
+    /// The half-rail threshold tracks the actual VCC, not a fixed level: the SAME control
+    /// voltage that closes the switch on a low rail leaves it open on a high rail (control
+    /// below half of the higher rail). This is the powered-gate threshold rule.
+    #[test]
+    fn aswitch_threshold_is_half_the_actual_rail() {
+        let vsrc = 5.0;
+        let ctrl = 3.0;
+        let ron = 100.0;
+        let rload = 100_000.0;
+        // Rail 5 V: half-rail = 2.5 V; CTRL 3 V > 2.5 → closed.
+        let on = aswitch_divider(vsrc, ctrl, 5.0, ron, rload);
+        assert!(on > 4.9, "CTRL 3 V > half of a 5 V rail closes it: {on}");
+        // Rail 8 V: half-rail = 4.0 V; CTRL 3 V < 4.0 → open.
+        let off = aswitch_divider(vsrc, ctrl, 8.0, ron, rload);
+        assert!(
+            off.abs() < 1e-3,
+            "the same CTRL 3 V is below half of an 8 V rail → open: {off}"
+        );
+    }
+
+    /// An unwired VCC (no power pins, but here the rail node floats to ~0) leaves the switch
+    /// DEAD: rail < GATE_MIN_RAIL forces it open regardless of the control level. Proven by
+    /// driving CTRL high while VCC sits at ~0 — the path must stay open.
+    #[test]
+    fn aswitch_unpowered_rail_is_dead() {
+        let vsrc = 5.0;
+        let ctrl = 5.0; // control fully high…
+        let rail = 0.0; // …but VCC at 0 V → rail below GATE_MIN_RAIL → dead.
+        let dead = aswitch_divider(vsrc, ctrl, rail, 100.0, 100_000.0);
+        assert!(
+            dead.abs() < 1e-3,
+            "an unpowered (rail≈0) analog switch is dead even with CTRL high: {dead}"
+        );
+    }
+
+    /// The unpowered FALLBACK (no power pins wired, d == 0 && e == 0): the switch follows a bare
+    /// control level against the fixed ASWITCH_FIXED_THRESH (1.5 V). CTRL above it closes; below
+    /// it opens. Nodes: 0 = gnd, 1 = source, 2 = load top, 3 = CTRL.
+    #[test]
+    fn aswitch_unpowered_fallback_uses_fixed_threshold() {
+        let pass = |ctrl_v: f64| -> f64 {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[
+                    ELEM_VSOURCE,  // source node 1
+                    ELEM_VSOURCE,  // CTRL node 3
+                    ELEM_ASWITCH,  // a=1, b=2, CTRL=3, no power pins (d=e=0)
+                    ELEM_RESISTOR, // load 2->0
+                ],
+                &[1, 3, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 3, 0], // c = CTRL
+                &[0, 0, 0, 0], // d = 0 (no VCC)  -> unpowered fallback
+                &[5.0, ctrl_v, 100.0, 100_000.0],
+                &[0.0; 4],
+            ));
+            for _ in 0..10 {
+                sim.step();
+            }
+            sim.node_voltages()[2]
+        };
+        // CTRL 3 V > 1.5 V threshold → closed.
+        assert!(
+            pass(3.0) > 4.9,
+            "bare control above 1.5 V closes the switch"
+        );
+        // CTRL 1 V < 1.5 V threshold → open.
+        assert!(
+            pass(1.0).abs() < 1e-3,
+            "bare control below 1.5 V leaves the switch open"
+        );
+    }
+
+    /// The switch follows a CTRL transition with the one-tick control delay (the control is read
+    /// from the COMMITTED previous-tick node_v). A PWM-switch chops the control line: the analog
+    /// path conducts while CTRL is high and opens while it is low, so the output node tracks the
+    /// control square wave (one tick behind), proving the node actually steers the conductance.
+    #[test]
+    fn aswitch_follows_a_control_transition() {
+        // Nodes: 0 gnd, 1 source 5 V, 2 load top, 3 CTRL, 4 VCC 5 V, 5 CTRL rail 5 V.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,  // source 5 V (node 1)
+                ELEM_VSOURCE,  // VCC 5 V (node 4)
+                ELEM_VSOURCE,  // CTRL rail 5 V (node 5)
+                ELEM_SWITCH,   // chop node 5 onto CTRL (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on CTRL so it falls between switch windows
+                ELEM_ASWITCH,  // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_RESISTOR, // load 2->0
+            ],
+            &[1, 4, 5, 5, 3, 1, 2],
+            &[0, 0, 0, 3, 0, 2, 0],
+            &[0, 0, 0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[5.0, 5.0, 5.0, 0.5, 1000.0, 100.0, 100_000.0],
+            &[0.0; 7],
+            &[],
+        ));
+        // Over a full PWM period the output must reach both a high (switch closed, CTRL high)
+        // and a low (switch open, CTRL low) extreme — i.e. it tracks the control.
+        let mut saw_high = false;
+        let mut saw_low = false;
+        for _ in 0..(2 * SWITCH_PERIOD_TICKS) {
+            sim.step();
+            let v2 = sim.node_voltages()[2];
+            if v2 > 4.5 {
+                saw_high = true;
+            }
+            if v2.abs() < 0.5 {
+                saw_low = true;
+            }
+        }
+        assert!(
+            saw_high && saw_low,
+            "the analog switch output follows the chopped CTRL (saw_high={saw_high}, saw_low={saw_low})"
+        );
+    }
+
+    /// **Sample-and-hold smoke test (the payoff).** A source → ASWITCH → a capacitor to GND, with
+    /// CTRL chopped by a PWM switch (sample while CTRL high, hold while CTRL low). The cap's R_on·C
+    /// (fast) lets it charge toward the source during each ON window; once CTRL drops, the OPEN
+    /// switch isolates the cap and its backward-Euler companion holds the captured charge — the
+    /// only remaining path is the tiny SWITCH_GOFF leak (τ = C/G_off ≈ 1000 s), negligible over a
+    /// ~50 µs hold window. Proven in one fixed netlist: after the cap has captured ~source, it
+    /// must barely droop across a full OFF window (it holds), the mechanism that unlocks S&H.
+    #[test]
+    fn aswitch_sample_and_hold_captures_and_holds() {
+        // Nodes: 0 gnd, 1 source 4 V, 2 cap top (held node), 3 CTRL, 4 VCC 5 V, 5 CTRL rail 5 V.
+        // R_on 1 kΩ into C 0.1 µF → τ = 100 µs; the PWM ON window is 25 ticks = 50 µs, so the cap
+        // tops up toward the source each sample, then holds through the OFF window.
+        let vsrc = 4.0;
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,   // source 4 V (node 1)
+                ELEM_VSOURCE,   // VCC 5 V (node 4)
+                ELEM_VSOURCE,   // CTRL rail 5 V (node 5)
+                ELEM_SWITCH,    // chop node 5 onto CTRL (node 3), 50% duty
+                ELEM_RESISTOR,  // CTRL pull-down
+                ELEM_ASWITCH,   // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_CAPACITOR, // hold cap 2->0
+            ],
+            &[1, 4, 5, 5, 3, 1, 2],
+            &[0, 0, 0, 3, 0, 2, 0],
+            &[0, 0, 0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[vsrc, 5.0, 5.0, 0.5, 1000.0, 1_000.0, 0.1e-6],
+            &[0.0; 7],
+            &[],
+        ));
+        // Settle several PWM periods so the cap has captured the source on the ON windows.
+        for _ in 0..20 * SWITCH_PERIOD_TICKS {
+            sim.step();
+        }
+        // The captured value must be near the source (the sample worked).
+        let captured = sim.node_voltages()[2];
+        assert!(
+            captured > 0.9 * vsrc,
+            "S&H captures ~the source on the sample window: {captured} (want > {})",
+            0.9 * vsrc
+        );
+        // Find an OFF window (switch open: CTRL low) and confirm the held node barely droops
+        // across it — the isolation/hold. Walk one full period sampling the cap, and over the
+        // stretch where CTRL is low the cap must stay essentially flat.
+        // CTRL (node 3) is the PWM output; when it is low (< 0.5 V) the ASWITCH is open.
+        let mut hold_start: Option<f64> = None;
+        let mut max_droop = 0.0f64;
+        for _ in 0..SWITCH_PERIOD_TICKS {
+            sim.step();
+            let ctrl = sim.node_voltages()[3];
+            let vcap = sim.node_voltages()[2];
+            if ctrl < 0.5 {
+                // switch open → holding
+                match hold_start {
+                    None => hold_start = Some(vcap),
+                    Some(v0) => max_droop = max_droop.max((v0 - vcap).abs()),
+                }
+            }
+        }
+        assert!(
+            hold_start.is_some(),
+            "expected an OFF (hold) window within one PWM period"
+        );
+        assert!(
+            max_droop < 0.02,
+            "the open switch holds the cap (max droop across the hold window {max_droop} V)"
+        );
+    }
+
+    /// Replay invariant for an analog-switch circuit: the switch state is a deterministic
+    /// function of the committed node voltages (no new hashed state), so a fixed netlist stepped
+    /// a fixed number of times reproduces its snapshot-hash stream exactly. The ASWITCH analogue
+    /// of `switch_run_is_reproducible`, with the mechanism ACTIVE (a chopped control + an S&H cap).
+    #[test]
+    fn aswitch_run_is_reproducible() {
+        let run = || {
+            // source → ASWITCH (gated by a PWM-chopped control) → hold cap; the control is
+            // exercised so the switch genuinely toggles across the run.
+            let mut sim = Sim::new(7);
+            assert!(sim.set_netlist_pe(
+                6,
+                &[
+                    ELEM_VSOURCE,   // source (node 1)
+                    ELEM_VSOURCE,   // VCC (node 4)
+                    ELEM_VSOURCE,   // CTRL rail (node 5)
+                    ELEM_SWITCH,    // chop node 5 onto CTRL (node 3)
+                    ELEM_RESISTOR,  // CTRL pull-down
+                    ELEM_ASWITCH,   // a=1, b=2, CTRL=3, VCC=4, GND=0
+                    ELEM_CAPACITOR, // hold cap 2->0
+                ],
+                &[1, 4, 5, 5, 3, 1, 2],
+                &[0, 0, 0, 3, 0, 2, 0],
+                &[0, 0, 0, 0, 0, 3, 0],
+                &[0, 0, 0, 0, 0, 4, 0],
+                &[0, 0, 0, 0, 0, 0, 0],
+                &[4.0, 5.0, 5.0, 0.5, 1000.0, 1_000.0, 1.0e-6],
+                &[0.0; 7],
+                &[],
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "analog-switch circuit must reproduce exactly");
     }
 
     // --- Sinusoidal AC voltage source -----------------------------------------
