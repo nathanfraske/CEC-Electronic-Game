@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (60) — "More reality" engine + CEC catalog; protocol engine phases (DRIVE ALL)
+
+**State:** 🟢 lots landed + pushed; 🟡 protocol engine phase 1 in flight. Branch `claude/kind-turing-hdelb3`.
+No PR (owner hasn't asked). **Owner directive: press on until ALL protocol-engine phases are implemented.**
+
+**Engine mechanisms LANDED (each golden byte-identical `0xeaac_3764_99e4_fa24`, sim-core only, web wiring later):**
+- **Wire-format provisioning** (ADR 0002): `MAX_TERMINALS` 5→8, `PARAM_STRIDE` 4→8, `PROTOCOL_VERSION` 1→2.
+  `set_netlist_pefgh` boundary; web `buildNetlist` emits f/g/h via `pushFGH()` at the 7 sites (array-sync = the
+  POT-regression class, verified). The cross-layer one.
+- **`ELEM_SAMPLER`=22** — clocked 1-bit quantizer (ADC atom).
+- **`ELEM_COMPARATOR`=23** — ADCMP601 latched comparator (differential, level-active-low latch, hysteresis,
+  powered output). Refsheet `docs/ui/parts/comparator-ic.html` landed too → complete both ends.
+- **`ELEM_ASWITCH`=24** — node-controlled gated analog switch (transmission gate); no new hashed state (derived
+  from `node_v[CTRL]`). Unlocked sample-and-hold + switched-cap + analog mux.
+
+**Pattern for every sim-core element (FOLLOW IT):** mirror `ELEM_SAMPLER` (state vec + install/reset + `step()`
+commit + a hash fold loop APPENDED after the prior folds, default 0 → zero bytes for the RC golden = byte-identical)
++ `ELEM_GATE` (powered output drive, `gate_rails`/`GATE_MIN_RAIL`/dead-rail Z). Integer/Level state only in hashed
+paths; FNV-1a; timing from declared params (structure), never values. **VERIFY THE GOLDEN MYSELF before each commit.**
+
+**Protocol engine — ADR 0004, phased (DRIVE ALL, sequentially — same file, dependency chain, each golden-gated):**
+- **Phase 1 (IN FLIGHT, subagent):** `ELEM_BEHAVIORAL`=25 — integer state machine + program-id dispatch + digital
+  I/O, at the BASE tick rate; first program = SPI master (a=SCLK,b=MOSI,c=CS,d=VCC,e=GND,f=MISO,g=START; first part
+  to use the 8-terminal format). New `beh_state` (8×u32/elem) folded after `cmp_q`. **Hold the commit until the
+  subagent reports + I re-verify the golden** (currently uncommitted in `crates/sim-core/src/lib.rs` — that is
+  correct, not forgotten).
+- **Phase 2:** multi-rate sub-ticking (M7) — a block sub-steps a fixed integer/analog tick (declared rate);
+  generalizes the 1-tick delay; fold the sub-tick counter. The harder step-loop change.
+- **Phase 3:** SPI slave (→ serial DAC081S101/ADC081S021), UART (async framing + baud divider, works at base rate),
+  I2C (open-drain + pull-up wired-AND already half).
+- **Phase 4:** behavioral CPU/FPGA at the `uC`/`FP` pins (cycle-stepped state machine / tiny ISA on the sub-tick kernel).
+- SerDes (owner asked): the LOGIC (serialize/8b10b/CDR/deserialize) is feasible behaviorally + sub-ticking; the GHz
+  PHY waveform is out of scope (analog Δt fixed) — channel = frequency-domain, link = behavioral. A phase-3/4 endpoint.
+
+**CEC teaching catalog (`docs/ui/cec-teaching-ics.md`):** 17 house-brand parts + IMPLY/NIMPLY (CEC2110/2111) +
+sample-and-hold (CEC4055, now buildable). Real-part min-pin exemplar chart in `docs/ui/new-part-refsheets.md`.
+Gate refsheets: 9/10 (only BUF left) + nand3 + xorpass + comparator. ADR 0002 (wire format), 0003 (high-pin
+composite, stress-tested to ~7.5k pins), 0004 (protocol engine).
+
+**Still NOT web-wired (the backends are done; needs PART_KINDS + buildNetlist + bin glyph, gated on refsheets):**
+the comparator, sampler, gated switch, the CEC parts, SPI — all sit one web step from placeable.
+
 ## 2026-06-20 (59) — Codex/hotbar/colour shipped; "more reality" framework underway
 
 **State:** 🟢 all three web features LANDED + pushed; 🟡 engine framework underway (clocked sampler
