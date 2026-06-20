@@ -15,6 +15,14 @@ VCC.** Every part is single-supply powered (VCC/GND), exactly like the logic gat
 a CEC part is never a bare two-terminal; it always has a rail, so "where does it get
 its energy" is always answerable. Logic levels swing GND..VCC; supply 1.8 V–15 V.
 
+**Packages.** Each part ships in a standard small-outline package, drawn over a real frame
+per `ic-glyph-spec.md` (a breadboard-friendly DIP exists for the bench): **CEC1041** and
+**CEC3007** in **SOT-23-5**, **CEC1083** in **SOT-23-6**, **CEC2018** in **SOT-23-8** (one
+N.C.). The two CEC **logic gates** (below) take the **SOT-23-5** gate footprint and the
+74-series single-gate pinout (`1 A · 2 B · 3 GND · 4 Y · 5 VCC`) so they sit beside the real
+gates — the output-on-pin-1 convention above is the Foundations Series' own; the gates keep
+the JEDEC gate order.
+
 > These are fictional teaching parts. "Specs" are pedagogical, not manufacturing.
 > The numbering is `CEC` + a 4-digit code: **1xxx** data-conversion, **2xxx**
 > arithmetic/logic, **3xxx** memory/sequential, **4xxx** analog/signal.
@@ -151,6 +159,28 @@ gates fight — a deliberate teaching hazard the sim shows as contention).
 `ELEM_GATE`), the 1 1 case resolving through the four-state `combine` → `X`. No new
 sim-core element. **Teaches:** feedback, bistability, the birth of memory, why the
 forbidden state is forbidden.
+
+---
+
+## CEC logic gates (non-standard functions)
+
+Eight of the ten gates ship as real 74-series single-gate parts; two functions have **no
+discrete real chip**, so CEC makes them. Each is a 2-input powered gate in the **SOT-23-5**
+gate footprint, 74-series pinout (`1 A · 2 B · 3 GND · 4 Y · 5 VCC`), mapping to `ELEM_GATE`
+(its function code already lives in the sim). Refsheets: `imply-ic.html`, `nimply-ic.html`.
+
+### CEC2110 — Implication Gate (A → B)
+
+*Critical Error Computing · "if A, then B — in one gate."* `Y = (NOT A) OR B`: low in exactly
+one case (A high, B low), high in the other three — the material conditional. Negative-unate
+in A, positive-unate in B; the static-CMOS cell is an inverter on B feeding a NAND with A.
+**Package:** SOT-23-5. **Truth** (A B → Y): 00→1 · 01→1 · 10→0 · 11→1.
+
+### CEC2111 — Inhibit Gate (A AND NOT B)
+
+*Critical Error Computing · "A, unless B says no."* `Y = A AND (NOT B)`: high in exactly one
+case (A high, B low) — the NIMPLY / inhibition function, IMPLY's mirror (it inverts A and
+uses a NOR core). **Package:** SOT-23-5. **Truth** (A B → Y): 00→0 · 01→0 · 10→1 · 11→0.
 
 ---
 
