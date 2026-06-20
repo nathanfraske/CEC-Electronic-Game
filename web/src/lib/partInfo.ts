@@ -623,6 +623,22 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Through current", value: f(e.current, "A") },
     ],
   },
+  CMP: {
+    name: "Comparator",
+    equation: "OUT → rail when IN+ > IN− · hyst V_H",
+    headline: (e, vh) =>
+      `Hysteresis ${f(vh, "V")} · open-loop compare · OUT drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A comparator is the bridge from the analog world to the digital one: it watches two analog inputs and slams its output to one rail or the other depending on which is larger — high when IN+ sits above IN−, low when below. Unlike an op-amp it runs open-loop ON PURPOSE; there is no linear region, just a hard decision, so it turns a smooth voltage into a clean logic level. That makes it the front end of every ADC, every zero-crossing detector, threshold alarm, and on/off controller. Real comparators add HYSTERESIS — a small dead-band V_H around the switching point — so a noisy input wobbling near the threshold does not make the output chatter: once it flips high it will not flip back until the input falls a little below the level, and vice versa. Set V_H to 0 for an ideal comparator, or widen it to reject more noise (the Schmitt-trigger trick). The output swings the GND..VCC rail like a powered gate; wire the inputs and power and feed it a slow ramp against a reference to watch it snap.",
+    derived: (e, vh) => [
+      { label: "Hysteresis V_H", value: f(vh, "V") },
+      {
+        label: "Mode",
+        value: vh > 0 ? "Schmitt (noise-immune)" : "plain (ideal)",
+      },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

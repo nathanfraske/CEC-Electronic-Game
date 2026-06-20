@@ -134,6 +134,12 @@ const TYPE_OF: Record<string, number> = {
   // GND). `value` = the on-resistance R_on (Ω). Uses `c`/`d`/`e`, so it joins
   // FIVE_PIN_TYPES below.
   ASW: 24,
+  // Comparator: a FIVE-terminal powered open-loop comparator. Pins ordered OUT, IN+,
+  // IN−, VCC, GND (pin 0 → a = OUT, 1 → b = IN+, 2 → c = IN−, 3 → d = VCC, 4 → e = GND).
+  // `value` = the input hysteresis V_H. Uses `c`/`d`/`e`, so it joins FIVE_PIN_TYPES
+  // below; the latch-enable terminal `f` is left unwired (ground), so the core reads it
+  // as transparent (a continuous compare).
+  CMP: 23,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -160,13 +166,14 @@ const FOUR_PIN_TYPES = new Set<number>([18, 19]);
 
 /**
  * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17,
- * pins OUT, IN1, IN2, VCC, GND) and the analog switch (type 24, pins A, B, CTRL, VCC,
- * GND). For both, pin 3 → d = VCC and pin 4 → e = GND. The `nc`/`nd`/`ne` computations
+ * pins OUT, IN1, IN2, VCC, GND), the analog switch (type 24, pins A, B, CTRL, VCC, GND),
+ * and the comparator (type 23, pins OUT, IN+, IN−, VCC, GND). For all, pin 3 → d = VCC
+ * and pin 4 → e = GND. The `nc`/`nd`/`ne` computations
  * below all test FIVE_PIN_TYPES membership, so adding a kind here emits its full
  * c (pin 2) / d (pin 3) / e (pin 4) trio. Every element with fewer pins leaves e = 0
  * (ground), where the core ignores it. Pin 4 → e.
  */
-const FIVE_PIN_TYPES = new Set<number>([17, 24]);
+const FIVE_PIN_TYPES = new Set<number>([17, 23, 24]);
 
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's

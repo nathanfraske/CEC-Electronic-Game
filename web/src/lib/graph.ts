@@ -799,6 +799,31 @@ export const PART_KINDS: Record<string, PartKind> = {
     "Ω",
     true,
   ),
+  // Comparator (sim type 23): a powered open-loop comparator — the analog→digital
+  // bridge. Pins are ordered OUT, IN+, IN−, VCC, GND so buildNetlist's pin→terminal
+  // map is direct (pin 0 → a = OUT digital, 1 → b = IN+ analog, 2 → c = IN− analog,
+  // 3 → d = VCC, 4 → e = GND), matching the core. OUT drives high when V(IN+) > V(IN−)
+  // and low when below, swinging the GND..VCC rail like a powered gate; `value` is the
+  // input hysteresis V_H (a symmetric Schmitt band about 0 — set 0 for a plain
+  // comparator). The latch-enable (LE = f) the core supports is left unwired here, so
+  // the front end is always transparent (continuous compare). Inputs on the left
+  // (IN+ top, IN− bottom), output on the right, VCC/GND top/bottom. Rose, the analog
+  // signal family alongside the op-amp.
+  CMP: kind(
+    "CMP",
+    "Comparator",
+    "accent",
+    [
+      pin("OUT", 2, 1),
+      pin("IN+", 0, 0),
+      pin("IN−", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    0.1,
+    "V",
+    true,
+  ),
   // Level shifter (sim type 20): translates a logic level across rails. Pins OUT,
   // IN (pin 0 → a = output, 1 → b = input). `value` is the INPUT rail (rail A, the
   // threshold side); the OUTPUT rail (rail B) is the second scalar (Component.amp,

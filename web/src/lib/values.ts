@@ -71,6 +71,9 @@ const CURATED_FULL: Record<string, number[]> = {
   // Analog switch on-resistance R_on (Ω): from a near-ideal lab switch (~1 Ω) up to
   // the kilohm range of a cheap CMOS gate.
   ASW: [1, 5, 10, 25, 50, 100, 200, 500, 1000],
+  // Comparator input hysteresis V_H (V): 0 = a plain comparator, widening into the
+  // Schmitt band that rejects noise near the switching point.
+  CMP: [0, 0.02, 0.05, 0.1, 0.2, 0.5, 1],
   // Level shifter input rail A (V) — the threshold side; output rail B is the amp.
   LS: [1.8, 2.5, 3.3, 5, 12, 15],
   // Pull-up Vcc (V): the rail the resistor pulls its net toward.
@@ -139,6 +142,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   SAMP: [1.65, 2.5, 3.3],
   // The analog-switch on-resistances people reach for first (lab / typical / cheap).
   ASW: [10, 100, 1000],
+  // The comparator hysteresis people reach for first (none / a light Schmitt band).
+  CMP: [0, 0.1, 0.5],
   LS: [1.8, 3.3, 5],
   PU: [3.3, 5, 12],
   // The turns ratios people reach for first: ¼, ½, 1:1, ×2, ×4.

@@ -18,20 +18,22 @@ target `ne555-ic.html`).
 wired** (the CLAUDE.md/logic-nets "GATE_AUX gap" was STALE — fixed that doc). Genuinely unwired:
 comparator, sampler, analog switch, behavioral (SPI/UART/LUT), CEC composition parts.
 
-**LANDED (chunk 1) — verified the full web gate (build:wasm/check/lint/build all green) + reviewed the
+**LANDED (chunks 1-2) — verified the full web gate (build:wasm/check/lint/build all green) + reviewed the
 netlist mapping myself:**
 - **SAMP "Clocked Sampler"** → `ELEM_SAMPLER` (type 22). Pins OUT/IN/CLK (a/b/c), value=threshold (V).
   Wired via `THREE_PIN_TYPES += 22` (emits CLK as c). The ADC atom.
 - **ASW "Analog Switch"** → `ELEM_ASWITCH` (type 24). Pins A/B/CTRL/VCC/GND (a/b/c/d/e), value=R_on (Ω).
   Wired via `FIVE_PIN_TYPES += 24` (the nc/nd/ne checks all test FIVE_PIN membership → emits c/d/e).
   Transmission gate / S&H / mux building block. Robust to unconnected pins (CTRL unwired → open).
+- **CMP "Comparator"** → `ELEM_COMPARATOR` (type 23), shipped **5-pin continuous** (OUT/IN+/IN−/VCC/GND
+  = a/b/c/d/e, `FIVE_PIN_TYPES += 23`), value=hysteresis V_H. The `LE`=f pin is left unwired (=ground)
+  so the core reads `e.f==0` → always transparent. **DEFERRED:** the 6-pin LATCHED variant (the LE pin)
+  needs connectivity detection — an unconnected web pin maps to a floating node (≠0), which would wrongly
+  LATCH; do it when building the real f-terminal infra for the behavioral parts (generalize `pushFGH` to
+  take `nf`, add a `SIX_PIN_TYPES`, and emit f=0 when LE is unconnected). The analog→digital bridge.
 
 **NEXT chunks (ordered):**
-1. **Comparator** (`ELEM_COMPARATOR`=23, 6-pin OUT/IN+/IN-/VCC/GND/LE). GOTCHA: sim treats `e.f==0` as
-   "transparent", but an UNCONNECTED web pin maps to a floating node (≠0) → would wrongly LATCH. Need
-   to detect LE-unconnected and emit f=0 (first f-terminal user — generalize `pushFGH` to take `nf`,
-   add a `SIX_PIN_TYPES={23}`), OR ship 5-pin continuous (drop LE) first.
-2. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin, prog id in `value`, LUT
+1. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin, prog id in `value`, LUT
    truth table in `aux`, mode in `params[4]`; needs config surfaces — a truth-table editor for the LUT).
 3. **CEC composition parts** (adder/half-adder/mux/demux/majority/tri-state/SR-latch/D-latch/JK) —
    multi-element `buildNetlist` macros (no new sim element; cross-coupled gates etc.).

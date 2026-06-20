@@ -1805,6 +1805,69 @@ function drawSAMP(g: Graphics, o: GlyphOpts): void {
   flow(g, rightX, out.y, out.x, out.y, o.electrical.current, o.phase, 0x46d2e6);
 }
 
+// --- Comparator (powered open-loop, analog→digital) --------------------------
+// Pins ordered OUT, IN+, IN−, VCC, GND. Drawn as the op-amp-style triangle (apex at
+// the output) with + / − polarity marks at the inputs and short VCC/GND power stubs;
+// a small Schmitt step inside the body marks its identity — it snaps the output to a
+// rail (with optional hysteresis), unlike the linear op-amp. `electrical.current` is
+// the output drive (lights the body + the output belt).
+function drawCMP(g: Graphics, o: GlyphOpts): void {
+  const out = o.pins[0];
+  const inP = o.pins[1];
+  const inM = o.pins[2];
+  const vcc = o.pins[3];
+  const gnd = o.pins[4];
+  if (!out || !inP || !inM) return;
+  const leftX = Math.min(inP.x, inM.x) + 10;
+  const apexX = out.x - 8;
+  const midY = (inP.y + inM.y) / 2;
+  const topY = Math.min(inP.y, inM.y) - 3;
+  const botY = Math.max(inP.y, inM.y) + 3;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Leads: inputs (high-impedance, quiet), the output spur, short power stubs.
+  g.moveTo(inP.x, inP.y).lineTo(leftX, inP.y);
+  g.moveTo(inM.x, inM.y).lineTo(leftX, inM.y);
+  g.moveTo(apexX, midY).lineTo(out.x, out.y);
+  if (vcc) g.moveTo(vcc.x, vcc.y).lineTo(vcc.x, midY - 6);
+  if (gnd) g.moveTo(gnd.x, gnd.y).lineTo(gnd.x, midY + 6);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // Body fill + the triangle outline.
+  g.moveTo(leftX, topY)
+    .lineTo(apexX, midY)
+    .lineTo(leftX, botY)
+    .closePath()
+    .fill({ color: o.color, alpha: 0.1 + 0.16 * drive });
+  g.moveTo(leftX, topY)
+    .lineTo(apexX, midY)
+    .lineTo(leftX, botY)
+    .closePath()
+    .stroke({ width: 2.4, color: o.color, alpha: 0.95 });
+
+  // Polarity marks: + at IN+, − at IN−.
+  const mk = leftX + 6;
+  const ms = 2.4;
+  g.moveTo(mk - ms, inP.y)
+    .lineTo(mk + ms, inP.y)
+    .moveTo(mk, inP.y - ms)
+    .lineTo(mk, inP.y + ms);
+  g.moveTo(mk - ms, inM.y).lineTo(mk + ms, inM.y);
+  g.stroke({ width: 1.6, color: o.color, alpha: 0.9 });
+
+  // Schmitt step inside the body — the comparator's identity (snaps to a rail), vs the
+  // linear op-amp triangle.
+  const hx = leftX + (apexX - leftX) * 0.42;
+  g.moveTo(hx - 4, midY + 3)
+    .lineTo(hx, midY + 3)
+    .lineTo(hx, midY - 3)
+    .lineTo(hx + 4, midY - 3)
+    .stroke({ width: 1.3, color: o.color, alpha: 0.7 });
+
+  // The OUT drive belt (signed by its current).
+  flow(g, apexX, midY, out.x, out.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 // --- Analog switch (node-gated transmission gate) ----------------------------
 // Pins ordered A, B, CTRL, VCC, GND: the switched signal path A↔B runs left→right;
 // CTRL (left-bottom) gates it, VCC/GND (top/bottom) power the gate. Drawn as the
@@ -2883,6 +2946,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   FF: drawFF,
   SAMP: drawSAMP,
   ASW: drawASW,
+  CMP: drawCMP,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
