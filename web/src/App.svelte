@@ -2220,6 +2220,25 @@
           </ul>
         </details>
       {/snippet}
+      {#if armedPart && !selPart && hasConfig(armedPart)}
+        <!-- Arm-time CONFIGURATOR, docked in the bin right where you picked the part (not in
+             the top toolbar). The same identity/quality chips the inspector shows, but BEFORE
+             placing — so the ghost is the configured part and place-and-repeat carpets it. The
+             default (variant 0 / mid tier / push-pull / CC) needs zero clicks; this only lets
+             you change it. Driven by the dual-target setters, which (with nothing selected)
+             write `armedConfig` and re-tint the ghost. -->
+        <div class="bin-config" role="group" aria-label="Configure armed part">
+          <div class="bin-config-head">
+            <span class="bin-config-name">{partName(armedPart)}</span>
+            <button
+              class="armed-x"
+              onclick={() => arm(null)}
+              aria-label="Disarm">×</button
+            >
+          </div>
+          {@render partConfig(armedPart)}
+        </div>
+      {/if}
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (Esc to disarm) —
         or drag it on. Scroll to zoom, drag empty space to pan.
@@ -2324,268 +2343,269 @@
     {/if}
   </aside>
 
-  <main class="panel board">
-    <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
-         tier / family / open-drain / load mode + step / PULSE waveform) that today only
-         showed once a part was placed. Factored into a snippet — declared here at the board
-         root so it's in scope for BOTH render sites: the arm-time configurator panel in the
-         toolbar's armed-chip block, and the selected-part inspector in the board frame. Both
-         are driven by the dual-target sel*/set* helpers, so a click edits the selected part
-         or the pending (armed) config interchangeably. Value-SEMANTICS rows (the value
-         picker, AC amplitude/mains, LS rail, POT/thermistor) stay in the inspector only —
-         they're per-instance knobs, not arm-time axes. -->
-    {#snippet partConfig(kind: string)}
-      {#if hasTiers(kind)}
-        <!-- Quality tier (main gameplay): each grade is a preset bundle of the
+  <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
+       tier / family / open-drain / load mode + step / PULSE waveform) that today only
+       showed once a part was placed. Factored into a snippet — declared here at the
+       WORKSPACE root so it's in scope for all three render sites: the arm-time
+       configurator card docked in the parts bin, and the selected-part inspector in the
+       board frame. Both are driven by the dual-target sel*/set* helpers, so a click edits
+       the selected part or the pending (armed) config interchangeably. Value-SEMANTICS rows
+       (the value picker, AC amplitude/mains, LS rail, POT/thermistor) stay in the inspector
+       only — they're per-instance knobs, not arm-time axes. -->
+  {#snippet partConfig(kind: string)}
+    {#if hasTiers(kind)}
+      <!-- Quality tier (main gameplay): each grade is a preset bundle of the
              device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
              inductor's DCR/winding-C, a source's output impedance, a resistor's
              tolerance, a MOSFET's Kp, a BJT's β), so a better tier self-resonates
              higher / is faster / regulates stiffer / has more gain (and, later, costs
              more). The non-ideal grades bite only in Real mode; the sandbox keeps raw
              param editing. -->
-        <div class="insp-sub">quality tier</div>
-        <div class="insp-chips wrap">
-          {#each TIER_LABELS as label, i (label)}
-            <button
-              class="chip-val {selTier() === i ? 'is-active' : ''}"
-              onclick={() => setTier(i)}>{label}</button
-            >
-          {/each}
-        </div>
-      {/if}
-      {#if hasDiodeTypes(kind)}
-        {@const dv = diodeVariant(kind, selVariant())}
-        <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
+      <div class="insp-sub">quality tier</div>
+      <div class="insp-chips wrap">
+        {#each TIER_LABELS as label, i (label)}
+          <button
+            class="chip-val {selTier() === i ? 'is-active' : ''}"
+            onclick={() => setTier(i)}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if hasDiodeTypes(kind)}
+      {@const dv = diodeVariant(kind, selVariant())}
+      <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
              Each preset sets the forward junction (Is/n → forward drop) and a current
              rating; the rating bites in Real mode (an over-rated diode FAILs). -->
-        <div class="insp-sub">diode type</div>
-        <div class="insp-chips wrap">
-          {#each DIODE_TYPES as dt, i (dt.label)}
-            <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{dt.label}</button
-            >
-          {/each}
+      <div class="insp-sub">diode type</div>
+      <div class="insp-chips wrap">
+        {#each DIODE_TYPES as dt, i (dt.label)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{dt.label}</button
+          >
+        {/each}
+      </div>
+      {#if dv}
+        <div class="insp-sub">
+          rated · <span class="mono">{formatValue(dv.ratedA, "A")}</span>
+          {#if realModels}<span class="mono">(FAIL above)</span>{/if}
         </div>
-        {#if dv}
-          <div class="insp-sub">
-            rated · <span class="mono">{formatValue(dv.ratedA, "A")}</span>
-            {#if realModels}<span class="mono">(FAIL above)</span>{/if}
-          </div>
-          {#if realModels}
-            <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
+        {#if realModels}
+          <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
                  out more charge on switch-off — the reverse-current spike a switcher hates. -->
-            <div class="insp-sub">
-              reverse recovery · <span class="mono"
-                >{dv.tt === 0
-                  ? "none"
-                  : dv.tt <= 1e-6
-                    ? "fast"
-                    : dv.tt <= 4e-6
-                      ? "medium"
-                      : "slow"}</span
-              >
-            </div>
-          {/if}
+          <div class="insp-sub">
+            reverse recovery · <span class="mono"
+              >{dv.tt === 0
+                ? "none"
+                : dv.tt <= 1e-6
+                  ? "fast"
+                  : dv.tt <= 4e-6
+                    ? "medium"
+                    : "slow"}</span
+            >
+          </div>
         {/if}
       {/if}
-      {#if hasLedColors(kind)}
-        {@const colors = variantList(kind) ?? []}
-        <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
+    {/if}
+    {#if hasLedColors(kind)}
+      {@const colors = variantList(kind) ?? []}
+      <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
              (red ~1.9 V … blue/white ~3 V) and tints the glyph. -->
-        <div class="insp-sub">colour</div>
-        <div class="insp-chips wrap">
-          {#each colors as col, i (col.label)}
-            <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{col.label}</button
-            >
-          {/each}
-        </div>
-      {/if}
-      {#if isDigitalPart(kind)}
-        {@const lv = familyLevels(selFamily(), partValue(kind))}
-        <!-- The logic family sets the input thresholds and output levels:
+      <div class="insp-sub">colour</div>
+      <div class="insp-chips wrap">
+        {#each colors as col, i (col.label)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{col.label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if isDigitalPart(kind)}
+      {@const lv = familyLevels(selFamily(), partValue(kind))}
+      <!-- The logic family sets the input thresholds and output levels:
            Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
            margins. Packed into `aux` for the solver (func + 16*family). -->
-        <div class="insp-sub">logic family</div>
-        <div class="insp-chips wrap">
-          {#each LOGIC_FAMILIES as fam, i (fam.name)}
-            <button
-              class="chip-val {selFamily() === i ? 'is-active' : ''}"
-              onclick={() => setFamily(i)}>{fam.name}</button
-            >
-          {/each}
-        </div>
-        <div class="insp-sub">
-          thresholds · <span class="mono"
-            >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
-              lv.vIh,
-              "V",
-            )}</span
+      <div class="insp-sub">logic family</div>
+      <div class="insp-chips wrap">
+        {#each LOGIC_FAMILIES as fam, i (fam.name)}
+          <button
+            class="chip-val {selFamily() === i ? 'is-active' : ''}"
+            onclick={() => setFamily(i)}>{fam.name}</button
           >
-        </div>
-        <div class="insp-sub">
-          output · <span class="mono"
-            >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
-          >
-          · noise margin
-          <span class="mono"
-            >{formatValue(lv.nmHigh, "V")} hi · {formatValue(lv.nmLow, "V")} lo</span
-          >
-        </div>
-      {/if}
-      {#if isGatePart(kind)}
-        <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+        {/each}
+      </div>
+      <div class="insp-sub">
+        thresholds · <span class="mono"
+          >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
+            lv.vIh,
+            "V",
+          )}</span
+        >
+      </div>
+      <div class="insp-sub">
+        output · <span class="mono"
+          >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
+        >
+        · noise margin
+        <span class="mono"
+          >{formatValue(lv.nmHigh, "V")} hi · {formatValue(lv.nmLow, "V")} lo</span
+        >
+      </div>
+    {/if}
+    {#if isGatePart(kind)}
+      <!-- Output stage: push-pull drives both rails; open-drain pulls low and
            releases high (needs an external pull-up) — open-drain outputs on one
            net make a wired-AND bus (I²C / interrupt-line idiom). -->
-        <div class="insp-sub">output</div>
-        <div class="insp-chips">
-          <button
-            class="chip-val {selOpenDrain() ? '' : 'is-active'}"
-            onclick={() => setOpenDrain(false)}>Push-pull</button
-          >
-          <button
-            class="chip-val {selOpenDrain() ? 'is-active' : ''}"
-            onclick={() => setOpenDrain(true)}>Open-drain</button
-          >
+      <div class="insp-sub">output</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+          onclick={() => setOpenDrain(false)}>Push-pull</button
+        >
+        <button
+          class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+          onclick={() => setOpenDrain(true)}>Open-drain</button
+        >
+      </div>
+      {#if selOpenDrain()}
+        <div class="insp-sub">
+          releases high · <span class="mono">add a pull-up to Vcc</span>
         </div>
-        {#if selOpenDrain()}
-          <div class="insp-sub">
-            releases high · <span class="mono">add a pull-up to Vcc</span>
-          </div>
-        {/if}
       {/if}
-      {#if kind === "PULSE"}
-        <!-- The pulse / clock generator: high level (amplitude), waveform (square or
+    {/if}
+    {#if kind === "PULSE"}
+      <!-- The pulse / clock generator: high level (amplitude), waveform (square or
              triangle), and duty cycle. `value` (the frequency, Hz) uses the row above. -->
-        <div class="insp-sub">high level</div>
-        <div class="insp-row">
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepAmpVal(-1)}
-            title="Next smaller level">−</button
-          >
-          <div class="insp-chips wrap">
-            {#each acAmpChips() as v (v)}
-              <button
-                class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
-              >
-            {/each}
-          </div>
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepAmpVal(1)}
-            title="Next larger level">+</button
-          >
-        </div>
-        <div class="insp-sub">waveform</div>
+      <div class="insp-sub">high level</div>
+      <div class="insp-row">
+        <button
+          class="btn btn-ghost insp-step"
+          onclick={() => stepAmpVal(-1)}
+          title="Next smaller level">−</button
+        >
         <div class="insp-chips wrap">
-          {#each ["Square", "Triangle"] as wf, i (wf)}
+          {#each acAmpChips() as v (v)}
             <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{wf}</button
+              class="chip-val {selAmp() === v ? 'is-active' : ''}"
+              onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
             >
           {/each}
         </div>
-        <div class="insp-sub">
-          duty · {Math.round(selDuty() * 100)}%
-        </div>
-        <div class="insp-row">
-          <span class="wiper-end">0</span>
-          <input
-            class="wiper-slider"
-            type="range"
-            min="0.05"
-            max="0.95"
-            step="0.01"
-            value={selDuty()}
-            aria-label="Pulse duty cycle"
-            oninput={(e) => setDuty(Number(e.currentTarget.value))}
-          />
-          <span class="wiper-end">1</span>
-        </div>
-      {/if}
-      {#if kind === "LOAD"}
-        <!-- The electronic load's MODE: constant-current (CC) draws a set current
+        <button
+          class="btn btn-ghost insp-step"
+          onclick={() => stepAmpVal(1)}
+          title="Next larger level">+</button
+        >
+      </div>
+      <div class="insp-sub">waveform</div>
+      <div class="insp-chips wrap">
+        {#each ["Square", "Triangle"] as wf, i (wf)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{wf}</button
+          >
+        {/each}
+      </div>
+      <div class="insp-sub">
+        duty · {Math.round(selDuty() * 100)}%
+      </div>
+      <div class="insp-row">
+        <span class="wiper-end">0</span>
+        <input
+          class="wiper-slider"
+          type="range"
+          min="0.05"
+          max="0.95"
+          step="0.01"
+          value={selDuty()}
+          aria-label="Pulse duty cycle"
+          oninput={(e) => setDuty(Number(e.currentTarget.value))}
+        />
+        <span class="wiper-end">1</span>
+      </div>
+    {/if}
+    {#if kind === "LOAD"}
+      <!-- The electronic load's MODE: constant-current (CC) draws a set current
              regardless of voltage; constant-resistance (CR) draws V/R. The mode sets
              the value chips' unit (A vs Ω) — handled in the inspector via loadChipsForMode
              + fmtVal — and which element buildNetlist emits. -->
-        <div class="insp-sub">mode</div>
-        <div class="insp-chips">
-          <button
-            class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
-            onclick={() => setLoadMode(0)}
-            title="Constant current — draw a set current regardless of voltage"
-            >CC</button
-          >
-          <button
-            class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
-            onclick={() => setLoadMode(1)}
-            title="Constant resistance — draw V/R like a fixed resistor"
-            >CR</button
-          >
-        </div>
-        {#if selLoadMode() === 0}
-          <!-- Dynamic load step (CC only): step the draw between the base level (the
+      <div class="insp-sub">mode</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
+          onclick={() => setLoadMode(0)}
+          title="Constant current — draw a set current regardless of voltage"
+          >CC</button
+        >
+        <button
+          class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
+          onclick={() => setLoadMode(1)}
+          title="Constant resistance — draw V/R like a fixed resistor"
+          >CR</button
+        >
+      </div>
+      {#if selLoadMode() === 0}
+        <!-- Dynamic load step (CC only): step the draw between the base level (the
                value chips in the inspector) and a PEAK at a chosen rate/duty — the load-step
                that probes a supply's transient response. Off (0 Hz) = a static DC load. -->
-          <div class="insp-sub">dynamic load step</div>
-          <div class="insp-chips wrap">
-            {#each LOAD_STEP_HZ as hz (hz)}
-              <button
-                class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
-                onclick={() => setLoadHz(hz)}
-                >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
-              >
-            {/each}
-          </div>
-          {#if selLoadHz() > 0}
-            <!-- The peak current (the load's `amp` second scalar): the value chips set
+        <div class="insp-sub">dynamic load step</div>
+        <div class="insp-chips wrap">
+          {#each LOAD_STEP_HZ as hz (hz)}
+            <button
+              class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
+              onclick={() => setLoadHz(hz)}
+              >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
+            >
+          {/each}
+        </div>
+        {#if selLoadHz() > 0}
+          <!-- The peak current (the load's `amp` second scalar): the value chips set
                  the BASE, this sets the PEAK it steps up to. Reuses the amp chips/stepper. -->
-            <div class="insp-sub">peak</div>
-            <div class="insp-row">
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(-1)}
-                title="Next smaller peak">−</button
-              >
-              <div class="insp-chips wrap">
-                {#each acAmpChips() as v (v)}
-                  <button
-                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                    onclick={() => setAmp(v)}>{formatValue(v, "A")}</button
-                  >
-                {/each}
-              </div>
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(1)}
-                title="Next larger peak">+</button
-              >
+          <div class="insp-sub">peak</div>
+          <div class="insp-row">
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepAmpVal(-1)}
+              title="Next smaller peak">−</button
+            >
+            <div class="insp-chips wrap">
+              {#each acAmpChips() as v (v)}
+                <button
+                  class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                  onclick={() => setAmp(v)}>{formatValue(v, "A")}</button
+                >
+              {/each}
             </div>
-            <div class="insp-sub">
-              duty · {Math.round(selDuty() * 100)}%
-            </div>
-            <div class="insp-row">
-              <span class="wiper-end">0</span>
-              <input
-                class="wiper-slider"
-                type="range"
-                min="0.05"
-                max="0.95"
-                step="0.01"
-                value={selDuty()}
-                aria-label="Load step duty cycle"
-                oninput={(e) => setDuty(Number(e.currentTarget.value))}
-              />
-              <span class="wiper-end">1</span>
-            </div>
-          {/if}
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepAmpVal(1)}
+              title="Next larger peak">+</button
+            >
+          </div>
+          <div class="insp-sub">
+            duty · {Math.round(selDuty() * 100)}%
+          </div>
+          <div class="insp-row">
+            <span class="wiper-end">0</span>
+            <input
+              class="wiper-slider"
+              type="range"
+              min="0.05"
+              max="0.95"
+              step="0.01"
+              value={selDuty()}
+              aria-label="Load step duty cycle"
+              oninput={(e) => setDuty(Number(e.currentTarget.value))}
+            />
+            <span class="wiper-end">1</span>
+          </div>
         {/if}
       {/if}
-    {/snippet}
+    {/if}
+  {/snippet}
+
+  <main class="panel board">
     <div class="board-tools">
       <span class="tool-label">Tool</span>
       <button
@@ -2690,20 +2710,6 @@
               aria-label="Disarm">×</button
             >
           </span>
-          {#if !selPart && hasConfig(armedPart)}
-            <!-- Arm-time CONFIGURATOR: the same identity/quality chips the inspector shows,
-                 but BEFORE placing — so the ghost is the configured part and place-and-repeat
-                 carpets it. The default (variant 0 / mid tier / push-pull / CC) needs zero
-                 clicks; this panel only lets you change it. Driven by the dual-target setters,
-                 which (with nothing selected) write `armedConfig` and re-tint the ghost. -->
-            <div
-              class="armed-config"
-              role="group"
-              aria-label="Configure armed part"
-            >
-              {@render partConfig(armedPart)}
-            </div>
-          {/if}
         </span>
       {/if}
       {#if demo}
@@ -3694,8 +3700,8 @@
     font-size: 10px;
     color: var(--faint);
   }
-  /* The armed-part chip: shows what a board click will drop, with an × to disarm. The
-     wrap anchors the arm-time configurator popover directly beneath the chip. */
+  /* The armed-part chip: a compact toolbar status of what a board click will drop, with an
+     × to disarm. The configurator itself lives in the parts bin (.bin-config), not here. */
   .armed-wrap {
     position: relative;
     display: inline-flex;
@@ -3713,27 +3719,36 @@
     border-radius: 3px;
     background: var(--accent-soft);
   }
-  /* Arm-time configurator: a compact dark-HUD popover under the armed chip, holding the
-     same identity/quality chips (the partConfig snippet) so the part is configured BEFORE
-     it's dropped. Mirrors the value-pop styling; scrolls if a kind has many rows. */
-  .armed-config {
-    position: absolute;
-    z-index: 6;
-    top: calc(100% + 6px);
-    left: 0;
-    width: 248px;
-    max-height: 60vh;
+  /* Arm-time configurator, docked at the top of the parts bin (right where you picked the
+     part): the same identity/quality chips (the partConfig snippet) so the part is configured
+     BEFORE it's dropped. Accent-framed so it reads as the live selection; scrolls if a kind
+     has many rows. */
+  .bin-config {
+    margin-bottom: 10px;
+    max-height: 42vh;
     overflow-y: auto;
-    padding: 9px 11px 11px;
-    border: 1px solid var(--border-bright);
+    padding: 8px 10px 10px;
+    border: 1px solid var(--accent-line);
     border-radius: 5px;
-    background: oklch(0.165 0.028 285 / 0.97);
-    box-shadow: 0 12px 34px -12px #000;
-    backdrop-filter: blur(4px);
+    background: var(--accent-soft);
   }
-  /* The first sub-label needs no top gap inside the panel (the panel padding suffices). */
-  .armed-config > :global(.insp-sub:first-child) {
-    margin-top: 0;
+  .bin-config-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .bin-config-name {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  /* The first sub-label sits right under the head, so it needs no extra top gap. */
+  .bin-config > :global(.insp-sub:first-of-type) {
+    margin-top: 4px;
   }
   .armed-x {
     width: 18px;
