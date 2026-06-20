@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (56) — Voltage representation overhaul (owner "go big") — PRs #150–#153
+
+**State:** 🟢 all landed + re-synced. The voltage view is now glance-readable: **colour = which rail**
+(conventional PC code), **height/fill = how many volts** (LED bar in Reality, water standpipe in
+Analogy), **RMS primary, AC swing shown as an envelope**. Two brainstorm agents fed it (rail colours
++ AC/RMS reading). Web-only; no sim change; gates green throughout.
+
+- **#150** — `voltageColor` rewritten to the conventional PC/bench wire code (+3.3 orange / +5 red /
+  +12 yellow / +1.8 violet / GND dark / −12 blue / −5 cyan; 24/48V→mains ramp hotter-whiter),
+  **signed + unclamped** (fixes −V-looks-grounded).
+- **#151** — wire colour tracks the net's **signed-RMS** effective voltage (steady on AC, no strobe;
+  mean's sign keeps −5V cyan; mains = its 230V). Added per-node `nodeVmean`/`nodeVmin`/`nodeVmax`
+  (mirror `nodeVrms`). Energy-flow direction stays instantaneous.
+- **#152** — Reality **LED bar** `drawNetBars`: per-net segmented bar, RMS solid fill + translucent
+  peak-envelope band, bipolar centre-zero, "~" badge, DC = zero-swing limit. `voltsToPx` soft-sat.
+- **#153** — Analogy **standpipe** `drawNetStandpipes`: water column, height = voltage, calm RMS +
+  peak wet-mark, sump below ground for −V, bipolar slosh. Shares factored `netGaugeAnchors` with the
+  bar. (Both gauges: reality→bar, analogy→standpipe, gated on the conduit lens.)
+- **Open (owner floated):** a **per-net colour override tied to net labels** (`NetLabel.color` +
+  label-editor swatch + `colorVoltage` honouring it). Plus AC extras (a swing bracket / `Vpk/Vrms`
+  inspector row; per-node freq/valid to gate the badge). See TODOS (31)/(33).
+- **NOW brainstorming (owner):** the **parts-bin clutter ↔ variant-friction** tradeoff — show all
+  component variety without clutter, and remove the "place then open a submenu to pick the variant"
+  friction. Multiple brainstorm agents launched.
+
 ## 2026-06-20 (55) — Electronic load + IMPLY/NIMPLY + OR refsheet + POT regression fix
 
 **State:** 🟢 all landed (PRs #144–#148 squash-merged, branch re-synced). Heavy multi-thread session;

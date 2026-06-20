@@ -8,6 +8,32 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (33) — Voltage overhaul shipped (owner "go big") — PRs #150–#153
+
+The plan in entry (31) is **DONE** end to end. Voltage now reads at a glance: **colour = which rail**
+(conventional PC code), **height/fill = how many volts** (LED bar in Reality, water standpipe in
+Analogy), **RMS primary with the AC swing shown as an envelope**.
+
+- ~~**#150 rail-identity colour:** rewrote `voltageColor` to the conventional PC/bench wire code
+  (+3.3 orange, +5 red, +12 yellow, +1.8 violet, GND dark, −12 blue, −5 cyan; 24/48V→mains ramp
+  hotter/whiter). Signed + unclamped — fixes the −V-looks-grounded bug.~~
+- ~~**#151 signed-RMS colour + per-node stats:** wire colour tracks the net's signed-RMS effective
+  voltage (steady on AC, no strobe; mean's sign keeps −5V cyan; mains reads as its 230V). Added
+  per-node `nodeVmean`/`nodeVmin`/`nodeVmax` (mirror `nodeVrms`) — the baseline + peak envelope the
+  gauges read. Re-anchored mains stops to RMS (120/230). Energy-flow dir stays instantaneous.~~
+- ~~**#152 Reality LED bar** (`drawNetBars`): per-net segmented bar, RMS solid fill + translucent
+  peak-envelope band, **bipolar centre-zero**, "~" badge, DC = zero-swing limit. `voltsToPx`
+  soft-saturates (5V & 230V both fit). Reality lens only.~~
+- ~~**#153 Analogy standpipe** (`drawNetStandpipes`): per-net water column, height = pressure =
+  voltage, calm RMS level + peak **wet-mark/tide band**, **sump** below ground for negatives,
+  bipolar slosh. Shares the factored `netGaugeAnchors` with the bar. Analogy lens only.~~
+- **DONE.** All four squash-merged, branch re-synced; web gates green throughout (no sim change).
+  - [ ] **Remaining brainstorm item (owner floated):** a **per-net colour OVERRIDE tied to net
+    labels** — a `color?` on `NetLabel` (graph.ts) + a swatch in the label editor (App.svelte) +
+    `colorVoltage`/`voltageColor` honouring it (board.ts) so a player can hand-colour a net. Also a
+    follow-on: AC/RMS brainstorm extras not yet built (a swing bracket + `Vpk/Vrms` inspector row;
+    per-node freq/valid to gate the badge more precisely than peak-to-peak).
+
 ## 2026-06-20 (32) — Electronic load, part 2: the LOAD part (CC / CR + dynamic load-step)
 
 Part 2 of the electronic-load work (part 1 = the programmable current source, #145). The LOAD part
