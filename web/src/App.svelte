@@ -1109,6 +1109,7 @@
             nl.aux,
             nl.d,
             nl.params,
+            nl.e,
           );
           controls?.resync();
         } else if (graph.components.size > 0) {

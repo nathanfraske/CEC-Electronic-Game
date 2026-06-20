@@ -145,6 +145,14 @@ const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
 const FOUR_PIN_TYPES = new Set<number>([18, 19]);
 
 /**
+ * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17),
+ * whose five pins are OUT, IN1, IN2, VCC (pin 3 → d), GND (pin 4 → e). The gate reads
+ * its rail as `V(VCC) − V(GND)` from these pins; with neither power pin wired (both
+ * default to ground) the core falls back to the legacy `value` rail. Pin 4 → e.
+ */
+const FIVE_PIN_TYPES = new Set<number>([17]);
+
+/**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
  * second scalar `aux`. Mirrors `gate_logic` in `crates/sim-core/src/lib.rs`:
  * 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF. Every gate part maps to
@@ -200,6 +208,12 @@ export interface BuiltNetlist {
    * element with fewer pins it is `0` (ground), which the core ignores. Pin 3 → d.
    */
   d: Uint32Array;
+  /**
+   * Fifth-terminal node per element, parallel to the rest: for a powered logic gate
+   * (the only 5-pin element) it is the node of its pin 4 (GND); every other element
+   * leaves it `0` (ground), which the core ignores. Pin 4 → e.
+   */
+  e: Uint32Array;
   values: Float64Array;
   /**
    * Second per-element scalar, parallel to `values`: an AC source's peak
@@ -384,9 +398,13 @@ export function buildNetlist(
   // gate / the base). The core ignores c for 2-pin types.
   const cArr: number[] = [];
   // The fourth-terminal array, parallel to `a`/`b`/`c`: a 4-pin device (the
-  // transformer) stamps its pin-3 node (secondary−); every other element leaves it
-  // 0 (ground), ignored by the core. Pushed in lockstep with each element stamp.
+  // transformer) or a powered logic gate's VCC pin stamps its pin-3 node; every other
+  // element leaves it 0 (ground), ignored by the core. Pushed in lockstep.
   const dArr: number[] = [];
+  // The fifth-terminal array, parallel to the rest: a powered logic gate's GND pin
+  // (pin 4) stamps its node here; every other element leaves it 0 (ground), ignored by
+  // the core. Pushed in lockstep with each element stamp.
+  const eArr: number[] = [];
   const values: number[] = [];
   // The second per-element scalar, parallel to `values`: an AC source's peak
   // amplitude (volts); 0 for every other element. Pushed in lockstep with each
@@ -503,14 +521,24 @@ export function buildNetlist(
     // vAcross reads Vce; for an op-amp its current is the output drive Iout sourced
     // at a = OUT and nodesOfComponent = [OUT, IN−], so vAcross reads V(OUT)−V(IN−).)
     const nc =
-      (THREE_PIN_TYPES.has(t) || FOUR_PIN_TYPES.has(t)) && kind.pins.length >= 3
+      (THREE_PIN_TYPES.has(t) ||
+        FOUR_PIN_TYPES.has(t) ||
+        FIVE_PIN_TYPES.has(t)) &&
+      kind.pins.length >= 3
         ? (nodeIndex.get(find(key(c.id, 2))) ?? 0)
         : 0;
     // The fourth terminal: a 4-pin device (the transformer) stamps its pin-3 node
-    // (secondary−); every element with fewer pins leaves d = 0 (ground, ignored).
+    // (secondary−), and a powered gate stamps its VCC pin; every element with fewer
+    // pins leaves d = 0 (ground, ignored).
     const nd =
-      FOUR_PIN_TYPES.has(t) && kind.pins.length >= 4
+      (FOUR_PIN_TYPES.has(t) || FIVE_PIN_TYPES.has(t)) && kind.pins.length >= 4
         ? (nodeIndex.get(find(key(c.id, 3))) ?? 0)
+        : 0;
+    // The fifth terminal: a powered gate stamps its GND pin (pin 4); everything else
+    // leaves e = 0 (ground, ignored — and so a gate with no power pins stays legacy).
+    const ne =
+      FIVE_PIN_TYPES.has(t) && kind.pins.length >= 5
+        ? (nodeIndex.get(find(key(c.id, 4))) ?? 0)
         : 0;
     // The second scalar: an AC source emits its peak amplitude (volts, defaulting
     // to 5 V when a legacy source carries none); a logic gate / flip-flop emits its
@@ -540,6 +568,7 @@ export function buildNetlist(
     bArr.push(nb);
     cArr.push(nc);
     dArr.push(nd);
+    eArr.push(ne);
     values.push(value);
     auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
@@ -649,6 +678,10 @@ export function buildNetlist(
   // transformer-free circuit keeps its exact old signature, while rewiring a
   // transformer's secondary− net rebuilds the sim.
   const dSig = dArr.some((x) => x !== 0) ? dArr.join(",") : "";
+  // The fifth terminal `e` (a powered gate's GND pin) folds in the same way, and only
+  // when non-zero — so a gate-free (or unpowered-legacy) circuit keeps its old signature,
+  // while wiring/rewiring a gate's power pins rebuilds the sim.
+  const eSig = eArr.some((x) => x !== 0) ? eArr.join(",") : "";
 
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
@@ -720,6 +753,7 @@ export function buildNetlist(
     (labelSig ? "|" + labelSig : "") +
     (auxSig ? "|aux:" + auxSig : "") +
     (dSig ? "|d:" + dSig : "") +
+    (eSig ? "|e:" + eSig : "") +
     paramsSig;
 
   return {
@@ -729,6 +763,7 @@ export function buildNetlist(
     b: Uint32Array.from(bArr),
     c: Uint32Array.from(cArr),
     d: Uint32Array.from(dArr),
+    e: Uint32Array.from(eArr),
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     params,

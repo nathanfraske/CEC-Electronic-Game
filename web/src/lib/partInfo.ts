@@ -107,7 +107,9 @@ function ratioStr(n: number): string {
 // Logic-gate info is shared but for the name, the boolean equation, and the prose:
 // every gate shows the same live row — its logic-high rail, the half-rail switching
 // threshold, and the output drive current — because the per-part lesson is the
-// truth table (static), not a changing number. `value` is the logic-high rail.
+// truth table (static), not a changing number. The chip is a real powered IC: its
+// rail is the supply you wire across its VCC and GND pins (V(VCC) − V(GND)), and the
+// live row still labels that rail off `value` for now (an acceptable approximation).
 function gateInfo(name: string, equation: string, plain: string): PartInfo {
   return {
     name,
@@ -505,42 +507,42 @@ export const PART_INFO: Record<string, PartInfo> = {
   AND: gateInfo(
     "AND Gate",
     "Y = A · B",
-    "An AND gate drives its output high only when BOTH inputs are high; any low input forces the output low. It reads each input as a 1 when the voltage is above half the supply rail and as a 0 below — a single clean threshold, no in-between. Like every gate here the inputs draw essentially no current (they only sense the voltage), while the output is driven hard toward the rail or ground through a low-impedance driver. The decision is taken from the previous tick's input levels, so the output lags its inputs by exactly one simulation step — the propagation delay every real gate has, and what makes chains of gates settle in sequence rather than all at once.",
+    "An AND gate drives its output high only when BOTH inputs are high; any low input forces the output low. It is a real powered chip — wire its VCC pin to a positive rail and its GND pin to ground, and the supply across those two pins (V(VCC) − V(GND)) becomes its logic rail. With no power wired the IC is dead and its output goes high-impedance, so always feed it VCC and GND first. It reads each input (measured against GND) as a 1 when the voltage is above half that rail and as a 0 below — a single clean threshold, no in-between. Like every gate here the inputs draw essentially no current (they only sense the voltage), while the output is driven hard toward VCC or GND through a low-impedance driver. The decision is taken from the previous tick's input levels, so the output lags its inputs by exactly one simulation step — the propagation delay every real gate has, and what makes chains of gates settle in sequence rather than all at once.",
   ),
   OR: gateInfo(
     "OR Gate",
     "Y = A + B",
-    "An OR gate drives its output high when EITHER input is high (or both); only two low inputs give a low output. Each input is thresholded at half the supply rail — above is a 1, below a 0. The inputs draw essentially no current; the output is driven hard to the rail or to ground. The output follows the previous tick's inputs, so it lags by one simulation step — the gate's propagation delay.",
+    "An OR gate drives its output high when EITHER input is high (or both); only two low inputs give a low output. It is a powered chip — wire VCC to a positive rail and GND to ground, and the supply across them is the logic rail; until you do, the IC is dead and its output floats. Each input (measured against GND) is thresholded at half that rail — above is a 1, below a 0. The inputs draw essentially no current; the output is driven hard to VCC or to GND. The output follows the previous tick's inputs, so it lags by one simulation step — the gate's propagation delay.",
   ),
   NAND: gateInfo(
     "NAND Gate",
     "Y = (A · B)′",
-    "A NAND gate is the inverse of AND: its output is low only when both inputs are high, and high in every other case. NAND is universal — every other gate, and so every digital circuit, can be built from NAND gates alone, which is why real logic families are full of them. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs change.",
+    "A NAND gate is the inverse of AND: its output is low only when both inputs are high, and high in every other case. NAND is universal — every other gate, and so every digital circuit, can be built from NAND gates alone, which is why real logic families are full of them. It is a powered chip: wire VCC and GND across it and the supply between them is the logic rail — with no power the IC is dead and its output floats. Inputs (measured against GND) are thresholded at half that rail and draw no current; the output is driven hard to VCC or GND, one tick after the inputs change.",
   ),
   NOR: gateInfo(
     "NOR Gate",
     "Y = (A + B)′",
-    "A NOR gate is the inverse of OR: its output is high only when BOTH inputs are low, and low otherwise. Like NAND it is universal — any logic can be built from NOR alone. Inputs are read against a half-rail threshold and draw no current; the output is driven hard to the rail or ground, lagging the inputs by one simulation step (the propagation delay).",
+    "A NOR gate is the inverse of OR: its output is high only when BOTH inputs are low, and low otherwise. Like NAND it is universal — any logic can be built from NOR alone. It is a powered chip: wire VCC and GND across it and the supply between them sets the logic rail — unpowered, the IC is dead and its output floats. Inputs (measured against GND) are read against a half-rail threshold and draw no current; the output is driven hard to VCC or GND, lagging the inputs by one simulation step (the propagation delay).",
   ),
   XOR: gateInfo(
     "XOR Gate",
     "Y = A ⊕ B",
-    "An XOR (exclusive-OR) gate drives its output high when its inputs DIFFER and low when they match. It is the heart of binary arithmetic — the sum bit of a half-adder is exactly A XOR B (and A AND B is the carry) — and the basis of parity and comparison logic. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs settle.",
+    "An XOR (exclusive-OR) gate drives its output high when its inputs DIFFER and low when they match. It is the heart of binary arithmetic — the sum bit of a half-adder is exactly A XOR B (and A AND B is the carry) — and the basis of parity and comparison logic. It is a powered chip: wire VCC and GND across it and the supply between them is the logic rail — without power the IC is dead and its output floats. Inputs (measured against GND) are thresholded at half that rail and draw no current; the output is driven hard to VCC or GND, one tick after the inputs settle.",
   ),
   XNOR: gateInfo(
     "XNOR Gate",
     "Y = (A ⊕ B)′",
-    "An XNOR (exclusive-NOR, or equality) gate is the complement of XOR: it drives its output high when its inputs MATCH and low when they differ — a one-bit equality test. Chain them to compare multi-bit buses. Inputs are thresholded at half the rail and draw no current; the output is driven hard to the rail or ground, one tick after the inputs settle.",
+    "An XNOR (exclusive-NOR, or equality) gate is the complement of XOR: it drives its output high when its inputs MATCH and low when they differ — a one-bit equality test. Chain them to compare multi-bit buses. It is a powered chip: wire VCC and GND across it and the supply between them is the logic rail — unpowered, the IC is dead and its output floats. Inputs (measured against GND) are thresholded at half that rail and draw no current; the output is driven hard to VCC or GND, one tick after the inputs settle.",
   ),
   NOT: gateInfo(
     "NOT Gate",
     "Y = A′",
-    "A NOT gate (an inverter) drives its output to the opposite of its single input: high in gives low out, low in gives high out. It is the simplest active logic element and the building block of every more complex gate. The input is thresholded at half the supply rail and draws no current; the output is driven hard to the rail or ground, lagging the input by exactly one simulation step. Wire an inverter's output back to its input and that one-tick delay makes it oscillate — a ring oscillator.",
+    "A NOT gate (an inverter) drives its output to the opposite of its single input: high in gives low out, low in gives high out. It is the simplest active logic element and the building block of every more complex gate. It is a real powered chip — wire its VCC pin to a positive rail and its GND pin to ground, and the supply across them (V(VCC) − V(GND)) is its logic rail; with no power the IC is dead and its output floats, so feed it VCC and GND first. The input (measured against GND) is thresholded at half that rail and draws no current; the output is driven hard to VCC or GND, lagging the input by exactly one simulation step. Wire an inverter's output back to its input and that one-tick delay makes it oscillate — a ring oscillator.",
   ),
   BUF: gateInfo(
     "Buffer",
     "Y = A",
-    "A buffer (BUF) drives its output to MATCH its single input — a non-inverting gate. It does no logic; it restores and re-drives a weak or loaded signal (a line driver) and adds exactly one simulation step of delay. The input is thresholded at half the rail and draws no current; the output is driven hard to the rail or ground.",
+    "A buffer (BUF) drives its output to MATCH its single input — a non-inverting gate. It does no logic; it restores and re-drives a weak or loaded signal (a line driver) and adds exactly one simulation step of delay. It is a real powered chip — wire its VCC pin to a positive rail and its GND pin to ground, and the supply across them is its logic rail; with no power the IC is dead and its output floats. The input (measured against GND) is thresholded at half that rail and draws no current; the output is driven hard to VCC or GND.",
   ),
   TR: {
     name: "Transformer",

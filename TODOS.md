@@ -31,10 +31,30 @@ half.
   **unchanged**. Added 4 powered tests (inverter swings to VCC; unwired VCC is dead; 2-input NAND
   via the 5th terminal; offset-GND output window). 135 sim-core tests, all gates green.~~ **DONE
   (part 1).**
-  - [ ] **Part 2 (web):** gates carry 5 pins (OUT[,IN2], IN1, VCC, GND); `buildNetlist` emits the
-    `e` node + calls `set_netlist_pe`; loop.ts boundary; 5-pin IC glyphs; inspector (the `value`
-    rail picker becomes vestigial when powered); migrate gate examples. The legacy fallback means
-    old circuits keep working until each is rewired.
+## 2026-06-20 (27) — Powered 5-pin logic ICs, part 2: the web side
+
+Part 2 of the powered-gate work (part 1 = sim-core foundation, entry 26). Gates are now real
+powered 5-pin ICs in the web, end to end.
+
+- ~~**Pins:** every gate is 5-pin `[Y, A, B, VCC, GND]` (`graph.ts`), index → terminal direct
+  (a,b,c,d,e). NOT/BUF's pin 2 is the package **NC** (matches the real SOT-23-5), ignored by the
+  sim.~~
+- ~~**Netlist:** `FIVE_PIN_TYPES`; `buildNetlist` emits the `e` (GND) node + `d` (VCC) for gates,
+  adds `e` to `BuiltNetlist` + the change-detection signature; `loop.ts` routes to
+  `set_netlist_pe` when an `e` array (or params) is present; `App.svelte` passes `nl.e`.~~
+- ~~**Glyph:** `gateSchematic` draws VCC (warm) out the top and GND (grey) out the bottom on every
+  gate, and a faint × NC stub on NOT/BUF; single-input gates no longer misread pin 2 as a second
+  input.~~
+- ~~**Examples:** the four gate examples (inverter, AND, half-adder, SR latch) migrated — a
+  `powerGate(g, gate, supply, pin, gnd)` helper wires every gate's VCC→5 V supply and GND→ground in
+  both `build()` and `demo.alt()`; steps/counts/prose updated (a logic IC is dead until powered).~~
+- ~~**Content/audit:** all 8 gate `plain()` texts + `gateInfo` rewritten for the powered model;
+  `pinout.ts` extended (GATE + GATE1 maps, VCC/GND/NC); swept the tree — `infoDiagram`, `board.ts`,
+  `App.svelte` are all pin-count-agnostic, nothing else broke.~~ **DONE — powered 5-pin ICs
+  COMPLETE.** 135 sim-core tests, all web gates green.
+  - [ ] Follow-on: the gate inspector's live "rail" row still labels off the vestigial `value`
+    (the real rail is `V(VCC)−V(GND)`, not exposed to `partInfo`); expose the wired rail to the
+    inspector so it reads the true supply. The `value` picker could also be retired for gates.
 
 ## 2026-06-20 (25) — Saved circuits → examples, drop-in (owner workflow) + re-modelled pot dimmer
 

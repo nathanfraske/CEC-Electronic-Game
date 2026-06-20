@@ -1346,7 +1346,11 @@ function gateSchematic(
   const out = o.pins[0];
   const inA = o.pins[1];
   if (!out || !inA) return;
-  const inB = o.pins[2]; // undefined for the inverter (single input)
+  // A powered IC carries five pins: OUT, IN1, IN2/NC, VCC, GND. The inverter and
+  // buffer are single-input — their pin 2 is the package's NC, NOT a second input —
+  // so they must not read it as inB (that would draw a phantom two-input body).
+  const single = o.kind === "NOT" || o.kind === "BUF";
+  const inB = single ? undefined : o.pins[2];
   const midY = inB ? (inA.y + inB.y) / 2 : inA.y;
   const topY = inB ? Math.min(inA.y, inB.y) : midY - 12;
   const botY = inB ? Math.max(inA.y, inB.y) : midY + 12;
@@ -1400,6 +1404,44 @@ function gateSchematic(
   // The inversion bubble at the output tip (NAND / NOR / NOT).
   if (inverted) {
     g.circle(tipX + 4, midY, 3.2).stroke({ width: 2, color: col, alpha: 0.95 });
+  }
+
+  // Power pins — the chip's supply. VCC (pin 3) comes out the top of the body, GND
+  // (pin 4) out the bottom, drawn as thin rail stubs (warm for VCC, gnd-grey for GND)
+  // so they read as power, not signal. The gate is DEAD until both are wired.
+  const bodyCx = (backX + tipX) / 2;
+  const vcc = o.pins[3];
+  const gnd = o.pins[4];
+  if (vcc) {
+    g.moveTo(vcc.x, vcc.y)
+      .lineTo(bodyCx, topY)
+      .stroke({ width: 1.6, color: 0xd8a24a, alpha: 0.8 });
+    // a small '+' tick at the VCC pin
+    g.moveTo(vcc.x - 2.5, vcc.y)
+      .lineTo(vcc.x + 2.5, vcc.y)
+      .moveTo(vcc.x, vcc.y - 2.5)
+      .lineTo(vcc.x, vcc.y + 2.5)
+      .stroke({ width: 1.4, color: 0xd8a24a, alpha: 0.9 });
+  }
+  if (gnd) {
+    g.moveTo(gnd.x, gnd.y)
+      .lineTo(bodyCx, botY)
+      .stroke({ width: 1.6, color: 0x6b6488, alpha: 0.8 });
+    // a small ground bar at the GND pin
+    g.moveTo(gnd.x - 3, gnd.y)
+      .lineTo(gnd.x + 3, gnd.y)
+      .stroke({ width: 1.4, color: 0x6b6488, alpha: 0.9 });
+  }
+  // Single-gate ICs carry a no-connect pin (pin 2): a short stub ending in a faint ×.
+  if (single) {
+    const nc = o.pins[2];
+    if (nc) {
+      g.moveTo(nc.x - 2, nc.y - 2)
+        .lineTo(nc.x + 2, nc.y + 2)
+        .moveTo(nc.x - 2, nc.y + 2)
+        .lineTo(nc.x + 2, nc.y - 2)
+        .stroke({ width: 1.2, color: 0x6b6488, alpha: 0.45 });
+    }
   }
 
   // Output drive belt: flowing dots along the output lead, signed by the current.

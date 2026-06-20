@@ -500,19 +500,28 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
-  // Logic gates: the first behavioural digital ICs (sim type 17). Pins are ordered
-  // OUT, IN1, IN2 — pin 0 = output Y (a), pin 1 = input A (b), pin 2 = input B (c)
-  // — so buildNetlist's pin→terminal map is direct and the per-tag function code is
-  // stamped into `aux` (see GATE_AUX in netlist.ts). `value` is the logic-high rail
-  // in volts (default 5). Inputs are thresholded at half the rail, read from the
-  // previous tick (one tick of propagation delay). The two-input gates are 3-pin
-  // (Y right, A top-left, B bottom-left); the inverter NOT is 2-pin (Y, A). Green
-  // `ok` marks the digital-logic family.
+  // Logic gates: real powered five-pin ICs (sim type 17). Pins are ordered OUT, IN1,
+  // IN2, VCC, GND — pin 0 = output Y (a), pin 1 = input A (b), pin 2 = input B (c),
+  // pin 3 = VCC (d), pin 4 = GND (e) — so buildNetlist's pin→terminal map is direct.
+  // The gate takes its rail from the power pins: V(VCC) − V(GND); inputs threshold at
+  // half that rail (relative to GND) and are read from the previous tick (one tick of
+  // propagation delay). WIRE BOTH POWER PINS or the chip is dead (an unwired VCC floats
+  // to ~0). The per-tag boolean is stamped into `aux` (GATE_AUX in netlist.ts). On the
+  // single-gate parts the IN2 slot is the package's NC pin (no-connect): the inverter /
+  // buffer ignore it (matching the real SOT-23-5). `value` is now vestigial (legacy
+  // rail; ignored once powered). Green `ok` marks the digital-logic family. VCC sits at
+  // top-centre, GND at bottom-centre, so power comes out the top and bottom of the body.
   AND: kind(
     "AND",
     "AND Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
@@ -521,7 +530,13 @@ export const PART_KINDS: Record<string, PartKind> = {
     "OR",
     "OR Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
@@ -530,7 +545,13 @@ export const PART_KINDS: Record<string, PartKind> = {
     "NAND",
     "NAND Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
@@ -539,7 +560,13 @@ export const PART_KINDS: Record<string, PartKind> = {
     "NOR",
     "NOR Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
@@ -548,41 +575,66 @@ export const PART_KINDS: Record<string, PartKind> = {
     "XOR",
     "XOR Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
   ),
   // XNOR (equality): the complement of XOR — output high when the inputs match.
-  // Same 3-pin shape and function-code family (aux = 5 in GATE_AUX).
+  // Same 5-pin shape and function-code family (aux = 5 in GATE_AUX).
   XNOR: kind(
     "XNOR",
     "XNOR Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 0), pin("B", 0, 2)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
   ),
-  // The inverter (NOT): single input. Pin order OUT, IN — pin 0 = Y (a), pin 1 = A
-  // (b); the unused third terminal c defaults to ground in buildNetlist.
+  // The inverter (NOT): single input. Pins OUT, IN, NC, VCC, GND — pin 0 = Y (a),
+  // pin 1 = A (b), pin 2 = the package's NC (the core ignores IN2 for NOT/BUF), pin 3
+  // = VCC (d), pin 4 = GND (e). Matches the real single-gate SOT-23-5 (one no-connect).
   NOT: kind(
     "NOT",
     "NOT Gate",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 1)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 1),
+      pin("NC", 2, 0),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
   ),
   // The buffer (BUF): single input, non-inverting — the output follows the input.
-  // Same 2-pin shape as NOT without the inversion bubble (aux = 7 in GATE_AUX); a
+  // Same 5-pin shape as NOT without the inversion bubble (aux = 7 in GATE_AUX); a
   // line driver / one-tick delay element.
   BUF: kind(
     "BUF",
     "Buffer",
     "ok",
-    [pin("Y", 2, 1), pin("A", 0, 1)],
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 1),
+      pin("NC", 2, 0),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
     5,
     "V",
     true,
