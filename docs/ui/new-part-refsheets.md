@@ -56,6 +56,53 @@ apply to every sheet.
 
 ---
 
+# Verified minimum-pin exemplars (datasheet-checked)
+
+The smallest single-function REAL chip for each part, confirmed by extracting the
+manufacturer datasheet PDFs (these supersede any suggestion in the cards below).
+RE-VERIFY each pinout against the datasheet PDF when authoring (per section 10) -- two
+intermediate fetches hallucinated pins (a phantom Q-bar on the 1G80, a wrong ADC pin
+count), so trust the PDF connection diagram + pin-function table over any summary.
+
+| Part | Min-pin chip (backup) | Package . pins | Interface | Sim backend |
+|---|---|---|---|---|
+| Plain comparator | ADCMP600 (TLV3201) | SC70-5 . 5 | analog | ELEM_COMPARATOR (LE unwired) |
+| Latched comparator | ADCMP601 | SC70-6 . 6 | analog | ELEM_COMPARATOR (done) |
+| Schmitt inverter | 74LVC1G14 (74AUP1G14) | SC70-5 . 5 (1 NC) | logic | ELEM_GATE / comparator hyst |
+| 555 timer | LMC555 (TLC555) | VSSOP-8 / DSBGA-8 . 8 | mixed | composition |
+| D flip-flop | 74LVC1G80 (inv) / 74AUP1G79 (non-inv) | SOT-23-5 . 5 | logic | ELEM_DFF (done) |
+| D-FF + Qn/set/reset | 74LVC1G74 | SC70-8 . 8 | logic | ELEM_DFF |
+| JK / T flip-flop | none single; dual 74x112 | DIP/SO . 16 | logic | ELEM_DFF + steering |
+| SAR ADC | ADC081S021 (MCP3201) | SOT-23-6 . 6 | SPI | protocol engine (later) |
+| DAC | MCP4725 (DAC081S101) | SOT-23-6 . 6 | I2C / SPI | protocol engine (later) |
+| Counter | 74HC4040 | DIP/SO . 16 | parallel | ELEM_DFF composition |
+| Shift register | 74HC595 | DIP/SO . 16 | serial-in/parallel-out | ELEM_DFF composition |
+
+**Pinouts (datasheet-verified pin order):**
+
+- **ADCMP600** (5): 1 Q | 2 GND | 3 VP/IN+ | 4 VN/IN- | 5 VCC
+- **ADCMP601** (6): 1 Q | 2 VEE | 3 VP/IN+ | 4 VN/IN- | 5 LE/HYS | 6 VCC
+- **74LVC1G14** (5): 1 NC | 2 A/IN | 3 GND | 4 Y/OUT | 5 VCC
+- **LMC555** (8): 1 GND | 2 TRIG | 3 OUT | 4 RESET | 5 CTRL | 6 THRESH | 7 DISCH | 8 V+
+- **74LVC1G80** (5, inverting; 74AUP1G79 = non-inverting, same pin order): 1 D | 2 CP | 3 GND | 4 Q | 5 VCC
+- **74LVC1G74** (8, full FF): D, CP, SD (set), RD (reset), Q, Qn, VCC, GND
+- **ADC081S021** (6, SPI): 1 VA | 2 GND | 3 VIN | 4 SCLK | 5 SDATA | 6 CS
+- **MCP4725** (6, I2C): 1 VOUT | 2 VSS | 3 VDD | 4 SDA | 5 SCL | 6 A0
+- **DAC081S101** (6, SPI): 1 VOUT | 2 GND | 3 VA | 4 DIN | 5 SCLK | 6 SYNC
+- **74HC4040** (16): 1 CP | 2 MR | 3-7 Q0-Q4 | 8 GND | 9-15 Q5-Q11 | 16 VCC
+- **74HC595** (16): 1-7 Q1-Q7 | 8 GND | 9 Q7S | 10 MR | 11 SHCP | 12 STCP | 13 OE | 14 DS | 15 Q0 | 16 VCC
+
+**Honest-minimum note.** A multi-bit counter / shift register has no small single-function
+form (every bit is a parallel pin); the minimum-pin teaching primitive for both is the
+single D flip-flop (74LVC1G80, 5-pin): Qn->D makes a divide-by-2 counter stage, D-in/Q-out
+makes a 1-bit shift stage, and the 16-pin parts are that one stage tapped N deep. Likewise
+the minimum-pin ADC/DAC are SERIAL (SPI/I2C) and need the protocol engine; the parallel
+flash ADC (comparators + encoder) and R-2R DAC (resistor ladder) are the no-new-backend
+teaching builds. And the CEC house-brand teaching ICs in `cec-teaching-ics.md` cover the
+gaps where no clean minimum-pin real part exists (e.g. the 1-bit clocked quantizer).
+
+---
+
 # First-arc parts (build thoroughly)
 
 These are the roadmap's "recommended first arc": the zero-core-code composition wins, the
