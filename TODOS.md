@@ -8,6 +8,34 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (26) — Powered 5-pin logic ICs, part 1: sim-core foundation (the 5th terminal)
+
+Owner: "go ahead and do the 5 pins" — make logic gates real powered ICs (VCC/GND pins, rail from
+the supply) matching the inverter/NAND/NOR refsheets. Doing it in two PRs; this is the sim-core
+half.
+
+- ~~**5th terminal `e`** on `Element` (a powered gate's GND pin; VCC reuses `d`). Threaded through a
+  new `set_netlist_pe(..., e, ...)`; `set_netlist`/`set_netlist_p` delegate with `e=&[]` (all
+  ground) so **every existing caller is untouched**. Range-validated like the others. wasm gains the
+  matching `set_netlist_pe` binding.~~
+- ~~**Powered-gate model**: `gate_rails(el, node_v)` → `(vlow, vhigh)`. A gate with power pins
+  (`d`/`e` not both ground) takes rail = `V(VCC) − V(GND)`, thresholds inputs relative to `V(GND)`,
+  and swings its output `vlow .. vlow+rail` (new `digital_vlow` GND-offset array, used in
+  `eval_digital`/`stamp_digital`/`commit_net_levels`). A gate with **no** power pins
+  (`d==0 && e==0`) falls back to the legacy `value` rail referenced to ground → **bit-identical**.~~
+- ~~**Unpowered = dead**: rail below `GATE_MIN_RAIL` (0.3 V, e.g. VCC unwired → node floats ~0) →
+  the IC releases its output (Z). `classify_nets` marks a gate's power pins **analog** (supply
+  nodes, not digital signal nets); `floating_refs` no longer pins them (an unwired VCC floats to ~0
+  rather than being held up).~~
+- ~~**Golden-safe**: the RC golden is unchanged (no gates); all 12 legacy gate tests pass
+  **unchanged**. Added 4 powered tests (inverter swings to VCC; unwired VCC is dead; 2-input NAND
+  via the 5th terminal; offset-GND output window). 135 sim-core tests, all gates green.~~ **DONE
+  (part 1).**
+  - [ ] **Part 2 (web):** gates carry 5 pins (OUT[,IN2], IN1, VCC, GND); `buildNetlist` emits the
+    `e` node + calls `set_netlist_pe`; loop.ts boundary; 5-pin IC glyphs; inspector (the `value`
+    rail picker becomes vestigial when powered); migrate gate examples. The legacy fallback means
+    old circuits keep working until each is rewired.
+
 ## 2026-06-20 (25) — Saved circuits → examples, drop-in (owner workflow) + re-modelled pot dimmer
 
 Owner: "make it so the JSON I save can be set as the example easily" (for tuning/adding examples),

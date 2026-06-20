@@ -91,6 +91,28 @@ impl Simulation {
             .set_netlist_p(node_count, types, a, b, c, d, values, aux, params)
     }
 
+    /// Install a netlist with the optional **fifth terminal** `e` (a powered logic gate's
+    /// GND pin) — see `Sim::set_netlist_pe`. `e` is empty (every fifth terminal is ground,
+    /// the legacy 4-terminal shape) or one node index per element. Additive and
+    /// golden-safe; the web sends it once gates carry VCC/GND power pins.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_pe(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        e: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
+        self.inner
+            .set_netlist_pe(node_count, types, a, b, c, d, e, values, aux, params)
+    }
+
     /// Reset to `t = 0` with reactive elements discharged, keeping the same
     /// netlist.
     pub fn reset(&mut self) {
