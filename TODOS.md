@@ -6,6 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (36) — "More reality" roadmap scoped (owner: "ADCs… what else?")
+
+Architecture-grounded feasibility pass over `crates/sim-core` (22 element types, the
+golden-safe levers, the determinism contract) → **`docs/reality-roadmap.md`**. Key finding:
+most of the classic curriculum is already **buildable from the existing 22 elements** (the
+DFF + four-state gate engine + Newton analog models span it), so a big slice ships as worked
+examples with **zero core code**. The real investments are a few *mechanisms*, in priority:
+
+- [ ] **(keystone) Generic clocked sampler / sample-and-hold** — generalize the DFF from
+  "latch 1 bit" to "latch an N-bit code / analog level on a clock edge". Golden-safe-additive.
+  **Unlocks ADC (flash/SAR), DAC, S&H, switched-cap, synchronous counters, sigma-delta input.**
+- [ ] **ADC (flash/SAR) + packaged DAC** on the sampler — the mixed-signal headline.
+- [ ] **Composition wins, zero core code (do first):** counters / shift registers / mux /
+  decoders, R-2R DAC, current mirror, instrumentation amp, op-amp Schmitt, SRAM cell,
+  open-loop buck/boost — worked examples + glyphs only.
+- [ ] **More FF types** (JK/T/SR/D-latch) — trivial `ELEM_DFF` variants.
+- [ ] **555 timer** (build-from-parts 🟢, or packaged 🟡 with one latched bit).
+- [ ] **Depth (moves golden, gate to Real + regen):** per-device thermal `Tj` axis
+  (self-heating / runaway / bandgap); a deterministic per-element **seeded PRNG** for noise
+  (Johnson/shot/flicker — consider the unhashed frequency domain first).
+- [ ] **External-input channel** (UI-driven scalar, default 0) → photodiode/phototransistor,
+  the first non-electrical input; opens the sensor family.
+- [ ] **Systems (long horizon):** the behavioral-MCU / multi-rate engine (`uC`/`FP`
+  placeholders) → I²C/SPI/UART (open-drain+pull-up already half-enable I²C), firmware, FPGA.
+
 ## 2026-06-20 (35) — Parts-bin trilogy complete + owner's two quick fixes
 
 The impact-ranked parts-bin plan from entry (34) is **DONE end to end**, plus two owner fixes from a
