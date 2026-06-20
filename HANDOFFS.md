@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (54) — Powered 5-pin logic ICs + NAND/NOR refsheets + drop-in saved-circuit examples
+
+**State:** 🟢 all landed (PRs #139–#142 squash-merged, branch re-synced). Continuing the owner's
+"do the 5 pins" plus two side asks delivered along the way.
+
+- **PR #139 — NAND + NOR refsheets.** Owner-built five-tier IC glyphs `docs/ui/parts/nand-ic.html`
+  (74LVC1G00) and `nor-ic.html` (74LVC1G02), placed verbatim (SPDX prepended). Passed the spec's
+  static §10 gates; Playwright render gate skipped (not provisioned; owner-validated, as with
+  `inv-ic.html`).
+- **PR #140 — Saved circuits as drop-in examples.** Owner: "make it so the JSON I save can be set
+  as the example easily." New `examples.ts` helpers: `SavedCircuit` (the Save-button envelope),
+  `fromSaved()` (unwrap + deep-clone), `savedExample({id,name,blurb,watch,saved,steps?,demo?})`
+  whose `build()` is the saved graph (`steps` defaults to a generic place-then-wire guide). Saved
+  circuits live as tiny typed `.ts` wrappers under **`web/src/lib/circuits/`** (chose `.ts` over raw
+  `.json` import — `verbatimModuleSyntax` makes `.json` fight svelte-check). First one:
+  `circuits/pot-dimmer.ts` = the owner's re-modelled **Potentiometer Dimmer** (fixed placement,
+  labels, net labels), starting `wiper:1` (LED dark) so the player slides it to brighten. **To add
+  an example: Save the JSON, drop it in a `circuits/<id>.ts` wrapper, write blurb/watch.**
+- **PR #141 + #142 — Powered 5-pin logic ICs (the main ask), two parts:**
+  - **#141 (sim-core):** a **5th `Element` terminal `e`** (gate GND; VCC = `d`), threaded via
+    `set_netlist_pe` (old `set_netlist`/`_p` delegate with `e=&[]`). `gate_rails()` → rail =
+    `V(VCC)−V(GND)`, inputs threshold vs `V(GND)`, output swings `vlow..vlow+rail` (new
+    `digital_vlow`). No power pins (`d==0&&e==0`) → legacy `value` rail (bit-identical golden + all
+    12 old gate tests). Unpowered (rail < `GATE_MIN_RAIL` 0.3 V) → output released (dead);
+    `classify_nets`/`floating_refs` treat power pins as analog. +4 powered tests (135 total).
+  - **#142 (web):** gates are 5-pin `[Y,A,B,VCC,GND]` (NOT/BUF pin 2 = package NC); `buildNetlist`
+    emits `e`/`d` (`FIVE_PIN_TYPES`) + `set_netlist_pe` via loop.ts; `gateSchematic` draws VCC/GND
+    leads (+ NC stub); the 4 gate examples powered via a `powerGate()` helper; gate `plain()` texts +
+    `pinout.ts` updated. Tree-audited: `infoDiagram`/`board.ts`/`App.svelte` are pin-count-agnostic.
+  - **Open follow-on:** the gate inspector's live "rail" row still reads the **vestigial** `value`
+    (real rail = `V(VCC)−V(GND)`, not exposed to `partInfo`). Expose the wired rail; consider
+    retiring the gate `value` picker. (TODOS 27.)
+
 ## 2026-06-20 (53) — AC phase fix + resistor lead inductance + a current-sense SHUNT part
 
 **State:** 🟢 landed (two PRs squash-merged to main, branch re-synced). Both from the same owner
