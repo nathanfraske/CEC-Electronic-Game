@@ -101,6 +101,18 @@
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
   import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
+  import {
+    codexCategories,
+    REFSHEET_OF,
+    PART_SYNONYMS as CODEX_SYNONYMS,
+    PART_META as CODEX_META,
+    PART_CAT_OF as CODEX_CAT_OF,
+    isDigital,
+    tierRows,
+    variantRows,
+    familyRows,
+    valueSummary,
+  } from "./lib/codex";
 
   const SEED = 1337;
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
@@ -745,6 +757,79 @@
     if (kind) diagramMode = untrack(() => boardLens);
   });
 
+  // ── Component Codex ─────────────────────────────────────────────────────────
+  // The full-screen "discovery museum": a browsable, exhaustive per-component
+  // reference (master list + a detail pane that renders EVERY datum the model
+  // carries for the selected kind). Web/render-only — it reads the same modules the
+  // inspector does (via lib/codex.ts) and never touches the sim, netlist, or wasm.
+  let codexOpen = $state(false);
+  // The kind the detail pane describes; defaults to the first catalog kind when opened.
+  let codexKind = $state<string | null>(null);
+  // Master-list filter (name / tag / desc / synonym), mirroring the bin's `partSearch`.
+  let codexSearch = $state("");
+  // The codex's own diagram tier toggle, independent of the info drawer's.
+  let codexDiagramMode = $state<DiagramMode>("schematic");
+  // The grouped master list (every kind placed in its category, in display order).
+  const codexGroups = codexCategories();
+  // Which tiers the selected codex kind has distinct art for (gates the toggle, exactly
+  // like the info drawer) and the clamped tier the diagram actually renders.
+  const codexHasDetail = $derived(codexKind ? hasDetail(codexKind) : false);
+  const codexHasFactory = $derived(
+    codexKind ? hasFactory(codexKind) || hasAnalogy(codexKind) : false,
+  );
+  const effectiveCodexMode = $derived<DiagramMode>(
+    codexDiagramMode === "reality" && !codexHasDetail
+      ? "schematic"
+      : codexDiagramMode === "analogy" && !codexHasFactory
+        ? "schematic"
+        : codexDiagramMode,
+  );
+  // Open the Codex (defaulting the selection to the first catalog kind), or close it.
+  function openCodex(): void {
+    if (!codexKind) codexKind = codexGroups[0]?.kinds[0] ?? null;
+    codexOpen = true;
+  }
+  // Pick a kind in the master list; reset its diagram to the schematic symbol.
+  function selectCodexKind(kind: string): void {
+    codexKind = kind;
+    codexDiagramMode = "schematic";
+  }
+  // The Codex's own InfoDiagram (one Pixi sub-app per mounted canvas, destroyed on
+  // close to avoid leaks). The frame loop drives it when the overlay is open.
+  let codexDiagram: InfoDiagram | undefined;
+  function codexDiagramAction(node: HTMLCanvasElement) {
+    const d = new InfoDiagram();
+    codexDiagram = d;
+    void d.init(node);
+    return {
+      destroy() {
+        d.destroy();
+        if (codexDiagram === d) codexDiagram = undefined;
+      },
+    };
+  }
+  // The filtered master groups when a search is active (name/tag/desc/synonym), else null.
+  const codexFiltered = $derived.by(() => {
+    const q = codexSearch.trim().toLowerCase();
+    if (!q) return null;
+    const match = (kind: string): boolean => {
+      const name = (PART_KINDS[kind]?.name ?? "").toLowerCase();
+      const desc = (CODEX_META[kind]?.desc ?? "").toLowerCase();
+      return (
+        name.includes(q) ||
+        kind.toLowerCase().includes(q) ||
+        desc.includes(q) ||
+        (CODEX_SYNONYMS[kind] ?? []).some((s) => s.includes(q))
+      );
+    };
+    const out: { category: string; kinds: string[] }[] = [];
+    for (const g of codexGroups) {
+      const kinds = g.kinds.filter(match);
+      if (kinds.length > 0) out.push({ category: g.category, kinds });
+    }
+    return out;
+  });
+
   /** Persist settings: the onboarding slice (mute + which cards have fired) plus the
    * board lens (tier toggle), the LOD toggle, and the camera (pan + zoom) — so the
    * view and the toggles survive a refresh. */
@@ -1188,7 +1273,11 @@
         // selection). Otherwise it disarms a part, cancels any in-progress wire /
         // open label editor / selection, then switches to the neutral Pan tool so
         // Escape always leaves you in a safe "just navigate" state.
-        if (infoOpen) {
+        if (codexOpen) {
+          // The Codex is a full-screen modal — Escape closes it first, before any
+          // board action (it sits in front of everything else).
+          codexOpen = false;
+        } else if (infoOpen) {
           infoOpen = false;
         } else {
           if (armedPart) arm(null);
@@ -1482,6 +1571,18 @@
                 partValue(armedPart),
               );
             }
+          }
+          // The Codex overlay's own diagram: a neutral, reference preview of the
+          // selected catalog kind (no live electrical state — the museum is static),
+          // driven on the same flow clock so its internals animate the same calm way.
+          if (codexOpen && codexKind) {
+            codexDiagram?.setMode(effectiveCodexMode);
+            codexDiagram?.setPhase(b.flowPhase());
+            codexDiagram?.setState(
+              codexKind,
+              ZERO_ELECTRICAL,
+              PART_KINDS[codexKind]?.defaultValue ?? 0,
+            );
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
@@ -2714,6 +2815,13 @@
         ⓘ Info
       </button>
       <button
+        class="btn btn-ghost {codexOpen ? 'is-active' : ''}"
+        onclick={openCodex}
+        title="Codex: the full browsable reference — every component, exhaustively"
+      >
+        ⊞ Codex
+      </button>
+      <button
         class="btn btn-ghost {boardLens !== 'schematic' ? 'is-active' : ''}"
         onclick={cycleLens}
         disabled={!ready || !lodOn}
@@ -3603,6 +3711,386 @@
     </details>
   </aside>
 </div>
+
+<!-- ── Component Codex ────────────────────────────────────────────────────────
+     The full-screen "discovery museum": a master list of every component (grouped,
+     searchable) and a detail pane that renders the exhaustive reference for the
+     selected kind. A high-z dimmed-backdrop modal; Esc or the × closes it. All the
+     per-component data comes from lib/codex.ts (a pure read of the existing model). -->
+{#if codexOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="codex-backdrop"
+    onclick={() => (codexOpen = false)}
+    role="presentation"
+  >
+    <div
+      class="codex-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Component Codex"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <header class="codex-head">
+        <div class="codex-head-title">
+          <span class="codex-mark">⊞</span>
+          <span class="codex-h1">Component Codex</span>
+          <span class="codex-h-sub mono"
+            >{Object.keys(CODEX_META).length} components · the full reference</span
+          >
+        </div>
+        <button
+          class="intro-x"
+          onclick={() => (codexOpen = false)}
+          aria-label="Close the Codex">×</button
+        >
+      </header>
+
+      <div class="codex-split">
+        <!-- ── Master list: every component, grouped by category, searchable ── -->
+        <nav class="codex-list" aria-label="Components">
+          <input
+            class="part-search codex-search"
+            type="search"
+            placeholder="Search components…"
+            bind:value={codexSearch}
+            aria-label="Search components"
+          />
+          <div class="codex-list-scroll scroll">
+            {#each codexFiltered ?? codexGroups as group (group.category)}
+              <details class="part-cat codex-cat" open>
+                <summary class="part-cat-head">
+                  <span class="part-cat-name">{group.category}</span>
+                  <span class="part-cat-count">{group.kinds.length}</span>
+                </summary>
+                <ul class="part-list codex-cat-list">
+                  {#each group.kinds as kind (kind)}
+                    {@const pk = PART_KINDS[kind]}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <li
+                      class="part codex-row {codexKind === kind
+                        ? 'is-selected'
+                        : ''}"
+                      style="--c: var(--{pk?.colorKey ?? 'bronze'})"
+                      onclick={() => selectCodexKind(kind)}
+                      title={CODEX_META[kind]?.desc ?? pk?.name}
+                    >
+                      <span class="part-glyph">{kind}</span>
+                      <span class="part-body">
+                        <span class="part-name">{pk?.name ?? kind}</span>
+                        <span class="part-desc"
+                          >{CODEX_META[kind]?.desc ?? ""}</span
+                        >
+                      </span>
+                      <span class="part-tier"
+                        >{CODEX_META[kind]?.learnTier ?? ""}</span
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              </details>
+            {/each}
+            {#if codexFiltered && codexFiltered.length === 0}
+              <p class="part-empty">No components match “{codexSearch}”.</p>
+            {/if}
+          </div>
+        </nav>
+
+        <!-- ── Detail pane: the exhaustive reference for the selected kind ── -->
+        <section class="codex-detail scroll" aria-label="Component detail">
+          {#if codexKind}
+            {@const pk = PART_KINDS[codexKind]}
+            {@const info = partInfo(codexKind)}
+            {@const po = pinoutOf(codexKind, 0)}
+            {@const meta = CODEX_META[codexKind]}
+            {@const tiers = tierRows(codexKind)}
+            {@const variants = variantRows(codexKind)}
+            {@const families = familyRows(codexKind, pk?.defaultValue ?? 5)}
+            {@const valSum = valueSummary(codexKind)}
+            {@const syns = CODEX_SYNONYMS[codexKind] ?? []}
+            {@const sheet = REFSHEET_OF[codexKind]}
+
+            <!-- 1 · Header -->
+            <div class="codex-d-head">
+              <span
+                class="codex-d-glyph"
+                style="--c: var(--{pk?.colorKey ?? 'bronze'})">{codexKind}</span
+              >
+              <div class="codex-d-titles">
+                <h2 class="codex-d-name">{pk?.name ?? codexKind}</h2>
+                <div class="codex-badges">
+                  <span class="codex-badge"
+                    >{CODEX_CAT_OF[codexKind] ?? "—"}</span
+                  >
+                  {#if meta}<span class="codex-badge codex-badge-tier"
+                      >Tier {meta.learnTier}</span
+                    >{/if}
+                  {#if pk?.ideal}<span class="codex-badge codex-badge-sim"
+                      >solver primitive</span
+                    >{/if}
+                </div>
+              </div>
+            </div>
+            {#if syns.length > 0}
+              <p class="codex-aka">
+                <span class="codex-aka-lbl">Also known as / used for</span>
+                {syns.join(" · ")}
+              </p>
+            {/if}
+
+            <!-- 2 · Diagram (Schematic / Analogy / Reality), like the info drawer -->
+            {#if codexHasFactory || codexHasDetail}
+              <div
+                class="diagram-toggle"
+                role="group"
+                aria-label="Component view tier"
+              >
+                <button
+                  class="seg {effectiveCodexMode === 'schematic'
+                    ? 'is-active'
+                    : ''}"
+                  onclick={() => (codexDiagramMode = "schematic")}
+                  title="Schematic — the symbol you'll meet on a datasheet"
+                  >Schematic</button
+                >
+                {#if codexHasFactory}
+                  <button
+                    class="seg {effectiveCodexMode === 'analogy'
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => (codexDiagramMode = "analogy")}
+                    title="Analogy — the machine-metaphor view">Analogy</button
+                  >
+                {/if}
+                {#if codexHasDetail}
+                  <button
+                    class="seg {effectiveCodexMode === 'reality'
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => (codexDiagramMode = "reality")}
+                    title="Reality — what's literally happening inside"
+                    >Reality</button
+                  >
+                {/if}
+              </div>
+            {/if}
+            <div
+              class="info-diagram codex-diagram {effectiveCodexMode ===
+              'reality'
+                ? 'is-detail'
+                : ''}"
+            >
+              <canvas use:codexDiagramAction></canvas>
+            </div>
+
+            <!-- 3 · Pinout -->
+            {#if po}
+              <div class="pinout-wrap">
+                <div class="pinout-cap">Pinout</div>
+                <div
+                  class="pinout"
+                  style="width: {po.width}px; height: {po.height}px;"
+                >
+                  <svg
+                    width={po.width}
+                    height={po.height}
+                    viewBox="0 0 {po.width} {po.height}"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      class="pinout-body"
+                      x={po.body.x}
+                      y={po.body.y}
+                      width={po.body.w}
+                      height={po.body.h}
+                      rx="4"
+                    />
+                    {#each po.pins as p (p.label)}
+                      <line
+                        class="pinout-leg"
+                        x1={po.body.x + po.body.w / 2}
+                        y1={po.body.y + po.body.h / 2}
+                        x2={p.x}
+                        y2={p.y}
+                      />
+                    {/each}
+                    {#each po.pins as p (p.label)}
+                      <circle
+                        class="pinout-dot"
+                        cx={p.x}
+                        cy={p.y}
+                        r="4.5"
+                        style="fill: {po.color}"
+                      />
+                    {/each}
+                  </svg>
+                  {#each po.pins as p (p.label)}
+                    <div
+                      class="pinout-label"
+                      style="left: {p.lx}px; top: {p.ly}px; transform: translate({p.tx}, {p.ty});"
+                    >
+                      <span class="pinout-name" style="color: {po.color}"
+                        >{p.label}</span
+                      >
+                      {#if p.gloss}<span class="pinout-gloss">{p.gloss}</span
+                        >{/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 4 · Governing law -->
+            {#if info}
+              <div class="codex-section">
+                <h3 class="codex-cap">Governing law</h3>
+                <div class="info-eq mono">{info.equation}</div>
+                <p class="info-plain">{info.plain()}</p>
+              </div>
+            {:else}
+              <div class="codex-section">
+                <h3 class="codex-cap">Governing law</h3>
+                <p class="info-plain codex-nomodel">
+                  No simulation model yet — {pk?.name ?? codexKind} is a preview of
+                  a later tech-tree tier, so it has no governing equation or live
+                  telemetry to show.
+                </p>
+              </div>
+            {/if}
+
+            <!-- 5 · Identity facts -->
+            <div class="codex-section">
+              <h3 class="codex-cap">Identity</h3>
+              <div class="codex-facts">
+                {#if pk?.unit}
+                  <div class="info-row">
+                    <span>Default value</span>
+                    <span class="mono"
+                      >{formatValue(pk.defaultValue, pk.unit)}</span
+                    >
+                  </div>
+                {/if}
+                <div class="info-row">
+                  <span>Category</span>
+                  <span class="mono">{CODEX_CAT_OF[codexKind] ?? "—"}</span>
+                </div>
+                <div class="info-row">
+                  <span>Terminals</span>
+                  <span class="mono">{pk?.pins.length ?? 0}-pin</span>
+                </div>
+                <div class="info-row">
+                  <span>Solver primitive</span>
+                  <span class="mono">{pk?.ideal ? "yes" : "no (preview)"}</span>
+                </div>
+                {#if po}
+                  {#each po.pins.filter((p) => p.gloss) as p (p.label)}
+                    <div class="info-row">
+                      <span>Pin {p.label}</span>
+                      <span class="mono">{p.gloss}</span>
+                    </div>
+                  {/each}
+                {/if}
+                {#if pk?.pins.length === 5 && isDigital(codexKind) && codexKind !== "FF"}
+                  <div class="info-row">
+                    <span>Package</span>
+                    <span class="mono">5-pin powered IC (VCC + GND)</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+
+            <!-- 6 · Quality tiers -->
+            {#if tiers.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">Quality tiers</h3>
+                <p class="codex-note">
+                  Each grade is a preset bundle of model parameters; the
+                  non-idealities bite only in Real (realistic) mode.
+                </p>
+                <div class="codex-table">
+                  {#each tiers as row (row.tier)}
+                    <div class="info-row">
+                      <span>{row.tier}</span>
+                      <span class="mono">{row.change}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 7 · Variants / ratings -->
+            {#if variants.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">
+                  {codexKind === "LED" ? "Colours" : "Variants & ratings"}
+                </h3>
+                <div class="codex-table">
+                  {#each variants as row (row.label)}
+                    <div class="info-row codex-row-wide">
+                      <span class="codex-vlabel">{row.label}</span>
+                      <span class="mono">{row.detail}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 8 · Logic levels (digital parts) -->
+            {#if families.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">
+                  Logic levels @ {formatValue(pk?.defaultValue ?? 5, "V")} rail
+                </h3>
+                <div class="codex-table">
+                  {#each families as row (row.family)}
+                    <div class="info-row codex-row-wide">
+                      <span class="codex-vlabel">{row.family}</span>
+                      <span class="mono">{row.detail}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 9 · Value range -->
+            {#if valSum}
+              <div class="codex-section">
+                <h3 class="codex-cap">Standard values</h3>
+                <div class="info-row codex-row-wide">
+                  <span class="codex-vlabel">Range</span>
+                  <span class="mono">{valSum}</span>
+                </div>
+              </div>
+            {/if}
+
+            <!-- 10 · Refsheet link -->
+            {#if sheet}
+              <a
+                class="codex-refsheet"
+                href={import.meta.env.BASE_URL + "parts/" + sheet}
+                target="_blank"
+                rel="noopener"
+              >
+                <span class="codex-refsheet-mark mono">[ ]</span>
+                <span class="codex-refsheet-txt">
+                  <span class="codex-refsheet-h">Open the full teardown</span>
+                  <span class="codex-refsheet-sub"
+                    >the five-tier interactive refsheet · opens in a new tab</span
+                  >
+                </span>
+                <span class="codex-refsheet-go mono">&gt;&gt;</span>
+              </a>
+            {/if}
+          {:else}
+            <p class="info-empty">Select a component from the list to begin.</p>
+          {/if}
+        </section>
+      </div>
+    </div>
+  </div>
+{/if}
 
 <div class="hud-footer">
   <div class="transport">
@@ -5177,5 +5665,311 @@
   .scrub:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* ── Component Codex ─────────────────────────────────────────────────────────
+     The full-screen "discovery museum": a dimmed-backdrop modal floating a
+     master-detail reference above everything. Reuses the info-drawer atoms
+     (.pinout-*, .info-eq, .info-plain, .info-row, .diagram-toggle/.seg,
+     .info-diagram) and the bin atoms (.part, .part-cat) so it reads as one
+     bench-instrument surface; the codex-* classes add the museum shell. */
+  .codex-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: clamp(12px, 3vh, 40px);
+    background: oklch(0.08 0.02 285 / 0.72);
+    backdrop-filter: blur(3px);
+  }
+  .codex-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(1180px, 96vw);
+    height: min(880px, 92vh);
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: 6px;
+    box-shadow:
+      0 0 0 1px oklch(0 0 0 / 0.4),
+      0 30px 80px -24px #000;
+    overflow: hidden;
+  }
+  .codex-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-2), var(--bg));
+  }
+  .codex-head-title {
+    display: flex;
+    align-items: baseline;
+    gap: 11px;
+  }
+  .codex-mark {
+    color: var(--accent);
+    font-size: 17px;
+    text-shadow: 0 0 12px var(--accent-soft);
+  }
+  .codex-h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .codex-h-sub {
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+  }
+  .codex-split {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 290px 1fr;
+    min-height: 0;
+  }
+  /* Master list ------------------------------------------------------------- */
+  .codex-list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .codex-search {
+    margin: 12px 12px 8px;
+  }
+  .codex-list-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .codex-cat-list {
+    padding: 8px 0 2px;
+  }
+  /* The active row in the master list — an accent rail + glow, like a focused part. */
+  .codex-row.is-selected {
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      -7px 0 16px -12px var(--accent);
+  }
+  .codex-row.is-selected .part-glyph {
+    border-color: var(--c);
+    box-shadow: 0 0 12px -4px var(--c);
+  }
+  /* Detail pane ------------------------------------------------------------- */
+  .codex-detail {
+    overflow-y: auto;
+    padding: 18px 22px 28px;
+    min-height: 0;
+  }
+  .codex-d-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 6px;
+  }
+  .codex-d-glyph {
+    --c: var(--bronze);
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--c);
+    border: 1px solid color-mix(in oklch, var(--c) 45%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in oklch, var(--c) 10%, transparent);
+    text-shadow: 0 0 12px color-mix(in oklch, var(--c) 55%, transparent);
+  }
+  .codex-d-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+  .codex-d-name {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 24px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text);
+    line-height: 1;
+  }
+  .codex-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .codex-badge {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+  }
+  .codex-badge-tier {
+    color: var(--cyan);
+    border-color: color-mix(in oklch, var(--cyan) 40%, var(--border));
+  }
+  .codex-badge-sim {
+    color: var(--ok);
+    border-color: color-mix(in oklch, var(--ok) 40%, var(--border));
+  }
+  .codex-aka {
+    margin: 0 0 16px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .codex-aka-lbl {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 2px;
+  }
+  /* The codex hero diagram is the centrepiece — a touch taller than the drawer's. */
+  .codex-diagram {
+    height: 220px;
+  }
+  .codex-diagram.is-detail {
+    height: 280px;
+  }
+  /* A titled section block in the detail pane. */
+  .codex-section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .codex-cap {
+    margin: 0 0 9px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .codex-note {
+    margin: -3px 0 9px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--faint);
+  }
+  .codex-nomodel {
+    padding: 9px 11px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+  }
+  /* The fact / tier / variant tables share the .info-row atom; the first row needs
+     no top divider since the section header already rules off above it. */
+  .codex-facts .info-row:first-child,
+  .codex-table .info-row:first-child {
+    border-top: none;
+  }
+  /* A wide data row whose value wraps to its own line below the label (the long
+     variant / logic-level / value-range strings don't squeeze onto one line). */
+  .codex-row-wide {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  .codex-vlabel {
+    color: var(--dim);
+    font-weight: 500;
+  }
+  .codex-row-wide .mono {
+    color: var(--text);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  /* The prominent "open the full teardown" link → the five-tier refsheet, new tab. */
+  .codex-refsheet {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin-top: 20px;
+    padding: 13px 15px;
+    text-decoration: none;
+    border: 1px solid var(--accent-line);
+    border-radius: 5px;
+    background: linear-gradient(
+      135deg,
+      var(--accent-soft),
+      color-mix(in oklch, var(--accent) 4%, transparent)
+    );
+    transition:
+      border-color 0.14s var(--ease),
+      box-shadow 0.14s var(--ease),
+      transform 0.06s var(--ease);
+  }
+  .codex-refsheet:hover {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      0 8px 24px -16px var(--accent);
+  }
+  .codex-refsheet:active {
+    transform: translateY(1px);
+  }
+  .codex-refsheet-mark {
+    color: var(--accent);
+    font-size: 15px;
+    text-shadow: 0 0 10px var(--accent-soft);
+  }
+  .codex-refsheet-txt {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+  }
+  .codex-refsheet-h {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .codex-refsheet-sub {
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .codex-refsheet-go {
+    color: var(--accent);
+    font-size: 15px;
+    letter-spacing: 0.05em;
+  }
+  @media (max-width: 720px) {
+    .codex-split {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(120px, 38%) 1fr;
+    }
+    .codex-list {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
   }
 </style>
