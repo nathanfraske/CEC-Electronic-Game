@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (63) — Landed the BUF refsheet (74LVC1G34) — gate set 10/10 COMPLETE
+
+**State:** 🟢 owner's buffer refsheet landed + pushed → `docs/ui/parts/buf-ic.html`. Branch
+`claude/kind-turing-hdelb3`. Models the **74LVC1G34** (single non-inverting buffer, datasheet-verified
+footnote — Nexperia Rev. 11; pinout `1 NC · 2 A · 3 GND · 4 Y · 5 VCC`, same SOT-23-5/SC-70-5 frame as
+the 1G04 inverter). Taught as **two inverters in series** with a wide output stage (a live transfer
+curve showing the middle inversion + the restored output).
+
+**§10 validation:** all gates pass — 5 tiers, glyphs CLEAN (fully ASCII), JS parses. **Two fixes on
+landing** (built from `inv-ic.html`): prepended SPDX, fixed leftover `<title>` ("NOT gate…" →
+"Buffer, five layers"). All other "inverter"/"NOT A" references are legit (a non-inverting buffer IS
+two inverters; "mid = NOT A" is the middle node). Added `buf-ic.html` to the example list.
+
+**Refsheet status:** **the 10-gate logic set is now COMPLETE** (inv/buf/and/or/nand/nor/xor/xnor +
+nand3 + schmitt, plus imply/nimply/xorpass variants); D-FF + latched comparator done too. Backend is
+fully ahead of the web (ELEM_GATE incl. BUF=7, DFF, comparator, sampler, aswitch, behavioral
+SPI/UART/LUT all in sim-core). **Next big block: web-wire the backed parts** (PART_KINDS +
+`buildNetlist` + bin glyphs) — see TODOS (37). Note: BUF (func 7) + XNOR (func 5) exist in the core
+but aren't yet reachable from the web gate picker (the `GATE_AUX` gap).
+
+---
+
 ## 2026-06-20 (62) — Landed the D flip-flop refsheet (74AUP1G79)
 
 **State:** 🟢 owner's FF refsheet landed + pushed → `docs/ui/parts/dff-ic.html`. Branch

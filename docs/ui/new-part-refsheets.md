@@ -27,7 +27,7 @@ concepts the part teaches best.
   `capacitor-electrolytic-tiers.html`, `inductor-tiers.html`, `transformer-tiers.html`,
   `diode-factory.html`, `diode-tier2-study.html`, `zener-tier2.html`, `varistor-tiers.html`,
   `mosfet-tiers.html`, `mosfet-pmos-tiers.html`, `transistor-tiers.html`, `opamp-tiers.html`.
-  The full IC-glyph examples are `inv-ic.html` (canonical template), `nand-ic.html`,
+  The full IC-glyph examples are `inv-ic.html` (canonical template), `buf-ic.html`, `nand-ic.html`,
   `nand3-ic.html`, `nor-ic.html`, `or-ic.html`, `and-ic.html`, `xor-ic.html`, `xnor-ic.html`,
   `xorpass-ic.html`, `imply-ic.html`, `nimply-ic.html`, `schmitt-ic.html` (Schmitt inverter),
   `comparator-ic.html` (ADCMP601, the first analog/boundary part), and `dff-ic.html` (74AUP1G79,
