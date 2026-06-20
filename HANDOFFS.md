@@ -5,6 +5,26 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (65) — CEC3076 JK/T flip-flop spec authored
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Authored the JK/T flip-flop as a
+CEC house part (no real single JK exists — only duals 74x76/112/CD4027), ready for the owner to draw
+as a five-tier glyph. The edge-triggered companion to the real D-FF (`dff-ic.html`, 74AUP1G79).
+
+**CEC3076 — JK / T Flip-Flop** in `docs/ui/cec-teaching-ics.md` (memory & sequential section, after
+CEC3014). 7-pin SC70-8/MSOP-8 (one N.C.), house order `1 Q · 2 GND · 3 J · 4 K · 5 CLK · 6 Q̄ ·
+7 VCC`. Function `Q⁺ = J·Q̄ + K̄·Q`; **tie J=K for a T flip-flop** (`Q⁺ = T⊕Q`, divide-by-2 — the
+counter cell). **Sim:** a `buildNetlist` composition — `ELEM_DFF` (Q=a,D=b,CLK=c,Q̄=d) fed by steering
+gates computing `D = J·Q̄ + ¬K·Q` (inverter on K + 2 AND + OR, feedback from the DFF's own Q/Q̄); the
+edge trigger makes J=K=1 a clean toggle (no latch race). No new sim-core element; golden-safe. Updated
+the package note + cross-reffed the real-part chart row (JK/T → "house single = CEC3076").
+
+**CEC house parts with no real single equivalent now spec'd:** CEC2064 (LUT), CEC3076 (JK/T) — both
+ready to draw, both map to existing/shipped sim backends (golden-safe). Owner's draw queue: LUT, JK/T,
+or 555 (all three now have checked pinouts/specs).
+
+---
+
 ## 2026-06-20 (64) — CEC2064 LUT spec authored + 555 exemplar verified
 
 **State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Two refsheet-prep deliverables:

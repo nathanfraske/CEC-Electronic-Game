@@ -17,8 +17,8 @@ its energy" is always answerable. Logic levels swing GND..VCC; supply 1.8 V–15
 
 **Packages.** Each part ships in a standard small-outline package, drawn over a real frame
 per `ic-glyph-spec.md` (a breadboard-friendly DIP exists for the bench): **CEC1041** and
-**CEC3007** in **SOT-23-5**, **CEC1083** in **SOT-23-6**, **CEC2018** (one N.C.) and **CEC2064**
-(all eight pins used) in **SOT-23-8**. The two CEC **logic gates** (below) take the **SOT-23-5** gate footprint and the
+**CEC3007** in **SOT-23-5**, **CEC1083** in **SOT-23-6**, **CEC2018** and **CEC3076**
+(7-pin, one N.C. each) and **CEC2064** (all eight pins used) in **SOT-23-8**. The two CEC **logic gates** (below) take the **SOT-23-5** gate footprint and the
 74-series single-gate pinout (`1 A · 2 B · 3 GND · 4 Y · 5 VCC`) so they sit beside the real
 gates — the output-on-pin-1 convention above is the Foundations Series' own; the gates keep
 the JEDEC gate order.
@@ -473,6 +473,51 @@ resolving through the four-state `combine`. No new sim-core element; golden-safe
 `LE` enable is the *analog* cousin of this digital latch — same transparent-vs-hold idea.)
 **Teaches:** level- vs. edge-triggered storage, transparency vs. hold, that a flip-flop is two
 latches in series.
+
+### CEC3076 — JK / T Flip-Flop (the universal flip-flop)
+
+*Critical Error Computing · "every flip-flop in one — and the toggle that counts."*
+
+**Description.** The CEC3076 is the **universal** edge-triggered flip-flop: on each rising CLK edge
+J and K choose the next state — hold (0 0), set (1 0), reset (0 1), or **toggle** (1 1) — the one
+flip-flop that does all four. The toggle is the prize: tie **J and K together** and it becomes a
+**T (toggle) flip-flop**, flipping its output on every clock while T = 1, so Q emerges at **half the
+clock frequency** — the divide-by-2 cell every binary counter and frequency divider is built from.
+The JK is also the SR latch with its forbidden state redeemed: where SET = RESET = 1 was illegal on
+the CEC3007, here J = K = 1 is the *most useful* case of all. No single JK is sold at this pin count
+(the real parts — 74x76, 74x112, CD4027 — are all **duals**), so CEC brings one flop out bare; it is
+the edge-triggered companion to the real D flip-flop (`dff-ic.html`, 74AUP1G79).
+
+**Features.** Edge-triggered J/K — hold / set / reset / **toggle** · tie J = K for a **T flip-flop**
+(divide-by-2) · the universal flip-flop (D and T are both special cases) · complementary Q̄ for
+divider chains · single supply.
+
+**Pin configuration — 7-pin (SC70-8 with one N.C., or MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Q** | Latched output (updates only on the clock edge). |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **J** | Set-side input (J = 1, K = 0 → Q latches HIGH). |
+| 4 | **K** | Reset-side input (J = 0, K = 1 → Q latches LOW). **Tie to J for T-mode.** |
+| 5 | **CLK** | Clock — samples J/K on the LOW→HIGH edge. |
+| 6 | **Q̄** | Complementary output (chain Q̄→CLK of the next stage for a ripple counter). |
+| 7 | **VCC** | Positive supply. |
+
+**Function** (J K, on CLK↑ → next Q): 0 0 → Q (hold) · 1 0 → 1 (set) · 0 1 → 0 (reset) · 1 1 → Q̄
+(toggle). Characteristic equation `Q⁺ = J·Q̄ + K̄·Q`. **T-mode** (J = K = T): `Q⁺ = T ⊕ Q` — toggles
+when T = 1, holds when T = 0.
+
+**Abs max:** VCC 16 V · inputs −0.3 V to VCC+0.3 V.
+
+**In the sim:** a `buildNetlist` composition — an edge-triggered `ELEM_DFF` (the memory; `Q = a`,
+`D = b`, `CLK = c`, `Q̄ = d`) fed by JK **steering logic** that computes its D input
+`D = (J · Q̄) + (¬K · Q)` from powered `ELEM_GATE`s (an inverter on K, two ANDs, an OR), with the
+DFF's own Q (`a`) and Q̄ (`d`) closing the feedback. Because the DFF samples only on the edge, the
+J = K = 1 case is a clean **toggle** with no latch race — the master-slave problem the real JK
+solved, here solved for free by the edge trigger. No new sim-core element; golden-safe additive.
+**Teaches:** the universal flip-flop and its four modes, toggle / divide-by-2 (the counter cell),
+how D and T are JK special cases, and why the SR forbidden state becomes JK's most useful one.
 
 ---
 

@@ -75,7 +75,7 @@ count), so trust the PDF connection diagram + pin-function table over any summar
 | 555 timer | NE555 (LMC555 / TLC555 CMOS) | DIP-8 / SOIC-8 . 8 | mixed | composition |
 | D flip-flop | 74LVC1G80 (inv) / 74AUP1G79 (non-inv) | SOT-23-5 . 5 | logic | ELEM_DFF (done) |
 | D-FF + Qn/set/reset | 74LVC1G74 | SC70-8 . 8 | logic | ELEM_DFF |
-| JK / T flip-flop | none single; dual 74x112 | DIP/SO . 16 | logic | ELEM_DFF + steering |
+| JK / T flip-flop | none single; dual 74x112 (house single = CEC3076) | DIP/SO . 16 | logic | ELEM_DFF + steering |
 | SAR ADC | ADC081S021 (MCP3201) | SOT-23-6 . 6 | SPI | protocol engine (later) |
 | DAC | MCP4725 (DAC081S101) | SOT-23-6 . 6 | I2C / SPI | protocol engine (later) |
 | Counter | 74HC4040 | DIP/SO . 16 | parallel | ELEM_DFF composition |
