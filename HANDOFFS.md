@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (58) — XNOR refsheet + SPDX backfill; codex/hotbar/colour-override in flight
+
+**State:** 🟡 in progress. Owner asked for three things: a **Catalog/Codex** ("contain ALL the details
+about that component, exhaustively"; link the refsheets so the curious can see the math), a **hotbar**
+(1–9 + Q pipette), and the **per-net colour override**. Four research agents mapped every subsystem
+(codex data sources, refsheet→component map + static-serving, hotbar plan, net-label colour wiring) —
+their findings are the implementation spec. Building the three **sequentially** (all touch App.svelte).
+
+- **Landed + pushed** (commit `213196e`): owner's **XNOR five-tier refsheet** `docs/ui/parts/xnor-ic.html`
+  (passes §10 static gates) + **SPDX backfill** on 4 refsheets that were missing the header
+  (inv-ic / mosfet-pmos-tiers / opamp-tiers / varistor-tiers). All of `docs/ui/parts/` (19 files) is now
+  golden-rule-#3 compliant — needed because the codex links every component to its refsheet.
+- **Codex** (subagent building now, owns App.svelte + vite.config.ts + new `web/src/lib/codex.ts`):
+  a full-screen master-detail overlay (toolbar "⊞ Codex" button) — categorized searchable component
+  list + an exhaustive detail pane (3-tier diagram, pinout, equation + plain, identity facts, quality
+  tiers table, variants/ratings, logic-family levels, value range, and a **refsheet link** opened via
+  `import.meta.env.BASE_URL + 'parts/<file>'`). A tiny inline Vite plugin serves `docs/ui/parts/*.html`
+  at `/parts/*` in dev and copies them to `dist/parts/` on build (single source in `docs/`, no public/
+  duplicate). `REFSHEET_OF` map + per-kind summary builders live in `codex.ts`.
+- **Hotbar** (queued): `1`–`9` slots of configured parts + `Q` pipette (copy `selPart`'s config into a
+  slot / arm it). Slots = `{kind, config: Partial<Component>}|null`; persist via an optional `hotbar?`
+  field on `Settings` (storage.ts, keep version 1). Keys 1–9/Q are all free. May extend
+  `PLACEMENT_OVERRIDE_KEYS` (graph.ts) to include `value` so a slot carries a tuned scalar (web-only).
+- **Colour override** (queued): `NetLabel.color?` (graph.ts type + serialize/restore optional-spread) +
+  a swatch in the label editor (App.svelte ~2836) + board.ts honouring it at the **6** `voltageColor`
+  sites (3762/3839/4246/4399/4663/4758) via a `nodeColor`/`endpointColor` choke-point; node→colour map
+  emitted beside `nodeNames` in netlist.ts. Pure web/render — golden-safe (no wasm-boundary/sim change).
+
+---
+
 ## 2026-06-20 (57) — Configurator → parts bin + standpipe/bar overhaul (owner's two quick fixes)
 
 **State:** 🟢 both fixes implemented, all web gates green, **pushed to `claude/kind-turing-hdelb3`**
