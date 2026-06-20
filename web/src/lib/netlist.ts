@@ -107,6 +107,8 @@ const TYPE_OF: Record<string, number> = {
   NOR: 17,
   XOR: 17,
   XNOR: 17,
+  IMPLY: 17,
+  NIMPLY: 17,
   NOT: 17,
   BUF: 17,
   // Level shifter: pins OUT, IN (pin 0 → a, 1 → b). `value` = input rail A; the
@@ -155,7 +157,7 @@ const FIVE_PIN_TYPES = new Set<number>([17]);
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
  * second scalar `aux`. Mirrors `gate_logic` in `crates/sim-core/src/lib.rs`:
- * 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF. Every gate part maps to
+ * 0 AND, 1 OR, 2 NAND, 3 NOR, 4 XOR, 5 XNOR, 6 NOT, 7 BUF, 8 IMPLY, 9 NIMPLY. Every gate part maps to
  * solver type 17; this code is what makes one an AND and another an XOR.
  */
 const GATE_AUX: Record<string, number> = {
@@ -167,6 +169,8 @@ const GATE_AUX: Record<string, number> = {
   XNOR: 5,
   NOT: 6,
   BUF: 7,
+  IMPLY: 8,
+  NIMPLY: 9,
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.

@@ -1342,6 +1342,10 @@ function gateSchematic(
   shape: GateShape,
   inverted: boolean,
   xor: boolean,
+  // Optional per-input inversion bubbles `[negate A, negate B]` on the back edge — the
+  // implication gates: IMPLY is an OR with A negated (¬A∨B), NIMPLY an AND with B negated
+  // (A∧¬B). Absent ⇒ neither input inverted (every ordinary gate).
+  invIn?: [boolean, boolean],
 ): void {
   const out = o.pins[0];
   const inA = o.pins[1];
@@ -1360,10 +1364,17 @@ function gateSchematic(
   const col = o.color;
   const drive = norm(o.electrical.current, CUR_SCALE);
 
+  // Input inversion bubbles sit just outside the back edge; pull a negated input's lead
+  // back by the bubble's diameter so it meets the bubble, not the body.
+  const negA = invIn?.[0] ?? false;
+  const negB = invIn?.[1] ?? false;
+  const inBubR = 3.2;
+  const leadEnd = (neg: boolean): number => (neg ? backX - 2 * inBubR : backX);
+
   // Input + output leads. For XOR the leads reach the inner body, crossing the
   // outer back-arc just as a real XOR symbol's do.
-  g.moveTo(inA.x, inA.y).lineTo(backX, inA.y);
-  if (inB) g.moveTo(inB.x, inB.y).lineTo(backX, inB.y);
+  g.moveTo(inA.x, inA.y).lineTo(leadEnd(negA), inA.y);
+  if (inB) g.moveTo(inB.x, inB.y).lineTo(leadEnd(negB), inB.y);
   g.moveTo(tipX, midY).lineTo(out.x, out.y);
   g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
 
@@ -1404,6 +1415,22 @@ function gateSchematic(
   // The inversion bubble at the output tip (NAND / NOR / NOT).
   if (inverted) {
     g.circle(tipX + 4, midY, 3.2).stroke({ width: 2, color: col, alpha: 0.95 });
+  }
+
+  // Input inversion bubbles on the back edge (IMPLY negates A, NIMPLY negates B).
+  if (negA) {
+    g.circle(backX - inBubR, inA.y, inBubR).stroke({
+      width: 2,
+      color: col,
+      alpha: 0.95,
+    });
+  }
+  if (negB && inB) {
+    g.circle(backX - inBubR, inB.y, inBubR).stroke({
+      width: 2,
+      color: col,
+      alpha: 0.95,
+    });
   }
 
   // Power pins — the chip's supply. VCC (pin 3) comes out the top of the body, GND
@@ -1480,6 +1507,14 @@ function drawNOT(g: Graphics, o: GlyphOpts): void {
 }
 function drawBUF(g: Graphics, o: GlyphOpts): void {
   gateSchematic(g, o, "not", false, false);
+}
+// IMPLY (A → B = ¬A ∨ B): an OR body with the A input inverted (bubble on A).
+function drawIMPLY(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "or", false, false, [true, false]);
+}
+// NIMPLY (A ↛ B = A ∧ ¬B): an AND body with the B input inverted (bubble on B).
+function drawNIMPLY(g: Graphics, o: GlyphOpts): void {
+  gateSchematic(g, o, "and", false, false, [false, true]);
 }
 
 // --- Transformer (two windings coupled through a core) ------------------------
@@ -2650,6 +2685,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOR: drawNOR,
   XOR: drawXOR,
   XNOR: drawXNOR,
+  IMPLY: drawIMPLY,
+  NIMPLY: drawNIMPLY,
   NOT: drawNOT,
   BUF: drawBUF,
   // Level shifter: a translator buffer (tier-1 placeholder = the buffer triangle).

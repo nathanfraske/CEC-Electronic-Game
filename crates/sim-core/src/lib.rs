@@ -1045,6 +1045,10 @@ fn gate_logic_level(code: f64, in1: Level, in2: Level) -> Level {
         5 => not(xor(a, b)),
         6 => not(a),
         7 => a,
+        // IMPLY (A → B = ¬A ∨ B): an OR with input A inverted. High except when A=1, B=0.
+        8 => or(not(a), b),
+        // NIMPLY (A ↛ B = A ∧ ¬B): an AND with input B inverted. High only when A=1, B=0.
+        9 => and(a, not(b)),
         // 0 and any unrecognised code: AND.
         _ => and(a, b),
     };
@@ -7312,6 +7316,26 @@ mod tests {
         assert!(gate_out(4.0, true, false) > 4.0);
         assert!(gate_out(4.0, false, true) > 4.0);
         assert!(gate_out(4.0, true, true) < 1.0);
+    }
+
+    #[test]
+    fn gate_imply_nimply_truth_tables() {
+        // code 8 = IMPLY (A → B = ¬A ∨ B): high everywhere EXCEPT A=1, B=0.
+        assert!(gate_out(8.0, false, false) > 4.0); // ¬0 ∨ 0 = 1
+        assert!(gate_out(8.0, false, true) > 4.0); // ¬0 ∨ 1 = 1
+        assert!(gate_out(8.0, true, false) < 1.0); // ¬1 ∨ 0 = 0  (the only low)
+        assert!(gate_out(8.0, true, true) > 4.0); // ¬1 ∨ 1 = 1
+                                                  // code 9 = NIMPLY (A ↛ B = A ∧ ¬B): high ONLY at A=1, B=0.
+        assert!(gate_out(9.0, false, false) < 1.0); // 0 ∧ ¬0 = 0
+        assert!(gate_out(9.0, false, true) < 1.0); // 0 ∧ ¬1 = 0
+        assert!(gate_out(9.0, true, false) > 4.0); // 1 ∧ ¬0 = 1  (the only high)
+        assert!(gate_out(9.0, true, true) < 1.0); // 1 ∧ ¬1 = 0
+                                                  // X propagates per the four-state tables: B=1 forces IMPLY high whatever A is; an
+                                                  // X on the deciding input leaves the output X.
+        assert_eq!(gate_logic_level(8.0, Level::X, Level::High), Level::High); // ¬X ∨ 1 = 1
+        assert_eq!(gate_logic_level(8.0, Level::High, Level::X), Level::X); // ¬1 ∨ X = X
+        assert_eq!(gate_logic_level(9.0, Level::Low, Level::X), Level::Low); // 0 ∧ ¬X = 0
+        assert_eq!(gate_logic_level(9.0, Level::High, Level::X), Level::X); // 1 ∧ ¬X = X
     }
 
     #[test]

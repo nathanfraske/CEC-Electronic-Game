@@ -59,6 +59,8 @@ const CURATED_FULL: Record<string, number[]> = {
   NOR: [1.8, 2.5, 3.3, 5, 12, 15],
   XOR: [1.8, 2.5, 3.3, 5, 12, 15],
   XNOR: [1.8, 2.5, 3.3, 5, 12, 15],
+  IMPLY: [1.8, 2.5, 3.3, 5, 12, 15],
+  NIMPLY: [1.8, 2.5, 3.3, 5, 12, 15],
   NOT: [1.8, 2.5, 3.3, 5, 12, 15],
   BUF: [1.8, 2.5, 3.3, 5, 12, 15],
   // D flip-flop logic rail (V): the digital supply its outputs drive to.
@@ -103,6 +105,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   NOR: [3.3, 5, 12],
   XOR: [3.3, 5, 12],
   XNOR: [3.3, 5, 12],
+  IMPLY: [3.3, 5, 12],
+  NIMPLY: [3.3, 5, 12],
   NOT: [3.3, 5, 12],
   BUF: [3.3, 5, 12],
   FF: [3.3, 5, 12],

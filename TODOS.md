@@ -8,6 +8,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (29) — IMPLY + NIMPLY gates
+
+Owner: "add IMPLY and NIMPLY gates, with ¬A and ¬B… specifically transmission-gate versions."
+Researched (logic + TG): the verdict is **behavioral** — the level-1 MOSFET fixes terminal `b` as
+source (no source/drain swap), so it can't model a pass transistor's swinging source; the
+transmission-gate structure belongs in the refsheet's transistor tiers (owner-authored).
+
+- ~~**sim-core:** two `gate_logic_level` arms — `8 => or(not(a), b)` (IMPLY, A→B = ¬A∨B) and
+  `9 => and(a, not(b))` (NIMPLY, A↛B = A∧¬B). New func codes on the same `ELEM_GATE` (type 17), so
+  they inherit the powered 5-pin model with no new element. X-propagation is automatic (the
+  four-state and/or/not tables). Golden-safe (codes only fire when placed). Test
+  `gate_imply_nimply_truth_tables` (full tables + X cases).~~
+- ~~**web:** `TYPE_OF`/`GATE_AUX` (8/9); `PART_KINDS` (5-pin two-input); `gateSchematic` gained
+  **input-bubble support** (`invIn?: [negA, negB]`) — IMPLY = OR body + A bubble, NIMPLY = AND body +
+  B bubble; `drawIMPLY`/`drawNIMPLY` + DRAWERS (factory falls back to the schematic, keeping the
+  bubble distinct); PARTS bin + `PART_CAT_OF` + `DIGITAL_KINDS` (family/open-drain pickers); partInfo,
+  pinout, values. 138 sim tests, all web gates green.~~ **DONE.**
+  - [ ] Owner heads-up: **no real IMPLY/NIMPLY discrete chip exists** — for a five-tier refsheet the
+    spec forbids inventing a pinout; anchor on a real transmission-gate/bilateral-switch part
+    (e.g. CD4066) and teach "built from TGs," or sign off on a package-less cell. General per-input
+    negation (¬A/¬B on any gate via spare `aux` bits 9/10) is a feasible follow-up that reuses the
+    new input-bubble helper.
+
 ## 2026-06-20 (28) — Electronic load, part 1: a programmable current source (core)
 
 Owner: "implement a programmable / electronic load… eventually test the ATX 3.1 spec. See what we
