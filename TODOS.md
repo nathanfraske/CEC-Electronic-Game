@@ -8,6 +8,33 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (28) — Electronic load, part 1: a programmable current source (core)
+
+Owner: "implement a programmable / electronic load… eventually test the ATX 3.1 spec. See what we
+can go to." Core enabler — a current source that can step between levels (the load-step /
+power-excursion pattern). Researched first (three agents mapped ISOURCE, the Newton/CP path, and
+the web part touch points).
+
+- ~~`i_source_current(&self, e)` near `ac_source_emf`: a current source's instantaneous current.
+  **Static by default** — step frequency (param slot 0) of `0` returns the plain DC `value`, so a
+  plain current source and the RC golden are bit-for-bit unchanged. Positive frequency → a square
+  step between **base** (`value`) and **peak** (`aux`) at that freq, peak for `params[3]` (duty) of
+  each period, starting at base (so the operating point primes the rail at steady state). Slots:
+  value=base, aux=peak, params[0]=freq, params[2]=`RATED_CURRENT_SLOT` (over-current FAIL for free),
+  params[3]=duty. Orientation a→b: positive drains `a`, so a load wires a=rail, b=gnd.~~
+- ~~Swapped the 8 stamp reads + 4 commit reads of ISOURCE `e.value` to `i_source_current(e)`.
+  Golden-safe (ISOURCE absent from the golden; default params → `value`). Tests:
+  `dynamic_current_load_steps_between_base_and_peak` (1 A↔3 A, rail sags 11 V↔9 V) +
+  `dynamic_current_load_run_is_reproducible`. 137 sim-core tests; golden + all 4 existing
+  current-source tests bit-identical.~~ **DONE (part 1).**
+  - [ ] **Part 2 (web):** the **Electronic Load** part — modes CC (→ISOURCE) / CR (→RESISTOR) with a
+    dynamic load-step sub-mode (base/peak/freq/duty), a mode-dependent unit (A/Ω/W), rating→FAIL,
+    glyph, inspector, examples. **Part 3:** CP (constant power) = a new nonlinear `ELEM_CPLOAD`
+    Newton element (I=P/V; needs V_MIN/I_MAX clamps + a step limiter — the first negative-conductance
+    device). **ATX note:** DT=2µs → excursion durations/steps ≥ ~10µs resolve (a 100µs excursion =
+    50 ticks); sub-µs slew aliases. Pair the dynamic load with a source output-Z + hold-up cap to
+    watch a rail droop/recover under a load step.
+
 ## 2026-06-20 (26) — Powered 5-pin logic ICs, part 1: sim-core foundation (the 5th terminal)
 
 Owner: "go ahead and do the 5 pins" — make logic gates real powered ICs (VCC/GND pins, rail from

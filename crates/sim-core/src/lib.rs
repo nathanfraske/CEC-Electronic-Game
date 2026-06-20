@@ -2975,13 +2975,16 @@ impl Sim {
                     self.stamp_transformer_op(&mut mat, &mut rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
-                    // Ideal current source injecting `value` a -> b: current
-                    // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
+                    // Ideal current source injecting `i` a -> b: current leaves a
+                    // (rhs[a] -= i) and enters b (rhs[b] += i). `i` is the programmable
+                    // load current (constant `value` by default; a stepped excursion when
+                    // the dynamic params are set).
+                    let i = self.i_source_current(e);
                     if let Some(r) = ia {
-                        rhs[r] -= e.value;
+                        rhs[r] -= i;
                     }
                     if let Some(r) = ib {
-                        rhs[r] += e.value;
+                        rhs[r] += i;
                     }
                 }
                 ELEM_PULLUP => {
@@ -3022,7 +3025,7 @@ impl Sim {
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
-                ELEM_ISOURCE => e.value,
+                ELEM_ISOURCE => self.i_source_current(e),
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
@@ -3181,14 +3184,16 @@ impl Sim {
                     self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
-                    // Ideal current source injecting `value` a -> b: current
-                    // leaves a (rhs[a] -= value) and enters b (rhs[b] += value).
-                    // No branch unknown and no history term — a pure KCL stamp.
+                    // Ideal current source injecting `i` a -> b: current leaves a
+                    // (rhs[a] -= i) and enters b (rhs[b] += i). No branch unknown and no
+                    // history term — a pure KCL stamp. `i` is the programmable load
+                    // current (constant `value`, or a stepped excursion when dynamic).
+                    let i = self.i_source_current(e);
                     if let Some(r) = ia {
-                        rhs[r] -= e.value;
+                        rhs[r] -= i;
                     }
                     if let Some(r) = ib {
-                        rhs[r] += e.value;
+                        rhs[r] += i;
                     }
                 }
                 ELEM_PULLUP => {
@@ -3237,7 +3242,7 @@ impl Sim {
                     let bi = self.branch_index[i];
                     x[bi] + e.value * x[bi + 1]
                 }
-                ELEM_ISOURCE => e.value,
+                ELEM_ISOURCE => self.i_source_current(e),
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
@@ -3916,11 +3921,12 @@ impl Sim {
                     self.stamp_transformer_op(&mut base_mat, &mut base_rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
+                    let i = self.i_source_current(e);
                     if let Some(r) = ia {
-                        base_rhs[r] -= e.value;
+                        base_rhs[r] -= i;
                     }
                     if let Some(r) = ib {
-                        base_rhs[r] += e.value;
+                        base_rhs[r] += i;
                     }
                 }
                 ELEM_PULLUP => {
@@ -3981,7 +3987,7 @@ impl Sim {
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
-                ELEM_ISOURCE => e.value,
+                ELEM_ISOURCE => self.i_source_current(e),
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     diode_eval(self.diode_vd[i], diode_model(e)).0
                 }
@@ -4148,11 +4154,12 @@ impl Sim {
                     self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
                 }
                 ELEM_ISOURCE => {
+                    let i = self.i_source_current(e);
                     if let Some(r) = ia {
-                        base_rhs[r] -= e.value;
+                        base_rhs[r] -= i;
                     }
                     if let Some(r) = ib {
-                        base_rhs[r] += e.value;
+                        base_rhs[r] += i;
                     }
                 }
                 ELEM_PULLUP => {
@@ -4232,7 +4239,7 @@ impl Sim {
                     let bi = self.branch_index[i];
                     x[bi] + e.value * x[bi + 1]
                 }
-                ELEM_ISOURCE => e.value,
+                ELEM_ISOURCE => self.i_source_current(e),
                 ELEM_DIODE | ELEM_SCHOTTKY | ELEM_LED | ELEM_ZENER => {
                     let id = diode_eval(self.diode_vd[i], diode_model(e)).0;
                     // Add the reverse-recovery charge current dq/dt (like the capacitor above)
@@ -4616,6 +4623,46 @@ impl Sim {
             } else {
                 amplitude * (1.0 - phase) / (1.0 - duty)
             }
+        }
+    }
+
+    /// The instantaneous current of an ideal current source ([`ELEM_ISOURCE`]) — the engine of a
+    /// programmable **electronic load** in constant-current mode. **Static by default:** a step
+    /// frequency (param slot 0) of `0` returns the plain DC `value`, so a plain current source — and
+    /// the golden, which has none — is bit-for-bit unchanged. A **positive** step frequency turns it
+    /// into a *dynamic* load: a square step between the **base** level (`value`) and the **peak**
+    /// level (`aux`) at that frequency, sitting at the peak for `params[3]` (duty) of each period and
+    /// at the base the rest — the load-step / power-excursion pattern used to test a supply's
+    /// transient response. The period **starts at the base** level (so the operating point primes the
+    /// rail at its steady state, then the excursion makes it sag). Deterministic (mul/floor/compare
+    /// only, no transcendental), so it reproduces bit-for-bit on every platform.
+    ///
+    /// Slot map for the source (no collisions): `value` = base/DC current, `aux` = peak current,
+    /// `params[0]` = step frequency (Hz; `0` = static), `params[2]` = [`RATED_CURRENT_SLOT`],
+    /// `params[3]` = duty (peak fraction). The orientation is the source's own (`a → b`): a positive
+    /// current drains terminal `a`, so a load wires `a` to the rail and `b` to ground.
+    #[inline]
+    fn i_source_current(&self, e: &Element) -> f64 {
+        let freq = e.params[0];
+        if freq <= 0.0 {
+            return e.value; // static DC — identical to the pre-programmable current source
+        }
+        let cycles = freq * (self.tick as f64) * DT;
+        let phase = cycles - cycles.floor(); // periodic phase in [0, 1)
+        let duty = {
+            let d = e.params[3]; // peak (excursion) fraction of each period
+            if d > 0.0 && d < 1.0 {
+                d
+            } else {
+                0.5
+            }
+        };
+        // Sit at the base for `1 - duty`, excurse to the peak for the final `duty` — so phase 0
+        // (and the operating point) is the base level.
+        if phase >= 1.0 - duty {
+            e.aux
+        } else {
+            e.value
         }
     }
 
@@ -6139,6 +6186,89 @@ mod tests {
                 expected
             );
         }
+    }
+
+    /// A **programmable electronic load** in dynamic (load-step) mode: a current sink that
+    /// steps between a base and a peak level at a set frequency + duty — the supply
+    /// transient/excursion test. A 12 V rail through a 1 Ω source resistance feeds the load;
+    /// the load drains node 2 (`ELEM_ISOURCE` a=2, b=0), base 1 A / peak 3 A, 1 kHz, 50 %
+    /// duty. The rail must sag further (12 − I·1) when the load steps to its peak.
+    #[test]
+    fn dynamic_current_load_steps_between_base_and_peak() {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = 1000.0; // load (elem 2) slot 0 = step frequency (Hz)
+        params[2 * PARAM_STRIDE + 3] = 0.5; // slot 3 = duty (peak/excursion fraction)
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_ISOURCE],
+            &[1, 1, 2], // a: V+, R, load drains node 2
+            &[0, 2, 0], // b: V−=gnd, R→node 2, load return=gnd
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[12.0, 1.0, 1.0], // V = 12, R = 1 Ω, load base = 1 A
+            &[0.0, 0.0, 3.0],  // load peak (aux) = 3 A
+            &params,
+        ));
+        // Period = 1/(1000·2µs) = 500 ticks; base for the first half (phase < 0.5), peak
+        // after. Sample in the base window (~tick 100) and the peak window (~tick 400).
+        for _ in 0..100 {
+            sim.step();
+        }
+        let load_base = sim.element_currents()[2];
+        let rail_base = sim.node_voltages()[2];
+        for _ in 0..300 {
+            sim.step();
+        }
+        let load_peak = sim.element_currents()[2];
+        let rail_peak = sim.node_voltages()[2];
+        assert!(
+            (load_base - 1.0).abs() < 1e-6,
+            "base draw is 1 A: {load_base}"
+        );
+        assert!(
+            (load_peak - 3.0).abs() < 1e-6,
+            "peak draw is 3 A: {load_peak}"
+        );
+        assert!(
+            (rail_base - 11.0).abs() < 1e-3,
+            "rail sits at 11 V under the 1 A base load: {rail_base}"
+        );
+        assert!(
+            (rail_peak - 9.0).abs() < 1e-3,
+            "rail sags to 9 V under the 3 A peak excursion: {rail_peak}"
+        );
+    }
+
+    /// The dynamic load's tick-driven current is a pure function of the tick, so a run with
+    /// a stepping load reproduces bit-for-bit (the new programmable-current path must not
+    /// break determinism).
+    #[test]
+    fn dynamic_current_load_run_is_reproducible() {
+        let run = || {
+            let mut sim = Sim::new(1);
+            let mut params = vec![0.0; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE] = 2500.0; // step frequency
+            params[2 * PARAM_STRIDE + 3] = 0.3; // duty
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_ISOURCE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[12.0, 2.0, 0.5],
+                &[0.0, 0.0, 2.5],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1500 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a stepping load reproduces exactly");
     }
 
     // --- Nonlinear: diode + Newton --------------------------------------------
