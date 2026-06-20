@@ -56,9 +56,26 @@ engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD` overload an existing elem
    program-id dispatch + digital I/O + hash fold) at the **base tick rate**, with the first
    program a **SPI master** (assert CS, shift a configured word out on MOSI clocked by SCLK at
    a structural divider, sample MISO). Slow but functional; proves the engine end to end.
-3. **Multi-rate sub-ticking (phase 2):** the event kernel sub-steps a fixed integer count per
-   analog tick (a block declares its rate). Generalizes the 1-tick delay; folds the sub-tick
-   counter. This is what lets protocols/CPUs run at MHz against the µs analog tick.
+3. **Multi-rate sub-ticking — DECIDED: partitioned digital sub-solve (Strategy 2), staged.**
+   Research confirmed pure-digital nets are still IN the dense MNA today, and the committed
+   `Level` is the re-quantized *solved voltage*, not the raw `combine`. So the only
+   N=1-bit-identical path is to KEEP them in the matrix and sub-solve the (already
+   analog-decoupled — zero off-diagonals) pure-digital block for N>1 — NOT the cleaner
+   event-combine route, which would change the committed level for floating-`Z` (→`Low`) and
+   contention (→`X` vs the re-quantized mid-rail) nets and force a golden regen up front.
+   Boundary nets (comparator/sampler/ADC outputs, the open-drain + pull-up I²C bus) stay in the
+   MNA — that's where the kernels meet. Two steps: **(3a)** a deterministic row partition
+   `[analog ∪ boundary ∪ branch | pure-digital]`, solve unchanged, proven byte-identical over
+   1000 ticks for every gate/DFF/ring/sampler/comparator/behavioral circuit (pure scaffolding —
+   all goldens unchanged); **(3b)** the integer sub-tick loop — after the full solve, freeze the
+   boundary `node_v` and re-solve only the pure-digital block N−1 more times (explicit
+   receiver→edge-detect→FF→comb→driver phase order), advancing the fast-domain sequential state.
+   Rate `N` is structural (a declared divider in `params`, default 1). **Hash at analog-tick
+   boundaries only** (sub-tick wrapped to 0), so the sub-tick counter never folds and the golden
+   is untouched; N=1 stays bit-identical because the N>1 branch is skipped for every existing
+   circuit. (Strategy 1, committing the `combine` result directly and dropping pure-digital nets
+   from the matrix, is the cleaner long-term representation and can be converged on later as its
+   own golden-gated step.) This is what lets protocols/CPUs run at MHz against the µs analog tick.
 4. **More protocols + endpoints (phase 3):** SPI slave (→ the serial DAC081S101 / ADC081S021),
    UART (async framing + a baud divider — works at the base rate too), I2C (the open-drain +
    pull-up wired-AND bus is already half of it).
