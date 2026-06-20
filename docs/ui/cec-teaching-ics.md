@@ -184,10 +184,468 @@ uses a NOR core). **Package:** SOT-23-5. **Truth** (A B → Y): 00→0 · 01→0
 
 ---
 
+## CEC logic & routing (arithmetic, selection, busing)
+
+Five combinational gaps where no clean discrete single-function chip exists at the minimum
+pin count — the arithmetic atom below the full adder, the two routing primitives (select and
+distribute), the fault-tolerance gate, and the bus driver. Each is a `buildNetlist`
+composition of the existing powered `ELEM_GATE` (golden-safe additive), and — like the two
+CEC gates above — each keeps the **74-series gate pin order** where it is a single logic
+function (`1 A · 2 B · 3 GND · … · VCC last`) so it sits beside the real gates; the wider
+parts (mux/demux/latch with a select or enable) revert to the **CEC house convention**
+(output pin 1, GND pin 2, VCC last) because they are no longer a bare 2-input gate.
+
+### CEC2024 — 1-Bit Half-Adder
+
+*Critical Error Computing · "addition before it learned to carry in."*
+
+**Description.** The CEC2024 adds two bits and reports a sum and a carry-out — and that is
+*all* it does, with no carry-in. It is the rung below the CEC2018 full adder: the half-adder
+is the cell at the very least-significant position of a ripple chain (where there is nothing
+to carry in yet), and a full adder is literally two half-adders plus an OR. Meeting addition
+without the carry-in pin first makes the full adder's third input obvious. There is no
+discrete single-gate half-adder chip — it has always been "an XOR and an AND" you wire
+yourself, which is exactly the lesson.
+
+**Features.** A + B → {COUT, SUM} · SUM = A ⊕ B, COUT = A · B · purely combinational ·
+the bottom rung of a ripple-carry adder · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **SUM** | Sum output = A ⊕ B. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **A** | Addend bit A. |
+| 4 | **B** | Addend bit B. |
+| 5 | **COUT** | Carry output = A · B (chains into a CEC2018's CIN). |
+| 6 | **VCC** | Positive supply (also the output logic-high rail). |
+
+(A half-adder's defining feature is the carry-*out*, so both outputs are brought out — this is
+the cell at the bottom of a ripple chain; add a carry-in and it becomes the CEC2018 full adder.)
+
+**Truth table** (A B → COUT SUM): 00→00 · 01→01 · 10→01 · 11→10.
+
+**In the sim:** a `buildNetlist` composition of two gates — `SUM` = one **XOR**(A,B),
+`COUT` = one **AND**(A,B), each a powered `ELEM_GATE` swinging GND..VCC (this is already shipped
+as the `logic-half-adder` worked example). No new sim-core element; golden-safe additive.
+**Teaches:** binary addition, sum vs. carry, why the full adder needs a third (carry-in) input.
+
+### CEC2031 — 2:1 Multiplexer
+
+*Critical Error Computing · "two wires in, one chosen out."*
+
+**Description.** The CEC2031 passes one of two inputs to the output, chosen by a select line:
+`SEL` low forwards A, `SEL` high forwards B. It is the elemental router — the building block
+of every larger mux, every data-path "pick a source," and (fed back) the lookup-table cell of
+an FPGA. Cascade them in a tree for a 4:1 or 8:1; this is the leaf. No discrete 1-bit 2:1 mux
+chip exists at this pin count (the smallest real parts are quad), so CEC lays the single bit
+bare.
+
+**Features.** Y = SEL ? B : A · one select line · combinational · the leaf cell of any mux
+tree / LUT · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Y** | Output: forwards A when SEL = 0, B when SEL = 1. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **A** | Data input 0 (selected when SEL = 0). |
+| 4 | **B** | Data input 1 (selected when SEL = 1). |
+| 5 | **SEL** | Select line (0 → A, 1 → B). |
+| 6 | **VCC** | Positive supply. |
+
+**Function:** `Y = (A · ¬SEL) + (B · SEL)`. **Truth** (SEL → Y): 0 → A · 1 → B.
+
+**In the sim:** a `buildNetlist` composition of gates — an inverter on SEL, two ANDs
+(`A·¬SEL`, `B·SEL`), and an OR to merge — all powered `ELEM_GATE`. No new sim-core element;
+golden-safe additive. **Teaches:** data selection/routing, the select line, how muxes build
+the FPGA lookup table.
+
+### CEC2032 — 1:2 Demultiplexer / 1-of-2 Decoder
+
+*Critical Error Computing · "one wire in, sent to where you point it."*
+
+**Description.** The CEC2031's mirror image. With `D` as data, the CEC2032 steers it to Y0 or
+Y1 by the select line (demux); tie `D` high and it becomes a 1-of-2 **decoder** — exactly one
+output asserts for each address, the one-hot primitive every memory address line and chip-select
+grows from. Distribution is the dual of selection, and meeting them as a matched pair (CEC2031
+↔ CEC2032) makes the duality concrete.
+
+**Features.** Demux: routes D to Y0/Y1 by SEL · Decoder (D = 1): one-hot 1-of-2 by address ·
+combinational · the address-decode primitive · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Y0** | Output 0 = D · ¬SEL (asserts when SEL = 0). |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **Y1** | Output 1 = D · SEL (asserts when SEL = 1). |
+| 4 | **D** | Data input (tie HIGH to use as a pure 1-of-2 decoder). |
+| 5 | **SEL** | Select / address line. |
+| 6 | **VCC** | Positive supply. |
+
+**Function:** `Y0 = D · ¬SEL`, `Y1 = D · SEL`. **Decode** (D = 1, SEL → Y1 Y0): 0 → 01 · 1 → 10.
+
+**In the sim:** a `buildNetlist` composition — an inverter on SEL and two AND gates
+(`D·¬SEL`, `D·SEL`), all powered `ELEM_GATE`. No new sim-core element; golden-safe additive.
+**Teaches:** data distribution (the dual of the mux), one-hot decoding, address lines /
+chip-select.
+
+### CEC2046 — Majority / Voting Gate (3-input)
+
+*Critical Error Computing · "democracy in a gate — two out of three wins."*
+
+**Description.** The CEC2046 outputs whatever the **majority** of its three inputs say:
+high if two or three are high, low otherwise. It is the heart of fault-tolerant logic —
+triple-modular redundancy votes out a single failed channel through exactly this gate — and,
+not coincidentally, it *is* the carry-out function of a full adder (`COUT = majority(A,B,CIN)`),
+so it ties arithmetic and reliability together. No discrete majority-gate chip exists; the
+function is fundamental enough (it is monotone, and a primitive of threshold/neuromorphic logic)
+to deserve its own glyph.
+
+**Features.** Y = majority(A, B, C) = AB + BC + CA · three inputs · monotone (no inversion) ·
+the TMR voter and the full-adder carry · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6), 74-series-style gate order:**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **A** | Input A. |
+| 2 | **B** | Input B. |
+| 3 | **GND** | Ground / 0 V reference. |
+| 4 | **C** | Input C. |
+| 5 | **Y** | Majority output (HIGH when ≥ 2 inputs HIGH). |
+| 6 | **VCC** | Positive supply. |
+
+(Three inputs + output exceeds the 5-pin single-gate footprint, so it takes the SOT-23-6 gate
+frame; pin order follows the gate convention — inputs and GND first, output then VCC — to sit
+beside the real 74-series gates rather than the output-on-pin-1 house convention.)
+
+**Truth table** (A B C → Y): 000→0 · 001→0 · 010→0 · 011→1 · 100→0 · 101→1 · 110→1 · 111→1.
+
+**In the sim:** a `buildNetlist` composition — three two-input **AND** gates (AB, BC, CA) into
+a three-input **OR** (itself a tree of two OR gates), all powered `ELEM_GATE` (identical to the
+CEC2018 carry network). No new sim-core element; golden-safe additive. **Teaches:** majority/
+threshold logic, triple-modular redundancy (voting out a fault), the full-adder carry as a vote.
+
+### CEC2057 — Tri-State Buffer (with Output Enable)
+
+*Critical Error Computing · "drive it, or get off the bus."*
+
+**Description.** The CEC2057 is a buffer with a third output state: **high-impedance**. When
+`OE` is high it passes A to Y (a clean 0 or VCC); when `OE` is low it **releases** Y entirely —
+neither high nor low, just disconnected (Hi-Z). That third state is the whole idea of a shared
+**bus**: many tri-state drivers on one wire, only one enabled at a time, the rest electrically
+absent. It is the part that makes a data bus, a wired backplane, and the `OE` pin on every
+memory and register possible. Hi-Z has no waveform, so it must be met as a *concept*, which is
+why it earns a dedicated glyph.
+
+**Features.** Y = A when OE = 1; **Hi-Z** when OE = 0 · three output states (0, 1, Z) · the bus
+driver / wired-OR enabler · single supply.
+
+**Pin configuration — 5-pin (SOT-23-5 / SC70-5):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Y** | Three-state output: A when enabled, **high-impedance** when not. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **A** | Data input. |
+| 4 | **OE** | Output enable (HIGH = drive Y; LOW = release Y to Hi-Z). |
+| 5 | **VCC** | Positive supply. |
+
+**Function** (OE A → Y): 0 X → **Z** · 1 0 → 0 · 1 1 → 1. Two or more CEC2057 outputs may share
+one net (a bus) provided **at most one** is enabled; two enabled drivers in disagreement is a
+**bus conflict** (the sim resolves it to `X` — a deliberate teaching hazard).
+
+**In the sim:** a `buildNetlist` composition over the existing digital domain's **four-state
+`Z`**. The honest, golden-safe build is a powered `ELEM_GATE` **buffer** whose VCC rail is
+**gated by `OE`** (OE low collapses the rail below `GATE_MIN_RAIL`, so the gate goes
+**dead-rail → releases its output to `Z`** — the existing unpowered-gate mechanism); OE high
+restores the rail and it drives A. Two such outputs on a net resolve through the IEEE-1164
+`combine()` rule (`Z` yields to any real driver; two disagreeing strong drivers → `X`). No new
+sim-core element. *(A cleaner native build — a direct `OE`-gated Z without rail-collapse — is
+noted in the engine as a future "tri-state buffer with OE" refinement using a dedicated enable
+pin; the dead-rail composition above teaches the same Hi-Z behaviour today.)* **Teaches:** the
+high-impedance state, shared buses and output-enable, bus contention.
+
+---
+
+## CEC memory & sequential (level vs. edge)
+
+### CEC3014 — Transparent D-Latch
+
+*Critical Error Computing · "memory with the door propped open."*
+
+**Description.** The CEC3014 stores one bit, but unlike a flip-flop it is **level-sensitive**:
+while `EN` is high the latch is *transparent* — Q simply follows D — and the instant `EN` goes
+low it **freezes** the last value of D and holds it. It is the missing middle term between the
+CEC3007 (an SR latch — feedback memory, but no clean data input) and an edge-triggered D
+flip-flop (the 74LVC1G80, which samples D only on a clock *edge*). Putting the transparent latch
+beside the edge flip-flop is the cleanest way to teach **level- vs. edge-triggered** — the
+single most confused distinction in sequential logic (and the source of every latch-vs-flop
+timing bug). No discrete single D-latch is sold at this pin count.
+
+**Features.** Transparent when EN = 1 (Q follows D), holds last D when EN = 0 · level-sensitive
+(not edge) · the gated-latch building block (a flip-flop is two of these) · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Q** | Latched output: follows D while EN = 1, holds when EN = 0. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **D** | Data input. |
+| 4 | **EN** | Enable / gate (HIGH = transparent, LOW = hold). |
+| 5 | **Q̄** | Complementary output. |
+| 6 | **VCC** | Positive supply. |
+
+**Function** (EN D → Q): 1 0 → 0 · 1 1 → 1 · 0 X → **hold**.
+
+**In the sim:** a `buildNetlist` composition of gates — a gated SR latch: two steering ANDs
+(`D·EN`, `¬D·EN`) into the cross-coupled NOR pair of the CEC3007 (so when EN = 0 both set/reset
+terms are forced low and the latch *holds*; when EN = 1 it tracks D). All powered `ELEM_GATE`,
+resolving through the four-state `combine`. No new sim-core element; golden-safe additive.
+(The level-sensitive latch the engine already implements inside `ELEM_COMPARATOR`'s active-low
+`LE` enable is the *analog* cousin of this digital latch — same transparent-vs-hold idea.)
+**Teaches:** level- vs. edge-triggered storage, transparency vs. hold, that a flip-flop is two
+latches in series.
+
+---
+
+## CEC analog & signal (sources, references, detectors)
+
+Five analog gaps. Each maps to a real sim-core element or a short composition, and each is
+single-supply powered (the CEC rule — a reference or a current source you can ask "where does
+its energy come from").
+
+### CEC4007 — Constant-Current Source/Sink
+
+*Critical Error Computing · "amps held as steady as a reference holds volts."*
+
+**Description.** The CEC4007 pushes (or pulls) a **fixed current** through whatever you connect
+to IOUT, regardless of the load voltage — the current-domain dual of a voltage reference. Drive
+an LED at a constant brightness, bias a sensor, charge a capacitor into a perfect linear ramp,
+or set the tail current of a differential pair: anywhere the *current* must be the controlled
+quantity, not a by-product of `V/R`. Real "current sources" are awkward (a current-regulator
+diode is a depletion JFET; a current mirror needs matched transistors) — CEC gives you the ideal
+behaviour laid bare so you meet the *idea* of a held current before its imperfect
+implementations.
+
+**Features.** Fixed IOUT independent of load voltage (ideal source impedance) · source **or**
+sink by orientation · compliance set by the supply rail · the dual of a voltage reference ·
+single supply.
+
+**Pin configuration — 4-pin (SOT-23-5 with one N.C., or SOT-23 leadframe):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **IOUT** | Constant-current terminal (delivers/draws the set current). |
+| 2 | **GND** | Ground / 0 V reference and return. |
+| 3 | **ISET** | Sets the output current (a resistor to GND, or a fixed internal value). |
+| 4 | **VCC** | Positive supply; sets the output-voltage compliance range. |
+
+**Transfer:** `IOUT = I_set` for all load voltages within compliance (`0 < V(IOUT) < VCC − V_dropout`);
+the source "runs out of headroom" (drops out of regulation) outside that window — a teaching
+annotation.
+
+**In the sim:** maps directly to **`ELEM_ISOURCE`** (an ideal DC current source: a pure
+right-hand-side KCL stamp, no branch unknown, no reactive state — `value` is the set current in
+amps). This is exactly how the existing electronic-**LOAD** part in CC mode already maps. No new
+sim-core element; golden-safe additive. **Teaches:** current as a controlled quantity, source
+vs. sink, compliance/headroom, the duality with a voltage reference.
+
+### CEC4012 — Buffered Voltage Reference
+
+*Critical Error Computing · "one voltage you can trust, on tap."*
+
+**Description.** The CEC4012 produces a **stable, low-impedance reference voltage** on VREF —
+the anchor every ADC, DAC, comparator threshold and regulator measures against. Unlike a bare
+shunt reference (e.g. the real LM4040, a two-terminal part that needs an external bias resistor
+and sinks into a high impedance), the CEC4012 buffers its internal reference so VREF is a
+**ready-to-use output** you can wire straight to a divider or an ADC pin — the teaching-optimized
+abstraction: the concept "a fixed voltage, independent of supply and load," with the bias network
+hidden. Its precision (and, in Real mode, its tempco) is the lesson in *why* references are hard.
+
+**Features.** Fixed VREF independent of supply (above dropout) and of load (buffered, low-Z out) ·
+the measurement anchor for ADC/DAC/regulator · internal shunt core, buffered to an output · single
+supply.
+
+**Pin configuration — 4-pin (SOT-23-5 with one N.C., or SC70):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **VREF** | Buffered reference output (fixed voltage, low impedance). |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **SET** | Selects the reference value (internal tap; pin reserved for trim/option). |
+| 4 | **VCC** | Positive supply (must exceed VREF + dropout). |
+
+**Transfer:** `VREF = V_ref` (a fixed value, e.g. 2.5 V), held flat while `VCC > VREF + V_dropout`
+and across rated load current.
+
+**In the sim:** a `buildNetlist` composition — an **`ELEM_ZENER`** (its `value` = the breakdown
+`Vz`, the stable reference core) biased from VCC through a resistor, then **buffered by an
+`ELEM_OPAMP`** in a unity follower so VREF is low-impedance. Both are existing elements; the
+Zener's reverse-breakdown model and the op-amp follower are already in the solve. No new sim-core
+element; golden-safe additive. (A real temperature-stable bandgap reference — where two opposing
+tempcos cancel — is the Real-mode / thermal-`Tj` refinement noted on the roadmap; the Zener core
+here teaches the *function* of a reference today.) **Teaches:** a supply-independent reference,
+why downstream accuracy rides on it, shunt core vs. buffered output, source/load regulation.
+
+### CEC4023 — Window Comparator
+
+*Critical Error Computing · "in range, or out — one bit for both edges."*
+
+**Description.** The CEC4023 asserts a single output when the input sits **between** a low and a
+high threshold, and de-asserts when it strays past either — a "good/bad," "in-band," or "valid
+range" detector in one part. A plain comparator answers *above or below one level*; the window
+comparator answers *inside or outside a band*, which is what undervoltage/overvoltage supervision,
+go/no-go testing, and bracketed alarms actually need. Building it from two comparators makes the
+band visible as two stacked thresholds.
+
+**Features.** GOOD = (V_LO < IN < V_HI) · two thresholds bracketing a band · combinational
+decision · the supervisor / go-no-go primitive · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **GOOD** | Output: HIGH while V_LO < IN < V_HI, else LOW. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **IN** | Analog input to test against the window. |
+| 4 | **VLO** | Lower threshold (analog). |
+| 5 | **VHI** | Upper threshold (analog). |
+| 6 | **VCC** | Positive supply (output logic-high rail). |
+
+**Transfer:** `GOOD = (IN > VLO) AND (IN < VHI)` — high only inside the band, low above VHI or
+below VLO.
+
+**In the sim:** a `buildNetlist` composition of **two `ELEM_COMPARATOR`** (the ADCMP601-modelled
+latched comparator, used in plain mode: `value` = 0 for no hysteresis, `LE` unwired so it runs
+transparent) — one testing `IN > VLO`, one testing `VHI > IN` — merged by one powered **AND**
+`ELEM_GATE`. All existing elements; the comparators drive clean digital levels the gate ANDs. No
+new sim-core element; golden-safe additive. **Teaches:** thresholds and bands, combining
+comparisons, voltage supervision (UV/OV), go/no-go testing.
+
+### CEC4031 — Peak Detector
+
+*Critical Error Computing · "it remembers the highest it ever saw."*
+
+**Description.** The CEC4031 captures and **holds the peak** of its input: as IN rises, OUT
+follows it up; when IN falls, OUT *stays* at the highest value reached (until reset). It is how
+an envelope is extracted from a waveform — AM demodulation, an audio VU/peak meter, capturing a
+transient's amplitude, an envelope follower. The mechanism is a one-way valve into a reservoir
+(charge the cap on the way up, block it on the way down), so the part teaches rectify-and-store
+directly. No tidy single-chip peak detector exists in jellybean form; it has always been a diode,
+a capacitor, and (for precision) an op-amp.
+
+**Features.** OUT tracks IN upward, holds the maximum when IN falls · diode-into-capacitor
+charge store · envelope / peak capture · optional reset · single supply.
+
+**Pin configuration — 5-pin (SOT-23-5 / SC70-5):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **OUT** | Peak output: rises with IN, holds the maximum reached. |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **IN** | Analog input whose peak is captured. |
+| 4 | **RST** | Reset (discharges the hold capacitor toward GND). |
+| 5 | **VCC** | Positive supply. |
+
+**Transfer:** `OUT = max(IN)` since the last reset (precision version cancels the diode drop);
+`OUT` decays slowly per the hold time (a teaching annotation) and snaps to ~0 on RST.
+
+**In the sim:** a `buildNetlist` composition of existing elements — an **`ELEM_DIODE`** (one-way
+charge path) into an **`ELEM_CAPACITOR`** (the reservoir, a backward-Euler companion that *holds*
+charge between updates), with RST modelled as a switched/resistive bleed to GND; the **precision**
+variant wraps an **`ELEM_OPAMP`** around the diode (the follower charges the cap to the true peak,
+cancelling the forward drop). All existing elements; the cap's reactive state is what gives the
+hold. No new sim-core element; golden-safe additive. **Teaches:** rectify-and-store, envelope
+detection, the diode as a one-way valve, capacitor charge storage / hold.
+
+### CEC4044 — Transconductance Cell (V→I)
+
+*Critical Error Computing · "voltage in, current out — the thing a transistor really is."*
+
+**Description.** The CEC4044 turns an input **voltage** into an output **current**: `IOUT = gm ·
+VIN`. That voltage-to-current conversion — *transconductance* — is the actual primitive a
+transistor performs (a MOSFET's gate voltage sets its drain current; the engine literally
+linearizes every active device into a `gm`), and it is the core of an operational transconductance
+amplifier (OTA), a gm-C filter, and a multiplier. Exposing gm by itself — as a single cell whose
+output is a current you watch flow — demystifies what "gain" is before it is buried inside an
+op-amp. The real OTA (e.g. an LM13700) is a multi-pin dual with bias and buffer pins; CEC strips
+it to the one idea.
+
+**Features.** IOUT = gm · VIN (voltage controls a current) · the OTA / gm-C core · the
+transistor's defining action laid bare · single supply.
+
+**Pin configuration — 5-pin (SOT-23-5 / SC70-5):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **IOUT** | Output current, proportional to VIN (sourced/sunk into the load). |
+| 2 | **GND** | Ground / 0 V reference and source return. |
+| 3 | **VIN** | Control input voltage (relative to GND). |
+| 4 | **IABC** | Sets gm (amplifier bias current); pin reserved for the gm control. |
+| 5 | **VCC** | Positive supply. |
+
+**Transfer:** `IOUT = gm · VIN` over the linear range (square-law/tanh roll-off at large |VIN|,
+exactly as the device model bends — a teaching annotation), with gm set by IABC.
+
+**In the sim:** maps to a single **`ELEM_NMOS`** (drain = IOUT, source = GND, gate = VIN): the
+MOSFET *is* a transconductor — the core linearizes it into a transconductance `gm` (from the gate)
+and an output conductance `gds`, which is precisely `IOUT = gm·VGS`. (A more ideal V→I — a true
+voltage-controlled current source independent of output voltage — is an op-amp + sense-resistor
+Howland composition, also from existing elements, if `gds`-flatness matters.) No new sim-core
+element; golden-safe additive. **Teaches:** transconductance (V→I), what gain *is* at the device
+level, the OTA / gm-C building block.
+
+---
+
+## Parts that wait on an engine mechanism
+
+A few obvious gaps need a core mechanism that does not exist yet, so they are **named here but
+not given full cards** (they would otherwise mis-teach against the sim):
+
+- **Analog sample-and-hold** (track the analog *value*, freeze it on a HOLD pin) — distinct from
+  the CEC1041 *1-bit* quantizer. It needs a **logic-gated analog switch** (a transmission gate
+  switched by an arbitrary signal pin) feeding a hold cap; today's `ELEM_SWITCH` is PWM/duty-driven,
+  not gated by a logic node, so the gated track-and-hold is **[needs: logic-gated analog switch /
+  transmission-gate element]**. The hold *cap* and the op-amp buffer already exist; only the gated
+  switch is missing.
+- **Voltage-controlled oscillator (V→frequency)** — every time-varying source (`ELEM_ACSOURCE`,
+  the PULSE/SWITCH mapping) takes its frequency as a **fixed param**, a pure function of `tick`, not
+  of a live node voltage. A true VCO is **[needs: a voltage-controlled time-varying source]** (a
+  frequency that reads a control node each tick) — deferred with the behavioral/multi-rate work.
+- **Monostable one-shot** (retriggerable edge → fixed-width pulse) — the *core* is buildable today
+  (comparator + RC + the CEC3007 SR latch), but a clean **retriggerable** one-shot wants the same
+  edge-to-timer plumbing the 555 monostable uses; partially buildable, deprioritized in favour of
+  using the real **LMC555** (which has a clean minimum-pin part) for timing.
+- **Clock divider (÷N)** — deliberately **skipped**: the single D flip-flop (real **74LVC1G80**,
+  5-pin) with `Q̄→D` already *is* the ÷2 divider stage, so a CEC version would duplicate a clean
+  real minimum-pin exemplar (see `new-part-refsheets.md`). Chain N flip-flops for ÷2ⁿ.
+
+---
+
 ## The arc
 
-Read together, the four are a tiny computer in kit form: **CEC1041** quantizes the world
-in, **CEC2018** computes on it, **CEC3007** remembers the result, **CEC1083** turns it
+Read together, the original four are a tiny computer in kit form: **CEC1041** quantizes the
+world in, **CEC2018** computes on it, **CEC3007** remembers the result, **CEC1083** turns it
 back into a voltage. Convert → compute → store → reconstruct, each a single CEC glyph,
 each at its minimum honest pin count — and (with the existing sampler/gate/resistor
 elements) each buildable in-sim today, golden-safe, the moment its refsheet is drawn.
+
+The second wave widens that spine into the rest of the curriculum without leaving the same
+ground: **route and compute** (the half-adder CEC2024, the mux/demux pair CEC2031/CEC2032,
+the voter CEC2046, the bus driver CEC2057), **the level-vs-edge bridge in memory** (the
+transparent latch CEC3014, sitting between the SR latch and the flip-flop), and **the analog
+anchors and detectors** (a held current CEC4007, a buffered reference CEC4012, a window
+CEC4023, a peak hold CEC4031, and transconductance itself CEC4044). Every one is the same
+contract as the first four — minimum honest pins, always powered, output-on-pin-1 (or the
+74-series order for a bare gate), and a real sim backend: a powered-gate composition, a single
+`ELEM_ISOURCE` / `ELEM_ZENER` / `ELEM_NMOS`, or a pair of `ELEM_COMPARATOR`s — all golden-safe
+additive. The few honest gaps that remain (a gated analog sample-and-hold, a true V→frequency
+VCO, a retriggerable one-shot) are named, not faked: they wait on a named engine mechanism so
+no glyph ever teaches something the simulator cannot do.
