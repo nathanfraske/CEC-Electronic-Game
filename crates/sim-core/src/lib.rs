@@ -618,6 +618,27 @@ fn gate_open_drain(aux: f64) -> bool {
     (aux_bits(aux) >> 8) & 0x01 != 0
 }
 
+/// A logic gate's supply rails as `(v_low, v_high)` absolute node voltages. A **powered**
+/// IC reads GND from terminal `e` and VCC from terminal `d`, so it swings and thresholds
+/// between the pins you wire (`V(GND) .. V(VCC)`). A gate with **no power pins**
+/// (`d == 0 && e == 0`) falls back to the **legacy** `value` rail referenced to ground —
+/// bit-identical to the pre-power model, which is what keeps the golden and the existing
+/// gate tests unchanged.
+#[inline]
+fn gate_rails(el: &Element, node_v: &[f64]) -> (f64, f64) {
+    if el.d == 0 && el.e == 0 {
+        (0.0, el.value)
+    } else {
+        (node_v[el.e], node_v[el.d])
+    }
+}
+
+/// Minimum rail (`v_high − v_low`, volts) for a powered gate to operate. Below it the IC
+/// is treated as **unpowered** and releases its output (high-impedance `Z`) rather than
+/// driving — so a gate whose VCC pin is left unwired (its node floats to ~0 V) sits dead,
+/// the "you must power the chip" lesson. Legacy `value`-rail gates sit far above this.
+const GATE_MIN_RAIL: f64 = 0.3;
+
 /// **Transformer** (ideal-T model). The first four-terminal element: primary
 /// `a`/`b`, secondary `c`/`d`. Its `value` is the turns ratio `n = Ns/Np`. A
 /// magnetising inductance [`TRANSFORMER_L1`] in series with the primary winding
@@ -1082,15 +1103,35 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
     let mut analog_touched = vec![false; node_count];
     let mut digital_touched = vec![false; node_count];
     for e in elements {
-        let digital = is_digital(e.kind);
-        for t in [e.a, e.b, e.c, e.d] {
-            if t >= node_count {
-                continue;
-            }
-            if digital {
-                digital_touched[t] = true;
+        if is_digital(e.kind) {
+            // Digital SIGNAL pins (driven / read as logic levels). A powered gate's
+            // POWER pins (VCC = d, GND = e) are NOT signal nets — they are ordinary
+            // analog supply nodes the gate only reads as voltages, so they are marked
+            // analog below (a gate on a 5 V rail must leave that rail Analog, not pull
+            // it into the digital domain). A DFF's four pins (Q, D, CLK, Q̄) and a level
+            // shifter's are all signal pins.
+            let signal: &[usize] = if e.kind == ELEM_GATE {
+                &[e.a, e.b, e.c]
             } else {
-                analog_touched[t] = true;
+                &[e.a, e.b, e.c, e.d]
+            };
+            for &t in signal {
+                if t < node_count {
+                    digital_touched[t] = true;
+                }
+            }
+            if e.kind == ELEM_GATE {
+                for t in [e.d, e.e] {
+                    if t < node_count {
+                        analog_touched[t] = true;
+                    }
+                }
+            }
+        } else {
+            for t in [e.a, e.b, e.c, e.d] {
+                if t < node_count {
+                    analog_touched[t] = true;
+                }
             }
         }
     }
@@ -1194,7 +1235,18 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.b);
                 mark(&mut referenced, e.c);
             }
-            ELEM_GATE | ELEM_DFF | ELEM_LEVELSHIFT => {
+            ELEM_GATE => {
+                // OUT (a) is referenced by the driver (GATE_GOUT to ground) and the
+                // inputs (b, c) by their nets. The POWER pins (VCC = d, GND = e) are
+                // ordinary analog nodes: left to be referenced by their own supply /
+                // ground connections, NOT pinned here — so a gate with an unwired VCC
+                // floats that node to ~0 V (a proper floating-ref tie) and reads as
+                // unpowered, instead of being falsely held up.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+            }
+            ELEM_DFF | ELEM_LEVELSHIFT => {
                 // Digital drivers reference their nets to ground via GATE_GOUT; treat
                 // every pin as pinned (receivers included — a driven net is referenced).
                 mark(&mut referenced, e.a);
@@ -1314,12 +1366,22 @@ pub struct Element {
     /// is ground.
     pub c: usize,
     /// Fourth terminal node index — the **second secondary** node of a four-terminal
-    /// element. Today only the [`ELEM_TRANSFORMER`] reads it: its terminals are
-    /// `a`/`b` = primary +/− and `c`/`d` = secondary +/−. Unused (`0` = ground, never
-    /// read) for every element with three or fewer terminals — the terminal analogue
-    /// of how `c` is ignored by two-terminal elements, so adding it changes nothing
-    /// on the existing paths. Node `0` is ground.
+    /// element, or a powered logic gate's **VCC** pin. The [`ELEM_TRANSFORMER`] reads it
+    /// as secondary− (its terminals are `a`/`b` = primary +/− and `c`/`d` = secondary
+    /// +/−); a powered [`ELEM_GATE`] reads it as the positive supply (see `e`). Unused
+    /// (`0` = ground, never read) for every element with three or fewer terminals — the
+    /// terminal analogue of how `c` is ignored by two-terminal elements, so adding it
+    /// changes nothing on the existing paths. Node `0` is ground.
     pub d: usize,
+    /// Fifth terminal node index — a powered logic gate's **GND** pin. Only a powered
+    /// [`ELEM_GATE`] reads it (with `d` = VCC): the gate's rail is `V(d) − V(e)` and its
+    /// levels are referenced to `V(e)`, so an IC swings between the supply pins you wire
+    /// rather than a fixed `value`. A gate with `d == 0 && e == 0` (no power pins) falls
+    /// back to the legacy `value` rail referenced to ground — so existing gates, and
+    /// every non-gate element (which leaves `e = 0`, never read), are bit-identical. The
+    /// fifth-terminal analogue of how `d` is ignored by elements with fewer terminals.
+    /// Node `0` is ground.
+    pub e: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
     /// Second per-element scalar, parallel to `value`. Unused by every element
@@ -2209,9 +2271,15 @@ pub struct Sim {
     /// rail in `digital_vhigh`. Recomputed every solve by [`Sim::eval_digital`]; not
     /// committed state and not hashed. Length `node_count`.
     digital_drive: Vec<Level>,
-    /// Scratch: the rail (`vhigh`) of each node's digital driver, paired with
-    /// `digital_drive` so the stamp can turn a [`Level`] into a Thévenin voltage.
+    /// Scratch: the rail SPAN (`vhigh − vlow`) of each node's digital driver, paired with
+    /// `digital_drive` so the stamp can turn a [`Level`] into a Thévenin voltage. For a
+    /// legacy gate this is `value`; for a powered gate it is `V(VCC) − V(GND)`.
     digital_vhigh: Vec<f64>,
+    /// Scratch: the GND reference (`vlow`) each node's digital levels are measured from,
+    /// paired with `digital_vhigh`. `0` for a legacy/ground-referenced driver; `V(GND)`
+    /// for a powered gate whose GND pin sits above ground, so its output swings
+    /// `vlow + frac·(vhigh − vlow)` and its inputs threshold relative to `vlow`.
+    digital_vlow: Vec<f64>,
     /// Scratch: the [`FAMILIES`] index of each node's digital driver, so the driver
     /// stamp ([`Sim::stamp_digital`]) and the canonical-level commit
     /// ([`Sim::commit_net_levels`]) use that driver's family levels. Paired with
@@ -2326,6 +2394,7 @@ impl Sim {
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
+            digital_vlow: vec![0.0],
             digital_family: vec![0],
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
@@ -2349,6 +2418,7 @@ impl Sim {
                 b: 0,
                 c: 0,
                 d: 0,
+                e: 0,
                 value: v_source,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2359,6 +2429,7 @@ impl Sim {
                 b: 2,
                 c: 0,
                 d: 0,
+                e: 0,
                 value: 1_000.0,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2369,6 +2440,7 @@ impl Sim {
                 b: 0,
                 c: 0,
                 d: 0,
+                e: 0,
                 value: 1.0e-6,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2409,7 +2481,7 @@ impl Sim {
         values: &[f64],
         aux: &[f64],
     ) -> bool {
-        self.set_netlist_p(node_count, types, a, b, c, d, values, aux, &[])
+        self.set_netlist_pe(node_count, types, a, b, c, d, &[], values, aux, &[])
     }
 
     /// Install a netlist with an explicit per-device [`Element::params`] block (see
@@ -2429,11 +2501,38 @@ impl Sim {
         aux: &[f64],
         params: &[f64],
     ) -> bool {
+        self.set_netlist_pe(node_count, types, a, b, c, d, &[], values, aux, params)
+    }
+
+    /// The full netlist install, with the optional **fifth terminal** `e` (a powered
+    /// logic gate's GND pin; see [`Element::e`]). `e` is either empty — every element's
+    /// fifth terminal is ground (`0`), the legacy 4-terminal shape, identical to
+    /// [`Sim::set_netlist_p`] — or exactly one node index per element. Like `c`/`d`, an
+    /// element that doesn't read `e` leaves it `0` and is bit-identical, so this is an
+    /// additive, golden-safe boundary widening. `params` follows the same empty-or-full
+    /// rule as [`Sim::set_netlist_p`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_pe(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        e: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
         let n = types.len();
         if a.len() != n
             || b.len() != n
             || c.len() != n
             || d.len() != n
+            // `e` is optional: empty means "every fifth terminal is ground"; otherwise
+            // it is exactly one node index per element.
+            || (!e.is_empty() && e.len() != n)
             || values.len() != n
             || aux.len() != n
             // Params are optional: an empty block means "all defaults"; otherwise it is
@@ -2480,10 +2579,17 @@ impl Sim {
             let nb = b[i] as usize;
             let nc = c[i] as usize;
             let nd = d[i] as usize;
-            // Validate all four terminals. `c`/`d` are ignored at solve time for an
+            // The fifth terminal (gate GND); ground when `e` is omitted.
+            let ne = if e.is_empty() { 0 } else { e[i] as usize };
+            // Validate all five terminals. `c`/`d`/`e` are ignored at solve time for an
             // element that doesn't use them, but they are still range-checked so a
             // malformed index is rejected fail-safe rather than stored.
-            if na >= node_count || nb >= node_count || nc >= node_count || nd >= node_count {
+            if na >= node_count
+                || nb >= node_count
+                || nc >= node_count
+                || nd >= node_count
+                || ne >= node_count
+            {
                 self.install_empty();
                 return false;
             }
@@ -2497,6 +2603,7 @@ impl Sim {
                 b: nb,
                 c: nc,
                 d: nd,
+                e: ne,
                 value: values[i],
                 aux: aux[i],
                 params: p,
@@ -2553,6 +2660,7 @@ impl Sim {
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
+        self.digital_vlow = vec![0.0; node_count];
         self.digital_family = vec![0; node_count];
         self.diode_vd = vec![0.0; elements.len()];
         self.mosfet_vgs = vec![0.0; elements.len()];
@@ -4340,24 +4448,37 @@ impl Sim {
                     // This gate's selected logic family (packed in aux's upper bits).
                     let fi = gate_family_index(e.aux);
                     let fam = &FAMILIES[fi];
-                    // Receiver: quantise each input's committed (last-tick) voltage at
-                    // THIS gate's family + rail (per-reader threshold, one tick of delay).
-                    let in1 = fam.quantize(self.node_v[e.b], e.value);
-                    let in2 = fam.quantize(self.node_v[e.c], e.value);
+                    // Supply rails: a powered IC reads GND (e) and VCC (d) and works in
+                    // that window; a legacy gate (no power pins) uses the `value` rail
+                    // referenced to ground. `rail` is the span, `vlow` the GND offset.
+                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                    let rail = (vhigh - vlow).max(0.0);
+                    // Receiver: quantise each input's committed (last-tick) voltage
+                    // RELATIVE to this gate's GND, over its rail (per-reader threshold,
+                    // one tick of delay).
+                    let in1 = fam.quantize(self.node_v[e.b] - vlow, rail);
+                    let in2 = fam.quantize(self.node_v[e.c] - vlow, rail);
                     let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
-                    // Open-drain: pull low, but RELEASE the high side (Z) — the high
-                    // comes from an external pull-up. Open-drain outputs on one net form
-                    // a wired-AND bus (any low wins; all release -> pull-up high).
-                    let driven = if gate_open_drain(e.aux) && out == Level::High {
-                        Level::Z
-                    } else {
-                        out
-                    };
-                    let (tv, g) = fam.drive_level(driven, e.value).unwrap_or((0.0, 0.0));
-                    self.gate_target[i] = tv;
+                    // The output releases (high-impedance Z) in two cases: an UNPOWERED
+                    // chip (rail below the operating minimum, e.g. its VCC pin unwired)
+                    // sits dead; and an open-drain output pulls low but RELEASES the high
+                    // side (the high comes from an external pull-up — open-drain outputs on
+                    // one net form a wired-AND bus: any low wins, all release -> pull-up
+                    // high). Otherwise it drives the computed level.
+                    let driven =
+                        if rail < GATE_MIN_RAIL || (gate_open_drain(e.aux) && out == Level::High) {
+                            Level::Z
+                        } else {
+                            out
+                        };
+                    // The family's Thévenin target is a rail fraction; offset it by the
+                    // gate's GND so the output swings `vlow .. vlow+rail`.
+                    let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = vlow + tvf;
                     self.gate_gout[i] = g;
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
-                    self.digital_vhigh[e.a] = e.value;
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = vlow;
                     self.digital_family[e.a] = fi as u8;
                 }
                 ELEM_DFF => {
@@ -4367,9 +4488,11 @@ impl Sim {
                     let q = self.ff_q[i];
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], q);
                     self.digital_vhigh[e.a] = e.value;
+                    self.digital_vlow[e.a] = 0.0;
                     self.digital_family[e.a] = fi as u8;
                     self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
                     self.digital_vhigh[e.d] = e.value;
+                    self.digital_vlow[e.d] = 0.0;
                     self.digital_family[e.d] = fi as u8;
                 }
                 ELEM_LEVELSHIFT => {
@@ -4383,6 +4506,7 @@ impl Sim {
                     self.gate_gout[i] = g;
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], lvl);
                     self.digital_vhigh[e.a] = e.aux; // output net carries rail B
+                    self.digital_vlow[e.a] = 0.0;
                     self.digital_family[e.a] = 0;
                 }
                 _ => {}
@@ -4403,7 +4527,10 @@ impl Sim {
                 NetClass::Digital | NetClass::Boundary
             ) {
                 let fam = &FAMILIES[self.digital_family[node] as usize];
-                self.net_level[node] = fam.quantize(self.node_v[node], self.digital_vhigh[node]);
+                self.net_level[node] = fam.quantize(
+                    self.node_v[node] - self.digital_vlow[node],
+                    self.digital_vhigh[node],
+                );
             }
         }
     }
@@ -4427,11 +4554,13 @@ impl Sim {
             let r = node - 1; // node n -> MNA row n-1 (ground excluded)
             mat[r * dim + r] += GMIN;
             let fam = &FAMILIES[self.digital_family[node] as usize];
-            if let Some((tv, g)) =
+            if let Some((tvf, g)) =
                 fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
             {
+                // The family target is a rail fraction; offset by the driver's GND so a
+                // powered gate stamps an absolute `vlow + frac·rail` (legacy vlow = 0).
                 mat[r * dim + r] += g;
-                rhs[r] += g * tv;
+                rhs[r] += g * (self.digital_vlow[node] + tvf);
             }
         }
     }
@@ -5390,6 +5519,7 @@ mod tests {
             b,
             c,
             d,
+            e: 0,
             value,
             aux: 0.0,
             params: [0.0; PARAM_STRIDE],
@@ -7369,6 +7499,153 @@ mod tests {
         assert!(bus(true, false)[2] < 1.0, "one low: bus pulled low");
         assert!(bus(false, true)[2] < 1.0, "one low: bus pulled low");
         assert!(bus(false, false)[2] < 1.0, "both low: bus low");
+    }
+
+    /// A **powered** logic gate (VCC on terminal `d`, GND on terminal `e`) takes its rail
+    /// from the supply pins, not `value`: a NOT IC on a 5 V supply inverts its input and
+    /// swings its output between the pins. nodes: 0 gnd, 1 VCC (5 V), 2 IN, 3 OUT.
+    #[test]
+    fn powered_gate_inverter_swings_between_supply_pins() {
+        let invert = |vin: f64| -> f64 {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_pe(
+                4,
+                &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE],
+                &[1, 2, 3], // a: VCC source, input source, gate OUT
+                &[0, 0, 2], // b: …, …, gate IN1
+                &[0, 0, 0], // c: gate IN2 unused
+                &[0, 0, 1], // d: gate VCC pin -> node 1
+                &[0, 0, 0], // e: gate GND pin -> node 0 (ground)
+                &[5.0, vin, 0.0],
+                &[0.0, 0.0, 6.0], // gate func 6 = NOT
+                &[],
+            ));
+            for _ in 0..8 {
+                sim.step();
+            }
+            sim.state()[3]
+        };
+        assert!(
+            invert(0.0) > 4.5,
+            "input low -> output high near VCC: {}",
+            invert(0.0)
+        );
+        assert!(
+            invert(5.0) < 0.5,
+            "input high -> output low near GND: {}",
+            invert(5.0)
+        );
+    }
+
+    /// An **unpowered** gate sits dead. Same inverter, but the VCC pin (node 1) is wired
+    /// to nothing, so its node floats to ~0 V: the rail is below the operating minimum and
+    /// the IC releases its output. A low input would normally drive the output HIGH; here
+    /// it stays low (never driven), the "you forgot to power the chip" case.
+    #[test]
+    fn powered_gate_with_unwired_vcc_is_dead() {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            4,
+            &[ELEM_VSOURCE, ELEM_GATE],
+            &[2, 3],     // a: input source on node 2; gate OUT on node 3
+            &[0, 2],     // b
+            &[0, 0],     // c
+            &[0, 1],     // d: VCC -> node 1 (floating, no source)
+            &[0, 0],     // e: GND -> node 0
+            &[0.0, 0.0], // input = 0 (low)
+            &[0.0, 6.0], // NOT
+            &[],
+        ));
+        for _ in 0..8 {
+            sim.step();
+        }
+        let out = sim.state()[3];
+        assert!(
+            out < 0.5,
+            "unpowered gate releases its output (stays dead), not driven high: {out}"
+        );
+    }
+
+    /// A powered **two-input** gate exercises all five terminals (a=OUT, b=A, c=B, d=VCC,
+    /// e=GND). A NAND IC on a 5 V supply: out = NOT(A AND B). nodes: 0 gnd, 1 VCC, 2 A,
+    /// 3 B, 4 OUT.
+    #[test]
+    fn powered_gate_two_input_nand_uses_fifth_terminal() {
+        let nand = |a_hi: bool, b_hi: bool| -> f64 {
+            let va = if a_hi { 5.0 } else { 0.0 };
+            let vb = if b_hi { 5.0 } else { 0.0 };
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_pe(
+                5,
+                &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE],
+                &[1, 2, 3, 4], // a
+                &[0, 0, 0, 2], // b: gate IN1 = A
+                &[0, 0, 0, 3], // c: gate IN2 = B
+                &[0, 0, 0, 1], // d: VCC
+                &[0, 0, 0, 0], // e: GND (ground)
+                &[5.0, va, vb, 0.0],
+                &[0.0, 0.0, 0.0, 2.0], // func 2 = NAND
+                &[],
+            ));
+            for _ in 0..8 {
+                sim.step();
+            }
+            sim.state()[4]
+        };
+        assert!(
+            nand(true, true) < 0.5,
+            "A&B high -> NAND low: {}",
+            nand(true, true)
+        );
+        assert!(
+            nand(true, false) > 4.5,
+            "one low -> NAND high: {}",
+            nand(true, false)
+        );
+        assert!(
+            nand(false, false) > 4.5,
+            "both low -> NAND high: {}",
+            nand(false, false)
+        );
+    }
+
+    /// The gate's GND pin need not be circuit ground. Here it sits at 2 V and VCC at 7 V,
+    /// so the 5 V rail floats on a 2 V pedestal: a powered NOT swings its output between
+    /// 2 V (its GND) and 7 V (its VCC) and thresholds inputs relative to 2 V — the GND
+    /// offset (`digital_vlow`) at work. nodes: 0 gnd, 1 VCC=7, 2 GNDref=2, 3 IN, 4 OUT.
+    #[test]
+    fn powered_gate_offset_ground_shifts_output_window() {
+        let invert = |vin: f64| -> f64 {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_pe(
+                5,
+                &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE],
+                &[1, 2, 3, 4], // a
+                &[0, 0, 0, 3], // b: gate IN
+                &[0, 0, 0, 0], // c
+                &[0, 0, 0, 1], // d: VCC -> node 1 (7 V)
+                &[0, 0, 0, 2], // e: GND -> node 2 (2 V pedestal)
+                &[7.0, 2.0, vin, 0.0],
+                &[0.0, 0.0, 0.0, 6.0], // NOT
+                &[],
+            ));
+            for _ in 0..8 {
+                sim.step();
+            }
+            sim.state()[4]
+        };
+        // Input at the gate's own GND (2 V = a logic low) -> output HIGH = VCC (7 V).
+        let out_lo = invert(2.0);
+        assert!(
+            (6.5..7.2).contains(&out_lo),
+            "low input -> output rises to VCC (7 V): {out_lo}"
+        );
+        // Input at VCC (7 V = a logic high) -> output LOW = the gate's GND (2 V).
+        let out_hi = invert(7.0);
+        assert!(
+            (1.8..2.5).contains(&out_hi),
+            "high input -> output falls to the gate's GND (2 V): {out_hi}"
+        );
     }
 
     /// A **level shifter** (type 20) reads its input at the input rail (`value`) and
