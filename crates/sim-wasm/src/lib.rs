@@ -113,6 +113,35 @@ impl Simulation {
             .set_netlist_pe(node_count, types, a, b, c, d, e, values, aux, params)
     }
 
+    /// Install a netlist carrying all **eight** terminals (`a`–`h`) — the full
+    /// provisioned wire format (ADR 0002); see `Sim::set_netlist_pefgh`. The sixth /
+    /// seventh / eighth terminals `f` / `g` / `h` are each empty (that terminal is ground
+    /// for every element, identical to the 5-terminal shape) or exactly one node index per
+    /// element. No element reads `f`/`g`/`h` yet, so this is forward-compatible
+    /// provisioning — additive and golden-safe. This is the richest install the web calls
+    /// once the netlist emits the wider terminal arrays.
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_pefgh(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        e: &[u32],
+        f: &[u32],
+        g: &[u32],
+        h: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
+        self.inner.set_netlist_pefgh(
+            node_count, types, a, b, c, d, e, f, g, h, values, aux, params,
+        )
+    }
+
     /// Reset to `t = 0` with reactive elements discharged, keeping the same
     /// netlist.
     pub fn reset(&mut self) {

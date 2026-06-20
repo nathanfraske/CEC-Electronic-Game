@@ -219,6 +219,17 @@ export interface BuiltNetlist {
    * leaves it `0` (ground), which the core ignores. Pin 4 → e.
    */
   e: Uint32Array;
+  /**
+   * Sixth/seventh/eighth-terminal nodes per element (`f`/`g`/`h`), parallel to the rest.
+   * Provisioned by ADR 0002's wire-format widening; NO current kind reads them, so every
+   * entry is `0` (ground) and the core ignores them. Built in lockstep with `a`..`e` (one
+   * entry per element) so the install's length validation accepts them, and carried so the
+   * boundary install (`set_netlist_pefgh`) is exercised end to end — future 6/7/8-terminal
+   * parts populate these without another wire-format change.
+   */
+  f: Uint32Array;
+  g: Uint32Array;
+  h: Uint32Array;
   values: Float64Array;
   /**
    * Second per-element scalar, parallel to `values`: an AC source's peak
@@ -428,6 +439,23 @@ export function buildNetlist(
   // (pin 4) stamps its node here; every other element leaves it 0 (ground), ignored by
   // the core. Pushed in lockstep with each element stamp.
   const eArr: number[] = [];
+  // The sixth/seventh/eighth-terminal arrays (`f`/`g`/`h`), parallel to the rest. ADR 0002
+  // provisioned them in the wire format; NO part uses them yet, so every entry is 0 (ground)
+  // and the core ignores them — but they MUST stay length-synced with `a`..`e` (one entry per
+  // element), so they are pushed in lockstep at every element stamp below via `pushFGH()`.
+  // This is the array-sync contract the POT regression broke for `e`; keeping the pushes in a
+  // single helper called beside every other terminal push makes a future desync hard.
+  const fArr: number[] = [];
+  const gArr: number[] = [];
+  const hArr: number[] = [];
+  // Push the (currently always-ground) sixth/seventh/eighth terminals for one element. Called
+  // once per element, right beside its `a`..`e` pushes, so all eight terminal arrays advance
+  // together and stay exactly `types.length` long.
+  const pushFGH = (): void => {
+    fArr.push(0);
+    gArr.push(0);
+    hArr.push(0);
+  };
   const values: number[] = [];
   // The second per-element scalar, parallel to `values`: an AC source's peak
   // amplitude (volts); 0 for every other element. Pushed in lockstep with each
@@ -468,6 +496,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       elemOfComponent.set(c.id, idx);
       nodesOfComponent.set(c.id, [na, nb]);
       continue;
@@ -488,6 +517,7 @@ export function buildNetlist(
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
       eArr.push(0); // not a powered gate: no fifth node
+      pushFGH(); // sixth/seventh/eighth terminals unused (ground)
       values.push(c.value); // capacitance
       auxArr.push(0); // not an AC source: no amplitude
       types.push(ELEM_RESISTOR);
@@ -496,6 +526,7 @@ export function buildNetlist(
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
       eArr.push(0); // not a powered gate: no fifth node
+      pushFGH(); // sixth/seventh/eighth terminals unused (ground)
       values.push(ecEsr(c.tier ?? DEFAULT_TIER)); // ESR (graded by the part's tier)
       auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
@@ -521,6 +552,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(rAW);
       auxArr.push(0);
       types.push(ELEM_RESISTOR);
@@ -529,6 +561,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(rWB);
       auxArr.push(0);
       elemOfComponent.set(c.id, upIdx); // A→W leg current (the main)
@@ -555,6 +588,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(reff);
       auxArr.push(0);
       elemOfComponent.set(c.id, idx);
@@ -627,6 +661,7 @@ export function buildNetlist(
     cArr.push(nc);
     dArr.push(nd);
     eArr.push(ne);
+    pushFGH(); // f/g/h provisioned but unused by every current kind → ground
     values.push(value);
     auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
@@ -833,6 +868,9 @@ export function buildNetlist(
     c: Uint32Array.from(cArr),
     d: Uint32Array.from(dArr),
     e: Uint32Array.from(eArr),
+    f: Uint32Array.from(fArr),
+    g: Uint32Array.from(gArr),
+    h: Uint32Array.from(hArr),
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     params,

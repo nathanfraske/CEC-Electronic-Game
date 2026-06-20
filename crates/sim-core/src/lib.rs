@@ -1434,7 +1434,10 @@ const DIODE_TT_SLOT: usize = 3;
 
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
-/// use the control terminal `c`.
+/// use the control terminal `c`. The struct carries up to **eight** terminals
+/// (`a`–`h`); any terminal an element does not read is `0` (ground) and inert, so
+/// widening the count (ADR 0002 provisioned `f`/`g`/`h`) changes nothing on the
+/// existing paths.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Element {
     /// Element type. See the `ELEM_*` constants.
@@ -1464,6 +1467,20 @@ pub struct Element {
     /// fifth-terminal analogue of how `d` is ignored by elements with fewer terminals.
     /// Node `0` is ground.
     pub e: usize,
+    /// Sixth terminal node index — **reserved** by ADR 0002's wire-format provisioning.
+    /// No element reads it yet; it defaults to `0` (ground) and is inert, exactly as `c`,
+    /// `d`, and `e` were inert before an element used them. Provisioned so future parts
+    /// (full flip-flops with set+reset+enable, dual-supply op-amps with offset-null pins,
+    /// the 555, center-tapped transformers, gate drivers, tri-state buffers with OE) are
+    /// purely additive — they read `f`/`g`/`h` without another boundary change. Node `0`
+    /// is ground.
+    pub f: usize,
+    /// Seventh terminal node index — **reserved** by ADR 0002 (see [`Element::f`]). Inert
+    /// and ground-defaulted until a part uses it. Node `0` is ground.
+    pub g: usize,
+    /// Eighth terminal node index — **reserved** by ADR 0002 (see [`Element::f`]). Inert
+    /// and ground-defaulted until a part uses it. Node `0` is ground.
+    pub h: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
     /// Second per-element scalar, parallel to `value`. Unused by every element
@@ -1494,9 +1511,14 @@ pub struct Element {
 }
 
 /// Width of an [`Element::params`] block — the number of `f64` model parameters carried
-/// per device across the netlist boundary. Fixed so the wire/save format is predictable;
-/// generous enough for the richest device (a BJT / MOSFET needs ≤4).
-pub const PARAM_STRIDE: usize = 4;
+/// per device across the netlist boundary. Fixed so the wire/save format is predictable.
+/// Provisioned to **8** by ADR 0002 (was 4) so the richest future models (a BJT with
+/// β + Is + Vaf + Rb + thermal coefficient; a real op-amp with GBW + slew + Vos + Ibias +
+/// Rout; a thermal/noise device) all fit without a second wire-format bump. The widening is
+/// golden-safe: [`param_or`]'s "`0.0` slot means the kind default" rule makes a zero-padded
+/// 8-wide block reproduce the old 4-wide solve bit-for-bit, and no current slot meaning moved
+/// (slots 4–7 are reserved/unused for now). Mirror this in `web/src/lib/tiers.ts`.
+pub const PARAM_STRIDE: usize = 8;
 
 /// A diode's terminal map for the Newton companion: `(element_index, anode_mna,
 /// cathode_mna)`, each MNA index `None` for ground. Collected once per solve in
@@ -2513,6 +2535,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: v_source,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2524,6 +2549,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: 1_000.0,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2535,6 +2563,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: 1.0e-6,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2598,13 +2629,11 @@ impl Sim {
         self.set_netlist_pe(node_count, types, a, b, c, d, &[], values, aux, params)
     }
 
-    /// The full netlist install, with the optional **fifth terminal** `e` (a powered
-    /// logic gate's GND pin; see [`Element::e`]). `e` is either empty — every element's
-    /// fifth terminal is ground (`0`), the legacy 4-terminal shape, identical to
-    /// [`Sim::set_netlist_p`] — or exactly one node index per element. Like `c`/`d`, an
-    /// element that doesn't read `e` leaves it `0` and is bit-identical, so this is an
-    /// additive, golden-safe boundary widening. `params` follows the same empty-or-full
-    /// rule as [`Sim::set_netlist_p`].
+    /// Install a netlist with the optional **fifth terminal** `e` (a powered logic gate's
+    /// GND pin; see [`Element::e`]). `e` is either empty — every element's fifth terminal
+    /// is ground (`0`), the legacy 4-terminal shape, identical to [`Sim::set_netlist_p`] —
+    /// or exactly one node index per element. Thin wrapper over [`Sim::set_netlist_pefgh`]
+    /// with the sixth/seventh/eighth terminals grounded (`f`/`g`/`h` empty).
     #[allow(clippy::too_many_arguments)]
     pub fn set_netlist_pe(
         &mut self,
@@ -2619,14 +2648,60 @@ impl Sim {
         aux: &[f64],
         params: &[f64],
     ) -> bool {
+        self.set_netlist_pefgh(
+            node_count,
+            types,
+            a,
+            b,
+            c,
+            d,
+            e,
+            &[],
+            &[],
+            &[],
+            values,
+            aux,
+            params,
+        )
+    }
+
+    /// The full netlist install, carrying all **eight** terminals (`a`–`h`). Terminals
+    /// `f`/`g`/`h` were provisioned by ADR 0002 (the wire-format widening): each is either
+    /// empty — every element's sixth/seventh/eighth terminal is ground (`0`), inert and
+    /// bit-identical to the legacy 5-terminal shape — or exactly one node index per element.
+    /// No element reads `f`/`g`/`h` yet, so passing them is purely forward-compatible
+    /// provisioning; like `c`/`d`/`e`, an element that doesn't read a terminal leaves it `0`
+    /// and is unaffected, so this is an additive, golden-safe widening. `e` follows the same
+    /// empty-or-full rule (see [`Sim::set_netlist_pe`]) and `params` the same empty-or-`n *
+    /// PARAM_STRIDE` rule as [`Sim::set_netlist_p`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_pefgh(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        e: &[u32],
+        f: &[u32],
+        g: &[u32],
+        h: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
         let n = types.len();
         if a.len() != n
             || b.len() != n
             || c.len() != n
             || d.len() != n
-            // `e` is optional: empty means "every fifth terminal is ground"; otherwise
-            // it is exactly one node index per element.
+            // `e`/`f`/`g`/`h` are optional: empty means "every such terminal is ground";
+            // otherwise each is exactly one node index per element.
             || (!e.is_empty() && e.len() != n)
+            || (!f.is_empty() && f.len() != n)
+            || (!g.is_empty() && g.len() != n)
+            || (!h.is_empty() && h.len() != n)
             || values.len() != n
             || aux.len() != n
             // Params are optional: an empty block means "all defaults"; otherwise it is
@@ -2674,9 +2749,12 @@ impl Sim {
             let nb = b[i] as usize;
             let nc = c[i] as usize;
             let nd = d[i] as usize;
-            // The fifth terminal (gate GND); ground when `e` is omitted.
+            // The fifth..eighth terminals; ground when their array is omitted.
             let ne = if e.is_empty() { 0 } else { e[i] as usize };
-            // Validate all five terminals. `c`/`d`/`e` are ignored at solve time for an
+            let nf = if f.is_empty() { 0 } else { f[i] as usize };
+            let ng = if g.is_empty() { 0 } else { g[i] as usize };
+            let nh = if h.is_empty() { 0 } else { h[i] as usize };
+            // Validate all eight terminals. `c`–`h` are ignored at solve time for an
             // element that doesn't use them, but they are still range-checked so a
             // malformed index is rejected fail-safe rather than stored.
             if na >= node_count
@@ -2684,6 +2762,9 @@ impl Sim {
                 || nc >= node_count
                 || nd >= node_count
                 || ne >= node_count
+                || nf >= node_count
+                || ng >= node_count
+                || nh >= node_count
             {
                 self.install_empty();
                 return false;
@@ -2699,6 +2780,9 @@ impl Sim {
                 c: nc,
                 d: nd,
                 e: ne,
+                f: nf,
+                g: ng,
+                h: nh,
                 value: values[i],
                 aux: aux[i],
                 params: p,
@@ -5672,6 +5756,79 @@ mod tests {
         println!("golden = 0x{:016x}", sim.snapshot_hash());
     }
 
+    /// ADR 0002 wire-format provisioning: the full **8-terminal / 8-param** plumbing,
+    /// exercised end to end through the public install path. Installs a netlist whose
+    /// resistor is wired through the **eighth** terminal `h` (index 7) and carries a value
+    /// in **param slot 7** (the last of the widened block), then reads both back off the
+    /// stored [`Element`]. `h` and slot 7 are reserved/inert today, so the resistor still
+    /// solves as a plain 5 V across 1 kΩ — proving the widened arrays cross the boundary,
+    /// pass length validation, and land in the struct without perturbing the solve. This is
+    /// the sim-core half of the array-sync de-risk (the JS half has no runtime test).
+    #[test]
+    fn wire_format_eighth_terminal_and_param_slot_plumb_through() {
+        let mut sim = Sim::new(1);
+
+        // node 0 = ground, node 1 = the hot node. E0 = 5 V source (1→0); E1 = 1 kΩ (1→0).
+        // E1 also wires its eighth terminal `h` to node 1 and stows a sentinel in slot 7.
+        let types = [ELEM_VSOURCE, ELEM_RESISTOR];
+        let a = [1u32, 1];
+        let b = [0u32, 0];
+        let c = [0u32, 0];
+        let d = [0u32, 0];
+        let e = [0u32, 0];
+        let f = [0u32, 0];
+        let g = [0u32, 0];
+        // The eighth terminal: ground on the source, node 1 on the resistor.
+        let h = [0u32, 1];
+        let values = [5.0, 1_000.0];
+        let aux = [0.0, 0.0];
+        // One PARAM_STRIDE-wide block per element; the resistor's slot 7 carries the sentinel.
+        const SENTINEL: f64 = 42.5;
+        let mut params = vec![0.0; types.len() * PARAM_STRIDE];
+        params[PARAM_STRIDE + 7] = SENTINEL; // element 1 (resistor), slot 7
+
+        // Every parallel array is exactly one entry per element; params is n * PARAM_STRIDE.
+        assert_eq!(h.len(), types.len());
+        assert_eq!(params.len(), types.len() * PARAM_STRIDE);
+
+        assert!(
+            sim.set_netlist_pefgh(
+                2, &types, &a, &b, &c, &d, &e, &f, &g, &h, &values, &aux, &params,
+            ),
+            "an 8-terminal / 8-param netlist must install (not fail safe to empty)"
+        );
+
+        // The eighth terminal landed on the stored element (the array plumbed through).
+        let resistor = sim.element_at(1);
+        assert_eq!(
+            resistor.h, 1,
+            "terminal `h` (index 7) must reach the Element"
+        );
+        assert_eq!(resistor.f, 0, "unused terminal `f` defaults to ground");
+        assert_eq!(resistor.g, 0, "unused terminal `g` defaults to ground");
+
+        // Param slot 7 reads back through the same `param_or` rule the solver uses.
+        assert_eq!(
+            param_or(&resistor.params, 7, -1.0),
+            SENTINEL,
+            "param slot 7 (the last of the widened 8-wide block) must read back"
+        );
+        // A zero slot still falls through to the caller's default (the golden-safe rule).
+        assert_eq!(
+            param_or(&resistor.params, 6, -1.0),
+            -1.0,
+            "an unset slot still means `use the default`"
+        );
+
+        // And the circuit actually solved (proving this was a real install): 5 V on node 1.
+        sim.step();
+        let volts = sim.node_voltages();
+        assert!(
+            (volts[1] - 5.0).abs() < 1e-9,
+            "the resistor still sees a plain 5 V across it — `h`/slot 7 are inert"
+        );
+    }
+
     /// Net classification separates the analog and digital domains deterministically
     /// (`docs/ui/logic-analog-digital-nets.md` §7.7): ground and analog-only nodes
     /// read `0`, nodes touched only by digital pins read `1` (pure-digital), and a
@@ -5744,6 +5901,9 @@ mod tests {
             c,
             d,
             e: 0,
+            f: 0,
+            g: 0,
+            h: 0,
             value,
             aux: 0.0,
             params: [0.0; PARAM_STRIDE],

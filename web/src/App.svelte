@@ -1416,9 +1416,11 @@
         netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
           // Pass the control-terminal array `c` (MOSFET gate / gate IN2; 0 for 2-pin
-          // parts), the second scalar `aux` (AC amplitude / gate function code), and
-          // the fourth terminal `d` (a transformer's secondary− node; 0 elsewhere).
-          // setNetlist takes c, aux, and d as trailing optionals.
+          // parts), the second scalar `aux` (AC amplitude / gate function code), the
+          // fourth terminal `d` (a transformer's secondary− node; 0 elsewhere), the fifth
+          // `e` (a powered gate's GND), and the provisioned sixth/seventh/eighth terminals
+          // `f`/`g`/`h` (ADR 0002 — all-ground today, no part uses them yet). setNetlist
+          // takes c, aux, d, params, e, f, g, h as trailing optionals.
           sim.setNetlist(
             nl.nodeCount,
             nl.types,
@@ -1430,6 +1432,9 @@
             nl.d,
             nl.params,
             nl.e,
+            nl.f,
+            nl.g,
+            nl.h,
           );
           controls?.resync();
         } else if (graph.components.size > 0) {
