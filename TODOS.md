@@ -8,6 +8,42 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (34) — Parts-bin UX: brainstorm synthesis + impact-ranked plan (owner "all are the unlock")
+
+Owner: the bin clutter ↔ variant-friction ↔ discovery tension. THREE brainstorm agents converged
+hard. **Key reframe:** "clutter" is THREE problems wearing one word, each wanting its own surface —
+(A) bin height, (B) variant friction ("place then open a submenu to pick the type"), (C) discovery
+("show the types without placing"). The unifying distinction: **IDENTITY** (what a part *is* —
+Schottky/Zener/LED — stays VISIBLE in the bin, it's the curriculum) vs **GRADE/MODE** (tier, CC/CR,
+CMOS/TTL, open-drain — moves to ARM-TIME, out of the bin + the post-place submenu). Do NOT collapse
+identities into one morphing "Diode" dropdown (kills the teaching taxonomy — all 3 agents agreed).
+
+Crucial enabling fact (friction agent): the inspector variant chips + `setComponent*` setters already
+target an *id*, not "a placed instance" — so **bind the same chips to the ARMED TEMPLATE** and the
+whole configurator falls out with near-zero new logic. Clean model change: `place(kind, cell,
+overrides?: Partial<Component>)` (serialize/restore already round-trip variant/tier/mode/family →
+undo + save are free; web-only, no determinism surface).
+
+**Impact-ranked build order:**
+- [ ] **(1) Arm-time configurator** (centerpiece — kills friction B). Reuse the inspector
+  variant/tier/mode/family/open-drain chips bound to a new `armedConfig` (App.svelte), shown on the
+  armed-part chip; the ghost reflects it (LED tint via `ledTint`); `place(overrides)` applies it;
+  place-and-repeat carpets the configured part. Inspector pickers demote to "edit one instance."
+  **+ last-used-variant memory** (re-arming restores your last config, per-kind map) ships with it.
+- [ ] **(2) Bin clutter relief** (A): a `common?` flag per `PARTS` row + a per-category "show
+  common / + N more" split (42 → ~20 rows today, ~an afternoon), then true **family rows** (collapse
+  "Logic gates ×10" etc., expand inline) + **synonym search** ("rectifier"/"universal").
+- [ ] **(3) Arm-and-preview** (C — the honest "show the type without placing"): press `I` / hover an
+  armed-but-unplaced part → its info-panel cutaway + pinout + ratings BEFORE dropping. Reuses the
+  info drawer (`component-info-panel.md`); also the greyed locked-shelf teasers once progression
+  lands.
+- [ ] **Later/committed adjacencies:** `1`–`9` **hotbar** of configured parts + `Q` pipette
+  (`mode-flow.md`); a **Catalog/codex** tab (the discovery museum, reuses partInfo + the five-tier
+  glyphs); **progression gating** (bin grows with the player — `game-progression.md` §1.1, needs the
+  economy; keep a creative "show all" for sandbox).
+
+**Verdict: enough brainstorm; the convergence is the signal — build.** Start with (1).
+
 ## 2026-06-20 (33) — Voltage overhaul shipped (owner "go big") — PRs #150–#153
 
 The plan in entry (31) is **DONE** end to end. Voltage now reads at a glance: **colour = which rail**
