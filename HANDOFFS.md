@@ -5,6 +5,27 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (62) — Landed the D flip-flop refsheet (74AUP1G79)
+
+**State:** 🟢 owner's FF refsheet landed + pushed → `docs/ui/parts/dff-ic.html`. Branch
+`claude/kind-turing-hdelb3`. The first **sequential** IC glyph (master-slave latches + a live
+timing diagram); models the **74AUP1G79** (single positive-edge D-FF, datasheet-verified footnote,
+pinout `1 D · 2 CP · 3 GND · 4 Q · 5 VCC` — matches the exemplar chart).
+
+**§10 validation:** all gates pass — 5 tiers (`buildT1..5`, names symbol/flow/valves/device/silicon),
+glyphs CLEAN (fully ASCII), JS parses (`node --check`). **Two fixes applied on landing** (the upload
+was built from `schmitt-ic.html`): prepended the SPDX header (was missing) and corrected the leftover
+`<title>` ("Schmitt inverter…" → "D flip-flop, five layers"). The "Schmitt inputs" label + the
+inverter references in tiers 4/5 are **legit** (the AUP1G79 has Schmitt inputs; its master-slave is
+built from CMOS inverters + transmission gates) — left as-is. Updated the IC-glyph example list in
+`new-part-refsheets.md`.
+
+**Refsheet status:** gate set 9/10 (only **BUF** left — recommended ref part **74LVC1G34**, the
+non-inverting twin of the 74LVC1G04 inverter, same SOT-23-5 frame; or 74LVC1G125 for tri-state /
+74LVC1G07 for open-drain). D-FF now done.
+
+---
+
 ## 2026-06-20 (61) — Protocol engine phase 4 DONE (FPGA logic element) — ALL PHASES COMPLETE
 
 **State:** 🟢 the protocol/behavioral engine is **fully implemented through every ADR-0004 phase** and

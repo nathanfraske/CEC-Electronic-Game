@@ -28,9 +28,12 @@ concepts the part teaches best.
   `diode-factory.html`, `diode-tier2-study.html`, `zener-tier2.html`, `varistor-tiers.html`,
   `mosfet-tiers.html`, `mosfet-pmos-tiers.html`, `transistor-tiers.html`, `opamp-tiers.html`.
   The full IC-glyph examples are `inv-ic.html` (canonical template), `nand-ic.html`,
-  `nor-ic.html`, `or-ic.html`, `xor-ic.html`, `xnor-ic.html`. When a card below says
-  "non-IC: follow the part-study precedent," it means use those, not the five logic-tier
-  arc, for the package frame and slider set.
+  `nand3-ic.html`, `nor-ic.html`, `or-ic.html`, `and-ic.html`, `xor-ic.html`, `xnor-ic.html`,
+  `xorpass-ic.html`, `imply-ic.html`, `nimply-ic.html`, `schmitt-ic.html` (Schmitt inverter),
+  `comparator-ic.html` (ADCMP601, the first analog/boundary part), and `dff-ic.html` (74AUP1G79,
+  the first **sequential** part — master-slave latches + a live timing diagram). When a card below
+  says "non-IC: follow the part-study precedent," it means use those, not the five logic-tier arc,
+  for the package frame and slider set.
 
 ## Two refsheet shapes (pick per part)
 
