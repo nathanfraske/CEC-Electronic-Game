@@ -483,6 +483,130 @@
     uC: "Logic & ICs",
   };
 
+  // Parts FAMILIES collapse the big multi-member sets into ONE expandable bin row each,
+  // so the catalogue scales without the bin becoming a wall of always-visible rows. A
+  // family lists its member tags in display order; every kind NOT named in a family is its
+  // own singleton (it renders as a plain row, unchanged). Order is the display order within
+  // a category — a multi-member family appears where its first member would, and absorbs the
+  // rest. Keep `familyOf` (tag → family name) in sync, mirroring `PART_CAT_OF`.
+  const PART_FAMILIES: { name: string; members: string[] }[] = [
+    {
+      name: "Logic gates",
+      members: [
+        "AND",
+        "OR",
+        "NAND",
+        "NOR",
+        "XOR",
+        "XNOR",
+        "IMPLY",
+        "NIMPLY",
+        "NOT",
+        "BUF",
+      ],
+    },
+    { name: "Diodes", members: ["D", "SD", "LED", "ZD"] },
+    { name: "Transistors", members: ["NM", "PM", "Q", "QP"] },
+    { name: "Thermistors", members: ["NTC", "PTC"] },
+  ];
+  // tag → owning family name. A tag absent from any multi-member family is its OWN family
+  // (the row renders plain), so the lookup falls back to the tag itself.
+  const PART_FAMILY_OF: Record<string, string> = (() => {
+    const m: Record<string, string> = {};
+    for (const fam of PART_FAMILIES)
+      for (const tag of fam.members) m[tag] = fam.name;
+    return m;
+  })();
+  const familyOf = (tag: string): string => PART_FAMILY_OF[tag] ?? tag;
+  // Multi-member families looked up by name (singletons are never stored here).
+  const PART_FAMILY_BY_NAME: Record<
+    string,
+    { name: string; members: string[] }
+  > = Object.fromEntries(PART_FAMILIES.map((f) => [f.name, f]));
+
+  // A bin "group" is one rendered row: either a SINGLE part (plain row) or a multi-member
+  // FAMILY (one expandable row whose nested rows are its `parts`). `familyGroups(cat)` walks
+  // `PARTS` in display order and folds each category's members into groups — a family lands
+  // where its FIRST member would, absorbing the rest; every other kind stays a singleton. A
+  // category with no multi-member families just yields all singletons (no empty headers).
+  type PartT = (typeof PARTS)[number];
+  type PartGroup =
+    | { kind: "single"; part: PartT }
+    | { kind: "family"; name: string; color: string; parts: PartT[] };
+  const familyGroups = (cat: string): PartGroup[] => {
+    const groups: PartGroup[] = [];
+    const famAt: Record<string, number> = {}; // family name → index in `groups`
+    for (const part of PARTS) {
+      if (PART_CAT_OF[part.tag] !== cat) continue;
+      const fam = PART_FAMILY_BY_NAME[familyOf(part.tag)];
+      if (!fam) {
+        groups.push({ kind: "single", part });
+        continue;
+      }
+      const at = famAt[fam.name];
+      if (at === undefined) {
+        famAt[fam.name] = groups.length;
+        groups.push({
+          kind: "family",
+          name: fam.name,
+          color: part.color, // first member's colour tints the family header
+          parts: [part],
+        });
+      } else {
+        (groups[at] as { parts: PartT[] }).parts.push(part);
+      }
+    }
+    return groups;
+  };
+
+  // FUNCTION synonyms for search: a search term matches a part if it's a substring of the
+  // part's name/tag/desc OR of any of these function words. Curated (~1–4 words per kind),
+  // covering the common "what is this FOR" questions a learner types instead of a part name.
+  const PART_SYNONYMS: Record<string, string[]> = {
+    V: ["supply", "rail", "battery", "power"],
+    AC: ["sine", "oscillator", "mains", "wave"],
+    PULSE: ["clock", "oscillator", "square", "timer", "pwm"],
+    R: ["resistor", "pull-up", "pull-down", "divider"],
+    SHUNT: ["current sense", "ammeter", "measure current"],
+    C: ["decoupling", "bypass", "filter", "smoothing"],
+    EC: ["decoupling", "bypass", "bulk", "smoothing", "reservoir"],
+    L: ["choke", "coil", "filter", "energy storage"],
+    TR: ["isolation", "step-up", "step-down", "couple"],
+    POT: ["volume", "trimmer", "divider", "variable resistor"],
+    NTC: ["temperature", "sensor", "inrush"],
+    PTC: ["resettable fuse", "temperature", "overcurrent"],
+    I: ["bias", "constant current", "source"],
+    LOAD: ["sink", "dummy load", "tester", "burn-in"],
+    GND: ["reference", "common", "earth", "0 v"],
+    D: ["rectifier", "clamp", "one-way", "check valve", "protection"],
+    SD: ["rectifier", "low drop", "fast", "freewheel"],
+    LED: ["indicator", "light", "lamp", "status"],
+    ZD: ["regulator", "reference", "clamp", "overvoltage"],
+    MOV: ["surge", "spike", "transient", "protection", "clamp"],
+    SW: ["chopper", "switch", "pwm"],
+    MSW: ["toggle", "button", "switch"],
+    NM: ["switch", "amplifier", "low-side"],
+    PM: ["switch", "high-side", "load switch"],
+    Q: ["switch", "amplifier", "current gain"],
+    QP: ["switch", "high-side", "current gain"],
+    OA: ["amplifier", "comparator", "buffer", "gain"],
+    AND: ["gate", "all"],
+    OR: ["gate", "any"],
+    NAND: ["universal", "gate"],
+    NOR: ["universal", "gate"],
+    XOR: ["gate", "difference", "parity"],
+    XNOR: ["gate", "equality", "parity"],
+    IMPLY: ["gate", "implication"],
+    NIMPLY: ["gate", "inhibit"],
+    NOT: ["inverter", "gate"],
+    BUF: ["buffer", "line driver", "gate"],
+    FF: ["latch", "register", "memory", "flip-flop"],
+    LS: ["translator", "level", "interface"],
+    PU: ["regulator", "reference", "pull-up", "open-drain"],
+    FP: ["fpga", "fabric", "parallel logic"],
+    uC: ["mcu", "processor", "firmware", "computer"],
+  };
+
   // The state vector is node voltages (index 0 is ground); channels are labelled
   // by node index and iterate the live snapshot length.
   const CHANNEL_COLORS = [
@@ -2076,6 +2200,26 @@
           <span class="part-tier">{part.tier}</span>
         </li>
       {/snippet}
+      {#snippet familyRow(group: {
+        name: string;
+        color: string;
+        parts: (typeof PARTS)[number][];
+      })}
+        <!-- A multi-member family: ONE collapsed row that expands inline to its members.
+             The header only expands/collapses (it never arms); members arm as usual. -->
+        <details class="part-family" style="--c: {group.color}">
+          <summary class="part-family-head">
+            <span class="part-family-glyph">{group.parts.length}</span>
+            <span class="part-family-name">{group.name}</span>
+            <span class="part-family-count">×{group.parts.length}</span>
+          </summary>
+          <ul class="part-list part-family-list">
+            {#each group.parts as part (part.name)}
+              {@render partRow(part)}
+            {/each}
+          </ul>
+        </details>
+      {/snippet}
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (Esc to disarm) —
         or drag it on. Scroll to zoom, drag empty space to pan.
@@ -2093,7 +2237,8 @@
           (p) =>
             p.name.toLowerCase().includes(q) ||
             p.tag.toLowerCase().includes(q) ||
-            p.desc.toLowerCase().includes(q),
+            p.desc.toLowerCase().includes(q) ||
+            (PART_SYNONYMS[p.tag] ?? []).some((s) => s.includes(q)),
         )}
         {#if hits.length > 0}
           <ul class="part-list scroll">
@@ -2107,16 +2252,25 @@
       {:else}
         <div class="part-cats scroll">
           {#each PART_CATEGORIES as cat (cat)}
-            {@const items = PARTS.filter((p) => PART_CAT_OF[p.tag] === cat)}
-            {#if items.length > 0}
+            {@const groups = familyGroups(cat)}
+            {#if groups.length > 0}
               <details class="part-cat" open>
                 <summary class="part-cat-head">
                   <span class="part-cat-name">{cat}</span>
-                  <span class="part-cat-count">{items.length}</span>
+                  <span class="part-cat-count"
+                    >{groups.reduce(
+                      (n, g) => n + (g.kind === "family" ? g.parts.length : 1),
+                      0,
+                    )}</span
+                  >
                 </summary>
                 <ul class="part-list">
-                  {#each items as part (part.name)}
-                    {@render partRow(part)}
+                  {#each groups as group (group.kind === "family" ? group.name : group.part.name)}
+                    {#if group.kind === "family"}
+                      <li class="part-family-li">{@render familyRow(group)}</li>
+                    {:else}
+                      {@render partRow(group.part)}
+                    {/if}
                   {/each}
                 </ul>
               </details>
@@ -4410,6 +4564,91 @@
   }
   .part-cat .part-list {
     margin-bottom: 8px;
+  }
+  /* Family row: a part-row-shaped, collapsed-by-default <details> that expands inline to
+     reveal its member rows. Mirrors the .part-cat/.example-cat folder pattern, tinted by the
+     family's --c so it reads like (and lines up with) the plain rows beside it. */
+  .part-family-li {
+    list-style: none;
+  }
+  .part-family {
+    --c: var(--bronze);
+    border: 1px solid var(--border);
+    border-left: 2px solid color-mix(in oklch, var(--c) 70%, var(--border));
+    border-radius: var(--radius);
+    background: linear-gradient(180deg, var(--surface-2), var(--surface));
+    transition:
+      border-color 0.16s var(--ease),
+      box-shadow 0.16s var(--ease);
+  }
+  .part-family[open] {
+    border-color: var(--border-bright);
+  }
+  .part-family-head {
+    display: grid;
+    grid-template-columns: 38px 1fr auto;
+    align-items: center;
+    gap: 11px;
+    padding: 9px 10px;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+  }
+  .part-family-head::-webkit-details-marker {
+    display: none;
+  }
+  .part-family:hover > .part-family-head {
+    border-left-color: var(--c);
+  }
+  .part-family-glyph {
+    position: relative;
+    display: grid;
+    place-items: center;
+    height: 30px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--c);
+    border: 1px solid color-mix(in oklch, var(--c) 40%, var(--border));
+    border-radius: var(--radius-sm);
+    background: color-mix(in oklch, var(--c) 9%, transparent);
+    text-shadow: 0 0 10px color-mix(in oklch, var(--c) 50%, transparent);
+  }
+  /* Disclosure caret sits to the left of the count inside the glyph cell. */
+  .part-family-head::before {
+    content: "▸";
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+    margin-left: 2px;
+    font-size: 10px;
+    color: var(--faint);
+    transition: transform 0.15s var(--ease);
+    z-index: 1;
+  }
+  .part-family[open] > .part-family-head::before {
+    transform: rotate(90deg);
+  }
+  .part-family-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text);
+  }
+  .part-family[open] > .part-family-head .part-family-name {
+    color: var(--accent);
+  }
+  .part-family-count {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--dim);
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+  }
+  .part-family-list {
+    padding: 0 8px 9px 14px;
+    gap: 7px;
   }
   .part-empty {
     font-size: 12px;
