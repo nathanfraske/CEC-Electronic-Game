@@ -24,6 +24,7 @@
     formatValue,
     PART_KINDS,
     AC_DEFAULT_AMP,
+    loadUnit,
     type GraphSnapshot,
   } from "./lib/graph";
   import {
@@ -38,6 +39,8 @@
     acAmpChips,
     stepAmp,
     AC_MAINS_PRESETS,
+    loadValues,
+    loadChips,
   } from "./lib/values";
   import { LOGIC_FAMILIES, familyLevels } from "./lib/families";
   import { TIER_LABELS, DEFAULT_TIER, hasTiers } from "./lib/tiers";
@@ -204,6 +207,13 @@
       desc: "Ideal fixed DC current",
       tier: "I",
       color: "var(--warn)",
+    },
+    {
+      tag: "LOAD",
+      name: "Electronic Load",
+      desc: "CC / CR sink + load-step",
+      tier: "II",
+      color: "var(--bad)",
     },
     {
       tag: "GND",
@@ -436,6 +446,7 @@
     MOV: "Protection",
     SW: "Active & Switching",
     MSW: "Active & Switching",
+    LOAD: "Active & Switching",
     NM: "Active & Switching",
     PM: "Active & Switching",
     Q: "Active & Switching",
@@ -691,7 +702,10 @@
   let calcVals = $state(initialCalc);
   function fillCalc(id: string): void {
     if (!selPart) return;
-    const u = PART_KINDS[selPart.kind]?.unit;
+    const u =
+      selPart.kind === "LOAD"
+        ? loadUnit(selLoadMode())
+        : PART_KINDS[selPart.kind]?.unit;
     const c = CALCS.find((x) => x.id === id);
     if (!c) return;
     for (const fld of c.fields) {
@@ -1407,7 +1421,12 @@
         );
       return value >= 1 ? "1:" + trim(value) : trim(1 / value) + ":1";
     }
-    const u = PART_KINDS[kind]?.unit ?? "";
+    // Electronic load: its value's unit follows the mode (A in CC, Ω in CR), so read
+    // it from `loadUnit(selMode())` rather than the static PART_KINDS unit.
+    const u =
+      kind === "LOAD"
+        ? loadUnit(selLoadMode())
+        : (PART_KINDS[kind]?.unit ?? "");
     return u ? formatValue(value, u) : String(value);
   }
   function setVal(v: number): void {
@@ -1417,7 +1436,14 @@
     if (selPart) board?.setComponentLabel(selPart.id, t);
   }
   function stepVal(dir: number): void {
-    if (selPart) setVal(stepValue(selPart.kind, selPart.value, dir));
+    if (!selPart) return;
+    // Electronic load: step through the mode's own value list (CC amps / CR ohms),
+    // since the static CURATED_FULL.LOAD is only the CC list.
+    if (selPart.kind === "LOAD") {
+      setVal(stepLoad(selPart.value, dir));
+      return;
+    }
+    setVal(stepValue(selPart.kind, selPart.value, dir));
   }
   // The AC source's amplitude (its second scalar): the displayed value defaults
   // to 5 V when a source carries none, mirroring the frequency chips above.
@@ -1468,6 +1494,45 @@
   }
   function setDuty(v: number): void {
     if (selPart) board?.setComponentDuty(selPart.id, v);
+  }
+  // The electronic load's mode (0 = constant-current CC, 1 = constant-resistance CR):
+  // a third descriptor beside `value`. It decides the value's unit (loadUnit) and the
+  // chip/full lists (loadChips/loadValues). 0 = CC (the default).
+  function selLoadMode(): number {
+    return selPart?.mode ?? 0;
+  }
+  function setLoadMode(m: number): void {
+    if (selPart) board?.setComponentMode(selPart.id, m);
+  }
+  // The load's value chips/full-list, picked by its mode (CC amps / CR ohms).
+  function loadChipsForMode(): number[] {
+    return loadChips(selLoadMode());
+  }
+  // Step the load's value through its mode's full list (ascending), nearest-detent —
+  // the same idea as `stepValue` but against the per-mode loadValues list.
+  function stepLoad(value: number, dir: number): number {
+    const list = loadValues(selLoadMode());
+    if (list.length === 0) return value;
+    let idx = 0;
+    let bestD = Infinity;
+    for (let i = 0; i < list.length; i++) {
+      const d = Math.abs(Math.log(list[i]!) - Math.log(value));
+      if (d < bestD) {
+        bestD = d;
+        idx = i;
+      }
+    }
+    const next = Math.max(0, Math.min(list.length - 1, idx + Math.sign(dir)));
+    return list[next]!;
+  }
+  // The load's dynamic step frequency (Hz): 0 = static, > 0 steps base→peak current.
+  // A small set of preset step rates, plus the static "Off" (0).
+  const LOAD_STEP_HZ = [0, 100, 1000, 10000, 50000];
+  function selLoadHz(): number {
+    return selPart?.loadHz ?? 0;
+  }
+  function setLoadHz(hz: number): void {
+    if (selPart) board?.setComponentLoadHz(selPart.id, hz);
   }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
@@ -2395,7 +2460,9 @@
                   title="Next smaller standard value">−</button
                 >
                 <div class="insp-chips">
-                  {#each chipsOf(kind) as v (v)}
+                  <!-- Electronic load: the value chips follow the mode (CC amps / CR ohms)
+                       via loadChipsForMode, not the static CURATED_CHIPS.LOAD. -->
+                  {#each kind === "LOAD" ? loadChipsForMode() : chipsOf(kind) as v (v)}
                     <button
                       class="chip-val {selPart.value === v ? 'is-active' : ''}"
                       onclick={() => setVal(v)}>{fmtVal(kind, v)}</button
@@ -2654,6 +2721,85 @@
                   />
                   <span class="wiper-end">1</span>
                 </div>
+              {/if}
+              {#if kind === "LOAD"}
+                <!-- The electronic load's MODE: constant-current (CC) draws a set current
+                     regardless of voltage; constant-resistance (CR) draws V/R. The mode sets
+                     the value chips' unit (A vs Ω) — handled above via loadChipsForMode +
+                     fmtVal — and which element buildNetlist emits. -->
+                <div class="insp-sub">mode</div>
+                <div class="insp-chips">
+                  <button
+                    class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
+                    onclick={() => setLoadMode(0)}
+                    title="Constant current — draw a set current regardless of voltage"
+                    >CC</button
+                  >
+                  <button
+                    class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
+                    onclick={() => setLoadMode(1)}
+                    title="Constant resistance — draw V/R like a fixed resistor"
+                    >CR</button
+                  >
+                </div>
+                {#if selLoadMode() === 0}
+                  <!-- Dynamic load step (CC only): step the draw between the base level (the
+                       value chips above) and a PEAK at a chosen rate/duty — the load-step that
+                       probes a supply's transient response. Off (0 Hz) = a static DC load. -->
+                  <div class="insp-sub">dynamic load step</div>
+                  <div class="insp-chips wrap">
+                    {#each LOAD_STEP_HZ as hz (hz)}
+                      <button
+                        class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
+                        onclick={() => setLoadHz(hz)}
+                        >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
+                      >
+                    {/each}
+                  </div>
+                  {#if selLoadHz() > 0}
+                    <!-- The peak current (the load's `amp` second scalar): the value chips set
+                         the BASE, this sets the PEAK it steps up to. Reuses the amp chips/stepper. -->
+                    <div class="insp-sub">peak</div>
+                    <div class="insp-row">
+                      <button
+                        class="btn btn-ghost insp-step"
+                        onclick={() => stepAmpVal(-1)}
+                        title="Next smaller peak">−</button
+                      >
+                      <div class="insp-chips wrap">
+                        {#each acAmpChips() as v (v)}
+                          <button
+                            class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                            onclick={() => setAmp(v)}
+                            >{formatValue(v, "A")}</button
+                          >
+                        {/each}
+                      </div>
+                      <button
+                        class="btn btn-ghost insp-step"
+                        onclick={() => stepAmpVal(1)}
+                        title="Next larger peak">+</button
+                      >
+                    </div>
+                    <div class="insp-sub">
+                      duty · {Math.round(selDuty() * 100)}%
+                    </div>
+                    <div class="insp-row">
+                      <span class="wiper-end">0</span>
+                      <input
+                        class="wiper-slider"
+                        type="range"
+                        min="0.05"
+                        max="0.95"
+                        step="0.01"
+                        value={selDuty()}
+                        aria-label="Load step duty cycle"
+                        oninput={(e) => setDuty(Number(e.currentTarget.value))}
+                      />
+                      <span class="wiper-end">1</span>
+                    </div>
+                  {/if}
+                {/if}
               {/if}
               {#if kind === "POT"}
                 <!-- The potentiometer's wiper position (0 = A end, 1 = B end) as a
