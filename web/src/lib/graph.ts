@@ -157,6 +157,15 @@ export interface Component {
  * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */
 export const AC_DEFAULT_AMP = 5;
 
+/**
+ * One quick-recall hotbar slot (the 1–9 strip beside the board): a captured part
+ * `kind` plus the {@link PLACEMENT_OVERRIDE_KEYS} subset of its config (the tuned
+ * value / wiper / temp and the identity-quality axes). Arming a slot drops you back
+ * into place-and-repeat with that exact part; `null` is an empty slot. Persisted in
+ * the settings blob, so a player's loadout survives a refresh.
+ */
+export type HotSlot = { kind: string; config: Partial<Component> } | null;
+
 /** Fully-qualified address of a pin on a placed component. */
 export interface PinRef {
   componentId: number;
@@ -886,11 +895,17 @@ export function loadUnit(mode: number | undefined): string {
  * The config axes an arm-time placement may override (the inspector's pre-placement
  * choices): `variant` (diode type / LED colour), `tier` (quality), `family` (logic),
  * `openDrain` (gate output stage), `mode` (load CC/CR), `loadHz`/`duty` (load step),
- * and `amp` (the load's peak). Deliberately **not** identity/geometry fields
- * (`id`/`kind`/`cell`/`value`/`rot`), nor per-instance knobs the configurator never
- * exposes (`wiper`/`temp`/`label`) — those keep their per-kind defaults.
+ * `amp` (the load's peak), plus the tuned scalars `value` (ohms / volts / Hz / …),
+ * `wiper` (pot position), and `temp` (thermistor body temperature) — so a quick-recall
+ * hotbar slot or the pipette can carry a *fully configured* part, not just its identity
+ * / quality axes. Deliberately **not** identity/geometry fields (`id`/`kind`/`cell`/
+ * `rot`) nor the cosmetic `label`.
+ *
+ * The ordinary arm flow never seeds `value`/`wiper`/`temp` into `armedConfig`, so plain
+ * placement keeps each kind's defaults exactly as before; only the hotbar / pipette
+ * (which snapshot a tuned part) set those three.
  */
-const PLACEMENT_OVERRIDE_KEYS = [
+export const PLACEMENT_OVERRIDE_KEYS = [
   "variant",
   "tier",
   "family",
@@ -899,6 +914,9 @@ const PLACEMENT_OVERRIDE_KEYS = [
   "loadHz",
   "duty",
   "amp",
+  "value",
+  "wiper",
+  "temp",
 ] as const satisfies readonly (keyof Component)[];
 
 /** Pick only the defined config-axis fields from an arm-time `overrides`, so spreading

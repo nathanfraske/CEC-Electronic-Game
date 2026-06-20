@@ -39,7 +39,9 @@
     PART_KINDS,
     AC_DEFAULT_AMP,
     loadUnit,
+    PLACEMENT_OVERRIDE_KEYS,
     type GraphSnapshot,
+    type HotSlot,
   } from "./lib/graph";
   import {
     hasValue,
@@ -648,6 +650,12 @@
   // and every drop spread. Reassigned (never mutated) so `$state` notifies and the ghost
   // re-tints. Empty = the part's per-kind defaults (zero clicks to place a default part).
   let armedConfig = $state<Partial<Component>>({});
+  // Quick-recall hotbar: nine configured-part slots (index 0..8 ↔ keys 1..9), plus the
+  // Q pipette. A filled slot remembers a part's kind + its tuned config (the
+  // PLACEMENT_OVERRIDE_KEYS subset — value/wiper/temp and the identity-quality axes), so
+  // pressing its digit re-arms that exact part for place-and-repeat. Reassigned (never
+  // mutated in place) so `$state` notifies. Persisted in settings (see persistSettings).
+  let hotbar = $state<HotSlot[]>(Array(9).fill(null));
   // The multimeter function in Measure mode: voltmeter or ammeter.
   let probeMode = $state<"V" | "A">("V");
   // The board's detail lens (the owner's three tiers): schematic symbols always; in
@@ -842,6 +850,7 @@
       boardLens,
       lodOn,
       camera: board?.getCamera(),
+      hotbar,
     });
   }
   // Debounced settings save for the camera (pan/zoom fire many events per second);
@@ -1176,6 +1185,26 @@
       : (CHANNEL_COLORS[(i - 1) % CHANNEL_COLORS.length] ?? "var(--accent)");
   const partName = (tag: string): string =>
     PARTS.find((p) => p.tag === tag)?.name ?? tag;
+  // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
+  // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
+  const partColor = (tag: string): string =>
+    `var(--${PART_KINDS[tag]?.colorKey ?? "bronze"})`;
+  // True when a hotbar slot mirrors the currently armed part + its captured config,
+  // so the strip highlights the live slot. Compares the kind and the
+  // PLACEMENT_OVERRIDE_KEYS-projected config (order-independent, value-equal).
+  const slotIsArmed = (slot: HotSlot): boolean => {
+    if (!slot || armedPart !== slot.kind) return false;
+    const live = partConfigOf({ kind: armedPart, ...armedConfig });
+    const keys = new Set([...Object.keys(live), ...Object.keys(slot.config)]);
+    for (const k of keys) {
+      if (
+        (live as Record<string, unknown>)[k] !==
+        (slot.config as Record<string, unknown>)[k]
+      )
+        return false;
+    }
+    return true;
+  };
 
   // One-line contextual hint that replaces the old mode buttons: it tells you
   // what a click will do right now, so the modeless board stays learnable.
@@ -1311,6 +1340,17 @@
         e.preventDefault();
       } else if (e.key === "." || e.key === ">") {
         stepFwd(); // . / > = step one tick forward
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {
+        // Hotbar 1–9: Shift+N stores the armed part into slot N, plain N recalls it.
+        // Keyed off e.code so Shift+digit (which produces "!"/"@"/… in e.key on many
+        // layouts) still maps to the right slot. (0 is reserved for fit-view.)
+        const slot = Number(e.code.slice(5)) - 1;
+        if (e.shiftKey) assignSlot(slot);
+        else armFromSlot(slot);
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "q" || e.key === "Q")) {
+        pipette(); // Q = pipette: eyedrop the selected part's kind + config and arm it
         e.preventDefault();
       }
     };
@@ -1620,6 +1660,12 @@
       board?.setLens(boardLens);
       board?.setLod(lodOn);
       board?.setCamera(settings.camera);
+      // Restore the quick-recall hotbar (defensively: only a genuine 9-slot array, else
+      // an empty bar — a stale/short blob never leaves the strip mis-sized).
+      hotbar =
+        Array.isArray(settings.hotbar) && settings.hotbar.length === 9
+          ? settings.hotbar
+          : Array(9).fill(null);
 
       const saved = loadBoard();
       if (saved) {
@@ -1983,6 +2029,84 @@
   function toggleArm(tag: string): void {
     arm(armedPart === tag ? null : tag);
   }
+
+  // --- Quick-recall hotbar (1–9) + the Q pipette ---------------------------------
+  // These arm a part with an EXPLICIT config (a saved slot or the eyedropped selection),
+  // so unlike `arm()` they must NOT re-seed `armedConfig` from the per-kind last-used
+  // memory — that would clobber the slot's tuned value/wiper/temp. `armWith` is the
+  // dedicated path: it arms `kind` with exactly `config` (a fresh copy for reactivity),
+  // does the same tool-switch `arm()` does, and pushes the config to the ghost.
+
+  /** Build a `Partial<Component>` from a captured part: the defined
+   * {@link PLACEMENT_OVERRIDE_KEYS} fields (now incl. value/wiper/temp) of a selected
+   * board part or of `{ kind, ...armedConfig }`. The single source for what a slot /
+   * the pipette stores, so a recalled part carpets place-and-repeat exactly as captured. */
+  function partConfigOf(src: Partial<Component>): Partial<Component> {
+    const out: Partial<Component> = {};
+    for (const key of PLACEMENT_OVERRIDE_KEYS) {
+      const v = src[key];
+      if (v !== undefined) (out as Record<string, unknown>)[key] = v;
+    }
+    return out;
+  }
+
+  /** Arm `kind` with an explicit `config` (slot recall / pipette), bypassing the
+   * per-kind last-used re-seed so the captured config survives. */
+  function armWith(kind: string, config: Partial<Component>): void {
+    armedPart = kind;
+    armedConfig = { ...config };
+    // Same intent-to-build tool switch as arm(): leave any non-building tool so the
+    // next click drops the part.
+    if (
+      mode === "measure" ||
+      mode === "junction" ||
+      mode === "label" ||
+      mode === "pan"
+    )
+      setMode("select");
+    board?.setArmed(kind, armedConfig);
+  }
+
+  /** Recall slot `i` (key i+1, or a click on a filled cell): arm its captured part. */
+  function armFromSlot(i: number): void {
+    const slot = hotbar[i];
+    if (!slot) return;
+    armWith(slot.kind, slot.config);
+  }
+
+  /** Assign the currently armed part into slot `i` (Shift+digit, or a click on an empty
+   * cell while armed). No-op when nothing is armed. Reassigns the array for `$state`. */
+  function assignSlot(i: number): void {
+    if (!armedPart) return;
+    const slot: HotSlot = {
+      kind: armedPart,
+      config: partConfigOf({ kind: armedPart, ...armedConfig }),
+    };
+    hotbar = hotbar.with(i, slot);
+    persistSettings();
+  }
+
+  /** Clear slot `i` (right-click a cell, or its × button). Reassigns for reactivity. */
+  function clearSlot(i: number): void {
+    if (!hotbar[i]) return;
+    hotbar = hotbar.with(i, null);
+    persistSettings();
+  }
+
+  /** Click handler for a hotbar cell: recall a filled slot, else (when armed) fill it. */
+  function clickSlot(i: number): void {
+    if (hotbar[i]) armFromSlot(i);
+    else assignSlot(i);
+  }
+
+  /** The Q pipette (eyedropper): copy the SELECTED board part — its kind + exact config
+   * (value/wiper/temp + identity-quality axes) — and arm it, so place-and-repeat carpets
+   * that configured part. A no-op when nothing is selected (Q only samples a live part). */
+  function pipette(): void {
+    if (!selPart) return;
+    armWith(selPart.kind, partConfigOf(selPart as Partial<Component>));
+  }
+
   function enterBuild(): void {
     setMode("select");
   }
@@ -2935,6 +3059,55 @@
         <span class="scope-tag">
           {partCount} parts · {wireCount} wires · {selCount} sel
         </span>
+      </div>
+
+      <!-- Quick-recall hotbar: nine configured-part slots along the board's bottom edge.
+           Press a digit to arm that slot's part (place-and-repeat), Shift+digit to store
+           the armed part there, right-click (or the ×) to clear; Q pipettes the selected
+           part into your hand. A filled cell shows the part glyph tinted by its kind
+           colour + a compact name; the live (currently-armed) slot lights accent. -->
+      <div class="hotbar" role="toolbar" aria-label="Quick-recall hotbar">
+        {#each hotbar as slot, i (i)}
+          <!-- Operable from the keyboard via the global 1–9 / Shift+1–9 handlers (which do
+               exactly what a click here does), so the per-cell click is a pointer convenience;
+               the strip itself isn't a tab stop (tabindex −1). -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+            class="hotcell {slot ? 'is-filled' : 'is-empty'} {slotIsArmed(slot)
+              ? 'is-armed'
+              : ''}"
+            style={slot ? `--c: ${partColor(slot.kind)}` : ""}
+            role="button"
+            tabindex="-1"
+            title={slot
+              ? `${partName(slot.kind)} — press ${i + 1} to arm · Shift+${i + 1} to reassign · right-click to clear`
+              : armedPart
+                ? `Empty — press Shift+${i + 1} (or click) to store ${partName(armedPart)} here`
+                : `Empty slot ${i + 1} — arm a part, then Shift+${i + 1} to store it here`}
+            onclick={() => clickSlot(i)}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              clearSlot(i);
+            }}
+          >
+            <kbd class="hotkey">{i + 1}</kbd>
+            {#if slot}
+              <span class="hotglyph">{slot.kind}</span>
+              <span class="hotname">{partName(slot.kind)}</span>
+              <button
+                class="hotclear"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  clearSlot(i);
+                }}
+                title="Clear this slot"
+                aria-label="Clear slot {i + 1}">×</button
+              >
+            {:else}
+              <span class="hotempty" aria-hidden="true"></span>
+            {/if}
+          </div>
+        {/each}
       </div>
 
       {#if circuitWarning}
