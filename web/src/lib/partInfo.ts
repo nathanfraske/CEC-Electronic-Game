@@ -534,6 +534,16 @@ export const PART_INFO: Record<string, PartInfo> = {
     "Y = (A ⊕ B)′",
     "An XNOR (exclusive-NOR, or equality) gate is the complement of XOR: it drives its output high when its inputs MATCH and low when they differ — a one-bit equality test. Chain them to compare multi-bit buses. It is a powered chip: wire VCC and GND across it and the supply between them is the logic rail — unpowered, the IC is dead and its output floats. Inputs (measured against GND) are thresholded at half that rail and draw no current; the output is driven hard to VCC or GND, one tick after the inputs settle.",
   ),
+  IMPLY: gateInfo(
+    "IMPLY Gate",
+    "Y = A′ + B",
+    "An IMPLY gate computes material implication, A → B: its output is high unless A is high and B is low — an OR with input A inverted. The only case that drives it low is the broken promise, A true while B is false; every other input leaves it high. It is a real powered chip — wire its VCC pin to a positive rail and its GND pin to ground, and the supply across those two pins (V(VCC) − V(GND)) is its logic rail; with no power the IC is dead and its output floats, so feed it VCC and GND first. Each input (measured against GND) is thresholded at half that rail — above is a 1, below a 0 — and draws essentially no current; the output is driven hard to VCC or GND, lagging the inputs by exactly one simulation step (the propagation delay).",
+  ),
+  NIMPLY: gateInfo(
+    "NIMPLY Gate",
+    "Y = A · B′",
+    "A NIMPLY gate computes material nonimplication, A ↛ B: its output is high only when A is high and B is low — an AND with input B inverted. It is exactly the complement of IMPLY, firing on the one case implication forbids. It is a real powered chip — wire its VCC pin to a positive rail and its GND pin to ground, and the supply across those two pins (V(VCC) − V(GND)) is its logic rail; with no power the IC is dead and its output floats, so feed it VCC and GND first. Each input (measured against GND) is thresholded at half that rail — above is a 1, below a 0 — and draws essentially no current; the output is driven hard to VCC or GND, lagging the inputs by exactly one simulation step (the propagation delay).",
+  ),
   NOT: gateInfo(
     "NOT Gate",
     "Y = A′",

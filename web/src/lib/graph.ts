@@ -603,6 +603,42 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // IMPLY (material implication, A → B): output = ¬A ∨ B — an OR with input A
+  // inverted. Low only when A is high and B is low; high otherwise. Same 5-pin
+  // powered shape and function-code family (aux = 8 in GATE_AUX).
+  IMPLY: kind(
+    "IMPLY",
+    "IMPLY Gate",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // NIMPLY (material nonimplication, A ↛ B): output = A ∧ ¬B — an AND with input B
+  // inverted. High only when A is high and B is low; low otherwise. Same 5-pin
+  // powered shape and function-code family (aux = 9 in GATE_AUX).
+  NIMPLY: kind(
+    "NIMPLY",
+    "NIMPLY Gate",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    5,
+    "V",
+    true,
+  ),
   // The inverter (NOT): single input. Pins OUT, IN, NC, VCC, GND — pin 0 = Y (a),
   // pin 1 = A (b), pin 2 = the package's NC (the core ignores IN2 for NOT/BUF), pin 3
   // = VCC (d), pin 4 = GND (e). Matches the real single-gate SOT-23-5 (one no-connect).

@@ -85,6 +85,8 @@ const GLOSS: Record<string, Record<string, string>> = {
   NOR: GATE,
   XOR: GATE,
   XNOR: GATE,
+  IMPLY: GATE,
+  NIMPLY: GATE,
   NOT: GATE1,
   BUF: GATE1,
   LS: { OUT: "shifted output (rail B)", IN: "input (rail A)" },
