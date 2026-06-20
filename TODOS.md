@@ -8,6 +8,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (30) — FIX: POT (and EC / thermistor) circuits dead since the 5-pin gate PR
+
+Owner: "no value of POT wiper changes anything." Regression from the powered-gate PR (#142): it
+added the fifth-terminal `eArr` to `buildNetlist`, pushing it **only in the generic element loop**.
+The web-expansion branches (EC → cap+ESR, **POT → two resistors**, thermistor → R(T)) push `types`
+directly and were never updated, so `eArr` came out **shorter than `types`** whenever one of those
+parts was present. `loop.ts` then saw a non-empty `e`, routed to `set_netlist_pe`, whose length
+check (`e.len != n`) rejected the install → `install_empty` → the whole circuit went dead (nothing,
+not just the wiper, did anything). The static gates passed because no JS test runs the sim.
+
+- ~~`netlist.ts`: added the 5 missing `eArr.push(0)` (EC ×2, POT ×2, thermistor ×1) so `eArr` stays
+  in lockstep with `types` (now 6 `types.push` ↔ 6 `eArr.push`, interleaved).~~
+- ~~`loop.ts`: hardened the boundary routing — only use `set_netlist_pe` when `e.length ===
+  types.length` AND `e` has a non-ground GND pin. A normal powered gate (GND on the common ground)
+  leaves `e` all-zero and carries VCC on `d`, so it uses the ordinary boundary; a malformed `e` can
+  no longer reject the whole install (fails safe).~~ **DONE.** All web gates green.
+  - [ ] No web test runner exists, which is why this slipped — a small `buildNetlist`/install smoke
+    harness (e.g. asserting `e.length === types.length` for a POT circuit) would have caught it.
+
 ## 2026-06-20 (29) — IMPLY + NIMPLY gates
 
 Owner: "add IMPLY and NIMPLY gates, with ¬A and ¬B… specifically transmission-gate versions."

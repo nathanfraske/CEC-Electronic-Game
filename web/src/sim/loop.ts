@@ -121,14 +121,18 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       const cc = c ?? new Uint32Array(types.length);
       const dd = d ?? new Uint32Array(types.length);
       const ax = aux ?? new Float64Array(types.length);
-      // Route to the full boundary (`set_netlist_pe`) when either a fifth terminal
-      // (a powered gate's GND pin) or a param block is supplied; pass the missing one
-      // as empty (= all ground / all defaults). Otherwise keep the common path
-      // byte-for-byte the default install.
+      // Route to the full boundary (`set_netlist_pe`) when either a param block or a
+      // genuine fifth terminal is supplied; pass the missing one as empty (= all defaults
+      // / all ground). `e` is only "genuine" when it is well-formed (one entry per
+      // element) AND carries a non-ground GND pin: a gate whose GND is the common ground
+      // (the usual case) leaves `e` all-zero and rides its VCC on `d`, so the ordinary
+      // boundary already handles it. Requiring the exact length also fails safe — a
+      // malformed `e` can never make the whole install reject (the circuit still runs).
       const hasParams = params != null && params.length > 0;
-      const hasE = e != null && e.length > 0;
+      const hasE =
+        e != null && e.length === types.length && e.some((x) => x !== 0);
       if (hasParams || hasE) {
-        const ee = e ?? new Uint32Array(0);
+        const ee = hasE && e != null ? e : new Uint32Array(0);
         const pp = params ?? new Float64Array(0);
         return sim.set_netlist_pe(
           nodeCount,
