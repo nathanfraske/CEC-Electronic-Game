@@ -55,9 +55,14 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
   labels. Use the CSS custom properties — do not hardcode colors.
 - **Power-bus visual language** (how voltage vs current are shown): spec in
   `docs/ui/visual-language.md`, interactive reference `docs/ui/dc-bus-reference.html`.
-  Voltage = net level (height + rail color + number); current = flow + thickness
-  + number; KCL at taps; IR-drop sag. Rail identity: +12V `#d8a24a`, +5V
-  `#46d2e6`, +3.3V `#9a78ff`, GND `#6b6488`. Draft, not final.
+  Voltage = **identity colour + a pre-attentive magnitude channel** (a segmented LED
+  bar in Reality, a water standpipe/height in Analogy); current = flow + thickness +
+  number; KCL at taps; IR-drop sag. **Rail identity colour** (`voltageColor` in
+  `board.ts`) uses the **conventional PC/bench wire code** so a rail reads at a glance:
+  +3.3V orange, +5V red, +12V yellow, +1.8V violet, GND dark, −12V blue, −5V cyan, and
+  higher rails (24/48V→mains) ramp hotter/whiter. Signed + unclamped (a −5V rail is no
+  longer ground-grey). Magnitude lives on the bar/standpipe, NOT the hue. (The op-amp
+  detail drawers' `--pos/--neg/--out` tokens are input-polarity colours, a separate use.)
 
 ## Where things live
 
