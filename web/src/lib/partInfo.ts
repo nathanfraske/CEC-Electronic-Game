@@ -759,6 +759,50 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output drive", value: f(e.current, "A") },
     ],
   },
+  LUT: {
+    name: "FPGA Logic Cell",
+    equation: "OUT = table[ IN0 | IN1·2 | IN2·4 | IN3·8 ]",
+    headline: (e) => `OUT ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A look-up table is the atom of an FPGA: not a fixed gate but a tiny 16-cell memory whose contents ARE the truth table of any function of four inputs. The four inputs form a 4-bit address (IN0 the least-significant bit) and the addressed cell drives the output — so the same silicon becomes AND, OR, XOR, a full-adder bit, a 3-input majority voter, anything, depending only on which 16 bits you store. This is what 'field-programmable' means: an FPGA ships as a sea of these cells plus a configurable interconnect, and a bitstream fills in every table. Pick a function from the presets or type any of the 65 536 patterns straight into the hex field. Turn on the output register and the cell latches its result on the rising clock edge — a LUT plus a flip-flop, the exact 'logic element' an FPGA tiles by the thousand.",
+    derived: (e) => [
+      { label: "Output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  SPIM: {
+    name: "SPI Master",
+    equation: "4-wire serial · SCLK / MOSI / MISO / CS",
+    headline: (e) => `SCLK ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "SPI is the workhorse short-range serial bus: four wires, full-duplex, no addressing. The master owns the clock. Pulse its START input and it pulls CS low, then shifts the data word out on MOSI most-significant-bit first, one bit per SCLK edge, while simultaneously clocking the slave's reply in on MISO — out and in on the same clocks, which is what 'full-duplex' buys you. Set the word it sends in hex; the clock rate and bit count come from sensible defaults. Wire its SCLK/MOSI/CS to a SPI slave (and MISO back) to watch a whole transaction. The trade against a UART is that SPI needs that shared clock wire, but in return it has no agreed baud rate to get wrong and runs much faster.",
+    derived: (e) => [
+      { label: "SCLK line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  SPIS: {
+    name: "SPI Slave",
+    equation: "shifts on SCLK · reply MSB-first on MISO",
+    headline: (e) => `MISO ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "The other end of the SPI bus: a slave has no clock of its own — it is driven entirely by the master's SCLK. While CS is held low it samples MOSI on each clock edge to receive the incoming word, and at the same time shifts its own reply word out on MISO, most-significant-bit first, so a read and a write happen in the same transaction. RXVALID goes high once a full frame has landed. Set the reply word it returns in hex. Real SPI peripherals (sensors, flash, displays) are exactly this: you select the chip, clock out a command, and clock the answer back in on the same edges.",
+    derived: (e) => [
+      { label: "MISO line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  UART: {
+    name: "UART",
+    equation: "async serial · START + data(LSB) + STOP",
+    headline: (e) => `TX ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A UART is the classic asynchronous serial port — just two wires, TX and RX, and no shared clock at all. Instead both ends agree on a baud rate beforehand and frame each byte: the idle-high line is pulled low for one START bit (the receiver's cue to start sampling), then the data bits are sent least-significant-bit first, then a STOP bit returns the line high. The receiver waits for the falling start edge and samples each bit in the middle of its window, so small clock differences don't matter. Pulse SEND to transmit the data word (set it in hex); RXVALID pulses when a byte arrives on RX. This is what's under a serial console, GPS modules, and the venerable RS-232 port — slower than SPI but needing no clock wire.",
+    derived: (e) => [
+      { label: "TX line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

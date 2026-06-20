@@ -497,6 +497,34 @@
       color: "var(--cyan)",
     },
     {
+      tag: "LUT",
+      name: "FPGA Logic Cell",
+      desc: "4-input look-up table · any function",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "SPIM",
+      name: "SPI Master",
+      desc: "Clocks a word out on START",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "SPIS",
+      name: "SPI Slave",
+      desc: "Clocked by the master · replies on MISO",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "UART",
+      name: "UART",
+      desc: "Async serial · frames a byte on SEND",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
       tag: "LS",
       name: "Level Shifter",
       desc: "Translates rail A → rail B",
@@ -588,6 +616,10 @@
     JKFF: "Logic & ICs",
     TRI: "Logic & ICs",
     SAMP: "Logic & ICs",
+    LUT: "Logic & ICs",
+    SPIM: "Logic & ICs",
+    SPIS: "Logic & ICs",
+    UART: "Logic & ICs",
     LS: "Logic & ICs",
     PU: "Logic & ICs",
     FP: "Logic & ICs",
@@ -724,6 +756,17 @@
     JKFF: ["jk flip-flop", "t flip-flop", "toggle", "divide by two", "counter"],
     TRI: ["tri-state", "buffer", "bus driver", "output enable", "hi-z"],
     SAMP: ["sampler", "adc", "sample and hold", "quantizer"],
+    LUT: [
+      "fpga",
+      "lut",
+      "look-up table",
+      "logic cell",
+      "programmable",
+      "gate array",
+    ],
+    SPIM: ["spi", "spi master", "serial", "bus", "mosi", "sclk"],
+    SPIS: ["spi", "spi slave", "serial", "peripheral", "miso"],
+    UART: ["uart", "serial", "rs232", "tx", "rx", "async"],
     LS: ["translator", "level", "interface"],
     PU: ["regulator", "reference", "pull-up", "open-drain"],
     FP: ["fpga", "fabric", "parallel logic"],
@@ -2031,6 +2074,61 @@
       rememberConfig(selPart.kind, { loadHz: hz });
     } else setArmedAxis({ loadHz: hz });
   }
+  // Behavioral blocks (LUT / SPI / UART): the editable datum is `word` — the LUT's 16-bit truth
+  // table or a serial data word (→ the behavioral element's aux) — plus the LUT's output-register
+  // mode (→ Component.mode → params[4]). BEH_DEFWORD mirrors the per-kind default in netlist.ts
+  // (BEH_SPEC.defWord), so the inspector shows the same table the sim uses when `word` is unset.
+  const BEH_DEFWORD: Record<string, number> = {
+    LUT: 0x6666, // 2-input XOR
+    SPIM: 0xa5,
+    SPIS: 0x3c,
+    UART: 0x55,
+  };
+  function isBehavioralPart(kind: string): boolean {
+    return kind in BEH_DEFWORD;
+  }
+  // The LUT preset functions: name → 16-bit truth table (OUT = bit[IN0 | IN1<<1 | IN2<<2 | IN3<<3]).
+  const LUT_PRESETS: { name: string; table: number; hint: string }[] = [
+    { name: "XOR", table: 0x6666, hint: "IN0 ⊕ IN1" },
+    { name: "XNOR", table: 0x9999, hint: "IN0 ⊙ IN1" },
+    { name: "AND", table: 0x8888, hint: "IN0 · IN1" },
+    { name: "OR", table: 0xeeee, hint: "IN0 + IN1" },
+    { name: "NAND", table: 0x7777, hint: "¬(IN0 · IN1)" },
+    { name: "NOR", table: 0x1111, hint: "¬(IN0 + IN1)" },
+    { name: "BUF", table: 0xaaaa, hint: "OUT = IN0" },
+    { name: "NOT", table: 0x5555, hint: "OUT = ¬IN0" },
+    { name: "MAJ", table: 0xe8e8, hint: "majority(IN0, IN1, IN2)" },
+    { name: "PAR", table: 0x6996, hint: "parity — XOR of all 4 inputs" },
+    { name: "0", table: 0x0000, hint: "constant low" },
+    { name: "1", table: 0xffff, hint: "constant high" },
+  ];
+  function selWord(): number {
+    const w = selPart ? selPart.word : armedConfig.word;
+    return w ?? BEH_DEFWORD[infoKind ?? ""] ?? 0;
+  }
+  function setWord(w: number): void {
+    if (selPart) {
+      board?.setComponentWord(selPart.id, w);
+      rememberConfig(selPart.kind, { word: w });
+    } else setArmedAxis({ word: w });
+  }
+  // Parse a hex string from the truth-table / data-word field and set it, capped to the field's
+  // width (LUT 16-bit, serial 32-bit). Ignores non-hex input. Uses Math.min (not a 32-bit `&`,
+  // which would go negative on bit 31) — the maxlength already bounds the digits.
+  function setWordHex(s: string, mask: number): void {
+    const v = parseInt(s.replace(/[^0-9a-fA-F]/g, ""), 16);
+    if (!Number.isNaN(v)) setWord(Math.min(Math.max(0, v), mask));
+  }
+  // The LUT's output register, reusing Component.mode (0 = combinational, 1 = registered).
+  function selLutReg(): number {
+    return (selPart ? selPart.mode : armedConfig.mode) ?? 0;
+  }
+  function setLutReg(m: number): void {
+    if (selPart) {
+      board?.setComponentMode(selPart.id, m);
+      rememberConfig(selPart.kind, { mode: m });
+    } else setArmedAxis({ mode: m });
+  }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
   function isGatePart(kind: string): boolean {
@@ -2046,6 +2144,7 @@
       hasDiodeTypes(kind) ||
       hasLedColors(kind) ||
       isDigitalPart(kind) ||
+      isBehavioralPart(kind) ||
       kind === "PULSE" ||
       kind === "LOAD"
     );
@@ -3000,6 +3099,67 @@
           </div>
         {/if}
       {/if}
+    {/if}
+    {#if kind === "LUT"}
+      <!-- FPGA logic cell: the 16-bit truth table is the program. Presets set the common
+             functions; the hex field reaches any of the 65 536 tables (OUT = bit
+             [IN0 | IN1<<1 | IN2<<2 | IN3<<3]). The output register makes it a clocked cell. -->
+      <div class="insp-sub">function · preset</div>
+      <div class="insp-chips wrap">
+        {#each LUT_PRESETS as p (p.name)}
+          <button
+            class="chip-val {selWord() === p.table ? 'is-active' : ''}"
+            onclick={() => setWord(p.table)}
+            title={p.hint}>{p.name}</button
+          >
+        {/each}
+      </div>
+      <div class="insp-sub">truth table · hex</div>
+      <div class="insp-row">
+        <span class="mono">0x</span>
+        <input
+          class="insp-hex mono"
+          type="text"
+          spellcheck="false"
+          maxlength="4"
+          value={selWord().toString(16).toUpperCase().padStart(4, "0")}
+          aria-label="LUT truth table (hex)"
+          onchange={(e) => setWordHex(e.currentTarget.value, 0xffff)}
+        />
+      </div>
+      <div class="insp-sub">output register</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selLutReg() === 0 ? 'is-active' : ''}"
+          onclick={() => setLutReg(0)}
+          title="Output follows the table live (no clock)">Combinational</button
+        >
+        <button
+          class="chip-val {selLutReg() === 1 ? 'is-active' : ''}"
+          onclick={() => setLutReg(1)}
+          title="Output latched into a register on the rising CLK edge"
+          >Registered</button
+        >
+      </div>
+    {/if}
+    {#if kind === "SPIM" || kind === "SPIS" || kind === "UART"}
+      <!-- The data word the block sends: the SPI master's TX word / the slave's reply on
+             MISO / the UART's transmitted byte, set in hex. -->
+      <div class="insp-sub">
+        {kind === "SPIS" ? "reply word · hex" : "data word · hex"}
+      </div>
+      <div class="insp-row">
+        <span class="mono">0x</span>
+        <input
+          class="insp-hex mono"
+          type="text"
+          spellcheck="false"
+          maxlength="8"
+          value={selWord().toString(16).toUpperCase()}
+          aria-label="Serial data word (hex)"
+          onchange={(e) => setWordHex(e.currentTarget.value, 0xffffffff)}
+        />
+      </div>
     {/if}
   {/snippet}
 
@@ -5012,6 +5172,24 @@
     color: var(--accent);
     border-color: var(--accent);
     background: var(--accent-soft);
+  }
+  /* Hex entry for a behavioral block's truth table / data word. */
+  .insp-hex {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    padding: 5px 9px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .insp-hex:focus {
+    outline: none;
+    border-color: var(--accent);
   }
   .insp-more {
     margin-top: 8px;

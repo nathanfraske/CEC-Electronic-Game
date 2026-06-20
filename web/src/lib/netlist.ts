@@ -196,6 +196,8 @@ const GATE_AUX: Record<string, number> = {
 
 // Element type for a powered logic gate (the CEC composites stamp these).
 const ELEM_GATE = 17;
+// Element type for a behavioral block (LUT / SPI / UART), run by an FSM in the core.
+const ELEM_BEHAVIORAL = 25;
 
 /**
  * CEC composite logic ICs (`docs/ui/cec-teaching-ics.md`) — house teaching parts with no single
@@ -385,6 +387,36 @@ const CEC_COMP: Record<string, CecComp> = {
       { t: 17, a: 0, b: 2, c: 2, d: NI(0), e: 1, value: 5, aux: 7 },
     ],
   },
+};
+
+/**
+ * Behavioral blocks (`ELEM_BEHAVIORAL`, `docs/ui/cec-teaching-ics.md` / sim-core `BEH_PROG_*`) — a
+ * tiny FSM in the core selected by the **program id** in `value`. Each is a single 8-terminal
+ * element. `term` maps each sim terminal `a..h` to a **visual pin index** (`-1` = ground/unused), so
+ * the catalog pinout can read naturally while buildNetlist routes pins to the core's fixed terminal
+ * order. `value` is the fixed program id (NOT a logic rail); `aux` is the data word — the LUT's
+ * 16-bit truth table or the serial blocks' data word — taken from `Component.word` (default
+ * `defWord`). The LUT's combinational/registered choice rides `Component.mode` → `params[4]`.
+ */
+interface BehSpec {
+  prog: number; // program id → value (1 SPI master, 2 SPI slave, 3 UART, 4 LUT)
+  term: number[]; // length 8: terminal a..h ← visual pin index (-1 = ground/unused)
+  defWord: number; // default aux (truth table / data word) when Component.word is unset
+}
+const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
+const BEH_SPEC: Record<string, BehSpec> = {
+  // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
+  // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
+  LUT: { prog: 4, term: [0, 5, 4, 6, 7, 1, 2, 3], defWord: 0x6666 },
+  // SPI master (prog 1): a=SCLK b=MOSI c=CS d=VCC e=GND f=MISO g=START (h unused).
+  // Visual pins [SCLK, MOSI, MISO, CS, START, VCC, GND].
+  SPIM: { prog: 1, term: [0, 1, 3, 5, 6, 2, 4, -1], defWord: 0xa5 },
+  // SPI slave (prog 2): a=MISO b=RXVALID d=VCC e=GND f=SCLK g=MOSI h=CS (c unused).
+  // Visual pins [MISO, RXV, SCLK, MOSI, CS, VCC, GND].
+  SPIS: { prog: 2, term: [0, 1, -1, 5, 6, 2, 3, 4], defWord: 0x3c },
+  // UART (prog 3): a=TX b=RXVALID d=VCC e=GND f=RX g=SEND (c, h unused).
+  // Visual pins [TX, RX, RXV, SEND, VCC, GND].
+  UART: { prog: 3, term: [0, 2, -1, 4, 5, 1, 3, -1], defWord: 0x55 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
@@ -667,21 +699,23 @@ export function buildNetlist(
   // the core. Pushed in lockstep with each element stamp.
   const eArr: number[] = [];
   // The sixth/seventh/eighth-terminal arrays (`f`/`g`/`h`), parallel to the rest. ADR 0002
-  // provisioned them in the wire format; NO part uses them yet, so every entry is 0 (ground)
-  // and the core ignores them — but they MUST stay length-synced with `a`..`e` (one entry per
-  // element), so they are pushed in lockstep at every element stamp below via `pushFGH()`.
-  // This is the array-sync contract the POT regression broke for `e`; keeping the pushes in a
-  // single helper called beside every other terminal push makes a future desync hard.
+  // provisioned them in the wire format; only the behavioral blocks (`ELEM_BEHAVIORAL`) wire
+  // them — every other element leaves all three at 0 (ground), and the core ignores them. They
+  // MUST stay length-synced with `a`..`e` (one entry per element), so they are pushed in lockstep
+  // at every element stamp below via `pushFGH()`. This is the array-sync contract the POT
+  // regression broke for `e`; keeping the pushes in a single helper called beside every other
+  // terminal push makes a future desync hard.
   const fArr: number[] = [];
   const gArr: number[] = [];
   const hArr: number[] = [];
-  // Push the (currently always-ground) sixth/seventh/eighth terminals for one element. Called
-  // once per element, right beside its `a`..`e` pushes, so all eight terminal arrays advance
-  // together and stay exactly `types.length` long.
-  const pushFGH = (): void => {
-    fArr.push(0);
-    gArr.push(0);
-    hArr.push(0);
+  // Push the sixth/seventh/eighth terminals for one element (default ground). Called once per
+  // element, right beside its `a`..`e` pushes, so all eight terminal arrays advance together and
+  // stay exactly `types.length` long. The behavioral branch passes real f/g/h nodes; everyone
+  // else calls it bare (all three ground).
+  const pushFGH = (nf = 0, ng = 0, nh = 0): void => {
+    fArr.push(nf);
+    gArr.push(ng);
+    hArr.push(nh);
   };
   const values: number[] = [];
   // The second per-element scalar, parallel to `values`: an AC source's peak
@@ -868,6 +902,31 @@ export function buildNetlist(
       continue;
     }
 
+    // Behavioral block (LUT / SPI / UART): a single ELEM_BEHAVIORAL using all eight terminals.
+    // `value` = the fixed program id; `aux` = the data word (Component.word, default per kind);
+    // the visual pins route to the core's terminal order a..h via BEH_SPEC.term (-1 → ground).
+    // The LUT's combinational/registered mode rides Component.mode → params[4] (in the params loop).
+    const beh = BEH_SPEC[c.kind];
+    if (beh) {
+      const nodeOfPin = (pinIdx: number): number =>
+        pinIdx < 0 ? 0 : (nodeIndex.get(find(key(c.id, pinIdx))) ?? 0);
+      const tm = beh.term;
+      const ei = types.length;
+      types.push(ELEM_BEHAVIORAL);
+      aArr.push(nodeOfPin(tm[0]!));
+      bArr.push(nodeOfPin(tm[1]!));
+      cArr.push(nodeOfPin(tm[2]!));
+      dArr.push(nodeOfPin(tm[3]!)); // VCC
+      eArr.push(nodeOfPin(tm[4]!)); // GND
+      pushFGH(nodeOfPin(tm[5]!), nodeOfPin(tm[6]!), nodeOfPin(tm[7]!));
+      values.push(beh.prog);
+      auxArr.push(c.word ?? beh.defWord);
+      elemOfComponent.set(c.id, ei);
+      // vAcross read as the primary output (terminal a) relative to the GND pin (terminal e).
+      nodesOfComponent.set(c.id, [nodeOfPin(tm[0]!), nodeOfPin(tm[4]!)]);
+      continue;
+    }
+
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
     // The third terminal: any device with a pin 2 stamps it as node c. For a 3-pin
@@ -983,11 +1042,11 @@ export function buildNetlist(
       }
       continue;
     }
-    // A CEC composite is a network of powered gates between its pins: for the
-    // return-path test treat the whole IC as one connected blob (its powered output and
-    // rails tie its nodes together), so a source returning through any pin finds a path —
+    // A CEC composite (a network of powered gates) or a behavioral block (a powered IC):
+    // for the return-path test treat the whole IC as one connected blob (its powered output
+    // and rails tie its nodes together), so a source returning through any pin finds a path —
     // the same spirit as the EC/POT passive-path unions above.
-    if (CEC_COMP[c.kind]) {
+    if (CEC_COMP[c.kind] || BEH_SPEC[c.kind]) {
       for (const p of kind.pins) {
         const np = nodeIndex.get(find(key(c.id, p.index)));
         if (np !== undefined) u2(na, np);
@@ -1058,6 +1117,14 @@ export function buildNetlist(
   // when non-zero — so a gate-free (or unpowered-legacy) circuit keeps its old signature,
   // while wiring/rewiring a gate's power pins rebuilds the sim.
   const eSig = eArr.some((x) => x !== 0) ? eArr.join(",") : "";
+  // The sixth/seventh/eighth terminals `f`/`g`/`h` (a behavioral block's serial/LUT inputs)
+  // fold in the same way, and only when non-zero — so every behavioral-free circuit keeps its
+  // exact old signature, while rewiring a LUT input or a SPI/UART line rebuilds the sim. Without
+  // these, moving a behavioral input wire would not change a/b/c/values/aux and the stale sim
+  // would not reinstall.
+  const fSig = fArr.some((x) => x !== 0) ? fArr.join(",") : "";
+  const gSig = gArr.some((x) => x !== 0) ? gArr.join(",") : "";
+  const hSig = hArr.some((x) => x !== 0) ? hArr.join(",") : "";
 
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
@@ -1114,6 +1181,11 @@ export function buildNetlist(
       params[ei * PARAM_STRIDE + 0] = comp.loadHz!;
       params[ei * PARAM_STRIDE + 3] = comp.duty ?? 0.5;
     }
+    // FPGA logic cell: combinational by default; mode = 1 latches the LUT output into the
+    // cell's register on the rising CLK edge (params slot 4 ≥ 1 → registered in sim-core).
+    if (comp.kind === "LUT" && (comp.mode ?? 0) >= 1) {
+      params[ei * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1;
+    }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op
   // string when nothing tiered is placed, so plain circuits keep their old signature).
@@ -1141,6 +1213,9 @@ export function buildNetlist(
     (auxSig ? "|aux:" + auxSig : "") +
     (dSig ? "|d:" + dSig : "") +
     (eSig ? "|e:" + eSig : "") +
+    (fSig ? "|f:" + fSig : "") +
+    (gSig ? "|g:" + gSig : "") +
+    (hSig ? "|h:" + hSig : "") +
     paramsSig;
 
   return {

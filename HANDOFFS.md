@@ -5,6 +5,50 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (72) — Web wiring chunk 4: behavioral blocks (LUT / SPI / UART) — WIRING COMPLETE
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The last unplaceable family is now placeable:
+the four **behavioral blocks** (`ELEM_BEHAVIORAL`, sim type 25) — **LUT** (FPGA logic cell), **SPIM**
+(SPI master), **SPIS** (SPI slave), **UART**. Full gate green: cargo fmt + 182 sim-core tests (golden
+intact — no Rust changes), build:wasm, web check/lint/build. Netlist + term maps reviewed by me against
+the authoritative sim-core contract and the known-good `lut_comb` test caller.
+
+**The f/g/h boundary (the determinism-adjacent bit, done carefully):**
+- `pushFGH(nf=0, ng=0, nh=0)` generalized (defaults keep every existing caller ground = golden-safe).
+- **Added `fSig`/`gSig`/`hSig` to the netlist signature** (they were MISSING — only d/e had sigs). Without
+  them, rewiring a LUT input / SPI line wouldn't change a/b/c/values/aux and the stale sim wouldn't
+  reinstall. All-zero today → empty sig → bit-identical signature for every behavioral-free circuit.
+- `loop.ts` + `set_netlist_pefgh` were ALREADY wired (route on `hasF||hasG||hasH`) — no boundary change.
+
+**The parts (data-driven, like CEC):** `BEH_SPEC[kind] = { prog, term[8], defWord }` in `netlist.ts`.
+`term` maps each sim terminal a..h ← a **visual pin index** (-1 = ground/unused), so catalog pinouts read
+naturally while buildNetlist routes to the core's fixed terminal order. A dedicated behavioral branch
+emits ONE `ELEM_BEHAVIORAL`: `value` = the fixed program id (NOT a rail; behavioral kinds are absent from
+the value lists → no value picker), `aux` = `Component.word` (NEW field — the LUT 16-bit truth table / the
+serial data word; round-trips via serialize's `...c`), `params[4]` = LUT mode (Component.mode reused).
+Behavioral ICs join the floating-source blob-union (CEC_COMP || BEH_SPEC). Term maps (verified):
+LUT [0,5,4,6,7,1,2,3]; SPIM [0,1,3,5,6,2,4,-1]; SPIS [0,1,-1,5,6,2,3,4]; UART [0,2,-1,4,5,1,3,-1].
+
+**The LUT editor (owner chose presets + hex):** in the `partConfig` snippet (dual-target arm-time +
+selected). `LUT_PRESETS` (XOR/XNOR/AND/OR/NAND/NOR/BUF/NOT/MAJ/PAR/0/1 → 16-bit tables, all hand-verified)
++ a hex field (`.insp-hex`, `setWordHex` uses Math.min not 32-bit `&` to avoid the bit-31 sign trap) +
+a combinational/registered toggle. Serial blocks get a hex data-word field. New board method
+`setComponentWord`. No bespoke glyphs (generic IC-card). Full 7-file pattern (graph/netlist/board/App/
+partInfo/codex; no values.ts — no value picker).
+
+**Session total: 16 parts wired** — 3 mixed-signal (SAMP/ASW/CMP) + 9 CEC composites + 4 behavioral.
+**The web-wiring backlog from entry 69 is now CLEARED.**
+
+**NEXT (smaller follow-ups, none blocking):**
+1. **Comparator 6-pin LATCHED variant** (LE = terminal f) — now unblocked (f-emission exists). Needs an
+   unconnected-pin check so an unwired LE ≠ ground-latched.
+2. SPI/UART **config knobs** (nbits, SPI half-period, UART baud) are sim params today left at defaults —
+   could expose inspector chips later (params[0]/[1]). Subtick rate (params[2]) likewise.
+3. Optional bespoke **glyphs/refsheets** for the new parts (they use the generic card today); the 555
+   refsheet draft is validated + awaiting the owner's "final".
+
+---
+
 ## 2026-06-20 (71) — Web wiring chunk 3: CEC combinational composites (the macro machinery)
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built the **CEC composition-macro machinery**

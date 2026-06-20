@@ -151,6 +151,16 @@ export interface Component {
    * source's `params[0]`). Undefined → static. Optional so older snapshots round-trip.
    */
   loadHz?: number;
+  /**
+   * The **data word** of a behavioral block, interpreted per kind: for the FPGA logic cell
+   * (`"LUT"`) it is the 16-bit **truth table** (output = bit `IN0 | IN1<<1 | IN2<<2 | IN3<<3`);
+   * for the serial blocks (`"SPIM"`, `"SPIS"`, `"UART"`) it is the **data word** they transmit
+   * (the SPI TX/reply word, the UART byte). {@link buildNetlist} writes it into the behavioral
+   * element's `aux`. Only the behavioral kinds read it; others ignore it. Undefined → the kind's
+   * default (the LUT a 2-input XOR table, the serial blocks a sample byte), so older snapshots and
+   * untouched parts round-trip unchanged.
+   */
+  word?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
@@ -942,6 +952,89 @@ export const PART_KINDS: Record<string, PartKind> = {
     [pin("OUT", 2, 1), pin("IN", 0, 0), pin("CLK", 0, 2)],
     2.5,
     "V",
+    true,
+  ),
+  // --- Behavioral blocks (ELEM_BEHAVIORAL, sim type 25) -----------------------
+  // Programmable/protocol ICs run by a tiny FSM in the core, selected by the program id
+  // in `value` (LUT 4, SPI master 1, SPI slave 2, UART 3). They use all 8 terminals
+  // (a..h), so buildNetlist routes the visual pins to terminals via BEH_SPEC.term and
+  // emits f/g/h. `value` is the (fixed) program id — NOT a logic rail and NOT in the
+  // value lists, so there is no value picker; the editable datum is `Component.word`
+  // (→ aux: the LUT truth table / the serial data word). Generic IC-card glyph. Violet.
+  // FPGA logic cell: a 4-input look-up table (any function of 4 inputs) + optional output
+  // register. a=OUT, b=CLK, c=IN3, d=VCC, e=GND, f=IN0, g=IN1, h=IN2.
+  LUT: kind(
+    "LUT",
+    "FPGA Logic Cell",
+    "violet",
+    [
+      pin("OUT", 2, 1),
+      pin("I0", 0, 0),
+      pin("I1", 0, 1),
+      pin("I2", 0, 2),
+      pin("I3", 0, 3),
+      pin("CLK", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    4,
+    "",
+    true,
+  ),
+  // SPI master (Mode 0): drives the bus and clocks a word out on a START edge.
+  // a=SCLK, b=MOSI, c=CS, d=VCC, e=GND, f=MISO, g=START.
+  SPIM: kind(
+    "SPIM",
+    "SPI Master",
+    "violet",
+    [
+      pin("SCLK", 2, 0),
+      pin("MOSI", 2, 1),
+      pin("MISO", 0, 1),
+      pin("CS", 2, 2),
+      pin("START", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 0, 0),
+    ],
+    1,
+    "",
+    true,
+  ),
+  // SPI slave (Mode 0): clocked by the master, shifts its reply word out on MISO.
+  // a=MISO, b=RXVALID, d=VCC, e=GND, f=SCLK, g=MOSI, h=CS.
+  SPIS: kind(
+    "SPIS",
+    "SPI Slave",
+    "violet",
+    [
+      pin("MISO", 2, 0),
+      pin("RXV", 2, 1),
+      pin("SCLK", 0, 0),
+      pin("MOSI", 0, 1),
+      pin("CS", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    2,
+    "",
+    true,
+  ),
+  // UART (async, full-duplex): frames a byte out on a SEND edge, receives on RX.
+  // a=TX, b=RXVALID, d=VCC, e=GND, f=RX, g=SEND.
+  UART: kind(
+    "UART",
+    "UART",
+    "violet",
+    [
+      pin("TX", 2, 0),
+      pin("RX", 0, 0),
+      pin("RXV", 2, 1),
+      pin("SEND", 0, 1),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    3,
+    "",
     true,
   ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,

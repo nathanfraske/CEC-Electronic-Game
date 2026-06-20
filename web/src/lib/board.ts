@@ -318,6 +318,10 @@ export interface SelectedPart {
   /** The electronic load's dynamic step frequency in Hz (0 = static; > 0 steps base→peak current).
    * Undefined → static. Only kind `"LOAD"` in CC mode uses it. */
   loadHz?: number;
+  /** A behavioral block's data word: the LUT's 16-bit truth table or a SPI/UART data word
+   * (→ the behavioral element's aux). Undefined → the kind's default. Only the behavioral
+   * kinds (`"LUT"`, `"SPIM"`, `"SPIS"`, `"UART"`) use it. */
+  word?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -1954,6 +1958,7 @@ export class Board {
           duty: c.duty,
           mode: c.mode,
           loadHz: c.loadHz,
+          word: c.word,
         };
     }
     this.cb.onSelect?.({
@@ -2139,6 +2144,22 @@ export class Board {
     c.loadHz = hz;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed step frequency
+  }
+
+  /**
+   * Set a behavioral block's **data word** (the LUT's 16-bit truth table, or a SPI/UART data
+   * word) from the inspector. Written into the behavioral element's `aux` by {@link buildNetlist}
+   * (folded into the netlist signature, so the sim reinstalls), so this rebuilds the netlist.
+   * No-op if unchanged.
+   */
+  setComponentWord(id: number, word: number): void {
+    const c = this.graph.components.get(id);
+    const next = Math.round(word);
+    if (!c || c.word === next) return;
+    this.pushUndo(this.graph.serialize());
+    c.word = next;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed word
   }
 
   /** Re-emit the current graph through `onChange` without any edit — used when the
