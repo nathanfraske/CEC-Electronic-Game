@@ -5,6 +5,27 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (66) — JK/T flip-flop refsheet guidesheet drafted (design-agent brief)
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted a standalone build brief
+for the design agent → `docs/ui/parts/jkff-guidesheet.md` (target output `jkff-ic.html`).
+
+**Key guidance captured:** build the JK from **`dff-ic.html`** (the sequential master-slave template),
+NOT `inv-ic.html` (the combinational pattern in ic-glyph-spec §8 doesn't fit an edge-triggered part).
+Reuse the D-FF master-slave core in all 5 tiers; add only the **JK steering front-end**
+(`D = J·Q̄ + K̄·Q`) + the **Q/Q̄ feedback** (the toggle path) + a 2nd input + the T-mode tie. The
+unifying thread: "a JK is a D-FF whose D is steered by its own output." Covers: CEC3076 pinout/package
+(7-pin SC70-8), the edge-triggered live model, per-tier arc, controls (J/K/T + clock, timing-diagram
+scope — no analog vin/vt), the sim mapping (ELEM_DFF + steering gates), the §10 gates, and an explicit
+**don't-repeat-the-leftover-`<title>`-bug** note (bit both dff-ic and buf-ic on landing).
+
+**House parts spec'd + ready to draw:** CEC2064 (LUT, has spec in cec-teaching-ics.md), CEC3076 (JK/T,
+now has BOTH the catalog spec AND this full design-agent guidesheet). 555 exemplar verified. The
+guidesheet format is reusable — if the owner wants the LUT or 555 as a design-agent brief too, mirror
+`jkff-guidesheet.md`.
+
+---
+
 ## 2026-06-20 (65) — CEC3076 JK/T flip-flop spec authored
 
 **State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Authored the JK/T flip-flop as a
