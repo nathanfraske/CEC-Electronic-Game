@@ -252,6 +252,15 @@ export interface BuiltNetlist {
    * wins (deterministic). Nodes with no label are absent from the map.
    */
   nodeNames: Map<number, string>;
+  /**
+   * Pinned colour (a PIXI hex int) per node index, for nodes whose {@link NetLabel}
+   * carries a `color`. Built in parallel with {@link nodeNames} off the same
+   * authoritative node numbering — so the override survives the renderer's wire-hop
+   * BFS (it's keyed on the final node index). Lowest label id wins, mirroring the
+   * name rule. Nodes with no colour-bearing label are absent. Render-side only:
+   * never crosses the wasm boundary, never enters the snapshot hash.
+   */
+  nodeColors: Map<number, number>;
   /** Current-source component ids whose forced current has no return path. */
   floatingSources: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
@@ -388,10 +397,19 @@ export function buildNetlist(
   // when two *different* names land on one physical net the lowest label id wins
   // (the `labels` list is sorted by id and we keep the first name set per node),
   // which is deterministic. This is what lets the scope/telemetry show `VCC`.
+  // Net colour override per node: built in parallel with the names off the same
+  // resolved node index, so a pinned label colour follows its net through the
+  // renderer's wire-hop BFS. Same lowest-id-wins rule as the names (labels sorted
+  // by id; keep the first colour set per node). Render-side only — never crosses
+  // the wasm boundary; the override paints the wire but does not affect the solve.
   const nodeNames = new Map<number, string>();
+  const nodeColors = new Map<number, number>();
   for (const l of labels) {
     const node = nodeIndex.get(find(endpointKey(l.at)));
-    if (node !== undefined && !nodeNames.has(node)) nodeNames.set(node, l.name);
+    if (node === undefined) continue;
+    if (!nodeNames.has(node)) nodeNames.set(node, l.name);
+    if (l.color !== undefined && !nodeColors.has(node))
+      nodeColors.set(node, l.color);
   }
 
   const types: number[] = [];
@@ -822,6 +840,7 @@ export function buildNetlist(
     legsOfComponent,
     nodesOfComponent,
     nodeNames,
+    nodeColors,
     floatingSources,
     sig,
   };

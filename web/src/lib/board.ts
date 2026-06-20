@@ -394,6 +394,9 @@ export interface BoardCallbacks {
       id: number | null;
       at: Endpoint;
       initial: string;
+      /** The label's pinned colour (PIXI hex int) when editing one that has one, so
+       * the HUD swatch shows the current value; null for a new label or an unpinned one. */
+      initialColor: number | null;
       rect: AnchorRect;
     } | null,
   ) => void;
@@ -490,6 +493,11 @@ export class Board {
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
   private netNames = new Map<number, string>();
+  // Per-node pinned colour overrides (node index → PIXI hex int) from the net
+  // labels' `color`. When a node is present here the renderer paints its whole net
+  // this colour instead of the voltage colour. Refreshed on rebuild (setNodeColors);
+  // honoured at every colour choke-point via nodeColor/endpointColor. Render-only.
+  private nodeColorOverrides = new Map<number, number>();
 
   private w = 0;
   private h = 0;
@@ -1161,6 +1169,13 @@ export class Board {
    * so the scope legend shows `VCC` instead of `Node 3` for a labelled net. */
   setNetNames(map: Map<number, string> | null): void {
     this.netNames = map ? new Map(map) : new Map();
+  }
+
+  /** Install the per-node colour overrides (node index → PIXI hex int) from the
+   * netlist's labelled-net colours, so a pinned net paints its chosen colour
+   * instead of its voltage colour. Refreshed whenever the netlist rebuilds. */
+  setNodeColors(map: Map<number, number> | null): void {
+    this.nodeColorOverrides = map ? new Map(map) : new Map();
   }
 
   /**
@@ -2183,13 +2198,15 @@ export class Board {
   }
 
   /**
-   * Commit the open net-label editor with `name` (from the HUD input). For a new
-   * label (pending id null) it adds one at the pending endpoint; for an existing
-   * one it renames it (an empty name removes it — see {@link BoardGraph}). No-op if
-   * nothing meaningful changed (e.g. an empty name on a not-yet-created label), so
-   * a stray blur doesn't push an empty undo. Closes the editor either way.
+   * Commit the open net-label editor with `name` (from the HUD input) and an optional
+   * pinned net `color` (a PIXI hex int; `undefined` ⇒ "Auto", the voltage colour). For
+   * a new label (pending id null) it adds one at the pending endpoint carrying the
+   * colour; for an existing one it renames it (an empty name removes it — see
+   * {@link BoardGraph}) and updates its colour. No-op if nothing meaningful changed
+   * (name AND colour unchanged, or an empty name on a not-yet-created label), so a
+   * stray blur doesn't push an empty undo. Closes the editor either way.
    */
-  commitLabel(name: string): void {
+  commitLabel(name: string, color?: number): void {
     const pending = this.pendingLabel;
     this.endLabelEdit();
     if (!pending) return;
@@ -2197,15 +2214,23 @@ export class Board {
     if (pending.id === null) {
       if (!trimmed) return; // nothing to add (empty name on a not-yet-created label)
       this.pushUndo(this.graph.serialize());
-      const l = this.graph.addNetLabel(pending.at, trimmed, pending.pos);
+      const l = this.graph.addNetLabel(pending.at, trimmed, pending.pos, color);
       this.redrawWires();
       if (l) this.selectLabel(l.id, false);
       this.cb.onChange?.(this.graph);
     } else {
       const existing = this.graph.netLabels.get(pending.id);
-      if (existing && existing.name === trimmed) return; // unchanged
+      // Unchanged ⇒ skip the undo entry: both the name and the pinned colour match.
+      if (existing && existing.name === trimmed && existing.color === color) {
+        return;
+      }
       this.pushUndo(this.graph.serialize());
       this.graph.renameNetLabel(pending.id, trimmed);
+      // renameNetLabel removes the label when the name is empty; only recolour a
+      // label that still exists (a non-empty name).
+      if (this.graph.netLabels.has(pending.id)) {
+        this.graph.setNetLabelColor(pending.id, color);
+      }
       this.redrawWires();
       this.cb.onChange?.(this.graph);
     }
@@ -2254,6 +2279,7 @@ export class Board {
       id: existing?.id ?? null,
       at: { ...at },
       initial: existing?.name ?? "",
+      initialColor: existing?.color ?? null,
       rect,
     });
   }
@@ -2413,11 +2439,28 @@ export class Board {
     return (this.nodeVmean[node] ?? 0) >= 0 ? rms : -rms;
   }
 
-  /** The colour-voltage ({@link nodeColorVoltage}) of the net an endpoint sits on, or `null`
-   * for an unconnected endpoint — the colour twin of {@link pinVoltage}. */
-  private colorVoltage(ep: Endpoint): number | null {
+  /**
+   * The display colour of a net node: its pinned override (a labelled net's `color`)
+   * when set, else its rail-identity voltage colour ({@link nodeColorVoltage} →
+   * {@link voltageColor}). The single colour choke-point — every wire/gauge/junction/
+   * label colour routes through here (or {@link endpointColor}) so the override is
+   * honoured in exactly one place. Magnitude/voltage logic at the call sites is
+   * unaffected; only the hue is overridden.
+   */
+  private nodeColor(node: number): number {
+    const ov = this.nodeColorOverrides.get(node);
+    return ov ?? voltageColor(this.nodeColorVoltage(node));
+  }
+
+  /**
+   * The display colour of the net an endpoint sits on — {@link nodeColor} of its
+   * resolved node, or {@link PALETTE.cyan} for an unconnected endpoint (matching the
+   * renderer's prior null-net default at every colour site). The colour twin of
+   * {@link pinVoltage}.
+   */
+  private endpointColor(ep: Endpoint): number {
     const node = this.endpointNode(ep);
-    return node === null ? null : this.nodeColorVoltage(node);
+    return node === null ? PALETTE.cyan : this.nodeColor(node);
   }
 
   private pinNode(ref: PinRef): number | null {
@@ -3758,8 +3801,10 @@ export class Board {
           });
         const node = this.endpointNode(w.from);
         nets.set(w.id, node);
-        const nv = node === null ? null : this.nodeColorVoltage(node);
-        wireColor.set(w.id, nv === null ? PALETTE.cyan : voltageColor(nv));
+        wireColor.set(
+          w.id,
+          node === null ? PALETTE.cyan : this.nodeColor(node),
+        );
       }
       nudgeParallel(condRoutes);
       // Follow-pass: each junction's shift = the perpendicular offset its runs picked up
@@ -3835,8 +3880,8 @@ export class Board {
       }
       // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the
       // instantaneous value — steady on AC at every speed, so the hue never strobes 0↔peak.
-      const cv = this.colorVoltage(w.from);
-      const color = cv === null ? PALETTE.cyan : voltageColor(cv);
+      // A pinned net-label colour overrides this (endpointColor); else it's the rail hue.
+      const color = this.endpointColor(w.from);
       // The INSTANTANEOUS net voltage stays the energy-flow direction (the power v·i sign that
       // sloshes the energy belt) — that reversal SHOULD track the live cycle, unlike the hue.
       const v = this.pinVoltage(w.from);
@@ -4243,7 +4288,9 @@ export class Board {
       });
 
       const { vrms, vmean, vmin, vmax } = this.netVStats(node);
-      const color = voltageColor(this.nodeColorVoltage(node));
+      // Tint by the net's pinned colour override when set, else the rail voltage
+      // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
+      const color = this.nodeColor(node);
 
       // Bipolar AC ⇒ centre-zero: swings through ground AND the DC mean is small versus the
       // swing. Otherwise unipolar, growing from the base outward (the rail-identity colour
@@ -4396,7 +4443,9 @@ export class Board {
       };
 
       const { vrms, vmean, vmin, vmax } = this.netVStats(node);
-      const color = voltageColor(this.nodeColorVoltage(node));
+      // Tint by the net's pinned colour override when set, else the rail voltage
+      // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
+      const color = this.nodeColor(node);
 
       // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline): swings through
       // ground AND the DC mean is small versus the swing — the SAME test the LED bar uses.
@@ -4659,8 +4708,7 @@ export class Board {
       // Use the nudged hub position when its runs were fanned into lanes (so the hub
       // sits on its pipes), else the plain cell.
       const p = junctionPos.get(j.id) ?? this.cellToWorld(j.cell);
-      const v = this.colorVoltage({ junctionId: j.id });
-      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const color = this.endpointColor({ junctionId: j.id });
       const hot = this.selectedJunctions.has(j.id);
       if (conduit) {
         this.drawJunctionConduit(
@@ -4754,8 +4802,7 @@ export class Board {
       const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
-      const v = this.colorVoltage(l.at);
-      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const color = this.endpointColor(l.at);
       const t = this.netLabelText(ti++);
       const editing = this.editingLabelId === l.id;
       t.text = l.name;

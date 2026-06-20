@@ -266,6 +266,14 @@ export interface NetLabel {
    * leader stay pinned to what it names. Absent ⇒ the default up-and-right offset.
    */
   tagOff?: { dx: number; dy: number };
+  /**
+   * Optional pinned colour (a PIXI hex int, e.g. a {@link PALETTE} value) for the
+   * net this label names. When set, the renderer paints the whole net this colour
+   * instead of deriving it from voltage (see `nodeColors` in {@link buildNetlist}
+   * and the colour choke-points in `board.ts`). Absent ⇒ the default voltage colour.
+   * Render-side only: never crosses the wasm boundary, never enters the snapshot hash.
+   */
+  color?: number;
 }
 
 /**
@@ -1337,7 +1345,12 @@ export class BoardGraph {
    * stale endpoint, an empty name, or a duplicate label already on that exact
    * endpoint (one label per point). Returns the new label, or undefined.
    */
-  addNetLabel(at: Endpoint, name: string, pos?: Cell): NetLabel | undefined {
+  addNetLabel(
+    at: Endpoint,
+    name: string,
+    pos?: Cell,
+    color?: number,
+  ): NetLabel | undefined {
     const n = name.trim();
     if (!n) return undefined;
     if (!this.endpointExists(at)) return undefined;
@@ -1350,6 +1363,7 @@ export class BoardGraph {
       name: n,
       at: { ...at },
       ...(pos ? { pos: { ...pos } } : {}),
+      ...(color !== undefined ? { color } : {}),
     };
     this.netLabels.set(label.id, label);
     return label;
@@ -1380,6 +1394,18 @@ export class BoardGraph {
       return;
     }
     l.name = n;
+  }
+
+  /**
+   * Pin (or clear) a net label's colour. `undefined` reverts the net to its
+   * default voltage colour; a PIXI hex int forces the whole net that colour.
+   * Render-side only (see {@link NetLabel.color}); the caller pushes undo.
+   */
+  setNetLabelColor(id: number, color: number | undefined): void {
+    const l = this.netLabels.get(id);
+    if (!l) return;
+    if (color === undefined) delete l.color;
+    else l.color = color;
   }
 
   /** Remove a net label, then tidy any junction it was the sole reason to keep. */
@@ -1435,6 +1461,7 @@ export class BoardGraph {
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
+        ...(l.color !== undefined ? { color: l.color } : {}),
       })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
@@ -1468,6 +1495,7 @@ export class BoardGraph {
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
+        ...(l.color !== undefined ? { color: l.color } : {}),
       });
     }
     for (const w of s.wires) {

@@ -36,6 +36,7 @@
   import {
     BoardGraph,
     formatValue,
+    PALETTE,
     PART_KINDS,
     AC_DEFAULT_AMP,
     loadUnit,
@@ -706,6 +707,10 @@
     rect: AnchorRect;
   } | null>(null);
   let labelEditValue = $state("");
+  // The colour the open editor's net is pinned to (PIXI hex int), or null for
+  // "Auto" (the default voltage colour). Seeded from the existing label when the
+  // editor opens; threaded back through commitLabel on commit.
+  let labelEditColor = $state<number | null>(null);
   let labelInput = $state<HTMLInputElement>();
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
@@ -1405,6 +1410,9 @@
         // Surface the net-label names (node index → name) so the scope legend and
         // the telemetry "Nodes" list can show `VCC` instead of `Node 3`.
         board?.setNetNames(nl ? nl.nodeNames : null);
+        // Surface the per-net colour overrides (node index → PIXI hex int) so a
+        // labelled net paints its pinned colour instead of its voltage colour.
+        board?.setNodeColors(nl ? nl.nodeColors : null);
         netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
           // Pass the control-terminal array `c` (MOSFET gate / gate IN2; 0 for 2-pin
@@ -1518,6 +1526,8 @@
           if (req) {
             labelEdit = { id: req.id, initial: req.initial, rect: req.rect };
             labelEditValue = req.initial;
+            // Seed the swatch from the label's pinned colour (null ⇒ Auto).
+            labelEditColor = req.initialColor;
             // Focus + select the input next tick, once it has rendered.
             setTimeout(() => labelInput?.focus(), 0);
           } else {
@@ -2251,9 +2261,26 @@
     board?.setNodeLabel(i, name);
   }
   // --- net-label inline editor (Label tool) ---
+  // Swatch presets for pinning a net's colour: sourced from the renderer's own
+  // PALETTE (the design-system signal set, the same hexes the wires use) so a
+  // chosen swatch matches the net it paints. No raw hex invented here.
+  const NET_LABEL_SWATCHES: { name: string; hex: number }[] = [
+    { name: "Rose", hex: PALETTE.accent },
+    { name: "Violet", hex: PALETTE.violet },
+    { name: "Cyan", hex: PALETTE.cyan },
+    { name: "Green", hex: PALETTE.ok },
+    { name: "Amber", hex: PALETTE.warn },
+    { name: "Bronze", hex: PALETTE.bronze },
+    { name: "Red", hex: PALETTE.bad },
+  ];
+  // A PIXI hex int → a CSS `#rrggbb` string, for the swatch background.
+  function cssHex(n: number): string {
+    return "#" + (n & 0xffffff).toString(16).padStart(6, "0");
+  }
   function commitLabelEdit(): void {
     if (!labelEdit) return;
-    board?.commitLabel(labelEditValue);
+    // null ⇒ "Auto": pass undefined so the net reverts to its voltage colour.
+    board?.commitLabel(labelEditValue, labelEditColor ?? undefined);
     labelEdit = null;
   }
   function cancelLabelEdit(): void {
@@ -3115,19 +3142,58 @@
       {/if}
 
       {#if labelEdit}
-        <input
-          bind:this={labelInput}
-          class="net-label-input mono"
+        <div
+          class="net-label-editor"
           style="left: {labelEdit.rect.x}px; top: {labelEdit.rect.y}px;"
-          bind:value={labelEditValue}
-          placeholder="net name"
-          maxlength="24"
-          spellcheck="false"
-          autocomplete="off"
-          onkeydown={onLabelKey}
-          onblur={commitLabelEdit}
-          aria-label="Net label name"
-        />
+        >
+          <input
+            bind:this={labelInput}
+            class="net-label-input mono"
+            bind:value={labelEditValue}
+            placeholder="net name"
+            maxlength="24"
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onLabelKey}
+            onblur={commitLabelEdit}
+            aria-label="Net label name"
+          />
+          <!-- Pin a colour to this net (overrides the voltage colour). The swatches
+               are the renderer PALETTE so the chip matches the wire it paints; "Auto"
+               clears the override. onpointerdown + preventDefault keeps the input
+               focused so its blur-commit doesn't fire mid-click. -->
+          <div class="net-label-swatches">
+            <button
+              type="button"
+              class="net-swatch net-swatch-auto {labelEditColor === null
+                ? 'is-active'
+                : ''}"
+              title="Auto (voltage colour)"
+              aria-label="Auto net colour (voltage)"
+              aria-pressed={labelEditColor === null}
+              onpointerdown={(e) => {
+                e.preventDefault();
+                labelEditColor = null;
+              }}>A</button
+            >
+            {#each NET_LABEL_SWATCHES as sw (sw.hex)}
+              <button
+                type="button"
+                class="net-swatch {labelEditColor === sw.hex
+                  ? 'is-active'
+                  : ''}"
+                style="--sw: {cssHex(sw.hex)};"
+                title={sw.name}
+                aria-label="{sw.name} net colour"
+                aria-pressed={labelEditColor === sw.hex}
+                onpointerdown={(e) => {
+                  e.preventDefault();
+                  labelEditColor = sw.hex;
+                }}
+              ></button>
+            {/each}
+          </div>
+        </div>
       {/if}
 
       {#if buildEx}
@@ -4504,11 +4570,16 @@
     border-color: var(--accent);
   }
 
-  /* Inline net-label name editor: a small input floated over the board at the
-     labelled endpoint (Label tool). On-brand mono, accent focus ring. */
-  .net-label-input {
+  /* Inline net-label editor: a small name input + a colour-pin swatch row, floated
+     over the board at the labelled endpoint (Label tool). On-brand mono. */
+  .net-label-editor {
     position: absolute;
     z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .net-label-input {
     width: 116px;
     padding: 3px 7px;
     font-family: var(--font-mono);
@@ -4527,6 +4598,47 @@
   .net-label-input:focus {
     outline: none;
     border-color: var(--accent);
+  }
+  /* Swatch row: preset colours to pin to the net, plus an "Auto" (clear) chip.
+     The active swatch is ringed; colours come from the PALETTE (the wire hues). */
+  .net-label-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 4px 5px;
+    background: oklch(0.165 0.028 285 / 0.97);
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    box-shadow: 0 8px 22px -10px #000;
+  }
+  .net-swatch {
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--sw, transparent);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .net-swatch:hover {
+    border-color: var(--text);
+  }
+  .net-swatch.is-active {
+    border-color: var(--text);
+    box-shadow: 0 0 0 1px var(--text);
+  }
+  /* The "Auto" chip carries a glyph, not a colour fill. */
+  .net-swatch-auto {
+    display: grid;
+    place-items: center;
+    color: var(--dim);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .net-swatch-auto.is-active {
+    color: var(--text);
   }
 
   /* Telemetry node controls: per-node scope visibility + rename, scope sizer. */
