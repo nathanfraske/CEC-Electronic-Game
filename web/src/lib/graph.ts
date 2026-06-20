@@ -346,6 +346,20 @@ export const PART_KINDS: Record<string, PartKind> = {
     true,
   ),
   R: kind("R", "Resistor", "bronze", twoPin("A", "B"), 1000, "Ω", true),
+  // Current-sense shunt: a precision *milliohm* resistor placed in series with a load so the
+  // small voltage across it (V = I·R) reads the current through it. Electrically a plain resistor
+  // (buildNetlist maps it to ELEM_RESISTOR), so it inherits the Real-mode lead inductance — and
+  // because its R is tiny, the ωL term swings the phase visibly at high frequency (a normal
+  // resistor's stays ~0°). Bronze, the resistor family.
+  SHUNT: kind(
+    "SHUNT",
+    "Current Shunt",
+    "bronze",
+    twoPin("A", "B"),
+    0.01,
+    "Ω",
+    true,
+  ),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
   // is the capacitance (F); the ESR is fixed in the netlist. Pins are polarized

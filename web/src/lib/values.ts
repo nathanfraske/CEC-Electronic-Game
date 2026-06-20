@@ -73,6 +73,10 @@ const CURATED_FULL: Record<string, number[]> = {
   POT: [100, 500, 1e3, 2e3, 5e3, 10e3, 20e3, 50e3, 100e3, 250e3, 500e3, 1e6],
   // Electrolytic capacitance (F): the common bulk values, 10 µF … 1000 µF.
   EC: [10e-6, 22e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
+  // Current-sense shunt resistance (Ω): the precision milliohm range, 1 mΩ … 250 mΩ. The low value
+  // is the point — you read the current from the small V across it (V = I·R), and at high frequency
+  // its ~10 nH lead inductance swings the phase (atan(ωL/R) is large only when R is tiny).
+  SHUNT: [1e-3, 2e-3, 5e-3, 10e-3, 25e-3, 50e-3, 100e-3, 250e-3],
 };
 
 /** The ~6–8 common values shown as chips up front (the calm default). */
@@ -109,6 +113,8 @@ const CURATED_CHIPS: Record<string, number[]> = {
   // The pot values people reach for first.
   POT: [1e3, 10e3, 50e3, 100e3, 1e6],
   EC: [10e-6, 47e-6, 100e-6, 220e-6, 470e-6, 1000e-6],
+  // The shunt values people reach for first; 10 mΩ default (≈32° lead-L phase at 100 kHz).
+  SHUNT: [1e-3, 10e-3, 50e-3, 100e-3],
 };
 
 /**

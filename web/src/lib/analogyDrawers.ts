@@ -2294,6 +2294,7 @@ function drawAnalogyThermistor(g: Graphics, o: AnalogyOpts): void {
  */
 const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   R: drawAnalogyResistor,
+  SHUNT: drawAnalogyResistor, // a shunt is a (low-value) resistor — same pipe-constriction analogy
   C: drawAnalogyCeramicCap,
   EC: drawAnalogyElectrolyticCap,
   L: drawAnalogyInductor,

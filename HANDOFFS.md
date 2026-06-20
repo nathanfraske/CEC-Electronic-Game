@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (53) — AC phase fix + resistor lead inductance + a current-sense SHUNT part
+
+**State:** 🟢 landed (two PRs squash-merged to main, branch re-synced). Both from the same owner
+thread: a screenshot of a 10 kΩ resistor reading **−14° LEAD** at 20 kHz in **Ideal** mode, plus
+"we should have shunts… but [a resistor] should have *some* inductance at 100 kHz, no?"
+
+- **PR #137 — AC phase artifact fix.** The per-element AC analyzer (`AcMeas::finalize`) took the
+  V−I phase from the current's zero-crossing offset, `2π·(i_cross/period)`. An in-phase current's
+  rising crossing lands one sample shy of the cycle end, wrapping to a spurious `−2π/period` lead —
+  exactly −14.4° at 20 kHz (25 samples/cycle). Now the magnitude comes from `acos(power factor)`
+  (exact 0 for a resistor); the sign still comes from the crossing position. Cap −90° / inductor
+  +90° unchanged. Test `ac_analysis_resistor_phase_zero_at_high_frequency`.
+
+- **(this branch, also merged) Resistor lead inductance + SHUNT.** `R_ESL = 10 nH` constant; in
+  `ac_solve_models` + `ac_element_measurements` a **Real-mode** resistor is `Y = 1/(R + jωL)`
+  (Ideal stays `1/R`). The same parasitic on every resistor, but only a low-value part swings the
+  phase (~+32° on a 10 mΩ shunt at 100 kHz, ~0° on a 10 kΩ). New **SHUNT** part = `ELEM_RESISTOR`
+  with milliohm values, so it inherits the lead-L for free (graph/netlist/values/glyph/detail/
+  analogy/partInfo/bin all wired; `drawSHUNT` is a metal strap with Kelvin taps). Drive-by: added
+  the missing `PULSE: "Sources"` to `PART_CAT_OF` (it was bin-search-only). Tests
+  `resistor_lead_inductance_shows_only_on_a_shunt`. **All golden-safe** (AC analysis is unhashed):
+  131 sim-core tests, all gates green.
+
+- **Next up (deferred, owner-chosen):** Real powered **5-pin logic ICs** (the "Real powered 5-pin
+  ICs" answer). Phase 1 NOT/BUF fit 4 terminals (a=Y, b=A, c=VCC, d=GND; sim reads the rail from
+  V(VCC)−V(GND)); Phase 2 (2-input gates) needs a **5th Element terminal** → breaking + golden
+  regen. Plan in HANDOFFS (52). Do NOT start without confirming scope.
+
 ## 2026-06-19 (52) — First IC glyph refsheet: inverter (`docs/ui/parts/inv-ic.html`)
 
 **State:** 🟢 docs-only. Owner delivered the canonical **74LVC1G04 inverter** five-tier glyph (the

@@ -1877,6 +1877,7 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   LED: drawDetailDiode,
   ZD: drawDetailDiode,
   R: drawDetailResistor,
+  SHUNT: drawDetailResistor, // a shunt's reality is a (low-value) resistor
   C: drawDetailCeramicCap,
   EC: drawDetailElectrolyticCap,
   L: drawDetailInductor,
