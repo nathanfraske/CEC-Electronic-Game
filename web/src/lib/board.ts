@@ -494,6 +494,12 @@ export class Board {
   // a part is armed and nothing is selected, the ghost reflects it, and the part
   // is dropped at this rotation. Independent of any selected part's rotation.
   private armedRot = 0;
+  // Arm-time configurator: the player's pre-placement choices for the armed part on
+  // the config axes (variant / tier / family / openDrain / mode / loadHz / duty / amp).
+  // Threaded into `graph.place` on every drop so place-and-repeat carpets the configured
+  // part, and read by the ghost (an LED preview tints by its chosen colour). Set by
+  // {@link setArmed}/{@link setArmedConfig} from the UI; empty = the per-kind defaults.
+  private armedConfig: Partial<Component> = {};
   // Whether the pointer is currently over the board, so the ghost shows only while
   // hovering and hides the moment the pointer leaves.
   private pointerInside = false;
@@ -754,15 +760,29 @@ export class Board {
     this.updateGhost();
   }
 
-  /** Arm a part kind: clicking empty board cells now drops it (place-and-repeat). */
-  setArmed(kind: string | null): void {
+  /**
+   * Arm a part kind: clicking empty board cells now drops it (place-and-repeat).
+   * `config` (the arm-time configurator's pre-placement choices) is applied to every
+   * drop and reflected in the ghost; disarming (`kind === null`) clears it.
+   */
+  setArmed(kind: string | null, config?: Partial<Component>): void {
     // Arming a part and a floating paste are mutually exclusive placements.
     if (kind !== null) this.cancelPaste();
     // Arming a fresh kind starts it at rotation 0 (R then rotates from there);
     // re-arming the same kind keeps the rotation the player dialled in.
     if (kind !== this.armed) this.armedRot = 0;
     this.armed = kind;
+    this.armedConfig = kind !== null ? (config ?? {}) : {};
     this.updateCursor();
+    this.updateGhost();
+  }
+
+  /** Update just the armed part's configurator choices (without re-arming), so changing
+   * a chip while armed re-tints the ghost and carries into the next drop. No-op when
+   * nothing is armed. */
+  setArmedConfig(config: Partial<Component>): void {
+    if (this.armed === null) return;
+    this.armedConfig = config;
     this.updateGhost();
   }
 
@@ -838,7 +858,15 @@ export class Board {
           row: snap(this.pointer.y, PITCH),
         };
         const o = this.cellToWorld(cell);
-        const color = PALETTE[kind.colorKey];
+        // The ghost reflects the arm-time configurator where it's cheap: an LED previews
+        // its chosen colour (the same `ledTint(variant)` the live LED glyph uses), so you
+        // see the part's identity before dropping. Other kinds keep their palette colour —
+        // the diode-type/tier/etc. choice rides the configurator panel + the dropped part
+        // (the diode symbol itself doesn't vary by type in the glyph).
+        const color =
+          this.armed === "LED"
+            ? ledTint(this.armedConfig.variant ?? 0)
+            : PALETTE[kind.colorKey];
         const pins = kind.pins.map((p) => ({
           x: p.dx * PITCH,
           y: p.dy * PITCH,
@@ -1156,7 +1184,11 @@ export class Board {
    */
   private placeCell(kind: string, cell: Cell, rot = 0): Component | undefined {
     const before = this.graph.serialize();
-    const c = this.graph.place(kind, cell);
+    // Apply the arm-time configurator's choices when dropping the armed kind — both
+    // place-and-repeat (click) and a drag-from-bin of the armed part carpet the
+    // configured part; dragging a *different* kind gets its plain per-kind defaults.
+    const overrides = kind === this.armed ? this.armedConfig : undefined;
+    const c = this.graph.place(kind, cell, overrides);
     if (c) {
       // Drop at the requested orientation (the armed placement rotation) so the
       // part lands exactly as the ghost previewed it; addNode reads c.rot.
@@ -3009,6 +3041,7 @@ export class Board {
     // A floating paste and an armed part are mutually exclusive — clear the arm.
     if (this.armed) {
       this.armed = null;
+      this.armedConfig = {};
       this.cb.onArm?.(null);
       this.updateGhost();
     }

@@ -883,6 +883,40 @@ export function loadUnit(mode: number | undefined): string {
 }
 
 /**
+ * The config axes an arm-time placement may override (the inspector's pre-placement
+ * choices): `variant` (diode type / LED colour), `tier` (quality), `family` (logic),
+ * `openDrain` (gate output stage), `mode` (load CC/CR), `loadHz`/`duty` (load step),
+ * and `amp` (the load's peak). Deliberately **not** identity/geometry fields
+ * (`id`/`kind`/`cell`/`value`/`rot`), nor per-instance knobs the configurator never
+ * exposes (`wiper`/`temp`/`label`) — those keep their per-kind defaults.
+ */
+const PLACEMENT_OVERRIDE_KEYS = [
+  "variant",
+  "tier",
+  "family",
+  "openDrain",
+  "mode",
+  "loadHz",
+  "duty",
+  "amp",
+] as const satisfies readonly (keyof Component)[];
+
+/** Pick only the defined config-axis fields from an arm-time `overrides`, so spreading
+ * the result over a freshly-defaulted component sets just the player's choices (and an
+ * `undefined`/omitted field leaves the per-kind default in place). */
+function placementOverrides(
+  overrides: Partial<Component> | undefined,
+): Partial<Component> {
+  if (!overrides) return {};
+  const out: Partial<Component> = {};
+  for (const key of PLACEMENT_OVERRIDE_KEYS) {
+    const v = overrides[key];
+    if (v !== undefined) (out as Record<string, unknown>)[key] = v;
+  }
+  return out;
+}
+
+/**
  * The board graph: placed components and the wires between their pins. Pure
  * model — it allocates stable ids, prevents duplicate/self wires, and answers
  * geometric queries the renderer needs (pin positions, hit testing) given a
@@ -898,8 +932,22 @@ export class BoardGraph {
   readonly junctions = new Map<number, Junction>();
   readonly netLabels = new Map<number, NetLabel>();
 
-  /** Place a new component of `kind` anchored at the given (already-snapped) cell. */
-  place(kind: string, cell: Cell): Component | undefined {
+  /**
+   * Place a new component of `kind` anchored at the given (already-snapped) cell.
+   *
+   * `overrides` (the arm-time configurator) carries the player's pre-placement
+   * choices on the config axes — `variant` (diode type / LED colour), `tier`,
+   * `family` (logic), `openDrain`, `mode` (load CC/CR), `loadHz`, `duty`, `amp`.
+   * It is applied **after** the per-kind defaults, so e.g.
+   * `place("D", cell, { variant: 2 })` drops a fast-recovery diode. Only those
+   * `Component` config fields are spread (never `id`/`kind`/`cell`/`value`/`rot`),
+   * and omitting `overrides` is a no-op — existing callers are unchanged.
+   */
+  place(
+    kind: string,
+    cell: Cell,
+    overrides?: Partial<Component>,
+  ): Component | undefined {
     const template = PART_KINDS[kind];
     if (!template) return undefined;
     const component: Component = {
@@ -923,6 +971,9 @@ export class BoardGraph {
       ...(kind === "POT" ? { wiper: 0.5 } : {}),
       // A thermistor carries its body temperature, defaulting to 25 °C.
       ...(kind === "NTC" || kind === "PTC" ? { temp: 25 } : {}),
+      // Arm-time configurator: the player's pre-placement choices override the
+      // per-kind defaults on the config axes only (a no-op when omitted).
+      ...placementOverrides(overrides),
     };
     this.components.set(component.id, component);
     return component;
