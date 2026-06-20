@@ -227,6 +227,8 @@ export const REFSHEET_OF: Record<string, string> = {
   OR: "or-ic.html",
   XOR: "xor-ic.html",
   XNOR: "xnor-ic.html",
+  IMPLY: "imply-ic.html",
+  NIMPLY: "nimply-ic.html",
   R: "resistor-tiers.html",
   C: "capacitor-ceramic-tiers.html",
   EC: "capacitor-electrolytic-tiers.html",
