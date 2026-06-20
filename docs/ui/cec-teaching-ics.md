@@ -602,19 +602,48 @@ Howland composition, also from existing elements, if `gds`-flatness matters.) No
 element; golden-safe additive. **Teaches:** transconductance (V→I), what gain *is* at the device
 level, the OTA / gm-C building block.
 
+### CEC4055 — Analog Sample-and-Hold
+
+*Critical Error Computing · "a voltage, frozen in time."*
+
+**Description.** The CEC4055 follows its analog input while TRACK is high and, the instant TRACK
+goes low, **freezes** the input's value on OUT and holds it steady. It is the front end of every
+ADC (catch the input so it cannot move mid-conversion), the deglitcher on a DAC, and the analog
+memory in any multiplexed measurement. Where the CEC1041 captures one *bit*, the CEC4055 holds the
+full analog *value*.
+
+**Features.** Track-and-hold of an analog value · follows IN when TRACK = 1, freezes when TRACK = 0
+· the ADC front-end / analog memory · single supply.
+
+**Pin configuration — 5-pin (SOT-23-5 / SC70-5):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **OUT** | Held analog output (follows IN, or holds the frozen value). |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **IN** | Analog input to track / sample. |
+| 4 | **TRACK** | HIGH = follow IN (sample); LOW = freeze (hold). |
+| 5 | **VCC** | Positive supply. |
+
+**Function.** TRACK = 1 → `OUT` tracks `IN`; TRACK = 0 → `OUT` holds the last sampled value.
+
+**In the sim:** a `buildNetlist` composition of existing elements — the new **`ELEM_ASWITCH`**
+(CTRL = TRACK) feeding a hold **`ELEM_CAPACITOR`** to GND, buffered by an **`ELEM_OPAMP`** unity
+follower so OUT is low-impedance and never loads the cap. TRACK high closes the switch and the cap
+follows IN; TRACK low opens it and the cap's backward-Euler companion **holds** the charge — the
+exact mechanism the gated switch was built for (proven by the `aswitch_sample_and_hold` test). No
+new sim-core element; golden-safe additive. **Teaches:** track-and-hold, analog memory, the ADC
+front end, why the hold cap and a clean switch matter.
+
 ---
 
 ## Parts that wait on an engine mechanism
 
-A few obvious gaps need a core mechanism that does not exist yet, so they are **named here but
-not given full cards** (they would otherwise mis-teach against the sim):
-
-- **Analog sample-and-hold** (track the analog *value*, freeze it on a HOLD pin) — distinct from
-  the CEC1041 *1-bit* quantizer. It needs a **logic-gated analog switch** (a transmission gate
-  switched by an arbitrary signal pin) feeding a hold cap; today's `ELEM_SWITCH` is PWM/duty-driven,
-  not gated by a logic node, so the gated track-and-hold is **[needs: logic-gated analog switch /
-  transmission-gate element]**. The hold *cap* and the op-amp buffer already exist; only the gated
-  switch is missing.
+The **gated analog switch landed** (`ELEM_ASWITCH`), so the sample-and-hold above — and with it
+**switched-capacitor** circuits (switches + caps standing in for resistors) and the **analog mux**
+(one switch per channel + a decoder) — are now buildable from existing elements. What still waits
+on a not-yet-built mechanism is **named here but not given a full card** (it would otherwise
+mis-teach against the sim):
 - **Voltage-controlled oscillator (V→frequency)** — every time-varying source (`ELEM_ACSOURCE`,
   the PULSE/SWITCH mapping) takes its frequency as a **fixed param**, a pure function of `tick`, not
   of a live node voltage. A true VCO is **[needs: a voltage-controlled time-varying source]** (a
@@ -646,6 +675,7 @@ CEC4023, a peak hold CEC4031, and transconductance itself CEC4044). Every one is
 contract as the first four — minimum honest pins, always powered, output-on-pin-1 (or the
 74-series order for a bare gate), and a real sim backend: a powered-gate composition, a single
 `ELEM_ISOURCE` / `ELEM_ZENER` / `ELEM_NMOS`, or a pair of `ELEM_COMPARATOR`s — all golden-safe
-additive. The few honest gaps that remain (a gated analog sample-and-hold, a true V→frequency
-VCO, a retriggerable one-shot) are named, not faked: they wait on a named engine mechanism so
-no glyph ever teaches something the simulator cannot do.
+additive. The gated analog switch (`ELEM_ASWITCH`) since landed, pulling the sample-and-hold
+(and switched-cap, and the analog mux) onto that same ground. The few honest gaps that remain (a
+true V→frequency VCO, a retriggerable one-shot) are named, not faked: they wait on a named engine
+mechanism so no glyph ever teaches something the simulator cannot do.
