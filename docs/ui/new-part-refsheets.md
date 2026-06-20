@@ -72,7 +72,7 @@ count), so trust the PDF connection diagram + pin-function table over any summar
 | Plain comparator | ADCMP600 (TLV3201) | SC70-5 . 5 | analog | ELEM_COMPARATOR (LE unwired) |
 | Latched comparator | ADCMP601 | SC70-6 . 6 | analog | ELEM_COMPARATOR (done) |
 | Schmitt inverter | 74LVC1G14 (74AUP1G14) | SC70-5 . 5 (1 NC) | logic | ELEM_GATE / comparator hyst |
-| 555 timer | LMC555 (TLC555) | VSSOP-8 / DSBGA-8 . 8 | mixed | composition |
+| 555 timer | NE555 (LMC555 / TLC555 CMOS) | DIP-8 / SOIC-8 . 8 | mixed | composition |
 | D flip-flop | 74LVC1G80 (inv) / 74AUP1G79 (non-inv) | SOT-23-5 . 5 | logic | ELEM_DFF (done) |
 | D-FF + Qn/set/reset | 74LVC1G74 | SC70-8 . 8 | logic | ELEM_DFF |
 | JK / T flip-flop | none single; dual 74x112 | DIP/SO . 16 | logic | ELEM_DFF + steering |
@@ -86,7 +86,9 @@ count), so trust the PDF connection diagram + pin-function table over any summar
 - **ADCMP600** (5): 1 Q | 2 GND | 3 VP/IN+ | 4 VN/IN- | 5 VCC
 - **ADCMP601** (6): 1 Q | 2 VEE | 3 VP/IN+ | 4 VN/IN- | 5 LE/HYS | 6 VCC
 - **74LVC1G14** (5): 1 NC | 2 A/IN | 3 GND | 4 Y/OUT | 5 VCC
-- **LMC555** (8): 1 GND | 2 TRIG | 3 OUT | 4 RESET | 5 CTRL | 6 THRESH | 7 DISCH | 8 V+
+- **NE555 / LMC555 / TLC555** (8, identical pinout across all variants, TI datasheet-verified):
+  1 GND | 2 TRIG (fires at 1/3 VCC) | 3 OUT | 4 !RESET (active-low) | 5 CTRL (control voltage) |
+  6 THRES (resets at 2/3 VCC) | 7 DISCH | 8 VCC
 - **74LVC1G80** (5, inverting; 74AUP1G79 = non-inverting, same pin order): 1 D | 2 CP | 3 GND | 4 Q | 5 VCC
 - **74LVC1G74** (8, full FF): D, CP, SD (set), RD (reset), Q, Qn, VCC, GND
 - **ADC081S021** (6, SPI): 1 VA | 2 GND | 3 VIN | 4 SCLK | 5 SDATA | 6 CS

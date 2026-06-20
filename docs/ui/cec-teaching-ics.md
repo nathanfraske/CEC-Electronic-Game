@@ -17,8 +17,8 @@ its energy" is always answerable. Logic levels swing GND..VCC; supply 1.8 V–15
 
 **Packages.** Each part ships in a standard small-outline package, drawn over a real frame
 per `ic-glyph-spec.md` (a breadboard-friendly DIP exists for the bench): **CEC1041** and
-**CEC3007** in **SOT-23-5**, **CEC1083** in **SOT-23-6**, **CEC2018** in **SOT-23-8** (one
-N.C.). The two CEC **logic gates** (below) take the **SOT-23-5** gate footprint and the
+**CEC3007** in **SOT-23-5**, **CEC1083** in **SOT-23-6**, **CEC2018** (one N.C.) and **CEC2064**
+(all eight pins used) in **SOT-23-8**. The two CEC **logic gates** (below) take the **SOT-23-5** gate footprint and the
 74-series single-gate pinout (`1 A · 2 B · 3 GND · 4 Y · 5 VCC`) so they sit beside the real
 gates — the output-on-pin-1 convention above is the Foundations Series' own; the gates keep
 the JEDEC gate order.
@@ -370,6 +370,67 @@ sim-core element. *(A cleaner native build — a direct `OE`-gated Z without rai
 noted in the engine as a future "tri-state buffer with OE" refinement using a dedicated enable
 pin; the dead-rail composition above teaches the same Hi-Z behaviour today.)* **Teaches:** the
 high-impedance state, shared buses and output-enable, bus contention.
+
+---
+
+## CEC programmable logic (the configurable cell)
+
+One gap the fixed-function parts above leave open: a gate you **program** instead of pick. Where
+every part so far computes one wired-in function, the cell below becomes *any* function you load
+into it — and it is the first CEC part backed by the **behavioral engine** (ADR 0004) rather than a
+`buildNetlist` gate composition. It is the capstone the CEC2031 mux pointed at ("how muxes build the
+FPGA lookup table").
+
+### CEC2064 — Configurable Logic Cell (4-Input LUT + register)
+
+*Critical Error Computing · "sixteen bits that become any gate you can name."*
+
+**Description.** The CEC2064 is a blank gate you fill in. Four inputs address a **sixteen-entry
+truth table** loaded at config time, and the addressed bit *is* the output — so one chip is *any*
+boolean function of up to four inputs at once: AND, XOR, a 3-input majority, a full-adder carry, a
+2:1 mux, anything sixteen bits can describe. Switch on its **registered** mode and the looked-up bit
+is latched on each clock edge instead of flowing straight through — a LUT followed by a flip-flop,
+which is exactly the **logic element** an FPGA is tiled from. A whole FPGA is a fabric of these cells
+plus programmable wiring; meeting one bare is meeting programmable hardware itself. No discrete
+single-LUT chip is sold (the closest real parts are configurable-logic gates like the 74LVC1G97, or
+the LUT blocks inside a GreenPAK), which is exactly why CEC lays one cell open.
+
+**Features.** Any boolean function of ≤ 4 inputs from a 16-bit truth table · combinational **or**
+registered output (a LUT, or a LUT+flip-flop "logic element") · every fixed gate is one table
+(AND = `0x8888`, XOR = `0x6666`, 3-input majority = `0xE8E8`) · a fabric of these is any logic or
+state machine · single supply.
+
+**Pin configuration — 8-pin (SOT-23-8 / MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **Y** | Logic output — the addressed truth-table bit (registered mode: the latched bit, held between clocks). |
+| 2 | **GND** | Ground / 0 V reference. |
+| 3 | **I0** | Input bit 0 — truth-table index LSB. |
+| 4 | **I1** | Input bit 1. |
+| 5 | **I2** | Input bit 2. |
+| 6 | **I3** | Input bit 3 — truth-table index MSB. |
+| 7 | **CLK** | Clock — registered mode only: latches Y on the LOW→HIGH edge; ignored when combinational. |
+| 8 | **VCC** | Positive supply (also the output logic-high rail). |
+
+**Configuration** (set at config time, not pins — a real LUT's truth table lives in config memory,
+not on a wire): the **16-bit truth table** `T[0..15]`, and the **mode** (combinational vs registered).
+
+**Function.** Index `n = 8·I3 + 4·I2 + 2·I1 + I0`. Combinational: `Y = T[n]`. Registered: on CLK↑,
+`Q ← T[n]`, and `Y = Q` (held until the next edge). Unwired inputs read LOW, so a 2- or 3-input
+function just loads a table that ignores the unused high inputs (e.g. XOR(I0,I1) = `0x6666`).
+
+**Abs max:** VCC 16 V · inputs −0.3 V to VCC+0.3 V · the truth table is a config property, not a
+runtime signal.
+
+**In the sim:** maps to `ELEM_BEHAVIORAL` **program 4** (`BEH_PROG_LUT`) — the truth table rides in
+`aux` (low 16 bits), the mode in `params[4]` (≥ 1 → registered), and the pins map **Y→a · GND→e ·
+I0/I1/I2→f/g/h · I3→c · CLK→b · VCC→d**. A combinational cell carries no state; a registered one
+folds only its `Q`/`clk_prev`, through the existing `beh_state` hash loop — **golden-safe by
+construction** (no golden circuit carries a behavioral block). The first CEC part backed by the
+behavioral engine rather than a gate composition. **Teaches:** that all combinational logic is a
+lookup table; programmability (one cell, any function); the FPGA logic element (LUT + register); how
+a fabric of LUTs becomes any circuit (the path to a soft core).
 
 ---
 

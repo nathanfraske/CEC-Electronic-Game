@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (64) — CEC2064 LUT spec authored + 555 exemplar verified
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Two refsheet-prep deliverables:
+
+**CEC2064 — Configurable Logic Cell (4-Input LUT + register)** — authored as a full CEC house part in
+`docs/ui/cec-teaching-ics.md` (new `## CEC programmable logic` section, between logic&routing and
+memory&sequential). The house spec for the Phase-4 `BEH_PROG_LUT` backend, ready for the owner to draw
+as a five-tier glyph. 8-pin SOT-23-8, house pin order `1 Y · 2 GND · 3 I0 · 4 I1 · 5 I2 · 6 I3 ·
+7 CLK · 8 VCC` (all 8 used). Config = 16-bit truth table + combinational/registered mode (not pins).
+**Sim map (matches the backend exactly):** `ELEM_BEHAVIORAL` prog 4 — truth table → `aux`, mode →
+`params[4]` (≥1 = registered), pins **Y→a · GND→e · I0/I1/I2→f/g/h · I3→c · CLK→b · VCC→d**. First CEC
+part on the behavioral engine (not a gate composition); golden-safe. Verified hexes: AND `0x8888`,
+XOR `0x6666`, MAJ3 `0xE8E8`. Updated the package note + the IC-glyph example list.
+
+**555 timer exemplar — verified + enriched** in `new-part-refsheets.md`. It was already in the chart
+(LMC555); confirmed the **canonical, invariant 555 pinout** against the TI NE555 datasheet
+(www.ti.com/lit/ds/symlink/ne555.pdf — fetched; auto-render blocked by no poppler, but cross-checked
+vs the card + the universal standard). Row now leads with **NE555** (DIP-8/SOIC-8); pinout line notes
+all variants share it + the comparator thresholds: `1 GND · 2 TRIG(1/3 VCC) · 3 OUT · 4 !RESET ·
+5 CTRL · 6 THRES(2/3 VCC) · 7 DISCH · 8 VCC`.
+
+**Owner's refsheet queue next:** LUT (CEC2064, now spec'd) or JK/T (74HC73 dual) or the 555. The gate
+set is 10/10 done; D-FF + comparator done. Backend is well ahead of the web everywhere.
+
+---
+
 ## 2026-06-20 (63) — Landed the BUF refsheet (74LVC1G34) — gate set 10/10 COMPLETE
 
 **State:** 🟢 owner's buffer refsheet landed + pushed → `docs/ui/parts/buf-ic.html`. Branch
