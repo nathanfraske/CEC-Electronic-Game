@@ -2064,15 +2064,22 @@ impl AcMeas {
         } else {
             0.0
         };
-        // Phase: signed V−I lag from the current's rising-crossing offset within the
-        // cycle, wrapped to (−π, π]. Needs a real cycle and a clean current crossing.
+        // Phase: signed V−I lag. The MAGNITUDE is the V–I correlation angle `acos(pf)`, which is
+        // EXACT for proportional signals — a resistor reads `pf = 1 → 0` with no sampling artifact.
+        // (Taking the angle straight from the current's crossing offset instead reads a spurious
+        // `~2π/period` lead for an in-phase current, because its crossing lands on the cycle
+        // boundary — e.g. −14° at 25 samples/cycle.) The SIGN (lead vs lag) comes from where the
+        // current's rising crossing sits in the cycle: early ⇒ lag (inductive, +), late ⇒ lead
+        // (capacitive, −). Both agree with the raw-crossing angle for a genuine reactive phase.
         let phase =
             if period > 0 && var_v > AC_VAR_FLOOR && var_i > AC_VAR_FLOOR && self.i_cross >= 0.0 {
-                let mut ph = std::f64::consts::TAU * (self.i_cross / period as f64);
-                if ph > std::f64::consts::PI {
-                    ph -= std::f64::consts::TAU;
+                let mag = pf.clamp(-1.0, 1.0).acos();
+                let lead = (self.i_cross / period as f64) > 0.5;
+                if lead {
+                    -mag
+                } else {
+                    mag
                 }
-                ph
             } else {
                 0.0
             };
@@ -9295,6 +9302,33 @@ mod tests {
             "Vrms ~ amp/sqrt(2): {}",
             r[0]
         );
+    }
+
+    /// A resistor stays resistive at **high** frequency, where a cycle spans only a
+    /// handful of samples. This guards the phase against the zero-crossing artifact:
+    /// an in-phase current's rising crossing lands one sample shy of the cycle end, so
+    /// a crossing-derived angle would read a spurious `~ -2π/period` lead (−14° at
+    /// 20 kHz = 25 samples/cycle). Taking the magnitude from `acos(pf)` reads ~0.
+    #[test]
+    fn ac_analysis_resistor_phase_zero_at_high_frequency() {
+        // 5 V-peak, 20 kHz AC source across a 1 k resistor: 25 samples per cycle.
+        let mut sim = build(
+            2,
+            &[ELEM_ACSOURCE, ELEM_RESISTOR],
+            &[1, 1],
+            &[0, 0],
+            &[20_000.0, 1000.0],
+        );
+        for _ in 0..6000 {
+            sim.step();
+        }
+        let m = sim.ac_measurements();
+        let r = &m[AC_FIELDS..2 * AC_FIELDS]; // the resistor (element 1)
+        assert_eq!(r[11], 1.0, "a full AC cycle has been measured");
+        assert!(r[7] > 0.98, "power factor near unity: {}", r[7]);
+        // The old crossing-based phase read ~ -0.25 rad (-14.4°) here; assert it is ~0.
+        assert!(r[9].abs() < 0.05, "phase near zero at 20 kHz: {}", r[9]);
+        assert!((r[10] - 20_000.0).abs() < 200.0, "freq ~ 20 kHz: {}", r[10]);
     }
 
     /// A capacitor's current **leads** its voltage by ~90°: the measured phase is
