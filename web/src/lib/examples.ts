@@ -5,7 +5,13 @@
 // board, the solver, and the animations do the rest. Keep the lists short and
 // the language plain.
 
-import { BoardGraph, type Component, type GraphSnapshot } from "./graph";
+import {
+  BoardGraph,
+  PART_KINDS,
+  type Component,
+  type GraphSnapshot,
+} from "./graph";
+import potDimmer from "./circuits/pot-dimmer";
 
 /** Live progress passed to a build step's completion check. */
 export interface BuildProgress {
@@ -73,6 +79,82 @@ function wire(
 }
 
 const at = (p: BuildProgress, kind: string): number => p.count[kind] ?? 0;
+
+/**
+ * A circuit exactly as the board's **Save** button downloads it: the versioned
+ * envelope wrapping a {@link GraphSnapshot}. The point is authoring convenience —
+ * an owner builds and tunes a circuit in the editor, saves the `.json`, and pastes
+ * it into a tiny wrapper module under `lib/circuits/` (see `circuits/pot-dimmer.ts`),
+ * with **no** hand-translation into `place()`/`wire()` calls. A bare snapshot (no
+ * envelope, e.g. an older save) is accepted too.
+ */
+export interface SavedCircuit {
+  format?: string;
+  version?: number;
+  savedAt?: string;
+  graph: GraphSnapshot;
+}
+
+/** Normalise a saved circuit (envelope or bare snapshot) to a **fresh** GraphSnapshot.
+ * Deep-cloned because `build()` is called more than once (the Watch view and the
+ * guided-build target) and the board mutates whatever graph it loads — the source
+ * module must stay pristine. */
+export function fromSaved(saved: SavedCircuit | GraphSnapshot): GraphSnapshot {
+  const graph = "graph" in saved ? saved.graph : saved;
+  return JSON.parse(JSON.stringify(graph)) as GraphSnapshot;
+}
+
+/** A generic two-step guided build derived from a circuit: place the parts, then wire
+ * it and run. Used when a {@link savedExample} doesn't supply bespoke steps, so the
+ * easy path (drop in a saved circuit) still yields a usable Build mode. */
+function defaultSteps(target: GraphSnapshot): BuildStep[] {
+  const counts: Record<string, number> = {};
+  for (const c of target.components) counts[c.kind] = (counts[c.kind] ?? 0) + 1;
+  const name = (k: string): string => PART_KINDS[k]?.name ?? k;
+  const parts = Object.entries(counts)
+    .filter(([k]) => k !== "GND")
+    .map(([k, n]) => (n > 1 ? `${n}× ${name(k)}` : name(k)))
+    .join(", ");
+  return [
+    {
+      do: `Place the parts: ${parts}${counts["GND"] ? ", and a Ground" : ""}.`,
+      why: "Lay out every component the circuit needs first — the shapes, then the connections.",
+      done: (p) => Object.entries(counts).every(([k, n]) => at(p, k) >= n),
+    },
+    {
+      do: "Wire the parts to match the circuit, then press Run.",
+      why: "Once the topology matches, the solver brings it to life — watch the result described above.",
+      done: (p) => p.complete,
+    },
+  ];
+}
+
+/**
+ * Turn a {@link SavedCircuit} straight into an {@link ExampleSpec} — the easy path for
+ * adding or retuning worked examples ("save the JSON, drop it in"). `build()` returns
+ * the saved graph; `steps` defaults to {@link defaultSteps} when not supplied, and an
+ * optional `demo` is passed through.
+ */
+export function savedExample(opts: {
+  id: string;
+  name: string;
+  blurb: string;
+  watch: string;
+  saved: SavedCircuit | GraphSnapshot;
+  steps?: BuildStep[];
+  demo?: ExampleSpec["demo"];
+}): ExampleSpec {
+  const build = (): GraphSnapshot => fromSaved(opts.saved);
+  return {
+    id: opts.id,
+    name: opts.name,
+    blurb: opts.blurb,
+    watch: opts.watch,
+    build,
+    steps: opts.steps ?? defaultSteps(build()),
+    ...(opts.demo ? { demo: opts.demo } : {}),
+  };
+}
 
 export const EXAMPLES: ExampleSpec[] = [
   {
@@ -182,72 +264,32 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     },
   },
-  {
+  savedExample({
     id: "pot-dimmer",
     name: "Potentiometer Dimmer",
     blurb:
-      "A potentiometer is an adjustable voltage divider — the fixed divider you just built, but with a knob. Wire its two ends across a supply and the wiper picks off any fraction of it you like. Send the wiper to an LED and you have a dimmer: slide toward the supply end for full brightness, toward the ground end to fade it out. The whole output is set by where the wiper sits.",
+      "A potentiometer is an adjustable voltage divider — the fixed divider you just built, but with a knob. Its two ends sit across the supply and the wiper picks off any fraction of it you like. Send the wiper to an LED through a current limiter and you have a dimmer: the whole output is set by where the wiper sits.",
     watch:
-      "the LED glow at the wiper's voltage — the divider output. Slide the wiper (the toggle): toward the A (supply) end it brightens, toward the B (ground) end it dims to dark. The wiper voltage, and so the LED current, tracks the wiper position.",
-    build() {
-      // V(5) across the pot A→B; the wiper feeds an LED through a limiter. The wiper
-      // voltage ≈ 5·(1−t), so a low wiper position is bright, a high one dim.
-      //   nets: A = V+ = POT.A ; GND(0) = POT.B = V− = LED.K ; W = POT.W = R.A ;
-      //         R.B = LED.A.
-      const g = new BoardGraph();
-      const v = comp(g, "V", 0, 0, 5, 1); // 5 V rail, + at top
-      const pot = comp(g, "POT", 4, 0, 10000); // 10 kΩ pot
-      pot.wiper = 0.1; // start bright (wiper near the A / supply end)
-      const r = comp(g, "R", 8, 0, 330); // LED current-limit
-      const led = comp(g, "LED", 11, 0, 0);
-      const gnd = comp(g, "GND", 4, 6, 0);
-      wire(g, v, 0, pot, 0); // V+ → POT.A (pin 0)
-      wire(g, pot, 1, gnd, 0); // POT.B (pin 1) → GND
-      wire(g, v, 1, gnd, 0); // V− → GND
-      wire(g, pot, 2, r, 0); // POT.W (pin 2 = wiper) → R
-      wire(g, r, 1, led, 0); // R → LED
-      wire(g, led, 1, gnd, 0); // LED → GND
-      return g.serialize();
-    },
+      "the LED starts dark — the wiper is parked at the ground end, so it taps almost nothing. Select the pot and slide the wiper toward the supply end (to the left): the tapped voltage climbs, the LED current rises with it, and the glow comes up from black to full brightness.",
+    saved: potDimmer,
     steps: [
       {
-        do: "Place a Voltage Source (V, 5 V), a Potentiometer (POT), and an LED with a series Resistor (R, ~330 Ω).",
-        why: "The pot is the adjustable divider; the LED is what reads its output. The series resistor limits the LED current the way it always does.",
+        do: "Place a Voltage Source (V, 5 V), a Potentiometer (POT), and an LED with a series Resistor (R, ~330 Ω) — plus a Ground.",
+        why: "The pot is the adjustable divider; the LED reads its output. The series resistor limits the LED current the way it always does.",
         done: (p) => at(p, "V") >= 1 && at(p, "POT") >= 1 && at(p, "LED") >= 1,
       },
       {
         do: "Wire V+ → the pot's A end and the pot's B end → Ground (and V− → GND). Take the WIPER (W) → R → LED → GND. Run.",
-        why: "The two ends sit across the full 5 V; the wiper taps a fraction of it set by its position. That tapped voltage drives the LED — an adjustable supply from one knob.",
+        why: "The two ends sit across the full 5 V; the wiper taps a fraction set by its position. That tapped voltage drives the LED — an adjustable supply from one knob.",
         done: (p) => at(p, "POT") >= 1 && at(p, "LED") >= 1 && p.complete,
       },
       {
-        do: "Select the pot and slide its wiper (the percentage chips, or use the toggle below).",
-        why: "Moving the wiper toward the supply end lifts the tapped voltage and the LED brightens; toward the ground end it falls and the LED dims. Same parts, a continuously variable output — that's what the wiper buys you.",
+        do: "It starts dark. Select the pot and slide the wiper toward the supply end (the percentage chips, or drag it left).",
+        why: "Parked at the ground end the wiper taps ~0 V, so the LED is off. Slide it toward the supply and the tapped voltage — and the LED current — climbs, so the LED brightens smoothly. Same parts, a continuously variable output: that's what the wiper buys you.",
         done: (p) => p.complete,
       },
     ],
-    demo: {
-      label: "Wiper bright / dim",
-      on: "Wiper near A (10%) — most of the 5 V reaches the LED: bright.",
-      off: "Wiper near B (80%) — only a sliver reaches the LED: dim/dark.",
-      alt() {
-        const g = new BoardGraph();
-        const v = comp(g, "V", 0, 0, 5, 1);
-        const pot = comp(g, "POT", 4, 0, 10000);
-        pot.wiper = 0.8; // wiper toward the ground end → dim
-        const r = comp(g, "R", 8, 0, 330);
-        const led = comp(g, "LED", 11, 0, 0);
-        const gnd = comp(g, "GND", 4, 6, 0);
-        wire(g, v, 0, pot, 0);
-        wire(g, pot, 1, gnd, 0);
-        wire(g, v, 1, gnd, 0);
-        wire(g, pot, 2, r, 0);
-        wire(g, r, 1, led, 0);
-        wire(g, led, 1, gnd, 0);
-        return g.serialize();
-      },
-    },
-  },
+  }),
   {
     id: "rc",
     name: "RC Charge",

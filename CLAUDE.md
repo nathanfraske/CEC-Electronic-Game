@@ -70,6 +70,8 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
 | `web/src/lib/board.ts` | PixiJS renderer (grid + signal traces) |
 | `web/src/App.svelte` | HUD shell |
 | `web/src/app.css` | design tokens + component styles |
+| `web/src/lib/examples.ts` | worked examples; `savedExample()` turns a board **Save** JSON into one |
+| `web/src/lib/circuits/` | saved-circuit modules (paste a downloaded `.json` into a tiny `.ts` wrapper) |
 | `web/src/wasm/` | **generated** by `build:wasm`; gitignored; never edit |
 | `docs/` | architecture, determinism contract, ADRs |
 | `docs/ui/ic-glyph-spec.md` | **authoring spec for the five-tier IC glyphs** (interactive teaching refsheets) — read it before building any IC glyph; refsheets live in `docs/ui/parts/` |

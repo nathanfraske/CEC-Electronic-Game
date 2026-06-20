@@ -8,6 +8,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (25) — Saved circuits → examples, drop-in (owner workflow) + re-modelled pot dimmer
+
+Owner: "make it so the JSON I save can be set as the example easily" (for tuning/adding examples),
+and delivered a re-modelled **Potentiometer Dimmer** save (fixed placement, labels, net labels,
+**starts with the wiper parked off** so you slide it to brighten the LED).
+
+- ~~**Drop-in mechanism** (`examples.ts`): `SavedCircuit` (the Save-button envelope `{format,
+  version, savedAt, graph}`), `fromSaved()` (unwrap + deep-clone to a fresh `GraphSnapshot`),
+  `savedExample({id,name,blurb,watch,saved,steps?,demo?})` → `ExampleSpec` whose `build()` returns
+  the saved graph. `steps` defaults to a generic place-then-wire guide (`defaultSteps`) derived
+  from the circuit, so the minimum to add an example is: Save the JSON, paste into a
+  `lib/circuits/<id>.ts` wrapper, write blurb/watch. No hand-translation to `place()`/`wire()`.~~
+- ~~**Pot dimmer re-modelled** (`lib/circuits/pot-dimmer.ts` = the owner's exact save; `pot-dimmer`
+  example now `savedExample(...)`). Starts `wiper:1` (LED dark); the watch/steps guide sliding the
+  wiper to the supply end to bring the LED up from black. Owner's labels + net labels (V(p_in),
+  V(p_out), V(led)) + routing waypoints preserved verbatim. Dropped the old bright/dim demo toggle
+  — the slider IS the interaction now.~~ **DONE.** (chose `.ts` wrapper over raw `.json` import:
+  `verbatimModuleSyntax` + no `resolveJsonModule` make `.json` imports fight svelte-check; the
+  wrapper is zero-config, type-checked against `GraphSnapshot`, and still a paste-the-JSON step.)
+  - [ ] Follow-on: migrate the other hand-coded examples to `savedExample` as the owner re-saves
+    them; optional `demo` via a second saved circuit if a toggle is wanted.
+
 ## 2026-06-20 (24) — Two more IC glyph refsheets: NAND + NOR
 
 Owner delivered two more five-tier IC glyphs built from the spec. Placed in `docs/ui/parts/`
