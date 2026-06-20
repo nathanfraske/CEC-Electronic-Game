@@ -761,6 +761,100 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // --- CEC composite logic ICs (docs/ui/cec-teaching-ics.md) ------------------
+  // House teaching ICs with no single discrete equivalent. Each is a buildNetlist
+  // composition of powered ELEM_GATEs (see CEC_COMP in netlist.ts) — no new solver
+  // element. Pin ORDER here must match the CEC_COMP terminal map exactly. They are
+  // powered by their VCC/GND pins (the `value` logic rail is vestigial, like a gate's);
+  // green, the logic family. Drawn with the generic IC-card glyph (the five-tier
+  // refsheets carry the detailed teaching view).
+  // Half-adder (CEC2024): SUM = A⊕B, COUT = A·B.
+  HADD: kind(
+    "HADD",
+    "Half Adder",
+    "ok",
+    [
+      pin("SUM", 2, 0),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("COUT", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Full-adder (CEC2018): SUM = A⊕B⊕CIN, COUT = majority(A,B,CIN). Ripple-chainable.
+  FADD: kind(
+    "FADD",
+    "Full Adder",
+    "ok",
+    [
+      pin("SUM", 2, 0),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 1),
+      pin("CIN", 0, 2),
+      pin("COUT", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // 2:1 multiplexer (CEC2031): Y = SEL ? B : A. The leaf cell of any mux tree / LUT.
+  MUX2: kind(
+    "MUX2",
+    "2:1 Mux",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("SEL", 0, 1),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // 1:2 demultiplexer / 1-of-2 decoder (CEC2032): Y0 = D·¬SEL, Y1 = D·SEL.
+  DMUX: kind(
+    "DMUX",
+    "1:2 Demux",
+    "ok",
+    [
+      pin("Y0", 2, 0),
+      pin("GND", 0, 0),
+      pin("Y1", 2, 2),
+      pin("D", 0, 1),
+      pin("SEL", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Majority / voter (CEC2046): Y = AB + BC + CA. Keeps the 74-series gate pin order
+  // (inputs + GND first, output then VCC) so it sits beside the real gates.
+  MAJ3: kind(
+    "MAJ3",
+    "Majority Gate",
+    "ok",
+    [
+      pin("A", 0, 0),
+      pin("B", 0, 1),
+      pin("GND", 1, 2),
+      pin("C", 0, 2),
+      pin("Y", 2, 1),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
   // Clocked sampler (sim type 22): the ADC atom — a clocked 1-bit quantizer. Pins
   // are ordered OUT, IN, CLK so buildNetlist's pin→terminal map is direct (pin 0 → a
   // = OUT digital, 1 → b = IN analog sense, 2 → c = CLK), matching the core. On each

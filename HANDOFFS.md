@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (71) — Web wiring chunk 3: CEC combinational composites (the macro machinery)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built the **CEC composition-macro machinery**
++ the 5 combinational composite parts. Full web gate green (check/lint/build); netlist reviewed by me.
+
+**The machinery (the reusable part, in `netlist.ts`):** a **data-driven expander** — `CEC_COMP` maps
+each composite kind to `{ internal, vccPin, gndPin, voutPin, primary, gates: GateStep[] }`, where a
+`GateStep` is `[func, out, in1, in2]` and a terminal ref is a **pin index (≥0)** or an **internal node
+(<0)**. `cecInternal` allocates the private internal nodes (after EC's, deterministic order); the
+expander resolves refs, routes the part's VCC/GND to every sub-gate's d/e, and emits one powered
+`ELEM_GATE` per step. No new sim element — golden-safe composition (like EC/POT but multi-gate). Also
+added a CEC branch to the floating-source connectivity check (treat the IC as a connected blob).
+**Adding a new composite = one `CEC_COMP` table entry + a PART_KINDS pinout + UI rows.** No bespoke
+glyph — composites use the generic IC-card fallback (the five-tier refsheets carry the detail).
+
+**LANDED (5 combinational composites):** HADD (half-adder), FADD (full-adder), MUX2 (2:1 mux), DMUX
+(1:2 demux/decoder), MAJ3 (majority/voter). Pins match the CEC catalog (CEC2024/2018/2031/2032/2046);
+equations verified against truth tables (FADD reuses t0=A⊕B for SUM and carry; MAJ3 = AND-OR voter).
+
+**NEXT chunks (ordered, per owner "Both, CEC first"):**
+1. **Sequential CEC composites** — SR latch (cross-coupled NOR), D-latch (gated SR), JK/T (DFF +
+   steering), tri-state buffer (OE-gated power). The latches need cross-coupled gates (digital feedback;
+   the engine handles it since gates read committed levels); JK needs a DFF element in the macro (extend
+   `GateStep`/the expander to allow a DFF step, or special-case); tri-state = a gate whose VCC is gated
+   by OE (the dead-rail Z trick — needs an OE-gated rail, may need a small expander tweak).
+2. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin → needs the f/g/h emission
+   infra: generalize `pushFGH(nf,ng,nh)` + SIX/SEVEN/EIGHT_PIN sets; prog id in `value`; **LUT truth
+   table edited via PRESETS + HEX** per owner; mode in `params[4]`). Also unblocks the comparator's
+   6-pin LATCHED (LE) variant once f-emission + unconnected-pin detection exist.
+
+---
+
 ## 2026-06-20 (70) — Web wiring chunk 1: sampler + analog switch placeable; 555 guidesheet
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Started "wire it all up" (web-exposing the

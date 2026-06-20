@@ -594,6 +594,71 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  HADD: {
+    name: "Half Adder",
+    equation: "SUM = A ⊕ B · COUT = A · B",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · A + B → {COUT, SUM} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A half adder adds two bits and reports a sum and a carry-out — and that is all it does, with no carry-in. The sum is A XOR B (high when the inputs differ) and the carry-out is A AND B (high only when both are 1), so two bits add to 0, 1, or — when they are both 1 — a 2 carried out. It is the rung below the full adder: the cell at the very least-significant position of a ripple chain, where there is nothing yet to carry in. It is built from exactly an XOR and an AND, which is the lesson — meeting addition without the carry-in pin first makes the full adder's third input obvious. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail every output swings within. Inputs are read against a half-rail threshold and draw essentially no current; the outputs are driven hard to VCC or GND, and lag the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  FADD: {
+    name: "Full Adder",
+    equation: "SUM = A ⊕ B ⊕ CIN · COUT = majority(A, B, CIN)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · A + B + CIN → {COUT, SUM} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A full adder adds three bits — A, B, and a carry-in — and reports a sum and a carry-out. The sum is the three-way parity A XOR B XOR CIN (high when an odd number of inputs are 1) and the carry-out is the majority of the three (high when at least two are 1). That extra carry-in is what lets it chain: wire each stage's COUT into the next stage's CIN and N of them form an N-bit ripple-carry adder — the cell every ALU is built from. A full adder is literally two half-adders plus an OR on their carries. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the outputs swing within. Inputs are thresholded at half that rail and draw essentially no current; the outputs are driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  MUX2: {
+    name: "2:1 Mux",
+    equation: "Y = (A · ¬SEL) + (B · SEL)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · Y = SEL ? B : A · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A 2:1 multiplexer passes one of its two data inputs to the output, chosen by a select line: SEL low forwards A, SEL high forwards B. It is the elemental router — the building block of every larger mux, every data-path 'pick a source,' and, fed back on itself, the lookup-table cell of an FPGA. Cascade them in a tree for a 4:1 or 8:1; this is the leaf. Internally it is an inverter on SEL, two AND gates (A·¬SEL and B·SEL) gating each input, and an OR that merges them. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the output swings within. The inputs are thresholded at half that rail and draw essentially no current; the output is driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  DMUX: {
+    name: "1:2 Demux",
+    equation: "Y0 = D · ¬SEL · Y1 = D · SEL",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · D → Y0/Y1 by SEL · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A 1:2 demultiplexer is the mirror image of the 2:1 mux: it steers one data input to one of two outputs by the select line. Y0 = D·¬SEL asserts when SEL is low, Y1 = D·SEL when SEL is high, and the unselected output stays low. Tie D high and it becomes a 1-of-2 decoder — exactly one output asserts for each address value, the one-hot primitive every memory address line and chip-select grows from. Distribution is the dual of selection, and meeting them as a matched pair makes that duality concrete. Internally it is an inverter on SEL and two AND gates. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the outputs swing within. Inputs are thresholded at half that rail and draw essentially no current; the outputs are driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  MAJ3: {
+    name: "Majority Gate",
+    equation: "Y = AB + BC + CA",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · high when ≥2 inputs high · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A majority gate outputs whatever the majority of its three inputs say: high when two or three of them are high, low otherwise. It is the heart of fault-tolerant logic — triple-modular redundancy votes out a single failed channel through exactly this gate, three copies of a signal reduced to the value at least two agree on — and, not coincidentally, it is the carry-out function of a full adder (COUT = majority(A, B, CIN)), so it ties arithmetic and reliability together. The function is monotone (no input inversion) and a primitive of threshold and neuromorphic logic. Internally it is three AND gates (AB, BC, CA) merged by an OR. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the output swings within. Inputs are thresholded at half that rail and draw essentially no current; the output is driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
   SAMP: {
     name: "Clocked Sampler",
     equation: "OUT ← (IN > Vth) on ↑CLK",

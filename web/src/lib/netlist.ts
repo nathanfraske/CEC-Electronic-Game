@@ -194,6 +194,106 @@ const GATE_AUX: Record<string, number> = {
   NIMPLY: 9,
 };
 
+// Element type for a powered logic gate (the CEC composites stamp these).
+const ELEM_GATE = 17;
+
+/**
+ * CEC composite logic ICs (`docs/ui/cec-teaching-ics.md`) — house teaching parts with no single
+ * discrete equivalent — expand into a small network of **powered `ELEM_GATE`s** wired through
+ * private internal nodes, exactly like the EC/POT expansions but multi-gate. There is no new
+ * sim-core element (golden-safe); each is `buildNetlist` composition. A `GateStep` is
+ * `[funcCode, out, in1, in2]`; a terminal ref is a **pin index** (`>= 0`) or an **internal node**
+ * (`< 0`, where `-1` → internal[0], `-2` → internal[1], …). The expander resolves refs, routes the
+ * part's VCC/GND pins to every sub-gate's `d`/`e`, and emits one `ELEM_GATE` per step. `primary` is
+ * the step whose element backs the part's glyph/inspector current; `voutPin` the pin read for
+ * `vAcross`. (Gate func codes mirror `GATE_AUX`: AND 0, OR 1, NOR 3, XOR 4, NOT 6. A NOT step
+ * ignores `in2`, so it is set equal to `in1`.)
+ */
+type GateStep = [func: number, out: number, in1: number, in2: number];
+interface CecComp {
+  internal: number; // private internal node count
+  vccPin: number;
+  gndPin: number;
+  voutPin: number; // pin whose voltage is the part's "output" (for vAcross)
+  primary: number; // index into gates[] backing the part current
+  gates: GateStep[];
+}
+// Internal-node ref helper: internal node k → the ref value the expander resolves.
+const NI = (k: number): number => -(k + 1);
+const CEC_COMP: Record<string, CecComp> = {
+  // Half-adder (CEC2024): pins SUM(0) GND(1) A(2) B(3) COUT(4) VCC(5). SUM = A^B, COUT = A&B.
+  HADD: {
+    internal: 0,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 0,
+    gates: [
+      [4, 0, 2, 3], // SUM = XOR(A, B)
+      [0, 4, 2, 3], // COUT = AND(A, B)
+    ],
+  },
+  // Full-adder (CEC2018): pins SUM(0) GND(1) A(2) B(3) CIN(4) COUT(5) VCC(6).
+  // SUM = A^B^CIN; COUT = majority(A,B,CIN) = AB + CIN(A^B). Reuses t0 = A^B.
+  FADD: {
+    internal: 3,
+    vccPin: 6,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [4, NI(0), 2, 3], // t0 = XOR(A, B)
+      [4, 0, NI(0), 4], // SUM = XOR(t0, CIN)
+      [0, NI(1), 2, 3], // t1 = AND(A, B)
+      [0, NI(2), 4, NI(0)], // t2 = AND(CIN, t0)
+      [1, 5, NI(1), NI(2)], // COUT = OR(t1, t2)
+    ],
+  },
+  // 2:1 mux (CEC2031): pins Y(0) GND(1) A(2) B(3) SEL(4) VCC(5). Y = A&~SEL | B&SEL.
+  MUX2: {
+    internal: 3,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 3,
+    gates: [
+      [6, NI(0), 4, 4], // nsel = NOT(SEL)
+      [0, NI(1), 2, NI(0)], // t1 = AND(A, nsel)
+      [0, NI(2), 3, 4], // t2 = AND(B, SEL)
+      [1, 0, NI(1), NI(2)], // Y = OR(t1, t2)
+    ],
+  },
+  // 1:2 demux / 1-of-2 decoder (CEC2032): pins Y0(0) GND(1) Y1(2) D(3) SEL(4) VCC(5).
+  DMUX: {
+    internal: 1,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [6, NI(0), 4, 4], // nsel = NOT(SEL)
+      [0, 0, 3, NI(0)], // Y0 = AND(D, nsel)
+      [0, 2, 3, 4], // Y1 = AND(D, SEL)
+    ],
+  },
+  // Majority / voter (CEC2046, 74-series gate order): pins A(0) B(1) GND(2) C(3) Y(4) VCC(5).
+  // Y = AB + BC + CA.
+  MAJ3: {
+    internal: 4,
+    vccPin: 5,
+    gndPin: 2,
+    voutPin: 4,
+    primary: 4,
+    gates: [
+      [0, NI(0), 0, 1], // t0 = AND(A, B)
+      [0, NI(1), 1, 3], // t1 = AND(B, C)
+      [0, NI(2), 3, 0], // t2 = AND(C, A)
+      [1, NI(3), NI(0), NI(1)], // t3 = OR(t0, t1)
+      [1, 4, NI(3), NI(2)], // Y = OR(t3, t2)
+    ],
+  },
+};
+
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
 const ELEM_CAPACITOR = 2;
@@ -422,6 +522,19 @@ export function buildNetlist(
     if (!kind || kind.pins.length < 2) continue;
     ecInternal.set(c.id, next++);
   }
+  // Each CEC composite logic IC (half-adder, mux, …) expands into a small network of
+  // powered gates wired through PRIVATE internal nodes (the intermediate signals between
+  // its sub-gates). Allocate that many per instance — after the pin/junction/EC nodes, in
+  // sorted-component-id order so numbering stays deterministic and move-invariant.
+  // cecInternal: composite component id → its array of internal node indices.
+  const cecInternal = new Map<number, number[]>();
+  for (const c of sorted) {
+    const comp = CEC_COMP[c.kind];
+    if (!comp) continue;
+    const arr: number[] = [];
+    for (let k = 0; k < comp.internal; k++) arr.push(next++);
+    cecInternal.set(c.id, arr);
+  }
   const nodeCount = next;
 
   // Net name per node: each label maps its endpoint to a node index and names it.
@@ -617,6 +730,38 @@ export function buildNetlist(
       continue;
     }
 
+    // CEC composite logic IC (half-adder, full-adder, mux, demux, majority, …): expand into
+    // its network of powered gates per CEC_COMP, wired through the private internal nodes
+    // allocated above. No new sim element — every step is a powered ELEM_GATE with the part's
+    // VCC/GND pins routed to its d/e, so the sub-gates share the part's rail.
+    const comp = CEC_COMP[c.kind];
+    if (comp) {
+      const internals = cecInternal.get(c.id) ?? [];
+      const nodeOfPin = (pinIdx: number): number =>
+        nodeIndex.get(find(key(c.id, pinIdx))) ?? 0;
+      // Resolve a gate-step terminal ref: pin index (>= 0) or internal node (< 0).
+      const resolve = (r: number): number =>
+        r >= 0 ? nodeOfPin(r) : (internals[-r - 1] ?? 0);
+      const nVcc = nodeOfPin(comp.vccPin);
+      const nGnd = nodeOfPin(comp.gndPin);
+      const family = c.family ?? 0;
+      const firstIdx = types.length;
+      for (const [func, out, in1, in2] of comp.gates) {
+        types.push(ELEM_GATE);
+        aArr.push(resolve(out));
+        bArr.push(resolve(in1));
+        cArr.push(resolve(in2));
+        dArr.push(nVcc);
+        eArr.push(nGnd);
+        pushFGH();
+        values.push(c.value); // vestigial logic rail (the gate is powered through d/e)
+        auxArr.push(func + 16 * family);
+      }
+      elemOfComponent.set(c.id, firstIdx + comp.primary);
+      nodesOfComponent.set(c.id, [nodeOfPin(comp.voutPin), nGnd]);
+      continue;
+    }
+
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
     // The third terminal: any device with a pin 2 stamps it as node c. For a 3-pin
@@ -729,6 +874,17 @@ export function buildNetlist(
       if (nw !== undefined) {
         u2(na, nw);
         u2(nw, nb);
+      }
+      continue;
+    }
+    // A CEC composite is a network of powered gates between its pins: for the
+    // return-path test treat the whole IC as one connected blob (its powered output and
+    // rails tie its nodes together), so a source returning through any pin finds a path —
+    // the same spirit as the EC/POT passive-path unions above.
+    if (CEC_COMP[c.kind]) {
+      for (const p of kind.pins) {
+        const np = nodeIndex.get(find(key(c.id, p.index)));
+        if (np !== undefined) u2(na, np);
       }
       continue;
     }
