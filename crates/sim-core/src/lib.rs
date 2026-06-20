@@ -968,10 +968,12 @@ const ASWITCH_FIXED_THRESH: f64 = 1.5;
 /// beside `samp_q`), **integer only** (no floats, no PRNG, no std hasher), zero-initialised and
 /// **folded into the snapshot hash** in fixed element + word order, appended after the existing
 /// folds — so a circuit with no behavioral block (the RC golden, every existing test) folds
-/// **zero** extra bytes and the golden is byte-identical by construction. The SPI program uses
-/// the eight words as `[0]=fsm`, `[1]=bit_index`, `[2]=shift_out`, `[3]=shift_in`,
-/// `[4]=clk_counter`, `[5]=sclk_level`, `[6]=cs_level`, `[7]=start_prev` (see
-/// [`beh_spi_step`]); a future program reuses the same eight words differently.
+/// **zero** extra bytes and the golden is byte-identical by construction. The SPI **master**
+/// program (1) uses the first eight words as `[0]=fsm`, `[1]=bit_index`, `[2]=shift_out`,
+/// `[3]=shift_in`, `[4]=clk_counter`, `[5]=sclk_level`, `[6]=cs_level`, `[7]=start_prev` (see
+/// [`beh_spi_step`]); the SPI **slave** (2, [`beh_spi_slave_step`]) and the **UART** (3,
+/// [`beh_uart_step`]) each lay the same `[u32; `[`BEH_STATE_WORDS`]`]` block out their own way —
+/// every program runs alone in its element, so the word maps need not agree.
 ///
 /// **SPI master pinout (program 1)** — uses the wider 8-terminal format: `a` = `SCLK` (out),
 /// `b` = `MOSI` (out), `c` = `CS` (out, active-low), `d` = `VCC`, `e` = `GND`, `f` = `MISO`
@@ -995,11 +997,16 @@ pub const ELEM_BEHAVIORAL: u8 = 25;
 
 /// Width of an [`ELEM_BEHAVIORAL`] block's integer internal-state array — the number of `u32`
 /// words each behavioral block carries (and folds into the snapshot hash in word order). Fixed
-/// so every program shares one state shape; the SPI master uses all eight (see [`beh_spi_step`]),
-/// a future program reuses them differently. Eight is comfortably enough for a shift-register
-/// protocol (fsm + a counter + two shift registers + a few flags) without bloating the per-tick
-/// hash fold.
-pub const BEH_STATE_WORDS: usize = 8;
+/// so every program shares one state shape; **each program lays the words out independently**
+/// (only one program ever runs per element): the SPI master (program 1) uses words 0..8 (see
+/// [`beh_spi_step`]), the SPI slave (program 2) words 0..6 (see [`beh_spi_slave_step`]), and the
+/// **UART** (program 3) words 0..12 — TX *and* RX run concurrently in one block, so it needs both
+/// engines' counters/shift-registers side by side (see [`beh_uart_step`]). Sixteen is comfortably
+/// enough for that widest program (a full-duplex shift-register protocol) without bloating the
+/// per-tick hash fold. Widening from the original eight is **golden-safe**: no golden circuit
+/// carries a behavioral block, so the RC golden folds zero extra bytes and
+/// `0xeaac_3764_99e4_fa24` is byte-identical; program 1's word map (0..8) is unchanged.
+pub const BEH_STATE_WORDS: usize = 16;
 
 /// Behavioral SPI master — default SCLK **half-period in analog ticks** when `params[0] <= 0`.
 /// A full SCLK period is `2 ·` this; with [`DT`] = 2 µs the default 4 → an 8 µs period
@@ -1029,9 +1036,284 @@ const BEH_SPI_START_PREV: usize = 7;
 
 /// Program id selecting the **SPI master** firmware for an [`ELEM_BEHAVIORAL`] (its `value`).
 /// `0` (or any unrecognised id) is an **inert** behavioral block — it advances no state and
-/// drives nothing, so it folds a zero state block and is golden-safe. Future programs take
-/// further ids.
+/// drives nothing, so it folds a zero state block and is golden-safe. Further programs take
+/// the next ids.
 const BEH_PROG_SPI_MASTER: u32 = 1;
+/// Program id selecting the **SPI slave** firmware (program 2) — the receiving end of the
+/// phase-1 SPI master, Mode 0. See [`beh_spi_slave_step`].
+const BEH_PROG_SPI_SLAVE: u32 = 2;
+/// Program id selecting the **UART** firmware (program 3) — async TX+RX in one block. See
+/// [`beh_uart_step`].
+const BEH_PROG_UART: u32 = 3;
+
+// --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
+
+/// SPI-**slave** internal-state word indices (program 2) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block — a fresh layout (every program runs alone in its
+/// element). The slave is the receiving end of the phase-1 master (Mode 0): it watches the
+/// driven `SCLK`/`MOSI`/`CS` pins and shifts MOSI in MSB-first on each SCLK **rising** edge while
+/// `CS` is asserted (low), presenting its reply word (`aux`) on `MISO` MSB-first so a master can
+/// read it back. `BIT_INDEX` counts the rising edges already taken in the current frame (the next
+/// reply/receive bit position); `RX_WORD` latches the completed receive word; `RXVALID` holds
+/// high from a completed word until `CS` deasserts (the receiver's data-ready pulse for one
+/// transaction); `SCLK_PREV`/`CS_PREV` are the edge-detection companions.
+const BEH_SLV_SCLK_PREV: usize = 0;
+const BEH_SLV_BIT_INDEX: usize = 1;
+const BEH_SLV_SHIFT_IN: usize = 2;
+const BEH_SLV_RX_WORD: usize = 3;
+const BEH_SLV_RXVALID: usize = 4;
+const BEH_SLV_CS_PREV: usize = 5;
+
+/// The SPI slave's bit count (`params[1]`, defaulting to [`BEH_SPI_NBITS_DEFAULT`] and clamped to
+/// [`BEH_SPI_NBITS_MAX`]) — the **structural** frame width, read once so the receive and the
+/// `MISO` reply agree. The slave is clocked entirely by the incoming `SCLK`, so it has no
+/// half-period of its own (`params[0]` is unused). Never a function of a solved voltage.
+#[inline]
+fn beh_spi_slave_nbits(el: &Element) -> u32 {
+    if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_SPI_NBITS_MAX)
+    } else {
+        BEH_SPI_NBITS_DEFAULT
+    }
+}
+
+/// The `MISO` bit the SPI slave currently presents (MSB-first) from its **committed** state: the
+/// reply word `aux`'s bit at position `nbits-1-bit_index`, where `bit_index` is the count of
+/// SCLK rising edges already taken this frame. Driven only while `CS` is asserted (`cs_prev == 0`,
+/// i.e. CS was low at the last commit); idle/deasserted presents `0`. Pure integer arithmetic on
+/// the hashed state — the same `bit_index` the commit step advances, so the reply a master samples
+/// on the rising edge is exactly the slave's next reply bit (the link is full-duplex).
+#[inline]
+fn beh_spi_slave_miso_bit(state: &[u32; BEH_STATE_WORDS], reply: u64, nbits: u32) -> bool {
+    if state[BEH_SLV_CS_PREV] != 0 {
+        return false; // CS deasserted → MISO idle low.
+    }
+    let bit_index = state[BEH_SLV_BIT_INDEX].min(nbits.saturating_sub(1));
+    let shift = nbits - 1 - bit_index;
+    (reply >> shift) & 1 != 0
+}
+
+/// Advance a behavioral **SPI slave**'s integer state machine by one analog tick (Mode 0:
+/// CPOL = 0, CPHA = 0), reading the just-solved committed input levels (`sclk`, `mosi`, `cs`).
+/// Mirrors the master's edge bookkeeping from the other side of the bus (all integer, fully
+/// deterministic):
+/// - **Deasserted** (`cs == true`, CS high): the receiver is reset — `bit_index`/`shift_in`
+///   cleared and `SCLK_PREV` tracked — and on the **rising CS edge** (the frame ending) `RXVALID`
+///   is cleared, so the data-ready pulse lasts exactly from a completed word until CS releases.
+/// - **Asserted** (`cs == false`, CS low): on a **rising SCLK edge** (`sclk && !sclk_prev`) shift
+///   `MOSI` into `shift_in` (MSB-first, shift-left + OR), then advance `bit_index`; once `nbits`
+///   bits have been clocked latch `shift_in` into `RX_WORD`, raise `RXVALID`, and reset
+///   `bit_index`/`shift_in` for a back-to-back next frame. `MISO` is presented combinationally
+///   from `bit_index` by [`beh_spi_slave_miso_bit`] (the reply word's bits MSB-first), so a
+///   Mode-0 master sampling on the same rising edge reads reply bit `bit_index`.
+///
+/// `SCLK_PREV`/`CS_PREV` are always updated last so the next tick can detect the next edges.
+/// Mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_spi_slave_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    nbits: u32,
+    sclk: bool,
+    mosi: bool,
+    cs: bool,
+) {
+    if cs {
+        // Deasserted: receiver reset; clear RXVALID on the CS rising edge (frame end).
+        if state[BEH_SLV_CS_PREV] == 0 {
+            state[BEH_SLV_RXVALID] = 0;
+        }
+        state[BEH_SLV_BIT_INDEX] = 0;
+        state[BEH_SLV_SHIFT_IN] = 0;
+    } else {
+        // Asserted: sample MOSI on each rising SCLK edge, MSB-first.
+        if sclk && state[BEH_SLV_SCLK_PREV] == 0 {
+            state[BEH_SLV_SHIFT_IN] = (state[BEH_SLV_SHIFT_IN] << 1) | (mosi as u32);
+            state[BEH_SLV_BIT_INDEX] += 1;
+            if state[BEH_SLV_BIT_INDEX] >= nbits {
+                state[BEH_SLV_RX_WORD] = state[BEH_SLV_SHIFT_IN];
+                state[BEH_SLV_RXVALID] = 1; // data-ready: held until CS deasserts
+                state[BEH_SLV_BIT_INDEX] = 0; // ready for a back-to-back next frame
+                state[BEH_SLV_SHIFT_IN] = 0;
+            }
+        }
+    }
+    state[BEH_SLV_SCLK_PREV] = sclk as u32;
+    state[BEH_SLV_CS_PREV] = cs as u32;
+}
+
+// --- Behavioral program 3: UART (async, TX + RX in one block) -----------------
+
+/// UART internal-state word indices (program 3) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block — TX and RX run **concurrently** in one block, so each
+/// engine gets its own counters/shift-register side by side (a fresh layout; every program runs
+/// alone in its element). `TX_*` drive the `TX` pin; `RX_*` sample the `RX` pin. All structural
+/// timing (the baud-tick counters) is integer and derived from `params`, never from a voltage.
+const BEH_UART_TX_STATE: usize = 0; // 0 = idle (line mark/high), 1 = transmitting a frame
+const BEH_UART_TX_BITPOS: usize = 1; // 0 = start bit, 1..=nbits = data bits, nbits+1 = stop bit
+const BEH_UART_TX_BAUD: usize = 2; // ticks elapsed in the current bit
+const BEH_UART_TX_SHIFT: usize = 3; // remaining data bits, LSB-first (shifted right as sent)
+const BEH_UART_SEND_PREV: usize = 4; // previous SEND level (rising-edge trigger companion)
+const BEH_UART_RX_STATE: usize = 5; // 0 = idle (awaiting start), 1 = sampling a frame
+const BEH_UART_RX_BITPOS: usize = 6; // data bits sampled so far (0..nbits)
+const BEH_UART_RX_BAUD: usize = 7; // ticks elapsed toward the next sample instant
+const BEH_UART_RX_SHIFT: usize = 8; // data bits received so far, assembled LSB-first
+const BEH_UART_RX_PREV: usize = 9; // previous RX level (falling-edge/start-bit companion)
+const BEH_UART_RX_WORD: usize = 10; // latched received byte
+const BEH_UART_RXVALID: usize = 11; // pulse: high for one tick when a byte latches
+
+/// Default UART **baud divider** — analog ticks per bit when `params[0] <= 0`. The structural bit
+/// period (a clock divider), so framing is deterministic and never a function of a solved voltage.
+/// Sixteen ticks/bit is the classic 16× oversampling figure and keeps mid-bit RX sampling
+/// (`baud/2`) well clear of the bit edges; with [`DT`] = 2 µs it is a 32 µs bit (~31.25 kbaud).
+const BEH_UART_BAUD_DEFAULT: u32 = 16;
+/// UART default **data bits** per frame when `params[1] <= 0` (a byte).
+const BEH_UART_NBITS_DEFAULT: u32 = 8;
+/// UART maximum data bits, clamping `params[1]` so a shift word stays within the 32-bit slot and
+/// the LSB-first index arithmetic can never overflow. Deterministic structural bound (32 bits).
+const BEH_UART_NBITS_MAX: u32 = 32;
+
+/// The UART's baud divider (`params[0]`, defaulting, floored at 1 so a bit always spans ≥ 1 tick)
+/// and data-bit count (`params[1]`, defaulting and clamped) as integers — the **structural**
+/// framing, read once so the TX/RX engines and the line drive agree. Never a function of a solved
+/// voltage.
+#[inline]
+fn beh_uart_config(el: &Element) -> (u32, u32) {
+    let baud = if el.params[0] >= 1.0 {
+        el.params[0] as u32
+    } else {
+        BEH_UART_BAUD_DEFAULT
+    }
+    .max(1);
+    let nbits = if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_UART_NBITS_MAX)
+    } else {
+        BEH_UART_NBITS_DEFAULT
+    };
+    (baud, nbits)
+}
+
+/// The level the UART currently drives on `TX` (its **committed** state): idle/mark is **high**;
+/// while transmitting, the start bit (bitpos 0) is low, each data bit (bitpos `1..=nbits`) is its
+/// LSB-first value from the shift register, and the stop bit (bitpos `nbits+1`) is high. Pure
+/// integer arithmetic on the hashed state — the same bits the commit step shifts out, so the
+/// drive and the bookkeeping stay in lockstep. Returns `true` for a high (mark) line.
+#[inline]
+fn beh_uart_tx_high(state: &[u32; BEH_STATE_WORDS], nbits: u32) -> bool {
+    if state[BEH_UART_TX_STATE] != 1 {
+        return true; // idle line = mark (high)
+    }
+    let bitpos = state[BEH_UART_TX_BITPOS];
+    if bitpos == 0 {
+        false // start bit (space/low)
+    } else if bitpos <= nbits {
+        // Data bit (LSB-first): the low bit of the remaining shift register.
+        state[BEH_UART_TX_SHIFT] & 1 != 0
+    } else {
+        true // stop bit (mark/high)
+    }
+}
+
+/// Advance a behavioral **UART**'s integer state machine by one analog tick — TX and RX both, from
+/// the just-solved committed inputs (`send`, `rx`). All timing is integer (the baud-tick counters),
+/// fully deterministic:
+/// - **TX:** idle holds the line high (mark). On a **rising SEND edge** load `aux & mask` into the
+///   shift register and begin a frame at the start bit. Each bit is held for `baud` ticks (counting
+///   `TX_BAUD` up); when a bit completes, advance `TX_BITPOS` (shifting the data register right as
+///   each data bit finishes) through start → `nbits` data bits (LSB-first) → stop, then return to
+///   idle. The level for the current bit is presented by [`beh_uart_tx_high`].
+/// - **RX:** idle watches `RX`; on its **falling edge** (a start bit) begin sampling and wait
+///   **1.5 bit periods** (`baud + baud/2`) so the first sample lands in the middle of the first
+///   data bit (half a bit to the start-bit midpoint, then a full bit to step over it). Then sample
+///   each of `nbits` data bits at one-bit (`baud`) intervals, assembling LSB-first; after the last
+///   data bit latch the byte into `RX_WORD` and pulse `RXVALID` high for one tick, then return to
+///   idle (the stop bit is the idle/mark the next start-edge search runs against — standard mid-bit
+///   sampling).
+///
+/// `SEND_PREV`/`RX_PREV` are updated last for the next tick's edge detection. `RXVALID` is cleared
+/// at the top each tick so it is a one-tick pulse. Mutates `state` in place (the commit phase).
+fn beh_uart_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    data: u64,
+    baud: u32,
+    nbits: u32,
+    send: bool,
+    rx: bool,
+) {
+    let mask: u64 = if nbits >= 32 {
+        u64::MAX
+    } else {
+        (1u64 << nbits) - 1
+    };
+    let half = (baud / 2).max(1); // first-sample delay; ≥ 1 so RX always advances
+
+    // RXVALID is a one-tick pulse: clear it, then any latch this tick re-raises it.
+    state[BEH_UART_RXVALID] = 0;
+
+    // --- TX engine ---
+    if state[BEH_UART_TX_STATE] == 1 {
+        state[BEH_UART_TX_BAUD] += 1;
+        if state[BEH_UART_TX_BAUD] >= baud {
+            state[BEH_UART_TX_BAUD] = 0;
+            let bitpos = state[BEH_UART_TX_BITPOS];
+            // The bit that just finished its `baud` ticks: if it was a data bit, drop it so the
+            // next data bit's value sits in bit 0 of the shift register.
+            if (1..=nbits).contains(&bitpos) {
+                state[BEH_UART_TX_SHIFT] >>= 1;
+            }
+            // Advance to the next bit; after the stop bit (bitpos == nbits+1) return to idle.
+            if bitpos > nbits {
+                state[BEH_UART_TX_STATE] = 0;
+                state[BEH_UART_TX_BITPOS] = 0;
+            } else {
+                state[BEH_UART_TX_BITPOS] = bitpos + 1;
+            }
+        }
+    } else if send && state[BEH_UART_SEND_PREV] == 0 {
+        // Rising SEND edge: load the byte (LSB-first) and start the frame at the start bit.
+        state[BEH_UART_TX_SHIFT] = (data & mask) as u32;
+        state[BEH_UART_TX_BITPOS] = 0; // start bit first
+        state[BEH_UART_TX_BAUD] = 0;
+        state[BEH_UART_TX_STATE] = 1;
+    }
+    state[BEH_UART_SEND_PREV] = send as u32;
+
+    // --- RX engine ---
+    if state[BEH_UART_RX_STATE] == 1 {
+        state[BEH_UART_RX_BAUD] += 1;
+        // The first data-bit sample lands in the MIDDLE OF BIT 0 — 1.5 bit periods after the start
+        // edge (`baud + half`): half a bit to reach the middle of the start bit, then one full bit
+        // to step over the start bit to the middle of the first data bit. Each subsequent sample is
+        // one full bit later (mid-bit). Skipping the start bit this way is what keeps the LSB-first
+        // assembly aligned (sampling only `half` would land on the start bit and shift every bit).
+        let target = if state[BEH_UART_RX_BITPOS] == 0 {
+            baud + half
+        } else {
+            baud
+        };
+        if state[BEH_UART_RX_BAUD] >= target {
+            state[BEH_UART_RX_BAUD] = 0;
+            // Sample this data bit (LSB-first: bit k lands in position k).
+            let k = state[BEH_UART_RX_BITPOS];
+            if rx {
+                state[BEH_UART_RX_SHIFT] |= 1u32 << k;
+            }
+            state[BEH_UART_RX_BITPOS] = k + 1;
+            if state[BEH_UART_RX_BITPOS] >= nbits {
+                // All data bits in: latch the byte and pulse RXVALID (one tick). The stop bit is
+                // the idle mark the next start-edge search runs against, so return straight to idle.
+                state[BEH_UART_RX_WORD] = state[BEH_UART_RX_SHIFT] & (mask as u32);
+                state[BEH_UART_RXVALID] = 1;
+                state[BEH_UART_RX_STATE] = 0;
+            }
+        }
+    } else if !rx && state[BEH_UART_RX_PREV] != 0 {
+        // Falling RX edge (start bit): begin sampling — clear the assembler, await the mid-bit.
+        state[BEH_UART_RX_STATE] = 1;
+        state[BEH_UART_RX_BITPOS] = 0;
+        state[BEH_UART_RX_BAUD] = 0;
+        state[BEH_UART_RX_SHIFT] = 0;
+    }
+    state[BEH_UART_RX_PREV] = rx as u32;
+}
 
 /// Read one of a behavioral block's digital **input** pins as a two-state level: `true`
 /// (logic high) iff the pin sits above half the chip's rail **relative to its GND pin** `e`,
@@ -1545,10 +1827,15 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 // IN- (c), VCC (d), GND (e) are analog (marked below).
                 &[e.a, e.f]
             } else if e.kind == ELEM_BEHAVIORAL {
-                // SPI master: SCLK (a), MOSI (b), CS (c) are digital OUTPUT pins and MISO (f),
-                // START (g) are digital INPUT pins; VCC (d), GND (e) are analog supply pins
-                // (marked below, exactly like a powered gate's power pins).
-                &[e.a, e.b, e.c, e.f, e.g]
+                // The behavioral block's signal pins are GENERAL across its programs: a/b/c are
+                // digital OUTPUT pins and f/g/h are digital INPUT pins; VCC (d), GND (e) are analog
+                // supply pins (marked below, exactly like a powered gate's power pins). Per program:
+                //   1 SPI master: a=SCLK,b=MOSI,c=CS (out); f=MISO,g=START (in)
+                //   2 SPI slave:  a=MISO,b=RXVALID (out); f=SCLK,g=MOSI,h=CS (in)
+                //   3 UART:       a=TX,b=RXVALID (out); f=RX,g=SEND (in)
+                // Unused pins default to ground (node 0, forced analog), so listing all of a/b/c and
+                // f/g/h is safe for every program — an unused one only ever re-marks ground.
+                &[e.a, e.b, e.c, e.f, e.g, e.h]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -1766,11 +2053,12 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.f);
             }
             ELEM_BEHAVIORAL => {
-                // The three powered OUTPUT pins — SCLK (a), MOSI (b), CS (c) — are referenced
-                // by their drivers (GATE_GOUT to ground via the powered output stage). The
-                // input pins MISO (f) / START (g) and the supply pins VCC (d) / GND (e) are
-                // NOT pinned here (mirrors a powered gate's VCC/GND and the sampler's IN) —
-                // each is an ordinary node left to be referenced by its own source, so an
+                // The powered OUTPUT pins a/b/c are referenced by their drivers (GATE_GOUT to
+                // ground via the powered output stage) — general across programs (prog 1 drives all
+                // three: SCLK/MOSI/CS; progs 2/3 drive a/b and release c, but marking an unused c
+                // only ever re-marks ground). The input pins f/g/h and the supply pins VCC (d) /
+                // GND (e) are NOT pinned here (mirrors a powered gate's VCC/GND and the sampler's
+                // IN) — each is an ordinary node left to be referenced by its own source, so an
                 // unwired VCC floats to ~0 V → the chip reads unpowered.
                 mark(&mut referenced, e.a);
                 mark(&mut referenced, e.b);
@@ -5278,15 +5566,19 @@ impl Sim {
                     self.digital_family[e.a] = 0;
                 }
                 ELEM_BEHAVIORAL => {
-                    // Behavioral block (SPI master, program 1): three POWERED digital outputs —
-                    // SCLK (a), MOSI (b), CS (c) — driven from the COMMITTED integer state through
-                    // the SAME powered-gate output path the gate/comparator use. They swing between
-                    // the GND pin (e, vlow) and the VCC pin (d, vhigh) and release (Z) when the rail
-                    // collapses below the operating minimum (an unpowered chip sits dead). The state
-                    // is advanced in the commit phase, so the levels are constant within the solve —
-                    // a constant Thévenin stamp, no Newton, one tick of state-to-output delay. MISO
-                    // (f) / START (g) are read in the commit phase (not driven here). Ideal driver
-                    // family (a clean rail-to-rail output), GND-offset by `vlow`.
+                    // Behavioral block: up to three POWERED digital outputs on a/b/c, driven from
+                    // the COMMITTED integer state through the SAME powered-gate output path the
+                    // gate/comparator use. They swing between the GND pin (e, vlow) and the VCC pin
+                    // (d, vhigh) and release (Z) when the rail collapses below the operating minimum
+                    // (an unpowered chip sits dead). The state is advanced in the commit phase, so
+                    // the levels are constant within the solve — a constant Thévenin stamp, no
+                    // Newton, one tick of state-to-output delay. The input pins f/g/h are read in
+                    // the commit phase (not driven here). Ideal driver family (a clean rail-to-rail
+                    // output), GND-offset by `vlow`. The per-program output map (which pin carries
+                    // what, and whether c is used) is the only thing that differs between programs:
+                    //   prog 1 SPI master: a=SCLK, b=MOSI, c=CS
+                    //   prog 2 SPI slave:  a=MISO, b=RXVALID, c unused (Z)
+                    //   prog 3 UART:       a=TX,   b=RXVALID, c unused (Z)
                     let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
                     let fam = &FAMILIES[0];
                     // The behavioral block is ALWAYS powered through its VCC (d) / GND (e) pins —
@@ -5295,56 +5587,66 @@ impl Sim {
                     // floats to ~0 V → rail below the minimum → the chip reads dead/released.
                     let vlow = self.node_v[e.e];
                     let rail = (self.node_v[e.d] - vlow).max(0.0);
-                    let dead = rail < GATE_MIN_RAIL || prog != BEH_PROG_SPI_MASTER;
-                    let (sclk, mosi, cs) = if dead {
-                        // Unpowered, or an inert/unknown program: release all three outputs (Z).
+                    let bit = |hi: bool| if hi { Level::High } else { Level::Low };
+                    // (a, b, c) output levels for this program (Z = released). Unpowered or an
+                    // inert/unknown program releases everything.
+                    let (la, lb, lc) = if rail < GATE_MIN_RAIL {
                         (Level::Z, Level::Z, Level::Z)
                     } else {
-                        let (nbits, _half) = beh_spi_config(&e);
                         let st = &self.beh_state[i];
-                        let sclk = if st[BEH_SPI_SCLK_LEVEL] != 0 {
-                            Level::High
-                        } else {
-                            Level::Low
-                        };
-                        let mosi = if beh_spi_mosi_bit(st, nbits) {
-                            Level::High
-                        } else {
-                            Level::Low
-                        };
-                        // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
-                        // output level, so it idles High and asserts Low during a transaction.
-                        // Guard the all-zero RESET state (cs_level = 0 before the first commit
-                        // runs the idle branch that raises it): CS is asserted Low ONLY while a
-                        // transaction is active (fsm = 1), else deasserted High — so a freshly
-                        // installed/idle master reads CS High from the very first tick (spec:
-                        // "Idle (fsm = 0): CS = 1 deasserted").
-                        let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
-                            Level::Low
-                        } else {
-                            Level::High
-                        };
-                        (sclk, mosi, cs)
+                        match prog {
+                            BEH_PROG_SPI_MASTER => {
+                                let (nbits, _half) = beh_spi_config(&e);
+                                let sclk = bit(st[BEH_SPI_SCLK_LEVEL] != 0);
+                                let mosi = bit(beh_spi_mosi_bit(st, nbits));
+                                // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
+                                // output level, so it idles High and asserts Low during a
+                                // transaction. Guard the all-zero RESET state (cs_level = 0 before
+                                // the first commit runs the idle branch that raises it): CS is
+                                // asserted Low ONLY while a transaction is active (fsm = 1), else
+                                // deasserted High — so a freshly installed/idle master reads CS High
+                                // from the very first tick (spec: "Idle (fsm = 0): CS = 1").
+                                let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
+                                    Level::Low
+                                } else {
+                                    Level::High
+                                };
+                                (sclk, mosi, cs)
+                            }
+                            BEH_PROG_SPI_SLAVE => {
+                                // MISO (a): the reply word `aux` MSB-first while CS is asserted,
+                                // else idle low. RXVALID (b): high while a received word is latched
+                                // (until CS deasserts). c unused.
+                                let nbits = beh_spi_slave_nbits(&e);
+                                let miso = bit(beh_spi_slave_miso_bit(st, e.aux as u64, nbits));
+                                let rxvalid = bit(st[BEH_SLV_RXVALID] != 0);
+                                (miso, rxvalid, Level::Z)
+                            }
+                            BEH_PROG_UART => {
+                                // TX (a): the framed line (idle/mark high). RXVALID (b): the one-tick
+                                // received-byte pulse. c unused.
+                                let (_baud, nbits) = beh_uart_config(&e);
+                                let tx = bit(beh_uart_tx_high(st, nbits));
+                                let rxvalid = bit(st[BEH_UART_RXVALID] != 0);
+                                (tx, rxvalid, Level::Z)
+                            }
+                            // Inert / unknown program: release all outputs.
+                            _ => (Level::Z, Level::Z, Level::Z),
+                        }
                     };
-                    // SCLK (a): also record the element-indexed Thévenin so the OUT current
-                    // readout (oriented out of `a`) matches the stamp, exactly like the gate.
-                    let (tvf, g) = fam.drive_level(sclk, rail).unwrap_or((0.0, 0.0));
+                    // OUT pin a: also record the element-indexed Thévenin so the OUT current readout
+                    // (oriented out of `a`) matches the stamp, exactly like the gate.
+                    let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
                     self.gate_target[i] = vlow + tvf;
                     self.gate_gout[i] = g;
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], sclk);
-                    self.digital_vhigh[e.a] = rail;
-                    self.digital_vlow[e.a] = vlow;
-                    self.digital_family[e.a] = 0;
-                    // MOSI (b).
-                    self.digital_drive[e.b] = combine(self.digital_drive[e.b], mosi);
-                    self.digital_vhigh[e.b] = rail;
-                    self.digital_vlow[e.b] = vlow;
-                    self.digital_family[e.b] = 0;
-                    // CS (c).
-                    self.digital_drive[e.c] = combine(self.digital_drive[e.c], cs);
-                    self.digital_vhigh[e.c] = rail;
-                    self.digital_vlow[e.c] = vlow;
-                    self.digital_family[e.c] = 0;
+                    // Drive all three output pins a/b/c uniformly (an unused pin carries Z, which
+                    // combine() yields on, so it neither pulls its net nor is double-counted).
+                    for (node, lvl) in [(e.a, la), (e.b, lb), (e.c, lc)] {
+                        self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                        self.digital_vhigh[node] = rail;
+                        self.digital_vlow[node] = vlow;
+                        self.digital_family[node] = 0;
+                    }
                 }
                 _ => {}
             }
@@ -5664,32 +5966,58 @@ impl Sim {
                 ELEM_BEHAVIORAL => {
                     // Advance the behavioral block's integer state machine by one tick from the
                     // just-solved committed inputs (the only state-mutation site — eval_digital
-                    // merely DRIVES from this committed state). Program 1 = SPI master (Mode 0).
-                    // An unpowered chip (rail below the operating minimum) holds its state, and a
-                    // 0/unknown program id is inert — both fold a zero/frozen state block, so the
-                    // golden is untouched.
+                    // merely DRIVES from this committed state). Programs: 1 = SPI master, 2 = SPI
+                    // slave, 3 = UART. An unpowered chip (rail below the operating minimum) holds
+                    // its state, and a 0/unknown program id is inert — both fold a zero/frozen state
+                    // block, so the golden is untouched. Inputs are read as two-state digital levels
+                    // (half-rail relative to GND on `e`, via beh_level — no float-order reduction; a
+                    // deterministic boolean), each program reading its own input pins:
+                    //   prog 1 SPI master: f=MISO, g=START
+                    //   prog 2 SPI slave:  f=SCLK, g=MOSI, h=CS
+                    //   prog 3 UART:       f=RX,   g=SEND
                     let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
-                    if prog == BEH_PROG_SPI_MASTER {
-                        let rail = self.node_v[e.d] - self.node_v[e.e];
-                        if rail >= GATE_MIN_RAIL {
-                            let (nbits, half) = beh_spi_config(e);
-                            // Inputs MISO (f) / START (g) as two-state levels, half-rail relative
-                            // to GND (e) — the powered-gate input threshold (no float-order
-                            // reduction; a deterministic boolean).
-                            let vlow = self.node_v[e.e];
-                            let start = beh_level(&self.node_v, e.g, vlow, rail);
-                            let miso = beh_level(&self.node_v, e.f, vlow, rail);
-                            beh_spi_step(
-                                &mut self.beh_state[i],
-                                e.aux as u64,
-                                nbits,
-                                half,
-                                start,
-                                miso,
-                            );
+                    let rail = self.node_v[e.d] - self.node_v[e.e];
+                    if rail >= GATE_MIN_RAIL {
+                        let vlow = self.node_v[e.e];
+                        let lvl = |pin: usize| beh_level(&self.node_v, pin, vlow, rail);
+                        match prog {
+                            BEH_PROG_SPI_MASTER => {
+                                let (nbits, half) = beh_spi_config(e);
+                                beh_spi_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u64,
+                                    nbits,
+                                    half,
+                                    lvl(e.g), // START
+                                    lvl(e.f), // MISO
+                                );
+                            }
+                            BEH_PROG_SPI_SLAVE => {
+                                let nbits = beh_spi_slave_nbits(e);
+                                beh_spi_slave_step(
+                                    &mut self.beh_state[i],
+                                    nbits,
+                                    lvl(e.f), // SCLK
+                                    lvl(e.g), // MOSI
+                                    lvl(e.h), // CS (active-low)
+                                );
+                            }
+                            BEH_PROG_UART => {
+                                let (baud, nbits) = beh_uart_config(e);
+                                beh_uart_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u64,
+                                    baud,
+                                    nbits,
+                                    lvl(e.g), // SEND (trigger)
+                                    lvl(e.f), // RX
+                                );
+                            }
+                            // Inert / unknown program: no state advance.
+                            _ => {}
                         }
-                        // else unpowered: state held (the dead-rail rule).
                     }
+                    // else unpowered: state held (the dead-rail rule).
                 }
                 _ => {}
             }
@@ -6369,6 +6697,26 @@ impl Sim {
     /// The behavioral SPI master's FSM phase (state word 0: 0 = idle, 1 = active) for element `i`.
     fn beh_spi_fsm(&self, i: usize) -> u32 {
         self.beh_state[i][BEH_SPI_FSM]
+    }
+    /// The behavioral **SPI slave**'s latched received word (`RX_WORD`) for element `i` — the last
+    /// completed transaction's byte. Mirrors `beh_spi_shift_in` from the slave side.
+    fn beh_spi_slave_rx_word(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SLV_RX_WORD]
+    }
+    /// The behavioral **SPI slave**'s `RXVALID` flag (1 = a word is latched, held until CS
+    /// deasserts) for element `i`.
+    fn beh_spi_slave_rxvalid(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SLV_RXVALID]
+    }
+    /// The behavioral **UART**'s latched received byte (`RX_WORD`) for element `i`.
+    fn beh_uart_rx_word(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_UART_RX_WORD]
+    }
+    /// The behavioral **UART**'s `RXVALID` pulse flag (1 for the one tick a byte latches) for
+    /// element `i`. (A test typically OR-accumulates this across the run since it is a one-tick
+    /// pulse.)
+    fn beh_uart_rxvalid(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_UART_RXVALID]
     }
 }
 
@@ -10401,7 +10749,7 @@ mod tests {
 
     /// A behavioral-block netlist (active integer state) reproduces bit-for-bit: two fresh `Sim`s
     /// run the same SPI-master netlist for N steps and agree on the snapshot hash at EVERY tick —
-    /// the determinism guarantee with the protocol engine ACTIVE (its 8 state words are hashed).
+    /// the determinism guarantee with the protocol engine ACTIVE (its state words are hashed).
     #[test]
     fn behavioral_run_is_reproducible() {
         let build = || spi_master(0xA5 as f64, 2.0, 8.0, 4); // MOSI→MISO loopback, active transaction
@@ -10413,6 +10761,222 @@ mod tests {
                 a.snapshot_hash(),
                 b.snapshot_hash(),
                 "behavioral block diverged at tick {tk} (its integer state must be hashed)"
+            );
+        }
+    }
+
+    // --- Behavioral programs 2 & 3: SPI slave + UART --------------------------
+    //
+    // Program 2 is the receiving end of the phase-1 SPI master (Mode 0). Pins:
+    // f=SCLK (in), g=MOSI (in), h=CS (in); a=MISO (out), b=RXVALID (out); d=VCC, e=GND.
+    // Program 3 is an async UART (TX+RX in one block). Pins: a=TX (out), b=RXVALID (out);
+    // f=RX (in), g=SEND (in); d=VCC, e=GND. aux = the byte to send; params[0] = baud
+    // divider (ticks/bit), params[1] = data bits. Both run at the base tick rate (no
+    // sub-ticking) and lay their integer state out their own way in `beh_state`.
+
+    /// Wire a phase-1 SPI **master** (program 1) to an SPI **slave** (program 2) on a shared
+    /// 4-wire bus: master SCLK(a)→slave SCLK(f), master MOSI(b)→slave MOSI(g), master CS(c)→slave
+    /// CS(h), slave MISO(a)→master MISO(f). The master is triggered once (START tied high), sending
+    /// `tx`; the slave replies `reply`. Nodes: 0=gnd, 1=VCC(5V), 2=START(5V), 3=SCLK, 4=MOSI,
+    /// 5=CS, 6=MISO, 7=RXVALID. Elements: [VCC src, START src, master, slave]; master is index 2,
+    /// slave index 3. Returns the installed `Sim` at t=0.
+    fn spi_master_slave(tx: f64, reply: f64, half: f64, nbits: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        // params: master gets [half, nbits] in slots 0/1; slave gets [_, nbits] in slot 1.
+        let mut params = vec![0.0; 4 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // master params[0] = SCLK half-period
+        params[2 * PARAM_STRIDE + 1] = nbits; // master params[1] = bit count
+        params[3 * PARAM_STRIDE + 1] = nbits; // slave  params[1] = bit count
+        assert!(sim.set_netlist_pefgh(
+            8,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 6],         // a: VCC src, START src, master SCLK=3, slave MISO=6
+            &[0, 0, 4, 7],         // b: src grounds; master MOSI=4, slave RXVALID=7
+            &[0, 0, 5, 0],         // c: master CS=5; slave c unused
+            &[0, 0, 1, 1],         // d: VCC = node 1 (both chips)
+            &[0, 0, 0, 0],         // e: GND = node 0
+            &[0, 0, 6, 3],         // f: master MISO=6, slave SCLK=3
+            &[0, 0, 2, 4],         // g: master START=2, slave MOSI=4
+            &[0, 0, 0, 5],         // h: slave CS=5 (master h unused)
+            &[5.0, 5.0, 1.0, 2.0], // values: VCC, START, master prog 1, slave prog 2
+            &[0.0, 0.0, tx, reply], // aux: master TX word, slave reply word
+            &params,
+        ));
+        sim
+    }
+
+    /// Full-duplex byte exchange over the 4-wire bus: a phase-1 SPI **master** (program 1) clocks a
+    /// byte to an SPI **slave** (program 2) while the slave clocks its reply back on MISO. After the
+    /// transaction the slave's received word equals the master's transmitted byte (and RXVALID
+    /// pulsed), and the master's `shift_in` equals the slave's reply word — a true full-duplex link.
+    /// Non-palindromic bytes (0x39 ↔ bit-reverse 0x9C; 0xC6 ↔ 0x63) so MSB-first ordering is genuinely
+    /// under test on BOTH directions.
+    #[test]
+    fn behavioral_spi_master_to_slave_link() {
+        let tx = 0x39u32; // master → slave
+        let reply = 0xC6u32; // slave → master
+        let nbits = 8usize;
+        let half = 2.0;
+        let mut sim = spi_master_slave(tx as f64, reply as f64, half, nbits as f64);
+        // Run well past one transaction (nbits*2*half SCLK ticks + cross-element pipeline delay).
+        let mut slave_rxvalid_pulsed = false;
+        for _ in 0..200 {
+            sim.step();
+            if sim.beh_spi_slave_rxvalid(3) != 0 {
+                slave_rxvalid_pulsed = true;
+            }
+        }
+        // Slave received the master's transmitted byte, MSB-first.
+        let rx = sim.beh_spi_slave_rx_word(3);
+        assert_eq!(
+            rx, tx,
+            "SPI slave must receive the master's byte 0x{tx:02X} (got 0x{rx:02X})"
+        );
+        assert!(
+            slave_rxvalid_pulsed,
+            "SPI slave RXVALID must pulse when a word is received"
+        );
+        // Master read back the slave's reply on MISO, MSB-first (full duplex).
+        let got = sim.beh_spi_shift_in(2);
+        assert_eq!(
+            got, reply,
+            "SPI master must read the slave's reply 0x{reply:02X} on MISO (got 0x{got:02X})"
+        );
+    }
+
+    /// UART loopback: with TX wired to RX, a byte sent on a rising SEND edge is framed out on TX,
+    /// sampled back in on RX, and latched — the received byte equals the transmitted one and
+    /// RXVALID pulsed. Checked for 0x5A AND a genuinely **non-palindromic** byte (0x53 = 0101_0011,
+    /// bit-reverse 0xCA differs) so the LSB-first framing/assembly ordering is actually under test —
+    /// 0x5A alone is bit-symmetric and would pass either order. Exercises start/data(LSB-first)/stop
+    /// framing end-to-end through the mid-bit RX sampler.
+    #[test]
+    fn behavioral_uart_loopback() {
+        let baud = 16usize;
+        let nbits = 8usize;
+        for &byte in &[0x5Au32, 0x53u32] {
+            let mut sim = uart_setup_loopback(byte as f64, baud as f64, nbits as f64);
+            // A full frame is (1 start + nbits data + 1 stop) * baud ticks, plus the 1.5-bit RX
+            // first-sample delay and a tick of output pipeline. Run generously past it.
+            let frame_ticks = (nbits + 2) * baud + 2 * baud; // + margin
+            let mut rxvalid_pulsed = false;
+            // UART is element index 2 in `uart_setup_loopback` (after VCC + SEND sources).
+            for _ in 0..(frame_ticks + 32) {
+                sim.step();
+                if sim.beh_uart_rxvalid(2) != 0 {
+                    rxvalid_pulsed = true;
+                }
+            }
+            let rx = sim.beh_uart_rx_word(2);
+            assert_eq!(
+                rx, byte,
+                "UART loopback must receive the transmitted byte 0x{byte:02X} (got 0x{rx:02X})"
+            );
+            assert!(
+                rxvalid_pulsed,
+                "UART RXVALID must pulse when a byte 0x{byte:02X} is received"
+            );
+        }
+    }
+
+    /// Build a UART loopback netlist with an explicit SEND source: TX(a) tied to RX(f) on node 3,
+    /// SEND(g) driven high by a source on node 2, VCC on node 1. Nodes: 0=gnd, 1=VCC(5V),
+    /// 2=SEND(5V), 3=TX/RX wire, 4=RXVALID. UART is element index 2 (after the two sources).
+    fn uart_setup_loopback(byte: f64, baud: f64, nbits: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = baud; // UART (elem 2) params[0] = baud divider
+        params[2 * PARAM_STRIDE + 1] = nbits; // UART params[1] = data bits
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],        // a: VCC src=1, SEND src=2, UART TX=3
+            &[0, 0, 4],        // b: src grounds; UART RXVALID=4
+            &[0, 0, 0],        // c: unused
+            &[0, 0, 1],        // d: UART VCC = node 1
+            &[0, 0, 0],        // e: UART GND = node 0
+            &[0, 0, 3],        // f: UART RX = node 3 (== TX: loopback)
+            &[0, 0, 2],        // g: UART SEND = node 2 (held high)
+            &[0, 0, 0],        // h: unused
+            &[5.0, 5.0, 3.0],  // values: VCC, SEND rail, UART program id 3
+            &[0.0, 0.0, byte], // aux: UART byte to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// With **no SEND pulse** the UART line idles HIGH (mark) for the whole run and never raises a
+    /// spurious RXVALID — the quiescent contract (an idle async line sits at mark, the receiver
+    /// waits for a real start bit). SEND (g) is grounded so no edge ever fires; TX is observed on
+    /// the bus node, RX is tied to TX so it sees the same idle-high line.
+    #[test]
+    fn behavioral_uart_idle_line_high() {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 2 * PARAM_STRIDE];
+        params[PARAM_STRIDE] = 16.0; // baud divider
+        params[PARAM_STRIDE + 1] = 8.0; // data bits
+                                        // Nodes: 0=gnd, 1=VCC(5V), 2=TX/RX wire, 3=RXVALID. SEND (g)=0 (grounded → never fires).
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2],             // a: VCC src=1, UART TX=2
+            &[0, 3],             // b: src ground; UART RXVALID=3
+            &[0, 0],             // c: unused
+            &[0, 1],             // d: UART VCC = node 1
+            &[0, 0],             // e: UART GND = node 0
+            &[0, 2],             // f: UART RX = node 2 (== TX: loopback)
+            &[0, 0],             // g: UART SEND = 0 (grounded → no edge)
+            &[0, 0],             // h: unused
+            &[5.0, 3.0],         // values: VCC, UART program id 3
+            &[0.0, 0x5A as f64], // aux: a byte (never sent — SEND never rises)
+            &params,
+        ));
+        for tk in 0..200 {
+            sim.step();
+            assert!(
+                spi_pin_high(sim.state()[2]),
+                "idle UART TX must stay HIGH/mark (tick {tk}, got {})",
+                sim.state()[2]
+            );
+            assert_eq!(
+                sim.beh_uart_rxvalid(1),
+                0,
+                "idle UART must never raise RXVALID (tick {tk})"
+            );
+        }
+        // And nothing was ever received.
+        assert_eq!(
+            sim.beh_uart_rx_word(1),
+            0,
+            "idle UART must not latch any received byte"
+        );
+    }
+
+    /// A slave/UART netlist reproduces bit-for-bit: two fresh `Sim`s run the same master↔slave SPI
+    /// link AND a UART loopback for N steps and agree on the snapshot hash at EVERY tick — the
+    /// determinism guarantee with programs 2 & 3 ACTIVE (their integer state words are hashed).
+    #[test]
+    fn behavioral_slave_uart_run_is_reproducible() {
+        let build_spi = || spi_master_slave(0x39 as f64, 0xC6 as f64, 2.0, 8.0);
+        let (mut a, mut b) = (build_spi(), build_spi());
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "SPI master↔slave link diverged at tick {tk} (slave state must be hashed)"
+            );
+        }
+        let build_uart = || uart_setup_loopback(0x5A as f64, 16.0, 8.0);
+        let (mut c, mut d) = (build_uart(), build_uart());
+        for tk in 0..400 {
+            c.step();
+            d.step();
+            assert_eq!(
+                c.snapshot_hash(),
+                d.snapshot_hash(),
+                "UART loopback diverged at tick {tk} (UART state must be hashed)"
             );
         }
     }
