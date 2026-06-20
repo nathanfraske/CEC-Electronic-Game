@@ -6,6 +6,34 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (35) — Parts-bin trilogy complete + owner's two quick fixes
+
+The impact-ranked parts-bin plan from entry (34) is **DONE end to end**, plus two owner fixes from a
+screenshot. All web-only; no sim/determinism surface; gates green. Pushed to
+`claude/kind-turing-hdelb3` (not yet PR'd).
+
+- ~~**Arm-time configurator + last-used memory** (#155), then **moved into the parts bin**: the
+  variant/tier/family/mode chips for an armed-but-unplaced part now dock as an accent card at the top
+  of the bin (`.bin-config`), right where you picked the part — not a top-toolbar popover. The shared
+  `{#snippet partConfig}` was hoisted to the `<div class="workspace">` root so the bin card AND the
+  board inspector both render it.~~
+- ~~**Bin clutter relief** (#156): family rows + synonym search + category folders.~~
+- ~~**Arm-and-preview**: the info drawer targets `infoKind = selPart?.kind ?? armedPart`; with a part
+  armed it previews the unplaced part (symbol/internals via `infoDiagram.setState(armedPart,
+  ZERO_ELECTRICAL, partValue)`, pinout, equation, plain) and swaps the live block for a "drop to see
+  live numbers" note (`infoPreview`). Trigger: **I** key or the bin card's **ⓘ** button. The bin card
+  now shows for any armed part (name + ⓘ + disarm ×); config chips only when `hasConfig`.~~
+- ~~**Voltage gauges → scale to circuit max + placement-aware** (board.ts): the Reality LED bar and
+  Analogy standpipe gated fill on a fixed ~12 V ref → static-looking on a 5 V board. Now both scale to
+  `circuitVMax` (the closed circuit's hottest rail); they tap off the pipe via a stub and rotate
+  up/down + slide along the route to dodge parts/other pipes (`netGaugeAnchors`/`gaugeBoxClear`).
+  **Ground (node 0) now reads as an empty gauge** (the 0 V reference made visible).~~
+
+**Open / next (deferred adjacencies, none started):** `1`–`9` hotbar of configured parts + `Q`
+pipette; a Catalog/codex tab (reuse partInfo + the five-tier glyphs); progression gating; the CP
+(constant-power) electronic-load mode (`ELEM_CPLOAD`); an ATX rail-transient demo; the per-net colour
+override tied to net labels (entry 31/33). Owner decides priority.
+
 ---
 
 ## 2026-06-20 (34) — Parts-bin UX: brainstorm synthesis + impact-ranked plan (owner "all are the unlock")
@@ -24,19 +52,17 @@ whole configurator falls out with near-zero new logic. Clean model change: `plac
 overrides?: Partial<Component>)` (serialize/restore already round-trip variant/tier/mode/family →
 undo + save are free; web-only, no determinism surface).
 
-**Impact-ranked build order:**
-- [ ] **(1) Arm-time configurator** (centerpiece — kills friction B). Reuse the inspector
+**Impact-ranked build order:** ALL THREE SHIPPED — see entry (35).
+- ~~**(1) Arm-time configurator** (centerpiece — kills friction B). Reuse the inspector
   variant/tier/mode/family/open-drain chips bound to a new `armedConfig` (App.svelte), shown on the
-  armed-part chip; the ghost reflects it (LED tint via `ledTint`); `place(overrides)` applies it;
-  place-and-repeat carpets the configured part. Inspector pickers demote to "edit one instance."
-  **+ last-used-variant memory** (re-arming restores your last config, per-kind map) ships with it.
-- [ ] **(2) Bin clutter relief** (A): a `common?` flag per `PARTS` row + a per-category "show
-  common / + N more" split (42 → ~20 rows today, ~an afternoon), then true **family rows** (collapse
-  "Logic gates ×10" etc., expand inline) + **synonym search** ("rectifier"/"universal").
-- [ ] **(3) Arm-and-preview** (C — the honest "show the type without placing"): press `I` / hover an
-  armed-but-unplaced part → its info-panel cutaway + pinout + ratings BEFORE dropping. Reuses the
-  info drawer (`component-info-panel.md`); also the greyed locked-shelf teasers once progression
-  lands.
+  armed-part chip; the ghost reflects it; `place(overrides)` applies it; place-and-repeat carpets the
+  configured part. **+ last-used-variant memory** ships with it.~~ DONE (#155); later moved into the
+  parts bin (entry 35).
+- ~~**(2) Bin clutter relief** (A): a `common?` flag + per-category split, then **family rows**
+  (collapse "Logic gates ×10", expand inline) + **synonym search**.~~ DONE (#156).
+- ~~**(3) Arm-and-preview** (C — the honest "show the type without placing"): press `I` / the bin ⓘ on
+  an armed-but-unplaced part → its info-panel cutaway + pinout BEFORE dropping. Reuses the info
+  drawer.~~ DONE (entry 35; `infoKind`/`infoPreview` in App.svelte).
 - [ ] **Later/committed adjacencies:** `1`–`9` **hotbar** of configured parts + `Q` pipette
   (`mode-flow.md`); a **Catalog/codex** tab (the discovery museum, reuses partInfo + the five-tier
   glyphs); **progression gating** (bin grows with the player — `game-progression.md` §1.1, needs the

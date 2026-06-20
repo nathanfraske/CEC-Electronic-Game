@@ -709,13 +709,21 @@
   // is selected (see the $effect). Falls back to schematic for kinds with no
   // detail drawer — `diagramHasDetail` gates the toggle's visibility.
   let diagramMode = $state<DiagramMode>("reality");
-  // Which tiers the current selection actually has distinct art for (a pure read of
-  // the kind). The schematic tier always exists; the others gate their toggle button.
-  const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
+  // The kind the info drawer describes: the SELECTED placed part, or — when nothing is
+  // selected but a part is ARMED — the armed part, so you can preview its symbol / internals
+  // / pinout / equation BEFORE dropping it (arm-and-preview; press I or the bin ⓘ while armed).
+  const infoKind = $derived<string | null>(
+    selPart ? selPart.kind : (armedPart ?? null),
+  );
+  // True while the drawer is previewing an armed-but-unplaced part (no live electrical state).
+  const infoPreview = $derived(!selPart && armedPart != null);
+  // Which tiers the current info kind actually has distinct art for (a pure read of the
+  // kind). The schematic tier always exists; the others gate their toggle button.
+  const diagramHasDetail = $derived(infoKind ? hasDetail(infoKind) : false);
   // The analogy tier renders the full-panel illustration when one exists, else the
   // board's Factory glyph — so it's available when EITHER is present.
   const diagramHasFactory = $derived(
-    selPart ? hasFactory(selPart.kind) || hasAnalogy(selPart.kind) : false,
+    infoKind ? hasFactory(infoKind) || hasAnalogy(infoKind) : false,
   );
   // The tier the diagram should actually render in: the user's choice when that
   // tier's art exists, else clamped outward to schematic so nothing is ever blank.
@@ -729,8 +737,8 @@
   // Selecting a different part defaults the view to its reality internals when it has
   // them — so double-clicking an op-amp opens straight to "what's happening inside."
   $effect(() => {
-    const kind = selPart?.kind;
-    // Default the info diagram to the board's active lens on each new selection
+    const kind = infoKind;
+    // Default the info diagram to the board's active lens on each new selection (or armed
     // (still freely toggleable after). The lens is read untracked so changing the
     // board lens alone doesn't yank a manually-chosen info tab; effectiveDiagramMode
     // clamps outward to schematic when that tier's art doesn't exist for the kind.
@@ -1192,7 +1200,7 @@
         setMode("pan"); // H = the hand / pan tool
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "i" || e.key === "I")) {
-        infoOpen = !infoOpen; // I = toggle the deep info panel for the selection
+        infoOpen = !infoOpen; // I = toggle the deep info panel (selection, or an armed preview)
         e.preventDefault();
       } else if (e.key === " ") {
         togglePlay(); // spacebar = play / pause
@@ -1462,6 +1470,18 @@
           } else {
             selDisplay = null;
             selRmsMode = false;
+            // Arm-and-preview: nothing selected but a part armed + the drawer open → drive
+            // the info diagram from the ARMED (unplaced) kind and a neutral electrical state,
+            // so its symbol / internals render before you drop it.
+            if (infoOpen && armedPart) {
+              infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setPhase(b.flowPhase());
+              infoDiagram?.setState(
+                armedPart,
+                ZERO_ELECTRICAL,
+                partValue(armedPart),
+              );
+            }
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
@@ -2220,23 +2240,36 @@
           </ul>
         </details>
       {/snippet}
-      {#if armedPart && !selPart && hasConfig(armedPart)}
-        <!-- Arm-time CONFIGURATOR, docked in the bin right where you picked the part (not in
-             the top toolbar). The same identity/quality chips the inspector shows, but BEFORE
-             placing — so the ghost is the configured part and place-and-repeat carpets it. The
-             default (variant 0 / mid tier / push-pull / CC) needs zero clicks; this only lets
-             you change it. Driven by the dual-target setters, which (with nothing selected)
-             write `armedConfig` and re-tint the ghost. -->
-        <div class="bin-config" role="group" aria-label="Configure armed part">
+      {#if armedPart && !selPart}
+        <!-- Arm-time card, docked in the bin right where you picked the part (not in the top
+             toolbar). The head names the armed part with a ⓘ PREVIEW button (open the info
+             drawer on the armed-but-unplaced part — symbol/internals, pinout, equation — before
+             you drop it; same as the I key) and a disarm ×. Below, for kinds with identity/
+             quality axes, the CONFIGURATOR chips the inspector shows, but BEFORE placing — so
+             the ghost is the configured part and place-and-repeat carpets it. The default
+             (variant 0 / mid tier / push-pull / CC) needs zero clicks; this only lets you
+             change it. Driven by the dual-target setters, which (with nothing selected) write
+             `armedConfig` and re-tint the ghost. -->
+        <div class="bin-config" role="group" aria-label="Armed part">
           <div class="bin-config-head">
             <span class="bin-config-name">{partName(armedPart)}</span>
-            <button
-              class="armed-x"
-              onclick={() => arm(null)}
-              aria-label="Disarm">×</button
-            >
+            <span class="bin-config-actions">
+              <button
+                class="bin-config-info {infoOpen ? 'is-active' : ''}"
+                onclick={() => (infoOpen = !infoOpen)}
+                title="Preview this part's info & pinout before placing (I)"
+                aria-label="Preview armed part info">ⓘ</button
+              >
+              <button
+                class="armed-x"
+                onclick={() => arm(null)}
+                aria-label="Disarm">×</button
+              >
+            </span>
           </div>
-          {@render partConfig(armedPart)}
+          {#if hasConfig(armedPart)}
+            {@render partConfig(armedPart)}
+          {/if}
         </div>
       {/if}
       <p class="panel-note">
@@ -3182,7 +3215,11 @@
         <aside class="info-drawer">
           <div class="info-head">
             <span class="info-title">
-              {selPart ? partName(selPart.kind) : "Component Info"}
+              {infoKind
+                ? partName(infoKind)
+                : "Component Info"}{#if infoPreview}<span
+                  class="info-preview-tag">preview</span
+                >{/if}
             </span>
             <button
               class="intro-x"
@@ -3202,10 +3239,9 @@
           </div>
           <div class="info-body scroll">
             {#if infoTab === "info"}
-              {#if selPart}
-                {@const info = partInfo(selPart.kind)}
+              {#if infoKind}
+                {@const info = partInfo(infoKind)}
                 {#if info}
-                  {@const e = selDisplay ?? ZERO_ELECTRICAL}
                   {#if diagramHasDetail || diagramHasFactory}
                     <!-- The 3-tier view selector: Schematic (the datasheet symbol) →
                          Analogy (the machine-metaphor view) → Reality (the live
@@ -3257,7 +3293,7 @@
                   >
                     <canvas use:infoDiagramAction></canvas>
                   </div>
-                  {@const po = pinoutOf(selPart.kind, selPart.rot)}
+                  {@const po = pinoutOf(infoKind, selPart?.rot ?? 0)}
                   {#if po}
                     <div class="pinout-wrap">
                       <div class="pinout-cap">Pinout</div>
@@ -3316,32 +3352,43 @@
                   {/if}
                   <div class="info-eq mono">{info.equation}</div>
                   <p class="info-plain">{info.plain()}</p>
-                  <div class="info-live">
-                    <div class="info-live-head">
-                      Right now{#if selRmsMode}<span class="rms-tag">rms</span
-                        >{/if}
-                    </div>
-                    <div class="info-sub mono">
-                      {info.headline(e, selPart.value, selPart.amp)}
-                    </div>
-                    {#each info.derived(e, selPart.value, selPart.amp) as row (row.label)}
-                      <div class="info-row">
-                        <span>{row.label}</span>
-                        <span class="mono">{row.value}</span>
+                  {#if selPart}
+                    {@const e = selDisplay ?? ZERO_ELECTRICAL}
+                    <div class="info-live">
+                      <div class="info-live-head">
+                        Right now{#if selRmsMode}<span class="rms-tag">rms</span
+                          >{/if}
                       </div>
-                    {/each}
-                  </div>
+                      <div class="info-sub mono">
+                        {info.headline(e, selPart.value, selPart.amp)}
+                      </div>
+                      {#each info.derived(e, selPart.value, selPart.amp) as row (row.label)}
+                        <div class="info-row">
+                          <span>{row.label}</span>
+                          <span class="mono">{row.value}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <!-- Arm-and-preview: an armed-but-unplaced part has no live electrical
+                         state, so show the static teaching content (symbol/internals, pinout,
+                         equation, plain) and a nudge to drop it for the live readout. -->
+                    <p class="info-preview-note">
+                      Previewing the armed part — drop it on the board to see
+                      its live “right now” numbers.
+                    </p>
+                  {/if}
                 {:else}
                   <p class="info-empty">
-                    {partName(selPart.kind)} isn't simulated yet — no live math to
-                    show.
+                    {partName(infoKind)} isn't simulated yet — no live math to show.
                   </p>
                 {/if}
               {:else}
                 <p class="info-empty">
-                  Select a component on the board to see what it's doing — its
-                  governing equation, a plain explanation of how it works, and a
-                  live "right now" readout of its numbers.
+                  Select a component on the board — or arm a part from the bin —
+                  to see what it's doing: its governing equation, a plain
+                  explanation of how it works, and (when placed) a live "right
+                  now" readout.
                 </p>
               {/if}
             {:else}
@@ -3746,6 +3793,34 @@
     font-size: 12px;
     color: var(--accent);
   }
+  .bin-config-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  /* The ⓘ preview toggle: opens the info drawer on the armed-but-unplaced part. */
+  .bin-config-info {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .bin-config-info:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .bin-config-info.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
   /* The first sub-label sits right under the head, so it needs no extra top gap. */
   .bin-config > :global(.insp-sub:first-of-type) {
     margin-top: 4px;
@@ -4144,6 +4219,31 @@
     font-size: 16px;
     letter-spacing: 0.04em;
     color: var(--text);
+  }
+  /* "preview" badge beside the title when the drawer is showing an armed (unplaced) part. */
+  .info-preview-tag {
+    margin-left: 7px;
+    padding: 1px 6px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 2px;
+    background: var(--accent-soft);
+    vertical-align: middle;
+  }
+  /* The "drop it to see live numbers" nudge that stands in for the live block in a preview. */
+  .info-preview-note {
+    margin: 12px 0 0;
+    padding: 9px 11px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dim);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: var(--surface);
   }
   .info-tabs {
     display: flex;

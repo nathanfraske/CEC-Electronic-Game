@@ -5,6 +5,50 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (57) — Configurator → parts bin + standpipe/bar overhaul (owner's two quick fixes)
+
+**State:** 🟢 both fixes implemented, all web gates green, **pushed to `claude/kind-turing-hdelb3`**
+(commits `3f67b53` board.ts, `641e1de` App.svelte) — **NOT yet PR'd** (awaiting owner). Web-only;
+no sim change. This continues the parts-bin thread (configurator+memory and bin-clutter relief
+already shipped earlier as #155/#156); the third surface **arm-and-preview is still open** (next).
+
+- **Configurator moved into the parts bin** (`App.svelte`): the arm-time configurator (variant /
+  tier / family / open-drain / load-mode / pulse chips for an armed-but-unplaced part) was a popover
+  under the top-toolbar armed-chip; it's now a **docked accent card at the top of the parts bin**
+  (`.bin-config`, rendered when `armedPart && !selPart && hasConfig(armedPart)`), right where you
+  picked the part. The shared `{#snippet partConfig}` was **hoisted from inside `<main class="panel
+  board">` up to the `<div class="workspace">` root** so it's in scope for BOTH the bin card and the
+  board inspector (moved the `<main>` open-tag below the snippet — `<main>` count unchanged). Toolbar
+  keeps a small armed status chip (no configurator).
+- **Voltage gauges overhauled** (`board.ts`, subagent + my ground fix): owner said "standpipes don't
+  show changes." Both the Reality LED bar (`drawNetBars`) and Analogy standpipe (`drawNetStandpipes`)
+  gated fill on a fixed ~12 V reference → near-empty on a 5 V board. Now they **scale to the closed
+  circuit's max rail** (`circuitVMax` = max |nodeColorVoltage| over the gauged nets, 1e-3 floor): the
+  hottest net fills the column, the rest proportional, stepping visibly to 0. Gauges are now
+  **placement-aware** — `netGaugeAnchors` taps off the pipe via a short stub, lays the column along
+  the route's outward normal (screen-up default; flips down or slides along the pipe via the cheap
+  AABB + point-to-segment `gaugeBoxClear` when it would clip a part/another pipe); both lenses share
+  the anchor. **Ground (node 0) is now gauged** as an EMPTY bar/standpipe (the 0 V reference made
+  visible — I flipped the `node <= 0` skip to `node < 0`; `circuitVMax`/draw loops handle node 0
+  safely since V(0)≈0).
+
+- **Arm-and-preview** (parts-bin surface #3 — completes the trilogy): the info drawer now targets
+  a derived **`infoKind`** = `selPart?.kind ?? armedPart`, so with nothing selected but a part armed
+  it previews the ARMED (unplaced) part — symbol/internals (driven via `infoDiagram.setState(armedPart,
+  ZERO_ELECTRICAL, partValue(armedPart))` in the frame loop's no-selPart branch), pinout, equation,
+  plain text — and swaps the live "right now" block for a "drop it to see live numbers" note
+  (`infoPreview`). Trigger: the **I** key (unchanged toggle) or a new **ⓘ** button in the bin card.
+  The bin card now shows for **any** armed part (head = name + ⓘ + disarm ×); the configurator chips
+  render below only for kinds with axes (`hasConfig`). Diagram-tier flags + the default-tier `$effect`
+  retargeted from `selPart` to `infoKind`. Gates green; **NOT yet committed when this line was first
+  written** — now committed.
+
+**Next (parts-bin trilogy complete):** the deferred adjacencies — hotbar (1–9 quick-arm), a
+catalog/codex tab, progression gating, the CP (constant-power) load mode, the ATX rail-transient
+demo, and the per-net colour override tied to net labels. None are started.
+
+---
+
 ## 2026-06-20 (56) — Voltage representation overhaul (owner "go big") — PRs #150–#153
 
 **State:** 🟢 all landed + re-synced. The voltage view is now glance-readable: **colour = which rail**
