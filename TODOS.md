@@ -8,6 +8,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (22) — AC phase artifact fix: a resistor read −14° LEAD at high frequency
+
+Owner screenshot: a 10 kΩ resistor on a 20 kHz AC source showed **−14° LEAD** in the phasor inset,
+in **IDEAL** mode — a pure measurement bug, not physics.
+
+- ~~Root cause in `AcMeas::finalize` (`crates/sim-core/src/lib.rs`): the V−I phase was taken from
+  the current's rising zero-crossing offset, `2π·(i_cross/period)`. For an **in-phase** current the
+  rising crossing lands one sample shy of the cycle end (the window opens on V's rising crossing, so
+  i_cross ≈ period−1), wrapping to a spurious `−2π/period` lead. At 20 kHz (DT=2µs → 25 samples/
+  cycle) that is exactly −360°/25 = **−14.4°**. The existing 1 kHz test (500 samples/cycle → 0.72°)
+  was under its 0.05 rad threshold, so it never caught it.~~
+- ~~**Fix:** take the phase **magnitude** from `acos(pf)` (power factor = the V–I correlation =
+  cos φ), which is **exact** for proportional signals (resistor pf=1 → 0, no sampling artifact); keep
+  the **sign** from the crossing position (early ⇒ lag/inductive +, late ⇒ lead/capacitive −). Cap
+  (pf≈0, late) still reads −90°, inductor (pf≈0, early) +90°.~~
+- ~~Regression test `ac_analysis_resistor_phase_zero_at_high_frequency` (20 kHz, 25 samples/cycle,
+  asserts |phase| < 0.05 — was −0.25 rad). 130 sim-core tests green; AcReadout is unhashed →
+  golden-safe. All gates pass.~~ **DONE.**
+
 ## 2026-06-19 (21) — Current-channel legibility (3-part: A frozen-spring ✓, B flicker, C MHz)
 
 Owner: components flicker when sped up; the circuit "dies" above ~100 kHz; and a big charged cap's
