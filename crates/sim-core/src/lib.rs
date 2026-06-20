@@ -3048,6 +3048,22 @@ pub struct Sim {
     /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
     /// the event scheduler lands. Exposed via [`Sim::net_class`].
     net_classes: Vec<NetClass>,
+    /// MNA **row index** (`node − 1`) of every node whose [`NetClass`] is pure
+    /// [`NetClass::Digital`] (NOT `Boundary`, NOT `Analog`), in **ascending node index** —
+    /// a deterministic partition fixed at install from [`classify_nets`], with no hashed
+    /// order. This is the row set of the analog-decoupled pure-digital block that ADR 0004's
+    /// phase-3 sub-tick loop (step 3b) will re-solve N−1 extra times per analog tick; it is
+    /// the metadata that step staging needs. **Pure scaffolding today:** nothing in the solve
+    /// reads it — it is consumed ONLY by the debug-only structural invariant check
+    /// ([`Sim::debug_assert_digital_block_diagonal`]), which proves each of these rows is
+    /// strictly diagonal (no off-diagonal coupling to any other row) right before every
+    /// `solve_dense`. A pure-`Digital` net's row is stamped ONLY by [`Sim::stamp_digital`] (a
+    /// lone `GMIN` + one resolved Thévenin on its diagonal; a gate's inputs are GMIN-only and
+    /// its output is one combined drive), so the block is diagonal by construction — the
+    /// invariant step 3b's frozen-boundary sub-solve relies on. The solve, the partial-pivot
+    /// order, and the snapshot hash are untouched, so the analog golden is byte-identical.
+    /// See `docs/adr/0004-protocol-engine.md` (phase-3 amendment).
+    pub(crate) digital_rows: Vec<usize>,
     /// Circuit nodes (1-based; ground is never listed) that each anchor a **floating
     /// connected component** — a subnet with no galvanic path to ground and no
     /// device-pinned terminal. Computed once at install by [`floating_refs`]; each is
@@ -3245,6 +3261,7 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             net_classes: vec![NetClass::Analog],
+            digital_rows: Vec::new(),
             floating_refs: Vec::new(),
             node_v: vec![0.0],
             reactive_state: Vec::new(),
@@ -3575,6 +3592,17 @@ impl Sim {
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
         let net_classes = classify_nets(node_count, &elements);
+        // Deterministic pure-digital row partition (ADR 0004 phase-3, step 3a): the MNA row
+        // index (`node − 1`) of every node classified pure-`Digital` (NOT `Boundary`, NOT
+        // `Analog`), in ascending node index — fixed at install, no hashed order. Ground
+        // (node 0) is always `Analog`, so a `Digital` node is always `>= 1` and `node − 1` is
+        // a valid node-voltage row. Metadata only: nothing in the solve reads it (the matrix
+        // is assembled and solved exactly as before); it is consumed only by the debug-only
+        // diagonal-block invariant check, so the analog golden is byte-identical.
+        let digital_rows: Vec<usize> = (1..node_count)
+            .filter(|&n| net_classes[n] == NetClass::Digital)
+            .map(|n| n - 1)
+            .collect();
         let floating = floating_refs(node_count, &elements);
 
         self.node_count = node_count;
@@ -3582,6 +3610,7 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
+        self.digital_rows = digital_rows;
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
@@ -3956,6 +3985,9 @@ impl Sim {
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
         self.stamp_floating_refs(&mut mat, n);
+        // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+        // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
+        Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
         let x = solve_dense(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
@@ -4179,6 +4211,9 @@ impl Sim {
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
         self.stamp_floating_refs(&mut mat, n);
+        // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+        // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
+        Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
         let x = solve_dense(mat, rhs, n);
 
@@ -4554,6 +4589,12 @@ impl Sim {
                     mat[r * n + r] += GMIN;
                 }
             }
+
+            // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+            // invariant, ADR 0004 step 3a). The iterate matrix is fully assembled here — the
+            // Newton companions (diode / MOSFET / BJT / varistor / op-amp) touch only analog
+            // terminals, so they cannot couple a pure-digital row; nothing is moved.
+            Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
             x = solve_dense(mat, rhs, n);
 
@@ -5674,6 +5715,55 @@ impl Sim {
         }
     }
 
+    /// **Debug-only structural invariant** (ADR 0004 phase-3, step 3a): assert that the
+    /// pure-digital block of a fully assembled MNA matrix is strictly **diagonal** — for every
+    /// row `r` in `digital_rows`, every off-diagonal entry in that row *and* that column is
+    /// exactly `0.0` (`mat[r*dim + c] == 0.0` and `mat[c*dim + r] == 0.0` for all `c != r`).
+    ///
+    /// This is the assumption step 3b's frozen-boundary sub-solve relies on: a pure-`Digital`
+    /// net is touched ONLY by digital pins, so it carries no cross-net conductance and is
+    /// stamped ONLY by [`Sim::stamp_digital`] (a lone `GMIN` + one combined Thévenin drive on
+    /// its own diagonal). No analog stamp — resistor, source, reactive companion, floating-ref
+    /// tie, or nonlinear Newton companion (diode / MOSFET / BJT / varistor / op-amp) — can reach
+    /// it, because those touch only analog terminals. So the block must be diagonal; if this
+    /// ever fires, some pure-digital net has unexpected coupling and the sub-tick partition is
+    /// invalid — we want it to fire loudly in tests (it is critical design feedback, not a bug
+    /// to paper over).
+    ///
+    /// Compiled only in debug/test builds (it is a `debug_assert!`-style check with the loop body
+    /// gated on `debug_assertions`), so release and the analog hot path are untouched. Cost is
+    /// `O(digital_rows · dim)`. Called right after each assembly path finishes stamping and BEFORE
+    /// `solve_dense`, so it sees the exact matrix that is about to be factored — nothing is moved.
+    #[inline]
+    fn debug_assert_digital_block_diagonal(mat: &[f64], dim: usize, digital_rows: &[usize]) {
+        #[cfg(debug_assertions)]
+        for &r in digital_rows {
+            debug_assert!(r < dim, "digital row {r} out of range for dim {dim}");
+            for c in 0..dim {
+                if c == r {
+                    continue;
+                }
+                debug_assert_eq!(
+                    mat[r * dim + c],
+                    0.0,
+                    "pure-digital row {r} has off-diagonal coupling at column {c} \
+                     (ADR 0004 sub-tick partition assumption broken)"
+                );
+                debug_assert_eq!(
+                    mat[c * dim + r],
+                    0.0,
+                    "pure-digital row {r} has off-diagonal coupling at row {c} \
+                     (ADR 0004 sub-tick partition assumption broken)"
+                );
+            }
+        }
+        // Silence unused-parameter warnings in release builds, where the loop is compiled out.
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (mat, dim, digital_rows);
+        }
+    }
+
     /// Stamp the resolved digital drives ([`Sim::eval_digital`]) into an MNA system
     /// (`mat`/`rhs`, dimension `dim`): for every `Digital`/`Boundary` net a `GMIN`
     /// anti-singularity floor, plus — unless the net is released (`Z`) — the driver's
@@ -6689,6 +6779,13 @@ impl Sim {
 /// API and compiled only under test.
 #[cfg(test)]
 impl Sim {
+    /// The deterministic pure-digital row partition built at install (ADR 0004 phase-3, step
+    /// 3a): the MNA row index (`node − 1`) of every pure-`Digital` node, ascending. Test-only
+    /// read of the metadata the sub-tick loop will consume.
+    fn digital_rows(&self) -> &[usize] {
+        &self.digital_rows
+    }
+
     /// The behavioral SPI master's received word (`shift_in`, state word 3) for the element at
     /// index `i`.
     fn beh_spi_shift_in(&self, i: usize) -> u32 {
@@ -6988,6 +7085,373 @@ mod tests {
             &[7.0, 0.0], // BUF, (resistor aux unused)
         ));
         assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
+    }
+
+    /// The expected pure-digital row partition derived independently from `net_class`: the MNA
+    /// row (`node − 1`) of every node the public classifier reports as pure-`Digital` (code `1`),
+    /// ascending. The internal `digital_rows` must equal this for every circuit.
+    fn expected_digital_rows(sim: &Sim) -> Vec<usize> {
+        (1..sim.node_count)
+            .filter(|&n| sim.net_class(n) == 1)
+            .map(|n| n - 1)
+            .collect()
+    }
+
+    /// ADR 0004 phase-3, step 3a — the pure-digital row partition is exactly the set of
+    /// `NetClass::Digital` node rows (ascending), and the pure-digital matrix block is strictly
+    /// diagonal. The diagonal property is enforced automatically by the debug assertion baked
+    /// into EVERY assembly path (it runs during `install` and every `step()` below; were any
+    /// pure-digital row to couple to another row, `debug_assert_digital_block_diagonal` would
+    /// panic). Here we additionally pin the partition contents against the independent
+    /// `net_class` classification and verify a couple of rows by hand. Several MIXED
+    /// analog+digital circuits exercise all four solve paths (linear / Newton × op / transient).
+    #[test]
+    fn digital_partition_is_diagonal() {
+        // Verify `digital_rows` equals the Digital-net rows, then step so the in-solve diagonal
+        // assertion runs against the real assembled matrix.
+        let check = |sim: &mut Sim, label: &str| {
+            assert_eq!(
+                sim.digital_rows(),
+                expected_digital_rows(sim).as_slice(),
+                "{label}: digital_rows must be exactly the Digital-net rows, ascending"
+            );
+            // Several steps drive the in-solve `debug_assert_digital_block_diagonal` on the
+            // genuinely assembled matrix each tick (a panic there fails this test).
+            for _ in 0..8 {
+                sim.step();
+            }
+            // Partition is fixed at install — unchanged after stepping.
+            assert_eq!(
+                sim.digital_rows(),
+                expected_digital_rows(sim).as_slice(),
+                "{label}: digital_rows is fixed at install"
+            );
+        };
+
+        // (1) Two-gate inverter chain: a powered-supply rail (node 1, analog), a source-driven
+        //     input (node 2), G1 IN=2 OUT=3, G2 IN=3 OUT=4. The gate-to-gate net (node 3) is
+        //     touched only by gate signal pins → the canonical **pure-Digital** net (row 2). The
+        //     input net (node 2) is shared by the analog source AND a gate input pin → Boundary
+        //     (NOT pure-digital), and the final gate output (node 4) is pure-Digital (row 3). The
+        //     gate VCC pin sits on node 1 (analog supply), keeping the rail analog.
+        let mut chain = Sim::new(1);
+        assert!(chain.set_netlist_pe(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_GATE],
+            &[1, 2, 3, 4], // a: VCC src, IN src, G1 OUT=3, G2 OUT=4
+            &[0, 0, 2, 3], // b: src grounds, G1 IN1=2, G2 IN1=3
+            &[0, 0, 0, 0], // c: G IN2 unused
+            &[0, 0, 1, 1], // d: gate VCC = node 1
+            &[0, 0, 0, 0], // e: gate GND = node 0
+            &[5.0, 5.0, 0.0, 0.0],
+            &[0.0, 0.0, 6.0, 6.0], // NOT, NOT
+            &[],
+        ));
+        // By hand: ground (0) analog, VCC rail (1) analog; the source-driven gate INPUT (2) is
+        // Boundary (analog source + digital pin); the gate-to-gate net (3) and final output (4)
+        // are pure-Digital → rows {2, 3}.
+        assert_eq!(chain.net_class(1), 0, "VCC rail is analog");
+        assert_eq!(
+            chain.net_class(2),
+            2,
+            "source-driven gate input is Boundary"
+        );
+        assert_eq!([chain.net_class(3), chain.net_class(4)], [1, 1]);
+        assert_eq!(chain.digital_rows(), &[2, 3]);
+        check(&mut chain, "two-gate chain");
+
+        // (2) DFF clocked by a gate: a SWITCH chops the rail (node 1) onto node 2, a powered
+        //     inverter (G) drives node 3 (the gate→DFF CLK net) from node 2, and the DFF (Q=4,
+        //     D=5, CLK=3, Q̄=6) latches on the resulting clock. The gate-OUT↔DFF-CLK net (3) and
+        //     the DFF signal nets Q/D/Q̄ (4/5/6) are pure-digital (only digital pins touch them);
+        //     node 2 is Boundary (the analog SWITCH conductance shares it with the gate input).
+        let mut dff = Sim::new(1);
+        assert!(dff.set_netlist_pe(
+            7,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_GATE, ELEM_DFF],
+            &[1, 1, 3, 4],         // a: VCC src, SWITCH hi=node1, G OUT=3, DFF Q=4
+            &[0, 2, 2, 5],         // b: src gnd, SWITCH to node2, G IN1=2, DFF D=5
+            &[0, 0, 0, 3],         // c: …, …, G IN2 unused, DFF CLK=3
+            &[0, 0, 1, 6],         // d: …, …, G VCC=node1, DFF Q̄=6
+            &[0, 0, 0, 0],         // e: G GND=node0
+            &[5.0, 0.5, 0.0, 5.0], // SWITCH duty 0.5, DFF rail 5 V
+            &[0.0, 0.0, 6.0, 0.0], // G NOT; DFF aux default
+            &[],
+        ));
+        // Node 2 (SWITCH↔gate input) is Boundary (an analog conductance shares it with a digital
+        // pin); the gate output 3 and the DFF signal nets 4/5/6 are pure-digital → rows {2,3,4,5}.
+        assert_eq!(dff.net_class(2), 2, "SWITCH-driven gate input is Boundary");
+        assert_eq!(
+            [
+                dff.net_class(3),
+                dff.net_class(4),
+                dff.net_class(5),
+                dff.net_class(6)
+            ],
+            [1, 1, 1, 1]
+        );
+        assert_eq!(dff.digital_rows(), &[2, 3, 4, 5]);
+        check(&mut dff, "DFF clocked by a gate");
+
+        // (3) Powered gate driving an RC load THROUGH the boundary: a powered inverter OUT (node
+        //     3) feeds a series R into an analog RC (node 4 → C → gnd). OUT (node 3) is shared by
+        //     a digital pin (gate OUT) AND an analog element (the resistor) → Boundary, so it is
+        //     NOT in digital_rows; the RC interior (node 4) is analog. The chain has no pure-
+        //     digital net at all → digital_rows empty.
+        let mut rcload = Sim::new(1);
+        assert!(rcload.set_netlist_pe(
+            5,
+            &[
+                ELEM_VSOURCE,   // VCC rail -> node 1
+                ELEM_VSOURCE,   // input    -> node 2
+                ELEM_GATE,      // inverter: OUT=3, IN=2, VCC=1, GND=0
+                ELEM_RESISTOR,  // node 3 -> node 4
+                ELEM_CAPACITOR  // node 4 -> gnd
+            ],
+            &[1, 2, 3, 3, 4],
+            &[0, 0, 2, 4, 0],
+            &[0, 0, 0, 0, 0],
+            &[0, 0, 1, 0, 0],
+            &[0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 6.0, 0.0, 0.0], // NOT
+            &[],
+        ));
+        assert_eq!(rcload.net_class(3), 2, "gate-OUT loaded by R is Boundary");
+        assert_eq!(rcload.net_class(4), 0, "RC interior is analog");
+        assert!(
+            rcload.digital_rows().is_empty(),
+            "no pure-digital net in the powered-gate→RC chain"
+        );
+        check(&mut rcload, "powered gate -> RC load (boundary OUT)");
+
+        // (4) Powered gate driving an RC load THROUGH NOTHING (the pure-digital case for
+        //     contrast): the inverter OUT (node 3) is pure-digital (no analog load on it), and a
+        //     SECOND gate buffers it onto node 4 (also pure-digital) which then drives the RC —
+        //     so node 4 is the boundary and node 3 stays pure-digital. Mixes a pure-digital row
+        //     (3 → row 2) with a boundary that is excluded.
+        let mut buf_rc = Sim::new(1);
+        assert!(buf_rc.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_GATE,      // inverter OUT=3
+                ELEM_GATE,      // buffer   OUT=4 from IN=3
+                ELEM_RESISTOR,  // node 4 -> 5
+                ELEM_CAPACITOR  // node 5 -> gnd
+            ],
+            &[1, 2, 3, 4, 4, 5],
+            &[0, 0, 2, 3, 5, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 1, 1, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 0.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 6.0, 7.0, 0.0, 0.0], // NOT, BUF
+            &[],
+        ));
+        assert_eq!(
+            buf_rc.net_class(3),
+            1,
+            "inverter OUT (unloaded) is pure-digital"
+        );
+        assert_eq!(buf_rc.net_class(4), 2, "buffer OUT loaded by R is Boundary");
+        assert_eq!(
+            buf_rc.digital_rows(),
+            &[2],
+            "only node 3 (row 2) is pure-digital"
+        );
+        check(
+            &mut buf_rc,
+            "gate -> gate -> RC (one pure-digital, one boundary)",
+        );
+
+        // (5) ADCMP601 comparator (Newton path is not needed, but a powered comparator with a
+        //     chopped input exercises the boundary/digital classifier): a PWM-chopped IN- (node
+        //     3) crosses a fixed IN+ (node 2) under a powered, transparent comparator whose OUT
+        //     (node 4) is pure-digital (nothing analog loads it). Mirrors
+        //     `comparator_run_is_reproducible`. OUT (4) is the only digital net → row 3.
+        let mut cmp = Sim::new(1);
+        assert!(cmp.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 5, 3, 4], // a: VCC, IN+ src, IN- rail, SWITCH, R, CMP OUT=4
+            &[0, 0, 0, 3, 0, 2], // b: …, SWITCH→IN-(3), R→gnd, CMP IN+=2
+            &[0, 0, 0, 0, 0, 3], // c: CMP IN-=3
+            &[0, 0, 0, 0, 0, 1], // d: CMP VCC=node1
+            &[0, 0, 0, 0, 0, 0], // e: CMP GND=node0
+            &[0, 0, 0, 0, 0, 0], // f: CMP LE=node0 (transparent)
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, 0.5, 1000.0, 1.0],
+            &[0.0; 6],
+            &[],
+        ));
+        assert_eq!(
+            cmp.net_class(3),
+            0,
+            "comparator IN- (analog sense + SWITCH) is analog"
+        );
+        assert_eq!(
+            cmp.net_class(4),
+            1,
+            "comparator OUT (unloaded) is pure-digital"
+        );
+        assert_eq!(cmp.digital_rows(), &[3]);
+        check(&mut cmp, "ADCMP601 comparator (pure-digital OUT)");
+
+        // (6) Behavioral SPI master: SCLK(3)/MOSI(4)/CS(5) are pure-digital OUTPUT pins → the
+        //     partition. The VCC rail (1) is analog (source + the block's analog VCC pin); the
+        //     START net (2) is Boundary (an analog source drives the block's digital START input);
+        //     MISO is grounded here (miso_node = 0), so node 6 is untouched → analog. Pure-digital
+        //     rows {2, 3, 4}. This exercises the behavioral block end to end across a transaction.
+        let mut spi = spi_master(0xA5 as f64, 2.0, 8.0, 0);
+        assert_eq!(
+            [spi.net_class(3), spi.net_class(4), spi.net_class(5)],
+            [1, 1, 1],
+            "SPI SCLK/MOSI/CS are pure-digital"
+        );
+        assert_eq!(spi.net_class(1), 0, "SPI VCC rail is analog");
+        assert_eq!(
+            spi.net_class(2),
+            2,
+            "SPI START is Boundary (analog source drives a digital input pin)"
+        );
+        assert_eq!(spi.digital_rows(), &[2, 3, 4]);
+        for _ in 0..40 {
+            spi.step();
+        }
+        assert_eq!(
+            spi.digital_rows(),
+            &[2, 3, 4],
+            "partition fixed across the transaction"
+        );
+
+        // (7) Open-drain + pull-up wired-AND bus (the I²C half-bus): two open-drain buffers and a
+        //     1 kΩ pull-up all share node 2 (the bus). The pull-up is an analog element, so the
+        //     bus is a Boundary net — NOT pure-digital. The open-drain INPUT nets (3, 4) are
+        //     Boundary too (an analog source drives each gate's digital input). So there is NO
+        //     pure-digital net at all → digital_rows is empty.
+        const OD_BUF: f64 = 7.0 + 256.0; // BUF (7) + open-drain bit (256)
+        let mut bus = Sim::new(1);
+        assert!(bus.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR, // 1 kΩ pull-up: node 2 (bus) -> node 1 (Vcc)
+                ELEM_GATE,     // open-drain buffer 1: OUT=2 IN=3
+                ELEM_GATE,     // open-drain buffer 2: OUT=2 IN=4
+            ],
+            &[1, 3, 4, 2, 2, 2],
+            &[0, 0, 0, 1, 3, 4],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 1000.0, 5.0, 5.0],
+            &[0.0, 0.0, 0.0, 0.0, OD_BUF, OD_BUF],
+        ));
+        assert_eq!(bus.net_class(2), 2, "open-drain + pull-up bus is Boundary");
+        assert!(
+            bus.digital_rows().is_empty(),
+            "the wired-AND bus is Boundary (analog pull-up), so no pure-digital row"
+        );
+        check(&mut bus, "open-drain + pull-up wired-AND bus");
+    }
+
+    /// ADR 0004 phase-3, step 3a — boundary nets (analog ∪ digital) are deliberately EXCLUDED
+    /// from `digital_rows`: they stay in the MNA and carry real off-diagonal coupling (that is
+    /// where the analog and digital kernels meet), so the frozen-boundary sub-solve must NOT
+    /// treat them as part of the decoupled pure-digital block. We assert the two canonical
+    /// boundary cases — a comparator OUT loaded by an analog element, and the open-drain +
+    /// pull-up bus — are Boundary and absent from `digital_rows`.
+    #[test]
+    fn digital_partition_excludes_boundary() {
+        // (a) Comparator OUT loaded by an analog resistor to ground → OUT is Boundary, excluded.
+        //     A powered, transparent comparator: IN+ = node 2 (fixed), IN- = node 3 (fixed), OUT
+        //     = node 4 with a 1 kΩ load to ground, so node 4 is touched by a digital pin (OUT)
+        //     AND an analog element (the load resistor).
+        let mut cmp = Sim::new(1);
+        assert!(cmp.set_netlist_pefgh(
+            5,
+            &[
+                ELEM_VSOURCE,  // VCC -> node 1
+                ELEM_VSOURCE,  // IN+ -> node 2
+                ELEM_VSOURCE,  // IN- -> node 3
+                ELEM_RESISTOR, // OUT load: node 4 -> gnd
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 3, 4, 4], // a: VCC, IN+ src, IN- src, R, CMP OUT=4
+            &[0, 0, 0, 0, 2], // b: …, …, …, R→gnd, CMP IN+=2
+            &[0, 0, 0, 0, 3], // c: CMP IN-=3
+            &[0, 0, 0, 0, 1], // d: CMP VCC=node1
+            &[0, 0, 0, 0, 0], // e: CMP GND=node0
+            &[0, 0, 0, 0, 0], // f: CMP LE=node0 (transparent)
+            &[],
+            &[],
+            &[5.0, 3.0, 2.0, 1000.0, 1.0], // IN+ > IN- so OUT drives high into the load
+            &[0.0; 5],
+            &[],
+        ));
+        assert_eq!(
+            cmp.net_class(4),
+            2,
+            "comparator OUT shared with an analog resistor is Boundary"
+        );
+        assert!(
+            !cmp.digital_rows().contains(&3),
+            "boundary comparator-OUT row (node 4 -> row 3) must be EXCLUDED from digital_rows"
+        );
+        assert!(
+            cmp.digital_rows().is_empty(),
+            "this circuit's only digital-touched net (OUT) is Boundary, so digital_rows is empty"
+        );
+        for _ in 0..8 {
+            cmp.step(); // the in-solve diagonal assertion runs against the assembled matrix
+        }
+
+        // (b) Open-drain + pull-up wired-AND bus → the bus net is Boundary, excluded. The bus
+        //     (node 1) carries two open-drain gate outputs AND a 1 kΩ pull-up resistor (analog).
+        const OD_BUF: f64 = 7.0 + 256.0;
+        let mut bus = Sim::new(1);
+        assert!(bus.set_netlist(
+            4,
+            &[
+                ELEM_VSOURCE,  // Vcc -> node 3 (pull-up rail)
+                ELEM_VSOURCE,  // input A -> node 2
+                ELEM_RESISTOR, // pull-up: bus(1) -> Vcc(3)
+                ELEM_GATE,     // open-drain buffer: OUT=1 (bus), IN=2
+            ],
+            &[3, 2, 1, 1],
+            &[0, 0, 3, 2],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[5.0, 5.0, 1000.0, 5.0],
+            &[0.0, 0.0, 0.0, OD_BUF],
+        ));
+        assert_eq!(
+            bus.net_class(1),
+            2,
+            "the open-drain + pull-up I²C-style bus is Boundary (analog pull-up shares it)"
+        );
+        assert!(
+            !bus.digital_rows().contains(&0),
+            "boundary bus row (node 1 -> row 0) must be EXCLUDED from digital_rows"
+        );
+        assert!(
+            bus.digital_rows().is_empty(),
+            "the bus is Boundary and the input net is analog, so digital_rows is empty"
+        );
+        for _ in 0..8 {
+            bus.step();
+        }
     }
 
     /// [`floating_refs`] identifies exactly the connected components with no galvanic
