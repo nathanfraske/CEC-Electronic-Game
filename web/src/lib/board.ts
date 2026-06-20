@@ -199,6 +199,35 @@ const MAX_BELT_DOTS = 64;
 // resolve" wobble for the high-frequency carrier→band handoff, NOT a real cycle.
 const SHIMMER_VIB = 9;
 
+// --- reality LED voltage bar-gauge -------------------------------------------
+// One small segmented bar per NET, drawn at the net's representative anchor in the
+// REALITY lens only — the pre-attentive MAGNITUDE channel for voltage (the rail-identity
+// COLOUR already rides the conduit via `voltageColor`). RMS is the solid lit fill; the
+// peak swing (Vmin..Vmax) is a translucent envelope band above it; a bipolar AC net
+// (swings through ground) is drawn centre-zero. Geometry is in WORLD px (the bar only
+// shows past TIER_ZOOM, where the world is magnified, so it stays a readable size).
+const BAR_HALF = 18; // half-height (px): a full unipolar bar is ~2× this tall
+const BAR_W = 7; // bar width (px)
+const BAR_SEGS = 8; // number of stacked segments (the "LED" look)
+const BAR_SEG_GAP = 1; // gap between lit segments (px)
+const BAR_OFFSET = 16; // px the bar sits to the side of its anchor (clear of the conduit)
+// Signed volts→pixels with soft saturation: a reference voltage maps to a set fraction of
+// the half-height, and everything beyond compresses smoothly so a 5 V and a 230 V net both
+// stay on-screen. Mirrors the `saturate` curve the belt thickness uses.
+const BAR_V_REF = 12; // ~one rail (+12 V) sits at BAR_V_FRAC of the half-height
+const BAR_V_FRAC = 0.7; // where BAR_V_REF lands on the bar (70% up)
+// A net counts as "appreciable swing" (envelope band + "~" AC badge) when its peak-to-peak
+// exceeds this fraction of the bar's full scale; below it the net reads as flat DC.
+const BAR_SWING_EPS = 0.02;
+// A net is bipolar AC (centre-zero) when it swings through ground (Vmin<0<Vmax) AND its DC
+// mean is small versus the swing — |mean| under this fraction of the half peak-to-peak.
+const BAR_BIPOLAR_MEAN_FRAC = 0.35;
+const BAR_FILL_ALPHA = 0.95; // solid RMS segments
+const BAR_ENV_ALPHA = 0.3; // translucent peak-envelope segments
+const BAR_OFF_ALPHA = 0.14; // unlit segment track (the "off LED")
+const BAR_OFF_COLOR = 0x6b6488; // unlit track / notch colour (the rail muted-violet)
+const BAR_NOTCH_COLOR = 0xe9e4ff; // the always-drawn zero-notch line
+
 // --- conduit skin (analogy/reality LOD) --------------------------------------
 // Zoomed in under the analogy/reality lens, a bare trace is re-skinned as the same
 // conduit the components become: an ANALOGY pipe (steel wall + dark bore + voltage-
@@ -3621,13 +3650,15 @@ export class Board {
     // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
     // share a channel, computed once up front so the per-wire draw below just uses them.
     const condRoutes = new Map<number, Point[]>();
+    // Wire → net node (or null for an unconnected wire). Hoisted to function scope so the
+    // reality LED-bar pass below can group wires by net and read the per-net voltage.
+    const nets = new Map<number, number | null>();
     // Where each junction hub actually draws: a junction is a free routing vertex, so
     // when its runs are fanned into lanes the hub rides along (filled in below). Empty ⇒
     // the hub stays on its cell (schematic, or an unnudged junction).
     const junctionPos = new Map<number, Point>();
     let conduitCrossDots: { x: number; y: number; color: number }[] = [];
     if (conduit) {
-      const nets = new Map<number, number | null>();
       const wireColor = new Map<number, number>();
       // Junction run-ends, with the connecting leg's axis (recorded pre-nudge from the
       // logical route), so the follow-pass below can shift the hub by each run's offset.
@@ -3922,6 +3953,9 @@ export class Board {
       g.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
       g.circle(d.x, d.y, 3).fill({ color: d.color });
     }
+    // Reality lens only: one per-net LED voltage bar-gauge (the pre-attentive MAGNITUDE
+    // channel), drawn on top of the conduit at each net's representative anchor.
+    if (conduit === "reality") this.drawNetBars(g, nets, condRoutes);
     // Drop offsets for wires that no longer exist (after a delete), so the maps
     // can't grow without bound across a long editing session.
     if (this.carrierOffset.size > this.graph.wires.size) {
@@ -3934,6 +3968,179 @@ export class Board {
     }
     // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
     this.flowDelta = 0;
+  }
+
+  /**
+   * A net's voltage statistics for the LED bar — the RMS magnitude, the DC mean (sign
+   * reference), and the swing extremes (peak envelope). Reads the sub-frame batch arrays
+   * when present; when they are absent (paused / scrubbing) it falls back to the frozen
+   * instantaneous value, which collapses the bar to a flat DC reading (no swing).
+   */
+  private netVStats(node: number): {
+    vrms: number;
+    vmean: number;
+    vmin: number;
+    vmax: number;
+  } {
+    const inst = this.nodeVoltage(node) ?? 0;
+    const arrays =
+      this.nodeVrms &&
+      this.nodeVmean &&
+      this.nodeVmin &&
+      this.nodeVmax &&
+      node >= 0 &&
+      node < this.nodeVrms.length;
+    if (!arrays) {
+      return { vrms: Math.abs(inst), vmean: inst, vmin: inst, vmax: inst };
+    }
+    return {
+      vrms: this.nodeVrms![node]!,
+      vmean: this.nodeVmean![node]!,
+      vmin: this.nodeVmin![node]!,
+      vmax: this.nodeVmax![node]!,
+    };
+  }
+
+  /**
+   * Reality-lens pass: one segmented **LED voltage bar-gauge** per NET — the pre-attentive
+   * MAGNITUDE channel for voltage (the rail-identity COLOUR already rides the conduit). Nets
+   * are grouped from the wire→node map; the bar anchors at the midpoint of the net's longest
+   * drawn conduit route, offset to the side so it stays clear of the pipe. The solid lit
+   * segments read RMS (a per-frame scalar, so it never strobes on AC); a translucent envelope
+   * band extends to the peak swing; a net that swings through ground is drawn centre-zero
+   * (the geometry itself signals bipolar AC). DC is the swing→0 limit of the same path.
+   */
+  private drawNetBars(
+    g: Graphics,
+    nets: Map<number, number | null>,
+    condRoutes: Map<number, Point[]>,
+  ): void {
+    // Group wires by net, tracking each net's longest drawn route as its anchor candidate.
+    // Skip the ground net (node 0) and unconnected wires (null) — neither gets a gauge.
+    const longest = new Map<number, { route: Point[]; len: number }>();
+    for (const [wid, node] of nets) {
+      if (node === null || node <= 0) continue;
+      const route = condRoutes.get(wid);
+      if (!route || route.length < 2) continue;
+      const len = routeLength(route);
+      if (len <= 0) continue;
+      const cur = longest.get(node);
+      if (!cur || len > cur.len) longest.set(node, { route, len });
+    }
+
+    const H = 2 * BAR_HALF; // full container height (px)
+    const segH = H / BAR_SEGS; // one segment slot's height
+    const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
+
+    for (const [node, best] of longest) {
+      const s = sampleRouteAt(best.route, best.len / 2);
+      // Offset perpendicular to the route at the midpoint so the bar never sits on the pipe.
+      const px = -s.dy;
+      const py = s.dx;
+      const bx = s.x + px * BAR_OFFSET;
+      const by = s.y + py * BAR_OFFSET;
+
+      const { vrms, vmean, vmin, vmax } = this.netVStats(node);
+      const color = voltageColor(this.nodeColorVoltage(node));
+
+      // Bipolar AC ⇒ centre-zero: swings through ground AND the DC mean is small versus the
+      // swing. Otherwise unipolar, growing from a baseline notch in the mean's direction.
+      const halfPtp = (vmax - vmin) / 2;
+      const bipolar =
+        vmin < 0 &&
+        vmax > 0 &&
+        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
+      // Significant swing (envelope band + "~" badge): peak-to-peak past a small fraction of
+      // full scale, and only when a batch ran (a frozen frame has no real swing to show).
+      const ptpFrac = (voltsToPx(vmax, H) - voltsToPx(vmin, H)) / H;
+      const swinging = live && ptpFrac > BAR_SWING_EPS;
+
+      // Per-side fill thresholds (px magnitude from the zero notch). `span` sets the
+      // saturation asymptote: a centre-zero bar gets half the height each way; a unipolar
+      // bar grows over the full height. RMS is unsigned (symmetric in the bipolar case).
+      let zeroY: number; // screen-y of the zero notch
+      let solidUp = 0,
+        solidDn = 0,
+        envUp = 0,
+        envDn = 0; // px extents up / down from the notch
+      if (bipolar) {
+        zeroY = by; // notch in the middle
+        const rms = voltsToPx(vrms, BAR_HALF);
+        solidUp = rms;
+        solidDn = rms;
+        envUp = Math.max(rms, voltsToPx(vmax, BAR_HALF));
+        envDn = Math.max(rms, voltsToPx(-vmin, BAR_HALF));
+      } else {
+        // Unipolar: sign from the mean (rail identity); ≈0 reads as a positive rail.
+        const up = vmean >= 0;
+        zeroY = up ? by + BAR_HALF : by - BAR_HALF; // baseline at the bottom / top
+        const rms = voltsToPx(vrms, H);
+        // The peak reaches the most-extreme sample on the rail's side.
+        const peak = voltsToPx(up ? vmax : -vmin, H);
+        if (up) {
+          solidUp = rms;
+          envUp = Math.max(rms, peak);
+        } else {
+          solidDn = rms;
+          envDn = Math.max(rms, peak);
+        }
+      }
+
+      // The off-track + lit segments. Each slot is lit solid (RMS), as a translucent
+      // envelope band (peak swing), or left as a dim off-segment, by where its centre's
+      // signed level falls relative to the per-side extents above. One path; when the swing
+      // is ~zero the envelope extents collapse onto the solid fill → a single solid bar.
+      const x0 = bx - BAR_W / 2;
+      for (let i = 0; i < BAR_SEGS; i++) {
+        const top = by - BAR_HALF + i * segH + BAR_SEG_GAP / 2;
+        const h = segH - BAR_SEG_GAP;
+        const cy = top + h / 2;
+        const lvl = zeroY - cy; // + = above the notch
+        const mag = Math.abs(lvl);
+        const solid = lvl >= 0 ? solidUp : solidDn;
+        const env = lvl >= 0 ? envUp : envDn;
+        let segColor = BAR_OFF_COLOR;
+        let segAlpha = BAR_OFF_ALPHA;
+        if (mag <= solid) {
+          segColor = color;
+          segAlpha = BAR_FILL_ALPHA;
+        } else if (swinging && mag <= env) {
+          segColor = color;
+          segAlpha = BAR_ENV_ALPHA;
+        }
+        g.roundRect(x0, top, BAR_W, h, 1.5).fill({
+          color: segColor,
+          alpha: segAlpha,
+        });
+      }
+
+      // The zero notch — always drawn — a crisp line across the bar at the baseline.
+      g.moveTo(x0 - 1, zeroY).lineTo(x0 + BAR_W + 1, zeroY);
+      g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: 0.85 });
+
+      // "~" AC badge beside the bar iff the net has an appreciable swing (DC ⇒ none).
+      if (swinging) this.drawTildeBadge(g, x0 + BAR_W + 5, by, color);
+    }
+  }
+
+  /** A small "~" glyph — the AC badge beside an LED bar with an appreciable swing. */
+  private drawTildeBadge(
+    g: Graphics,
+    x: number,
+    cy: number,
+    color: number,
+  ): void {
+    const w = 8; // glyph width (px)
+    const a = 2.4; // wave amplitude (px)
+    const n = 10; // samples across the sine
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      const px = x + t * w;
+      const py = cy - Math.sin(t * Math.PI * 2) * a;
+      if (i === 0) g.moveTo(px, py);
+      else g.lineTo(px, py);
+    }
+    g.stroke({ width: 1.4, color, alpha: 0.9, cap: "round", join: "round" });
   }
 
   /**
@@ -5301,6 +5508,20 @@ interface RouteSample {
 
 function saturate(x: number): number {
   return x / (1 + x);
+}
+
+/**
+ * Signed volts → pixel offset from the LED bar's zero notch, with soft saturation so a
+ * 5 V and a 230 V net both stay on-screen. `span` is the asymptote (the magnitude a huge
+ * voltage compresses toward): the reference {@link BAR_V_REF} lands at {@link BAR_V_FRAC}
+ * of it, and the curve mirrors the `x/(1+x)` saturation the belt thickness uses. Positive
+ * volts return a positive (upward) offset.
+ */
+function voltsToPx(v: number, span: number): number {
+  const k = (1 - BAR_V_FRAC) / BAR_V_FRAC;
+  const u = Math.abs(v) / BAR_V_REF;
+  const mag = span * (u / (u + k));
+  return v >= 0 ? mag : -mag;
 }
 
 function polyline(g: Graphics, pts: Point[]): void {
