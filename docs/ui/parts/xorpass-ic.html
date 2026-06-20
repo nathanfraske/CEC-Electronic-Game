@@ -1,0 +1,737 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pass-transistor XOR, five layers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:94ch;} p.intro b{color:var(--text);}
+  .modebar{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:14px;}
+  .seg{display:inline-flex; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;}
+  .seg button{font-family:var(--font-display); font-size:12.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); background:var(--surface); border:none; padding:8px 14px; cursor:pointer; transition:background .15s,color .15s;}
+  .seg button + button{border-left:1px solid var(--border);}
+  .seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+  .seg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); margin-right:2px;}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .scopewrap{padding:8px 10px 12px;}
+  .scopewrap svg{display:block; width:100%; height:auto;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:200px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].ta::-webkit-slider-thumb{background:var(--accent); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].ta::-moz-range-thumb{background:var(--accent);}
+  input[type=range].tb::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].tb::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">XOR</span><span class="chip" id="chipReg">PASS-A</span></div>
+  </div>
+
+  <h1 class="lede">The pass-transistor XOR, five layers down</h1>
+  <p class="intro">This is the same XOR function as the standard cell, high when the inputs differ, but built a different way. Instead of pulling the output to a rail through a transistor network, it <b>steers</b> the output to a data wire through transmission gates. The trick is to read XOR as a <b>2-to-1 multiplexer</b>: Y = B ? NOT A : A. When B is low, pass A through to Y; when B is high, pass NOT A. That needs one inverter for the NOT A data, one inverter for the NOT B that completes the gate controls, and two <b>transmission gates</b>, each an NMOS and a PMOS in parallel so the pass is full swing. <b>Eight transistors</b> against the twelve of the and-or-invert build. The defining feature is what the output is tied to: <b>nothing</b>. Only the two inverters touch VCC and GND. The output node is connected, through whichever transmission gate is open, straight to a data node, so it is <b>passed, not pulled</b>. The first tier is the logic symbol, the same XOR shield. The second is the gate as a flow network, a <b>selector</b> that routes the output chamber to one of two reservoirs. The third opens each gate into its <b>NMOS and PMOS valve pair</b>. The fourth is the device as a schematic, the two inverters and the two transmission gates. The fifth is the silicon, the <b>metal-oxide cross-section</b> where the pass transistors tie to data and the output, never to a rail. The transfer curve shows the signature: with B low, Y follows A as a straight diagonal, the analog input passed through with no restoration.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; symbol</button>
+      <button data-t="t2">2 &middot; flow</button>
+      <button data-t="t3">3 &middot; valves</button>
+      <button data-t="t4">4 &middot; device</button>
+      <button data-t="t5">5 &middot; silicon</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">schematic</span>
+      <span class="scope-tag r" id="regTag">pull-up</span>
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" aria-label="pass-transistor XOR gate"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">Operating point</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Transfer curve</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">input A</span><span class="ic-val" id="labVin">0.00 V</span></div><input type="range" class="ta" id="vin" min="0" max="600" value="0"></div>
+    <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">input B</span><span class="ic-val" id="labVinb">0.00 V</span></div><input type="range" class="ta" id="vinb" min="0" max="600" value="0"></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">supply V_DD</span><span class="ic-val" id="labVdd">5.00 V</span></div><input type="range" id="vdd" min="200" max="600" value="500"></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">threshold V_t</span><span class="ic-val" id="labVt">1.00 V</span></div><input type="range" class="tb" id="vt" min="50" max="200" value="100"></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function flowDots(run,dots,path,len,norm,col,fwd){var on=(norm>0.02),sp=(0.2+norm*0.95);for(var i=0;i<dots.length;i++){var o=dots[i];if(run&&on){o.u=(o.u+sp*0.004)%1;}var uu=fwd?o.u:(1-o.u),pt=path.getPointAtLength(uu*len);o.el.setAttribute('cx',pt.x.toFixed(1));o.el.setAttribute('cy',pt.y.toFixed(1));o.el.setAttribute('opacity',(on?clamp(0.35+norm,0,1):0).toFixed(2));o.el.setAttribute('fill',col);}}
+  function th(i){return (i*0.61803398875)%1;}
+  function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff';
+  function wcol(v,VDD){return mix(LO,HI,clamp(v/VDD,0,1));}
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== pass-transistor XOR model (mux: select B steers Y between A and NOT A) =====
+  // Y = B ? NOT A : A. Two inverters make Ai=NOT A (data) and Bi=NOT B (the TG complement);
+  // two transmission gates pass A (when B low) or Ai (when B high). Output is NOT rail-tied.
+  var KP=0.5, LAMBDA=0.02;
+  function imos(von,vds){if(von<=0)return 0;if(vds<0)vds=0;if(vds<von)return KP*(von*vds-0.5*vds*vds);return 0.5*KP*von*von*(1+LAMBDA*(vds-von));}
+  function solveNode(vonN,vonP,VDD){ // bisection: inverter node where N pulling down balances P pulling up
+    var lo=0,hi=VDD,V=VDD/2;
+    for(var it=0;it<42;it++){var mid=(lo+hi)/2,In=imos(vonN,mid),Ip=imos(vonP,VDD-mid);if(In>Ip){hi=mid;}else{lo=mid;}V=mid;}
+    return V;
+  }
+  function model(Va,Vb,VDD,Vt){
+    Va=clamp(Va,0,VDD); Vb=clamp(Vb,0,VDD);
+    // ---- two inverters: A -> Ai (NOT A, the steered data) , B -> Bi (NOT B, the TG complement) ----
+    var vonNiA=Va-Vt, vonPiA=(VDD-Va)-Vt, VAi=solveNode(vonNiA,vonPiA,VDD);
+    var vonNiB=Vb-Vt, vonPiB=(VDD-Vb)-Vt, VBi=solveNode(vonNiB,vonPiB,VDD);
+    var IinvA=(imos(vonNiA,VAi)+imos(vonPiA,VDD-VAi))/2;
+    var IinvB=(imos(vonNiB,VBi)+imos(vonPiB,VDD-VBi))/2;
+    // ---- transmission gates (PMOS||NMOS each). TG0 passes A, on when B low ; TG1 passes Ai, on when B high ----
+    // per-device gate overdrive (for the valve/channel render): both halves of a TG turn on together
+    var von_nTG0=VBi-Vt, von_pTG0=(VDD-Vb)-Vt;   // TG0: NMOS gate Bi, PMOS gate B  -> on when B low
+    var von_nTG1=Vb-Vt,  von_pTG1=(VDD-VBi)-Vt;  // TG1: NMOS gate B,  PMOS gate Bi -> on when B high
+    var g0=Math.max(0,(VDD-Vb)-Vt);   // TG0 conductance (passes A)
+    var g1=Math.max(0,Vb-Vt);          // TG1 conductance (passes Ai)
+    var sum=g0+g1;
+    // output is a resistive divider between the two data nodes : no restoration, Y follows the data
+    var Vout=(sum>0.01)?(g0*Va+g1*VAi)/sum:(Va+VAi)/2;
+    // crossover current: when both TGs conduct, A and Ai are shorted through the pair
+    var gser=(sum>0.01)?(g0*g1/sum):0;
+    var Ipass=gser*Math.abs(Va-VAi)*0.12;
+    var Ithru=IinvA+IinvB+Ipass;
+    // ---- regions: which TG is steering (the output is passed, not pulled) ----
+    var domA=(sum>0.001)?g0/sum:0.5;
+    var region;
+    if(domA>0.72){region='pass-A';}        // B low : TG0 connects Y to A
+    else if(domA<0.28){region='pass-nA';}  // B high : TG1 connects Y to NOT A
+    else {region='switching';}             // both TGs partly on : crossover
+    return {Va:Va,Vb:Vb,VAi:VAi,VBi:VBi,Vout:Vout,
+      vonNiA:vonNiA,vonPiA:vonPiA,vonNiB:vonNiB,vonPiB:vonPiB,
+      von_nTG0:von_nTG0,von_pTG0:von_pTG0,von_nTG1:von_nTG1,von_pTG1:von_pTG1,
+      g0:g0,g1:g1,domA:domA,IinvA:IinvA,IinvB:IinvB,Ipass:Ipass,Ithru:Ithru,region:region,
+      lA:(Va>VDD/2)?1:0,lB:(Vb>VDD/2)?1:0,lAi:(VAi>VDD/2)?1:0,lBi:(VBi>VDD/2)?1:0,lOut:(Vout>VDD/2)?1:0,VDD:VDD};
+  }
+  function fmtV(v){return v.toFixed(2)+' V';}
+  function fmtI(I){var a=Math.abs(I);if(a<1e-7)return '0';if(a<1e-3)return (I*1e6).toFixed(1)+' uA';if(a<1)return (I*1000).toFixed(2)+' mA';return I.toFixed(2)+' A';}
+  var IPEAK=0.5*KP*Math.pow(2.5-1,2); // rough through-current scale for normalization display
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
+
+  // ============ TIER 1 : SYMBOL ============
+  var t1={};
+  // ===== shared SOT-23-5 package frame (real pinout, identical in every tier) =====
+  var PKX0=190,PKX1=590,PKY0=116,PKY1=456;
+  var PIN={vcc:[280,PKY0], y:[500,PKY0], a:[280,PKY1], b:[390,PKY1], gnd:[500,PKY1]};
+  function drawPkg(g){
+    g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));
+    function pin(x,top,num,name,col){
+      var ty=top?PKY0-28:PKY1;
+      g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      g.appendChild(el('text',{x:x,y:top?PKY0+15:PKY1-7,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},num));
+      g.appendChild(el('text',{x:x,y:top?ty-7:ty+41,'font-family':'var(--font-mono)','font-size':12,fill:col,'text-anchor':'middle'},name));
+    }
+    pin(280,true,'5','VCC',HI); pin(500,true,'4','Y',DIM);
+    pin(280,false,'1','A',ACCENT); pin(390,false,'2','B',ACCENT); pin(500,false,'3','GND',LO);
+  }
+  function buildT1(){
+    drawPkg(gT1);
+    gT1.appendChild(el('text',{x:30,y:150,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'letter-spacing':'0.05em'},'XOR cell . pass-transistor'));
+    gT1.appendChild(el('text',{x:30,y:166,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'XOR (2-input)'));
+    gT1.appendChild(el('text',{x:30,y:182,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'logic symbol'));
+    gT1.appendChild(el('text',{x:30,y:200,'font-family':'var(--font-mono)','font-size':10,fill:DIM},'Y = A (+) B'));
+    gT1.appendChild(el('text',{x:30,y:214,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'= mux: B ? NOT A : A'));
+    var by0=244, by1=328, my=286, tip=452;
+    t1.body=el('path',{d:'M 348 244 Q 410 250 452 286 Q 410 322 348 328 Q 372 286 348 244 Z',fill:'rgba(154,166,189,0.06)',stroke:STEEL,'stroke-width':2.4,'stroke-linejoin':'round'});gT1.appendChild(t1.body);
+    // XOR: extra concave back arc, just left of the OR back (no output bubble; that bubble would make XNOR)
+    t1.back2=el('path',{d:'M 336 244 Q 360 286 336 328',fill:'none',stroke:STEEL,'stroke-width':2.4});gT1.appendChild(t1.back2);
+    t1.wA=el('path',{d:'M 280 '+PKY1+' L 280 266 L 362 266',fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wA);
+    t1.nA=el('circle',{cx:280,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nA);
+    t1.wB=el('path',{d:'M 390 '+PKY1+' L 390 352 L 326 352 L 326 306 L 362 306',fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wB);
+    t1.nB=el('circle',{cx:390,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nB);
+    t1.wY=el('path',{d:'M '+tip+' '+my+' L 500 '+my+' L 500 '+PKY0,fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wY);
+    t1.nY=el('circle',{cx:500,cy:PKY0,r:4,fill:STEEL});gT1.appendChild(t1.nY);
+    gT1.appendChild(el('path',{d:'M 280 '+PKY0+' L 280 224 L 396 224 L 396 '+(by0+6),fill:'none',stroke:HI,'stroke-width':2,opacity:0.8}));
+    gT1.appendChild(el('circle',{cx:396,cy:by0+6,r:3,fill:HI}));
+    gT1.appendChild(el('path',{d:'M 500 '+PKY1+' L 500 360 L 396 360 L 396 '+(by1-6),fill:'none',stroke:LO,'stroke-width':2,opacity:0.8}));
+    gT1.appendChild(el('circle',{cx:396,cy:by1-6,r:3,fill:LO}));
+    t1.dA=el('text',{x:386,y:262,'font-family':'var(--font-mono)','font-size':15,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dA);
+    t1.dB=el('text',{x:388,y:302,'font-family':'var(--font-mono)','font-size':15,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dB);
+    t1.dY=el('text',{x:478,y:my-12,'font-family':'var(--font-mono)','font-size':16,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dY);
+    gT1.appendChild(el('text',{x:366,y:266+4,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'start'},'A'));
+    gT1.appendChild(el('text',{x:366,y:306+4,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'start'},'B'));
+    var TX=40,TY=250;
+    gT1.appendChild(el('text',{x:TX,y:TY-12,'font-family':'var(--font-display)','font-size':11,fill:FAINT,'letter-spacing':'0.1em'},'TRUTH TABLE'));
+    gT1.appendChild(el('text',{x:TX+16,y:TY,'font-family':'var(--font-mono)','font-size':12,fill:DIM,'text-anchor':'middle'},'A'));
+    gT1.appendChild(el('text',{x:TX+50,y:TY,'font-family':'var(--font-mono)','font-size':12,fill:DIM,'text-anchor':'middle'},'B'));
+    gT1.appendChild(el('text',{x:TX+92,y:TY,'font-family':'var(--font-mono)','font-size':12,fill:DIM,'text-anchor':'middle'},'Y'));
+    gT1.appendChild(el('line',{x1:TX+2,y1:TY+8,x2:TX+114,y2:TY+8,stroke:'var(--border)','stroke-width':1}));
+    t1.rows=[];var rd=[[0,0,0],[0,1,1],[1,0,1],[1,1,0]];
+    for(var i=0;i<4;i++){var ry=TY+28+i*26;
+      var hl=el('rect',{x:TX,y:ry-14,width:116,height:24,rx:3,fill:'rgba(0,0,0,0)'});gT1.appendChild(hl);
+      var a=el('text',{x:TX+16,y:ry,'font-family':'var(--font-mono)','font-size':13,fill:DIM,'text-anchor':'middle'},String(rd[i][0]));gT1.appendChild(a);
+      var b=el('text',{x:TX+50,y:ry,'font-family':'var(--font-mono)','font-size':13,fill:DIM,'text-anchor':'middle'},String(rd[i][1]));gT1.appendChild(b);
+      var y=el('text',{x:TX+92,y:ry,'font-family':'var(--font-mono)','font-size':13,fill:DIM,'text-anchor':'middle'},String(rd[i][2]));gT1.appendChild(y);
+      t1.rows.push({A:rd[i][0],B:rd[i][1],hl:hl,a:a,b:b,y:y});}
+    t1.note=el('text',{x:40,y:410,'font-family':'var(--font-mono)','font-size':12,fill:OK,'text-anchor':'start'},'');gT1.appendChild(t1.note);
+  }
+  function updateT1(s){
+    var ca=wcol(s.Va,s.VDD),cb=wcol(s.Vb,s.VDD),co=wcol(s.Vout,s.VDD);
+    t1.wA.setAttribute('stroke',ca);t1.nA.setAttribute('fill',s.lA?HI:STEEL);
+    t1.wB.setAttribute('stroke',cb);t1.nB.setAttribute('fill',s.lB?HI:STEEL);
+    t1.wY.setAttribute('stroke',co);t1.nY.setAttribute('fill',s.lOut?HI:STEEL);
+    t1.body.setAttribute('stroke',mix(STEEL,HI,clamp(s.Vout/s.VDD,0,1)*0.5));
+    t1.dA.textContent=String(s.lA);t1.dA.setAttribute('fill',s.lA?HI:LO);
+    t1.dB.textContent=String(s.lB);t1.dB.setAttribute('fill',s.lB?HI:LO);
+    t1.dY.textContent=String(s.lOut);t1.dY.setAttribute('fill',s.lOut?HI:LO);
+    for(var i=0;i<4;i++){var active=(t1.rows[i].A===s.lA && t1.rows[i].B===s.lB);
+      t1.rows[i].hl.setAttribute('fill',active?'rgba(95,208,230,0.13)':'rgba(0,0,0,0)');
+      var c=active?HI:DIM;t1.rows[i].a.setAttribute('fill',c);t1.rows[i].b.setAttribute('fill',c);t1.rows[i].y.setAttribute('fill',c);}
+    t1.note.textContent=(s.region==='switching')?'both gates open: crossover':((s.lB)?'B selects NOT A':'B selects A');
+    t1.note.setAttribute('fill',(s.region==='switching')?WARM:OK);
+  }
+
+  // ============ TIER 2 : FLOW NETWORK (a B-driven selector routing Y to A or NOT A) ============
+  var t2={};
+  function mkv2c(g0,cx,cy){
+    var g={cx:cx,cy:cy};
+    g.body=el('rect',{x:cx-21,y:cy-17,width:42,height:34,rx:3,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1.2});g0.appendChild(g.body);
+    g.seatL=el('polygon',{points:poly([[cx-19,cy-8],[cx-6,cy],[cx-19,cy+8]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':0.9});g0.appendChild(g.seatL);
+    g.seatR=el('polygon',{points:poly([[cx+19,cy-8],[cx+6,cy],[cx+19,cy+8]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':0.9});g0.appendChild(g.seatR);
+    g.plug=el('ellipse',{cx:cx,cy:cy,rx:7,ry:9,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1});g0.appendChild(g.plug);
+    return g;
+  }
+  function setv2c(g,open){var lift=clamp(open,0,1)*9;g.plug.setAttribute('cy',(g.cy-lift).toFixed(1));g.plug.setAttribute('fill',open>0.05?'#c7cfdd':'#aeb6c4');}
+  function buildT2(){
+    drawPkg(gT2);
+    // ---- data reservoir A (held at the input level) ----
+    var arX=224,arY=172,arW=70,arH=58;
+    gT2.appendChild(el('rect',{x:arX,y:arY,width:arW,height:arH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.5}));
+    t2.aLvl=el('rect',{x:arX+3,y:arY+arH-3,width:arW-6,height:0,rx:2,fill:'rgba(255,138,128,0.5)'});gT2.appendChild(t2.aLvl);t2.arY=arY;t2.arH=arH;
+    gT2.appendChild(el('text',{x:arX+arW/2,y:arY-5,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'A reservoir'));
+    gT2.appendChild(el('path',{d:'M 280 '+PKY1+' L 280 '+(arY+arH)+' L '+(arX+arW/2)+' '+(arY+arH),fill:'none',stroke:ACCENT,'stroke-width':2,opacity:0.6}));
+    // ---- inverter on A makes NOT A, feeding the Ai reservoir ----
+    var invY=262;
+    gT2.appendChild(el('rect',{x:arX+12,y:invY,width:46,height:36,rx:3,fill:'oklch(0.19 0.03 285)',stroke:STEEL,'stroke-width':1.2}));
+    gT2.appendChild(el('text',{x:arX+35,y:invY+15,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'invert'));
+    gT2.appendChild(el('text',{x:arX+35,y:invY+27,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'A'));
+    gT2.appendChild(el('line',{x1:arX+35,y1:arY+arH,x2:arX+35,y2:invY,stroke:ACCENT,'stroke-width':1.4,opacity:0.5}));
+    gT2.appendChild(el('line',{x1:arX+35,y1:invY+36,x2:arX+35,y2:340,stroke:CYAN,'stroke-width':1.6}));
+    // ---- data reservoir Ai ----
+    var irX=224,irY=340,irW=70,irH=58;
+    gT2.appendChild(el('rect',{x:irX,y:irY,width:irW,height:irH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.5}));
+    t2.aiLvl=el('rect',{x:irX+3,y:irY+irH-3,width:irW-6,height:0,rx:2,fill:'rgba(95,208,255,0.5)'});gT2.appendChild(t2.aiLvl);t2.irY=irY;t2.irH=irH;
+    gT2.appendChild(el('text',{x:irX+irW/2,y:irY+irH+13,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},'Ai = NOT A'));
+    // ---- selector valves : TG0 (A -> Y, open B low) , TG1 (Ai -> Y, open B high) ----
+    var v0x=382,v0y=201, v1x=382,v1y=369, ychX=458,ychY=256,ychW=74,ychH=88;
+    gT2.appendChild(el('line',{x1:arX+arW,y1:v0y,x2:v0x-21,y2:v0y,stroke:STEEL,'stroke-width':2}));
+    t2.tg0=mkv2c(gT2,v0x,v0y);
+    gT2.appendChild(el('line',{x1:v0x+21,y1:v0y,x2:ychX,y2:v0y,stroke:STEEL,'stroke-width':2}));
+    gT2.appendChild(el('line',{x1:irX+irW,y1:v1y,x2:v1x-21,y2:v1y,stroke:STEEL,'stroke-width':2}));
+    t2.tg1=mkv2c(gT2,v1x,v1y);
+    gT2.appendChild(el('line',{x1:v1x+21,y1:v1y,x2:ychX,y2:v1y,stroke:STEEL,'stroke-width':2}));
+    gT2.appendChild(el('text',{x:v0x,y:v0y-22,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG0 (B low)'));
+    gT2.appendChild(el('text',{x:v1x,y:v1y+28,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG1 (B high)'));
+    // ---- Y chamber : takes the level of whichever reservoir is connected ----
+    gT2.appendChild(el('line',{x1:ychX,y1:v0y,x2:ychX,y2:v1y,stroke:STEEL,'stroke-width':2}));
+    gT2.appendChild(el('rect',{x:ychX,y:ychY,width:ychW,height:ychH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.6}));
+    t2.yLvl=el('rect',{x:ychX+3,y:ychY+ychH-3,width:ychW-6,height:0,rx:2,fill:'rgba(127,208,255,0.55)'});gT2.appendChild(t2.yLvl);t2.ychY=ychY;t2.ychH=ychH;
+    gT2.appendChild(el('text',{x:ychX+ychW/2,y:ychY-5,'font-family':'var(--font-display)','font-size':11,fill:DIM,'text-anchor':'middle','letter-spacing':'0.06em'},'Y'));
+    t2.outNode=el('circle',{cx:ychX+ychW/2,cy:ychY,r:3.5,fill:STEEL});gT2.appendChild(t2.outNode);
+    t2.outWire=el('path',{d:'M '+(ychX+ychW/2)+' '+ychY+' L '+(ychX+ychW/2)+' '+PKY0,fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});
+    t2.outWire.setAttribute('d','M '+(ychX+ychW/2)+' '+ychY+' L '+(ychX+ychW/2)+' 150 L 500 150 L 500 '+PKY0);gT2.appendChild(t2.outWire);
+    t2.outV=el('text',{x:ychX+ychW/2,y:ychY+ychH+14,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'');gT2.appendChild(t2.outV);
+    // ---- B select drives the valves (B and its complement) ----
+    t2.selWire=el('path',{d:'M 390 '+PKY1+' L 390 446 L 360 446 L 360 '+v1y+' L '+(v1x-21)+' '+v1y+' M 360 '+v0y+' L '+(v0x-21)+' '+v0y,fill:'none',stroke:ACCENT,'stroke-width':1.4,'stroke-dasharray':'4 3',opacity:0.55});gT2.appendChild(t2.selWire);
+    gT2.appendChild(el('text',{x:352,y:286,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'B'));
+    t2.inAV=el('text',{x:280,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT2.appendChild(t2.inAV);
+    t2.inBV=el('text',{x:390,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT2.appendChild(t2.inBV);
+    // flow dots through each selector
+    function mkp(d){var p=el('path',{d:d,fill:'none',stroke:'none'});gT2.appendChild(p);return {el:p,len:p.getTotalLength()};}
+    t2.f0=mkp('M '+(arX+arW)+' '+v0y+' L '+ychX+' '+v0y);
+    t2.f1=mkp('M '+(irX+irW)+' '+v1y+' L '+ychX+' '+v1y);
+    function dots(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.7,fill:col,opacity:0});gT2.appendChild(c);a.push({el:c,u:i/n});}return a;}
+    t2.d0=dots(6,WATER2);t2.d1=dots(6,WATER2);
+    // legend
+    gT2.appendChild(el('text',{x:330,y:300,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'SELECTOR'));
+    gT2.appendChild(el('text',{x:330,y:316,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'B routes Y to one'));
+    gT2.appendChild(el('text',{x:330,y:328,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'reservoir. no supply,'));
+    gT2.appendChild(el('text',{x:330,y:340,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'Y takes its level'));
+    t2.stateLab=el('text',{x:330,y:434,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT2.appendChild(t2.stateLab);
+  }
+  function updateT2(s){
+    var VDD=s.VDD,co=wcol(s.Vout,VDD),ca=wcol(s.Va,VDD),cai=wcol(s.VAi,VDD);
+    function setTank(lvlEl,y0,h,V){var f=clamp(V/VDD,0,1)*(h-6);lvlEl.setAttribute('y',(y0+h-3-f).toFixed(1));lvlEl.setAttribute('height',f.toFixed(1));}
+    setTank(t2.aLvl,t2.arY,t2.arH,s.Va);t2.aLvl.setAttribute('fill','rgba(255,138,128,0.5)');
+    setTank(t2.aiLvl,t2.irY,t2.irH,s.VAi);
+    setTank(t2.yLvl,t2.ychY,t2.ychH,s.Vout);
+    t2.outWire.setAttribute('stroke',co);t2.outNode.setAttribute('fill',s.lOut?HI:STEEL);t2.outV.textContent=fmtV(s.Vout);t2.outV.setAttribute('fill',co);
+    var o0=clamp(s.g0/VDD,0,1),o1=clamp(s.g1/VDD,0,1);
+    setv2c(t2.tg0,o0);setv2c(t2.tg1,o1);
+    t2.inAV.textContent=fmtV(s.Va);t2.inAV.setAttribute('fill',ca);t2.inBV.textContent=fmtV(s.Vb);t2.inBV.setAttribute('fill',wcol(s.Vb,VDD));
+    function fl(arr,pp,amt,col){var on=amt>0.03;for(var j=0;j<arr.length;j++){var d=arr[j];if(s.run&&on){d.u=(d.u+0.006+0.02*amt)%1;}var pt=pp.el.getPointAtLength(d.u*pp.len);d.el.setAttribute('cx',pt.x.toFixed(1));d.el.setAttribute('cy',pt.y.toFixed(1));d.el.setAttribute('fill',col);d.el.setAttribute('opacity',on?'0.9':'0');}}
+    fl(t2.d0,t2.f0,o0*(Math.abs(s.Va-s.Vout)>0.1?1:0.4),mix('oklch(0.4 0.1 28)',ACCENT,0.6));
+    fl(t2.d1,t2.f1,o1*(Math.abs(s.VAi-s.Vout)>0.1?1:0.4),WATER2);
+    t2.stateLab.textContent=(s.region==='switching')?'both valves open: blend':((s.region==='pass-A')?'TG0 open: Y = A level':'TG1 open: Y = Ai level');
+    t2.stateLab.setAttribute('fill',(s.region==='switching')?WARM:OK);
+  }
+  // ============ TIER 3 : PRESSURE PILOT VALVES (the CMOS network) ============
+  var t3={};
+  var ovRange=2.0, maxLiftC=16;
+  function t3valveC(pcx, throatY){
+    var wl=pcx-17, wr=pcx+17;
+    var g={pcx:pcx,throatY:throatY,wl:wl,wr:wr};
+    g.seatL=el('polygon',{points:poly([[wl,throatY-8],[pcx-7,throatY],[wl,throatY+8]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':0.9});gT3.appendChild(g.seatL);
+    g.seatR=el('polygon',{points:poly([[wr,throatY-8],[pcx+7,throatY],[wr,throatY+8]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':0.9});gT3.appendChild(g.seatR);
+    g.fDots=[];for(var i=0;i<6;i++){var c=el('circle',{r:2.4,fill:WATER2,opacity:0});gT3.appendChild(c);g.fDots.push({el:c,u:i/6,sd:(i%2?1:-1),lf:((i*0.382)%1)*0.8+0.1,th:th(i)});}
+    g.plug=el('ellipse',{cx:pcx,cy:throatY,rx:8,ry:10,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1.1});gT3.appendChild(g.plug);
+    g.spring=el('path',{d:'',fill:'none',stroke:BRONZE,'stroke-width':1.1});gT3.appendChild(g.spring);
+    g.cap=el('rect',{x:pcx-9,y:throatY-30,width:18,height:4,rx:1,fill:STEEL});gT3.appendChild(g.cap);
+    return g;
+  }
+  function t3setC(g, vov, vds, run, yA, yB){
+    var ov=Math.max(vov,0);
+    var lift=clamp(ov,0,ovRange)/ovRange*maxLiftC, Yp=g.throatY-lift;
+    g.plug.setAttribute('cy',Yp.toFixed(1));g.plug.setAttribute('fill',ov>0?'#c7cfdd':'#aeb6c4');
+    g.spring.setAttribute('d',vcoil(g.pcx,g.throatY-26,Yp-10,3,3));
+    var region=(ov<=0)?'cutoff':((vds<ov)?'triode':'saturation');
+    var sat=(region==='saturation'),choke=sat?clamp((vds-ov)/3,0,1):0,openV=(lift>0.5);
+    var wall=14,thw=7-choke*4,prx=8,pry=10,ridgeH=9,THROAT=g.throatY;
+    var fn=(openV?clamp(ov/ovRange,0.12,1)*(1-0.45*choke):0);
+    for(var i=0;i<g.fDots.length;i++){var d=g.fDots[i],vis=(fn>d.th*0.55);
+      if(run&&vis){d.u=(d.u+0.005+0.014*fn)%1;}
+      var y=lerp(yA,yB,d.u);var tn=(wall-thw)*Math.exp(-Math.pow((y-THROAT)/ridgeH,2));
+      var pb=(prx+2)*Math.exp(-Math.pow((y-Yp)/pry,2));var outerH=wall-tn,innerH=pb,gap=outerH-innerH,hp=(gap>1.2)?(innerH+gap*d.lf):outerH;
+      d.el.setAttribute('cx',(g.pcx+d.sd*hp).toFixed(1));d.el.setAttribute('cy',y.toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');}
+    var scol=sat?'#d6a866':'oklch(0.3 0.03 285)';g.seatL.setAttribute('fill',scol);g.seatR.setAttribute('fill',scol);
+    return region;
+  }
+  function buildT3(){
+    drawPkg(gT3);
+    // ---- two data reservoirs on top : A (input) and Ai (inverter) ----
+    var arX=232,arY=158,arW=92,arH=46, irX=446,irY=158,irW=92,irH=46, ychX=346,ychY=388,ychW=88,ychH=52;
+    gT3.appendChild(el('rect',{x:arX,y:arY,width:arW,height:arH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.5}));
+    t3.aLvl=el('rect',{x:arX+3,y:arY+arH-3,width:arW-6,height:0,rx:2,fill:'rgba(255,138,128,0.5)'});gT3.appendChild(t3.aLvl);t3.arY=arY;t3.arH=arH;
+    gT3.appendChild(el('text',{x:arX+arW/2,y:arY-5,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'A reservoir'));
+    gT3.appendChild(el('rect',{x:irX,y:irY,width:irW,height:irH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.5}));
+    t3.aiLvl=el('rect',{x:irX+3,y:irY+irH-3,width:irW-6,height:0,rx:2,fill:'rgba(95,208,255,0.5)'});gT3.appendChild(t3.aiLvl);t3.irY=irY;t3.irH=irH;
+    gT3.appendChild(el('text',{x:irX+irW/2,y:irY-5,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},'Ai = NOT A'));
+    // inverter on A feeds the Ai reservoir
+    gT3.appendChild(el('rect',{x:362,y:150,width:56,height:24,rx:3,fill:'oklch(0.19 0.03 285)',stroke:STEEL,'stroke-width':1.1}));
+    gT3.appendChild(el('text',{x:390,y:166,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'invert A'));
+    gT3.appendChild(el('path',{d:'M 280 '+PKY1+' L 280 130 L 362 130 L 362 150 M 280 '+(arY+arH)+' L 280 '+arY,fill:'none',stroke:ACCENT,'stroke-width':1.4,opacity:0.5}));
+    gT3.appendChild(el('line',{x1:418,y1:162,x2:irX,y2:162,stroke:CYAN,'stroke-width':1.6,opacity:0.7}));
+    // ---- TG0 (A -> Y) and TG1 (Ai -> Y), each a NMOS || PMOS pilot-valve pair, flowing down ----
+    var n0x=262,p0x=304, n1x=476,p1x=518, vthroat=254;
+    function feed(rx,rw,vx1,vx2){gT3.appendChild(el('line',{x1:rx+rw/2,y1:arY+arH,x2:rx+rw/2,y2:224,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:vx1,y1:224,x2:vx2,y2:224,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:vx1,y1:224,x2:vx1,y2:vthroat-14,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:vx2,y1:224,x2:vx2,y2:vthroat-14,stroke:STEEL,'stroke-width':2}));}
+    feed(arX,arW,n0x,p0x); feed(irX,irW,n1x,p1x);
+    t3.nTG0=t3valveC(n0x,vthroat);t3.pTG0=t3valveC(p0x,vthroat);
+    t3.nTG1=t3valveC(n1x,vthroat);t3.pTG1=t3valveC(p1x,vthroat);
+    function merge(vx1,vx2,toX){gT3.appendChild(el('line',{x1:vx1,y1:vthroat+10,x2:vx1,y2:340,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:vx2,y1:vthroat+10,x2:vx2,y2:340,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:vx1,y1:340,x2:vx2,y2:340,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:(vx1+vx2)/2,y1:340,x2:(vx1+vx2)/2,y2:368,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:(vx1+vx2)/2,y1:368,x2:toX,y2:368,stroke:STEEL,'stroke-width':2}));gT3.appendChild(el('line',{x1:toX,y1:368,x2:toX,y2:ychY,stroke:STEEL,'stroke-width':2}));}
+    merge(n0x,p0x,ychX+18); merge(n1x,p1x,ychX+ychW-18);
+    // valve gate labels
+    function vlab(v,net,col,dy){gT3.appendChild(el('text',{x:v.pcx,y:v.throatY-30+(dy||0),'font-family':'var(--font-mono)','font-size':7.5,fill:col,'text-anchor':'middle'},net));}
+    vlab(t3.nTG0,'Bi',CYAN);vlab(t3.pTG0,'B',ACCENT);vlab(t3.nTG1,'B',ACCENT);vlab(t3.pTG1,'Bi',CYAN);
+    gT3.appendChild(el('text',{x:(n0x+p0x)/2,y:vthroat+44,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG0'));
+    gT3.appendChild(el('text',{x:(n1x+p1x)/2,y:vthroat+44,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG1'));
+    // ---- Y chamber ----
+    gT3.appendChild(el('rect',{x:ychX,y:ychY,width:ychW,height:ychH,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.6}));
+    t3.yLvl=el('rect',{x:ychX+3,y:ychY+ychH-3,width:ychW-6,height:0,rx:2,fill:'rgba(127,208,255,0.55)'});gT3.appendChild(t3.yLvl);t3.ychY=ychY;t3.ychH=ychH;
+    gT3.appendChild(el('text',{x:ychX+ychW/2,y:ychY+ychH/2+4,'font-family':'var(--font-display)','font-size':12,fill:DIM,'text-anchor':'middle'},'Y'));
+    t3.outNode=el('circle',{cx:ychX+ychW/2,cy:ychY,r:3.5,fill:STEEL});gT3.appendChild(t3.outNode);
+    t3.outWire=el('path',{d:'M '+(ychX+ychW/2)+' '+ychY+' L '+(ychX+ychW/2)+' 376 L 500 376 L 500 '+PKY0,fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT3.appendChild(t3.outWire);
+    t3.outV=el('text',{x:ychX+ychW/2,y:ychY+ychH+14,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'');gT3.appendChild(t3.outV);
+    t3.inAV=el('text',{x:280,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT3.appendChild(t3.inAV);
+    t3.inBV=el('text',{x:390,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT3.appendChild(t3.inBV);
+    // flow dots through each valve (reservoir level -> Y)
+    function dots(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.4,fill:col,opacity:0});gT3.appendChild(c);a.push({el:c,u:i/n});}return a;}
+    t3.dn0=dots(4,WATER2);t3.dp0=dots(4,WATER2);t3.dn1=dots(4,WATER2);t3.dp1=dots(4,WATER2);
+    // legend
+    gT3.appendChild(el('text',{x:34,y:300,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'PILOT VALVES'));
+    gT3.appendChild(el('text',{x:34,y:318,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'each TG = 2 valves'));
+    gT3.appendChild(el('text',{x:34,y:330,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'NMOS || PMOS,'));
+    gT3.appendChild(el('text',{x:34,y:342,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'full swing pass'));
+    t3.stateLab=el('text',{x:34,y:370,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT3.appendChild(t3.stateLab);
+  }
+  function updateT3(s){
+    var VDD=s.VDD,co=wcol(s.Vout,VDD),ca=wcol(s.Va,VDD);
+    function setTank(lvlEl,y0,h,V){var f=clamp(V/VDD,0,1)*(h-6);lvlEl.setAttribute('y',(y0+h-3-f).toFixed(1));lvlEl.setAttribute('height',f.toFixed(1));}
+    setTank(t3.aLvl,t3.arY,t3.arH,s.Va);setTank(t3.aiLvl,t3.irY,t3.irH,s.VAi);setTank(t3.yLvl,t3.ychY,t3.ychH,s.Vout);
+    t3.outWire.setAttribute('stroke',co);t3.outNode.setAttribute('fill',s.lOut?HI:STEEL);t3.outV.textContent=fmtV(s.Vout);t3.outV.setAttribute('fill',co);
+    var dV=Math.abs(s.Va-s.Vout),dVi=Math.abs(s.VAi-s.Vout);
+    t3setC(t3.nTG0,s.von_nTG0,dV,s.run,224,368);t3setC(t3.pTG0,s.von_pTG0,dV,s.run,224,368);
+    t3setC(t3.nTG1,s.von_nTG1,dVi,s.run,224,368);t3setC(t3.pTG1,s.von_pTG1,dVi,s.run,224,368);
+    t3.inAV.textContent=fmtV(s.Va);t3.inAV.setAttribute('fill',ca);t3.inBV.textContent=fmtV(s.Vb);t3.inBV.setAttribute('fill',wcol(s.Vb,VDD));
+    function fl(arr,vx,amt){var on=amt>0.03;for(var j=0;j<arr.length;j++){var d=arr[j];if(s.run&&on){d.u=(d.u+0.006+0.02*amt)%1;}var y=lerp(224,368,d.u);d.el.setAttribute('cx',vx);d.el.setAttribute('cy',y.toFixed(1));d.el.setAttribute('opacity',on?'0.85':'0');}}
+    var t0=clamp(Math.max(s.von_nTG0,s.von_pTG0)/VDD,0,1)*(dV>0.1?1:0.4);
+    var t1=clamp(Math.max(s.von_nTG1,s.von_pTG1)/VDD,0,1)*(dVi>0.1?1:0.4);
+    fl(t3.dn0,262,t0);fl(t3.dp0,304,t0);fl(t3.dn1,476,t1);fl(t3.dp1,518,t1);
+    t3.stateLab.textContent=(s.region==='switching')?'both TG throttling':((s.region==='pass-A')?'TG0 open: Y = A':'TG1 open: Y = NOT A');
+    t3.stateLab.setAttribute('fill',(s.region==='switching')?WARM:OK);
+  }
+
+  // compact MOSFET glyph for the dense 12-transistor tiers
+  function mosfetC(group,gx,topY,botY,isP){
+    var g={isP:isP}; var GX=gx, CX=gx+18, TY=topY, BY=botY, MY=(TY+BY)/2;
+    g.GX=GX;g.CX=CX;g.TY=TY;g.BY=BY;g.topx=CX+22;g.botx=CX+22;g.gateLeadX=GX-22;g.gateY=MY;
+    group.appendChild(el('line',{x1:GX,y1:TY+5,x2:GX,y2:BY-5,stroke:STEEL,'stroke-width':2.8}));
+    var segs=[[TY+5,TY+16],[TY+19,BY-19],[BY-16,BY-5]];
+    segs.forEach(function(s){group.appendChild(el('line',{x1:CX,y1:s[0],x2:CX,y2:s[1],stroke:STEEL,'stroke-width':3}));});
+    g.chan=el('line',{x1:CX,y1:TY+5,x2:CX,y2:BY-5,stroke:OK,'stroke-width':4,'stroke-linecap':'round',opacity:0,filter:'url(#glow)'});group.appendChild(g.chan);
+    group.appendChild(el('path',{d:'M '+CX+' '+(TY+13)+' L '+(CX+22)+' '+(TY+13)+' L '+(CX+22)+' '+TY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('path',{d:'M '+CX+' '+(BY-13)+' L '+(CX+22)+' '+(BY-13)+' L '+(CX+22)+' '+BY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('line',{x1:GX,y1:MY,x2:GX-22,y2:MY,stroke:STEEL,'stroke-width':2}));
+    if(isP){g.bub=el('circle',{cx:GX-5,cy:MY,r:3.5,fill:'var(--bg-2)',stroke:STEEL,'stroke-width':1.2});group.appendChild(g.bub);}
+    return g;
+  }
+
+  // ============ TIER 4 : REAL DEVICE (package + transmission-gate schematic, 8 transistors) ============
+  var t4={};
+  function buildT4(){
+    drawPkg(gT4);
+    var VCCy=150, GNDy=430, IP1=166,IP1b=212, IN1=374,IN2b=420, tgT=236, tgB=326;
+    // VCC and GND reach ONLY the two inverters (left). the pass network is not rail-tied.
+    gT4.appendChild(el('path',{d:'M 280 '+PKY0+' L 280 '+VCCy,fill:'none',stroke:HI,'stroke-width':2.4}));
+    t4.vcc=el('line',{x1:206,y1:VCCy,x2:368,y2:VCCy,stroke:HI,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.vcc);
+    gT4.appendChild(el('text',{x:210,y:VCCy-4,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'VCC : inverters only'));
+    gT4.appendChild(el('path',{d:'M 500 '+PKY1+' L 500 '+GNDy+' L 368 '+GNDy,fill:'none',stroke:LO,'stroke-width':2.4}));
+    t4.gnd=el('line',{x1:206,y1:GNDy,x2:368,y2:GNDy,stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.gnd);
+    gT4.appendChild(el('text',{x:210,y:GNDy+11,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'GND : inverters only'));
+    // ---- two inverters (left): A -> Ai (data) , B -> Bi (TG complement) ----
+    t4.pIA=mosfetC(gT4,222,IP1,IP1b,true); t4.nIA=mosfetC(gT4,222,IN1,IN2b,false); var IAx=262;
+    gT4.appendChild(el('line',{x1:IAx,y1:IP1,x2:IAx,y2:VCCy,stroke:HI,'stroke-width':2}));
+    gT4.appendChild(el('line',{x1:IAx,y1:IN2b,x2:IAx,y2:GNDy,stroke:LO,'stroke-width':2}));
+    t4.aiW=el('line',{x1:IAx,y1:IP1b,x2:IAx,y2:IN1,stroke:CYAN,'stroke-width':2.2});gT4.appendChild(t4.aiW);
+    t4.aiNode=el('circle',{cx:IAx,cy:293,r:3.4,fill:CYAN});gT4.appendChild(t4.aiNode);
+    gT4.appendChild(el('text',{x:IAx+7,y:289,'font-family':'var(--font-mono)','font-size':9,fill:CYAN},'Ai'));
+    gT4.appendChild(el('text',{x:242,y:IP1-8,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'inv A'));
+    t4.pIB=mosfetC(gT4,322,IP1,IP1b,true); t4.nIB=mosfetC(gT4,322,IN1,IN2b,false); var IBx=362;
+    gT4.appendChild(el('line',{x1:IBx,y1:IP1,x2:IBx,y2:VCCy,stroke:HI,'stroke-width':2}));
+    gT4.appendChild(el('line',{x1:IBx,y1:IN2b,x2:IBx,y2:GNDy,stroke:LO,'stroke-width':2}));
+    t4.biW=el('line',{x1:IBx,y1:IP1b,x2:IBx,y2:IN1,stroke:CYAN,'stroke-width':2.2});gT4.appendChild(t4.biW);
+    t4.biNode=el('circle',{cx:IBx,cy:293,r:3.4,fill:CYAN});gT4.appendChild(t4.biNode);
+    gT4.appendChild(el('text',{x:IBx+7,y:289,'font-family':'var(--font-mono)','font-size':9,fill:CYAN},'Bi'));
+    gT4.appendChild(el('text',{x:342,y:IP1-8,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'inv B'));
+    // ---- two transmission gates (right): TG0 passes A (on when B low) ; TG1 passes Ai (on when B high) ----
+    t4.nTG0=mosfetC(gT4,402,tgT,tgB,false); t4.pTG0=mosfetC(gT4,440,tgT,tgB,true);
+    t4.nTG1=mosfetC(gT4,500,tgT,tgB,false); t4.pTG1=mosfetC(gT4,538,tgT,tgB,true);
+    var tg0a=442,tg0b=480, tg1a=540,tg1b=578;  // terminal x of each TG transistor (gx+40)
+    // data tops : TG0 <- A , TG1 <- Ai
+    t4.aRail=el('line',{x1:tg0a,y1:tgT,x2:tg0b,y2:tgT,stroke:wcol(0,5),'stroke-width':2.2});gT4.appendChild(t4.aRail);
+    gT4.appendChild(el('text',{x:(tg0a+tg0b)/2,y:tgT-7,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'A'));
+    t4.aiRail=el('line',{x1:tg1a,y1:tgT,x2:tg1b,y2:tgT,stroke:CYAN,'stroke-width':2.2});gT4.appendChild(t4.aiRail);
+    gT4.appendChild(el('text',{x:(tg1a+tg1b)/2,y:tgT-7,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},'Ai'));
+    // Y rail : all four bottoms tied
+    t4.yRail=el('line',{x1:tg0a,y1:tgB,x2:tg1b,y2:tgB,stroke:wcol(0,5),'stroke-width':2.6,'stroke-linecap':'round'});gT4.appendChild(t4.yRail);
+    t4.yNode=el('circle',{cx:(tg0b+tg1a)/2,cy:tgB,r:4,fill:STEEL});gT4.appendChild(t4.yNode);
+    gT4.appendChild(el('text',{x:(tg0b+tg1a)/2,y:tgB+15,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'middle'},'Y'));
+    t4.outWire=el('path',{d:'M '+((tg0b+tg1a)/2)+' '+tgB+' L 560 '+tgB+' L 560 128 L 500 128 L 500 '+PKY0,fill:'none',stroke:wcol(0,5),'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.outWire);
+    t4.outV=el('text',{x:500,y:tgB+30,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'');gT4.appendChild(t4.outV);
+    gT4.appendChild(el('text',{x:461,y:tgT-22,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG0'));
+    gT4.appendChild(el('text',{x:559,y:tgT-22,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'TG1'));
+    gT4.appendChild(el('text',{x:500,y:tgB+44,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'no rail tie : Y is passed, not pulled'));
+    // ---- gate net labels : selects B and Bi (bus convention) ----
+    t4.gateLabs=[];
+    function glab(mos,net,key,below){var x=mos.gateLeadX,y=mos.gateY;
+      gT4.appendChild(el('line',{x1:x,y1:y,x2:x-7,y2:y,stroke:STEEL,'stroke-width':1.4}));
+      var dot=el('circle',{cx:x-7,cy:y,r:2.6,fill:STEEL});gT4.appendChild(dot);
+      var t=el('text',{x:x-11,y:y+3,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM,'text-anchor':'end'},net);gT4.appendChild(t);
+      t4.gateLabs.push({dot:dot,txt:t,key:key});}
+    glab(t4.nTG0,'Bi','bi');glab(t4.pTG0,'B','b');glab(t4.nTG1,'B','b');glab(t4.pTG1,'Bi','bi');
+    // ---- input wires : A and B from pins to the inverters (and A also feeds TG0 data) ----
+    t4.aWire=el('path',{d:'M 280 '+PKY1+' L 280 446 L 188 446 L 188 293 L '+t4.pIA.gateLeadX+' 293',fill:'none',stroke:ACCENT,'stroke-width':1.6});gT4.appendChild(t4.aWire);
+    t4.bWire=el('path',{d:'M 390 '+PKY1+' L 390 452 L 396 452 L 396 293 L '+t4.pIB.gateLeadX+' 293',fill:'none',stroke:ACCENT,'stroke-width':1.6});gT4.appendChild(t4.bWire);
+    t4.inAV=el('text',{x:280,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inAV);
+    t4.inBV=el('text',{x:390,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inBV);
+    // flow dots : through the conducting TG, and the two inverters
+    function mkp(d){var p=el('path',{d:d,fill:'none',stroke:'none'});gT4.appendChild(p);return {el:p,len:p.getTotalLength()};}
+    t4.tg0P=mkp('M '+((tg0a+tg0b)/2)+' '+tgT+' L '+((tg0a+tg0b)/2)+' '+tgB);
+    t4.tg1P=mkp('M '+((tg1a+tg1b)/2)+' '+tgT+' L '+((tg1a+tg1b)/2)+' '+tgB);
+    t4.iaP=mkp('M '+IAx+' '+VCCy+' L '+IAx+' '+GNDy);t4.ibP=mkp('M '+IBx+' '+VCCy+' L '+IBx+' '+GNDy);
+    function dots(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.8,fill:col,opacity:0});gT4.appendChild(c);a.push({el:c,u:i/n});}return a;}
+    t4.tg0D=dots(5,ELEC);t4.tg1D=dots(5,ELEC);t4.iaD=dots(5,ELEC);t4.ibD=dots(5,ELEC);
+    // legend + state
+    gT4.appendChild(el('text',{x:34,y:150,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'REAL DEVICE'));
+    gT4.appendChild(el('text',{x:34,y:168,'font-family':'var(--font-mono)','font-size':11,fill:DIM},'pass-transistor'));
+    gT4.appendChild(el('text',{x:34,y:182,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'2 inv + 2 TG mux'));
+    gT4.appendChild(el('text',{x:34,y:196,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'8 FET'));
+    t4.stateLab=el('text',{x:34,y:232,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT4.appendChild(t4.stateLab);
+  }
+  function updateT4(s){
+    var VDD=s.VDD,co=wcol(s.Vout,VDD),ca=wcol(s.Va,VDD),cb=wcol(s.Vb,VDD),cai=wcol(s.VAi,VDD),cbi=wcol(s.VBi,VDD);
+    function ch(g,von){var v=clamp(von/VDD*2.2,0,1);g.chan.setAttribute('opacity',v.toFixed(2));g.chan.setAttribute('stroke',(s.region==='switching')?WARM:OK);if(g.bub)g.bub.setAttribute('stroke',von>0?OK:STEEL);}
+    ch(t4.pIA,s.vonPiA);ch(t4.nIA,s.vonNiA);ch(t4.pIB,s.vonPiB);ch(t4.nIB,s.vonNiB);
+    ch(t4.nTG0,s.von_nTG0);ch(t4.pTG0,s.von_pTG0);ch(t4.nTG1,s.von_nTG1);ch(t4.pTG1,s.von_pTG1);
+    t4.aiW.setAttribute('stroke',cai);t4.aiNode.setAttribute('fill',s.lAi?CYAN:'oklch(0.4 0.04 200)');
+    t4.biW.setAttribute('stroke',cbi);t4.biNode.setAttribute('fill',s.lBi?CYAN:'oklch(0.4 0.04 200)');
+    t4.aiRail.setAttribute('stroke',cai);
+    t4.aRail.setAttribute('stroke',ca);
+    var netcol={b:cb,bi:cbi};
+    for(var gi=0;gi<t4.gateLabs.length;gi++){var gl=t4.gateLabs[gi],gc=netcol[gl.key];gl.dot.setAttribute('fill',gc);gl.txt.setAttribute('fill',gc);}
+    t4.yRail.setAttribute('stroke',co);t4.outWire.setAttribute('stroke',co);t4.yNode.setAttribute('fill',s.lOut?HI:STEEL);
+    t4.aWire.setAttribute('stroke',ca);t4.bWire.setAttribute('stroke',cb);
+    t4.outV.textContent=fmtV(s.Vout);t4.outV.setAttribute('fill',co);
+    t4.inAV.textContent=fmtV(s.Va);t4.inAV.setAttribute('fill',ca);t4.inBV.textContent=fmtV(s.Vb);t4.inBV.setAttribute('fill',cb);
+    function fl(arr,pp,amt){var on=amt>0.02;for(var j=0;j<arr.length;j++){var d=arr[j];if(s.run&&on){d.u=(d.u+0.006+0.02*amt)%1;}var pt=pp.el.getPointAtLength(d.u*pp.len);d.el.setAttribute('cx',pt.x.toFixed(1));d.el.setAttribute('cy',pt.y.toFixed(1));d.el.setAttribute('opacity',on?'0.9':'0');}}
+    var t0=clamp(s.g0/VDD,0,1),t1c=clamp(s.g1/VDD,0,1);
+    fl(t4.tg0D,t4.tg0P,t0);fl(t4.tg1D,t4.tg1P,t1c);
+    var iaOn=clamp((s.VAi<VDD*0.5?clamp(s.vonPiA/VDD,0,1):clamp(s.vonNiA/VDD,0,1)),0,1)*0.5;
+    var ibOn=clamp((s.VBi<VDD*0.5?clamp(s.vonPiB/VDD,0,1):clamp(s.vonNiB/VDD,0,1)),0,1)*0.5;
+    fl(t4.iaD,t4.iaP,iaOn);fl(t4.ibD,t4.ibP,ibOn);
+    t4.stateLab.textContent=(s.region==='switching')?'both TG open: crossover':((s.region==='pass-A')?'TG0 on: Y = A':'TG1 on: Y = NOT A');
+    t4.stateLab.setAttribute('fill',(s.region==='switching')?WARM:OK);
+  }
+  // ============ TIER 5 : METAL OXIDE SILICON (pass-transistor XOR cross-section, 8 transistors) ============
+  var t5={};
+  function buildT5(){
+    drawPkg(gT5);
+    var SURF=348, DH=38, GW=12, GT=SURF-26, VCCY=150, GNDY=438, AIBUS=292, YBUS=318, ABUS=232;
+    t5.SURF=SURF;
+    // substrate (full) + n-well (left half holds the 4 PMOS)
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:372,height:GNDY-SURF,rx:4,fill:'oklch(0.22 0.03 300)',stroke:'oklch(0.34 0.04 300)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:572,y:GNDY-7,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'p-type substrate'));
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:186,height:GNDY-SURF-7,rx:4,fill:'oklch(0.25 0.05 232)',stroke:'oklch(0.37 0.06 232)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:210,y:GNDY-14,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'n-well'));
+    t5.gateLabs=[];t5.dev=[];t5.diffs={};
+    function diff(cx,isP,lab,col,key){gT5.appendChild(el('rect',{x:cx-6,y:SURF,width:12,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+22,'font-family':'var(--font-mono)','font-size':6.5,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+8,'font-family':'var(--font-mono)','font-size':6.5,fill:col||FAINT,'text-anchor':'middle'},lab));if(key)t5.diffs[key]=cx;return cx;}
+    function gate(cx,lab,key){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-8,width:GW,height:8,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:16,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':7,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});return cx;}
+    function chan(cx,isP){var c=el('path',{d:'',fill:isP?'rgba(255,122,89,0.3)':'rgba(95,208,255,0.3)',stroke:isP?HOLE:ELEC,'stroke-width':1,opacity:0});gT5.appendChild(c);return c;}
+    // ---- PMOS row (n-well): inv A, inv B, then TG0, TG1 (TG diffusions are data + Y, not rails) ----
+    var px=222, pp=13;
+    function P(net,col,key){var x=diff(px,true,net,col,key);px+=pp;return x;}
+    function PG(sig,key){var x=gate(px,sig,key);var c=chan(px,true);px+=pp;return {gx:x,chan:c};}
+    var dpVa=P('VCC',HI,'pvcc1'); var gpIA=PG('A','a'); var dpAi=P('Ai',CYAN,'pai'); px+=3;
+    var dpVb=P('VCC',HI,'pvcc2'); var gpIB=PG('B','b'); var dpBi=P('Bi',CYAN,'pbi'); px+=3;
+    var dpA=P('A',ACCENT,'pa'); var gpTG0=PG('B','b'); var dpY0=P('Y',null,'py0'); px+=3;
+    var dpAi2=P('Ai',CYAN,'pai2'); var gpTG1=PG('Bi','bi'); var dpY1=P('Y',null,'py1');
+    t5.dev.push({g:gpIA,key:'pIA',isP:true},{g:gpIB,key:'pIB',isP:true},{g:gpTG0,key:'pTG0',isP:true},{g:gpTG1,key:'pTG1',isP:true});
+    // ---- NMOS row (substrate): inv A, inv B, then TG0, TG1 ----
+    var nx=410, np=13;
+    function N(net,col,key){var x=diff(nx,false,net,col,key);nx+=np;return x;}
+    function NG(sig,key){var x=gate(nx,sig,key);var c=chan(nx,false);nx+=np;return {gx:x,chan:c};}
+    var dnGa=N('GND',LO,'ngnd1'); var gnIA=NG('A','a'); var dnAi=N('Ai',CYAN,'nai'); nx+=3;
+    var dnGb=N('GND',LO,'ngnd2'); var gnIB=NG('B','b'); var dnBi=N('Bi',CYAN,'nbi'); nx+=3;
+    var dnA=N('A',ACCENT,'na'); var gnTG0=NG('Bi','bi'); var dnY0=N('Y',null,'ny0'); nx+=3;
+    var dnAi2=N('Ai',CYAN,'nai2'); var gnTG1=NG('B','b'); var dnY1=N('Y',null,'ny1');
+    t5.dev.push({g:gnIA,key:'nIA',isP:false},{g:gnIB,key:'nIB',isP:false},{g:gnTG0,key:'nTG0',isP:false},{g:gnTG1,key:'nTG1',isP:false});
+    // ---- metal nets ----
+    function tap(x,y,col){gT5.appendChild(el('line',{x1:x,y1:SURF,x2:x,y2:y,stroke:col,'stroke-width':1.4}));gT5.appendChild(el('circle',{cx:x,cy:SURF,r:2,fill:col}));}
+    // VCC -> inverter PMOS sources only
+    gT5.appendChild(el('path',{d:'M 280 '+PKY0+' L 280 '+VCCY+' L '+dpVa+' '+VCCY,fill:'none',stroke:HI,'stroke-width':2}));
+    gT5.appendChild(el('line',{x1:dpVa,y1:VCCY,x2:dpVb,y2:VCCY,stroke:HI,'stroke-width':2}));
+    tap(dpVa,VCCY,HI);tap(dpVb,VCCY,HI);
+    // GND -> inverter NMOS sources only
+    gT5.appendChild(el('path',{d:'M 500 '+PKY1+' L 500 '+GNDY+' L '+dnGa+' '+GNDY,fill:'none',stroke:LO,'stroke-width':2}));
+    gT5.appendChild(el('line',{x1:dnGa,y1:GNDY,x2:dnGb,y2:GNDY,stroke:LO,'stroke-width':2}));
+    tap(dnGa,GNDY,LO);tap(dnGb,GNDY,LO);
+    // A net : inverter-A inputs feed the TG0 data diffusion (drawn) ; label-coupled to gates
+    t5.aBus=el('path',{d:'M '+dpA+' '+SURF+' L '+dpA+' '+ABUS+' L '+dnA+' '+ABUS+' L '+dnA+' '+SURF,fill:'none',stroke:ACCENT,'stroke-width':1.6,'stroke-linejoin':'round'});gT5.appendChild(t5.aBus);
+    gT5.appendChild(el('circle',{cx:dpA,cy:SURF,r:2,fill:ACCENT}));gT5.appendChild(el('circle',{cx:dnA,cy:SURF,r:2,fill:ACCENT}));
+    gT5.appendChild(el('text',{x:(dpA+dnA)/2,y:ABUS-3,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'middle'},'A (input)'));
+    // Ai net : inv-A drains + TG1 data diffusions
+    t5.aiBus=el('path',{d:'M '+dpAi+' '+SURF+' L '+dpAi+' '+AIBUS+' L '+dnAi2+' '+AIBUS+' M '+dnAi+' '+SURF+' L '+dnAi+' '+(AIBUS+8)+' L '+dpAi+' '+(AIBUS+8)+' M '+dpAi2+' '+SURF+' L '+dpAi2+' '+AIBUS+' M '+dnAi2+' '+SURF+' L '+dnAi2+' '+AIBUS,fill:'none',stroke:CYAN,'stroke-width':1.5,'stroke-linejoin':'round'});gT5.appendChild(t5.aiBus);
+    [dpAi,dpAi2,dnAi,dnAi2].forEach(function(x){gT5.appendChild(el('circle',{cx:x,cy:SURF,r:2,fill:CYAN}));});
+    gT5.appendChild(el('text',{x:dpAi2-12,y:AIBUS-3,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'middle'},'Ai'));
+    // Bi net : inv-B drains (feeds TG gates by label)
+    t5.biBus=el('path',{d:'M '+dpBi+' '+SURF+' L '+dpBi+' '+(SURF+DH+14)+' L '+dnBi+' '+(SURF+DH+14)+' L '+dnBi+' '+SURF,fill:'none',stroke:CYAN,'stroke-width':1.3,opacity:0.7});gT5.appendChild(t5.biBus);
+    gT5.appendChild(el('text',{x:(dpBi+dnBi)/2,y:SURF+DH+24,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'middle'},'Bi -> TG gates'));
+    // Y net : the four TG drains -> pin
+    t5.yBus=el('path',{d:'M '+dpY0+' '+SURF+' L '+dpY0+' '+YBUS+' L '+dnY1+' '+YBUS+' M '+dpY1+' '+SURF+' L '+dpY1+' '+YBUS+' M '+dnY0+' '+SURF+' L '+dnY0+' '+YBUS+' M '+dnY1+' '+SURF+' L '+dnY1+' '+YBUS+' M 500 '+PKY0+' L 500 '+(YBUS-6)+' L '+dnY1+' '+(YBUS-6),fill:'none',stroke:LO,'stroke-width':2,'stroke-linejoin':'round'});gT5.appendChild(t5.yBus);
+    [dpY0,dpY1,dnY0,dnY1].forEach(function(x){gT5.appendChild(el('circle',{cx:x,cy:SURF,r:2,fill:STEEL}));});
+    gT5.appendChild(el('text',{x:dpY1+14,y:YBUS-4,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'Y'));
+    t5.outV=el('text',{x:505,y:YBUS+13,'font-family':'var(--font-mono)','font-size':11,fill:HI,'text-anchor':'start'},'');gT5.appendChild(t5.outV);
+    // carriers
+    function carrSet(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.1,fill:col,opacity:0});gT5.appendChild(c);a.push({el:c,u:i/n,th:th(i)});}return a;}
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k];dv.carr=carrSet(3,dv.isP?HOLE:ELEC);var gx=dv.g.gx;dv.path=el('path',{d:'M '+(gx-10)+' '+(SURF+4)+' L '+(gx+10)+' '+(SURF+4),fill:'none',stroke:'none'});gT5.appendChild(dv.path);dv.plen=dv.path.getTotalLength();}
+    gT5.appendChild(el('text',{x:(dpVa+dpBi)/2,y:GT-13,'font-family':'var(--font-mono)','font-size':8,fill:HOLE,'text-anchor':'middle'},'inverters tap rails'));
+    gT5.appendChild(el('text',{x:(dnA+dnY1)/2,y:GT-13,'font-family':'var(--font-mono)','font-size':8,fill:ELEC,'text-anchor':'middle'},'pass gates: data to Y, no rail'));
+    gT5.appendChild(el('text',{x:34,y:300,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'SILICON'));
+    gT5.appendChild(el('text',{x:34,y:318,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'one die, 8 FET'));
+    gT5.appendChild(el('text',{x:34,y:331,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'2 inv + 2 TG'));
+    gT5.appendChild(el('text',{x:34,y:344,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'gates carry nets'));
+    t5.stateLab=el('text',{x:34,y:372,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT5.appendChild(t5.stateLab);
+  }
+  function updateT5(s){
+    var SURF=t5.SURF, VDD=s.VDD, co=wcol(s.Vout,VDD);
+    var dV=Math.abs(s.Va-s.Vout), dVi=Math.abs(s.VAi-s.Vout);
+    var ov={pIA:[s.vonPiA,VDD-s.VAi],pIB:[s.vonPiB,VDD-s.VBi],pTG0:[s.von_pTG0,dV],pTG1:[s.von_pTG1,dVi],
+      nIA:[s.vonNiA,s.VAi],nIB:[s.vonNiB,s.VBi],nTG0:[s.von_nTG0,dV],nTG1:[s.von_nTG1,dVi]};
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k],o=ov[dv.key],ovr=Math.max(o[0],0),vds=Math.max(o[1],0),gx=dv.g.gx,w=10;
+      if(ovr>0){var ds=clamp(ovr,0,5)*3.4, dd=clamp(ovr-vds,0,5)*3.4;dv.g.chan.setAttribute('d','M '+(gx-w)+' '+SURF+' L '+(gx+w)+' '+SURF+' L '+(gx+w)+' '+(SURF+dd).toFixed(1)+' L '+(gx-w)+' '+(SURF+ds).toFixed(1)+' Z');dv.g.chan.setAttribute('opacity','0.95');}
+      else{dv.g.chan.setAttribute('opacity','0');}
+      var f=(ovr>0)?clamp(ovr/2,0.12,1):0,on=ovr>0;
+      for(var j=0;j<dv.carr.length;j++){var d=dv.carr[j],vis=(on&&f>d.th*0.5);if(s.run&&vis){d.u=(d.u+0.004+0.013*f)%1;}var p=dv.path.getPointAtLength(d.u*dv.plen);d.el.setAttribute('cx',p.x.toFixed(1));d.el.setAttribute('cy',p.y.toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');}}
+    var ca=wcol(s.Va,VDD),cb=wcol(s.Vb,VDD),cai=wcol(s.VAi,VDD),cbi=wcol(s.VBi,VDD),netcol={a:ca,b:cb,ai:cai,bi:cbi};
+    for(var gi=0;gi<t5.gateLabs.length;gi++){t5.gateLabs[gi].txt.setAttribute('fill',netcol[t5.gateLabs[gi].key]||BRONZE);}
+    t5.aiBus.setAttribute('stroke',cai);t5.biBus.setAttribute('stroke',cbi);t5.aBus.setAttribute('stroke',ca);
+    t5.yBus.setAttribute('stroke',co);t5.outV.textContent=fmtV(s.Vout);t5.outV.setAttribute('fill',co);
+    t5.stateLab.textContent=(s.region==='switching')?'both gates conduct':((s.region==='pass-A')?'TG0 passes A to Y':'TG1 passes NOT A to Y');
+    t5.stateLab.setAttribute('fill',(s.region==='switching')?WARM:OK);
+  }
+
+  buildT1();buildT2();buildT3();buildT4();buildT5();
+
+  var scope=document.getElementById('scope');var sc={};
+  function buildScope(){
+    var L=42,R=288,T=14,B=176;sc.L=L;sc.R=R;sc.T=T;sc.B=B;
+    scope.appendChild(el('rect',{x:L,y:T,width:R-L,height:B-T,fill:'oklch(0.16 0.02 285)',stroke:'oklch(0.32 0.045 285)','stroke-width':1}));
+    sc.grid=el('g',{});scope.appendChild(sc.grid);
+    scope.appendChild(el('text',{x:(L+R)/2,y:B+26,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'middle'},'V_A  (B low)'));
+    scope.appendChild(el('text',{x:13,y:(T+B)/2,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'middle','transform':'rotate(-90 13 '+((T+B)/2)+')'},'V_out'));
+    sc.curThru=el('path',{d:'',fill:'none',stroke:'oklch(0.6 0.12 72)','stroke-width':1.4,opacity:0.7});scope.appendChild(sc.curThru);
+    sc.curve=el('path',{d:'',fill:'none',stroke:ACCENT,'stroke-width':2.2,'stroke-linejoin':'round'});scope.appendChild(sc.curve);
+    sc.diag=el('line',{x1:0,y1:0,x2:0,y2:0,stroke:'oklch(0.4 0.03 285)','stroke-width':1,'stroke-dasharray':'2 3'});scope.appendChild(sc.diag);
+    sc.cx=el('line',{x1:0,y1:0,x2:0,y2:0,stroke:CYAN,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.5});scope.appendChild(sc.cx);
+    sc.cy=el('line',{x1:0,y1:0,x2:0,y2:0,stroke:CYAN,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.5});scope.appendChild(sc.cy);
+    sc.op=el('circle',{cx:L,cy:T,r:4,fill:CYAN,filter:'url(#glow)'});scope.appendChild(sc.op);
+    scope.appendChild(el('text',{x:R-2,y:T+12,'font-family':'var(--font-mono)','font-size':8,fill:'oklch(0.6 0.12 72)','text-anchor':'end'},'I through'));
+    sc.lastVDD=-1;sc.lastVt=-1;
+  }
+  function buildGrid(VDD){
+    while(sc.grid.firstChild)sc.grid.removeChild(sc.grid.firstChild);
+    var L=sc.L,R=sc.R,T=sc.T,B=sc.B;
+    for(var k=0;k<=VDD+0.001;k++){var x=L+(k/VDD)*(R-L),y=B-(k/VDD)*(B-T);
+      sc.grid.appendChild(el('line',{x1:x,y1:T,x2:x,y2:B,stroke:'oklch(0.22 0.02 285)','stroke-width':1}));
+      sc.grid.appendChild(el('line',{x1:L,y1:y,x2:R,y2:y,stroke:'oklch(0.22 0.02 285)','stroke-width':1}));}
+    sc.grid.appendChild(el('line',{x1:L,y1:B,x2:R,y2:B,stroke:FAINT,'stroke-width':1.3}));
+    sc.grid.appendChild(el('line',{x1:L,y1:T,x2:L,y2:B,stroke:FAINT,'stroke-width':1.3}));
+  }
+  function drawScope(s){
+    var L=sc.L,R=sc.R,T=sc.T,B=sc.B,VDD=s.VDD;
+    function X(vin){return L+clamp(vin/VDD,0,1)*(R-L);}
+    function Y(vout){return B-clamp(vout/VDD,0,1)*(B-T);}
+    if(VDD!==sc.lastVDD||s.Vt!==sc.lastVt||s.Vb!==sc.lastVb){
+      buildGrid(VDD);
+      var d='',dt='',ipk=1e-9;
+      var samp=[];
+      for(var k=0;k<=80;k++){var vin=k/80*VDD,m=model(vin,s.Vb,VDD,s.Vt);samp.push(m);if(m.Ithru>ipk)ipk=m.Ithru;}
+      for(k=0;k<=80;k++){var vin2=k/80*VDD,m2=samp[k];d+=(k===0?'M ':'L ')+X(vin2).toFixed(1)+' '+Y(m2.Vout).toFixed(1)+' ';
+        var yt=B-(m2.Ithru/ipk)*(B-T)*0.9;dt+=(k===0?'M ':'L ')+X(vin2).toFixed(1)+' '+yt.toFixed(1)+' ';}
+      sc.curve.setAttribute('d',d);sc.curThru.setAttribute('d',dt);
+      sc.lastVDD=VDD;sc.lastVt=s.Vt;sc.lastVb=s.Vb;
+    }
+    var ox=X(s.Va),oy=Y(s.Vout);
+    sc.op.setAttribute('cx',ox.toFixed(1));sc.op.setAttribute('cy',oy.toFixed(1));
+    sc.cx.setAttribute('x1',L);sc.cx.setAttribute('y1',oy);sc.cx.setAttribute('x2',ox);sc.cx.setAttribute('y2',oy);
+    sc.cy.setAttribute('x1',ox);sc.cy.setAttribute('y1',B);sc.cy.setAttribute('x2',ox);sc.cy.setAttribute('y2',oy);
+  }
+  buildScope();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roVa=trow('input A'),roVb=trow('input B'),roAi=trow('internal NOT A'),roBi=trow('internal NOT B'),roVout=trow('output V_out'),roLogic=trow('logic A B / Y'),roI=trow('through-current'),roS=trow('state');
+
+  // ===== controls =====
+  var vinEl=document.getElementById('vin'),vinbEl=document.getElementById('vinb'),vddEl=document.getElementById('vdd'),vtEl=document.getElementById('vt'),
+      labVin=document.getElementById('labVin'),labVinb=document.getElementById('labVinb'),labVdd=document.getElementById('labVdd'),labVt=document.getElementById('labVt'),
+      btnRun=document.getElementById('btnRun'),visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),
+      chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true,tier='t1';
+  footnote.innerHTML='The gate shown is a 2-input XOR built as a pass-transistor multiplexer, the same logic function as the and-or-invert cell but a different circuit. XOR can be read as a selector: Y equals A when B is low and NOT A when B is high, which is the 2-to-1 mux Y = B ? NOT A : A, and that equals XOR. The build is one inverter making NOT A, the data that gets steered, one inverter making NOT B, which supplies the complementary control the gates need, and two transmission gates. A transmission gate is an NMOS and a PMOS wired in parallel and driven by opposite controls, so it either connects its two terminals with a low resistance in both directions or isolates them, and because both device types are present it passes a full swing with no threshold drop. The first transmission gate passes A to the output when B is low; the second passes NOT A when B is high; exactly one is on at a time. Eight transistors in all, two inverters and the two gates, against twelve for the and-or-invert version. The defining property is that the output is never tied to a supply rail. Only the two inverters draw from VCC and GND. The output node is joined, through whichever gate is open, directly to a data node, so it is passed, not pulled, and this is visible in the silicon tier where the pass transistors sit between data diffusions and the output with no rail contact. That has a cost as well as a benefit. With no fight between a pull-up and a pull-down the static current is low, but the output is not restored to a clean rail by this stage, so chaining several pass stages in series degrades the level and a real design buffers it with an inverter every so often. The transfer curve makes the character plain. With B held low the open gate connects the output straight to A, so the curve is a straight diagonal, the output following the analog input with no restoration, unlike the sharp restored step of the and-or-invert cell. Flip B high and the output follows NOT A, which is stepped, because NOT A is itself an inverter output. The solution inverts both inputs and then treats the output as a resistive divider between the two data nodes weighted by how open each gate is, so the diagonal, the step, and the small crossover current when both gates are partly open are computed, not drawn by hand. The displayed through-current is normalized to its own peak, not in absolute amperes. Many real single-gate XOR and XNOR parts use transmission-gate or pass-transistor cores internally for exactly this device economy. The two hidden nodes are NOT A, the steered data, and NOT B, the gate complement.';
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
+    var names={t1:'logic symbol',t2:'flow network',t3:'pressure pilot valves',t4:'real device . pass-transistor',t5:'metal oxide silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+  setTier('t1');
+
+  var tick=0;
+  function frame(){
+    if(running){tick++;}
+    var VDD=(+vddEl.value)/100, Vt=(+vtEl.value)/100, Va=clamp((+vinEl.value)/100,0,VDD), Vb=clamp((+vinbEl.value)/100,0,VDD);
+    var m=model(Va,Vb,VDD,Vt);
+    var s=Object.assign({},m,{Vt:Vt,run:running,tick:tick});
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else if(tier==='t3'){updateT3(s);}else if(tier==='t4'){updateT4(s);}else{updateT5(s);}
+    drawScope(s);
+    labVin.textContent=fmtV(Va);labVinb.textContent=fmtV(Vb);labVdd.textContent=fmtV(VDD);labVt.textContent=fmtV(Vt);
+    roVa.textContent=fmtV(Va);roVb.textContent=fmtV(Vb);roAi.textContent=fmtV(m.VAi);roAi.style.color=wcol(m.VAi,VDD);roBi.textContent=fmtV(m.VBi);roBi.style.color=wcol(m.VBi,VDD);roVout.textContent=fmtV(m.Vout);roLogic.textContent=m.lA+' '+m.lB+'  /  '+m.lOut;roLogic.style.color=HI;
+    roI.textContent=fmtI(m.Ithru);roI.style.color=(m.region==='switching')?WARM:DIM;
+    roS.textContent=m.region;roS.style.color=(m.region==='switching')?WARM:((m.region==='floating')?FAINT:OK);
+    regTag.textContent=m.region;chipReg.textContent=m.region.toUpperCase();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
