@@ -438,6 +438,7 @@ export function buildNetlist(
       bArr.push(mid);
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
+      eArr.push(0); // not a powered gate: no fifth node
       values.push(c.value); // capacitance
       auxArr.push(0); // not an AC source: no amplitude
       types.push(ELEM_RESISTOR);
@@ -445,6 +446,7 @@ export function buildNetlist(
       bArr.push(nb);
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
+      eArr.push(0); // not a powered gate: no fifth node
       values.push(ecEsr(c.tier ?? DEFAULT_TIER)); // ESR (graded by the part's tier)
       auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
@@ -469,6 +471,7 @@ export function buildNetlist(
       bArr.push(nw);
       cArr.push(0);
       dArr.push(0);
+      eArr.push(0);
       values.push(rAW);
       auxArr.push(0);
       types.push(ELEM_RESISTOR);
@@ -476,6 +479,7 @@ export function buildNetlist(
       bArr.push(nb);
       cArr.push(0);
       dArr.push(0);
+      eArr.push(0);
       values.push(rWB);
       auxArr.push(0);
       elemOfComponent.set(c.id, upIdx); // A→W leg current (the main)
@@ -501,6 +505,7 @@ export function buildNetlist(
       bArr.push(nb);
       cArr.push(0);
       dArr.push(0);
+      eArr.push(0);
       values.push(reff);
       auxArr.push(0);
       elemOfComponent.set(c.id, idx);
