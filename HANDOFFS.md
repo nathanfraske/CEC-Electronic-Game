@@ -5,6 +5,50 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (55) — Electronic load + IMPLY/NIMPLY + OR refsheet + POT regression fix
+
+**State:** 🟢 all landed (PRs #144–#148 squash-merged, branch re-synced). Heavy multi-thread session;
+research-first (many agents). Two big owner threads still open as **queued follow-ups** (below).
+
+- **PR #144 — OR refsheet** `docs/ui/parts/or-ic.html` (74LVC1G32). Static §10 gates pass.
+- **PRs #145 + #148 — Electronic load** (owner: "programmable / electronic load… test ATX 3.1").
+  - #145 (core, sim): **programmable current source** — `i_source_current(&self, e)` mirroring
+    `ac_source_emf`. Static by default (step freq `params[0]`=0 → plain `value`, golden-safe; ISOURCE
+    absent from the golden). `freq>0` → square step between base (`value`) and peak (`aux`) at
+    `params[0]`/duty `params[3]`, starting at base. Swapped the 8 stamp + 4 commit ISOURCE reads.
+    Orientation a→b: + drains `a`, so a load wires a=rail, b=gnd.
+  - #148 (web): **LOAD part** — `Component.mode` (0=CC/1=CR) + `loadHz` (step Hz), reusing `amp`
+    (peak) + `duty`. Web-only mapping (no sim element): **CC→ELEM_ISOURCE** (static or stepping),
+    **CR→ELEM_RESISTOR**. `loadUnit(mode)` A/Ω/W; `loadValues`/`loadChips` per mode. Glyph, inspector
+    (mode picker + mode-aware unit + dynamic-step controls), board plumbing, partInfo.
+  - **CP (constant power) is part 3, not built** — research says a clean new nonlinear `ELEM_CPLOAD`
+    (varistor template; I=P/V, but the FIRST negative-conductance device → needs V_MIN/I_MAX clamps +
+    a step limiter + a convergence test). **ATX reach:** DT=2µs → excursion durations/steps ≥ ~10µs
+    resolve (100µs = 50 ticks); sub-µs slew aliases. Next: an ATX rail-transient demo (12V +
+    output-Z + hold-up cap + the dynamic load) — concrete capstone, not yet done.
+- **PR #146 — IMPLY + NIMPLY gates** (behavioral func codes 8/9 on ELEM_GATE: `or(not(a),b)` /
+  `and(a,not(b))`). New `gateSchematic` input-bubble support (IMPLY=OR+A̅ bubble, NIMPLY=AND+B̅).
+  Golden-safe. **Owner wanted transmission-gate versions** — verdict: behavioral (the level-1 MOSFET
+  fixes its source terminal, can't model a pass transistor's swinging source); TG structure belongs
+  in the refsheet's transistor tiers. **No real IMPLY/NIMPLY chip exists** → a refsheet must anchor
+  on a real TG/bilateral-switch part (CD4066) or be a package-less cell (owner's call).
+- **PR #147 — REGRESSION FIX (owner-reported "POT wiper does nothing").** The 5-pin gate PR added
+  `eArr` to `buildNetlist` but pushed it only in the generic loop; the EC/POT/thermistor expansion
+  branches desynced it → `set_netlist_pe` length check rejected the install → **any POT/EC/thermistor
+  circuit went dead**. Fixed the 5 missing `eArr.push(0)` + hardened `loop.ts` (use `set_netlist_pe`
+  only when `e.length===types.length` && a non-ground GND pin → fails safe). **No JS test runs the
+  sim** — a `buildNetlist` smoke harness would have caught it (TODOS 30).
+
+### Queued follow-ups (owner-directed, NOT yet built)
+- **Voltage representation overhaul (TODOS 31) — owner "go big".** Today `voltageColor(v)` maps volts
+  → a HUE clamped to [0,12] (negatives look grounded — a real bug; not glance-readable). Plan: move
+  magnitude to a **pre-attentive height/fill** channel (Analogy = standpipes; Reality = LED bar-gauges)
+  + a quick-win (luminance + signed clamp). **Net coloring (owner):** default = auto-distinct color
+  per net + conventional PC rail colors (+12 yellow/+5 red/+3.3 orange); plus a **per-net color
+  override tied to net labels** (a `color?` on NetLabel + a swatch in the label editor). Full
+  brainstorm + ranked proposals in TODOS 31.
+- **CP load mode** + **ATX demo** (above).
+
 ## 2026-06-20 (54) — Powered 5-pin logic ICs + NAND/NOR refsheets + drop-in saved-circuit examples
 
 **State:** 🟢 all landed (PRs #139–#142 squash-merged, branch re-synced). Continuing the owner's
