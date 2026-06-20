@@ -49,6 +49,25 @@
 //! | 22   | clocked sampler    | threshold V   | edge-triggered 1-bit comparator, linear (OUT=a IN=b CLK=c)|
 //! | 23   | latched comparator | hysteresis V_H| level-latched analog comparator, powered rail-to-rail (OUT=a IN+=b IN-=c VCC=d GND=e LE=f)|
 //! | 24   | analog switch (TG) | R_on ohms     | node-gated transmission gate, time-varying conductance a<->b (CTRL=c VCC=d GND=e)|
+//! | 25   | behavioral block   | program id    | integer state machine, program-id dispatch, powered digital I/O (SPI master: SCLK=a MOSI=b CS=c VCC=d GND=e MISO=f START=g)|
+//!
+//! Type 25 is the **behavioral block** — the protocol / behavioral engine's element (ADR 0004,
+//! `docs/sim/multi-rate-domains.md`): a clocked, **integer-state** machine that runs beside the
+//! analog MNA solve and talks to it only at its boundary pins. Each tick it reads its input pins
+//! as logic levels, advances a fixed `[u32; 8]` block of internal state, and drives its powered
+//! digital outputs from that committed state — the digital twin of the gate/sampler/DFF, made
+//! programmable. Its `value` is a **program id** dispatching which firmware it runs (`1` = SPI
+//! master; the dispatch is open for SPI slave / UART / I2C / a tiny MCU later), `aux` is the data
+//! word to transmit, and its timing is **structural** (`params[0]` = SCLK half-period in ticks,
+//! `params[1]` = bit count) — never a function of a solved voltage. This is **phase 1**: it runs
+//! at the **base tick rate** (multi-rate sub-ticking is phase 2). The **SPI master** (program 1)
+//! is Mode 0 (CPOL = 0, CPHA = 0): a rising `START` (`g`) asserts `CS` (`c`) low and shifts the
+//! word out on `MOSI` (`b`) MSB-first, clocked by `SCLK` (`a`) at the structural divider, sampling
+//! `MISO` (`f`) on each rising edge; the three outputs are powered (swing the `GND` (`e`) .. `VCC`
+//! (`d`) rail, dead below [`GATE_MIN_RAIL`]) exactly like a gate. Its eight `u32` state words enter
+//! the snapshot hash (LE bytes, fixed element + word order, appended after the comparator fold), so
+//! a behavioral netlist replays bit-for-bit and a circuit with no behavioral block folds zero extra
+//! bytes (the golden is untouched). See [`ELEM_BEHAVIORAL`] and [`beh_spi_step`].
 //!
 //! Type 22 is the **clocked sampler** (a 1-bit clocked comparator — the keystone of the
 //! ADC / sample-and-hold / SAR cluster): a near-twin of the D flip-flop whose data input
@@ -925,6 +944,213 @@ const ASWITCH_RON: f64 = 100.0;
 /// only the fallback, the analogue of a powerless gate's legacy `value`-rail threshold.
 const ASWITCH_FIXED_THRESH: f64 = 1.5;
 
+/// **Behavioral block** — the protocol / behavioral engine's element (ADR 0004,
+/// `docs/sim/multi-rate-domains.md`). A clocked, integer-state machine that runs **beside**
+/// the analog MNA solve and talks to it only at its boundary pins: each tick it reads its
+/// input pins as logic levels, advances a fixed block of **integer** internal state, and
+/// drives its powered digital outputs from that committed state — the digital twin of the
+/// gate/sampler/DFF mechanism, generalised to a small programmable state machine. This is
+/// **phase 1**: it runs at the **base tick rate** (one step per analog tick — multi-rate
+/// sub-ticking is phase 2 and deliberately not here), so it is slow but functional, proving
+/// the engine end to end.
+///
+/// **Program-id dispatch.** Its `value` is a **program id** selecting which firmware the block
+/// runs (`1` = SPI master; the dispatch is left open for future programs — SPI slave, UART,
+/// I2C, a tiny MCU — one engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD` overload an
+/// existing element). Its `aux` is the **data word to transmit** (treated as an integer,
+/// `aux as u64`). Timing is structural: `params[0]` is the SCLK **half-period in analog ticks**
+/// (the clock divider; `<= 0` defaults to [`BEH_SPI_HALF_DEFAULT`]) and `params[1]` is the
+/// **bit count** (`<= 0` defaults to [`BEH_SPI_NBITS_DEFAULT`]). Timing comes **only** from
+/// these declared params — never from a solved voltage (the determinism contract:
+/// structure, not values).
+///
+/// **Internal state** is a fixed `[u32; `[`BEH_STATE_WORDS`]`]` block per element (`beh_state`,
+/// beside `samp_q`), **integer only** (no floats, no PRNG, no std hasher), zero-initialised and
+/// **folded into the snapshot hash** in fixed element + word order, appended after the existing
+/// folds — so a circuit with no behavioral block (the RC golden, every existing test) folds
+/// **zero** extra bytes and the golden is byte-identical by construction. The SPI program uses
+/// the eight words as `[0]=fsm`, `[1]=bit_index`, `[2]=shift_out`, `[3]=shift_in`,
+/// `[4]=clk_counter`, `[5]=sclk_level`, `[6]=cs_level`, `[7]=start_prev` (see
+/// [`beh_spi_step`]); a future program reuses the same eight words differently.
+///
+/// **SPI master pinout (program 1)** — uses the wider 8-terminal format: `a` = `SCLK` (out),
+/// `b` = `MOSI` (out), `c` = `CS` (out, active-low), `d` = `VCC`, `e` = `GND`, `f` = `MISO`
+/// (in), `g` = `START` (in); `h` is unused (ground). The three outputs `a`/`b`/`c` are
+/// **powered digital** — they swing `V(e) .. V(d)` through the **same powered-gate output path**
+/// the gate/comparator use (rail from [`gate_rails`]; an unpowered rail below [`GATE_MIN_RAIL`]
+/// releases them, the "you must power the chip" rule). The two inputs `f`/`g` are read as digital
+/// levels (quantised against half-rail relative to GND on `e`, see [`beh_level`]). Like every
+/// digital element the analog↔digital crossing lives in its pins; the within-tick stamp is a
+/// constant (no Newton, no branch unknown, one tick of state-to-output delay).
+///
+/// **SPI master state machine (Mode 0: CPOL=0, CPHA=0)** — advanced once per step in the commit
+/// phase from the just-solved committed `node_v` (mirroring where `samp_q`/`cmp_q` update):
+/// idle holds SCLK low and CS high; a **rising START edge** loads `shift_out = aux & mask`,
+/// asserts CS low, and enters the active state; the active state presents the current MOSI bit
+/// **MSB-first**, generates SCLK by counting `clk_counter` to the half-period and toggling,
+/// **samples MISO on each rising SCLK edge** (shift-left + OR) and **advances the bit on each
+/// falling edge**, and after the configured bit count deasserts CS and returns to idle with the
+/// received word in `shift_in`. See [`beh_spi_step`] for the exact Mode-0 edge bookkeeping.
+pub const ELEM_BEHAVIORAL: u8 = 25;
+
+/// Width of an [`ELEM_BEHAVIORAL`] block's integer internal-state array — the number of `u32`
+/// words each behavioral block carries (and folds into the snapshot hash in word order). Fixed
+/// so every program shares one state shape; the SPI master uses all eight (see [`beh_spi_step`]),
+/// a future program reuses them differently. Eight is comfortably enough for a shift-register
+/// protocol (fsm + a counter + two shift registers + a few flags) without bloating the per-tick
+/// hash fold.
+pub const BEH_STATE_WORDS: usize = 8;
+
+/// Behavioral SPI master — default SCLK **half-period in analog ticks** when `params[0] <= 0`.
+/// A full SCLK period is `2 ·` this; with [`DT`] = 2 µs the default 4 → an 8 µs period
+/// (125 kHz). Purely structural (a clock divider), so the bus timing is deterministic and never
+/// depends on a solved voltage.
+const BEH_SPI_HALF_DEFAULT: u32 = 4;
+
+/// Behavioral SPI master — default **bit count** per transaction when `params[1] <= 0` (a byte).
+const BEH_SPI_NBITS_DEFAULT: u32 = 8;
+
+/// Behavioral SPI master — maximum bit count, clamping `params[1]` so a `shift_out`/`shift_in`
+/// word stays within the 32-bit state slots and the MSB-first index arithmetic can never
+/// underflow. Deterministic structural bound (32 bits).
+const BEH_SPI_NBITS_MAX: u32 = 32;
+
+/// SPI-master internal-state word indices into an [`ELEM_BEHAVIORAL`]'s `[u32; BEH_STATE_WORDS]`
+/// block (program 1). `FSM`: 0 = idle, 1 = active. The rest are the shift-register engine's
+/// counters/registers and the edge-detection companion (`START_PREV`).
+const BEH_SPI_FSM: usize = 0;
+const BEH_SPI_BIT_INDEX: usize = 1;
+const BEH_SPI_SHIFT_OUT: usize = 2;
+const BEH_SPI_SHIFT_IN: usize = 3;
+const BEH_SPI_CLK_COUNTER: usize = 4;
+const BEH_SPI_SCLK_LEVEL: usize = 5;
+const BEH_SPI_CS_LEVEL: usize = 6;
+const BEH_SPI_START_PREV: usize = 7;
+
+/// Program id selecting the **SPI master** firmware for an [`ELEM_BEHAVIORAL`] (its `value`).
+/// `0` (or any unrecognised id) is an **inert** behavioral block — it advances no state and
+/// drives nothing, so it folds a zero state block and is golden-safe. Future programs take
+/// further ids.
+const BEH_PROG_SPI_MASTER: u32 = 1;
+
+/// Read one of a behavioral block's digital **input** pins as a two-state level: `true`
+/// (logic high) iff the pin sits above half the chip's rail **relative to its GND pin** `e`,
+/// `false` otherwise — the powered-gate / comparator-LE threshold (a clean half-rail decision,
+/// no forbidden band, so the SPI bookkeeping is a deterministic boolean). `rail` is the chip's
+/// supply span `V(d) − V(e)`; with `rail <= 0` (unpowered) every input reads `false`.
+#[inline]
+fn beh_level(node_v: &[f64], pin: usize, vlow: f64, rail: f64) -> bool {
+    rail > 0.0 && (node_v[pin] - vlow) > 0.5 * rail
+}
+
+/// The behavioral SPI master's bit count (`params[1]`, defaulting and clamped) and SCLK
+/// half-period (`params[0]`, defaulting) as integers — the **structural** timing, read once so
+/// the commit step and the output drive agree. Never a function of a solved voltage.
+#[inline]
+fn beh_spi_config(el: &Element) -> (u32, u32) {
+    let nbits = if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_SPI_NBITS_MAX)
+    } else {
+        BEH_SPI_NBITS_DEFAULT
+    };
+    let half = if el.params[0] >= 1.0 {
+        el.params[0] as u32
+    } else {
+        BEH_SPI_HALF_DEFAULT
+    };
+    (nbits, half)
+}
+
+/// The MOSI bit the SPI master currently presents (MSB-first), from the **committed** state:
+/// while active (`fsm == 1`) it is `(shift_out >> (nbits-1-bit_index)) & 1`, else `0` (idle
+/// drives MOSI low). Pure integer arithmetic on the hashed state — the same value the commit
+/// step shifts out, so the drive and the bookkeeping stay in lockstep.
+#[inline]
+fn beh_spi_mosi_bit(state: &[u32; BEH_STATE_WORDS], nbits: u32) -> bool {
+    if state[BEH_SPI_FSM] != 1 {
+        return false;
+    }
+    let bit_index = state[BEH_SPI_BIT_INDEX];
+    if bit_index >= nbits {
+        return false;
+    }
+    let shift = nbits - 1 - bit_index;
+    (state[BEH_SPI_SHIFT_OUT] >> shift) & 1 != 0
+}
+
+/// Advance a behavioral SPI master's integer state machine by one analog tick (Mode 0:
+/// CPOL = 0, CPHA = 0), reading the just-solved committed input levels (`start`, `miso`).
+/// Mirrors where the sampler/comparator latch their bit. **Mode-0 edge bookkeeping** (all
+/// integer, fully deterministic):
+/// - **Idle** (`fsm == 0`): SCLK = 0, CS = 1 (deasserted). On a **rising START edge**
+///   (`start && !start_prev`) load `shift_out = data & mask`, zero `bit_index`/`clk_counter`/
+///   `sclk_level`, assert CS = 0, and enter the active state. The first MOSI bit (the MSB) is
+///   thereby presented while CS is low and **before** the first SCLK rising edge — CPHA = 0.
+/// - **Active** (`fsm == 1`): count `clk_counter` up each tick; when it reaches `half_period`
+///   reset it and **toggle** SCLK. On the resulting **rising** SCLK edge sample MISO into
+///   `shift_in` (shift left, OR the received bit). On the **falling** SCLK edge advance
+///   `bit_index`; once `nbits` bits have been clocked (i.e. after the nth falling edge) deassert
+///   (CS = 1, SCLK = 0) and return to idle — the transaction is done and `shift_in` holds the
+///   received word.
+///
+/// `start_prev` is always updated last so the next tick can detect the next rising START edge.
+/// Returns nothing; it mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_spi_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    data: u64,
+    nbits: u32,
+    half: u32,
+    start: bool,
+    miso: bool,
+) {
+    let mask: u64 = if nbits >= 32 {
+        u64::MAX
+    } else {
+        (1u64 << nbits) - 1
+    };
+    match state[BEH_SPI_FSM] {
+        1 => {
+            // Active: generate SCLK by counting to the half-period, then act on its edge.
+            state[BEH_SPI_CLK_COUNTER] += 1;
+            if state[BEH_SPI_CLK_COUNTER] >= half {
+                state[BEH_SPI_CLK_COUNTER] = 0;
+                let old = state[BEH_SPI_SCLK_LEVEL];
+                let new = 1 - old; // toggle 0<->1
+                state[BEH_SPI_SCLK_LEVEL] = new;
+                if old == 0 && new == 1 {
+                    // Rising edge: sample MISO into the receive shift register (MSB-first in).
+                    state[BEH_SPI_SHIFT_IN] = (state[BEH_SPI_SHIFT_IN] << 1) | (miso as u32);
+                } else {
+                    // Falling edge: this bit is finished — advance, and finish after nbits bits.
+                    state[BEH_SPI_BIT_INDEX] += 1;
+                    if state[BEH_SPI_BIT_INDEX] >= nbits {
+                        state[BEH_SPI_CS_LEVEL] = 1; // deassert CS
+                        state[BEH_SPI_SCLK_LEVEL] = 0; // park SCLK low
+                        state[BEH_SPI_FSM] = 0; // back to idle; shift_in holds the received word
+                    }
+                }
+            }
+        }
+        _ => {
+            // Idle (or an unrecognised fsm value, which resets cleanly to idle behaviour).
+            state[BEH_SPI_FSM] = 0;
+            state[BEH_SPI_SCLK_LEVEL] = 0;
+            state[BEH_SPI_CS_LEVEL] = 1; // CS deasserted (active-low)
+            if start && state[BEH_SPI_START_PREV] == 0 {
+                // Rising START edge: load the word and assert CS, present the MSB (CPHA = 0).
+                state[BEH_SPI_SHIFT_OUT] = (data & mask) as u32;
+                state[BEH_SPI_SHIFT_IN] = 0;
+                state[BEH_SPI_BIT_INDEX] = 0;
+                state[BEH_SPI_CLK_COUNTER] = 0;
+                state[BEH_SPI_SCLK_LEVEL] = 0;
+                state[BEH_SPI_CS_LEVEL] = 0; // assert CS (active-low)
+                state[BEH_SPI_FSM] = 1;
+            }
+        }
+    }
+    state[BEH_SPI_START_PREV] = start as u32;
+}
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -1256,9 +1482,10 @@ fn is_nonlinear(kind: u8) -> bool {
 }
 
 /// True for the **digital** element kinds — a logic gate, a flip-flop, a level shifter,
-/// or a clocked sampler. Their terminals are logic pins (driven/sensed levels) rather than
-/// continuous-voltage analog terminals — except the sampler's `IN` pin, which is a high-Z
-/// analog **sense** node (handled specially in [`classify_nets`]). The net-classification
+/// a clocked sampler, a latched comparator, or a behavioral block. Their terminals are logic
+/// pins (driven/sensed levels) rather than continuous-voltage analog terminals — except a few
+/// high-Z analog **sense**/supply pins (the sampler's `IN`, the comparator's `IN±`, the powered
+/// chips' `VCC`/`GND`), which are handled specially in [`classify_nets`]. The net-classification
 /// pass uses this to separate the analog and digital domains; the boundary between them is
 /// any node where a digital pin and an analog element meet. See
 /// `docs/ui/logic-analog-digital-nets.md` §7.
@@ -1269,6 +1496,7 @@ fn is_digital(kind: u8) -> bool {
         || kind == ELEM_LEVELSHIFT
         || kind == ELEM_SAMPLER
         || kind == ELEM_COMPARATOR
+        || kind == ELEM_BEHAVIORAL
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -1316,6 +1544,11 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 // OUT (a) and LE (f) are the comparator's digital signal pins; IN+ (b),
                 // IN- (c), VCC (d), GND (e) are analog (marked below).
                 &[e.a, e.f]
+            } else if e.kind == ELEM_BEHAVIORAL {
+                // SPI master: SCLK (a), MOSI (b), CS (c) are digital OUTPUT pins and MISO (f),
+                // START (g) are digital INPUT pins; VCC (d), GND (e) are analog supply pins
+                // (marked below, exactly like a powered gate's power pins).
+                &[e.a, e.b, e.c, e.f, e.g]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -1343,6 +1576,17 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 // analog, so a comparator's input/supply nets stay Analog and a node shared
                 // with a digital pin is Boundary.
                 for t in [e.b, e.c, e.d, e.e] {
+                    if t < node_count {
+                        analog_touched[t] = true;
+                    }
+                }
+            }
+            if e.kind == ELEM_BEHAVIORAL {
+                // VCC (d) / GND (e) are analog SUPPLY pins (treated exactly like a powered
+                // gate's power pins), so the behavioral block's supply nets stay Analog and a
+                // node shared with a digital pin is Boundary. Its signal pins (SCLK/MOSI/CS/
+                // MISO/START) are digital-touched above.
+                for t in [e.d, e.e] {
                     if t < node_count {
                         analog_touched[t] = true;
                     }
@@ -1520,6 +1764,17 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 // unwired VCC floats to ~0 V → the chip reads unpowered.
                 mark(&mut referenced, e.a);
                 mark(&mut referenced, e.f);
+            }
+            ELEM_BEHAVIORAL => {
+                // The three powered OUTPUT pins — SCLK (a), MOSI (b), CS (c) — are referenced
+                // by their drivers (GATE_GOUT to ground via the powered output stage). The
+                // input pins MISO (f) / START (g) and the supply pins VCC (d) / GND (e) are
+                // NOT pinned here (mirrors a powered gate's VCC/GND and the sampler's IN) —
+                // each is an ordinary node left to be referenced by its own source, so an
+                // unwired VCC floats to ~0 V → the chip reads unpowered.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
             }
             ELEM_PULLUP => {
                 // Pulled to an internal rail through PULLUP_R — a real conductance to
@@ -2570,6 +2825,16 @@ pub struct Sim {
     /// lockstep with `elements`. Unlike the sampler the comparator is level-sensitive, so it
     /// needs no previous-clock companion — `cmp_q` is its only persistent scalar.
     cmp_q: Vec<Level>,
+    /// Per-element **behavioral-block integer state** — a fixed `[u32; `[`BEH_STATE_WORDS`]`]`
+    /// block carrying an [`ELEM_BEHAVIORAL`]'s state machine (fsm + shift registers + counters +
+    /// edge flags; the word map is program-specific — see [`beh_spi_step`] for the SPI master).
+    /// Used only by [`ELEM_BEHAVIORAL`]; an all-zero block for every other element. **Integer
+    /// only** (no floats, no PRNG) and advanced once per step in the commit phase from the
+    /// just-solved committed `node_v`. Persistent sequential state that **enters the snapshot
+    /// hash** in fixed element + word order (appended after the existing folds, so a circuit
+    /// with no behavioral block folds zero extra bytes and the golden is byte-identical).
+    /// Indexed in lockstep with `elements`.
+    beh_state: Vec<[u32; BEH_STATE_WORDS]>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -2703,6 +2968,7 @@ impl Sim {
             samp_q: Vec::new(),
             samp_clk_prev: Vec::new(),
             cmp_q: Vec::new(),
+            beh_state: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -2939,6 +3205,7 @@ impl Sim {
                     | ELEM_SAMPLER
                     | ELEM_COMPARATOR
                     | ELEM_ASWITCH
+                    | ELEM_BEHAVIORAL
             ) {
                 self.install_empty();
                 return false;
@@ -3037,6 +3304,7 @@ impl Sim {
         self.samp_q = vec![Level::Low; elements.len()];
         self.samp_clk_prev = vec![Level::Low; elements.len()];
         self.cmp_q = vec![Level::Low; elements.len()];
+        self.beh_state = vec![[0u32; BEH_STATE_WORDS]; elements.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -3090,6 +3358,9 @@ impl Sim {
         }
         for s in &mut self.cmp_q {
             *s = Level::Low;
+        }
+        for s in &mut self.beh_state {
+            *s = [0u32; BEH_STATE_WORDS];
         }
         for s in &mut self.net_level {
             *s = Level::Low;
@@ -3426,7 +3697,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -3659,7 +3930,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4443,7 +4714,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4719,7 +4990,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -5005,6 +5276,75 @@ impl Sim {
                     self.digital_vhigh[e.a] = e.aux; // output net carries rail B
                     self.digital_vlow[e.a] = 0.0;
                     self.digital_family[e.a] = 0;
+                }
+                ELEM_BEHAVIORAL => {
+                    // Behavioral block (SPI master, program 1): three POWERED digital outputs —
+                    // SCLK (a), MOSI (b), CS (c) — driven from the COMMITTED integer state through
+                    // the SAME powered-gate output path the gate/comparator use. They swing between
+                    // the GND pin (e, vlow) and the VCC pin (d, vhigh) and release (Z) when the rail
+                    // collapses below the operating minimum (an unpowered chip sits dead). The state
+                    // is advanced in the commit phase, so the levels are constant within the solve —
+                    // a constant Thévenin stamp, no Newton, one tick of state-to-output delay. MISO
+                    // (f) / START (g) are read in the commit phase (not driven here). Ideal driver
+                    // family (a clean rail-to-rail output), GND-offset by `vlow`.
+                    let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
+                    let fam = &FAMILIES[0];
+                    // The behavioral block is ALWAYS powered through its VCC (d) / GND (e) pins —
+                    // `value` is the program id, NOT a logic rail, so it has no legacy `value`-rail
+                    // fallback (that would misread the program id as a 1 V rail). An unwired VCC
+                    // floats to ~0 V → rail below the minimum → the chip reads dead/released.
+                    let vlow = self.node_v[e.e];
+                    let rail = (self.node_v[e.d] - vlow).max(0.0);
+                    let dead = rail < GATE_MIN_RAIL || prog != BEH_PROG_SPI_MASTER;
+                    let (sclk, mosi, cs) = if dead {
+                        // Unpowered, or an inert/unknown program: release all three outputs (Z).
+                        (Level::Z, Level::Z, Level::Z)
+                    } else {
+                        let (nbits, _half) = beh_spi_config(&e);
+                        let st = &self.beh_state[i];
+                        let sclk = if st[BEH_SPI_SCLK_LEVEL] != 0 {
+                            Level::High
+                        } else {
+                            Level::Low
+                        };
+                        let mosi = if beh_spi_mosi_bit(st, nbits) {
+                            Level::High
+                        } else {
+                            Level::Low
+                        };
+                        // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
+                        // output level, so it idles High and asserts Low during a transaction.
+                        // Guard the all-zero RESET state (cs_level = 0 before the first commit
+                        // runs the idle branch that raises it): CS is asserted Low ONLY while a
+                        // transaction is active (fsm = 1), else deasserted High — so a freshly
+                        // installed/idle master reads CS High from the very first tick (spec:
+                        // "Idle (fsm = 0): CS = 1 deasserted").
+                        let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
+                            Level::Low
+                        } else {
+                            Level::High
+                        };
+                        (sclk, mosi, cs)
+                    };
+                    // SCLK (a): also record the element-indexed Thévenin so the OUT current
+                    // readout (oriented out of `a`) matches the stamp, exactly like the gate.
+                    let (tvf, g) = fam.drive_level(sclk, rail).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = vlow + tvf;
+                    self.gate_gout[i] = g;
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], sclk);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = vlow;
+                    self.digital_family[e.a] = 0;
+                    // MOSI (b).
+                    self.digital_drive[e.b] = combine(self.digital_drive[e.b], mosi);
+                    self.digital_vhigh[e.b] = rail;
+                    self.digital_vlow[e.b] = vlow;
+                    self.digital_family[e.b] = 0;
+                    // CS (c).
+                    self.digital_drive[e.c] = combine(self.digital_drive[e.c], cs);
+                    self.digital_vhigh[e.c] = rail;
+                    self.digital_vlow[e.c] = vlow;
+                    self.digital_family[e.c] = 0;
                 }
                 _ => {}
             }
@@ -5320,6 +5660,36 @@ impl Sim {
                         // else latched: cmp_q unchanged (hold).
                     }
                     // else unpowered: cmp_q unchanged (hold).
+                }
+                ELEM_BEHAVIORAL => {
+                    // Advance the behavioral block's integer state machine by one tick from the
+                    // just-solved committed inputs (the only state-mutation site — eval_digital
+                    // merely DRIVES from this committed state). Program 1 = SPI master (Mode 0).
+                    // An unpowered chip (rail below the operating minimum) holds its state, and a
+                    // 0/unknown program id is inert — both fold a zero/frozen state block, so the
+                    // golden is untouched.
+                    let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
+                    if prog == BEH_PROG_SPI_MASTER {
+                        let rail = self.node_v[e.d] - self.node_v[e.e];
+                        if rail >= GATE_MIN_RAIL {
+                            let (nbits, half) = beh_spi_config(e);
+                            // Inputs MISO (f) / START (g) as two-state levels, half-rail relative
+                            // to GND (e) — the powered-gate input threshold (no float-order
+                            // reduction; a deterministic boolean).
+                            let vlow = self.node_v[e.e];
+                            let start = beh_level(&self.node_v, e.g, vlow, rail);
+                            let miso = beh_level(&self.node_v, e.f, vlow, rail);
+                            beh_spi_step(
+                                &mut self.beh_state[i],
+                                e.aux as u64,
+                                nbits,
+                                half,
+                                start,
+                                miso,
+                            );
+                        }
+                        // else unpowered: state held (the dead-rail rule).
+                    }
                 }
                 _ => {}
             }
@@ -5924,10 +6294,13 @@ impl Sim {
     /// state replays across a clock edge; then — appended after the flip-flops — each
     /// clocked sampler's `samp_q` and `samp_clk_prev` (one `u8` each), the same sequential
     /// replay guarantee for the sampler; then — appended after the samplers — each latched
-    /// comparator's `cmp_q` (one `u8`), the same guarantee for the level-latched comparator.
-    /// Forward-stable and append-only: a circuit with no flip-flop, sampler, or comparator
-    /// (the RC golden) hashes exactly as it always did. See
-    /// `docs/ui/logic-analog-digital-nets.md` §7.8.
+    /// comparator's `cmp_q` (one `u8`), the same guarantee for the level-latched comparator;
+    /// then — appended after the comparators — each behavioral block's full integer state
+    /// (`beh_state`: [`BEH_STATE_WORDS`] `u32` words as little-endian bytes, in fixed element +
+    /// word order), the protocol/behavioral engine's reproducibility guarantee (ADR 0004).
+    /// Forward-stable and append-only: a circuit with no flip-flop, sampler, comparator, or
+    /// behavioral block (the RC golden, every existing test) folds ZERO extra bytes and hashes
+    /// exactly as it always did. See `docs/ui/logic-analog-digital-nets.md` §7.8.
     pub fn snapshot_hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8 + self.elements.len() * 2);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
@@ -5966,7 +6339,36 @@ impl Sim {
                 bytes.push(self.cmp_q[i] as u8);
             }
         }
+        // Then each behavioral block's full integer state (BEH_STATE_WORDS u32 words as LE
+        // bytes), in fixed element + word order — APPENDED after the comparator fold, so a
+        // circuit with no behavioral block (the RC golden, every existing test) folds ZERO
+        // extra bytes and hashes byte-identically to before. Integer state only (no floats,
+        // no std hasher), the protocol/behavioral engine's reproducibility guarantee (ADR 0004).
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_BEHAVIORAL {
+                for w in &self.beh_state[i] {
+                    bytes.extend_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
         fnv1a(&bytes)
+    }
+}
+
+/// Test-only accessors into a behavioral block's integer state — so the SPI tests can read the
+/// received word and the state-machine phase directly (the receive path and idle/done state are
+/// internal to `beh_state`; the OUTPUT pins only expose SCLK/MOSI/CS). Not part of the public
+/// API and compiled only under test.
+#[cfg(test)]
+impl Sim {
+    /// The behavioral SPI master's received word (`shift_in`, state word 3) for the element at
+    /// index `i`.
+    fn beh_spi_shift_in(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SPI_SHIFT_IN]
+    }
+    /// The behavioral SPI master's FSM phase (state word 0: 0 = idle, 1 = active) for element `i`.
+    fn beh_spi_fsm(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SPI_FSM]
     }
 }
 
@@ -9708,6 +10110,311 @@ mod tests {
             ),
             "out-of-range LE terminal f is rejected"
         );
+    }
+
+    // --- Behavioral block / SPI master (ELEM_BEHAVIORAL = 25) ------------------
+    //
+    // The protocol / behavioral engine's element (ADR 0004): a clocked INTEGER state
+    // machine that runs beside the analog solve and talks to it only at its boundary
+    // pins. Program 1 is an SPI master (Mode 0): a rising START asserts CS low, shifts
+    // the configured word out on MOSI (MSB-first) clocked by SCLK at the structural
+    // divider (params[0] = half-period ticks, params[1] = bit count), sampling MISO on
+    // each rising edge. Its three outputs are powered (swing the GND..VCC rail, dead
+    // below GATE_MIN_RAIL) exactly like a gate; its eight u32 state words enter the
+    // snapshot hash so a behavioral netlist replays bit-for-bit.
+    //
+    // SPI master test pinout: a=SCLK, b=MOSI, c=CS, d=VCC, e=GND, f=MISO, g=START.
+
+    /// True iff a (pure-digital) output node reads logic-high: above half a 5 V rail. The
+    /// behavioral SPI outputs swing 0..VCC (= 5 V here), so a clean `> 2.5 V` decision turns
+    /// the observed node voltage back into the bit the master is driving.
+    fn spi_pin_high(v: f64) -> bool {
+        v > 2.5
+    }
+
+    /// Build a powered SPI-master netlist transmitting `data` with the given half-period and
+    /// bit count, START tied to a constant-high source (the block's `start_prev` resets Low, so
+    /// the first step sees exactly one rising START edge → one transaction), and MISO sourced
+    /// from `miso_node` (node `0` = grounded → MISO reads Low). Nodes: 0 = gnd (= GND pin),
+    /// 1 = VCC (5 V), 2 = START rail (5 V), 3 = SCLK, 4 = MOSI, 5 = CS, 6 = MISO rail.
+    /// Returns the installed `Sim` (already at t = 0, state zeroed).
+    fn spi_master(data: f64, half: f64, nbits: f64, miso_node: u32) -> Sim {
+        let mut sim = Sim::new(1);
+        // params: SPI block gets [half-period, bit-count] in slots 0/1; sources get defaults.
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // params[0] = SCLK half-period (ticks)
+        params[2 * PARAM_STRIDE + 1] = nbits; // params[1] = bit count
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],         // a: VCC src, START src, SPI SCLK = node 3
+            &[0, 0, 4],         // b: src grounds; SPI MOSI = node 4
+            &[0, 0, 5],         // c: SPI CS = node 5
+            &[0, 0, 1],         // d: SPI VCC = node 1 (5 V)
+            &[0, 0, 0],         // e: SPI GND = node 0
+            &[0, 0, miso_node], // f: SPI MISO = miso_node
+            &[0, 0, 2],         // g: SPI START = node 2 (held high)
+            &[],                // h unused
+            &[5.0, 5.0, 1.0],   // values: VCC 5 V, START 5 V, program id 1 (SPI master)
+            &[0.0, 0.0, data],  // aux: SPI data word to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// Run one SPI-master transaction of `data` (half-period `half`, `nbits` bits, MISO grounded)
+    /// and observe the powered output nodes tick by tick, returning the bits sampled on MOSI at
+    /// each SCLK **rising** edge, the SCLK rising-edge count, whether CS asserted (went Low) at
+    /// the start, and whether CS deasserted (went High) after the last bit. The observed pins are
+    /// one tick delayed from the internal state (the gate/sampler convention) but internally
+    /// consistent — exactly what a scope on the bus would see.
+    fn spi_observe(data: u32, half: f64, nbits: usize) -> (Vec<bool>, usize, bool, bool) {
+        let mut sim = spi_master(data as f64, half, nbits as f64, 0);
+        let mut prev_sclk = false;
+        let mut prev_cs = true; // CS idles HIGH (deasserted)
+        let mut rising_edges = 0usize;
+        let mut mosi_at_edge: Vec<bool> = Vec::new();
+        let mut cs_asserted = false;
+        let mut cs_deasserted_after_bits = false;
+        // A full transaction is nbits * 2 (rise+fall) * half ticks plus the load tick; run well
+        // past it so we also see CS deassert and the machine return to idle.
+        let total = nbits * 2 * (half as usize) + 16;
+        for _ in 0..total {
+            sim.step();
+            let sclk = spi_pin_high(sim.state()[3]);
+            let mosi = spi_pin_high(sim.state()[4]);
+            let cs = spi_pin_high(sim.state()[5]);
+            if prev_cs && !cs {
+                cs_asserted = true; // CS went Low (asserted) at the transaction start
+            }
+            if !prev_sclk && sclk {
+                rising_edges += 1;
+                mosi_at_edge.push(mosi); // sample the MOSI bit presented across this rising edge
+            }
+            if rising_edges >= nbits && cs {
+                cs_deasserted_after_bits = true; // CS back High after the last bit
+            }
+            prev_sclk = sclk;
+            prev_cs = cs;
+        }
+        (
+            mosi_at_edge,
+            rising_edges,
+            cs_asserted,
+            cs_deasserted_after_bits,
+        )
+    }
+
+    /// The SPI master shifts a byte: on a rising START it asserts CS low, then drives exactly
+    /// `nbits` SCLK pulses while presenting the data word MSB-first on MOSI (each bit stable
+    /// across the SCLK rising edge that samples it, Mode 0 / CPHA = 0), and deasserts CS high
+    /// after the last bit. Checked for the spec byte 0xA5 AND a non-palindromic byte (0xB3,
+    /// whose bit-reversal 0xCD differs) so the MSB-first ordering is genuinely under test —
+    /// 0xA5 alone is bit-symmetric and would pass either order.
+    #[test]
+    fn behavioral_spi_master_shifts_a_byte() {
+        let nbits = 8usize;
+        let half = 2.0;
+        for &data in &[0xA5u32, 0xB3u32] {
+            let (mosi_at_edge, rising_edges, cs_asserted, cs_deasserted) =
+                spi_observe(data, half, nbits);
+            // Expected MOSI bits, MSB-first (bit nbits-1 first).
+            let expected: Vec<bool> = (0..nbits)
+                .map(|k| (data >> (nbits - 1 - k)) & 1 != 0)
+                .collect();
+            assert!(
+                cs_asserted,
+                "CS must assert (go Low) when START rises (0x{data:02X})"
+            );
+            assert_eq!(
+                rising_edges, nbits,
+                "SPI master must produce exactly {nbits} SCLK pulses (0x{data:02X}), saw {rising_edges}"
+            );
+            assert_eq!(
+                mosi_at_edge, expected,
+                "MOSI must present 0x{data:02X} MSB-first at each SCLK rising edge"
+            );
+            assert!(
+                cs_deasserted,
+                "CS must deassert (go High) after the last bit (0x{data:02X}, transaction complete)"
+            );
+        }
+    }
+
+    /// With MOSI tied to MISO (an external wire), the master clocks its own transmitted bits
+    /// back in on MISO — so after the transaction the received word `shift_in` equals the
+    /// transmitted byte. Proves the receive path (rising-edge MISO sampling, MSB-first in).
+    #[test]
+    fn behavioral_spi_miso_loopback() {
+        // A NON-palindromic byte (0xB3 → bit-reversal 0xCD) so a transmit/receive ordering
+        // mismatch would corrupt the round-trip — the receive path is MSB-first, genuinely tested.
+        let data: u32 = 0xB3;
+        let nbits = 8usize;
+        let half = 2.0;
+        // MISO sourced from node 4 (= MOSI): a wire from MOSI back to MISO. The MOSI net is the
+        // SPI block's own powered output, so MISO reads exactly what the master drives.
+        let mut sim = spi_master(data as f64, half, nbits as f64, 4);
+
+        let total = nbits * 2 * (half as usize) + 16;
+        for _ in 0..total {
+            sim.step();
+        }
+        // The transaction has completed (back to idle); shift_in holds the received word.
+        let received = sim.beh_spi_shift_in(2);
+        assert_eq!(
+            received, data,
+            "MOSI→MISO loopback: received word 0x{received:02X} must equal transmitted 0x{data:02X}"
+        );
+        // And the state machine is back in idle with CS deasserted.
+        assert_eq!(
+            sim.beh_spi_fsm(2),
+            0,
+            "SPI master must return to idle after the transaction"
+        );
+    }
+
+    /// Idle is well-defined: with START held LOW (never a rising edge) the master never starts —
+    /// SCLK stays Low and CS stays High (deasserted) for the whole run, and MOSI stays Low.
+    #[test]
+    fn behavioral_idle_drives_clean_levels() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 = gnd, 1 = VCC (5 V), 2 = SCLK, 3 = MOSI, 4 = CS. START (g) = 0 (grounded →
+        // held Low, no edge ever fires); MISO (f) = 0 (grounded).
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2], // a: VCC src, SPI SCLK = node 2
+            &[0, 3], // b: MOSI = node 3
+            &[0, 4], // c: CS = node 4
+            &[0, 1], // d: VCC = node 1
+            &[0, 0], // e: GND = node 0
+            &[0, 0], // f: MISO = 0 (grounded)
+            &[0, 0], // g: START = 0 (grounded → held Low)
+            &[],
+            &[5.0, 1.0], // VCC 5 V, program id 1 (SPI master)
+            &[0.0, 0xA5 as f64],
+            &[], // params default (half = 4, nbits = 8) — irrelevant, never starts
+        ));
+        for tk in 0..120 {
+            sim.step();
+            assert!(
+                !spi_pin_high(sim.state()[2]),
+                "idle SCLK must stay Low (tick {tk}, got {})",
+                sim.state()[2]
+            );
+            assert!(
+                spi_pin_high(sim.state()[4]),
+                "idle CS must stay High/deasserted (tick {tk}, got {})",
+                sim.state()[4]
+            );
+            assert!(
+                !spi_pin_high(sim.state()[3]),
+                "idle MOSI must stay Low (tick {tk}, got {})",
+                sim.state()[3]
+            );
+        }
+    }
+
+    /// An unpowered SPI master (VCC pin left at ground → rail below GATE_MIN_RAIL) is DEAD: it
+    /// releases all three outputs (high-Z) and never advances its state, even with START high —
+    /// the powered-chip "you must power it" rule, and proof the timing comes from the declared
+    /// params under power, not from a floating rail.
+    #[test]
+    fn behavioral_unpowered_is_dead() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 = gnd, 1 = START rail (5 V), 2 = SCLK, 3 = MOSI, 4 = CS. VCC pin (d) = 0 → dead.
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2],
+            &[0, 3],
+            &[0, 4],
+            &[0, 0], // d: VCC = node 0 → unpowered
+            &[0, 0], // e: GND = node 0
+            &[0, 0], // f: MISO = 0
+            &[0, 1], // g: START = node 1 (high), but the chip is unpowered
+            &[],
+            &[5.0, 1.0],
+            &[0.0, 0xA5 as f64],
+            &[],
+        ));
+        for _ in 0..60 {
+            sim.step();
+        }
+        // No clock was ever generated; the state machine stayed idle (all-zero state).
+        assert_eq!(
+            sim.beh_spi_fsm(1),
+            0,
+            "an unpowered SPI master must not advance its state machine"
+        );
+        // The released outputs sit near 0 V (the GMIN-floored Z), not a driven rail.
+        assert!(
+            sim.state()[2].abs() < 0.5 && sim.state()[4].abs() < 0.5,
+            "unpowered outputs release (high-Z, ~0 V): SCLK {}, CS {}",
+            sim.state()[2],
+            sim.state()[4]
+        );
+    }
+
+    /// A six-/seven-terminal behavioral netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the comparator's / sampler's arity validation).
+    #[test]
+    fn behavioral_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist_pefgh(
+                8,
+                &[ELEM_BEHAVIORAL],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[5],
+                &[6],
+                &[7],
+                &[],
+                &[1.0],
+                &[0.0],
+                &[],
+            ),
+            "valid seven-terminal behavioral block installs"
+        );
+        assert!(
+            !sim.set_netlist_pefgh(
+                8,
+                &[ELEM_BEHAVIORAL],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[5],
+                &[6],
+                &[9], // START out of range
+                &[],
+                &[1.0],
+                &[0.0],
+                &[],
+            ),
+            "out-of-range START terminal g is rejected"
+        );
+    }
+
+    /// A behavioral-block netlist (active integer state) reproduces bit-for-bit: two fresh `Sim`s
+    /// run the same SPI-master netlist for N steps and agree on the snapshot hash at EVERY tick —
+    /// the determinism guarantee with the protocol engine ACTIVE (its 8 state words are hashed).
+    #[test]
+    fn behavioral_run_is_reproducible() {
+        let build = || spi_master(0xA5 as f64, 2.0, 8.0, 4); // MOSI→MISO loopback, active transaction
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "behavioral block diverged at tick {tk} (its integer state must be hashed)"
+            );
+        }
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
