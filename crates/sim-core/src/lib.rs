@@ -2160,6 +2160,43 @@ const RATED_CURRENT_SLOT: usize = 2;
 /// realistic ordering (Schottky < fast-recovery < rectifier) is what matters, not the absolute ns.
 const DIODE_TT_SLOT: usize = 3;
 
+/// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
+/// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
+/// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
+/// `docs/sim/multi-rate-domains.md`), so the schedule is fixed at install and reproducible. `<= 1`
+/// (the default, and what a caller that omits params installs) means the block runs once per analog
+/// tick exactly as today — so a circuit with no declared fast rate has a global rate `S = 1`, the
+/// sub-tick loop is skipped entirely, and the result is **byte-identical** to before the loop
+/// existed.
+///
+/// It reuses [`RATED_CURRENT_SLOT`] (slot 2) — harmless because a behavioral block's outputs are a
+/// clean rail-to-rail Thévenin through [`GATE_GOUT`] (≤ a few amps into a dead short), far below any
+/// realistic `N` (8, 16, …), so the general rated-current check in [`Sim::flag_and_clamp_fails`]
+/// never trips on a behavioral block's tiny output current. The two readings never collide on a real
+/// circuit, and the rating only *flags* (`failed_elements` is not hashed), so neither the solve nor
+/// the snapshot hash is affected. Only [`ELEM_BEHAVIORAL`] declares a rate; every other kind leaves
+/// slot 2 as its rated current.
+const BEH_SUBTICK_RATE_SLOT: usize = RATED_CURRENT_SLOT;
+
+/// The declared digital sub-tick rate `N ≥ 1` of one [`ELEM_BEHAVIORAL`] block — slot
+/// [`BEH_SUBTICK_RATE_SLOT`], floored to `1` (a `0`/unset/`< 1` slot ⇒ one sub-tick per analog tick,
+/// the existing behaviour). Non-behavioral elements have no rate (always `1`). Pure read of a
+/// declared structural param; never a function of a voltage.
+#[inline]
+fn beh_subtick_rate(e: &Element) -> usize {
+    if e.kind != ELEM_BEHAVIORAL {
+        return 1;
+    }
+    let n = e.params[BEH_SUBTICK_RATE_SLOT];
+    if n >= 2.0 {
+        // Round to the nearest integer (the param is a declared integer divider; `f64` rounding
+        // keeps a value like 16.0 exact and clamps anything pathological to a finite integer).
+        n.round() as usize
+    } else {
+        1
+    }
+}
+
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
 /// use the control terminal `c`. The struct carries up to **eight** terminals
@@ -3064,6 +3101,18 @@ pub struct Sim {
     /// order, and the snapshot hash are untouched, so the analog golden is byte-identical.
     /// See `docs/adr/0004-protocol-engine.md` (phase-3 amendment).
     pub(crate) digital_rows: Vec<usize>,
+    /// The **global digital sub-tick rate** `S = max over elements of their declared rate`
+    /// ([`beh_subtick_rate`]), computed once at install (ADR 0004 phase-3, step 3b). `S = 1` for
+    /// every circuit with no declared fast rate (i.e. every circuit that existed before sub-ticking
+    /// — only an [`ELEM_BEHAVIORAL`] block can declare a rate, via [`BEH_SUBTICK_RATE_SLOT`]), and
+    /// then the `S > 1` sub-tick branch in [`Sim::step`] is skipped entirely, so the result is
+    /// **byte-identical** to before the loop existed. For `S > 1` the analog solve still runs once
+    /// per analog tick (the analog Δt never changes — the golden's Δt is fixed); only the
+    /// analog-decoupled pure-digital block (`digital_rows`) is re-evaluated `S − 1` extra times,
+    /// advancing the fast digital domain. The count is structural (declared, not value-derived) and
+    /// the loop is a fixed `S`, so it is reproducible by construction. The transient sub-tick index
+    /// is wrapped to `0` at the analog-tick boundary and **never** enters [`Sim::snapshot_hash`].
+    subtick_rate: usize,
     /// Circuit nodes (1-based; ground is never listed) that each anchor a **floating
     /// connected component** — a subnet with no galvanic path to ground and no
     /// device-pinned terminal. Computed once at install by [`floating_refs`]; each is
@@ -3262,6 +3311,7 @@ impl Sim {
             has_nonlinear: false,
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
+            subtick_rate: 1,
             floating_refs: Vec::new(),
             node_v: vec![0.0],
             reactive_state: Vec::new(),
@@ -3611,6 +3661,16 @@ impl Sim {
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
+        // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
+        // Structural — read once here from the declared params, never from a solved value. `S = 1`
+        // (no element declares a fast rate) ⇒ the `S > 1` branch in `step()` is skipped, so the run
+        // is byte-identical to before sub-ticking existed.
+        self.subtick_rate = elements
+            .iter()
+            .map(beh_subtick_rate)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
@@ -5782,15 +5842,48 @@ impl Sim {
             }
             let r = node - 1; // node n -> MNA row n-1 (ground excluded)
             mat[r * dim + r] += GMIN;
-            let fam = &FAMILIES[self.digital_family[node] as usize];
-            if let Some((tvf, g)) =
-                fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
-            {
-                // The family target is a rail fraction; offset by the driver's GND so a
-                // powered gate stamps an absolute `vlow + frac·rail` (legacy vlow = 0).
+            if let Some((vt, g)) = self.digital_net_thevenin(node) {
+                // `vt` is the absolute Thévenin target (the family rail fraction already offset
+                // by the driver's GND — see `digital_net_thevenin`); `g` its conductance.
                 mat[r * dim + r] += g;
-                rhs[r] += g * (self.digital_vlow[node] + tvf);
+                rhs[r] += g * vt;
             }
+        }
+    }
+
+    /// The resolved digital driver's **absolute Thévenin** `(target_voltage, conductance)` for a
+    /// `Digital`/`Boundary` net, or `None` when the net is released (`Z`). This is the single source
+    /// of truth for how a resolved [`Level`] becomes an analog stamp: the family target is a rail
+    /// fraction, offset here by the driver's GND (`digital_vlow`) so a powered gate yields an
+    /// absolute `vlow + frac·rail` (legacy `vlow = 0`). Used by [`Sim::stamp_digital`] (which adds
+    /// `g` to the diagonal and `g·vt` to the RHS) **and** by [`Sim::digital_net_solved_voltage`]
+    /// (the closed-form diagonal sub-solve), so the two can never drift apart.
+    #[inline]
+    fn digital_net_thevenin(&self, node: usize) -> Option<(f64, f64)> {
+        let fam = &FAMILIES[self.digital_family[node] as usize];
+        fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
+            .map(|(tvf, g)| (self.digital_vlow[node] + tvf, g))
+    }
+
+    /// The solved node voltage of a **pure-digital** net's diagonal MNA row, computed in closed form
+    /// instead of via a matrix factorisation — the value [`Sim::stamp_digital`] + [`solve_dense`]
+    /// would produce for a row that is provably **diagonal** (ADR 0004 step 3a proved each
+    /// `digital_rows` net is stamped ONLY here: a lone [`GMIN`] floor + at most one resolved
+    /// Thévenin on its own diagonal, no off-diagonal coupling). The diagonal equation
+    /// `(GMIN + g)·v = g·vt` gives:
+    /// - **driven** (`Some((vt, g))` from [`Sim::digital_net_thevenin`]) ⇒ `v = g·vt / (GMIN + g)`;
+    /// - **undriven / released** (`Z` ⇒ `None` ⇒ only the `GMIN` floor) ⇒ `v = 0 / GMIN = 0.0`,
+    ///   so a floating digital net reads ≈0 V (→ `Low`), preserving floating-input-reads-low.
+    ///
+    /// This is the per-net body of step 3b's frozen-boundary sub-solve: it re-derives a pure-digital
+    /// net's voltage from the latest committed drives without touching the (frozen) analog/boundary
+    /// rows. Because it shares [`Sim::digital_net_thevenin`] with the full-assembly stamp, the value
+    /// is bit-identical to what a fresh `solve_dense` of the same matrix produces for that row.
+    #[inline]
+    fn digital_net_solved_voltage(&self, node: usize) -> f64 {
+        match self.digital_net_thevenin(node) {
+            Some((vt, g)) => g * vt / (GMIN + g),
+            None => 0.0,
         }
     }
 
@@ -5959,7 +6052,10 @@ impl Sim {
         // Commit each digital/boundary net's level (the receiver, one tick of delay
         // before the digital engine reads it next tick) for the hash and the renderer.
         self.commit_net_levels();
-        // Commit reactive state for the next step.
+        // Commit ANALOG reactive state for the next step (needs `x`'s branch unknowns).
+        // The sequential DIGITAL state (DFF / SAMPLER / COMPARATOR / BEHAVIORAL) is advanced
+        // separately by `commit_sequential_digital_state` so the sub-tick loop can re-run the
+        // identical logic without re-committing reactive companions or re-solving the analog rows.
         for (i, e) in self.elements.iter().enumerate() {
             match e.kind {
                 ELEM_CAPACITOR => {
@@ -5991,6 +6087,50 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                     self.secondary_state[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
+                _ => {}
+            }
+        }
+        // Sub-tick 0 of this analog tick: advance the sequential digital state once from the
+        // just-solved committed voltages (the unit-delay edge-detect / FF / sampler / comparator /
+        // behavioral commits) — UNCHANGED from the single-rate engine.
+        self.commit_sequential_digital_state();
+
+        // ADR 0004 step 3b — the integer multi-rate sub-tick loop. For every existing circuit
+        // `S = 1` and this is skipped entirely, so the run is BYTE-IDENTICAL to before sub-ticking
+        // existed (no hash change: the sub-tick index is transient, wrapped to 0 at this boundary,
+        // and never folded). When some block declares a fast rate (`S > 1`) the analog solve and the
+        // analog/boundary `node_v` are FROZEN (the analog Δt never moves — the golden's Δt is fixed);
+        // we re-run only the analog-decoupled pure-digital block `S − 1` more times so a fast domain
+        // clocks at its declared sub-tick rate against the µs analog tick. Each sub-tick follows the
+        // fixed `logic-analog-digital-nets.md §7.6.1` phase order:
+        //   receivers (eval_digital) → diagonal sub-solve → commit_net_levels → sequential commit.
+        if self.subtick_rate > 1 {
+            self.run_digital_subticks();
+        }
+        // Screen the committed state for a non-physical (FAIL) result and clamp it so
+        // it can never propagate as a NaN, before the tick advances.
+        self.flag_and_clamp_fails();
+        // Fold this tick's per-element V/I sample into the running AC analyzers, after
+        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
+        self.update_ac_analysis();
+        self.tick += 1;
+    }
+
+    /// Advance the **sequential digital** state of every clocked element by one digital
+    /// (sub-)tick from the current committed `node_v`: the edge-triggered D flip-flop
+    /// ([`ELEM_DFF`]), the clocked 1-bit sampler ([`ELEM_SAMPLER`]), the latched analog
+    /// comparator ([`ELEM_COMPARATOR`]), and the behavioral state machine ([`ELEM_BEHAVIORAL`]).
+    /// This is the unit-delay edge-detect/FF/comb/driver commit, factored out of [`Sim::step`]
+    /// **verbatim** so the analog-tick path (sub-tick 0) and the multi-rate sub-tick loop
+    /// ([`Sim::run_digital_subticks`]) run the **same** code — at the analog tick it reads the
+    /// just-solved analog voltages; in a sub-tick it reads the sub-step-updated pure-digital
+    /// `node_v` (the frozen boundary/analog `node_v` unchanged). All mutated state is integer/
+    /// [`Level`] and enters the snapshot hash (so a rewind onto an edge replays identically). It
+    /// iterates in fixed element-index order; its arms are disjoint from the reactive-companion
+    /// commits, so splitting it off does not change the single-rate result.
+    fn commit_sequential_digital_state(&mut self) {
+        for (i, e) in self.elements.iter().enumerate() {
+            match e.kind {
                 ELEM_DFF => {
                     // Edge-triggered latch: on a rising CLK edge (Low -> High) sample
                     // D into the stored level (the receiver quantises the just-solved
@@ -6112,13 +6252,56 @@ impl Sim {
                 _ => {}
             }
         }
-        // Screen the committed state for a non-physical (FAIL) result and clamp it so
-        // it can never propagate as a NaN, before the tick advances.
-        self.flag_and_clamp_fails();
-        // Fold this tick's per-element V/I sample into the running AC analyzers, after
-        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
-        self.update_ac_analysis();
-        self.tick += 1;
+    }
+
+    /// ADR 0004 phase-3, step 3b — the integer **multi-rate sub-tick loop**. Called from
+    /// [`Sim::step`] only when the global rate `S = self.subtick_rate > 1`, AFTER the full analog
+    /// solve + `commit_net_levels` + the sub-tick-0 [`Sim::commit_sequential_digital_state`]. It runs
+    /// `S − 1` additional digital sub-ticks, advancing the fast digital domain at its declared rate
+    /// while the **analog Δt never changes** (the golden's Δt is fixed). The analog/boundary `node_v`
+    /// stay FROZEN throughout — only the analog-decoupled pure-digital nets (`digital_rows`, proven
+    /// strictly diagonal in step 3a) are re-derived — so no analog re-solve happens and the analog
+    /// golden is untouched.
+    ///
+    /// Each sub-tick follows the fixed `logic-analog-digital-nets.md §7.6.1` phase order (getting it
+    /// wrong creates a gated-clock ambiguity):
+    /// 1. **receivers** — [`Sim::eval_digital`] recomputes every net's resolved drive from the
+    ///    current committed levels (receivers read the latest pure-digital `node_v` + the frozen
+    ///    boundary `node_v`);
+    /// 2. **diagonal sub-solve** — for each pure-digital row, recompute its `node_v` in closed form
+    ///    from its resolved drive ([`Sim::digital_net_solved_voltage`], the same value
+    ///    [`Sim::stamp_digital`] + a matrix solve would give for that diagonal row); the
+    ///    boundary/analog `node_v` are left frozen;
+    /// 3. **commit_net_levels** — re-quantise the new pure-digital `node_v` into `net_level`;
+    /// 4. **sequential commit** — [`Sim::commit_sequential_digital_state`] re-runs the edge-detect /
+    ///    FF / sampler / comparator / behavioral logic on the sub-step-updated levels, so a fast
+    ///    block clocks at the sub-tick rate (over-clocking the whole digital kernel is safe — a comb
+    ///    gate just propagates faster; an FF clocked by a slow clock still latches only on that
+    ///    clock's natural edges, which don't move within an analog tick because the boundary is
+    ///    frozen).
+    ///
+    /// The sub-tick index `sub` is transient and wrapped to `0` at the analog-tick boundary (it is a
+    /// loop-local counter), so it **never** enters [`Sim::snapshot_hash`]; the count is structural
+    /// (`S`, derived from declared params) and the loop is fixed, so the result is reproducible by
+    /// construction.
+    fn run_digital_subticks(&mut self) {
+        for _sub in 1..self.subtick_rate {
+            // (1) Receivers: recompute the digital drives from the latest committed levels.
+            self.eval_digital();
+            // (2) Diagonal sub-solve of the pure-digital block ONLY — frozen boundary/analog rows.
+            //     A pure-digital net's row is diagonal (`GMIN` + at most one Thévenin), so its
+            //     voltage is the closed form `digital_net_solved_voltage`, bit-identical to a
+            //     `solve_dense` of that single diagonal row. `digital_rows` holds MNA row indices
+            //     (`node − 1`); map back to the node to write `node_v[node]`.
+            for &row in &self.digital_rows {
+                let node = row + 1;
+                self.node_v[node] = self.digital_net_solved_voltage(node);
+            }
+            // (3) Re-quantise the updated pure-digital nets into their canonical levels.
+            self.commit_net_levels();
+            // (4) Advance the sequential digital state from the sub-step-updated levels.
+            self.commit_sequential_digital_state();
+        }
     }
 
     /// Fold this tick's solved per-element waveform sample — terminal voltage
@@ -11441,6 +11624,279 @@ mod tests {
                 c.snapshot_hash(),
                 d.snapshot_hash(),
                 "UART loopback diverged at tick {tk} (UART state must be hashed)"
+            );
+        }
+    }
+
+    // --- Multi-rate sub-ticking (ADR 0004 step 3b) ----------------------------
+    //
+    // A behavioral block declares a structural sub-tick rate N in params[2]
+    // (BEH_SUBTICK_RATE_SLOT); the global S = max N drives the sub-tick loop in step().
+    // N unset/1 (every existing circuit) ⇒ S = 1 ⇒ the loop is skipped ⇒ byte-identical.
+
+    /// UART loopback with a declared sub-tick rate in `params[2]` — same wiring as
+    /// `uart_setup_loopback`, plus the rate. `rate <= 1` is the existing single-rate path.
+    fn uart_setup_loopback_rate(byte: f64, baud: f64, nbits: f64, rate: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = baud; // UART (elem 2) params[0] = baud divider
+        params[2 * PARAM_STRIDE + 1] = nbits; // params[1] = data bits
+        params[2 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // params[2] = sub-tick rate N
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],        // a: VCC src=1, SEND src=2, UART TX=3
+            &[0, 0, 4],        // b: src grounds; UART RXVALID=4
+            &[0, 0, 0],        // c: unused
+            &[0, 0, 1],        // d: UART VCC = node 1
+            &[0, 0, 0],        // e: UART GND = node 0
+            &[0, 0, 3],        // f: UART RX = node 3 (== TX: loopback)
+            &[0, 0, 2],        // g: UART SEND = node 2 (held high)
+            &[0, 0, 0],        // h: unused
+            &[5.0, 5.0, 3.0],  // values: VCC, SEND rail, UART program id 3
+            &[0.0, 0.0, byte], // aux: UART byte to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// The first **analog** tick at which the UART loopback's latched received word equals `byte`,
+    /// at the given sub-tick rate — and whether RXVALID was observed pulsing at any analog-tick
+    /// boundary. The latched `rx_word` PERSISTS (it holds the last completed byte), so it is the
+    /// observable analog-boundary signal at ANY rate; RXVALID is a one-DIGITAL-tick pulse, so at a
+    /// high sub-tick rate it can fire and clear entirely within one analog tick's sub-ticks and so
+    /// is invisible at the boundary — the persistent `rx_word` is what we time the frame by. Returns
+    /// `(analog_tick, rxvalid_seen_at_boundary)` or `None` if the byte never arrives in `max_ticks`.
+    /// The UART is element index 2.
+    fn uart_rx_complete_tick(
+        byte: u32,
+        baud: f64,
+        nbits: f64,
+        rate: f64,
+        max_ticks: usize,
+    ) -> Option<(usize, bool)> {
+        let mut sim = uart_setup_loopback_rate(byte as f64, baud, nbits, rate);
+        let mut rxvalid_seen = false;
+        for tk in 0..max_ticks {
+            sim.step();
+            if sim.beh_uart_rxvalid(2) != 0 {
+                rxvalid_seen = true;
+            }
+            if sim.beh_uart_rx_word(2) == byte {
+                return Some((tk, rxvalid_seen));
+            }
+        }
+        None
+    }
+
+    /// **`subtick_n1_is_byte_identical`** — a behavioral circuit built with `params[2]` set to 1
+    /// (an explicitly declared rate of one sub-tick per analog tick) produces the **exact same
+    /// `snapshot_hash` stream** as the same circuit built with no rate param at all. This is the
+    /// hard requirement: declaring `N = 1` must take the `S = 1` path (the sub-tick branch is
+    /// skipped), so it is bit-for-bit the legacy engine. Covered for a UART loopback AND a
+    /// master↔slave SPI link (programs 2 & 3, with hashed integer state).
+    #[test]
+    fn subtick_n1_is_byte_identical() {
+        // UART: rate-1 vs no-rate.
+        let mut with_n1 = uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 1.0);
+        let mut without = uart_setup_loopback(0x5A as f64, 16.0, 8.0);
+        assert_eq!(with_n1.subtick_rate, 1, "declared N=1 must give global S=1");
+        assert_eq!(
+            without.subtick_rate, 1,
+            "no rate param must give global S=1"
+        );
+        for tk in 0..400 {
+            with_n1.step();
+            without.step();
+            assert_eq!(
+                with_n1.snapshot_hash(),
+                without.snapshot_hash(),
+                "UART: declared N=1 must be byte-identical to no rate param (tick {tk})"
+            );
+        }
+        // SPI master↔slave: rate-1 vs no-rate (both blocks at N=1).
+        let mut spi_n1 = spi_master_slave_rate(0x39 as f64, 0xC6 as f64, 2.0, 8.0, 1.0);
+        let mut spi_plain = spi_master_slave(0x39 as f64, 0xC6 as f64, 2.0, 8.0);
+        assert_eq!(spi_n1.subtick_rate, 1);
+        assert_eq!(spi_plain.subtick_rate, 1);
+        for tk in 0..400 {
+            spi_n1.step();
+            spi_plain.step();
+            assert_eq!(
+                spi_n1.snapshot_hash(),
+                spi_plain.snapshot_hash(),
+                "SPI: declared N=1 must be byte-identical to no rate param (tick {tk})"
+            );
+        }
+    }
+
+    /// **`subtick_speeds_up_uart`** (the payoff) — a UART loopback at `params[2] = 16` completes a
+    /// full frame in ~16× fewer **analog** ticks than the same UART at rate 1, because 16 digital
+    /// sub-ticks run per analog tick (megabaud against the 2 µs analog tick). We compare the analog
+    /// tick at which RXVALID first pulses in the loopback, and assert the byte still round-trips
+    /// (0x5A) in BOTH cases — the speedup must not corrupt the data.
+    #[test]
+    fn subtick_speeds_up_uart() {
+        let byte = 0x5Au32;
+        let (baud, nbits) = (16.0, 8.0);
+        // Rate 1: a full frame is (1 start + 8 data + 1 stop) * 16 baud ticks + RX sampling delay,
+        // and the byte arrives only because the loopback round-trips it (the helper returns `Some`
+        // ONLY when rx_word == byte, so reaching here proves the round-trip at rate 1). RXVALID is
+        // a single analog tick at rate 1, so it IS observed at a boundary there.
+        let (slow_tick, slow_rxvalid) =
+            uart_rx_complete_tick(byte, baud, nbits, 1.0, 4000).expect("rate-1 UART must receive");
+        assert!(
+            slow_rxvalid,
+            "rate-1 UART RXVALID must pulse at an analog-tick boundary"
+        );
+        // Rate 16: 16 digital sub-ticks per analog tick ⇒ the same frame completes in ~16× fewer
+        // ANALOG ticks (megabaud against the 2 µs analog tick). The byte still round-trips (again,
+        // the helper only returns `Some` when rx_word == 0x5A — the speedup did not corrupt it).
+        let (fast_tick, _fast_rxvalid) = uart_rx_complete_tick(byte, baud, nbits, 16.0, 4000)
+            .expect("rate-16 UART must receive");
+        // The speedup is real and close to the declared rate (16). The frame is the same number of
+        // DIGITAL ticks in both runs; at rate R it lands at ≈ that / R analog ticks, so the ratio is
+        // ≈ 16. Require ≥ 8× (comfortably proving the multi-rate kernel over-clocks the digital
+        // domain against the fixed analog Δt).
+        let speedup = (slow_tick + 1) as f64 / (fast_tick + 1) as f64;
+        assert!(
+            speedup >= 8.0,
+            "rate-16 UART must complete a frame ≥8× faster (slow tick {slow_tick}, fast tick \
+             {fast_tick}, speedup {speedup:.1}×)"
+        );
+    }
+
+    /// Wire an SPI **master**↔**slave** link (as `spi_master_slave`) with a declared sub-tick rate
+    /// in BOTH blocks' `params[2]`. `rate <= 1` is the existing single-rate path.
+    fn spi_master_slave_rate(tx: f64, reply: f64, half: f64, nbits: f64, rate: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 4 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // master params[0] = SCLK half-period
+        params[2 * PARAM_STRIDE + 1] = nbits; // master params[1] = bit count
+        params[2 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // master sub-tick rate
+        params[3 * PARAM_STRIDE + 1] = nbits; // slave  params[1] = bit count
+        params[3 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // slave sub-tick rate
+        assert!(sim.set_netlist_pefgh(
+            8,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 6],         // a: VCC src, START src, master SCLK=3, slave MISO=6
+            &[0, 0, 4, 7],         // b: src grounds; master MOSI=4, slave RXVALID=7
+            &[0, 0, 5, 0],         // c: master CS=5; slave c unused
+            &[0, 0, 1, 1],         // d: VCC = node 1 (both chips)
+            &[0, 0, 0, 0],         // e: GND = node 0
+            &[0, 0, 6, 3],         // f: master MISO=6, slave SCLK=3
+            &[0, 0, 2, 4],         // g: master START=2, slave MOSI=4
+            &[0, 0, 0, 5],         // h: slave CS=5 (master h unused)
+            &[5.0, 5.0, 1.0, 2.0], // values: VCC, START, master prog 1, slave prog 2
+            &[0.0, 0.0, tx, reply], // aux: master TX word, slave reply word
+            &params,
+        ));
+        sim
+    }
+
+    /// **`subtick_spi_link_fast`** — the master↔slave SPI link from phase 2, with both blocks at
+    /// `params[2] = 8`: the full-duplex byte exchange completes in fewer analog ticks (each block
+    /// runs 8 sub-ticks per analog tick) and the received bytes still match in BOTH directions
+    /// (slave RX == master TX, master shift_in == slave reply).
+    #[test]
+    fn subtick_spi_link_fast() {
+        let tx = 0x39u32; // master → slave
+        let reply = 0xC6u32; // slave → master
+        let (half, nbits) = (2.0, 8.0);
+
+        // Find the analog tick at which the slave's RXVALID first pulses, at a given rate.
+        let rxvalid_tick = |rate: f64| -> Option<usize> {
+            let mut sim = spi_master_slave_rate(tx as f64, reply as f64, half, nbits, rate);
+            for tk in 0..4000 {
+                sim.step();
+                if sim.beh_spi_slave_rxvalid(3) != 0 {
+                    return Some(tk);
+                }
+            }
+            None
+        };
+        let slow = rxvalid_tick(1.0).expect("rate-1 SPI link must complete");
+        let fast = rxvalid_tick(8.0).expect("rate-8 SPI link must complete");
+        assert!(
+            (fast + 1) * 4 < (slow + 1),
+            "rate-8 SPI link must finish in far fewer analog ticks (slow {slow}, fast {fast})"
+        );
+
+        // The fast link still exchanges both bytes correctly.
+        let mut sim = spi_master_slave_rate(tx as f64, reply as f64, half, nbits, 8.0);
+        let mut slave_rxvalid_pulsed = false;
+        for _ in 0..400 {
+            sim.step();
+            if sim.beh_spi_slave_rxvalid(3) != 0 {
+                slave_rxvalid_pulsed = true;
+            }
+        }
+        assert!(slave_rxvalid_pulsed, "rate-8 SPI slave RXVALID must pulse");
+        assert_eq!(
+            sim.beh_spi_slave_rx_word(3),
+            tx,
+            "rate-8 SPI slave must receive the master's byte"
+        );
+        assert_eq!(
+            sim.beh_spi_shift_in(2),
+            reply,
+            "rate-8 SPI master must read the slave's reply (full duplex)"
+        );
+    }
+
+    /// **`subtick_run_is_reproducible`** — a fast-rate circuit run on two fresh `Sim`s produces the
+    /// identical `snapshot_hash` at EVERY analog tick. The sub-tick loop is deterministic float
+    /// arithmetic over structural counts, so the multi-rate path reproduces by construction.
+    #[test]
+    fn subtick_run_is_reproducible() {
+        let build = || uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 16.0);
+        let (mut a, mut b) = (build(), build());
+        assert_eq!(a.subtick_rate, 16, "the fast UART must run at S=16");
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "fast-rate UART diverged at analog tick {tk}"
+            );
+        }
+        // Also a fast SPI link (both programs active, both fast).
+        let build_spi = || spi_master_slave_rate(0x39 as f64, 0xC6 as f64, 2.0, 8.0, 8.0);
+        let (mut c, mut d) = (build_spi(), build_spi());
+        for tk in 0..400 {
+            c.step();
+            d.step();
+            assert_eq!(
+                c.snapshot_hash(),
+                d.snapshot_hash(),
+                "fast-rate SPI link diverged at analog tick {tk}"
+            );
+        }
+    }
+
+    /// **`subtick_rewind_replays`** — run a fast circuit M analog ticks recording the per-tick hash
+    /// sequence; reset to t=0 and re-run; assert the hash is identical at every analog tick. The
+    /// keyframe/rewind contract holds across sub-tick edges because the sub-tick index is transient
+    /// (never hashed) and all fast-domain sequential state (folded each analog-tick boundary) is the
+    /// quantised level / integer state, so a replay lands bit-for-bit even mid-frame.
+    #[test]
+    fn subtick_rewind_replays() {
+        const M: usize = 300;
+        let mut sim = uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 16.0);
+        let mut hashes = Vec::with_capacity(M);
+        for _ in 0..M {
+            sim.step();
+            hashes.push(sim.snapshot_hash());
+        }
+        // Rewind to t=0 (reset) and re-simulate forward; every analog-tick hash must match.
+        sim.reset();
+        for (tk, &h) in hashes.iter().enumerate() {
+            sim.step();
+            assert_eq!(
+                sim.snapshot_hash(),
+                h,
+                "fast-rate UART rewind-replay diverged at analog tick {tk}"
             );
         }
     }
