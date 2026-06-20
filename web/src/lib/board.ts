@@ -576,6 +576,13 @@ export class Board {
   // rapidly-reversing voltage stops strobing the hue. Undefined when no batch (paused
   // / scrubbing) — the colour then tracks the instantaneous voltage as before.
   private nodeVrms: Float64Array | undefined;
+  // Per-node AC statistics over the same sub-frame batch, parallel to `nodeVrms`: the DC
+  // mean (the baseline / sign reference) and the swing extremes (min/max = the peak
+  // envelope). Used for the rail colour's sign and for the magnitude channels (the LED bar /
+  // standpipe envelope + bipolar centre-zero). Undefined when no batch ran (paused/scrubbing).
+  private nodeVmean: Float64Array | undefined;
+  private nodeVmin: Float64Array | undefined;
+  private nodeVmax: Float64Array | undefined;
 
   constructor(
     private readonly app: Application,
@@ -1488,17 +1495,35 @@ export class Board {
     if (scopeBatch && scopeBatch.length > 0) {
       const n = snap.state.length;
       const sumsq = new Float64Array(n);
+      const sum = new Float64Array(n);
+      const vmin = new Float64Array(n).fill(Infinity);
+      const vmax = new Float64Array(n).fill(-Infinity);
       for (const s of scopeBatch) {
         const st = s.state;
         const m = Math.min(n, st.length);
-        for (let i = 0; i < m; i++) sumsq[i] += st[i]! * st[i]!;
+        for (let i = 0; i < m; i++) {
+          const x = st[i]!;
+          sumsq[i] += x * x;
+          sum[i] += x;
+          if (x < vmin[i]!) vmin[i] = x;
+          if (x > vmax[i]!) vmax[i] = x;
+        }
       }
       const vrms = new Float64Array(n);
-      for (let i = 0; i < n; i++)
+      const vmean = new Float64Array(n);
+      for (let i = 0; i < n; i++) {
         vrms[i] = Math.sqrt(sumsq[i]! / scopeBatch.length);
+        vmean[i] = sum[i]! / scopeBatch.length;
+      }
       this.nodeVrms = vrms;
+      this.nodeVmean = vmean;
+      this.nodeVmin = vmin;
+      this.nodeVmax = vmax;
     } else {
       this.nodeVrms = undefined;
+      this.nodeVmean = undefined;
+      this.nodeVmin = undefined;
+      this.nodeVmax = undefined;
     }
     this.redrawWires();
     this.advanceWireRms();
@@ -2276,6 +2301,35 @@ export class Board {
   private nodeVoltage(node: number): number | null {
     if (node < 0 || node >= this.lastState.length) return null;
     return this.lastState[node] ?? 0;
+  }
+
+  /**
+   * A net's **signed effective** voltage for the rail-identity COLOUR: the RMS magnitude —
+   * steady on AC, where the instantaneous value strobes 0↔peak — carried with the DC mean's
+   * sign. So a −5 V rail stays cyan (not red), a +12 V rail with ripple stays yellow, and a
+   * symmetric AC net (mean ≈ 0) colours by its RMS identity (mains reads as its ~230 V, not
+   * its ±325 V peak). Falls back to the instantaneous value when no sub-frame batch ran this
+   * frame (paused/scrubbing), where RMS == the frozen value anyway.
+   */
+  private nodeColorVoltage(node: number): number {
+    const inst = this.nodeVoltage(node) ?? 0;
+    if (
+      !this.nodeVrms ||
+      !this.nodeVmean ||
+      node < 0 ||
+      node >= this.nodeVrms.length
+    ) {
+      return inst;
+    }
+    const rms = this.nodeVrms[node]!;
+    return (this.nodeVmean[node] ?? 0) >= 0 ? rms : -rms;
+  }
+
+  /** The colour-voltage ({@link nodeColorVoltage}) of the net an endpoint sits on, or `null`
+   * for an unconnected endpoint — the colour twin of {@link pinVoltage}. */
+  private colorVoltage(ep: Endpoint): number | null {
+    const node = this.endpointNode(ep);
+    return node === null ? null : this.nodeColorVoltage(node);
   }
 
   private pinNode(ref: PinRef): number | null {
@@ -3613,7 +3667,7 @@ export class Board {
           });
         const node = this.endpointNode(w.from);
         nets.set(w.id, node);
-        const nv = node === null ? null : this.nodeVoltage(node);
+        const nv = node === null ? null : this.nodeColorVoltage(node);
         wireColor.set(w.id, nv === null ? PALETTE.cyan : voltageColor(nv));
       }
       nudgeParallel(condRoutes);
@@ -3688,8 +3742,13 @@ export class Board {
           );
         }
       }
+      // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the
+      // instantaneous value — steady on AC at every speed, so the hue never strobes 0↔peak.
+      const cv = this.colorVoltage(w.from);
+      const color = cv === null ? PALETTE.cyan : voltageColor(cv);
+      // The INSTANTANEOUS net voltage stays the energy-flow direction (the power v·i sign that
+      // sloshes the energy belt) — that reversal SHOULD track the live cycle, unlike the hue.
       const v = this.pinVoltage(w.from);
-      let color = v === null ? PALETTE.cyan : voltageColor(v);
 
       const cur = currents.get(w.id) ?? 0;
       // The carrier→shimmer blur for this wire: its AC current's APPARENT rate
@@ -3713,16 +3772,8 @@ export class Board {
       // Thickness tracks current over a wide range so amperage is legible at a
       // glance (bounded by the saturating normC — a huge current stays on-screen).
       const width = BELT_WIDTH_MIN + (BELT_WIDTH_MAX - BELT_WIDTH_MIN) * normC;
-      // Stabilise the colour the SAME way as the carriers: voltage aliases frame-to-
-      // frame on fast AC (`voltageColor` is magnitude-based, so the hue strobes 0↔peak),
-      // so blend toward the net's RMS voltage (from the non-aliased sub-frame batch) as
-      // the blur rises — the voltage-domain twin of the carrier→shimmer handoff.
-      if (blur > 0.02 && v !== null && this.nodeVrms) {
-        const node = this.endpointNode(w.from);
-        if (node !== null && node >= 0 && node < this.nodeVrms.length) {
-          color = lerpColor(color, voltageColor(this.nodeVrms[node]!), blur);
-        }
-      }
+      // (The colour is already the net's signed-RMS rail identity — see `cv` above — so it
+      // is stable on AC at every speed; no per-frame de-strobe blend is needed any more.)
       // The path actually drawn (and walked by the carriers): in conduit mode it is the
       // logical route + aligning pin stubs, rounded into elbows; in schematic mode the
       // plain route. Sampling the carriers on THIS keeps the particles on the pipe
@@ -4009,7 +4060,7 @@ export class Board {
       // Use the nudged hub position when its runs were fanned into lanes (so the hub
       // sits on its pipes), else the plain cell.
       const p = junctionPos.get(j.id) ?? this.cellToWorld(j.cell);
-      const v = this.pinVoltage({ junctionId: j.id });
+      const v = this.colorVoltage({ junctionId: j.id });
       const color = v === null ? PALETTE.cyan : voltageColor(v);
       const hot = this.selectedJunctions.has(j.id);
       if (conduit) {
@@ -4104,7 +4155,7 @@ export class Board {
       const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
-      const v = this.pinVoltage(l.at);
+      const v = this.colorVoltage(l.at);
       const color = v === null ? PALETTE.cyan : voltageColor(v);
       const t = this.netLabelText(ti++);
       const editing = this.editingLabelId === l.id;
@@ -5683,8 +5734,8 @@ function voltageColor(v: number): number {
     [12, 0xe8c24a], // +12 V yellow (PC)
     [24, 0xf0d96a], // +24 V light yellow (industrial)
     [48, 0xf5e9a0], // +48 V pale yellow (telecom / PoE)
-    [170, 0xf2f2f5], // ~120 Vrms mains peak → near-white (high voltage)
-    [340, 0xffffff], // ~230 Vrms mains peak → white
+    [120, 0xf2f2f5], // ~120 Vrms (US mains) → near-white (high voltage)
+    [230, 0xffffff], // ~230 Vrms (EU mains) → white
   ];
   if (v <= stops[0]![0]) return stops[0]![1];
   const last = stops[stops.length - 1]!;
