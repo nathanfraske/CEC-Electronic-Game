@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (69) — Landed the LUT refsheet (CEC2064) — CLEANEST UPLOAD YET
+
+**State:** 🟢 owner's LUT refsheet landed + pushed → `docs/ui/parts/lut-ic.html` (built from
+`lut-guidesheet.md`). Branch `claude/kind-turing-hdelb3`. **Zero fixes needed** — the cleanest
+landing so far: correct title (`4-input LUT, five layers`), CEC2064 throughout, correct package-frame
+comment (no stale template carryover, unlike the JK), and a complete CEC2064 footnote with all 9
+verified preset hexes matching the guidesheet (AND 0x8888 … inverter 0x5555) + the volatile-SRAM /
+FPGA-reload payoff. Models the 16:1 mux over a config-bit memory with the optional registered output.
+
+**§10 validation:** static gates 1–4 all pass — 5 tiers (`buildT1..5`; names map `symbol . truth
+table` / `flow network . mux funnel` / valves / `real device . CEC2064` / silicon), glyphs CLEAN, JS
+parses, member-consistency clean across all 5 tiers. Gate 5 (render) is the design agent's (no
+chromium here). Added `lut-ic.html` to the example list + cross-reffed the CEC2064 catalog entry.
+
+**Refsheet program — effectively complete for the spec'd set:** 10-gate set + variants, D-FF,
+comparator, Schmitt, JK/T, **and now the LUT**. Both house parts with no real single equivalent are
+fully done (spec → guidesheet → landed refsheet): CEC3076 (JK/T) and CEC2064 (LUT). 555 exemplar
+verified (whenever it gets drawn, the pinout's locked). **Backend remains well ahead of the web** —
+the natural next big block is web-wiring the backed parts (PART_KINDS + `buildNetlist` + bin glyphs);
+see TODOS (37). The reusable design-agent-brief pattern (`*-guidesheet.md`) is established for any
+future part.
+
+---
+
 ## 2026-06-20 (68) — LUT (CEC2064) refsheet guidesheet drafted (design-agent brief)
 
 **State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted the design-agent build

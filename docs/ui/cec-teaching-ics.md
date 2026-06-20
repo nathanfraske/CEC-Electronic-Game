@@ -430,7 +430,7 @@ folds only its `Q`/`clk_prev`, through the existing `beh_state` hash loop — **
 construction** (no golden circuit carries a behavioral block). The first CEC part backed by the
 behavioral engine rather than a gate composition. **Teaches:** that all combinational logic is a
 lookup table; programmability (one cell, any function); the FPGA logic element (LUT + register); how
-a fabric of LUTs becomes any circuit (the path to a soft core).
+a fabric of LUTs becomes any circuit (the path to a soft core). **Refsheet:** `lut-ic.html`.
 
 ---
 
