@@ -5,6 +5,50 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (59) — Codex/hotbar/colour shipped; "more reality" framework underway
+
+**State:** 🟢 all three web features LANDED + pushed; 🟡 engine framework underway (clocked sampler
+in flight). Branch `claude/kind-turing-hdelb3`. No PR yet (owner hasn't asked).
+
+**Shipped (pushed):**
+- **Component Codex** (`abeec93`) — full-screen master-detail reference; `web/src/lib/codex.ts` data
+  layer + a Vite plugin serving `docs/ui/parts/*.html` at `/parts/*`. Exhaustive detail pane + refsheet
+  links. (Known follow-up: codex.ts duplicates App.svelte's catalog metadata — de-dupe to a shared
+  module someday.)
+- **Hotbar** (`d2c4dcd`) — 1–9 configured-part slots + Q pipette; `PLACEMENT_OVERRIDE_KEYS` gained
+  value/wiper/temp (golden-safe, web-only). Persists in Settings.
+- **Per-net colour override** (`0c96a16`) — `NetLabel.color` + label-editor swatch + the 6 board.ts
+  colour sites routed through one `nodeColor`/`endpointColor` choke-point + a `nodeColors` map from
+  netlist.ts. Pure render; golden untouched.
+- **XNOR refsheet** (`213196e`) + SPDX backfill on 4 refsheets (all 19 in `docs/ui/parts/` compliant).
+
+**"More reality" initiative (owner: scope it, build the framework, do hash/engine-touching now):**
+- **`docs/reality-roadmap.md`** + an exhaustive additions-catalog research pass (the full part/phenomenon
+  universe → 14 engine mechanisms M1–M14).
+- **`docs/ui/new-part-refsheets.md`** — the per-part refsheet-authoring sheet (15 first-arc cards + a
+  broader table), the "design refsheets around it" deliverable.
+- **ADR 0002** (`docs/adr/`) — wire-format provisioning decision: `MAX_TERMINALS` 5→8, `PARAM_STRIDE`
+  4→8, `PROTOCOL_VERSION` 1→2. Golden-safe (param_or 0-defaults, unused terminals grounded). **Not yet
+  implemented** — staged as its own careful cross-layer PR (array-sync runtime risk, no JS test = the
+  POT-regression class; needs a Rust test exercising terminal `h` + slot 7).
+- **ADR 0003** — high-pin devices (advanced ADC/MCU/FPGA) use a **composite** (one behavioral core
+  element + N single-terminal pin elements, expanded web-side like EC/POT), NOT a terminal-count bump.
+  Scales without a cap; golden-safe; needs no solver refactor.
+
+**Engine framework — sampler LANDED:** the **clocked sampler `ELEM_SAMPLER`=22** (the ADC/DAC/S&H
+keystone, a DFF-twin: latch `V(IN)>threshold` on a rising CLK edge, drive a 1-tick-delayed digital out)
+is in (`crates/sim-core` only; web wiring still to come). a=OUT, b=IN (analog, high-Z, Boundary), c=CLK;
+`value`=threshold, `aux`=high rail. New `samp_q`/`samp_clk_prev` state folded into `snapshot_hash` in a
+loop APPENDED after the DFF fold (zero bytes for the RC golden). Golden **byte-identical**
+`0xeaac_3764_99e4_fa24`; 5 sampler tests + reproducibility green; fmt/clippy/test all green
+(independently re-verified before commit).
+
+**Next engine steps (each its own verified increment):** commit the sampler → web-wire it (Clocked
+Comparator part + buildNetlist emit ELEM_SAMPLER → first ADC/DAC buildable) → **wire-format provisioning**
+(ADR 0002) as a dedicated cross-layer PR → **thermal `Tj`** (M3) + **seeded per-element PRNG** (M2) on
+the final 8/8 format, Real-mode-gated + golden-verified → **composite** core+pin mechanism (ADR 0003)
+when the first wide device is built.
+
 ## 2026-06-20 (58) — XNOR refsheet + SPDX backfill; codex/hotbar/colour-override in flight
 
 **State:** 🟡 in progress. Owner asked for three things: a **Catalog/Codex** ("contain ALL the details

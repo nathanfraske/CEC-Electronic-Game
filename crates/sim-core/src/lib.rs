@@ -46,6 +46,17 @@
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
 //! | 18   | transformer        | turns ratio n | ideal-T: magnetiser + hard secondary (pri=a/b sec=c/d)|
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
+//! | 22   | clocked sampler    | threshold V   | edge-triggered 1-bit comparator, linear (OUT=a IN=b CLK=c)|
+//!
+//! Type 22 is the **clocked sampler** (a 1-bit clocked comparator — the keystone of the
+//! ADC / sample-and-hold / SAR cluster): a near-twin of the D flip-flop whose data input
+//! is a continuous **analog** sense node (`IN` = `b`) instead of a logic pin. On each rising
+//! edge of `CLK` (`c`) it latches `OUT` (`a`) = `High` if `V(IN) > value` (its threshold)
+//! else `Low`, driving `OUT` from the committed bit through the same constant digital stamp
+//! as the flip-flop (no Newton, no branch unknown, one tick of clock-to-output delay). `IN`
+//! is a high-Z analog pin (not driven, not iterated). Like the flip-flop it keeps two
+//! persistent four-state scalars (the stored bit and the previous clock level) that enter
+//! the snapshot hash. See [`ELEM_SAMPLER`].
 //!
 //! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
 //! that samples its `D` input (`b`) on each rising edge of `CLK` (`c`) and presents it
@@ -740,6 +751,51 @@ pub const ELEM_PULLUP: u8 = 21;
 /// rail well within a tick.
 const PULLUP_R: f64 = 4_700.0;
 
+/// **Clocked sampler / 1-bit comparator** — the keystone atom of the ADC / sample-and-hold
+/// / SAR cluster. A near-twin of the [`ELEM_DFF`] (model it on the same machinery), but its
+/// data input is a continuous **analog** sense node rather than a logic pin. Three terminals:
+/// output `a` = `OUT` (a digital output), input `b` = `IN` (the analog signal sensed), input
+/// `c` = `CLK` (the clock); `d` and `e` are unused (ground). Its `value` is the **threshold
+/// voltage** (V) and its `aux` is the **output logic-high rail** (V) — when `aux <= 0` it
+/// defaults to [`SAMPLER_VHIGH_DEFAULT`] so a sampler with no rail set still drives a clean
+/// logic level. On each **rising edge** of `CLK` (`Low -> High`, detected exactly like the
+/// flip-flop via a persistent previous-clock level) it latches a one-bit comparison of the
+/// analog input against the threshold: `OUT = High` if `V(IN) > value`, else `Low`. Otherwise
+/// it holds. The output is driven from the **committed** bit through the same digital-drive
+/// path the flip-flop uses (`FAMILIES[0].drive_level(samp_q, rail)`), a constant Thévenin
+/// stamp within the solve — so it adds **no** Newton work and **no** branch unknown, and gives
+/// a clean one-tick clock-to-output delay (the bit is updated once per step in the commit
+/// phase from the solved `CLK`/`IN`). It keeps two persistent four-state [`Level`] scalars —
+/// the stored output bit (`samp_q`) and the previous clock level (`samp_clk_prev`) — that
+/// **enter the snapshot hash**, so a rewind landing on a clock edge replays identically.
+///
+/// The **boundary** nature: `OUT` (a) and `CLK` (c) are digital signal pins, but `IN` (b) is a
+/// high-Z analog **sense** node — it is *not* driven and does *not* engage Newton (the sampler
+/// is a constant stamp within a tick, exactly like the flip-flop). In [`classify_nets`] `IN` is
+/// therefore marked **analog-touching** (so a net touching only `IN` is `Analog`, and a node
+/// shared with an analog element and a digital pin is `Boundary` — the comparator pattern),
+/// mirroring how a powered gate's VCC/GND pins are kept analog. A flash ADC is N samplers at
+/// different `value` taps; a sample-and-hold and a SAR build on this same latch-on-clock atom.
+/// Driven through the resolved digital domain (see [`Sim::eval_digital`]).
+pub const ELEM_SAMPLER: u8 = 22;
+
+/// Default output logic-high rail (volts) for an [`ELEM_SAMPLER`] whose `aux` is unset
+/// (`<= 0`). A sane logic level (the common bench 5 V rail) so a sampler still drives a clean
+/// `OUT` without an explicit rail. A sampler that sets `aux > 0` overrides it per device.
+const SAMPLER_VHIGH_DEFAULT: f64 = 5.0;
+
+/// The output logic-high rail (volts) a clocked sampler ([`ELEM_SAMPLER`]) drives `OUT` to:
+/// its `aux` when set (`> 0`), else [`SAMPLER_VHIGH_DEFAULT`]. Used by both the digital drive
+/// ([`Sim::eval_digital`]) and the OUT current readout so they agree on the rail.
+#[inline]
+fn sampler_rail(el: &Element) -> f64 {
+    if el.aux > 0.0 {
+        el.aux
+    } else {
+        SAMPLER_VHIGH_DEFAULT
+    }
+}
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -1070,15 +1126,16 @@ fn is_nonlinear(kind: u8) -> bool {
     is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
 }
 
-/// True for the **digital** element kinds — a logic gate or a flip-flop. Their
-/// terminals are logic pins (driven/sensed levels) rather than continuous-voltage
-/// analog terminals. The net-classification pass ([`classify_nets`]) uses this to
-/// separate the analog and digital domains; the boundary between them is any node
-/// where a digital pin and an analog element meet. See
+/// True for the **digital** element kinds — a logic gate, a flip-flop, a level shifter,
+/// or a clocked sampler. Their terminals are logic pins (driven/sensed levels) rather than
+/// continuous-voltage analog terminals — except the sampler's `IN` pin, which is a high-Z
+/// analog **sense** node (handled specially in [`classify_nets`]). The net-classification
+/// pass uses this to separate the analog and digital domains; the boundary between them is
+/// any node where a digital pin and an analog element meet. See
 /// `docs/ui/logic-analog-digital-nets.md` §7.
 #[inline]
 fn is_digital(kind: u8) -> bool {
-    kind == ELEM_GATE || kind == ELEM_DFF || kind == ELEM_LEVELSHIFT
+    kind == ELEM_GATE || kind == ELEM_DFF || kind == ELEM_LEVELSHIFT || kind == ELEM_SAMPLER
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -1112,10 +1169,16 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
             // POWER pins (VCC = d, GND = e) are NOT signal nets — they are ordinary
             // analog supply nodes the gate only reads as voltages, so they are marked
             // analog below (a gate on a 5 V rail must leave that rail Analog, not pull
-            // it into the digital domain). A DFF's four pins (Q, D, CLK, Q̄) and a level
-            // shifter's are all signal pins.
+            // it into the digital domain). The clocked sampler's IN pin (b) is likewise an
+            // analog SENSE node (a high-Z comparator input) — only its OUT (a) and CLK (c)
+            // are signal pins, so IN is marked analog below (the comparator/boundary
+            // pattern: a net touching only IN is Analog; shared with a digital pin →
+            // Boundary). A DFF's four pins (Q, D, CLK, Q̄) and a level shifter's are all
+            // signal pins.
             let signal: &[usize] = if e.kind == ELEM_GATE {
                 &[e.a, e.b, e.c]
+            } else if e.kind == ELEM_SAMPLER {
+                &[e.a, e.c]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -1130,6 +1193,12 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                         analog_touched[t] = true;
                     }
                 }
+            }
+            if e.kind == ELEM_SAMPLER && e.b < node_count {
+                // IN (b) is a high-Z analog sense pin — mark it analog (mirrors a
+                // powered gate's VCC/GND), so a comparator's input net is Analog and a
+                // node it shares with a digital pin is Boundary.
+                analog_touched[e.b] = true;
             }
         } else {
             for t in [e.a, e.b, e.c, e.d] {
@@ -1257,6 +1326,15 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.b);
                 mark(&mut referenced, e.c);
                 mark(&mut referenced, e.d);
+            }
+            ELEM_SAMPLER => {
+                // OUT (a) is referenced by the driver (GATE_GOUT to ground) and CLK (c)
+                // by its net. IN (b) is a high-Z analog SENSE pin the sampler does NOT
+                // pin — it is an ordinary analog node, left to be referenced by its own
+                // source/divider, so a floating IN gets a proper floating-ref tie (not
+                // falsely held by the sampler). d, e are unused (ground).
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.c);
             }
             ELEM_PULLUP => {
                 // Pulled to an internal rail through PULLUP_R — a real conductance to
@@ -2265,6 +2343,16 @@ pub struct Sim {
     /// rising edge (`Low -> High`). Used only by [`ELEM_DFF`]; `Level::Low` elsewhere.
     /// Also hashed (it is part of the sequential state). Indexed with `elements`.
     ff_clk_prev: Vec<Level>,
+    /// The clocked sampler's stored output [`Level`]: the one-bit comparison latched at the
+    /// last rising clock edge (`High` iff `V(IN) > value`), which drives `OUT` every tick
+    /// until the next edge. Used only by [`ELEM_SAMPLER`]; `Level::Low` for every other
+    /// element. Persistent sequential state that **enters the snapshot hash** (so a rewind
+    /// landing on a clock edge replays identically). Indexed in lockstep with `elements`.
+    samp_q: Vec<Level>,
+    /// The clocked sampler's previous clock [`Level`], kept so the commit phase can detect a
+    /// rising edge (`Low -> High`). Used only by [`ELEM_SAMPLER`]; `Level::Low` elsewhere.
+    /// Also hashed (it is part of the sequential state). Indexed with `elements`.
+    samp_clk_prev: Vec<Level>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -2395,6 +2483,8 @@ impl Sim {
             failed_elements: Vec::new(),
             ff_q: Vec::new(),
             ff_clk_prev: Vec::new(),
+            samp_q: Vec::new(),
+            samp_clk_prev: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -2575,6 +2665,7 @@ impl Sim {
                     | ELEM_DFF
                     | ELEM_LEVELSHIFT
                     | ELEM_PULLUP
+                    | ELEM_SAMPLER
             ) {
                 self.install_empty();
                 return false;
@@ -2661,6 +2752,8 @@ impl Sim {
         self.failed_elements = vec![false; elements.len()];
         self.ff_q = vec![Level::Low; elements.len()];
         self.ff_clk_prev = vec![Level::Low; elements.len()];
+        self.samp_q = vec![Level::Low; elements.len()];
+        self.samp_clk_prev = vec![Level::Low; elements.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -2704,6 +2797,12 @@ impl Sim {
             *s = Level::Low;
         }
         for s in &mut self.ff_clk_prev {
+            *s = Level::Low;
+        }
+        for s in &mut self.samp_q {
+            *s = Level::Low;
+        }
+        for s in &mut self.samp_clk_prev {
             *s = Level::Low;
         }
         for s in &mut self.net_level {
@@ -3048,6 +3147,14 @@ impl Sim {
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -3262,6 +3369,14 @@ impl Sim {
                     // output levels and an X-driven Q — not a 2-state rail/0.
                     let (vq, g) = FAMILIES[gate_family_index(e.aux)]
                         .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
@@ -4032,6 +4147,14 @@ impl Sim {
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -4292,6 +4415,14 @@ impl Sim {
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
                 _ => 0.0,
             };
         }
@@ -4505,6 +4636,17 @@ impl Sim {
                     self.digital_vhigh[e.d] = e.value;
                     self.digital_vlow[e.d] = 0.0;
                     self.digital_family[e.d] = fi as u8;
+                }
+                ELEM_SAMPLER => {
+                    // OUT (a) drives the stored comparison bit at the output rail (`aux`,
+                    // defaulted). The bit is latched in the commit phase, so the output is
+                    // constant within the solve (one tick of clock-to-output delay). IN (b)
+                    // is a high-Z analog sense pin — read, not driven. Ideal driver family.
+                    let rail = sampler_rail(&e);
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], self.samp_q[i]);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = 0.0;
+                    self.digital_family[e.a] = 0;
                 }
                 ELEM_LEVELSHIFT => {
                     // Read the input (b) at the INPUT rail A (value), re-drive the output
@@ -4743,6 +4885,24 @@ impl Sim {
                         self.ff_q[i] = fam.quantize(self.node_v[e.b], e.value);
                     }
                     self.ff_clk_prev[i] = clk;
+                }
+                ELEM_SAMPLER => {
+                    // Clocked 1-bit comparator: on a rising CLK edge (Low -> High) latch the
+                    // analog input against the threshold — OUT = High iff V(IN) > value, else
+                    // Low. Otherwise the bit holds. CLK (c) is quantised at the output rail
+                    // (the LEGACY family, half-rail threshold); IN (b) is compared directly to
+                    // `value` (the latch is a pure deterministic float compare — no float-order
+                    // reduction). Both `samp_q` and `samp_clk_prev` are 4-state and enter the
+                    // snapshot hash, so a rewind onto a clock edge replays identically.
+                    let clk = FAMILIES[0].quantize(self.node_v[e.c], sampler_rail(e));
+                    if clk == Level::High && self.samp_clk_prev[i] != Level::High {
+                        self.samp_q[i] = if self.node_v[e.b] > e.value {
+                            Level::High
+                        } else {
+                            Level::Low
+                        };
+                    }
+                    self.samp_clk_prev[i] = clk;
                 }
                 _ => {}
             }
@@ -5337,9 +5497,11 @@ impl Sim {
     /// folds its discrete [`Level`] (one `u8`, no float compares cross the boundary),
     /// every other node (analog/boundary) folds its `node_v` (`f64` bits) as before;
     /// then each flip-flop's `ff_q` and `ff_clk_prev` (one `u8` each), so sequential
-    /// state replays across a clock edge. Forward-stable and append-only: a pure-analog
-    /// circuit hashes exactly as it always did (the RC golden is unchanged). See
-    /// `docs/ui/logic-analog-digital-nets.md` §7.8.
+    /// state replays across a clock edge; then — appended after the flip-flops — each
+    /// clocked sampler's `samp_q` and `samp_clk_prev` (one `u8` each), the same sequential
+    /// replay guarantee for the comparator. Forward-stable and append-only: a circuit with
+    /// neither a flip-flop nor a sampler (the RC golden) hashes exactly as it always did.
+    /// See `docs/ui/logic-analog-digital-nets.md` §7.8.
     pub fn snapshot_hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8 + self.elements.len() * 2);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
@@ -5354,6 +5516,17 @@ impl Sim {
             if e.kind == ELEM_DFF {
                 bytes.push(self.ff_q[i] as u8);
                 bytes.push(self.ff_clk_prev[i] as u8);
+            }
+        }
+        // Then each clocked sampler's stored bit and previous clock level (one `u8` each),
+        // in fixed element order — APPENDED after the flip-flop fold, so a circuit with no
+        // sampler (the RC golden, every existing test) folds ZERO extra bytes and hashes
+        // byte-identically to before. Sequential state, so a rewind onto a sample edge
+        // replays exactly.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_SAMPLER {
+                bytes.push(self.samp_q[i] as u8);
+                bytes.push(self.samp_clk_prev[i] as u8);
             }
         }
         fnv1a(&bytes)
@@ -8499,6 +8672,197 @@ mod tests {
                 a.snapshot_hash(),
                 b.snapshot_hash(),
                 "clocked flip-flop diverged at tick {tk} (sequential state must be hashed)"
+            );
+        }
+    }
+
+    // --- Clocked sampler (1-bit comparator, ELEM_SAMPLER = 22) -----------------
+    //
+    // A near-twin of the D flip-flop whose data input is a continuous analog node:
+    // on each rising clock edge it latches OUT = High iff V(IN) > threshold (`value`),
+    // else Low, and holds between edges (a one-tick-delayed digital output). It is the
+    // keystone atom of the ADC / sample-and-hold / SAR cluster. Like the flip-flop it
+    // is a constant within-tick stamp (no Newton) and keeps hashed sequential state.
+
+    /// Build a sampler with a DC source holding IN at `in_v`, a PWM-switch clock on CLK,
+    /// and the given `threshold` (its `value`), then run several clock periods and return
+    /// the settled OUT voltage. Nodes: 0 = gnd, 1 = IN, 2 = CLK, 3 = OUT, 4 = clock rail.
+    /// The switch chops the 5 V rail onto the pulled-down CLK node, so CLK is a clean
+    /// 0/5 V square wave (rising edges every SWITCH_PERIOD_TICKS); IN is held, so after a
+    /// few edges OUT settles to the comparison of IN against the threshold.
+    fn sampler_clocked(in_v: f64, threshold: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,  // IN held at in_v (node 1)
+                ELEM_VSOURCE,  // clock rail at 5 V (node 4)
+                ELEM_SWITCH,   // chops node 4 onto CLK (node 2), 50% duty
+                ELEM_RESISTOR, // pull-down on CLK so it falls between switch-on windows
+                ELEM_SAMPLER   // OUT=3, IN=1, CLK=2
+            ],
+            &[1, 4, 4, 2, 3],
+            &[0, 0, 2, 0, 1],
+            &[0, 0, 0, 0, 2], // sampler c = CLK = node 2
+            &[0, 0, 0, 0, 0], // sampler d unused (ground)
+            &[in_v, 5.0, 0.5, 1000.0, threshold],
+            &[0.0; 5], // sampler aux = 0 -> default 5 V output rail
+        ));
+        for _ in 0..500 {
+            sim.step();
+        }
+        sim.state()[3]
+    }
+
+    /// On the clock edge the sampler latches its analog input against the threshold and
+    /// presents the result on OUT, holding it until the next edge. With IN above the
+    /// threshold OUT drives high; below, it drives low.
+    #[test]
+    fn sampler_latches_comparison_and_holds() {
+        // IN = 3 V, threshold = 2 V -> above -> OUT high.
+        let out_hi = sampler_clocked(3.0, 2.0);
+        assert!(
+            out_hi > 4.0,
+            "OUT high when IN ({}) > threshold: {out_hi}",
+            3.0
+        );
+        // IN = 1 V, threshold = 2 V -> below -> OUT low.
+        let out_lo = sampler_clocked(1.0, 2.0);
+        assert!(
+            out_lo < 1.0,
+            "OUT low when IN ({}) < threshold: {out_lo}",
+            1.0
+        );
+        // Same input, threshold moved across it flips the decision (the comparator axis).
+        let flipped = sampler_clocked(3.0, 4.0);
+        assert!(
+            flipped < 1.0,
+            "OUT low when threshold (4) rises above the same IN (3): {flipped}"
+        );
+    }
+
+    /// The sampler output is a one-tick-delayed, hold-until-next-edge latch — it changes
+    /// ONLY on a rising clock edge. With the clock held LOW (no edge ever fires) the output
+    /// stays at its reset Low even though IN sits well above the threshold: proof the output
+    /// follows the latched bit, not the live comparison.
+    #[test]
+    fn sampler_holds_low_without_a_clock_edge() {
+        // Nodes: 0 = gnd, 1 = IN (held at 4 V), 2 = CLK (held LOW at 0 V), 3 = OUT.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_SAMPLER],
+            &[1, 2, 3],
+            &[0, 0, 1],
+            &[0, 0, 2], // sampler c = CLK = node 2
+            &[0, 0, 0],
+            &[4.0, 0.0, 2.5], // IN = 4 V (> threshold), CLK = 0 V, threshold = 2.5 V
+            &[0.0; 3],
+        ));
+        for tk in 0..100 {
+            sim.step();
+            assert!(
+                sim.state()[3] < 1.0,
+                "with CLK never rising, OUT must hold its reset Low despite IN>threshold \
+                 (tick {tk}, got {})",
+                sim.state()[3]
+            );
+        }
+    }
+
+    /// A one-tick-delayed, hold-until-next-edge latch under a real clock: once an edge
+    /// latches OUT High (IN above threshold), OUT must stay High across the following ticks
+    /// — including the next edge, since IN is unchanged — never glitching low mid-period.
+    #[test]
+    fn sampler_holds_between_edges() {
+        // Nodes: 0 = gnd, 1 = IN (4 V), 2 = CLK, 3 = OUT, 4 = clock rail. PWM switch clocks.
+        let mut s = Sim::new(1);
+        assert!(s.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_SAMPLER
+            ],
+            &[1, 4, 4, 2, 3],
+            &[0, 0, 2, 0, 1],
+            &[0, 0, 0, 0, 2],
+            &[0, 0, 0, 0, 0],
+            &[4.0, 5.0, 0.5, 1000.0, 2.5], // IN = 4 V > 2.5 V threshold
+            &[0.0; 5],
+        ));
+        // Run until OUT has latched high on an edge.
+        for _ in 0..200 {
+            s.step();
+        }
+        assert!(
+            s.state()[3] > 4.0,
+            "sampler should have latched OUT high (IN 4 V > 2.5 V): {}",
+            s.state()[3]
+        );
+        // Across a full clock period (spanning a rising edge) OUT must hold High — IN stays
+        // above threshold, so even the reload keeps it high; the point is no mid-period glitch.
+        for _ in 0..SWITCH_PERIOD_TICKS {
+            s.step();
+            assert!(
+                s.state()[3] > 4.0,
+                "OUT must hold High through an edge while IN stays above threshold: {}",
+                s.state()[3]
+            );
+        }
+    }
+
+    /// A three-terminal sampler netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the flip-flop's arity validation).
+    #[test]
+    fn sampler_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(4, &[ELEM_SAMPLER], &[1], &[2], &[3], &[0], &[2.0], &[0.0]),
+            "valid three-terminal sampler installs"
+        );
+        assert!(
+            !sim.set_netlist(4, &[ELEM_SAMPLER], &[1], &[2], &[9], &[0], &[2.0], &[0.0]),
+            "out-of-range CLK terminal c is rejected"
+        );
+    }
+
+    /// A clocked sampler circuit (active sequential state) reproduces bit-for-bit: two
+    /// fresh `Sim`s run the same sampler netlist for N steps and agree on the snapshot-hash
+    /// sequence at EVERY tick — including the exact ticks where a clock edge latches. This
+    /// is the determinism guarantee with the sampler mechanism ACTIVE (not merely inert).
+    #[test]
+    fn sampler_run_is_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_SWITCH,
+                    ELEM_RESISTOR,
+                    ELEM_SAMPLER
+                ],
+                &[1, 4, 4, 2, 3],
+                &[0, 0, 2, 0, 1],
+                &[0, 0, 0, 0, 2],
+                &[0, 0, 0, 0, 0],
+                &[3.0, 5.0, 0.5, 1000.0, 2.0], // IN 3 V, threshold 2 V
+                &[0.0; 5],
+            ));
+            sim
+        };
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "clocked sampler diverged at tick {tk} (sequential state must be hashed)"
             );
         }
     }
