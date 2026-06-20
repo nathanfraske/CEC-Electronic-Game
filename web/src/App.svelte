@@ -1,4 +1,18 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
+<script lang="ts" module>
+  import type { Component } from "./lib/graph";
+
+  // Per-kind LAST-USED arm-time configuration (the configurator axes only). Module-level
+  // and non-reactive on purpose: it's a plain memory that outlives any single arm, so
+  // re-arming a kind — or editing a placed one — re-offers what you last chose. Keyed by
+  // kind tag; the value is the same `Partial<Component>` shape the ghost/placement spread.
+  // A plain (NOT Svelte-reactive) Map is deliberate: it's only ever read in event handlers
+  // (arm / the dual-target setters), never in a template or `$derived`, so reactivity would
+  // be pure overhead — the reactive copy that the UI tracks is `armedConfig` ($state).
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- intentional non-reactive memory; see above
+  const lastConfig = new Map<string, Partial<Component>>();
+</script>
+
 <script lang="ts">
   import { onMount, untrack } from "svelte";
   import { Application } from "pixi.js";
@@ -493,6 +507,11 @@
   let mode = $state<Mode>("select");
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
   let armedPart = $state<string | null>(null);
+  // The armed part's pre-placement configurator choices (variant / tier / family /
+  // open-drain / load mode / load step / amp) — the SAME `Partial<Component>` the ghost
+  // and every drop spread. Reassigned (never mutated) so `$state` notifies and the ghost
+  // re-tints. Empty = the part's per-kind defaults (zero clicks to place a default part).
+  let armedConfig = $state<Partial<Component>>({});
   // The multimeter function in Measure mode: voltmeter or ammeter.
   let probeMode = $state<"V" | "A">("V");
   // The board's detail lens (the owner's three tiers): schematic symbols always; in
@@ -955,7 +974,9 @@
           : mode === "label"
             ? "LABEL · click a pin, junction, or trace to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
             : armedPart
-              ? `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
+              ? hasConfig(armedPart)
+                ? `PLACING ${partName(armedPart)} · set its type below, then click to drop · R rotate · Esc cancel`
+                : `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
               : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
@@ -1206,8 +1227,10 @@
           selPart = sel.single ?? null;
         },
         onArm: (kind) => {
-          // The board disarmed itself (right-click) — mirror it into the HUD.
+          // The board disarmed itself (right-click) — mirror it into the HUD, and drop
+          // the configurator choices so the panel closes with it.
           armedPart = kind;
+          if (kind === null) armedConfig = {};
         },
         onMode: (m) => {
           // The board switched its own tool (Pan yields to Build when you grab a
@@ -1445,16 +1468,28 @@
     }
     setVal(stepValue(selPart.kind, selPart.value, dir));
   }
-  // The AC source's amplitude (its second scalar): the displayed value defaults
-  // to 5 V when a source carries none, mirroring the frequency chips above.
+  // The second scalar (`amp`): an AC/PULSE source's peak (V), an LS output rail (V), or a
+  // LOAD's step PEAK (A). Dual-target like the other axes — reads the selected part else
+  // the armed config. The kind-specific default mirrors graph.ts's placement defaults so
+  // an unset value highlights the right chip (LOAD peak 2 A; everything else 5).
+  function ampDefaultFor(kind: string | null | undefined): number {
+    return kind === "LOAD" ? 2 : AC_DEFAULT_AMP;
+  }
   function selAmp(): number {
-    return selPart?.amp ?? AC_DEFAULT_AMP;
+    return selPart
+      ? (selPart.amp ?? ampDefaultFor(selPart.kind))
+      : (armedConfig.amp ?? ampDefaultFor(armedPart));
   }
   function setAmp(v: number): void {
-    if (selPart) board?.setComponentAmp(selPart.id, v);
+    if (selPart) {
+      board?.setComponentAmp(selPart.id, v);
+      rememberConfig(selPart.kind, { amp: v });
+    } else setArmedAxis({ amp: v });
   }
   function stepAmpVal(dir: number): void {
-    if (selPart) setAmp(stepAmp(selAmp(), dir));
+    // Dual-target: steps the selected part's amp, or — when only armed — the configurator's
+    // (setAmp routes to whichever is active). Guarded so it's a no-op with neither.
+    if (selPart || armedPart) setAmp(stepAmp(selAmp(), dir));
   }
   // Logic family of a digital part (gate or flip-flop): a third descriptor beside
   // `value` (the rail). Indexes LOGIC_FAMILIES; 0 = Ideal (the default).
@@ -1474,35 +1509,80 @@
   function isDigitalPart(kind: string): boolean {
     return DIGITAL_KINDS.has(kind);
   }
+  // --- Dual-target configurator axes (variant / tier / family / openDrain / mode /
+  // loadHz / duty / amp). Each `selX()` reads the SELECTED part when one is selected,
+  // else the ARMED part's pending config (so the same chips drive both the inspector and
+  // the arm-time configurator). Each `setX()` either edits the selected part (and teaches
+  // the per-kind last-used memory) or, when only armed, reassigns `armedConfig` (for
+  // reactivity), stores it as the kind's last-used config, and re-tints the ghost.
+
+  /** Record an edit to a placed part into its kind's last-used memory, so the NEXT time
+   * that kind is armed the configurator pre-selects what you last set on a real one. */
+  function rememberConfig(kind: string, patch: Partial<Component>): void {
+    lastConfig.set(kind, { ...(lastConfig.get(kind) ?? {}), ...patch });
+  }
+  /** Apply a configurator-axis change to the armed (not-yet-placed) part: reassign
+   * `armedConfig` (so `$state` notifies), persist it as the kind's last-used, and push it
+   * to the board so the ghost re-tints and the next drop carpets the new config. */
+  function setArmedAxis(patch: Partial<Component>): void {
+    if (!armedPart) return;
+    armedConfig = { ...armedConfig, ...patch };
+    lastConfig.set(armedPart, armedConfig);
+    board?.setArmedConfig(armedConfig);
+  }
+  /** The `value` (rail / nominal) the config rows reason about: the selected part's when
+   * one is selected, else the kind's per-kind default (the armed part has no instance
+   * value yet). Used by the logic-family threshold/output preview. */
+  function partValue(kind: string): number {
+    return selPart ? selPart.value : (PART_KINDS[kind]?.defaultValue ?? 0);
+  }
   function selFamily(): number {
-    return selPart?.family ?? 0;
+    return (selPart ? selPart.family : armedConfig.family) ?? 0;
   }
   function setFamily(idx: number): void {
-    if (selPart) board?.setComponentFamily(selPart.id, idx);
+    if (selPart) {
+      board?.setComponentFamily(selPart.id, idx);
+      rememberConfig(selPart.kind, { family: idx });
+    } else setArmedAxis({ family: idx });
+  }
+  function selTier(): number {
+    return (selPart ? selPart.tier : armedConfig.tier) ?? DEFAULT_TIER;
   }
   function setTier(idx: number): void {
-    if (selPart) board?.setComponentTier(selPart.id, idx);
+    if (selPart) {
+      board?.setComponentTier(selPart.id, idx);
+      rememberConfig(selPart.kind, { tier: idx });
+    } else setArmedAxis({ tier: idx });
   }
   function selVariant(): number {
-    return selPart?.variant ?? 0;
+    return (selPart ? selPart.variant : armedConfig.variant) ?? 0;
   }
   function setVariant(idx: number): void {
-    if (selPart) board?.setComponentVariant(selPart.id, idx);
+    if (selPart) {
+      board?.setComponentVariant(selPart.id, idx);
+      rememberConfig(selPart.kind, { variant: idx });
+    } else setArmedAxis({ variant: idx });
   }
   function selDuty(): number {
-    return selPart?.duty ?? 0.5;
+    return (selPart ? selPart.duty : armedConfig.duty) ?? 0.5;
   }
   function setDuty(v: number): void {
-    if (selPart) board?.setComponentDuty(selPart.id, v);
+    if (selPart) {
+      board?.setComponentDuty(selPart.id, v);
+      rememberConfig(selPart.kind, { duty: v });
+    } else setArmedAxis({ duty: v });
   }
   // The electronic load's mode (0 = constant-current CC, 1 = constant-resistance CR):
   // a third descriptor beside `value`. It decides the value's unit (loadUnit) and the
   // chip/full lists (loadChips/loadValues). 0 = CC (the default).
   function selLoadMode(): number {
-    return selPart?.mode ?? 0;
+    return (selPart ? selPart.mode : armedConfig.mode) ?? 0;
   }
   function setLoadMode(m: number): void {
-    if (selPart) board?.setComponentMode(selPart.id, m);
+    if (selPart) {
+      board?.setComponentMode(selPart.id, m);
+      rememberConfig(selPart.kind, { mode: m });
+    } else setArmedAxis({ mode: m });
   }
   // The load's value chips/full-list, picked by its mode (CC amps / CR ohms).
   function loadChipsForMode(): number[] {
@@ -1529,21 +1609,41 @@
   // A small set of preset step rates, plus the static "Off" (0).
   const LOAD_STEP_HZ = [0, 100, 1000, 10000, 50000];
   function selLoadHz(): number {
-    return selPart?.loadHz ?? 0;
+    return (selPart ? selPart.loadHz : armedConfig.loadHz) ?? 0;
   }
   function setLoadHz(hz: number): void {
-    if (selPart) board?.setComponentLoadHz(selPart.id, hz);
+    if (selPart) {
+      board?.setComponentLoadHz(selPart.id, hz);
+      rememberConfig(selPart.kind, { loadHz: hz });
+    } else setArmedAxis({ loadHz: hz });
   }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
   function isGatePart(kind: string): boolean {
     return isDigitalPart(kind) && kind !== "FF";
   }
+  // Whether a kind exposes ANY arm-time configurator row (the `partConfig` snippet would
+  // render something): a quality tier, a device variant (diode type / LED colour), a logic
+  // family / gate output stage, or the PULSE / LOAD specifics. Gates the arm-time panel and
+  // the "set its type below" hint so a plain part (V, R, GND, …) shows neither.
+  function hasConfig(kind: string): boolean {
+    return (
+      hasTiers(kind) ||
+      hasDiodeTypes(kind) ||
+      hasLedColors(kind) ||
+      isDigitalPart(kind) ||
+      kind === "PULSE" ||
+      kind === "LOAD"
+    );
+  }
   function selOpenDrain(): boolean {
-    return selPart?.openDrain ?? false;
+    return (selPart ? selPart.openDrain : armedConfig.openDrain) ?? false;
   }
   function setOpenDrain(v: boolean): void {
-    if (selPart) board?.setComponentOpenDrain(selPart.id, v);
+    if (selPart) {
+      board?.setComponentOpenDrain(selPart.id, v);
+      rememberConfig(selPart.kind, { openDrain: v });
+    } else setArmedAxis({ openDrain: v });
   }
   // The potentiometer's wiper position (its second scalar): 0..1, centred by
   // default. Presented as a continuous slider that sets the exact position.
@@ -1617,6 +1717,11 @@
   // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
     armedPart = tag;
+    // Seed the configurator from this kind's last-used choices (empty for a kind never
+    // configured → its per-kind defaults). Copied so editing the armed config doesn't
+    // alias the stored memory. Disarming clears it. A fresh object reference each time
+    // so `$state` notifies and the configurator panel/ghost re-render.
+    armedConfig = tag ? { ...(lastConfig.get(tag) ?? {}) } : {};
     // Arming a part is an intent to build, so leave any non-building tool —
     // including the neutral pan (Esc) default — and drop into select so the very
     // next click drops the part.
@@ -1628,7 +1733,7 @@
         mode === "pan")
     )
       setMode("select");
-    board?.setArmed(tag);
+    board?.setArmed(tag, armedConfig);
   }
   function toggleArm(tag: string): void {
     arm(armedPart === tag ? null : tag);
@@ -2066,6 +2171,267 @@
   </aside>
 
   <main class="panel board">
+    <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
+         tier / family / open-drain / load mode + step / PULSE waveform) that today only
+         showed once a part was placed. Factored into a snippet — declared here at the board
+         root so it's in scope for BOTH render sites: the arm-time configurator panel in the
+         toolbar's armed-chip block, and the selected-part inspector in the board frame. Both
+         are driven by the dual-target sel*/set* helpers, so a click edits the selected part
+         or the pending (armed) config interchangeably. Value-SEMANTICS rows (the value
+         picker, AC amplitude/mains, LS rail, POT/thermistor) stay in the inspector only —
+         they're per-instance knobs, not arm-time axes. -->
+    {#snippet partConfig(kind: string)}
+      {#if hasTiers(kind)}
+        <!-- Quality tier (main gameplay): each grade is a preset bundle of the
+             device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
+             inductor's DCR/winding-C, a source's output impedance, a resistor's
+             tolerance, a MOSFET's Kp, a BJT's β), so a better tier self-resonates
+             higher / is faster / regulates stiffer / has more gain (and, later, costs
+             more). The non-ideal grades bite only in Real mode; the sandbox keeps raw
+             param editing. -->
+        <div class="insp-sub">quality tier</div>
+        <div class="insp-chips wrap">
+          {#each TIER_LABELS as label, i (label)}
+            <button
+              class="chip-val {selTier() === i ? 'is-active' : ''}"
+              onclick={() => setTier(i)}>{label}</button
+            >
+          {/each}
+        </div>
+      {/if}
+      {#if hasDiodeTypes(kind)}
+        {@const dv = diodeVariant(kind, selVariant())}
+        <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
+             Each preset sets the forward junction (Is/n → forward drop) and a current
+             rating; the rating bites in Real mode (an over-rated diode FAILs). -->
+        <div class="insp-sub">diode type</div>
+        <div class="insp-chips wrap">
+          {#each DIODE_TYPES as dt, i (dt.label)}
+            <button
+              class="chip-val {selVariant() === i ? 'is-active' : ''}"
+              onclick={() => setVariant(i)}>{dt.label}</button
+            >
+          {/each}
+        </div>
+        {#if dv}
+          <div class="insp-sub">
+            rated · <span class="mono">{formatValue(dv.ratedA, "A")}</span>
+            {#if realModels}<span class="mono">(FAIL above)</span>{/if}
+          </div>
+          {#if realModels}
+            <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
+                 out more charge on switch-off — the reverse-current spike a switcher hates. -->
+            <div class="insp-sub">
+              reverse recovery · <span class="mono"
+                >{dv.tt === 0
+                  ? "none"
+                  : dv.tt <= 1e-6
+                    ? "fast"
+                    : dv.tt <= 4e-6
+                      ? "medium"
+                      : "slow"}</span
+              >
+            </div>
+          {/if}
+        {/if}
+      {/if}
+      {#if hasLedColors(kind)}
+        {@const colors = variantList(kind) ?? []}
+        <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
+             (red ~1.9 V … blue/white ~3 V) and tints the glyph. -->
+        <div class="insp-sub">colour</div>
+        <div class="insp-chips wrap">
+          {#each colors as col, i (col.label)}
+            <button
+              class="chip-val {selVariant() === i ? 'is-active' : ''}"
+              onclick={() => setVariant(i)}>{col.label}</button
+            >
+          {/each}
+        </div>
+      {/if}
+      {#if isDigitalPart(kind)}
+        {@const lv = familyLevels(selFamily(), partValue(kind))}
+        <!-- The logic family sets the input thresholds and output levels:
+           Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
+           margins. Packed into `aux` for the solver (func + 16*family). -->
+        <div class="insp-sub">logic family</div>
+        <div class="insp-chips wrap">
+          {#each LOGIC_FAMILIES as fam, i (fam.name)}
+            <button
+              class="chip-val {selFamily() === i ? 'is-active' : ''}"
+              onclick={() => setFamily(i)}>{fam.name}</button
+            >
+          {/each}
+        </div>
+        <div class="insp-sub">
+          thresholds · <span class="mono"
+            >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
+              lv.vIh,
+              "V",
+            )}</span
+          >
+        </div>
+        <div class="insp-sub">
+          output · <span class="mono"
+            >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
+          >
+          · noise margin
+          <span class="mono"
+            >{formatValue(lv.nmHigh, "V")} hi · {formatValue(lv.nmLow, "V")} lo</span
+          >
+        </div>
+      {/if}
+      {#if isGatePart(kind)}
+        <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+           releases high (needs an external pull-up) — open-drain outputs on one
+           net make a wired-AND bus (I²C / interrupt-line idiom). -->
+        <div class="insp-sub">output</div>
+        <div class="insp-chips">
+          <button
+            class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+            onclick={() => setOpenDrain(false)}>Push-pull</button
+          >
+          <button
+            class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+            onclick={() => setOpenDrain(true)}>Open-drain</button
+          >
+        </div>
+        {#if selOpenDrain()}
+          <div class="insp-sub">
+            releases high · <span class="mono">add a pull-up to Vcc</span>
+          </div>
+        {/if}
+      {/if}
+      {#if kind === "PULSE"}
+        <!-- The pulse / clock generator: high level (amplitude), waveform (square or
+             triangle), and duty cycle. `value` (the frequency, Hz) uses the row above. -->
+        <div class="insp-sub">high level</div>
+        <div class="insp-row">
+          <button
+            class="btn btn-ghost insp-step"
+            onclick={() => stepAmpVal(-1)}
+            title="Next smaller level">−</button
+          >
+          <div class="insp-chips wrap">
+            {#each acAmpChips() as v (v)}
+              <button
+                class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
+              >
+            {/each}
+          </div>
+          <button
+            class="btn btn-ghost insp-step"
+            onclick={() => stepAmpVal(1)}
+            title="Next larger level">+</button
+          >
+        </div>
+        <div class="insp-sub">waveform</div>
+        <div class="insp-chips wrap">
+          {#each ["Square", "Triangle"] as wf, i (wf)}
+            <button
+              class="chip-val {selVariant() === i ? 'is-active' : ''}"
+              onclick={() => setVariant(i)}>{wf}</button
+            >
+          {/each}
+        </div>
+        <div class="insp-sub">
+          duty · {Math.round(selDuty() * 100)}%
+        </div>
+        <div class="insp-row">
+          <span class="wiper-end">0</span>
+          <input
+            class="wiper-slider"
+            type="range"
+            min="0.05"
+            max="0.95"
+            step="0.01"
+            value={selDuty()}
+            aria-label="Pulse duty cycle"
+            oninput={(e) => setDuty(Number(e.currentTarget.value))}
+          />
+          <span class="wiper-end">1</span>
+        </div>
+      {/if}
+      {#if kind === "LOAD"}
+        <!-- The electronic load's MODE: constant-current (CC) draws a set current
+             regardless of voltage; constant-resistance (CR) draws V/R. The mode sets
+             the value chips' unit (A vs Ω) — handled in the inspector via loadChipsForMode
+             + fmtVal — and which element buildNetlist emits. -->
+        <div class="insp-sub">mode</div>
+        <div class="insp-chips">
+          <button
+            class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
+            onclick={() => setLoadMode(0)}
+            title="Constant current — draw a set current regardless of voltage"
+            >CC</button
+          >
+          <button
+            class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
+            onclick={() => setLoadMode(1)}
+            title="Constant resistance — draw V/R like a fixed resistor"
+            >CR</button
+          >
+        </div>
+        {#if selLoadMode() === 0}
+          <!-- Dynamic load step (CC only): step the draw between the base level (the
+               value chips in the inspector) and a PEAK at a chosen rate/duty — the load-step
+               that probes a supply's transient response. Off (0 Hz) = a static DC load. -->
+          <div class="insp-sub">dynamic load step</div>
+          <div class="insp-chips wrap">
+            {#each LOAD_STEP_HZ as hz (hz)}
+              <button
+                class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
+                onclick={() => setLoadHz(hz)}
+                >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
+              >
+            {/each}
+          </div>
+          {#if selLoadHz() > 0}
+            <!-- The peak current (the load's `amp` second scalar): the value chips set
+                 the BASE, this sets the PEAK it steps up to. Reuses the amp chips/stepper. -->
+            <div class="insp-sub">peak</div>
+            <div class="insp-row">
+              <button
+                class="btn btn-ghost insp-step"
+                onclick={() => stepAmpVal(-1)}
+                title="Next smaller peak">−</button
+              >
+              <div class="insp-chips wrap">
+                {#each acAmpChips() as v (v)}
+                  <button
+                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                    onclick={() => setAmp(v)}>{formatValue(v, "A")}</button
+                  >
+                {/each}
+              </div>
+              <button
+                class="btn btn-ghost insp-step"
+                onclick={() => stepAmpVal(1)}
+                title="Next larger peak">+</button
+              >
+            </div>
+            <div class="insp-sub">
+              duty · {Math.round(selDuty() * 100)}%
+            </div>
+            <div class="insp-row">
+              <span class="wiper-end">0</span>
+              <input
+                class="wiper-slider"
+                type="range"
+                min="0.05"
+                max="0.95"
+                step="0.01"
+                value={selDuty()}
+                aria-label="Load step duty cycle"
+                oninput={(e) => setDuty(Number(e.currentTarget.value))}
+              />
+              <span class="wiper-end">1</span>
+            </div>
+          {/if}
+        {/if}
+      {/if}
+    {/snippet}
     <div class="board-tools">
       <span class="tool-label">Tool</span>
       <button
@@ -2161,11 +2527,29 @@
         {lodOn ? "⊕ LOD" : "⊘ LOD"}
       </button>
       {#if armedPart}
-        <span class="armed-chip" title="Armed for placement">
-          {partName(armedPart)}
-          <button class="armed-x" onclick={() => arm(null)} aria-label="Disarm"
-            >×</button
-          >
+        <span class="armed-wrap">
+          <span class="armed-chip" title="Armed for placement">
+            {partName(armedPart)}
+            <button
+              class="armed-x"
+              onclick={() => arm(null)}
+              aria-label="Disarm">×</button
+            >
+          </span>
+          {#if !selPart && hasConfig(armedPart)}
+            <!-- Arm-time CONFIGURATOR: the same identity/quality chips the inspector shows,
+                 but BEFORE placing — so the ghost is the configured part and place-and-repeat
+                 carpets it. The default (variant 0 / mid tier / push-pull / CC) needs zero
+                 clicks; this panel only lets you change it. Driven by the dual-target setters,
+                 which (with nothing selected) write `armedConfig` and re-tint the ghost. -->
+            <div
+              class="armed-config"
+              role="group"
+              aria-label="Configure armed part"
+            >
+              {@render partConfig(armedPart)}
+            </div>
+          {/if}
         </span>
       {/if}
       {#if demo}
@@ -2475,139 +2859,11 @@
                   title="Next larger standard value">+</button
                 >
               </div>
-              {#if hasTiers(kind)}
-                <!-- Quality tier (main gameplay): each grade is a preset bundle of the
-                     device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
-                     inductor's DCR/winding-C, a source's output impedance, a resistor's
-                     tolerance, a MOSFET's Kp, a BJT's β), so a better tier self-resonates
-                     higher / is faster / regulates stiffer / has more gain (and, later, costs
-                     more). The non-ideal grades bite only in Real mode; the sandbox keeps raw
-                     param editing. -->
-                <div class="insp-sub">quality tier</div>
-                <div class="insp-chips wrap">
-                  {#each TIER_LABELS as label, i (label)}
-                    <button
-                      class="chip-val {(selPart.tier ?? DEFAULT_TIER) === i
-                        ? 'is-active'
-                        : ''}"
-                      onclick={() => setTier(i)}>{label}</button
-                    >
-                  {/each}
-                </div>
-              {/if}
-              {#if hasDiodeTypes(kind)}
-                {@const dv = diodeVariant(kind, selVariant())}
-                <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
-                     Each preset sets the forward junction (Is/n → forward drop) and a current
-                     rating; the rating bites in Real mode (an over-rated diode FAILs). -->
-                <div class="insp-sub">diode type</div>
-                <div class="insp-chips wrap">
-                  {#each DIODE_TYPES as dt, i (dt.label)}
-                    <button
-                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
-                      onclick={() => setVariant(i)}>{dt.label}</button
-                    >
-                  {/each}
-                </div>
-                {#if dv}
-                  <div class="insp-sub">
-                    rated · <span class="mono"
-                      >{formatValue(dv.ratedA, "A")}</span
-                    >
-                    {#if realModels}<span class="mono">(FAIL above)</span>{/if}
-                  </div>
-                  {#if realModels}
-                    <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
-                         out more charge on switch-off — the reverse-current spike a switcher hates. -->
-                    <div class="insp-sub">
-                      reverse recovery · <span class="mono"
-                        >{dv.tt === 0
-                          ? "none"
-                          : dv.tt <= 1e-6
-                            ? "fast"
-                            : dv.tt <= 4e-6
-                              ? "medium"
-                              : "slow"}</span
-                      >
-                    </div>
-                  {/if}
-                {/if}
-              {/if}
-              {#if hasLedColors(kind)}
-                {@const colors = variantList(kind) ?? []}
-                <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
-                     (red ~1.9 V … blue/white ~3 V) and tints the glyph. -->
-                <div class="insp-sub">colour</div>
-                <div class="insp-chips wrap">
-                  {#each colors as col, i (col.label)}
-                    <button
-                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
-                      onclick={() => setVariant(i)}>{col.label}</button
-                    >
-                  {/each}
-                </div>
-              {/if}
-              {#if isDigitalPart(kind)}
-                {@const lv = familyLevels(selFamily(), selPart.value)}
-                <!-- The logic family sets the input thresholds and output levels:
-                   Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
-                   margins. Packed into `aux` for the solver (func + 16*family). -->
-                <div class="insp-sub">logic family</div>
-                <div class="insp-chips wrap">
-                  {#each LOGIC_FAMILIES as fam, i (fam.name)}
-                    <button
-                      class="chip-val {selFamily() === i ? 'is-active' : ''}"
-                      onclick={() => setFamily(i)}>{fam.name}</button
-                    >
-                  {/each}
-                </div>
-                <div class="insp-sub">
-                  thresholds · <span class="mono"
-                    >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
-                      lv.vIh,
-                      "V",
-                    )}</span
-                  >
-                </div>
-                <div class="insp-sub">
-                  output · <span class="mono"
-                    >{formatValue(lv.vOl, "V")} / {formatValue(
-                      lv.vOh,
-                      "V",
-                    )}</span
-                  >
-                  · noise margin
-                  <span class="mono"
-                    >{formatValue(lv.nmHigh, "V")} hi · {formatValue(
-                      lv.nmLow,
-                      "V",
-                    )} lo</span
-                  >
-                </div>
-              {/if}
-              {#if isGatePart(kind)}
-                <!-- Output stage: push-pull drives both rails; open-drain pulls low and
-                   releases high (needs an external pull-up) — open-drain outputs on one
-                   net make a wired-AND bus (I²C / interrupt-line idiom). -->
-                <div class="insp-sub">output</div>
-                <div class="insp-chips">
-                  <button
-                    class="chip-val {selOpenDrain() ? '' : 'is-active'}"
-                    onclick={() => setOpenDrain(false)}>Push-pull</button
-                  >
-                  <button
-                    class="chip-val {selOpenDrain() ? 'is-active' : ''}"
-                    onclick={() => setOpenDrain(true)}>Open-drain</button
-                  >
-                </div>
-                {#if selOpenDrain()}
-                  <div class="insp-sub">
-                    releases high · <span class="mono"
-                      >add a pull-up to Vcc</span
-                    >
-                  </div>
-                {/if}
-              {/if}
+              <!-- The device identity/quality axes (tier / diode-type / LED-colour /
+                   logic-family / gate output / PULSE waveform / LOAD mode+step). Shared with
+                   the arm-time configurator panel via this snippet; the dual-target sel*/set*
+                   helpers route each click to the selected part here. -->
+              {@render partConfig(kind)}
               {#if kind === "LS"}
                 <!-- The level shifter's OUTPUT rail (rail B); the value chips above set
                    the INPUT rail (rail A). Pick both to shift up (A < B) or down. -->
@@ -2670,136 +2926,6 @@
                     >
                   {/each}
                 </div>
-              {/if}
-              {#if kind === "PULSE"}
-                <!-- The pulse / clock generator: high level (amplitude), waveform (square or
-                     triangle), and duty cycle. `value` (the frequency, Hz) uses the row above. -->
-                <div class="insp-sub">high level</div>
-                <div class="insp-row">
-                  <button
-                    class="btn btn-ghost insp-step"
-                    onclick={() => stepAmpVal(-1)}
-                    title="Next smaller level">−</button
-                  >
-                  <div class="insp-chips wrap">
-                    {#each acAmpChips() as v (v)}
-                      <button
-                        class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                        onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
-                      >
-                    {/each}
-                  </div>
-                  <button
-                    class="btn btn-ghost insp-step"
-                    onclick={() => stepAmpVal(1)}
-                    title="Next larger level">+</button
-                  >
-                </div>
-                <div class="insp-sub">waveform</div>
-                <div class="insp-chips wrap">
-                  {#each ["Square", "Triangle"] as wf, i (wf)}
-                    <button
-                      class="chip-val {selVariant() === i ? 'is-active' : ''}"
-                      onclick={() => setVariant(i)}>{wf}</button
-                    >
-                  {/each}
-                </div>
-                <div class="insp-sub">
-                  duty · {Math.round(selDuty() * 100)}%
-                </div>
-                <div class="insp-row">
-                  <span class="wiper-end">0</span>
-                  <input
-                    class="wiper-slider"
-                    type="range"
-                    min="0.05"
-                    max="0.95"
-                    step="0.01"
-                    value={selDuty()}
-                    aria-label="Pulse duty cycle"
-                    oninput={(e) => setDuty(Number(e.currentTarget.value))}
-                  />
-                  <span class="wiper-end">1</span>
-                </div>
-              {/if}
-              {#if kind === "LOAD"}
-                <!-- The electronic load's MODE: constant-current (CC) draws a set current
-                     regardless of voltage; constant-resistance (CR) draws V/R. The mode sets
-                     the value chips' unit (A vs Ω) — handled above via loadChipsForMode +
-                     fmtVal — and which element buildNetlist emits. -->
-                <div class="insp-sub">mode</div>
-                <div class="insp-chips">
-                  <button
-                    class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
-                    onclick={() => setLoadMode(0)}
-                    title="Constant current — draw a set current regardless of voltage"
-                    >CC</button
-                  >
-                  <button
-                    class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
-                    onclick={() => setLoadMode(1)}
-                    title="Constant resistance — draw V/R like a fixed resistor"
-                    >CR</button
-                  >
-                </div>
-                {#if selLoadMode() === 0}
-                  <!-- Dynamic load step (CC only): step the draw between the base level (the
-                       value chips above) and a PEAK at a chosen rate/duty — the load-step that
-                       probes a supply's transient response. Off (0 Hz) = a static DC load. -->
-                  <div class="insp-sub">dynamic load step</div>
-                  <div class="insp-chips wrap">
-                    {#each LOAD_STEP_HZ as hz (hz)}
-                      <button
-                        class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
-                        onclick={() => setLoadHz(hz)}
-                        >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
-                      >
-                    {/each}
-                  </div>
-                  {#if selLoadHz() > 0}
-                    <!-- The peak current (the load's `amp` second scalar): the value chips set
-                         the BASE, this sets the PEAK it steps up to. Reuses the amp chips/stepper. -->
-                    <div class="insp-sub">peak</div>
-                    <div class="insp-row">
-                      <button
-                        class="btn btn-ghost insp-step"
-                        onclick={() => stepAmpVal(-1)}
-                        title="Next smaller peak">−</button
-                      >
-                      <div class="insp-chips wrap">
-                        {#each acAmpChips() as v (v)}
-                          <button
-                            class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                            onclick={() => setAmp(v)}
-                            >{formatValue(v, "A")}</button
-                          >
-                        {/each}
-                      </div>
-                      <button
-                        class="btn btn-ghost insp-step"
-                        onclick={() => stepAmpVal(1)}
-                        title="Next larger peak">+</button
-                      >
-                    </div>
-                    <div class="insp-sub">
-                      duty · {Math.round(selDuty() * 100)}%
-                    </div>
-                    <div class="insp-row">
-                      <span class="wiper-end">0</span>
-                      <input
-                        class="wiper-slider"
-                        type="range"
-                        min="0.05"
-                        max="0.95"
-                        step="0.01"
-                        value={selDuty()}
-                        aria-label="Load step duty cycle"
-                        oninput={(e) => setDuty(Number(e.currentTarget.value))}
-                      />
-                      <span class="wiper-end">1</span>
-                    </div>
-                  {/if}
-                {/if}
               {/if}
               {#if kind === "POT"}
                 <!-- The potentiometer's wiper position (0 = A end, 1 = B end) as a
@@ -3414,7 +3540,12 @@
     font-size: 10px;
     color: var(--faint);
   }
-  /* The armed-part chip: shows what a board click will drop, with an × to disarm. */
+  /* The armed-part chip: shows what a board click will drop, with an × to disarm. The
+     wrap anchors the arm-time configurator popover directly beneath the chip. */
+  .armed-wrap {
+    position: relative;
+    display: inline-flex;
+  }
   .armed-chip {
     display: inline-flex;
     align-items: center;
@@ -3427,6 +3558,28 @@
     border: 1px solid var(--accent-line);
     border-radius: 3px;
     background: var(--accent-soft);
+  }
+  /* Arm-time configurator: a compact dark-HUD popover under the armed chip, holding the
+     same identity/quality chips (the partConfig snippet) so the part is configured BEFORE
+     it's dropped. Mirrors the value-pop styling; scrolls if a kind has many rows. */
+  .armed-config {
+    position: absolute;
+    z-index: 6;
+    top: calc(100% + 6px);
+    left: 0;
+    width: 248px;
+    max-height: 60vh;
+    overflow-y: auto;
+    padding: 9px 11px 11px;
+    border: 1px solid var(--border-bright);
+    border-radius: 5px;
+    background: oklch(0.165 0.028 285 / 0.97);
+    box-shadow: 0 12px 34px -12px #000;
+    backdrop-filter: blur(4px);
+  }
+  /* The first sub-label needs no top gap inside the panel (the panel padding suffices). */
+  .armed-config > :global(.insp-sub:first-child) {
+    margin-top: 0;
   }
   .armed-x {
     width: 18px;
