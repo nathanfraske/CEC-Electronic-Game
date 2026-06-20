@@ -47,6 +47,7 @@
 //! | 18   | transformer        | turns ratio n | ideal-T: magnetiser + hard secondary (pri=a/b sec=c/d)|
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
 //! | 22   | clocked sampler    | threshold V   | edge-triggered 1-bit comparator, linear (OUT=a IN=b CLK=c)|
+//! | 23   | latched comparator | hysteresis V_H| level-latched analog comparator, powered rail-to-rail (OUT=a IN+=b IN-=c VCC=d GND=e LE=f)|
 //!
 //! Type 22 is the **clocked sampler** (a 1-bit clocked comparator — the keystone of the
 //! ADC / sample-and-hold / SAR cluster): a near-twin of the D flip-flop whose data input
@@ -57,6 +58,23 @@
 //! is a high-Z analog pin (not driven, not iterated). Like the flip-flop it keeps two
 //! persistent four-state scalars (the stored bit and the previous clock level) that enter
 //! the snapshot hash. See [`ELEM_SAMPLER`].
+//!
+//! Type 23 is the **latched comparator** (modelled on the Analog Devices **ADCMP601**): a
+//! crossbreed of the clocked sampler and the powered logic gate. Its **front end** is an
+//! analog comparator — it senses two continuous inputs `IN+` (`b`) and `IN-` (`c`) and tracks
+//! whether `V(IN+) > V(IN-)` — while its **output stage** is a powered, rail-to-rail digital
+//! driver like a gate: `OUT` (`a`) swings between the GND pin (`e`, low) and the VCC pin (`d`,
+//! high), and an unpowered rail (`V(d) − V(e) < `[`GATE_MIN_RAIL`]) leaves it dead/released
+//! exactly as for a gate. A **level-sensitive, active-low latch enable** `LE` (`f`) gates the
+//! front end: while LE is transparent (unwired, or driven at/above half-rail it is *not* —
+//! below half-rail latches) the held bit (`cmp_q`) tracks the comparison; while LE is asserted
+//! low the bit holds. Its `value` is the **hysteresis band** `V_H` (volts, default `0` = a
+//! clean compare with no dead-band): the bit flips Low→High only once `diff > V_H/2` and
+//! High→Low only once `diff < −V_H/2`, a symmetric Schmitt window about zero. Like the sampler
+//! the held bit drives `OUT` through the constant powered-gate stamp (no Newton, no branch
+//! unknown; the bit is committed once per step from the just-solved inputs, a one-tick delay),
+//! `IN+`/`IN-` are high-Z analog sense pins (Boundary), and the single persistent four-state
+//! scalar `cmp_q` enters the snapshot hash. See [`ELEM_COMPARATOR`].
 //!
 //! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
 //! that samples its `D` input (`b`) on each rising edge of `CLK` (`c`) and presents it
@@ -796,6 +814,47 @@ fn sampler_rail(el: &Element) -> f64 {
     }
 }
 
+/// **Latched comparator** — an analog comparator with a powered rail-to-rail output and a
+/// level-sensitive latch, modelled on the Analog Devices **ADCMP601**. It is the *analog* twin
+/// of the clocked sampler ([`ELEM_SAMPLER`]): both latch a one-bit decision and drive it through
+/// a constant digital stamp, but where the sampler compares one analog input against a fixed
+/// threshold on a clock **edge**, the comparator compares **two** analog inputs against each
+/// other under a **level**-sensitive enable, and its output stage is **powered** like a logic
+/// gate ([`ELEM_GATE`]) rather than ground-referenced.
+///
+/// **Six terminals** (uses the wider 8-terminal format): output `a` = `OUT` (`Q`, a digital
+/// output), input `b` = `IN+` (`VP`), input `c` = `IN-` (`VN`), `d` = `VCC` (the positive
+/// supply), `e` = `GND` (`VEE`, the output's low reference), `f` = `LE` (the latch enable);
+/// `g`/`h` are unused (ground). Its `value` is the **hysteresis band** `V_H` in volts (default
+/// `0` ⇒ a clean compare with no dead-band — the golden-safe simple case); `aux` is unused.
+///
+/// **Front end** (evaluated in the commit phase from the just-solved committed node voltages,
+/// exactly where the sampler latches):
+/// 1. `rail = V(d) − V(e)`. If `rail < `[`GATE_MIN_RAIL`] the chip is **unpowered** — the held
+///    bit is left as-is and the output reads dead/released (a powered gate's dead-rail rule).
+/// 2. **Latch (level-sensitive, ACTIVE-LOW):** the front end is *transparent* when `LE` is
+///    unwired (`f == 0`, the ADCMP601 floating default) or driven at/above half-rail
+///    (`V(f) − V(e) >= 0.5·rail`); driven **below** half-rail it is *latched* and the bit holds.
+/// 3. While transparent, apply **symmetric hysteresis** about zero to `diff = V(IN+) − V(IN-)`,
+///    using the current held bit (`cmp_q`) as the Schmitt state: flip to `High` when
+///    `diff > V_H/2`, to `Low` when `diff < −V_H/2`, else hold. With `value` = `0` this is a
+///    plain comparator (`diff > 0` → High, `diff < 0` → Low).
+///
+/// **Output stage:** `OUT` (`a`) is driven from the committed bit through the **same powered
+/// gate output path** the gate uses — it swings between `V(e)` (low) and `V(d)` (high) via the
+/// [`digital_vlow`](Sim::digital_vlow) GND-offset mechanism and the family driver, and releases
+/// (high-Z `Z`) when the rail collapses, just like a dead-rail gate. A constant Thévenin stamp
+/// within the solve (no Newton, no branch unknown; one tick of input-to-output delay).
+///
+/// **Boundary nature** (mirrors the sampler / a powered gate): `OUT` (`a`) and `LE` (`f`) are
+/// digital signal pins; `IN+` (`b`) and `IN-` (`c`) are high-Z analog **sense** nodes (marked
+/// analog-touching in [`classify_nets`], so a comparator input net is Analog and a node it
+/// shares with a digital pin is Boundary); `VCC` (`d`) / `GND` (`e`) are analog supply pins
+/// (handled exactly like a powered gate's power pins). The single persistent four-state
+/// [`Level`] scalar `cmp_q` (the held output bit) **enters the snapshot hash**, so a rewind
+/// replays identically.
+pub const ELEM_COMPARATOR: u8 = 23;
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -1135,7 +1194,11 @@ fn is_nonlinear(kind: u8) -> bool {
 /// `docs/ui/logic-analog-digital-nets.md` §7.
 #[inline]
 fn is_digital(kind: u8) -> bool {
-    kind == ELEM_GATE || kind == ELEM_DFF || kind == ELEM_LEVELSHIFT || kind == ELEM_SAMPLER
+    kind == ELEM_GATE
+        || kind == ELEM_DFF
+        || kind == ELEM_LEVELSHIFT
+        || kind == ELEM_SAMPLER
+        || kind == ELEM_COMPARATOR
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -1179,6 +1242,10 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 &[e.a, e.b, e.c]
             } else if e.kind == ELEM_SAMPLER {
                 &[e.a, e.c]
+            } else if e.kind == ELEM_COMPARATOR {
+                // OUT (a) and LE (f) are the comparator's digital signal pins; IN+ (b),
+                // IN- (c), VCC (d), GND (e) are analog (marked below).
+                &[e.a, e.f]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -1199,6 +1266,17 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 // powered gate's VCC/GND), so a comparator's input net is Analog and a
                 // node it shares with a digital pin is Boundary.
                 analog_touched[e.b] = true;
+            }
+            if e.kind == ELEM_COMPARATOR {
+                // IN+ (b) / IN- (c) are high-Z analog SENSE pins, and VCC (d) / GND (e) are
+                // analog SUPPLY pins (treated exactly like a powered gate's power pins) — all
+                // analog, so a comparator's input/supply nets stay Analog and a node shared
+                // with a digital pin is Boundary.
+                for t in [e.b, e.c, e.d, e.e] {
+                    if t < node_count {
+                        analog_touched[t] = true;
+                    }
+                }
             }
         } else {
             for t in [e.a, e.b, e.c, e.d] {
@@ -1336,6 +1414,16 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.a);
                 mark(&mut referenced, e.c);
             }
+            ELEM_COMPARATOR => {
+                // OUT (a) is referenced by the powered output driver and LE (f) by its
+                // net. IN+ (b), IN- (c), VCC (d), GND (e) are analog SENSE/SUPPLY pins the
+                // comparator does NOT pin (mirrors a powered gate's VCC/GND and the
+                // sampler's IN) — each is an ordinary analog node left to be referenced by
+                // its own source, so an unwired one gets a proper floating-ref tie and an
+                // unwired VCC floats to ~0 V → the chip reads unpowered.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.f);
+            }
             ELEM_PULLUP => {
                 // Pulled to an internal rail through PULLUP_R — a real conductance to
                 // ground, so the node is referenced.
@@ -1467,13 +1555,14 @@ pub struct Element {
     /// fifth-terminal analogue of how `d` is ignored by elements with fewer terminals.
     /// Node `0` is ground.
     pub e: usize,
-    /// Sixth terminal node index — **reserved** by ADR 0002's wire-format provisioning.
-    /// No element reads it yet; it defaults to `0` (ground) and is inert, exactly as `c`,
-    /// `d`, and `e` were inert before an element used them. Provisioned so future parts
-    /// (full flip-flops with set+reset+enable, dual-supply op-amps with offset-null pins,
-    /// the 555, center-tapped transformers, gate drivers, tri-state buffers with OE) are
-    /// purely additive — they read `f`/`g`/`h` without another boundary change. Node `0`
-    /// is ground.
+    /// Sixth terminal node index — a latched comparator's **LE** (latch-enable) pin; see
+    /// [`ELEM_COMPARATOR`]. Provisioned by ADR 0002's wire-format widening and first read by
+    /// the comparator (`f == 0` means LE unwired ⇒ the front end is transparent, the ADCMP601
+    /// floating default). For every other element it defaults to `0` (ground) and is inert,
+    /// exactly as `c`, `d`, and `e` were inert before an element used them — so future parts
+    /// (full flip-flops with set+reset+enable, dual-supply op-amps with offset-null pins, the
+    /// 555, center-tapped transformers, gate drivers, tri-state buffers with OE) remain purely
+    /// additive: they read `f`/`g`/`h` without another boundary change. Node `0` is ground.
     pub f: usize,
     /// Seventh terminal node index — **reserved** by ADR 0002 (see [`Element::f`]). Inert
     /// and ground-defaulted until a part uses it. Node `0` is ground.
@@ -2375,6 +2464,15 @@ pub struct Sim {
     /// rising edge (`Low -> High`). Used only by [`ELEM_SAMPLER`]; `Level::Low` elsewhere.
     /// Also hashed (it is part of the sequential state). Indexed with `elements`.
     samp_clk_prev: Vec<Level>,
+    /// The latched comparator's held output [`Level`]: the current/held comparison bit (`High`
+    /// iff the front end has resolved `IN+ > IN-` within its hysteresis window), which drives
+    /// `OUT` every tick. While the comparator is *transparent* (LE not asserted) it tracks the
+    /// live comparison; while *latched* (LE low) it holds; an unpowered rail freezes it. Used
+    /// only by [`ELEM_COMPARATOR`]; `Level::Low` for every other element. Persistent sequential
+    /// state that **enters the snapshot hash** (so a rewind replays identically). Indexed in
+    /// lockstep with `elements`. Unlike the sampler the comparator is level-sensitive, so it
+    /// needs no previous-clock companion — `cmp_q` is its only persistent scalar.
+    cmp_q: Vec<Level>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -2507,6 +2605,7 @@ impl Sim {
             ff_clk_prev: Vec::new(),
             samp_q: Vec::new(),
             samp_clk_prev: Vec::new(),
+            cmp_q: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -2741,6 +2840,7 @@ impl Sim {
                     | ELEM_LEVELSHIFT
                     | ELEM_PULLUP
                     | ELEM_SAMPLER
+                    | ELEM_COMPARATOR
             ) {
                 self.install_empty();
                 return false;
@@ -2838,6 +2938,7 @@ impl Sim {
         self.ff_clk_prev = vec![Level::Low; elements.len()];
         self.samp_q = vec![Level::Low; elements.len()];
         self.samp_clk_prev = vec![Level::Low; elements.len()];
+        self.cmp_q = vec![Level::Low; elements.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -2887,6 +2988,9 @@ impl Sim {
             *s = Level::Low;
         }
         for s in &mut self.samp_clk_prev {
+            *s = Level::Low;
+        }
+        for s in &mut self.cmp_q {
             *s = Level::Low;
         }
         for s in &mut self.net_level {
@@ -3216,7 +3320,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -3441,7 +3545,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4216,7 +4320,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4484,7 +4588,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4730,6 +4834,31 @@ impl Sim {
                     self.digital_drive[e.a] = combine(self.digital_drive[e.a], self.samp_q[i]);
                     self.digital_vhigh[e.a] = rail;
                     self.digital_vlow[e.a] = 0.0;
+                    self.digital_family[e.a] = 0;
+                }
+                ELEM_COMPARATOR => {
+                    // POWERED output stage, identical machinery to a powered gate: OUT (a)
+                    // swings between the GND pin (e, vlow) and the VCC pin (d, vhigh) and
+                    // releases (Z) when the rail collapses below the operating minimum (an
+                    // unpowered chip sits dead). The held comparison bit (`cmp_q`, latched in
+                    // the commit phase) is constant within the solve, so this is a constant
+                    // Thévenin stamp — no Newton. IN+ (b)/IN- (c) are analog sense pins (read
+                    // in the commit phase, not driven here); LE (f) is read there too. Ideal
+                    // driver family (a clean rail-to-rail output), GND-offset by `vlow`.
+                    let fam = &FAMILIES[0];
+                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                    let rail = (vhigh - vlow).max(0.0);
+                    let driven = if rail < GATE_MIN_RAIL {
+                        Level::Z
+                    } else {
+                        self.cmp_q[i]
+                    };
+                    let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = vlow + tvf;
+                    self.gate_gout[i] = g;
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = vlow;
                     self.digital_family[e.a] = 0;
                 }
                 ELEM_LEVELSHIFT => {
@@ -4987,6 +5116,38 @@ impl Sim {
                         };
                     }
                     self.samp_clk_prev[i] = clk;
+                }
+                ELEM_COMPARATOR => {
+                    // Latched analog comparator (ADCMP601). Evaluate the front end from the
+                    // just-solved committed voltages — the powered output stage then drives
+                    // `cmp_q` next tick (a one-tick input-to-output delay, like the sampler).
+                    // 1) Rail across the supply pins; below the operating minimum the chip is
+                    //    UNPOWERED → hold the bit (the output reads dead/released, the powered
+                    //    gate's dead-rail rule).
+                    let rail = self.node_v[e.d] - self.node_v[e.e];
+                    if rail >= GATE_MIN_RAIL {
+                        // 2) Level-sensitive, ACTIVE-LOW latch enable: transparent when LE is
+                        //    unwired (f == 0, the floating default) or driven at/above half-rail
+                        //    relative to GND; driven below half-rail latches (hold). Pure
+                        //    deterministic float compares — no float-order reduction.
+                        let transparent =
+                            e.f == 0 || (self.node_v[e.f] - self.node_v[e.e]) >= 0.5 * rail;
+                        if transparent {
+                            // 3) Symmetric hysteresis about 0 using the current held bit as the
+                            //    Schmitt state: flip to High once diff > V_H/2, to Low once
+                            //    diff < −V_H/2, else hold. value (= V_H) 0 ⇒ a plain comparator
+                            //    (diff > 0 → High, diff < 0 → Low).
+                            let diff = self.node_v[e.b] - self.node_v[e.c];
+                            let half_vh = 0.5 * e.value;
+                            if self.cmp_q[i] != Level::High && diff > half_vh {
+                                self.cmp_q[i] = Level::High;
+                            } else if self.cmp_q[i] != Level::Low && diff < -half_vh {
+                                self.cmp_q[i] = Level::Low;
+                            }
+                        }
+                        // else latched: cmp_q unchanged (hold).
+                    }
+                    // else unpowered: cmp_q unchanged (hold).
                 }
                 _ => {}
             }
@@ -5583,9 +5744,11 @@ impl Sim {
     /// then each flip-flop's `ff_q` and `ff_clk_prev` (one `u8` each), so sequential
     /// state replays across a clock edge; then — appended after the flip-flops — each
     /// clocked sampler's `samp_q` and `samp_clk_prev` (one `u8` each), the same sequential
-    /// replay guarantee for the comparator. Forward-stable and append-only: a circuit with
-    /// neither a flip-flop nor a sampler (the RC golden) hashes exactly as it always did.
-    /// See `docs/ui/logic-analog-digital-nets.md` §7.8.
+    /// replay guarantee for the sampler; then — appended after the samplers — each latched
+    /// comparator's `cmp_q` (one `u8`), the same guarantee for the level-latched comparator.
+    /// Forward-stable and append-only: a circuit with no flip-flop, sampler, or comparator
+    /// (the RC golden) hashes exactly as it always did. See
+    /// `docs/ui/logic-analog-digital-nets.md` §7.8.
     pub fn snapshot_hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8 + self.elements.len() * 2);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
@@ -5611,6 +5774,17 @@ impl Sim {
             if e.kind == ELEM_SAMPLER {
                 bytes.push(self.samp_q[i] as u8);
                 bytes.push(self.samp_clk_prev[i] as u8);
+            }
+        }
+        // Then each latched comparator's held bit (one `u8`), in fixed element order —
+        // APPENDED after the sampler fold, so a circuit with no comparator (the RC golden,
+        // every existing test) folds ZERO extra bytes and hashes byte-identically to before.
+        // The comparator is level-sensitive, so unlike the sampler it has no previous-clock
+        // companion — `cmp_q` is its only sequential scalar. Sequential state, so a rewind
+        // replays exactly.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_COMPARATOR {
+                bytes.push(self.cmp_q[i] as u8);
             }
         }
         fnv1a(&bytes)
@@ -9025,6 +9199,336 @@ mod tests {
                 "clocked sampler diverged at tick {tk} (sequential state must be hashed)"
             );
         }
+    }
+
+    // --- Latched comparator (ADCMP601, ELEM_COMPARATOR = 23) -------------------
+    //
+    // An analog comparator (senses IN+ vs IN-) with a powered rail-to-rail output
+    // (swings the GND..VCC pins like a gate) and a level-sensitive ACTIVE-LOW latch
+    // enable LE. Its `value` is the hysteresis band V_H (0 = a clean compare). The
+    // crossbreed of the sampler (latched 1-bit decision, hashed state, constant stamp)
+    // and the powered gate (rail-to-rail output, dead-rail release). 6 terminals:
+    // a=OUT, b=IN+, c=IN-, d=VCC, e=GND, f=LE.
+
+    /// Build a powered comparator with IN+/IN- and the supply held by DC sources, LE left
+    /// unwired (f = 0 → the transparent floating default), hysteresis `vh`, then run a few
+    /// ticks (the output has a one-tick input-to-output delay) and return the settled OUT
+    /// voltage. Nodes: 0 = gnd (= GND/VEE pin), 1 = VCC (5 V), 2 = IN+, 3 = IN-, 4 = OUT.
+    fn comparator_dc(vp: f64, vn: f64, vh: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_COMPARATOR],
+            &[1, 2, 3, 4], // a: VCC src, IN+ src, IN- src, comparator OUT = node 4
+            &[0, 0, 0, 2], // b: src grounds; comparator IN+ = node 2
+            &[0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 1], // d: comparator VCC = node 1 (5 V)
+            &[0, 0, 0, 0], // e: comparator GND = node 0 (circuit ground)
+            &[0, 0, 0, 0], // f: comparator LE = 0 (unwired → transparent)
+            &[],
+            &[],
+            &[5.0, vp, vn, vh], // values: VCC 5 V, IN+ , IN- , hysteresis V_H
+            &[0.0; 4],          // aux (unused)
+            &[],                // params (defaults)
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim.state()[4]
+    }
+
+    /// The comparator's front end resolves `V(IN+) > V(IN-)` and its POWERED output stage
+    /// drives OUT to the supply rails: above → OUT ≈ VCC, below → OUT ≈ GND. With LE
+    /// transparent (unwired) the bit tracks the live comparison; the output is a clean
+    /// rail-to-rail swing (the powered-gate output path).
+    #[test]
+    fn comparator_compares_and_swings_rails() {
+        // IN+ (3 V) > IN- (1 V) → OUT drives HIGH to VCC (5 V).
+        let out_hi = comparator_dc(3.0, 1.0, 0.0);
+        assert!(
+            out_hi > 4.5,
+            "IN+ > IN- → OUT swings to VCC (~5 V): {out_hi}"
+        );
+        // IN+ (1 V) < IN- (3 V) → OUT drives LOW to GND (~0 V).
+        let out_lo = comparator_dc(1.0, 3.0, 0.0);
+        assert!(
+            out_lo < 0.5,
+            "IN+ < IN- → OUT swings to GND (~0 V): {out_lo}"
+        );
+    }
+
+    /// An unpowered comparator (VCC pin unwired, so its rail floats below GATE_MIN_RAIL) sits
+    /// DEAD: it releases its output (high-Z) just like a dead-rail gate, so the floored OUT
+    /// node reads ~0 V rather than a driven level — the "you must power the chip" lesson.
+    #[test]
+    fn comparator_unpowered_output_is_dead() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 gnd, 1 IN+ (3 V), 2 IN- (1 V), 3 OUT. VCC pin (d) left at ground → unpowered.
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_COMPARATOR],
+            &[1, 2, 3], // a
+            &[0, 0, 1], // b: comparator IN+ = node 1
+            &[0, 0, 2], // c: comparator IN- = node 2
+            &[0, 0, 0], // d: comparator VCC = ground → rail ≈ 0 → dead
+            &[0, 0, 0], // e: comparator GND = ground
+            &[0, 0, 0], // f: LE unwired
+            &[],
+            &[],
+            &[3.0, 1.0, 0.0],
+            &[0.0; 3],
+            &[],
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        assert!(
+            sim.state()[3].abs() < 0.5,
+            "unpowered comparator releases OUT (dead rail) → ~0 V, not a driven level: {}",
+            sim.state()[3]
+        );
+    }
+
+    /// The level-sensitive ACTIVE-LOW latch, on ONE continuous `Sim`. IN- is chopped by a PWM
+    /// switch so the LIVE comparison alternates each clock period (IN+ above IN- for part of the
+    /// period, below for the rest); LE is held LOW the whole run, so the front end is opaque.
+    /// The held bit must therefore IGNORE the chopped inputs and hold its reset Low — even
+    /// during the windows the live compare says HIGH. (The complementary `tracks` test below,
+    /// same circuit with LE HIGH, shows it DOES follow the same chopped compare, so this is a
+    /// latch and not a dead output.) This is the analog of `sampler_holds_low_without_a_clock`.
+    fn comparator_chopped_input(le_high: bool) -> Sim {
+        // Nodes: 0 gnd (=GND pin), 1 VCC (5 V), 2 IN+ (2.5 V fixed), 3 IN-, 4 OUT, 5 IN- rail,
+        //        6 LE rail. A switch chops the IN- rail (4 V) onto IN- through a pull-down, so
+        //        IN- swings 0 V (→ diff +2.5, live HIGH) ↔ ~4 V (→ diff −1.5, live LOW).
+        let mut sim = Sim::new(1);
+        let le_v = if le_high { 5.0 } else { 0.0 };
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,  // VCC 5 V        (node 1)
+                ELEM_VSOURCE,  // IN+ 2.5 V      (node 2)
+                ELEM_VSOURCE,  // IN- rail 4 V   (node 5)
+                ELEM_VSOURCE,  // LE rail        (node 6)
+                ELEM_SWITCH,   // chop node 5 onto IN- (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on IN-
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 6, 5, 3, 4], // a
+            &[0, 0, 0, 0, 3, 0, 2], // b: switch b = IN- (node 3); comparator IN+ = node 2
+            &[0, 0, 0, 0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 0, 0, 0, 1], // d: comparator VCC = node 1
+            &[0, 0, 0, 0, 0, 0, 0], // e: comparator GND = node 0
+            &[0, 0, 0, 0, 0, 0, 6], // f: comparator LE = node 6
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, le_v, 0.5, 1000.0, 0.0], // V_H = 0 (clean compare)
+            &[0.0; 7],
+            &[],
+        ));
+        sim
+    }
+
+    /// With LE held LOW the comparator is latched: the chopped inputs (which swing the live
+    /// compare HIGH for half of every period) never reach the front end, so OUT holds its reset
+    /// Low for the whole run.
+    #[test]
+    fn comparator_latched_low_holds_against_chopped_inputs() {
+        let mut sim = comparator_chopped_input(false); // LE low → latched
+        for tk in 0..400 {
+            sim.step();
+            assert!(
+                sim.state()[4].abs() < 0.5,
+                "LE low (latched): OUT holds reset Low despite the live compare going HIGH \
+                 (tick {tk}, got {})",
+                sim.state()[4]
+            );
+        }
+    }
+
+    /// The complement: the SAME chopped-input circuit with LE held HIGH is transparent, so OUT
+    /// DOES track the live compare — it must reach HIGH at some point (proving the hold above is
+    /// the latch gating the front end, not a stuck/dead output).
+    #[test]
+    fn comparator_transparent_tracks_chopped_inputs() {
+        let mut sim = comparator_chopped_input(true); // LE high → transparent
+        let mut saw_high = false;
+        for _ in 0..400 {
+            sim.step();
+            if sim.state()[4] > 4.5 {
+                saw_high = true;
+            }
+        }
+        assert!(
+            saw_high,
+            "LE high (transparent): OUT tracks the chopped compare and reaches HIGH"
+        );
+    }
+
+    /// Symmetric hysteresis (V_H > 0): the output is a Schmitt window about 0 — from a reset-Low
+    /// state it flips Low→High only once `diff = V(IN+) − V(IN-)` exceeds +V_H/2, and a diff that
+    /// stays inside the dead-band (`|diff| < V_H/2`) leaves the Low output unchanged.
+    #[test]
+    fn comparator_hysteresis_band() {
+        let vh = 2.0; // band is ±V_H/2 = ±1.0 V about 0
+                      // diff = +0.5 V is inside the +V_H/2 (1.0 V) band → a reset-Low output stays LOW.
+        let inside_pos = comparator_dc(2.5, 2.0, vh); // diff = +0.5
+        assert!(
+            inside_pos < 0.5,
+            "diff +0.5 V inside the +V_H/2 band → OUT stays LOW: {inside_pos}"
+        );
+        // diff = −0.5 V is inside the −V_H/2 band → a reset-Low output also stays LOW.
+        let inside_neg = comparator_dc(2.0, 2.5, vh); // diff = −0.5
+        assert!(
+            inside_neg < 0.5,
+            "diff −0.5 V inside the −V_H/2 band → OUT stays LOW: {inside_neg}"
+        );
+        // diff = +1.5 V is past the upper trip +V_H/2 → flips HIGH.
+        let trip_hi = comparator_dc(3.5, 2.0, vh); // diff = +1.5
+        assert!(
+            trip_hi > 4.5,
+            "diff +1.5 V past the +V_H/2 trip → OUT flips HIGH: {trip_hi}"
+        );
+    }
+
+    /// The H→L edge of the hysteresis window on ONE persistent comparator. IN- is chopped by a
+    /// PWM switch around the fixed IN+: for part of each period diff = +2.5 V (well past the
+    /// upper trip +V_H/2 = +1.0) which latches OUT HIGH, then diff = −1.5 V (past the LOWER trip
+    /// −V_H/2 = −1.0) which trips it LOW. Seeing HIGH then a later LOW proves the held HIGH state
+    /// only drops once diff crosses −V_H/2, the lower Schmitt edge (not a bare sign flip).
+    #[test]
+    fn comparator_hysteresis_upper_state_trips_at_lower_edge() {
+        // Nodes: 0 gnd (=GND), 1 VCC 5 V, 2 IN+ (2.5 V fixed), 3 IN-, 4 OUT, 5 IN- rail (4 V).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,  // VCC 5 V (node 1)
+                ELEM_VSOURCE,  // IN+ 2.5 V (node 2)
+                ELEM_VSOURCE,  // IN- rail 4 V (node 5)
+                ELEM_SWITCH,   // chop node 5 onto IN- (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on IN-
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 5, 3, 4], // a
+            &[0, 0, 0, 3, 0, 2], // b: switch b = IN- (node 3); comparator IN+ = node 2
+            &[0, 0, 0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 0, 0, 1], // d: comparator VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: comparator GND = node 0
+            &[0, 0, 0, 0, 0, 0], // f: LE unwired → transparent
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, 0.5, 1000.0, 2.0], // V_H = 2.0
+            &[0.0; 6],
+            &[],
+        ));
+        let mut saw_high = false;
+        let mut saw_low_after_high = false;
+        for _ in 0..400 {
+            sim.step();
+            let out = sim.state()[4];
+            if out > 4.5 {
+                saw_high = true;
+            }
+            if saw_high && out < 0.5 {
+                saw_low_after_high = true;
+            }
+        }
+        assert!(
+            saw_high,
+            "transparent comparator should latch HIGH while IN- is pulled low (diff +2.5 V)"
+        );
+        assert!(
+            saw_low_after_high,
+            "once IN- rises so diff < −V_H/2 the HIGH state must trip LOW (the lower Schmitt edge)"
+        );
+    }
+
+    /// A comparator circuit (active sequential `cmp_q`) reproduces bit-for-bit: two fresh
+    /// `Sim`s run the same comparator netlist for N steps and agree on the snapshot-hash at
+    /// EVERY tick — the determinism guarantee with the comparator mechanism ACTIVE.
+    #[test]
+    fn comparator_run_is_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            // A PWM-chopped IN- crossing a fixed IN+ under a powered, transparent comparator —
+            // so the held bit flips back and forth (exercising the latch path), with hysteresis.
+            assert!(sim.set_netlist_pefgh(
+                6,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_SWITCH,
+                    ELEM_RESISTOR,
+                    ELEM_COMPARATOR,
+                ],
+                &[1, 2, 5, 5, 3, 4],
+                &[0, 0, 0, 3, 0, 2],
+                &[0, 0, 0, 0, 0, 3],
+                &[0, 0, 0, 0, 0, 1],
+                &[0, 0, 0, 0, 0, 0],
+                &[0, 0, 0, 0, 0, 0],
+                &[],
+                &[],
+                &[5.0, 2.5, 4.0, 0.5, 1000.0, 1.0], // V_H = 1.0
+                &[0.0; 6],
+                &[],
+            ));
+            sim
+        };
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "latched comparator diverged at tick {tk} (cmp_q must be hashed)"
+            );
+        }
+    }
+
+    /// A six-terminal comparator netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the sampler's / flip-flop's arity validation).
+    #[test]
+    fn comparator_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist_pefgh(
+                6,
+                &[ELEM_COMPARATOR],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[0],
+                &[5],
+                &[],
+                &[],
+                &[0.0],
+                &[0.0],
+                &[],
+            ),
+            "valid six-terminal comparator installs"
+        );
+        assert!(
+            !sim.set_netlist_pefgh(
+                6,
+                &[ELEM_COMPARATOR],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[0],
+                &[9], // LE out of range
+                &[],
+                &[],
+                &[0.0],
+                &[0.0],
+                &[],
+            ),
+            "out-of-range LE terminal f is rejected"
+        );
     }
 
     // --- Clock-driven switch (PWM) --------------------------------------------
