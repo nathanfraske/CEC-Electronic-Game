@@ -8,6 +8,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-20 (24) — Two more IC glyph refsheets: NAND + NOR
+
+Owner delivered two more five-tier IC glyphs built from the spec. Placed in `docs/ui/parts/`
+(SPDX header prepended, matching the compliant siblings):
+
+- ~~`nand-ic.html` — **74LVC1G00** single NAND gate.~~
+- ~~`nor-ic.html` — **74LVC1G02** single NOR gate.~~
+- ~~Static §10 gates pass on both: JS `node --check` OK, no forbidden glyphs / dash entities,
+  `drawPkg(gT` = 5, `var t4=` = 1, member consistency clean (all tiers). Playwright render gate
+  (§10.5) skipped — Playwright isn't provisioned here and these are owner-validated canonical
+  files (same call as `inv-ic.html`).~~ **DONE.**
+
 ## 2026-06-20 (23) — Resistor lead inductance (Real mode) + a current-sense SHUNT part
 
 Owner (same thread as 22): "we should probably also have shunts then so we can show that… But it
