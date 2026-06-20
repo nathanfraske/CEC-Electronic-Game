@@ -1747,6 +1747,141 @@ function drawFF(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// --- Clocked sampler (1-bit quantizer — the ADC atom) ------------------------
+// Pins ordered OUT, IN, CLK: the digital output OUT (right), the analog sense IN
+// (left-top) and the edge-clocked CLK (left-bottom, drawn with the ">" edge
+// marker). Drawn as a comparator triangle (it thresholds IN against `value`) with
+// a small rising-edge glyph on the clock — "compare, latched on the edge". The
+// `electrical.current` is the OUT drive, animating the output belt when it drives a
+// load; the latched bit reads on the scope at OUT.
+function drawSAMP(g: Graphics, o: GlyphOpts): void {
+  const out = o.pins[0];
+  const inp = o.pins[1];
+  const clk = o.pins[2];
+  if (!out || !inp || !clk) return;
+  const leftX = Math.min(inp.x, clk.x) + 8;
+  const rightX = out.x - 10;
+  const topY = Math.min(inp.y, out.y, clk.y) + 2;
+  const botY = Math.max(inp.y, out.y, clk.y) - 2;
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  // Leads to the body edges.
+  g.moveTo(inp.x, inp.y).lineTo(leftX, inp.y);
+  g.moveTo(clk.x, clk.y).lineTo(leftX, clk.y);
+  g.moveTo(rightX, out.y).lineTo(out.x, out.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  // The comparator triangle body (flat back on the left, tip at the output).
+  g.moveTo(leftX, topY)
+    .lineTo(rightX, out.y)
+    .lineTo(leftX, botY)
+    .closePath()
+    .fill({ color: o.color, alpha: 0.1 + 0.12 * drive });
+  g.moveTo(leftX, topY)
+    .lineTo(rightX, out.y)
+    .lineTo(leftX, botY)
+    .closePath()
+    .stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+
+  // The threshold mark on the input side (a small reference tick by IN).
+  g.moveTo(leftX + 2, inp.y - 3)
+    .lineTo(leftX + 9, inp.y - 3)
+    .stroke({ width: 1.4, color: o.color, alpha: 0.7 });
+
+  // The edge-clock marker: a ">" notch at the CLK input inside the body, plus a
+  // tiny rising-edge glyph (a step up) just outside it — the "sample on ↑CLK" cue.
+  const cy = clk.y;
+  g.moveTo(leftX, cy - 4)
+    .lineTo(leftX + 6, cy)
+    .lineTo(leftX, cy + 4)
+    .stroke({ width: 2, color: o.color, alpha: 0.9 });
+  g.moveTo(clk.x + 3, cy + 3)
+    .lineTo(clk.x + 6, cy + 3)
+    .lineTo(clk.x + 6, cy - 3)
+    .lineTo(clk.x + 9, cy - 3)
+    .stroke({ width: 1.4, color: o.color, alpha: 0.75 });
+
+  // The OUT drive belt (signed by its current), body tip → output pin.
+  flow(g, rightX, out.y, out.x, out.y, o.electrical.current, o.phase, 0x46d2e6);
+}
+
+// --- Analog switch (node-gated transmission gate) ----------------------------
+// Pins ordered A, B, CTRL, VCC, GND: the switched signal path A↔B runs left→right;
+// CTRL (left-bottom) gates it, VCC/GND (top/bottom) power the gate. Drawn as the
+// transmission-gate symbol — two facing triangles between the A and B contacts —
+// with a dashed control line dropping from the CTRL pin to the gate. It CLOSES (the
+// path conducts) when V(CTRL) − V(GND) > half the rail; the renderer infers the
+// closed state from the small voltage it drops when conducting (a closed switch is
+// near-ideal). `electrical.current` is the through-current A→B.
+function drawASW(g: Graphics, o: GlyphOpts): void {
+  const a = o.pins[0];
+  const b = o.pins[1];
+  const ctrl = o.pins[2];
+  const vcc = o.pins[3];
+  const gnd = o.pins[4];
+  if (!a || !b || !ctrl || !vcc || !gnd) return;
+  const my = (a.y + b.y) / 2;
+  const mx = (a.x + b.x) / 2;
+  const gap = 9; // half-width of the gate body between the two contacts
+  // A conducting switch drops ~0 V across the signal path; an open one stands the
+  // full node difference. The body brightens and the belt flows when closed.
+  const closed = Math.abs(o.electrical.vAcross) < 0.25;
+  const cond = norm(o.electrical.current, CUR_SCALE);
+
+  // Signal leads in to the gate contacts.
+  g.moveTo(a.x, a.y).lineTo(mx - gap, my);
+  g.moveTo(mx + gap, my).lineTo(b.x, b.y);
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  g.circle(mx - gap, my, 2).fill({ color: o.color });
+  g.circle(mx + gap, my, 2).fill({ color: o.color });
+
+  // The transmission-gate body: two triangles meeting tip-to-tip (the bow-tie),
+  // brighter when the channel is on.
+  const th = 7; // triangle half-height
+  const bodyAlpha = closed ? 0.16 + 0.2 * cond : 0.08;
+  g.moveTo(mx - gap, my - th)
+    .lineTo(mx - gap, my + th)
+    .lineTo(mx, my)
+    .closePath()
+    .fill({ color: o.color, alpha: bodyAlpha });
+  g.moveTo(mx + gap, my - th)
+    .lineTo(mx + gap, my + th)
+    .lineTo(mx, my)
+    .closePath()
+    .fill({ color: o.color, alpha: bodyAlpha });
+  g.moveTo(mx - gap, my - th)
+    .lineTo(mx - gap, my + th)
+    .lineTo(mx, my)
+    .closePath()
+    .stroke({ width: 2, color: o.color, alpha: closed ? 0.95 : 0.55 });
+  g.moveTo(mx + gap, my - th)
+    .lineTo(mx + gap, my + th)
+    .lineTo(mx, my)
+    .closePath()
+    .stroke({ width: 2, color: o.color, alpha: closed ? 0.95 : 0.55 });
+
+  // Power pins (VCC top, GND bottom) into the body — short stubs.
+  g.moveTo(vcc.x, vcc.y).lineTo(mx, my - th - 2);
+  g.moveTo(gnd.x, gnd.y).lineTo(mx, my + th + 2);
+  g.stroke({ width: 1.6, color: 0x6b6488, alpha: 0.7 });
+
+  // The control line from CTRL to the gate — dashed, with a small bubble/dot at the
+  // gate to read as "this node opens or closes the channel".
+  g.moveTo(ctrl.x, ctrl.y).lineTo(mx, my + th + 2);
+  g.stroke({ width: 1.6, color: o.color, alpha: closed ? 0.9 : 0.45 });
+  g.circle(mx, my, 2.2).fill({ color: o.color, alpha: closed ? 0.9 : 0.4 });
+
+  if (closed) {
+    if (cond > 0.03) {
+      g.circle(mx, my, 12).fill({ color: o.color, alpha: 0.16 * cond });
+    }
+    flow(g, a.x, a.y, b.x, b.y, o.electrical.current, o.phase, o.color);
+  } else {
+    // A visible break mark when open — a small ring at the body centre.
+    g.circle(mx, my, 5).stroke({ width: 1.4, color: 0x9c93b8, alpha: 0.5 });
+  }
+}
+
 function drawCard(g: Graphics, o: GlyphOpts): void {
   const w = o.wPx;
   const h = o.hPx;
@@ -2746,6 +2881,8 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   TR: drawTR,
   POT: drawPOT,
   FF: drawFF,
+  SAMP: drawSAMP,
+  ASW: drawASW,
 };
 
 const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {

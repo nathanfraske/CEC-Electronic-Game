@@ -761,6 +761,44 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // Clocked sampler (sim type 22): the ADC atom — a clocked 1-bit quantizer. Pins
+  // are ordered OUT, IN, CLK so buildNetlist's pin→terminal map is direct (pin 0 → a
+  // = OUT digital, 1 → b = IN analog sense, 2 → c = CLK), matching the core. On each
+  // rising CLK edge it latches OUT = (V(IN) > threshold); `value` is that comparison
+  // threshold (volts). Output on the right (OUT), the sensed input + the edge-clock
+  // CLK on the left. Uses `c`, so it joins THREE_PIN_TYPES in netlist.ts. Cyan, the
+  // clocked/memory family alongside the flip-flop.
+  SAMP: kind(
+    "SAMP",
+    "Clocked Sampler",
+    "cyan",
+    [pin("OUT", 2, 1), pin("IN", 0, 0), pin("CLK", 0, 2)],
+    2.5,
+    "V",
+    true,
+  ),
+  // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
+  // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
+  // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =
+  // GND), matching the core. Closed (low-resistance a↔b) when V(CTRL) − V(GND) >
+  // 0.5·rail, else open; `value` is the on-resistance R_on (Ω). The switched path A↔B
+  // runs left→right, the control CTRL on the left, VCC/GND as the top/bottom power
+  // pins. Uses `e` (and `c`/`d`), so it joins FIVE_PIN_TYPES in netlist.ts. Violet.
+  ASW: kind(
+    "ASW",
+    "Analog Switch",
+    "violet",
+    [
+      pin("A", 0, 1),
+      pin("B", 2, 1),
+      pin("CTRL", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    100,
+    "Ω",
+    true,
+  ),
   // Level shifter (sim type 20): translates a logic level across rails. Pins OUT,
   // IN (pin 0 → a = output, 1 → b = input). `value` is the INPUT rail (rail A, the
   // threshold side); the OUTPUT rail (rail B) is the second scalar (Component.amp,

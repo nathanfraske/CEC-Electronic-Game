@@ -594,6 +594,35 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  SAMP: {
+    name: "Clocked Sampler",
+    equation: "OUT ← (IN > Vth) on ↑CLK",
+    headline: (e, vth) =>
+      `Threshold ${f(vth, "V")} · clock-edge quantize · OUT drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A clocked sampler is the atom of an analog-to-digital converter: on each rising edge of its clock it compares its analog input against a fixed threshold and latches a single bit — high if the input is above the threshold, low if below — holding that bit on its output until the next edge. Between edges it ignores the input entirely. That is the two halves of digitising a signal in their simplest form: SAMPLE (freeze a value on the clock edge) and QUANTIZE (decide which side of a level it fell on). Chain many of these at staggered thresholds and you have a flash ADC; feed one a ramp and a comparator and you have the heart of a successive-approximation converter. The input is sensed, not loaded (it draws essentially no current); the output is driven hard to the rail or ground one tick after the edge.",
+    derived: (e, vth) => [
+      { label: "Comparison threshold", value: f(vth, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Output bit", value: e.current >= 0 ? "follows IN>Vth" : "—" },
+    ],
+  },
+  ASW: {
+    name: "Analog Switch",
+    equation: "A↔B when CTRL high · R_on",
+    headline: (e, ron) =>
+      `R_on ${f(ron, "Ω")} · ${Math.abs(e.vAcross) < 0.25 ? "closed" : "open"} · ${f(e.current, "A")} through`,
+    plain: () =>
+      "An analog switch (a transmission gate) is a digitally-controlled connection between two nodes: a logic level on its control pin decides whether the A and B terminals are joined by a low resistance (closed) or isolated (open). Unlike a logic gate it does not produce a level — it PASSES whatever analog signal is on the path, in either direction, so it works as happily on a slow sensor voltage as on a logic line. It is the building block of analog multiplexers (steer one of several inputs to a shared output), sample-and-hold front ends (briefly close to charge a hold capacitor, then open to freeze the value), and programmable signal routing. When closed it is not ideal: it has a small on-resistance R_on in series, which forms a divider with whatever it feeds and limits how fast it can charge a capacitive load. It closes when the control rises above half the supply rail and opens below it.",
+    derived: (e, ron) => [
+      { label: "On-resistance R_on", value: f(ron, "Ω") },
+      {
+        label: "State",
+        value: Math.abs(e.vAcross) < 0.25 ? "closed (A↔B)" : "open",
+      },
+      { label: "Through current", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

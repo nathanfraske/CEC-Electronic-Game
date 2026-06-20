@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-20 (70) — Web wiring chunk 1: sampler + analog switch placeable; 555 guidesheet
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Started "wire it all up" (web-exposing the
+backed sim parts). Also drafted the **555 design-agent guidesheet** (`docs/ui/parts/ne555-guidesheet.md`,
+target `ne555-ic.html`).
+
+**Recon (Explore agent mapped the part pipeline):** the 7-step add-a-part pattern is
+`graph.ts` PART_KINDS → `netlist.ts` TYPE_OF + the `*_PIN_TYPES` sets (drive c/d/e/f emission) →
+`glyphs.ts` drawer + DRAWERS map → `partInfo.ts` PART_INFO → `values.ts` CURATED_FULL/CHIPS →
+`codex.ts` category + PART_META → `App.svelte` PARTS + category + keywords. **BUF/XNOR were already
+wired** (the CLAUDE.md/logic-nets "GATE_AUX gap" was STALE — fixed that doc). Genuinely unwired:
+comparator, sampler, analog switch, behavioral (SPI/UART/LUT), CEC composition parts.
+
+**LANDED (chunk 1) — verified the full web gate (build:wasm/check/lint/build all green) + reviewed the
+netlist mapping myself:**
+- **SAMP "Clocked Sampler"** → `ELEM_SAMPLER` (type 22). Pins OUT/IN/CLK (a/b/c), value=threshold (V).
+  Wired via `THREE_PIN_TYPES += 22` (emits CLK as c). The ADC atom.
+- **ASW "Analog Switch"** → `ELEM_ASWITCH` (type 24). Pins A/B/CTRL/VCC/GND (a/b/c/d/e), value=R_on (Ω).
+  Wired via `FIVE_PIN_TYPES += 24` (the nc/nd/ne checks all test FIVE_PIN membership → emits c/d/e).
+  Transmission gate / S&H / mux building block. Robust to unconnected pins (CTRL unwired → open).
+
+**NEXT chunks (ordered):**
+1. **Comparator** (`ELEM_COMPARATOR`=23, 6-pin OUT/IN+/IN-/VCC/GND/LE). GOTCHA: sim treats `e.f==0` as
+   "transparent", but an UNCONNECTED web pin maps to a floating node (≠0) → would wrongly LATCH. Need
+   to detect LE-unconnected and emit f=0 (first f-terminal user — generalize `pushFGH` to take `nf`,
+   add a `SIX_PIN_TYPES={23}`), OR ship 5-pin continuous (drop LE) first.
+2. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin, prog id in `value`, LUT
+   truth table in `aux`, mode in `params[4]`; needs config surfaces — a truth-table editor for the LUT).
+3. **CEC composition parts** (adder/half-adder/mux/demux/majority/tri-state/SR-latch/D-latch/JK) —
+   multi-element `buildNetlist` macros (no new sim element; cross-coupled gates etc.).
+
+---
+
 ## 2026-06-20 (69) — Landed the LUT refsheet (CEC2064) — CLEANEST UPLOAD YET
 
 **State:** 🟢 owner's LUT refsheet landed + pushed → `docs/ui/parts/lut-ic.html` (built from

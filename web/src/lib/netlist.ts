@@ -125,6 +125,15 @@ const TYPE_OF: Record<string, number> = {
   // a = Q output, 1 → b = D input, 2 → c = CLK input, 3 → d = Q̄ output). `value` is
   // the logic rail. Uses `d`, so it joins FOUR_PIN_TYPES below.
   FF: 19,
+  // Clocked sampler: a THREE-terminal clocked 1-bit quantizer (the ADC atom). Pins
+  // ordered OUT, IN, CLK (pin 0 → a = OUT, 1 → b = IN, 2 → c = CLK). `value` = the
+  // comparison threshold (volts). Uses `c` (its CLK), so it joins THREE_PIN_TYPES below.
+  SAMP: 22,
+  // Analog switch: a FIVE-terminal node-gated transmission gate. Pins ordered A, B,
+  // CTRL, VCC, GND (pin 0 → a, 1 → b = signal path, 2 → c = CTRL, 3 → d = VCC, 4 → e =
+  // GND). `value` = the on-resistance R_on (Ω). Uses `c`/`d`/`e`, so it joins
+  // FIVE_PIN_TYPES below.
+  ASW: 24,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -132,11 +141,14 @@ const TYPE_OF: Record<string, number> = {
 
 /**
  * Element types that carry a third (control) terminal `c`: the MOSFETs (gate),
- * the BJTs (base), and the op-amp (its non-inverting input IN+). For all of them
- * pin 2 → c, and that pin's node is the one stamped into the `c` array; every
- * two-terminal element leaves c = 0 (ground), where the core ignores it.
+ * the BJTs (base), the op-amp (its non-inverting input IN+), and the clocked sampler
+ * (type 22, its CLK). For all of them pin 2 → c, and that pin's node is the one
+ * stamped into the `c` array; every two-terminal element leaves c = 0 (ground), where
+ * the core ignores it. (A 4-/5-pin device also stamps its pin-2 node via this set —
+ * see the `nc` computation below — so the transformer, flip-flop, and analog switch
+ * route through their FOUR_/FIVE_PIN_TYPES membership, not this set.)
  */
-const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
+const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17, 22]);
 
 /**
  * Element types that carry a **fourth** terminal `d`: the transformer (type 18,
@@ -147,12 +159,14 @@ const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
 const FOUR_PIN_TYPES = new Set<number>([18, 19]);
 
 /**
- * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17),
- * whose five pins are OUT, IN1, IN2, VCC (pin 3 → d), GND (pin 4 → e). The gate reads
- * its rail as `V(VCC) − V(GND)` from these pins; with neither power pin wired (both
- * default to ground) the core falls back to the legacy `value` rail. Pin 4 → e.
+ * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17,
+ * pins OUT, IN1, IN2, VCC, GND) and the analog switch (type 24, pins A, B, CTRL, VCC,
+ * GND). For both, pin 3 → d = VCC and pin 4 → e = GND. The `nc`/`nd`/`ne` computations
+ * below all test FIVE_PIN_TYPES membership, so adding a kind here emits its full
+ * c (pin 2) / d (pin 3) / e (pin 4) trio. Every element with fewer pins leaves e = 0
+ * (ground), where the core ignores it. Pin 4 → e.
  */
-const FIVE_PIN_TYPES = new Set<number>([17]);
+const FIVE_PIN_TYPES = new Set<number>([17, 24]);
 
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
