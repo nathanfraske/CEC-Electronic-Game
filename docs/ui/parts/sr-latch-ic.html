@@ -291,6 +291,9 @@
       var w=el('rect',{x:x-25,y:CBOT-2,width:50,height:0,fill:'oklch(0.6 0.14 232 / 0.55)'});gT2.appendChild(w);return w;
     }
     t2.qW=tank(QX,'Q'); t2.qbW=tank(QBX,'Qbar');
+    // Q output : the Q chamber level taken out to pin 1
+    t2.outQ=pipe('M '+(QX-28)+' 292 L '+XQ+' 292 L '+XQ+' '+PKY1,CYAN,2.4);
+    gT2.appendChild(el('text',{x:XQ-4,y:288,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'end'},'Q'));
     // fill (VCC -> valve -> chamber) and drain (chamber -> valve -> GND) pipes
     t2.qFill=pipe('M '+QX+' '+VY+' L '+QX+' '+CTOP,LO,2.4);
     t2.qbFill=pipe('M '+QBX+' '+VY+' L '+QBX+' '+CTOP,LO,2.4);
@@ -322,6 +325,7 @@
     var FULL=t2.CBOT-t2.CTOP-4;
     function setW(w,frac){var th=clamp(frac,0,1)*FULL;var cy=parseFloat(w.getAttribute('y')),ch=t2.CBOT-2-cy,nh=ch+(th-ch)*0.18;w.setAttribute('y',(t2.CBOT-2-nh).toFixed(1));w.setAttribute('height',Math.max(nh,0).toFixed(1));}
     setW(t2.qW,s.Q);setW(t2.qbW,s.Qn);
+    t2.outQ.setAttribute('stroke',s.Q?HI:LO);
     var qFill=(s.R===0&&s.Qn===0), qbFill=(s.S===0&&s.Q===0);
     setVvalve(t2.qFv,qFill);setVvalve(t2.qbFv,qbFill);
     setVvalve(t2.qDv,!qFill);setVvalve(t2.qbDv,!qbFill);
@@ -508,9 +512,16 @@
     gT5.appendChild(el('text',{x:470,y:293,'font-family':'var(--font-mono)','font-size':7.5,fill:ORANGE,'text-anchor':'start'},'R'));
     // gate B rail (input Qbar, fed from the other NOR off-slice)
     t5.mGB=m('M 302 '+GT+' L 302 272 L 502 272 L 502 '+GT,CYAN,1.8);
-    t5.mGBin=m('M 502 272 L 542 272',CYAN,1.8);dot(502,272,CYAN);
-    gT5.appendChild(el('text',{x:546,y:268,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'start'},'Qbar'));
-    gT5.appendChild(el('text',{x:546,y:279,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'start'},'from other NOR'));
+    // the other NOR (NOR2) is off this slice : it takes S and the fed-back Q and returns Qbar
+    gT5.appendChild(el('rect',{x:544,y:250,width:36,height:50,rx:4,fill:'oklch(0.15 0.018 285)',stroke:'oklch(0.32 0.03 285)','stroke-width':1,'stroke-dasharray':'3 2'}));
+    gT5.appendChild(el('text',{x:562,y:271,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'NOR2'));
+    gT5.appendChild(el('text',{x:562,y:283,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'middle'},'off slice'));
+    t5.mGBin=m('M 502 272 L 544 272',CYAN,1.8);dot(502,272,CYAN);
+    gT5.appendChild(el('text',{x:512,y:266,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'start'},'Qbar'));
+    t5.wS=m('M '+XS+' '+PKY1+' L '+XS+' 446 L 588 446 L 588 300 L 562 300',ACCENT,1.8);
+    gT5.appendChild(el('text',{x:548,y:314,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'start'},'S'));
+    t5.mQfb=m('M 526 246 L 562 246 L 562 250',CYAN,1.6);dot(526,246,CYAN);
+    gT5.appendChild(el('text',{x:540,y:242,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'start'},'Q'));
     // legend + note
     gT5.appendChild(el('text',{x:34,y:250,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'SILICON'));
     gT5.appendChild(el('text',{x:34,y:268,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'one NOR cell of the'));
@@ -533,6 +544,8 @@
     t5.mQ.setAttribute('stroke',qc);t5.mQ2.setAttribute('stroke',qc);t5.wQ.setAttribute('stroke',qc);
     var gac=s.R?ORANGE:'oklch(0.42 0.05 50)';t5.mGA.setAttribute('stroke',gac);t5.mGAf.setAttribute('stroke',gac);
     t5.mGB.setAttribute('stroke',s.Qn?HI:'oklch(0.34 0.05 232)');t5.mGBin.setAttribute('stroke',s.Qn?HI:'oklch(0.34 0.05 232)');
+    t5.wS.setAttribute('stroke',s.S?ACCENT:'oklch(0.36 0.06 18)');
+    t5.mQfb.setAttribute('stroke',s.Q?HI:LO);
     var net={PA:s.R?ORANGE:LO, NA:s.R?ORANGE:LO, PB:s.Qn?HI:LO, NB:s.Qn?HI:LO};
     for(var gi=0;gi<t5.gateLabs.length;gi++){t5.gateLabs[gi].txt.setAttribute('fill',net[t5.gateLabs[gi].key]||BRONZE);}
     if(s.mode==='forbidden'){t5.stateLab.textContent='both inputs high : an NMOS in each side conducts, output pulled low';t5.stateLab.setAttribute('fill',BAD);}
