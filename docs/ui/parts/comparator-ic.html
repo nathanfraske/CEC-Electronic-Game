@@ -87,12 +87,10 @@
 <div class="wrap">
   <div class="hud-header">
     <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
-    <div class="header-meta"><span class="chip chip-accent" id="chipType">COMP</span><span class="chip" id="chipReg">COMPARE</span></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">ADCMP601</span><span class="chip" id="chipReg">COMPARE</span></div>
   </div>
-
   <h1 class="lede">The latched comparator, five layers down</h1>
   <p class="intro">A comparator answers one question: which input is higher. It is the 1-bit converter that turns an analog difference into a single digital bit. Here it is the <b>ADCMP601</b>, a rail-to-rail latched comparator in a six-pin SC70 package. The output Q goes high when the analog input VP sits above VN, and the latch control LE decides whether that result is held: drive LE low to latch the last decision, leave it high to track. The defining heart is a <b>regenerative cross-coupled latch</b>, a positive-feedback loop that drives a tiny input difference to a full rail in nanoseconds, the same cross-coupled cell that stores a bit in a flip-flop. The first tier is the logic symbol with the real pinout and the decision table. The second is the flow network: two cross-coupled chambers, each piloting the other to the opposite level, with the differential input tipping the balance and an LE valve that holds it. The third opens the differential pair as <b>pressure-pilot valves</b>, where the higher input lifts its plug more and drains its node. The fourth is the schematic, the diff pair feeding the cross-coupled latch over an LE-gated tail current source. The fifth is the silicon, the differential pair and the cross-coupled load on one die. When the two inputs are nearly equal the latch hangs near mid-rail, the <b>metastable</b> state, balanced and slow to decide. The metastable band shown here is widened for the eye, since the real input offset is only a few millivolts.</p>
-
   <div class="modebar">
     <span class="seg-label">view</span>
     <div class="seg" id="tierSeg">
@@ -103,7 +101,6 @@
       <button data-t="t5">5 &middot; silicon</button>
     </div>
   </div>
-
   <div class="main">
     <div class="board-frame">
       <span class="scope-tag" id="visTag">schematic</span>
@@ -115,7 +112,6 @@
       <div class="panel"><h2 class="panel-title">Transfer curve</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
     </div>
   </div>
-
   <div class="transport">
     <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">input V+ (VP)</span><span class="ic-val" id="labVin">0.00 V</span></div><input type="range" class="ta" id="vin" min="0" max="600" value="360"></div>
     <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">input V- (VN)</span><span class="ic-val" id="labVinb">0.00 V</span></div><input type="range" class="ta" id="vinb" min="0" max="600" value="250"></div>
@@ -124,7 +120,6 @@
     <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">threshold V_t</span><span class="ic-val" id="labVt">1.00 V</span></div><input type="range" class="tb" id="vt" min="50" max="200" value="100"></div>
     <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
   </div>
-
   <footer id="footnote"></footer>
 </div>
 <script>
@@ -139,56 +134,44 @@
   function flowDots(run,dots,path,len,norm,col,fwd){var on=(norm>0.02),sp=(0.2+norm*0.95);for(var i=0;i<dots.length;i++){var o=dots[i];if(run&&on){o.u=(o.u+sp*0.004)%1;}var uu=fwd?o.u:(1-o.u),pt=path.getPointAtLength(uu*len);o.el.setAttribute('cx',pt.x.toFixed(1));o.el.setAttribute('cy',pt.y.toFixed(1));o.el.setAttribute('opacity',(on?clamp(0.35+norm,0,1):0).toFixed(2));o.el.setAttribute('fill',col);}}
   function th(i){return (i*0.61803398875)%1;}
   function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
-
   var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff';
   function wcol(v,VDD){return mix(LO,HI,clamp(v/VDD,0,1));}
-
   var defs=el('defs',{});
   var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
   svg.appendChild(defs);
-
   // ===== latched comparator model (differential compare -> regenerative latch -> held output) =====
-  // Vp,Vn are the analog inputs ; Vle is the latch control (drive low to latch) ; st = stored decision bit.
-  // The output node pair (Vqa,Vqb) is a cross-coupled positive-feedback latch: tiny input imbalance is
-  // regenerated to a full-rail decision, and held when latched.
   var KP=0.5, LAMBDA=0.02;
   function comparator(Vp,Vn,Vle,VDD,Vt,st){
     Vp=clamp(Vp,0,VDD); Vn=clamp(Vn,0,VDD); Vle=clamp(Vle,0,VDD);
     var dV=Vp-Vn;
-    var Vmeta=0.035*VDD;                 // regeneration sharpness (exaggerated metastable band for the eye)
-    var compareMode=(Vle>VDD/2);          // LE high -> compare/track ; LE low -> latch/hold
-    var resolve=Math.tanh(dV/Vmeta);      // -1..+1, near-vertical through dV=0
+    var Vmeta=0.035*VDD;
+    var compareMode=(Vle>VDD/2);
+    var resolve=Math.tanh(dV/Vmeta);
     var stored=st;
     if(compareMode){ stored=(dV>=0)?1:0; }
     var Vqa,Vqb;
     if(compareMode){ Vqa=VDD/2+(VDD/2)*0.97*resolve; Vqb=VDD/2-(VDD/2)*0.97*resolve; }
     else { Vqa=stored?VDD*0.97:VDD*0.03; Vqb=stored?VDD*0.03:VDD*0.97; }
-    var Vout=stored?VDD:0;                 // buffered output Q
-    var metastable=compareMode&&(Math.abs(dV)<Vmeta*1.2);   // still deciding : nodes near mid-rail
-    // regeneration strength (how fast/hard the latch commits) grows with the imbalance
+    var Vout=stored?VDD:0;
+    var metastable=compareMode&&(Math.abs(dV)<Vmeta*1.2);
     var regen=clamp(Math.abs(resolve),0,1);
-    var Ibias=0.6*(VDD/5);                 // continuous-comparator bias current (normalized, roughly constant)
+    var Ibias=0.6*(VDD/5);
     return {Vp:Vp,Vn:Vn,Vle:Vle,dV:dV,Vqa:Vqa,Vqb:Vqb,Vout:Vout,stored:stored,
       compareMode:compareMode,metastable:metastable,resolve:resolve,regen:regen,Ibias:Ibias,Vmeta:Vmeta,
       lP:(Vp>VDD/2)?1:0,lN:(Vn>VDD/2)?1:0,lLE:compareMode?1:0,lOut:stored,VDD:VDD};
   }
   function fmtV(v){return v.toFixed(2)+' V';}
   function fmtI(I){var a=Math.abs(I);if(a<1e-7)return '0';if(a<1e-3)return (I*1e6).toFixed(1)+' uA';if(a<1)return (I*1000).toFixed(2)+' mA';return I.toFixed(2)+' A';}
-
   var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
   svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
-
   // ============ TIER 1 : SYMBOL ============
   var t1={};
-  // ===== shared SC70-6 package frame, real ADCMP601 pinout, identical in every tier =====
   var PKX0=190,PKX1=590,PKY0=116,PKY1=456;
-  // real ADCMP601 (SC70-6) pinout, top view rotated so the two pin rows sit top/bottom (counterclockwise 1..6)
-  // top L-R : VCC(6) LE(5) VN(4)   bottom L-R : Q(1) GND(2) VP(3)
   var PIN={vcc:[270,PKY0], le:[390,PKY0], vn:[510,PKY0], q:[270,PKY1], gnd:[390,PKY1], vp:[510,PKY1]};
   var XVCC=270,XLE=390,XVN=510,XQ=270,XGND=390,XVP=510;
   function drawPkg(g){
     g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
-    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));  // pin-1 marker by Q
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));
     function pin(x,top,num,name,col){
       var ty=top?PKY0-28:PKY1;
       g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
@@ -204,38 +187,29 @@
     gT1.appendChild(el('text',{x:30,y:166,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'LATCHED COMPARATOR'));
     gT1.appendChild(el('text',{x:30,y:182,'font-family':'var(--font-mono)','font-size':10,fill:FAINT},'compare, then hold'));
     gT1.appendChild(el('text',{x:30,y:200,'font-family':'var(--font-mono)','font-size':9,fill:DIM},'Q = 1 if VP > VN'));
-    // comparator triangle points left : inputs on the right from the VP/VN pins, apex (output) on the left
     var bx=470, ty0=242, ty1=330, apx=372, my=286;
     t1.body=el('path',{d:'M '+bx+' '+ty0+' L '+apx+' '+my+' L '+bx+' '+ty1+' Z',fill:'rgba(154,166,189,0.06)',stroke:STEEL,'stroke-width':2.4,'stroke-linejoin':'round'});gT1.appendChild(t1.body);
     gT1.appendChild(el('text',{x:bx-20,y:270,'font-family':'var(--font-mono)','font-size':15,fill:DIM,'text-anchor':'middle'},'-'));
     gT1.appendChild(el('text',{x:bx-20,y:316,'font-family':'var(--font-mono)','font-size':15,fill:DIM,'text-anchor':'middle'},'+'));
-    // VN input (-) from pin 4 (top)
     t1.wN=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' 262 L '+bx+' 262',fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wN);
     t1.nN=el('circle',{cx:XVN,cy:PKY0,r:4,fill:STEEL});gT1.appendChild(t1.nN);
     gT1.appendChild(el('text',{x:bx+10,y:258,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'start'},'VN'));
-    // VP input (+) from pin 3 (bottom)
     t1.wP=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' 310 L '+bx+' 310',fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wP);
     t1.nP=el('circle',{cx:XVP,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nP);
     gT1.appendChild(el('text',{x:bx+10,y:314,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'text-anchor':'start'},'VP'));
-    // latch stage : box left of the apex, gated by LE
     var lxa=300,lxb=352,lya=266,lyb=306;
     t1.latch=el('rect',{x:lxa,y:lya,width:lxb-lxa,height:lyb-lya,rx:3,fill:'rgba(95,208,255,0.05)',stroke:STEEL,'stroke-width':1.6});gT1.appendChild(t1.latch);
     gT1.appendChild(el('text',{x:(lxa+lxb)/2,y:my+4,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'middle'},'latch'));
-    // clock notch (edge marker)
     gT1.appendChild(el('path',{d:'M '+lxb+' '+(my-7)+' L '+(lxb-8)+' '+my+' L '+lxb+' '+(my+7),fill:'none',stroke:CYAN,'stroke-width':1.4}));
     gT1.appendChild(el('line',{x1:apx,y1:my,x2:lxb,y2:my,stroke:LO,'stroke-width':3,'stroke-linecap':'round'}));
-    // LE input from pin 5 (top center)
     t1.wLE=el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' '+(lya-20)+' L '+((lxa+lxb)/2)+' '+(lya-20)+' L '+((lxa+lxb)/2)+' '+lya,fill:'none',stroke:CYAN,'stroke-width':2.4,'stroke-linecap':'round'});gT1.appendChild(t1.wLE);
     t1.nLE=el('circle',{cx:XLE,cy:PKY0,r:4,fill:STEEL});gT1.appendChild(t1.nLE);
     gT1.appendChild(el('text',{x:(lxa+lxb)/2+6,y:lya-24,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'LE'));
-    // Q output to pin 1 (bottom left)
     t1.wQ=el('path',{d:'M '+lxa+' '+my+' L 282 '+my+' L 282 402 L '+XQ+' 402 L '+XQ+' '+PKY1,fill:'none',stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT1.appendChild(t1.wQ);
     t1.nQ=el('circle',{cx:XQ,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nQ);
     t1.dQ=el('text',{x:284,y:my-8,'font-family':'var(--font-mono)','font-size':16,fill:HI,'text-anchor':'middle'},'1');gT1.appendChild(t1.dQ);
-    // input value readouts on the wires
     t1.vP=el('text',{x:486,y:302,'font-family':'var(--font-mono)','font-size':10,fill:HI,'text-anchor':'middle'},'');gT1.appendChild(t1.vP);
     t1.vN=el('text',{x:486,y:254,'font-family':'var(--font-mono)','font-size':10,fill:HI,'text-anchor':'middle'},'');gT1.appendChild(t1.vN);
-    // decision table
     var TX=40,TY=250;
     gT1.appendChild(el('text',{x:TX,y:TY-12,'font-family':'var(--font-display)','font-size':11,fill:FAINT,'letter-spacing':'0.1em'},'DECISION'));
     gT1.appendChild(el('text',{x:TX+8,y:TY,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'start'},'inputs'));
@@ -268,7 +242,7 @@
     t1.note.textContent=s.metastable?'inputs too close: deciding':(s.compareMode?(s.stored?'VP above VN, Q = 1':'VP below VN, Q = 0'):'latched: Q held at '+s.stored);
     t1.note.setAttribute('fill',s.metastable?WARM:(s.compareMode?OK:CYAN));
   }
-  // ============ TIER 2 : FLOW NETWORK (the comparator as cross-coupled chambers) ============
+  // ============ TIER 2 : FLOW NETWORK ============
   var t2={};
   function mkv2(cx,cy,horiz){
     var g={cx:cx,cy:cy,horiz:!!horiz};
@@ -283,21 +257,18 @@
     drawPkg(gT2);
     var VCCy=158, GNDy=434, qaX=346, qbX=478, chT=250, chB=350, cw=42;
     t2.chT=chT;t2.chB=chB;
-    // VCC + GND rails
     gT2.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCy,fill:'none',stroke:HI,'stroke-width':2.4}));
     gT2.appendChild(el('line',{x1:XVCC,y1:VCCy,x2:520,y2:VCCy,stroke:HI,'stroke-width':3,'stroke-linecap':'round'}));
     gT2.appendChild(el('text',{x:522,y:VCCy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'VCC'));
     gT2.appendChild(el('line',{x1:300,y1:GNDy,x2:520,y2:GNDy,stroke:LO,'stroke-width':3,'stroke-linecap':'round'}));
     gT2.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' '+GNDy,fill:'none',stroke:LO,'stroke-width':2.4}));
     gT2.appendChild(el('text',{x:522,y:GNDy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'GND'));
-    // two chambers Qa (left), Qb (right)
     function chamber(x,lab){gT2.appendChild(el('rect',{x:x-cw/2,y:chT,width:cw,height:chB-chT,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.6}));
       var lvl=el('rect',{x:x-cw/2+3,y:chB-3,width:cw-6,height:0,rx:2,fill:'rgba(127,208,255,0.55)'});gT2.appendChild(lvl);
       gT2.appendChild(el('text',{x:x,y:chT-32,'font-family':'var(--font-mono)','font-size':12,fill:CYAN,'text-anchor':'middle'},lab));
       var vt=el('text',{x:x,y:chB+16,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'middle'},'');gT2.appendChild(vt);
       return {lvl:lvl,vt:vt,x:x};}
     t2.qa=chamber(qaX,'Qa');t2.qb=chamber(qbX,'Qb');
-    // fill valves (VCC -> chamber) and drain valves (chamber -> GND), cross-piloted
     gT2.appendChild(el('line',{x1:qaX,y1:VCCy,x2:qaX,y2:chT-21+21-21,stroke:STEEL,'stroke-width':2,opacity:0}));
     t2.qaFill=mkv2(qaX,chT-28);  gT2.appendChild(el('line',{x1:qaX,y1:VCCy,x2:qaX,y2:chT-28-21,stroke:HI,'stroke-width':2}));gT2.appendChild(el('line',{x1:qaX,y1:chT-28+21,x2:qaX,y2:chT,stroke:STEEL,'stroke-width':2}));
     t2.qaDrain=mkv2(qaX,chB+28); gT2.appendChild(el('line',{x1:qaX,y1:chB,x2:qaX,y2:chB+28-21,stroke:STEEL,'stroke-width':2}));gT2.appendChild(el('line',{x1:qaX,y1:chB+28+21,x2:qaX,y2:GNDy,stroke:LO,'stroke-width':2}));
@@ -305,23 +276,18 @@
     t2.qbDrain=mkv2(qbX,chB+28); gT2.appendChild(el('line',{x1:qbX,y1:chB,x2:qbX,y2:chB+28-21,stroke:STEEL,'stroke-width':2}));gT2.appendChild(el('line',{x1:qbX,y1:chB+28+21,x2:qbX,y2:GNDy,stroke:LO,'stroke-width':2}));
     gT2.appendChild(el('text',{x:qaX-30,y:chT-28+3,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'end'},'fill'));
     gT2.appendChild(el('text',{x:qaX-30,y:chB+28+3,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'end'},'drain'));
-    // cross-pilot lines : Qb level pilots Qa valves ; Qa level pilots Qb valves
     t2.pilotBA=el('path',{d:'M '+(qbX-cw/2)+' '+((chT+chB)/2)+' L 412 '+((chT+chB)/2)+' L 412 '+(chT-28)+' L '+(qaX+23)+' '+(chT-28)+' M 412 '+((chT+chB)/2)+' L 412 '+(chB+28)+' L '+(qaX+23)+' '+(chB+28),fill:'none',stroke:WARM,'stroke-width':1.4,'stroke-dasharray':'3 3',opacity:0.6});gT2.appendChild(t2.pilotBA);
     t2.pilotAB=el('path',{d:'M '+(qaX+cw/2)+' '+((chT+chB)/2-8)+' L 424 '+((chT+chB)/2-8)+' L 424 '+(chT-28+8)+' L '+(qbX-23)+' '+(chT-28+8)+' M 424 '+((chT+chB)/2-8)+' L 424 '+(chB+28-8)+' L '+(qbX-23)+' '+(chB+28-8),fill:'none',stroke:WARM,'stroke-width':1.4,'stroke-dasharray':'3 3',opacity:0.6});gT2.appendChild(t2.pilotAB);
     gT2.appendChild(el('text',{x:418,y:299,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'middle'},'cross-'));
     gT2.appendChild(el('text',{x:418,y:309,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'middle'},'piloted'));
-    // differential input : VP (pin 3, bottom right) tips Qb ; VN (pin 4, top right) tips Qa ; LE (pin 5, top) gates the tail
     t2.vpIn=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' '+(chB+44)+' L '+(qbX+cw/2)+' '+(chB+44)+' L '+(qbX+cw/2)+' '+(chB-8),fill:'none',stroke:ACCENT,'stroke-width':2,'stroke-dasharray':'5 3'});gT2.appendChild(t2.vpIn);
     gT2.appendChild(el('text',{x:XVP+6,y:chB+48,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'start'},'VP tips Qb'));
     t2.vnIn=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' 182 L '+(qaX-cw/2-8)+' 182 L '+(qaX-cw/2-8)+' '+(chT+18),fill:'none',stroke:ACCENT,'stroke-width':2,'stroke-dasharray':'5 3'});gT2.appendChild(t2.vnIn);
     gT2.appendChild(el('text',{x:qaX-cw/2-12,y:178,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'end'},'VN tips Qa'));
-    // LE valve in the tail (pin 5, top center)
     t2.leW=el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' 206 L 412 206 L 412 '+((chT+chB)/2-12),fill:'none',stroke:CYAN,'stroke-width':2,'stroke-dasharray':'4 3'});gT2.appendChild(t2.leW);
     gT2.appendChild(el('text',{x:416,y:208,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'LE gate'));
-    // output Q from Qa to pin 1 (bottom left)
     t2.outW=el('path',{d:'M '+(qaX-cw/2)+' '+(chB-18)+' L 284 '+(chB-18)+' L 284 '+(GNDy+18)+' L '+XQ+' '+(GNDy+18)+' L '+XQ+' '+PKY1,fill:'none',stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT2.appendChild(t2.outW);
     t2.outV=el('text',{x:302,y:chB-24,'font-family':'var(--font-mono)','font-size':11,fill:HI,'text-anchor':'middle'},'');gT2.appendChild(t2.outV);
-    // legend
     gT2.appendChild(el('text',{x:34,y:172,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'FLOW NETWORK'));
     gT2.appendChild(el('text',{x:34,y:190,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'two chambers'));
     gT2.appendChild(el('text',{x:34,y:210,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'each chamber'));
@@ -334,7 +300,6 @@
     var VDD=s.VDD,H=t2.chB-t2.chT-6,cqa=wcol(s.Vqa,VDD),cqb=wcol(s.Vqb,VDD);
     function setLvl(c,v,col){var h=clamp(v/VDD,0,1)*H;c.lvl.setAttribute('y',(t2.chB-3-h).toFixed(1));c.lvl.setAttribute('height',h.toFixed(1));c.lvl.setAttribute('fill',col);c.lvl.setAttribute('opacity','0.55');c.vt.textContent=fmtV(v);c.vt.setAttribute('fill',col);}
     setLvl(t2.qa,s.Vqa,cqa);setLvl(t2.qb,s.Vqb,cqb);
-    // Qa valves piloted by Qb : fill open when Qb low, drain open when Qb high
     var qaFill=clamp((VDD-s.Vqb-s.Vt)/2,0,1), qaDrain=clamp((s.Vqb-s.Vt)/2,0,1);
     var qbFill=clamp((VDD-s.Vqa-s.Vt)/2,0,1), qbDrain=clamp((s.Vqa-s.Vt)/2,0,1);
     setv2(t2.qaFill,qaFill);setv2(t2.qaDrain,qaDrain);setv2(t2.qbFill,qbFill);setv2(t2.qbDrain,qbDrain);
@@ -345,47 +310,38 @@
     t2.stateLab.textContent=s.metastable?'levels balanced : metastable':(s.compareMode?(s.stored?'Qa fills, Qb drains : Q=1':'Qa drains, Qb fills : Q=0'):'tail shut : levels held');
     t2.stateLab.setAttribute('fill',s.metastable?WARM:(s.compareMode?OK:CYAN));
   }
-  // ============ TIER 3 : PRESSURE PILOT VALVES (the differential pair, detailed) ============
+  // ============ TIER 3 : PRESSURE PILOT VALVES ============
   var t3={};
   function spring(x,y0,y1,w,n){var d='M '+x+' '+y0,seg=(y1-y0)/n;for(var i=0;i<n;i++){var yy=y0+seg*(i+0.5),xx=x+((i%2)?w:-w);d+=' L '+xx+' '+yy.toFixed(1);}d+=' L '+x+' '+y1;return d;}
   function buildT3(){
     drawPkg(gT3);
     var mpX=348, mnX=472, nodeT=204, nodeB=246, throatY=306, tailY=378, GNDy=432, cw=40;
     t3.throatY=throatY;
-    // VCC + GND
     gT3.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' 168 L '+mpX+' 168',fill:'none',stroke:HI,'stroke-width':2}));
     gT3.appendChild(el('line',{x1:mpX,y1:168,x2:mnX,y2:168,stroke:HI,'stroke-width':2}));
     gT3.appendChild(el('line',{x1:mpX,y1:168,x2:mpX,y2:nodeT,stroke:HI,'stroke-width':1.6,opacity:0.5}));
     gT3.appendChild(el('line',{x1:mnX,y1:168,x2:mnX,y2:nodeT,stroke:HI,'stroke-width':1.6,opacity:0.5}));
     gT3.appendChild(el('text',{x:mnX+24,y:171,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'VCC'));
-    // two node chambers (the diff-pair drains -> latch nodes)
     function chamber(x,lab){gT3.appendChild(el('rect',{x:x-cw/2,y:nodeT,width:cw,height:nodeB-nodeT,rx:3,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.4}));
       var lvl=el('rect',{x:x-cw/2+3,y:nodeB-3,width:cw-6,height:0,rx:1.5,fill:'rgba(127,208,255,0.55)'});gT3.appendChild(lvl);
       gT3.appendChild(el('text',{x:x,y:nodeT-6,'font-family':'var(--font-mono)','font-size':11,fill:CYAN,'text-anchor':'middle'},lab));
       var vt=el('text',{x:x+cw/2+4,y:nodeT+14,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'start'},'');gT3.appendChild(vt);return {lvl:lvl,vt:vt};}
-    t3.qa=chamber(mpX,'Qa');t3.qb=chamber(mnX,'Qb');  // VN valve (left) drains Qa ; VP valve (right) drains Qb
-    // detailed pilot valves : channel from node down through throat to tail
+    t3.qa=chamber(mpX,'Qa');t3.qb=chamber(mnX,'Qb');
     function valve(vx,sig){
       gT3.appendChild(el('line',{x1:vx-15,y1:nodeB,x2:vx-15,y2:tailY,stroke:STEEL,'stroke-width':2}));
       gT3.appendChild(el('line',{x1:vx+15,y1:nodeB,x2:vx+15,y2:tailY,stroke:STEEL,'stroke-width':2}));
-      // seat (narrowing) at throat
       var seatL=el('polygon',{points:poly([[vx-15,throatY-12],[vx-5,throatY],[vx-15,throatY+12]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':1});gT3.appendChild(seatL);
       var seatR=el('polygon',{points:poly([[vx+15,throatY-12],[vx+5,throatY],[vx+15,throatY+12]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':1});gT3.appendChild(seatR);
-      // flow dots
       var fdots=[];for(var i=0;i<6;i++){var c=el('circle',{r:2.6,fill:WATER2,opacity:0});gT3.appendChild(c);fdots.push({el:c,u:i/6,th:th(i)});}
-      // plug (lifts with overdrive)
       var plug=el('ellipse',{cx:vx,cy:throatY,rx:9,ry:11,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1.2});gT3.appendChild(plug);
-      // spring above plug (= Vt)
       var spr=el('path',{d:spring(vx,throatY-13,throatY-34,5,4),fill:'none',stroke:BRONZE,'stroke-width':1.4});gT3.appendChild(spr);
       gT3.appendChild(el('rect',{x:vx-13,y:throatY-38,width:26,height:5,rx:1.5,fill:'oklch(0.4 0.02 285)',stroke:STEEL,'stroke-width':0.8}));
-      // pilot lead (input pressure pushes the plug)
       var pilotDot=el('circle',{cx:vx-30,cy:throatY,r:2.6,fill:STEEL});gT3.appendChild(pilotDot);
       gT3.appendChild(el('line',{x1:vx-30,y1:throatY,x2:vx-9,y2:throatY,stroke:STEEL,'stroke-width':1.6,opacity:0.5}));
       var pilotTxt=el('text',{x:vx-34,y:throatY+3,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'end'},sig);gT3.appendChild(pilotTxt);
       return {vx:vx,plug:plug,spr:spr,seatL:seatL,seatR:seatR,fdots:fdots,pilotDot:pilotDot,pilotTxt:pilotTxt,sig:sig};
     }
     t3.mN=valve(mpX,'VN');t3.mP=valve(mnX,'VP');
-    // tail line + shared current source (LE-gated) -> GND
     gT3.appendChild(el('line',{x1:mpX,y1:tailY,x2:mnX,y2:tailY,stroke:STEEL,'stroke-width':2.4}));
     var tcx=410;gT3.appendChild(el('line',{x1:tcx,y1:tailY,x2:tcx,y2:tailY+8,stroke:STEEL,'stroke-width':2}));
     t3.tail=el('circle',{cx:tcx,cy:tailY+20,r:11,fill:'none',stroke:BRONZE,'stroke-width':1.8});gT3.appendChild(t3.tail);
@@ -394,18 +350,13 @@
     gT3.appendChild(el('line',{x1:mpX,y1:GNDy,x2:mnX,y2:GNDy,stroke:LO,'stroke-width':3,'stroke-linecap':'round'}));
     gT3.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' '+GNDy,fill:'none',stroke:LO,'stroke-width':2}));
     gT3.appendChild(el('text',{x:tcx+15,y:tailY+23,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'start'},'tail'));
-    // pilots from pins
     t3.vpW=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' 186 L '+(mnX-30)+' 186 L '+(mnX-30)+' '+throatY,fill:'none',stroke:ACCENT,'stroke-width':2});gT3.appendChild(t3.vpW);
     t3.vnW=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' 158 L '+(mpX-30)+' 158 L '+(mpX-30)+' '+throatY,fill:'none',stroke:ACCENT,'stroke-width':2});gT3.appendChild(t3.vnW);
-    // LE -> tail
     t3.leW=el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' '+(tailY-20)+' L '+(tcx+11)+' '+(tailY-20)+' L '+(tcx+11)+' '+(tailY+20),fill:'none',stroke:CYAN,'stroke-width':2,'stroke-dasharray':'4 3'});gT3.appendChild(t3.leW);
-    // output Q from Qa
     t3.outW=el('path',{d:'M '+(mpX-cw/2)+' '+(nodeT+12)+' L 300 '+(nodeT+12)+' L 300 '+(GNDy+12)+' L '+XQ+' '+(GNDy+12)+' L '+XQ+' '+PKY1,fill:'none',stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT3.appendChild(t3.outW);
     t3.outV=el('text',{x:mpX-cw/2-6,y:nodeT+8,'font-family':'var(--font-mono)','font-size':11,fill:HI,'text-anchor':'end'},'');gT3.appendChild(t3.outV);
-    // regeneration note (nodes feed the cross-coupled latch)
     t3.regTxt=el('text',{x:410,y:188,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'middle'},'to cross-coupled latch');gT3.appendChild(t3.regTxt);
     gT3.appendChild(el('path',{d:'M '+(mpX+cw/2)+' '+(nodeT+10)+' L 408 '+(nodeT+10)+' M 412 '+(nodeT+10)+' L '+(mnX-cw/2)+' '+(nodeT+10),fill:'none',stroke:WARM,'stroke-width':1,'stroke-dasharray':'2 2',opacity:0.5}));
-    // legend
     gT3.appendChild(el('text',{x:34,y:172,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'PILOT VALVES'));
     gT3.appendChild(el('text',{x:34,y:190,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'differential pair'));
     gT3.appendChild(el('text',{x:34,y:204,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'spring = V_t'));
@@ -415,10 +366,9 @@
     t3.stateLab=el('text',{x:34,y:290,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT3.appendChild(t3.stateLab);
   }
   function updateT3(s){
-    var VDD=s.VDD,H=t3.qa?28:28,cqa=wcol(s.Vqa,VDD),cqb=wcol(s.Vqb,VDD),nodeB=246,nodeT=204;
+    var VDD=s.VDD,cqa=wcol(s.Vqa,VDD),cqb=wcol(s.Vqb,VDD),nodeB=246,nodeT=204;
     function setLvl(c,v,col){var h=clamp(v/VDD,0,1)*(nodeB-nodeT-6);c.lvl.setAttribute('y',(nodeB-3-h).toFixed(1));c.lvl.setAttribute('height',h.toFixed(1));c.lvl.setAttribute('fill',col);c.lvl.setAttribute('opacity','0.55');c.vt.textContent=fmtV(v);c.vt.setAttribute('fill',col);}
     setLvl(t3.qa,s.Vqa,cqa);setLvl(t3.qb,s.Vqb,cqb);
-    // valve lift = input overdrive (input - Vt), normalized
     function setValve(v,vin,drains){var ov=Math.max(vin-s.Vt,0),lift=clamp(ov/2.2,0,1);var Yp=t3.throatY-lift*13;
       v.plug.setAttribute('cy',Yp.toFixed(1));v.plug.setAttribute('fill',lift>0.05?'#c7cfdd':'#8b93a0');
       v.spr.setAttribute('d',spring(v.vx,Yp-13,t3.throatY-34,5,4));
@@ -435,139 +385,158 @@
     t3.stateLab.setAttribute('fill',s.metastable?WARM:(s.compareMode?OK:CYAN));
   }
   function mosfet(group,gx,topY,botY,nodeY,isP){
-    // vertical MOSFET symbol: gate plate on left, channel, top + bottom terminals
     var g={isP:isP};
     var GX=gx, CX=gx+22, TY=topY, BY=botY;
     g.GX=GX;g.CX=CX;g.TY=TY;g.BY=BY;
-    // gate plate
     group.appendChild(el('line',{x1:GX,y1:TY+8,x2:GX,y2:BY-8,stroke:STEEL,'stroke-width':3.2}));
-    // three broken channel segments
     var segs=[[TY+8,TY+30],[TY+34,BY-34],[BY-30,BY-8]];
     segs.forEach(function(sgmt){group.appendChild(el('line',{x1:CX,y1:sgmt[0],x2:CX,y2:sgmt[1],stroke:STEEL,'stroke-width':3.6}));});
-    // induced channel (lights when on)
     g.chan=el('line',{x1:CX,y1:TY+8,x2:CX,y2:BY-8,stroke:OK,'stroke-width':4.5,'stroke-linecap':'round',opacity:0,filter:'url(#glow)'});group.appendChild(g.chan);
-    // top terminal
     group.appendChild(el('path',{d:'M '+CX+' '+(TY+18)+' L '+(CX+26)+' '+(TY+18)+' L '+(CX+26)+' '+TY,fill:'none',stroke:STEEL,'stroke-width':2.4}));
-    // bottom terminal
     group.appendChild(el('path',{d:'M '+CX+' '+(BY-18)+' L '+(CX+26)+' '+(BY-18)+' L '+(CX+26)+' '+BY,fill:'none',stroke:STEEL,'stroke-width':2.4}));
     g.topx=CX+26;g.botx=CX+26;
-    // gate lead to the left
     group.appendChild(el('line',{x1:GX,y1:(TY+BY)/2,x2:GX-30,y2:(TY+BY)/2,stroke:STEEL,'stroke-width':2.4}));
     g.gateLeadX=GX-30;g.gateY=(TY+BY)/2;
-    // bubble on gate for PMOS
     if(isP){g.bub=el('circle',{cx:GX-6,cy:(TY+BY)/2,r:5,fill:'var(--bg-2)',stroke:STEEL,'stroke-width':1.4});group.appendChild(g.bub);}
-    // body arrow (into channel for N, out for P) at mid
-    var ay=(TY+BY)/2+ (isP?-0:0);
     g.label=el('text',{x:CX+30,y:(TY+BY)/2+4,'font-family':'var(--font-mono)','font-size':12,fill:DIM},isP?'PMOS':'NMOS');group.appendChild(g.label);
     return g;
   }
+  // compact MOSFET for dense schematic tiers
+  function mosfetC(group,gx,topY,botY,isP){
+    var g={isP:isP}; var GX=gx, CX=gx+18, TY=topY, BY=botY, MY=(TY+BY)/2;
+    g.GX=GX;g.CX=CX;g.TY=TY;g.BY=BY;g.topx=CX+22;g.botx=CX+22;g.gateLeadX=GX-22;g.gateY=MY;
+    group.appendChild(el('line',{x1:GX,y1:TY+5,x2:GX,y2:BY-5,stroke:STEEL,'stroke-width':2.8}));
+    var segs=[[TY+5,TY+16],[TY+19,BY-19],[BY-16,BY-5]];
+    segs.forEach(function(s){group.appendChild(el('line',{x1:CX,y1:s[0],x2:CX,y2:s[1],stroke:STEEL,'stroke-width':3}));});
+    g.chan=el('line',{x1:CX,y1:TY+5,x2:CX,y2:BY-5,stroke:OK,'stroke-width':4,'stroke-linecap':'round',opacity:0,filter:'url(#glow)'});group.appendChild(g.chan);
+    group.appendChild(el('path',{d:'M '+CX+' '+(TY+13)+' L '+(CX+22)+' '+(TY+13)+' L '+(CX+22)+' '+TY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('path',{d:'M '+CX+' '+(BY-13)+' L '+(CX+22)+' '+(BY-13)+' L '+(CX+22)+' '+BY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('line',{x1:GX,y1:MY,x2:GX-22,y2:MY,stroke:STEEL,'stroke-width':2}));
+    if(isP){g.bub=el('circle',{cx:GX-5,cy:MY,r:3.5,fill:'var(--bg-2)',stroke:STEEL,'stroke-width':1.2});group.appendChild(g.bub);}
+    return g;
+  }
 
-  // ============ TIER 4 : REAL DEVICE (sense-amp latch : diff pair + cross-coupled latch) ============
+  // ============ TIER 4 : REAL DEVICE (sense-amp latch, real transistors) ============
   var t4={};
   function buildT4(){
     drawPkg(gT4);
-    var VCCy=158, GNDy=432, qaX=378, qbX=472, latTop=198, latBot=308, tailY=392;
+    var VCCy=176, GNDy=430, Lx=350, Rx=456, Tx=398, Bx=246;
+    var Lt=Lx+40, Rt=Rx+40, Tt=Tx+40, Bt=Bx+40;   // terminal x of each column (mosfetC: gx+40)
+    var QAY=246, QBY=246, INTY=311, TAILY=372;
     // rails
-    gT4.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCy,fill:'none',stroke:HI,'stroke-width':2.4}));
-    t4.vcc=el('line',{x1:XVCC,y1:VCCy,x2:510,y2:VCCy,stroke:HI,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.vcc);
-    gT4.appendChild(el('text',{x:512,y:VCCy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'VCC'));
-    gT4.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' '+GNDy,fill:'none',stroke:LO,'stroke-width':2.4}));
-    t4.gnd=el('line',{x1:300,y1:GNDy,x2:510,y2:GNDy,stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.gnd);
-    gT4.appendChild(el('text',{x:512,y:GNDy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'GND'));
-    // two latch node rails Qa (left), Qb (right)
-    t4.qaRail=el('line',{x1:qaX,y1:latTop,x2:qaX,y2:latBot,stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT4.appendChild(t4.qaRail);
-    t4.qbRail=el('line',{x1:qbX,y1:latTop,x2:qbX,y2:latBot,stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT4.appendChild(t4.qbRail);
-    gT4.appendChild(el('text',{x:qaX-6,y:latTop-4,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'middle'},'Qb'));
-    gT4.appendChild(el('text',{x:qbX+6,y:latTop-4,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'middle'},'Qa'));
-    // two cross-coupled inverters between the rails (the regenerative latch)
-    function xinv(cy,dir){ // dir=-1 points left (out->Qa), +1 points right (out->Qb)
-      var cxc=425, w=24, h=13;
-      var tipx=cxc+dir*(w/2), backx=cxc-dir*(w/2);
-      var body=el('path',{d:'M '+backx+' '+(cy-h)+' L '+tipx+' '+cy+' L '+backx+' '+(cy+h)+' Z',fill:'rgba(95,208,255,0.07)',stroke:STEEL,'stroke-width':1.7,'stroke-linejoin':'round'});gT4.appendChild(body);
-      var bub=el('circle',{cx:tipx+dir*5,cy:cy,r:4,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.5});gT4.appendChild(bub);
-      var outx=tipx+dir*9, outRail=(dir<0?qaX:qbX), inRail=(dir<0?qbX:qaX);
-      gT4.appendChild(el('line',{x1:outx,y1:cy,x2:outRail,y2:cy,stroke:STEEL,'stroke-width':1.8}));   // output to its rail
-      gT4.appendChild(el('line',{x1:backx,y1:cy,x2:inRail,y2:cy,stroke:STEEL,'stroke-width':1.8}));    // input from other rail
-      gT4.appendChild(el('circle',{cx:inRail,cy:cy,r:2.4,fill:STEEL}));
-      // supply stubs
-      gT4.appendChild(el('line',{x1:cxc,y1:cy-h,x2:cxc,y2:VCCy,stroke:HI,'stroke-width':1.2,opacity:0.4}));
-      gT4.appendChild(el('line',{x1:cxc,y1:cy+h,x2:cxc,y2:GNDy,stroke:LO,'stroke-width':1.2,opacity:0.4}));
-      return {body:body,bub:bub,cy:cy};
-    }
-    t4.invA=xinv(220,-1);  // out -> Qa, in <- Qb
-    t4.invB=xinv(256,1);   // out -> Qb, in <- Qa
-    gT4.appendChild(el('text',{x:425,y:188,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'middle'},'cross-coupled : regeneration'));
-    // ---- differential input pair (compares VP, VN), drains -> rails, sources -> tail ----
-    t4.m1=mosfet(gT4,322,316,374,0,false); t4.m2=mosfet(gT4,424,316,374,0,false);
-    t4.m1.label.textContent='';t4.m2.label.textContent='';
-    gT4.appendChild(el('line',{x1:370,y1:316,x2:qaX,y2:316,stroke:CYAN,'stroke-width':2}));   // M1 drain -> Qa
-    gT4.appendChild(el('line',{x1:qaX,y1:latBot,x2:qaX,y2:316,stroke:CYAN,'stroke-width':2.6}));
-    gT4.appendChild(el('line',{x1:472,y1:316,x2:qbX,y2:316,stroke:CYAN,'stroke-width':2}));   // M2 drain -> Qb (472=qbX)
-    gT4.appendChild(el('line',{x1:qbX,y1:latBot,x2:qbX,y2:316,stroke:CYAN,'stroke-width':2.6}));
-    // sources join to tail
-    gT4.appendChild(el('line',{x1:370,y1:374,x2:370,y2:tailY-14,stroke:STEEL,'stroke-width':2}));
-    gT4.appendChild(el('line',{x1:472,y1:374,x2:472,y2:tailY-14,stroke:STEEL,'stroke-width':2}));
-    gT4.appendChild(el('line',{x1:370,y1:tailY-14,x2:472,y2:tailY-14,stroke:STEEL,'stroke-width':2}));
-    // tail current source (LE-gated) -> GND
-    var tcx=421;
-    gT4.appendChild(el('line',{x1:tcx,y1:tailY-14,x2:tcx,y2:tailY-8,stroke:STEEL,'stroke-width':2}));
-    t4.tail=el('circle',{cx:tcx,cy:tailY,r:11,fill:'none',stroke:BRONZE,'stroke-width':1.8});gT4.appendChild(t4.tail);
-    gT4.appendChild(el('path',{d:'M '+tcx+' '+(tailY-6)+' L '+tcx+' '+(tailY+6)+' M '+(tcx-4)+' '+(tailY+1)+' L '+tcx+' '+(tailY+6)+' L '+(tcx+4)+' '+(tailY+1),fill:'none',stroke:BRONZE,'stroke-width':1.6}));
-    gT4.appendChild(el('line',{x1:tcx,y1:tailY+11,x2:tcx,y2:GNDy,stroke:STEEL,'stroke-width':2}));
-    gT4.appendChild(el('text',{x:tcx+16,y:tailY+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'tail'));
-    // gate labels VP, VN on the diff pair
-    t4.gpDot=el('circle',{cx:t4.m1.gateLeadX,cy:t4.m1.gateY,r:2.6,fill:STEEL});gT4.appendChild(t4.gpDot);
-    t4.gpTxt=el('text',{x:t4.m1.gateLeadX-5,y:t4.m1.gateY+3,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'end'},'VP');gT4.appendChild(t4.gpTxt);
-    t4.gnDot=el('circle',{cx:t4.m2.gateLeadX,cy:t4.m2.gateY,r:2.6,fill:STEEL});gT4.appendChild(t4.gnDot);
-    t4.gnTxt=el('text',{x:t4.m2.gateLeadX-5,y:t4.m2.gateY+3,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'end'},'VN');gT4.appendChild(t4.gnTxt);
-    // input stubs from pins
-    t4.vpStub=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' 412 L '+t4.m1.gateLeadX+' 412 L '+t4.m1.gateLeadX+' '+t4.m1.gateY,fill:'none',stroke:ACCENT,'stroke-width':2});gT4.appendChild(t4.vpStub);
-    t4.vnStub=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' 188 L '+t4.m2.gateLeadX+' 188 L '+t4.m2.gateLeadX+' '+t4.m2.gateY,fill:'none',stroke:ACCENT,'stroke-width':2});gT4.appendChild(t4.vnStub);
-    // LE -> tail enable
-    t4.leStub=el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' '+(tailY+22)+' L '+(tcx+11)+' '+(tailY+22)+' L '+(tcx+11)+' '+tailY,fill:'none',stroke:CYAN,'stroke-width':2,'stroke-dasharray':'4 3'});gT4.appendChild(t4.leStub);
-    // output buffer : Qa -> inverter -> Q
-    var obx=508;
-    gT4.appendChild(el('path',{d:'M '+qaX+' '+220+' L 344 220 L 344 168 L '+obx+' 168',fill:'none',stroke:STEEL,'stroke-width':1.6,opacity:0}));
-    t4.outTap=el('path',{d:'M '+qbX+' 236 L 494 236 L 494 176 L 286 176 L 286 '+(GNDy+15)+' L '+XQ+' '+(GNDy+15)+' L '+XQ+' '+PKY1,fill:'none',stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT4.appendChild(t4.outTap);
-    t4.outNode=el('circle',{cx:qbX,cy:236,r:3.4,fill:CYAN});gT4.appendChild(t4.outNode);
-    t4.outV=el('text',{x:300,y:188,'font-family':'var(--font-mono)','font-size':11,fill:HI,'text-anchor':'middle'},'');gT4.appendChild(t4.outV);
-    gT4.appendChild(el('text',{x:486,y:248,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'Qa -> Q'));
-    // values
+    gT4.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCy+' L '+(Bx-30)+' '+VCCy,fill:'none',stroke:HI,'stroke-width':2.2}));
+    t4.vcc=el('line',{x1:Bx-30,y1:VCCy,x2:Rt+8,y2:VCCy,stroke:HI,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.vcc);
+    gT4.appendChild(el('text',{x:Rt+10,y:VCCy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'VCC'));
+    gT4.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' '+GNDy,fill:'none',stroke:LO,'stroke-width':2.2}));
+    t4.gnd=el('line',{x1:Bx-30,y1:GNDy,x2:Rt+8,y2:GNDy,stroke:LO,'stroke-width':3,'stroke-linecap':'round'});gT4.appendChild(t4.gnd);
+    gT4.appendChild(el('text',{x:Rt+10,y:GNDy+3,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'GND'));
+    // ---- cross-coupled latch : PMOS M5/M6 over NMOS M3/M4 (two inverters, outputs cross-wired) ----
+    t4.m5=mosfetC(gT4,Lx,196,236,true);  t4.m3=mosfetC(gT4,Lx,256,296,false);  // left inverter -> Qa
+    t4.m6=mosfetC(gT4,Rx,196,236,true);  t4.m4=mosfetC(gT4,Rx,256,296,false);  // right inverter -> Qb
+    // ---- diff pair M1/M2 (NMOS), gates VP/VN ----
+    t4.m1=mosfetC(gT4,Lx,326,366,false); t4.m2=mosfetC(gT4,Rx,326,366,false);
+    // ---- tail switch M7 (NMOS), gate LE ----
+    t4.m7=mosfetC(gT4,Tx,382,420,false);
+    // device role labels
+    function lab(x,y,t,col){gT4.appendChild(el('text',{x:x,y:y,'font-family':'var(--font-mono)','font-size':7.5,fill:col||DIM,'text-anchor':'start'},t));}
+    lab(Lt+3,216,'M5',HOLE);lab(Rt+3,216,'M6',HOLE);lab(Lt+3,278,'M3',ELEC);lab(Rt+3,278,'M4',ELEC);
+    lab(Lt+3,348,'M1',ACCENT);lab(Rt+3,348,'M2',ACCENT);lab(Tt+3,403,'M7',CYAN);
+    // ---- wiring : PMOS sources to VCC ----
+    gT4.appendChild(el('line',{x1:Lt,y1:196,x2:Lt,y2:VCCy,stroke:HI,'stroke-width':1.8}));
+    gT4.appendChild(el('line',{x1:Rt,y1:196,x2:Rt,y2:VCCy,stroke:HI,'stroke-width':1.8}));
+    // Qa node (M5 drain - M3 drain) , Qb node (M6 drain - M4 drain)
+    t4.qaRail=el('line',{x1:Lt,y1:236,x2:Lt,y2:256,stroke:CYAN,'stroke-width':2.6});gT4.appendChild(t4.qaRail);
+    t4.qbRail=el('line',{x1:Rt,y1:236,x2:Rt,y2:256,stroke:CYAN,'stroke-width':2.6});gT4.appendChild(t4.qbRail);
+    t4.qaNode=el('circle',{cx:Lt,cy:QAY,r:3,fill:CYAN});gT4.appendChild(t4.qaNode);
+    t4.qbNode=el('circle',{cx:Rt,cy:QBY,r:3,fill:CYAN});gT4.appendChild(t4.qbNode);
+    gT4.appendChild(el('text',{x:Lt-2,y:QAY-6,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'end'},'Qa'));
+    gT4.appendChild(el('text',{x:Rt+6,y:QBY-6,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'Qb'));
+    // M3 source - M1 drain (left intermediate) ; M4 source - M2 drain (right)
+    gT4.appendChild(el('line',{x1:Lt,y1:296,x2:Lt,y2:326,stroke:STEEL,'stroke-width':1.8}));
+    gT4.appendChild(el('line',{x1:Rt,y1:296,x2:Rt,y2:326,stroke:STEEL,'stroke-width':1.8}));
+    // M1 source + M2 source -> tail node -> M7 drain
+    gT4.appendChild(el('line',{x1:Lt,y1:366,x2:Lt,y2:TAILY,stroke:STEEL,'stroke-width':1.8}));
+    gT4.appendChild(el('line',{x1:Rt,y1:366,x2:Rt,y2:TAILY,stroke:STEEL,'stroke-width':1.8}));
+    gT4.appendChild(el('line',{x1:Lt,y1:TAILY,x2:Rt,y2:TAILY,stroke:STEEL,'stroke-width':1.8}));
+    gT4.appendChild(el('line',{x1:Tt,y1:TAILY,x2:Tt,y2:382,stroke:STEEL,'stroke-width':1.8}));
+    gT4.appendChild(el('circle',{cx:Tt,cy:TAILY,r:2.4,fill:STEEL}));
+    gT4.appendChild(el('text',{x:Tt+4,y:TAILY-3,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'start'},'tail'));
+    // M7 source -> GND
+    gT4.appendChild(el('line',{x1:Tt,y1:420,x2:Tt,y2:GNDy,stroke:LO,'stroke-width':1.8}));
+    // ---- cross-couple gate buses : left gates (M5,M3) <- Qb ; right gates (M6,M4) <- Qa ----
+    var LgX=Lx-22, RgX=Rx-22;
+    gT4.appendChild(el('line',{x1:LgX,y1:t4.m5.gateY,x2:LgX,y2:t4.m3.gateY,stroke:STEEL,'stroke-width':1.6}));  // left gate bus
+    gT4.appendChild(el('line',{x1:RgX,y1:t4.m6.gateY,x2:RgX,y2:t4.m4.gateY,stroke:STEEL,'stroke-width':1.6}));  // right gate bus
+    t4.xcQb=el('path',{d:'M '+Rt+' '+(QBY-4)+' L '+(Rt+10)+' '+(QBY-4)+' L '+(Rt+10)+' 168 L '+(LgX)+' 168 L '+LgX+' '+t4.m5.gateY,fill:'none',stroke:CYAN,'stroke-width':1.5});gT4.appendChild(t4.xcQb);  // Qb -> left gates
+    t4.xcQa=el('path',{d:'M '+Lt+' '+(QAY+6)+' L '+(Lt+8)+' '+(QAY+6)+' L '+(Lt+8)+' 309 L '+(RgX)+' 309 L '+RgX+' '+t4.m4.gateY,fill:'none',stroke:CYAN,'stroke-width':1.5});gT4.appendChild(t4.xcQa);  // Qa -> right gates
+    gT4.appendChild(el('text',{x:418,y:163,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'middle'},'cross-coupled : regeneration'));
+    // ---- diff-pair gate stubs VP, VN ----
+    t4.vpStub=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' 408 L '+(LgX-6)+' 408 L '+(LgX-6)+' '+t4.m1.gateY+' L '+LgX+' '+t4.m1.gateY,fill:'none',stroke:ACCENT,'stroke-width':1.8});gT4.appendChild(t4.vpStub);
+    gT4.appendChild(el('text',{x:LgX-8,y:t4.m1.gateY-4,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'end'},'VP'));
+    t4.vnStub=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' 344 L '+(RgX+30)+' 344 L '+(RgX+30)+' '+t4.m2.gateY+' L '+RgX+' '+t4.m2.gateY,fill:'none',stroke:ACCENT,'stroke-width':1.8});gT4.appendChild(t4.vnStub);
+    gT4.appendChild(el('text',{x:RgX-2,y:t4.m2.gateY-4,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'end'},'VN'));
+    // ---- LE -> tail gate ----
+    var TgX=Tx-22;
+    t4.leStub=el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' 444 L '+(TgX-8)+' 444 L '+(TgX-8)+' '+t4.m7.gateY+' L '+TgX+' '+t4.m7.gateY,fill:'none',stroke:CYAN,'stroke-width':1.8,'stroke-dasharray':'4 3'});gT4.appendChild(t4.leStub);
+    gT4.appendChild(el('text',{x:TgX-10,y:t4.m7.gateY-4,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'end'},'LE'));
+    // ---- output buffer (real inverter) : input Qb -> Q ----
+    t4.bp=mosfetC(gT4,250,238,274,true); t4.bn=mosfetC(gT4,250,286,322,false); var Bft=250+40;
+    gT4.appendChild(el('line',{x1:Bft,y1:238,x2:Bft,y2:VCCy,stroke:HI,'stroke-width':1.6}));
+    gT4.appendChild(el('line',{x1:Bft,y1:322,x2:Bft,y2:GNDy,stroke:LO,'stroke-width':1.6}));
+    t4.qOut=el('line',{x1:Bft,y1:274,x2:Bft,y2:286,stroke:CYAN,'stroke-width':2.4});gT4.appendChild(t4.qOut);
+    gT4.appendChild(el('text',{x:Bft+3,y:262,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'start'},'buf'));
+    // buffer input from Qb (routed under the diff pair)
+    var BgX=250-22;
+    t4.bufIn=el('path',{d:'M '+Rt+' '+(QBY+8)+' L '+(Rt+4)+' '+(QBY+8)+' L '+(Rt+4)+' 426 L '+(BgX-10)+' 426 L '+(BgX-10)+' '+t4.bp.gateY+' L '+BgX+' '+t4.bp.gateY,fill:'none',stroke:CYAN,'stroke-width':1.4});gT4.appendChild(t4.bufIn);
+    gT4.appendChild(el('line',{x1:BgX,y1:t4.bp.gateY,x2:BgX,y2:t4.bn.gateY,stroke:STEEL,'stroke-width':1.4}));
+    // Q out -> pin 1
+    t4.outW=el('path',{d:'M '+Bft+' 280 L '+(Bft+8)+' 280 L '+(Bft+8)+' 470 L '+XQ+' 470 L '+XQ+' '+PKY1,fill:'none',stroke:CYAN,'stroke-width':2.4,'stroke-linecap':'round'});gT4.appendChild(t4.outW);
+    t4.outV=el('text',{x:Bft+10,y:276,'font-family':'var(--font-mono)','font-size':10,fill:HI,'text-anchor':'start'},'');gT4.appendChild(t4.outV);
+    // input value readouts
     t4.inPV=el('text',{x:XVP,y:512,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inPV);
     t4.inNV=el('text',{x:XVN,y:104,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inNV);
     t4.inLV=el('text',{x:XLE,y:104,'font-family':'var(--font-mono)','font-size':12,fill:CYAN,'text-anchor':'middle'},'');gT4.appendChild(t4.inLV);
     // legend + state
-    gT4.appendChild(el('text',{x:34,y:172,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'REAL DEVICE'));
-    gT4.appendChild(el('text',{x:34,y:190,'font-family':'var(--font-mono)','font-size':11,fill:DIM},'ADCMP601'));
-    gT4.appendChild(el('text',{x:34,y:204,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'diff pair + latch'));
-    gT4.appendChild(el('text',{x:34,y:330,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'VP, VN steer the'));
-    gT4.appendChild(el('text',{x:34,y:342,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'tail current ; the'));
-    gT4.appendChild(el('text',{x:34,y:354,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'latch regenerates'));
-    t4.stateLab=el('text',{x:34,y:382,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT4.appendChild(t4.stateLab);
+    gT4.appendChild(el('text',{x:34,y:160,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'REAL DEVICE'));
+    gT4.appendChild(el('text',{x:34,y:178,'font-family':'var(--font-mono)','font-size':11,fill:DIM},'ADCMP601'));
+    gT4.appendChild(el('text',{x:34,y:192,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'sense-amp latch'));
+    gT4.appendChild(el('text',{x:34,y:206,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'CMOS, 7 + 2 FET'));
+    gT4.appendChild(el('text',{x:34,y:352,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'M1 M2 : diff pair'));
+    gT4.appendChild(el('text',{x:34,y:363,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'M3-M6 : cross-couple'));
+    gT4.appendChild(el('text',{x:34,y:374,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'M7 : LE tail'));
+    t4.stateLab=el('text',{x:34,y:400,'font-family':'var(--font-body)','font-size':12,fill:OK},'');gT4.appendChild(t4.stateLab);
   }
   function updateT4(s){
     var VDD=s.VDD,cqa=wcol(s.Vqa,VDD),cqb=wcol(s.Vqb,VDD),cp=wcol(s.Vp,VDD),cn=wcol(s.Vn,VDD),cle=wcol(s.Vle,VDD);
-    var regcol=s.metastable?WARM:CYAN;
-    t4.qaRail.setAttribute('stroke',cqb);t4.qbRail.setAttribute('stroke',cqa);
-    // diff pair channels: the higher input conducts harder
-    var d1=clamp((s.Vp-Math.min(s.Vp,s.Vn))/VDD+0.12+0.5*(s.Vp>s.Vn?s.regen:0),0,1);
-    var d2=clamp((s.Vn-Math.min(s.Vp,s.Vn))/VDD+0.12+0.5*(s.Vn>s.Vp?s.regen:0),0,1);
-    t4.m1.chan.setAttribute('opacity',d1.toFixed(2));t4.m1.chan.setAttribute('stroke',s.Vp>=s.Vn?OK:STEEL);
-    t4.m2.chan.setAttribute('opacity',d2.toFixed(2));t4.m2.chan.setAttribute('stroke',s.Vn>s.Vp?OK:STEEL);
-    t4.invA.bub.setAttribute('stroke',regcol);t4.invB.bub.setAttribute('stroke',regcol);
-    t4.invA.body.setAttribute('stroke',s.metastable?WARM:mix(STEEL,CYAN,s.regen*0.6));
-    t4.invB.body.setAttribute('stroke',s.metastable?WARM:mix(STEEL,CYAN,s.regen*0.6));
-    t4.tail.setAttribute('stroke',s.compareMode?BRONZE:'oklch(0.34 0.04 285)');
-    t4.leStub.setAttribute('stroke',cle);
-    t4.gpDot.setAttribute('fill',cp);t4.gpTxt.setAttribute('fill',cp);t4.gnDot.setAttribute('fill',cn);t4.gnTxt.setAttribute('fill',cn);
-    t4.vpStub.setAttribute('stroke',cp);t4.vnStub.setAttribute('stroke',cn);
-    t4.outTap.setAttribute('stroke',cqa);t4.outNode.setAttribute('fill',cqa);
+    function setCh(g,v,col){g.chan.setAttribute('opacity',clamp(v,0,1).toFixed(2));if(col)g.chan.setAttribute('stroke',col);}
+    // cross-coupled latch devices, driven by node voltages (gate of left = Qb, gate of right = Qa)
+    var qaN=s.Vqa/VDD, qbN=s.Vqb/VDD;
+    var latcol=s.metastable?WARM:OK;
+    setCh(t4.m5,(1-qbN),s.metastable?WARM:HOLE);   // PMOS gate Qb : on when Qb low
+    setCh(t4.m3,qbN,latcol);                        // NMOS gate Qb : on when Qb high
+    setCh(t4.m6,(1-qaN),s.metastable?WARM:HOLE);   // PMOS gate Qa
+    setCh(t4.m4,qaN,latcol);                        // NMOS gate Qa
+    // diff pair : winning side conducts harder, only while compareMode (tail on)
+    var base=s.compareMode?0.25:0.05;
+    var d1=clamp(base+(s.Vp>=s.Vn?0.55*s.regen:0)+(s.compareMode?0.1:0),0,1);
+    var d2=clamp(base+(s.Vn>s.Vp?0.55*s.regen:0)+(s.compareMode?0.1:0),0,1);
+    setCh(t4.m1,s.compareMode?d1:0,s.Vp>=s.Vn?OK:STEEL);
+    setCh(t4.m2,s.compareMode?d2:0,s.Vn>s.Vp?OK:STEEL);
+    // tail : on only when LE high (compare)
+    setCh(t4.m7,s.compareMode?clamp(0.3+0.6*s.regen,0,1):0,s.compareMode?CYAN:STEEL);
+    // output buffer : input Qb, output Q = stored
+    setCh(t4.bp,(1-qbN),CYAN);setCh(t4.bn,qbN,CYAN);
+    t4.qaRail.setAttribute('stroke',cqa);t4.qbRail.setAttribute('stroke',cqb);t4.qaNode.setAttribute('fill',cqa);t4.qbNode.setAttribute('fill',cqb);
+    t4.xcQb.setAttribute('stroke',cqb);t4.xcQa.setAttribute('stroke',cqa);
+    t4.vpStub.setAttribute('stroke',cp);t4.vnStub.setAttribute('stroke',cn);t4.leStub.setAttribute('stroke',cle);
+    t4.bufIn.setAttribute('stroke',cqb);t4.qOut.setAttribute('stroke',s.stored?HI:LO);t4.outW.setAttribute('stroke',s.stored?HI:LO);
     t4.outV.textContent='Q='+s.stored;t4.outV.setAttribute('fill',s.stored?HI:LO);
     t4.inPV.textContent=fmtV(s.Vp);t4.inPV.setAttribute('fill',cp);t4.inNV.textContent=fmtV(s.Vn);t4.inNV.setAttribute('fill',cn);
     t4.inLV.textContent=s.compareMode?'compare':'latch';t4.inLV.setAttribute('fill',cle);
-    t4.stateLab.textContent=s.metastable?'inputs near equal : metastable':(s.compareMode?(s.stored?'VP wins : Qb high, Q = 1':'VN wins : Qb low, Q = 0'):'isolated : latch holds Q');
+    t4.stateLab.textContent=s.metastable?'inputs near equal : metastable':(s.compareMode?(s.stored?'VP wins : latch slams Qa high, Q=1':'VN wins : latch slams Qa low, Q=0'):'tail off : latch holds Q');
     t4.stateLab.setAttribute('fill',s.metastable?WARM:(s.compareMode?OK:CYAN));
   }
+
   // ============ TIER 5 : METAL OXIDE SILICON (diff pair + cross-coupled load) ============
   var t5={};
   function isPk5(k){return k==='pa'||k==='pb';}
@@ -582,23 +551,17 @@
     t5.gateLabs=[];t5.dev=[];
     function diff(cx,isP,lab,col){gT5.appendChild(el('rect',{x:cx-9,y:SURF,width:18,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+22,'font-family':'var(--font-mono)','font-size':7,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+9,'font-family':'var(--font-mono)','font-size':7,fill:col||FAINT,'text-anchor':'middle'},lab));return cx;}
     function gate(cx,lab,key){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-8,width:GW,height:8,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:16,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':8,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});var c=el('path',{d:'',fill:isPk5(key)?'rgba(255,122,89,0.3)':'rgba(95,208,255,0.3)',stroke:isPk5(key)?HOLE:ELEC,'stroke-width':1,opacity:0});gT5.appendChild(c);return {gx:cx,chan:c};}
-    // PMOS cross-coupled load (n-well): Qa | gpA(Qb) | VCC | gpB(Qa) | Qb
     diff(240,true,'Qa',CYAN); var gpA=gate(270,'Qb','pa'); diff(300,true,'VCC',HI); var gpB=gate(330,'Qa','pb'); diff(360,true,'Qb',CYAN);
     t5.dev.push({g:gpA,key:'pa',isP:true},{g:gpB,key:'pb',isP:true});
-    // NMOS differential pair (substrate): Qb | gVP | tail | gVN | Qa
     diff(420,false,'Qb',CYAN); var gnP=gate(450,'VP','m1'); diff(480,false,'tail',BRONZE); var gnN=gate(510,'VN','m2'); diff(540,false,'Qa',CYAN);
     t5.dev.push({g:gnP,key:'m1',isP:false},{g:gnN,key:'m2',isP:false});
-    // metal: VCC
     gT5.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' 250 L 300 250 L 300 '+SURF,fill:'none',stroke:HI,'stroke-width':2}));gT5.appendChild(el('circle',{cx:300,cy:SURF,r:2,fill:HI}));
-    // Qa rail : PMOS Qa diff (240) <-> NMOS Qa diff (540) -> output
     t5.qaRail=el('path',{d:'M 240 '+SURF+' L 240 '+QAY+' L 540 '+QAY+' L 540 '+SURF,fill:'none',stroke:CYAN,'stroke-width':2.2,'stroke-linejoin':'round'});gT5.appendChild(t5.qaRail);
     gT5.appendChild(el('circle',{cx:240,cy:SURF,r:2,fill:CYAN}));gT5.appendChild(el('circle',{cx:540,cy:SURF,r:2,fill:CYAN}));
     gT5.appendChild(el('text',{x:395,y:QAY-4,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'middle'},'Qa = Q'));
-    // Qb rail : PMOS Qb diff (360) <-> NMOS Qb diff (420)
     t5.qbRail=el('path',{d:'M 360 '+SURF+' L 360 '+QBY+' L 420 '+QBY+' L 420 '+SURF,fill:'none',stroke:CYAN,'stroke-width':2.2,'stroke-linejoin':'round'});gT5.appendChild(t5.qbRail);
     gT5.appendChild(el('circle',{cx:360,cy:SURF,r:2,fill:CYAN}));gT5.appendChild(el('circle',{cx:420,cy:SURF,r:2,fill:CYAN}));
     gT5.appendChild(el('text',{x:390,y:QBY-3,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'middle'},'Qb'));
-    // tail -> current source -> GND
     var tx=480;
     gT5.appendChild(el('line',{x1:tx,y1:SURF+DH,x2:tx,y2:GNDY-24,stroke:STEEL,'stroke-width':1.8}));
     t5.tail=el('circle',{cx:tx,cy:GNDY-13,r:9,fill:'none',stroke:BRONZE,'stroke-width':1.6});gT5.appendChild(t5.tail);
@@ -607,15 +570,11 @@
     gT5.appendChild(el('line',{x1:XGND,y1:GNDY,x2:545,y2:GNDY,stroke:LO,'stroke-width':2.4,'stroke-linecap':'round'}));
     gT5.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' '+GNDY,fill:'none',stroke:LO,'stroke-width':2}));
     gT5.appendChild(el('text',{x:tx+13,y:GNDY-10,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'start'},'tail'));
-    // output Qa -> Q pin
     t5.outW=el('path',{d:'M 240 '+QAY+' L 220 '+QAY+' L 220 '+(GNDY+15)+' L '+XQ+' '+(GNDY+15)+' L '+XQ+' '+PKY1,fill:'none',stroke:CYAN,'stroke-width':2.4,'stroke-linecap':'round'});gT5.appendChild(t5.outW);
     t5.outV=el('text',{x:232,y:QAY-4,'font-family':'var(--font-mono)','font-size':11,fill:HI,'text-anchor':'end'},'');gT5.appendChild(t5.outV);
-    // input gate drops VP (pin3), VN (pin4)
     t5.vpW=el('path',{d:'M '+XVP+' '+PKY1+' L '+XVP+' '+(SURF+DH+16)+' L 450 '+(SURF+DH+16)+' L 450 '+(SURF+DH+13),fill:'none',stroke:ACCENT,'stroke-width':1.4,opacity:0.55});gT5.appendChild(t5.vpW);
     t5.vnW=el('path',{d:'M '+XVN+' '+PKY0+' L '+XVN+' '+(GT-4),fill:'none',stroke:ACCENT,'stroke-width':1.4,opacity:0.55});gT5.appendChild(t5.vnW);
-    // LE (pin5) note
     gT5.appendChild(el('path',{d:'M '+XLE+' '+PKY0+' L '+XLE+' '+(GNDY-13)+' L '+(tx-9)+' '+(GNDY-13),fill:'none',stroke:CYAN,'stroke-width':1.4,'stroke-dasharray':'4 3',opacity:0.6}));
-    // carriers
     function carrSet(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.1,fill:col,opacity:0});gT5.appendChild(c);a.push({el:c,u:i/n,th:th(i)});}return a;}
     for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k];dv.carr=carrSet(3,dv.isP?HOLE:ELEC);var gx=dv.g.gx;dv.path=el('path',{d:'M '+(gx-10)+' '+(SURF+4)+' L '+(gx+10)+' '+(SURF+4),fill:'none',stroke:'none'});gT5.appendChild(dv.path);dv.plen=dv.path.getTotalLength();}
     gT5.appendChild(el('text',{x:300,y:GT-14,'font-family':'var(--font-mono)','font-size':8,fill:HOLE,'text-anchor':'middle'},'cross-coupled load'));
@@ -643,7 +602,6 @@
     t5.stateLab.setAttribute('fill',s.metastable?WARM:(s.compareMode?OK:CYAN));
   }
   buildT1();buildT2();buildT3();buildT4();buildT5();
-
   var scope=document.getElementById('scope');var sc={};
   function buildScope(){
     var L=42,R=288,T=14,B=176;sc.L=L;sc.R=R;sc.T=T;sc.B=B;
@@ -676,7 +634,7 @@
     if(VDD!==sc.lastVDD||s.Vt!==sc.lastVt||s.Vn!==sc.lastVn){
       buildGrid(VDD);
       var d='',db='';
-      for(var k=0;k<=120;k++){var vp=k/120*VDD,m=comparator(vp,s.Vn,VDD,VDD,s.Vt,1); // LE=VDD: compare mode
+      for(var k=0;k<=120;k++){var vp=k/120*VDD,m=comparator(vp,s.Vn,VDD,VDD,s.Vt,1);
         d+=(k===0?'M ':'L ')+X(vp).toFixed(1)+' '+Y(m.Vqa).toFixed(1)+' ';
         db+=(k===0?'M ':'L ')+X(vp).toFixed(1)+' '+Y(m.Vqb).toFixed(1)+' ';}
       sc.curve.setAttribute('d',d);sc.curThru.setAttribute('d',db);
@@ -688,29 +646,24 @@
     sc.cy.setAttribute('x1',ox);sc.cy.setAttribute('y1',B);sc.cy.setAttribute('x2',ox);sc.cy.setAttribute('y2',oy);
   }
   buildScope();
-
-  // ===== telemetry =====
   var tele=document.getElementById('telemetry');
   function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
   var roVp=trow('input VP'),roVn=trow('input VN'),roLE=trow('latch LE'),roDiff=trow('VP - VN'),roQ=trow('output Q'),roMode=trow('mode'),roS=trow('state');
-
-  // ===== controls =====
   var vinEl=document.getElementById('vin'),vinbEl=document.getElementById('vinb'),vincEl=document.getElementById('vinc'),vddEl=document.getElementById('vdd'),vtEl=document.getElementById('vt'),
       labVin=document.getElementById('labVin'),labVinb=document.getElementById('labVinb'),labVinc=document.getElementById('labVinc'),labVdd=document.getElementById('labVdd'),labVt=document.getElementById('labVt'),
       btnRun=document.getElementById('btnRun'),visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),
       chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
   var running=true,tier='t1';
-  footnote.innerHTML='The part shown is the ADCMP601, a rail-to-rail latched comparator, verified against the Analog Devices datasheet for the ADCMP600, ADCMP601, and ADCMP602 (Rev. A). In its 6-lead SC70 package the pinout places the noninverting output Q on pin 1, ground on pin 2, the noninverting analog input VP on pin 3, the inverting analog input VN on pin 4, the latch and hysteresis control LE/HYS on pin 5, and the shared input and output supply VCCI/VCCO on pin 6. Q is at logic high when the analog voltage at VP is greater than the voltage at VN while the comparator is in compare mode. The LE/HYS pin is driven low to latch the output, holding the last decision no matter what the inputs do; held high, the comparator tracks. That same single pin also sets programmable hysteresis when biased with a resistor or current. The defining heart is the regenerative latch, a cross-coupled pair whose positive feedback drives a tiny input imbalance to a full-rail decision, the same cross-coupled cell that stores a bit in a flip-flop. The flow analogy maps it to two chambers, where each chamber pilots the other to the opposite level through its fill and drain valves, the differential input tips the balance, and an LE valve shuts the tail to hold the state. When the two inputs are nearly equal the latch can hang near mid-rail, the metastable state, slow and uncertain about which way it will fall; the band shown here is widened for visibility, since the real input offset is on the order of millivolts. A comparator like this is the 1-bit analog-to-digital converter at the core of flash and SAR converters. Per the datasheet, the ADCMP601 runs rail-to-rail from 2.5 to 5.5 volts, accepts an input common-mode range from about 0.2 volts below ground to 0.2 volts above the supply, switches in about 3.5 nanoseconds, draws roughly 3 milliamps typical supply current for about 10 milliwatts at 3.3 volts, is built on the XFCB2 process, and is specified as an improved replacement for the MAX999 over a -40 to +125 C range.';
-
+  footnote.innerHTML='The part shown is the ADCMP601, a rail-to-rail latched comparator, verified against the Analog Devices datasheet for the ADCMP600, ADCMP601, and ADCMP602 (Rev. A). In its 6-lead SC70 package the pinout places the noninverting output Q on pin 1, ground on pin 2, the noninverting analog input VP on pin 3, the inverting analog input VN on pin 4, the latch and hysteresis control LE/HYS on pin 5, and the shared input and output supply VCCI/VCCO on pin 6. Q is at logic high when the analog voltage at VP is greater than the voltage at VN while the comparator is in compare mode. The LE/HYS pin is driven low to latch the output, holding the last decision no matter what the inputs do; held high, the comparator tracks. That same single pin also sets programmable hysteresis when biased with a resistor or current. The defining heart is the regenerative latch, a cross-coupled pair whose positive feedback drives a tiny input imbalance to a full-rail decision, the same cross-coupled cell that stores a bit in a flip-flop. The realistic tiers draw that cell as its actual transistors: an NMOS differential pair (M1, M2) gated by VP and VN, a four-device cross-coupled latch of NMOS M3, M4 and PMOS M5, M6 with the two inverter outputs cross-wired, and an LE-gated NMOS tail M7 that enables the evaluation and freezes the decision when LE goes low. The flow analogy maps it to two chambers, where each chamber pilots the other to the opposite level through its fill and drain valves, the differential input tips the balance, and an LE valve shuts the tail to hold the state. When the two inputs are nearly equal the latch can hang near mid-rail, the metastable state, slow and uncertain about which way it will fall; the band shown here is widened for visibility, since the real input offset is on the order of millivolts. A comparator like this is the 1-bit analog-to-digital converter at the core of flash and SAR converters. Per the datasheet, the ADCMP601 runs rail-to-rail from 2.5 to 5.5 volts, accepts an input common-mode range from about 0.2 volts below ground to 0.2 volts above the supply, switches in about 3.5 nanoseconds, draws roughly 3 milliamps typical supply current for about 10 milliwatts at 3.3 volts, is built on the XFCB2 process, and is specified as an improved replacement for the MAX999 over a -40 to +125 C range. The schematic here is drawn as a CMOS sense-amp latch, the dominant way this cell is built and the one that teaches the regeneration cleanly; the ADCMP601 own core is SiGe bipolar.';
   function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
     var names={t1:'symbol . pinout',t2:'flow network',t3:'pressure pilot valves',t4:'real device . ADCMP601',t5:'metal oxide silicon'};visTag.textContent=names[t];
     [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
   [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
   btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
   setTier('t1');
-
   var tick=0, stored=0;
   function frame(){
+    if(window.__freeze){requestAnimationFrame(frame);return;}
     if(running){tick++;}
     var VDD=(+vddEl.value)/100, Vt=(+vtEl.value)/100, Vp=clamp((+vinEl.value)/100,0,VDD), Vn=clamp((+vinbEl.value)/100,0,VDD), Vle=clamp((+vincEl.value)/100,0,VDD);
     var m=comparator(Vp,Vn,Vle,VDD,Vt,stored);

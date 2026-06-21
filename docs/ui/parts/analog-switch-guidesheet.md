@@ -34,7 +34,8 @@ the signal nears VCC); a PMOS passes a strong high but a weak low (it weakens ne
 **parallel**, drive their gates with **complementary** controls (CTRL to the NMOS, NOT-CTRL to the PMOS,
 so both turn on together), and the pair passes the **full rail-to-rail** signal at a low, roughly flat
 **on-resistance R_on**. Open the gate and A and B are isolated. That complementary N+P pair, and the
-**bathtub-shaped R_on curve** it produces, is the whole lesson and must be the payoff of the realistic
+**complementary R_on curve** it produces (each device's resistance blowing up at its own rail, the
+parallel pair staying low across the whole swing), is the whole lesson and must be the payoff of the realistic
 tiers and the scope.
 
 ## 1. The real-device mandate (the point of this build)
@@ -56,8 +57,12 @@ Same split as the other sheets — keep the abstraction where it teaches, make t
 ## 2. The part and its real internal cell
 
 - **Real exemplars (pick one for the package/pinout, datasheet-verify it):** a single **SPST CMOS analog
-  switch** — **TS5A3160** (TI, SC70-5 / SOT23-5), **ADG801 / ADG802** (Analog Devices, SPST), or
-  **MAX4624**. These match the game's 5-pin SPST shape directly.
+  switch** — the **CD4066B** quad bilateral switch (the sim's stated model); one cell of it IS a single SPST
+  switch, so draw ONE of its four identical cells on the game's five-pin teaching layout (A and B = a
+  switch's two interchangeable terminals, e.g. CD4066B pins 1 and 2; CTRL = its control pin 13; VCC =
+  pin 14, GND = pin 7, shared across all four). NOT the **TS5A3160**, which is an SPDT 2:1 mux, not an
+  SPST; the single-SPST **ADG801 / ADG802** or **MAX4626** are the same cell in a 6-pin package if you
+  prefer a single-switch part.
 - **The internal cell is the classic CD4066-style transmission gate** — the sim itself models the `ASW`
   as "a CD4066-style transmission gate" (see `crates/sim-core/src/lib.rs`, `ELEM_ASWITCH`). So name the
   **CD4066B** as the canonical teaching reference for the cell even if you draw a single-SPST package
@@ -90,7 +95,7 @@ the mapping in the device tier.) Update `chipType` and the `names` map to the ch
 
 ## 4. The live model (interactive state, per frame)
 
-A transmission gate with a **per-device** on-resistance, so the bathtub curve falls out for the scope and
+A transmission gate with a **per-device** on-resistance, so the R_on curve falls out for the scope and
 the device tiers. `xorpass-ic.html` already has the per-device on-state math — adapt it for one gate.
 State: the control level `Vc`, the passed signal voltage `Vsig` (the analog level on A, a control), the
 supply `VDD`, and the nominal `R_on`.
@@ -98,7 +103,7 @@ supply `VDD`, and the nominal `R_on`.
 ```js
 // closed when CTRL is above half the rail (mirrors the sim's aswitch_closed rule)
 var closed = (Vc > VDD/2);
-// per-device on-resistance vs the passed signal (the bathtub): each device weakens as the
+// per-device on-resistance vs the passed signal (the complementary curves): each device weakens as the
 // signal nears the rail where its overdrive collapses. Scaled for legibility, not SI ohms.
 var ovN = closed ? Math.max(0, (VDD - Vsig) - Vtn) : 0;   // NMOS overdrive: gate at VDD, dies near VDD
 var ovP = closed ? Math.max(0, (Vsig - 0)   - Vtp) : 0;   // PMOS overdrive: gate at 0,  dies near GND
@@ -115,7 +120,7 @@ Flag the model as a scaled teaching animation, not SI ohms.
 
 **Tier 1 — symbol + pinout + scope.** The analog-switch symbol (the SPST switch / bidirectional bilateral
 switch symbol) wired to the real 5-pin pinout, with CTRL toggling it open/closed and a plain-language
-note ("CTRL high: A-B closed, R_on ohms" / "CTRL low: open"). The scope shows the bathtub R_on curve (see
+note ("CTRL high: A-B closed, R_on ohms" / "CTRL low: open"). The scope shows the R_on curve (see
 section 7).
 
 **Tier 2 — flow network (analogy, build rich).** The switch as a **gated pipe between A and B**. CTRL is
@@ -150,20 +155,24 @@ The `ASW` part is already live: `ELEM_ASWITCH` (sim type 24), pins **a=A, b=B, c
 `value` = the **on-resistance R_on** (Ω), closed when **V(CTRL) - V(GND) > half the rail** (an unpowered
 switch falls back to a fixed mid-level threshold). ON stamps a symmetric `1/R_on` between A and B; OFF
 stamps a tiny leak. The sim uses a **single lumped R_on** (it does not curve R_on with the signal), so be
-clear that the **bathtub curve in this glyph is the real device's truth being taught**, while the game's
+clear that the **R_on curve in this glyph is the real device's truth being taught**, while the game's
 solver uses the flat middle value. Tier 4's schematic should match the sim's model (a CTRL-gated
 bidirectional path A-B), so the glyph and the part agree.
 
 ## 7. Controls and scope
 
 - **Controls:** a **CTRL** toggle (open / closed), a **passed-signal voltage `Vsig`** slider (sweeps A's
-  analog level across 0 to VCC — this is what drives the bathtub), and optionally an **R_on** (quality)
+  analog level across 0 to VCC — this is what drives the curve), and optionally an **R_on** (quality)
   control. A VCC slider is a nice extra. Drop any gate-style logic-input sliders.
-- **Scope — the bathtub R_on curve (the payoff).** Plot **R_on versus the passed signal voltage** across
-  0 to VCC: the **NMOS-only** curve rising toward VCC, the **PMOS-only** curve rising toward GND, and
-  their **parallel sum** staying low and roughly flat across the middle (dip in the center, rise at both
-  ends — the bathtub). Mark the live `Vsig` point on the curve so moving the slider shows which device is
-  carrying. This single graphic is why the transmission gate needs both devices; make it the centerpiece.
+- **Scope — the complementary R_on curve (the payoff).** Plot **R_on versus the passed signal voltage**
+  across 0 to VCC: the **NMOS-only** curve rising steeply toward VCC (its overdrive `VCC-Vsig-Vtn`
+  collapses at the high rail), the **PMOS-only** curve rising toward GND (mirror image), the two crossing
+  in an **X** near mid-rail, and their **parallel sum** sitting **below both and staying low across the
+  whole swing** — lowest at each rail (where one device is at full overdrive) with at most a gentle
+  mid-rail rise. (NOT a bathtub: the resistance does not rise at the ends — at each rail one device is at
+  maximum overdrive, so the pair is at its lowest there.) Mark the live `Vsig` point so moving the slider
+  shows which device is carrying. This single graphic is why the transmission gate needs both devices;
+  make it the centerpiece.
   (A second optional trace: the pass transfer — output following input as a straight diagonal when
   closed, flat when open — like `xorpass-ic.html`'s transfer curve.)
 
@@ -194,13 +203,13 @@ Flag in the handback:
   bulk ties) via the §7.4 helper; tier 5 is real MOS cross-sections — not a block diagram.
 - **Analogy tiers kept:** tiers 2-3 still tell the gated-pipe / pressure-pilot-valve story (the
   complementary pair shown as two valves), not a schematic.
-- **The lesson lands:** the bathtub R_on curve is the scope centerpiece (NMOS rises to VCC, PMOS rises to
+- **The lesson lands:** the complementary R_on curve is the scope centerpiece (NMOS rises to VCC, PMOS rises to
   GND, parallel stays flat), the channels light independently as `Vsig` sweeps, and the bidirectional
   "passes, does not pull" nature is explicit (it produces no level of its own; A-B carry either way).
 - **Identity clean:** title / lede / `chipType` / device-tier part name / `names` map all read analog
   switch / the chosen part; grep for stray "XOR", "pass-transistor XOR", "inverter", "NOT gate",
   "74LVC1G04".
-- **Agreement with the sim noted:** the glyph teaches the per-signal bathtub R_on; the game's
+- **Agreement with the sim noted:** the glyph teaches the per-signal R_on curve; the game's
   `ELEM_ASWITCH` uses the lumped flat R_on (`value`) and the half-rail close rule — both stated.
 - **All §10 gates pass clean**, including the mandatory five-tier Playwright render with no console/page
   errors and no off-canvas or colliding labels.
