@@ -137,6 +137,45 @@ resolution vs. LSB size.
 
 ---
 
+## CEC1108 — 3-Bit SAR ADC
+
+*Critical Error Computing · "guess, weigh, keep or drop, repeat."*
+
+**Description.** The CEC1108 converts by **successive approximation** -- a binary search. It holds one
+comparator, one CEC1083-style R-2R DAC, and a 3-bit register wired in a loop. On each clock it tries the
+next bit, most-significant first: set the bit, let the DAC produce that trial voltage, and ask the
+comparator "is VIN still above it?" -- keep the bit if yes, drop it if no. After 3 clocks the register
+holds the code and DONE pulses. One comparator instead of the flash's seven, at the cost of N clocks per
+conversion: the speed-versus-parts opposite of the CEC1080 flash ADC.
+
+**Features.** Successive-approximation (binary search) · one comparator + R-2R DAC + 3-bit SAR register ·
+3 clocks per conversion · DONE end-of-conversion strobe · VCC the full-scale reference · single supply.
+
+**Pin configuration — 8-pin (SOT-23-8 / MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **VIN** | analog input (sensed), compared against the internal DAC. |
+| 2 | **CLK** | conversion clock; one bit is decided per rising edge. |
+| 3 | **D2** | result bit 2 (MSB). |
+| 4 | **D1** | result bit 1. |
+| 5 | **D0** | result bit 0 (LSB). |
+| 6 | **DONE** | end-of-conversion: high when the 3-bit result is valid. |
+| 7 | **VCC** | supply; the DAC's full-scale reference. |
+| 8 | **GND** | ground / 0 V reference. |
+
+**Function.** Binary search over 3 clocks: try D2 (DAC = 4/8 VCC), keep if VIN > DAC else clear; try D1
+(DAC = (kept + 2)/8 VCC), keep or clear; try D0; then raise DONE. The result settles to
+floor(8 * VIN / VCC), clamped 0..7 -- the same code the CEC1080 finds in parallel.
+
+**In the sim:** a `buildNetlist` loop of existing elements (one `ELEM_COMPARATOR`, the CEC1083 R-2R DAC,
+and a 3-bit successive-approximation register driving the DAC from the comparator result), or a small
+behavioral SAR program. No new sim-core element. **Teaches:** successive approximation, the binary search,
+the comparator-DAC feedback loop, and the speed (N clocks) versus parts (one comparator) trade against the
+flash ADC.
+
+---
+
 ## CEC2018 — 1-Bit Full Adder
 
 *Critical Error Computing · "the smallest piece of arithmetic that still counts."*
