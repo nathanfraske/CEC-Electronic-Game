@@ -22,6 +22,10 @@ Every tier draws the identical real package frame with the real pinout, and only
 
 Tiers 2 and 3 are analogies; tiers 4 and 5 are real. The bridge: tiers 3, 4, and 5 are all driven by the same device model, so the valve lift, the schematic channel opacity, and the silicon inversion layer all move off one computed solution. Tiers 1 and 2 read the same model state at a coarser (logic / open-shut) level.
 
+**The tiers are two zoom pairs plus the silicon.** Tier 4 is a *zoom-in of tier 1* (the symbol opened up into the full device it stands for), and tier 3 is a *zoom-in of tier 2* (the overall flow analogy opened up into its working parts). So the **real track** runs 1 -> 4 and the **analogy track** runs 2 -> 3, with tier 5 the physical silicon. Build each pair so the deeper tier is literally the shallower one magnified: same part, same pins, more detail.
+
+**Show all of it, down to the FETs, and carry the analogy all the way down.** A learner is meant to zoom in and literally see every component working, so do not abstract devices away to save space (the completeness is the point; the file is made to be zoomed). Crucially, the **analogy does not stop at the function level** -- in the analogy track every component, down to each individual FET, has an analogy form: tier 3 is the **FET-level analogy** (each transistor a pressure-pilot valve), so the zoomed-in analogy is the full mechanism at the transistor level, not a high-level cartoon. For a part too large to draw every transistor (a multi-gate composite, a register-transfer FSM), decompose to its natural component level (gates, flip-flops, registers) and let each of those carry its own FET-level valve analogy; never leave an opaque block that cannot be opened.
+
 ## 2. Hard constraints (do not violate)
 
 - Single self-contained `.html` file. No external JS or CSS except the one Google Fonts `<link>`. No build step. Never use `localStorage`, `sessionStorage`, or any browser storage.
