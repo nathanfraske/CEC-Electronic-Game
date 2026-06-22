@@ -7,7 +7,7 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-22 (73) — Five-tier IC glyph refsheets: the whole queue landed
 
-**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built + landed **14 five-tier IC glyph
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built + landed **15 five-tier IC glyph
 refsheets** in `docs/ui/parts/` via a guidesheet → self-contained "build kit" → owner/agent builds →
 I validate (§10 gates) → land loop. Each glyph passed the static §10 gates (SPDX, identity, 5×
 `drawPkg(gT`, no forbidden glyphs, per-tier member consistency, `node --check`); the owner/agent ran the
@@ -40,9 +40,15 @@ exists) — `chipType` = the CEC number, no real-manufacturer name where house-v
   COMMENT block** is left stale (full-adder/demux carried a `// CEC2024 half adder` comment over correct
   code; full-adder also had a stale `<title>`). Grep comments + `<title>`, not just labels.
 
-**Open loose thread:** the **555 refsheet** (`ne555-guidesheet.md` exists; an owner draft passed the
-static §10 gates earlier this session) is **not landed** — awaiting the owner's "final" before committing
-to `docs/ui/parts/ne555-ic.html`. Nothing else queued.
+**555 (landed):** `ne555-ic.html` is in — owner-signed-off, static §10 gates clean. It is a **real part**
+(NE555, the canonical analog↔digital teaching IC), not a CEC house part, so it keeps the real 555 pinout;
+its silicon tier is block/architecture level (the 555's lesson is the architecture) per its guidesheet.
+Signed off "for now" — visual touch-ups may follow.
+
+**Nothing queued.** Every backed part now has a refsheet. Possible future work, none blocking: optional
+visual touch-ups (555, and the deliberately-dense serial/SPI RTL tiers); rebuilding the *older* gate/device
+refsheets to the new tier-zoom-pair framing if consistency is wanted; and refsheets for any *new* parts
+added later.
 
 ---
 
