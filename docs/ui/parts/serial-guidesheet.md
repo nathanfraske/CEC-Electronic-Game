@@ -69,6 +69,16 @@ half-adder) -- they are **finite-state machines**. Drawing every transistor (tho
 
 (Tiers 2-3 stay the analogy, section 4.)
 
+**Apply the spec's tier zoom-pairs and FET-level analogy (spec section 1).** Tier 4 is the zoom-in of
+tier 1 (the symbol opened into the full datapath) and tier 3 is the zoom-in of tier 2 (the flow analogy
+opened into its working parts) -- same part, same pins, more detail. And carry the analogy all the way
+down: the glyph is made to be zoomed, so build it complete and let every component open, never an opaque
+block. At the RTL scale you decompose to flip-flops and gates rather than drawing a thousand transistors,
+but each of those still has its FET-level valve form (a D flip-flop is a pair of cross-coupled latches,
+each a few pressure-pilot valves) -- so in the analogy track draw the shift/framing mechanism as real
+analogy parts (a flip-flop as its latch-valves where it fits), not labeled rectangles, so a learner
+zooming in keeps seeing mechanism down to the FET, not a dead end.
+
 ## 1b. THE NO-STUBS MANDATE (carry it forward; these parts have the most pins)
 
 **Every pin must be drawn fully connected to the working datapath and shown doing its job. Nothing is a
