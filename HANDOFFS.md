@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-22 (74) — Mixed-signal headline: the 3-bit flash ADC (sim-core + part + glyph)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The first "more reality" feature beyond the
+refsheet queue: a **3-bit flash ADC**, complete end to end. Owner wants **both flash and SAR, flash
+first** — flash is done; SAR is next (needs the DAC).
+
+**sim-core (golden-safe):** added **`BEH_PROG_FLASH_ADC = 5`** to `ELEM_BEHAVIORAL` — a parallel
+quantizer that reads the live analog input on `f` against the reference span (the VREF pin `g` above GND,
+else the VCC rail) and drives a 3-bit code on D0/D1/D2 (`a`/`b`/`c`): `code = floor(8 * (Vin-Vgnd) /
+span)`, clamped 0..7. **Combinational** — runs in `eval_digital` only (helper `beh_flash_adc_code`), no
+state, **no commit arm**. Additive ⇒ no existing circuit sets value=5 ⇒ `beh_state` stays zero ⇒
+`snapshot_hash` byte-identical: `golden_snapshot_hash_is_stable` + all `run_is_reproducible` green, **183
+tests** (added `behavioral_flash_adc_3bit_quantizes`). Pattern to copy for the next behavioral program.
+
+**web (placeable):** the **`ADC` part** — `graph.ts` kind (7-pin VIN·VREF·D2·D1·D0·VCC·GND, cyan),
+`netlist.ts` `BEH_SPEC.ADC = { prog: 5, term: [4,3,2,5,6,0,1,-1], defWord: 0 }` (no value picker, no data
+word), partInfo/codex/App rows. Full gate green.
+
+**catalogue + glyph:** `cec-teaching-ics.md` gets **CEC1080 "3-Bit Flash ADC"** (1xxx data-conversion,
+between CEC1041 quantizer and CEC1083 DAC). `flash-adc-ic.html` landed — the **densest glyph**: ladder +
+7 comparators + thermometer-to-binary encoder (D2=T4; D1=T6 OR (T2·notT4); D0=odd-count tree), staircase
+scope. **Precedent set:** it uses a **larger 1100×820 scene viewBox** (wrap widened to 1480px) — a sanctioned
+deviation from the standard 780×540 for a too-dense glyph (the owner: "allow the agent more space"); future
+dense glyphs may do the same. Its guidesheet (`flash-adc-guidesheet.md`) is deliberately layout-prescriptive.
+
+**NEXT (the owner's "both, flash first" → now the rest):**
+1. **CEC1083 3-bit DAC** as a placeable part — a code→voltage converter. Unblocks the convert↔reconstruct
+   demo (flash ADC → DAC) AND is the feedback element the SAR needs. Likely an `ELEM_BEHAVIORAL` prog 6
+   (read 3 input bits, drive an analog output via the reference) OR an R-2R resistor composition (golden-
+   safe, no core code — decide which). Then its glyph (CEC1083 is already catalogued).
+2. **SAR ADC** — comparator + the DAC + a successive-approximation register/FSM (a behavioral prog or a
+   composition). The sequential cousin; binary-search teaching.
+
+---
+
 ## 2026-06-22 (73) — Five-tier IC glyph refsheets: the whole queue landed
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built + landed **15 five-tier IC glyph
