@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-22 (75) — DAC + SAR ADC glyphs landed; data-conversion glyph set complete
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Landed two more data-conversion glyphs via the
+guidesheet → kit → build → validate (§10) → land loop:
+- **`dac-ic.html` (CEC1083)** — the 3-bit R-2R ladder DAC. Pure resistors (no FETs); tier 4 is the literal
+  R-2R network (two R spine, four 2R legs, MSB at the output node) and tier 5 matched resistor strips;
+  reconstruction-staircase scope. Owner verdict: correctness-sound, **"fine for now" but a polish-remake
+  candidate** (minor cosmetics flagged: tier-1 trapezoid AOUT-left, a tier-3 lead graze, a tight VCC label).
+- **`sar-adc-ic.html` (CEC1108)** — the 3-bit successive-approximation ADC. The comparator → SAR register →
+  DAC → comparator feedback loop drawn as a closed cycle; binary search MSB-first over 3 clocks (DAC trial
+  steps VCC/2, VCC/4, VCC/8 onto VIN); successive-approximation convergence as the scope; tier 3 redone.
+  Its guidesheet (`sar-adc-guidesheet.md`) is the most layout-prescriptive ("how each tier should look").
+
+Catalogue: added **CEC1108 3-Bit SAR ADC** (1xxx). The data-conversion line is now CEC1041 / 1080 / 1083 /
+1108 (quantizer / flash ADC / DAC / SAR ADC), all with glyphs.
+
+**OPEN THREAD — the DAC and SAR are GLYPH-ONLY (not placeable yet).** The glyphs got ahead of the
+functional parts:
+- **Flash ADC IS functional** (sim-core prog 5 + the placeable `ADC` part, entry 74).
+- **DAC (CEC1083): not wired.** Clean to do — a `buildNetlist` **R-2R resistor composition**, golden-safe
+  (no core code); the exact topology is in the catalogue + the dac glyph tier 4 (two R: A-B, B-C; four 2R:
+  A→D2, B→D1, C→D0, C→GND; AOUT = node A = (4D2+2D1+D0)/8·VCC; bits driven 0/VCC). Needs a buildNetlist
+  branch (like EC/POT emit resistors) + the web part + pinout AOUT/GND/D0/D1/D2/VCC.
+- **SAR ADC (CEC1108): not wired.** Comparator + the DAC + a 3-bit SAR register/controller loop (a small
+  behavioral SAR program, or a composition). Depends on the DAC.
+- Then the **convert↔reconstruct demo** (flash ADC → DAC) becomes buildable in-game.
+
+**NEXT:** wire the functional DAC (R-2R composition) → functional SAR → the reconstruct demo. (Also still
+open from way back: optional polish — the DAC glyph remake, dense-RTL touch-ups.)
+
+---
+
 ## 2026-06-22 (74) — Mixed-signal headline: the 3-bit flash ADC (sim-core + part + glyph)
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The first "more reality" feature beyond the
