@@ -1068,6 +1068,12 @@ const BEH_PROG_UART: u32 = 3;
 /// Program id selecting the **FPGA logic element** firmware (program 4) — a 4-input lookup table
 /// with an optional registered output (ADR 0004 phase 4, the `FP` part). See [`beh_lut_step`].
 const BEH_PROG_LUT: u32 = 4;
+/// Program id selecting the **3-bit flash ADC** firmware (program 5) — a parallel quantizer: the
+/// analog input on `f` measured against the reference span (the VREF pin `g` above GND, or the VCC
+/// rail if VREF is unwired) and encoded to a 3-bit code driving D0/D1/D2 on `a`/`b`/`c`. Purely
+/// combinational (no state block), so it runs in `eval_digital` only and folds a zero state block —
+/// golden-safe additive. See [`beh_flash_adc_code`]. (The teaching flash ADC, pairing with the DAC.)
+const BEH_PROG_FLASH_ADC: u32 = 5;
 
 // --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
 
@@ -1527,6 +1533,31 @@ fn beh_lut_step(
         state[BEH_LUT_Q] = beh_lut_bit(truth, index) as u32; // latch on the rising clock edge
     }
     state[BEH_LUT_CLK_PREV] = clk as u32;
+}
+
+/// The 3-bit flash-ADC code for a behavioral block (program 5): the analog input `V(f)` measured
+/// against the reference span, quantized to `0..=7` by the floor rule `floor(8 * (Vin - Vgnd) /
+/// span)`. The span is the **VREF pin `g`** above the `GND` pin (`vlow`) when it is driven above the
+/// gate minimum, else the **VCC rail** (so an ADC wired with only VCC/GND still converts full-scale
+/// against its supply). The seven implied thresholds sit at `k/8` of full scale (`k = 1..7`) -- the
+/// comparator bank of a flash converter, read live in [`Sim::eval_digital`] (combinational, no state
+/// block, so program 5 commits nothing and folds a zero state -- golden-safe additive). Under-range
+/// and over-range saturate to 0 and 7.
+#[inline]
+fn beh_flash_adc_code(node_v: &[f64], e: &Element, vlow: f64, rail: f64) -> u32 {
+    let span = {
+        let vref = node_v[e.g] - vlow; // the VREF pin above GND
+        if vref > GATE_MIN_RAIL {
+            vref
+        } else {
+            rail // VREF unwired: fall back to the VCC supply as full scale
+        }
+    };
+    if span <= GATE_MIN_RAIL {
+        return 0; // unpowered / no reference: nothing to convert
+    }
+    let frac = ((node_v[e.f] - vlow) / span).clamp(0.0, 1.0);
+    ((frac * 8.0).floor() as u32).min(7)
 }
 
 // --- AC voltage source model constants ----------------------------------------
@@ -5852,6 +5883,17 @@ impl Sim {
                                 let tx = bit(beh_uart_tx_high(st, nbits));
                                 let rxvalid = bit(st[BEH_UART_RXVALID] != 0);
                                 (tx, rxvalid, Level::Z)
+                            }
+                            BEH_PROG_FLASH_ADC => {
+                                // 3-bit flash ADC: quantize the live analog input (f) against the
+                                // reference span to a code 0..7, driving D0/D1/D2 on a/b/c. Purely
+                                // combinational (reads node_v, carries no state -> no commit arm).
+                                let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
+                                (
+                                    bit(code & 1 != 0),
+                                    bit(code & 2 != 0),
+                                    bit(code & 4 != 0),
+                                )
                             }
                             // Inert / unknown program: release all outputs.
                             _ => (Level::Z, Level::Z, Level::Z),
@@ -11547,6 +11589,48 @@ mod tests {
         // OR(IN0, IN1): 0,1,1,1 ⇒ 0xEEEE.
         assert!(!hi(lut_comb(0xEEEE, 0.0, 0.0, 0.0, 0.0)), "0 OR 0 = 0");
         assert!(hi(lut_comb(0xEEEE, 5.0, 0.0, 0.0, 0.0)), "1 OR 0 = 1");
+    }
+
+    /// Drive a 3-bit flash ADC (program 5): VIN on `f`, VREF on `g`, reading the 3-bit code back off
+    /// D0/D1/D2 (`a`/`b`/`c`) as a 0..7 integer. Nodes: 1 = VCC (5 V), 2 = VIN, 3 = VREF, 4/5/6 = D0/D1/D2.
+    fn adc_code(vin: f64, vref: f64) -> u32 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 4 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 4], // a: VCC + VIN + VREF sources; ADC D0 = node 4
+            &[0, 0, 0, 5], // b: src grounds; ADC D1 = node 5
+            &[0, 0, 0, 6], // c: ADC D2 = node 6
+            &[0, 0, 0, 1], // d: ADC VCC = node 1 (5 V)
+            &[0, 0, 0, 0], // e: ADC GND = node 0
+            &[0, 0, 0, 2], // f: ADC VIN = node 2
+            &[0, 0, 0, 3], // g: ADC VREF = node 3
+            &[0, 0, 0, 0], // h: unused
+            &[5.0, vin, vref, BEH_PROG_FLASH_ADC as f64], // values: rails + program id 5
+            &[0.0, 0.0, 0.0, 0.0],                        // aux unused
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        let s = sim.state();
+        let hi = |v: f64| (v > 2.5) as u32;
+        hi(s[4]) | (hi(s[5]) << 1) | (hi(s[6]) << 2)
+    }
+
+    /// The 3-bit flash ADC quantizes its input by the floor rule `code = floor(8 * Vin / Vref)`
+    /// against the 5 V reference (LSB = 0.625 V): each band maps to its code, full scale saturates to
+    /// 7, and over-range clamps rather than wrapping. (The comparator-bank thresholds at k/8 of FS.)
+    #[test]
+    fn behavioral_flash_adc_3bit_quantizes() {
+        assert_eq!(adc_code(0.0, 5.0), 0, "0 V -> 0");
+        assert_eq!(adc_code(0.4, 5.0), 0, "0.4 V (< 1 LSB) -> 0");
+        assert_eq!(adc_code(0.7, 5.0), 1, "0.7 V (in [0.625, 1.25)) -> 1");
+        assert_eq!(adc_code(2.6, 5.0), 4, "2.6 V (just over half scale) -> 4");
+        assert_eq!(adc_code(4.4, 5.0), 7, "4.4 V (in [4.375, 5)) -> 7");
+        assert_eq!(adc_code(5.0, 5.0), 7, "full scale saturates to 7");
+        assert_eq!(adc_code(6.0, 5.0), 7, "over-range clamps to 7 (no wrap)");
     }
 
     /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth
