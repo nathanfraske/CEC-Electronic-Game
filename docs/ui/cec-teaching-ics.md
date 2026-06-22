@@ -25,7 +25,8 @@ the JEDEC gate order.
 
 > These are fictional teaching parts. "Specs" are pedagogical, not manufacturing.
 > The numbering is `CEC` + a 4-digit code: **1xxx** data-conversion, **2xxx**
-> arithmetic/logic, **3xxx** memory/sequential, **4xxx** analog/signal.
+> arithmetic/logic, **3xxx** memory/sequential, **4xxx** analog/signal, **5xxx**
+> interface/communication.
 
 ---
 
@@ -741,6 +742,118 @@ follows IN; TRACK low opens it and the cap's backward-Euler companion **holds** 
 exact mechanism the gated switch was built for (proven by the `aswitch_sample_and_hold` test). No
 new sim-core element; golden-safe additive. **Teaches:** track-and-hold, analog memory, the ADC
 front end, why the hold cap and a clean switch matter.
+
+---
+
+## CEC interface / communication (5xxx)
+
+The serial blocks. Where the rest of the Foundations Series is combinational gates and bistables, these
+are **little finite-state machines that move a word over wires one bit at a time** -- the bridge from a
+parallel register to a serial link. Each is a real `ELEM_BEHAVIORAL` program in the sim (a shift register
+plus a control FSM), so the glyph teaches at the **register-transfer level**: a shift register drawn as a
+chain of real flip-flops, a bit counter, and the clock/framing logic. The pair CEC5021 (master) and
+CEC5022 (slave) are the two ends of one SPI bus; CEC5232 is the clockless asynchronous cousin.
+
+### CEC5021 — SPI Master (4-Wire Synchronous Bus Controller)
+
+*Critical Error Computing · "one clock to run the bus."*
+
+**Description.** The CEC5021 is the master of a Serial Peripheral Interface link, and it owns the clock.
+Pulse START and it pulls CS low, then shifts its data word out on MOSI most-significant-bit first, one bit
+per SCLK pulse, while simultaneously clocking the peripheral's reply in on MISO -- out and in on the same
+edges, which is what full-duplex buys you. Four wires, no addressing, no agreed baud rate to get wrong:
+the fastest short-range link there is.
+
+**Features.** SPI Mode 0 (CPOL = 0, CPHA = 0) · MSB-first · full-duplex · master-driven SCLK · single
+supply.
+
+**Pin configuration — 7-pin (SOT-23-8 with one N.C., or MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **SCLK** | Serial clock, master-driven (idles low in Mode 0). |
+| 2 | **MOSI** | Master-out / slave-in: the word shifted out, MSB first. |
+| 3 | **MISO** | Master-in / slave-out: the reply, sampled on the rising edge. |
+| 4 | **CS** | Chip select (active-low; asserted for the whole transfer). |
+| 5 | **START** | Trigger: a rising edge begins one transaction. |
+| 6 | **VCC** | Positive supply. |
+| 7 | **GND** | Ground / 0 V reference. |
+
+**Function.** On START rising: CS goes low; then for each of N bits, MOSI presents the next bit and SCLK
+pulses while MISO is sampled on the rising edge; after N bits CS releases high.
+
+**In the sim:** `ELEM_BEHAVIORAL` program 1 (data word in `aux`; SCLK half-period and bit count in
+`params`). No new sim-core element. **Teaches:** synchronous serial, MSB-first shifting, full-duplex,
+chip-select framing.
+
+---
+
+### CEC5022 — SPI Slave (Clocked Peripheral)
+
+*Critical Error Computing · "speak only when clocked."*
+
+**Description.** The other end of the SPI bus. The CEC5022 has no clock of its own -- it is driven
+entirely by the master's SCLK. While CS is held low it samples MOSI on each clock edge to receive the
+incoming word and at the same time shifts its own reply out on MISO, MSB first, so a read and a write
+happen in one transaction. RXVALID rises once a full word has landed. Every real SPI peripheral -- a
+sensor, a flash, a display -- is this: select it, clock a command in, clock the answer out, on the same
+edges.
+
+**Features.** SPI Mode 0 receiver/transmitter · MSB-first · clocked by external SCLK · RXVALID strobe ·
+single supply.
+
+**Pin configuration — 7-pin (SOT-23-8 with one N.C., or MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **MISO** | Master-in / slave-out: the reply word, shifted out MSB first. |
+| 2 | **RXVALID** | High once a full word has been received. |
+| 3 | **SCLK** | Serial clock input (from the master). |
+| 4 | **MOSI** | Master-out / slave-in: incoming data, sampled on the rising edge. |
+| 5 | **CS** | Chip select (active-low; frames the transfer). |
+| 6 | **VCC** | Positive supply. |
+| 7 | **GND** | Ground / 0 V reference. |
+
+**Function.** While CS is low: on each SCLK rising edge, sample MOSI into the receive register and shift
+the reply out on MISO; at the frame end, raise RXVALID.
+
+**In the sim:** `ELEM_BEHAVIORAL` program 2 (reply word in `aux`; bit count in `params`). **Teaches:** the
+slave half of synchronous serial, shift-in / shift-out, the role of chip-select.
+
+---
+
+### CEC5232 — UART (Asynchronous Serial Port)
+
+*Critical Error Computing · "two wires, no clock, an agreement on speed."*
+
+**Description.** The CEC5232 is an asynchronous serial port -- the venerable two-wire link under every
+serial console, and the RS-232 line it is named for. There is no shared clock: both ends agree a baud
+rate beforehand and frame each byte. The idle-high TX line drops for one START bit (the receiver's cue),
+then the data bits go out least-significant-bit first, then a STOP bit returns the line high. The receiver
+watches RX for the falling start edge and samples each bit in the middle of its window, so small clock
+differences do not matter. Slower than SPI, but it needs no clock wire.
+
+**Features.** Async (no clock) · 8-N-1 framing (START + 8 data LSB-first + STOP) · full-duplex
+(independent TX and RX) · agreed baud rate · single supply.
+
+**Pin configuration — 6-pin (SOT-23-6 / SC70-6):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **TX** | Transmit line (idle high; framed START + data + STOP). |
+| 2 | **RX** | Receive line (sampled for the falling START edge). |
+| 3 | **RXVALID** | One-tick pulse when a received byte completes. |
+| 4 | **SEND** | Trigger: a rising edge transmits the data word. |
+| 5 | **VCC** | Positive supply. |
+| 6 | **GND** | Ground / 0 V reference. |
+
+**Function.** On SEND rising: frame the data word on TX as START (low) + N data bits LSB-first + STOP
+(high). On RX: a falling edge starts reception; sample N bits at the agreed baud (mid-bit); pulse RXVALID
+when the byte lands.
+
+**In the sim:** `ELEM_BEHAVIORAL` program 3 (data word in `aux`; baud divider and bit count in `params`).
+**Teaches:** asynchronous serial, START/STOP framing, baud rate, mid-bit sampling, the timing edge of a
+comms link.
 
 ---
 
