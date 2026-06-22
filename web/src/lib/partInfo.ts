@@ -803,6 +803,18 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output drive", value: f(e.current, "A") },
     ],
   },
+  ADC: {
+    name: "Flash ADC",
+    equation: "code = floor(8 · VIN / VREF), clamped 0..7",
+    headline: (e) =>
+      `flash quantize · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A flash ADC is the fastest way to turn a voltage into a number: it compares the input against every threshold at once. A reference ladder divides VREF into seven evenly-spaced levels; a bank of seven comparators each asks 'is VIN above my level?' in parallel; and a priority encoder turns that thermometer of yes/no answers into a 3-bit binary code on D2..D0 — all in a single step, with no clock and no searching. That parallelism is both its speed and its cost: an N-bit flash needs (2 to the N) minus 1 comparators, so flash is used where speed matters most (video, fast digitizers), while successive-approximation trades speed for far fewer parts at higher resolution. This one digitizes VIN against VREF into 8 levels (LSB = VREF/8); pair it with a 3-bit DAC to watch a voltage convert to a code and reconstruct back.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

@@ -64,6 +64,44 @@ in-sim (the real-world aperture is a teaching annotation).
 
 ---
 
+## CEC1080 — 3-Bit Flash ADC
+
+*Critical Error Computing · "every threshold at once."*
+
+**Description.** The CEC1080 turns a voltage into a 3-bit number the fast way: in parallel. A
+reference ladder splits VREF into seven evenly-spaced levels; seven comparators each ask "is VIN
+above my level?" simultaneously; and a priority encoder folds that thermometer of answers into a
+3-bit code on D2..D0. No clock, no searching -- one step. It is the upgrade of the CEC1041 (one
+comparator, one bit) to a whole bank, and the convert half of the converter pair with the CEC1083
+DAC. Flash is the fastest ADC architecture and the most expensive: an N-bit flash needs 2^N - 1
+comparators (this 3-bit part has seven), which is why flash is reserved for the highest speeds and
+SAR is used where parts matter more than nanoseconds.
+
+**Features.** Parallel (flash) conversion · 3-bit output (8 levels, LSB = VREF/8) · floor
+quantization clamped 0..7 · single supply · VREF input (falls back to VCC as full scale if unwired).
+
+**Pin configuration — 7-pin (SOT-23-8 with one N.C., or MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **VIN** | Analog input (sensed, high-Z), measured against VREF. |
+| 2 | **VREF** | Reference / full-scale (the top of the ladder). |
+| 3 | **D2** | Output code bit 2 (MSB). |
+| 4 | **D1** | Output code bit 1. |
+| 5 | **D0** | Output code bit 0 (LSB). |
+| 6 | **VCC** | Positive supply. |
+| 7 | **GND** | Ground / 0 V reference. |
+
+**Function.** `code = floor(8 * (VIN - GND) / (VREF - GND))`, clamped to 0..7, presented as binary on
+D2 D1 D0. The seven implied comparator thresholds sit at k/8 of full scale (k = 1..7).
+
+**In the sim:** `ELEM_BEHAVIORAL` program 5 (a parallel quantizer; reads VIN/VREF live, drives the
+three code bits, combinational/no state). No new sim-core element; golden-safe additive. **Teaches:**
+parallel (flash) conversion, the comparator ladder, thermometer-to-binary encoding, the speed-vs-parts
+trade against successive approximation, and (with the CEC1083) the full convert <-> reconstruct loop.
+
+---
+
 ## CEC1083 — 3-Bit Ladder DAC
 
 *Critical Error Computing · "three switches and a ladder make a voltage."*

@@ -1037,6 +1037,27 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // 3-bit flash ADC (CEC1080): the parallel converter — quantizes the analog VIN against VREF to a
+  // 3-bit code on D0/D1/D2. ELEM_BEHAVIORAL program 5 (the multi-bit sibling of the SAMP sampler);
+  // value = the fixed program id (no value picker, not in the value lists); no data word. Pins
+  // VIN/VREF (analog in), D2/D1/D0 (digital out), VCC/GND. buildNetlist routes them via BEH_SPEC.
+  ADC: kind(
+    "ADC",
+    "Flash ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 1),
+      pin("VREF", 0, 2),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    5,
+    "",
+    true,
+  ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
   // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
   // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =

@@ -417,6 +417,10 @@ const BEH_SPEC: Record<string, BehSpec> = {
   // UART (prog 3): a=TX b=RXVALID d=VCC e=GND f=RX g=SEND (c, h unused).
   // Visual pins [TX, RX, RXV, SEND, VCC, GND].
   UART: { prog: 3, term: [0, 2, -1, 4, 5, 1, 3, -1], defWord: 0x55 },
+  // 3-bit flash ADC (prog 5): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=VREF (h unused). The output
+  // code drives a/b/c; VIN/VREF are analog sense pins. No data word (aux unused). Visual pins
+  // [VIN, VREF, D2, D1, D0, VCC, GND].
+  ADC: { prog: 5, term: [4, 3, 2, 5, 6, 0, 1, -1], defWord: 0 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
