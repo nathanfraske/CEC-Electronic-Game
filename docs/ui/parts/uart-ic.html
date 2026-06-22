@@ -1,0 +1,768 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UART, five layers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:94ch;} p.intro b{color:var(--text);}
+  .modebar{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:14px;}
+  .seg{display:inline-flex; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;}
+  .seg button{font-family:var(--font-display); font-size:12.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); background:var(--surface); border:none; padding:8px 14px; cursor:pointer; transition:background .15s,color .15s;}
+  .seg button + button{border-left:1px solid var(--border);}
+  .seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+  .seg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); margin-right:2px;}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .scopewrap{padding:8px 10px 12px;}
+  .scopewrap svg{display:block; width:100%; height:auto;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:200px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].ta::-webkit-slider-thumb{background:var(--accent); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].ta::-moz-range-thumb{background:var(--accent);}
+  input[type=range].tb::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].tb::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">CEC5232</span><span class="chip" id="chipReg">idle</span></div>
+  </div>
+
+  <h1 class="lede">The UART, five layers down</h1>
+  <p class="intro">Serial is a parallel word sent one bit at a time through a shift register. This is the house <b>CEC5232</b>, an asynchronous serial port, the two-wire link under every serial console and the RS-232 line it is named for. There is no clock wire: both ends agree a <b>baud rate</b> beforehand, and an internal baud counter divides the system tick down to one bit-time. The TX line idles high; on SEND it frames a byte as a <b>START</b> bit (low), then eight data bits <b>least-significant-bit first</b>, then a <b>STOP</b> bit (high), one bit per baud period. The receiver watches RX for the falling START edge, then samples each bit in the <b>middle</b> of its window, so small clock differences do not matter, and pulses <b>RXVALID</b> when the byte lands. Slower than SPI, but it needs no clock wire. The first tier is the logic symbol on the real pinout with the live <b>protocol timing diagram</b>, the signature of a serial part. The second is the flow network, the shift register as a <b>bucket brigade</b> an internal baud metronome marches one bit per tick, wrapped with a START and a STOP. The third opens that as <b>pressure-pilot valves</b>. The fourth is the real device at the <b>register-transfer level</b>, the shift register as a chain of eight D flip-flops with a <b>baud counter</b>, a framing FSM, and a mid-bit RX sampler, all powered from the rails. The fifth is the silicon, one flip-flop of that register laid out as its CMOS transistors, the cell the whole register repeats.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; symbol</button>
+      <button data-t="t2">2 &middot; flow</button>
+      <button data-t="t3">3 &middot; valves</button>
+      <button data-t="t4">4 &middot; device</button>
+      <button data-t="t5">5 &middot; silicon</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">schematic</span>
+      <span class="scope-tag r" id="regTag">idle</span>
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" aria-label="UART"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">Link state</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Protocol timing</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnSend">send byte</button><button class="btn btn-ghost" id="btnByte">TX = 0xA5</button><button class="btn btn-ghost is-active" id="btnStream">auto repeat</button></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">supply V_DD</span><span class="ic-val" id="labVdd">3.30 V</span></div><input type="range" id="vdd" min="180" max="1500" value="330"></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">baud rate</span><span class="ic-val" id="labSpd">medium</span></div><input type="range" class="tb" id="spd" min="60" max="320" value="150"></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff';
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== CEC5232 : UART, asynchronous, 8-N-1, LSB-first, full-duplex (no clock wire) =====
+  // No shared clock. An internal baud counter divides the system tick to one bit-time. TX idles high; on
+  // SEND it frames a byte as START(low) + 8 data LSB-first + STOP(high), one bit per baud period. RX watches
+  // its line for the falling START edge, then samples each bit at mid-bit (1.5 + k bit-times after the edge)
+  // and raises RXVALID. Here a phantom remote drives RX so both directions run at once (true full-duplex).
+  // Scaled teaching animation, not real baud. State lives in module vars; uartTick() advances one frame.
+  function bitsLSB(byte){var a=[];for(var i=0;i<8;i++){a.push((byte>>i)&1);}return a;}   // a[0] = bit 0 = LSB first
+  function valLSB(arr){var v=0;for(var i=0;i<8;i++){v|=(arr[i]<<i);}return v;}
+  function hex2(b){var s=b.toString(16).toUpperCase();return '0x'+(s.length<2?'0'+s:s);}
+
+  // a generic START + 8 data LSB-first + STOP framing transmitter, instanced twice (our TX, the phantom RX)
+  function mkTxFsm(byte){return {state:'idle',byte:byte,data:bitsLSB(byte),sub:0,bit:0,line:1};}
+  function txFsmStart(f){if(f.state==='idle'){f.state='start';f.sub=0;f.data=bitsLSB(f.byte);}}
+  function txFsmStep(f,BAUD){
+    if(f.state==='idle'){f.line=1;}
+    else if(f.state==='start'){f.line=0;f.sub++;if(f.sub>=BAUD){f.state='data';f.bit=0;f.sub=0;}}
+    else if(f.state==='data'){f.line=f.data[f.bit];f.sub++;if(f.sub>=BAUD){f.bit++;f.sub=0;if(f.bit>=8){f.state='stop';}}}
+    else if(f.state==='stop'){f.line=1;f.sub++;if(f.sub>=BAUD){f.state='idle';}}
+  }
+
+  var uart={tx:mkTxFsm(0xA5), ptx:mkTxFsm(0x3C),                 // tx -> TX pin ; ptx = phantom remote -> RX pin
+            rxState:'idle',rxPhase:0,rxBit:0,rxReg:[0,0,0,0,0,0,0,0],rxByte:0,rxLine:1,rxLinePrev:1,
+            rxvalid:false,rxvHold:0,rxSampled:false, BAUD:20, sendPulse:0};
+  function uartStep(){
+    uart.rxSampled=false;
+    txFsmStep(uart.tx,uart.BAUD); txFsmStep(uart.ptx,uart.BAUD);
+    uart.rxLinePrev=uart.rxLine; uart.rxLine=uart.ptx.line;     // the RX sampler reads the phantom line
+    if(uart.rxvHold>0){uart.rxvHold--;if(uart.rxvHold<=0)uart.rxvalid=false;}
+    if(uart.rxState==='idle'){
+      if(uart.rxLinePrev===1&&uart.rxLine===0){uart.rxState='rx';uart.rxPhase=0;uart.rxBit=0;uart.rxReg=[0,0,0,0,0,0,0,0];}
+    } else {
+      uart.rxPhase++;
+      var sp=Math.round((1.5+uart.rxBit)*uart.BAUD);            // mid of data bit k = 1.5 + k bit-times after START
+      if(uart.rxBit<8&&uart.rxPhase>=sp){uart.rxReg[uart.rxBit]=uart.rxLine;uart.rxBit++;uart.rxSampled=true;}
+      if(uart.rxBit>=8){uart.rxByte=valLSB(uart.rxReg);uart.rxvalid=true;uart.rxvHold=14;uart.rxState='idle';}
+    }
+  }
+  var idleGap=30, idleCount=0, streaming=true;
+  function uartSend(){txFsmStart(uart.tx);txFsmStart(uart.ptx);uart.sendPulse=12;}
+  function uartTick(){
+    uartStep();
+    if(uart.tx.state==='idle'){idleCount++;if(streaming&&idleCount>=idleGap){idleCount=0;uartSend();}} else {idleCount=0;}
+    if(uart.sendPulse>0)uart.sendPulse--;
+  }
+  function fmtV(v){return v.toFixed(2)+' V';}
+  function txStateLabel(st){return st==='idle'?'idle':(st==='start'?'START':(st==='stop'?'STOP':'data'));}
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
+  var t1={},t2={},t3={},t4={},t5={};
+
+  // ===== shared 6-lead package frame, CEC5232 house pinout, identical in every tier =====
+  var PKX0=190,PKX1=590,PKY0=116,PKY1=456;
+  // CEC5232, all 6 pins used on a SOT-23-6 frame, landscape, pin 1 (TX) at the lower-left.
+  //   bottom L-R : TX(1) RX(2) RXVALID(3)      top L-R : GND(6) VCC(5) SEND(4)
+  var XTX=280,XRX=390,XRXV=500, XGND=280,XVCC=390,XSEND=500;
+  var PIN={tx:[XTX,PKY1],rx:[XRX,PKY1],rxv:[XRXV,PKY1],gnd:[XGND,PKY0],vcc:[XVCC,PKY0],send:[XSEND,PKY0]};
+  function drawPkg(g){
+    g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));   // pin-1 marker by TX
+    function pin(x,top,num,name,col){
+      var ty=top?PKY0-28:PKY1;
+      g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      g.appendChild(el('text',{x:x,y:top?PKY0+15:PKY1-7,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},num));
+      g.appendChild(el('text',{x:x,y:top?ty-7:ty+41,'font-family':'var(--font-mono)','font-size':(name.length>5?9.5:11),fill:col,'text-anchor':'middle'},name));
+    }
+    pin(XTX,false,'1','TX',ACCENT); pin(XRX,false,'2','RX',CYAN); pin(XRXV,false,'3','RXVALID',OK);
+    pin(XGND,true,'6','GND',LO); pin(XVCC,true,'5','VCC',HI); pin(XSEND,true,'4','SEND',ORANGE);
+    // all six pins are used : no N.C. stub on this part
+  }
+
+  // ============ TIER 1 : SYMBOL + PINOUT ============
+  function buildT1(){
+    drawPkg(gT1);
+    var BX0=312,BX1=468,BY0=224,BY1=352;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.4,'stroke-linecap':'round','stroke-linejoin':'round'});gT1.appendChild(p);return p;}
+    function arr(x,y,dir,col){var s=dir==='down'?1:(dir==='up'?-1:0);var d2=dir==='right'?'M '+(x-5)+' '+(y-4)+' L '+x+' '+y+' L '+(x-5)+' '+(y+4)+' Z':(dir==='left'?'M '+(x+5)+' '+(y-4)+' L '+x+' '+y+' L '+(x+5)+' '+(y+4)+' Z':'M '+(x-4)+' '+(y-5*s)+' L '+x+' '+(y+1*s)+' L '+(x+4)+' '+(y-5*s)+' Z');gT1.appendChild(el('path',{d:d2,fill:col}));}
+    // ----- pin wires (all six pins connect) -----
+    t1.wTx=wire('M 340 '+BY1+' L 340 410 L '+XTX+' 410 L '+XTX+' '+PKY1,ACCENT,2.4);       // TX out
+    t1.wRx=wire('M '+XRX+' '+PKY1+' L '+XRX+' '+BY1,CYAN,2.4);                              // RX in
+    t1.wRxv=wire('M 440 '+BY1+' L 440 428 L '+XRXV+' 428 L '+XRXV+' '+PKY1,OK,2.4);         // RXVALID out
+    t1.wSend=wire('M '+XSEND+' '+PKY0+' L '+XSEND+' 270 L '+BX1+' 270',ORANGE,2.4);         // SEND in
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' '+BY0,HI,2);
+    wire('M '+XGND+' '+PKY0+' L '+XGND+' 206 L 354 206 L 354 '+BY0,LO,2);
+    arr(XTX,PKY1-2,'down',ACCENT);arr(XRX,BY1-4,'up',CYAN);arr(XRXV,PKY1-2,'down',OK);arr(BX1+4,270,'right',ORANGE);
+    // faint external loopback-style note arc : the demo feeds a remote frame into RX
+    gT1.appendChild(el('text',{x:(XTX+XRX)/2,y:PKY1+52,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'RX driven by a remote sending 0x3C (demo)'));
+    // ----- symbol body -----
+    t1.box=el('rect',{x:BX0,y:BY0,width:BX1-BX0,height:BY1-BY0,rx:6,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':2});gT1.appendChild(t1.box);
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+22,'font-family':'var(--font-display)','font-size':15,fill:FAINT,'text-anchor':'middle','letter-spacing':'0.08em'},'CEC5232'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+37,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'UART'));
+    gT1.appendChild(el('text',{x:340,y:344,'font-family':'var(--font-mono)','font-size':7,fill:ACCENT,'text-anchor':'middle'},'TX'));
+    gT1.appendChild(el('text',{x:390,y:344,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'middle'},'RX'));
+    gT1.appendChild(el('text',{x:440,y:344,'font-family':'var(--font-mono)','font-size':6.5,fill:OK,'text-anchor':'middle'},'RXV'));
+    gT1.appendChild(el('text',{x:BX1-6,y:266,'font-family':'var(--font-mono)','font-size':7,fill:ORANGE,'text-anchor':'end'},'SEND'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:308,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'no clock . LSB first'));
+    // ----- left margin : title + how a frame runs -----
+    var TX=34;
+    gT1.appendChild(el('text',{x:TX,y:206,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'SYMBOL'));
+    gT1.appendChild(el('text',{x:TX,y:226,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'async, no clock wire.'));
+    gT1.appendChild(el('text',{x:TX,y:238,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'an agreed baud rate.'));
+    gT1.appendChild(el('text',{x:TX,y:256,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM},'SEND frames a byte:'));
+    gT1.appendChild(el('text',{x:TX,y:268,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM},'START low + 8 data'));
+    gT1.appendChild(el('text',{x:TX,y:280,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM},'LSB-first + STOP high'));
+    gT1.appendChild(el('text',{x:TX,y:298,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'RX finds the start edge,'));
+    gT1.appendChild(el('text',{x:TX,y:310,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'samples each bit mid-'));
+    gT1.appendChild(el('text',{x:TX,y:322,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'window, pulses RXVALID.'));
+    // ----- live TX frame strip : START + 8 data LSB-first + STOP -----
+    gT1.appendChild(el('text',{x:TX,y:386,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT},'TX frame'));
+    t1.frCells=[];var cw=15,cg=1,x0=TX;
+    var labs=['S','0','1','2','3','4','5','6','7','P'];
+    for(var i=0;i<10;i++){var cx=x0+i*(cw+cg);
+      var r=el('rect',{x:cx,y:392,width:cw,height:24,rx:2,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1});gT1.appendChild(r);
+      var tt=el('text',{x:cx+cw/2,y:408,'font-family':'var(--font-mono)','font-size':9,fill:LO,'text-anchor':'middle'},'');gT1.appendChild(tt);
+      gT1.appendChild(el('text',{x:cx+cw/2,y:426,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'middle'},labs[i]));
+      t1.frCells.push({r:r,t:tt});}
+    gT1.appendChild(el('text',{x:x0+1*(cw+cg)+cw/2,y:436,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'middle'},'LSB'));
+    gT1.appendChild(el('text',{x:x0+8*(cw+cg)+cw/2,y:436,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'middle'},'MSB'));
+    // ----- right margin : live line state + RXVALID lamp -----
+    var RX=600;
+    gT1.appendChild(el('text',{x:RX,y:232,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'line state'));
+    function lampRow(y,lab,col){gT1.appendChild(el('text',{x:RX,y:y+4,'font-family':'var(--font-mono)','font-size':9,fill:col},lab));var c=el('circle',{cx:RX+96,cy:y,r:6,fill:'oklch(0.2 0.02 285)',stroke:STEEL,'stroke-width':1});gT1.appendChild(c);return c;}
+    t1.lTx=lampRow(252,'TX',ACCENT);t1.lRx=lampRow(274,'RX',CYAN);t1.lRxv=lampRow(296,'RXVALID',OK);t1.lSend=lampRow(318,'SEND',ORANGE);
+    t1.note=el('text',{x:RX,y:356,'font-family':'var(--font-mono)','font-size':9.5,fill:OK,'text-anchor':'start'},'');gT1.appendChild(t1.note);
+    t1.rxLab=el('text',{x:RX,y:378,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'start'},'');gT1.appendChild(t1.rxLab);
+  }
+  function updateT1(s){
+    t1.wTx.setAttribute('stroke',s.txLine?ACCENT:'oklch(0.36 0.06 18)');
+    t1.wRx.setAttribute('stroke',s.rxLine?CYAN:'oklch(0.34 0.05 232)');
+    t1.wRxv.setAttribute('stroke',s.rxvalid?OK:'oklch(0.4 0.08 150)');
+    t1.wSend.setAttribute('stroke',s.send?ORANGE:'oklch(0.4 0.06 50)');
+    t1.box.setAttribute('stroke',(s.txState!=='idle')?ACCENT:STEEL);
+    // frame strip : cell 0 = START(0), 1..8 = data LSB-first, 9 = STOP(1) ; highlight current tx position
+    var cur=(s.txState==='start')?0:(s.txState==='data'?1+s.txBit:(s.txState==='stop'?9:-1));
+    for(var i=0;i<10;i++){var bit, base;
+      if(i===0){bit=0;}else if(i===9){bit=1;}else{bit=s.txData[i-1];}
+      t1.frCells[i].t.textContent=''+bit;
+      var isS=(i===0),isP=(i===9);
+      t1.frCells[i].t.setAttribute('fill',isS?ORANGE:(isP?OK:(bit?HI:LO)));
+      var on=(i===cur);
+      t1.frCells[i].r.setAttribute('stroke',on?WARM:STEEL);t1.frCells[i].r.setAttribute('stroke-width',on?2:1);
+      t1.frCells[i].r.setAttribute('fill',on?'oklch(0.4 0.1 90 / 0.35)':(isS?'oklch(0.4 0.1 50 / 0.18)':(isP?'oklch(0.4 0.1 150 / 0.18)':(bit?'oklch(0.46 0.13 232 / 0.4)':'oklch(0.16 0.02 285)'))));}
+    function lamp(c,on,col){c.setAttribute('fill',on?col:'oklch(0.2 0.02 285)');}
+    lamp(t1.lTx,!s.txLine,ACCENT);lamp(t1.lRx,!s.rxLine,CYAN);lamp(t1.lRxv,s.rxvalid,OK);lamp(t1.lSend,s.send,ORANGE);
+    t1.note.textContent=(s.txState!=='idle')?('TX: sending '+txStateLabel(s.txState)):(s.rxvalid?'RX byte valid':'press send byte');
+    t1.note.setAttribute('fill',(s.txState!=='idle')?ACCENT:(s.rxvalid?OK:FAINT));
+    t1.rxLab.textContent='RX: '+(s.rxvalid?('got '+hex2(s.rxByte)):(s.rxState==='rx'?'receiving':'waiting'));
+    t1.rxLab.setAttribute('fill',s.rxvalid?OK:DIM);
+  }
+
+  // ============ TIER 2 : FLOW NETWORK (bucket brigade) ============
+  function buildT2(){
+    drawPkg(gT2);
+    function pipe(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.2,'stroke-linecap':'round','stroke-linejoin':'round'});gT2.appendChild(p);return p;}
+    var BX0=282,STEP=32,BW=26, TXY=238,TXH=34, RXY=334,RXH=34;
+    function cx(i){return BX0+BW/2+i*STEP;}
+    // ----- VCC supply rail (full level) and GND basin (return) -----
+    pipe('M '+XVCC+' '+PKY0+' L '+XVCC+' 150',HI,2);
+    gT2.appendChild(el('line',{x1:268,y1:150,x2:(cx(7)+BW/2+6),y2:150,stroke:'oklch(0.5 0.1 250)','stroke-width':1.4}));
+    gT2.appendChild(el('text',{x:430,y:146,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'start'},'VCC (full level)'));
+    [cx(1),cx(4),cx(7)].forEach(function(dx){gT2.appendChild(el('line',{x1:dx,y1:150,x2:dx,y2:TXY,stroke:'oklch(0.5 0.1 250)','stroke-width':0.8,'stroke-dasharray':'2 3'}));});
+    pipe('M '+XGND+' '+PKY0+' L '+XGND+' 134 L 198 134 L 198 430 L 256 430',LO,2);
+    gT2.appendChild(el('rect',{x:256,y:426,width:316,height:8,rx:2,fill:'oklch(0.2 0.04 250 / 0.5)',stroke:'oklch(0.38 0.05 250)','stroke-width':1}));
+    gT2.appendChild(el('text',{x:560,y:422,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'end'},'GND basin'));
+    // ----- baud metronome (internal divider : the drive, NO clock wire) -----
+    gT2.appendChild(el('rect',{x:206,y:198,width:66,height:42,rx:4,fill:'oklch(0.17 0.022 285)',stroke:BRONZE,'stroke-width':1.3}));
+    gT2.appendChild(el('text',{x:239,y:211,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE,'text-anchor':'middle'},'baud'));
+    t2.metro=el('path',{d:'M 214 230 L 214 222 L 224 222 L 224 230 L 234 230 L 234 222 L 244 222 L 244 230 L 254 230 L 254 222 L 264 222',fill:'none',stroke:WARM,'stroke-width':1.4});gT2.appendChild(t2.metro);
+    gT2.appendChild(el('text',{x:239,y:252,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'no clock wire'));
+    // tick rail between the belts, driven by the metronome
+    t2.tickRail=el('line',{x1:239,y1:305,x2:(cx(7)+BW/2+6),y2:305,stroke:WARM,'stroke-width':2});gT2.appendChild(t2.tickRail);
+    pipe('M 239 240 L 239 305',BRONZE,1.6);
+    gT2.appendChild(el('text',{x:243,y:300,'font-family':'var(--font-mono)','font-size':7,fill:WARM,'text-anchor':'start'},'one tick per bit'));
+    for(var d=0;d<8;d++){gT2.appendChild(el('line',{x1:cx(d),y1:305,x2:cx(d),y2:TXY+TXH+2,stroke:'oklch(0.4 0.05 70)','stroke-width':0.8,'stroke-dasharray':'2 2'}));
+      gT2.appendChild(el('line',{x1:cx(d),y1:305,x2:cx(d),y2:RXY-2,stroke:'oklch(0.4 0.05 70)','stroke-width':0.8,'stroke-dasharray':'2 2'}));}
+    // ----- TX data belt (8 buckets, LSB at the left tips out first) -----
+    gT2.appendChild(el('text',{x:BX0,y:218,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'start'},'TX data'));
+    gT2.appendChild(el('text',{x:cx(0),y:228,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'LSB'));
+    gT2.appendChild(el('text',{x:cx(7),y:228,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'MSB'));
+    gT2.appendChild(el('line',{x1:BX0-6,y1:TXY+TXH+3,x2:cx(7)+BW/2+6,y2:TXY+TXH+3,stroke:STEEL,'stroke-width':2}));
+    t2.txBkt=[];t2.rxBkt=[];
+    function bucket(i,yt,h){var x=BX0+i*STEP;
+      gT2.appendChild(el('path',{d:'M '+x+' '+yt+' L '+x+' '+(yt+h)+' L '+(x+BW)+' '+(yt+h)+' L '+(x+BW)+' '+yt,fill:'none',stroke:STEEL,'stroke-width':1.4}));
+      var fill=el('rect',{x:x+2,y:yt+h-3,width:BW-4,height:0,fill:'oklch(0.6 0.14 232 / 0.7)'});gT2.appendChild(fill);
+      var tx=el('text',{x:x+BW/2,y:yt+h/2+4,'font-family':'var(--font-mono)','font-size':10,fill:LO,'text-anchor':'middle'},'0');gT2.appendChild(tx);
+      return {fill:fill,t:tx,yt:yt,h:h};}
+    for(var i=0;i<8;i++){t2.txBkt.push(bucket(i,TXY,TXH));}
+    // ----- framer on the TX output : injects START low / STOP high around the data -----
+    t2.txChute=pipe('M '+cx(0)+' '+(TXY+TXH)+' L '+cx(0)+' 300 L 250 300 L 250 412 L '+XTX+' 412 L '+XTX+' '+PKY1,ACCENT,2.4);
+    t2.framer=el('rect',{x:234,y:352,width:32,height:18,rx:3,fill:'oklch(0.18 0.025 285)',stroke:ORANGE,'stroke-width':1.2});gT2.appendChild(t2.framer);
+    t2.framerT=el('text',{x:250,y:364,'font-family':'var(--font-mono)','font-size':7,fill:ORANGE,'text-anchor':'middle'},'frame');gT2.appendChild(t2.framerT);
+    gT2.appendChild(el('text',{x:250,y:344,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'middle'},'START / STOP'));
+    gT2.appendChild(el('text',{x:XTX,y:436,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'middle'},'TX line'));
+    // ----- RX data belt (8 buckets), fills from the mid-bit sampler -----
+    gT2.appendChild(el('text',{x:cx(0),y:RXY-8,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'RX data'));
+    gT2.appendChild(el('line',{x1:BX0-6,y1:RXY+RXH+3,x2:cx(7)+BW/2+6,y2:RXY+RXH+3,stroke:STEEL,'stroke-width':2}));
+    for(i=0;i<8;i++){t2.rxBkt.push(bucket(i,RXY,RXH));}
+    t2.rxChute=pipe('M '+XRX+' '+PKY1+' L '+XRX+' 446 L 556 446 L 556 '+(RXY+RXH/2)+' L '+(cx(7)+BW/2)+' '+(RXY+RXH/2),CYAN,2.4);
+    t2.sampler=el('rect',{x:540,y:388,width:34,height:16,rx:3,fill:'oklch(0.18 0.025 285)',stroke:WARM,'stroke-width':1.2});gT2.appendChild(t2.sampler);
+    gT2.appendChild(el('text',{x:557,y:399,'font-family':'var(--font-mono)','font-size':6.5,fill:WARM,'text-anchor':'middle'},'sample'));
+    gT2.appendChild(el('text',{x:557,y:RXY-2,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'middle'},'RX line'));
+    // ----- RXVALID flag -> RXVALID pin -----
+    pipe('M '+cx(6)+' '+(RXY+RXH)+' L '+cx(6)+' 392 L '+XRXV+' 392',OK,1.6);
+    t2.rxvFlag=el('rect',{x:XRXV-16,y:390,width:32,height:15,rx:3,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1});gT2.appendChild(t2.rxvFlag);
+    t2.rxvTxt=el('text',{x:XRXV,y:401,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'valid');gT2.appendChild(t2.rxvTxt);
+    t2.rxvWire=pipe('M '+XRXV+' 405 L '+XRXV+' '+PKY1,OK,2);
+    // ----- SEND loader : drops the byte into the TX belt -----
+    t2.loadWire=pipe('M '+XSEND+' '+PKY0+' L '+XSEND+' 196 L '+cx(4)+' 196 L '+cx(4)+' '+(TXY-4),ORANGE,2);
+    gT2.appendChild(el('text',{x:XSEND-6,y:192,'font-family':'var(--font-mono)','font-size':7.5,fill:ORANGE,'text-anchor':'end'},'SEND loads'));
+    // ----- left-margin note -----
+    gT2.appendChild(el('text',{x:34,y:206,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'FLOW'));
+    gT2.appendChild(el('text',{x:34,y:226,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'a baud metronome'));
+    gT2.appendChild(el('text',{x:34,y:238,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'(no wire) marches'));
+    gT2.appendChild(el('text',{x:34,y:250,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'the belt. the framer'));
+    gT2.appendChild(el('text',{x:34,y:262,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'wraps START/STOP'));
+    gT2.appendChild(el('text',{x:34,y:274,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'onto TX, LSB first.'));
+    t2.note=el('text',{x:34,y:330,'font-family':'var(--font-mono)','font-size':9.5,fill:OK,'text-anchor':'start'},'');gT2.appendChild(t2.note);
+  }
+  function setBucket(b,bit){b.fill.setAttribute('height',(bit?b.h-4:0).toFixed(1));b.fill.setAttribute('y',(b.yt+ (bit?2:b.h-3)).toFixed(1));b.t.textContent=''+bit;b.t.setAttribute('fill',bit?HI:LO);}
+  function updateT2(s){
+    for(var i=0;i<8;i++){setBucket(t2.txBkt[i],s.txData[i]);setBucket(t2.rxBkt[i],s.rxReg[i]);}
+    t2.tickRail.setAttribute('stroke',s.baudHigh?WARM:'oklch(0.42 0.05 70)');
+    t2.metro.setAttribute('stroke',s.baudHigh?WARM:'oklch(0.5 0.06 70)');
+    t2.txChute.setAttribute('stroke',s.txLine?ACCENT:'oklch(0.34 0.05 18)');
+    var fr=(s.txState==='start')?'START':(s.txState==='stop'?'STOP':(s.txState==='data'?'data':'idle'));
+    t2.framerT.textContent=fr;t2.framer.setAttribute('stroke',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:STEEL)));
+    t2.framerT.setAttribute('fill',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:FAINT)));
+    t2.rxChute.setAttribute('stroke',s.rxLine?CYAN:'oklch(0.34 0.05 232)');
+    t2.sampler.setAttribute('stroke',s.rxSampled?'#ffd24d':WARM);t2.sampler.setAttribute('fill',s.rxSampled?'oklch(0.4 0.1 90 / 0.4)':'oklch(0.18 0.025 285)');
+    t2.rxvFlag.setAttribute('stroke',s.rxvalid?OK:STEEL);t2.rxvFlag.setAttribute('fill',s.rxvalid?'oklch(0.4 0.1 150 / 0.4)':'oklch(0.18 0.025 285)');
+    t2.rxvTxt.setAttribute('fill',s.rxvalid?OK:FAINT);t2.rxvWire.setAttribute('stroke',s.rxvalid?OK:'oklch(0.4 0.08 150)');
+    t2.loadWire.setAttribute('stroke',s.send?ORANGE:'oklch(0.4 0.06 50)');
+    t2.note.textContent=(s.txState!=='idle')?('TX '+txStateLabel(s.txState)+(s.txState==='data'?(' bit '+(s.txBit+1)+' of 8'):'')):(s.rxvalid?'RX byte received':'idle : line high');
+    t2.note.setAttribute('fill',(s.txState!=='idle')?ACCENT:(s.rxvalid?OK:OK));
+  }
+
+  // ============ TIER 3 : PRESSURE-PILOT VALVES ============
+  function buildT3(){
+    drawPkg(gT3);
+    function pipe(d,col,w,dash){var a={d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.2,'stroke-linecap':'round','stroke-linejoin':'round'};if(dash)a['stroke-dasharray']=dash;var p=el('path',a);gT3.appendChild(p);return p;}
+    var CTY=222,CBY=270,CMY=246;
+    var c=[ [288,340],[366,418],[444,496] ];     // 3 representative TX data stages (LSB at left)
+    var VA=353, VB=431, MAN=300;
+    // ----- VCC rail and GND return -----
+    pipe('M '+XVCC+' '+PKY0+' L '+XVCC+' 176 L 318 176',HI,2);
+    gT3.appendChild(el('line',{x1:318,y1:176,x2:540,y2:176,stroke:'oklch(0.42 0.08 250)','stroke-width':1.6}));
+    gT3.appendChild(el('text',{x:430,y:166,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'start'},'VCC powers the pilots'));
+    pipe('M '+XGND+' '+PKY0+' L '+XGND+' 150 L 196 150 L 196 436 L 300 436',LO,2);
+    gT3.appendChild(el('line',{x1:300,y1:436,x2:556,y2:436,stroke:'oklch(0.38 0.05 250)','stroke-width':1.6}));
+    gT3.appendChild(el('text',{x:540,y:432,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'end'},'GND return'));
+    // ----- baud pilot manifold (internal divider : NO clock wire) -----
+    gT3.appendChild(el('rect',{x:206,y:286,width:60,height:28,rx:4,fill:'oklch(0.17 0.022 285)',stroke:BRONZE,'stroke-width':1.2}));
+    gT3.appendChild(el('text',{x:236,y:298,'font-family':'var(--font-mono)','font-size':7,fill:BRONZE,'text-anchor':'middle'},'baud'));
+    t3.metro=el('path',{d:'M 214 308 L 214 303 L 222 303 L 222 308 L 230 308 L 230 303 L 238 303 L 238 308 L 246 308 L 246 303 L 258 303',fill:'none',stroke:WARM,'stroke-width':1.2});gT3.appendChild(t3.metro);
+    t3.man=pipe('M 266 300 L 300 300 L 527 300',ACCENT,2,'5 3');
+    gT3.appendChild(el('text',{x:318,y:MAN+13,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'start'},'baud pilot : a tick advances every stage'));
+    // ----- TX data chambers + fills -----
+    t3.cFill=[];
+    for(var i=0;i<3;i++){var x0=c[i][0],x1=c[i][1];
+      gT3.appendChild(el('rect',{x:x0,y:CTY,width:x1-x0,height:CBY-CTY,rx:3,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.4}));
+      var f=el('rect',{x:x0+2,y:CBY-3,width:x1-x0-4,height:0,fill:'oklch(0.6 0.14 232 / 0.7)'});gT3.appendChild(f);t3.cFill.push(f);
+      gT3.appendChild(el('text',{x:(x0+x1)/2,y:CTY-6,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'bit '+i+(i===0?' (LSB)':'')));
+      gT3.appendChild(el('line',{x1:(x0+x1)/2,y1:176,x2:(x0+x1)/2,y2:CTY,stroke:'oklch(0.4 0.06 250)','stroke-width':0.8,'stroke-dasharray':'2 3'}));}
+    gT3.appendChild(el('text',{x:510,y:CMY+3,'font-family':'var(--font-mono)','font-size':12,fill:FAINT,'text-anchor':'start'},'...'));
+    gT3.appendChild(el('text',{x:512,y:CMY+16,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'start'},'8 total'));
+    // ----- pilot valves (plug + spring) -----
+    function pvalve(cx){
+      gT3.appendChild(el('path',{d:'M '+(cx-12)+' '+(CMY-9)+' L '+(cx-3)+' '+CMY+' L '+(cx-12)+' '+(CMY+9),fill:'none',stroke:STEEL,'stroke-width':1.4}));
+      gT3.appendChild(el('path',{d:'M '+(cx+12)+' '+(CMY-9)+' L '+(cx+3)+' '+CMY+' L '+(cx+12)+' '+(CMY+9),fill:'none',stroke:STEEL,'stroke-width':1.4}));
+      gT3.appendChild(el('rect',{x:cx-9,y:CMY-40,width:18,height:20,rx:2,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1}));
+      var spr=el('path',{d:vcoil(cx,CMY-38,CMY-14,3,3.5),fill:'none',stroke:BRONZE,'stroke-width':1.4});gT3.appendChild(spr);
+      var plug=el('ellipse',{cx:cx,cy:CMY,rx:8,ry:6,fill:'#aeb6c4',stroke:STEEL,'stroke-width':1});gT3.appendChild(plug);
+      var rod=el('line',{x1:cx,y1:CMY+6,x2:cx,y2:MAN,stroke:ACCENT,'stroke-width':1.4,'stroke-dasharray':'3 2'});gT3.appendChild(rod);
+      return {cx:cx,plug:plug,spr:spr,rod:rod};
+    }
+    t3.linkA=pipe('M 340 '+CMY+' L 366 '+CMY,STEEL,3);
+    t3.linkB=pipe('M 418 '+CMY+' L 444 '+CMY,STEEL,3);
+    t3.vA=pvalve(VA);t3.vB=pvalve(VB);
+    // ----- TX output : LSB stage -> framing valve -> TX pin -----
+    t3.txPipe=pipe('M 288 '+CMY+' L 268 '+CMY+' L 268 410 L '+XTX+' 410 L '+XTX+' '+PKY1,ACCENT,2.4);
+    t3.vFrame=pvalveH(gT3,268,360);
+    t3.frameLab=el('text',{x:268,y:392,'font-family':'var(--font-mono)','font-size':7,fill:ORANGE,'text-anchor':'middle'},'framer');gT3.appendChild(t3.frameLab);
+    t3.sendWire=pipe('M '+XSEND+' '+PKY0+' L '+XSEND+' 196 L 246 196 L 246 360 L 256 360',ORANGE,2);
+    gT3.appendChild(el('text',{x:XSEND-6,y:192,'font-family':'var(--font-mono)','font-size':7,fill:ORANGE,'text-anchor':'end'},'SEND frames'));
+    gT3.appendChild(el('text',{x:XTX,y:436,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'middle'},'START/STOP added'));
+    // ----- RX intake -> RX chamber -> RXVALID -----
+    gT3.appendChild(el('rect',{x:506,y:322,width:42,height:36,rx:3,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.4}));
+    t3.rxFill=el('rect',{x:508,y:355,width:38,height:0,fill:'oklch(0.6 0.14 232 / 0.7)'});gT3.appendChild(t3.rxFill);
+    gT3.appendChild(el('text',{x:527,y:318,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'middle'},'RX'));
+    t3.vRx=pvalveH(gT3,527,378);
+    t3.rxPipe=pipe('M '+XRX+' '+PKY1+' L '+XRX+' 400 L 527 400 L 527 386',CYAN,2.4);
+    gT3.appendChild(el('text',{x:454,y:412,'font-family':'var(--font-mono)','font-size':6.5,fill:WARM,'text-anchor':'middle'},'sampled mid-bit'));
+    pipe('M 510 358 L 510 414 L '+XRXV+' 414',OK,1.6);
+    t3.rxvFlag=el('rect',{x:XRXV-16,y:407,width:32,height:15,rx:3,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1});gT3.appendChild(t3.rxvFlag);
+    t3.rxvTxt=el('text',{x:XRXV,y:418,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'valid');gT3.appendChild(t3.rxvTxt);
+    t3.rxvWire=pipe('M '+XRXV+' 422 L '+XRXV+' '+PKY1,OK,2);
+    // ----- left-margin note -----
+    gT3.appendChild(el('text',{x:34,y:206,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'VALVES'));
+    gT3.appendChild(el('text',{x:34,y:226,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'each data bit is a'));
+    gT3.appendChild(el('text',{x:34,y:238,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'chamber gated by a'));
+    gT3.appendChild(el('text',{x:34,y:250,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'pilot valve. the baud'));
+    gT3.appendChild(el('text',{x:34,y:262,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'pressure lifts every'));
+    gT3.appendChild(el('text',{x:34,y:274,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'plug, the bit hops out'));
+    gT3.appendChild(el('text',{x:34,y:286,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'on TX, LSB first.'));
+    t3.note=el('text',{x:34,y:330,'font-family':'var(--font-mono)','font-size':9.5,fill:OK,'text-anchor':'start'},'');gT3.appendChild(t3.note);
+  }
+  function pvalveH(g,cx,cy){
+    g.appendChild(el('rect',{x:cx-12,y:cy-9,width:24,height:18,rx:2,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1}));
+    var plug=el('rect',{x:cx-4,y:cy-7,width:8,height:14,rx:1,fill:'#aeb6c4',stroke:STEEL,'stroke-width':1});g.appendChild(plug);
+    return {cx:cx,cy:cy,plug:plug};
+  }
+  function setPV(v,open){var lift=open?12:0;v.plug.setAttribute('cy',(246-lift).toFixed(1));
+    v.spr.setAttribute('d',vcoil(v.cx,206,(246-lift)-8,3,3.5));
+    v.plug.setAttribute('fill',open?'#c7cfdd':'#aeb6c4');v.rod.setAttribute('stroke',open?ACCENT:'oklch(0.4 0.08 18)');}
+  function setPVH(v,open){v.plug.setAttribute('fill',open?'#5a647a':'#aeb6c4');v.plug.setAttribute('height',(open?4:14).toFixed(1));v.plug.setAttribute('y',(open?v.cy-2:v.cy-7).toFixed(1));}
+  function updateT3(s){
+    var moving=s.baudHigh;
+    for(var i=0;i<3;i++){var b=s.txData[i],f=t3.cFill[i];
+      f.setAttribute('height',(b?42:0).toFixed(1));f.setAttribute('y',(b?224:267).toFixed(1));
+      f.setAttribute('fill',b?'oklch(0.6 0.14 232 / 0.75)':'oklch(0.4 0.06 232 / 0.3)');}
+    setPV(t3.vA,moving);setPV(t3.vB,moving);
+    t3.linkA.setAttribute('stroke',(moving&&s.txData[1])?HI:'oklch(0.3 0.03 285)');
+    t3.linkB.setAttribute('stroke',(moving&&s.txData[2])?HI:'oklch(0.3 0.03 285)');
+    t3.man.setAttribute('stroke',s.baudHigh?ACCENT:'oklch(0.42 0.08 18)');
+    t3.metro.setAttribute('stroke',s.baudHigh?WARM:'oklch(0.5 0.06 70)');
+    setPVH(t3.vFrame,s.txState!=='idle');
+    t3.txPipe.setAttribute('stroke',s.txLine?ACCENT:'oklch(0.34 0.05 18)');
+    t3.frameLab.textContent=(s.txState==='start')?'START':(s.txState==='stop'?'STOP':(s.txState==='data'?'data':'framer'));
+    t3.frameLab.setAttribute('fill',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:FAINT)));
+    t3.sendWire.setAttribute('stroke',s.send?ORANGE:'oklch(0.4 0.06 50)');
+    setPVH(t3.vRx,moving);
+    t3.rxFill.setAttribute('height',(s.rxLine&&s.rxState==='rx'?34:0).toFixed(1));t3.rxFill.setAttribute('y',(s.rxLine&&s.rxState==='rx'?322:357).toFixed(1));
+    t3.rxPipe.setAttribute('stroke',s.rxLine?CYAN:'oklch(0.34 0.05 232)');
+    t3.rxvFlag.setAttribute('stroke',s.rxvalid?OK:STEEL);t3.rxvFlag.setAttribute('fill',s.rxvalid?'oklch(0.4 0.1 150 / 0.4)':'oklch(0.18 0.025 285)');
+    t3.rxvTxt.setAttribute('fill',s.rxvalid?OK:FAINT);t3.rxvWire.setAttribute('stroke',s.rxvalid?OK:'oklch(0.4 0.08 150)');
+    t3.note.textContent=(s.txState!=='idle')?('TX '+txStateLabel(s.txState)+(s.txState==='data'?(' bit '+(s.txBit+1)+' of 8'):'')):(s.rxvalid?'RX byte received':'idle : plugs seated');
+    t3.note.setAttribute('fill',(s.txState!=='idle')?ACCENT:OK);
+  }
+
+  // ============ TIER 4 : REAL DEVICE (register-transfer level) ============
+  // No clock wire : a baud counter divides the system tick to one bit-time and paces everything. The TX
+  // shift register (8 D flip-flops, FF0 = LSB) feeds a framer that wraps START low / STOP high onto TX.
+  // A framing FSM (idle -> start -> data -> stop) sequences it from SEND. An RX sampler finds the falling
+  // START edge, samples each bit mid-window into the RX register, and raises RXVALID. All cells powered.
+  function buildT4(){
+    drawPkg(gT4);
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||1.9,'stroke-linecap':'round','stroke-linejoin':'round'});gT4.appendChild(p);return p;}
+    var VCCB=168, GNDB=228, CKR=240;
+    // ----- power + baud-tick rails -----
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCB,HI,1.8);
+    gT4.appendChild(el('line',{x1:204,y1:VCCB,x2:560,y2:VCCB,stroke:'oklch(0.5 0.1 250)','stroke-width':1.4}));
+    gT4.appendChild(el('text',{x:204,y:VCCB-4,'font-family':'var(--font-mono)','font-size':7.5,fill:HI,'text-anchor':'start'},'VCC'));
+    wire('M '+XGND+' '+PKY0+' L '+XGND+' 150 L 194 150 L 194 '+GNDB+' L 204 '+GNDB,LO,1.8);
+    gT4.appendChild(el('line',{x1:204,y1:GNDB,x2:568,y2:GNDB,stroke:'oklch(0.4 0.05 250)','stroke-width':1.4}));
+    gT4.appendChild(el('text',{x:560,y:GNDB-4,'font-family':'var(--font-mono)','font-size':7.5,fill:LO,'text-anchor':'end'},'GND'));
+    // ----- 8 D flip-flops : TX shift register (FF0 = LSB, drives TX through the framer) -----
+    gT4.appendChild(el('text',{x:384,y:163,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'middle'},'TX shift register'));
+    t4.tx=[];var fw=36,fh=38,fyT=184,pitch=44,fx0=212;
+    for(var k=0;k<8;k++){var xL=fx0+k*pitch,cx=xL+fw/2,bot=fyT+fh;
+      gT4.appendChild(el('rect',{x:xL,y:fyT,width:fw,height:fh,rx:3,fill:'oklch(0.18 0.022 285)',stroke:STEEL,'stroke-width':1.3}));
+      gT4.appendChild(el('text',{x:xL+4,y:fyT+11,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'start'},'Q'));
+      gT4.appendChild(el('text',{x:xL+fw-4,y:fyT+11,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'end'},'D'));
+      var bt=el('text',{x:cx,y:fyT+30,'font-family':'var(--font-display)','font-size':17,fill:LO,'text-anchor':'middle'},'0');gT4.appendChild(bt);
+      gT4.appendChild(el('text',{x:cx,y:fyT-4,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'middle'},(k===0?'LSB':(k===7?'MSB':''+k))));
+      gT4.appendChild(el('path',{d:'M '+(cx-4)+' '+bot+' L '+cx+' '+(bot-5)+' L '+(cx+4)+' '+bot,fill:'none',stroke:WARM,'stroke-width':1.2}));
+      gT4.appendChild(el('line',{x1:cx,y1:fyT,x2:cx,y2:VCCB,stroke:'oklch(0.5 0.1 250)','stroke-width':0.8,'stroke-dasharray':'2 2'}));
+      gT4.appendChild(el('line',{x1:xL+6,y1:bot,x2:xL+6,y2:GNDB,stroke:'oklch(0.4 0.05 250)','stroke-width':0.8,'stroke-dasharray':'2 2'}));
+      gT4.appendChild(el('line',{x1:cx,y1:bot+5,x2:cx,y2:CKR,stroke:WARM,'stroke-width':0.8}));
+      t4.tx.push({bit:bt,xL:xL,cx:cx});
+      if(k>0){wire('M '+xL+' '+(fyT+18)+' L '+(xL-8)+' '+(fyT+18),STEEL,1.6);}
+    }
+    t4.clkRail=wire('M 200 '+CKR+' L 560 '+CKR,WARM,1.8);
+    wire('M '+(fx0+7*pitch+fw)+' '+(fyT+18)+' L 566 '+(fyT+18),'oklch(0.5 0.1 232)',1.6);
+    gT4.appendChild(el('text',{x:566,y:fyT+30,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'end'},'1 in'));
+    // ----- control row : framing FSM (left), baud counter (center), RX sampler (right) -----
+    var BY0=292,BY1=350, VSUB=284, GSUB=358;
+    gT4.appendChild(el('line',{x1:210,y1:VSUB,x2:566,y2:VSUB,stroke:'oklch(0.5 0.1 250)','stroke-width':1,'stroke-dasharray':'3 2'}));
+    gT4.appendChild(el('line',{x1:210,y1:GSUB,x2:566,y2:GSUB,stroke:'oklch(0.4 0.05 250)','stroke-width':1,'stroke-dasharray':'3 2'}));
+    wire('M 206 '+VCCB+' L 206 '+VSUB,'oklch(0.5 0.1 250)',0.8);
+    wire('M 568 '+GNDB+' L 568 '+GSUB+' L 566 '+GSUB,'oklch(0.4 0.05 250)',0.8);
+    function block(x0,x1,lab){gT4.appendChild(el('rect',{x:x0,y:BY0,width:x1-x0,height:BY1-BY0,rx:4,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':1.3}));
+      gT4.appendChild(el('text',{x:(x0+x1)/2,y:BY0+13,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},lab));
+      gT4.appendChild(el('line',{x1:(x0+x1)/2,y1:BY0,x2:(x0+x1)/2,y2:VSUB,stroke:'oklch(0.5 0.1 250)','stroke-width':0.8,'stroke-dasharray':'2 2'}));
+      gT4.appendChild(el('line',{x1:(x0+x1)/2,y1:BY1,x2:(x0+x1)/2,y2:GSUB,stroke:'oklch(0.4 0.05 250)','stroke-width':0.8,'stroke-dasharray':'2 2'}));
+      return [(x0+x1)/2,x0,x1];}
+    block(206,300,'framing FSM'); block(322,442,'baud counter'); block(464,576,'RX sampler');
+    // baud counter : square-wave glyph + bit count, output to the tick rail (the central, clockless drive)
+    t4.baudGlyph=el('path',{d:'M 334 338 L 334 330 L 344 330 L 344 338 L 354 338 L 354 330 L 364 330 L 364 338 L 374 338 L 374 330 L 384 330',fill:'none',stroke:WARM,'stroke-width':1.4});gT4.appendChild(t4.baudGlyph);
+    t4.baudCnt=el('text',{x:418,y:336,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},'-');gT4.appendChild(t4.baudCnt);
+    gT4.appendChild(el('text',{x:418,y:346,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'middle'},'bit / 8'));
+    wire('M 382 '+BY0+' L 382 '+CKR,WARM,1.4);
+    // framing FSM : SEND in, state, -> framer
+    t4.wSend=wire('M '+XSEND+' '+PKY0+' L '+XSEND+' 268 L 253 268 L 253 '+BY0,ORANGE,2);
+    gT4.appendChild(el('text',{x:386,y:264,'font-family':'var(--font-mono)','font-size':6.5,fill:ORANGE,'text-anchor':'middle'},'SEND'));
+    t4.fsmState=el('text',{x:253,y:340,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'idle');gT4.appendChild(t4.fsmState);
+    // ----- TX framer (left margin) : FF0 data + START/STOP -> TX line -----
+    wire('M '+fx0+' '+(fyT+18)+' L 200 '+(fyT+18)+' L 200 414',ACCENT,2.2);
+    t4.framer=el('rect',{x:200,y:414,width:40,height:18,rx:3,fill:'oklch(0.18 0.025 285)',stroke:ORANGE,'stroke-width':1.3});gT4.appendChild(t4.framer);
+    t4.framerT=el('text',{x:220,y:426,'font-family':'var(--font-mono)','font-size':7,fill:ORANGE,'text-anchor':'middle'},'framer');gT4.appendChild(t4.framerT);
+    wire('M 253 '+BY1+' L 253 400 L 226 400 L 226 414',ORANGE,1.6);
+    t4.wTx=wire('M 240 423 L '+XTX+' 423 L '+XTX+' '+PKY1,ACCENT,2.2);
+    gT4.appendChild(el('text',{x:XTX,y:446,'font-family':'var(--font-mono)','font-size':6.5,fill:ACCENT,'text-anchor':'middle'},'TX'));
+    // ----- RX register (8 cells, right of TX pin), filled by the sampler LSB-first -----
+    gT4.appendChild(el('text',{x:300,y:380,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'RX register'));
+    t4.rx=[];var rw=33,ry=384,rx0=300;
+    for(var j=0;j<8;j++){var rxL=rx0+j*rw;
+      gT4.appendChild(el('rect',{x:rxL,y:ry,width:rw-3,height:26,rx:2,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      var rt=el('text',{x:rxL+(rw-3)/2,y:ry+18,'font-family':'var(--font-mono)','font-size':11,fill:LO,'text-anchor':'middle'},'0');gT4.appendChild(rt);
+      gT4.appendChild(el('text',{x:rxL+(rw-3)/2,y:ry+34,'font-family':'var(--font-mono)','font-size':5.5,fill:FAINT,'text-anchor':'middle'},(j===0?'LSB':(j===7?'MSB':''+j))));
+      t4.rx.push(rt);}
+    // RX in : RX pin -> sampler (above the strip) ; RXVALID -> pin (around the right of the strip)
+    t4.wRx=wire('M '+XRX+' '+PKY1+' L '+XRX+' 372 L 470 372 L 470 '+BY1,CYAN,2.2);
+    gT4.appendChild(el('text',{x:XRX+6,y:368,'font-family':'var(--font-mono)','font-size':6.5,fill:CYAN,'text-anchor':'start'},'RX'));
+    t4.sampDot=el('circle',{cx:524,cy:320,r:3,fill:'oklch(0.4 0.05 70)'});gT4.appendChild(t4.sampDot);
+    gT4.appendChild(el('text',{x:538,y:323,'font-family':'var(--font-mono)','font-size':6,fill:FAINT,'text-anchor':'start'},'mid-bit'));
+    t4.rsState=el('text',{x:520,y:340,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'idle');gT4.appendChild(t4.rsState);
+    t4.wRxv=wire('M 560 '+BY1+' L 560 372 L 596 372 L 596 430 L '+XRXV+' 430 L '+XRXV+' '+PKY1,OK,2.2);
+    gT4.appendChild(el('text',{x:XRXV+6,y:446,'font-family':'var(--font-mono)','font-size':6.5,fill:OK,'text-anchor':'start'},'RXVALID'));
+    // ----- left-margin tier note -----
+    gT4.appendChild(el('text',{x:34,y:200,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'REAL'));
+    gT4.appendChild(el('text',{x:34,y:214,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'DEVICE'));
+    gT4.appendChild(el('text',{x:34,y:236,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'a baud counter'));
+    gT4.appendChild(el('text',{x:34,y:247,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'paces it : no clock'));
+    gT4.appendChild(el('text',{x:34,y:258,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'wire. framer adds'));
+    gT4.appendChild(el('text',{x:34,y:269,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'START/STOP. powered.'));
+    t4.note=el('text',{x:34,y:300,'font-family':'var(--font-mono)','font-size':9,fill:OK,'text-anchor':'start'},'');gT4.appendChild(t4.note);
+  }
+  function updateT4(s){
+    for(var k=0;k<8;k++){var b=s.txData[k];t4.tx[k].bit.textContent=''+b;t4.tx[k].bit.setAttribute('fill',b?HI:LO);}
+    t4.tx[0].bit.setAttribute('fill',s.txData[0]?'#ffd24d':LO);
+    for(var j=0;j<8;j++){var r=s.rxReg[j];t4.rx[j].textContent=''+r;t4.rx[j].setAttribute('fill',r?HI:LO);}
+    t4.clkRail.setAttribute('stroke',s.baudHigh?WARM:'oklch(0.42 0.05 70)');
+    t4.baudGlyph.setAttribute('stroke',s.baudHigh?WARM:'oklch(0.5 0.06 70)');
+    t4.baudCnt.textContent=(s.txState==='data')?(''+(s.txBit+1)):(s.rxState==='rx'?(''+(s.rxBit+1)):'-');
+    t4.wTx.setAttribute('stroke',s.txLine?ACCENT:'oklch(0.34 0.05 18)');
+    t4.wRx.setAttribute('stroke',s.rxLine?CYAN:'oklch(0.34 0.05 232)');
+    t4.wSend.setAttribute('stroke',s.send?ORANGE:'oklch(0.4 0.06 50)');
+    t4.wRxv.setAttribute('stroke',s.rxvalid?OK:'oklch(0.4 0.08 150)');
+    var fs=txStateLabel(s.txState);t4.fsmState.textContent=fs;
+    t4.fsmState.setAttribute('fill',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:DIM)));
+    t4.framerT.textContent=(s.txState==='start')?'START':(s.txState==='stop'?'STOP':(s.txState==='data'?'data':'idle'));
+    t4.framer.setAttribute('stroke',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:STEEL)));
+    t4.framerT.setAttribute('fill',(s.txState==='start')?ORANGE:(s.txState==='stop'?OK:(s.txState==='data'?ACCENT:FAINT)));
+    t4.sampDot.setAttribute('fill',s.rxSampled?'#ffd24d':(s.rxState==='rx'?WARM:'oklch(0.4 0.05 70)'));
+    t4.rsState.textContent=(s.rxState==='rx')?'sampling':(s.rxvalid?'valid':'idle');
+    t4.rsState.setAttribute('fill',(s.rxState==='rx')?CYAN:(s.rxvalid?OK:DIM));
+    t4.note.textContent=(s.txState!=='idle')?('TX '+fs+(s.txState==='data'?(' bit '+(s.txBit+1)+' of 8'):'')):(s.rxvalid?'RX byte received':'idle : line high');
+    t4.note.setAttribute('fill',(s.txState!=='idle')?ACCENT:OK);
+  }
+
+  // ============ TIER 5 : SILICON (one TX-register flip-flop cell) ============
+  // One D flip-flop of the TX shift register, expanded to its CMOS : the master input transmission gate
+  // plus the first inverter. The register is 8 of these. The baud tick (no clock wire) clocks the pass
+  // gates, VCC/GND power the transistors, data flows from the previous stage to the next, and the LSB
+  // stage out becomes TX through the framer. The baud counter, framing FSM, RX sampler, RXVALID, and the
+  // other 7 stages live off this slice.
+  function buildT5(){
+    drawPkg(gT5);
+    t5.dev=[];t5.gateLabs=[];
+    var SURF=300, DH=34, GW=12, GT=SURF-24, VCCY=150, GNDY=400;
+    t5.SURF=SURF;
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:372,height:GNDY-SURF,rx:4,fill:'oklch(0.22 0.03 300)',stroke:'oklch(0.34 0.04 300)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:572,y:GNDY-10,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'p-substrate (NMOS)'));
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:198,height:GNDY-SURF-7,rx:4,fill:'oklch(0.25 0.05 232)',stroke:'oklch(0.37 0.06 232)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:210,y:GNDY-10,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'n-well (PMOS)'));
+    function diff(cx,isP,lab,col){gT5.appendChild(el('rect',{x:cx-9,y:SURF,width:18,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+20,'font-family':'var(--font-mono)','font-size':7,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+9,'font-family':'var(--font-mono)','font-size':6.5,fill:col||FAINT,'text-anchor':'middle'},lab));return cx;}
+    function gate(cx,lab,key,isP){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-7,width:GW,height:7,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:15,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':7,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});var c=el('path',{d:'',fill:isP?'rgba(255,138,77,0.55)':'rgba(95,208,255,0.5)',stroke:isP?HOLE:ELEC,'stroke-width':1.6,opacity:0});gT5.appendChild(c);t5.dev.push({g:{gx:cx,chan:c},key:key,isP:isP});return cx;}
+    diff(228,true,'prev',ACCENT); gate(250,'baud','TGP',true); diff(272,true,'X',CYAN);
+    diff(304,true,'VCC',HI); gate(326,'X','INVP',true); diff(348,true,'out',WARM);
+    diff(440,false,'prev',ACCENT); gate(462,'baudn','TGN',false); diff(484,false,'X',CYAN);
+    diff(516,false,'out',WARM); gate(538,'X','INVN',false); diff(560,false,'GND',LO);
+    function m(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT5.appendChild(p);return p;}
+    function dot(x,y,col){gT5.appendChild(el('circle',{cx:x,cy:y,r:2,fill:col}));}
+    // VCC : PMOS source (304) -> VCC pin (top)
+    m('M 304 '+SURF+' L 304 '+VCCY+' L '+XVCC+' '+VCCY,HI,2);m('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCY,HI,2);dot(304,SURF,HI);dot(XVCC,VCCY,HI);
+    // GND : NMOS source (560) -> GND pin (top-left, across the top)
+    m('M 560 '+SURF+' L 560 '+GNDY+' L 586 '+GNDY+' L 586 132 L '+XGND+' 132 L '+XGND+' '+PKY0,LO,2);dot(560,SURF,LO);
+    // prev rail (from the previous stage Q, off this slice)
+    t5.mPrev=m('M 228 '+SURF+' L 228 262 L 440 262 L 440 '+SURF,ACCENT,2);dot(228,SURF,ACCENT);dot(440,SURF,ACCENT);
+    m('M 196 262 L 228 262',ACCENT,2);gT5.appendChild(el('text',{x:192,y:259,'font-family':'var(--font-mono)','font-size':7,fill:ACCENT,'text-anchor':'end'},'from prev stage'));
+    // X rail (the stored bit)
+    t5.mX=m('M 272 '+SURF+' L 272 240 L 484 240 L 484 '+SURF,CYAN,2.2);dot(272,SURF,CYAN);dot(484,SURF,CYAN);
+    t5.mXg=m('M 326 '+GT+' L 326 240 M 538 '+GT+' L 538 240',CYAN,1.4);
+    gT5.appendChild(el('text',{x:380,y:236,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'middle'},'X = stored bit'));
+    // out rail (this stage out -> next stage ; the LSB stage out -> framer -> TX)
+    t5.mOut=m('M 348 '+SURF+' L 348 218 L 516 218 L 516 '+SURF,WARM,2.2);dot(348,SURF,WARM);dot(516,SURF,WARM);
+    m('M 516 218 L 540 218',WARM,2);gT5.appendChild(el('text',{x:544,y:215,'font-family':'var(--font-mono)','font-size':7,fill:WARM,'text-anchor':'start'},'to next stage'));
+    // baud tick to the pass-gate gates (from the off-slice baud counter, up the left margin)
+    t5.mSc=m('M 250 '+GT+' L 250 286 L 230 286',WARM,1.6);
+    t5.mScn=m('M 462 '+GT+' L 462 286 L 442 286',WARM,1.6);
+    m('M 232 427 L 214 427 L 214 286 L 230 286',WARM,1.6);dot(230,286,WARM);
+    gT5.appendChild(el('text',{x:214,y:283,'font-family':'var(--font-mono)','font-size':6.5,fill:WARM,'text-anchor':'start'},'baud tick'));
+    gT5.appendChild(el('text',{x:250,y:GT-13,'font-family':'var(--font-mono)','font-size':6.5,fill:HOLE,'text-anchor':'middle'},'pass gate'));
+    gT5.appendChild(el('text',{x:337,y:GT-13,'font-family':'var(--font-mono)','font-size':6.5,fill:HOLE,'text-anchor':'middle'},'inverter'));
+    gT5.appendChild(el('text',{x:462,y:GT-13,'font-family':'var(--font-mono)','font-size':6.5,fill:ELEC,'text-anchor':'middle'},'pass gate'));
+    gT5.appendChild(el('text',{x:549,y:GT-13,'font-family':'var(--font-mono)','font-size':6.5,fill:ELEC,'text-anchor':'middle'},'inverter'));
+    // ----- off-slice block : the rest of the device, with the remaining pins routed to it -----
+    gT5.appendChild(el('rect',{x:232,y:412,width:330,height:30,rx:4,fill:'oklch(0.155 0.018 285)',stroke:'oklch(0.3 0.03 285)','stroke-width':1,'stroke-dasharray':'4 3'}));
+    gT5.appendChild(el('text',{x:397,y:425,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'off this slice : baud counter, framing FSM,'));
+    gT5.appendChild(el('text',{x:397,y:436,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'framer, RX sampler, RXVALID, other 7 stages'));
+    t5.wTx=m('M '+XTX+' '+PKY1+' L '+XTX+' 442',ACCENT,2);
+    t5.wRx=m('M '+XRX+' '+PKY1+' L '+XRX+' 442',CYAN,2);
+    t5.wRxv=m('M '+XRXV+' '+PKY1+' L '+XRXV+' 442',OK,2);
+    t5.wSend=m('M '+XSEND+' '+PKY0+' L 592 '+PKY0+' L 592 408 L 562 408',ORANGE,1.8);gT5.appendChild(el('text',{x:566,y:405,'font-family':'var(--font-mono)','font-size':6.5,fill:ORANGE,'text-anchor':'end'},'SEND'));
+    // ----- left-margin note -----
+    gT5.appendChild(el('text',{x:34,y:250,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.1em'},'SILICON'));
+    gT5.appendChild(el('text',{x:34,y:268,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'one flip-flop of'));
+    gT5.appendChild(el('text',{x:34,y:279,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'the TX register :'));
+    gT5.appendChild(el('text',{x:34,y:290,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'input pass gate +'));
+    gT5.appendChild(el('text',{x:34,y:301,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'first inverter.'));
+    gT5.appendChild(el('text',{x:34,y:319,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE},'the register is'));
+    gT5.appendChild(el('text',{x:34,y:330,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE},'8 of these.'));
+    t5.stateLab=el('text',{x:34,y:358,'font-family':'var(--font-mono)','font-size':9,fill:OK,'text-anchor':'start'},'');gT5.appendChild(t5.stateLab);
+  }
+  function updateT5(s){
+    var SURF=t5.SURF, Xv=s.txData[0], cp=s.baudHigh?1:0, w=9;   // representative cell = the LSB TX stage
+    var on={TGP:cp===0, TGN:cp===0, INVP:Xv===0, INVN:Xv===1};
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k],gx=dv.g.gx;
+      if(on[dv.key]){var ds=13;dv.g.chan.setAttribute('d','M '+(gx-w)+' '+SURF+' L '+(gx+w)+' '+SURF+' L '+(gx+w)+' '+(SURF+ds)+' L '+(gx-w)+' '+(SURF+ds)+' Z');dv.g.chan.setAttribute('opacity','0.9');}
+      else dv.g.chan.setAttribute('opacity','0');}
+    t5.mPrev.setAttribute('stroke',s.txData[1]?ACCENT:'oklch(0.36 0.06 18)');
+    t5.mX.setAttribute('stroke',Xv?HI:LO);t5.mXg.setAttribute('stroke',Xv?HI:LO);
+    t5.mOut.setAttribute('stroke',(1-Xv)?HI:LO);
+    t5.mSc.setAttribute('stroke',cp?'oklch(0.42 0.05 70)':WARM);t5.mScn.setAttribute('stroke',cp?WARM:'oklch(0.42 0.05 70)');
+    t5.wTx.setAttribute('stroke',s.txLine?ACCENT:'oklch(0.34 0.05 18)');
+    t5.wRx.setAttribute('stroke',s.rxLine?CYAN:'oklch(0.34 0.05 232)');
+    t5.wRxv.setAttribute('stroke',s.rxvalid?OK:'oklch(0.4 0.08 150)');
+    t5.wSend.setAttribute('stroke',s.send?ORANGE:'oklch(0.4 0.06 50)');
+    var net={TGP:WARM,TGN:WARM,INVP:Xv?HI:LO,INVN:Xv?HI:LO};
+    for(var gi=0;gi<t5.gateLabs.length;gi++){t5.gateLabs[gi].txt.setAttribute('fill',net[t5.gateLabs[gi].key]||BRONZE);}
+    if(cp===0){t5.stateLab.textContent='baud low : X follows the previous stage';t5.stateLab.setAttribute('fill',CYAN);}
+    else{t5.stateLab.textContent='baud high : X held by the inverter pair';t5.stateLab.setAttribute('fill',WARM);}
+  }
+
+  buildT1();buildT2();buildT3();buildT4();buildT5();
+
+  // ===== protocol-timing scope : TX / RX / RXVALID (RX dotted at each mid-bit sample) =====
+  var scope=document.getElementById('scope');var sc={buf:[],N:132};
+  function buildScope(){
+    var L=44,R=292,T=8,B=200;sc.L=L;sc.R=R;sc.T=T;sc.B=B;
+    scope.appendChild(el('rect',{x:L,y:T,width:R-L,height:B-T,fill:'oklch(0.16 0.02 285)',stroke:'oklch(0.32 0.045 285)','stroke-width':1}));
+    sc.lanes={tx:{hi:26,lo:54,col:ACCENT,lab:'TX'},rx:{hi:88,lo:116,col:CYAN,lab:'RX'},rxvalid:{hi:150,lo:178,col:OK,lab:'RXV'}};
+    sc.order=['tx','rx','rxvalid'];
+    for(var ki=0;ki<sc.order.length;ki++){var ln=sc.lanes[sc.order[ki]];
+      scope.appendChild(el('line',{x1:L,y1:ln.lo,x2:R,y2:ln.lo,stroke:'oklch(0.24 0.02 285)','stroke-width':1}));
+      scope.appendChild(el('line',{x1:L,y1:ln.hi,x2:R,y2:ln.hi,stroke:'oklch(0.22 0.02 285)','stroke-width':1,'stroke-dasharray':'2 3'}));
+      scope.appendChild(el('text',{x:L-5,y:(ln.hi+ln.lo)/2+3,'font-family':'var(--font-mono)','font-size':8,fill:ln.col,'text-anchor':'end'},ln.lab));}
+    sc.edges=el('g',{});scope.appendChild(sc.edges);
+    sc.pTX=el('path',{d:'',fill:'none',stroke:ACCENT,'stroke-width':1.7,'stroke-linejoin':'round'});scope.appendChild(sc.pTX);
+    sc.pRX=el('path',{d:'',fill:'none',stroke:CYAN,'stroke-width':1.7,'stroke-linejoin':'round'});scope.appendChild(sc.pRX);
+    sc.pRV=el('path',{d:'',fill:'none',stroke:OK,'stroke-width':1.7,'stroke-linejoin':'round'});scope.appendChild(sc.pRV);
+    scope.appendChild(el('text',{x:R-2,y:T+9,'font-family':'var(--font-mono)','font-size':7,fill:WARM,'text-anchor':'end'},'START low + 8 data LSB-first + STOP high . RX sampled mid-bit'));
+  }
+  function pushScope(s){sc.buf.push({tx:s.txLine?1:0,rx:s.rxLine?1:0,rxvalid:s.rxvalid?1:0,samp:s.rxSampled?1:0,st:s.txState});if(sc.buf.length>sc.N)sc.buf.shift();}
+  function stepPath(key){
+    var ln=sc.lanes[key],L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length;if(n<1)return '';
+    var dx=(R-L)/N;function X(i){return R-(n-1-i)*dx;}function Y(v){return v?ln.hi:ln.lo;}
+    var d='M '+X(0).toFixed(1)+' '+Y(b[0][key]);
+    for(var i=1;i<n;i++){d+=' L '+X(i).toFixed(1)+' '+Y(b[i-1][key])+' L '+X(i).toFixed(1)+' '+Y(b[i][key]);}
+    return d;
+  }
+  function drawScope(){
+    sc.pTX.setAttribute('d',stepPath('tx'));sc.pRX.setAttribute('d',stepPath('rx'));sc.pRV.setAttribute('d',stepPath('rxvalid'));
+    while(sc.edges.firstChild)sc.edges.removeChild(sc.edges.firstChild);
+    var L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length,dx=(R-L)/N,tl=sc.lanes.tx,rl=sc.lanes.rx;
+    for(var i=1;i<n;i++){var x=R-(n-1-i)*dx;
+      if(b[i-1].st!=='start'&&b[i].st==='start'){sc.edges.appendChild(el('line',{x1:x,y1:tl.hi-4,x2:x,y2:tl.lo+4,stroke:ORANGE,'stroke-width':1,'stroke-dasharray':'2 2',opacity:0.7}));
+        sc.edges.appendChild(el('text',{x:x,y:tl.hi-6,'font-family':'var(--font-mono)','font-size':6,fill:ORANGE,'text-anchor':'middle'},'S'));}
+      if(b[i-1].st!=='stop'&&b[i].st==='stop'){sc.edges.appendChild(el('line',{x1:x,y1:tl.hi-4,x2:x,y2:tl.lo+4,stroke:OK,'stroke-width':1,'stroke-dasharray':'2 2',opacity:0.7}));
+        sc.edges.appendChild(el('text',{x:x,y:tl.hi-6,'font-family':'var(--font-mono)','font-size':6,fill:OK,'text-anchor':'middle'},'P'));}
+      if(b[i].samp===1){sc.edges.appendChild(el('circle',{cx:x,cy:(b[i].rx?rl.hi:rl.lo),r:2.4,fill:'#ffd24d'}));}}
+  }
+  buildScope();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roTx=trow('TX byte'),roRx=trow('RX byte'),roRxv=trow('RXVALID'),roTs=trow('TX state'),roBaud=trow('baud period'),roState=trow('state');
+
+  // ===== controls =====
+  var vddEl=document.getElementById('vdd'),spdEl=document.getElementById('spd'),
+      labVdd=document.getElementById('labVdd'),labSpd=document.getElementById('labSpd'),
+      btnSend=document.getElementById('btnSend'),btnByte=document.getElementById('btnByte'),btnStream=document.getElementById('btnStream'),btnRun=document.getElementById('btnRun'),
+      visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true,tier='t1';
+  var bytes=[0xA5,0x3C,0xF0,0x96,0xFF,0x01],bi=0;
+  footnote.innerHTML='The part shown is the CEC5232, the house asynchronous serial port (UART) ; no vendor sells this exact teaching part. A UART has no clock wire. Both ends agree a baud rate beforehand, and an internal baud counter divides the system tick down to one bit-time. The TX line idles high ; on SEND it frames a byte as a START bit (low), then eight data bits least-significant-bit first, then a STOP bit (high), one bit per baud period. The receiver watches RX for the falling START edge, then samples each bit in the middle of its window, at 1.5 + k bit-times after the edge, so small differences between the two clocks do not matter, and pulses RXVALID once the byte has landed ; here RXVALID stays asserted through the gap until the next frame so it is easy to see. To show both directions at once, a phantom remote drives RX with the byte 0x3C while this part transmits, so the link runs full-duplex. The model is a scaled teaching animation : the timing is not real baud, and the mid-bit sample points are drawn as dots on the RX trace. Internally the part is a shift register, drawn at the register-transfer level as a chain of eight D flip-flops with a baud counter, a framing FSM, a framer, and a mid-bit RX sampler rather than any external clock ; one flip-flop is opened to its CMOS in the silicon tier. Drawn on a six-lead frame, the pinout places TX on pin 1, RX on pin 2, RXVALID on pin 3, SEND on pin 4, VCC on pin 5, GND on pin 6, with the pin 1 indicator at the lower-left corner and no no-connect. Two wires, no clock, an agreement on speed : every serial console and RS-232 line works this way.';
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
+    var names={t1:'symbol . pinout',t2:'flow network',t3:'pressure pilot valves',t4:'real device . CEC5232',t5:'metal oxide silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  btnSend.addEventListener('click',function(){uartSend();});
+  btnByte.addEventListener('click',function(){bi=(bi+1)%bytes.length;uart.tx.byte=bytes[bi];if(uart.tx.state==='idle'){uart.tx.data=bitsLSB(uart.tx.byte);}this.textContent='TX = '+hex2(uart.tx.byte);});
+  btnStream.addEventListener('click',function(){streaming=!streaming;this.classList.toggle('is-active',streaming);this.textContent=streaming?'auto repeat':'single shot';});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+  setTier('t1');
+
+  var baudTick=0;
+  function frame(){
+    var VDD=(+vddEl.value)/100; uart.BAUD=clamp(Math.round(3000/(+spdEl.value)),8,40);
+    baudTick=(baudTick+1)%Math.max(2,uart.BAUD); var baudHigh=baudTick<uart.BAUD/2;
+    if(running){uartTick();}
+    var s={txData:uart.tx.data,txState:uart.tx.state,txBit:uart.tx.bit,txLine:uart.tx.line,txByte:uart.tx.byte,
+           rxReg:uart.rxReg,rxLine:uart.rxLine,rxByte:uart.rxByte,rxState:uart.rxState,rxBit:uart.rxBit,
+           rxvalid:uart.rxvalid,rxSampled:uart.rxSampled,send:(uart.sendPulse>0),baudHigh:baudHigh,VDD:VDD,run:running};
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else if(tier==='t3'){updateT3(s);}else if(tier==='t4'){updateT4(s);}else{updateT5(s);}
+    if(running)pushScope(s);
+    drawScope();
+    labVdd.textContent=fmtV(VDD);
+    var sp=(+spdEl.value);labSpd.textContent=sp<140?'slow':(sp<240?'medium':'fast');
+    roTx.textContent=hex2(uart.tx.byte);roTx.style.color=ACCENT;
+    roRx.textContent=hex2(uart.rxByte);roRx.style.color=uart.rxByte?HI:DIM;
+    roRxv.textContent=uart.rxvalid?'yes':'no';roRxv.style.color=uart.rxvalid?OK:DIM;
+    roTs.textContent=txStateLabel(uart.tx.state);roTs.style.color=(uart.tx.state!=='idle')?ACCENT:DIM;
+    roBaud.textContent=uart.BAUD+' ticks';roBaud.style.color=DIM;
+    roState.textContent=(uart.tx.state!=='idle')?'sending':(uart.rxvalid?'rx valid':'idle');roState.style.color=(uart.tx.state!=='idle')?ACCENT:(uart.rxvalid?OK:DIM);
+    var st=(uart.tx.state!=='idle')?'sending':(uart.rxvalid?'rx valid':'idle');regTag.textContent=st;if(chipReg){chipReg.textContent=st;}
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();</script>
+</body>
+</html>
