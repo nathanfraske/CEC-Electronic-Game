@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-22 (73) — Five-tier IC glyph refsheets: the whole queue landed
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built + landed **14 five-tier IC glyph
+refsheets** in `docs/ui/parts/` via a guidesheet → self-contained "build kit" → owner/agent builds →
+I validate (§10 gates) → land loop. Each glyph passed the static §10 gates (SPDX, identity, 5×
+`drawPkg(gT`, no forbidden glyphs, per-tier member consistency, `node --check`); the owner/agent ran the
+mandatory Playwright render. All are CEC house parts (or real parts where a single-chip equivalent
+exists) — `chipType` = the CEC number, no real-manufacturer name where house-vendored.
+
+**Landed glyphs:** comparator-ic (ADCMP601, real) · analog-switch-ic (CD4066B cell, real) · sampler-ic
+(CEC1041) · half-adder/full-adder/mux/demux/majority-ic (CEC2024/2018/2031/2032/2046) · sr-latch/d-latch-ic
+(CEC3007/3014) · spi-master/spi-slave/uart-ic (CEC5021/5022/**5232**) · tri-state-ic (CEC2057).
+
+**Catalogue + spec changes (committed):**
+- `docs/ui/cec-teaching-ics.md`: added the **5xxx interface/communication** category + 3 entries
+  (CEC5021 SPI master, CEC5022 SPI slave, CEC5232 UART) — these had no real single-chip equivalent, so
+  they were house-vendored (convention: real part where one exists — comparator→ADCMP601, switch→CD4066B;
+  CEC house part where none does — sampler→CEC1041, serial→5xxx).
+- `docs/ui/ic-glyph-spec.md` §1: **tier zoom-pairs + FET-level analogy** (owner direction) — tier 4 is a
+  zoom-in of tier 1 (real track), tier 3 a zoom-in of tier 2 (analogy track), tier 5 silicon; show all of
+  it down to the FETs, analogy all the way down (each gate/flip-flop opens to its FET-valve form; never an
+  opaque block). The glyphs are deliberately dense + **zoomable** ("see all of it working") — do NOT
+  compress for the small default view. First glyphs built to it: UART + tri-state.
+
+**Conventions that emerged (for the next refsheet author):**
+- **No stubs:** every pin (esp. VCC/GND) traces by an unbroken wire to the gate/device it powers or drives;
+  the render catches stubs the static checks miss (an early SR-latch had a tier-2 output pin + tier-5
+  fed-back signal left dangling — fixed).
+- **"Real device" depends on scale:** single cell (comparator/sampler/switch/tri-state) → real FETs;
+  gate composition (adders/mux/…) → gate-level schematic (gates ARE the device); FSM (serial) → RTL
+  (shift register of real flip-flops + counter + control), tier 5 = one representative cell in silicon.
+- **Recurring agent slip:** when cloning a template, the visible identity gets fixed but the **model
+  COMMENT block** is left stale (full-adder/demux carried a `// CEC2024 half adder` comment over correct
+  code; full-adder also had a stale `<title>`). Grep comments + `<title>`, not just labels.
+
+**Open loose thread:** the **555 refsheet** (`ne555-guidesheet.md` exists; an owner draft passed the
+static §10 gates earlier this session) is **not landed** — awaiting the owner's "final" before committing
+to `docs/ui/parts/ne555-ic.html`. Nothing else queued.
+
+---
+
 ## 2026-06-20 (72) — Web wiring chunk 4: behavioral blocks (LUT / SPI / UART) — WIRING COMPLETE
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The last unplaceable family is now placeable:
