@@ -54,15 +54,21 @@ sim-core change, golden trivially safe**). Phased: (1) composite-internals topol
 to the abstraction ladder; (4) remake select behavioral ICs as compositions for live zoom (flash ADC
 first); (5) build-and-seal authoring (Tier C). **NEXT concrete step: phase 1.**
 
-Owner then added scope: a **full designable IC maker** (make arbitrary ICs, define pinouts + package
-formats) -> **`docs/adr/0006-user-defined-ics-packages-pinouts.md`** written. A user IC =
-`{ graph (the sub-circuit), package (archetype + pin-1), pins (port net -> numbered pin + name + role) }`,
-expanded by a **generalised `CEC_COMP`** (same seal-as-same-netlist determinism) and rendered from a
-**parametric package-format library** (DIP/SOIC/SOT-23/SC70/MSOP/QFP...). Built-ins become factory-preset
-user ICs (one expander, one package model). Package/pinout are presentation + node-binding only — no hash
-impact. Phases: package library -> user-IC model + generic expander -> pinout/package UI -> persistence +
-user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. Both ADRs are design-only (no code
-yet); start with 0005 phase 1.
+Owner then added scope: a **full designable IC maker** (arbitrary ICs, user pinouts + package formats, a
+**bounded die you build inside**, and a real **pin in/out** mechanism) -> **`docs/adr/0006-user-defined-
+ics-packages-pinouts.md`** written. A user IC is **four parts**: (1) a **die boundary** (the barrier — a
+DRC keeps everything inside the walls so it packages cleanly), (2) the **function** (a `GraphSnapshot`
+built inside), (3) the **pinout via PORT PADS** (drop a pad on the wall, wire the internal net to it; the
+pad is the bond-pad->lead — inside you wire to it, outside it's the package lead the board connects to),
+(4) the **package** (archetype + pin-1; its die outline IS the boundary). Expanded by a **generalised
+`CEC_COMP`** that **fuses each pad's internal net with its external pin node** (seal-as-same-netlist, so
+determinism is free) and rendered from a **parametric package-format library** (DIP/SOIC/SOT-23/SC70/
+MSOP/QFP/TO-92...). The boundary is a presentation-time DRC (never enters the solve/hash); built-ins
+become factory-preset user ICs (one expander, one package model). Phases: package library + die boundary
+-> user-IC model + generic expander (pads fuse nodes) -> bounded-canvas + DRC + pad authoring UI ->
+persistence + user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. Open owner calls:
+naming scheme, first package set, nesting limits, die-sizing policy (package-fixed vs design-grown). Both
+ADRs are design-only (no code yet); start with 0005 phase 1.
 
 ---
 

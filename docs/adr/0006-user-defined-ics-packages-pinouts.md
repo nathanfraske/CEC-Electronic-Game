@@ -25,16 +25,26 @@ What exists to build on:
 
 ## Decision
 
-A **user-authored IC** is a serializable, versioned definition with three separable parts:
+A **user-authored IC** is a serializable, versioned definition with four parts:
 
-1. **The function** — a `GraphSnapshot` (the very sub-circuit the player builds on the board: parts +
-   wires + ideal values). This is ADR 0005's seal payload; at sim time it expands to real elements.
-2. **The pinout** — a list of **ports**: internal nets the player designates as boundary, each carrying
-   `{ pinNumber, name, role, net-ref }`. Roles: `in` / `out` / `inout` / `power` / `passive` / `nc`.
-   Designating a net as a port is the only "interface" act; everything else inside stays private.
-3. **The package** — a **package-format archetype** + the assignment of pin numbers to physical
-   positions + pin-1 location/orientation. The package alone determines the **board footprint** (which
-   cells the part occupies and where each numbered pin attaches) and the drawn package outline.
+1. **The die boundary (the barrier)** — the IC is authored inside a **bounded build region**: a walled
+   die area on its own canvas. A **design rule keeps every component and wire INSIDE the walls** —
+   nothing may hang over the boundary — so the design always packages cleanly into its footprint. The
+   boundary is coupled to the package (pick a package -> get a die area to fit inside; or grow the die
+   and the package follows). The walls are the only place signals may leave.
+2. **The function** — a `GraphSnapshot` (the sub-circuit built inside the boundary: parts + wires + ideal
+   values). This is ADR 0005's seal payload; at sim time it expands to real elements.
+3. **The pinout, via PORT PADS** — the in/out connection mechanism. The author drops **port pads** on the
+   boundary walls and **wires the internal circuit to them**; each pad is one boundary crossing carrying
+   `{ pinNumber, name, role }` (roles `in` / `out` / `inout` / `power` / `passive` / `nc`). A pad is the
+   **bond-pad-to-lead of a real IC**: from the INSIDE you route an internal net to it; on the OUTSIDE it
+   becomes the numbered package lead the rest of the system wires to. Dropping and wiring a pad is the
+   only "interface" act; everything else inside stays private. (A pad generalizes the existing net label
+   + the `CEC_COMP` pin->terminal binding — it is the single object that bridges in and out.)
+4. **The package** — a **package-format archetype** + pin-1 location/orientation. The package's die
+   outline **IS** the build boundary, and its numbered leads are the external side of the port pads; the
+   package alone fixes the **board footprint** (which cells the part occupies and where each numbered pin
+   attaches).
 
 **Packages are a parametric library, not ad-hoc offsets.** Ship a small set of archetypes, each a
 template that yields a footprint + a numbering convention + a pin-1 marker from a pin count:
@@ -45,10 +55,12 @@ template that yields a footprint + a numbering convention + a pin-1 marker from 
 - Quad: **QFP-N** / **QFN-N** (pins on all four sides) for high pin counts (ADR 0003 territory).
 
 `graph.ts`'s "footprint from furthest pin" generalizes to "footprint from the package archetype": the
-archetype lays the numbered pins onto the footprint deterministically, and the **pinout binds each
-package pin to an internal port net** (or leaves it `nc`). A user IC placed on the board is thus a
-**dynamic `PartKind`** (pins from package+pinout) backed by a **dynamic `CEC_COMP`-style expander** (the
-authored sub-graph spliced in, ports bound to the pin nodes).
+archetype lays the numbered leads onto the footprint deterministically, and **each lead binds, through its
+port pad, to the internal net the author wired to that pad** (or is left `nc`). A user IC placed on the
+board is thus a **dynamic `PartKind`** (pins from package + pinout) backed by a **dynamic
+`CEC_COMP`-style expander** (the authored sub-graph spliced in, each pad's internal net fused to its
+external pin node — so a wire on the board to pin N continues, unbroken, to whatever the pad touches
+inside).
 
 ## Determinism guarantees (the contract this preserves)
 
@@ -58,6 +70,11 @@ authored sub-graph spliced in, ports bound to the pin nodes).
 - **Package and pinout are presentation + node-binding only** — which board cell a pin sits on and which
   internal net it maps to. They add **no hashed state**; renumbering pins or swapping the package never
   changes the simulation, only the drawing and the external wiring.
+- **The die boundary is a design-rule check, not a sim input.** "Everything inside the walls" is enforced
+  at authoring time (placement/DRC), so it shapes only what the player may seal — it never enters the
+  solve or the hash. A **port pad fuses** its internal net with its external pin node (one node, not a
+  buffered crossing), so a board wire to pin N and the internal wire to the pad are the *same* electrical
+  node — the seal-as-same-netlist guarantee holds straight through the package wall.
 - A sealed blueprint's reproducibility = its sub-graph's reproducibility: save/load must round-trip every
   element param exactly (the `SavedCircuit` contract). Integer/structural params only, per ADR 0004.
 - **Depth** (a user IC containing user ICs) recurses cleanly under seal-as-same-netlist, but the solve
@@ -67,27 +84,33 @@ authored sub-graph spliced in, ports bound to the pin nodes).
 
 ## The authoring flow (UI surface)
 
-1. **Build** the sub-circuit on the board (or select an existing region of it).
-2. **Designate ports:** tag boundary nets as pins; give each a name + role. (A net label already names a
-   net — promoting a labelled net to a port is the natural gesture.)
-3. **Choose a package:** pick an archetype + pin count; assign pin numbers to the port nets; set pin-1.
-   Unused package pins are `nc`. A live footprint preview shows the resulting board part.
+1. **Open a die:** pick a package (archetype + pin count); its die outline becomes the **bounded build
+   canvas** with numbered **lead stubs** on the walls. (Or start from a region you already built and let
+   the die size to fit.)
+2. **Build inside the walls:** lay out the sub-circuit within the boundary. A live **design-rule check**
+   flags anything crossing the walls — the design must fit to be sealed (nothing over the walls).
+3. **Wire the pins in and out:** drop **port pads** on the wall (or adopt the lead stubs), route internal
+   nets to them, and give each a name + role + package pin number; set pin-1. A pad with nothing wired is
+   `nc`. A live footprint preview shows the resulting board part. This step is literally "connect the pins
+   in and out": inside you wire to the pad, outside the pad is the lead the board wires to.
 4. **(Verify)** optionally check a spec at the pins (the earn-condition that flips analog->sealed is owned
    by `game-rewards.md` / `game-contracts-economy.md`; out of scope here).
-5. **Seal** -> a new placeable part lands in the player's **part library**, usable like any built-in IC,
-   and **zoom-to-open** (ADR 0005) reveals the authored sub-circuit running live.
+5. **Seal** -> a new placeable part lands in the player's **part library**, wired like any built-in IC,
+   and **zoom-to-open** (ADR 0005) reveals the authored sub-circuit running live inside its walls.
 
 ## Phased build path (dependency order; this is ADR 0005 phase 5 expanded)
 
-1. **Package-format library** — the archetype templates: footprint derivation, numbering conventions,
-   pin-1 marker, and `drawPkg`/board-glyph integration. Pure presentation; no sim impact. (Refactor
-   `graph.ts` `kind()` so a kind's footprint can come from a package layout, keeping the existing
-   hand-placed parts working.)
-2. **User-IC data model + generic expander** — `UserIc { graph, package, pins[] }`; generalize the
-   `CEC_COMP` expander to "instantiate an arbitrary saved sub-graph, allocate its internal nodes, bind
-   its port nets to the placed instance's pin nodes." Golden-safe additive.
-3. **Pinout / package authoring UI** — designate ports, name/role them, pick a package, assign pins,
-   preview the footprint.
+1. **Package-format library + die boundary** — the archetype templates: footprint derivation, numbering
+   conventions, pin-1 marker, the **die outline (the build boundary) derived from the package**, and
+   `drawPkg`/board-glyph integration. Pure presentation; no sim impact. (Refactor `graph.ts` `kind()` so a
+   kind's footprint can come from a package layout, keeping the existing hand-placed parts working.)
+2. **User-IC data model + generic expander** — `UserIc { graph, package, pins[] }` where each `pin` is a
+   **port pad** (`{ number, name, role, padPosition, net-ref }`); generalize the `CEC_COMP` expander to
+   "instantiate an arbitrary saved sub-graph, allocate its internal nodes, **fuse each pad's internal net
+   with the placed instance's pin node**." Golden-safe additive.
+3. **Pinout / package authoring UI** — the **bounded die canvas** with wall lead-stubs, the **containment
+   design-rule check** (nothing over the walls), dropping/wiring **port pads**, naming/roling them,
+   assigning pin numbers, and the live footprint preview.
 4. **Persistence + the player part library** — save/load user ICs (the `SavedCircuit` round-trip), a
    browsable user-part bin beside the built-ins.
 5. **Optional polish** — auto-generated glyph **symbol/schematic** tiers (the sub-graph *is* the
@@ -103,3 +126,6 @@ authored sub-graph spliced in, ports bound to the pin nodes).
   still sees only the flat expanded element list it already solves.
 - House numbering for authored parts (e.g. a `CEC9xxx` user range vs. free-form names), the first
   shipped package set, and nesting limits are owner calls — flagged as open questions, not decided here.
+- **Die-sizing policy** is an owner call too: package-fixed (pick the package -> fit inside its die) vs.
+  design-grown (build, then the smallest fitting package is offered) vs. a hybrid. The DRC ("nothing over
+  the walls") is the same either way; only *when* the boundary is set differs.
