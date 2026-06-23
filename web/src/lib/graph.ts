@@ -5,7 +5,7 @@
 // renderer and the simulation netlist builder can both read it. Grid snapping
 // and the CEC palette mirror live here as plain values for the GPU layer.
 
-import { packageLayout, packageOptions } from "./packages";
+import { packageLayout, dieLayout, packageOptions } from "./packages";
 
 /** Logical grid cell. The board is an integer lattice; geometry is derived. */
 export interface Cell {
@@ -163,6 +163,17 @@ export interface Component {
    * untouched parts round-trip unchanged.
    */
   word?: number;
+  /**
+   * Per-pin user names, by pin index — the IC-maker DIE EDITOR's "name the port pad" affordance
+   * (ADR 0006 / docs/ui/ic-maker-guide.md §3). Only meaningful on a die FRAME (its pins are the
+   * package leads): the player names a perimeter pin (`"VCC"`, `"OUT"`, `"A"`, …) and that name
+   * becomes the LABEL on the sealed chip's matching pin (carried through {@link captureSeal} into
+   * the `UserIc.pinNames` and used by `userIcPartKind`, falling back to the package pin number when
+   * unset). A sparse array: index i is pin i's name, an empty/absent slot means "use the number".
+   * **Pure presentation** — names never affect the netlist or the sim. Optional, so older snapshots
+   * and unnamed parts round-trip unchanged; deep-copied by `serialize`/`restore` so undo is safe.
+   */
+  pinNames?: string[];
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
@@ -1263,6 +1274,24 @@ function frameName(archetype: string, pinCount: number): string {
   // Human display name in the conventional package form: "DIP-8", "SOT-23-6", "VSSOP-8".
   return archetype + "-" + pinCount;
 }
+
+/**
+ * Tag prefix for the INTERNAL die-editor frame kinds (ADR 0006 / docs/ui/dieEditor.ts). For every
+ * placeable frame ("SOT23_6") there is a paired die-frame kind ("__DIE_SOT23_6") used ONLY inside
+ * the die editor: same package + same numbered pins, but laid out on the die's PERIMETER edges
+ * ({@link dieLayout}) with a roomy empty interior, instead of the tight production body. It is kept
+ * out of the parts bin/codex (those iterate the explicit catalog, not `PART_KINDS`), so it never
+ * shows as a placeable part — but it IS a frame ({@link framePackage}/{@link isFrame} resolve it),
+ * so the seal engine reads its package and maps its pins straight through. The underscore prefix
+ * keeps it from colliding with any user-named seal.
+ */
+export const DIE_FRAME_PREFIX = "__DIE_";
+
+/** The internal die-frame kind tag paired with a placeable frame tag (e.g. "SOT23_6" ->
+ * "__DIE_SOT23_6"). The die editor places this so the frame's pins land on the die walls. */
+export function dieFrameTag(frameTag: string): string {
+  return DIE_FRAME_PREFIX + frameTag;
+}
 /**
  * Reverse lookup for the generated frame kinds: a frame's tag -> the package archetype +
  * pin count it was built from (e.g. "SOT23_6" -> { archetype: "SOT-23", pinCount: 6 }).
@@ -1293,6 +1322,27 @@ for (const { archetype, pinCount } of packageOptions()) {
     "",
     true,
   );
+
+  // The paired internal DIE-FRAME kind: identical package + numbered pins, but distributed on the
+  // die's perimeter edges (dieLayout) with a roomy interior, for the in-die authoring canvas. Same
+  // pin INDEX order as the production layout (dieLayout mirrors packageLayout's numbering), so the
+  // seal maps each die pin straight through to the sealed chip's matching lead. Registered as a
+  // frame (FRAME_PACKAGES) so the seal engine reads its package; absent from the catalog, so it
+  // never appears as a placeable part.
+  const dieTag = dieFrameTag(tag);
+  FRAME_PACKAGES.set(dieTag, { archetype, pinCount });
+  const diePins = dieLayout(archetype, pinCount).pins.map((p) =>
+    pin(String(p.number), p.dx, p.dy),
+  );
+  PART_KINDS[dieTag] = kind(
+    dieTag,
+    frameName(archetype, pinCount),
+    "border",
+    diePins,
+    0,
+    "",
+    true,
+  );
 }
 
 /**
@@ -1308,9 +1358,17 @@ export function framePackage(
 }
 
 /** Whether a part-kind tag is an IC-maker frame (a no-element package outline the player
- * wires their circuit into, then seals). The seal UI gates on this. */
+ * wires their circuit into, then seals) — placeable OR the internal die-editor variant.
+ * The seal UI gates on this. */
 export function isFrame(tag: string): boolean {
   return FRAME_PACKAGES.has(tag);
+}
+
+/** Whether a tag is the INTERNAL die-editor frame variant ({@link dieFrameTag}) — the perimeter
+ * relayout used inside the die, not the placeable production frame. The die editor uses this to
+ * style/label the die frame apart from an ordinary part. */
+export function isDieFrame(tag: string): boolean {
+  return tag.startsWith(DIE_FRAME_PREFIX);
 }
 
 function pin(label: string, dx: number, dy: number): Pin {
@@ -1955,6 +2013,9 @@ export class BoardGraph {
       components: [...this.components.values()].map((c) => ({
         ...c,
         cell: { ...c.cell },
+        // Deep-copy the per-pin names so an undo snapshot can't share (and later mutate) the
+        // live component's array. Absent for the common no-names case.
+        ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
       })),
       wires: [...this.wires.values()].map((w) => ({
         id: w.id,
@@ -1991,7 +2052,11 @@ export class BoardGraph {
     this.junctions.clear();
     this.netLabels.clear();
     for (const c of s.components) {
-      this.components.set(c.id, { ...c, cell: { ...c.cell } });
+      this.components.set(c.id, {
+        ...c,
+        cell: { ...c.cell },
+        ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+      });
     }
     for (const j of s.junctions ?? []) {
       this.junctions.set(j.id, {

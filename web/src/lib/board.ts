@@ -26,6 +26,7 @@ import {
   isJunctionRef,
   isPinRef,
   isFrame,
+  isDieFrame,
   endpointKey,
   type Component,
   type PinRef,
@@ -413,6 +414,22 @@ export interface BoardCallbacks {
       rect: AnchorRect;
     } | null,
   ) => void;
+  /**
+   * Open the inline DIE-PIN name editor (IC-maker port-pad naming). Fired by a double-click on a
+   * die frame's perimeter pin: the HUD shows a small input seeded with `initial` (the pin's current
+   * name, or its package number) at `rect`, and on commit calls back {@link Board.commitPinName}.
+   * `componentId`/`pinIndex` identify the pad. A null payload closes the editor. Presentation only.
+   */
+  onPinNameEdit?: (
+    req: {
+      componentId: number;
+      pinIndex: number;
+      /** the package pin number shown as the placeholder/fallback when the name is blank. */
+      number: number;
+      initial: string;
+      rect: AnchorRect;
+    } | null,
+  ) => void;
 }
 
 export class Board {
@@ -620,6 +637,10 @@ export class Board {
   // Last component-body press (id + time), so a second press on the same body
   // within DOUBLE_CLICK_MS is recognised as a double-click → open its info panel.
   private lastBodyTap: { id: number; t: number } | null = null;
+  // Last die-frame pin press (component + pin index + time), so a second press on the same
+  // perimeter pin within DOUBLE_CLICK_MS opens its name editor (IC-maker port-pad naming). Only
+  // tracked while editing a die; a single press still starts a wire from the pin.
+  private lastPinTap: { id: number; pin: number; t: number } | null = null;
   private panning: { lastX: number; lastY: number } | null = null;
   // Marquee (rubber-band) selection: a drag on empty space in Select mode sweeps a
   // box; on release every component inside it (and every wire wholly inside) is
@@ -1559,6 +1580,8 @@ export class Board {
     camera?: { x: number; y: number; scale: number },
   ): void {
     this.endLabelEdit();
+    // Close any open die port-pad name editor too, so it doesn't linger across the boundary.
+    this.cb.onPinNameEdit?.(null);
     this.graph.restore(snapshot);
     this.rebuildNodes();
     this.clearSelection();
@@ -2247,6 +2270,42 @@ export class Board {
   }
 
   /**
+   * Name a die frame's port pad (the IC-maker die editor): set pin `pinIndex`'s user name on
+   * component `id`, which becomes that lead's LABEL on the sealed chip ({@link captureSeal} ->
+   * {@link UserIc.pinNames}). Pure presentation — like {@link setComponentLabel} it persists
+   * cosmetically (NO netlist rebuild / sim rewind) and is undoable. A blank name clears the slot
+   * back to the package pin number. Rebuilds the node so the perimeter pin re-labels, and refreshes
+   * the inspector. No-op on a missing component, an out-of-range pin, or an unchanged name.
+   */
+  setComponentPinName(id: number, pinIndex: number, name: string): void {
+    const c = this.graph.components.get(id);
+    if (!c) return;
+    const k = this.graph.kindOf(c);
+    if (!k || pinIndex < 0 || pinIndex >= k.pins.length) return;
+    const next = name.trim();
+    const cur = c.pinNames?.[pinIndex] ?? "";
+    if (cur === next) return;
+    this.pushUndo(this.graph.serialize());
+    // Materialize a full-length names array (sparse slots as ""), set the slot, then drop the array
+    // entirely if nothing is named (keeps the common case off the snapshot).
+    const names = (c.pinNames ?? []).slice();
+    while (names.length < k.pins.length) names.push("");
+    names[pinIndex] = next;
+    c.pinNames = names.some((n) => n && n.trim()) ? names : undefined;
+    // Rebuild this node so its pin labels reflect the new name (NodeView reads pinNames at build).
+    const node = this.nodes.get(id);
+    if (node) {
+      node.destroy();
+      this.nodes.delete(id);
+      this.addNode(c);
+    }
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onPersist?.(this.graph);
+    this.emitSelect();
+  }
+
+  /**
    * Flip a manual switch (kind `MSW`) between closed (value 1) and open (value 0).
    * Routed through {@link setComponentValue}, so the flip is undoable and rebuilds
    * the netlist exactly like an inspector value edit — the sim sees the new state
@@ -2615,6 +2674,52 @@ export class Board {
       initialColor: existing?.color ?? null,
       rect,
     });
+  }
+
+  /**
+   * Open the inline name editor for a die frame's port pad (the IC-maker pin-naming affordance).
+   * Computes the pad's on-screen rect (like {@link beginLabelEdit}) so the HUD positions a small
+   * input seeded with the pin's current name; the package pin number is sent as the placeholder.
+   * On commit the HUD calls {@link commitPinName}. No-op on a non-frame component / out-of-range pin.
+   */
+  private beginPinNameEdit(componentId: number, pinIndex: number): void {
+    const c = this.graph.components.get(componentId);
+    if (!c) return;
+    const k = this.graph.kindOf(c);
+    const p = k?.pins[pinIndex];
+    if (!k || !p) return;
+    const cell = this.graph.pinCell(c, p);
+    const o = this.cellToWorld(cell);
+    const s = this.world.scale.x;
+    const rect: AnchorRect = {
+      x: this.world.position.x + (o.x + 12) * s,
+      y: this.world.position.y + (o.y - 18) * s,
+      width: 90 * s,
+      height: 20 * s,
+    };
+    // The die-frame kind's default pin label IS the package number; the override (if any) lives on
+    // the component. Seed the input with the current name; show the number as the placeholder.
+    const number = Number(p.label);
+    this.cb.onPinNameEdit?.({
+      componentId,
+      pinIndex,
+      number: Number.isFinite(number) ? number : pinIndex + 1,
+      initial: c.pinNames?.[pinIndex] ?? "",
+      rect,
+    });
+  }
+
+  /** Commit (or clear) a die-pin name from the inline editor, then close it. Routes through
+   * {@link setComponentPinName} (undoable, cosmetic-persist, re-labels the pad). A blank name clears
+   * it back to the package number. Always closes the editor (a null onPinNameEdit payload). */
+  commitPinName(componentId: number, pinIndex: number, name: string): void {
+    this.cb.onPinNameEdit?.(null);
+    this.setComponentPinName(componentId, pinIndex, name);
+  }
+
+  /** Close the die-pin name editor without changing anything (Escape / outside click). */
+  cancelPinNameEdit(): void {
+    this.cb.onPinNameEdit?.(null);
   }
 
   private selectComponent(id: number, additive: boolean): void {
@@ -3139,6 +3244,28 @@ export class Board {
       pin &&
       (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
     ) {
+      // Inside a die: a DOUBLE-click on the die frame's perimeter pin opens its name editor (the
+      // port-pad naming affordance), rather than starting a second wire. A single click still wires
+      // (the first click's release-in-place is a no-op), mirroring the body double-click-to-inspect.
+      if (
+        !additive &&
+        this.dieFrameId !== null &&
+        pin.componentId === this.dieFrameId
+      ) {
+        const now = performance.now();
+        const dbl =
+          this.lastPinTap !== null &&
+          this.lastPinTap.id === pin.componentId &&
+          this.lastPinTap.pin === pin.pinIndex &&
+          now - this.lastPinTap.t < DOUBLE_CLICK_MS;
+        if (dbl) {
+          this.lastPinTap = null;
+          this.cancelWiring();
+          this.beginPinNameEdit(pin.componentId, pin.pinIndex);
+          return;
+        }
+        this.lastPinTap = { id: pin.componentId, pin: pin.pinIndex, t: now };
+      }
       this.startWiring(pin, wp);
       return;
     }
@@ -5852,7 +5979,11 @@ class ComponentNode {
     this.hPx = ((kind?.h ?? 1) - 1) * PITCH;
     for (const p of kind?.pins ?? []) {
       this.pinPositions.push({ x: p.dx * PITCH, y: p.dy * PITCH });
-      this.pinLabels.push(p.label);
+      // A die frame's pins can carry a player-given name (the IC-maker port-pad label); show it in
+      // place of the kind's default label (the package pin number) when set. Other parts have no
+      // pinNames, so this is the kind label as before.
+      const named = component.pinNames?.[p.index]?.trim();
+      this.pinLabels.push(named ? named : p.label);
     }
 
     this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
@@ -6145,8 +6276,12 @@ class ComponentNode {
       g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
-    // at the rotated pin. Only with a tier illustration showing and zoomed in far.
-    const showPins = (tier !== null || showInternals) && zoom >= DETAIL_ZOOM;
+    // at the rotated pin. Only with a tier illustration showing and zoomed in far —
+    // EXCEPT a die frame, whose perimeter pins are the port pads being named, so their
+    // labels (the package number or the player's name) show at the working die zoom.
+    const showPins = isDieFrame(this.kindTag)
+      ? zoom >= TIER_ZOOM
+      : (tier !== null || showInternals) && zoom >= DETAIL_ZOOM;
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];

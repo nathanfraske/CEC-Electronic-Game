@@ -22,22 +22,24 @@
 
 import {
   BoardGraph,
+  PART_KINDS,
+  dieFrameTag,
   framePackage,
   isFrame,
   isPinRef,
   type GraphSnapshot,
   type Cell,
 } from "./graph";
-import { packageLayout } from "./packages";
 import { buildNetlist } from "./netlist";
 
 /**
  * Slack (in grid cells) left between the die's perimeter pins and the buildable-interior wall, on
- * every side. A frame's footprint is tight to its pins; the die opens a roomy interior so the
- * player can place + wire parts without immediately bumping the walls. Purely presentation/UX —
- * it never affects the netlist (the inner graph is an ordinary board).
+ * every side. The die FRAME itself is the roomy perimeter (its pins are spread on the edges via
+ * {@link dieLayout}); this margin just sets the walls a little OUTSIDE those edge pins so they sit
+ * comfortably inside the boundary rather than on the wall line, and gives a small build apron.
+ * Purely presentation/UX — it never affects the netlist (the inner graph is an ordinary board).
  */
-export const DIE_INTERIOR_MARGIN = 6;
+export const DIE_INTERIOR_MARGIN = 2;
 
 /**
  * Where the die's own frame is anchored inside the inner canvas. Offset a little from the origin
@@ -54,18 +56,22 @@ export interface DieGraph {
 }
 
 /**
- * The inner graph a freshly-built frame starts with: a single frame of the SAME package as the
- * placed outer frame (the die), anchored roomily so its perimeter pins are spaced and reachable.
- * The player builds their circuit around/inside this die and wires nets out to its pins; sealing
- * captures the die + everything wired to it (the existing {@link captureSeal} BFS).
+ * The inner graph a freshly-built frame starts with: a single DIE-FRAME of the same package as the
+ * placed outer frame, but laid out with its pins on the PERIMETER edges and the interior empty for
+ * building ({@link dieFrameTag} / {@link dieLayout}) — the wall you author the IC's circuit inside.
+ * The player wires internal nets out to its edge pins; sealing captures the die + everything wired
+ * to it (the existing {@link captureSeal} BFS).
  *
- * `frameTag` is the outer frame's kind (e.g. "SOT23_6", "DIP8"); a non-frame tag yields undefined.
+ * `frameTag` is the outer frame's PLACEABLE kind (e.g. "SOT23_6", "DIP8"); the die uses its paired
+ * internal perimeter kind. The die frame carries the SAME package + SAME pin index order as the
+ * outer frame, so the seal maps each lead straight through (this is a visual relayout only). A
+ * non-frame tag yields undefined.
  */
 export function freshDieGraph(frameTag: string): DieGraph | undefined {
   const pkg = framePackage(frameTag);
   if (!pkg) return undefined;
   const g = new BoardGraph();
-  const frame = g.place(frameTag, { ...DIE_FRAME_ORIGIN });
+  const frame = g.place(dieFrameTag(frameTag), { ...DIE_FRAME_ORIGIN });
   if (!frame) return undefined;
   return { snapshot: g.serialize(), frameId: frame.id };
 }
@@ -102,13 +108,13 @@ export function dieBounds(
   | undefined {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return undefined;
-  const pkg = framePackage(frame.kind);
-  if (!pkg) return undefined;
-  const lay = packageLayout(pkg.archetype, pkg.pinCount);
-  // The frame's own footprint extent (pin offsets are >= 0 from its anchor cell).
+  const k = PART_KINDS[frame.kind];
+  if (!k) return undefined;
+  // The die frame's OWN footprint extent — its pins sit on the perimeter edges (dieLayout), so the
+  // box already brackets the spread; the margin just pushes the walls a little beyond the edge pins.
   let maxDx = 0;
   let maxDy = 0;
-  for (const p of lay.pins) {
+  for (const p of k.pins) {
     maxDx = Math.max(maxDx, p.dx);
     maxDy = Math.max(maxDy, p.dy);
   }
@@ -158,9 +164,9 @@ export function unusedDiePins(
 ): number[] {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return [];
-  const pkg = framePackage(frame.kind);
-  if (!pkg) return [];
-  const pinCount = packageLayout(pkg.archetype, pkg.pinCount).pins.length;
+  const k = PART_KINDS[frame.kind];
+  if (!k) return [];
+  const pinCount = k.pins.length;
   const wired = new Set<number>();
   for (const w of snapshot.wires) {
     for (const e of [w.from, w.to]) {

@@ -1034,6 +1034,16 @@
   // editor opens; threaded back through commitLabel on commit.
   let labelEditColor = $state<number | null>(null);
   let labelInput = $state<HTMLInputElement>();
+  // IC-maker die editor: the open port-pad name editor (a small input over a die frame's perimeter
+  // pin), or null when closed. `number` is the package pin number, shown as the placeholder/fallback.
+  let pinNameEdit = $state<{
+    componentId: number;
+    pinIndex: number;
+    number: number;
+    rect: AnchorRect;
+  } | null>(null);
+  let pinNameValue = $state("");
+  let pinNameInput = $state<HTMLInputElement>();
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
   let circuitWarning = $state<string | null>(null);
@@ -1871,6 +1881,20 @@
             labelEdit = null;
           }
         },
+        onPinNameEdit: (req) => {
+          if (req) {
+            pinNameEdit = {
+              componentId: req.componentId,
+              pinIndex: req.pinIndex,
+              number: req.number,
+              rect: req.rect,
+            };
+            pinNameValue = req.initial;
+            setTimeout(() => pinNameInput?.focus(), 0);
+          } else {
+            pinNameEdit = null;
+          }
+        },
       });
       board = b;
       b.setMode(mode);
@@ -2214,6 +2238,8 @@
     if (!drill || !board) return;
     const ctx = drill;
     const outer = mutate ? mutate(ctx.outerSnapshot) : ctx.outerSnapshot;
+    // Close any open port-pad name editor so it doesn't linger over the outer board.
+    if (pinNameEdit) cancelPinNameEdit();
     // Leave die mode BEFORE the swap, so swapGraph's onChange sees the outer board with `drill`
     // cleared and persists it normally (the per-edit saves were suppressed while inside the die, so
     // the outer board needs to be re-persisted now; the inner graph never reached localStorage).
@@ -2876,6 +2902,33 @@
     if (!labelEdit) return;
     board?.cancelLabelEdit();
     labelEdit = null;
+  }
+  // IC-maker die editor: commit / cancel / key handling for the port-pad name editor (mirrors the
+  // net-label editor). Commit routes through board.commitPinName (undoable, re-labels the pad on the
+  // die + carries into the sealed chip); a blank name clears the pad back to its package number.
+  function commitPinNameEdit(): void {
+    if (!pinNameEdit) return;
+    board?.commitPinName(
+      pinNameEdit.componentId,
+      pinNameEdit.pinIndex,
+      pinNameValue,
+    );
+    pinNameEdit = null;
+  }
+  function cancelPinNameEdit(): void {
+    if (!pinNameEdit) return;
+    board?.cancelPinNameEdit();
+    pinNameEdit = null;
+  }
+  function onPinNameKey(e: KeyboardEvent): void {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      commitPinNameEdit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelPinNameEdit();
+    }
+    e.stopPropagation();
   }
   function onLabelKey(e: KeyboardEvent): void {
     if (e.key === "Enter") {
@@ -3765,6 +3818,12 @@
               {dieStatus.used}/{dieStatus.total} pins
             </div>
           {/if}
+          <span
+            class="die-hint mono"
+            title="Double-click a wall pin to name it"
+          >
+            dbl-click a pin to name it
+          </span>
           <input
             class="insp-name mono die-seal-name"
             type="text"
@@ -3917,6 +3976,30 @@
               ></button>
             {/each}
           </div>
+        </div>
+      {/if}
+
+      <!-- IC-maker die editor: the port-pad name editor — a small input over a die frame's
+           perimeter pin (opened by double-clicking the pin). Enter / blur commits, Escape cancels.
+           A blank name reverts the pad to its package pin number. The placeholder shows that number
+           so the player sees the default. -->
+      {#if pinNameEdit}
+        <div
+          class="net-label-editor"
+          style="left: {pinNameEdit.rect.x}px; top: {pinNameEdit.rect.y}px;"
+        >
+          <input
+            bind:this={pinNameInput}
+            class="net-label-input mono"
+            bind:value={pinNameValue}
+            placeholder={"pin " + pinNameEdit.number}
+            maxlength="12"
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onPinNameKey}
+            onblur={commitPinNameEdit}
+            aria-label="Pin name"
+          />
         </div>
       {/if}
 
@@ -5779,6 +5862,13 @@
   .die-seal-name {
     width: 150px;
     flex: 0 0 auto;
+  }
+  /* Quiet how-to for the port-pad naming affordance (double-click a wall pin). */
+  .die-hint {
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    color: var(--dim);
+    white-space: nowrap;
   }
   .die-actions {
     display: flex;

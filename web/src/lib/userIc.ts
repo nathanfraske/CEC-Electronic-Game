@@ -37,6 +37,12 @@ export interface UserIc {
   frameId: number;
   /** the inner circuit, INCLUDING the frame (the authored sub-graph). */
   graph: GraphSnapshot;
+  /**
+   * Optional per-pin user names by pin index (the die editor's named port pads): pin i's name
+   * becomes the LABEL on the sealed chip's pin i. Sparse — an empty/absent slot falls back to the
+   * package pin number in {@link userIcPartKind}. Pure presentation; never affects the netlist.
+   */
+  pinNames?: string[];
 }
 
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library). */
@@ -74,15 +80,20 @@ export function userIcTags(): string[] {
   return [...REGISTRY.keys()];
 }
 
-/** Build the placeable `PartKind` for a sealed IC from its package (footprint + numbered pins). */
+/** Build the placeable `PartKind` for a sealed IC from its package (footprint + numbered pins).
+ * Each pin's LABEL is the player's name for that lead ({@link UserIc.pinNames} by index) when set,
+ * else the package pin number — so a sealed chip shows the names the author gave its pads. */
 function userIcPartKind(ic: UserIc): PartKind {
   const lay = packageLayout(ic.package.archetype, ic.package.pinCount);
-  const pins: Pin[] = lay.pins.map((p, i) => ({
-    index: i,
-    label: String(p.number),
-    dx: p.dx,
-    dy: p.dy,
-  }));
+  const pins: Pin[] = lay.pins.map((p, i) => {
+    const named = ic.pinNames?.[i]?.trim();
+    return {
+      index: i,
+      label: named ? named : String(p.number),
+      dx: p.dx,
+      dy: p.dy,
+    };
+  });
   const w = pins.reduce((m, p) => Math.max(m, p.dx), 0) + 1;
   const h = pins.reduce((m, p) => Math.max(m, p.dy), 0) + 1;
   // accent-tinted so a sealed user IC reads as a distinct (player-made) part; no value/unit, and
@@ -296,7 +307,11 @@ export function captureSeal(
   const full = graph.serialize();
   const capComps = full.components
     .filter((c) => comps.has(c.id))
-    .map((c) => ({ ...c, cell: { ...c.cell } }));
+    .map((c) => ({
+      ...c,
+      cell: { ...c.cell },
+      ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+    }));
   const capJuncs: Junction[] = (full.junctions ?? [])
     .filter((j) => juncs.has(j.id))
     .map((j) => ({
@@ -347,6 +362,9 @@ export function captureSeal(
     nextNetLabelId: maxId(capLabels.map((l) => l.id)) + 1,
   };
 
+  // The player's per-pin names live on the frame component (the die editor's named port pads);
+  // carry them onto the sealed IC so its placed instance shows them as pin labels.
+  const framePinNames = frame.pinNames;
   const tag = name && name.trim() ? name.trim() : nextAutoTag();
   registerUserIc({
     tag,
@@ -354,6 +372,9 @@ export function captureSeal(
     package: pkg,
     frameId,
     graph: snapshot,
+    ...(framePinNames && framePinNames.some((n) => n && n.trim())
+      ? { pinNames: [...framePinNames] }
+      : {}),
   });
 
   return {
