@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (83) — Seal/zoom: phases 3 + 4 done, phase 5 foundation (package library) — REVIEW PASS
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner asked for analogy-lens support + "implement
+all phases for a review pass." Delivered phases 3 and 4 fully and phase 5's reviewable foundation; the
+phase-5 interactive authoring UI is the remaining major effort (it needs the owner's visual loop — I did
+NOT blind-dump it). **Several pieces need the owner's eyes/verification (flagged below).**
+
+**Phase 3 — analogy lens too (DONE).** The zoom-to-open internals now trigger under BOTH non-schematic
+lenses (`reality` || `analogy`), skinned per lens via a passed-in `accent` (water `PIPE_WATER` under
+analogy, electron `COND_ELEC` under reality); `internalsView.ts` stays lens-agnostic. Schematic lens still
+shows the black-box symbol. Commit `b35aaa9`.
+
+**Phase 4 — flash ADC remade as a DISCRETE composition (DONE, NEEDS VERIFICATION).** `CEC_COMP.ADC` (in
+`netlist.ts`): an 8-resistor ladder VREF→GND (taps k/8·VREF) + 7 transparent comparators (th_k = VIN >
+k/8·VREF) + a gate encoder (D2 = th4; D1 = th2·¬th4 + th6; D0 = th1·¬th2 + th3·¬th4 + th5·¬th6 + th7); c4
+drives D2 directly. `BEH_SPEC.ADC` removed (sim-core prog 5 retained, golden-safe, just unwired). So the
+flash ADC now OPENS to its real comparator bank in the zoom view. **Verify:** (a) the `flash-adc` /
+`adc-dac-staircase` demos still ramp correctly (I can't run the web sim — the encoder logic is
+truth-table-verified but unrun); (b) 26 sub-elements render dense in the current grid layout — the
+internals layout wants a pass for big composites. Commit `a938448`.
+
+**Phase 5 foundation — package-format library (DONE).** New `web/src/lib/packages.ts`: `packageLayout(arch,
+pinCount)` → footprint (grid cells), numbered leads, pin-1, and a `DiePolicy` (`fixed`: SOT-23-3/5/6;
+`expandable`: VSSOP-8, DIP-8/14/16). Pure geometry/data, no consumer yet (foundation for the authoring UI).
+
+**REMAINING — phase 5 authoring UI (the IC maker proper, ADR 0006).** NOT built — it's a large interactive
+subsystem best built with the owner's visual feedback: the **die-boundary canvas** (bounded build region +
+DRC "nothing over the walls"), **port pads** (drop on the wall, wire internal→pad, pad = the package lead),
+the **pinout editor**, **free-form/CEC9xxx naming**, **one-layer nesting** (hide the user-IC library on the
+canvas), the **generalized `CEC_COMP` expander** for an arbitrary saved sub-graph, **persistence** + a
+**user part bin**. Design is fully specced in `docs/adr/0006-...`. Start with the generalized expander
+(wire `packages.ts` in) + a minimal "seal selection → new IC" flow, iterating on the UX with the owner.
+
+---
+
 ## 2026-06-23 (82) — Seal/zoom mini-mode: ADR 0005 phase 2 DONE (zoom-to-open renderer)
 
 **State:** 🟢 pushed; **needs the owner's VISUAL check in the browser** (I can't run PixiJS here — the web
