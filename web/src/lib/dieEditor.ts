@@ -30,21 +30,21 @@ import {
   type GraphSnapshot,
   type Cell,
 } from "./graph";
+import { dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
 
 /**
- * Slack (in grid cells) left between the die's perimeter pins and the buildable-interior wall, on
- * every side. The die FRAME itself is the roomy perimeter (its pins are spread on the edges via
- * {@link dieLayout}); this margin just sets the walls a little OUTSIDE those edge pins so they sit
- * comfortably inside the boundary rather than on the wall line, and gives a small build apron.
- * Purely presentation/UX — it never affects the netlist (the inner graph is an ordinary board).
+ * Breathing room (in grid cells) the die-editor CAMERA leaves around the die body when it frames
+ * the view on entry — NOT a wall offset. The walls now sit exactly on the die body box so the
+ * package leads land ON them ({@link dieBounds} / {@link dieLayout}); this pad only keeps the walls
+ * off the very edge of the screen. Purely presentation/UX — it never affects the netlist.
  */
 export const DIE_INTERIOR_MARGIN = 2;
 
 /**
- * Where the die's own frame is anchored inside the inner canvas. Offset a little from the origin
- * so the boundary box (which extends {@link DIE_INTERIOR_MARGIN} above/left of pin 1) stays in
- * positive grid space and the view frames it nicely on entry.
+ * Where the die's own frame is anchored inside the inner canvas. Offset from the origin so the
+ * whole die body (anchored here and extending right/down to its package footprint) sits in positive
+ * grid space and the view frames it nicely on entry.
  */
 export const DIE_FRAME_ORIGIN: Cell = { col: 8, row: 8 };
 
@@ -92,13 +92,14 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
 }
 
 /**
- * The buildable-interior box (the "walls") for a die, in grid cells: the die frame's footprint
- * grown by {@link DIE_INTERIOR_MARGIN} on every side. The renderer draws this as the boundary and
- * the soft-containment check keeps placement inside it. Returns undefined if `frameId` isn't a
- * frame in the snapshot (so a graph with no die has no walls to draw).
+ * The buildable-interior box (the "walls") for a die, in grid cells: the die frame's BODY box,
+ * anchored at the frame and extending to its package footprint ({@link dieLayout}'s w x h). The
+ * renderer draws this as the boundary and the soft-containment check keeps placement inside it.
+ * Returns undefined if `frameId` isn't a frame in the snapshot (so a graph with no die has no walls).
  *
- * The box is derived from the die frame's package layout (not hand-tuned), so it always matches
- * the pin spread — wider packages get wider dies.
+ * The box is the package's own body, and {@link dieLayout} guarantees every lead sits on that body's
+ * perimeter — so the walls land exactly ON the pins (the leads cross the wall like real package
+ * leads), and the (now roomy) interior is the build area. Bigger packages get bigger dies.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
@@ -108,22 +109,14 @@ export function dieBounds(
   | undefined {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return undefined;
-  const k = PART_KINDS[frame.kind];
-  if (!k) return undefined;
-  // The die frame's OWN footprint extent — its pins sit on the perimeter edges (dieLayout), so the
-  // box already brackets the spread; the margin just pushes the walls a little beyond the edge pins.
-  let maxDx = 0;
-  let maxDy = 0;
-  for (const p of k.pins) {
-    maxDx = Math.max(maxDx, p.dx);
-    maxDy = Math.max(maxDy, p.dy);
-  }
-  const m = DIE_INTERIOR_MARGIN;
+  const pkg = framePackage(frame.kind);
+  if (!pkg) return undefined;
+  const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
   return {
-    minCol: frame.cell.col - m,
-    minRow: frame.cell.row - m,
-    maxCol: frame.cell.col + maxDx + m,
-    maxRow: frame.cell.row + maxDy + m,
+    minCol: frame.cell.col,
+    minRow: frame.cell.row,
+    maxCol: frame.cell.col + w,
+    maxRow: frame.cell.row + h,
   };
 }
 

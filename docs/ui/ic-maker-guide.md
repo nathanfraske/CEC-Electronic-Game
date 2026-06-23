@@ -51,6 +51,15 @@ internals once, as a normal circuit, and both the live reality view (tier 5) and
   unbroken, to whatever the pad touches inside (no buffering, exact same netlist).
 - A pad with nothing wired is `nc`.
 
+> **Implemented (die editor):** inside the die the pads sit on the **perimeter walls** at their real lead
+> positions (`dieLayout` in `packages.ts`, a roomy relayout of `packageLayout` with the **same pin
+> numbering/index order**, so the seal maps each pad straight through). **Naming** is live: **double-click a
+> wall pin** to open a small input and name it (Enter/blur commits; blank reverts to the package number).
+> The name is stored on the die-frame component (`Component.pinNames` by pin index), carried by
+> `captureSeal` into `UserIc.pinNames`, and becomes the **label on the sealed chip's matching pin**
+> (`userIcPartKind`, falling back to the number). Names are presentation only — never in the netlist.
+> (Pad **roles** remain a future addition.)
+
 ## 4. Build the circuit inside
 
 - Drop real parts (transistors, gates, resistors, …) inside the frame and wire them up, routing the

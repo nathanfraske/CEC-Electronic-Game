@@ -36,7 +36,7 @@ import {
   type GraphSnapshot,
 } from "./graph";
 import { captureSeal } from "./userIc";
-import { DIE_INTERIOR_MARGIN, dieBounds } from "./dieEditor";
+import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
   flowStabilized,
@@ -1616,7 +1616,19 @@ export class Board {
       maxX = Math.max(maxX, p.x);
       maxY = Math.max(maxY, p.y);
     }
-    // Pad the content box by the die's interior margin so the walls (drawn beyond the pins) fit.
+    // Fold in the die's WALLS (its body box) so the whole, now-roomy package frames on entry — the
+    // bare anchor cells above only cover the placed parts, not the package perimeter the pins ride.
+    const dieId = findDieFrameId(snapshot);
+    const walls = dieId !== undefined ? dieBounds(snapshot, dieId) : undefined;
+    if (walls) {
+      const tl = this.cellToWorld({ col: walls.minCol, row: walls.minRow });
+      const br = this.cellToWorld({ col: walls.maxCol, row: walls.maxRow });
+      minX = Math.min(minX, tl.x);
+      minY = Math.min(minY, tl.y);
+      maxX = Math.max(maxX, br.x);
+      maxY = Math.max(maxY, br.y);
+    }
+    // A little breathing room so the walls don't kiss the screen edge.
     const pad = DIE_INTERIOR_MARGIN * PITCH * 1.5;
     minX -= pad;
     minY -= pad;
@@ -1700,13 +1712,13 @@ export class Board {
     if (this.dieFrameId === null) return;
     const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
     if (!bounds) return;
-    // Pad the wall a little OUTSIDE the pin-grown bounds so the perimeter pins sit comfortably
-    // within the interior rather than on the wall line.
-    const inset = PITCH * 0.5;
-    const x = bounds.minCol * PITCH - inset;
-    const y = bounds.minRow * PITCH - inset;
-    const w = (bounds.maxCol - bounds.minCol) * PITCH + inset * 2;
-    const h = (bounds.maxRow - bounds.minRow) * PITCH + inset * 2;
+    // The walls sit exactly on the die BODY box, which {@link dieBounds}/{@link dieLayout} place so
+    // every package lead lands ON the wall line — the leads cross the boundary like a real package's
+    // (no inset that would float the pins inside the interior).
+    const x = bounds.minCol * PITCH;
+    const y = bounds.minRow * PITCH;
+    const w = (bounds.maxCol - bounds.minCol) * PITCH;
+    const h = (bounds.maxRow - bounds.minRow) * PITCH;
     // A faint die fill so the buildable area reads as a surface, plus a bright dashed-ish border
     // (drawn as a solid accent-line rect — cheap + legible) marking the wall you build inside.
     g.roundRect(x, y, w, h, 6);
@@ -3144,6 +3156,26 @@ export class Board {
           return;
         }
       }
+      // Inside a die: a second press back on the SAME die-frame pin the wire started from is the
+      // name-pad gesture (not a no-op continue onto itself) — cancel the pending wire and open the
+      // port-pad name editor. Mirrors the junction double-click-to-drag above. (The first click left
+      // the wire pending; nothing was committed, so cancelling loses nothing.)
+      if (this.dieFrameId !== null && isPinRef(this.wiring.from)) {
+        const pinHit = this.pinHitTest(wp.x, wp.y);
+        if (
+          pinHit &&
+          pinHit.componentId === this.dieFrameId &&
+          this.lastPinTap !== null &&
+          this.lastPinTap.id === pinHit.componentId &&
+          this.lastPinTap.pin === pinHit.pinIndex &&
+          performance.now() - this.lastPinTap.t < DOUBLE_CLICK_MS
+        ) {
+          this.lastPinTap = null;
+          this.cancelWiring();
+          this.beginPinNameEdit(pinHit.componentId, pinHit.pinIndex);
+          return;
+        }
+      }
       this.continueOrFinishWiring(wp.x, wp.y, false);
       if (this.wiring) {
         // Still routing: arm this press so a drag from here is a drag-to-wire and a
@@ -3244,27 +3276,19 @@ export class Board {
       pin &&
       (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
     ) {
-      // Inside a die: a DOUBLE-click on the die frame's perimeter pin opens its name editor (the
-      // port-pad naming affordance), rather than starting a second wire. A single click still wires
-      // (the first click's release-in-place is a no-op), mirroring the body double-click-to-inspect.
+      // Inside a die: remember this press on the die frame's perimeter pin so a SECOND press on it
+      // (which, the wire now pending, lands in the wiring branch above) is recognised as the
+      // double-click "name this pad" gesture. The first click still starts a wire as usual.
       if (
         !additive &&
         this.dieFrameId !== null &&
         pin.componentId === this.dieFrameId
       ) {
-        const now = performance.now();
-        const dbl =
-          this.lastPinTap !== null &&
-          this.lastPinTap.id === pin.componentId &&
-          this.lastPinTap.pin === pin.pinIndex &&
-          now - this.lastPinTap.t < DOUBLE_CLICK_MS;
-        if (dbl) {
-          this.lastPinTap = null;
-          this.cancelWiring();
-          this.beginPinNameEdit(pin.componentId, pin.pinIndex);
-          return;
-        }
-        this.lastPinTap = { id: pin.componentId, pin: pin.pinIndex, t: now };
+        this.lastPinTap = {
+          id: pin.componentId,
+          pin: pin.pinIndex,
+          t: performance.now(),
+        };
       }
       this.startWiring(pin, wp);
       return;
@@ -6010,8 +6034,9 @@ class ComponentNode {
     }
     const symbol = isSymbol(this.kindTag);
     this.label = new Text({
-      // The custom label if the player named this part, else the kind tag.
-      text: this.component.label ?? this.kindTag,
+      // The custom label if the player named this part, else the kind's fallback (its tag, or
+      // nothing for a die frame — see defaultLabel).
+      text: this.component.label ?? this.defaultLabel(),
       style: {
         fill: this.color,
         fontFamily: "IBM Plex Mono, monospace",
@@ -6128,10 +6153,17 @@ class ComponentNode {
   }
 
   /** Refresh the on-board label after an inspector rename: the custom name if set,
-   *  else the kind tag. */
+   *  else the kind's fallback ({@link defaultLabel}). */
   setLabel(label: string | undefined): void {
-    this.label.text = label && label.length > 0 ? label : this.kindTag;
+    this.label.text = label && label.length > 0 ? label : this.defaultLabel();
     this.layoutLabels();
+  }
+
+  /** The label shown when the part carries no custom name: its kind tag — EXCEPT a die frame,
+   *  whose tag is the internal "__DIE_*" id and whose body is the build area, so it shows nothing
+   *  (the package identity lives in the die-editor breadcrumb, not a watermark over the circuit). */
+  private defaultLabel(): string {
+    return isDieFrame(this.kindTag) ? "" : this.kindTag;
   }
 
   update(
