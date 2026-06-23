@@ -5,6 +5,52 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (77) — Functional SAR ADC wired (CEC1108, sim-core behavioral program 6)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The **CEC1108 3-bit SAR ADC is now a placeable,
+functional part** (it was glyph-only). This one needed a **sim-core change** (a new behavioral program),
+unlike the DAC — but it's golden-safe by construction (additive program id; `beh_state` stays empty for
+every existing circuit, so the snapshot hash is byte-identical).
+
+**Sim-core (the new bit):**
+- **`BEH_PROG_SAR_ADC = 6`** — a clocked successive-approximation converter. On each **rising CLK** (`h`)
+  it decides one result bit **MSB-first**: clear the register at the start of a conversion, set the bit
+  under test, compare `VIN` (`f`) against the internal **trial R-2R DAC** level (`trial/8 · VCC`), keep the
+  bit if `VIN ≥ trial`, else drop it. After 3 clocks the register holds **`floor(8·VIN/VCC)` clamped 0..7
+  — the SAME code the flash ADC finds in parallel** — and **DONE** (`g`) goes high until the next
+  conversion. `VCC` is the full-scale reference (single supply, no VREF).
+- Integer state in `beh_state` (slots CODE/STEP/DONE/CLK_PREV), advanced in the commit phase via
+  `beh_sar_adc_step`; driven in `eval_digital` from committed state (one tick state→output delay).
+- **DONE is a 4th behavioral output** (terminal `g`). The generic behavioral drive path only does a/b/c,
+  so the SAR has its **own eval branch** (drives D0/D1/D2 + DONE), mirroring the LUT special-case.
+  `classify_nets` already lists a/b/c/f/g/h as digital signal pins and the digital stamp is generic
+  per-node (`digital_net_thevenin`), so `g` classifies + stamps with no plumbing change; the one targeted
+  addition is `mark(referenced, e.g)` **guarded to prog 6** (other programs keep `g` an input).
+- **Tests:** `behavioral_sar_adc_3bit_successive_approximation` (drives a fixed VIN, clocks it with a
+  50%-duty switch, reads the code **gated on DONE** so a mid-search register is never sampled; checks the
+  full range incl. saturation/over-range). `golden_snapshot_hash_is_stable` + every `run_is_reproducible`
+  still green. **184 sim-core tests pass; fmt/clippy clean.** (fmt also collapsed 2 pre-existing flash-ADC
+  lines that had minor drift — incidental, formatting-only.)
+
+**Web:**
+- **`SAR` kind** (graph.ts): 8 pins **VIN, CLK, D2, D1, D0, DONE, VCC, GND** (visual index order matches
+  the catalogue; outputs grouped on the right, a 3×4 card). **`BEH_SPEC.SAR`** = `{ prog: 6,
+  term: [4,3,2,6,7,0,5,1] }` (a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=DONE h=CLK). partInfo, codex
+  (cat/meta/synonyms), App (PARTS/cat/keywords) rows added; renders as the generic IC card.
+- Catalogue CEC1108 "In the sim" note rewritten to the behavioral-prog-6 reality.
+- Web gate green: `pnpm -C web check` 0/0, `lint` clean, `build` ok, `build:wasm` ok.
+
+**Behavior note:** re-reads VIN each clock step (no explicit sample-and-hold) — exact for a DC/slow input
+(the teaching case); a real SAR needs an S&H for fast inputs. Needs an external clock on CLK (wire a PULSE
+part). DONE pulses high for ~one conversion period after each conversion (wire it to an LED).
+
+**NEXT:** the **convert↔reconstruct demo** is now fully unblocked — flash ADC (CEC1080) **or** SAR
+(CEC1108) → DAC (CEC1083), all three placeable. Build it as a worked example / saved circuit (ADC code →
+DAC reconstructs the staircase). Still open from before: optional DAC-glyph polish-remake; dense-RTL tier
+touch-ups.
+
+---
+
 ## 2026-06-23 (76) — Functional R-2R DAC wired (CEC1083 now placeable)
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Closed the entry-75 open thread for the DAC: the

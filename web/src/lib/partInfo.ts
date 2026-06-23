@@ -827,6 +827,18 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Ladder current", value: f(e.current, "A") },
     ],
   },
+  SAR: {
+    name: "SAR ADC",
+    equation: "code = floor(8 · VIN / VCC), found bit-by-bit over 3 clocks",
+    headline: (e) =>
+      `successive approx · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A successive-approximation (SAR) ADC converts by binary search — the speed-versus-parts opposite of the flash ADC. Instead of a bank of comparators it has just one, wired in a loop with a small internal DAC and a 3-bit register: on each clock it tries the next bit, most-significant first. Set the bit, let the DAC produce that trial voltage (the first trial is half scale, then a quarter, then an eighth), and ask the one comparator 'is VIN still above it?' — keep the bit if yes, drop it if no. After 3 clocks the register has homed in on the answer and DONE goes high; the result is floor(8 · VIN / VCC), clamped 0..7 — exactly the code the flash ADC finds in a single step, but reached with one comparator instead of seven. That is the classic trade: flash is fastest but costs (2 to the N) minus 1 comparators, while SAR needs only N clocks and a handful of parts, which is why most general-purpose ADCs are SAR. Drive CLK from a clock and hold VIN steady during the conversion (a real SAR samples and holds it); VCC is the full-scale reference.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

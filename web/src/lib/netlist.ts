@@ -449,6 +449,11 @@ const BEH_SPEC: Record<string, BehSpec> = {
   // code drives a/b/c; VIN/VREF are analog sense pins. No data word (aux unused). Visual pins
   // [VIN, VREF, D2, D1, D0, VCC, GND].
   ADC: { prog: 5, term: [4, 3, 2, 5, 6, 0, 1, -1], defWord: 0 },
+  // 3-bit SAR ADC (prog 6): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=DONE h=CLK. The committed result
+  // register drives D0/D1/D2 and the DONE strobe (a FOURTH behavioral output on g); VIN is the
+  // analog sense, CLK steps the 3-clock binary search, VCC is the full-scale reference. No data
+  // word (aux unused). Visual pins [VIN, CLK, D2, D1, D0, DONE, VCC, GND].
+  SAR: { prog: 6, term: [4, 3, 2, 6, 7, 0, 5, 1], defWord: 0 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.

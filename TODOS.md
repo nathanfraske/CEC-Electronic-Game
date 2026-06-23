@@ -6,6 +6,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (39) — Functional SAR ADC wired (CEC1108 placeable, behavioral prog 6)
+
+- ~~**Wire the functional SAR ADC (CEC1108)**~~ — DONE. The 3-bit successive-approximation ADC is now a
+  placeable part. New **sim-core behavioral program 6** (`BEH_PROG_SAR_ADC`): clocked binary search,
+  MSB-first, one bit per rising CLK, comparing VIN against an internal trial R-2R DAC level
+  (`trial/8 · VCC`); after 3 clocks the register holds `floor(8·VIN/VCC)` (clamped 0..7 — the SAME code
+  the flash ADC finds in parallel) and **DONE** goes high. Carries integer state (CODE/STEP/DONE/CLK_PREV
+  in `beh_state`) advanced in the commit phase. **Golden byte-identical** (additive program; `beh_state`
+  empty for existing circuits) — `golden_snapshot_hash_is_stable` + all `run_is_reproducible` green; new
+  test `behavioral_sar_adc_3bit_successive_approximation` (reads gated on DONE so a mid-search register is
+  never sampled). 184 sim-core tests pass; fmt/clippy clean.
+- **DONE is a FOURTH behavioral output** (on terminal `g`). The generic behavioral path drives only a/b/c,
+  so the SAR has its own eval branch (drives D0/D1/D2 + DONE) like the LUT's special-case; `classify_nets`
+  already marks a/b/c/f/g/h as digital signal pins (so the DONE net classifies), and the digital stamp is
+  generic per-node (`digital_net_thevenin`), so g stamps automatically. Added a targeted
+  `mark(referenced, e.g)` for prog 6 only (other programs keep g as an input).
+- **Web:** `SAR` kind (8 pins VIN/CLK/D2/D1/D0/DONE/VCC/GND), `BEH_SPEC.SAR` (prog 6,
+  `term:[4,3,2,6,7,0,5,1]`), partInfo, codex, App rows. VCC is the full-scale reference (no VREF pin), per
+  the catalogue. Renders as the generic IC card. Web gate green (check 0/0, lint, build, build:wasm).
+- Catalogue CEC1108 "In the sim" note updated to the behavioral-prog-6 reality.
+
+---
+
 ## 2026-06-23 (38) — Functional R-2R DAC wired (CEC1083 placeable)
 
 - ~~**Wire the functional DAC (CEC1083)**~~ — DONE. The 3-bit R-2R ladder is now a placeable part,
@@ -18,10 +41,9 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   fallback) like the ADC. Web gate green (check 0/0, lint clean, build ok). Note: a switch-less R-2R
   ladder scales AOUT with the **external logic's** high level on the D pins; wire VCC to that same
   rail and `AOUT = code/8 · VCC` holds exactly (matches the glyph tier-4 framing).
-- [ ] **Wire the functional SAR ADC (CEC1108)** — comparator + this DAC + a 3-bit SAR
-  register/controller loop (a small behavioral SAR program, or a composition). Now unblocked.
-- [ ] **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example, once both converters
-  are placeable (the DAC half is now done).
+- ~~**Wire the functional SAR ADC (CEC1108)**~~ — DONE (see entry 39): behavioral program 6.
+- [ ] **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example, now that both ADCs (flash +
+  SAR) and the DAC are all placeable.
 
 ---
 

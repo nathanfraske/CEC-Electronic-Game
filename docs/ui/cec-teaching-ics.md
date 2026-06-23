@@ -168,11 +168,13 @@ conversion: the speed-versus-parts opposite of the CEC1080 flash ADC.
 (DAC = (kept + 2)/8 VCC), keep or clear; try D0; then raise DONE. The result settles to
 floor(8 * VIN / VCC), clamped 0..7 -- the same code the CEC1080 finds in parallel.
 
-**In the sim:** a `buildNetlist` loop of existing elements (one `ELEM_COMPARATOR`, the CEC1083 R-2R DAC,
-and a 3-bit successive-approximation register driving the DAC from the comparator result), or a small
-behavioral SAR program. No new sim-core element. **Teaches:** successive approximation, the binary search,
-the comparator-DAC feedback loop, and the speed (N clocks) versus parts (one comparator) trade against the
-flash ADC.
+**In the sim:** a small **behavioral SAR program** (`ELEM_BEHAVIORAL` program 6) — on each rising `CLK` it
+decides one bit MSB-first, comparing `VIN` against an internal trial R-2R DAC level (`trial/8 * VCC`) and
+keeping the bit when `VIN` is above it; after 3 clocks the register holds `floor(8 * VIN / VCC)` (clamped
+0..7) and `DONE` goes high. The comparator-DAC-register loop is folded into the one behavioral block (no
+new sim-core element). `VCC` is the full-scale reference (single supply, no `VREF` pin). **Teaches:**
+successive approximation, the binary search, the comparator-DAC feedback loop, and the speed (N clocks)
+versus parts (one comparator) trade against the flash ADC.
 
 ---
 

@@ -1079,6 +1079,30 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // 3-bit SAR ADC (CEC1108): the successive-approximation converter — a binary search over 3 clocks
+  // (one comparator + an internal R-2R DAC + a 3-bit register), the speed-vs-parts opposite of the
+  // parallel flash ADC. ELEM_BEHAVIORAL program 6: on each rising CLK it decides one bit MSB-first,
+  // settling to floor(8·VIN/VCC) on D2/D1/D0 with DONE high once the result is valid. VCC is the
+  // full-scale reference (no VREF pin). value = the fixed program id (no value picker). Pins
+  // VIN/CLK (in, left), D2/D1/D0/DONE (out, right), VCC/GND. buildNetlist routes them via BEH_SPEC.
+  SAR: kind(
+    "SAR",
+    "SAR ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 0),
+      pin("CLK", 0, 1),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("DONE", 2, 3),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    6,
+    "",
+    true,
+  ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
   // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
   // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =

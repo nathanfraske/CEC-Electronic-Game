@@ -1074,6 +1074,17 @@ const BEH_PROG_LUT: u32 = 4;
 /// combinational (no state block), so it runs in `eval_digital` only and folds a zero state block —
 /// golden-safe additive. See [`beh_flash_adc_code`]. (The teaching flash ADC, pairing with the DAC.)
 const BEH_PROG_FLASH_ADC: u32 = 5;
+/// Program id selecting the **3-bit SAR ADC** firmware (program 6) — a clocked successive-
+/// approximation converter (the CEC1108). On each rising `CLK` (`h`) it decides one result bit
+/// most-significant first by comparing the analog input `VIN` (`f`) against an internal trial R-2R
+/// DAC level (`trial / 8` of the `VCC` rail, the single-supply reference) — keeping the bit when
+/// `VIN` is at or above it, dropping it otherwise. After 3 clocks the register holds
+/// `floor(8 * VIN / VCC)` clamped `0..=7` (the SAME code the flash ADC finds in parallel) and `DONE`
+/// (`g`) goes high until the next conversion starts. Unlike the combinational flash ADC it carries
+/// integer state (the result register, the step counter, the done flag, the CLK edge companion),
+/// advanced in the commit phase. See [`beh_sar_adc_step`]. (The teaching SAR ADC, the speed-vs-parts
+/// opposite of the flash CEC1080: one comparator + one DAC, but N clocks per conversion.)
+const BEH_PROG_SAR_ADC: u32 = 6;
 
 // --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
 
@@ -1558,6 +1569,58 @@ fn beh_flash_adc_code(node_v: &[f64], e: &Element, vlow: f64, rail: f64) -> u32 
     }
     let frac = ((node_v[e.f] - vlow) / span).clamp(0.0, 1.0);
     ((frac * 8.0).floor() as u32).min(7)
+}
+
+// --- Behavioral program 6: 3-bit SAR ADC --------------------------------------
+
+/// SAR-ADC internal-state word indices (program 6) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block — a fresh layout (every program runs alone in its element).
+/// `CODE`: the running successive-approximation result register (`0..=7`), driving `D0`/`D1`/`D2`.
+/// `STEP`: which bit is decided on the next clock, `0..SAR_BITS` (the bit under test is the MSB
+/// minus `STEP`), wrapping after the LSB. `DONE`: `1` once a full conversion has completed (the
+/// result is valid), cleared when the next conversion begins. `CLK_PREV`: the rising-edge companion.
+const BEH_SAR_CODE: usize = 0;
+const BEH_SAR_STEP: usize = 1;
+const BEH_SAR_DONE: usize = 2;
+const BEH_SAR_CLK_PREV: usize = 3;
+
+/// Bits the SAR resolves — and the number of clocks per conversion. A 3-bit converter.
+const SAR_BITS: u32 = 3;
+/// Full-scale code count, `2^`[`SAR_BITS`]: the trial DAC level for code `c` is `c / SAR_LEVELS` of
+/// the reference, so one LSB = reference / `SAR_LEVELS`.
+const SAR_LEVELS: u32 = 1 << SAR_BITS;
+
+/// Advance a behavioral **3-bit SAR ADC**'s integer state by one tick (program 6). On each **rising
+/// `CLK` edge** (`clk && !clk_prev`) it performs one step of the binary search, most-significant bit
+/// first: at the start of a conversion (`STEP == 0`) it clears the register, then sets the bit under
+/// test and compares the input `vin` (volts above the chip's `GND`) against that trial's internal
+/// R-2R DAC output (`trial / `[`SAR_LEVELS`]` * span`, where `span` is the `VCC` reference) — keeping
+/// the bit when `vin` is at or above the trial level, dropping it otherwise. After the LSB step the
+/// register holds `floor(`[`SAR_LEVELS`]` * vin / span)` clamped to `0..SAR_LEVELS` (the same code the
+/// parallel flash ADC produces — the speed-vs-parts duality) and `DONE` is raised until the next
+/// conversion begins. `CLK_PREV` is updated last for the next tick's edge detection. Pure integer /
+/// `f64` compares (no transcendentals), so it is fully deterministic; mutates `state` in place (the
+/// only mutation site, run in the commit phase). The input should be stable across the conversion's
+/// clocks (a real SAR samples and holds `VIN` at conversion start); a slowly varying or DC input
+/// converts exactly.
+fn beh_sar_adc_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, vin: f64, span: f64) {
+    if clk && state[BEH_SAR_CLK_PREV] == 0 {
+        if state[BEH_SAR_STEP] == 0 {
+            state[BEH_SAR_CODE] = 0; // start of conversion: clear the register
+            state[BEH_SAR_DONE] = 0; // result not yet valid
+        }
+        let bit = (SAR_BITS - 1) - state[BEH_SAR_STEP]; // MSB first
+        let trial = state[BEH_SAR_CODE] | (1u32 << bit);
+        let dac = (trial as f64) / (SAR_LEVELS as f64) * span; // internal R-2R DAC trial level
+        if vin >= dac {
+            state[BEH_SAR_CODE] = trial; // comparator: VIN at/above the trial DAC => keep the bit
+        }
+        state[BEH_SAR_STEP] = (state[BEH_SAR_STEP] + 1) % SAR_BITS;
+        if state[BEH_SAR_STEP] == 0 {
+            state[BEH_SAR_DONE] = 1; // finished the LSB: the 3-bit result is valid
+        }
+    }
+    state[BEH_SAR_CLK_PREV] = clk as u32;
 }
 
 // --- AC voltage source model constants ----------------------------------------
@@ -2190,6 +2253,12 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.a);
                 mark(&mut referenced, e.b);
                 mark(&mut referenced, e.c);
+                // The SAR ADC (program 6) drives a FOURTH output, DONE, on `g` — reference it like
+                // the other outputs (the other programs leave `g` an input, referenced by its own
+                // source; an unused `g` is ground, already referenced, so this is a no-op there).
+                if e.value as u32 == BEH_PROG_SAR_ADC {
+                    mark(&mut referenced, e.g);
+                }
             }
             ELEM_PULLUP => {
                 // Pulled to an internal rail through PULLUP_R — a real conductance to
@@ -5842,6 +5911,40 @@ impl Sim {
                         self.digital_family[e.a] = 0;
                         continue;
                     }
+                    // Program 6 (the 3-bit SAR ADC) drives FOUR powered outputs from committed state
+                    // — D0/D1/D2 (a/b/c) = the successive-approximation result register, DONE (g) =
+                    // high once a full conversion has completed — and reads VIN (f) / CLK (h) in the
+                    // commit phase. The fourth output (g) is why it can't use the generic a/b/c loop
+                    // below; handle it here and skip (like the LUT). Reference is the VCC rail
+                    // (single supply). Unpowered ⇒ everything released (Z). One tick of
+                    // state-to-output delay, like the other clocked programs.
+                    if prog == BEH_PROG_SAR_ADC {
+                        let powered = rail >= GATE_MIN_RAIL;
+                        let code = self.beh_state[i][BEH_SAR_CODE];
+                        let done_hi = self.beh_state[i][BEH_SAR_DONE] != 0;
+                        // (output node, high?) for D0, D1, D2, DONE.
+                        let outs = [
+                            (e.a, code & 1 != 0),
+                            (e.b, code & 2 != 0),
+                            (e.c, code & 4 != 0),
+                            (e.g, done_hi),
+                        ];
+                        for (k, &(node, hi)) in outs.iter().enumerate() {
+                            let lvl = if powered { bit(hi) } else { Level::Z };
+                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                            if k == 0 {
+                                // OUT (a = D0): record the element-indexed Thévenin so the OUT current
+                                // readout (oriented out of `a`) matches the stamp, like the gate.
+                                self.gate_target[i] = vlow + tvf;
+                                self.gate_gout[i] = g;
+                            }
+                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                            self.digital_vhigh[node] = rail;
+                            self.digital_vlow[node] = vlow;
+                            self.digital_family[node] = 0;
+                        }
+                        continue;
+                    }
                     // (a, b, c) output levels for this program (Z = released). Unpowered or an
                     // inert/unknown program releases everything.
                     let (la, lb, lc) = if rail < GATE_MIN_RAIL {
@@ -5889,11 +5992,7 @@ impl Sim {
                                 // reference span to a code 0..7, driving D0/D1/D2 on a/b/c. Purely
                                 // combinational (reads node_v, carries no state -> no commit arm).
                                 let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
-                                (
-                                    bit(code & 1 != 0),
-                                    bit(code & 2 != 0),
-                                    bit(code & 4 != 0),
-                                )
+                                (bit(code & 1 != 0), bit(code & 2 != 0), bit(code & 4 != 0))
                             }
                             // Inert / unknown program: release all outputs.
                             _ => (Level::Z, Level::Z, Level::Z),
@@ -6423,6 +6522,15 @@ impl Sim {
                                     index,
                                     clk,
                                 );
+                            }
+                            BEH_PROG_SAR_ADC => {
+                                // 3-bit SAR ADC: on each rising CLK (h) decide one bit MSB-first,
+                                // comparing VIN (f) against the trial DAC level (trial/8 of the VCC
+                                // reference rail). The committed code drives D0/D1/D2 and the DONE
+                                // strobe in eval_digital (one tick of state-to-output delay).
+                                let clk = lvl(e.h);
+                                let vin = self.node_v[e.f] - vlow;
+                                beh_sar_adc_step(&mut self.beh_state[i], clk, vin, rail);
                             }
                             // Inert / unknown program: no state advance.
                             _ => {}
@@ -11608,7 +11716,7 @@ mod tests {
             &[0, 0, 0, 3], // g: ADC VREF = node 3
             &[0, 0, 0, 0], // h: unused
             &[5.0, vin, vref, BEH_PROG_FLASH_ADC as f64], // values: rails + program id 5
-            &[0.0, 0.0, 0.0, 0.0],                        // aux unused
+            &[0.0, 0.0, 0.0, 0.0], // aux unused
             &params,
         ));
         for _ in 0..50 {
@@ -11631,6 +11739,65 @@ mod tests {
         assert_eq!(adc_code(4.4, 5.0), 7, "4.4 V (in [4.375, 5)) -> 7");
         assert_eq!(adc_code(5.0, 5.0), 7, "full scale saturates to 7");
         assert_eq!(adc_code(6.0, 5.0), 7, "over-range clamps to 7 (no wrap)");
+    }
+
+    /// Drive a 3-bit SAR ADC (program 6) at a fixed VIN against the 5 V VCC reference, clocked by a
+    /// 50 %-duty switch (a clean 0/5 V square wave, rising edges every SWITCH_PERIOD_TICKS), reading
+    /// the 3-bit code off D0/D1/D2 (a/b/c) whenever DONE (g) is asserted — i.e. on a completed
+    /// conversion, so the sample is never mid-search. Nodes: 0 = gnd, 1 = VCC (5 V), 2 = VIN,
+    /// 3 = CLK, 4 = clock source rail, 5/6/7 = D0/D1/D2, 8 = DONE.
+    fn sar_code(vin: f64) -> u32 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, VIN, clk-rail srcs; SWITCH a=4; R a=3; SAR D0 = node 5
+            &[0, 0, 0, 3, 0, 6], // b: src grounds; SWITCH b=3 (CLK); R b=0; SAR D1 = node 6
+            &[0, 0, 0, 0, 0, 7], // c: SAR D2 = node 7
+            &[0, 0, 0, 0, 0, 1], // d: SAR VCC = node 1 (5 V reference)
+            &[0, 0, 0, 0, 0, 0], // e: SAR GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: SAR VIN = node 2
+            &[0, 0, 0, 0, 0, 8], // g: SAR DONE = node 8
+            &[0, 0, 0, 0, 0, 3], // h: SAR CLK = node 3
+            &[5.0, vin, 5.0, 0.5, 1000.0, BEH_PROG_SAR_ADC as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],                        // aux unused
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut done_code = None;
+        for _ in 0..400 {
+            sim.step();
+            let s = sim.state();
+            if s[8] > 2.5 {
+                done_code = Some(hi(s[5]) | (hi(s[6]) << 1) | (hi(s[7]) << 2));
+            }
+        }
+        done_code.expect("SAR completes at least one conversion (DONE asserted) within 400 ticks")
+    }
+
+    /// The 3-bit SAR ADC converges by binary search to the SAME code the flash ADC finds —
+    /// `floor(8 * VIN / VCC)` against the 5 V reference (LSB = 0.625 V) — taking 3 clocks instead of
+    /// one (the speed-vs-parts trade). Checked across the range, with full scale saturating to 7 and
+    /// over-range clamping (no wrap). The reads are gated on DONE, so a partial mid-search register
+    /// is never observed.
+    #[test]
+    fn behavioral_sar_adc_3bit_successive_approximation() {
+        assert_eq!(sar_code(0.0), 0, "0 V -> 0");
+        assert_eq!(sar_code(0.7), 1, "0.7 V (in [0.625, 1.25)) -> 1");
+        assert_eq!(sar_code(1.4), 2, "1.4 V (in [1.25, 1.875)) -> 2");
+        assert_eq!(sar_code(2.6), 4, "2.6 V (just over half scale) -> 4");
+        assert_eq!(sar_code(3.2), 5, "3.2 V (in [3.125, 3.75)) -> 5");
+        assert_eq!(sar_code(4.4), 7, "4.4 V (in [4.375, 5)) -> 7");
+        assert_eq!(sar_code(5.0), 7, "full scale saturates to 7");
+        assert_eq!(sar_code(6.0), 7, "over-range clamps to 7 (no wrap)");
     }
 
     /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth
