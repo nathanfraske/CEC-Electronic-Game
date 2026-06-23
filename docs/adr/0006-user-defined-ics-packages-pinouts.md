@@ -33,7 +33,9 @@ A **user-authored IC** is a serializable, versioned definition with four parts:
    boundary is coupled to the package (pick a package -> get a die area to fit inside; or grow the die
    and the package follows). The walls are the only place signals may leave.
 2. **The function** — a `GraphSnapshot` (the sub-circuit built inside the boundary: parts + wires + ideal
-   values). This is ADR 0005's seal payload; at sim time it expands to real elements.
+   values). This is ADR 0005's seal payload; at sim time it expands to real elements. It may use discretes
+   and any **built-in** parts — including built-in ICs (a comparator, a buffer, gates, a flip-flop) — but
+   **not another user IC**: exactly **one layer of user nesting** (see Determinism + Notes).
 3. **The pinout, via PORT PADS** — the in/out connection mechanism. The author drops **port pads** on the
    boundary walls and **wires the internal circuit to them**; each pad is one boundary crossing carrying
    `{ pinNumber, name, role }` (roles `in` / `out` / `inout` / `power` / `passive` / `nc`). A pad is the
@@ -83,10 +85,13 @@ inside).
   node — the seal-as-same-netlist guarantee holds straight through the package wall.
 - A sealed blueprint's reproducibility = its sub-graph's reproducibility: save/load must round-trip every
   element param exactly (the `SavedCircuit` contract). Integer/structural params only, per ADR 0004.
-- **Depth** (a user IC containing user ICs) recurses cleanly under seal-as-same-netlist, but the solve
-  cost compounds; the **Tier-A sealed-behavior backing** (`ic-buildings-ideation.md` §2.3 — replay the
-  verified truth-table/macro-model instead of re-expanding) is the escape hatch for deep/large bases and
-  is a pure function of inputs+state+tick, so it stays deterministic.
+- **Depth is bounded by rule — one layer of user nesting.** A user IC may contain built-in parts (which
+  carry their own factory composition, e.g. gates inside a half-adder) but **never another user IC**, so
+  expansion is always shallow and finite: user IC -> built-in parts -> primitives. No recursion, no
+  runaway expand cost, and the "open the box" zoom always terminates. The **Tier-A sealed-behavior
+  backing** (`ic-buildings-ideation.md` §2.3) is therefore an *optional optimization* for large flat
+  designs, not a depth necessity. Enforcement: the user-IC library is unavailable on the authoring canvas
+  (you may place discretes + built-ins, not other user ICs).
 
 ## The authoring flow (UI surface)
 
@@ -101,8 +106,9 @@ inside).
    in and out": inside you wire to the pad, outside the pad is the lead the board wires to.
 4. **(Verify)** optionally check a spec at the pins (the earn-condition that flips analog->sealed is owned
    by `game-rewards.md` / `game-contracts-economy.md`; out of scope here).
-5. **Seal** -> a new placeable part lands in the player's **part library**, wired like any built-in IC,
-   and **zoom-to-open** (ADR 0005) reveals the authored sub-circuit running live inside its walls.
+5. **Name and seal** -> give it a **free-form name** (defaults to the next **CEC9xxx** house id), and a new
+   placeable part lands in the player's **part library**, wired like any built-in IC; **zoom-to-open** (ADR
+   0005) reveals the authored sub-circuit running live inside its walls.
 
 ## Phased build path (dependency order; this is ADR 0005 phase 5 expanded)
 
@@ -134,7 +140,9 @@ inside).
   **per-archetype**: *fixed* packages lock the die to the standard (the author fits the circuit inside);
   *expandable* packages let the die grow to fit the circuit, within the family's range. The containment
   DRC ("nothing over the walls") applies to both; only whether the wall may move differs.
-- Still **open owner calls** (they don't block the foundation — they bite only at the authoring layer,
-  phases 3-5): house numbering for authored parts (a `CEC9xxx` user range vs. free-form names) and nesting
-  limits (a user IC inside a user IC — recurses cleanly, with the Tier-A sealed-behavior backing as the
-  depth/cost escape hatch).
+- **Naming (decided):** authored parts take a **free-form name**, defaulting to the next **CEC9xxx** house
+  id (auto-incrementing) when the player doesn't supply one.
+- **Nesting (decided):** **one layer of user nesting** — a user IC may contain discretes and built-in
+  parts (including built-in ICs), but **not another user IC**. Bounds expansion depth by construction (see
+  Determinism); enforced by hiding the user-IC library on the authoring canvas. All design questions for
+  the IC maker are now settled; the remaining work is the phased build.

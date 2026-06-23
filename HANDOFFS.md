@@ -69,8 +69,12 @@ become factory-preset user ICs (one expander, one package model). Phases: packag
 persistence + user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. **Decided this stop:**
 starter package set (SOT-23-3/5/6 fixed; VSSOP-8, DIP-8/14/16 expandable — 3..16 pins, expand later) and
 the **die-sizing policy = per-archetype** (fixed packages lock the die; expandable ones grow to fit; the
-"nothing over the walls" DRC applies to both). **Still open** (don't block the foundation): authored-part
-naming scheme, nesting limits. Both ADRs are design-only (no code yet); foundation = 0005 phase 1.
+"nothing over the walls" DRC applies to both); **naming** = free-form with a **CEC9xxx** auto-default;
+**nesting** = **one layer of user nesting** (a user IC may contain discretes + built-in parts incl. built-in
+ICs, but NOT another user IC — bounds expansion depth by construction; enforced by hiding the user-IC
+library on the authoring canvas). **The IC-maker design is now fully settled** — ADRs 0005 + 0006 complete
+and consistent. No code yet; **foundation = 0005 phase 1** (composite-internals topology in `buildNetlist`,
+golden-safe, web-only).
 
 ---
 
