@@ -2468,6 +2468,69 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  {
+    id: "sigma-delta",
+    name: "Sigma-Delta ADC (Bit-Density)",
+    blurb:
+      "The third way to digitise: oversampling. A sigma-delta modulator measures the input only one bit at a time, but very fast, and lets the DENSITY of its 1s carry the value — feed in a high voltage and the bit stream is mostly 1s; a low voltage, mostly 0s. A fast clock drives the modulator; the slow input is a triangle. Counting those 1s (the decimator) recovers a multi-bit code, which a DAC turns back into a voltage. No precise analog anywhere — just a 1-bit slicer, run often, and averaged.",
+    watch:
+      "the BS trace — the raw 1-bit stream — get visibly DENSER with 1s as VIN climbs and sparser as it falls: the density is the signal. AOUT (the decoded-then-reconstructed value) tracks the VIN triangle a step at a time. Widen the scope's time-base to see a whole VIN sweep. This is how precision audio ADCs work: trade a fast 1-bit loop for as many bits as you oversample for.",
+    build() {
+      // A fast modulator clock + a slow triangle input -> sigma-delta modulator -> 1-bit stream (BS)
+      // and a 3-bit code (D2/D1/D0) -> R-2R DAC -> AOUT. The bit density on BS = VIN/VCC; AOUT is the
+      // decimated reconstruction. CLK must be much faster than VIN (oversampling).
+      // SDM pins: VIN(0) CLK(1) D2(2) D1(3) D0(4) BS(5) VCC(6) GND(7).
+      // R-2R DAC pins: AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5).
+      const g = new BoardGraph();
+      const vin = comp(g, "PULSE", 0, 1, 20); // 20 Hz triangle: the slow signal
+      vin.amp = 5;
+      vin.variant = 1; // triangle
+      vin.duty = 0.5;
+      const vclk = comp(g, "PULSE", 0, 6, 5000); // 5 kHz square: the fast modulator clock
+      vclk.amp = 5;
+      vclk.variant = 0; // square
+      vclk.duty = 0.5;
+      const sdm = comp(g, "SDM", 5, 0, 8);
+      const dac = comp(g, "DAC", 12, 0, 0);
+      const vcc = comp(g, "V", 0, 11, 5, 1);
+      const gnd = comp(g, "GND", 9, 11, 0);
+      wire(g, vin, 0, sdm, 0); // VIN+ -> SDM.VIN (the signal)
+      wire(g, vin, 1, gnd, 0); // VIN- -> GND
+      wire(g, vclk, 0, sdm, 1); // clock -> SDM.CLK (the fast modulator clock)
+      wire(g, vclk, 1, gnd, 0); // clock - -> GND
+      wire(g, vcc, 0, sdm, 6); // +5 V -> SDM.VCC (full-scale reference)
+      wire(g, sdm, 7, gnd, 0); // SDM.GND -> GND
+      wire(g, vcc, 0, dac, 5); // +5 V -> DAC.VCC
+      wire(g, dac, 1, gnd, 0); // DAC.GND -> GND
+      wire(g, sdm, 4, dac, 2); // SDM.D0 -> DAC.D0
+      wire(g, sdm, 3, dac, 3); // SDM.D1 -> DAC.D1
+      wire(g, sdm, 2, dac, 4); // SDM.D2 -> DAC.D2
+      wire(g, vcc, 1, gnd, 0); // V- -> GND
+      g.addNetLabel({ componentId: sdm.id, pinIndex: 0 }, "VIN");
+      g.addNetLabel({ componentId: sdm.id, pinIndex: 5 }, "BS");
+      g.addNetLabel({ componentId: dac.id, pinIndex: 0 }, "AOUT");
+      g.addNetLabel({ componentId: vcc.id, pinIndex: 0 }, "+5V");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Sigma-Delta ADC (SDM), a fast Pulse clock (square, a few kHz) into its CLK, and a slow triangle Pulse into its VIN. Power it (VCC to +5 V, GND to ground). Scope the BS pin. Run.",
+        why: "BS is the 1-bit modulator stream. Watch its density of 1s rise and fall with VIN — that density IS the measurement. The clock must be far faster than the signal: that is the 'oversampling' the whole scheme depends on.",
+        done: (p) => at(p, "SDM") >= 1 && at(p, "PULSE") >= 2 && p.wires >= 4,
+      },
+      {
+        do: "Add an R-2R DAC. Wire the SDM's D0/D1/D2 to the DAC's D0/D1/D2, power it, and tap AOUT. Run.",
+        why: "D0/D1/D2 are the decimator's output — it counts the 1s in the stream into a multi-bit code. The DAC turns that code back into a voltage, so AOUT reconstructs VIN. A 1-bit loop became a multi-bit converter, purely by averaging.",
+        done: (p) => at(p, "SDM") >= 1 && at(p, "DAC") >= 1 && p.complete,
+      },
+      {
+        do: "Open the scope; compare VIN, BS, and AOUT. Try raising and lowering VIN.",
+        why: "VIN smooth; BS a blur of 1s whose density follows it; AOUT a stepped copy. Oversampling trades speed for resolution and almost eliminates precision analog — which is why sigma-delta dominates audio and instrumentation. Compare with flash (fast, many comparators) and SAR (one comparator, N clocks): three routes to the same number.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below

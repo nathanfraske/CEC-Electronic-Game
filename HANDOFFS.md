@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (80) — Sigma-delta ADC (CEC1110): the ADC trilogy is complete + counter glyph kit out
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Two threads this stop: (1) the **sigma-delta
+ADC** landed (completing the three-ADC arc), and (2) the **counter glyph build kit** was delivered for
+download. Plus the owner raised a big new direction — the **seal / "mini-mode"** mechanic (see NEXT).
+
+**Sigma-delta ADC — behavioral program 8 (`BEH_PROG_SIGMA_DELTA`):** a 1st-order ΣΔ. The **modulator** is
+a **fixed-point integer integrator** (`SD_INTEG`, an `i32` in a `u32` slot — bounded/clamped so it is
+deterministic and hashable) + a 1-bit comparator (`integ > 0`) + 1-bit feedback (`integ += vin_q -
+bit*SD_FULL`), so the **density of 1s = VIN/VCC** (the only float step is the input quantise `round`,
+deterministic). The **decimator** counts 1s over `SD_DECIM`=8 clocks → `CODE = min(count,7)`. The live bit
+is exposed on **BS = a 4th output on `g`** (identical drive pattern + `referenced`-mark to the SAR's DONE,
+now guarded `matches!(prog, SAR | SIGMA_DELTA)`). Drives D0/D1/D2 (`a`/`b`/`c`) from CODE, BS from the
+bit. **Golden byte-identical** (additive program). Test `behavioral_sigma_delta_oversamples`: dominant
+code at x∈{0,¼,½,¾,1} → {0,2,4,6,7} (limit-cycle periods divide the block), and BS density ≈ x. **188
+tests; fmt/clippy clean.**
+
+**Web:** `SDM` kind (8 pins **VIN, CLK, D2, D1, D0, BS, VCC, GND**; cyan), `BEH_SPEC.SDM` = `{ prog: 8,
+term: [4,3,2,6,7,0,5,1] }` (same as the SAR — BS sits where DONE did). partInfo/codex/App rows. Catalogue
+**CEC1110**. Worked example **`sigma-delta`**: fast clock + slow triangle → SDM → BS (density) + D0/D1/D2 →
+DAC → AOUT (oversample → bitstream → code → reconstruct). Web gate green.
+
+**ADC trilogy complete:** flash (CEC1080) · SAR (CEC1108) · sigma-delta (CEC1110); plus DAC (CEC1083) and
+counter (CEC3161). **SDM glyph deferred** (follow-up kit).
+
+**Counter glyph:** `counter-guidesheet.md` committed; the self-contained build kit was delivered to the
+owner for download (the agent has no repo access). Awaiting the built `docs/ui/parts/counter-ic.html`.
+
+**NEXT — the SEAL / "mini-mode" mechanic (owner's idea, the new headline).** Owner: *"a mini mode almost
+... remake some of these ICs as full detailed circuits and have you seal them as a black box you can zoom
+into — shows the analogous view, but keep zooming and it shows all the components working as if you built
+the full circuit."* This is the **`docs/ic-buildings-ideation.md` seal-mechanic keystone** (player builds a
+circuit → seals it into a chip) fused with the existing **five-tier IC-glyph zoom ladder** (symbol → flow →
+valves → device → silicon) and the **info-drawer tiers** (`schematic`/`analogy`/`reality` in
+`infoDiagram.ts` / `analogyDrawers.ts` / `detailDrawers.ts`). The deep question (the ideation flags it):
+the **seal's determinism/hash contract** — a sealed block must simulate identically whether sealed or
+expanded (the composition expanders like `CEC_COMP` already do exactly this for the gate ICs; the seal is
+the generalisation + a zoom UI). Needs a design pass / ADR before code. This is big and architectural —
+the agent is discussing scope/approach with the owner now; do NOT start building it blind.
+
+---
+
 ## 2026-06-23 (79) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner picked **counters + ramp generator** from

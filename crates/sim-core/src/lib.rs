@@ -1095,6 +1095,17 @@ const BEH_PROG_SAR_ADC: u32 = 6;
 /// ramp/sawtooth generator; it also underlies timers, frequency dividers, sequencers, memory addressing
 /// and the sigma-delta decimator. See [`beh_counter_step`].
 const BEH_PROG_COUNTER: u32 = 7;
+/// Program id selecting the **1st-order sigma-delta ADC** firmware (program 8) — the oversampling
+/// converter, completing the trilogy beside flash (parallel) and SAR (binary search). A 1-bit
+/// **modulator** runs fast: an integrator accumulates `VIN - feedback`, a 1-bit comparator slices its
+/// sign, and that bit feeds back (subtracting full-scale when high), so the loop forces the **density
+/// of 1s** in the bit stream to equal `VIN/VCC` (noise-shaped — the quantisation error is pushed to
+/// high frequency). A **decimator** then just counts the 1s over `SD_DECIM` modulator clocks to get a
+/// multi-bit code. So: oversample to a 1-bit stream, then count — high resolution from a 1-bit slicer.
+/// The 1-bit stream is exposed on `BS` (`g`, a fourth output) so its density is visible; the decimated
+/// code drives D0/D1/D2 (`a`/`b`/`c`). VCC is the full-scale reference. The integrator is fixed-point
+/// integer state (so it is deterministic and hashable). See [`beh_sigma_delta_step`].
+const BEH_PROG_SIGMA_DELTA: u32 = 8;
 
 // --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
 
@@ -1660,6 +1671,64 @@ fn beh_counter_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, reset: bool) 
         state[BEH_CNT_COUNT] = (state[BEH_CNT_COUNT] + 1) % COUNTER_LEVELS;
     }
     state[BEH_CNT_CLK_PREV] = clk as u32;
+}
+
+// --- Behavioral program 8: 1st-order sigma-delta ADC --------------------------
+
+/// Sigma-delta internal-state word indices (program 8) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block. `INTEG`: the modulator's integrator, fixed-point (an `i32` stored
+/// bit-for-bit in the `u32` slot — bounded, so deterministic and hashable). `BIT`: the current 1-bit
+/// modulator output (drives the `BS` bit-stream pin). `BITCOUNT`/`BLOCKPOS`: the decimator's running
+/// count of 1s and its position in the current block. `CODE`: the latched decimated 3-bit code (drives
+/// D0/D1/D2). `CLK_PREV`: the rising-edge companion.
+const SD_INTEG: usize = 0;
+const SD_BIT: usize = 1;
+const SD_BITCOUNT: usize = 2;
+const SD_BLOCKPOS: usize = 3;
+const SD_CODE: usize = 4;
+const SD_CLK_PREV: usize = 5;
+
+/// Sigma-delta fixed-point full scale: `VIN/VCC` is quantised to `0..=SD_FULL` and the 1-bit feedback
+/// subtracts `SD_FULL`. A power of two so the arithmetic is exact.
+const SD_FULL: i32 = 256;
+/// Sigma-delta decimation ratio: modulator clocks per output sample (the oversampling ratio). Eight
+/// 1-bit samples are counted into one 3-bit code, so the count of 1s lands in `0..=8` (clamped to 7).
+const SD_DECIM: u32 = 8;
+
+/// Advance a behavioral **1st-order sigma-delta ADC**'s integer state by one tick (program 8). On each
+/// **rising `CLK` edge** it runs one modulator step and one decimator step:
+/// 1. **Modulator:** quantise the input to fixed point `vin_q = round(SD_FULL * clamp(vin/span, 0, 1))`;
+///    slice the integrator's sign for the output bit (`integ > 0`); then integrate the error with 1-bit
+///    feedback `integ += vin_q - bit * SD_FULL` (so the loop drives the average bit density to
+///    `vin/span`). The integrator is clamped to a safe bounded range (it never legitimately leaves
+///    `+/- SD_FULL`) so the `i32` math cannot overflow.
+/// 2. **Decimator:** add the bit to the block count; every [`SD_DECIM`] clocks latch
+///    `CODE = min(count, 7)` and restart the block (the integrator carries over — only the counter
+///    resets). The latched code drives D0/D1/D2; the live bit drives `BS`.
+///
+/// `CLK_PREV` is updated last. The only float step is the input quantisation (`round`, deterministic);
+/// everything else is integer, so the run is bit-reproducible. Mutates `state` in place (commit phase).
+fn beh_sigma_delta_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, vin: f64, span: f64) {
+    if clk && state[SD_CLK_PREV] == 0 {
+        // Modulator: integrate the error, slice, feed back 1 bit.
+        let x = (vin / span).clamp(0.0, 1.0);
+        let vin_q = (x * SD_FULL as f64).round() as i32;
+        let mut integ = state[SD_INTEG] as i32;
+        let bit: i32 = if integ > 0 { 1 } else { 0 };
+        integ += vin_q - bit * SD_FULL;
+        integ = integ.clamp(-2 * SD_FULL, 2 * SD_FULL); // bounded in practice; guard i32 overflow
+        state[SD_INTEG] = integ as u32;
+        state[SD_BIT] = bit as u32;
+        // Decimator: count the 1s over SD_DECIM clocks, then latch the 3-bit code.
+        state[SD_BITCOUNT] += bit as u32;
+        state[SD_BLOCKPOS] += 1;
+        if state[SD_BLOCKPOS] >= SD_DECIM {
+            state[SD_CODE] = state[SD_BITCOUNT].min(7);
+            state[SD_BITCOUNT] = 0;
+            state[SD_BLOCKPOS] = 0;
+        }
+    }
+    state[SD_CLK_PREV] = clk as u32;
 }
 
 // --- AC voltage source model constants ----------------------------------------
@@ -2292,10 +2361,11 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.a);
                 mark(&mut referenced, e.b);
                 mark(&mut referenced, e.c);
-                // The SAR ADC (program 6) drives a FOURTH output, DONE, on `g` — reference it like
-                // the other outputs (the other programs leave `g` an input, referenced by its own
-                // source; an unused `g` is ground, already referenced, so this is a no-op there).
-                if e.value as u32 == BEH_PROG_SAR_ADC {
+                // The SAR ADC (program 6, DONE) and the sigma-delta ADC (program 8, BS bit-stream)
+                // each drive a FOURTH output on `g` — reference it like the other outputs (the other
+                // programs leave `g` an input, referenced by its own source; an unused `g` is ground,
+                // already referenced, so this is a no-op there).
+                if matches!(e.value as u32, BEH_PROG_SAR_ADC | BEH_PROG_SIGMA_DELTA) {
                     mark(&mut referenced, e.g);
                 }
             }
@@ -5984,6 +6054,35 @@ impl Sim {
                         }
                         continue;
                     }
+                    // Program 8 (the sigma-delta ADC) also drives FOUR outputs from committed state —
+                    // D0/D1/D2 (a/b/c) = the decimated code, and BS (g) = the live 1-bit modulator
+                    // stream (so its density ∝ VIN is visible). Same shape as the SAR; handle it here
+                    // and skip the generic a/b/c path.
+                    if prog == BEH_PROG_SIGMA_DELTA {
+                        let powered = rail >= GATE_MIN_RAIL;
+                        let code = self.beh_state[i][SD_CODE];
+                        let bs_hi = self.beh_state[i][SD_BIT] != 0;
+                        // (output node, high?) for D0, D1, D2, BS (the bit stream).
+                        let outs = [
+                            (e.a, code & 1 != 0),
+                            (e.b, code & 2 != 0),
+                            (e.c, code & 4 != 0),
+                            (e.g, bs_hi),
+                        ];
+                        for (k, &(node, hi)) in outs.iter().enumerate() {
+                            let lvl = if powered { bit(hi) } else { Level::Z };
+                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                            if k == 0 {
+                                self.gate_target[i] = vlow + tvf;
+                                self.gate_gout[i] = g;
+                            }
+                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                            self.digital_vhigh[node] = rail;
+                            self.digital_vlow[node] = vlow;
+                            self.digital_family[node] = 0;
+                        }
+                        continue;
+                    }
                     // (a, b, c) output levels for this program (Z = released). Unpowered or an
                     // inert/unknown program releases everything.
                     let (la, lb, lc) = if rail < GATE_MIN_RAIL {
@@ -6583,6 +6682,14 @@ impl Sim {
                                 let clk = lvl(e.f);
                                 let reset = lvl(e.g);
                                 beh_counter_step(&mut self.beh_state[i], clk, reset);
+                            }
+                            BEH_PROG_SIGMA_DELTA => {
+                                // Sigma-delta ADC: on each rising CLK (h) run one modulator + decimator
+                                // step, comparing VIN (f) against the VCC reference rail. Drives the
+                                // decimated code on D0/D1/D2 and the 1-bit stream on BS in eval_digital.
+                                let clk = lvl(e.h);
+                                let vin = self.node_v[e.f] - vlow;
+                                beh_sigma_delta_step(&mut self.beh_state[i], clk, vin, rail);
                             }
                             // Inert / unknown program: no state advance.
                             _ => {}
@@ -11986,6 +12093,77 @@ mod tests {
     fn behavioral_counter_reset_holds_zero() {
         let seq = counter_sequence(1); // RESET = VCC (node 1): held cleared
         assert_eq!(seq, vec![0], "RESET held high pins the count at 0: {seq:?}");
+    }
+
+    /// Run a sigma-delta ADC (program 8) at a fixed VIN against the 5 V VCC reference, clocked by a
+    /// 50 %-duty switch, and return (the settled D0/D1/D2 codes, the time-fraction the BS bit-stream is
+    /// high). Nodes: 0 = gnd, 1 = VCC (5 V), 2 = VIN, 3 = CLK, 4 = clock source rail, 5/6/7 = D0/D1/D2,
+    /// 8 = BS (1-bit modulator stream).
+    fn sigma_delta_run(vin: f64) -> (Vec<u32>, f64) {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, VIN, clk-rail srcs; SWITCH a=4; R a=3; SDM D0 = node 5
+            &[0, 0, 0, 3, 0, 6], // b: src gnds; SWITCH b=3 (CLK); R b=0; SDM D1 = node 6
+            &[0, 0, 0, 0, 0, 7], // c: SDM D2 = node 7
+            &[0, 0, 0, 0, 0, 1], // d: SDM VCC = node 1 (5 V reference)
+            &[0, 0, 0, 0, 0, 0], // e: SDM GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: SDM VIN = node 2
+            &[0, 0, 0, 0, 0, 8], // g: SDM BS (bit stream) = node 8
+            &[0, 0, 0, 0, 0, 3], // h: SDM CLK = node 3
+            &[5.0, vin, 5.0, 0.5, 1000.0, BEH_PROG_SIGMA_DELTA as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0; 6],
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut codes = Vec::new();
+        let mut bs_high = 0usize;
+        let mut samples = 0usize;
+        for t in 0..4000 {
+            sim.step();
+            if t >= 2000 {
+                // settle past the modulator startup
+                let s = sim.state();
+                codes.push(hi(s[5]) | (hi(s[6]) << 1) | (hi(s[7]) << 2));
+                bs_high += hi(s[8]) as usize;
+                samples += 1;
+            }
+        }
+        (codes, bs_high as f64 / samples as f64)
+    }
+
+    /// The 1st-order sigma-delta ADC oversamples a 1-bit modulator and decimates by counting 1s. At DC
+    /// inputs whose modulator limit-cycle period divides the decimation block (8) the code is steady:
+    /// x = VIN/5 in {0, 1/4, 1/2, 3/4, 1} -> dominant code {0, 2, 4, 6, 7}. And the 1-bit stream's
+    /// density tracks the input fraction (the defining sigma-delta property: density of 1s = VIN/VCC).
+    #[test]
+    fn behavioral_sigma_delta_oversamples() {
+        for (vin, want) in [(0.0, 0u32), (1.25, 2), (2.5, 4), (3.75, 6), (5.0, 7)] {
+            let (codes, density) = sigma_delta_run(vin);
+            // dominant settled code = the expected stable value
+            let mode = (0..=7u32)
+                .max_by_key(|&c| codes.iter().filter(|&&x| x == c).count())
+                .unwrap();
+            assert_eq!(
+                mode, want,
+                "vin {vin}: dominant code {mode} != {want} ({codes:?})"
+            );
+            // bit-stream density ≈ x = VIN/VCC (the noise-shaped average)
+            let x = vin / 5.0;
+            assert!(
+                (density - x).abs() < 0.12,
+                "vin {vin}: bit-stream density {density} not ~{x}"
+            );
+        }
     }
 
     /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth

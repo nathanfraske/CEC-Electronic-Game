@@ -839,6 +839,18 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output drive", value: f(e.current, "A") },
     ],
   },
+  SDM: {
+    name: "Sigma-Delta ADC",
+    equation: "density of 1s on BS = VIN/VCC; code = count of 1s",
+    headline: (e) =>
+      `oversample + count · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A sigma-delta (delta-sigma) ADC is the modern high-resolution converter, and it works in a completely different way from flash or SAR: instead of measuring the input precisely once, it measures crudely (one bit!) but very often, and lets averaging do the rest. A fast loop — an integrator, a 1-bit comparator, and a 1-bit feedback DAC — produces a stream of 1s and 0s whose DENSITY equals VIN/VCC: feed in half-scale and the stream is half 1s; feed in nine-tenths and it is nine-tenths 1s. The clever part (noise shaping) is that the loop pushes its quantisation error up to high frequencies, away from the signal. A simple digital filter — here, just counting the 1s over a block of clocks — then turns that bit stream into a clean multi-bit number. So you trade speed for resolution and parts: one comparator, almost no precision analog, and as many bits as you are willing to oversample for. Watch the BS pin: it is the raw 1-bit stream, and its blur of 1s and 0s gets denser as VIN rises. Drive CLK from a clock; VCC is the full-scale reference.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   CTR: {
     name: "Counter",
     equation: "count = (count + 1) mod 8, on each rising CLK",

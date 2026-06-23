@@ -546,6 +546,13 @@
       color: "var(--cyan)",
     },
     {
+      tag: "SDM",
+      name: "Sigma-Delta ADC",
+      desc: "Oversampling: 1-bit stream -> code",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
       tag: "CTR",
       name: "Counter",
       desc: "3-bit up-counter (counts clock edges)",
@@ -651,6 +658,7 @@
     ADC: "Logic & ICs",
     DAC: "Logic & ICs",
     SAR: "Logic & ICs",
+    SDM: "Logic & ICs",
     CTR: "Logic & ICs",
     LS: "Logic & ICs",
     PU: "Logic & ICs",
@@ -809,6 +817,7 @@
     ],
     DAC: ["dac", "r-2r", "ladder dac", "digital to analog", "converter", "d/a"],
     SAR: ["sar", "successive approximation", "binary search adc", "adc", "a/d"],
+    SDM: ["sigma-delta", "delta-sigma", "oversampling adc", "modulator", "adc"],
     CTR: [
       "counter",
       "binary counter",

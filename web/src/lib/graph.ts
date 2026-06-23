@@ -1125,6 +1125,30 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // 1st-order sigma-delta ADC (CEC1110): the oversampling converter — the third ADC architecture
+  // beside flash (parallel) and SAR (binary search). ELEM_BEHAVIORAL program 8: a 1-bit modulator
+  // (integrator + comparator + 1-bit feedback) makes the density of 1s on BS equal VIN/VCC, then a
+  // decimator counts the 1s over 8 clocks into a 3-bit code on D2/D1/D0. BS exposes the live bit
+  // stream (wire it to an LED/scope to see the density). VCC is the reference. value = the fixed
+  // program id (no value picker). Pins VIN/CLK (in), D2/D1/D0/BS (out), VCC/GND. Routed via BEH_SPEC.
+  SDM: kind(
+    "SDM",
+    "Sigma-Delta ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 0),
+      pin("CLK", 0, 1),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("BS", 2, 3),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    8,
+    "",
+    true,
+  ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
   // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
   // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =

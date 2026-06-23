@@ -178,6 +178,48 @@ versus parts (one comparator) trade against the flash ADC.
 
 ---
 
+## CEC1110 — Sigma-Delta ADC (1st order)
+
+*Critical Error Computing · "measure badly, but a thousand times, and average."*
+
+**Description.** The CEC1110 is the third way to digitise — **oversampling** — completing the trilogy
+beside the CEC1080 flash (parallel) and CEC1108 SAR (binary search). Instead of measuring VIN precisely
+once, it measures it crudely (a single bit) but very fast, in a feedback loop: an **integrator**, a 1-bit
+**comparator**, and a 1-bit feedback DAC together force the **density of 1s** in the output bit stream to
+equal VIN/VCC. The loop's quantisation error is **noise-shaped** (pushed to high frequency, away from the
+signal), so a simple digital filter — here, just **counting the 1s** over a block of clocks — recovers a
+clean multi-bit number. It is how modern audio and precision ADCs get 16-24 bits from almost no precision
+analog: trade speed (oversampling) for resolution.
+
+**Features.** 1st-order modulator (integrator + 1-bit comparator + 1-bit feedback) · the 1-bit stream's
+density = VIN/VCC · decimator counts 1s over 8 clocks into a 3-bit code · **BS** pin exposes the raw bit
+stream · VCC the full-scale reference · single supply.
+
+**Pin configuration — 8-pin (SOT-23-8 / MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **VIN** | analog input (sensed), compared inside the modulator loop. |
+| 2 | **CLK** | modulator clock; one bit decided per rising edge. |
+| 3 | **D2** | decimated code bit 2 (MSB). |
+| 4 | **D1** | decimated code bit 1. |
+| 5 | **D0** | decimated code bit 0 (LSB). |
+| 6 | **BS** | the raw 1-bit modulator stream (its density of 1s = VIN/VCC). |
+| 7 | **VCC** | supply; the full-scale reference. |
+| 8 | **GND** | ground / 0 V reference. |
+
+**Function.** Each CLK: `integ += VIN - bit*VCC`; `bit = (integ > 0)`; output `bit` on BS. Every 8 clocks
+the decimator latches `code = count of 1s` (clamped 0..7) on D2 D1 D0. The bit density and the code both
+track `VIN/VCC`.
+
+**In the sim:** `ELEM_BEHAVIORAL` program 8 — a 1st-order modulator with a **fixed-point integer
+integrator** (so it is deterministic and hashable) feeding a block decimator; BS (`g`) carries the live
+bit, D0/D1/D2 (`a`/`b`/`c`) the decimated code, VIN = `f`, CLK = `h`, VCC/GND = `d`/`e`. No new sim-core
+element; golden-safe additive. **Teaches:** oversampling, 1-bit quantisation + noise shaping, density
+modulation (BS), decimation as averaging, and the resolution-vs-speed trade against flash and SAR.
+
+---
+
 ## CEC2018 — 1-Bit Full Adder
 
 *Critical Error Computing · "the smallest piece of arithmetic that still counts."*

@@ -6,6 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (42) — Sigma-delta ADC (CEC1110) — the ADC trilogy is complete
+
+- ~~**Sigma-delta ADC**~~ — DONE. New **sim-core behavioral program 8** (`BEH_PROG_SIGMA_DELTA`): a
+  1st-order ΣΔ — a 1-bit modulator (fixed-point **integer** integrator + 1-bit comparator + 1-bit
+  feedback; the bit density = VIN/VCC) feeding a block decimator (count 1s over `SD_DECIM`=8 clocks →
+  3-bit code). The 1-bit stream is exposed on a **4th output BS** (same drive pattern as the SAR's DONE);
+  code on D0/D1/D2. Golden byte-identical (additive program; integer state). Test
+  `behavioral_sigma_delta_oversamples` (dominant code at x∈{0,¼,½,¾,1} → {0,2,4,6,7}; BS density ≈ x).
+  188 sim-core tests; fmt/clippy clean.
+- **Web part `SDM`** ("Sigma-Delta ADC"): graph.ts kind (VIN/CLK/D2/D1/D0/BS/VCC/GND), `BEH_SPEC.SDM`
+  (prog 8, `term:[4,3,2,6,7,0,5,1]` — same as SAR), partInfo, codex, App. Catalogue **CEC1110**.
+- **Worked example `sigma-delta`**: fast clock + slow triangle → SDM → BS (density viz) + D0/D1/D2 → DAC →
+  AOUT. Shows oversample → bitstream → code → reconstruct. Web gate green.
+- **The ADC trilogy is COMPLETE:** flash (CEC1080, parallel) · SAR (CEC1108, binary search) · sigma-delta
+  (CEC1110, oversampling). Plus DAC (CEC1083) and counter (CEC3161). Glyph for SDM deferred (follow-up).
+- **Counter glyph kit DELIVERED** this session (`counter-guidesheet.md` committed; self-contained kit sent
+  for download) — awaiting the built `counter-ic.html`.
+- **NEXT — the SEAL / "mini-mode" idea (owner raised it).** Build an IC from discrete parts, then SEAL it
+  into a zoomable black box: top = black box, zoom = analogy view, zoom more = the full discrete circuit
+  running live. This is the **`docs/ic-buildings-ideation.md` seal-mechanic keystone** + the existing
+  **five-tier glyph** zoom ladder, unified. Owner wants to remake some ICs as full discrete circuits and
+  seal them. Needs a design pass (see HANDOFFS 80). Big, exciting, architectural.
+
+---
+
 ## 2026-06-23 (41) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator
 
 Owner picked **counters + ramp generator** from the entry-78 menu.

@@ -459,6 +459,11 @@ const BEH_SPEC: Record<string, BehSpec> = {
   // (active-high) async-clears. No data word (aux unused). Visual pins [CLK, RESET, Q2, Q1, Q0,
   // VCC, GND].
   CTR: { prog: 7, term: [4, 3, 2, 5, 6, 0, 1, -1], defWord: 0 },
+  // 1st-order sigma-delta ADC (prog 8): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=BS h=CLK. The decimated
+  // code drives D0/D1/D2 and the 1-bit modulator stream drives BS (a FOURTH output on g, like the
+  // SAR's DONE — same term map). VCC is the reference. No data word (aux unused). Visual pins
+  // [VIN, CLK, D2, D1, D0, BS, VCC, GND].
+  SDM: { prog: 8, term: [4, 3, 2, 6, 7, 0, 5, 1], defWord: 0 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
