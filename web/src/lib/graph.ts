@@ -5,6 +5,8 @@
 // renderer and the simulation netlist builder can both read it. Grid snapping
 // and the CEC palette mirror live here as plain values for the GPU layer.
 
+import { packageLayout, packageOptions } from "./packages";
+
 /** Logical grid cell. The board is an integer lattice; geometry is derived. */
 export interface Cell {
   col: number;
@@ -1234,6 +1236,50 @@ export const PART_KINDS: Record<string, PartKind> = {
     false,
   ),
 };
+
+// IC-maker FRAME kinds (ADR 0006 / docs/ui/ic-maker-guide.md). A "frame" is a placeable
+// package outline whose footprint + numbered pins come from a package archetype
+// (packages.ts) and which has NO simulation element of its own: its pins are just named
+// connection points (nets) the player wires their own circuit to, defining a future IC's
+// pinout. Generated from `packageOptions()` so every starter archetype/pin-count becomes a
+// part - each pin's LABEL is its package pin number and the footprint is the package layout.
+// Deliberately NOT added to TYPE_OF/netlist element maps: buildNetlist skips a kind with no
+// element type, so a placed frame is a pure no-element connection hub (its pins still join
+// nets via the union-find). `ideal: true` keeps it out of the "not simulated" placeholder
+// styling; the renderer falls back to the generic IC-card drawer for any kind without a
+// dedicated glyph. defaultValue 0 / unit "" -> the inspector shows no value picker.
+//
+// (archetype, pinCount) -> a clean tag + display name, e.g. SOT-23/6 -> "SOT23_6" / "SOT-23-6".
+function frameTag(archetype: string, pinCount: number): string {
+  // Strip the hyphen from the archetype for a terse identifier, then join the pin count. Use an
+  // underscore separator ONLY when the stripped name already ends in a digit (the SOT-23 family:
+  // "SOT23" + 6 -> "SOT23_6"), so the count doesn't mash into the archetype's own digits; names
+  // ending in a letter join directly ("DIP" + 8 -> "DIP8"; "VSSOP" + 8 -> "VSSOP8").
+  const stripped = archetype.replace(/-/g, "");
+  const sep = /\d$/.test(stripped) ? "_" : "";
+  return stripped + sep + pinCount;
+}
+function frameName(archetype: string, pinCount: number): string {
+  // Human display name in the conventional package form: "DIP-8", "SOT-23-6", "VSSOP-8".
+  return archetype + "-" + pinCount;
+}
+for (const { archetype, pinCount } of packageOptions()) {
+  const tag = frameTag(archetype, pinCount);
+  const pins = packageLayout(archetype, pinCount).pins.map((p) =>
+    pin(String(p.number), p.dx, p.dy),
+  );
+  // "border" is the neutral package-outline palette key (a muted blue-violet); a frame is
+  // chrome, not a signal part, so it reads as a plain die outline rather than a coloured device.
+  PART_KINDS[tag] = kind(
+    tag,
+    frameName(archetype, pinCount),
+    "border",
+    pins,
+    0,
+    "",
+    true,
+  );
+}
 
 function pin(label: string, dx: number, dy: number): Pin {
   return { index: 0, label, dx, dy };

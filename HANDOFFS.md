@@ -5,6 +5,97 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (88) — IC maker: the SEAL expander, built + VERIFIED by test (the core mechanic)
+
+**State:** 🟢 core seal mechanic built + gate-green + unit-tested; on branch `claude/kind-turing-hdelb3`.
+The determinism-critical heart of "seal a built circuit into an IC" is done and proven.
+
+**The mechanic:** a sealed IC's inner circuit is **inlined into the board before `buildNetlist`**, so the
+sim runs the real discrete parts (ADR 0005 seal-as-same-netlist). New `web/src/lib/userIc.ts`:
+`UserIc {tag,name,package,frameId,graph}` + a registry + `registerUserIc` (stores the def AND registers a
+placeable package-footprint kind) + **`flattenUserIcs(graph)`** — for each placed sealed instance, inline
+its inner components/wires with offset ids and re-point each frame-pin wire at the placed instance's pin
+(the pad->lead fusion); the instance stays a no-element hub. **Strict no-op when no sealed IC is placed**
+(returns the input graph) → every existing circuit + the golden untouched. Wired into `buildNetlist` (one
+line at the top).
+
+**VERIFIED (new!):** stood up **vitest** (`web/src/lib/netlist.test.ts`; `pnpm -C web test`, added to the
+gate + CLAUDE.md) — the netlist chain imports glyphs as types only, so `buildNetlist` runs headless. Tests:
+a V+R+GND smoke build; **seal-as-same-netlist** (a sealed resistor-in-a-package compiles to identical
+element types + values as the inline circuit); and the no-op. All pass. This is the web side's first test
+suite — use it to guard determinism-critical compilation.
+
+**NEXT — the user-facing pieces (so the owner can author):** (a) the **SEAL action/UI** — select a frame +
+its connected circuit on the board, "Seal as IC", name it (CEC9001 default), `registerUserIc` from the
+captured sub-graph → it appears in the bin. (b) **Live view**: the sealed instance currently has no live
+display (the netlist's components are the offset inner ones, not the instance id) — wire the zoom to render
+the inner circuit at the authored layout, proportional to the live values (owner's requirement). (c)
+Persistence (save/load the user IC library). Then tiers 2/4 via refsheet-SVG reuse.
+
+---
+
+## 2026-06-23 (87) — IC maker: placeable package frames landed (authoring piece 1)
+
+**State:** 🟢 frame parts built (agent) + gate-green; on branch `claude/kind-turing-hdelb3`. First piece of
+the IC-maker authoring (per `docs/ui/ic-maker-guide.md`).
+
+**What landed:** 7 placeable **IC frame** parts generated from `packages.ts` — `DIP8/14/16`,
+`SOT23_3/5/6`, `VSSOP8` (pins = package leads, numbered; footprint = package layout). A frame has **no sim
+element** (not in `TYPE_OF`): `buildNetlist` skips it, its pins just join nets via the union-find, so it's
+a pure connection hub the player wires their circuit to (the pinout). Bin: new **"IC Frames"** category
+(`PART_CATEGORIES` / `PART_CAT_OF` / `PARTS` with `tier:"IC"` / `PART_SYNONYMS`). Crash-safe: generic
+IC-card drawer, `partInfo` undefined → graceful, no value picker, codex omits them. Files: `graph.ts`
+(generation loop + `frameTag`/`frameName`), `App.svelte` (bin). Web gate green.
+
+**Owner steers:** approved the plan; tiers 2/4 later via **reusing the refsheet SVG** (not blind re-draw).
+Key requirement: **everything must be proportional to the live electrical actuals** (flow ∝ current, level
+∝ voltage — the visual-language) — applies to the live sealed-circuit view especially.
+
+**Minor (flagged):** the inspector head shows "0" for a frame's value (value-less kind); cosmetic, deferred.
+
+**NEXT (the core mechanic):** (2) the **seal** — generalized expander: take the frame + the circuit wired
+to its pins (the connected sub-graph) + the pad→pin map → a placeable composite IC spliced into the netlist
+(fuse pad nets to pin nodes; ADR 0006). (3) **layout-preserving live view** — render the sealed internals
+with the board's own component glyphs at the authored positions, proportional to the live values. Prove on
+one IC (e.g. a CMOS AND from MOSFETs) end-to-end. Then tiers 2/4 (SVG reuse).
+
+---
+
+## 2026-06-23 (86) — Direction change: author IC internals as real circuits + seal them (IC-maker guide)
+
+**State:** 🟡 design/guide written; mechanism build is NEXT. Branch `claude/kind-turing-hdelb3`.
+
+**Why:** the auto-generated internal-view drawers (wave 1's parametric gate CMOS especially) were "not it"
+per the owner — re-drawing the authored refsheets blind in PixiJS can't reach their quality and I can't
+see renders. **New plan (owner's): author each IC's internals as a REAL circuit built from components, and
+SEAL it** — the live zoom then renders the actual circuit the owner drew, no blind re-drawing. The
+refsheets stay the **codex** reference (the authored five-tier teaching pages); the in-board zoom is the
+live built-from-parts view.
+
+**Tier mapping (owner):** tier 2 = analogy zoomed-out, tier 4 = reality zoomed-out/schematic (both
+authored drawers, made). **Tiers 3 + 5 = zoomed-in analogy + reality = the live sealed circuit**, which
+`internalsView` already produces from one netlist, lens-skinned (water/electron). So sealing one real
+circuit yields both 3 and 5.
+
+**Owner needs (this is the ask):** an **IC frame + pinout mechanism** to build ICs in, and a guide. Guide
+written: **`docs/ui/ic-maker-guide.md`** — frame (package from `packages.ts`) + pinout (port pads:
+named/numbered/role, wired inside, the pin outside) + build-inside (containment DRC) + seal (CEC9xxx
+default, one-layer nesting) + the build mapping. It's the authoring how-to AND the build spec.
+
+**NEXT — build the mechanism from the guide:** (1) frame part (package-driven outline + numbered pads);
+(2) port pads = nameable per-instance connectable pins; (3) containment DRC; (4) the **generalized
+expander** (ADR 0006 phase 2: splice an arbitrary saved sub-graph + pad→pin map into the netlist, fusing
+pad nets to pin nodes — generalises `CEC_COMP`); (5) **upgrade `internalsView`** to render the sealed
+internals with the board's OWN component glyphs at the authored positions (a mini-board), not the
+auto-grid. UI-heavy + I can't see renders → build with the owner's visual loop / agents. Prove on one IC
+(e.g. a CMOS AND from MOSFETs) end-to-end first.
+
+**Superseded:** the parametric gate CMOS drawer (`logicInternal.ts`) — replace gates with sealed real
+circuits. (`behavioralInternal.ts` / `specialInternal.ts` may stay for parts that can't be built from
+discretes — behavioral firmware blocks — TBD with owner.)
+
+---
+
 ## 2026-06-23 (85) — In-app internal views for the refsheet logic ICs (zoom-to-open, expanded)
 
 **State:** 🟢 all waves landed + pushed (on the branch, ahead of main → needs a PR to land on main). Owner clarified the
