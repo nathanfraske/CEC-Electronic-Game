@@ -66,9 +66,11 @@ determinism is free) and rendered from a **parametric package-format library** (
 MSOP/QFP/TO-92...). The boundary is a presentation-time DRC (never enters the solve/hash); built-ins
 become factory-preset user ICs (one expander, one package model). Phases: package library + die boundary
 -> user-IC model + generic expander (pads fuse nodes) -> bounded-canvas + DRC + pad authoring UI ->
-persistence + user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. Open owner calls:
-naming scheme, first package set, nesting limits, die-sizing policy (package-fixed vs design-grown). Both
-ADRs are design-only (no code yet); start with 0005 phase 1.
+persistence + user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. **Decided this stop:**
+starter package set (SOT-23-3/5/6 fixed; VSSOP-8, DIP-8/14/16 expandable — 3..16 pins, expand later) and
+the **die-sizing policy = per-archetype** (fixed packages lock the die; expandable ones grow to fit; the
+"nothing over the walls" DRC applies to both). **Still open** (don't block the foundation): authored-part
+naming scheme, nesting limits. Both ADRs are design-only (no code yet); foundation = 0005 phase 1.
 
 ---
 

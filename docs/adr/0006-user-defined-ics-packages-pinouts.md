@@ -46,13 +46,19 @@ A **user-authored IC** is a serializable, versioned definition with four parts:
    package alone fixes the **board footprint** (which cells the part occupies and where each numbered pin
    attaches).
 
-**Packages are a parametric library, not ad-hoc offsets.** Ship a small set of archetypes, each a
-template that yields a footprint + a numbering convention + a pin-1 marker from a pin count:
-- Dual / single in-line: **DIP-N**, **SOIC-N**, **TSSOP-N** (two rows, pin-1 top-left, CCW numbering);
-  **SIP-N** (one row). Through-hole **TO-92** (3) / **TO-220** (tab) for discretes-as-parts.
-- Small-outline / chip-scale: **SOT-23-3/5/6**, **SC70-5/6**, **MSOP-8**, **SOT-23-8** (the ones the
-  catalogue and glyphs already use).
-- Quad: **QFP-N** / **QFN-N** (pins on all four sides) for high pin counts (ADR 0003 territory).
+**Packages are a parametric library, not ad-hoc offsets.** Each archetype is a template that yields a
+footprint + numbering convention + pin-1 marker from a pin count, and carries a **die-area policy**:
+
+- **Fixed** — the interior build area is locked to the package standard; the author must fit the circuit
+  inside (the restrictive, standardized small-outline parts): **SOT-23-3 / -5 / -6**, **SC70**, **MSOP-8**.
+- **Expandable** — the body may grow (lengthen) to fit the circuit, within the family's range (the looser
+  families that are not set in stone): **VSSOP**, **DIP-N**, **SOIC-N**, **SSOP / TSSOP-N**, **SIP-N**.
+
+**Starter set (this phase — expand later):** a handful spanning 3-16 pins, mixing both policies —
+**SOT-23-3** (3, fixed), **SOT-23-5** (5, fixed), **SOT-23-6** (6, fixed), **VSSOP-8** (8, expandable),
+**DIP-8** (8, expandable), **DIP-14** (14, expandable), **DIP-16** (16, expandable). More archetypes
+(SOIC/TSSOP/SC70; the quad **QFP / QFN-N** for ADR-0003 high pin counts; through-hole **TO-92 / TO-220**
+for discretes-as-parts) drop in as needed — the library is open-ended.
 
 `graph.ts`'s "footprint from furthest pin" generalizes to "footprint from the package archetype": the
 archetype lays the numbered leads onto the footprint deterministically, and **each lead binds, through its
@@ -124,8 +130,11 @@ inside).
   we don't grow two parallel systems.
 - Keep the JS<->wasm boundary coarse (ADR 0001): packaging/pinout/expansion are all web-side; sim-core
   still sees only the flat expanded element list it already solves.
-- House numbering for authored parts (e.g. a `CEC9xxx` user range vs. free-form names), the first
-  shipped package set, and nesting limits are owner calls — flagged as open questions, not decided here.
-- **Die-sizing policy** is an owner call too: package-fixed (pick the package -> fit inside its die) vs.
-  design-grown (build, then the smallest fitting package is offered) vs. a hybrid. The DRC ("nothing over
-  the walls") is the same either way; only *when* the boundary is set differs.
+- **Decided (this stop):** the **starter package set** (above) and the **die-sizing policy** — it is
+  **per-archetype**: *fixed* packages lock the die to the standard (the author fits the circuit inside);
+  *expandable* packages let the die grow to fit the circuit, within the family's range. The containment
+  DRC ("nothing over the walls") applies to both; only whether the wall may move differs.
+- Still **open owner calls** (they don't block the foundation — they bite only at the authoring layer,
+  phases 3-5): house numbering for authored parts (a `CEC9xxx` user range vs. free-form names) and nesting
+  limits (a user IC inside a user IC — recurses cleanly, with the Tier-A sealed-behavior backing as the
+  depth/cost escape hatch).
