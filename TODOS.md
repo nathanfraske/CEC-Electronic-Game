@@ -6,6 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (43) — DESIGN LIST: connector types + "sealing" boards (the seal mechanic, one level up)
+
+Owner idea, parked for design (NOT yet built — the IC-maker drill-in editor is the active work).
+
+- [ ] **Connector types** — a new part category for real-world I/O connectors, each with its true pinout:
+  **RJ-45** (8p/4-pair Ethernet), **USB-C** (VBUS/GND/D+/D-/CC/SBU…), USB-A, **DC barrel jack** (tip/sleeve),
+  3.5 mm audio, HDMI, pin headers, screw terminals, … They're the physical edge I/O of a board — what a
+  cable plugs into. As parts: placeable connectors with their pin maps. As board I/O: they define a sealed
+  board's external interface (the board-level analogue of an IC's pins).
+- [ ] **Board sealing (board modules)** — the **seal mechanic one fractal level up**: components → ICs →
+  **boards**. Define a **board outline** (the PCB shape/area = the containment, like the die walls but for a
+  board), build the board (ICs + parts + connectors), then **seal** it into a locked **module** whose
+  external interface is its **connectors** (not bare pins). A sealed board is a placeable module you wire to
+  other boards/systems by **mating connectors** (USB-C ↔ USB-C receptacle, RJ-45 ↔ RJ-45, barrel ↔ barrel).
+  Reuses the same engine: seal-as-same-netlist (the module flattens to its real board netlist), the
+  generalized expander, the containment DRC, the drill-in editor — just at the board scale, with connectors
+  as the ports. One-layer nesting still applies (a board contains ICs/parts/connectors; sealing yields a
+  module; a module isn't built from other modules).
+- **Where it slots:** extends ADR 0005 (seal) + ADR 0006 (maker) upward; the connector pinouts are a parts
+  addition (like the package library). Likely its own ADR (0007) when it reaches a design pass. The
+  `docs/ic-buildings-ideation.md` "fractal fidelity" vision already gestures at this (zoom out and see the
+  sprawl you built from parts you understand) — board modules are the next rung.
+
+---
+
 ## 2026-06-23 (42) — Sigma-delta ADC (CEC1110) — the ADC trilogy is complete
 
 - ~~**Sigma-delta ADC**~~ — DONE. New **sim-core behavioral program 8** (`BEH_PROG_SIGMA_DELTA`): a

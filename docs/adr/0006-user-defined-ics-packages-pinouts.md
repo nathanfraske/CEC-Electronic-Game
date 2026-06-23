@@ -146,3 +146,10 @@ inside).
   parts (including built-in ICs), but **not another user IC**. Bounds expansion depth by construction (see
   Determinism); enforced by hiding the user-IC library on the authoring canvas. All design questions for
   the IC maker are now settled; the remaining work is the phased build.
+- **Future direction — sealing UPWARD (board modules + connectors), parked (TODOS 43):** the same
+  seal-as-same-netlist mechanic generalises one fractal level up — components → ICs → **boards**. A
+  **board outline** is the containment (the die walls at board scale); the external interface is real
+  **connector parts** (RJ-45, USB-C, DC barrel jack, …) instead of bare pins; sealing yields a placeable
+  **module** you wire to other boards by **mating connectors**. Reuses this ADR's expander, containment
+  DRC, and drill-in editor — package→board-outline, port-pad→connector. Connector types are a parts
+  addition (like the package library). Likely its own ADR (0007) at design time.
