@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (86) — Direction change: author IC internals as real circuits + seal them (IC-maker guide)
+
+**State:** 🟡 design/guide written; mechanism build is NEXT. Branch `claude/kind-turing-hdelb3`.
+
+**Why:** the auto-generated internal-view drawers (wave 1's parametric gate CMOS especially) were "not it"
+per the owner — re-drawing the authored refsheets blind in PixiJS can't reach their quality and I can't
+see renders. **New plan (owner's): author each IC's internals as a REAL circuit built from components, and
+SEAL it** — the live zoom then renders the actual circuit the owner drew, no blind re-drawing. The
+refsheets stay the **codex** reference (the authored five-tier teaching pages); the in-board zoom is the
+live built-from-parts view.
+
+**Tier mapping (owner):** tier 2 = analogy zoomed-out, tier 4 = reality zoomed-out/schematic (both
+authored drawers, made). **Tiers 3 + 5 = zoomed-in analogy + reality = the live sealed circuit**, which
+`internalsView` already produces from one netlist, lens-skinned (water/electron). So sealing one real
+circuit yields both 3 and 5.
+
+**Owner needs (this is the ask):** an **IC frame + pinout mechanism** to build ICs in, and a guide. Guide
+written: **`docs/ui/ic-maker-guide.md`** — frame (package from `packages.ts`) + pinout (port pads:
+named/numbered/role, wired inside, the pin outside) + build-inside (containment DRC) + seal (CEC9xxx
+default, one-layer nesting) + the build mapping. It's the authoring how-to AND the build spec.
+
+**NEXT — build the mechanism from the guide:** (1) frame part (package-driven outline + numbered pads);
+(2) port pads = nameable per-instance connectable pins; (3) containment DRC; (4) the **generalized
+expander** (ADR 0006 phase 2: splice an arbitrary saved sub-graph + pad→pin map into the netlist, fusing
+pad nets to pin nodes — generalises `CEC_COMP`); (5) **upgrade `internalsView`** to render the sealed
+internals with the board's OWN component glyphs at the authored positions (a mini-board), not the
+auto-grid. UI-heavy + I can't see renders → build with the owner's visual loop / agents. Prove on one IC
+(e.g. a CMOS AND from MOSFETs) end-to-end first.
+
+**Superseded:** the parametric gate CMOS drawer (`logicInternal.ts`) — replace gates with sealed real
+circuits. (`behavioralInternal.ts` / `specialInternal.ts` may stay for parts that can't be built from
+discretes — behavioral firmware blocks — TBD with owner.)
+
+---
+
 ## 2026-06-23 (85) — In-app internal views for the refsheet logic ICs (zoom-to-open, expanded)
 
 **State:** 🟢 all waves landed + pushed (on the branch, ahead of main → needs a PR to land on main). Owner clarified the
