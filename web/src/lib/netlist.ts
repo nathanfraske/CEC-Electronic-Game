@@ -415,6 +415,54 @@ const CEC_COMP: Record<string, CecComp> = {
       { t: 1, a: 5, b: 1, c: 0, d: 0, e: 0, value: 1e6, aux: 0 }, // 1 MΩ VCC - GND
     ],
   },
+  // 3-bit flash ADC (CEC1080), the DISCRETE remake (ADR 0005 phase 4): a real comparator-bank
+  // converter so the chip can open to its true internals. Pins VIN(0) VREF(1) D2(2) D1(3) D0(4)
+  // VCC(5) GND(6). An 8-resistor ladder VREF->GND makes 7 taps (k/8·VREF); 7 transparent
+  // comparators (IN+ = VIN, IN- = tap_k) form the thermometer code th_k = (VIN > k/8·VREF); a gate
+  // encoder turns thermometer -> binary: D2 = th4, D1 = th2·¬th4 + th6, D0 = th1·¬th2 + th3·¬th4 +
+  // th5·¬th6 + th7. c4 drives D2 directly (so th4 = the D2 pin). Internals (22): tap1..7 = NI0..6;
+  // th1,2,3,5,6,7 = NI7..12; ¬th2,¬th4,¬th6 = NI13,14,15; a1 = NI16; a2,a3,a4 = NI17,18,19;
+  // o1,o2 = NI20,21. No new sim element (comparators + resistors + powered gates); golden-safe.
+  ADC: {
+    internal: 22,
+    vccPin: 5,
+    gndPin: 6,
+    voutPin: 4, // D0
+    primary: 0, // the first encoder gate (no meaningful single "part current" for a converter)
+    gates: [
+      [6, NI(13), NI(8), NI(8)], // ¬th2 = NOT(th2)
+      [6, NI(14), 2, 2], // ¬th4 = NOT(D2)  (th4 is the D2 pin)
+      [6, NI(15), NI(11), NI(11)], // ¬th6 = NOT(th6)
+      [0, NI(16), NI(8), NI(14)], // a1 = AND(th2, ¬th4)
+      [1, 3, NI(16), NI(11)], // D1 = OR(a1, th6)
+      [0, NI(17), NI(7), NI(13)], // a2 = AND(th1, ¬th2)
+      [0, NI(18), NI(9), NI(14)], // a3 = AND(th3, ¬th4)
+      [0, NI(19), NI(10), NI(15)], // a4 = AND(th5, ¬th6)
+      [1, NI(20), NI(17), NI(18)], // o1 = OR(a2, a3)
+      [1, NI(21), NI(19), NI(12)], // o2 = OR(a4, th7)
+      [1, 4, NI(20), NI(21)], // D0 = OR(o1, o2)
+    ],
+    extra: [
+      // R-2R... no: a uniform 8-resistor ladder, GND -> tap1..tap7 -> VREF (taps at k/8·VREF).
+      { t: 1, a: 6, b: NI(0), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(0), b: NI(1), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(1), b: NI(2), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(2), b: NI(3), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(3), b: NI(4), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(4), b: NI(5), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(5), b: NI(6), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(6), b: 1, c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      // 7 transparent comparators: OUT, IN+ = VIN(0), IN- = tap_k, VCC(5), GND(6). value = 0 (no
+      // hysteresis); f left unwired by the expander (ground) => continuous compare.
+      { t: 23, a: NI(7), b: 0, c: NI(0), d: 5, e: 6, value: 0, aux: 0 }, // th1
+      { t: 23, a: NI(8), b: 0, c: NI(1), d: 5, e: 6, value: 0, aux: 0 }, // th2
+      { t: 23, a: NI(9), b: 0, c: NI(2), d: 5, e: 6, value: 0, aux: 0 }, // th3
+      { t: 23, a: 2, b: 0, c: NI(3), d: 5, e: 6, value: 0, aux: 0 }, // th4 -> D2 pin
+      { t: 23, a: NI(10), b: 0, c: NI(4), d: 5, e: 6, value: 0, aux: 0 }, // th5
+      { t: 23, a: NI(11), b: 0, c: NI(5), d: 5, e: 6, value: 0, aux: 0 }, // th6
+      { t: 23, a: NI(12), b: 0, c: NI(6), d: 5, e: 6, value: 0, aux: 0 }, // th7
+    ],
+  },
 };
 
 /**
@@ -445,10 +493,9 @@ const BEH_SPEC: Record<string, BehSpec> = {
   // UART (prog 3): a=TX b=RXVALID d=VCC e=GND f=RX g=SEND (c, h unused).
   // Visual pins [TX, RX, RXV, SEND, VCC, GND].
   UART: { prog: 3, term: [0, 2, -1, 4, 5, 1, 3, -1], defWord: 0x55 },
-  // 3-bit flash ADC (prog 5): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=VREF (h unused). The output
-  // code drives a/b/c; VIN/VREF are analog sense pins. No data word (aux unused). Visual pins
-  // [VIN, VREF, D2, D1, D0, VCC, GND].
-  ADC: { prog: 5, term: [4, 3, 2, 5, 6, 0, 1, -1], defWord: 0 },
+  // (The 3-bit flash ADC, formerly behavioral prog 5, is now a DISCRETE composition — see
+  // CEC_COMP.ADC — so it opens to its real comparator bank + ladder + encoder in the zoom-to-open
+  // view, ADR 0005 phase 4. sim-core prog 5 is retained, golden-safe, just no longer web-wired.)
   // 3-bit SAR ADC (prog 6): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=DONE h=CLK. The committed result
   // register drives D0/D1/D2 and the DONE strobe (a FOURTH behavioral output on g); VIN is the
   // analog sense, CLK steps the 3-clock binary search, VCC is the full-scale reference. No data
