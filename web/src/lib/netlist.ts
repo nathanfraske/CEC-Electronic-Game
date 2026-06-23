@@ -25,6 +25,7 @@ import {
   PARAM_STRIDE,
 } from "./tiers";
 import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
+import { flattenUserIcs } from "./userIc";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -662,6 +663,10 @@ export function buildNetlist(
   graph: BoardGraph,
   real = false,
 ): BuiltNetlist | null {
+  // Seal expansion (IC maker, ADR 0006): inline any placed sealed-IC instance's authored inner
+  // circuit before compiling, so the sim sees the real discrete parts (seal-as-same-netlist). A
+  // strict no-op when no sealed IC is placed, so every normal circuit (and the golden) is unchanged.
+  graph = flattenUserIcs(graph);
   // Union-find over wire endpoints: pins (keyed "componentId:pinIndex") AND
   // junctions (keyed "j<id>"). A junction is not an element — it only joins the
   // wire-ends that meet at it into one net, exactly like a wire does.

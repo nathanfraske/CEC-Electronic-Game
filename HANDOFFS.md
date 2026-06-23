@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (88) — IC maker: the SEAL expander, built + VERIFIED by test (the core mechanic)
+
+**State:** 🟢 core seal mechanic built + gate-green + unit-tested; on branch `claude/kind-turing-hdelb3`.
+The determinism-critical heart of "seal a built circuit into an IC" is done and proven.
+
+**The mechanic:** a sealed IC's inner circuit is **inlined into the board before `buildNetlist`**, so the
+sim runs the real discrete parts (ADR 0005 seal-as-same-netlist). New `web/src/lib/userIc.ts`:
+`UserIc {tag,name,package,frameId,graph}` + a registry + `registerUserIc` (stores the def AND registers a
+placeable package-footprint kind) + **`flattenUserIcs(graph)`** — for each placed sealed instance, inline
+its inner components/wires with offset ids and re-point each frame-pin wire at the placed instance's pin
+(the pad->lead fusion); the instance stays a no-element hub. **Strict no-op when no sealed IC is placed**
+(returns the input graph) → every existing circuit + the golden untouched. Wired into `buildNetlist` (one
+line at the top).
+
+**VERIFIED (new!):** stood up **vitest** (`web/src/lib/netlist.test.ts`; `pnpm -C web test`, added to the
+gate + CLAUDE.md) — the netlist chain imports glyphs as types only, so `buildNetlist` runs headless. Tests:
+a V+R+GND smoke build; **seal-as-same-netlist** (a sealed resistor-in-a-package compiles to identical
+element types + values as the inline circuit); and the no-op. All pass. This is the web side's first test
+suite — use it to guard determinism-critical compilation.
+
+**NEXT — the user-facing pieces (so the owner can author):** (a) the **SEAL action/UI** — select a frame +
+its connected circuit on the board, "Seal as IC", name it (CEC9001 default), `registerUserIc` from the
+captured sub-graph → it appears in the bin. (b) **Live view**: the sealed instance currently has no live
+display (the netlist's components are the offset inner ones, not the instance id) — wire the zoom to render
+the inner circuit at the authored layout, proportional to the live values (owner's requirement). (c)
+Persistence (save/load the user IC library). Then tiers 2/4 via refsheet-SVG reuse.
+
+---
+
 ## 2026-06-23 (87) — IC maker: placeable package frames landed (authoring piece 1)
 
 **State:** 🟢 frame parts built (agent) + gate-green; on branch `claude/kind-turing-hdelb3`. First piece of

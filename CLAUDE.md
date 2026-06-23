@@ -36,9 +36,13 @@ pnpm run build:wasm
 pnpm -C web check
 pnpm -C web lint
 pnpm -C web build
+pnpm -C web test
 ```
 
-`pnpm -C web format` rewrites files with Prettier (use before `lint`).
+`pnpm -C web format` rewrites files with Prettier (use before `lint`). `pnpm -C web test` runs the
+headless **vitest** suite (e.g. `web/src/lib/netlist.test.ts`) — `buildNetlist` imports glyphs as types
+only, so it compiles in node, letting us verify determinism-critical compilation (the IC-maker seal
+expanding to the same netlist as the inline circuit) without a browser.
 
 ## Design system (the look)
 
