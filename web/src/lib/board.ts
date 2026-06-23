@@ -4365,8 +4365,8 @@ export class Board {
       } else {
         u0 = 0; // notch at the base
         const rms = fr(vrms, H);
-        // The peak reaches the most-extreme sample's magnitude.
-        const peak = fr(Math.abs(vmean) >= Math.abs(vmin) ? vmax : vmin, H);
+        // The peak reaches the most-extreme sample on the rail's (mean's) side.
+        const peak = fr(vmean >= 0 ? vmax : vmin, H);
         solidOut = rms;
         envOut = Math.max(rms, peak);
       }
@@ -4516,7 +4516,7 @@ export class Board {
         wetIn = Math.max(rms, fr(-vmin, BAR_HALF));
       } else {
         const rms = fr(vrms, H);
-        const peak = fr(Math.abs(vmean) >= Math.abs(vmin) ? vmax : vmin, H);
+        const peak = fr(vmean >= 0 ? vmax : vmin, H);
         calmOut = rms;
         wetOut = Math.max(rms, peak);
       }

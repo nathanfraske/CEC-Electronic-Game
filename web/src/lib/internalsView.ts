@@ -176,7 +176,8 @@ export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
   // Node positions: pins anchored at the real footprint pins; elements in a centred interior grid;
   // each internal node at the centroid of the elements that touch it.
   const pos = new Map<number, { x: number; y: number }>();
-  for (let i = 0; i < pinNodes.length; i++) {
+  const nPins = Math.min(pinNodes.length, pins.length); // defensive: keep the two arrays in lockstep
+  for (let i = 0; i < nPins; i++) {
     const p = pins[i];
     if (p) pos.set(pinNodes[i]!, { x: p.x, y: p.y });
   }
@@ -214,16 +215,16 @@ export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
 
   const sym = Math.max(3, Math.min(wPx, hPx) * 0.11); // element symbol half-size
 
-  // Wires: element terminal -> its node. For a gate, terminal 0 is the output (flows outward),
-  // 1 and 2 are inputs (flow inward); other terminals (power) are skipped. For a two-terminal part
-  // the first three terminals are drawn. Colour + flow track the node's live level.
+  // Wires: each element's SIGNAL terminals -> their nodes. For a gate, terminal 0 is the output
+  // (flows outward), 1 and 2 are inputs (flow inward); the power terminals (VCC/GND) are skipped.
+  // Colour + flow track the node's live level.
   for (let k = 0; k < elements.length; k++) {
     const el = elements[k]!;
     const ep = ePos[k]!;
     const isGate = el.type === T_GATE;
-    // How many terminals actually carry signal: a gate uses out + 2 ins; a DFF/switch 3; a
-    // two-terminal part (resistor/cap) only a/b. The unused terminals hold filler node refs (the
-    // core ignores them), so drawing them would add phantom wires — cap the loop per type.
+    // How many terminals actually carry signal (the rest are power or filler the core ignores, so
+    // drawing them would add phantom wires): a gate uses out + 2 ins (3); a DFF a/b/c = Q/D/CLK
+    // (d = Q̄ skipped); an analog switch a/b/c (d/e = power); a two-terminal part (resistor/cap) a/b.
     const nTerm = isGate || el.type === T_DFF || el.type === T_ASWITCH ? 3 : 2;
     for (let ti = 0; ti < nTerm; ti++) {
       const nd = el.nodes[ti];

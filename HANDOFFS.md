@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (84) — Adversarial panel audit of the full branch diff → fixes → merged to main
+
+**State:** 🟢 audited, fixed, gate-green, **merged to `main`** (owner asked to review on main). Branch
+`claude/kind-turing-hdelb3` (= main now).
+
+Ran a 4-agent adversarial review over the full `origin/main...HEAD` diff (~10k LOC of code; the ~20k of
+glyph HTML are static refsheets, spot-checked only) plus the full verification gate as ground truth.
+
+**Verdict: solid.** Determinism-safe (188 tests, golden `0xeaac_3764_99e4_fa24` byte-identical — all
+sim-core additions are additive/integer/append-folded); the flash-ADC discrete composition's
+thermometer→binary encoder was independently truth-table-verified for all 8 codes; all parts wired
+consistently across every map; SPDX headers present; logs current.
+
+**Fixes applied this pass:**
+- **BUG (real regression) — `board.ts` gauge peak** (`drawNetBars` + standpipe twin): a refactor had
+  rewritten the unipolar peak selection as `Math.abs(vmean) >= Math.abs(vmin) ? vmax : vmin`, which is NOT
+  equivalent to the original `up = vmean >= 0` intent (wrong envelope peak when the mean is small-positive
+  but a large negative excursion exists). Restored to `vmean >= 0 ? vmax : vmin`.
+- **NIT — `graph.ts` ADC comment** stale ("ELEM_BEHAVIORAL prog 5 / BEH_SPEC") → now describes the
+  discrete CEC_COMP composition.
+- **internalsView.ts** — defensive `Math.min(pinNodes.length, pins.length)` bound; clarified the
+  terminal-count comments.
+
+**Deferred (low-risk hardening, not reachable from bounded UI; noted for later):** `el.params[N] as u32`
+casts without a finite-check; the UART RX baud counter could overflow at absurd baud. Neither affects
+normal operation or the golden.
+
+**NEXT (unchanged):** phase 5 IC-maker authoring UI (ADR 0006) — die canvas, port pads, pinout editor,
+generalized expander, persistence; build with the owner's visual loop. The flash-ADC discrete view + the
+internals layout for large composites still want a visual pass (owner review).
+
+---
+
 ## 2026-06-23 (83) — Seal/zoom: phases 3 + 4 done, phase 5 foundation (package library) — REVIEW PASS
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner asked for analogy-lens support + "implement

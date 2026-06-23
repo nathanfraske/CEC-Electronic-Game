@@ -1038,9 +1038,10 @@ export const PART_KINDS: Record<string, PartKind> = {
     true,
   ),
   // 3-bit flash ADC (CEC1080): the parallel converter — quantizes the analog VIN against VREF to a
-  // 3-bit code on D0/D1/D2. ELEM_BEHAVIORAL program 5 (the multi-bit sibling of the SAMP sampler);
-  // value = the fixed program id (no value picker, not in the value lists); no data word. Pins
-  // VIN/VREF (analog in), D2/D1/D0 (digital out), VCC/GND. buildNetlist routes them via BEH_SPEC.
+  // 3-bit code on D0/D1/D2. A DISCRETE composition (ADR 0005 phase 4): a reference ladder (7 taps at
+  // k/8·VREF) feeds 7 comparators forming a thermometer code, encoded by gates into the binary
+  // output — so it opens to its real internals in the zoom-to-open view. Pins VIN/VREF (analog in),
+  // D2/D1/D0 (digital out), VCC/GND. buildNetlist expands it via CEC_COMP (not BEH_SPEC).
   ADC: kind(
     "ADC",
     "Flash ADC",
