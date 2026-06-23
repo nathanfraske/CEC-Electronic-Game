@@ -1,0 +1,623 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>D flip-flop, five layers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:94ch;} p.intro b{color:var(--text);}
+  .modebar{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:14px;}
+  .seg{display:inline-flex; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;}
+  .seg button{font-family:var(--font-display); font-size:12.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); background:var(--surface); border:none; padding:8px 14px; cursor:pointer; transition:background .15s,color .15s;}
+  .seg button + button{border-left:1px solid var(--border);}
+  .seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+  .seg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); margin-right:2px;}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .scopewrap{padding:8px 10px 12px;}
+  .scopewrap svg{display:block; width:100%; height:auto;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:200px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].ta::-webkit-slider-thumb{background:var(--accent); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].ta::-moz-range-thumb{background:var(--accent);}
+  input[type=range].tb::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].tb::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">1G79</span><span class="chip" id="chipReg">Q=0</span></div>
+  </div>
+
+  <h1 class="lede">The D flip-flop, five layers down</h1>
+  <p class="intro">A flip-flop is the smallest unit of memory: one bit that stays put until you tell it to change. This is the <b>74AUP1G79</b>, a single positive-edge-triggered D-type flip-flop in a five-pin package. It does one thing. On each rising edge of the clock CP it samples the data input D and copies that value to the output Q, then holds Q steady until the next rising edge, no matter what D does in between. That hold is the memory. Internally it is a <b>master-slave</b> pair of latches clocked on opposite phases, so the value is captured at the instant the clock rises and only then released to Q, never letting input and output be connected at once. The first tier is the logic symbol with the real pinout and a live timing diagram. The second is the flow network, the two latches as chambers that hand a bit across on the clock edge. The third opens that mechanism as <b>pressure-pilot valves</b>. The fourth is the schematic, the transmission-gate master-slave built from inverters and clocked switches. The fifth is the silicon. The cross-coupled inverter pair at the heart of each latch is the storage cell, the same regenerative loop that holds a bit everywhere in a chip.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; symbol</button>
+      <button data-t="t2">2 &middot; flow</button>
+      <button data-t="t3">3 &middot; valves</button>
+      <button data-t="t4">4 &middot; device</button>
+      <button data-t="t5">5 &middot; silicon</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">schematic</span>
+      <span class="scope-tag r" id="regTag">compare</span>
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" aria-label="D-type flip-flop"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">State</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Timing diagram</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="in-ctl" style="--c:var(--accent)"><div class="ic-top"><span class="ic-name">data D</span><span class="ic-val" id="labD">0.00 V</span></div><input type="range" class="ta" id="dIn" min="0" max="360" value="360"></div>
+    <div class="in-ctl" style="--c:var(--cyan)"><div class="ic-top"><span class="ic-name">clock CP</span><span class="ic-val" id="labCP">0.00 V</span></div><input type="range" class="ta" id="cpIn" min="0" max="360" value="0"></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">supply V_DD</span><span class="ic-val" id="labVdd">3.30 V</span></div><input type="range" id="vdd" min="80" max="360" value="330"></div>
+    <div class="tg"><button class="btn btn-ghost" id="btnClk">auto clock</button><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function flowDots(run,dots,path,len,norm,col,fwd){var on=(norm>0.02),sp=(0.2+norm*0.95);for(var i=0;i<dots.length;i++){var o=dots[i];if(run&&on){o.u=(o.u+sp*0.004)%1;}var uu=fwd?o.u:(1-o.u),pt=path.getPointAtLength(uu*len);o.el.setAttribute('cx',pt.x.toFixed(1));o.el.setAttribute('cy',pt.y.toFixed(1));o.el.setAttribute('opacity',(on?clamp(0.35+norm,0,1):0).toFixed(2));o.el.setAttribute('fill',col);}}
+  function th(i){return (i*0.61803398875)%1;}
+  function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff';
+  function wcol(v,VDD){return mix(LO,HI,clamp(v/VDD,0,1));}
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== 74AUP1G79 : positive-edge-triggered D-type flip-flop (master-slave) =====
+  // Two latches in series clocked on opposite phases. While CP is LOW the MASTER latch is transparent
+  // and tracks D while the SLAVE holds. While CP is HIGH the MASTER holds the value it had at the rising
+  // edge and the SLAVE becomes transparent, copying that value to Q. So Q only changes on the LOW-to-HIGH
+  // edge of CP, taking whatever D was at that instant, then holds it. The two latches are never both open.
+  function dff(Dv,CPv,VDD,curMaster,curSlave){
+    Dv=clamp(Dv,0,VDD);CPv=clamp(CPv,0,VDD);
+    var d=(Dv>=VDD/2)?1:0, cp=(CPv>=VDD/2)?1:0;
+    var master=curMaster, slave=curSlave;
+    if(cp===0){ master=d; }       // CP low  : master transparent (tracks D), slave holds
+    else      { slave=master; }   // CP high : slave transparent (copies master), master holds
+    return {Dv:Dv,CPv:CPv,d:d,cp:cp,cpn:1-cp,master:master,Q:slave,Qn:1-slave,VDD:VDD,
+      masterT:(cp===0),phase:(cp?'CP high: hold, drive Q':'CP low: track D')};
+  }
+  function fmtV(v){return v.toFixed(2)+' V';}
+  function fmtI(I){var a=Math.abs(I);if(a<1e-7)return '0';if(a<1e-3)return (I*1e6).toFixed(1)+' uA';if(a<1)return (I*1000).toFixed(2)+' mA';return I.toFixed(2)+' A';}
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
+
+  // ============ TIER 1 : SYMBOL ============
+  var t1={},t2={},t3={},t4={},t5={};
+  // ===== shared 5-lead package frame, real 74AUP1G79 pinout, identical in every tier =====
+  var PKX0=190,PKX1=590,PKY0=116,PKY1=456;
+  // real 74AUP1G79 (SOT353 TSSOP5 / SOT753 SC-74A, 5-lead) pinout, rotated into landscape with pin 1 at the
+  // lower-left per the datasheet marking note.   bottom L-R : D(1) CP(2) GND(3)    top L-R : Q(4) VCC(5)
+  var PIN={d:[270,PKY1], cp:[390,PKY1], gnd:[510,PKY1], q:[270,PKY0], vcc:[510,PKY0]};
+  var XD=270,XCP=390,XGND=510,XQ=270,XVCC=510;
+  function drawPkg(g){
+    g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));  // pin-1 marker by D
+    function pin(x,top,num,name,col){
+      var ty=top?PKY0-28:PKY1;
+      g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      g.appendChild(el('text',{x:x,y:top?PKY0+15:PKY1-7,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},num));
+      g.appendChild(el('text',{x:x,y:top?ty-7:ty+41,'font-family':'var(--font-mono)','font-size':12,fill:col,'text-anchor':'middle'},name));
+    }
+    pin(XQ,true,'4','Q',CYAN); pin(XVCC,true,'5','VCC',HI);
+    pin(XD,false,'1','D',ACCENT); pin(XCP,false,'2','CP',WARM); pin(XGND,false,'3','GND',LO);
+  }
+  function buildT1(){
+    drawPkg(gT1);
+    var BX0=358,BX1=478,BY0=250,BY1=374, DY=286, CKY=344, QY=286;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.4,'stroke-linecap':'round','stroke-linejoin':'round'});gT1.appendChild(p);return p;}
+    // pins -> box
+    t1.wD=wire('M '+XD+' '+PKY1+' L '+XD+' '+DY+' L '+BX0+' '+DY,ACCENT,2.6);
+    t1.wCP=wire('M '+XCP+' '+PKY1+' L '+XCP+' 402 L 344 402 L 344 '+CKY+' L '+BX0+' '+CKY,WARM,2.6);
+    t1.wQ=wire('M '+BX1+' '+QY+' L '+BX1+' 150 L '+XQ+' 150 L '+XQ+' '+PKY0,CYAN,2.6);
+    // VCC / GND stubs
+    // VCC / GND power the cell : tie to the body (right edge, below Q)
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 306 L 478 306',HI,2);gT1.appendChild(el('text',{x:472,y:302,'font-family':'var(--font-mono)','font-size':7,fill:HI,'text-anchor':'end'},'VCC'));
+    wire('M '+XGND+' '+PKY1+' L '+XGND+' 348 L 478 348',LO,2);gT1.appendChild(el('text',{x:472,y:344,'font-family':'var(--font-mono)','font-size':7,fill:LO,'text-anchor':'end'},'GND'));
+    // FF body
+    t1.box=el('rect',{x:BX0,y:BY0,width:BX1-BX0,height:BY1-BY0,rx:6,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':2});gT1.appendChild(t1.box);
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+23,'font-family':'var(--font-display)','font-size':15,fill:FAINT,'text-anchor':'middle','letter-spacing':'0.08em'},'1G79'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+38,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'D flip-flop'));
+    gT1.appendChild(el('text',{x:BX0+9,y:DY+4,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'start'},'D'));
+    gT1.appendChild(el('text',{x:BX0+22,y:CKY+4,'font-family':'var(--font-mono)','font-size':10,fill:WARM,'text-anchor':'start'},'CP'));
+    gT1.appendChild(el('text',{x:BX1-9,y:QY+4,'font-family':'var(--font-mono)','font-size':12,fill:CYAN,'text-anchor':'end'},'Q'));
+    // clock dynamic-input triangle (edge indicator)
+    t1.tri=el('path',{d:'M '+BX0+' '+(CKY-7)+' L '+(BX0+12)+' '+CKY+' L '+BX0+' '+(CKY+7)+' Z',fill:'none',stroke:WARM,'stroke-width':1.6});gT1.appendChild(t1.tri);
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY1-11,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'Schmitt inputs'));
+    // ----- function table -----
+    var TX=40,Hy=258,r0=288,r1=314,r2=340, cCP=70,cD=112,cQ=156;
+    gT1.appendChild(el('text',{x:TX,y:Hy-12,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'letter-spacing':'0.08em'},'FUNCTION'));
+    gT1.appendChild(el('text',{x:cCP,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'CP'));
+    gT1.appendChild(el('text',{x:cD,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'D'));
+    gT1.appendChild(el('text',{x:cQ,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'Q'));
+    t1.rowHi=[];
+    [r0,r1,r2].forEach(function(yy){var rc=el('rect',{x:TX-6,y:yy-13,width:150,height:22,rx:3,fill:'oklch(0.62 0.16 250 / 0)'});gT1.appendChild(rc);t1.rowHi.push(rc);});
+    function riseGlyph(yy){gT1.appendChild(el('path',{d:'M '+(cCP-9)+' '+(yy+3)+' L '+(cCP-2)+' '+(yy+3)+' L '+(cCP-2)+' '+(yy-4)+' L '+(cCP+9)+' '+(yy-4),fill:'none',stroke:CYAN,'stroke-width':1.5}));}
+    riseGlyph(r0);riseGlyph(r1);
+    gT1.appendChild(el('path',{d:'M '+(cCP-9)+' '+(r2+1)+' L '+(cCP+9)+' '+(r2+1),fill:'none',stroke:DIM,'stroke-width':1.5,'stroke-dasharray':'2 2'}));
+    gT1.appendChild(el('text',{x:cD,y:r0+3,'font-family':'var(--font-mono)','font-size':10,fill:LO,'text-anchor':'middle'},'0'));
+    gT1.appendChild(el('text',{x:cD,y:r1+3,'font-family':'var(--font-mono)','font-size':10,fill:HI,'text-anchor':'middle'},'1'));
+    gT1.appendChild(el('text',{x:cD,y:r2+3,'font-family':'var(--font-mono)','font-size':10,fill:DIM,'text-anchor':'middle'},'X'));
+    gT1.appendChild(el('text',{x:cQ,y:r0+3,'font-family':'var(--font-mono)','font-size':10,fill:LO,'text-anchor':'middle'},'0'));
+    gT1.appendChild(el('text',{x:cQ,y:r1+3,'font-family':'var(--font-mono)','font-size':10,fill:HI,'text-anchor':'middle'},'1'));
+    gT1.appendChild(el('text',{x:cQ,y:r2+3,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM,'text-anchor':'middle'},'hold'));
+    // phase note
+    t1.phase=el('text',{x:TX,y:366,'font-family':'var(--font-mono)','font-size':9.5,fill:CYAN,'text-anchor':'start'},'');gT1.appendChild(t1.phase);
+    // ----- stored bit indicator -----
+    gT1.appendChild(el('text',{x:TX,y:392,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'stored bit'));
+    t1.cell=el('rect',{x:TX,y:398,width:54,height:40,rx:4,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.5});gT1.appendChild(t1.cell);
+    t1.storedVal=el('text',{x:TX+27,y:427,'font-family':'var(--font-display)','font-size':24,fill:LO,'text-anchor':'middle'},'0');gT1.appendChild(t1.storedVal);
+    t1.qWord=el('text',{x:TX+66,y:421,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'start'},'');gT1.appendChild(t1.qWord);
+  }
+  function updateT1(s){
+    var hiD=s.d?ACCENT:'oklch(0.36 0.06 18)', hiCP=s.cp?WARM:'oklch(0.36 0.05 70)', hiQ=s.Q?CYAN:'oklch(0.34 0.05 232)';
+    t1.wD.setAttribute('stroke',hiD);t1.wCP.setAttribute('stroke',hiCP);t1.wQ.setAttribute('stroke',hiQ);
+    t1.tri.setAttribute('fill',s.cp?'rgba(232,168,80,0.45)':'none');
+    t1.tri.setAttribute('stroke',s.rising?HI:WARM);t1.tri.setAttribute('stroke-width',s.rising?2.8:1.6);
+    var act=s.cp?(s.Q?1:0):2;
+    for(var i=0;i<t1.rowHi.length;i++){t1.rowHi[i].setAttribute('fill', i===act?'oklch(0.62 0.16 250 / 0.18)':'oklch(0.62 0.16 250 / 0)');}
+    t1.storedVal.textContent=''+s.Q;t1.storedVal.setAttribute('fill',s.Q?HI:LO);
+    t1.cell.setAttribute('stroke',s.Q?HI:STEEL);
+    t1.qWord.textContent='Q = '+s.Q;t1.qWord.setAttribute('fill',s.Q?HI:LO);
+    t1.phase.textContent=s.masterT?'CP low: master tracks D':'CP high: Q holds captured D';
+    t1.phase.setAttribute('fill',s.masterT?CYAN:WARM);
+  }
+  // ============ TIERS 2-5 : in progress (flow network, pilot valves, schematic, silicon) ============
+  // horizontal flow gate : a gate that drops across the pipe (closed) or retracts (open)
+  function hgate(g,cx,cy,col){
+    var v={cx:cx,cy:cy,col:col||CYAN};
+    g.appendChild(el('rect',{x:cx-14,y:cy-18,width:28,height:36,rx:3,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1.2}));
+    v.gate=el('rect',{x:cx-4,y:cy-16,width:8,height:32,rx:1,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1});g.appendChild(v.gate);
+    v.flow=el('path',{d:'',fill:'none',stroke:v.col,'stroke-width':3.4,'stroke-linecap':'round',opacity:0});g.appendChild(v.flow);
+    v.arr=el('path',{d:'',fill:v.col,opacity:0});g.appendChild(v.arr);
+    return v;
+  }
+  function setGate(v,open){
+    v.gate.setAttribute('height',(open?3:32).toFixed(1));
+    v.gate.setAttribute('fill',open?'#5a647a':'#c7cfdd');
+    if(open){v.flow.setAttribute('d','M '+(v.cx-13)+' '+v.cy+' L '+(v.cx+13)+' '+v.cy);v.flow.setAttribute('opacity',0.9);
+      v.arr.setAttribute('d','M '+(v.cx+5)+' '+(v.cy-4)+' L '+(v.cx+12)+' '+v.cy+' L '+(v.cx+5)+' '+(v.cy+4)+' Z');v.arr.setAttribute('opacity',0.95);}
+    else {v.flow.setAttribute('opacity',0);v.arr.setAttribute('opacity',0);}
+  }
+  function buildT2(){
+    drawPkg(gT2);
+    // VCC / GND supply rails ; chamber levels swing between them
+    gT2.appendChild(el('line',{x1:228,y1:150,x2:582,y2:150,stroke:'oklch(0.42 0.08 250)','stroke-width':1.6}));
+    gT2.appendChild(el('line',{x1:228,y1:430,x2:582,y2:430,stroke:'oklch(0.38 0.05 250)','stroke-width':1.6}));
+    gT2.appendChild(el('text',{x:232,y:146,'font-family':'var(--font-mono)','font-size':8,fill:HI},'VCC (full)'));
+    gT2.appendChild(el('text',{x:232,y:444,'font-family':'var(--font-mono)','font-size':8,fill:LO},'GND (empty)'));
+    gT2.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' 150',fill:'none',stroke:HI,'stroke-width':1.6}));
+    gT2.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' 430',fill:'none',stroke:LO,'stroke-width':1.6}));
+    ['382','522'].forEach(function(cx){gT2.appendChild(el('path',{d:'M '+cx+' 150 L '+cx+' 430',fill:'none',stroke:'oklch(0.3 0.03 250)','stroke-width':1,'stroke-dasharray':'3 3'}));});
+    var CY=355, CTOP=312, CBOT=398, DX=270, MX0=338,MX1=426, SX0=478,SX1=566;
+    t2.CY=CY;t2.CTOP=CTOP;t2.CBOT=CBOT;t2.MX0=MX0;t2.MX1=MX1;t2.SX0=SX0;t2.SX1=SX1;
+    function tank(x0,x1,lab,labcol){
+      gT2.appendChild(el('rect',{x:x0,y:CTOP,width:x1-x0,height:CBOT-CTOP,rx:3,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.6}));
+      gT2.appendChild(el('text',{x:(x0+x1)/2,y:CTOP-6,'font-family':'var(--font-mono)','font-size':10,fill:labcol,'text-anchor':'middle'},lab));
+      var w=el('rect',{x:x0+2,y:CBOT-2,width:x1-x0-4,height:0,fill:'oklch(0.6 0.14 232 / 0.55)'});gT2.appendChild(w);return w;
+    }
+    // D source standpipe
+    gT2.appendChild(el('rect',{x:DX-13,y:CTOP,width:26,height:CBOT-CTOP,rx:3,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.4}));
+    gT2.appendChild(el('text',{x:DX,y:CTOP-6,'font-family':'var(--font-mono)','font-size':10,fill:ACCENT,'text-anchor':'middle'},'D'));
+    t2.dW=el('rect',{x:DX-11,y:CBOT-2,width:22,height:0,fill:'oklch(0.62 0.18 18 / 0.55)'});gT2.appendChild(t2.dW);
+    gT2.appendChild(el('path',{d:'M '+DX+' '+PKY1+' L '+DX+' '+CBOT,fill:'none',stroke:ACCENT,'stroke-width':2.2}));
+    // master + slave chambers
+    t2.mW=tank(MX0,MX1,'master',CYAN);
+    t2.sW=tank(SX0,SX1,'slave = Q',CYAN);
+    // connecting pipes + gates
+    gT2.appendChild(el('line',{x1:DX+13,y1:CY,x2:MX0,y2:CY,stroke:STEEL,'stroke-width':2.4}));
+    gT2.appendChild(el('line',{x1:MX1,y1:CY,x2:SX0,y2:CY,stroke:STEEL,'stroke-width':2.4}));
+    t2.g1=hgate(gT2,(DX+13+MX0)/2,CY,WATER2);   // master input gate : opens CP low
+    t2.g2=hgate(gT2,(MX1+SX0)/2,CY,WATER2);      // transfer gate : opens CP high
+    gT2.appendChild(el('text',{x:t2.g1.cx,y:CY+30,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'CP low'));
+    gT2.appendChild(el('text',{x:t2.g2.cx,y:CY+30,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'CP high'));
+    // Q output : slave -> Q pin (top-left)
+    t2.wQ=el('path',{d:'M '+((SX0+SX1)/2)+' '+CTOP+' L '+((SX0+SX1)/2)+' 212 L '+XQ+' 212 L '+XQ+' '+PKY0,fill:'none',stroke:CYAN,'stroke-width':2.6,'stroke-linecap':'round'});gT2.appendChild(t2.wQ);
+    // clock distribution : CP pin -> both gates (opposite phases)
+    gT2.appendChild(el('path',{d:'M '+XCP+' '+PKY1+' L '+XCP+' 432 L '+t2.g1.cx+' 432 L '+t2.g1.cx+' '+(CY+18),fill:'none',stroke:WARM,'stroke-width':2}));
+    t2.clkR=el('path',{d:'M '+XCP+' 432 L '+t2.g2.cx+' 432 L '+t2.g2.cx+' '+(CY+18),fill:'none',stroke:WARM,'stroke-width':2});gT2.appendChild(t2.clkR);
+    gT2.appendChild(el('circle',{cx:t2.g1.cx,cy:CY+15,r:3.5,fill:'none',stroke:WARM,'stroke-width':1.3}));  // inversion bubble : G1 = CPn
+    // phase note
+    t2.note=el('text',{x:210,y:172,'font-family':'var(--font-mono)','font-size':11,fill:OK,'text-anchor':'start'},'');gT2.appendChild(t2.note);
+    t2.mLevel=0;t2.sLevel=0;t2.dLevel=0;
+  }
+  function updateT2(s){
+    var FULL=t2.CBOT-t2.CTOP-4;
+    function setW(w,frac){var th=clamp(frac,0,1)*FULL;var cy=parseFloat(w.getAttribute('y')),ch=t2.CBOT-2-cy,nh=ch+(th-ch)*0.2;w.setAttribute('y',(t2.CBOT-2-nh).toFixed(1));w.setAttribute('height',Math.max(nh,0).toFixed(1));}
+    setW(t2.dW,s.d);setW(t2.mW,s.master);setW(t2.sW,s.Q);
+    var g1open=(s.cp===0), g2open=(s.cp===1);
+    setGate(t2.g1,g1open);setGate(t2.g2,g2open);
+    t2.dW.setAttribute('fill',s.d?'oklch(0.62 0.18 18 / 0.6)':'oklch(0.4 0.07 18 / 0.35)');
+    t2.mW.setAttribute('fill',s.master?'oklch(0.6 0.14 232 / 0.6)':'oklch(0.4 0.06 232 / 0.3)');
+    t2.sW.setAttribute('fill',s.Q?'oklch(0.6 0.14 232 / 0.6)':'oklch(0.4 0.06 232 / 0.3)');
+    t2.wQ.setAttribute('stroke',s.Q?HI:LO);
+    t2.clkR.setAttribute('stroke',s.cp?WARM:'oklch(0.4 0.05 70)');
+    t2.note.textContent=s.cp?'CP high : master gate shut, transfer gate open, slave copies master -> Q':'CP low : master gate open tracking D, transfer gate shut, slave holds Q';
+    t2.note.setAttribute('fill',s.cp?WARM:CYAN);
+  }
+  function invTri(g,cx,cy,dir){
+    var s=dir==='r'?1:-1;
+    var t=el('path',{d:'M '+(cx-13*s)+' '+(cy-11)+' L '+(cx+13*s)+' '+cy+' L '+(cx-13*s)+' '+(cy+11)+' Z',fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.4});g.appendChild(t);
+    g.appendChild(el('circle',{cx:cx+17*s,cy:cy,r:3.6,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.2}));
+    return {cx:cx,cy:cy,outx:cx+21*s,inx:cx-13*s,tri:t};
+  }
+  function buildT3(){
+    drawPkg(gT3);
+    // VCC / GND rails power the cross-coupled cell
+    gT3.appendChild(el('line',{x1:228,y1:178,x2:582,y2:178,stroke:'oklch(0.42 0.08 250)','stroke-width':1.6}));
+    gT3.appendChild(el('line',{x1:228,y1:432,x2:582,y2:432,stroke:'oklch(0.38 0.05 250)','stroke-width':1.6}));
+    gT3.appendChild(el('text',{x:232,y:174,'font-family':'var(--font-mono)','font-size':8,fill:HI},'VCC'));
+    gT3.appendChild(el('text',{x:232,y:444,'font-family':'var(--font-mono)','font-size':8,fill:LO},'GND'));
+    gT3.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' 178',fill:'none',stroke:HI,'stroke-width':1.6}));
+    gT3.appendChild(el('path',{d:'M '+XGND+' '+PKY1+' L '+XGND+' 432',fill:'none',stroke:LO,'stroke-width':1.6}));
+    gT3.appendChild(el('path',{d:'M 400 178 L 400 289',fill:'none',stroke:'oklch(0.32 0.04 250)','stroke-width':1,'stroke-dasharray':'3 3'}));
+    gT3.appendChild(el('path',{d:'M 400 403 L 400 432',fill:'none',stroke:'oklch(0.32 0.04 250)','stroke-width':1,'stroke-dasharray':'3 3'}));
+    var YN=345, XN=360, YND=300, YNB=392, INV1X=400, YX=434, INV2X=400, TGFX=338;
+    gT3.appendChild(el('text',{x:198,y:140,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'master latch  (slave is identical, clocked on the opposite phase)'));
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.2,'stroke-linecap':'round','stroke-linejoin':'round'});gT3.appendChild(p);return p;}
+    // D in -> TG_in -> X
+    t3.wD=wire('M '+XD+' '+PKY1+' L '+XD+' '+YN+' L 296 '+YN,ACCENT,2.4);
+    t3.tgin=hgate(gT3,312,YN,WATER2);
+    wire('M 326 '+YN+' L '+XN+' '+YN,STEEL,2.2);
+    t3.xDot=el('circle',{cx:XN,cy:YN,r:4.5,fill:STEEL});gT3.appendChild(t3.xDot);
+    gT3.appendChild(el('text',{x:XN-2,y:YN+18,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'middle'},'X'));
+    // keeper loop : X -> INV1 -> Y -> INV2 -> TG_fb -> X
+    wire('M '+XN+' '+YN+' L '+XN+' '+YND+' L '+(INV1X-13)+' '+YND,STEEL,2);
+    t3.inv1=invTri(gT3,INV1X,YND,'r');
+    wire('M '+t3.inv1.outx+' '+YND+' L '+YX+' '+YND,STEEL,2);
+    t3.yDot=el('circle',{cx:YX,cy:YND,r:4.5,fill:STEEL});gT3.appendChild(t3.yDot);
+    gT3.appendChild(el('text',{x:YX+12,y:YND+4,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'start'},'NOT X'));
+    wire('M '+YX+' '+YND+' L '+YX+' '+YNB+' L '+(INV2X+13)+' '+YNB,STEEL,2);
+    t3.inv2=invTri(gT3,INV2X,YNB,'l');
+    wire('M '+t3.inv2.outx+' '+YNB+' L 352 '+YNB,STEEL,2);
+    t3.tgfb=hgate(gT3,TGFX,YNB,WATER2);
+    t3.wFb=wire('M '+(TGFX-14)+' '+YNB+' L 324 '+YNB+' L 324 '+YN+' L '+XN+' '+YN,STEEL,2);
+    // output : X -> right -> (slave) -> Q
+    t3.wOut=wire('M '+XN+' '+YN+' L 548 '+YN+' L 548 206 L '+XQ+' 206 L '+XQ+' '+PKY0,CYAN,2.4);
+    gT3.appendChild(el('rect',{x:470,y:188,width:118,height:30,rx:4,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1,'stroke-dasharray':'4 3'}));
+    gT3.appendChild(el('text',{x:529,y:200,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'slave latch'));
+    gT3.appendChild(el('text',{x:529,y:211,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'(same, opposite phase)'));
+    gT3.appendChild(el('text',{x:556,y:340,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'Q'));
+    // clock pilots : CP -> TG_fb (CP) and TG_in (CPn)
+    wire('M '+XCP+' '+PKY1+' L '+XCP+' 436 L 312 436 L 312 '+(YN+18),WARM,1.8);
+    gT3.appendChild(el('circle',{cx:312,cy:YN+15,r:3.4,fill:'none',stroke:WARM,'stroke-width':1.3}));  // CPn bubble on TG_in
+    t3.clkFb=wire('M '+XCP+' 436 L '+TGFX+' 436 L '+TGFX+' '+(YNB+18),WARM,1.8);
+    gT3.appendChild(el('text',{x:294,y:YN+30,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'middle'},'CP low'));
+    gT3.appendChild(el('text',{x:TGFX,y:YNB+30,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'middle'},'CP high'));
+    gT3.appendChild(el('text',{x:296,y:YN-12,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'write'));
+    gT3.appendChild(el('text',{x:TGFX-2,y:YNB-14,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'hold'));
+    // phase note
+    t3.note=el('text',{x:210,y:162,'font-family':'var(--font-mono)','font-size':10.5,fill:OK,'text-anchor':'start'},'');gT3.appendChild(t3.note);
+  }
+  function updateT3(s){
+    var Xv=s.master, Yv=1-s.master;
+    var writing=(s.cp===0), holding=(s.cp===1);
+    setGate(t3.tgin,writing);setGate(t3.tgfb,holding);
+    t3.xDot.setAttribute('fill',Xv?HI:LO);t3.yDot.setAttribute('fill',Yv?HI:LO);
+    t3.wD.setAttribute('stroke',s.d?ACCENT:'oklch(0.36 0.06 18)');
+    t3.wOut.setAttribute('stroke',Xv?HI:LO);
+    t3.wFb.setAttribute('stroke',holding?(Yv?HI:LO):'oklch(0.3 0.03 285)');  // feedback active only when holding
+    t3.inv1.tri.setAttribute('stroke',Xv?HI:STEEL);t3.inv2.tri.setAttribute('stroke',(holding?(Yv?HI:STEEL):STEEL));
+    t3.clkFb.setAttribute('stroke',s.cp?WARM:'oklch(0.4 0.05 70)');
+    t3.note.textContent=writing?'CP low : input valve open, D writes the cell, keeper loop broken':'CP high : feedback valve closes the loop, cross-coupled pair holds the bit';
+    t3.note.setAttribute('fill',writing?CYAN:WARM);
+  }
+  // transmission gate : bowtie of NMOS+PMOS in parallel ; conducts -> channel lights
+  function tg(g,cx,cy){
+    var w=14,h=10;
+    g.appendChild(el('path',{d:'M '+(cx-w)+' '+(cy-h)+' L '+cx+' '+cy+' L '+(cx-w)+' '+(cy+h)+' Z',fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.3}));
+    g.appendChild(el('path',{d:'M '+(cx+w)+' '+(cy-h)+' L '+cx+' '+cy+' L '+(cx+w)+' '+(cy+h)+' Z',fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.3}));
+    g.appendChild(el('line',{x1:cx,y1:cy+h,x2:cx,y2:cy+h+9,stroke:STEEL,'stroke-width':1.3}));         // N control (bottom)
+    g.appendChild(el('circle',{cx:cx,cy:cy-h-5,r:3.6,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.1})); // P control bubble (top)
+    g.appendChild(el('line',{x1:cx,y1:cy-h-9,x2:cx,y2:cy-h-15,stroke:STEEL,'stroke-width':1.3}));
+    var CH='M '+(cx-w)+' '+cy+' L '+(cx+w)+' '+cy;
+    var glowG=el('g',{opacity:0});
+    glowG.appendChild(el('path',{d:CH,fill:'none',stroke:OK,'stroke-width':7,opacity:0.22,'stroke-linecap':'round'}));
+    glowG.appendChild(el('path',{d:CH,fill:'none',stroke:OK,'stroke-width':3,'stroke-linecap':'round'}));
+    g.appendChild(glowG);
+    return {cx:cx,cy:cy,lx:cx-w,rx:cx+w,nY:cy+h+9,pY:cy-h-15,glow:glowG};
+  }
+  function buildT4(){
+    drawPkg(gT4);
+    var MF=222, MB=262, SF=346, SB=386;   // master fwd/back lanes, slave fwd/back lanes
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT4.appendChild(p);return p;}
+    function node(x,y,lab,lc){var c=el('circle',{cx:x,cy:y,r:4,fill:STEEL});gT4.appendChild(c);if(lab)gT4.appendChild(el('text',{x:x,y:y-8,'font-family':'var(--font-mono)','font-size':8.5,fill:lc||DIM,'text-anchor':'middle'},lab));return c;}
+    // VCC / GND rails (inverters + TGs tie here)
+    gT4.appendChild(el('line',{x1:200,y1:150,x2:580,y2:150,stroke:'oklch(0.32 0.05 30)','stroke-width':1.6}));
+    gT4.appendChild(el('line',{x1:200,y1:432,x2:580,y2:432,stroke:'oklch(0.3 0.04 250)','stroke-width':1.6}));
+    gT4.appendChild(el('text',{x:566,y:146,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'end'},'VCC'));
+    gT4.appendChild(el('text',{x:566,y:444,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'end'},'GND'));
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 150',HI,1.6);wire('M '+XGND+' '+PKY1+' L '+XGND+' 432',LO,1.6);
+    // inverter power : each CMOS inverter ties PMOS->VCC, NMOS->GND
+    [[250,168],[378,222],[388,262],[360,346],[347,386]].forEach(function(pp){var ix=pp[0],iy=pp[1];
+      gT4.appendChild(el('path',{d:'M '+ix+' 150 L '+ix+' '+(iy-11),fill:'none',stroke:'oklch(0.36 0.05 250)','stroke-width':0.9,'stroke-dasharray':'2 3'}));
+      gT4.appendChild(el('path',{d:'M '+ix+' '+(iy+11)+' L '+ix+' 432',fill:'none',stroke:'oklch(0.34 0.045 250)','stroke-width':0.9,'stroke-dasharray':'2 3'}));});
+    // ---- clock inverter : CP -> CPn ----
+    wire('M '+XCP+' '+PKY1+' L '+XCP+' 410 L 218 410 L 218 168 L 237 168',WARM,1.8);
+    t4.invc=invTri(gT4,250,168,'r');
+    gT4.appendChild(el('text',{x:232,y:160,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'end'},'CP'));
+    gT4.appendChild(el('text',{x:276,y:171,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'start'},'CPn'));
+    gT4.appendChild(el('text',{x:250,y:188,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'clock inverter'));
+    // ===== MASTER latch (top lane, left -> right) =====
+    gT4.appendChild(el('text',{x:200,y:206,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'MASTER  (transparent on CP low)'));
+    t4.wD=wire('M '+XD+' '+PKY1+' L '+XD+' '+MF+' L 291 '+MF,ACCENT,2.2);
+    t4.tg1=tg(gT4,305,MF); t4.xm=node(345,MF,'Xm',CYAN);
+    wire('M 319 '+MF+' L 345 '+MF,STEEL,2); wire('M 345 '+MF+' L 364 '+MF,STEEL,2);
+    t4.inv1=invTri(gT4,378,MF,'r'); t4.mo=node(420,MF,'Mout',CYAN);
+    wire('M 399 '+MF+' L 420 '+MF,STEEL,2);
+    // master feedback : Mout -> INV2 -> TG2 -> Xm
+    wire('M 420 '+MF+' L 420 '+MB+' L 401 '+MB,STEEL,1.8);
+    t4.inv2=invTri(gT4,388,MB,'l'); t4.tg2=tg(gT4,335,MB);
+    wire('M 367 '+MB+' L 349 '+MB,STEEL,1.8);
+    t4.wfbM=wire('M 321 '+MB+' L 305 '+MB+' L 305 '+MF+' L 345 '+MF,STEEL,1.8);
+    // ===== SLAVE latch (bottom lane, right -> left) =====
+    gT4.appendChild(el('text',{x:200,y:330,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'SLAVE  (transparent on CP high)'));
+    wire('M 420 '+MF+' L 462 '+MF+' L 462 '+SF+' L 448 '+SF,STEEL,2);
+    t4.tg3=tg(gT4,434,SF); t4.xs=node(394,SF,'Xs',CYAN);
+    wire('M 420 '+SF+' L 394 '+SF,STEEL,2); wire('M 394 '+SF+' L 374 '+SF,STEEL,2);
+    t4.inv3=invTri(gT4,360,SF,'l'); t4.q=node(318,SF,'Q',CYAN);
+    wire('M 339 '+SF+' L 318 '+SF,STEEL,2);
+    // slave feedback : Q -> INV4 -> TG4 -> Xs
+    wire('M 318 '+SF+' L 318 '+SB+' L 333 '+SB,STEEL,1.8);
+    t4.inv4=invTri(gT4,347,SB,'r'); t4.tg4=tg(gT4,408,SB);
+    wire('M 368 '+SB+' L 394 '+SB,STEEL,1.8);
+    t4.wfbS=wire('M 422 '+SB+' L 440 '+SB+' L 440 '+SF+' L 394 '+SF,STEEL,1.8);
+    // Q out -> Q pin
+    t4.wQ=wire('M 318 '+SF+' L 240 '+SF+' L 240 184 L '+XQ+' 184 L '+XQ+' '+PKY0,CYAN,2.4);
+    // ---- TG clock control labels (conduction phase) ----
+    function tgClk(t,lab){gT4.appendChild(el('line',{x1:t.cx,y1:t.nY,x2:t.cx,y2:t.nY+6,stroke:WARM,'stroke-width':1.2}));gT4.appendChild(el('text',{x:t.cx,y:t.nY+15,'font-family':'var(--font-mono)','font-size':7,fill:WARM,'text-anchor':'middle'},lab));}
+    tgClk(t4.tg1,'CP low');tgClk(t4.tg2,'CP high');tgClk(t4.tg3,'CP high');tgClk(t4.tg4,'CP low');
+    gT4.appendChild(el('text',{x:328,y:180,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM},'each inverter = 1 PMOS + 1 NMOS ; TGs gated by CP / CPn'));
+    t4.note=el('text',{x:214,y:448,'font-family':'var(--font-mono)','font-size':10.5,fill:OK,'text-anchor':'start'},'');gT4.appendChild(t4.note);
+  }
+  function updateT4(s){
+    var Xm=s.master, Mout=1-s.master, Xs=1-s.Q, Q=s.Q;
+    function lit(t,on){t.glow.setAttribute('opacity',on?0.95:0);}
+    lit(t4.tg1,s.cp===0);lit(t4.tg2,s.cp===1);lit(t4.tg3,s.cp===1);lit(t4.tg4,s.cp===0);
+    t4.xm.setAttribute('fill',Xm?HI:LO);t4.mo.setAttribute('fill',Mout?HI:LO);
+    t4.xs.setAttribute('fill',Xs?HI:LO);t4.q.setAttribute('fill',Q?HI:LO);
+    t4.wD.setAttribute('stroke',s.d?ACCENT:'oklch(0.36 0.06 18)');
+    t4.wQ.setAttribute('stroke',Q?HI:LO);
+    t4.inv1.tri.setAttribute('stroke',Mout?HI:STEEL);t4.inv3.tri.setAttribute('stroke',Q?HI:STEEL);
+    t4.wfbM.setAttribute('stroke',s.cp===1?(Xm?HI:LO):'oklch(0.3 0.03 285)');
+    t4.wfbS.setAttribute('stroke',s.cp===0?(Xs?HI:LO):'oklch(0.3 0.03 285)');
+    t4.note.textContent=s.cp?'CP high : master holds, slave open, Q = master':'CP low : master tracks D, slave holds Q';
+    t4.note.setAttribute('fill',s.cp?WARM:CYAN);
+  }
+  function buildT5(){
+    drawPkg(gT5);
+    t5.dev=[];t5.gateLabs=[];
+    var SURF=322, DH=36, GW=12, GT=SURF-24, VCCY=152, GNDY=438;
+    t5.SURF=SURF;
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:372,height:GNDY-SURF,rx:4,fill:'oklch(0.22 0.03 300)',stroke:'oklch(0.34 0.04 300)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:572,y:GNDY-12,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'p-substrate (NMOS)'));
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:198,height:GNDY-SURF-7,rx:4,fill:'oklch(0.25 0.05 232)',stroke:'oklch(0.37 0.06 232)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:210,y:GNDY-12,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'n-well (PMOS)'));
+    function diff(cx,isP,lab,col){gT5.appendChild(el('rect',{x:cx-9,y:SURF,width:18,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+21,'font-family':'var(--font-mono)','font-size':7,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+9,'font-family':'var(--font-mono)','font-size':7,fill:col||FAINT,'text-anchor':'middle'},lab));return cx;}
+    function gate(cx,lab,key,isP){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-7,width:GW,height:7,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:15,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});var c=el('path',{d:'',fill:isP?'rgba(255,138,77,0.55)':'rgba(95,208,255,0.5)',stroke:isP?HOLE:ELEC,'stroke-width':1.6,opacity:0});gT5.appendChild(c);t5.dev.push({g:{gx:cx,chan:c},key:key,isP:isP});return cx;}
+    // n-well PMOS : TG-PMOS (D|CP|X) , INV-PMOS (VCC|X|Mout)
+    diff(228,true,'D',ACCENT); gate(250,'CP','TGP',true); diff(272,true,'X',CYAN);
+    diff(304,true,'VCC',HI); gate(326,'X','INVP',true); diff(348,true,'Mout',WARM);
+    // substrate NMOS : TG-NMOS (D|CPn|X) , INV-NMOS (Mout|X|GND)
+    diff(440,false,'D',ACCENT); gate(462,'CPn','TGN',false); diff(484,false,'X',CYAN);
+    diff(516,false,'Mout',WARM); gate(538,'X','INVN',false); diff(560,false,'GND',LO);
+    function m(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT5.appendChild(p);return p;}
+    function dot(x,y,col){gT5.appendChild(el('circle',{cx:x,cy:y,r:2,fill:col}));}
+    // VCC : PMOS source(304) -> VCC pin
+    m('M 304 '+SURF+' L 304 '+VCCY+' L '+XVCC+' '+VCCY,HI,2);m('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCY,HI,2);dot(304,SURF,HI);dot(XVCC,VCCY,HI);
+    // GND : NMOS source(560) -> GND pin
+    m('M 560 '+SURF+' L 560 '+GNDY+' L '+XGND+' '+GNDY,LO,2);m('M '+XGND+' '+PKY1+' L '+XGND+' '+GNDY,LO,2);dot(560,SURF,LO);dot(XGND,GNDY,LO);
+    // D rail : diff 228 <-> diff 440 , tapped by D pin
+    t5.mD=m('M 228 '+SURF+' L 228 268 L 440 268 L 440 '+SURF,ACCENT,2);dot(228,SURF,ACCENT);dot(440,SURF,ACCENT);
+    m('M '+XD+' '+PKY1+' L '+XD+' 268',ACCENT,2);dot(XD,268,ACCENT);
+    // X rail : diff 272 <-> diff 484 , drives both INV gates
+    t5.mX=m('M 272 '+SURF+' L 272 244 L 484 244 L 484 '+SURF,CYAN,2.2);dot(272,SURF,CYAN);dot(484,SURF,CYAN);
+    t5.mXg=m('M 326 '+GT+' L 326 244 M 538 '+GT+' L 538 244',CYAN,1.4);
+    gT5.appendChild(el('text',{x:380,y:240,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'middle'},'X = master node'));
+    gT5.appendChild(el('path',{d:'M 348 220 L 348 168 L '+XQ+' 168 L '+XQ+' '+PKY0,fill:'none',stroke:WARM,'stroke-width':1.4,'stroke-dasharray':'4 3',opacity:0.7}));
+    gT5.appendChild(el('text',{x:300,y:164,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM,'text-anchor':'middle'},'Mout -> slave latch -> Q'));
+    // Mout rail : diff 348 <-> diff 516 -> slave
+    t5.mMo=m('M 348 '+SURF+' L 348 220 L 516 220 L 516 '+SURF,WARM,2.2);dot(348,SURF,WARM);dot(516,SURF,WARM);
+    // CP / CPn to the pass-gate gates
+    t5.mCP=m('M 250 '+GT+' L 250 290 L 224 290',WARM,1.6);
+    t5.mCPn=m('M 462 '+GT+' L 462 290 L 436 290',WARM,1.6);
+    // device-group labels
+    gT5.appendChild(el('text',{x:250,y:GT-13,'font-family':'var(--font-mono)','font-size':7,fill:HOLE,'text-anchor':'middle'},'pass gate'));
+    gT5.appendChild(el('text',{x:337,y:GT-13,'font-family':'var(--font-mono)','font-size':7,fill:HOLE,'text-anchor':'middle'},'inverter'));
+    gT5.appendChild(el('text',{x:462,y:GT-13,'font-family':'var(--font-mono)','font-size':7,fill:ELEC,'text-anchor':'middle'},'pass gate'));
+    gT5.appendChild(el('text',{x:549,y:GT-13,'font-family':'var(--font-mono)','font-size':7,fill:ELEC,'text-anchor':'middle'},'inverter'));
+    // title + annotation
+    gT5.appendChild(el('text',{x:34,y:262,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'SILICON'));
+    gT5.appendChild(el('text',{x:34,y:280,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'representative slice:'));
+    gT5.appendChild(el('text',{x:34,y:291,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'master input TG'));
+    gT5.appendChild(el('text',{x:34,y:302,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'+ first inverter'));
+    gT5.appendChild(el('text',{x:34,y:320,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM},'full cell repeats'));
+    gT5.appendChild(el('text',{x:34,y:331,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM},'this ~18 MOS'));
+    t5.stateLab=el('text',{x:206,y:466,'font-family':'var(--font-mono)','font-size':11,fill:OK,'text-anchor':'start'},'');gT5.appendChild(t5.stateLab);
+  }
+  function updateT5(s){
+    var SURF=t5.SURF, Xv=s.master, Mout=1-s.master, cp=s.cp, w=9;
+    var on={TGP:cp===0, TGN:cp===0, INVP:Xv===0, INVN:Xv===1};
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k],gx=dv.g.gx;
+      if(on[dv.key]){var ds=14;dv.g.chan.setAttribute('d','M '+(gx-w)+' '+SURF+' L '+(gx+w)+' '+SURF+' L '+(gx+w)+' '+(SURF+ds)+' L '+(gx-w)+' '+(SURF+ds)+' Z');dv.g.chan.setAttribute('opacity','0.9');}
+      else dv.g.chan.setAttribute('opacity','0');}
+    t5.mD.setAttribute('stroke',s.d?ACCENT:'oklch(0.36 0.06 18)');
+    t5.mX.setAttribute('stroke',Xv?HI:LO);t5.mXg.setAttribute('stroke',Xv?HI:LO);
+    t5.mMo.setAttribute('stroke',Mout?HI:LO);
+    t5.mCP.setAttribute('stroke',cp?WARM:'oklch(0.42 0.05 70)');t5.mCPn.setAttribute('stroke',cp?'oklch(0.42 0.05 70)':WARM);
+    var net={TGP:WARM,TGN:WARM,INVP:Xv?HI:LO,INVN:Xv?HI:LO};
+    for(var gi=0;gi<t5.gateLabs.length;gi++){t5.gateLabs[gi].txt.setAttribute('fill',net[t5.gateLabs[gi].key]||BRONZE);}
+    if(cp===0){t5.stateLab.textContent='CP low : pass gate channels on, X follows D, inverter drives Mout';t5.stateLab.setAttribute('fill',CYAN);}
+    else{t5.stateLab.textContent='CP high : pass gate off, X isolated and held by the latch';t5.stateLab.setAttribute('fill',WARM);}
+  }
+  buildT1();buildT2();buildT3();buildT4();buildT5();
+
+  var scope=document.getElementById('scope');var sc={buf:[],N:120};
+  function buildScope(){
+    var L=42,R=292,T=10,B=200;sc.L=L;sc.R=R;sc.T=T;sc.B=B;
+    scope.appendChild(el('rect',{x:L,y:T,width:R-L,height:B-T,fill:'oklch(0.16 0.02 285)',stroke:'oklch(0.32 0.045 285)','stroke-width':1}));
+    sc.lanes={cp:{hi:26,lo:58,col:CYAN,lab:'CP'},d:{hi:90,lo:122,col:ACCENT,lab:'D'},q:{hi:154,lo:186,col:HI,lab:'Q'}};
+    for(var k in sc.lanes){var ln=sc.lanes[k];
+      scope.appendChild(el('line',{x1:L,y1:ln.lo,x2:R,y2:ln.lo,stroke:'oklch(0.24 0.02 285)','stroke-width':1}));
+      scope.appendChild(el('line',{x1:L,y1:ln.hi,x2:R,y2:ln.hi,stroke:'oklch(0.22 0.02 285)','stroke-width':1,'stroke-dasharray':'2 3'}));
+      scope.appendChild(el('text',{x:L-6,y:(ln.hi+ln.lo)/2+3,'font-family':'var(--font-mono)','font-size':10,fill:ln.col,'text-anchor':'end'},ln.lab));}
+    sc.edges=el('g',{});scope.appendChild(sc.edges);
+    sc.pCP=el('path',{d:'',fill:'none',stroke:CYAN,'stroke-width':2,'stroke-linejoin':'round'});scope.appendChild(sc.pCP);
+    sc.pD=el('path',{d:'',fill:'none',stroke:ACCENT,'stroke-width':2,'stroke-linejoin':'round'});scope.appendChild(sc.pD);
+    sc.pQ=el('path',{d:'',fill:'none',stroke:HI,'stroke-width':2.4,'stroke-linejoin':'round'});scope.appendChild(sc.pQ);
+    sc.now=el('line',{x1:R,y1:T,x2:R,y2:B,stroke:FAINT,'stroke-width':1,opacity:0.5});scope.appendChild(sc.now);
+    scope.appendChild(el('text',{x:(L+R)/2,y:B+8,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'time ->'));
+    scope.appendChild(el('text',{x:R-2,y:T+10,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'end'},'Q samples D at each rising edge'));
+  }
+  function pushScope(s){sc.buf.push({cp:s.cp,d:s.d,q:s.Q});if(sc.buf.length>sc.N)sc.buf.shift();}
+  function stepPath(k){
+    var ln=sc.lanes[k],L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length;if(n<1)return '';
+    var dx=(R-L)/N;function X(i){return R-(n-1-i)*dx;}function Y(v){return v?ln.hi:ln.lo;}
+    var d='M '+X(0).toFixed(1)+' '+Y(b[0][k]);
+    for(var i=1;i<n;i++){d+=' L '+X(i).toFixed(1)+' '+Y(b[i-1][k])+' L '+X(i).toFixed(1)+' '+Y(b[i][k]);}
+    return d;
+  }
+  function drawScope(s){
+    sc.pCP.setAttribute('d',stepPath('cp'));sc.pD.setAttribute('d',stepPath('d'));sc.pQ.setAttribute('d',stepPath('q'));
+    while(sc.edges.firstChild)sc.edges.removeChild(sc.edges.firstChild);
+    var L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length,dx=(R-L)/N,qh=sc.lanes.q.hi,ql=sc.lanes.q.lo;
+    for(var i=1;i<n;i++){if(b[i-1].cp===0&&b[i].cp===1){var x=R-(n-1-i)*dx;
+      sc.edges.appendChild(el('line',{x1:x,y1:sc.lanes.cp.hi-4,x2:x,y2:ql+4,stroke:WARM,'stroke-width':1,'stroke-dasharray':'3 3',opacity:0.65}));
+      sc.edges.appendChild(el('circle',{cx:x,cy:(b[i].q?qh:ql),r:2.6,fill:WARM}));}}
+  }
+  buildScope();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roD=trow('data D'),roCP=trow('clock CP'),roQ=trow('output Q'),roQn=trow('output NOT Q'),roM=trow('master node'),roPh=trow('phase');
+
+  // ===== controls =====
+  var dInEl=document.getElementById('dIn'),cpInEl=document.getElementById('cpIn'),vddEl=document.getElementById('vdd'),
+      labD=document.getElementById('labD'),labCP=document.getElementById('labCP'),labVdd=document.getElementById('labVdd'),
+      btnRun=document.getElementById('btnRun'),btnClk=document.getElementById('btnClk'),visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),
+      chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true,tier='t1',clkAuto=false,clkPhase=0,cpPrev=0,CLKP=72;
+  footnote.innerHTML='The part shown is the 74AUP1G79, a single positive-edge-triggered D-type flip-flop, verified against the Nexperia data sheet (Rev. 9, 24 July 2023). In its 5-lead SOT353 (TSSOP5) and SOT753 (SC-74A) packages the pinout places the data input D on pin 1, the clock CP on pin 2, ground on pin 3, the output Q on pin 4, and the supply VCC on pin 5, with the pin 1 indicator at the lower-left corner. The function table is short: on a LOW-to-HIGH transition of CP the value present at D is stored and appears at Q; at all other times Q holds its last value. Internally this is a master-slave pair of latches clocked on opposite phases, so the input is sampled at the rising edge and is never connected straight through to the output. All inputs have Schmitt-trigger action, which makes the part tolerant of slow input rise and fall times. Per the data sheet the 74AUP1G79 runs from 0.8 to 3.6 volts, tolerates inputs and outputs up to 3.6 volts, draws about 0.9 microamps maximum supply current, clocks to several hundred megahertz, switches with a clock-to-Q delay of roughly 2 to 4 nanoseconds at 3.3 volts, withstands more than 5000 volts of human-body-model ESD, supports partial power-down through its Ioff circuitry, and is specified over -40 to +125 C. A single D flip-flop like this is the bit cell of registers, counters, shift registers, and every synchronous state machine.';
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
+    var names={t1:'symbol . pinout',t2:'flow network',t3:'pressure pilot valves',t4:'real device . 74AUP1G79',t5:'metal oxide silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+  btnClk.addEventListener('click',function(){clkAuto=!clkAuto;this.textContent=clkAuto?'manual clock':'auto clock';this.classList.toggle('is-active',clkAuto);});
+  setTier('t1');
+
+  var tick=0, master=0, stored=0;
+  function frame(){
+    if(running){tick++;}
+    var VDD=(+vddEl.value)/100;
+    var Dv=clamp((+dInEl.value)/100,0,VDD), CPv;
+    if(clkAuto){
+      if(running)clkPhase=(clkPhase+1)%CLKP;
+      CPv=(clkPhase<CLKP*0.5)?0:VDD; cpInEl.value=Math.round(CPv*100);
+    } else { CPv=clamp((+cpInEl.value)/100,0,VDD); }
+    var m=dff(Dv,CPv,VDD,master,stored);
+    master=m.master; stored=m.Q;
+    var rising=(m.cp===1&&cpPrev===0); cpPrev=m.cp;
+    var s={Dv:m.Dv,CPv:m.CPv,d:m.d,cp:m.cp,cpn:m.cpn,master:m.master,Q:m.Q,Qn:m.Qn,VDD:VDD,masterT:m.masterT,phase:m.phase,rising:rising,run:running,tick:tick};
+    if(running)pushScope(s);
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else if(tier==='t3'){updateT3(s);}else if(tier==='t4'){updateT4(s);}else{updateT5(s);}
+    drawScope(s);
+    labD.textContent=fmtV(Dv);labCP.textContent=fmtV(CPv);labVdd.textContent=fmtV(VDD);
+    roD.textContent=m.d?'1  (HIGH)':'0  (LOW)';roD.style.color=m.d?HI:LO;
+    roCP.textContent=m.cp?'1  (HIGH)':'0  (LOW)';roCP.style.color=m.cp?HI:LO;
+    roQ.textContent='Q = '+m.Q;roQ.style.color=m.Q?HI:LO;
+    roQn.textContent='NOT Q = '+m.Qn;roQn.style.color=m.Qn?HI:LO;
+    roM.textContent='master = '+m.master;roM.style.color=m.master?HI:LO;
+    roPh.textContent=m.phase;roPh.style.color=m.masterT?CYAN:WARM;
+    regTag.textContent=m.cp?'CP high':'CP low';if(chipReg){chipReg.textContent='Q='+m.Q;}
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();</script>
+</body>
+</html>

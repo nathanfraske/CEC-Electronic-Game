@@ -594,6 +594,275 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Switching threshold", value: f(rail / 2, "V") },
     ],
   },
+  HADD: {
+    name: "Half Adder",
+    equation: "SUM = A ⊕ B · COUT = A · B",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · A + B → {COUT, SUM} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A half adder adds two bits and reports a sum and a carry-out — and that is all it does, with no carry-in. The sum is A XOR B (high when the inputs differ) and the carry-out is A AND B (high only when both are 1), so two bits add to 0, 1, or — when they are both 1 — a 2 carried out. It is the rung below the full adder: the cell at the very least-significant position of a ripple chain, where there is nothing yet to carry in. It is built from exactly an XOR and an AND, which is the lesson — meeting addition without the carry-in pin first makes the full adder's third input obvious. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail every output swings within. Inputs are read against a half-rail threshold and draw essentially no current; the outputs are driven hard to VCC or GND, and lag the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  FADD: {
+    name: "Full Adder",
+    equation: "SUM = A ⊕ B ⊕ CIN · COUT = majority(A, B, CIN)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · A + B + CIN → {COUT, SUM} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A full adder adds three bits — A, B, and a carry-in — and reports a sum and a carry-out. The sum is the three-way parity A XOR B XOR CIN (high when an odd number of inputs are 1) and the carry-out is the majority of the three (high when at least two are 1). That extra carry-in is what lets it chain: wire each stage's COUT into the next stage's CIN and N of them form an N-bit ripple-carry adder — the cell every ALU is built from. A full adder is literally two half-adders plus an OR on their carries. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the outputs swing within. Inputs are thresholded at half that rail and draw essentially no current; the outputs are driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  MUX2: {
+    name: "2:1 Mux",
+    equation: "Y = (A · ¬SEL) + (B · SEL)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · Y = SEL ? B : A · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A 2:1 multiplexer passes one of its two data inputs to the output, chosen by a select line: SEL low forwards A, SEL high forwards B. It is the elemental router — the building block of every larger mux, every data-path 'pick a source,' and, fed back on itself, the lookup-table cell of an FPGA. Cascade them in a tree for a 4:1 or 8:1; this is the leaf. Internally it is an inverter on SEL, two AND gates (A·¬SEL and B·SEL) gating each input, and an OR that merges them. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the output swings within. The inputs are thresholded at half that rail and draw essentially no current; the output is driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  DMUX: {
+    name: "1:2 Demux",
+    equation: "Y0 = D · ¬SEL · Y1 = D · SEL",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · D → Y0/Y1 by SEL · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A 1:2 demultiplexer is the mirror image of the 2:1 mux: it steers one data input to one of two outputs by the select line. Y0 = D·¬SEL asserts when SEL is low, Y1 = D·SEL when SEL is high, and the unselected output stays low. Tie D high and it becomes a 1-of-2 decoder — exactly one output asserts for each address value, the one-hot primitive every memory address line and chip-select grows from. Distribution is the dual of selection, and meeting them as a matched pair makes that duality concrete. Internally it is an inverter on SEL and two AND gates. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the outputs swing within. Inputs are thresholded at half that rail and draw essentially no current; the outputs are driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  MAJ3: {
+    name: "Majority Gate",
+    equation: "Y = AB + BC + CA",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · high when ≥2 inputs high · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A majority gate outputs whatever the majority of its three inputs say: high when two or three of them are high, low otherwise. It is the heart of fault-tolerant logic — triple-modular redundancy votes out a single failed channel through exactly this gate, three copies of a signal reduced to the value at least two agree on — and, not coincidentally, it is the carry-out function of a full adder (COUT = majority(A, B, CIN)), so it ties arithmetic and reliability together. The function is monotone (no input inversion) and a primitive of threshold and neuromorphic logic. Internally it is three AND gates (AB, BC, CA) merged by an OR. It is a real powered IC made of gates: wire VCC to a positive rail and GND to ground, and the supply across them (V(VCC) − V(GND)) is the logic rail the output swings within. Inputs are thresholded at half that rail and draw essentially no current; the output is driven hard to VCC or GND, lagging the inputs by the internal gates' propagation delay.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  SRL: {
+    name: "SR Latch",
+    equation: "Q = NOR(R, Q̄) · Q̄ = NOR(S, Q)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · set/reset memory · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "An SR latch is the first thing a circuit ever remembered: one bit of memory made of feedback. A pulse on SET drives the output high and it STAYS high after SET releases; a pulse on RESET drives it low and it stays. Hold both low and it remembers its last value. That persistence comes from two cross-coupled NOR gates, each feeding the other's input, so the pair has two stable states it locks into — the bistable cell every flip-flop, register, and SRAM bit grows from. The one rule: do not assert SET and RESET together (both high forces both outputs low and the next state is undefined as they release) — the forbidden state the clocked flip-flops were invented to tame. A real powered IC: wire VCC/GND and the output swings that rail.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  DLATCH: {
+    name: "D-Latch",
+    equation: "Q follows D while EN=1, holds when EN=0",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · transparent when EN high · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A D-latch stores one bit, but unlike a flip-flop it is LEVEL-sensitive: while its enable EN is high the latch is transparent — Q simply follows D — and the instant EN goes low it freezes the last value of D and holds it. It is the missing middle term between the SR latch (feedback memory, but no clean data input) and the edge-triggered D flip-flop (which samples D only on a clock EDGE). Meeting the transparent latch beside the edge flip-flop is the cleanest way to learn level- vs. edge-triggered — the single most confused distinction in sequential logic, and the source of every latch-vs-flop timing bug. Internally it is a gated SR latch: two steering AND gates (D·EN, ¬D·EN) feeding the cross-coupled NOR pair, so EN low forces both terms low and the latch holds. A real powered IC: wire VCC/GND and the outputs swing that rail.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  JKFF: {
+    name: "JK Flip-Flop",
+    equation: "Q⁺ = J·Q̄ + K̄·Q · (tie J=K ⇒ T)",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · edge-triggered J/K · Q drive ${f(e.current, "A")}`,
+    plain: () =>
+      "The JK is the universal flip-flop: on each rising clock edge J and K decide the next state — hold (0 0), set (1 0), reset (0 1), or TOGGLE (1 1), the one flip-flop that does all four. The toggle is the prize: tie J and K together as a single T input and it flips on every clock while T is high, so Q comes out at half the clock frequency — the divide-by-2 cell every binary counter and frequency divider is built from. It is the SR latch with its forbidden state redeemed: where set = reset = 1 was illegal, here J = K = 1 is the most useful case. Internally it is a D flip-flop fed by steering logic that computes D = J·Q̄ + ¬K·Q from the flop's own outputs; the edge trigger makes the toggle race-free. Wire VCC/GND to power the steering and clock it on the rising edge.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Q output drive", value: f(e.current, "A") },
+      { label: "Switching threshold", value: f(rail / 2, "V") },
+    ],
+  },
+  TRI: {
+    name: "Tri-State Buffer",
+    equation: "Y = A when OE=1 · Hi-Z when OE=0",
+    headline: (e, rail) =>
+      `Rail ${f(rail, "V")} · ${Math.abs(e.current) > 1e-7 ? "enabled" : "Hi-Z / idle"} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A tri-state buffer is a buffer with a third output state: high-impedance. When OE (output enable) is high it passes A to Y as a clean logic level; when OE is low it RELEASES Y entirely — neither high nor low, just disconnected (Hi-Z). That third state is the whole idea of a shared bus: many tri-state drivers on one wire, only one enabled at a time, the rest electrically absent. It is the part that makes a data bus, a wired backplane, and the output-enable pin on every memory and register possible. Two enabled drivers fighting on one net is a bus conflict (the sim resolves it to the unknown state X). Internally the enable gates the buffer's supply rail — OE low collapses it so the output goes dark (Hi-Z) — the honest dead-rail realization of the third state.",
+    derived: (e, rail) => [
+      { label: "Logic rail", value: f(rail, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      {
+        label: "State",
+        value: Math.abs(e.current) > 1e-7 ? "driving" : "Hi-Z / idle",
+      },
+    ],
+  },
+  SAMP: {
+    name: "Clocked Sampler",
+    equation: "OUT ← (IN > Vth) on ↑CLK",
+    headline: (e, vth) =>
+      `Threshold ${f(vth, "V")} · clock-edge quantize · OUT drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A clocked sampler is the atom of an analog-to-digital converter: on each rising edge of its clock it compares its analog input against a fixed threshold and latches a single bit — high if the input is above the threshold, low if below — holding that bit on its output until the next edge. Between edges it ignores the input entirely. That is the two halves of digitising a signal in their simplest form: SAMPLE (freeze a value on the clock edge) and QUANTIZE (decide which side of a level it fell on). Chain many of these at staggered thresholds and you have a flash ADC; feed one a ramp and a comparator and you have the heart of a successive-approximation converter. The input is sensed, not loaded (it draws essentially no current); the output is driven hard to the rail or ground one tick after the edge.",
+    derived: (e, vth) => [
+      { label: "Comparison threshold", value: f(vth, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+      { label: "Output bit", value: e.current >= 0 ? "follows IN>Vth" : "—" },
+    ],
+  },
+  ASW: {
+    name: "Analog Switch",
+    equation: "A↔B when CTRL high · R_on",
+    headline: (e, ron) =>
+      `R_on ${f(ron, "Ω")} · ${Math.abs(e.vAcross) < 0.25 ? "closed" : "open"} · ${f(e.current, "A")} through`,
+    plain: () =>
+      "An analog switch (a transmission gate) is a digitally-controlled connection between two nodes: a logic level on its control pin decides whether the A and B terminals are joined by a low resistance (closed) or isolated (open). Unlike a logic gate it does not produce a level — it PASSES whatever analog signal is on the path, in either direction, so it works as happily on a slow sensor voltage as on a logic line. It is the building block of analog multiplexers (steer one of several inputs to a shared output), sample-and-hold front ends (briefly close to charge a hold capacitor, then open to freeze the value), and programmable signal routing. When closed it is not ideal: it has a small on-resistance R_on in series, which forms a divider with whatever it feeds and limits how fast it can charge a capacitive load. It closes when the control rises above half the supply rail and opens below it.",
+    derived: (e, ron) => [
+      { label: "On-resistance R_on", value: f(ron, "Ω") },
+      {
+        label: "State",
+        value: Math.abs(e.vAcross) < 0.25 ? "closed (A↔B)" : "open",
+      },
+      { label: "Through current", value: f(e.current, "A") },
+    ],
+  },
+  CMP: {
+    name: "Comparator",
+    equation: "OUT → rail when IN+ > IN− · hyst V_H",
+    headline: (e, vh) =>
+      `Hysteresis ${f(vh, "V")} · open-loop compare · OUT drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A comparator is the bridge from the analog world to the digital one: it watches two analog inputs and slams its output to one rail or the other depending on which is larger — high when IN+ sits above IN−, low when below. Unlike an op-amp it runs open-loop ON PURPOSE; there is no linear region, just a hard decision, so it turns a smooth voltage into a clean logic level. That makes it the front end of every ADC, every zero-crossing detector, threshold alarm, and on/off controller. Real comparators add HYSTERESIS — a small dead-band V_H around the switching point — so a noisy input wobbling near the threshold does not make the output chatter: once it flips high it will not flip back until the input falls a little below the level, and vice versa. Set V_H to 0 for an ideal comparator, or widen it to reject more noise (the Schmitt-trigger trick). The output swings the GND..VCC rail like a powered gate; wire the inputs and power and feed it a slow ramp against a reference to watch it snap.",
+    derived: (e, vh) => [
+      { label: "Hysteresis V_H", value: f(vh, "V") },
+      {
+        label: "Mode",
+        value: vh > 0 ? "Schmitt (noise-immune)" : "plain (ideal)",
+      },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  LUT: {
+    name: "FPGA Logic Cell",
+    equation: "OUT = table[ IN0 | IN1·2 | IN2·4 | IN3·8 ]",
+    headline: (e) => `OUT ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A look-up table is the atom of an FPGA: not a fixed gate but a tiny 16-cell memory whose contents ARE the truth table of any function of four inputs. The four inputs form a 4-bit address (IN0 the least-significant bit) and the addressed cell drives the output — so the same silicon becomes AND, OR, XOR, a full-adder bit, a 3-input majority voter, anything, depending only on which 16 bits you store. This is what 'field-programmable' means: an FPGA ships as a sea of these cells plus a configurable interconnect, and a bitstream fills in every table. Pick a function from the presets or type any of the 65 536 patterns straight into the hex field. Turn on the output register and the cell latches its result on the rising clock edge — a LUT plus a flip-flop, the exact 'logic element' an FPGA tiles by the thousand.",
+    derived: (e) => [
+      { label: "Output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  SPIM: {
+    name: "SPI Master",
+    equation: "4-wire serial · SCLK / MOSI / MISO / CS",
+    headline: (e) => `SCLK ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "SPI is the workhorse short-range serial bus: four wires, full-duplex, no addressing. The master owns the clock. Pulse its START input and it pulls CS low, then shifts the data word out on MOSI most-significant-bit first, one bit per SCLK edge, while simultaneously clocking the slave's reply in on MISO — out and in on the same clocks, which is what 'full-duplex' buys you. Set the word it sends in hex; the clock rate and bit count come from sensible defaults. Wire its SCLK/MOSI/CS to a SPI slave (and MISO back) to watch a whole transaction. The trade against a UART is that SPI needs that shared clock wire, but in return it has no agreed baud rate to get wrong and runs much faster.",
+    derived: (e) => [
+      { label: "SCLK line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  SPIS: {
+    name: "SPI Slave",
+    equation: "shifts on SCLK · reply MSB-first on MISO",
+    headline: (e) => `MISO ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "The other end of the SPI bus: a slave has no clock of its own — it is driven entirely by the master's SCLK. While CS is held low it samples MOSI on each clock edge to receive the incoming word, and at the same time shifts its own reply word out on MISO, most-significant-bit first, so a read and a write happen in the same transaction. RXVALID goes high once a full frame has landed. Set the reply word it returns in hex. Real SPI peripherals (sensors, flash, displays) are exactly this: you select the chip, clock out a command, and clock the answer back in on the same edges.",
+    derived: (e) => [
+      { label: "MISO line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  UART: {
+    name: "UART",
+    equation: "async serial · START + data(LSB) + STOP",
+    headline: (e) => `TX ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A UART is the classic asynchronous serial port — just two wires, TX and RX, and no shared clock at all. Instead both ends agree on a baud rate beforehand and frame each byte: the idle-high line is pulled low for one START bit (the receiver's cue to start sampling), then the data bits are sent least-significant-bit first, then a STOP bit returns the line high. The receiver waits for the falling start edge and samples each bit in the middle of its window, so small clock differences don't matter. Pulse SEND to transmit the data word (set it in hex); RXVALID pulses when a byte arrives on RX. This is what's under a serial console, GPS modules, and the venerable RS-232 port — slower than SPI but needing no clock wire.",
+    derived: (e) => [
+      { label: "TX line", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  ADC: {
+    name: "Flash ADC",
+    equation: "code = floor(8 · VIN / VREF), clamped 0..7",
+    headline: (e) =>
+      `flash quantize · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A flash ADC is the fastest way to turn a voltage into a number: it compares the input against every threshold at once. A reference ladder divides VREF into seven evenly-spaced levels; a bank of seven comparators each asks 'is VIN above my level?' in parallel; and a priority encoder turns that thermometer of yes/no answers into a 3-bit binary code on D2..D0 — all in a single step, with no clock and no searching. That parallelism is both its speed and its cost: an N-bit flash needs (2 to the N) minus 1 comparators, so flash is used where speed matters most (video, fast digitizers), while successive-approximation trades speed for far fewer parts at higher resolution. This one digitizes VIN against VREF into 8 levels (LSB = VREF/8); pair it with a 3-bit DAC to watch a voltage convert to a code and reconstruct back.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  DAC: {
+    name: "R-2R DAC",
+    equation: "AOUT = (4 · D2 + 2 · D1 + D0) / 8 · Vhigh",
+    headline: (e) =>
+      `R-2R reconstruct · AOUT ${f(e.vAcross, "V")} · ladder ${f(e.current, "A")}`,
+    plain: () =>
+      "A digital-to-analog converter turns a binary code back into a voltage — the reconstruct half of the converter pair with the flash ADC. This is the most honest DAC there is: nothing but a resistor R-2R ladder, no op-amp, no switches, no reference pin. Each input bit is an ordinary logic level (0 or the supply high), and the ladder weights them by powers of two — the MSB D2 counts for 4, D1 for 2, the LSB D0 for 1 — then sums them, so the output settles to eight evenly-spaced steps from 0 to 7/8 of full scale, one LSB = full-scale/8. The trick is the repeated R-2R cell: at every node, looking toward the LSB end the resistance is 2R, so each step down the ladder halves a bit's contribution — binary weighting from one two-value building block. Drive D2..D0 from a counter to watch AOUT climb the reconstruction staircase; feed it back into a comparator and you have the heart of a successive-approximation ADC.",
+    derived: (e) => [
+      { label: "AOUT (code · LSB)", value: f(e.vAcross, "V") },
+      { label: "Ladder current", value: f(e.current, "A") },
+    ],
+  },
+  SAR: {
+    name: "SAR ADC",
+    equation: "code = floor(8 · VIN / VCC), found bit-by-bit over 3 clocks",
+    headline: (e) =>
+      `successive approx · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A successive-approximation (SAR) ADC converts by binary search — the speed-versus-parts opposite of the flash ADC. Instead of a bank of comparators it has just one, wired in a loop with a small internal DAC and a 3-bit register: on each clock it tries the next bit, most-significant first. Set the bit, let the DAC produce that trial voltage (the first trial is half scale, then a quarter, then an eighth), and ask the one comparator 'is VIN still above it?' — keep the bit if yes, drop it if no. After 3 clocks the register has homed in on the answer and DONE goes high; the result is floor(8 · VIN / VCC), clamped 0..7 — exactly the code the flash ADC finds in a single step, but reached with one comparator instead of seven. That is the classic trade: flash is fastest but costs (2 to the N) minus 1 comparators, while SAR needs only N clocks and a handful of parts, which is why most general-purpose ADCs are SAR. Drive CLK from a clock and hold VIN steady during the conversion (a real SAR samples and holds it); VCC is the full-scale reference.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  SDM: {
+    name: "Sigma-Delta ADC",
+    equation: "density of 1s on BS = VIN/VCC; code = count of 1s",
+    headline: (e) =>
+      `oversample + count · D0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A sigma-delta (delta-sigma) ADC is the modern high-resolution converter, and it works in a completely different way from flash or SAR: instead of measuring the input precisely once, it measures crudely (one bit!) but very often, and lets averaging do the rest. A fast loop — an integrator, a 1-bit comparator, and a 1-bit feedback DAC — produces a stream of 1s and 0s whose DENSITY equals VIN/VCC: feed in half-scale and the stream is half 1s; feed in nine-tenths and it is nine-tenths 1s. The clever part (noise shaping) is that the loop pushes its quantisation error up to high frequencies, away from the signal. A simple digital filter — here, just counting the 1s over a block of clocks — then turns that bit stream into a clean multi-bit number. So you trade speed for resolution and parts: one comparator, almost no precision analog, and as many bits as you are willing to oversample for. Watch the BS pin: it is the raw 1-bit stream, and its blur of 1s and 0s gets denser as VIN rises. Drive CLK from a clock; VCC is the full-scale reference.",
+    derived: (e) => [
+      { label: "D0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
+  CTR: {
+    name: "Counter",
+    equation: "count = (count + 1) mod 8, on each rising CLK",
+    headline: (e) =>
+      `binary up-count · Q0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A binary counter is the most basic sequential machine there is: a register that adds one to itself on every clock edge. Three bits count 0 → 7 and roll over, so the outputs Q0/Q1/Q2 step through the binary numbers in order — each bit toggles at half the rate of the one below it, which is why a counter is also a chain of frequency dividers (Q0 = clock ÷2, Q1 = ÷4, Q2 = ÷8). RESET clears it to zero asynchronously; leave RESET unwired and it free-runs. It is the workhorse behind timers, clock dividers, address generators, and sequencers — and wire Q0/Q1/Q2 into a DAC and the staircase becomes a self-running ramp (sawtooth) generator. Counts on the rising edge, so drive CLK from a clock or pulse source.",
+    derived: (e) => [
+      { label: "Q0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

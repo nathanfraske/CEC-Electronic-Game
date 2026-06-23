@@ -6,8 +6,12 @@
 // `Element::params` in crates/sim-core/src/lib.rs; a slot of 0 means "use the kind default".
 // In the sandbox the raw params stay editable — this is the curated set for the game.
 
-/** Number of f64 model parameters per device — mirrors sim-core's `PARAM_STRIDE`. */
-export const PARAM_STRIDE = 4;
+/** Number of f64 model parameters per device — mirrors sim-core's `PARAM_STRIDE`.
+ * Provisioned to 8 by ADR 0002 (was 4). MUST equal the sim-core constant: every element's
+ * param block is emitted exactly `PARAM_STRIDE` wide and the core rejects any other length.
+ * The per-tier param literals below stay ≤4 entries (slots 4–7 reserved); buildNetlist
+ * zero-pads each block out to this stride, which is golden-safe (a 0 slot = the kind default). */
+export const PARAM_STRIDE = 8;
 
 /** The four grades, by index (0 budget … 3 lab-grade). */
 export const TIER_LABELS = [

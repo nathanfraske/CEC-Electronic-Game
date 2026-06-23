@@ -5,6 +5,973 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (84) — Adversarial panel audit of the full branch diff → fixes → PR to main
+
+**State:** 🟢 audited, fixed, gate-green; pushed to `claude/kind-turing-hdelb3`. **Direct push to `main` is
+blocked by org policy (HTTP 403)** — git to the repo server forbids it — so landing via a **PR → main**
+(owner's choice) for review. Clean fast-forward (main `3c1a7e5` is an ancestor of HEAD `038bd77`).
+
+Ran a 4-agent adversarial review over the full `origin/main...HEAD` diff (~10k LOC of code; the ~20k of
+glyph HTML are static refsheets, spot-checked only) plus the full verification gate as ground truth.
+
+**Verdict: solid.** Determinism-safe (188 tests, golden `0xeaac_3764_99e4_fa24` byte-identical — all
+sim-core additions are additive/integer/append-folded); the flash-ADC discrete composition's
+thermometer→binary encoder was independently truth-table-verified for all 8 codes; all parts wired
+consistently across every map; SPDX headers present; logs current.
+
+**Fixes applied this pass:**
+- **BUG (real regression) — `board.ts` gauge peak** (`drawNetBars` + standpipe twin): a refactor had
+  rewritten the unipolar peak selection as `Math.abs(vmean) >= Math.abs(vmin) ? vmax : vmin`, which is NOT
+  equivalent to the original `up = vmean >= 0` intent (wrong envelope peak when the mean is small-positive
+  but a large negative excursion exists). Restored to `vmean >= 0 ? vmax : vmin`.
+- **NIT — `graph.ts` ADC comment** stale ("ELEM_BEHAVIORAL prog 5 / BEH_SPEC") → now describes the
+  discrete CEC_COMP composition.
+- **internalsView.ts** — defensive `Math.min(pinNodes.length, pins.length)` bound; clarified the
+  terminal-count comments.
+
+**Deferred (low-risk hardening, not reachable from bounded UI; noted for later):** `el.params[N] as u32`
+casts without a finite-check; the UART RX baud counter could overflow at absurd baud. Neither affects
+normal operation or the golden.
+
+**NEXT (unchanged):** phase 5 IC-maker authoring UI (ADR 0006) — die canvas, port pads, pinout editor,
+generalized expander, persistence; build with the owner's visual loop. The flash-ADC discrete view + the
+internals layout for large composites still want a visual pass (owner review).
+
+---
+
+## 2026-06-23 (83) — Seal/zoom: phases 3 + 4 done, phase 5 foundation (package library) — REVIEW PASS
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner asked for analogy-lens support + "implement
+all phases for a review pass." Delivered phases 3 and 4 fully and phase 5's reviewable foundation; the
+phase-5 interactive authoring UI is the remaining major effort (it needs the owner's visual loop — I did
+NOT blind-dump it). **Several pieces need the owner's eyes/verification (flagged below).**
+
+**Phase 3 — analogy lens too (DONE).** The zoom-to-open internals now trigger under BOTH non-schematic
+lenses (`reality` || `analogy`), skinned per lens via a passed-in `accent` (water `PIPE_WATER` under
+analogy, electron `COND_ELEC` under reality); `internalsView.ts` stays lens-agnostic. Schematic lens still
+shows the black-box symbol. Commit `b35aaa9`.
+
+**Phase 4 — flash ADC remade as a DISCRETE composition (DONE, NEEDS VERIFICATION).** `CEC_COMP.ADC` (in
+`netlist.ts`): an 8-resistor ladder VREF→GND (taps k/8·VREF) + 7 transparent comparators (th_k = VIN >
+k/8·VREF) + a gate encoder (D2 = th4; D1 = th2·¬th4 + th6; D0 = th1·¬th2 + th3·¬th4 + th5·¬th6 + th7); c4
+drives D2 directly. `BEH_SPEC.ADC` removed (sim-core prog 5 retained, golden-safe, just unwired). So the
+flash ADC now OPENS to its real comparator bank in the zoom view. **Verify:** (a) the `flash-adc` /
+`adc-dac-staircase` demos still ramp correctly (I can't run the web sim — the encoder logic is
+truth-table-verified but unrun); (b) 26 sub-elements render dense in the current grid layout — the
+internals layout wants a pass for big composites. Commit `a938448`.
+
+**Phase 5 foundation — package-format library (DONE).** New `web/src/lib/packages.ts`: `packageLayout(arch,
+pinCount)` → footprint (grid cells), numbered leads, pin-1, and a `DiePolicy` (`fixed`: SOT-23-3/5/6;
+`expandable`: VSSOP-8, DIP-8/14/16). Pure geometry/data, no consumer yet (foundation for the authoring UI).
+
+**REMAINING — phase 5 authoring UI (the IC maker proper, ADR 0006).** NOT built — it's a large interactive
+subsystem best built with the owner's visual feedback: the **die-boundary canvas** (bounded build region +
+DRC "nothing over the walls"), **port pads** (drop on the wall, wire internal→pad, pad = the package lead),
+the **pinout editor**, **free-form/CEC9xxx naming**, **one-layer nesting** (hide the user-IC library on the
+canvas), the **generalized `CEC_COMP` expander** for an arbitrary saved sub-graph, **persistence** + a
+**user part bin**. Design is fully specced in `docs/adr/0006-...`. Start with the generalized expander
+(wire `packages.ts` in) + a minimal "seal selection → new IC" flow, iterating on the UX with the owner.
+
+---
+
+## 2026-06-23 (82) — Seal/zoom mini-mode: ADR 0005 phase 2 DONE (zoom-to-open renderer)
+
+**State:** 🟢 pushed; **needs the owner's VISUAL check in the browser** (I can't run PixiJS here — the web
+gate is green but the look/animation is unverified). Branch `claude/kind-turing-hdelb3`.
+
+**HOW TO TRIGGER:** switch the board to the **Reality lens** and **zoom in** (scroll) onto a composite IC
+(half-adder, mux, JK flip-flop, R-2R DAC, …) past `INTERNALS_ZOOM` (2.5). The black-box symbol opens to its
+live internal sub-circuit. (Schematic/analogy lenses are unchanged; LOD must be on, which it is by default.)
+
+**What it does:** a composite chip, zoomed in under reality, draws its real sub-elements (the gates /
+resistors / DFF it is simulated as) wired together, animating from the same per-frame snapshot — wires
+colour by node level (rail→cyan), carriers flow along active wires on the board's flow clock, gate symbols
+tint by output level. Pin nodes are anchored at the real package pins, so you see the inside wired straight
+out to the boundary. This is "seal-as-same-netlist": purely a drawing over the netlist the sim already
+solves — no new sim, no hashing.
+
+**Files:** new **`web/src/lib/internalsView.ts`** (`drawCompositeInternals` + gate/part symbols, fully
+self-contained, render-only). **`board.ts`**: `INTERNALS_ZOOM=2.5`, field+setter `setCompositeInternals`,
+`ComponentNode.update()` gains `internals?`/`nodeV?` params and a first branch drawing internals when
+`lens==="reality" && zoom>=INTERNALS_ZOOM`; pin-label LOD extended to the internals view. **`App.svelte`**:
+`board.setCompositeInternals(nl.compositeInternals)` in `rebuildNetlist`. Phase-1 `CompositeInternals` also
+gained `vccNode`/`gndNode` (for rail normalisation). Web gate green (check 0/0, lint, build).
+
+**NEXT / known limits to refine after the owner sees it:** (a) layout is a simple centred grid + centroid
+nodes (not a routed schematic — wires can cross); (b) gate-symbol geometry is hand-rolled and unverified
+visually — may need tuning; (c) trigger is reality-lens-gated (by design; reconsider if owner wants
+zoom-alone); (d) then phase 3 (generalise + tie to the schematic/analogy/reality ladder), phase 4 (remake
+behavioral ICs as compositions — flash ADC first), phase 5 (the IC-maker authoring UI per ADR 0006).
+
+---
+
+## 2026-06-23 (81) — Seal/zoom mini-mode: ADR 0005 phase 1 DONE (composite internals in buildNetlist)
+
+**State:** 🟢 phase 1 pushed; phase 2 (the renderer) next. Branch `claude/kind-turing-hdelb3`. Owner
+greenlit the build ("let's do it") after the ADR 0005 + 0006 design pass.
+
+**Phase 1 — composite-internals topology recorded in `buildNetlist` (`web/src/lib/netlist.ts`), web-only,
+golden-safe.** New exported types `CompositeSubElement { index, type, func, nodes[] }` and
+`CompositeInternals { pinNodes[], internalNodes[], elements[] }`, plus `BuiltNetlist.compositeInternals:
+Map<componentId, CompositeInternals>`. Built in the `CEC_COMP` expansion loop: as each sub-gate / `extra`
+element is emitted, its element index + resolved terminal nodes (a..e) + func are recorded; `pinNodes` =
+each external pin's node, `internalNodes` = the `cecInternal` nodes. **Emission is byte-identical** (the
+resolved refs are just captured into locals first), so the netlist crossing to the core and the golden are
+unchanged. Only `CEC_COMP` parts get an entry (behavioral blocks are one opaque element; leaf parts none).
+All node indices index `node_voltages`, element indices `element_currents` — the same snapshot the renderer
+already reads. Web gate green (check 0/0, lint, build).
+
+**NEXT — phase 2: the zoom-to-open renderer** (`web/src/lib/board.ts`, PixiJS). A composite chip expands
+in place to draw its live sub-circuit from `compositeInternals` + the per-frame snapshot (node voltages +
+element currents). Prototype on the **half-adder** (smallest: 2 gates) and the **R-2R DAC** (analog).
+NOTE: board.ts already references a "part-internals animation" (~line 1673) and has `pinNode()` (~2487) —
+check how it reads the snapshot and animates before adding the zoom view. Then phase 3 (generalise + tie to
+the schematic/analogy/reality ladder), 4 (remake behavioral ICs as compositions), 5 (the IC-maker
+authoring UI — ADR 0006: die boundary, port pads, packages, free-form/CEC9xxx naming, one-layer nesting).
+
+---
+
+## 2026-06-23 (80) — Sigma-delta ADC (CEC1110): the ADC trilogy is complete + counter glyph kit out
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Two threads this stop: (1) the **sigma-delta
+ADC** landed (completing the three-ADC arc), and (2) the **counter glyph build kit** was delivered for
+download. Plus the owner raised a big new direction — the **seal / "mini-mode"** mechanic (see NEXT).
+
+**Sigma-delta ADC — behavioral program 8 (`BEH_PROG_SIGMA_DELTA`):** a 1st-order ΣΔ. The **modulator** is
+a **fixed-point integer integrator** (`SD_INTEG`, an `i32` in a `u32` slot — bounded/clamped so it is
+deterministic and hashable) + a 1-bit comparator (`integ > 0`) + 1-bit feedback (`integ += vin_q -
+bit*SD_FULL`), so the **density of 1s = VIN/VCC** (the only float step is the input quantise `round`,
+deterministic). The **decimator** counts 1s over `SD_DECIM`=8 clocks → `CODE = min(count,7)`. The live bit
+is exposed on **BS = a 4th output on `g`** (identical drive pattern + `referenced`-mark to the SAR's DONE,
+now guarded `matches!(prog, SAR | SIGMA_DELTA)`). Drives D0/D1/D2 (`a`/`b`/`c`) from CODE, BS from the
+bit. **Golden byte-identical** (additive program). Test `behavioral_sigma_delta_oversamples`: dominant
+code at x∈{0,¼,½,¾,1} → {0,2,4,6,7} (limit-cycle periods divide the block), and BS density ≈ x. **188
+tests; fmt/clippy clean.**
+
+**Web:** `SDM` kind (8 pins **VIN, CLK, D2, D1, D0, BS, VCC, GND**; cyan), `BEH_SPEC.SDM` = `{ prog: 8,
+term: [4,3,2,6,7,0,5,1] }` (same as the SAR — BS sits where DONE did). partInfo/codex/App rows. Catalogue
+**CEC1110**. Worked example **`sigma-delta`**: fast clock + slow triangle → SDM → BS (density) + D0/D1/D2 →
+DAC → AOUT (oversample → bitstream → code → reconstruct). Web gate green.
+
+**ADC trilogy complete:** flash (CEC1080) · SAR (CEC1108) · sigma-delta (CEC1110); plus DAC (CEC1083) and
+counter (CEC3161). **SDM glyph deferred** (follow-up kit).
+
+**Counter glyph:** `counter-guidesheet.md` committed; the self-contained build kit was delivered to the
+owner for download (the agent has no repo access). Awaiting the built `docs/ui/parts/counter-ic.html`.
+
+**NEXT — the SEAL / "mini-mode" mechanic (owner's idea, the new headline).** Owner: *"a mini mode almost
+... remake some of these ICs as full detailed circuits and have you seal them as a black box you can zoom
+into — shows the analogous view, but keep zooming and it shows all the components working as if you built
+the full circuit."* This is the **`docs/ic-buildings-ideation.md` seal-mechanic keystone** (player builds a
+circuit → seals it into a chip) fused with the existing **five-tier IC-glyph zoom ladder** (symbol → flow →
+valves → device → silicon) and the **info-drawer tiers** (`schematic`/`analogy`/`reality` in
+`infoDiagram.ts` / `analogyDrawers.ts` / `detailDrawers.ts`). The deep question (the ideation flags it):
+the **seal's determinism/hash contract** — a sealed block must simulate identically whether sealed or
+expanded (the composition expanders like `CEC_COMP` already do exactly this for the gate ICs; the seal is
+the generalisation + a zoom UI).
+
+**Design pass DONE — owner picked "ADR first" -> `docs/adr/0005-sealed-subcircuits-and-zoom.md` written.**
+Decision: **seal-as-the-same-netlist** (the seal is a *rendering*, not a second model — sealed and opened
+are the same expanded netlist, so determinism is free) + a **zoom-to-open** board view that is **almost
+entirely web-side** (the sim already solves the real elements; the web already has the snapshot — only
+`buildNetlist` needs to record each composite's sub-element/sub-node topology for the renderer; **no
+sim-core change, golden trivially safe**). Phased: (1) composite-internals topology in `buildNetlist`;
+(2) zoom-to-open renderer, prototype on the half-adder + R-2R DAC; (3) generalise across `CEC_COMP` + tie
+to the abstraction ladder; (4) remake select behavioral ICs as compositions for live zoom (flash ADC
+first); (5) build-and-seal authoring (Tier C). **NEXT concrete step: phase 1.**
+
+Owner then added scope: a **full designable IC maker** (arbitrary ICs, user pinouts + package formats, a
+**bounded die you build inside**, and a real **pin in/out** mechanism) -> **`docs/adr/0006-user-defined-
+ics-packages-pinouts.md`** written. A user IC is **four parts**: (1) a **die boundary** (the barrier — a
+DRC keeps everything inside the walls so it packages cleanly), (2) the **function** (a `GraphSnapshot`
+built inside), (3) the **pinout via PORT PADS** (drop a pad on the wall, wire the internal net to it; the
+pad is the bond-pad->lead — inside you wire to it, outside it's the package lead the board connects to),
+(4) the **package** (archetype + pin-1; its die outline IS the boundary). Expanded by a **generalised
+`CEC_COMP`** that **fuses each pad's internal net with its external pin node** (seal-as-same-netlist, so
+determinism is free) and rendered from a **parametric package-format library** (DIP/SOIC/SOT-23/SC70/
+MSOP/QFP/TO-92...). The boundary is a presentation-time DRC (never enters the solve/hash); built-ins
+become factory-preset user ICs (one expander, one package model). Phases: package library + die boundary
+-> user-IC model + generic expander (pads fuse nodes) -> bounded-canvas + DRC + pad authoring UI ->
+persistence + user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. **Decided this stop:**
+starter package set (SOT-23-3/5/6 fixed; VSSOP-8, DIP-8/14/16 expandable — 3..16 pins, expand later) and
+the **die-sizing policy = per-archetype** (fixed packages lock the die; expandable ones grow to fit; the
+"nothing over the walls" DRC applies to both); **naming** = free-form with a **CEC9xxx** auto-default;
+**nesting** = **one layer of user nesting** (a user IC may contain discretes + built-in parts incl. built-in
+ICs, but NOT another user IC — bounds expansion depth by construction; enforced by hiding the user-IC
+library on the authoring canvas). **The IC-maker design is now fully settled** — ADRs 0005 + 0006 complete
+and consistent. No code yet; **foundation = 0005 phase 1** (composite-internals topology in `buildNetlist`,
+golden-safe, web-only).
+
+---
+
+## 2026-06-23 (79) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner picked **counters + ramp generator** from
+the entry-78 menu. The first sequential building block beyond flip-flops, plus a digital waveform demo.
+
+**Sim-core — behavioral program 7 (`BEH_PROG_COUNTER`):** a clocked 3-bit up-counter. On each rising CLK
+(`f`) it does `count = (count + 1) mod 8`, driving **Q0/Q1/Q2 on a/b/c via the GENERIC output path** — 3
+outputs fit a/b/c, so (unlike the SAR's 4th DONE output) it needs no special eval branch, just a match arm
+in the generic `(la,lb,lc)` block + a commit arm. **RESET (`g`, active-high) asynchronously clears**;
+unwired `g` = ground = low = free-run. State = COUNT + CLK_PREV (`beh_counter_step`, commit phase).
+**Golden byte-identical** (additive program; `beh_state` empty for existing circuits). Tests:
+`behavioral_counter_counts_and_wraps` (+1 mod 8, reaches 7, wraps 7→0) and
+`behavioral_counter_reset_holds_zero`. **187 sim-core tests pass; fmt/clippy clean.**
+
+**Web part `CTR` ("Counter"):** graph.ts kind (7 pins **CLK, RESET, Q2, Q1, Q0, VCC, GND**; violet),
+`BEH_SPEC.CTR` = `{ prog: 7, term: [4,3,2,5,6,0,1,-1] }` (a=Q0 b=Q1 c=Q2 d=VCC e=GND f=CLK g=RESET).
+partInfo, codex (cat/meta/synonyms), App (PARTS/cat/keywords). Generic IC card. Catalogue **CEC3161**
+added (memory & sequential).
+
+**Worked example `counter-ramp` ("Counter → DAC Ramp Generator"):** a 2 kHz square clock (PULSE) → CTR →
+R-2R DAC → AOUT = a self-running 8-step **sawtooth** (count/8 · 5 V, wraps). The digital twin of the
+ADC→DAC staircase — the code now comes from counting, not measuring. 3 guided build steps. (Watch text
+says to widen the scope a notch; ~2 kHz → one 8-count ramp ≈ 4 ms.)
+
+**Glyph deferred** — the counter five-tier IC glyph is a follow-up (like the converters got theirs
+separately).
+
+**NEXT — owner to steer (menu, refined):**
+- **Sigma-delta (ΣΔ) ADC** — now unblocked (its decimator can use the counter). Completes the ADC trilogy
+  (parallel / binary-search / oversampling). A behavioral program (1-bit modulator + decimator) + glyph +
+  demo. The conceptual capstone of the data-conversion arc.
+- **Counter glyph** — the five-tier IC refsheet for CEC3161 (rounds out the part just shipped).
+- **Sample-and-Hold (S&H)** — the ADC front-end (analog switch + hold cap + buffer); lets converters
+  sample fast inputs.
+- **Analog building blocks** — current mirror, instrumentation amp, op-amp Schmitt (examples + glyphs).
+- **Shift register / more sequential** — the counter's sibling; with the counter, opens sequencers,
+  serial-parallel conversion, memory addressing.
+
+---
+
+## 2026-06-23 (78) — Convert/reconstruct worked example (ADC → DAC staircase) + acceptance test
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The data-conversion arc now has a capstone demo,
+and the whole chain has an end-to-end test.
+
+**Worked example** `adc-dac-staircase` ("ADC → DAC: Convert & Reconstruct") in `web/src/lib/examples.ts`
+(placed as the capstone of the logic section, before the AC track): a **200 Hz unipolar triangle**
+(`PULSE`, `variant=1`/`duty=0.5`/`amp=5`) → **flash ADC** → 3-bit code → **R-2R DAC** → **AOUT**, all on a
+single 5 V rail that doubles as the ADC's VREF and the DAC's full-scale reference. AOUT reconstructs VIN as
+an **8-step staircase** (one LSB = 0.625 V; tops out at 4.375 V = 7/8 FS — the quantisation-ceiling
+lesson). Net labels VIN/AOUT/+5V/GND; 3 guided build steps. (200 Hz so one triangle period = the 4.8 ms
+scope preset — the watch text says to widen the time-base one notch.)
+
+**Acceptance test** `adc_dac_reconstructs_quantised_staircase` (sim-core) — builds the EXACT chain (flash
+ADC + the 6-resistor R-2R network `buildNetlist` composes) and asserts `AOUT = code/8 · 5` across the
+range. Confirms the ADC's 1 Ω logic driver (`GATE_GOUT`) holds the 20 k ladder legs cleanly, so the two
+parts compose with ~mV error. **185 sim-core tests pass; golden stable; fmt/clippy clean; web gate green.**
+
+**The data-conversion line is now COMPLETE end-to-end:** flash ADC (CEC1080), DAC (CEC1083), SAR ADC
+(CEC1108) — all functional + glyphs + catalogue, plus this worked example tying ADC↔DAC together.
+
+**NEXT — owner to steer (asked at end of session).** A menu of coherent next arcs, each building on what's
+here:
+- **Sigma-delta (ΣΔ) ADC** — completes the "three ways to digitise" trilogy (flash = parallel, SAR =
+  binary search, ΣΔ = oversampling + noise shaping). A behavioral program (1-bit modulator + decimator) +
+  glyph + demo. Most conceptually advanced; the "modern high-res" one. (Needs a counter for the decimator.)
+- **Counters + a waveform generator** — a real gap: no counter/register part yet. Build a counter (JK/T
+  chain composition, or a behavioral block), then the fun visual payoff **counter → DAC = ramp/sawtooth
+  generator**. Unlocks timers, frequency dividers, sequencers, memory addressing, and the ΣΔ decimator.
+  Lowest risk, high leverage, immediately visual.
+- **Sample-and-Hold (S&H)** — the ADC front-end we skipped (the SAR re-reads VIN each step). A composition
+  (analog switch + hold cap + op-amp buffer); lets the SAR sample fast/changing inputs. Foundational
+  mixed-signal; pairs directly with the converters.
+- **Analog building blocks** — current mirror, instrumentation amp, op-amp Schmitt trigger as worked
+  examples + glyphs (zero core code). Rounds out the analog catalogue.
+
+---
+
+## 2026-06-23 (77) — Functional SAR ADC wired (CEC1108, sim-core behavioral program 6)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The **CEC1108 3-bit SAR ADC is now a placeable,
+functional part** (it was glyph-only). This one needed a **sim-core change** (a new behavioral program),
+unlike the DAC — but it's golden-safe by construction (additive program id; `beh_state` stays empty for
+every existing circuit, so the snapshot hash is byte-identical).
+
+**Sim-core (the new bit):**
+- **`BEH_PROG_SAR_ADC = 6`** — a clocked successive-approximation converter. On each **rising CLK** (`h`)
+  it decides one result bit **MSB-first**: clear the register at the start of a conversion, set the bit
+  under test, compare `VIN` (`f`) against the internal **trial R-2R DAC** level (`trial/8 · VCC`), keep the
+  bit if `VIN ≥ trial`, else drop it. After 3 clocks the register holds **`floor(8·VIN/VCC)` clamped 0..7
+  — the SAME code the flash ADC finds in parallel** — and **DONE** (`g`) goes high until the next
+  conversion. `VCC` is the full-scale reference (single supply, no VREF).
+- Integer state in `beh_state` (slots CODE/STEP/DONE/CLK_PREV), advanced in the commit phase via
+  `beh_sar_adc_step`; driven in `eval_digital` from committed state (one tick state→output delay).
+- **DONE is a 4th behavioral output** (terminal `g`). The generic behavioral drive path only does a/b/c,
+  so the SAR has its **own eval branch** (drives D0/D1/D2 + DONE), mirroring the LUT special-case.
+  `classify_nets` already lists a/b/c/f/g/h as digital signal pins and the digital stamp is generic
+  per-node (`digital_net_thevenin`), so `g` classifies + stamps with no plumbing change; the one targeted
+  addition is `mark(referenced, e.g)` **guarded to prog 6** (other programs keep `g` an input).
+- **Tests:** `behavioral_sar_adc_3bit_successive_approximation` (drives a fixed VIN, clocks it with a
+  50%-duty switch, reads the code **gated on DONE** so a mid-search register is never sampled; checks the
+  full range incl. saturation/over-range). `golden_snapshot_hash_is_stable` + every `run_is_reproducible`
+  still green. **184 sim-core tests pass; fmt/clippy clean.** (fmt also collapsed 2 pre-existing flash-ADC
+  lines that had minor drift — incidental, formatting-only.)
+
+**Web:**
+- **`SAR` kind** (graph.ts): 8 pins **VIN, CLK, D2, D1, D0, DONE, VCC, GND** (visual index order matches
+  the catalogue; outputs grouped on the right, a 3×4 card). **`BEH_SPEC.SAR`** = `{ prog: 6,
+  term: [4,3,2,6,7,0,5,1] }` (a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=DONE h=CLK). partInfo, codex
+  (cat/meta/synonyms), App (PARTS/cat/keywords) rows added; renders as the generic IC card.
+- Catalogue CEC1108 "In the sim" note rewritten to the behavioral-prog-6 reality.
+- Web gate green: `pnpm -C web check` 0/0, `lint` clean, `build` ok, `build:wasm` ok.
+
+**Behavior note:** re-reads VIN each clock step (no explicit sample-and-hold) — exact for a DC/slow input
+(the teaching case); a real SAR needs an S&H for fast inputs. Needs an external clock on CLK (wire a PULSE
+part). DONE pulses high for ~one conversion period after each conversion (wire it to an LED).
+
+**NEXT:** the **convert↔reconstruct demo** is now fully unblocked — flash ADC (CEC1080) **or** SAR
+(CEC1108) → DAC (CEC1083), all three placeable. Build it as a worked example / saved circuit (ADC code →
+DAC reconstructs the staircase). Still open from before: optional DAC-glyph polish-remake; dense-RTL tier
+touch-ups.
+
+---
+
+## 2026-06-23 (76) — Functional R-2R DAC wired (CEC1083 now placeable)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Closed the entry-75 open thread for the DAC: the
+**CEC1083 3-bit R-2R DAC is now a placeable, functional part** (it was glyph-only). Web-only change — no
+sim-core, no new program, golden byte-identical by construction.
+
+**How it's wired (golden-safe `buildNetlist` composition):**
+- New **`CEC_COMP.DAC`** entry in `web/src/lib/netlist.ts` — a pure-resistor R-2R ladder via the `extra`
+  RawStep machinery (same path the TRI uses): two **R** (10 k) spine A-B-C (node A = AOUT; B, C internal),
+  four **2R** (20 k) legs A→D2 (MSB at the output node), B→D1, C→D0, and the C→GND termination, plus a
+  **1 MΩ VCC-GND bleeder** so the nominal VCC pin is never an isolated MNA node. `internal: 2`,
+  `voutPin: 0` (AOUT), `primary: 0` (the A-B spine resistor backs the part current). All `ELEM_RESISTOR`
+  (t=1) — no new sim element, golden untouched.
+- **`DAC` kind** in `graph.ts`: pins **AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5)** — the pin INDEX order is
+  fixed to match the CEC_COMP refs (visually data bits left, AOUT right, VCC/GND top/bottom). No value
+  picker (not in values.ts), cyan.
+- **partInfo / codex (cat+meta+synonyms) / App.svelte (PARTS+cat+keywords)** rows added, mirroring the ADC.
+- Renders as the generic IC card (the `drawCard` fallback in glyphs.ts), exactly like the ADC/composites —
+  no bespoke board drawer needed.
+
+**Behavior note (important, by design):** this is a **switch-less** R-2R ladder — the D inputs are driven
+directly by external logic, so AOUT scales with the **external logic's high level**, not the DAC's own VCC
+pin. Wire VCC to the same rail that powers the driving logic (the natural setup) and `AOUT = (4·D2 + 2·D1 +
+D0)/8 · VCC` holds exactly. This matches the glyph tier-4 framing ("inputs driven 0 or VCC by external
+logic") and the catalogue. The VCC pin is otherwise nominal (the bleeder just keeps it referenced).
+
+**Verify:** web gate green — `pnpm -C web check` 0 errors / 0 warnings, `lint` clean, `build` ok,
+`build:wasm` ok. No cargo run (zero Rust changes; the R-2R is pure resistors).
+
+**NEXT (entry-75 thread, now narrowed):**
+- **Wire the functional SAR ADC (CEC1108)** — comparator + this DAC + a 3-bit SAR register/controller loop
+  (a small behavioral SAR program, or a composition). The DAC dependency is now satisfied.
+- **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example — both converters needed; the DAC
+  half is done, so this is buildable once the SAR/loop scaffolding or a counter→DAC example is set up.
+- Still open from before: optional DAC-glyph polish-remake; dense-RTL tier touch-ups.
+
+---
+
+## 2026-06-22 (75) — DAC + SAR ADC glyphs landed; data-conversion glyph set complete
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Landed two more data-conversion glyphs via the
+guidesheet → kit → build → validate (§10) → land loop:
+- **`dac-ic.html` (CEC1083)** — the 3-bit R-2R ladder DAC. Pure resistors (no FETs); tier 4 is the literal
+  R-2R network (two R spine, four 2R legs, MSB at the output node) and tier 5 matched resistor strips;
+  reconstruction-staircase scope. Owner verdict: correctness-sound, **"fine for now" but a polish-remake
+  candidate** (minor cosmetics flagged: tier-1 trapezoid AOUT-left, a tier-3 lead graze, a tight VCC label).
+- **`sar-adc-ic.html` (CEC1108)** — the 3-bit successive-approximation ADC. The comparator → SAR register →
+  DAC → comparator feedback loop drawn as a closed cycle; binary search MSB-first over 3 clocks (DAC trial
+  steps VCC/2, VCC/4, VCC/8 onto VIN); successive-approximation convergence as the scope; tier 3 redone.
+  Its guidesheet (`sar-adc-guidesheet.md`) is the most layout-prescriptive ("how each tier should look").
+
+Catalogue: added **CEC1108 3-Bit SAR ADC** (1xxx). The data-conversion line is now CEC1041 / 1080 / 1083 /
+1108 (quantizer / flash ADC / DAC / SAR ADC), all with glyphs.
+
+**OPEN THREAD — the DAC and SAR are GLYPH-ONLY (not placeable yet).** The glyphs got ahead of the
+functional parts:
+- **Flash ADC IS functional** (sim-core prog 5 + the placeable `ADC` part, entry 74).
+- **DAC (CEC1083): not wired.** Clean to do — a `buildNetlist` **R-2R resistor composition**, golden-safe
+  (no core code); the exact topology is in the catalogue + the dac glyph tier 4 (two R: A-B, B-C; four 2R:
+  A→D2, B→D1, C→D0, C→GND; AOUT = node A = (4D2+2D1+D0)/8·VCC; bits driven 0/VCC). Needs a buildNetlist
+  branch (like EC/POT emit resistors) + the web part + pinout AOUT/GND/D0/D1/D2/VCC.
+- **SAR ADC (CEC1108): not wired.** Comparator + the DAC + a 3-bit SAR register/controller loop (a small
+  behavioral SAR program, or a composition). Depends on the DAC.
+- Then the **convert↔reconstruct demo** (flash ADC → DAC) becomes buildable in-game.
+
+**NEXT:** wire the functional DAC (R-2R composition) → functional SAR → the reconstruct demo. (Also still
+open from way back: optional polish — the DAC glyph remake, dense-RTL touch-ups.)
+
+---
+
+## 2026-06-22 (74) — Mixed-signal headline: the 3-bit flash ADC (sim-core + part + glyph)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The first "more reality" feature beyond the
+refsheet queue: a **3-bit flash ADC**, complete end to end. Owner wants **both flash and SAR, flash
+first** — flash is done; SAR is next (needs the DAC).
+
+**sim-core (golden-safe):** added **`BEH_PROG_FLASH_ADC = 5`** to `ELEM_BEHAVIORAL` — a parallel
+quantizer that reads the live analog input on `f` against the reference span (the VREF pin `g` above GND,
+else the VCC rail) and drives a 3-bit code on D0/D1/D2 (`a`/`b`/`c`): `code = floor(8 * (Vin-Vgnd) /
+span)`, clamped 0..7. **Combinational** — runs in `eval_digital` only (helper `beh_flash_adc_code`), no
+state, **no commit arm**. Additive ⇒ no existing circuit sets value=5 ⇒ `beh_state` stays zero ⇒
+`snapshot_hash` byte-identical: `golden_snapshot_hash_is_stable` + all `run_is_reproducible` green, **183
+tests** (added `behavioral_flash_adc_3bit_quantizes`). Pattern to copy for the next behavioral program.
+
+**web (placeable):** the **`ADC` part** — `graph.ts` kind (7-pin VIN·VREF·D2·D1·D0·VCC·GND, cyan),
+`netlist.ts` `BEH_SPEC.ADC = { prog: 5, term: [4,3,2,5,6,0,1,-1], defWord: 0 }` (no value picker, no data
+word), partInfo/codex/App rows. Full gate green.
+
+**catalogue + glyph:** `cec-teaching-ics.md` gets **CEC1080 "3-Bit Flash ADC"** (1xxx data-conversion,
+between CEC1041 quantizer and CEC1083 DAC). `flash-adc-ic.html` landed — the **densest glyph**: ladder +
+7 comparators + thermometer-to-binary encoder (D2=T4; D1=T6 OR (T2·notT4); D0=odd-count tree), staircase
+scope. **Precedent set:** it uses a **larger 1100×820 scene viewBox** (wrap widened to 1480px) — a sanctioned
+deviation from the standard 780×540 for a too-dense glyph (the owner: "allow the agent more space"); future
+dense glyphs may do the same. Its guidesheet (`flash-adc-guidesheet.md`) is deliberately layout-prescriptive.
+
+**NEXT (the owner's "both, flash first" → now the rest):**
+1. **CEC1083 3-bit DAC** as a placeable part — a code→voltage converter. Unblocks the convert↔reconstruct
+   demo (flash ADC → DAC) AND is the feedback element the SAR needs. Likely an `ELEM_BEHAVIORAL` prog 6
+   (read 3 input bits, drive an analog output via the reference) OR an R-2R resistor composition (golden-
+   safe, no core code — decide which). Then its glyph (CEC1083 is already catalogued).
+2. **SAR ADC** — comparator + the DAC + a successive-approximation register/FSM (a behavioral prog or a
+   composition). The sequential cousin; binary-search teaching.
+
+---
+
+## 2026-06-22 (73) — Five-tier IC glyph refsheets: the whole queue landed
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built + landed **15 five-tier IC glyph
+refsheets** in `docs/ui/parts/` via a guidesheet → self-contained "build kit" → owner/agent builds →
+I validate (§10 gates) → land loop. Each glyph passed the static §10 gates (SPDX, identity, 5×
+`drawPkg(gT`, no forbidden glyphs, per-tier member consistency, `node --check`); the owner/agent ran the
+mandatory Playwright render. All are CEC house parts (or real parts where a single-chip equivalent
+exists) — `chipType` = the CEC number, no real-manufacturer name where house-vendored.
+
+**Landed glyphs:** comparator-ic (ADCMP601, real) · analog-switch-ic (CD4066B cell, real) · sampler-ic
+(CEC1041) · half-adder/full-adder/mux/demux/majority-ic (CEC2024/2018/2031/2032/2046) · sr-latch/d-latch-ic
+(CEC3007/3014) · spi-master/spi-slave/uart-ic (CEC5021/5022/**5232**) · tri-state-ic (CEC2057).
+
+**Catalogue + spec changes (committed):**
+- `docs/ui/cec-teaching-ics.md`: added the **5xxx interface/communication** category + 3 entries
+  (CEC5021 SPI master, CEC5022 SPI slave, CEC5232 UART) — these had no real single-chip equivalent, so
+  they were house-vendored (convention: real part where one exists — comparator→ADCMP601, switch→CD4066B;
+  CEC house part where none does — sampler→CEC1041, serial→5xxx).
+- `docs/ui/ic-glyph-spec.md` §1: **tier zoom-pairs + FET-level analogy** (owner direction) — tier 4 is a
+  zoom-in of tier 1 (real track), tier 3 a zoom-in of tier 2 (analogy track), tier 5 silicon; show all of
+  it down to the FETs, analogy all the way down (each gate/flip-flop opens to its FET-valve form; never an
+  opaque block). The glyphs are deliberately dense + **zoomable** ("see all of it working") — do NOT
+  compress for the small default view. First glyphs built to it: UART + tri-state.
+
+**Conventions that emerged (for the next refsheet author):**
+- **No stubs:** every pin (esp. VCC/GND) traces by an unbroken wire to the gate/device it powers or drives;
+  the render catches stubs the static checks miss (an early SR-latch had a tier-2 output pin + tier-5
+  fed-back signal left dangling — fixed).
+- **"Real device" depends on scale:** single cell (comparator/sampler/switch/tri-state) → real FETs;
+  gate composition (adders/mux/…) → gate-level schematic (gates ARE the device); FSM (serial) → RTL
+  (shift register of real flip-flops + counter + control), tier 5 = one representative cell in silicon.
+- **Recurring agent slip:** when cloning a template, the visible identity gets fixed but the **model
+  COMMENT block** is left stale (full-adder/demux carried a `// CEC2024 half adder` comment over correct
+  code; full-adder also had a stale `<title>`). Grep comments + `<title>`, not just labels.
+
+**555 (landed):** `ne555-ic.html` is in — owner-signed-off, static §10 gates clean. It is a **real part**
+(NE555, the canonical analog↔digital teaching IC), not a CEC house part, so it keeps the real 555 pinout;
+its silicon tier is block/architecture level (the 555's lesson is the architecture) per its guidesheet.
+Signed off "for now" — visual touch-ups may follow.
+
+**Nothing queued.** Every backed part now has a refsheet. Possible future work, none blocking: optional
+visual touch-ups (555, and the deliberately-dense serial/SPI RTL tiers); rebuilding the *older* gate/device
+refsheets to the new tier-zoom-pair framing if consistency is wanted; and refsheets for any *new* parts
+added later.
+
+---
+
+## 2026-06-20 (72) — Web wiring chunk 4: behavioral blocks (LUT / SPI / UART) — WIRING COMPLETE
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The last unplaceable family is now placeable:
+the four **behavioral blocks** (`ELEM_BEHAVIORAL`, sim type 25) — **LUT** (FPGA logic cell), **SPIM**
+(SPI master), **SPIS** (SPI slave), **UART**. Full gate green: cargo fmt + 182 sim-core tests (golden
+intact — no Rust changes), build:wasm, web check/lint/build. Netlist + term maps reviewed by me against
+the authoritative sim-core contract and the known-good `lut_comb` test caller.
+
+**The f/g/h boundary (the determinism-adjacent bit, done carefully):**
+- `pushFGH(nf=0, ng=0, nh=0)` generalized (defaults keep every existing caller ground = golden-safe).
+- **Added `fSig`/`gSig`/`hSig` to the netlist signature** (they were MISSING — only d/e had sigs). Without
+  them, rewiring a LUT input / SPI line wouldn't change a/b/c/values/aux and the stale sim wouldn't
+  reinstall. All-zero today → empty sig → bit-identical signature for every behavioral-free circuit.
+- `loop.ts` + `set_netlist_pefgh` were ALREADY wired (route on `hasF||hasG||hasH`) — no boundary change.
+
+**The parts (data-driven, like CEC):** `BEH_SPEC[kind] = { prog, term[8], defWord }` in `netlist.ts`.
+`term` maps each sim terminal a..h ← a **visual pin index** (-1 = ground/unused), so catalog pinouts read
+naturally while buildNetlist routes to the core's fixed terminal order. A dedicated behavioral branch
+emits ONE `ELEM_BEHAVIORAL`: `value` = the fixed program id (NOT a rail; behavioral kinds are absent from
+the value lists → no value picker), `aux` = `Component.word` (NEW field — the LUT 16-bit truth table / the
+serial data word; round-trips via serialize's `...c`), `params[4]` = LUT mode (Component.mode reused).
+Behavioral ICs join the floating-source blob-union (CEC_COMP || BEH_SPEC). Term maps (verified):
+LUT [0,5,4,6,7,1,2,3]; SPIM [0,1,3,5,6,2,4,-1]; SPIS [0,1,-1,5,6,2,3,4]; UART [0,2,-1,4,5,1,3,-1].
+
+**The LUT editor (owner chose presets + hex):** in the `partConfig` snippet (dual-target arm-time +
+selected). `LUT_PRESETS` (XOR/XNOR/AND/OR/NAND/NOR/BUF/NOT/MAJ/PAR/0/1 → 16-bit tables, all hand-verified)
++ a hex field (`.insp-hex`, `setWordHex` uses Math.min not 32-bit `&` to avoid the bit-31 sign trap) +
+a combinational/registered toggle. Serial blocks get a hex data-word field. New board method
+`setComponentWord`. No bespoke glyphs (generic IC-card). Full 7-file pattern (graph/netlist/board/App/
+partInfo/codex; no values.ts — no value picker).
+
+**Session total: 16 parts wired** — 3 mixed-signal (SAMP/ASW/CMP) + 9 CEC composites + 4 behavioral.
+**The web-wiring backlog from entry 69 is now CLEARED.**
+
+**NEXT (smaller follow-ups, none blocking):**
+1. **Comparator 6-pin LATCHED variant** (LE = terminal f) — now unblocked (f-emission exists). Needs an
+   unconnected-pin check so an unwired LE ≠ ground-latched.
+2. SPI/UART **config knobs** (nbits, SPI half-period, UART baud) are sim params today left at defaults —
+   could expose inspector chips later (params[0]/[1]). Subtick rate (params[2]) likewise.
+3. Optional bespoke **glyphs/refsheets** for the new parts (they use the generic card today); the 555
+   refsheet draft is validated + awaiting the owner's "final".
+
+---
+
+## 2026-06-20 (71) — Web wiring chunk 3: CEC combinational composites (the macro machinery)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Built the **CEC composition-macro machinery**
++ the 5 combinational composite parts. Full web gate green (check/lint/build); netlist reviewed by me.
+
+**The machinery (the reusable part, in `netlist.ts`):** a **data-driven expander** — `CEC_COMP` maps
+each composite kind to `{ internal, vccPin, gndPin, voutPin, primary, gates: GateStep[] }`, where a
+`GateStep` is `[func, out, in1, in2]` and a terminal ref is a **pin index (≥0)** or an **internal node
+(<0)**. `cecInternal` allocates the private internal nodes (after EC's, deterministic order); the
+expander resolves refs, routes the part's VCC/GND to every sub-gate's d/e, and emits one powered
+`ELEM_GATE` per step. No new sim element — golden-safe composition (like EC/POT but multi-gate). Also
+added a CEC branch to the floating-source connectivity check (treat the IC as a connected blob).
+**Adding a new composite = one `CEC_COMP` table entry + a PART_KINDS pinout + UI rows.** No bespoke
+glyph — composites use the generic IC-card fallback (the five-tier refsheets carry the detail).
+
+**LANDED — the CEC composite chunk is COMPLETE (9/9):** combinational — HADD, FADD, MUX2, DMUX, MAJ3;
+sequential — SRL (SR latch), DLATCH (D-latch), **JKFF (JK/T flip-flop)**; bus — **TRI (tri-state
+buffer)**. Pins match the CEC catalog (CEC2024/2018/2031/2032/2046/3007/3014/3076/2057). The expander
+was GENERALIZED with an optional `extra: RawStep[]` ({t,a,b,c,d,e,value,aux}) so a composite can include
+**non-gate** elements: JKFF = 4 steering gates + a raw `ELEM_DFF` (D = J·Q̄ + ¬K·Q; edge-triggered
+toggle; tie J=K for T); TRI = a raw `ELEM_ASWITCH` (VCC→internal rail, gated by OE) + a 100k pull-down +
+a raw BUF gate powered off that gated rail (the dead-rail-Z trick: OE low collapses the rail < operating
+min → output releases to Z). `primary` now indexes the combined gates+extra order.
+
+**NEXT chunk (the last one, per owner "Both, CEC first" → now behavioral):**
+1. **Behavioral parts** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin → needs the f/g/h
+   emission infra: generalize `pushFGH()` to take `nf,ng,nh` + add SIX/SEVEN/EIGHT_PIN sets so pins
+   5/6/7 emit; prog id in `value`; **LUT truth table edited via PRESETS + HEX** per owner; SPI/UART
+   config in `params`; mode in `params[4]`). Also unblocks the comparator's 6-pin LATCHED (LE = f)
+   variant once f-emission + unconnected-pin detection exist.
+2. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin → needs the f/g/h emission
+   infra: generalize `pushFGH(nf,ng,nh)` + SIX/SEVEN/EIGHT_PIN sets; prog id in `value`; **LUT truth
+   table edited via PRESETS + HEX** per owner; mode in `params[4]`). Also unblocks the comparator's
+   6-pin LATCHED (LE) variant once f-emission + unconnected-pin detection exist.
+
+---
+
+## 2026-06-20 (70) — Web wiring chunk 1: sampler + analog switch placeable; 555 guidesheet
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Started "wire it all up" (web-exposing the
+backed sim parts). Also drafted the **555 design-agent guidesheet** (`docs/ui/parts/ne555-guidesheet.md`,
+target `ne555-ic.html`).
+
+**Recon (Explore agent mapped the part pipeline):** the 7-step add-a-part pattern is
+`graph.ts` PART_KINDS → `netlist.ts` TYPE_OF + the `*_PIN_TYPES` sets (drive c/d/e/f emission) →
+`glyphs.ts` drawer + DRAWERS map → `partInfo.ts` PART_INFO → `values.ts` CURATED_FULL/CHIPS →
+`codex.ts` category + PART_META → `App.svelte` PARTS + category + keywords. **BUF/XNOR were already
+wired** (the CLAUDE.md/logic-nets "GATE_AUX gap" was STALE — fixed that doc). Genuinely unwired:
+comparator, sampler, analog switch, behavioral (SPI/UART/LUT), CEC composition parts.
+
+**LANDED (chunks 1-2) — verified the full web gate (build:wasm/check/lint/build all green) + reviewed the
+netlist mapping myself:**
+- **SAMP "Clocked Sampler"** → `ELEM_SAMPLER` (type 22). Pins OUT/IN/CLK (a/b/c), value=threshold (V).
+  Wired via `THREE_PIN_TYPES += 22` (emits CLK as c). The ADC atom.
+- **ASW "Analog Switch"** → `ELEM_ASWITCH` (type 24). Pins A/B/CTRL/VCC/GND (a/b/c/d/e), value=R_on (Ω).
+  Wired via `FIVE_PIN_TYPES += 24` (the nc/nd/ne checks all test FIVE_PIN membership → emits c/d/e).
+  Transmission gate / S&H / mux building block. Robust to unconnected pins (CTRL unwired → open).
+- **CMP "Comparator"** → `ELEM_COMPARATOR` (type 23), shipped **5-pin continuous** (OUT/IN+/IN−/VCC/GND
+  = a/b/c/d/e, `FIVE_PIN_TYPES += 23`), value=hysteresis V_H. The `LE`=f pin is left unwired (=ground)
+  so the core reads `e.f==0` → always transparent. **DEFERRED:** the 6-pin LATCHED variant (the LE pin)
+  needs connectivity detection — an unconnected web pin maps to a floating node (≠0), which would wrongly
+  LATCH; do it when building the real f-terminal infra for the behavioral parts (generalize `pushFGH` to
+  take `nf`, add a `SIX_PIN_TYPES`, and emit f=0 when LE is unconnected). The analog→digital bridge.
+
+**NEXT chunks (ordered):**
+1. **Behavioral** SPI master/slave, UART, LUT (`ELEM_BEHAVIORAL`=25, 8-pin, prog id in `value`, LUT
+   truth table in `aux`, mode in `params[4]`; needs config surfaces — a truth-table editor for the LUT).
+3. **CEC composition parts** (adder/half-adder/mux/demux/majority/tri-state/SR-latch/D-latch/JK) —
+   multi-element `buildNetlist` macros (no new sim element; cross-coupled gates etc.).
+
+---
+
+## 2026-06-20 (69) — Landed the LUT refsheet (CEC2064) — CLEANEST UPLOAD YET
+
+**State:** 🟢 owner's LUT refsheet landed + pushed → `docs/ui/parts/lut-ic.html` (built from
+`lut-guidesheet.md`). Branch `claude/kind-turing-hdelb3`. **Zero fixes needed** — the cleanest
+landing so far: correct title (`4-input LUT, five layers`), CEC2064 throughout, correct package-frame
+comment (no stale template carryover, unlike the JK), and a complete CEC2064 footnote with all 9
+verified preset hexes matching the guidesheet (AND 0x8888 … inverter 0x5555) + the volatile-SRAM /
+FPGA-reload payoff. Models the 16:1 mux over a config-bit memory with the optional registered output.
+
+**§10 validation:** static gates 1–4 all pass — 5 tiers (`buildT1..5`; names map `symbol . truth
+table` / `flow network . mux funnel` / valves / `real device . CEC2064` / silicon), glyphs CLEAN, JS
+parses, member-consistency clean across all 5 tiers. Gate 5 (render) is the design agent's (no
+chromium here). Added `lut-ic.html` to the example list + cross-reffed the CEC2064 catalog entry.
+
+**Refsheet program — effectively complete for the spec'd set:** 10-gate set + variants, D-FF,
+comparator, Schmitt, JK/T, **and now the LUT**. Both house parts with no real single equivalent are
+fully done (spec → guidesheet → landed refsheet): CEC3076 (JK/T) and CEC2064 (LUT). 555 exemplar
+verified (whenever it gets drawn, the pinout's locked). **Backend remains well ahead of the web** —
+the natural next big block is web-wiring the backed parts (PART_KINDS + `buildNetlist` + bin glyphs);
+see TODOS (37). The reusable design-agent-brief pattern (`*-guidesheet.md`) is established for any
+future part.
+
+---
+
+## 2026-06-20 (68) — LUT (CEC2064) refsheet guidesheet drafted (design-agent brief)
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted the design-agent build
+brief for the CEC2064 4-input LUT → `docs/ui/parts/lut-guidesheet.md` (target `lut-ic.html`),
+mirroring `jkff-guidesheet.md`.
+
+**Key guidance:** the LUT is more novel than the gates/FF — its through-line is **"logic is a memory
+you address with your inputs": 16 config-bit SRAM cells read out by a 16:1 mux tree** (the structure
+the CEC2031 mux teased). No clean single template, so take the **shell from `dff-ic.html`** (digital,
+timing scope) and **reuse two of its pieces** — its flip-flop for the registered-output mode, its
+cross-coupled-inverter cell for the config bits — but build the mux-tree device + tiers 2–4 fresh
+(keep legible: highlight the active path through the funnel, dim the rest). Covers the 8-pin pinout,
+the digital live model (`Y = T[address]`, optional CLK latch), the per-tier arc (truth-table star in
+T1, mux funnel T2–3, SRAM-bank + TG-tree + output-FF in T4, SRAM cross-section T5), verified gate
+presets (AND 0x8888, XOR 0x6666, MAJ3 0xE8E8, …), the sim map (`ELEM_BEHAVIORAL` prog 4, table→aux,
+mode→params[4]), §10 gates, and the title/leftover-grep reminder.
+
+**Both house parts now have full design-agent briefs:** CEC3076 (JK/T — guidesheet + landed refsheet)
+and CEC2064 (LUT — guidesheet, ready to draw). 555 verified. Reusable-brief pattern established
+(`jkff-guidesheet.md`, `lut-guidesheet.md`).
+
+---
+
+## 2026-06-20 (67) — Landed the JK/T flip-flop refsheet (CEC3076)
+
+**State:** 🟢 owner's JK/T refsheet landed + pushed → `docs/ui/parts/jkff-ic.html` (built from the
+`jkff-guidesheet.md` brief). Branch `claude/kind-turing-hdelb3`. The agent followed the guidesheet
+well: SPDX present, **title correct** (no leftover-title bug this time), CEC3076 identity throughout,
+the master-slave core + JK steering front-end + Q/Q̄ feedback, ASCII-safe entities (`&#x0305;` overbar,
+`&#x2295;` XOR, `&middot;`), and a correct CEC3076 footnote (duals 7476/74112/CD4027, the
+characteristic eq, T-mode, the 7-pin pinout).
+
+**§10 validation:** static gates 1–4 all pass — 5 tiers (`buildT1..5`, all tier names), glyphs CLEAN,
+JS parses, **member-consistency clean across all 5 tiers** (the runtime-crash catcher). Gate 5 (render)
+needs Playwright (not in this container — like poppler; the design agent runs it pre-upload). **One fix
+on landing:** removed a stale comment block (lines 170/172/173 still described the dff-ic template's
+74AUP1G79 5-lead pinout, contradicting the correct CEC3076 lines below) — internal comments only, not
+rendered. Added `jkff-ic.html` to the example list + cross-reffed the CEC3076 catalog entry.
+
+**Refsheet tally:** 10-gate set + variants, D-FF, comparator, Schmitt, **and now JK/T** all done. CEC
+house parts: CEC3076 (JK/T) now has spec + guidesheet + **landed refsheet**; CEC2064 (LUT) has spec +
+is the next natural draw (offer to write its guidesheet, mirroring `jkff-guidesheet.md`). 555 verified.
+
+---
+
+## 2026-06-20 (66) — JK/T flip-flop refsheet guidesheet drafted (design-agent brief)
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Drafted a standalone build brief
+for the design agent → `docs/ui/parts/jkff-guidesheet.md` (target output `jkff-ic.html`).
+
+**Key guidance captured:** build the JK from **`dff-ic.html`** (the sequential master-slave template),
+NOT `inv-ic.html` (the combinational pattern in ic-glyph-spec §8 doesn't fit an edge-triggered part).
+Reuse the D-FF master-slave core in all 5 tiers; add only the **JK steering front-end**
+(`D = J·Q̄ + K̄·Q`) + the **Q/Q̄ feedback** (the toggle path) + a 2nd input + the T-mode tie. The
+unifying thread: "a JK is a D-FF whose D is steered by its own output." Covers: CEC3076 pinout/package
+(7-pin SC70-8), the edge-triggered live model, per-tier arc, controls (J/K/T + clock, timing-diagram
+scope — no analog vin/vt), the sim mapping (ELEM_DFF + steering gates), the §10 gates, and an explicit
+**don't-repeat-the-leftover-`<title>`-bug** note (bit both dff-ic and buf-ic on landing).
+
+**House parts spec'd + ready to draw:** CEC2064 (LUT, has spec in cec-teaching-ics.md), CEC3076 (JK/T,
+now has BOTH the catalog spec AND this full design-agent guidesheet). 555 exemplar verified. The
+guidesheet format is reusable — if the owner wants the LUT or 555 as a design-agent brief too, mirror
+`jkff-guidesheet.md`.
+
+---
+
+## 2026-06-20 (65) — CEC3076 JK/T flip-flop spec authored
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Authored the JK/T flip-flop as a
+CEC house part (no real single JK exists — only duals 74x76/112/CD4027), ready for the owner to draw
+as a five-tier glyph. The edge-triggered companion to the real D-FF (`dff-ic.html`, 74AUP1G79).
+
+**CEC3076 — JK / T Flip-Flop** in `docs/ui/cec-teaching-ics.md` (memory & sequential section, after
+CEC3014). 7-pin SC70-8/MSOP-8 (one N.C.), house order `1 Q · 2 GND · 3 J · 4 K · 5 CLK · 6 Q̄ ·
+7 VCC`. Function `Q⁺ = J·Q̄ + K̄·Q`; **tie J=K for a T flip-flop** (`Q⁺ = T⊕Q`, divide-by-2 — the
+counter cell). **Sim:** a `buildNetlist` composition — `ELEM_DFF` (Q=a,D=b,CLK=c,Q̄=d) fed by steering
+gates computing `D = J·Q̄ + ¬K·Q` (inverter on K + 2 AND + OR, feedback from the DFF's own Q/Q̄); the
+edge trigger makes J=K=1 a clean toggle (no latch race). No new sim-core element; golden-safe. Updated
+the package note + cross-reffed the real-part chart row (JK/T → "house single = CEC3076").
+
+**CEC house parts with no real single equivalent now spec'd:** CEC2064 (LUT), CEC3076 (JK/T) — both
+ready to draw, both map to existing/shipped sim backends (golden-safe). Owner's draw queue: LUT, JK/T,
+or 555 (all three now have checked pinouts/specs).
+
+---
+
+## 2026-06-20 (64) — CEC2064 LUT spec authored + 555 exemplar verified
+
+**State:** 🟢 docs only, pushed. Branch `claude/kind-turing-hdelb3`. Two refsheet-prep deliverables:
+
+**CEC2064 — Configurable Logic Cell (4-Input LUT + register)** — authored as a full CEC house part in
+`docs/ui/cec-teaching-ics.md` (new `## CEC programmable logic` section, between logic&routing and
+memory&sequential). The house spec for the Phase-4 `BEH_PROG_LUT` backend, ready for the owner to draw
+as a five-tier glyph. 8-pin SOT-23-8, house pin order `1 Y · 2 GND · 3 I0 · 4 I1 · 5 I2 · 6 I3 ·
+7 CLK · 8 VCC` (all 8 used). Config = 16-bit truth table + combinational/registered mode (not pins).
+**Sim map (matches the backend exactly):** `ELEM_BEHAVIORAL` prog 4 — truth table → `aux`, mode →
+`params[4]` (≥1 = registered), pins **Y→a · GND→e · I0/I1/I2→f/g/h · I3→c · CLK→b · VCC→d**. First CEC
+part on the behavioral engine (not a gate composition); golden-safe. Verified hexes: AND `0x8888`,
+XOR `0x6666`, MAJ3 `0xE8E8`. Updated the package note + the IC-glyph example list.
+
+**555 timer exemplar — verified + enriched** in `new-part-refsheets.md`. It was already in the chart
+(LMC555); confirmed the **canonical, invariant 555 pinout** against the TI NE555 datasheet
+(www.ti.com/lit/ds/symlink/ne555.pdf — fetched; auto-render blocked by no poppler, but cross-checked
+vs the card + the universal standard). Row now leads with **NE555** (DIP-8/SOIC-8); pinout line notes
+all variants share it + the comparator thresholds: `1 GND · 2 TRIG(1/3 VCC) · 3 OUT · 4 !RESET ·
+5 CTRL · 6 THRES(2/3 VCC) · 7 DISCH · 8 VCC`.
+
+**Owner's refsheet queue next:** LUT (CEC2064, now spec'd) or JK/T (74HC73 dual) or the 555. The gate
+set is 10/10 done; D-FF + comparator done. Backend is well ahead of the web everywhere.
+
+---
+
+## 2026-06-20 (63) — Landed the BUF refsheet (74LVC1G34) — gate set 10/10 COMPLETE
+
+**State:** 🟢 owner's buffer refsheet landed + pushed → `docs/ui/parts/buf-ic.html`. Branch
+`claude/kind-turing-hdelb3`. Models the **74LVC1G34** (single non-inverting buffer, datasheet-verified
+footnote — Nexperia Rev. 11; pinout `1 NC · 2 A · 3 GND · 4 Y · 5 VCC`, same SOT-23-5/SC-70-5 frame as
+the 1G04 inverter). Taught as **two inverters in series** with a wide output stage (a live transfer
+curve showing the middle inversion + the restored output).
+
+**§10 validation:** all gates pass — 5 tiers, glyphs CLEAN (fully ASCII), JS parses. **Two fixes on
+landing** (built from `inv-ic.html`): prepended SPDX, fixed leftover `<title>` ("NOT gate…" →
+"Buffer, five layers"). All other "inverter"/"NOT A" references are legit (a non-inverting buffer IS
+two inverters; "mid = NOT A" is the middle node). Added `buf-ic.html` to the example list.
+
+**Refsheet status:** **the 10-gate logic set is now COMPLETE** (inv/buf/and/or/nand/nor/xor/xnor +
+nand3 + schmitt, plus imply/nimply/xorpass variants); D-FF + latched comparator done too. Backend is
+fully ahead of the web (ELEM_GATE incl. BUF=7, DFF, comparator, sampler, aswitch, behavioral
+SPI/UART/LUT all in sim-core). **Next big block: web-wire the backed parts** (PART_KINDS +
+`buildNetlist` + bin glyphs) — see TODOS (37). Note: BUF (func 7) + XNOR (func 5) exist in the core
+but aren't yet reachable from the web gate picker (the `GATE_AUX` gap).
+
+---
+
+## 2026-06-20 (62) — Landed the D flip-flop refsheet (74AUP1G79)
+
+**State:** 🟢 owner's FF refsheet landed + pushed → `docs/ui/parts/dff-ic.html`. Branch
+`claude/kind-turing-hdelb3`. The first **sequential** IC glyph (master-slave latches + a live
+timing diagram); models the **74AUP1G79** (single positive-edge D-FF, datasheet-verified footnote,
+pinout `1 D · 2 CP · 3 GND · 4 Q · 5 VCC` — matches the exemplar chart).
+
+**§10 validation:** all gates pass — 5 tiers (`buildT1..5`, names symbol/flow/valves/device/silicon),
+glyphs CLEAN (fully ASCII), JS parses (`node --check`). **Two fixes applied on landing** (the upload
+was built from `schmitt-ic.html`): prepended the SPDX header (was missing) and corrected the leftover
+`<title>` ("Schmitt inverter…" → "D flip-flop, five layers"). The "Schmitt inputs" label + the
+inverter references in tiers 4/5 are **legit** (the AUP1G79 has Schmitt inputs; its master-slave is
+built from CMOS inverters + transmission gates) — left as-is. Updated the IC-glyph example list in
+`new-part-refsheets.md`.
+
+**Refsheet status:** gate set 9/10 (only **BUF** left — recommended ref part **74LVC1G34**, the
+non-inverting twin of the 74LVC1G04 inverter, same SOT-23-5 frame; or 74LVC1G125 for tri-state /
+74LVC1G07 for open-drain). D-FF now done.
+
+---
+
+## 2026-06-20 (61) — Protocol engine phase 4 DONE (FPGA logic element) — ALL PHASES COMPLETE
+
+**State:** 🟢 the protocol/behavioral engine is **fully implemented through every ADR-0004 phase** and
+pushed. Branch `claude/kind-turing-hdelb3`. No PR (owner hasn't asked). Golden byte-identical
+`0xeaac_3764_99e4_fa24`; 182 tests pass debug **and** release; fmt/clippy clean; wasm builds.
+
+**Phase 4 = the FPGA logic element (`BEH_PROG_LUT = 4`)** — the universal user-programmable digital
+primitive, the last protocol-engine phase (commit on this branch). A **4-input LUT** (16-entry truth
+table in `aux`) with an **optional registered output** (LUT+FF = the fundamental FPGA "logic element"):
+- Pins: `a`=OUT, `f`/`g`/`h`/`c`=IN0..IN3 (LSB..MSB), `b`=CLK, `d`/`e`=VCC/GND. `params[4]≥1` ⇒ registered.
+- **Combinational** mode drives `a` from the **live** inputs in `eval_digital` (gate-like, settles in
+  the digital sub-solve, no clock-to-output delay) — it must NOT touch b/c (they're inputs), so it
+  takes its own single-`a` drive path and skips the generic a/b/c output loop (`continue`).
+- **Registered** mode latches `bit[index]` into `Q` on the rising CLK edge in `commit_sequential_digital_state`
+  (DFF pattern), driven from committed `Q`; clocks at the declared sub-tick rate (step 3b).
+- **Golden-safe by construction:** integer state only (`Q`,`clk_prev`, or none combinational), folded by
+  the **existing** `beh_state` hash loop (no new fold) — no golden circuit has a behavioral block.
+- New tests: `behavioral_lut_combinational_is_a_programmable_gate` (XOR/AND/OR truth tables),
+  `…_four_input_index_ordering` (f=LSB, c=MSB), `…_registered_latches_on_clock` (acts as a DFF),
+  `…_unpowered_is_released`, `…_run_is_reproducible`.
+- **Why a LUT, not a baked ISA:** an FPGA has no ISA — it's LUTs, and a fabric of registered LUTs is
+  *any* sequential machine (the honest "soft core"). The per-element data model holds no program ROM
+  without expanding the `Element`/wire format; a stored-program micro-core stays a clean future
+  program-id if a ROM payload is ever provisioned. Rationale recorded in ADR 0004 (phase-4 bullet).
+
+**Protocol engine — ALL PHASES ✅:** Phase 1 SPI master · Phase 2 SPI slave + UART · Step 3a partition
+(diagonal proof) · Step 3b sub-tick loop (megabaud) · **Phase 4 FPGA logic element.** ADR 0004 Status =
+"all phases implemented." The `value`=program-id dispatch stays open for I2C / a tiny MCU later.
+
+**Remaining (deferred per owner — refsheets first, then web):** web-wire the now-backed parts
+(comparator, sampler, gated switch, SPI/UART/LUT behavioral blocks, CEC catalog) into placeable web
+parts (PART_KINDS + buildNetlist + bin glyph). Standing: land owner refsheets as they arrive (only BUF
+gate left of the 10; the FF refsheet the owner is drawing). Minor: `BEH_SUBTICK_RATE_SLOT` still shares
+slot 2 with `RATED_CURRENT_SLOT` (harmless; free slots 5-7 exist — LUT mode now uses slot 4).
+
+---
+
+## 2026-06-20 (60) — "More reality" engine + CEC catalog; protocol engine phases (DRIVE ALL)
+
+**State:** 🟢 lots landed + pushed; 🟡 protocol engine phase 1 in flight. Branch `claude/kind-turing-hdelb3`.
+No PR (owner hasn't asked). **Owner directive: press on until ALL protocol-engine phases are implemented.**
+
+**Engine mechanisms LANDED (each golden byte-identical `0xeaac_3764_99e4_fa24`, sim-core only, web wiring later):**
+- **Wire-format provisioning** (ADR 0002): `MAX_TERMINALS` 5→8, `PARAM_STRIDE` 4→8, `PROTOCOL_VERSION` 1→2.
+  `set_netlist_pefgh` boundary; web `buildNetlist` emits f/g/h via `pushFGH()` at the 7 sites (array-sync = the
+  POT-regression class, verified). The cross-layer one.
+- **`ELEM_SAMPLER`=22** — clocked 1-bit quantizer (ADC atom).
+- **`ELEM_COMPARATOR`=23** — ADCMP601 latched comparator (differential, level-active-low latch, hysteresis,
+  powered output). Refsheet `docs/ui/parts/comparator-ic.html` landed too → complete both ends.
+- **`ELEM_ASWITCH`=24** — node-controlled gated analog switch (transmission gate); no new hashed state (derived
+  from `node_v[CTRL]`). Unlocked sample-and-hold + switched-cap + analog mux.
+
+**Pattern for every sim-core element (FOLLOW IT):** mirror `ELEM_SAMPLER` (state vec + install/reset + `step()`
+commit + a hash fold loop APPENDED after the prior folds, default 0 → zero bytes for the RC golden = byte-identical)
++ `ELEM_GATE` (powered output drive, `gate_rails`/`GATE_MIN_RAIL`/dead-rail Z). Integer/Level state only in hashed
+paths; FNV-1a; timing from declared params (structure), never values. **VERIFY THE GOLDEN MYSELF before each commit.**
+
+**Protocol engine — ADR 0004, phased (DRIVE ALL, sequentially — same file, dependency chain, each golden-gated):**
+- **Phase 1 (IN FLIGHT, subagent):** `ELEM_BEHAVIORAL`=25 — integer state machine + program-id dispatch + digital
+  I/O, at the BASE tick rate; first program = SPI master (a=SCLK,b=MOSI,c=CS,d=VCC,e=GND,f=MISO,g=START; first part
+  to use the 8-terminal format). New `beh_state` (8×u32/elem) folded after `cmp_q`. **Hold the commit until the
+  subagent reports + I re-verify the golden** (currently uncommitted in `crates/sim-core/src/lib.rs` — that is
+  correct, not forgotten).
+- **Phase 2:** multi-rate sub-ticking (M7) — a block sub-steps a fixed integer/analog tick (declared rate);
+  generalizes the 1-tick delay; fold the sub-tick counter. The harder step-loop change.
+- **Phase 3:** SPI slave (→ serial DAC081S101/ADC081S021), UART (async framing + baud divider, works at base rate),
+  I2C (open-drain + pull-up wired-AND already half).
+- **Phase 4:** behavioral CPU/FPGA at the `uC`/`FP` pins (cycle-stepped state machine / tiny ISA on the sub-tick kernel).
+- SerDes (owner asked): the LOGIC (serialize/8b10b/CDR/deserialize) is feasible behaviorally + sub-ticking; the GHz
+  PHY waveform is out of scope (analog Δt fixed) — channel = frequency-domain, link = behavioral. A phase-3/4 endpoint.
+
+**CEC teaching catalog (`docs/ui/cec-teaching-ics.md`):** 17 house-brand parts + IMPLY/NIMPLY (CEC2110/2111) +
+sample-and-hold (CEC4055, now buildable). Real-part min-pin exemplar chart in `docs/ui/new-part-refsheets.md`.
+Gate refsheets: 9/10 (only BUF left) + nand3 + xorpass + comparator. ADR 0002 (wire format), 0003 (high-pin
+composite, stress-tested to ~7.5k pins), 0004 (protocol engine).
+
+**Still NOT web-wired (the backends are done; needs PART_KINDS + buildNetlist + bin glyph, gated on refsheets):**
+the comparator, sampler, gated switch, the CEC parts, SPI — all sit one web step from placeable.
+
+## 2026-06-20 (59) — Codex/hotbar/colour shipped; "more reality" framework underway
+
+**State:** 🟢 all three web features LANDED + pushed; 🟡 engine framework underway (clocked sampler
+in flight). Branch `claude/kind-turing-hdelb3`. No PR yet (owner hasn't asked).
+
+**Shipped (pushed):**
+- **Component Codex** (`abeec93`) — full-screen master-detail reference; `web/src/lib/codex.ts` data
+  layer + a Vite plugin serving `docs/ui/parts/*.html` at `/parts/*`. Exhaustive detail pane + refsheet
+  links. (Known follow-up: codex.ts duplicates App.svelte's catalog metadata — de-dupe to a shared
+  module someday.)
+- **Hotbar** (`d2c4dcd`) — 1–9 configured-part slots + Q pipette; `PLACEMENT_OVERRIDE_KEYS` gained
+  value/wiper/temp (golden-safe, web-only). Persists in Settings.
+- **Per-net colour override** (`0c96a16`) — `NetLabel.color` + label-editor swatch + the 6 board.ts
+  colour sites routed through one `nodeColor`/`endpointColor` choke-point + a `nodeColors` map from
+  netlist.ts. Pure render; golden untouched.
+- **XNOR refsheet** (`213196e`) + SPDX backfill on 4 refsheets (all 19 in `docs/ui/parts/` compliant).
+
+**"More reality" initiative (owner: scope it, build the framework, do hash/engine-touching now):**
+- **`docs/reality-roadmap.md`** + an exhaustive additions-catalog research pass (the full part/phenomenon
+  universe → 14 engine mechanisms M1–M14).
+- **`docs/ui/new-part-refsheets.md`** — the per-part refsheet-authoring sheet (15 first-arc cards + a
+  broader table), the "design refsheets around it" deliverable.
+- **ADR 0002** (`docs/adr/`) — wire-format provisioning decision: `MAX_TERMINALS` 5→8, `PARAM_STRIDE`
+  4→8, `PROTOCOL_VERSION` 1→2. Golden-safe (param_or 0-defaults, unused terminals grounded). **Not yet
+  implemented** — staged as its own careful cross-layer PR (array-sync runtime risk, no JS test = the
+  POT-regression class; needs a Rust test exercising terminal `h` + slot 7).
+- **ADR 0003** — high-pin devices (advanced ADC/MCU/FPGA) use a **composite** (one behavioral core
+  element + N single-terminal pin elements, expanded web-side like EC/POT), NOT a terminal-count bump.
+  Scales without a cap; golden-safe; needs no solver refactor.
+
+**Engine framework — sampler LANDED:** the **clocked sampler `ELEM_SAMPLER`=22** (the ADC/DAC/S&H
+keystone, a DFF-twin: latch `V(IN)>threshold` on a rising CLK edge, drive a 1-tick-delayed digital out)
+is in (`crates/sim-core` only; web wiring still to come). a=OUT, b=IN (analog, high-Z, Boundary), c=CLK;
+`value`=threshold, `aux`=high rail. New `samp_q`/`samp_clk_prev` state folded into `snapshot_hash` in a
+loop APPENDED after the DFF fold (zero bytes for the RC golden). Golden **byte-identical**
+`0xeaac_3764_99e4_fa24`; 5 sampler tests + reproducibility green; fmt/clippy/test all green
+(independently re-verified before commit).
+
+**Next engine steps (each its own verified increment):** commit the sampler → web-wire it (Clocked
+Comparator part + buildNetlist emit ELEM_SAMPLER → first ADC/DAC buildable) → **wire-format provisioning**
+(ADR 0002) as a dedicated cross-layer PR → **thermal `Tj`** (M3) + **seeded per-element PRNG** (M2) on
+the final 8/8 format, Real-mode-gated + golden-verified → **composite** core+pin mechanism (ADR 0003)
+when the first wide device is built.
+
+## 2026-06-20 (58) — XNOR refsheet + SPDX backfill; codex/hotbar/colour-override in flight
+
+**State:** 🟡 in progress. Owner asked for three things: a **Catalog/Codex** ("contain ALL the details
+about that component, exhaustively"; link the refsheets so the curious can see the math), a **hotbar**
+(1–9 + Q pipette), and the **per-net colour override**. Four research agents mapped every subsystem
+(codex data sources, refsheet→component map + static-serving, hotbar plan, net-label colour wiring) —
+their findings are the implementation spec. Building the three **sequentially** (all touch App.svelte).
+
+- **Landed + pushed** (commit `213196e`): owner's **XNOR five-tier refsheet** `docs/ui/parts/xnor-ic.html`
+  (passes §10 static gates) + **SPDX backfill** on 4 refsheets that were missing the header
+  (inv-ic / mosfet-pmos-tiers / opamp-tiers / varistor-tiers). All of `docs/ui/parts/` (19 files) is now
+  golden-rule-#3 compliant — needed because the codex links every component to its refsheet.
+- **Codex** (subagent building now, owns App.svelte + vite.config.ts + new `web/src/lib/codex.ts`):
+  a full-screen master-detail overlay (toolbar "⊞ Codex" button) — categorized searchable component
+  list + an exhaustive detail pane (3-tier diagram, pinout, equation + plain, identity facts, quality
+  tiers table, variants/ratings, logic-family levels, value range, and a **refsheet link** opened via
+  `import.meta.env.BASE_URL + 'parts/<file>'`). A tiny inline Vite plugin serves `docs/ui/parts/*.html`
+  at `/parts/*` in dev and copies them to `dist/parts/` on build (single source in `docs/`, no public/
+  duplicate). `REFSHEET_OF` map + per-kind summary builders live in `codex.ts`.
+- **Hotbar** (queued): `1`–`9` slots of configured parts + `Q` pipette (copy `selPart`'s config into a
+  slot / arm it). Slots = `{kind, config: Partial<Component>}|null`; persist via an optional `hotbar?`
+  field on `Settings` (storage.ts, keep version 1). Keys 1–9/Q are all free. May extend
+  `PLACEMENT_OVERRIDE_KEYS` (graph.ts) to include `value` so a slot carries a tuned scalar (web-only).
+- **Colour override** (queued): `NetLabel.color?` (graph.ts type + serialize/restore optional-spread) +
+  a swatch in the label editor (App.svelte ~2836) + board.ts honouring it at the **6** `voltageColor`
+  sites (3762/3839/4246/4399/4663/4758) via a `nodeColor`/`endpointColor` choke-point; node→colour map
+  emitted beside `nodeNames` in netlist.ts. Pure web/render — golden-safe (no wasm-boundary/sim change).
+
+---
+
+## 2026-06-20 (57) — Configurator → parts bin + standpipe/bar overhaul (owner's two quick fixes)
+
+**State:** 🟢 both fixes implemented, all web gates green, **pushed to `claude/kind-turing-hdelb3`**
+(commits `3f67b53` board.ts, `641e1de` App.svelte) — **NOT yet PR'd** (awaiting owner). Web-only;
+no sim change. This continues the parts-bin thread (configurator+memory and bin-clutter relief
+already shipped earlier as #155/#156); the third surface **arm-and-preview is still open** (next).
+
+- **Configurator moved into the parts bin** (`App.svelte`): the arm-time configurator (variant /
+  tier / family / open-drain / load-mode / pulse chips for an armed-but-unplaced part) was a popover
+  under the top-toolbar armed-chip; it's now a **docked accent card at the top of the parts bin**
+  (`.bin-config`, rendered when `armedPart && !selPart && hasConfig(armedPart)`), right where you
+  picked the part. The shared `{#snippet partConfig}` was **hoisted from inside `<main class="panel
+  board">` up to the `<div class="workspace">` root** so it's in scope for BOTH the bin card and the
+  board inspector (moved the `<main>` open-tag below the snippet — `<main>` count unchanged). Toolbar
+  keeps a small armed status chip (no configurator).
+- **Voltage gauges overhauled** (`board.ts`, subagent + my ground fix): owner said "standpipes don't
+  show changes." Both the Reality LED bar (`drawNetBars`) and Analogy standpipe (`drawNetStandpipes`)
+  gated fill on a fixed ~12 V reference → near-empty on a 5 V board. Now they **scale to the closed
+  circuit's max rail** (`circuitVMax` = max |nodeColorVoltage| over the gauged nets, 1e-3 floor): the
+  hottest net fills the column, the rest proportional, stepping visibly to 0. Gauges are now
+  **placement-aware** — `netGaugeAnchors` taps off the pipe via a short stub, lays the column along
+  the route's outward normal (screen-up default; flips down or slides along the pipe via the cheap
+  AABB + point-to-segment `gaugeBoxClear` when it would clip a part/another pipe); both lenses share
+  the anchor. **Ground (node 0) is now gauged** as an EMPTY bar/standpipe (the 0 V reference made
+  visible — I flipped the `node <= 0` skip to `node < 0`; `circuitVMax`/draw loops handle node 0
+  safely since V(0)≈0).
+
+- **Arm-and-preview** (parts-bin surface #3 — completes the trilogy): the info drawer now targets
+  a derived **`infoKind`** = `selPart?.kind ?? armedPart`, so with nothing selected but a part armed
+  it previews the ARMED (unplaced) part — symbol/internals (driven via `infoDiagram.setState(armedPart,
+  ZERO_ELECTRICAL, partValue(armedPart))` in the frame loop's no-selPart branch), pinout, equation,
+  plain text — and swaps the live "right now" block for a "drop it to see live numbers" note
+  (`infoPreview`). Trigger: the **I** key (unchanged toggle) or a new **ⓘ** button in the bin card.
+  The bin card now shows for **any** armed part (head = name + ⓘ + disarm ×); the configurator chips
+  render below only for kinds with axes (`hasConfig`). Diagram-tier flags + the default-tier `$effect`
+  retargeted from `selPart` to `infoKind`. Gates green; **NOT yet committed when this line was first
+  written** — now committed.
+
+**Next (parts-bin trilogy complete):** the deferred adjacencies — hotbar (1–9 quick-arm), a
+catalog/codex tab, progression gating, the CP (constant-power) load mode, the ATX rail-transient
+demo, and the per-net colour override tied to net labels. None are started.
+
+---
+
 ## 2026-06-20 (56) — Voltage representation overhaul (owner "go big") — PRs #150–#153
 
 **State:** 🟢 all landed + re-synced. The voltage view is now glance-readable: **colour = which rail**

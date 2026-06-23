@@ -151,11 +151,30 @@ export interface Component {
    * source's `params[0]`). Undefined → static. Optional so older snapshots round-trip.
    */
   loadHz?: number;
+  /**
+   * The **data word** of a behavioral block, interpreted per kind: for the FPGA logic cell
+   * (`"LUT"`) it is the 16-bit **truth table** (output = bit `IN0 | IN1<<1 | IN2<<2 | IN3<<3`);
+   * for the serial blocks (`"SPIM"`, `"SPIS"`, `"UART"`) it is the **data word** they transmit
+   * (the SPI TX/reply word, the UART byte). {@link buildNetlist} writes it into the behavioral
+   * element's `aux`. Only the behavioral kinds read it; others ignore it. Undefined → the kind's
+   * default (the LUT a 2-input XOR table, the serial blocks a sample byte), so older snapshots and
+   * untouched parts round-trip unchanged.
+   */
+  word?: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
  * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */
 export const AC_DEFAULT_AMP = 5;
+
+/**
+ * One quick-recall hotbar slot (the 1–9 strip beside the board): a captured part
+ * `kind` plus the {@link PLACEMENT_OVERRIDE_KEYS} subset of its config (the tuned
+ * value / wiper / temp and the identity-quality axes). Arming a slot drops you back
+ * into place-and-repeat with that exact part; `null` is an empty slot. Persisted in
+ * the settings blob, so a player's loadout survives a refresh.
+ */
+export type HotSlot = { kind: string; config: Partial<Component> } | null;
 
 /** Fully-qualified address of a pin on a placed component. */
 export interface PinRef {
@@ -257,6 +276,14 @@ export interface NetLabel {
    * leader stay pinned to what it names. Absent ⇒ the default up-and-right offset.
    */
   tagOff?: { dx: number; dy: number };
+  /**
+   * Optional pinned colour (a PIXI hex int, e.g. a {@link PALETTE} value) for the
+   * net this label names. When set, the renderer paints the whole net this colour
+   * instead of deriving it from voltage (see `nodeColors` in {@link buildNetlist}
+   * and the colour choke-points in `board.ts`). Absent ⇒ the default voltage colour.
+   * Render-side only: never crosses the wasm boundary, never enters the snapshot hash.
+   */
+  color?: number;
 }
 
 /**
@@ -744,6 +771,432 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // --- CEC composite logic ICs (docs/ui/cec-teaching-ics.md) ------------------
+  // House teaching ICs with no single discrete equivalent. Each is a buildNetlist
+  // composition of powered ELEM_GATEs (see CEC_COMP in netlist.ts) — no new solver
+  // element. Pin ORDER here must match the CEC_COMP terminal map exactly. They are
+  // powered by their VCC/GND pins (the `value` logic rail is vestigial, like a gate's);
+  // green, the logic family. Drawn with the generic IC-card glyph (the five-tier
+  // refsheets carry the detailed teaching view).
+  // Half-adder (CEC2024): SUM = A⊕B, COUT = A·B.
+  HADD: kind(
+    "HADD",
+    "Half Adder",
+    "ok",
+    [
+      pin("SUM", 2, 0),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("COUT", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Full-adder (CEC2018): SUM = A⊕B⊕CIN, COUT = majority(A,B,CIN). Ripple-chainable.
+  FADD: kind(
+    "FADD",
+    "Full Adder",
+    "ok",
+    [
+      pin("SUM", 2, 0),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 1),
+      pin("CIN", 0, 2),
+      pin("COUT", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // 2:1 multiplexer (CEC2031): Y = SEL ? B : A. The leaf cell of any mux tree / LUT.
+  MUX2: kind(
+    "MUX2",
+    "2:1 Mux",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("GND", 1, 2),
+      pin("A", 0, 0),
+      pin("B", 0, 2),
+      pin("SEL", 0, 1),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // 1:2 demultiplexer / 1-of-2 decoder (CEC2032): Y0 = D·¬SEL, Y1 = D·SEL.
+  DMUX: kind(
+    "DMUX",
+    "1:2 Demux",
+    "ok",
+    [
+      pin("Y0", 2, 0),
+      pin("GND", 0, 0),
+      pin("Y1", 2, 2),
+      pin("D", 0, 1),
+      pin("SEL", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Majority / voter (CEC2046): Y = AB + BC + CA. Keeps the 74-series gate pin order
+  // (inputs + GND first, output then VCC) so it sits beside the real gates.
+  MAJ3: kind(
+    "MAJ3",
+    "Majority Gate",
+    "ok",
+    [
+      pin("A", 0, 0),
+      pin("B", 0, 1),
+      pin("GND", 1, 2),
+      pin("C", 0, 2),
+      pin("Y", 2, 1),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // SR latch (CEC3007): cross-coupled NORs — the first bit of memory. Pins Q, GND, S,
+  // R, VCC. Set/Reset with hold (S=R=1 is the forbidden state). Cyan, the memory family.
+  SRL: kind(
+    "SRL",
+    "SR Latch",
+    "cyan",
+    [
+      pin("Q", 2, 1),
+      pin("GND", 1, 2),
+      pin("S", 0, 0),
+      pin("R", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // D-latch (CEC3014): a level-sensitive gated latch — transparent (Q follows D) while
+  // EN high, holds when EN low. Pins Q, GND, D, EN, Q̅, VCC. The level-vs-edge teacher.
+  DLATCH: kind(
+    "DLATCH",
+    "D-Latch",
+    "cyan",
+    [
+      pin("Q", 2, 0),
+      pin("GND", 1, 2),
+      pin("D", 0, 0),
+      pin("EN", 0, 2),
+      pin("Q̅", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // JK / T flip-flop (CEC3076): the universal flip-flop — a D flip-flop fed by JK
+  // steering (D = J·Q̄ + ¬K·Q). Pins Q, GND, J, K, CLK, Q̅, VCC. hold/set/reset/toggle on
+  // the rising edge; tie J=K for a T flip-flop (divide-by-2). Cyan, the memory family.
+  JKFF: kind(
+    "JKFF",
+    "JK Flip-Flop",
+    "cyan",
+    [
+      pin("Q", 2, 0),
+      pin("GND", 1, 2),
+      pin("J", 0, 0),
+      pin("K", 0, 1),
+      pin("CLK", 0, 2),
+      pin("Q̅", 2, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Tri-state buffer (CEC2057): Y = A when OE high, high-impedance (Z) when OE low — the
+  // bus driver. Pins Y, GND, A, OE, VCC. Built as an OE-gated rail feeding a buffer (the
+  // dead-rail-Z trick). Green, the logic family.
+  TRI: kind(
+    "TRI",
+    "Tri-State Buffer",
+    "ok",
+    [
+      pin("Y", 2, 1),
+      pin("GND", 1, 2),
+      pin("A", 0, 1),
+      pin("OE", 0, 2),
+      pin("VCC", 1, 0),
+    ],
+    5,
+    "V",
+    true,
+  ),
+  // Clocked sampler (sim type 22): the ADC atom — a clocked 1-bit quantizer. Pins
+  // are ordered OUT, IN, CLK so buildNetlist's pin→terminal map is direct (pin 0 → a
+  // = OUT digital, 1 → b = IN analog sense, 2 → c = CLK), matching the core. On each
+  // rising CLK edge it latches OUT = (V(IN) > threshold); `value` is that comparison
+  // threshold (volts). Output on the right (OUT), the sensed input + the edge-clock
+  // CLK on the left. Uses `c`, so it joins THREE_PIN_TYPES in netlist.ts. Cyan, the
+  // clocked/memory family alongside the flip-flop.
+  SAMP: kind(
+    "SAMP",
+    "Clocked Sampler",
+    "cyan",
+    [pin("OUT", 2, 1), pin("IN", 0, 0), pin("CLK", 0, 2)],
+    2.5,
+    "V",
+    true,
+  ),
+  // --- Behavioral blocks (ELEM_BEHAVIORAL, sim type 25) -----------------------
+  // Programmable/protocol ICs run by a tiny FSM in the core, selected by the program id
+  // in `value` (LUT 4, SPI master 1, SPI slave 2, UART 3). They use all 8 terminals
+  // (a..h), so buildNetlist routes the visual pins to terminals via BEH_SPEC.term and
+  // emits f/g/h. `value` is the (fixed) program id — NOT a logic rail and NOT in the
+  // value lists, so there is no value picker; the editable datum is `Component.word`
+  // (→ aux: the LUT truth table / the serial data word). Generic IC-card glyph. Violet.
+  // FPGA logic cell: a 4-input look-up table (any function of 4 inputs) + optional output
+  // register. a=OUT, b=CLK, c=IN3, d=VCC, e=GND, f=IN0, g=IN1, h=IN2.
+  LUT: kind(
+    "LUT",
+    "FPGA Logic Cell",
+    "violet",
+    [
+      pin("OUT", 2, 1),
+      pin("I0", 0, 0),
+      pin("I1", 0, 1),
+      pin("I2", 0, 2),
+      pin("I3", 0, 3),
+      pin("CLK", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    4,
+    "",
+    true,
+  ),
+  // SPI master (Mode 0): drives the bus and clocks a word out on a START edge.
+  // a=SCLK, b=MOSI, c=CS, d=VCC, e=GND, f=MISO, g=START.
+  SPIM: kind(
+    "SPIM",
+    "SPI Master",
+    "violet",
+    [
+      pin("SCLK", 2, 0),
+      pin("MOSI", 2, 1),
+      pin("MISO", 0, 1),
+      pin("CS", 2, 2),
+      pin("START", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 0, 0),
+    ],
+    1,
+    "",
+    true,
+  ),
+  // SPI slave (Mode 0): clocked by the master, shifts its reply word out on MISO.
+  // a=MISO, b=RXVALID, d=VCC, e=GND, f=SCLK, g=MOSI, h=CS.
+  SPIS: kind(
+    "SPIS",
+    "SPI Slave",
+    "violet",
+    [
+      pin("MISO", 2, 0),
+      pin("RXV", 2, 1),
+      pin("SCLK", 0, 0),
+      pin("MOSI", 0, 1),
+      pin("CS", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    2,
+    "",
+    true,
+  ),
+  // UART (async, full-duplex): frames a byte out on a SEND edge, receives on RX.
+  // a=TX, b=RXVALID, d=VCC, e=GND, f=RX, g=SEND.
+  UART: kind(
+    "UART",
+    "UART",
+    "violet",
+    [
+      pin("TX", 2, 0),
+      pin("RX", 0, 0),
+      pin("RXV", 2, 1),
+      pin("SEND", 0, 1),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    3,
+    "",
+    true,
+  ),
+  // 3-bit flash ADC (CEC1080): the parallel converter — quantizes the analog VIN against VREF to a
+  // 3-bit code on D0/D1/D2. A DISCRETE composition (ADR 0005 phase 4): a reference ladder (7 taps at
+  // k/8·VREF) feeds 7 comparators forming a thermometer code, encoded by gates into the binary
+  // output — so it opens to its real internals in the zoom-to-open view. Pins VIN/VREF (analog in),
+  // D2/D1/D0 (digital out), VCC/GND. buildNetlist expands it via CEC_COMP (not BEH_SPEC).
+  ADC: kind(
+    "ADC",
+    "Flash ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 1),
+      pin("VREF", 0, 2),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    5,
+    "",
+    true,
+  ),
+  // 3-bit R-2R ladder DAC (CEC1083): the reconstruct partner of the flash ADC — turns the binary
+  // code D2 D1 D0 into AOUT = (4·D2 + 2·D1 + D0)/8 · Vhigh. Pure resistors, no sim element of its
+  // own: buildNetlist expands it via CEC_COMP into a 3-bit R-2R ladder (two R spine, four 2R legs).
+  // Pin INDEX order is fixed AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5) to match the CEC_COMP refs;
+  // visually the data bits land on the left, AOUT on the right, VCC/GND top/bottom. No value picker.
+  DAC: kind(
+    "DAC",
+    "R-2R DAC",
+    "cyan",
+    [
+      pin("AOUT", 2, 1),
+      pin("GND", 1, 2),
+      pin("D0", 0, 2),
+      pin("D1", 0, 1),
+      pin("D2", 0, 0),
+      pin("VCC", 1, 0),
+    ],
+    0,
+    "",
+    true,
+  ),
+  // 3-bit SAR ADC (CEC1108): the successive-approximation converter — a binary search over 3 clocks
+  // (one comparator + an internal R-2R DAC + a 3-bit register), the speed-vs-parts opposite of the
+  // parallel flash ADC. ELEM_BEHAVIORAL program 6: on each rising CLK it decides one bit MSB-first,
+  // settling to floor(8·VIN/VCC) on D2/D1/D0 with DONE high once the result is valid. VCC is the
+  // full-scale reference (no VREF pin). value = the fixed program id (no value picker). Pins
+  // VIN/CLK (in, left), D2/D1/D0/DONE (out, right), VCC/GND. buildNetlist routes them via BEH_SPEC.
+  SAR: kind(
+    "SAR",
+    "SAR ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 0),
+      pin("CLK", 0, 1),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("DONE", 2, 3),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    6,
+    "",
+    true,
+  ),
+  // 3-bit binary counter (CEC3161): the fundamental sequential block — a clocked register that
+  // increments. ELEM_BEHAVIORAL program 7: each rising CLK advances the count 0..7 (wrapping 7→0)
+  // on Q0/Q1/Q2; RESET (active-high) asynchronously clears it (unwired = runs free). value = the
+  // fixed program id (no value picker). Pins CLK/RESET (in, left), Q2/Q1/Q0 (out, right), VCC/GND.
+  // Drive a DAC from Q0/Q1/Q2 for a ramp/sawtooth generator. buildNetlist routes via BEH_SPEC.
+  CTR: kind(
+    "CTR",
+    "Counter",
+    "violet",
+    [
+      pin("CLK", 0, 0),
+      pin("RESET", 0, 2),
+      pin("Q2", 2, 0),
+      pin("Q1", 2, 1),
+      pin("Q0", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    7,
+    "",
+    true,
+  ),
+  // 1st-order sigma-delta ADC (CEC1110): the oversampling converter — the third ADC architecture
+  // beside flash (parallel) and SAR (binary search). ELEM_BEHAVIORAL program 8: a 1-bit modulator
+  // (integrator + comparator + 1-bit feedback) makes the density of 1s on BS equal VIN/VCC, then a
+  // decimator counts the 1s over 8 clocks into a 3-bit code on D2/D1/D0. BS exposes the live bit
+  // stream (wire it to an LED/scope to see the density). VCC is the reference. value = the fixed
+  // program id (no value picker). Pins VIN/CLK (in), D2/D1/D0/BS (out), VCC/GND. Routed via BEH_SPEC.
+  SDM: kind(
+    "SDM",
+    "Sigma-Delta ADC",
+    "cyan",
+    [
+      pin("VIN", 0, 0),
+      pin("CLK", 0, 1),
+      pin("D2", 2, 0),
+      pin("D1", 2, 1),
+      pin("D0", 2, 2),
+      pin("BS", 2, 3),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 3),
+    ],
+    8,
+    "",
+    true,
+  ),
+  // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
+  // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
+  // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =
+  // GND), matching the core. Closed (low-resistance a↔b) when V(CTRL) − V(GND) >
+  // 0.5·rail, else open; `value` is the on-resistance R_on (Ω). The switched path A↔B
+  // runs left→right, the control CTRL on the left, VCC/GND as the top/bottom power
+  // pins. Uses `e` (and `c`/`d`), so it joins FIVE_PIN_TYPES in netlist.ts. Violet.
+  ASW: kind(
+    "ASW",
+    "Analog Switch",
+    "violet",
+    [
+      pin("A", 0, 1),
+      pin("B", 2, 1),
+      pin("CTRL", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    100,
+    "Ω",
+    true,
+  ),
+  // Comparator (sim type 23): a powered open-loop comparator — the analog→digital
+  // bridge. Pins are ordered OUT, IN+, IN−, VCC, GND so buildNetlist's pin→terminal
+  // map is direct (pin 0 → a = OUT digital, 1 → b = IN+ analog, 2 → c = IN− analog,
+  // 3 → d = VCC, 4 → e = GND), matching the core. OUT drives high when V(IN+) > V(IN−)
+  // and low when below, swinging the GND..VCC rail like a powered gate; `value` is the
+  // input hysteresis V_H (a symmetric Schmitt band about 0 — set 0 for a plain
+  // comparator). The latch-enable (LE = f) the core supports is left unwired here, so
+  // the front end is always transparent (continuous compare). Inputs on the left
+  // (IN+ top, IN− bottom), output on the right, VCC/GND top/bottom. Rose, the analog
+  // signal family alongside the op-amp.
+  CMP: kind(
+    "CMP",
+    "Comparator",
+    "accent",
+    [
+      pin("OUT", 2, 1),
+      pin("IN+", 0, 0),
+      pin("IN−", 0, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    0.1,
+    "V",
+    true,
+  ),
   // Level shifter (sim type 20): translates a logic level across rails. Pins OUT,
   // IN (pin 0 → a = output, 1 → b = input). `value` is the INPUT rail (rail A, the
   // threshold side); the OUTPUT rail (rail B) is the second scalar (Component.amp,
@@ -886,11 +1339,17 @@ export function loadUnit(mode: number | undefined): string {
  * The config axes an arm-time placement may override (the inspector's pre-placement
  * choices): `variant` (diode type / LED colour), `tier` (quality), `family` (logic),
  * `openDrain` (gate output stage), `mode` (load CC/CR), `loadHz`/`duty` (load step),
- * and `amp` (the load's peak). Deliberately **not** identity/geometry fields
- * (`id`/`kind`/`cell`/`value`/`rot`), nor per-instance knobs the configurator never
- * exposes (`wiper`/`temp`/`label`) — those keep their per-kind defaults.
+ * `amp` (the load's peak), plus the tuned scalars `value` (ohms / volts / Hz / …),
+ * `wiper` (pot position), and `temp` (thermistor body temperature) — so a quick-recall
+ * hotbar slot or the pipette can carry a *fully configured* part, not just its identity
+ * / quality axes. Deliberately **not** identity/geometry fields (`id`/`kind`/`cell`/
+ * `rot`) nor the cosmetic `label`.
+ *
+ * The ordinary arm flow never seeds `value`/`wiper`/`temp` into `armedConfig`, so plain
+ * placement keeps each kind's defaults exactly as before; only the hotbar / pipette
+ * (which snapshot a tuned part) set those three.
  */
-const PLACEMENT_OVERRIDE_KEYS = [
+export const PLACEMENT_OVERRIDE_KEYS = [
   "variant",
   "tier",
   "family",
@@ -899,6 +1358,9 @@ const PLACEMENT_OVERRIDE_KEYS = [
   "loadHz",
   "duty",
   "amp",
+  "value",
+  "wiper",
+  "temp",
 ] as const satisfies readonly (keyof Component)[];
 
 /** Pick only the defined config-axis fields from an arm-time `overrides`, so spreading
@@ -1319,7 +1781,12 @@ export class BoardGraph {
    * stale endpoint, an empty name, or a duplicate label already on that exact
    * endpoint (one label per point). Returns the new label, or undefined.
    */
-  addNetLabel(at: Endpoint, name: string, pos?: Cell): NetLabel | undefined {
+  addNetLabel(
+    at: Endpoint,
+    name: string,
+    pos?: Cell,
+    color?: number,
+  ): NetLabel | undefined {
     const n = name.trim();
     if (!n) return undefined;
     if (!this.endpointExists(at)) return undefined;
@@ -1332,6 +1799,7 @@ export class BoardGraph {
       name: n,
       at: { ...at },
       ...(pos ? { pos: { ...pos } } : {}),
+      ...(color !== undefined ? { color } : {}),
     };
     this.netLabels.set(label.id, label);
     return label;
@@ -1362,6 +1830,18 @@ export class BoardGraph {
       return;
     }
     l.name = n;
+  }
+
+  /**
+   * Pin (or clear) a net label's colour. `undefined` reverts the net to its
+   * default voltage colour; a PIXI hex int forces the whole net that colour.
+   * Render-side only (see {@link NetLabel.color}); the caller pushes undo.
+   */
+  setNetLabelColor(id: number, color: number | undefined): void {
+    const l = this.netLabels.get(id);
+    if (!l) return;
+    if (color === undefined) delete l.color;
+    else l.color = color;
   }
 
   /** Remove a net label, then tidy any junction it was the sole reason to keep. */
@@ -1417,6 +1897,7 @@ export class BoardGraph {
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
+        ...(l.color !== undefined ? { color: l.color } : {}),
       })),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
@@ -1450,6 +1931,7 @@ export class BoardGraph {
         at: { ...l.at },
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
+        ...(l.color !== undefined ? { color: l.color } : {}),
       });
     }
     for (const w of s.wires) {

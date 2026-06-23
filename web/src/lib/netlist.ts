@@ -125,6 +125,21 @@ const TYPE_OF: Record<string, number> = {
   // a = Q output, 1 → b = D input, 2 → c = CLK input, 3 → d = Q̄ output). `value` is
   // the logic rail. Uses `d`, so it joins FOUR_PIN_TYPES below.
   FF: 19,
+  // Clocked sampler: a THREE-terminal clocked 1-bit quantizer (the ADC atom). Pins
+  // ordered OUT, IN, CLK (pin 0 → a = OUT, 1 → b = IN, 2 → c = CLK). `value` = the
+  // comparison threshold (volts). Uses `c` (its CLK), so it joins THREE_PIN_TYPES below.
+  SAMP: 22,
+  // Analog switch: a FIVE-terminal node-gated transmission gate. Pins ordered A, B,
+  // CTRL, VCC, GND (pin 0 → a, 1 → b = signal path, 2 → c = CTRL, 3 → d = VCC, 4 → e =
+  // GND). `value` = the on-resistance R_on (Ω). Uses `c`/`d`/`e`, so it joins
+  // FIVE_PIN_TYPES below.
+  ASW: 24,
+  // Comparator: a FIVE-terminal powered open-loop comparator. Pins ordered OUT, IN+,
+  // IN−, VCC, GND (pin 0 → a = OUT, 1 → b = IN+, 2 → c = IN−, 3 → d = VCC, 4 → e = GND).
+  // `value` = the input hysteresis V_H. Uses `c`/`d`/`e`, so it joins FIVE_PIN_TYPES
+  // below; the latch-enable terminal `f` is left unwired (ground), so the core reads it
+  // as transparent (a continuous compare).
+  CMP: 23,
   // NOTE: EC (electrolytic cap) is deliberately ABSENT here. It has no single
   // element type — it expands below into an ideal capacitor (type 2) in series
   // with an ESR resistor (type 1) sharing a private internal node.
@@ -132,11 +147,14 @@ const TYPE_OF: Record<string, number> = {
 
 /**
  * Element types that carry a third (control) terminal `c`: the MOSFETs (gate),
- * the BJTs (base), and the op-amp (its non-inverting input IN+). For all of them
- * pin 2 → c, and that pin's node is the one stamped into the `c` array; every
- * two-terminal element leaves c = 0 (ground), where the core ignores it.
+ * the BJTs (base), the op-amp (its non-inverting input IN+), and the clocked sampler
+ * (type 22, its CLK). For all of them pin 2 → c, and that pin's node is the one
+ * stamped into the `c` array; every two-terminal element leaves c = 0 (ground), where
+ * the core ignores it. (A 4-/5-pin device also stamps its pin-2 node via this set —
+ * see the `nc` computation below — so the transformer, flip-flop, and analog switch
+ * route through their FOUR_/FIVE_PIN_TYPES membership, not this set.)
  */
-const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
+const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17, 22]);
 
 /**
  * Element types that carry a **fourth** terminal `d`: the transformer (type 18,
@@ -147,12 +165,15 @@ const THREE_PIN_TYPES = new Set<number>([11, 12, 13, 14, 15, 17]);
 const FOUR_PIN_TYPES = new Set<number>([18, 19]);
 
 /**
- * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17),
- * whose five pins are OUT, IN1, IN2, VCC (pin 3 → d), GND (pin 4 → e). The gate reads
- * its rail as `V(VCC) − V(GND)` from these pins; with neither power pin wired (both
- * default to ground) the core falls back to the legacy `value` rail. Pin 4 → e.
+ * Element types that carry a **fifth** terminal `e`: the powered logic gate (type 17,
+ * pins OUT, IN1, IN2, VCC, GND), the analog switch (type 24, pins A, B, CTRL, VCC, GND),
+ * and the comparator (type 23, pins OUT, IN+, IN−, VCC, GND). For all, pin 3 → d = VCC
+ * and pin 4 → e = GND. The `nc`/`nd`/`ne` computations
+ * below all test FIVE_PIN_TYPES membership, so adding a kind here emits its full
+ * c (pin 2) / d (pin 3) / e (pin 4) trio. Every element with fewer pins leaves e = 0
+ * (ground), where the core ignores it. Pin 4 → e.
  */
-const FIVE_PIN_TYPES = new Set<number>([17]);
+const FIVE_PIN_TYPES = new Set<number>([17, 23, 24]);
 
 /**
  * Logic-gate boolean function codes, keyed by part tag, written into each gate's
@@ -171,6 +192,325 @@ const GATE_AUX: Record<string, number> = {
   BUF: 7,
   IMPLY: 8,
   NIMPLY: 9,
+};
+
+// Element type for a powered logic gate (the CEC composites stamp these).
+const ELEM_GATE = 17;
+// Element type for a behavioral block (LUT / SPI / UART), run by an FSM in the core.
+const ELEM_BEHAVIORAL = 25;
+
+/**
+ * CEC composite logic ICs (`docs/ui/cec-teaching-ics.md`) — house teaching parts with no single
+ * discrete equivalent — expand into a small network of **powered `ELEM_GATE`s** wired through
+ * private internal nodes, exactly like the EC/POT expansions but multi-gate. There is no new
+ * sim-core element (golden-safe); each is `buildNetlist` composition. A `GateStep` is
+ * `[funcCode, out, in1, in2]`; a terminal ref is a **pin index** (`>= 0`) or an **internal node**
+ * (`< 0`, where `-1` → internal[0], `-2` → internal[1], …). The expander resolves refs, routes the
+ * part's VCC/GND pins to every sub-gate's `d`/`e`, and emits one `ELEM_GATE` per step. `primary` is
+ * the step whose element backs the part's glyph/inspector current; `voutPin` the pin read for
+ * `vAcross`. (Gate func codes mirror `GATE_AUX`: AND 0, OR 1, NOR 3, XOR 4, NOT 6. A NOT step
+ * ignores `in2`, so it is set equal to `in1`.)
+ *
+ * A few composites need **non-gate** elements too (the JK flip-flop's `ELEM_DFF`, the tri-state
+ * buffer's `ELEM_ASWITCH` + pull-down resistor + an internally-railed buffer). Those go in the
+ * optional `extra` list as **raw element steps** — `{ t, a, b, c, d, e, value, aux }` with every
+ * terminal an explicit ref (pin index or internal node) — emitted verbatim after the gates. `primary`
+ * indexes the COMBINED emission order (gates first, then extra), so it can point at a raw element.
+ */
+type GateStep = [func: number, out: number, in1: number, in2: number];
+interface RawStep {
+  t: number; // sim element type
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  value: number;
+  aux: number;
+}
+interface CecComp {
+  internal: number; // private internal node count
+  vccPin: number;
+  gndPin: number;
+  voutPin: number; // pin whose voltage is the part's "output" (for vAcross)
+  primary: number; // index into the combined (gates then extra) emission backing the part current
+  gates: GateStep[];
+  extra?: RawStep[]; // non-gate elements (DFF, analog switch, resistor), emitted after the gates
+}
+// Internal-node ref helper: internal node k → the ref value the expander resolves.
+const NI = (k: number): number => -(k + 1);
+const CEC_COMP: Record<string, CecComp> = {
+  // Half-adder (CEC2024): pins SUM(0) GND(1) A(2) B(3) COUT(4) VCC(5). SUM = A^B, COUT = A&B.
+  HADD: {
+    internal: 0,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 0,
+    gates: [
+      [4, 0, 2, 3], // SUM = XOR(A, B)
+      [0, 4, 2, 3], // COUT = AND(A, B)
+    ],
+  },
+  // Full-adder (CEC2018): pins SUM(0) GND(1) A(2) B(3) CIN(4) COUT(5) VCC(6).
+  // SUM = A^B^CIN; COUT = majority(A,B,CIN) = AB + CIN(A^B). Reuses t0 = A^B.
+  FADD: {
+    internal: 3,
+    vccPin: 6,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [4, NI(0), 2, 3], // t0 = XOR(A, B)
+      [4, 0, NI(0), 4], // SUM = XOR(t0, CIN)
+      [0, NI(1), 2, 3], // t1 = AND(A, B)
+      [0, NI(2), 4, NI(0)], // t2 = AND(CIN, t0)
+      [1, 5, NI(1), NI(2)], // COUT = OR(t1, t2)
+    ],
+  },
+  // 2:1 mux (CEC2031): pins Y(0) GND(1) A(2) B(3) SEL(4) VCC(5). Y = A&~SEL | B&SEL.
+  MUX2: {
+    internal: 3,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 3,
+    gates: [
+      [6, NI(0), 4, 4], // nsel = NOT(SEL)
+      [0, NI(1), 2, NI(0)], // t1 = AND(A, nsel)
+      [0, NI(2), 3, 4], // t2 = AND(B, SEL)
+      [1, 0, NI(1), NI(2)], // Y = OR(t1, t2)
+    ],
+  },
+  // 1:2 demux / 1-of-2 decoder (CEC2032): pins Y0(0) GND(1) Y1(2) D(3) SEL(4) VCC(5).
+  DMUX: {
+    internal: 1,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [6, NI(0), 4, 4], // nsel = NOT(SEL)
+      [0, 0, 3, NI(0)], // Y0 = AND(D, nsel)
+      [0, 2, 3, 4], // Y1 = AND(D, SEL)
+    ],
+  },
+  // SR latch (CEC3007): pins Q(0) GND(1) S(2) R(3) VCC(4). Two cross-coupled NORs —
+  // Q = NOR(R, Qbar), Qbar = NOR(S, Q). Qbar is the one internal node. The digital
+  // sub-solve settles the feedback; S=R=1 drives both low (the forbidden state).
+  SRL: {
+    internal: 1,
+    vccPin: 4,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 1,
+    gates: [
+      [3, NI(0), 2, 0], // Qbar = NOR(S, Q)
+      [3, 0, 3, NI(0)], // Q = NOR(R, Qbar)
+    ],
+  },
+  // D-latch (CEC3014): pins Q(0) GND(1) D(2) EN(3) Qbar(4) VCC(5). A gated SR latch —
+  // steering ANDs (S = D·EN, R = ¬D·EN) into the cross-coupled NOR pair. Transparent
+  // (Q follows D) while EN high; holds when EN low (both steering terms forced low).
+  DLATCH: {
+    internal: 3,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 3,
+    gates: [
+      [6, NI(0), 2, 2], // nd = NOT(D)
+      [0, NI(1), 2, 3], // s = AND(D, EN)
+      [0, NI(2), NI(0), 3], // r = AND(nd, EN)
+      [3, 0, NI(2), 4], // Q = NOR(r, Qbar)
+      [3, 4, NI(1), 0], // Qbar = NOR(s, Q)
+    ],
+  },
+  // Majority / voter (CEC2046, 74-series gate order): pins A(0) B(1) GND(2) C(3) Y(4) VCC(5).
+  // Y = AB + BC + CA.
+  MAJ3: {
+    internal: 4,
+    vccPin: 5,
+    gndPin: 2,
+    voutPin: 4,
+    primary: 4,
+    gates: [
+      [0, NI(0), 0, 1], // t0 = AND(A, B)
+      [0, NI(1), 1, 3], // t1 = AND(B, C)
+      [0, NI(2), 3, 0], // t2 = AND(C, A)
+      [1, NI(3), NI(0), NI(1)], // t3 = OR(t0, t1)
+      [1, 4, NI(3), NI(2)], // Y = OR(t3, t2)
+    ],
+  },
+  // JK / T flip-flop (CEC3076): pins Q(0) GND(1) J(2) K(3) CLK(4) Q̄(5) VCC(6). A D
+  // flip-flop fed by JK steering: D = J·Q̄ + ¬K·Q. The steering is four powered gates;
+  // the memory is a raw ELEM_DFF (Q=a, D=b, CLK=c, Q̄=d). The edge trigger makes J=K=1
+  // a clean toggle. Tie J=K for a T flip-flop. Internals: nk, t1, t2, D = 4 nodes.
+  JKFF: {
+    internal: 4,
+    vccPin: 6,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 4, // the DFF (4 gate steps precede it in the combined order)
+    gates: [
+      [6, NI(0), 3, 3], // nk = NOT(K)
+      [0, NI(1), 2, 5], // t1 = AND(J, Q̄)
+      [0, NI(2), NI(0), 0], // t2 = AND(nk, Q)
+      [1, NI(3), NI(1), NI(2)], // D = OR(t1, t2)
+    ],
+    extra: [
+      // ELEM_DFF (19): Q=a, D=b, CLK=c, Q̄=d. Powered by its `value` logic rail (it has
+      // no VCC/GND pins); the steering gates use the part's wired VCC/GND.
+      { t: 19, a: 0, b: NI(3), c: 4, d: 5, e: 0, value: 5, aux: 0 },
+    ],
+  },
+  // Tri-state buffer (CEC2057): pins Y(0) GND(1) A(2) OE(3) VCC(4). A buffer whose VCC
+  // rail is gated by OE (the dead-rail-Z trick): an ELEM_ASWITCH passes VCC onto a private
+  // rail node when OE is high, a large pull-down collapses that rail when OE is low, and a
+  // BUF gate powered from that rail drives Y = A (OE high) or releases to Z (OE low, rail
+  // below the gate's operating minimum). Internal: the gated rail node = 1.
+  TRI: {
+    internal: 1,
+    vccPin: 4,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 2, // the buffer (the two raw switch/resistor steps precede it; 0 gates)
+    gates: [],
+    extra: [
+      // ASWITCH (24): a/b = VCC↔rail, c = OE (control), d = VCC, e = GND. Small R_on so the
+      // rail sits at ~VCC when closed.
+      { t: 24, a: 4, b: NI(0), c: 3, d: 4, e: 1, value: 10, aux: 0 },
+      // Pull-down resistor (1) rail→GND: large, so an open switch collapses the rail to ~0.
+      { t: 1, a: NI(0), b: 1, c: 0, d: 0, e: 0, value: 1e5, aux: 0 },
+      // BUF gate (17, func 7) Y = A, powered from the GATED rail (d = rail, e = GND): dead
+      // (output Z) when the rail collapses, drives A when the rail is up.
+      { t: 17, a: 0, b: 2, c: 2, d: NI(0), e: 1, value: 5, aux: 7 },
+    ],
+  },
+  // R-2R ladder DAC (CEC1083): pins AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5). Pure resistors —
+  // a 3-bit R-2R ladder turns the binary code D2 D1 D0 into AOUT = (4·D2 + 2·D1 + D0)/8 · Vhigh,
+  // where Vhigh is the high level external logic drives onto the D pins. Two R form the A-B-C
+  // spine (node A = AOUT; B, C internal), four 2R are the bit legs (A→D2, B→D1, C→D0) plus the
+  // C→GND termination; each step toward the LSB halves a bit's weight, giving binary weighting
+  // from one repeated R-2R cell. No gates, no new sim element — golden-safe. VCC is nominal here
+  // (the real reference is the external logic's high level); a 1 MΩ bleeder ties it to GND so the
+  // pin is never an isolated node. Internals: B, C = 2.
+  DAC: {
+    internal: 2,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 0, // the A-B spine resistor (no gates precede it) — its current backs the part
+    gates: [],
+    extra: [
+      // Spine: two R. A(AOUT) - B - C.
+      { t: 1, a: 0, b: NI(0), c: 0, d: 0, e: 0, value: 10000, aux: 0 }, // R: A - B
+      { t: 1, a: NI(0), b: NI(1), c: 0, d: 0, e: 0, value: 10000, aux: 0 }, // R: B - C
+      // Bit legs: four 2R. A→D2 (MSB at the output node), B→D1, C→D0, and C→GND (termination).
+      { t: 1, a: 0, b: 4, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: A - D2
+      { t: 1, a: NI(0), b: 3, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: B - D1
+      { t: 1, a: NI(1), b: 2, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: C - D0
+      { t: 1, a: NI(1), b: 1, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: C - GND
+      // Bleeder: keep VCC referenced (never an isolated node) without loading the ladder.
+      { t: 1, a: 5, b: 1, c: 0, d: 0, e: 0, value: 1e6, aux: 0 }, // 1 MΩ VCC - GND
+    ],
+  },
+  // 3-bit flash ADC (CEC1080), the DISCRETE remake (ADR 0005 phase 4): a real comparator-bank
+  // converter so the chip can open to its true internals. Pins VIN(0) VREF(1) D2(2) D1(3) D0(4)
+  // VCC(5) GND(6). An 8-resistor ladder VREF->GND makes 7 taps (k/8·VREF); 7 transparent
+  // comparators (IN+ = VIN, IN- = tap_k) form the thermometer code th_k = (VIN > k/8·VREF); a gate
+  // encoder turns thermometer -> binary: D2 = th4, D1 = th2·¬th4 + th6, D0 = th1·¬th2 + th3·¬th4 +
+  // th5·¬th6 + th7. c4 drives D2 directly (so th4 = the D2 pin). Internals (22): tap1..7 = NI0..6;
+  // th1,2,3,5,6,7 = NI7..12; ¬th2,¬th4,¬th6 = NI13,14,15; a1 = NI16; a2,a3,a4 = NI17,18,19;
+  // o1,o2 = NI20,21. No new sim element (comparators + resistors + powered gates); golden-safe.
+  ADC: {
+    internal: 22,
+    vccPin: 5,
+    gndPin: 6,
+    voutPin: 4, // D0
+    primary: 0, // the first encoder gate (no meaningful single "part current" for a converter)
+    gates: [
+      [6, NI(13), NI(8), NI(8)], // ¬th2 = NOT(th2)
+      [6, NI(14), 2, 2], // ¬th4 = NOT(D2)  (th4 is the D2 pin)
+      [6, NI(15), NI(11), NI(11)], // ¬th6 = NOT(th6)
+      [0, NI(16), NI(8), NI(14)], // a1 = AND(th2, ¬th4)
+      [1, 3, NI(16), NI(11)], // D1 = OR(a1, th6)
+      [0, NI(17), NI(7), NI(13)], // a2 = AND(th1, ¬th2)
+      [0, NI(18), NI(9), NI(14)], // a3 = AND(th3, ¬th4)
+      [0, NI(19), NI(10), NI(15)], // a4 = AND(th5, ¬th6)
+      [1, NI(20), NI(17), NI(18)], // o1 = OR(a2, a3)
+      [1, NI(21), NI(19), NI(12)], // o2 = OR(a4, th7)
+      [1, 4, NI(20), NI(21)], // D0 = OR(o1, o2)
+    ],
+    extra: [
+      // R-2R... no: a uniform 8-resistor ladder, GND -> tap1..tap7 -> VREF (taps at k/8·VREF).
+      { t: 1, a: 6, b: NI(0), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(0), b: NI(1), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(1), b: NI(2), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(2), b: NI(3), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(3), b: NI(4), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(4), b: NI(5), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(5), b: NI(6), c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      { t: 1, a: NI(6), b: 1, c: 0, d: 0, e: 0, value: 10000, aux: 0 },
+      // 7 transparent comparators: OUT, IN+ = VIN(0), IN- = tap_k, VCC(5), GND(6). value = 0 (no
+      // hysteresis); f left unwired by the expander (ground) => continuous compare.
+      { t: 23, a: NI(7), b: 0, c: NI(0), d: 5, e: 6, value: 0, aux: 0 }, // th1
+      { t: 23, a: NI(8), b: 0, c: NI(1), d: 5, e: 6, value: 0, aux: 0 }, // th2
+      { t: 23, a: NI(9), b: 0, c: NI(2), d: 5, e: 6, value: 0, aux: 0 }, // th3
+      { t: 23, a: 2, b: 0, c: NI(3), d: 5, e: 6, value: 0, aux: 0 }, // th4 -> D2 pin
+      { t: 23, a: NI(10), b: 0, c: NI(4), d: 5, e: 6, value: 0, aux: 0 }, // th5
+      { t: 23, a: NI(11), b: 0, c: NI(5), d: 5, e: 6, value: 0, aux: 0 }, // th6
+      { t: 23, a: NI(12), b: 0, c: NI(6), d: 5, e: 6, value: 0, aux: 0 }, // th7
+    ],
+  },
+};
+
+/**
+ * Behavioral blocks (`ELEM_BEHAVIORAL`, `docs/ui/cec-teaching-ics.md` / sim-core `BEH_PROG_*`) — a
+ * tiny FSM in the core selected by the **program id** in `value`. Each is a single 8-terminal
+ * element. `term` maps each sim terminal `a..h` to a **visual pin index** (`-1` = ground/unused), so
+ * the catalog pinout can read naturally while buildNetlist routes pins to the core's fixed terminal
+ * order. `value` is the fixed program id (NOT a logic rail); `aux` is the data word — the LUT's
+ * 16-bit truth table or the serial blocks' data word — taken from `Component.word` (default
+ * `defWord`). The LUT's combinational/registered choice rides `Component.mode` → `params[4]`.
+ */
+interface BehSpec {
+  prog: number; // program id → value (1 SPI master, 2 SPI slave, 3 UART, 4 LUT)
+  term: number[]; // length 8: terminal a..h ← visual pin index (-1 = ground/unused)
+  defWord: number; // default aux (truth table / data word) when Component.word is unset
+}
+const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
+const BEH_SPEC: Record<string, BehSpec> = {
+  // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
+  // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
+  LUT: { prog: 4, term: [0, 5, 4, 6, 7, 1, 2, 3], defWord: 0x6666 },
+  // SPI master (prog 1): a=SCLK b=MOSI c=CS d=VCC e=GND f=MISO g=START (h unused).
+  // Visual pins [SCLK, MOSI, MISO, CS, START, VCC, GND].
+  SPIM: { prog: 1, term: [0, 1, 3, 5, 6, 2, 4, -1], defWord: 0xa5 },
+  // SPI slave (prog 2): a=MISO b=RXVALID d=VCC e=GND f=SCLK g=MOSI h=CS (c unused).
+  // Visual pins [MISO, RXV, SCLK, MOSI, CS, VCC, GND].
+  SPIS: { prog: 2, term: [0, 1, -1, 5, 6, 2, 3, 4], defWord: 0x3c },
+  // UART (prog 3): a=TX b=RXVALID d=VCC e=GND f=RX g=SEND (c, h unused).
+  // Visual pins [TX, RX, RXV, SEND, VCC, GND].
+  UART: { prog: 3, term: [0, 2, -1, 4, 5, 1, 3, -1], defWord: 0x55 },
+  // (The 3-bit flash ADC, formerly behavioral prog 5, is now a DISCRETE composition — see
+  // CEC_COMP.ADC — so it opens to its real comparator bank + ladder + encoder in the zoom-to-open
+  // view, ADR 0005 phase 4. sim-core prog 5 is retained, golden-safe, just no longer web-wired.)
+  // 3-bit SAR ADC (prog 6): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=DONE h=CLK. The committed result
+  // register drives D0/D1/D2 and the DONE strobe (a FOURTH behavioral output on g); VIN is the
+  // analog sense, CLK steps the 3-clock binary search, VCC is the full-scale reference. No data
+  // word (aux unused). Visual pins [VIN, CLK, D2, D1, D0, DONE, VCC, GND].
+  SAR: { prog: 6, term: [4, 3, 2, 6, 7, 0, 5, 1], defWord: 0 },
+  // 3-bit binary counter (prog 7): a=Q0 b=Q1 c=Q2 d=VCC e=GND f=CLK g=RESET (h unused). The
+  // committed count drives Q0/Q1/Q2 on a/b/c (the generic output path); CLK increments, RESET
+  // (active-high) async-clears. No data word (aux unused). Visual pins [CLK, RESET, Q2, Q1, Q0,
+  // VCC, GND].
+  CTR: { prog: 7, term: [4, 3, 2, 5, 6, 0, 1, -1], defWord: 0 },
+  // 1st-order sigma-delta ADC (prog 8): a=D0 b=D1 c=D2 d=VCC e=GND f=VIN g=BS h=CLK. The decimated
+  // code drives D0/D1/D2 and the 1-bit modulator stream drives BS (a FOURTH output on g, like the
+  // SAR's DONE — same term map). VCC is the reference. No data word (aux unused). Visual pins
+  // [VIN, CLK, D2, D1, D0, BS, VCC, GND].
+  SDM: { prog: 8, term: [4, 3, 2, 6, 7, 0, 5, 1], defWord: 0 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
@@ -193,6 +533,38 @@ const POT_WIPER_MIN = 0.5;
 // inside sim-core's `ac_solve` instead, so their param block is installed in both modes (it is
 // harmless to the transient solve, which never reads those slots).
 const TRANSIENT_TIER_KINDS = new Set(["V", "AC", "NM", "PM", "Q", "QP"]);
+
+/**
+ * One sub-element inside an expanded composite IC, for the zoom-to-open "mini-mode" view
+ * (ADR 0005). `index` is into `element_currents` (the live sub-element current); `nodes` are its
+ * resolved terminal node indices into `node_voltages`, in a..e order (for a gate: out, in1, in2,
+ * VCC, GND). `func` is the gate function code for an `ELEM_GATE`, else the element's `aux`.
+ */
+export interface CompositeSubElement {
+  index: number;
+  type: number;
+  func: number;
+  nodes: number[];
+}
+
+/**
+ * The internal topology of one expanded composite IC (`CEC_COMP`), recorded so the zoom-to-open
+ * view can draw the chip's real sub-circuit live from the same snapshot the board already reads
+ * (ADR 0005 phase 1). All node indices are into `node_voltages`, all element indices into
+ * `element_currents`. Built only for composites; absent for behavioral blocks (one opaque element)
+ * and leaf parts. Render-side only — never crosses to the core, never hashed.
+ */
+export interface CompositeInternals {
+  /** node index per external pin, by pin index (the package boundary). */
+  pinNodes: number[];
+  /** the private internal node indices (from `cecInternal`). */
+  internalNodes: number[];
+  /** the VCC / GND rail node indices, so the view can normalise a node to a logic level. */
+  vccNode: number;
+  gndNode: number;
+  /** the sub-elements (gates first, then `extra`), in emission order. */
+  elements: CompositeSubElement[];
+}
 
 export interface BuiltNetlist {
   nodeCount: number;
@@ -219,6 +591,17 @@ export interface BuiltNetlist {
    * leaves it `0` (ground), which the core ignores. Pin 4 → e.
    */
   e: Uint32Array;
+  /**
+   * Sixth/seventh/eighth-terminal nodes per element (`f`/`g`/`h`), parallel to the rest.
+   * Provisioned by ADR 0002's wire-format widening; NO current kind reads them, so every
+   * entry is `0` (ground) and the core ignores them. Built in lockstep with `a`..`e` (one
+   * entry per element) so the install's length validation accepts them, and carried so the
+   * boundary install (`set_netlist_pefgh`) is exercised end to end — future 6/7/8-terminal
+   * parts populate these without another wire-format change.
+   */
+  f: Uint32Array;
+  g: Uint32Array;
+  h: Uint32Array;
   values: Float64Array;
   /**
    * Second per-element scalar, parallel to `values`: an AC source's peak
@@ -245,6 +628,14 @@ export interface BuiltNetlist {
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
   nodesOfComponent: Map<number, [number, number]>;
   /**
+   * component id → the internal topology of an expanded composite IC (`CEC_COMP`), for the
+   * zoom-to-open "mini-mode" view (ADR 0005): its sub-elements (each with resolved terminal nodes
+   * and gate func) plus the internal and pin node indices, all referencing the same
+   * `node_voltages` / `element_currents` the rest of the renderer uses. Absent for non-composite
+   * parts. Render-side only; never crosses to the core, never hashed.
+   */
+  compositeInternals: Map<number, CompositeInternals>;
+  /**
    * Net-label display name per node index (into `node_voltages`): a node carrying
    * one or more {@link NetLabel}s reports that name (e.g. `VCC`) so the scope and
    * telemetry can show it instead of `Node 3`. Built from the labels after node
@@ -252,6 +643,15 @@ export interface BuiltNetlist {
    * wins (deterministic). Nodes with no label are absent from the map.
    */
   nodeNames: Map<number, string>;
+  /**
+   * Pinned colour (a PIXI hex int) per node index, for nodes whose {@link NetLabel}
+   * carries a `color`. Built in parallel with {@link nodeNames} off the same
+   * authoritative node numbering — so the override survives the renderer's wire-hop
+   * BFS (it's keyed on the final node index). Lowest label id wins, mirroring the
+   * name rule. Nodes with no colour-bearing label are absent. Render-side only:
+   * never crosses the wasm boundary, never enters the snapshot hash.
+   */
+  nodeColors: Map<number, number>;
   /** Current-source component ids whose forced current has no return path. */
   floatingSources: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
@@ -381,6 +781,19 @@ export function buildNetlist(
     if (!kind || kind.pins.length < 2) continue;
     ecInternal.set(c.id, next++);
   }
+  // Each CEC composite logic IC (half-adder, mux, …) expands into a small network of
+  // powered gates wired through PRIVATE internal nodes (the intermediate signals between
+  // its sub-gates). Allocate that many per instance — after the pin/junction/EC nodes, in
+  // sorted-component-id order so numbering stays deterministic and move-invariant.
+  // cecInternal: composite component id → its array of internal node indices.
+  const cecInternal = new Map<number, number[]>();
+  for (const c of sorted) {
+    const comp = CEC_COMP[c.kind];
+    if (!comp) continue;
+    const arr: number[] = [];
+    for (let k = 0; k < comp.internal; k++) arr.push(next++);
+    cecInternal.set(c.id, arr);
+  }
   const nodeCount = next;
 
   // Net name per node: each label maps its endpoint to a node index and names it.
@@ -388,10 +801,19 @@ export function buildNetlist(
   // when two *different* names land on one physical net the lowest label id wins
   // (the `labels` list is sorted by id and we keep the first name set per node),
   // which is deterministic. This is what lets the scope/telemetry show `VCC`.
+  // Net colour override per node: built in parallel with the names off the same
+  // resolved node index, so a pinned label colour follows its net through the
+  // renderer's wire-hop BFS. Same lowest-id-wins rule as the names (labels sorted
+  // by id; keep the first colour set per node). Render-side only — never crosses
+  // the wasm boundary; the override paints the wire but does not affect the solve.
   const nodeNames = new Map<number, string>();
+  const nodeColors = new Map<number, number>();
   for (const l of labels) {
     const node = nodeIndex.get(find(endpointKey(l.at)));
-    if (node !== undefined && !nodeNames.has(node)) nodeNames.set(node, l.name);
+    if (node === undefined) continue;
+    if (!nodeNames.has(node)) nodeNames.set(node, l.name);
+    if (l.color !== undefined && !nodeColors.has(node))
+      nodeColors.set(node, l.color);
   }
 
   const types: number[] = [];
@@ -410,6 +832,25 @@ export function buildNetlist(
   // (pin 4) stamps its node here; every other element leaves it 0 (ground), ignored by
   // the core. Pushed in lockstep with each element stamp.
   const eArr: number[] = [];
+  // The sixth/seventh/eighth-terminal arrays (`f`/`g`/`h`), parallel to the rest. ADR 0002
+  // provisioned them in the wire format; only the behavioral blocks (`ELEM_BEHAVIORAL`) wire
+  // them — every other element leaves all three at 0 (ground), and the core ignores them. They
+  // MUST stay length-synced with `a`..`e` (one entry per element), so they are pushed in lockstep
+  // at every element stamp below via `pushFGH()`. This is the array-sync contract the POT
+  // regression broke for `e`; keeping the pushes in a single helper called beside every other
+  // terminal push makes a future desync hard.
+  const fArr: number[] = [];
+  const gArr: number[] = [];
+  const hArr: number[] = [];
+  // Push the sixth/seventh/eighth terminals for one element (default ground). Called once per
+  // element, right beside its `a`..`e` pushes, so all eight terminal arrays advance together and
+  // stay exactly `types.length` long. The behavioral branch passes real f/g/h nodes; everyone
+  // else calls it bare (all three ground).
+  const pushFGH = (nf = 0, ng = 0, nh = 0): void => {
+    fArr.push(nf);
+    gArr.push(ng);
+    hArr.push(nh);
+  };
   const values: number[] = [];
   // The second per-element scalar, parallel to `values`: an AC source's peak
   // amplitude (volts); 0 for every other element. Pushed in lockstep with each
@@ -419,6 +860,7 @@ export function buildNetlist(
   const elemOfComponent = new Map<number, number>();
   const legsOfComponent = new Map<number, number[]>();
   const nodesOfComponent = new Map<number, [number, number]>();
+  const compositeInternals = new Map<number, CompositeInternals>();
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
@@ -450,6 +892,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       elemOfComponent.set(c.id, idx);
       nodesOfComponent.set(c.id, [na, nb]);
       continue;
@@ -470,6 +913,7 @@ export function buildNetlist(
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
       eArr.push(0); // not a powered gate: no fifth node
+      pushFGH(); // sixth/seventh/eighth terminals unused (ground)
       values.push(c.value); // capacitance
       auxArr.push(0); // not an AC source: no amplitude
       types.push(ELEM_RESISTOR);
@@ -478,6 +922,7 @@ export function buildNetlist(
       cArr.push(0); // 2-terminal: no control node
       dArr.push(0); // 2-terminal: no fourth node
       eArr.push(0); // not a powered gate: no fifth node
+      pushFGH(); // sixth/seventh/eighth terminals unused (ground)
       values.push(ecEsr(c.tier ?? DEFAULT_TIER)); // ESR (graded by the part's tier)
       auxArr.push(0); // not an AC source: no amplitude
       elemOfComponent.set(c.id, capIdx); // series current = the cap's current
@@ -503,6 +948,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(rAW);
       auxArr.push(0);
       types.push(ELEM_RESISTOR);
@@ -511,6 +957,7 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(rWB);
       auxArr.push(0);
       elemOfComponent.set(c.id, upIdx); // A→W leg current (the main)
@@ -537,10 +984,114 @@ export function buildNetlist(
       cArr.push(0);
       dArr.push(0);
       eArr.push(0);
+      pushFGH();
       values.push(reff);
       auxArr.push(0);
       elemOfComponent.set(c.id, idx);
       nodesOfComponent.set(c.id, [na, nb]);
+      continue;
+    }
+
+    // CEC composite logic IC (half-adder, full-adder, mux, demux, majority, …): expand into
+    // its network of powered gates per CEC_COMP, wired through the private internal nodes
+    // allocated above. No new sim element — every step is a powered ELEM_GATE with the part's
+    // VCC/GND pins routed to its d/e, so the sub-gates share the part's rail.
+    const comp = CEC_COMP[c.kind];
+    if (comp) {
+      const internals = cecInternal.get(c.id) ?? [];
+      const nodeOfPin = (pinIdx: number): number =>
+        nodeIndex.get(find(key(c.id, pinIdx))) ?? 0;
+      // Resolve a gate-step terminal ref: pin index (>= 0) or internal node (< 0).
+      const resolve = (r: number): number =>
+        r >= 0 ? nodeOfPin(r) : (internals[-r - 1] ?? 0);
+      const nVcc = nodeOfPin(comp.vccPin);
+      const nGnd = nodeOfPin(comp.gndPin);
+      const family = c.family ?? 0;
+      const firstIdx = types.length;
+      // Record each sub-element's index + resolved terminal nodes for the zoom-to-open view
+      // (ADR 0005). The emission below is byte-identical to before — the recording only reads
+      // the same resolved refs — so the netlist crossing to the core (and the golden) is unchanged.
+      const subElements: CompositeSubElement[] = [];
+      for (const [func, out, in1, in2] of comp.gates) {
+        const oN = resolve(out);
+        const i1 = resolve(in1);
+        const i2 = resolve(in2);
+        const ei = types.length;
+        types.push(ELEM_GATE);
+        aArr.push(oN);
+        bArr.push(i1);
+        cArr.push(i2);
+        dArr.push(nVcc);
+        eArr.push(nGnd);
+        pushFGH();
+        values.push(c.value); // vestigial logic rail (the gate is powered through d/e)
+        auxArr.push(func + 16 * family);
+        subElements.push({
+          index: ei,
+          type: ELEM_GATE,
+          func,
+          nodes: [oN, i1, i2, nVcc, nGnd],
+        });
+      }
+      // Non-gate elements (a DFF, an analog switch, a pull-down resistor, an internally-railed
+      // buffer): each raw step lists every terminal explicitly, emitted verbatim after the gates.
+      for (const rs of comp.extra ?? []) {
+        const ra = resolve(rs.a);
+        const rb = resolve(rs.b);
+        const rc = resolve(rs.c);
+        const rd = resolve(rs.d);
+        const re = resolve(rs.e);
+        const ei = types.length;
+        types.push(rs.t);
+        aArr.push(ra);
+        bArr.push(rb);
+        cArr.push(rc);
+        dArr.push(rd);
+        eArr.push(re);
+        pushFGH();
+        values.push(rs.value);
+        auxArr.push(rs.aux);
+        subElements.push({
+          index: ei,
+          type: rs.t,
+          func: rs.aux,
+          nodes: [ra, rb, rc, rd, re],
+        });
+      }
+      elemOfComponent.set(c.id, firstIdx + comp.primary);
+      nodesOfComponent.set(c.id, [nodeOfPin(comp.voutPin), nGnd]);
+      compositeInternals.set(c.id, {
+        pinNodes: kind.pins.map((p) => nodeOfPin(p.index)),
+        internalNodes: internals,
+        vccNode: nVcc,
+        gndNode: nGnd,
+        elements: subElements,
+      });
+      continue;
+    }
+
+    // Behavioral block (LUT / SPI / UART): a single ELEM_BEHAVIORAL using all eight terminals.
+    // `value` = the fixed program id; `aux` = the data word (Component.word, default per kind);
+    // the visual pins route to the core's terminal order a..h via BEH_SPEC.term (-1 → ground).
+    // The LUT's combinational/registered mode rides Component.mode → params[4] (in the params loop).
+    const beh = BEH_SPEC[c.kind];
+    if (beh) {
+      const nodeOfPin = (pinIdx: number): number =>
+        pinIdx < 0 ? 0 : (nodeIndex.get(find(key(c.id, pinIdx))) ?? 0);
+      const tm = beh.term;
+      const ei = types.length;
+      types.push(ELEM_BEHAVIORAL);
+      aArr.push(nodeOfPin(tm[0]!));
+      bArr.push(nodeOfPin(tm[1]!));
+      cArr.push(nodeOfPin(tm[2]!));
+      dArr.push(nodeOfPin(tm[3]!)); // VCC
+      eArr.push(nodeOfPin(tm[4]!)); // GND
+      pushFGH(nodeOfPin(tm[5]!), nodeOfPin(tm[6]!), nodeOfPin(tm[7]!));
+      values.push(beh.prog);
+      auxArr.push(c.word ?? beh.defWord);
+      elemOfComponent.set(c.id, ei);
+      // vAcross read as the primary output (terminal a) relative to the GND pin (terminal e).
+      nodesOfComponent.set(c.id, [nodeOfPin(tm[0]!), nodeOfPin(tm[4]!)]);
       continue;
     }
 
@@ -609,6 +1160,7 @@ export function buildNetlist(
     cArr.push(nc);
     dArr.push(nd);
     eArr.push(ne);
+    pushFGH(); // f/g/h provisioned but unused by every current kind → ground
     values.push(value);
     auxArr.push(aux);
     elemOfComponent.set(c.id, idx);
@@ -655,6 +1207,17 @@ export function buildNetlist(
       if (nw !== undefined) {
         u2(na, nw);
         u2(nw, nb);
+      }
+      continue;
+    }
+    // A CEC composite (a network of powered gates) or a behavioral block (a powered IC):
+    // for the return-path test treat the whole IC as one connected blob (its powered output
+    // and rails tie its nodes together), so a source returning through any pin finds a path —
+    // the same spirit as the EC/POT passive-path unions above.
+    if (CEC_COMP[c.kind] || BEH_SPEC[c.kind]) {
+      for (const p of kind.pins) {
+        const np = nodeIndex.get(find(key(c.id, p.index)));
+        if (np !== undefined) u2(na, np);
       }
       continue;
     }
@@ -722,6 +1285,14 @@ export function buildNetlist(
   // when non-zero — so a gate-free (or unpowered-legacy) circuit keeps its old signature,
   // while wiring/rewiring a gate's power pins rebuilds the sim.
   const eSig = eArr.some((x) => x !== 0) ? eArr.join(",") : "";
+  // The sixth/seventh/eighth terminals `f`/`g`/`h` (a behavioral block's serial/LUT inputs)
+  // fold in the same way, and only when non-zero — so every behavioral-free circuit keeps its
+  // exact old signature, while rewiring a LUT input or a SPI/UART line rebuilds the sim. Without
+  // these, moving a behavioral input wire would not change a/b/c/values/aux and the stale sim
+  // would not reinstall.
+  const fSig = fArr.some((x) => x !== 0) ? fArr.join(",") : "";
+  const gSig = gArr.some((x) => x !== 0) ? gArr.join(",") : "";
+  const hSig = hArr.some((x) => x !== 0) ? hArr.join(",") : "";
 
   // Fold the control terminal `c` into the signature too, so wiring (or rewiring)
   // a 3-pin device's control net — a MOSFET's gate or a BJT's base — to a
@@ -778,6 +1349,11 @@ export function buildNetlist(
       params[ei * PARAM_STRIDE + 0] = comp.loadHz!;
       params[ei * PARAM_STRIDE + 3] = comp.duty ?? 0.5;
     }
+    // FPGA logic cell: combinational by default; mode = 1 latches the LUT output into the
+    // cell's register on the rising CLK edge (params slot 4 ≥ 1 → registered in sim-core).
+    if (comp.kind === "LUT" && (comp.mode ?? 0) >= 1) {
+      params[ei * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1;
+    }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op
   // string when nothing tiered is placed, so plain circuits keep their old signature).
@@ -805,6 +1381,9 @@ export function buildNetlist(
     (auxSig ? "|aux:" + auxSig : "") +
     (dSig ? "|d:" + dSig : "") +
     (eSig ? "|e:" + eSig : "") +
+    (fSig ? "|f:" + fSig : "") +
+    (gSig ? "|g:" + gSig : "") +
+    (hSig ? "|h:" + hSig : "") +
     paramsSig;
 
   return {
@@ -815,13 +1394,18 @@ export function buildNetlist(
     c: Uint32Array.from(cArr),
     d: Uint32Array.from(dArr),
     e: Uint32Array.from(eArr),
+    f: Uint32Array.from(fArr),
+    g: Uint32Array.from(gArr),
+    h: Uint32Array.from(hArr),
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     params,
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,
+    compositeInternals,
     nodeNames,
+    nodeColors,
     floatingSources,
     sig,
   };

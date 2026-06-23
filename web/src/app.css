@@ -655,6 +655,155 @@ body {
   box-shadow: 0 0 0 1px oklch(0 0 0 / 0.3);
 }
 
+/* Quick-recall hotbar (1–9) ----------------------------------------------------
+ * A low-profile strip of nine slots along the board's bottom edge: a digit hotkey,
+ * the captured part's glyph (tinted by its kind identity colour) + a compact name,
+ * and a clear ×. The live (currently-armed) slot lights accent. Sits above the
+ * canvas + scope glass but reads as part of the bench HUD. */
+.hotbar {
+  position: absolute;
+  z-index: 4;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 5px;
+  padding: 5px;
+  max-width: calc(100% - 24px);
+  background: oklch(0.135 0.022 285 / 0.72);
+  backdrop-filter: blur(3px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 0.3),
+    0 8px 22px -14px oklch(0 0 0 / 0.9);
+}
+
+.hotcell {
+  --c: var(--border-bright);
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 116px;
+  min-width: 0;
+  height: 30px;
+  padding: 0 7px 0 5px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  user-select: none;
+  transition:
+    border-color 0.16s var(--ease),
+    background 0.16s var(--ease),
+    box-shadow 0.16s var(--ease);
+}
+
+.hotcell.is-empty {
+  background: transparent;
+  border-style: dashed;
+  border-color: var(--border);
+  opacity: 0.7;
+}
+
+.hotcell.is-filled:hover {
+  border-color: color-mix(in oklch, var(--c) 55%, var(--border));
+  box-shadow: 0 0 12px -6px var(--c);
+}
+
+.hotcell.is-armed {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  box-shadow:
+    0 0 0 1px var(--accent-line),
+    0 0 14px -6px var(--accent);
+}
+
+/* The digit hotkey badge (its own style so it reads at a glance even on a filled
+ * cell, where the glyph sits beside it). */
+.hotkey {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 13px;
+  height: 16px;
+  padding: 0 3px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+  color: var(--faint);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+}
+
+.hotcell.is-armed .hotkey {
+  color: var(--accent);
+  border-color: var(--accent-line);
+}
+
+/* The captured part's tag glyph, tinted by its kind identity colour. */
+.hotglyph {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--c);
+  text-shadow: 0 0 10px color-mix(in oklch, var(--c) 50%, transparent);
+}
+
+.hotname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.hotclear {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--faint);
+  background: transparent;
+  border: none;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    color 0.15s,
+    opacity 0.15s;
+}
+
+.hotcell:hover .hotclear {
+  opacity: 1;
+}
+
+.hotclear:hover {
+  color: var(--bad);
+}
+
+/* The empty slot's faint placeholder track. */
+.hotempty {
+  flex: 1;
+  height: 3px;
+  border-radius: 2px;
+  background: repeating-linear-gradient(
+    90deg,
+    var(--border) 0 4px,
+    transparent 4px 8px
+  );
+  opacity: 0.5;
+}
+
 /* Telemetry --------------------------------------------------------------- */
 
 .readout {

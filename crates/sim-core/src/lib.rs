@@ -46,6 +46,56 @@
 //! | 17   | logic gate         | high rail V   | tick-pure boolean driver, linear (OUT=a IN1=b IN2=c)|
 //! | 18   | transformer        | turns ratio n | ideal-T: magnetiser + hard secondary (pri=a/b sec=c/d)|
 //! | 19   | D flip-flop        | logic rail V  | edge-triggered 1-bit memory, linear (Q=a D=b CLK=c Q̄=d)|
+//! | 22   | clocked sampler    | threshold V   | edge-triggered 1-bit comparator, linear (OUT=a IN=b CLK=c)|
+//! | 23   | latched comparator | hysteresis V_H| level-latched analog comparator, powered rail-to-rail (OUT=a IN+=b IN-=c VCC=d GND=e LE=f)|
+//! | 24   | analog switch (TG) | R_on ohms     | node-gated transmission gate, time-varying conductance a<->b (CTRL=c VCC=d GND=e)|
+//! | 25   | behavioral block   | program id    | integer state machine, program-id dispatch, powered digital I/O (SPI master: SCLK=a MOSI=b CS=c VCC=d GND=e MISO=f START=g)|
+//!
+//! Type 25 is the **behavioral block** — the protocol / behavioral engine's element (ADR 0004,
+//! `docs/sim/multi-rate-domains.md`): a clocked, **integer-state** machine that runs beside the
+//! analog MNA solve and talks to it only at its boundary pins. Each tick it reads its input pins
+//! as logic levels, advances a fixed `[u32; 8]` block of internal state, and drives its powered
+//! digital outputs from that committed state — the digital twin of the gate/sampler/DFF, made
+//! programmable. Its `value` is a **program id** dispatching which firmware it runs (`1` = SPI
+//! master, `2` = SPI slave, `3` = UART, `4` = FPGA logic element; the dispatch stays open for I2C
+//! and a tiny MCU later), `aux` is the data word / truth table, and its timing is **structural**
+//! (`params[0]` = SCLK half-period in ticks, `params[1]` = bit count) — never a function of a
+//! solved voltage. Sub-ticking (phase 3) lets a block run many digital sub-ticks per analog tick at
+//! a declared rate, so protocols clock at MHz against the µs analog tick. The **SPI master** (program 1)
+//! is Mode 0 (CPOL = 0, CPHA = 0): a rising `START` (`g`) asserts `CS` (`c`) low and shifts the
+//! word out on `MOSI` (`b`) MSB-first, clocked by `SCLK` (`a`) at the structural divider, sampling
+//! `MISO` (`f`) on each rising edge; the three outputs are powered (swing the `GND` (`e`) .. `VCC`
+//! (`d`) rail, dead below [`GATE_MIN_RAIL`]) exactly like a gate. Its eight `u32` state words enter
+//! the snapshot hash (LE bytes, fixed element + word order, appended after the comparator fold), so
+//! a behavioral netlist replays bit-for-bit and a circuit with no behavioral block folds zero extra
+//! bytes (the golden is untouched). See [`ELEM_BEHAVIORAL`] and [`beh_spi_step`].
+//!
+//! Type 22 is the **clocked sampler** (a 1-bit clocked comparator — the keystone of the
+//! ADC / sample-and-hold / SAR cluster): a near-twin of the D flip-flop whose data input
+//! is a continuous **analog** sense node (`IN` = `b`) instead of a logic pin. On each rising
+//! edge of `CLK` (`c`) it latches `OUT` (`a`) = `High` if `V(IN) > value` (its threshold)
+//! else `Low`, driving `OUT` from the committed bit through the same constant digital stamp
+//! as the flip-flop (no Newton, no branch unknown, one tick of clock-to-output delay). `IN`
+//! is a high-Z analog pin (not driven, not iterated). Like the flip-flop it keeps two
+//! persistent four-state scalars (the stored bit and the previous clock level) that enter
+//! the snapshot hash. See [`ELEM_SAMPLER`].
+//!
+//! Type 23 is the **latched comparator** (modelled on the Analog Devices **ADCMP601**): a
+//! crossbreed of the clocked sampler and the powered logic gate. Its **front end** is an
+//! analog comparator — it senses two continuous inputs `IN+` (`b`) and `IN-` (`c`) and tracks
+//! whether `V(IN+) > V(IN-)` — while its **output stage** is a powered, rail-to-rail digital
+//! driver like a gate: `OUT` (`a`) swings between the GND pin (`e`, low) and the VCC pin (`d`,
+//! high), and an unpowered rail (`V(d) − V(e) < `[`GATE_MIN_RAIL`]) leaves it dead/released
+//! exactly as for a gate. A **level-sensitive, active-low latch enable** `LE` (`f`) gates the
+//! front end: while LE is transparent (unwired, or driven at/above half-rail it is *not* —
+//! below half-rail latches) the held bit (`cmp_q`) tracks the comparison; while LE is asserted
+//! low the bit holds. Its `value` is the **hysteresis band** `V_H` (volts, default `0` = a
+//! clean compare with no dead-band): the bit flips Low→High only once `diff > V_H/2` and
+//! High→Low only once `diff < −V_H/2`, a symmetric Schmitt window about zero. Like the sampler
+//! the held bit drives `OUT` through the constant powered-gate stamp (no Newton, no branch
+//! unknown; the bit is committed once per step from the just-solved inputs, a one-tick delay),
+//! `IN+`/`IN-` are high-Z analog sense pins (Boundary), and the single persistent four-state
+//! scalar `cmp_q` enters the snapshot hash. See [`ELEM_COMPARATOR`].
 //!
 //! Type 19 is the **D flip-flop**: the first *sequential* element — a one-bit memory
 //! that samples its `D` input (`b`) on each rising edge of `CLK` (`c`) and presents it
@@ -159,6 +209,20 @@
 //! computed once per solve from the tick before any iterating. This makes a buck
 //! converter (switch into an inductor + freewheel diode + output cap) expressible
 //! as an ordinary netlist.
+//!
+//! ## Gated analog switch (transmission gate)
+//!
+//! The **analog switch** ([`ELEM_ASWITCH`]) is the *node-controlled* cousin of the clock-driven
+//! switch — a CD4066-style transmission gate. It is the same time-varying *linear* conductance
+//! between `a` and `b` (so it shares the switch's fixed-linear-base, no-Newton machinery), but
+//! its open/closed state comes from a **control node** `c` rather than the tick: the control is
+//! read from the **committed previous-tick** node voltages (a one-tick delay, exactly like a
+//! logic gate's input), so the conductance is still a constant within the solve. Powered from
+//! `d` (VCC) / `e` (GND) it thresholds at half-rail and goes dead on an unpowered rail (the
+//! powered-gate rule); with no power pins it falls back to a fixed control threshold. Its
+//! `value` is the on-resistance `R_on`. Because its state is *derived* from the already-hashed
+//! `node_v` it adds no hashed state, so the snapshot hash and golden are unchanged. This is the
+//! switch the sample-and-hold / switched-capacitor / analog-mux clusters are built from.
 //!
 //! ## MNA layout
 //!
@@ -740,6 +804,933 @@ pub const ELEM_PULLUP: u8 = 21;
 /// rail well within a tick.
 const PULLUP_R: f64 = 4_700.0;
 
+/// **Clocked sampler / 1-bit comparator** — the keystone atom of the ADC / sample-and-hold
+/// / SAR cluster. A near-twin of the [`ELEM_DFF`] (model it on the same machinery), but its
+/// data input is a continuous **analog** sense node rather than a logic pin. Three terminals:
+/// output `a` = `OUT` (a digital output), input `b` = `IN` (the analog signal sensed), input
+/// `c` = `CLK` (the clock); `d` and `e` are unused (ground). Its `value` is the **threshold
+/// voltage** (V) and its `aux` is the **output logic-high rail** (V) — when `aux <= 0` it
+/// defaults to [`SAMPLER_VHIGH_DEFAULT`] so a sampler with no rail set still drives a clean
+/// logic level. On each **rising edge** of `CLK` (`Low -> High`, detected exactly like the
+/// flip-flop via a persistent previous-clock level) it latches a one-bit comparison of the
+/// analog input against the threshold: `OUT = High` if `V(IN) > value`, else `Low`. Otherwise
+/// it holds. The output is driven from the **committed** bit through the same digital-drive
+/// path the flip-flop uses (`FAMILIES[0].drive_level(samp_q, rail)`), a constant Thévenin
+/// stamp within the solve — so it adds **no** Newton work and **no** branch unknown, and gives
+/// a clean one-tick clock-to-output delay (the bit is updated once per step in the commit
+/// phase from the solved `CLK`/`IN`). It keeps two persistent four-state [`Level`] scalars —
+/// the stored output bit (`samp_q`) and the previous clock level (`samp_clk_prev`) — that
+/// **enter the snapshot hash**, so a rewind landing on a clock edge replays identically.
+///
+/// The **boundary** nature: `OUT` (a) and `CLK` (c) are digital signal pins, but `IN` (b) is a
+/// high-Z analog **sense** node — it is *not* driven and does *not* engage Newton (the sampler
+/// is a constant stamp within a tick, exactly like the flip-flop). In [`classify_nets`] `IN` is
+/// therefore marked **analog-touching** (so a net touching only `IN` is `Analog`, and a node
+/// shared with an analog element and a digital pin is `Boundary` — the comparator pattern),
+/// mirroring how a powered gate's VCC/GND pins are kept analog. A flash ADC is N samplers at
+/// different `value` taps; a sample-and-hold and a SAR build on this same latch-on-clock atom.
+/// Driven through the resolved digital domain (see [`Sim::eval_digital`]).
+pub const ELEM_SAMPLER: u8 = 22;
+
+/// Default output logic-high rail (volts) for an [`ELEM_SAMPLER`] whose `aux` is unset
+/// (`<= 0`). A sane logic level (the common bench 5 V rail) so a sampler still drives a clean
+/// `OUT` without an explicit rail. A sampler that sets `aux > 0` overrides it per device.
+const SAMPLER_VHIGH_DEFAULT: f64 = 5.0;
+
+/// The output logic-high rail (volts) a clocked sampler ([`ELEM_SAMPLER`]) drives `OUT` to:
+/// its `aux` when set (`> 0`), else [`SAMPLER_VHIGH_DEFAULT`]. Used by both the digital drive
+/// ([`Sim::eval_digital`]) and the OUT current readout so they agree on the rail.
+#[inline]
+fn sampler_rail(el: &Element) -> f64 {
+    if el.aux > 0.0 {
+        el.aux
+    } else {
+        SAMPLER_VHIGH_DEFAULT
+    }
+}
+
+/// **Latched comparator** — an analog comparator with a powered rail-to-rail output and a
+/// level-sensitive latch, modelled on the Analog Devices **ADCMP601**. It is the *analog* twin
+/// of the clocked sampler ([`ELEM_SAMPLER`]): both latch a one-bit decision and drive it through
+/// a constant digital stamp, but where the sampler compares one analog input against a fixed
+/// threshold on a clock **edge**, the comparator compares **two** analog inputs against each
+/// other under a **level**-sensitive enable, and its output stage is **powered** like a logic
+/// gate ([`ELEM_GATE`]) rather than ground-referenced.
+///
+/// **Six terminals** (uses the wider 8-terminal format): output `a` = `OUT` (`Q`, a digital
+/// output), input `b` = `IN+` (`VP`), input `c` = `IN-` (`VN`), `d` = `VCC` (the positive
+/// supply), `e` = `GND` (`VEE`, the output's low reference), `f` = `LE` (the latch enable);
+/// `g`/`h` are unused (ground). Its `value` is the **hysteresis band** `V_H` in volts (default
+/// `0` ⇒ a clean compare with no dead-band — the golden-safe simple case); `aux` is unused.
+///
+/// **Front end** (evaluated in the commit phase from the just-solved committed node voltages,
+/// exactly where the sampler latches):
+/// 1. `rail = V(d) − V(e)`. If `rail < `[`GATE_MIN_RAIL`] the chip is **unpowered** — the held
+///    bit is left as-is and the output reads dead/released (a powered gate's dead-rail rule).
+/// 2. **Latch (level-sensitive, ACTIVE-LOW):** the front end is *transparent* when `LE` is
+///    unwired (`f == 0`, the ADCMP601 floating default) or driven at/above half-rail
+///    (`V(f) − V(e) >= 0.5·rail`); driven **below** half-rail it is *latched* and the bit holds.
+/// 3. While transparent, apply **symmetric hysteresis** about zero to `diff = V(IN+) − V(IN-)`,
+///    using the current held bit (`cmp_q`) as the Schmitt state: flip to `High` when
+///    `diff > V_H/2`, to `Low` when `diff < −V_H/2`, else hold. With `value` = `0` this is a
+///    plain comparator (`diff > 0` → High, `diff < 0` → Low).
+///
+/// **Output stage:** `OUT` (`a`) is driven from the committed bit through the **same powered
+/// gate output path** the gate uses — it swings between `V(e)` (low) and `V(d)` (high) via the
+/// [`digital_vlow`](Sim::digital_vlow) GND-offset mechanism and the family driver, and releases
+/// (high-Z `Z`) when the rail collapses, just like a dead-rail gate. A constant Thévenin stamp
+/// within the solve (no Newton, no branch unknown; one tick of input-to-output delay).
+///
+/// **Boundary nature** (mirrors the sampler / a powered gate): `OUT` (`a`) and `LE` (`f`) are
+/// digital signal pins; `IN+` (`b`) and `IN-` (`c`) are high-Z analog **sense** nodes (marked
+/// analog-touching in [`classify_nets`], so a comparator input net is Analog and a node it
+/// shares with a digital pin is Boundary); `VCC` (`d`) / `GND` (`e`) are analog supply pins
+/// (handled exactly like a powered gate's power pins). The single persistent four-state
+/// [`Level`] scalar `cmp_q` (the held output bit) **enters the snapshot hash**, so a rewind
+/// replays identically.
+pub const ELEM_COMPARATOR: u8 = 23;
+
+/// **Gated analog switch / transmission gate** (a CD4066-style bilateral switch) — the
+/// signal-gated pass element the sample-and-hold, switched-capacitor, analog-mux, and VCO
+/// clusters need. It is the **node-controlled** cousin of the clock-driven [`ELEM_SWITCH`]:
+/// where that switch's conductance is a pure function of [`Sim::tick`] (a fixed-period PWM),
+/// this one's open/closed state is driven by a **control node** carrying a logic signal — so
+/// it can be steered by a clock generator, a flip-flop, a comparator, or any digital pin.
+///
+/// **Five terminals:** the **switched analog path** is `a` ↔ `b` (a resistor between them when
+/// the switch is ON, symmetric like [`ELEM_RESISTOR`]/[`ELEM_SWITCH`]); `c` = `CTRL` (the
+/// digital control input that opens/closes the path); `d` = `VCC`; `e` = `GND` (the supply
+/// pins, read exactly like a powered gate's). `f`/`g`/`h` are unused (ground). Its `value` is
+/// the **on-resistance `R_on`** in ohms; `value <= 0` defaults to [`ASWITCH_RON`].
+///
+/// **A LINEAR, time-varying conductance — not Newton.** Exactly like [`ELEM_SWITCH`], it stamps
+/// a symmetric conductance between `a` and `b` (no branch unknown, no reactive state), so it
+/// stays on the linear fast path and composes with nonlinear devices by sitting in the fixed
+/// Newton base. The only difference from the clock switch is **where the on/off comes from**:
+/// the control is read from the **committed previous-tick** node voltages ([`Sim::node_v`], the
+/// same one-tick delay the digital engine uses for a gate input), so the conductance is a
+/// *constant within the solve* (it never makes the system non-linear or iterate). Determinism:
+/// the state is a deterministic function of the committed `node_v` — itself already hashed — so
+/// the switch introduces **no new hashed state** and the snapshot hash is unchanged.
+///
+/// **The on/off rule** (see [`Sim::aswitch_closed`]), mirroring [`gate_rails`] /
+/// [`GATE_MIN_RAIL`]:
+/// - **Powered, active-high** (the normal case): `rail = V(d) − V(e)`; when
+///   `rail >= `[`GATE_MIN_RAIL`] the switch is **ON** iff `V(c) − V(e) > 0.5·rail` (control
+///   above half-rail, referenced to the chip's GND), exactly like a powered gate's input
+///   threshold. An unwired VCC floats to ~0 V → `rail < GATE_MIN_RAIL` → the switch is **dead**
+///   (forced open), the "you must power the chip" lesson the powered gate teaches.
+/// - **Unpowered fallback** (`d == 0 && e == 0`, no power pins wired): the switch is **ON** iff
+///   `V(c) > `[`ASWITCH_FIXED_THRESH`] — a bare control level against a fixed threshold, so an
+///   unwired-rail analog switch still works off a plain logic signal (mirrors how a powerless
+///   gate falls back to its legacy `value` rail).
+///
+/// **ON** stamps `g = 1/R_on` between `a` and `b` (the standard symmetric resistor stamp);
+/// **OFF** stamps the tiny [`SWITCH_GOFF`] leak (matching [`ELEM_SWITCH`]'s open behaviour) so
+/// the node stays non-singular. Wire a source → ASWITCH → a capacitor and pulse `CTRL` to build
+/// a sample-and-hold: the cap charges toward the source while the switch is ON and **holds** its
+/// voltage (its backward-Euler companion keeps the charge) once the switch opens and isolates it.
+pub const ELEM_ASWITCH: u8 = 24;
+
+/// Default on-resistance of a closed [`ELEM_ASWITCH`], in ohms, used when its `value <= 0`.
+/// Larger than the clock switch's near-ideal [`SWITCH_RON`] because a real transmission gate
+/// (CD4066 ~ 80–125 Ω, 74HC4066 similar) has a non-trivial channel resistance — small enough to
+/// pass a signal cleanly into a high-impedance load, large enough to be a teachable non-ideality.
+const ASWITCH_RON: f64 = 100.0;
+
+/// Fixed control threshold (volts) for an **unpowered** [`ELEM_ASWITCH`] (no VCC/GND pins wired,
+/// `d == 0 && e == 0`): the switch closes when its control `V(c)` exceeds this. A sane logic
+/// mid-level so a bare control swing (0 V / 3.3–5 V) drives it cleanly. A powered analog switch
+/// instead thresholds at half its actual rail (see [`ELEM_ASWITCH`] / [`GATE_MIN_RAIL`]); this is
+/// only the fallback, the analogue of a powerless gate's legacy `value`-rail threshold.
+const ASWITCH_FIXED_THRESH: f64 = 1.5;
+
+/// **Behavioral block** — the protocol / behavioral engine's element (ADR 0004,
+/// `docs/sim/multi-rate-domains.md`). A clocked, integer-state machine that runs **beside**
+/// the analog MNA solve and talks to it only at its boundary pins: each tick it reads its
+/// input pins as logic levels, advances a fixed block of **integer** internal state, and
+/// drives its powered digital outputs from that committed state — the digital twin of the
+/// gate/sampler/DFF mechanism, generalised to a small programmable state machine. This is
+/// **phase 1**: it runs at the **base tick rate** (one step per analog tick — multi-rate
+/// sub-ticking is phase 2 and deliberately not here), so it is slow but functional, proving
+/// the engine end to end.
+///
+/// **Program-id dispatch.** Its `value` is a **program id** selecting which firmware the block
+/// runs (`1` = SPI master, `2` = SPI slave, `3` = UART, `4` = FPGA logic element; the dispatch
+/// stays open for I2C and a tiny MCU — one engine, many behaviors, the way `PULSE`/`SHUNT`/`LOAD`
+/// overload an existing element). Its `aux` is the **data word to transmit** (treated as an
+/// integer, `aux as u64`) for the serial programs, or the **16-entry truth table** for the LUT
+/// (program 4). Timing is structural: `params[0]` is the SCLK **half-period in analog ticks**
+/// (the clock divider; `<= 0` defaults to [`BEH_SPI_HALF_DEFAULT`]) and `params[1]` is the
+/// **bit count** (`<= 0` defaults to [`BEH_SPI_NBITS_DEFAULT`]). Timing comes **only** from
+/// these declared params — never from a solved voltage (the determinism contract:
+/// structure, not values).
+///
+/// **Internal state** is a fixed `[u32; `[`BEH_STATE_WORDS`]`]` block per element (`beh_state`,
+/// beside `samp_q`), **integer only** (no floats, no PRNG, no std hasher), zero-initialised and
+/// **folded into the snapshot hash** in fixed element + word order, appended after the existing
+/// folds — so a circuit with no behavioral block (the RC golden, every existing test) folds
+/// **zero** extra bytes and the golden is byte-identical by construction. The SPI **master**
+/// program (1) uses the first eight words as `[0]=fsm`, `[1]=bit_index`, `[2]=shift_out`,
+/// `[3]=shift_in`, `[4]=clk_counter`, `[5]=sclk_level`, `[6]=cs_level`, `[7]=start_prev` (see
+/// [`beh_spi_step`]); the SPI **slave** (2, [`beh_spi_slave_step`]), the **UART** (3,
+/// [`beh_uart_step`]) and the **FPGA logic element** (4, [`beh_lut_step`] — words `[0]=Q`,
+/// `[1]=clk_prev`, or none at all in combinational mode) each lay the same
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block out their own way — every program runs alone in its
+/// element, so the word maps need not agree.
+///
+/// **SPI master pinout (program 1)** — uses the wider 8-terminal format: `a` = `SCLK` (out),
+/// `b` = `MOSI` (out), `c` = `CS` (out, active-low), `d` = `VCC`, `e` = `GND`, `f` = `MISO`
+/// (in), `g` = `START` (in); `h` is unused (ground). The three outputs `a`/`b`/`c` are
+/// **powered digital** — they swing `V(e) .. V(d)` through the **same powered-gate output path**
+/// the gate/comparator use (rail from [`gate_rails`]; an unpowered rail below [`GATE_MIN_RAIL`]
+/// releases them, the "you must power the chip" rule). The two inputs `f`/`g` are read as digital
+/// levels (quantised against half-rail relative to GND on `e`, see [`beh_level`]). Like every
+/// digital element the analog↔digital crossing lives in its pins; the within-tick stamp is a
+/// constant (no Newton, no branch unknown, one tick of state-to-output delay).
+///
+/// **SPI master state machine (Mode 0: CPOL=0, CPHA=0)** — advanced once per step in the commit
+/// phase from the just-solved committed `node_v` (mirroring where `samp_q`/`cmp_q` update):
+/// idle holds SCLK low and CS high; a **rising START edge** loads `shift_out = aux & mask`,
+/// asserts CS low, and enters the active state; the active state presents the current MOSI bit
+/// **MSB-first**, generates SCLK by counting `clk_counter` to the half-period and toggling,
+/// **samples MISO on each rising SCLK edge** (shift-left + OR) and **advances the bit on each
+/// falling edge**, and after the configured bit count deasserts CS and returns to idle with the
+/// received word in `shift_in`. See [`beh_spi_step`] for the exact Mode-0 edge bookkeeping.
+///
+/// **FPGA logic element (program 4)** — the universal digital primitive (ADR 0004 phase 4, the
+/// `FP` part): a **4-input lookup table** whose 16-entry **truth table** is `aux`'s low 16 bits.
+/// The output `a` is `bit[index]` of the table, `index = IN0 | IN1<<1 | IN2<<2 | IN3<<3` from the
+/// inputs `IN0` = `f`, `IN1` = `g`, `IN2` = `h`, `IN3` = `c` (each a digital level at half-rail
+/// relative to `GND`). Every ≤4-input gate is one particular truth table, so a single element
+/// teaches *all* of them (AND = `0x8888`, XOR = `0x6666`, the 3-input majority = `0xE8E8`, …).
+/// `params[`[`BEH_LUT_MODE_SLOT`]`]` selects the **output mode**: combinational (the default — the
+/// output follows the live inputs through the **same digital sub-solve** a gate settles in, no
+/// clock-to-output delay) or **registered** (`>= 1` — the lookup is latched into `Q` on each rising
+/// `CLK` = `b` edge and the output drives that held bit, a LUT followed by a flip-flop). A LUT+FF
+/// "logic element" is the fundamental FPGA building block; a fabric of them is **any** sequential
+/// machine — the honest realization of phase 4's "cycle-stepped state machine / soft core" (an FPGA
+/// has no ISA; it has LUTs). The output is powered exactly like the serial programs (swings
+/// `V(e) .. V(d)`, released below [`GATE_MIN_RAIL`]); a combinational LUT folds a zero state block
+/// (golden-safe by construction), a registered one folds `Q`/`clk_prev`. See [`beh_lut_step`].
+pub const ELEM_BEHAVIORAL: u8 = 25;
+
+/// Width of an [`ELEM_BEHAVIORAL`] block's integer internal-state array — the number of `u32`
+/// words each behavioral block carries (and folds into the snapshot hash in word order). Fixed
+/// so every program shares one state shape; **each program lays the words out independently**
+/// (only one program ever runs per element): the SPI master (program 1) uses words 0..8 (see
+/// [`beh_spi_step`]), the SPI slave (program 2) words 0..6 (see [`beh_spi_slave_step`]), and the
+/// **UART** (program 3) words 0..12 — TX *and* RX run concurrently in one block, so it needs both
+/// engines' counters/shift-registers side by side (see [`beh_uart_step`]). Sixteen is comfortably
+/// enough for that widest program (a full-duplex shift-register protocol) without bloating the
+/// per-tick hash fold. Widening from the original eight is **golden-safe**: no golden circuit
+/// carries a behavioral block, so the RC golden folds zero extra bytes and
+/// `0xeaac_3764_99e4_fa24` is byte-identical; program 1's word map (0..8) is unchanged.
+pub const BEH_STATE_WORDS: usize = 16;
+
+/// Behavioral SPI master — default SCLK **half-period in analog ticks** when `params[0] <= 0`.
+/// A full SCLK period is `2 ·` this; with [`DT`] = 2 µs the default 4 → an 8 µs period
+/// (125 kHz). Purely structural (a clock divider), so the bus timing is deterministic and never
+/// depends on a solved voltage.
+const BEH_SPI_HALF_DEFAULT: u32 = 4;
+
+/// Behavioral SPI master — default **bit count** per transaction when `params[1] <= 0` (a byte).
+const BEH_SPI_NBITS_DEFAULT: u32 = 8;
+
+/// Behavioral SPI master — maximum bit count, clamping `params[1]` so a `shift_out`/`shift_in`
+/// word stays within the 32-bit state slots and the MSB-first index arithmetic can never
+/// underflow. Deterministic structural bound (32 bits).
+const BEH_SPI_NBITS_MAX: u32 = 32;
+
+/// SPI-master internal-state word indices into an [`ELEM_BEHAVIORAL`]'s `[u32; BEH_STATE_WORDS]`
+/// block (program 1). `FSM`: 0 = idle, 1 = active. The rest are the shift-register engine's
+/// counters/registers and the edge-detection companion (`START_PREV`).
+const BEH_SPI_FSM: usize = 0;
+const BEH_SPI_BIT_INDEX: usize = 1;
+const BEH_SPI_SHIFT_OUT: usize = 2;
+const BEH_SPI_SHIFT_IN: usize = 3;
+const BEH_SPI_CLK_COUNTER: usize = 4;
+const BEH_SPI_SCLK_LEVEL: usize = 5;
+const BEH_SPI_CS_LEVEL: usize = 6;
+const BEH_SPI_START_PREV: usize = 7;
+
+/// Program id selecting the **SPI master** firmware for an [`ELEM_BEHAVIORAL`] (its `value`).
+/// `0` (or any unrecognised id) is an **inert** behavioral block — it advances no state and
+/// drives nothing, so it folds a zero state block and is golden-safe. Further programs take
+/// the next ids.
+const BEH_PROG_SPI_MASTER: u32 = 1;
+/// Program id selecting the **SPI slave** firmware (program 2) — the receiving end of the
+/// phase-1 SPI master, Mode 0. See [`beh_spi_slave_step`].
+const BEH_PROG_SPI_SLAVE: u32 = 2;
+/// Program id selecting the **UART** firmware (program 3) — async TX+RX in one block. See
+/// [`beh_uart_step`].
+const BEH_PROG_UART: u32 = 3;
+/// Program id selecting the **FPGA logic element** firmware (program 4) — a 4-input lookup table
+/// with an optional registered output (ADR 0004 phase 4, the `FP` part). See [`beh_lut_step`].
+const BEH_PROG_LUT: u32 = 4;
+/// Program id selecting the **3-bit flash ADC** firmware (program 5) — a parallel quantizer: the
+/// analog input on `f` measured against the reference span (the VREF pin `g` above GND, or the VCC
+/// rail if VREF is unwired) and encoded to a 3-bit code driving D0/D1/D2 on `a`/`b`/`c`. Purely
+/// combinational (no state block), so it runs in `eval_digital` only and folds a zero state block —
+/// golden-safe additive. See [`beh_flash_adc_code`]. (The teaching flash ADC, pairing with the DAC.)
+const BEH_PROG_FLASH_ADC: u32 = 5;
+/// Program id selecting the **3-bit SAR ADC** firmware (program 6) — a clocked successive-
+/// approximation converter (the CEC1108). On each rising `CLK` (`h`) it decides one result bit
+/// most-significant first by comparing the analog input `VIN` (`f`) against an internal trial R-2R
+/// DAC level (`trial / 8` of the `VCC` rail, the single-supply reference) — keeping the bit when
+/// `VIN` is at or above it, dropping it otherwise. After 3 clocks the register holds
+/// `floor(8 * VIN / VCC)` clamped `0..=7` (the SAME code the flash ADC finds in parallel) and `DONE`
+/// (`g`) goes high until the next conversion starts. Unlike the combinational flash ADC it carries
+/// integer state (the result register, the step counter, the done flag, the CLK edge companion),
+/// advanced in the commit phase. See [`beh_sar_adc_step`]. (The teaching SAR ADC, the speed-vs-parts
+/// opposite of the flash CEC1080: one comparator + one DAC, but N clocks per conversion.)
+const BEH_PROG_SAR_ADC: u32 = 6;
+/// Program id selecting the **3-bit binary counter** firmware (program 7) — a clocked up-counter, the
+/// fundamental sequential building block (a free-running register that increments). On each rising
+/// `CLK` (`f`) it advances `count = (count + 1) mod 8`, driving the three bits on `Q0`/`Q1`/`Q2`
+/// (`a`/`b`/`c`) — so it uses the GENERIC a/b/c output path (no special drive branch, unlike the SAR's
+/// fourth output). `RESET` (`g`, active-high) asynchronously clears the count to 0; unwired (`g` =
+/// ground) it reads low, so a counter with no reset wired simply free-runs. State is the count register
+/// and the CLK edge companion, advanced in the commit phase. Drive a DAC from `Q0..Q2` for a
+/// ramp/sawtooth generator; it also underlies timers, frequency dividers, sequencers, memory addressing
+/// and the sigma-delta decimator. See [`beh_counter_step`].
+const BEH_PROG_COUNTER: u32 = 7;
+/// Program id selecting the **1st-order sigma-delta ADC** firmware (program 8) — the oversampling
+/// converter, completing the trilogy beside flash (parallel) and SAR (binary search). A 1-bit
+/// **modulator** runs fast: an integrator accumulates `VIN - feedback`, a 1-bit comparator slices its
+/// sign, and that bit feeds back (subtracting full-scale when high), so the loop forces the **density
+/// of 1s** in the bit stream to equal `VIN/VCC` (noise-shaped — the quantisation error is pushed to
+/// high frequency). A **decimator** then just counts the 1s over `SD_DECIM` modulator clocks to get a
+/// multi-bit code. So: oversample to a 1-bit stream, then count — high resolution from a 1-bit slicer.
+/// The 1-bit stream is exposed on `BS` (`g`, a fourth output) so its density is visible; the decimated
+/// code drives D0/D1/D2 (`a`/`b`/`c`). VCC is the full-scale reference. The integrator is fixed-point
+/// integer state (so it is deterministic and hashable). See [`beh_sigma_delta_step`].
+const BEH_PROG_SIGMA_DELTA: u32 = 8;
+
+// --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
+
+/// SPI-**slave** internal-state word indices (program 2) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block — a fresh layout (every program runs alone in its
+/// element). The slave is the receiving end of the phase-1 master (Mode 0): it watches the
+/// driven `SCLK`/`MOSI`/`CS` pins and shifts MOSI in MSB-first on each SCLK **rising** edge while
+/// `CS` is asserted (low), presenting its reply word (`aux`) on `MISO` MSB-first so a master can
+/// read it back. `BIT_INDEX` counts the rising edges already taken in the current frame (the next
+/// reply/receive bit position); `RX_WORD` latches the completed receive word; `RXVALID` holds
+/// high from a completed word until `CS` deasserts (the receiver's data-ready pulse for one
+/// transaction); `SCLK_PREV`/`CS_PREV` are the edge-detection companions.
+const BEH_SLV_SCLK_PREV: usize = 0;
+const BEH_SLV_BIT_INDEX: usize = 1;
+const BEH_SLV_SHIFT_IN: usize = 2;
+const BEH_SLV_RX_WORD: usize = 3;
+const BEH_SLV_RXVALID: usize = 4;
+const BEH_SLV_CS_PREV: usize = 5;
+
+/// The SPI slave's bit count (`params[1]`, defaulting to [`BEH_SPI_NBITS_DEFAULT`] and clamped to
+/// [`BEH_SPI_NBITS_MAX`]) — the **structural** frame width, read once so the receive and the
+/// `MISO` reply agree. The slave is clocked entirely by the incoming `SCLK`, so it has no
+/// half-period of its own (`params[0]` is unused). Never a function of a solved voltage.
+#[inline]
+fn beh_spi_slave_nbits(el: &Element) -> u32 {
+    if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_SPI_NBITS_MAX)
+    } else {
+        BEH_SPI_NBITS_DEFAULT
+    }
+}
+
+/// The `MISO` bit the SPI slave currently presents (MSB-first) from its **committed** state: the
+/// reply word `aux`'s bit at position `nbits-1-bit_index`, where `bit_index` is the count of
+/// SCLK rising edges already taken this frame. Driven only while `CS` is asserted (`cs_prev == 0`,
+/// i.e. CS was low at the last commit); idle/deasserted presents `0`. Pure integer arithmetic on
+/// the hashed state — the same `bit_index` the commit step advances, so the reply a master samples
+/// on the rising edge is exactly the slave's next reply bit (the link is full-duplex).
+#[inline]
+fn beh_spi_slave_miso_bit(state: &[u32; BEH_STATE_WORDS], reply: u64, nbits: u32) -> bool {
+    if state[BEH_SLV_CS_PREV] != 0 {
+        return false; // CS deasserted → MISO idle low.
+    }
+    let bit_index = state[BEH_SLV_BIT_INDEX].min(nbits.saturating_sub(1));
+    let shift = nbits - 1 - bit_index;
+    (reply >> shift) & 1 != 0
+}
+
+/// Advance a behavioral **SPI slave**'s integer state machine by one analog tick (Mode 0:
+/// CPOL = 0, CPHA = 0), reading the just-solved committed input levels (`sclk`, `mosi`, `cs`).
+/// Mirrors the master's edge bookkeeping from the other side of the bus (all integer, fully
+/// deterministic):
+/// - **Deasserted** (`cs == true`, CS high): the receiver is reset — `bit_index`/`shift_in`
+///   cleared and `SCLK_PREV` tracked — and on the **rising CS edge** (the frame ending) `RXVALID`
+///   is cleared, so the data-ready pulse lasts exactly from a completed word until CS releases.
+/// - **Asserted** (`cs == false`, CS low): on a **rising SCLK edge** (`sclk && !sclk_prev`) shift
+///   `MOSI` into `shift_in` (MSB-first, shift-left + OR), then advance `bit_index`; once `nbits`
+///   bits have been clocked latch `shift_in` into `RX_WORD`, raise `RXVALID`, and reset
+///   `bit_index`/`shift_in` for a back-to-back next frame. `MISO` is presented combinationally
+///   from `bit_index` by [`beh_spi_slave_miso_bit`] (the reply word's bits MSB-first), so a
+///   Mode-0 master sampling on the same rising edge reads reply bit `bit_index`.
+///
+/// `SCLK_PREV`/`CS_PREV` are always updated last so the next tick can detect the next edges.
+/// Mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_spi_slave_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    nbits: u32,
+    sclk: bool,
+    mosi: bool,
+    cs: bool,
+) {
+    if cs {
+        // Deasserted: receiver reset; clear RXVALID on the CS rising edge (frame end).
+        if state[BEH_SLV_CS_PREV] == 0 {
+            state[BEH_SLV_RXVALID] = 0;
+        }
+        state[BEH_SLV_BIT_INDEX] = 0;
+        state[BEH_SLV_SHIFT_IN] = 0;
+    } else {
+        // Asserted: sample MOSI on each rising SCLK edge, MSB-first.
+        if sclk && state[BEH_SLV_SCLK_PREV] == 0 {
+            state[BEH_SLV_SHIFT_IN] = (state[BEH_SLV_SHIFT_IN] << 1) | (mosi as u32);
+            state[BEH_SLV_BIT_INDEX] += 1;
+            if state[BEH_SLV_BIT_INDEX] >= nbits {
+                state[BEH_SLV_RX_WORD] = state[BEH_SLV_SHIFT_IN];
+                state[BEH_SLV_RXVALID] = 1; // data-ready: held until CS deasserts
+                state[BEH_SLV_BIT_INDEX] = 0; // ready for a back-to-back next frame
+                state[BEH_SLV_SHIFT_IN] = 0;
+            }
+        }
+    }
+    state[BEH_SLV_SCLK_PREV] = sclk as u32;
+    state[BEH_SLV_CS_PREV] = cs as u32;
+}
+
+// --- Behavioral program 3: UART (async, TX + RX in one block) -----------------
+
+/// UART internal-state word indices (program 3) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block — TX and RX run **concurrently** in one block, so each
+/// engine gets its own counters/shift-register side by side (a fresh layout; every program runs
+/// alone in its element). `TX_*` drive the `TX` pin; `RX_*` sample the `RX` pin. All structural
+/// timing (the baud-tick counters) is integer and derived from `params`, never from a voltage.
+const BEH_UART_TX_STATE: usize = 0; // 0 = idle (line mark/high), 1 = transmitting a frame
+const BEH_UART_TX_BITPOS: usize = 1; // 0 = start bit, 1..=nbits = data bits, nbits+1 = stop bit
+const BEH_UART_TX_BAUD: usize = 2; // ticks elapsed in the current bit
+const BEH_UART_TX_SHIFT: usize = 3; // remaining data bits, LSB-first (shifted right as sent)
+const BEH_UART_SEND_PREV: usize = 4; // previous SEND level (rising-edge trigger companion)
+const BEH_UART_RX_STATE: usize = 5; // 0 = idle (awaiting start), 1 = sampling a frame
+const BEH_UART_RX_BITPOS: usize = 6; // data bits sampled so far (0..nbits)
+const BEH_UART_RX_BAUD: usize = 7; // ticks elapsed toward the next sample instant
+const BEH_UART_RX_SHIFT: usize = 8; // data bits received so far, assembled LSB-first
+const BEH_UART_RX_PREV: usize = 9; // previous RX level (falling-edge/start-bit companion)
+const BEH_UART_RX_WORD: usize = 10; // latched received byte
+const BEH_UART_RXVALID: usize = 11; // pulse: high for one tick when a byte latches
+
+/// Default UART **baud divider** — analog ticks per bit when `params[0] <= 0`. The structural bit
+/// period (a clock divider), so framing is deterministic and never a function of a solved voltage.
+/// Sixteen ticks/bit is the classic 16× oversampling figure and keeps mid-bit RX sampling
+/// (`baud/2`) well clear of the bit edges; with [`DT`] = 2 µs it is a 32 µs bit (~31.25 kbaud).
+const BEH_UART_BAUD_DEFAULT: u32 = 16;
+/// UART default **data bits** per frame when `params[1] <= 0` (a byte).
+const BEH_UART_NBITS_DEFAULT: u32 = 8;
+/// UART maximum data bits, clamping `params[1]` so a shift word stays within the 32-bit slot and
+/// the LSB-first index arithmetic can never overflow. Deterministic structural bound (32 bits).
+const BEH_UART_NBITS_MAX: u32 = 32;
+
+/// The UART's baud divider (`params[0]`, defaulting, floored at 1 so a bit always spans ≥ 1 tick)
+/// and data-bit count (`params[1]`, defaulting and clamped) as integers — the **structural**
+/// framing, read once so the TX/RX engines and the line drive agree. Never a function of a solved
+/// voltage.
+#[inline]
+fn beh_uart_config(el: &Element) -> (u32, u32) {
+    let baud = if el.params[0] >= 1.0 {
+        el.params[0] as u32
+    } else {
+        BEH_UART_BAUD_DEFAULT
+    }
+    .max(1);
+    let nbits = if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_UART_NBITS_MAX)
+    } else {
+        BEH_UART_NBITS_DEFAULT
+    };
+    (baud, nbits)
+}
+
+/// The level the UART currently drives on `TX` (its **committed** state): idle/mark is **high**;
+/// while transmitting, the start bit (bitpos 0) is low, each data bit (bitpos `1..=nbits`) is its
+/// LSB-first value from the shift register, and the stop bit (bitpos `nbits+1`) is high. Pure
+/// integer arithmetic on the hashed state — the same bits the commit step shifts out, so the
+/// drive and the bookkeeping stay in lockstep. Returns `true` for a high (mark) line.
+#[inline]
+fn beh_uart_tx_high(state: &[u32; BEH_STATE_WORDS], nbits: u32) -> bool {
+    if state[BEH_UART_TX_STATE] != 1 {
+        return true; // idle line = mark (high)
+    }
+    let bitpos = state[BEH_UART_TX_BITPOS];
+    if bitpos == 0 {
+        false // start bit (space/low)
+    } else if bitpos <= nbits {
+        // Data bit (LSB-first): the low bit of the remaining shift register.
+        state[BEH_UART_TX_SHIFT] & 1 != 0
+    } else {
+        true // stop bit (mark/high)
+    }
+}
+
+/// Advance a behavioral **UART**'s integer state machine by one analog tick — TX and RX both, from
+/// the just-solved committed inputs (`send`, `rx`). All timing is integer (the baud-tick counters),
+/// fully deterministic:
+/// - **TX:** idle holds the line high (mark). On a **rising SEND edge** load `aux & mask` into the
+///   shift register and begin a frame at the start bit. Each bit is held for `baud` ticks (counting
+///   `TX_BAUD` up); when a bit completes, advance `TX_BITPOS` (shifting the data register right as
+///   each data bit finishes) through start → `nbits` data bits (LSB-first) → stop, then return to
+///   idle. The level for the current bit is presented by [`beh_uart_tx_high`].
+/// - **RX:** idle watches `RX`; on its **falling edge** (a start bit) begin sampling and wait
+///   **1.5 bit periods** (`baud + baud/2`) so the first sample lands in the middle of the first
+///   data bit (half a bit to the start-bit midpoint, then a full bit to step over it). Then sample
+///   each of `nbits` data bits at one-bit (`baud`) intervals, assembling LSB-first; after the last
+///   data bit latch the byte into `RX_WORD` and pulse `RXVALID` high for one tick, then return to
+///   idle (the stop bit is the idle/mark the next start-edge search runs against — standard mid-bit
+///   sampling).
+///
+/// `SEND_PREV`/`RX_PREV` are updated last for the next tick's edge detection. `RXVALID` is cleared
+/// at the top each tick so it is a one-tick pulse. Mutates `state` in place (the commit phase).
+fn beh_uart_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    data: u64,
+    baud: u32,
+    nbits: u32,
+    send: bool,
+    rx: bool,
+) {
+    let mask: u64 = if nbits >= 32 {
+        u64::MAX
+    } else {
+        (1u64 << nbits) - 1
+    };
+    let half = (baud / 2).max(1); // first-sample delay; ≥ 1 so RX always advances
+
+    // RXVALID is a one-tick pulse: clear it, then any latch this tick re-raises it.
+    state[BEH_UART_RXVALID] = 0;
+
+    // --- TX engine ---
+    if state[BEH_UART_TX_STATE] == 1 {
+        state[BEH_UART_TX_BAUD] += 1;
+        if state[BEH_UART_TX_BAUD] >= baud {
+            state[BEH_UART_TX_BAUD] = 0;
+            let bitpos = state[BEH_UART_TX_BITPOS];
+            // The bit that just finished its `baud` ticks: if it was a data bit, drop it so the
+            // next data bit's value sits in bit 0 of the shift register.
+            if (1..=nbits).contains(&bitpos) {
+                state[BEH_UART_TX_SHIFT] >>= 1;
+            }
+            // Advance to the next bit; after the stop bit (bitpos == nbits+1) return to idle.
+            if bitpos > nbits {
+                state[BEH_UART_TX_STATE] = 0;
+                state[BEH_UART_TX_BITPOS] = 0;
+            } else {
+                state[BEH_UART_TX_BITPOS] = bitpos + 1;
+            }
+        }
+    } else if send && state[BEH_UART_SEND_PREV] == 0 {
+        // Rising SEND edge: load the byte (LSB-first) and start the frame at the start bit.
+        state[BEH_UART_TX_SHIFT] = (data & mask) as u32;
+        state[BEH_UART_TX_BITPOS] = 0; // start bit first
+        state[BEH_UART_TX_BAUD] = 0;
+        state[BEH_UART_TX_STATE] = 1;
+    }
+    state[BEH_UART_SEND_PREV] = send as u32;
+
+    // --- RX engine ---
+    if state[BEH_UART_RX_STATE] == 1 {
+        state[BEH_UART_RX_BAUD] += 1;
+        // The first data-bit sample lands in the MIDDLE OF BIT 0 — 1.5 bit periods after the start
+        // edge (`baud + half`): half a bit to reach the middle of the start bit, then one full bit
+        // to step over the start bit to the middle of the first data bit. Each subsequent sample is
+        // one full bit later (mid-bit). Skipping the start bit this way is what keeps the LSB-first
+        // assembly aligned (sampling only `half` would land on the start bit and shift every bit).
+        let target = if state[BEH_UART_RX_BITPOS] == 0 {
+            baud + half
+        } else {
+            baud
+        };
+        if state[BEH_UART_RX_BAUD] >= target {
+            state[BEH_UART_RX_BAUD] = 0;
+            // Sample this data bit (LSB-first: bit k lands in position k).
+            let k = state[BEH_UART_RX_BITPOS];
+            if rx {
+                state[BEH_UART_RX_SHIFT] |= 1u32 << k;
+            }
+            state[BEH_UART_RX_BITPOS] = k + 1;
+            if state[BEH_UART_RX_BITPOS] >= nbits {
+                // All data bits in: latch the byte and pulse RXVALID (one tick). The stop bit is
+                // the idle mark the next start-edge search runs against, so return straight to idle.
+                state[BEH_UART_RX_WORD] = state[BEH_UART_RX_SHIFT] & (mask as u32);
+                state[BEH_UART_RXVALID] = 1;
+                state[BEH_UART_RX_STATE] = 0;
+            }
+        }
+    } else if !rx && state[BEH_UART_RX_PREV] != 0 {
+        // Falling RX edge (start bit): begin sampling — clear the assembler, await the mid-bit.
+        state[BEH_UART_RX_STATE] = 1;
+        state[BEH_UART_RX_BITPOS] = 0;
+        state[BEH_UART_RX_BAUD] = 0;
+        state[BEH_UART_RX_SHIFT] = 0;
+    }
+    state[BEH_UART_RX_PREV] = rx as u32;
+}
+
+/// Read one of a behavioral block's digital **input** pins as a two-state level: `true`
+/// (logic high) iff the pin sits above half the chip's rail **relative to its GND pin** `e`,
+/// `false` otherwise — the powered-gate / comparator-LE threshold (a clean half-rail decision,
+/// no forbidden band, so the SPI bookkeeping is a deterministic boolean). `rail` is the chip's
+/// supply span `V(d) − V(e)`; with `rail <= 0` (unpowered) every input reads `false`.
+#[inline]
+fn beh_level(node_v: &[f64], pin: usize, vlow: f64, rail: f64) -> bool {
+    rail > 0.0 && (node_v[pin] - vlow) > 0.5 * rail
+}
+
+/// The behavioral SPI master's bit count (`params[1]`, defaulting and clamped) and SCLK
+/// half-period (`params[0]`, defaulting) as integers — the **structural** timing, read once so
+/// the commit step and the output drive agree. Never a function of a solved voltage.
+#[inline]
+fn beh_spi_config(el: &Element) -> (u32, u32) {
+    let nbits = if el.params[1] >= 1.0 {
+        (el.params[1] as u32).min(BEH_SPI_NBITS_MAX)
+    } else {
+        BEH_SPI_NBITS_DEFAULT
+    };
+    let half = if el.params[0] >= 1.0 {
+        el.params[0] as u32
+    } else {
+        BEH_SPI_HALF_DEFAULT
+    };
+    (nbits, half)
+}
+
+/// The MOSI bit the SPI master currently presents (MSB-first), from the **committed** state:
+/// while active (`fsm == 1`) it is `(shift_out >> (nbits-1-bit_index)) & 1`, else `0` (idle
+/// drives MOSI low). Pure integer arithmetic on the hashed state — the same value the commit
+/// step shifts out, so the drive and the bookkeeping stay in lockstep.
+#[inline]
+fn beh_spi_mosi_bit(state: &[u32; BEH_STATE_WORDS], nbits: u32) -> bool {
+    if state[BEH_SPI_FSM] != 1 {
+        return false;
+    }
+    let bit_index = state[BEH_SPI_BIT_INDEX];
+    if bit_index >= nbits {
+        return false;
+    }
+    let shift = nbits - 1 - bit_index;
+    (state[BEH_SPI_SHIFT_OUT] >> shift) & 1 != 0
+}
+
+/// Advance a behavioral SPI master's integer state machine by one analog tick (Mode 0:
+/// CPOL = 0, CPHA = 0), reading the just-solved committed input levels (`start`, `miso`).
+/// Mirrors where the sampler/comparator latch their bit. **Mode-0 edge bookkeeping** (all
+/// integer, fully deterministic):
+/// - **Idle** (`fsm == 0`): SCLK = 0, CS = 1 (deasserted). On a **rising START edge**
+///   (`start && !start_prev`) load `shift_out = data & mask`, zero `bit_index`/`clk_counter`/
+///   `sclk_level`, assert CS = 0, and enter the active state. The first MOSI bit (the MSB) is
+///   thereby presented while CS is low and **before** the first SCLK rising edge — CPHA = 0.
+/// - **Active** (`fsm == 1`): count `clk_counter` up each tick; when it reaches `half_period`
+///   reset it and **toggle** SCLK. On the resulting **rising** SCLK edge sample MISO into
+///   `shift_in` (shift left, OR the received bit). On the **falling** SCLK edge advance
+///   `bit_index`; once `nbits` bits have been clocked (i.e. after the nth falling edge) deassert
+///   (CS = 1, SCLK = 0) and return to idle — the transaction is done and `shift_in` holds the
+///   received word.
+///
+/// `start_prev` is always updated last so the next tick can detect the next rising START edge.
+/// Returns nothing; it mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_spi_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    data: u64,
+    nbits: u32,
+    half: u32,
+    start: bool,
+    miso: bool,
+) {
+    let mask: u64 = if nbits >= 32 {
+        u64::MAX
+    } else {
+        (1u64 << nbits) - 1
+    };
+    match state[BEH_SPI_FSM] {
+        1 => {
+            // Active: generate SCLK by counting to the half-period, then act on its edge.
+            state[BEH_SPI_CLK_COUNTER] += 1;
+            if state[BEH_SPI_CLK_COUNTER] >= half {
+                state[BEH_SPI_CLK_COUNTER] = 0;
+                let old = state[BEH_SPI_SCLK_LEVEL];
+                let new = 1 - old; // toggle 0<->1
+                state[BEH_SPI_SCLK_LEVEL] = new;
+                if old == 0 && new == 1 {
+                    // Rising edge: sample MISO into the receive shift register (MSB-first in).
+                    state[BEH_SPI_SHIFT_IN] = (state[BEH_SPI_SHIFT_IN] << 1) | (miso as u32);
+                } else {
+                    // Falling edge: this bit is finished — advance, and finish after nbits bits.
+                    state[BEH_SPI_BIT_INDEX] += 1;
+                    if state[BEH_SPI_BIT_INDEX] >= nbits {
+                        state[BEH_SPI_CS_LEVEL] = 1; // deassert CS
+                        state[BEH_SPI_SCLK_LEVEL] = 0; // park SCLK low
+                        state[BEH_SPI_FSM] = 0; // back to idle; shift_in holds the received word
+                    }
+                }
+            }
+        }
+        _ => {
+            // Idle (or an unrecognised fsm value, which resets cleanly to idle behaviour).
+            state[BEH_SPI_FSM] = 0;
+            state[BEH_SPI_SCLK_LEVEL] = 0;
+            state[BEH_SPI_CS_LEVEL] = 1; // CS deasserted (active-low)
+            if start && state[BEH_SPI_START_PREV] == 0 {
+                // Rising START edge: load the word and assert CS, present the MSB (CPHA = 0).
+                state[BEH_SPI_SHIFT_OUT] = (data & mask) as u32;
+                state[BEH_SPI_SHIFT_IN] = 0;
+                state[BEH_SPI_BIT_INDEX] = 0;
+                state[BEH_SPI_CLK_COUNTER] = 0;
+                state[BEH_SPI_SCLK_LEVEL] = 0;
+                state[BEH_SPI_CS_LEVEL] = 0; // assert CS (active-low)
+                state[BEH_SPI_FSM] = 1;
+            }
+        }
+    }
+    state[BEH_SPI_START_PREV] = start as u32;
+}
+
+// --- Behavioral program 4: FPGA logic element (4-input LUT + optional register) ----
+
+/// FPGA-logic-element internal-state word indices (program 4) into an [`ELEM_BEHAVIORAL`]'s
+/// `[u32; `[`BEH_STATE_WORDS`]`]` block. Only the **registered** mode carries state — the
+/// registered output bit `Q` and its clock-edge companion `CLK_PREV`; a purely **combinational**
+/// LUT advances no state (all words stay zero, folding exactly like an inert block, so it is
+/// golden-safe by construction). A fresh layout (every program runs alone in its element).
+const BEH_LUT_Q: usize = 0;
+const BEH_LUT_CLK_PREV: usize = 1;
+
+/// `params` slot selecting an [`ELEM_BEHAVIORAL`] LUT's **output mode** (program 4): `>= 1` ⇒
+/// **registered** (the LUT result is latched into `Q` on each rising `CLK` edge and the output
+/// drives that held bit, a LUT+flip-flop "logic element"); otherwise **combinational** (the output
+/// follows the live inputs with no clock, a plain gate). Slot 4 is otherwise unused by a behavioral
+/// block (slots 0/1 are the SPI/UART config, slot 2 the sub-tick rate). Structural, never a solved
+/// value.
+const BEH_LUT_MODE_SLOT: usize = 4;
+
+/// Whether an [`ELEM_BEHAVIORAL`] LUT (program 4) is in **registered** mode (`params[`
+/// [`BEH_LUT_MODE_SLOT`]`] >= 1`) versus combinational. Structural config.
+#[inline]
+fn beh_lut_registered(e: &Element) -> bool {
+    e.params[BEH_LUT_MODE_SLOT] >= 1.0
+}
+
+/// The output bit of a 4-input LUT given its 16-entry **truth table** (`truth`, low 16 bits) and a
+/// 4-bit input `index` (`IN0` = bit 0 … `IN3` = bit 3): bit `index` of the table. The index is
+/// masked to `0..16` so the shift can never exceed the table width (a LUT4 is exactly 16 entries).
+/// Pure integer arithmetic — the universal combinational primitive (every ≤4-input gate is one
+/// particular truth table).
+#[inline]
+fn beh_lut_bit(truth: u32, index: u32) -> bool {
+    (truth >> (index & 0xF)) & 1 != 0
+}
+
+/// The 4-bit LUT input index assembled from a behavioral block's **live** input pins — `IN0` = `f`
+/// (bit 0, the LSB), `IN1` = `g`, `IN2` = `h`, `IN3` = `c` (bit 3, the MSB) — each read as a digital
+/// level at half the chip's rail relative to its `GND` pin (`vlow`/`rail`, via [`beh_level`]). Used
+/// by the **combinational** LUT in [`Sim::eval_digital`], exactly the gate receiver path (the output
+/// then settles within the digital sub-solve with no clock-to-output delay). The clock pin `b` is
+/// not an input here — it matters only to the registered latch.
+#[inline]
+fn beh_lut_live_index(node_v: &[f64], e: &Element, vlow: f64, rail: f64) -> u32 {
+    let q = |pin: usize| beh_level(node_v, pin, vlow, rail) as u32;
+    q(e.f) | (q(e.g) << 1) | (q(e.h) << 2) | (q(e.c) << 3)
+}
+
+/// Advance a behavioral **FPGA logic element**'s integer state by one tick (program 4). A
+/// **combinational** LUT (`registered == false`) holds no state — its output follows the live
+/// inputs in [`Sim::eval_digital`], so there is nothing to commit and this returns immediately
+/// (every state word stays zero). A **registered** LUT latches the truth-table lookup of its
+/// committed input levels into `Q` on each **rising `CLK` edge** (`clk && !clk_prev`) — a LUT
+/// followed by a D flip-flop, the fundamental FPGA building block (a network of these is any
+/// sequential machine / soft core). `index` is the committed-input LUT index (the SAME
+/// [`beh_lut_live_index`] the combinational output uses, so the two paths can't drift), `clk` the
+/// committed clock level (`b`). `CLK_PREV` is updated last for the next tick's edge detection.
+/// Mutates `state` in place (the only mutation site, run in the commit phase).
+fn beh_lut_step(
+    state: &mut [u32; BEH_STATE_WORDS],
+    truth: u32,
+    registered: bool,
+    index: u32,
+    clk: bool,
+) {
+    if !registered {
+        return; // combinational LUT carries no state (output is live in eval_digital)
+    }
+    if clk && state[BEH_LUT_CLK_PREV] == 0 {
+        state[BEH_LUT_Q] = beh_lut_bit(truth, index) as u32; // latch on the rising clock edge
+    }
+    state[BEH_LUT_CLK_PREV] = clk as u32;
+}
+
+/// The 3-bit flash-ADC code for a behavioral block (program 5): the analog input `V(f)` measured
+/// against the reference span, quantized to `0..=7` by the floor rule `floor(8 * (Vin - Vgnd) /
+/// span)`. The span is the **VREF pin `g`** above the `GND` pin (`vlow`) when it is driven above the
+/// gate minimum, else the **VCC rail** (so an ADC wired with only VCC/GND still converts full-scale
+/// against its supply). The seven implied thresholds sit at `k/8` of full scale (`k = 1..7`) -- the
+/// comparator bank of a flash converter, read live in [`Sim::eval_digital`] (combinational, no state
+/// block, so program 5 commits nothing and folds a zero state -- golden-safe additive). Under-range
+/// and over-range saturate to 0 and 7.
+#[inline]
+fn beh_flash_adc_code(node_v: &[f64], e: &Element, vlow: f64, rail: f64) -> u32 {
+    let span = {
+        let vref = node_v[e.g] - vlow; // the VREF pin above GND
+        if vref > GATE_MIN_RAIL {
+            vref
+        } else {
+            rail // VREF unwired: fall back to the VCC supply as full scale
+        }
+    };
+    if span <= GATE_MIN_RAIL {
+        return 0; // unpowered / no reference: nothing to convert
+    }
+    let frac = ((node_v[e.f] - vlow) / span).clamp(0.0, 1.0);
+    ((frac * 8.0).floor() as u32).min(7)
+}
+
+// --- Behavioral program 6: 3-bit SAR ADC --------------------------------------
+
+/// SAR-ADC internal-state word indices (program 6) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block — a fresh layout (every program runs alone in its element).
+/// `CODE`: the running successive-approximation result register (`0..=7`), driving `D0`/`D1`/`D2`.
+/// `STEP`: which bit is decided on the next clock, `0..SAR_BITS` (the bit under test is the MSB
+/// minus `STEP`), wrapping after the LSB. `DONE`: `1` once a full conversion has completed (the
+/// result is valid), cleared when the next conversion begins. `CLK_PREV`: the rising-edge companion.
+const BEH_SAR_CODE: usize = 0;
+const BEH_SAR_STEP: usize = 1;
+const BEH_SAR_DONE: usize = 2;
+const BEH_SAR_CLK_PREV: usize = 3;
+
+/// Bits the SAR resolves — and the number of clocks per conversion. A 3-bit converter.
+const SAR_BITS: u32 = 3;
+/// Full-scale code count, `2^`[`SAR_BITS`]: the trial DAC level for code `c` is `c / SAR_LEVELS` of
+/// the reference, so one LSB = reference / `SAR_LEVELS`.
+const SAR_LEVELS: u32 = 1 << SAR_BITS;
+
+/// Advance a behavioral **3-bit SAR ADC**'s integer state by one tick (program 6). On each **rising
+/// `CLK` edge** (`clk && !clk_prev`) it performs one step of the binary search, most-significant bit
+/// first: at the start of a conversion (`STEP == 0`) it clears the register, then sets the bit under
+/// test and compares the input `vin` (volts above the chip's `GND`) against that trial's internal
+/// R-2R DAC output (`trial / `[`SAR_LEVELS`]` * span`, where `span` is the `VCC` reference) — keeping
+/// the bit when `vin` is at or above the trial level, dropping it otherwise. After the LSB step the
+/// register holds `floor(`[`SAR_LEVELS`]` * vin / span)` clamped to `0..SAR_LEVELS` (the same code the
+/// parallel flash ADC produces — the speed-vs-parts duality) and `DONE` is raised until the next
+/// conversion begins. `CLK_PREV` is updated last for the next tick's edge detection. Pure integer /
+/// `f64` compares (no transcendentals), so it is fully deterministic; mutates `state` in place (the
+/// only mutation site, run in the commit phase). The input should be stable across the conversion's
+/// clocks (a real SAR samples and holds `VIN` at conversion start); a slowly varying or DC input
+/// converts exactly.
+fn beh_sar_adc_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, vin: f64, span: f64) {
+    if clk && state[BEH_SAR_CLK_PREV] == 0 {
+        if state[BEH_SAR_STEP] == 0 {
+            state[BEH_SAR_CODE] = 0; // start of conversion: clear the register
+            state[BEH_SAR_DONE] = 0; // result not yet valid
+        }
+        let bit = (SAR_BITS - 1) - state[BEH_SAR_STEP]; // MSB first
+        let trial = state[BEH_SAR_CODE] | (1u32 << bit);
+        let dac = (trial as f64) / (SAR_LEVELS as f64) * span; // internal R-2R DAC trial level
+        if vin >= dac {
+            state[BEH_SAR_CODE] = trial; // comparator: VIN at/above the trial DAC => keep the bit
+        }
+        state[BEH_SAR_STEP] = (state[BEH_SAR_STEP] + 1) % SAR_BITS;
+        if state[BEH_SAR_STEP] == 0 {
+            state[BEH_SAR_DONE] = 1; // finished the LSB: the 3-bit result is valid
+        }
+    }
+    state[BEH_SAR_CLK_PREV] = clk as u32;
+}
+
+// --- Behavioral program 7: 3-bit binary counter -------------------------------
+
+/// Counter internal-state word indices (program 7) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block. `COUNT`: the running count (`0..`[`COUNTER_LEVELS`]`)`, driving
+/// `Q0`/`Q1`/`Q2`. `CLK_PREV`: the rising-edge companion.
+const BEH_CNT_COUNT: usize = 0;
+const BEH_CNT_CLK_PREV: usize = 1;
+
+/// Width of the binary counter — a 3-bit counter, to match the 3-bit DAC it most often drives.
+const COUNTER_BITS: u32 = 3;
+/// Counter modulus, `2^`[`COUNTER_BITS`]: the count wraps `COUNTER_LEVELS - 1 -> 0`.
+const COUNTER_LEVELS: u32 = 1 << COUNTER_BITS;
+
+/// Advance a behavioral **3-bit binary counter**'s integer state by one tick (program 7). `RESET`
+/// (active high) asynchronously clears the count to 0 and dominates the clock. Otherwise, on each
+/// **rising `CLK` edge** (`clk && !clk_prev`) it increments `count = (count + 1) mod `[`COUNTER_LEVELS`]
+/// (wrapping `7 -> 0`). `CLK_PREV` is updated last for the next tick's edge detection. Pure integer
+/// arithmetic — fully deterministic; mutates `state` in place (the only mutation site, run in the
+/// commit phase). The committed count drives `Q0`/`Q1`/`Q2` in [`Sim::eval_digital`] (one tick of
+/// state-to-output delay, like the other clocked programs).
+fn beh_counter_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, reset: bool) {
+    if reset {
+        state[BEH_CNT_COUNT] = 0; // asynchronous active-high clear
+    } else if clk && state[BEH_CNT_CLK_PREV] == 0 {
+        state[BEH_CNT_COUNT] = (state[BEH_CNT_COUNT] + 1) % COUNTER_LEVELS;
+    }
+    state[BEH_CNT_CLK_PREV] = clk as u32;
+}
+
+// --- Behavioral program 8: 1st-order sigma-delta ADC --------------------------
+
+/// Sigma-delta internal-state word indices (program 8) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block. `INTEG`: the modulator's integrator, fixed-point (an `i32` stored
+/// bit-for-bit in the `u32` slot — bounded, so deterministic and hashable). `BIT`: the current 1-bit
+/// modulator output (drives the `BS` bit-stream pin). `BITCOUNT`/`BLOCKPOS`: the decimator's running
+/// count of 1s and its position in the current block. `CODE`: the latched decimated 3-bit code (drives
+/// D0/D1/D2). `CLK_PREV`: the rising-edge companion.
+const SD_INTEG: usize = 0;
+const SD_BIT: usize = 1;
+const SD_BITCOUNT: usize = 2;
+const SD_BLOCKPOS: usize = 3;
+const SD_CODE: usize = 4;
+const SD_CLK_PREV: usize = 5;
+
+/// Sigma-delta fixed-point full scale: `VIN/VCC` is quantised to `0..=SD_FULL` and the 1-bit feedback
+/// subtracts `SD_FULL`. A power of two so the arithmetic is exact.
+const SD_FULL: i32 = 256;
+/// Sigma-delta decimation ratio: modulator clocks per output sample (the oversampling ratio). Eight
+/// 1-bit samples are counted into one 3-bit code, so the count of 1s lands in `0..=8` (clamped to 7).
+const SD_DECIM: u32 = 8;
+
+/// Advance a behavioral **1st-order sigma-delta ADC**'s integer state by one tick (program 8). On each
+/// **rising `CLK` edge** it runs one modulator step and one decimator step:
+/// 1. **Modulator:** quantise the input to fixed point `vin_q = round(SD_FULL * clamp(vin/span, 0, 1))`;
+///    slice the integrator's sign for the output bit (`integ > 0`); then integrate the error with 1-bit
+///    feedback `integ += vin_q - bit * SD_FULL` (so the loop drives the average bit density to
+///    `vin/span`). The integrator is clamped to a safe bounded range (it never legitimately leaves
+///    `+/- SD_FULL`) so the `i32` math cannot overflow.
+/// 2. **Decimator:** add the bit to the block count; every [`SD_DECIM`] clocks latch
+///    `CODE = min(count, 7)` and restart the block (the integrator carries over — only the counter
+///    resets). The latched code drives D0/D1/D2; the live bit drives `BS`.
+///
+/// `CLK_PREV` is updated last. The only float step is the input quantisation (`round`, deterministic);
+/// everything else is integer, so the run is bit-reproducible. Mutates `state` in place (commit phase).
+fn beh_sigma_delta_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, vin: f64, span: f64) {
+    if clk && state[SD_CLK_PREV] == 0 {
+        // Modulator: integrate the error, slice, feed back 1 bit.
+        let x = (vin / span).clamp(0.0, 1.0);
+        let vin_q = (x * SD_FULL as f64).round() as i32;
+        let mut integ = state[SD_INTEG] as i32;
+        let bit: i32 = if integ > 0 { 1 } else { 0 };
+        integ += vin_q - bit * SD_FULL;
+        integ = integ.clamp(-2 * SD_FULL, 2 * SD_FULL); // bounded in practice; guard i32 overflow
+        state[SD_INTEG] = integ as u32;
+        state[SD_BIT] = bit as u32;
+        // Decimator: count the 1s over SD_DECIM clocks, then latch the 3-bit code.
+        state[SD_BITCOUNT] += bit as u32;
+        state[SD_BLOCKPOS] += 1;
+        if state[SD_BLOCKPOS] >= SD_DECIM {
+            state[SD_CODE] = state[SD_BITCOUNT].min(7);
+            state[SD_BITCOUNT] = 0;
+            state[SD_BLOCKPOS] = 0;
+        }
+    }
+    state[SD_CLK_PREV] = clk as u32;
+}
+
 // --- AC voltage source model constants ----------------------------------------
 
 /// Default peak amplitude of an [`ELEM_ACSOURCE`], in volts. Used when the
@@ -1070,15 +2061,22 @@ fn is_nonlinear(kind: u8) -> bool {
     is_diode(kind) || is_mosfet(kind) || is_bjt(kind) || is_varistor(kind) || is_opamp(kind)
 }
 
-/// True for the **digital** element kinds — a logic gate or a flip-flop. Their
-/// terminals are logic pins (driven/sensed levels) rather than continuous-voltage
-/// analog terminals. The net-classification pass ([`classify_nets`]) uses this to
-/// separate the analog and digital domains; the boundary between them is any node
-/// where a digital pin and an analog element meet. See
+/// True for the **digital** element kinds — a logic gate, a flip-flop, a level shifter,
+/// a clocked sampler, a latched comparator, or a behavioral block. Their terminals are logic
+/// pins (driven/sensed levels) rather than continuous-voltage analog terminals — except a few
+/// high-Z analog **sense**/supply pins (the sampler's `IN`, the comparator's `IN±`, the powered
+/// chips' `VCC`/`GND`), which are handled specially in [`classify_nets`]. The net-classification
+/// pass uses this to separate the analog and digital domains; the boundary between them is
+/// any node where a digital pin and an analog element meet. See
 /// `docs/ui/logic-analog-digital-nets.md` §7.
 #[inline]
 fn is_digital(kind: u8) -> bool {
-    kind == ELEM_GATE || kind == ELEM_DFF || kind == ELEM_LEVELSHIFT
+    kind == ELEM_GATE
+        || kind == ELEM_DFF
+        || kind == ELEM_LEVELSHIFT
+        || kind == ELEM_SAMPLER
+        || kind == ELEM_COMPARATOR
+        || kind == ELEM_BEHAVIORAL
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -1112,10 +2110,30 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
             // POWER pins (VCC = d, GND = e) are NOT signal nets — they are ordinary
             // analog supply nodes the gate only reads as voltages, so they are marked
             // analog below (a gate on a 5 V rail must leave that rail Analog, not pull
-            // it into the digital domain). A DFF's four pins (Q, D, CLK, Q̄) and a level
-            // shifter's are all signal pins.
+            // it into the digital domain). The clocked sampler's IN pin (b) is likewise an
+            // analog SENSE node (a high-Z comparator input) — only its OUT (a) and CLK (c)
+            // are signal pins, so IN is marked analog below (the comparator/boundary
+            // pattern: a net touching only IN is Analog; shared with a digital pin →
+            // Boundary). A DFF's four pins (Q, D, CLK, Q̄) and a level shifter's are all
+            // signal pins.
             let signal: &[usize] = if e.kind == ELEM_GATE {
                 &[e.a, e.b, e.c]
+            } else if e.kind == ELEM_SAMPLER {
+                &[e.a, e.c]
+            } else if e.kind == ELEM_COMPARATOR {
+                // OUT (a) and LE (f) are the comparator's digital signal pins; IN+ (b),
+                // IN- (c), VCC (d), GND (e) are analog (marked below).
+                &[e.a, e.f]
+            } else if e.kind == ELEM_BEHAVIORAL {
+                // The behavioral block's signal pins are GENERAL across its programs: a/b/c are
+                // digital OUTPUT pins and f/g/h are digital INPUT pins; VCC (d), GND (e) are analog
+                // supply pins (marked below, exactly like a powered gate's power pins). Per program:
+                //   1 SPI master: a=SCLK,b=MOSI,c=CS (out); f=MISO,g=START (in)
+                //   2 SPI slave:  a=MISO,b=RXVALID (out); f=SCLK,g=MOSI,h=CS (in)
+                //   3 UART:       a=TX,b=RXVALID (out); f=RX,g=SEND (in)
+                // Unused pins default to ground (node 0, forced analog), so listing all of a/b/c and
+                // f/g/h is safe for every program — an unused one only ever re-marks ground.
+                &[e.a, e.b, e.c, e.f, e.g, e.h]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -1130,6 +2148,49 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                         analog_touched[t] = true;
                     }
                 }
+            }
+            if e.kind == ELEM_SAMPLER && e.b < node_count {
+                // IN (b) is a high-Z analog sense pin — mark it analog (mirrors a
+                // powered gate's VCC/GND), so a comparator's input net is Analog and a
+                // node it shares with a digital pin is Boundary.
+                analog_touched[e.b] = true;
+            }
+            if e.kind == ELEM_COMPARATOR {
+                // IN+ (b) / IN- (c) are high-Z analog SENSE pins, and VCC (d) / GND (e) are
+                // analog SUPPLY pins (treated exactly like a powered gate's power pins) — all
+                // analog, so a comparator's input/supply nets stay Analog and a node shared
+                // with a digital pin is Boundary.
+                for t in [e.b, e.c, e.d, e.e] {
+                    if t < node_count {
+                        analog_touched[t] = true;
+                    }
+                }
+            }
+            if e.kind == ELEM_BEHAVIORAL {
+                // VCC (d) / GND (e) are analog SUPPLY pins (treated exactly like a powered
+                // gate's power pins), so the behavioral block's supply nets stay Analog and a
+                // node shared with a digital pin is Boundary. Its signal pins (SCLK/MOSI/CS/
+                // MISO/START) are digital-touched above.
+                for t in [e.d, e.e] {
+                    if t < node_count {
+                        analog_touched[t] = true;
+                    }
+                }
+            }
+        } else if e.kind == ELEM_ASWITCH {
+            // Gated analog switch: the switched path (a, b) and the supply pins (VCC = d,
+            // GND = e) are analog (a, b carry the passed signal; d/e are an ordinary
+            // supply, handled exactly like a powered gate's power pins). CTRL (c) is the
+            // digital control input — a logic signal the switch reads, so it is
+            // digital-touching (the sampler-CLK / comparator pattern: a net touching only
+            // CTRL is Digital, and a CTRL net shared with an analog driver is Boundary).
+            for t in [e.a, e.b, e.d, e.e] {
+                if t < node_count {
+                    analog_touched[t] = true;
+                }
+            }
+            if e.c < node_count {
+                digital_touched[e.c] = true;
             }
         } else {
             for t in [e.a, e.b, e.c, e.d] {
@@ -1223,6 +2284,18 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                     uf_union(&mut parent, e.a, e.b);
                 }
             }
+            ELEM_ASWITCH => {
+                // The switched analog path (a, b) is a conductance between them (a finite
+                // path even when open, like the clock switch's SWITCH_GOFF) — union it. The
+                // control CTRL (c) and the supply pins VCC (d) / GND (e) are read-only: the
+                // switch reads them as voltages but pins none of them, so (mirroring a
+                // powered gate's VCC/GND and the sampler's IN) they are left to be referenced
+                // by their own source/driver — an unwired one gets a proper floating-ref tie,
+                // and an unwired VCC floats to ~0 V → the switch reads dead.
+                if e.a < node_count && e.b < node_count {
+                    uf_union(&mut parent, e.a, e.b);
+                }
+            }
             ELEM_NMOS | ELEM_PMOS | ELEM_NPN | ELEM_PNP => {
                 // The channel / main current ties drain–source (collector–emitter);
                 // the gate/base draws no DC current and is GMIN-pinned by the device,
@@ -1257,6 +2330,44 @@ fn floating_refs(node_count: usize, elements: &[Element]) -> Vec<usize> {
                 mark(&mut referenced, e.b);
                 mark(&mut referenced, e.c);
                 mark(&mut referenced, e.d);
+            }
+            ELEM_SAMPLER => {
+                // OUT (a) is referenced by the driver (GATE_GOUT to ground) and CLK (c)
+                // by its net. IN (b) is a high-Z analog SENSE pin the sampler does NOT
+                // pin — it is an ordinary analog node, left to be referenced by its own
+                // source/divider, so a floating IN gets a proper floating-ref tie (not
+                // falsely held by the sampler). d, e are unused (ground).
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.c);
+            }
+            ELEM_COMPARATOR => {
+                // OUT (a) is referenced by the powered output driver and LE (f) by its
+                // net. IN+ (b), IN- (c), VCC (d), GND (e) are analog SENSE/SUPPLY pins the
+                // comparator does NOT pin (mirrors a powered gate's VCC/GND and the
+                // sampler's IN) — each is an ordinary analog node left to be referenced by
+                // its own source, so an unwired one gets a proper floating-ref tie and an
+                // unwired VCC floats to ~0 V → the chip reads unpowered.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.f);
+            }
+            ELEM_BEHAVIORAL => {
+                // The powered OUTPUT pins a/b/c are referenced by their drivers (GATE_GOUT to
+                // ground via the powered output stage) — general across programs (prog 1 drives all
+                // three: SCLK/MOSI/CS; progs 2/3 drive a/b and release c, but marking an unused c
+                // only ever re-marks ground). The input pins f/g/h and the supply pins VCC (d) /
+                // GND (e) are NOT pinned here (mirrors a powered gate's VCC/GND and the sampler's
+                // IN) — each is an ordinary node left to be referenced by its own source, so an
+                // unwired VCC floats to ~0 V → the chip reads unpowered.
+                mark(&mut referenced, e.a);
+                mark(&mut referenced, e.b);
+                mark(&mut referenced, e.c);
+                // The SAR ADC (program 6, DONE) and the sigma-delta ADC (program 8, BS bit-stream)
+                // each drive a FOURTH output on `g` — reference it like the other outputs (the other
+                // programs leave `g` an input, referenced by its own source; an unused `g` is ground,
+                // already referenced, so this is a no-op there).
+                if matches!(e.value as u32, BEH_PROG_SAR_ADC | BEH_PROG_SIGMA_DELTA) {
+                    mark(&mut referenced, e.g);
+                }
             }
             ELEM_PULLUP => {
                 // Pulled to an internal rail through PULLUP_R — a real conductance to
@@ -1354,9 +2465,49 @@ const RATED_CURRENT_SLOT: usize = 2;
 /// realistic ordering (Schottky < fast-recovery < rectifier) is what matters, not the absolute ns.
 const DIODE_TT_SLOT: usize = 3;
 
+/// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
+/// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
+/// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
+/// `docs/sim/multi-rate-domains.md`), so the schedule is fixed at install and reproducible. `<= 1`
+/// (the default, and what a caller that omits params installs) means the block runs once per analog
+/// tick exactly as today — so a circuit with no declared fast rate has a global rate `S = 1`, the
+/// sub-tick loop is skipped entirely, and the result is **byte-identical** to before the loop
+/// existed.
+///
+/// It reuses [`RATED_CURRENT_SLOT`] (slot 2) — harmless because a behavioral block's outputs are a
+/// clean rail-to-rail Thévenin through [`GATE_GOUT`] (≤ a few amps into a dead short), far below any
+/// realistic `N` (8, 16, …), so the general rated-current check in [`Sim::flag_and_clamp_fails`]
+/// never trips on a behavioral block's tiny output current. The two readings never collide on a real
+/// circuit, and the rating only *flags* (`failed_elements` is not hashed), so neither the solve nor
+/// the snapshot hash is affected. Only [`ELEM_BEHAVIORAL`] declares a rate; every other kind leaves
+/// slot 2 as its rated current.
+const BEH_SUBTICK_RATE_SLOT: usize = RATED_CURRENT_SLOT;
+
+/// The declared digital sub-tick rate `N ≥ 1` of one [`ELEM_BEHAVIORAL`] block — slot
+/// [`BEH_SUBTICK_RATE_SLOT`], floored to `1` (a `0`/unset/`< 1` slot ⇒ one sub-tick per analog tick,
+/// the existing behaviour). Non-behavioral elements have no rate (always `1`). Pure read of a
+/// declared structural param; never a function of a voltage.
+#[inline]
+fn beh_subtick_rate(e: &Element) -> usize {
+    if e.kind != ELEM_BEHAVIORAL {
+        return 1;
+    }
+    let n = e.params[BEH_SUBTICK_RATE_SLOT];
+    if n >= 2.0 {
+        // Round to the nearest integer (the param is a declared integer divider; `f64` rounding
+        // keeps a value like 16.0 exact and clamps anything pathological to a finite integer).
+        n.round() as usize
+    } else {
+        1
+    }
+}
+
 /// One ideal element in the netlist. Two-terminal elements use `a` and `b` (and
 /// set `c = 0`, where it is ignored); three-terminal devices (the MOSFETs) also
-/// use the control terminal `c`.
+/// use the control terminal `c`. The struct carries up to **eight** terminals
+/// (`a`–`h`); any terminal an element does not read is `0` (ground) and inert, so
+/// widening the count (ADR 0002 provisioned `f`/`g`/`h`) changes nothing on the
+/// existing paths.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Element {
     /// Element type. See the `ELEM_*` constants.
@@ -1386,6 +2537,21 @@ pub struct Element {
     /// fifth-terminal analogue of how `d` is ignored by elements with fewer terminals.
     /// Node `0` is ground.
     pub e: usize,
+    /// Sixth terminal node index — a latched comparator's **LE** (latch-enable) pin; see
+    /// [`ELEM_COMPARATOR`]. Provisioned by ADR 0002's wire-format widening and first read by
+    /// the comparator (`f == 0` means LE unwired ⇒ the front end is transparent, the ADCMP601
+    /// floating default). For every other element it defaults to `0` (ground) and is inert,
+    /// exactly as `c`, `d`, and `e` were inert before an element used them — so future parts
+    /// (full flip-flops with set+reset+enable, dual-supply op-amps with offset-null pins, the
+    /// 555, center-tapped transformers, gate drivers, tri-state buffers with OE) remain purely
+    /// additive: they read `f`/`g`/`h` without another boundary change. Node `0` is ground.
+    pub f: usize,
+    /// Seventh terminal node index — **reserved** by ADR 0002 (see [`Element::f`]). Inert
+    /// and ground-defaulted until a part uses it. Node `0` is ground.
+    pub g: usize,
+    /// Eighth terminal node index — **reserved** by ADR 0002 (see [`Element::f`]). Inert
+    /// and ground-defaulted until a part uses it. Node `0` is ground.
+    pub h: usize,
     /// Element value in the units implied by `kind` (V / ohm / F / H / A).
     pub value: f64,
     /// Second per-element scalar, parallel to `value`. Unused by every element
@@ -1416,9 +2582,14 @@ pub struct Element {
 }
 
 /// Width of an [`Element::params`] block — the number of `f64` model parameters carried
-/// per device across the netlist boundary. Fixed so the wire/save format is predictable;
-/// generous enough for the richest device (a BJT / MOSFET needs ≤4).
-pub const PARAM_STRIDE: usize = 4;
+/// per device across the netlist boundary. Fixed so the wire/save format is predictable.
+/// Provisioned to **8** by ADR 0002 (was 4) so the richest future models (a BJT with
+/// β + Is + Vaf + Rb + thermal coefficient; a real op-amp with GBW + slew + Vos + Ibias +
+/// Rout; a thermal/noise device) all fit without a second wire-format bump. The widening is
+/// golden-safe: [`param_or`]'s "`0.0` slot means the kind default" rule makes a zero-padded
+/// 8-wide block reproduce the old 4-wide solve bit-for-bit, and no current slot meaning moved
+/// (slots 4–7 are reserved/unused for now). Mirror this in `web/src/lib/tiers.ts`.
+pub const PARAM_STRIDE: usize = 8;
 
 /// A diode's terminal map for the Newton companion: `(element_index, anode_mna,
 /// cathode_mna)`, each MNA index `None` for ground. Collected once per solve in
@@ -2219,6 +3390,34 @@ pub struct Sim {
     /// yet affect the solve — pure-digital nets still stamp into the MNA matrix until
     /// the event scheduler lands. Exposed via [`Sim::net_class`].
     net_classes: Vec<NetClass>,
+    /// MNA **row index** (`node − 1`) of every node whose [`NetClass`] is pure
+    /// [`NetClass::Digital`] (NOT `Boundary`, NOT `Analog`), in **ascending node index** —
+    /// a deterministic partition fixed at install from [`classify_nets`], with no hashed
+    /// order. This is the row set of the analog-decoupled pure-digital block that ADR 0004's
+    /// phase-3 sub-tick loop (step 3b) will re-solve N−1 extra times per analog tick; it is
+    /// the metadata that step staging needs. **Pure scaffolding today:** nothing in the solve
+    /// reads it — it is consumed ONLY by the debug-only structural invariant check
+    /// ([`Sim::debug_assert_digital_block_diagonal`]), which proves each of these rows is
+    /// strictly diagonal (no off-diagonal coupling to any other row) right before every
+    /// `solve_dense`. A pure-`Digital` net's row is stamped ONLY by [`Sim::stamp_digital`] (a
+    /// lone `GMIN` + one resolved Thévenin on its diagonal; a gate's inputs are GMIN-only and
+    /// its output is one combined drive), so the block is diagonal by construction — the
+    /// invariant step 3b's frozen-boundary sub-solve relies on. The solve, the partial-pivot
+    /// order, and the snapshot hash are untouched, so the analog golden is byte-identical.
+    /// See `docs/adr/0004-protocol-engine.md` (phase-3 amendment).
+    pub(crate) digital_rows: Vec<usize>,
+    /// The **global digital sub-tick rate** `S = max over elements of their declared rate`
+    /// ([`beh_subtick_rate`]), computed once at install (ADR 0004 phase-3, step 3b). `S = 1` for
+    /// every circuit with no declared fast rate (i.e. every circuit that existed before sub-ticking
+    /// — only an [`ELEM_BEHAVIORAL`] block can declare a rate, via [`BEH_SUBTICK_RATE_SLOT`]), and
+    /// then the `S > 1` sub-tick branch in [`Sim::step`] is skipped entirely, so the result is
+    /// **byte-identical** to before the loop existed. For `S > 1` the analog solve still runs once
+    /// per analog tick (the analog Δt never changes — the golden's Δt is fixed); only the
+    /// analog-decoupled pure-digital block (`digital_rows`) is re-evaluated `S − 1` extra times,
+    /// advancing the fast digital domain. The count is structural (declared, not value-derived) and
+    /// the loop is a fixed `S`, so it is reproducible by construction. The transient sub-tick index
+    /// is wrapped to `0` at the analog-tick boundary and **never** enters [`Sim::snapshot_hash`].
+    subtick_rate: usize,
     /// Circuit nodes (1-based; ground is never listed) that each anchor a **floating
     /// connected component** — a subnet with no galvanic path to ground and no
     /// device-pinned terminal. Computed once at install by [`floating_refs`]; each is
@@ -2265,6 +3464,35 @@ pub struct Sim {
     /// rising edge (`Low -> High`). Used only by [`ELEM_DFF`]; `Level::Low` elsewhere.
     /// Also hashed (it is part of the sequential state). Indexed with `elements`.
     ff_clk_prev: Vec<Level>,
+    /// The clocked sampler's stored output [`Level`]: the one-bit comparison latched at the
+    /// last rising clock edge (`High` iff `V(IN) > value`), which drives `OUT` every tick
+    /// until the next edge. Used only by [`ELEM_SAMPLER`]; `Level::Low` for every other
+    /// element. Persistent sequential state that **enters the snapshot hash** (so a rewind
+    /// landing on a clock edge replays identically). Indexed in lockstep with `elements`.
+    samp_q: Vec<Level>,
+    /// The clocked sampler's previous clock [`Level`], kept so the commit phase can detect a
+    /// rising edge (`Low -> High`). Used only by [`ELEM_SAMPLER`]; `Level::Low` elsewhere.
+    /// Also hashed (it is part of the sequential state). Indexed with `elements`.
+    samp_clk_prev: Vec<Level>,
+    /// The latched comparator's held output [`Level`]: the current/held comparison bit (`High`
+    /// iff the front end has resolved `IN+ > IN-` within its hysteresis window), which drives
+    /// `OUT` every tick. While the comparator is *transparent* (LE not asserted) it tracks the
+    /// live comparison; while *latched* (LE low) it holds; an unpowered rail freezes it. Used
+    /// only by [`ELEM_COMPARATOR`]; `Level::Low` for every other element. Persistent sequential
+    /// state that **enters the snapshot hash** (so a rewind replays identically). Indexed in
+    /// lockstep with `elements`. Unlike the sampler the comparator is level-sensitive, so it
+    /// needs no previous-clock companion — `cmp_q` is its only persistent scalar.
+    cmp_q: Vec<Level>,
+    /// Per-element **behavioral-block integer state** — a fixed `[u32; `[`BEH_STATE_WORDS`]`]`
+    /// block carrying an [`ELEM_BEHAVIORAL`]'s state machine (fsm + shift registers + counters +
+    /// edge flags; the word map is program-specific — see [`beh_spi_step`] for the SPI master).
+    /// Used only by [`ELEM_BEHAVIORAL`]; an all-zero block for every other element. **Integer
+    /// only** (no floats, no PRNG) and advanced once per step in the commit phase from the
+    /// just-solved committed `node_v`. Persistent sequential state that **enters the snapshot
+    /// hash** in fixed element + word order (appended after the existing folds, so a circuit
+    /// with no behavioral block folds zero extra bytes and the golden is byte-identical).
+    /// Indexed in lockstep with `elements`.
+    beh_state: Vec<[u32; BEH_STATE_WORDS]>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -2387,6 +3615,8 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             net_classes: vec![NetClass::Analog],
+            digital_rows: Vec::new(),
+            subtick_rate: 1,
             floating_refs: Vec::new(),
             node_v: vec![0.0],
             reactive_state: Vec::new(),
@@ -2395,6 +3625,10 @@ impl Sim {
             failed_elements: Vec::new(),
             ff_q: Vec::new(),
             ff_clk_prev: Vec::new(),
+            samp_q: Vec::new(),
+            samp_clk_prev: Vec::new(),
+            cmp_q: Vec::new(),
+            beh_state: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -2423,6 +3657,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: v_source,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2434,6 +3671,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: 1_000.0,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2445,6 +3685,9 @@ impl Sim {
                 c: 0,
                 d: 0,
                 e: 0,
+                f: 0,
+                g: 0,
+                h: 0,
                 value: 1.0e-6,
                 aux: 0.0,
                 params: [0.0; PARAM_STRIDE],
@@ -2508,13 +3751,11 @@ impl Sim {
         self.set_netlist_pe(node_count, types, a, b, c, d, &[], values, aux, params)
     }
 
-    /// The full netlist install, with the optional **fifth terminal** `e` (a powered
-    /// logic gate's GND pin; see [`Element::e`]). `e` is either empty — every element's
-    /// fifth terminal is ground (`0`), the legacy 4-terminal shape, identical to
-    /// [`Sim::set_netlist_p`] — or exactly one node index per element. Like `c`/`d`, an
-    /// element that doesn't read `e` leaves it `0` and is bit-identical, so this is an
-    /// additive, golden-safe boundary widening. `params` follows the same empty-or-full
-    /// rule as [`Sim::set_netlist_p`].
+    /// Install a netlist with the optional **fifth terminal** `e` (a powered logic gate's
+    /// GND pin; see [`Element::e`]). `e` is either empty — every element's fifth terminal
+    /// is ground (`0`), the legacy 4-terminal shape, identical to [`Sim::set_netlist_p`] —
+    /// or exactly one node index per element. Thin wrapper over [`Sim::set_netlist_pefgh`]
+    /// with the sixth/seventh/eighth terminals grounded (`f`/`g`/`h` empty).
     #[allow(clippy::too_many_arguments)]
     pub fn set_netlist_pe(
         &mut self,
@@ -2529,14 +3770,60 @@ impl Sim {
         aux: &[f64],
         params: &[f64],
     ) -> bool {
+        self.set_netlist_pefgh(
+            node_count,
+            types,
+            a,
+            b,
+            c,
+            d,
+            e,
+            &[],
+            &[],
+            &[],
+            values,
+            aux,
+            params,
+        )
+    }
+
+    /// The full netlist install, carrying all **eight** terminals (`a`–`h`). Terminals
+    /// `f`/`g`/`h` were provisioned by ADR 0002 (the wire-format widening): each is either
+    /// empty — every element's sixth/seventh/eighth terminal is ground (`0`), inert and
+    /// bit-identical to the legacy 5-terminal shape — or exactly one node index per element.
+    /// No element reads `f`/`g`/`h` yet, so passing them is purely forward-compatible
+    /// provisioning; like `c`/`d`/`e`, an element that doesn't read a terminal leaves it `0`
+    /// and is unaffected, so this is an additive, golden-safe widening. `e` follows the same
+    /// empty-or-full rule (see [`Sim::set_netlist_pe`]) and `params` the same empty-or-`n *
+    /// PARAM_STRIDE` rule as [`Sim::set_netlist_p`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn set_netlist_pefgh(
+        &mut self,
+        node_count: usize,
+        types: &[u8],
+        a: &[u32],
+        b: &[u32],
+        c: &[u32],
+        d: &[u32],
+        e: &[u32],
+        f: &[u32],
+        g: &[u32],
+        h: &[u32],
+        values: &[f64],
+        aux: &[f64],
+        params: &[f64],
+    ) -> bool {
         let n = types.len();
         if a.len() != n
             || b.len() != n
             || c.len() != n
             || d.len() != n
-            // `e` is optional: empty means "every fifth terminal is ground"; otherwise
-            // it is exactly one node index per element.
+            // `e`/`f`/`g`/`h` are optional: empty means "every such terminal is ground";
+            // otherwise each is exactly one node index per element.
             || (!e.is_empty() && e.len() != n)
+            || (!f.is_empty() && f.len() != n)
+            || (!g.is_empty() && g.len() != n)
+            || (!h.is_empty() && h.len() != n)
             || values.len() != n
             || aux.len() != n
             // Params are optional: an empty block means "all defaults"; otherwise it is
@@ -2575,6 +3862,10 @@ impl Sim {
                     | ELEM_DFF
                     | ELEM_LEVELSHIFT
                     | ELEM_PULLUP
+                    | ELEM_SAMPLER
+                    | ELEM_COMPARATOR
+                    | ELEM_ASWITCH
+                    | ELEM_BEHAVIORAL
             ) {
                 self.install_empty();
                 return false;
@@ -2583,9 +3874,12 @@ impl Sim {
             let nb = b[i] as usize;
             let nc = c[i] as usize;
             let nd = d[i] as usize;
-            // The fifth terminal (gate GND); ground when `e` is omitted.
+            // The fifth..eighth terminals; ground when their array is omitted.
             let ne = if e.is_empty() { 0 } else { e[i] as usize };
-            // Validate all five terminals. `c`/`d`/`e` are ignored at solve time for an
+            let nf = if f.is_empty() { 0 } else { f[i] as usize };
+            let ng = if g.is_empty() { 0 } else { g[i] as usize };
+            let nh = if h.is_empty() { 0 } else { h[i] as usize };
+            // Validate all eight terminals. `c`–`h` are ignored at solve time for an
             // element that doesn't use them, but they are still range-checked so a
             // malformed index is rejected fail-safe rather than stored.
             if na >= node_count
@@ -2593,6 +3887,9 @@ impl Sim {
                 || nc >= node_count
                 || nd >= node_count
                 || ne >= node_count
+                || nf >= node_count
+                || ng >= node_count
+                || nh >= node_count
             {
                 self.install_empty();
                 return false;
@@ -2608,6 +3905,9 @@ impl Sim {
                 c: nc,
                 d: nd,
                 e: ne,
+                f: nf,
+                g: ng,
+                h: nh,
                 value: values[i],
                 aux: aux[i],
                 params: p,
@@ -2647,6 +3947,17 @@ impl Sim {
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
         let net_classes = classify_nets(node_count, &elements);
+        // Deterministic pure-digital row partition (ADR 0004 phase-3, step 3a): the MNA row
+        // index (`node − 1`) of every node classified pure-`Digital` (NOT `Boundary`, NOT
+        // `Analog`), in ascending node index — fixed at install, no hashed order. Ground
+        // (node 0) is always `Analog`, so a `Digital` node is always `>= 1` and `node − 1` is
+        // a valid node-voltage row. Metadata only: nothing in the solve reads it (the matrix
+        // is assembled and solved exactly as before); it is consumed only by the debug-only
+        // diagonal-block invariant check, so the analog golden is byte-identical.
+        let digital_rows: Vec<usize> = (1..node_count)
+            .filter(|&n| net_classes[n] == NetClass::Digital)
+            .map(|n| n - 1)
+            .collect();
         let floating = floating_refs(node_count, &elements);
 
         self.node_count = node_count;
@@ -2654,6 +3965,17 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.net_classes = net_classes;
+        self.digital_rows = digital_rows;
+        // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
+        // Structural — read once here from the declared params, never from a solved value. `S = 1`
+        // (no element declares a fast rate) ⇒ the `S > 1` branch in `step()` is skipped, so the run
+        // is byte-identical to before sub-ticking existed.
+        self.subtick_rate = elements
+            .iter()
+            .map(beh_subtick_rate)
+            .max()
+            .unwrap_or(1)
+            .max(1);
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
@@ -2661,6 +3983,10 @@ impl Sim {
         self.failed_elements = vec![false; elements.len()];
         self.ff_q = vec![Level::Low; elements.len()];
         self.ff_clk_prev = vec![Level::Low; elements.len()];
+        self.samp_q = vec![Level::Low; elements.len()];
+        self.samp_clk_prev = vec![Level::Low; elements.len()];
+        self.cmp_q = vec![Level::Low; elements.len()];
+        self.beh_state = vec![[0u32; BEH_STATE_WORDS]; elements.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -2705,6 +4031,18 @@ impl Sim {
         }
         for s in &mut self.ff_clk_prev {
             *s = Level::Low;
+        }
+        for s in &mut self.samp_q {
+            *s = Level::Low;
+        }
+        for s in &mut self.samp_clk_prev {
+            *s = Level::Low;
+        }
+        for s in &mut self.cmp_q {
+            *s = Level::Low;
+        }
+        for s in &mut self.beh_state {
+            *s = [0u32; BEH_STATE_WORDS];
         }
         for s in &mut self.net_level {
             *s = Level::Low;
@@ -2916,11 +4254,16 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a time-varying conductance computed
-                    // from the tick (tick 0 at the operating point). Stamped
-                    // exactly like a resistor of that conductance.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a time-varying conductance computed from the
+                    // tick, tick 0 at the operating point) or node-gated analog switch
+                    // (its conductance derived from the control node's committed voltage).
+                    // Either way a symmetric conductance stamped exactly like a resistor.
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -3007,6 +4350,9 @@ impl Sim {
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
         self.stamp_floating_refs(&mut mat, n);
+        // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+        // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
+        Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
         let x = solve_dense(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
@@ -3027,13 +4373,16 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => self.i_source_current(e),
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -3045,6 +4394,14 @@ impl Sim {
                     // output levels and an X-driven Q — not a 2-state rail/0.
                     let (vq, g) = FAMILIES[gate_family_index(e.aux)]
                         .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
@@ -3101,12 +4458,17 @@ impl Sim {
                         mat[c * n + r] -= g;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a time-varying conductance that is a
-                    // pure function of the current tick. Stamped exactly like a
-                    // resistor of that conductance (symmetric, no branch unknown,
-                    // no reactive state).
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a time-varying conductance, a pure function of
+                    // the current tick) or node-gated analog switch (its conductance from
+                    // the control node's committed previous-tick voltage). Either way a
+                    // symmetric conductance stamped exactly like a resistor — no branch
+                    // unknown, no reactive state.
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -3214,6 +4576,9 @@ impl Sim {
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
         self.stamp_floating_refs(&mut mat, n);
+        // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+        // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
+        Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
         let x = solve_dense(mat, rhs, n);
 
@@ -3234,6 +4599,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -3250,7 +4618,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a` (same output-current
                 // convention as the op-amp). Vtarget was committed during assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -3262,6 +4630,14 @@ impl Sim {
                     // output levels and an X-driven Q — not a 2-state rail/0.
                     let (vq, g) = FAMILIES[gate_family_index(e.aux)]
                         .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
@@ -3578,6 +4954,12 @@ impl Sim {
                     mat[r * n + r] += GMIN;
                 }
             }
+
+            // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
+            // invariant, ADR 0004 step 3a). The iterate matrix is fully assembled here — the
+            // Newton companions (diode / MOSFET / BJT / varistor / op-amp) touch only analog
+            // terminals, so they cannot couple a pure-digital row; nothing is moved.
+            Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
             x = solve_dense(mat, rhs, n);
 
@@ -3941,12 +5323,18 @@ impl Sim {
                         base_rhs[r] += e.value / PULLUP_R;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a tick-determined conductance stamped
-                    // into the fixed linear base (computed once from tick 0 here),
-                    // exactly like a resistor. Carries no branch unknown, so the
-                    // Newton loop sees it as part of the constant base.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a tick-determined conductance) or node-gated
+                    // analog switch (its conductance from the control node's committed
+                    // voltage) stamped into the fixed linear base — exactly like a
+                    // resistor. Carries no branch unknown, so the Newton loop sees it as
+                    // part of the constant base (it works in circuits that also contain
+                    // nonlinear devices).
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -3989,6 +5377,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_VSOURCE | ELEM_ACSOURCE | ELEM_CAPACITOR => x[op_branch[i]],
                 ELEM_INDUCTOR | ELEM_TRANSFORMER => self.reactive_state[i],
                 ELEM_ISOURCE => self.i_source_current(e),
@@ -4017,7 +5408,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4029,6 +5420,14 @@ impl Sim {
                     // output levels and an X-driven Q — not a 2-state rail/0.
                     let (vq, g) = FAMILIES[gate_family_index(e.aux)]
                         .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
@@ -4174,13 +5573,18 @@ impl Sim {
                         base_rhs[r] += e.value / PULLUP_R;
                     }
                 }
-                ELEM_SWITCH => {
-                    // Clock-driven switch: a tick-determined conductance stamped
-                    // into the fixed linear base (computed once per step from the
-                    // current tick before any Newton iterating), exactly like a
-                    // resistor. No branch unknown and no reactive state, so the
-                    // Newton loop treats it as part of the constant base.
-                    let g = self.switch_conductance(e);
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock-driven switch (a tick-determined conductance) or node-gated
+                    // analog switch (its conductance from the control node's committed
+                    // previous-tick voltage) stamped into the fixed linear base, computed
+                    // once per step before any Newton iterating — exactly like a resistor.
+                    // No branch unknown and no reactive state, so the Newton loop treats it
+                    // as part of the constant base (it works alongside nonlinear devices).
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -4231,6 +5635,9 @@ impl Sim {
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
+                // Gated analog switch: same conductance·voltage current as the clock
+                // switch, but the conductance comes from the control node (aswitch_closed).
+                ELEM_ASWITCH => self.aswitch_conductance(e) * self.element_voltage(e),
                 ELEM_CAPACITOR => {
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
@@ -4277,7 +5684,7 @@ impl Sim {
                 // Logic-gate output drive current: GATE_GOUT*(Vtarget − V(out)), the
                 // current the gate sources out of its output `a`. Vtarget was
                 // committed from the previous-tick inputs during base assembly.
-                ELEM_GATE | ELEM_LEVELSHIFT => {
+                ELEM_GATE | ELEM_LEVELSHIFT | ELEM_COMPARATOR | ELEM_BEHAVIORAL => {
                     self.gate_gout[i] * (self.gate_target[i] - self.node_v[e.a])
                 }
                 // Pull-up: the current it sources from Vcc (value) into its net.
@@ -4289,6 +5696,14 @@ impl Sim {
                     // output levels and an X-driven Q — not a 2-state rail/0.
                     let (vq, g) = FAMILIES[gate_family_index(e.aux)]
                         .drive_level(self.ff_q[i], e.value)
+                        .unwrap_or((self.node_v[e.a], 0.0));
+                    g * (vq - self.node_v[e.a])
+                }
+                // The sampler's OUT drive current, from the committed comparison bit (the
+                // rail is `aux`, defaulting when unset; same shape as the flip-flop's Q).
+                ELEM_SAMPLER => {
+                    let (vq, g) = FAMILIES[0]
+                        .drive_level(self.samp_q[i], sampler_rail(e))
                         .unwrap_or((self.node_v[e.a], 0.0));
                     g * (vq - self.node_v[e.a])
                 }
@@ -4506,6 +5921,42 @@ impl Sim {
                     self.digital_vlow[e.d] = 0.0;
                     self.digital_family[e.d] = fi as u8;
                 }
+                ELEM_SAMPLER => {
+                    // OUT (a) drives the stored comparison bit at the output rail (`aux`,
+                    // defaulted). The bit is latched in the commit phase, so the output is
+                    // constant within the solve (one tick of clock-to-output delay). IN (b)
+                    // is a high-Z analog sense pin — read, not driven. Ideal driver family.
+                    let rail = sampler_rail(&e);
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], self.samp_q[i]);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = 0.0;
+                    self.digital_family[e.a] = 0;
+                }
+                ELEM_COMPARATOR => {
+                    // POWERED output stage, identical machinery to a powered gate: OUT (a)
+                    // swings between the GND pin (e, vlow) and the VCC pin (d, vhigh) and
+                    // releases (Z) when the rail collapses below the operating minimum (an
+                    // unpowered chip sits dead). The held comparison bit (`cmp_q`, latched in
+                    // the commit phase) is constant within the solve, so this is a constant
+                    // Thévenin stamp — no Newton. IN+ (b)/IN- (c) are analog sense pins (read
+                    // in the commit phase, not driven here); LE (f) is read there too. Ideal
+                    // driver family (a clean rail-to-rail output), GND-offset by `vlow`.
+                    let fam = &FAMILIES[0];
+                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                    let rail = (vhigh - vlow).max(0.0);
+                    let driven = if rail < GATE_MIN_RAIL {
+                        Level::Z
+                    } else {
+                        self.cmp_q[i]
+                    };
+                    let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = vlow + tvf;
+                    self.gate_gout[i] = g;
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = vlow;
+                    self.digital_family[e.a] = 0;
+                }
                 ELEM_LEVELSHIFT => {
                     // Read the input (b) at the INPUT rail A (value), re-drive the output
                     // (a) at the OUTPUT rail B (aux) — the part that translates levels
@@ -4519,6 +5970,191 @@ impl Sim {
                     self.digital_vhigh[e.a] = e.aux; // output net carries rail B
                     self.digital_vlow[e.a] = 0.0;
                     self.digital_family[e.a] = 0;
+                }
+                ELEM_BEHAVIORAL => {
+                    // Behavioral block: up to three POWERED digital outputs on a/b/c, driven from
+                    // the COMMITTED integer state through the SAME powered-gate output path the
+                    // gate/comparator use. They swing between the GND pin (e, vlow) and the VCC pin
+                    // (d, vhigh) and release (Z) when the rail collapses below the operating minimum
+                    // (an unpowered chip sits dead). The state is advanced in the commit phase, so
+                    // the levels are constant within the solve — a constant Thévenin stamp, no
+                    // Newton, one tick of state-to-output delay. The input pins f/g/h are read in
+                    // the commit phase (not driven here). Ideal driver family (a clean rail-to-rail
+                    // output), GND-offset by `vlow`. The per-program output map (which pin carries
+                    // what, and whether c is used) is the only thing that differs between programs:
+                    //   prog 1 SPI master: a=SCLK, b=MOSI, c=CS
+                    //   prog 2 SPI slave:  a=MISO, b=RXVALID, c unused (Z)
+                    //   prog 3 UART:       a=TX,   b=RXVALID, c unused (Z)
+                    let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
+                    let fam = &FAMILIES[0];
+                    // The behavioral block is ALWAYS powered through its VCC (d) / GND (e) pins —
+                    // `value` is the program id, NOT a logic rail, so it has no legacy `value`-rail
+                    // fallback (that would misread the program id as a 1 V rail). An unwired VCC
+                    // floats to ~0 V → rail below the minimum → the chip reads dead/released.
+                    let vlow = self.node_v[e.e];
+                    let rail = (self.node_v[e.d] - vlow).max(0.0);
+                    let bit = |hi: bool| if hi { Level::High } else { Level::Low };
+                    // Program 4 (the FPGA logic element) drives a SINGLE powered output on `a` and
+                    // reads its inputs on b/c/f/g/h — so it must NOT touch b/c (the generic a/b/c
+                    // drive loop below unconditionally overwrites each pin's quantisation rail, which
+                    // would clobber an input net driven by an external clock/gate). Handle it here
+                    // and skip the generic output path. Combinational mode looks the truth table up
+                    // from the LIVE inputs (gate-like, settling within the digital sub-solve, no
+                    // clock-to-output delay); registered mode drives the committed `Q` (a LUT+FF,
+                    // one tick of clock-to-output delay like the DFF). Unpowered ⇒ released (Z).
+                    if prog == BEH_PROG_LUT {
+                        let la = if rail < GATE_MIN_RAIL {
+                            Level::Z
+                        } else if beh_lut_registered(&e) {
+                            bit(self.beh_state[i][BEH_LUT_Q] != 0)
+                        } else {
+                            let idx = beh_lut_live_index(&self.node_v, &e, vlow, rail);
+                            bit(beh_lut_bit(e.aux as u32, idx))
+                        };
+                        let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
+                        self.gate_target[i] = vlow + tvf;
+                        self.gate_gout[i] = g;
+                        self.digital_drive[e.a] = combine(self.digital_drive[e.a], la);
+                        self.digital_vhigh[e.a] = rail;
+                        self.digital_vlow[e.a] = vlow;
+                        self.digital_family[e.a] = 0;
+                        continue;
+                    }
+                    // Program 6 (the 3-bit SAR ADC) drives FOUR powered outputs from committed state
+                    // — D0/D1/D2 (a/b/c) = the successive-approximation result register, DONE (g) =
+                    // high once a full conversion has completed — and reads VIN (f) / CLK (h) in the
+                    // commit phase. The fourth output (g) is why it can't use the generic a/b/c loop
+                    // below; handle it here and skip (like the LUT). Reference is the VCC rail
+                    // (single supply). Unpowered ⇒ everything released (Z). One tick of
+                    // state-to-output delay, like the other clocked programs.
+                    if prog == BEH_PROG_SAR_ADC {
+                        let powered = rail >= GATE_MIN_RAIL;
+                        let code = self.beh_state[i][BEH_SAR_CODE];
+                        let done_hi = self.beh_state[i][BEH_SAR_DONE] != 0;
+                        // (output node, high?) for D0, D1, D2, DONE.
+                        let outs = [
+                            (e.a, code & 1 != 0),
+                            (e.b, code & 2 != 0),
+                            (e.c, code & 4 != 0),
+                            (e.g, done_hi),
+                        ];
+                        for (k, &(node, hi)) in outs.iter().enumerate() {
+                            let lvl = if powered { bit(hi) } else { Level::Z };
+                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                            if k == 0 {
+                                // OUT (a = D0): record the element-indexed Thévenin so the OUT current
+                                // readout (oriented out of `a`) matches the stamp, like the gate.
+                                self.gate_target[i] = vlow + tvf;
+                                self.gate_gout[i] = g;
+                            }
+                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                            self.digital_vhigh[node] = rail;
+                            self.digital_vlow[node] = vlow;
+                            self.digital_family[node] = 0;
+                        }
+                        continue;
+                    }
+                    // Program 8 (the sigma-delta ADC) also drives FOUR outputs from committed state —
+                    // D0/D1/D2 (a/b/c) = the decimated code, and BS (g) = the live 1-bit modulator
+                    // stream (so its density ∝ VIN is visible). Same shape as the SAR; handle it here
+                    // and skip the generic a/b/c path.
+                    if prog == BEH_PROG_SIGMA_DELTA {
+                        let powered = rail >= GATE_MIN_RAIL;
+                        let code = self.beh_state[i][SD_CODE];
+                        let bs_hi = self.beh_state[i][SD_BIT] != 0;
+                        // (output node, high?) for D0, D1, D2, BS (the bit stream).
+                        let outs = [
+                            (e.a, code & 1 != 0),
+                            (e.b, code & 2 != 0),
+                            (e.c, code & 4 != 0),
+                            (e.g, bs_hi),
+                        ];
+                        for (k, &(node, hi)) in outs.iter().enumerate() {
+                            let lvl = if powered { bit(hi) } else { Level::Z };
+                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                            if k == 0 {
+                                self.gate_target[i] = vlow + tvf;
+                                self.gate_gout[i] = g;
+                            }
+                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                            self.digital_vhigh[node] = rail;
+                            self.digital_vlow[node] = vlow;
+                            self.digital_family[node] = 0;
+                        }
+                        continue;
+                    }
+                    // (a, b, c) output levels for this program (Z = released). Unpowered or an
+                    // inert/unknown program releases everything.
+                    let (la, lb, lc) = if rail < GATE_MIN_RAIL {
+                        (Level::Z, Level::Z, Level::Z)
+                    } else {
+                        let st = &self.beh_state[i];
+                        match prog {
+                            BEH_PROG_SPI_MASTER => {
+                                let (nbits, _half) = beh_spi_config(&e);
+                                let sclk = bit(st[BEH_SPI_SCLK_LEVEL] != 0);
+                                let mosi = bit(beh_spi_mosi_bit(st, nbits));
+                                // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
+                                // output level, so it idles High and asserts Low during a
+                                // transaction. Guard the all-zero RESET state (cs_level = 0 before
+                                // the first commit runs the idle branch that raises it): CS is
+                                // asserted Low ONLY while a transaction is active (fsm = 1), else
+                                // deasserted High — so a freshly installed/idle master reads CS High
+                                // from the very first tick (spec: "Idle (fsm = 0): CS = 1").
+                                let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
+                                    Level::Low
+                                } else {
+                                    Level::High
+                                };
+                                (sclk, mosi, cs)
+                            }
+                            BEH_PROG_SPI_SLAVE => {
+                                // MISO (a): the reply word `aux` MSB-first while CS is asserted,
+                                // else idle low. RXVALID (b): high while a received word is latched
+                                // (until CS deasserts). c unused.
+                                let nbits = beh_spi_slave_nbits(&e);
+                                let miso = bit(beh_spi_slave_miso_bit(st, e.aux as u64, nbits));
+                                let rxvalid = bit(st[BEH_SLV_RXVALID] != 0);
+                                (miso, rxvalid, Level::Z)
+                            }
+                            BEH_PROG_UART => {
+                                // TX (a): the framed line (idle/mark high). RXVALID (b): the one-tick
+                                // received-byte pulse. c unused.
+                                let (_baud, nbits) = beh_uart_config(&e);
+                                let tx = bit(beh_uart_tx_high(st, nbits));
+                                let rxvalid = bit(st[BEH_UART_RXVALID] != 0);
+                                (tx, rxvalid, Level::Z)
+                            }
+                            BEH_PROG_FLASH_ADC => {
+                                // 3-bit flash ADC: quantize the live analog input (f) against the
+                                // reference span to a code 0..7, driving D0/D1/D2 on a/b/c. Purely
+                                // combinational (reads node_v, carries no state -> no commit arm).
+                                let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
+                                (bit(code & 1 != 0), bit(code & 2 != 0), bit(code & 4 != 0))
+                            }
+                            BEH_PROG_COUNTER => {
+                                // 3-bit binary counter: drive Q0/Q1/Q2 (a/b/c) from the committed
+                                // count (advanced on each rising CLK in the commit phase).
+                                let n = st[BEH_CNT_COUNT];
+                                (bit(n & 1 != 0), bit(n & 2 != 0), bit(n & 4 != 0))
+                            }
+                            // Inert / unknown program: release all outputs.
+                            _ => (Level::Z, Level::Z, Level::Z),
+                        }
+                    };
+                    // OUT pin a: also record the element-indexed Thévenin so the OUT current readout
+                    // (oriented out of `a`) matches the stamp, exactly like the gate.
+                    let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
+                    self.gate_target[i] = vlow + tvf;
+                    self.gate_gout[i] = g;
+                    // Drive all three output pins a/b/c uniformly (an unused pin carries Z, which
+                    // combine() yields on, so it neither pulls its net nor is double-counted).
+                    for (node, lvl) in [(e.a, la), (e.b, lb), (e.c, lc)] {
+                        self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                        self.digital_vhigh[node] = rail;
+                        self.digital_vlow[node] = vlow;
+                        self.digital_family[node] = 0;
+                    }
                 }
                 _ => {}
             }
@@ -4546,6 +6182,55 @@ impl Sim {
         }
     }
 
+    /// **Debug-only structural invariant** (ADR 0004 phase-3, step 3a): assert that the
+    /// pure-digital block of a fully assembled MNA matrix is strictly **diagonal** — for every
+    /// row `r` in `digital_rows`, every off-diagonal entry in that row *and* that column is
+    /// exactly `0.0` (`mat[r*dim + c] == 0.0` and `mat[c*dim + r] == 0.0` for all `c != r`).
+    ///
+    /// This is the assumption step 3b's frozen-boundary sub-solve relies on: a pure-`Digital`
+    /// net is touched ONLY by digital pins, so it carries no cross-net conductance and is
+    /// stamped ONLY by [`Sim::stamp_digital`] (a lone `GMIN` + one combined Thévenin drive on
+    /// its own diagonal). No analog stamp — resistor, source, reactive companion, floating-ref
+    /// tie, or nonlinear Newton companion (diode / MOSFET / BJT / varistor / op-amp) — can reach
+    /// it, because those touch only analog terminals. So the block must be diagonal; if this
+    /// ever fires, some pure-digital net has unexpected coupling and the sub-tick partition is
+    /// invalid — we want it to fire loudly in tests (it is critical design feedback, not a bug
+    /// to paper over).
+    ///
+    /// Compiled only in debug/test builds (it is a `debug_assert!`-style check with the loop body
+    /// gated on `debug_assertions`), so release and the analog hot path are untouched. Cost is
+    /// `O(digital_rows · dim)`. Called right after each assembly path finishes stamping and BEFORE
+    /// `solve_dense`, so it sees the exact matrix that is about to be factored — nothing is moved.
+    #[inline]
+    fn debug_assert_digital_block_diagonal(mat: &[f64], dim: usize, digital_rows: &[usize]) {
+        #[cfg(debug_assertions)]
+        for &r in digital_rows {
+            debug_assert!(r < dim, "digital row {r} out of range for dim {dim}");
+            for c in 0..dim {
+                if c == r {
+                    continue;
+                }
+                debug_assert_eq!(
+                    mat[r * dim + c],
+                    0.0,
+                    "pure-digital row {r} has off-diagonal coupling at column {c} \
+                     (ADR 0004 sub-tick partition assumption broken)"
+                );
+                debug_assert_eq!(
+                    mat[c * dim + r],
+                    0.0,
+                    "pure-digital row {r} has off-diagonal coupling at row {c} \
+                     (ADR 0004 sub-tick partition assumption broken)"
+                );
+            }
+        }
+        // Silence unused-parameter warnings in release builds, where the loop is compiled out.
+        #[cfg(not(debug_assertions))]
+        {
+            let _ = (mat, dim, digital_rows);
+        }
+    }
+
     /// Stamp the resolved digital drives ([`Sim::eval_digital`]) into an MNA system
     /// (`mat`/`rhs`, dimension `dim`): for every `Digital`/`Boundary` net a `GMIN`
     /// anti-singularity floor, plus — unless the net is released (`Z`) — the driver's
@@ -4564,15 +6249,48 @@ impl Sim {
             }
             let r = node - 1; // node n -> MNA row n-1 (ground excluded)
             mat[r * dim + r] += GMIN;
-            let fam = &FAMILIES[self.digital_family[node] as usize];
-            if let Some((tvf, g)) =
-                fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
-            {
-                // The family target is a rail fraction; offset by the driver's GND so a
-                // powered gate stamps an absolute `vlow + frac·rail` (legacy vlow = 0).
+            if let Some((vt, g)) = self.digital_net_thevenin(node) {
+                // `vt` is the absolute Thévenin target (the family rail fraction already offset
+                // by the driver's GND — see `digital_net_thevenin`); `g` its conductance.
                 mat[r * dim + r] += g;
-                rhs[r] += g * (self.digital_vlow[node] + tvf);
+                rhs[r] += g * vt;
             }
+        }
+    }
+
+    /// The resolved digital driver's **absolute Thévenin** `(target_voltage, conductance)` for a
+    /// `Digital`/`Boundary` net, or `None` when the net is released (`Z`). This is the single source
+    /// of truth for how a resolved [`Level`] becomes an analog stamp: the family target is a rail
+    /// fraction, offset here by the driver's GND (`digital_vlow`) so a powered gate yields an
+    /// absolute `vlow + frac·rail` (legacy `vlow = 0`). Used by [`Sim::stamp_digital`] (which adds
+    /// `g` to the diagonal and `g·vt` to the RHS) **and** by [`Sim::digital_net_solved_voltage`]
+    /// (the closed-form diagonal sub-solve), so the two can never drift apart.
+    #[inline]
+    fn digital_net_thevenin(&self, node: usize) -> Option<(f64, f64)> {
+        let fam = &FAMILIES[self.digital_family[node] as usize];
+        fam.drive_level(self.digital_drive[node], self.digital_vhigh[node])
+            .map(|(tvf, g)| (self.digital_vlow[node] + tvf, g))
+    }
+
+    /// The solved node voltage of a **pure-digital** net's diagonal MNA row, computed in closed form
+    /// instead of via a matrix factorisation — the value [`Sim::stamp_digital`] + [`solve_dense`]
+    /// would produce for a row that is provably **diagonal** (ADR 0004 step 3a proved each
+    /// `digital_rows` net is stamped ONLY here: a lone [`GMIN`] floor + at most one resolved
+    /// Thévenin on its own diagonal, no off-diagonal coupling). The diagonal equation
+    /// `(GMIN + g)·v = g·vt` gives:
+    /// - **driven** (`Some((vt, g))` from [`Sim::digital_net_thevenin`]) ⇒ `v = g·vt / (GMIN + g)`;
+    /// - **undriven / released** (`Z` ⇒ `None` ⇒ only the `GMIN` floor) ⇒ `v = 0 / GMIN = 0.0`,
+    ///   so a floating digital net reads ≈0 V (→ `Low`), preserving floating-input-reads-low.
+    ///
+    /// This is the per-net body of step 3b's frozen-boundary sub-solve: it re-derives a pure-digital
+    /// net's voltage from the latest committed drives without touching the (frozen) analog/boundary
+    /// rows. Because it shares [`Sim::digital_net_thevenin`] with the full-assembly stamp, the value
+    /// is bit-identical to what a fresh `solve_dense` of the same matrix produces for that row.
+    #[inline]
+    fn digital_net_solved_voltage(&self, node: usize) -> f64 {
+        match self.digital_net_thevenin(node) {
+            Some((vt, g)) => g * vt / (GMIN + g),
+            None => 0.0,
         }
     }
 
@@ -4692,6 +6410,47 @@ impl Sim {
         }
     }
 
+    /// Whether a gated analog switch ([`ELEM_ASWITCH`]) is **closed** (conducting), derived
+    /// from its control node read off the **committed previous-tick** [`Sim::node_v`] — the
+    /// one-tick control delay that keeps the conductance constant within the solve (the same
+    /// receiver delay the digital engine uses). Mirrors the powered-gate rail/threshold logic
+    /// ([`gate_rails`] / [`GATE_MIN_RAIL`]):
+    /// - Powered (`d` or `e` wired): `rail = V(d) − V(e)`; closed iff `rail >= `[`GATE_MIN_RAIL`]
+    ///   **and** the control is above half-rail relative to GND (`V(c) − V(e) > 0.5·rail`). An
+    ///   unwired VCC floats the rail below the minimum → forced open (dead chip).
+    /// - Unpowered fallback (`d == 0 && e == 0`): closed iff `V(c) > `[`ASWITCH_FIXED_THRESH`].
+    ///
+    /// Pure `f64`, no PRNG, no hashing — a deterministic function of the committed node voltages.
+    #[inline]
+    fn aswitch_closed(&self, e: &Element) -> bool {
+        if e.d == 0 && e.e == 0 {
+            // No power pins: a bare control level against a fixed threshold (the powerless-gate
+            // fallback), so an unwired-rail switch still follows a plain logic signal.
+            self.node_v[e.c] > ASWITCH_FIXED_THRESH
+        } else {
+            let rail = self.node_v[e.d] - self.node_v[e.e];
+            // An unpowered/under-powered rail forces the switch open (dead), matching a powered
+            // gate whose VCC floats below GATE_MIN_RAIL.
+            rail >= GATE_MIN_RAIL && (self.node_v[e.c] - self.node_v[e.e]) > 0.5 * rail
+        }
+    }
+
+    /// The conductance of a gated analog switch ([`ELEM_ASWITCH`]) at the current tick: closed
+    /// (control asserted, [`Sim::aswitch_closed`]) returns `1/R_on` (its `value`, or
+    /// [`ASWITCH_RON`] when `value <= 0`); open returns the tiny [`SWITCH_GOFF`] leak (matching
+    /// the clock switch's open behaviour so the node stays non-singular). A time-varying *linear*
+    /// conductance read from the committed `node_v`, stamped exactly like a resistor — no Newton,
+    /// no branch unknown, no reactive state.
+    #[inline]
+    fn aswitch_conductance(&self, e: &Element) -> f64 {
+        if self.aswitch_closed(e) {
+            let ron = if e.value > 0.0 { e.value } else { ASWITCH_RON };
+            1.0 / ron
+        } else {
+            SWITCH_GOFF
+        }
+    }
+
     /// Advance exactly one fixed-size tick. Solves the implicit system, commits
     /// the new reactive state from the solution, and increments the tick. Pure
     /// `f64`, fixed order.
@@ -4700,7 +6459,10 @@ impl Sim {
         // Commit each digital/boundary net's level (the receiver, one tick of delay
         // before the digital engine reads it next tick) for the hash and the renderer.
         self.commit_net_levels();
-        // Commit reactive state for the next step.
+        // Commit ANALOG reactive state for the next step (needs `x`'s branch unknowns).
+        // The sequential DIGITAL state (DFF / SAMPLER / COMPARATOR / BEHAVIORAL) is advanced
+        // separately by `commit_sequential_digital_state` so the sub-tick loop can re-run the
+        // identical logic without re-committing reactive companions or re-solving the analog rows.
         for (i, e) in self.elements.iter().enumerate() {
             match e.kind {
                 ELEM_CAPACITOR => {
@@ -4732,6 +6494,50 @@ impl Sim {
                     self.reactive_state[i] = if bi < x.len() { x[bi] } else { 0.0 };
                     self.secondary_state[i] = if bi + 1 < x.len() { x[bi + 1] } else { 0.0 };
                 }
+                _ => {}
+            }
+        }
+        // Sub-tick 0 of this analog tick: advance the sequential digital state once from the
+        // just-solved committed voltages (the unit-delay edge-detect / FF / sampler / comparator /
+        // behavioral commits) — UNCHANGED from the single-rate engine.
+        self.commit_sequential_digital_state();
+
+        // ADR 0004 step 3b — the integer multi-rate sub-tick loop. For every existing circuit
+        // `S = 1` and this is skipped entirely, so the run is BYTE-IDENTICAL to before sub-ticking
+        // existed (no hash change: the sub-tick index is transient, wrapped to 0 at this boundary,
+        // and never folded). When some block declares a fast rate (`S > 1`) the analog solve and the
+        // analog/boundary `node_v` are FROZEN (the analog Δt never moves — the golden's Δt is fixed);
+        // we re-run only the analog-decoupled pure-digital block `S − 1` more times so a fast domain
+        // clocks at its declared sub-tick rate against the µs analog tick. Each sub-tick follows the
+        // fixed `logic-analog-digital-nets.md §7.6.1` phase order:
+        //   receivers (eval_digital) → diagonal sub-solve → commit_net_levels → sequential commit.
+        if self.subtick_rate > 1 {
+            self.run_digital_subticks();
+        }
+        // Screen the committed state for a non-physical (FAIL) result and clamp it so
+        // it can never propagate as a NaN, before the tick advances.
+        self.flag_and_clamp_fails();
+        // Fold this tick's per-element V/I sample into the running AC analyzers, after
+        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
+        self.update_ac_analysis();
+        self.tick += 1;
+    }
+
+    /// Advance the **sequential digital** state of every clocked element by one digital
+    /// (sub-)tick from the current committed `node_v`: the edge-triggered D flip-flop
+    /// ([`ELEM_DFF`]), the clocked 1-bit sampler ([`ELEM_SAMPLER`]), the latched analog
+    /// comparator ([`ELEM_COMPARATOR`]), and the behavioral state machine ([`ELEM_BEHAVIORAL`]).
+    /// This is the unit-delay edge-detect/FF/comb/driver commit, factored out of [`Sim::step`]
+    /// **verbatim** so the analog-tick path (sub-tick 0) and the multi-rate sub-tick loop
+    /// ([`Sim::run_digital_subticks`]) run the **same** code — at the analog tick it reads the
+    /// just-solved analog voltages; in a sub-tick it reads the sub-step-updated pure-digital
+    /// `node_v` (the frozen boundary/analog `node_v` unchanged). All mutated state is integer/
+    /// [`Level`] and enters the snapshot hash (so a rewind onto an edge replays identically). It
+    /// iterates in fixed element-index order; its arms are disjoint from the reactive-companion
+    /// commits, so splitting it off does not change the single-rate result.
+    fn commit_sequential_digital_state(&mut self) {
+        for (i, e) in self.elements.iter().enumerate() {
+            match e.kind {
                 ELEM_DFF => {
                     // Edge-triggered latch: on a rising CLK edge (Low -> High) sample
                     // D into the stored level (the receiver quantises the just-solved
@@ -4744,16 +6550,206 @@ impl Sim {
                     }
                     self.ff_clk_prev[i] = clk;
                 }
+                ELEM_SAMPLER => {
+                    // Clocked 1-bit comparator: on a rising CLK edge (Low -> High) latch the
+                    // analog input against the threshold — OUT = High iff V(IN) > value, else
+                    // Low. Otherwise the bit holds. CLK (c) is quantised at the output rail
+                    // (the LEGACY family, half-rail threshold); IN (b) is compared directly to
+                    // `value` (the latch is a pure deterministic float compare — no float-order
+                    // reduction). Both `samp_q` and `samp_clk_prev` are 4-state and enter the
+                    // snapshot hash, so a rewind onto a clock edge replays identically.
+                    let clk = FAMILIES[0].quantize(self.node_v[e.c], sampler_rail(e));
+                    if clk == Level::High && self.samp_clk_prev[i] != Level::High {
+                        self.samp_q[i] = if self.node_v[e.b] > e.value {
+                            Level::High
+                        } else {
+                            Level::Low
+                        };
+                    }
+                    self.samp_clk_prev[i] = clk;
+                }
+                ELEM_COMPARATOR => {
+                    // Latched analog comparator (ADCMP601). Evaluate the front end from the
+                    // just-solved committed voltages — the powered output stage then drives
+                    // `cmp_q` next tick (a one-tick input-to-output delay, like the sampler).
+                    // 1) Rail across the supply pins; below the operating minimum the chip is
+                    //    UNPOWERED → hold the bit (the output reads dead/released, the powered
+                    //    gate's dead-rail rule).
+                    let rail = self.node_v[e.d] - self.node_v[e.e];
+                    if rail >= GATE_MIN_RAIL {
+                        // 2) Level-sensitive, ACTIVE-LOW latch enable: transparent when LE is
+                        //    unwired (f == 0, the floating default) or driven at/above half-rail
+                        //    relative to GND; driven below half-rail latches (hold). Pure
+                        //    deterministic float compares — no float-order reduction.
+                        let transparent =
+                            e.f == 0 || (self.node_v[e.f] - self.node_v[e.e]) >= 0.5 * rail;
+                        if transparent {
+                            // 3) Symmetric hysteresis about 0 using the current held bit as the
+                            //    Schmitt state: flip to High once diff > V_H/2, to Low once
+                            //    diff < −V_H/2, else hold. value (= V_H) 0 ⇒ a plain comparator
+                            //    (diff > 0 → High, diff < 0 → Low).
+                            let diff = self.node_v[e.b] - self.node_v[e.c];
+                            let half_vh = 0.5 * e.value;
+                            if self.cmp_q[i] != Level::High && diff > half_vh {
+                                self.cmp_q[i] = Level::High;
+                            } else if self.cmp_q[i] != Level::Low && diff < -half_vh {
+                                self.cmp_q[i] = Level::Low;
+                            }
+                        }
+                        // else latched: cmp_q unchanged (hold).
+                    }
+                    // else unpowered: cmp_q unchanged (hold).
+                }
+                ELEM_BEHAVIORAL => {
+                    // Advance the behavioral block's integer state machine by one tick from the
+                    // just-solved committed inputs (the only state-mutation site — eval_digital
+                    // merely DRIVES from this committed state). Programs: 1 = SPI master, 2 = SPI
+                    // slave, 3 = UART. An unpowered chip (rail below the operating minimum) holds
+                    // its state, and a 0/unknown program id is inert — both fold a zero/frozen state
+                    // block, so the golden is untouched. Inputs are read as two-state digital levels
+                    // (half-rail relative to GND on `e`, via beh_level — no float-order reduction; a
+                    // deterministic boolean), each program reading its own input pins:
+                    //   prog 1 SPI master: f=MISO, g=START
+                    //   prog 2 SPI slave:  f=SCLK, g=MOSI, h=CS
+                    //   prog 3 UART:       f=RX,   g=SEND
+                    let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
+                    let rail = self.node_v[e.d] - self.node_v[e.e];
+                    if rail >= GATE_MIN_RAIL {
+                        let vlow = self.node_v[e.e];
+                        let lvl = |pin: usize| beh_level(&self.node_v, pin, vlow, rail);
+                        match prog {
+                            BEH_PROG_SPI_MASTER => {
+                                let (nbits, half) = beh_spi_config(e);
+                                beh_spi_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u64,
+                                    nbits,
+                                    half,
+                                    lvl(e.g), // START
+                                    lvl(e.f), // MISO
+                                );
+                            }
+                            BEH_PROG_SPI_SLAVE => {
+                                let nbits = beh_spi_slave_nbits(e);
+                                beh_spi_slave_step(
+                                    &mut self.beh_state[i],
+                                    nbits,
+                                    lvl(e.f), // SCLK
+                                    lvl(e.g), // MOSI
+                                    lvl(e.h), // CS (active-low)
+                                );
+                            }
+                            BEH_PROG_UART => {
+                                let (baud, nbits) = beh_uart_config(e);
+                                beh_uart_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u64,
+                                    baud,
+                                    nbits,
+                                    lvl(e.g), // SEND (trigger)
+                                    lvl(e.f), // RX
+                                );
+                            }
+                            BEH_PROG_LUT => {
+                                // FPGA logic element: a combinational LUT advances no state (its
+                                // output is live in eval_digital); a registered LUT latches the
+                                // truth-table lookup of its committed inputs into Q on the rising
+                                // CLK (b) edge. The index (IN0..IN3 = f/g/h/c, LSB..MSB) is the SAME
+                                // helper the combinational output uses, so the two paths agree.
+                                let index = beh_lut_live_index(&self.node_v, e, vlow, rail);
+                                let registered = beh_lut_registered(e);
+                                let clk = lvl(e.b);
+                                beh_lut_step(
+                                    &mut self.beh_state[i],
+                                    e.aux as u32,
+                                    registered,
+                                    index,
+                                    clk,
+                                );
+                            }
+                            BEH_PROG_SAR_ADC => {
+                                // 3-bit SAR ADC: on each rising CLK (h) decide one bit MSB-first,
+                                // comparing VIN (f) against the trial DAC level (trial/8 of the VCC
+                                // reference rail). The committed code drives D0/D1/D2 and the DONE
+                                // strobe in eval_digital (one tick of state-to-output delay).
+                                let clk = lvl(e.h);
+                                let vin = self.node_v[e.f] - vlow;
+                                beh_sar_adc_step(&mut self.beh_state[i], clk, vin, rail);
+                            }
+                            BEH_PROG_COUNTER => {
+                                // 3-bit counter: increment on each rising CLK (f); RESET (g, active
+                                // high) asynchronously clears. Drives Q0/Q1/Q2 in eval_digital.
+                                let clk = lvl(e.f);
+                                let reset = lvl(e.g);
+                                beh_counter_step(&mut self.beh_state[i], clk, reset);
+                            }
+                            BEH_PROG_SIGMA_DELTA => {
+                                // Sigma-delta ADC: on each rising CLK (h) run one modulator + decimator
+                                // step, comparing VIN (f) against the VCC reference rail. Drives the
+                                // decimated code on D0/D1/D2 and the 1-bit stream on BS in eval_digital.
+                                let clk = lvl(e.h);
+                                let vin = self.node_v[e.f] - vlow;
+                                beh_sigma_delta_step(&mut self.beh_state[i], clk, vin, rail);
+                            }
+                            // Inert / unknown program: no state advance.
+                            _ => {}
+                        }
+                    }
+                    // else unpowered: state held (the dead-rail rule).
+                }
                 _ => {}
             }
         }
-        // Screen the committed state for a non-physical (FAIL) result and clamp it so
-        // it can never propagate as a NaN, before the tick advances.
-        self.flag_and_clamp_fails();
-        // Fold this tick's per-element V/I sample into the running AC analyzers, after
-        // the clamp so every sample is finite. Derived, snapshot-only, never hashed.
-        self.update_ac_analysis();
-        self.tick += 1;
+    }
+
+    /// ADR 0004 phase-3, step 3b — the integer **multi-rate sub-tick loop**. Called from
+    /// [`Sim::step`] only when the global rate `S = self.subtick_rate > 1`, AFTER the full analog
+    /// solve + `commit_net_levels` + the sub-tick-0 [`Sim::commit_sequential_digital_state`]. It runs
+    /// `S − 1` additional digital sub-ticks, advancing the fast digital domain at its declared rate
+    /// while the **analog Δt never changes** (the golden's Δt is fixed). The analog/boundary `node_v`
+    /// stay FROZEN throughout — only the analog-decoupled pure-digital nets (`digital_rows`, proven
+    /// strictly diagonal in step 3a) are re-derived — so no analog re-solve happens and the analog
+    /// golden is untouched.
+    ///
+    /// Each sub-tick follows the fixed `logic-analog-digital-nets.md §7.6.1` phase order (getting it
+    /// wrong creates a gated-clock ambiguity):
+    /// 1. **receivers** — [`Sim::eval_digital`] recomputes every net's resolved drive from the
+    ///    current committed levels (receivers read the latest pure-digital `node_v` + the frozen
+    ///    boundary `node_v`);
+    /// 2. **diagonal sub-solve** — for each pure-digital row, recompute its `node_v` in closed form
+    ///    from its resolved drive ([`Sim::digital_net_solved_voltage`], the same value
+    ///    [`Sim::stamp_digital`] + a matrix solve would give for that diagonal row); the
+    ///    boundary/analog `node_v` are left frozen;
+    /// 3. **commit_net_levels** — re-quantise the new pure-digital `node_v` into `net_level`;
+    /// 4. **sequential commit** — [`Sim::commit_sequential_digital_state`] re-runs the edge-detect /
+    ///    FF / sampler / comparator / behavioral logic on the sub-step-updated levels, so a fast
+    ///    block clocks at the sub-tick rate (over-clocking the whole digital kernel is safe — a comb
+    ///    gate just propagates faster; an FF clocked by a slow clock still latches only on that
+    ///    clock's natural edges, which don't move within an analog tick because the boundary is
+    ///    frozen).
+    ///
+    /// The sub-tick index `sub` is transient and wrapped to `0` at the analog-tick boundary (it is a
+    /// loop-local counter), so it **never** enters [`Sim::snapshot_hash`]; the count is structural
+    /// (`S`, derived from declared params) and the loop is fixed, so the result is reproducible by
+    /// construction.
+    fn run_digital_subticks(&mut self) {
+        for _sub in 1..self.subtick_rate {
+            // (1) Receivers: recompute the digital drives from the latest committed levels.
+            self.eval_digital();
+            // (2) Diagonal sub-solve of the pure-digital block ONLY — frozen boundary/analog rows.
+            //     A pure-digital net's row is diagonal (`GMIN` + at most one Thévenin), so its
+            //     voltage is the closed form `digital_net_solved_voltage`, bit-identical to a
+            //     `solve_dense` of that single diagonal row. `digital_rows` holds MNA row indices
+            //     (`node − 1`); map back to the node to write `node_v[node]`.
+            for &row in &self.digital_rows {
+                let node = row + 1;
+                self.node_v[node] = self.digital_net_solved_voltage(node);
+            }
+            // (3) Re-quantise the updated pure-digital nets into their canonical levels.
+            self.commit_net_levels();
+            // (4) Advance the sequential digital state from the sub-step-updated levels.
+            self.commit_sequential_digital_state();
+        }
     }
 
     /// Fold this tick's solved per-element waveform sample — terminal voltage
@@ -4949,6 +6945,12 @@ impl Sim {
                 }
                 ELEM_SWITCH => {
                     stamp_y(&mut a, ia, ib, Cplx::new(self.switch_conductance(e), 0.0));
+                }
+                ELEM_ASWITCH => {
+                    // Node-gated analog switch: a real conductance (its R_on or the open
+                    // leak), the small-signal twin of the clock switch's stamp. Its state
+                    // comes from the control node's committed voltage (aswitch_conductance).
+                    stamp_y(&mut a, ia, ib, Cplx::new(self.aswitch_conductance(e), 0.0));
                 }
                 ELEM_CAPACITOR => {
                     if e.value > 0.0 {
@@ -5154,6 +7156,7 @@ impl Sim {
                     Cplx::new(1.0 / e.value, 0.0)
                 }),
                 ELEM_SWITCH => Some(Cplx::new(self.switch_conductance(e), 0.0)),
+                ELEM_ASWITCH => Some(Cplx::new(self.aswitch_conductance(e), 0.0)),
                 ELEM_CAPACITOR if e.value > 0.0 => Some(if real {
                     let esr = param_or(&e.params, 0, CAP_ESR);
                     let esl = param_or(&e.params, 1, CAP_ESL);
@@ -5337,9 +7340,16 @@ impl Sim {
     /// folds its discrete [`Level`] (one `u8`, no float compares cross the boundary),
     /// every other node (analog/boundary) folds its `node_v` (`f64` bits) as before;
     /// then each flip-flop's `ff_q` and `ff_clk_prev` (one `u8` each), so sequential
-    /// state replays across a clock edge. Forward-stable and append-only: a pure-analog
-    /// circuit hashes exactly as it always did (the RC golden is unchanged). See
-    /// `docs/ui/logic-analog-digital-nets.md` §7.8.
+    /// state replays across a clock edge; then — appended after the flip-flops — each
+    /// clocked sampler's `samp_q` and `samp_clk_prev` (one `u8` each), the same sequential
+    /// replay guarantee for the sampler; then — appended after the samplers — each latched
+    /// comparator's `cmp_q` (one `u8`), the same guarantee for the level-latched comparator;
+    /// then — appended after the comparators — each behavioral block's full integer state
+    /// (`beh_state`: [`BEH_STATE_WORDS`] `u32` words as little-endian bytes, in fixed element +
+    /// word order), the protocol/behavioral engine's reproducibility guarantee (ADR 0004).
+    /// Forward-stable and append-only: a circuit with no flip-flop, sampler, comparator, or
+    /// behavioral block (the RC golden, every existing test) folds ZERO extra bytes and hashes
+    /// exactly as it always did. See `docs/ui/logic-analog-digital-nets.md` §7.8.
     pub fn snapshot_hash(&self) -> u64 {
         let mut bytes = Vec::with_capacity(8 + self.node_v.len() * 8 + self.elements.len() * 2);
         bytes.extend_from_slice(&self.tick.to_le_bytes());
@@ -5356,7 +7366,90 @@ impl Sim {
                 bytes.push(self.ff_clk_prev[i] as u8);
             }
         }
+        // Then each clocked sampler's stored bit and previous clock level (one `u8` each),
+        // in fixed element order — APPENDED after the flip-flop fold, so a circuit with no
+        // sampler (the RC golden, every existing test) folds ZERO extra bytes and hashes
+        // byte-identically to before. Sequential state, so a rewind onto a sample edge
+        // replays exactly.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_SAMPLER {
+                bytes.push(self.samp_q[i] as u8);
+                bytes.push(self.samp_clk_prev[i] as u8);
+            }
+        }
+        // Then each latched comparator's held bit (one `u8`), in fixed element order —
+        // APPENDED after the sampler fold, so a circuit with no comparator (the RC golden,
+        // every existing test) folds ZERO extra bytes and hashes byte-identically to before.
+        // The comparator is level-sensitive, so unlike the sampler it has no previous-clock
+        // companion — `cmp_q` is its only sequential scalar. Sequential state, so a rewind
+        // replays exactly.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_COMPARATOR {
+                bytes.push(self.cmp_q[i] as u8);
+            }
+        }
+        // Then each behavioral block's full integer state (BEH_STATE_WORDS u32 words as LE
+        // bytes), in fixed element + word order — APPENDED after the comparator fold, so a
+        // circuit with no behavioral block (the RC golden, every existing test) folds ZERO
+        // extra bytes and hashes byte-identically to before. Integer state only (no floats,
+        // no std hasher), the protocol/behavioral engine's reproducibility guarantee (ADR 0004).
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_BEHAVIORAL {
+                for w in &self.beh_state[i] {
+                    bytes.extend_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
         fnv1a(&bytes)
+    }
+}
+
+/// Test-only accessors into a behavioral block's integer state — so the SPI tests can read the
+/// received word and the state-machine phase directly (the receive path and idle/done state are
+/// internal to `beh_state`; the OUTPUT pins only expose SCLK/MOSI/CS). Not part of the public
+/// API and compiled only under test.
+#[cfg(test)]
+impl Sim {
+    /// The deterministic pure-digital row partition built at install (ADR 0004 phase-3, step
+    /// 3a): the MNA row index (`node − 1`) of every pure-`Digital` node, ascending. Test-only
+    /// read of the metadata the sub-tick loop will consume.
+    fn digital_rows(&self) -> &[usize] {
+        &self.digital_rows
+    }
+
+    /// The behavioral SPI master's received word (`shift_in`, state word 3) for the element at
+    /// index `i`.
+    fn beh_spi_shift_in(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SPI_SHIFT_IN]
+    }
+    /// The behavioral SPI master's FSM phase (state word 0: 0 = idle, 1 = active) for element `i`.
+    fn beh_spi_fsm(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SPI_FSM]
+    }
+    /// The behavioral **SPI slave**'s latched received word (`RX_WORD`) for element `i` — the last
+    /// completed transaction's byte. Mirrors `beh_spi_shift_in` from the slave side.
+    fn beh_spi_slave_rx_word(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SLV_RX_WORD]
+    }
+    /// The behavioral **SPI slave**'s `RXVALID` flag (1 = a word is latched, held until CS
+    /// deasserts) for element `i`.
+    fn beh_spi_slave_rxvalid(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_SLV_RXVALID]
+    }
+    /// The behavioral **UART**'s latched received byte (`RX_WORD`) for element `i`.
+    fn beh_uart_rx_word(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_UART_RX_WORD]
+    }
+    /// The behavioral **UART**'s `RXVALID` pulse flag (1 for the one tick a byte latches) for
+    /// element `i`. (A test typically OR-accumulates this across the run since it is a one-tick
+    /// pulse.)
+    fn beh_uart_rxvalid(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_UART_RXVALID]
+    }
+    /// The behavioral **FPGA logic element**'s registered output bit (`Q`, state word 0) for
+    /// element `i` — the value a registered LUT latched on its last rising clock edge.
+    fn beh_lut_q(&self, i: usize) -> u32 {
+        self.beh_state[i][BEH_LUT_Q]
     }
 }
 
@@ -5499,6 +7592,79 @@ mod tests {
         println!("golden = 0x{:016x}", sim.snapshot_hash());
     }
 
+    /// ADR 0002 wire-format provisioning: the full **8-terminal / 8-param** plumbing,
+    /// exercised end to end through the public install path. Installs a netlist whose
+    /// resistor is wired through the **eighth** terminal `h` (index 7) and carries a value
+    /// in **param slot 7** (the last of the widened block), then reads both back off the
+    /// stored [`Element`]. `h` and slot 7 are reserved/inert today, so the resistor still
+    /// solves as a plain 5 V across 1 kΩ — proving the widened arrays cross the boundary,
+    /// pass length validation, and land in the struct without perturbing the solve. This is
+    /// the sim-core half of the array-sync de-risk (the JS half has no runtime test).
+    #[test]
+    fn wire_format_eighth_terminal_and_param_slot_plumb_through() {
+        let mut sim = Sim::new(1);
+
+        // node 0 = ground, node 1 = the hot node. E0 = 5 V source (1→0); E1 = 1 kΩ (1→0).
+        // E1 also wires its eighth terminal `h` to node 1 and stows a sentinel in slot 7.
+        let types = [ELEM_VSOURCE, ELEM_RESISTOR];
+        let a = [1u32, 1];
+        let b = [0u32, 0];
+        let c = [0u32, 0];
+        let d = [0u32, 0];
+        let e = [0u32, 0];
+        let f = [0u32, 0];
+        let g = [0u32, 0];
+        // The eighth terminal: ground on the source, node 1 on the resistor.
+        let h = [0u32, 1];
+        let values = [5.0, 1_000.0];
+        let aux = [0.0, 0.0];
+        // One PARAM_STRIDE-wide block per element; the resistor's slot 7 carries the sentinel.
+        const SENTINEL: f64 = 42.5;
+        let mut params = vec![0.0; types.len() * PARAM_STRIDE];
+        params[PARAM_STRIDE + 7] = SENTINEL; // element 1 (resistor), slot 7
+
+        // Every parallel array is exactly one entry per element; params is n * PARAM_STRIDE.
+        assert_eq!(h.len(), types.len());
+        assert_eq!(params.len(), types.len() * PARAM_STRIDE);
+
+        assert!(
+            sim.set_netlist_pefgh(
+                2, &types, &a, &b, &c, &d, &e, &f, &g, &h, &values, &aux, &params,
+            ),
+            "an 8-terminal / 8-param netlist must install (not fail safe to empty)"
+        );
+
+        // The eighth terminal landed on the stored element (the array plumbed through).
+        let resistor = sim.element_at(1);
+        assert_eq!(
+            resistor.h, 1,
+            "terminal `h` (index 7) must reach the Element"
+        );
+        assert_eq!(resistor.f, 0, "unused terminal `f` defaults to ground");
+        assert_eq!(resistor.g, 0, "unused terminal `g` defaults to ground");
+
+        // Param slot 7 reads back through the same `param_or` rule the solver uses.
+        assert_eq!(
+            param_or(&resistor.params, 7, -1.0),
+            SENTINEL,
+            "param slot 7 (the last of the widened 8-wide block) must read back"
+        );
+        // A zero slot still falls through to the caller's default (the golden-safe rule).
+        assert_eq!(
+            param_or(&resistor.params, 6, -1.0),
+            -1.0,
+            "an unset slot still means `use the default`"
+        );
+
+        // And the circuit actually solved (proving this was a real install): 5 V on node 1.
+        sim.step();
+        let volts = sim.node_voltages();
+        assert!(
+            (volts[1] - 5.0).abs() < 1e-9,
+            "the resistor still sees a plain 5 V across it — `h`/slot 7 are inert"
+        );
+    }
+
     /// Net classification separates the analog and digital domains deterministically
     /// (`docs/ui/logic-analog-digital-nets.md` §7.7): ground and analog-only nodes
     /// read `0`, nodes touched only by digital pins read `1` (pure-digital), and a
@@ -5557,6 +7723,373 @@ mod tests {
         assert_eq!([sim.net_class(0), sim.net_class(1)], [0, 2]);
     }
 
+    /// The expected pure-digital row partition derived independently from `net_class`: the MNA
+    /// row (`node − 1`) of every node the public classifier reports as pure-`Digital` (code `1`),
+    /// ascending. The internal `digital_rows` must equal this for every circuit.
+    fn expected_digital_rows(sim: &Sim) -> Vec<usize> {
+        (1..sim.node_count)
+            .filter(|&n| sim.net_class(n) == 1)
+            .map(|n| n - 1)
+            .collect()
+    }
+
+    /// ADR 0004 phase-3, step 3a — the pure-digital row partition is exactly the set of
+    /// `NetClass::Digital` node rows (ascending), and the pure-digital matrix block is strictly
+    /// diagonal. The diagonal property is enforced automatically by the debug assertion baked
+    /// into EVERY assembly path (it runs during `install` and every `step()` below; were any
+    /// pure-digital row to couple to another row, `debug_assert_digital_block_diagonal` would
+    /// panic). Here we additionally pin the partition contents against the independent
+    /// `net_class` classification and verify a couple of rows by hand. Several MIXED
+    /// analog+digital circuits exercise all four solve paths (linear / Newton × op / transient).
+    #[test]
+    fn digital_partition_is_diagonal() {
+        // Verify `digital_rows` equals the Digital-net rows, then step so the in-solve diagonal
+        // assertion runs against the real assembled matrix.
+        let check = |sim: &mut Sim, label: &str| {
+            assert_eq!(
+                sim.digital_rows(),
+                expected_digital_rows(sim).as_slice(),
+                "{label}: digital_rows must be exactly the Digital-net rows, ascending"
+            );
+            // Several steps drive the in-solve `debug_assert_digital_block_diagonal` on the
+            // genuinely assembled matrix each tick (a panic there fails this test).
+            for _ in 0..8 {
+                sim.step();
+            }
+            // Partition is fixed at install — unchanged after stepping.
+            assert_eq!(
+                sim.digital_rows(),
+                expected_digital_rows(sim).as_slice(),
+                "{label}: digital_rows is fixed at install"
+            );
+        };
+
+        // (1) Two-gate inverter chain: a powered-supply rail (node 1, analog), a source-driven
+        //     input (node 2), G1 IN=2 OUT=3, G2 IN=3 OUT=4. The gate-to-gate net (node 3) is
+        //     touched only by gate signal pins → the canonical **pure-Digital** net (row 2). The
+        //     input net (node 2) is shared by the analog source AND a gate input pin → Boundary
+        //     (NOT pure-digital), and the final gate output (node 4) is pure-Digital (row 3). The
+        //     gate VCC pin sits on node 1 (analog supply), keeping the rail analog.
+        let mut chain = Sim::new(1);
+        assert!(chain.set_netlist_pe(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_GATE],
+            &[1, 2, 3, 4], // a: VCC src, IN src, G1 OUT=3, G2 OUT=4
+            &[0, 0, 2, 3], // b: src grounds, G1 IN1=2, G2 IN1=3
+            &[0, 0, 0, 0], // c: G IN2 unused
+            &[0, 0, 1, 1], // d: gate VCC = node 1
+            &[0, 0, 0, 0], // e: gate GND = node 0
+            &[5.0, 5.0, 0.0, 0.0],
+            &[0.0, 0.0, 6.0, 6.0], // NOT, NOT
+            &[],
+        ));
+        // By hand: ground (0) analog, VCC rail (1) analog; the source-driven gate INPUT (2) is
+        // Boundary (analog source + digital pin); the gate-to-gate net (3) and final output (4)
+        // are pure-Digital → rows {2, 3}.
+        assert_eq!(chain.net_class(1), 0, "VCC rail is analog");
+        assert_eq!(
+            chain.net_class(2),
+            2,
+            "source-driven gate input is Boundary"
+        );
+        assert_eq!([chain.net_class(3), chain.net_class(4)], [1, 1]);
+        assert_eq!(chain.digital_rows(), &[2, 3]);
+        check(&mut chain, "two-gate chain");
+
+        // (2) DFF clocked by a gate: a SWITCH chops the rail (node 1) onto node 2, a powered
+        //     inverter (G) drives node 3 (the gate→DFF CLK net) from node 2, and the DFF (Q=4,
+        //     D=5, CLK=3, Q̄=6) latches on the resulting clock. The gate-OUT↔DFF-CLK net (3) and
+        //     the DFF signal nets Q/D/Q̄ (4/5/6) are pure-digital (only digital pins touch them);
+        //     node 2 is Boundary (the analog SWITCH conductance shares it with the gate input).
+        let mut dff = Sim::new(1);
+        assert!(dff.set_netlist_pe(
+            7,
+            &[ELEM_VSOURCE, ELEM_SWITCH, ELEM_GATE, ELEM_DFF],
+            &[1, 1, 3, 4],         // a: VCC src, SWITCH hi=node1, G OUT=3, DFF Q=4
+            &[0, 2, 2, 5],         // b: src gnd, SWITCH to node2, G IN1=2, DFF D=5
+            &[0, 0, 0, 3],         // c: …, …, G IN2 unused, DFF CLK=3
+            &[0, 0, 1, 6],         // d: …, …, G VCC=node1, DFF Q̄=6
+            &[0, 0, 0, 0],         // e: G GND=node0
+            &[5.0, 0.5, 0.0, 5.0], // SWITCH duty 0.5, DFF rail 5 V
+            &[0.0, 0.0, 6.0, 0.0], // G NOT; DFF aux default
+            &[],
+        ));
+        // Node 2 (SWITCH↔gate input) is Boundary (an analog conductance shares it with a digital
+        // pin); the gate output 3 and the DFF signal nets 4/5/6 are pure-digital → rows {2,3,4,5}.
+        assert_eq!(dff.net_class(2), 2, "SWITCH-driven gate input is Boundary");
+        assert_eq!(
+            [
+                dff.net_class(3),
+                dff.net_class(4),
+                dff.net_class(5),
+                dff.net_class(6)
+            ],
+            [1, 1, 1, 1]
+        );
+        assert_eq!(dff.digital_rows(), &[2, 3, 4, 5]);
+        check(&mut dff, "DFF clocked by a gate");
+
+        // (3) Powered gate driving an RC load THROUGH the boundary: a powered inverter OUT (node
+        //     3) feeds a series R into an analog RC (node 4 → C → gnd). OUT (node 3) is shared by
+        //     a digital pin (gate OUT) AND an analog element (the resistor) → Boundary, so it is
+        //     NOT in digital_rows; the RC interior (node 4) is analog. The chain has no pure-
+        //     digital net at all → digital_rows empty.
+        let mut rcload = Sim::new(1);
+        assert!(rcload.set_netlist_pe(
+            5,
+            &[
+                ELEM_VSOURCE,   // VCC rail -> node 1
+                ELEM_VSOURCE,   // input    -> node 2
+                ELEM_GATE,      // inverter: OUT=3, IN=2, VCC=1, GND=0
+                ELEM_RESISTOR,  // node 3 -> node 4
+                ELEM_CAPACITOR  // node 4 -> gnd
+            ],
+            &[1, 2, 3, 3, 4],
+            &[0, 0, 2, 4, 0],
+            &[0, 0, 0, 0, 0],
+            &[0, 0, 1, 0, 0],
+            &[0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 6.0, 0.0, 0.0], // NOT
+            &[],
+        ));
+        assert_eq!(rcload.net_class(3), 2, "gate-OUT loaded by R is Boundary");
+        assert_eq!(rcload.net_class(4), 0, "RC interior is analog");
+        assert!(
+            rcload.digital_rows().is_empty(),
+            "no pure-digital net in the powered-gate→RC chain"
+        );
+        check(&mut rcload, "powered gate -> RC load (boundary OUT)");
+
+        // (4) Powered gate driving an RC load THROUGH NOTHING (the pure-digital case for
+        //     contrast): the inverter OUT (node 3) is pure-digital (no analog load on it), and a
+        //     SECOND gate buffers it onto node 4 (also pure-digital) which then drives the RC —
+        //     so node 4 is the boundary and node 3 stays pure-digital. Mixes a pure-digital row
+        //     (3 → row 2) with a boundary that is excluded.
+        let mut buf_rc = Sim::new(1);
+        assert!(buf_rc.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_GATE,      // inverter OUT=3
+                ELEM_GATE,      // buffer   OUT=4 from IN=3
+                ELEM_RESISTOR,  // node 4 -> 5
+                ELEM_CAPACITOR  // node 5 -> gnd
+            ],
+            &[1, 2, 3, 4, 4, 5],
+            &[0, 0, 2, 3, 5, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 1, 1, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 0.0, 1000.0, 1.0e-6],
+            &[0.0, 0.0, 6.0, 7.0, 0.0, 0.0], // NOT, BUF
+            &[],
+        ));
+        assert_eq!(
+            buf_rc.net_class(3),
+            1,
+            "inverter OUT (unloaded) is pure-digital"
+        );
+        assert_eq!(buf_rc.net_class(4), 2, "buffer OUT loaded by R is Boundary");
+        assert_eq!(
+            buf_rc.digital_rows(),
+            &[2],
+            "only node 3 (row 2) is pure-digital"
+        );
+        check(
+            &mut buf_rc,
+            "gate -> gate -> RC (one pure-digital, one boundary)",
+        );
+
+        // (5) ADCMP601 comparator (Newton path is not needed, but a powered comparator with a
+        //     chopped input exercises the boundary/digital classifier): a PWM-chopped IN- (node
+        //     3) crosses a fixed IN+ (node 2) under a powered, transparent comparator whose OUT
+        //     (node 4) is pure-digital (nothing analog loads it). Mirrors
+        //     `comparator_run_is_reproducible`. OUT (4) is the only digital net → row 3.
+        let mut cmp = Sim::new(1);
+        assert!(cmp.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 5, 3, 4], // a: VCC, IN+ src, IN- rail, SWITCH, R, CMP OUT=4
+            &[0, 0, 0, 3, 0, 2], // b: …, SWITCH→IN-(3), R→gnd, CMP IN+=2
+            &[0, 0, 0, 0, 0, 3], // c: CMP IN-=3
+            &[0, 0, 0, 0, 0, 1], // d: CMP VCC=node1
+            &[0, 0, 0, 0, 0, 0], // e: CMP GND=node0
+            &[0, 0, 0, 0, 0, 0], // f: CMP LE=node0 (transparent)
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, 0.5, 1000.0, 1.0],
+            &[0.0; 6],
+            &[],
+        ));
+        assert_eq!(
+            cmp.net_class(3),
+            0,
+            "comparator IN- (analog sense + SWITCH) is analog"
+        );
+        assert_eq!(
+            cmp.net_class(4),
+            1,
+            "comparator OUT (unloaded) is pure-digital"
+        );
+        assert_eq!(cmp.digital_rows(), &[3]);
+        check(&mut cmp, "ADCMP601 comparator (pure-digital OUT)");
+
+        // (6) Behavioral SPI master: SCLK(3)/MOSI(4)/CS(5) are pure-digital OUTPUT pins → the
+        //     partition. The VCC rail (1) is analog (source + the block's analog VCC pin); the
+        //     START net (2) is Boundary (an analog source drives the block's digital START input);
+        //     MISO is grounded here (miso_node = 0), so node 6 is untouched → analog. Pure-digital
+        //     rows {2, 3, 4}. This exercises the behavioral block end to end across a transaction.
+        let mut spi = spi_master(0xA5 as f64, 2.0, 8.0, 0);
+        assert_eq!(
+            [spi.net_class(3), spi.net_class(4), spi.net_class(5)],
+            [1, 1, 1],
+            "SPI SCLK/MOSI/CS are pure-digital"
+        );
+        assert_eq!(spi.net_class(1), 0, "SPI VCC rail is analog");
+        assert_eq!(
+            spi.net_class(2),
+            2,
+            "SPI START is Boundary (analog source drives a digital input pin)"
+        );
+        assert_eq!(spi.digital_rows(), &[2, 3, 4]);
+        for _ in 0..40 {
+            spi.step();
+        }
+        assert_eq!(
+            spi.digital_rows(),
+            &[2, 3, 4],
+            "partition fixed across the transaction"
+        );
+
+        // (7) Open-drain + pull-up wired-AND bus (the I²C half-bus): two open-drain buffers and a
+        //     1 kΩ pull-up all share node 2 (the bus). The pull-up is an analog element, so the
+        //     bus is a Boundary net — NOT pure-digital. The open-drain INPUT nets (3, 4) are
+        //     Boundary too (an analog source drives each gate's digital input). So there is NO
+        //     pure-digital net at all → digital_rows is empty.
+        const OD_BUF: f64 = 7.0 + 256.0; // BUF (7) + open-drain bit (256)
+        let mut bus = Sim::new(1);
+        assert!(bus.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR, // 1 kΩ pull-up: node 2 (bus) -> node 1 (Vcc)
+                ELEM_GATE,     // open-drain buffer 1: OUT=2 IN=3
+                ELEM_GATE,     // open-drain buffer 2: OUT=2 IN=4
+            ],
+            &[1, 3, 4, 2, 2, 2],
+            &[0, 0, 0, 1, 3, 4],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 1000.0, 5.0, 5.0],
+            &[0.0, 0.0, 0.0, 0.0, OD_BUF, OD_BUF],
+        ));
+        assert_eq!(bus.net_class(2), 2, "open-drain + pull-up bus is Boundary");
+        assert!(
+            bus.digital_rows().is_empty(),
+            "the wired-AND bus is Boundary (analog pull-up), so no pure-digital row"
+        );
+        check(&mut bus, "open-drain + pull-up wired-AND bus");
+    }
+
+    /// ADR 0004 phase-3, step 3a — boundary nets (analog ∪ digital) are deliberately EXCLUDED
+    /// from `digital_rows`: they stay in the MNA and carry real off-diagonal coupling (that is
+    /// where the analog and digital kernels meet), so the frozen-boundary sub-solve must NOT
+    /// treat them as part of the decoupled pure-digital block. We assert the two canonical
+    /// boundary cases — a comparator OUT loaded by an analog element, and the open-drain +
+    /// pull-up bus — are Boundary and absent from `digital_rows`.
+    #[test]
+    fn digital_partition_excludes_boundary() {
+        // (a) Comparator OUT loaded by an analog resistor to ground → OUT is Boundary, excluded.
+        //     A powered, transparent comparator: IN+ = node 2 (fixed), IN- = node 3 (fixed), OUT
+        //     = node 4 with a 1 kΩ load to ground, so node 4 is touched by a digital pin (OUT)
+        //     AND an analog element (the load resistor).
+        let mut cmp = Sim::new(1);
+        assert!(cmp.set_netlist_pefgh(
+            5,
+            &[
+                ELEM_VSOURCE,  // VCC -> node 1
+                ELEM_VSOURCE,  // IN+ -> node 2
+                ELEM_VSOURCE,  // IN- -> node 3
+                ELEM_RESISTOR, // OUT load: node 4 -> gnd
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 3, 4, 4], // a: VCC, IN+ src, IN- src, R, CMP OUT=4
+            &[0, 0, 0, 0, 2], // b: …, …, …, R→gnd, CMP IN+=2
+            &[0, 0, 0, 0, 3], // c: CMP IN-=3
+            &[0, 0, 0, 0, 1], // d: CMP VCC=node1
+            &[0, 0, 0, 0, 0], // e: CMP GND=node0
+            &[0, 0, 0, 0, 0], // f: CMP LE=node0 (transparent)
+            &[],
+            &[],
+            &[5.0, 3.0, 2.0, 1000.0, 1.0], // IN+ > IN- so OUT drives high into the load
+            &[0.0; 5],
+            &[],
+        ));
+        assert_eq!(
+            cmp.net_class(4),
+            2,
+            "comparator OUT shared with an analog resistor is Boundary"
+        );
+        assert!(
+            !cmp.digital_rows().contains(&3),
+            "boundary comparator-OUT row (node 4 -> row 3) must be EXCLUDED from digital_rows"
+        );
+        assert!(
+            cmp.digital_rows().is_empty(),
+            "this circuit's only digital-touched net (OUT) is Boundary, so digital_rows is empty"
+        );
+        for _ in 0..8 {
+            cmp.step(); // the in-solve diagonal assertion runs against the assembled matrix
+        }
+
+        // (b) Open-drain + pull-up wired-AND bus → the bus net is Boundary, excluded. The bus
+        //     (node 1) carries two open-drain gate outputs AND a 1 kΩ pull-up resistor (analog).
+        const OD_BUF: f64 = 7.0 + 256.0;
+        let mut bus = Sim::new(1);
+        assert!(bus.set_netlist(
+            4,
+            &[
+                ELEM_VSOURCE,  // Vcc -> node 3 (pull-up rail)
+                ELEM_VSOURCE,  // input A -> node 2
+                ELEM_RESISTOR, // pull-up: bus(1) -> Vcc(3)
+                ELEM_GATE,     // open-drain buffer: OUT=1 (bus), IN=2
+            ],
+            &[3, 2, 1, 1],
+            &[0, 0, 3, 2],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[5.0, 5.0, 1000.0, 5.0],
+            &[0.0, 0.0, 0.0, OD_BUF],
+        ));
+        assert_eq!(
+            bus.net_class(1),
+            2,
+            "the open-drain + pull-up I²C-style bus is Boundary (analog pull-up shares it)"
+        );
+        assert!(
+            !bus.digital_rows().contains(&0),
+            "boundary bus row (node 1 -> row 0) must be EXCLUDED from digital_rows"
+        );
+        assert!(
+            bus.digital_rows().is_empty(),
+            "the bus is Boundary and the input net is analog, so digital_rows is empty"
+        );
+        for _ in 0..8 {
+            bus.step();
+        }
+    }
+
     /// [`floating_refs`] identifies exactly the connected components with no galvanic
     /// path to ground and no device-pinned terminal — the topology behind the
     /// per-component `GMIN` (`docs/sim/floating-networks.md`). A grounded circuit yields
@@ -5571,6 +8104,9 @@ mod tests {
             c,
             d,
             e: 0,
+            f: 0,
+            g: 0,
+            h: 0,
             value,
             aux: 0.0,
             params: [0.0; PARAM_STRIDE],
@@ -8503,6 +11039,1854 @@ mod tests {
         }
     }
 
+    // --- Clocked sampler (1-bit comparator, ELEM_SAMPLER = 22) -----------------
+    //
+    // A near-twin of the D flip-flop whose data input is a continuous analog node:
+    // on each rising clock edge it latches OUT = High iff V(IN) > threshold (`value`),
+    // else Low, and holds between edges (a one-tick-delayed digital output). It is the
+    // keystone atom of the ADC / sample-and-hold / SAR cluster. Like the flip-flop it
+    // is a constant within-tick stamp (no Newton) and keeps hashed sequential state.
+
+    /// Build a sampler with a DC source holding IN at `in_v`, a PWM-switch clock on CLK,
+    /// and the given `threshold` (its `value`), then run several clock periods and return
+    /// the settled OUT voltage. Nodes: 0 = gnd, 1 = IN, 2 = CLK, 3 = OUT, 4 = clock rail.
+    /// The switch chops the 5 V rail onto the pulled-down CLK node, so CLK is a clean
+    /// 0/5 V square wave (rising edges every SWITCH_PERIOD_TICKS); IN is held, so after a
+    /// few edges OUT settles to the comparison of IN against the threshold.
+    fn sampler_clocked(in_v: f64, threshold: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,  // IN held at in_v (node 1)
+                ELEM_VSOURCE,  // clock rail at 5 V (node 4)
+                ELEM_SWITCH,   // chops node 4 onto CLK (node 2), 50% duty
+                ELEM_RESISTOR, // pull-down on CLK so it falls between switch-on windows
+                ELEM_SAMPLER   // OUT=3, IN=1, CLK=2
+            ],
+            &[1, 4, 4, 2, 3],
+            &[0, 0, 2, 0, 1],
+            &[0, 0, 0, 0, 2], // sampler c = CLK = node 2
+            &[0, 0, 0, 0, 0], // sampler d unused (ground)
+            &[in_v, 5.0, 0.5, 1000.0, threshold],
+            &[0.0; 5], // sampler aux = 0 -> default 5 V output rail
+        ));
+        for _ in 0..500 {
+            sim.step();
+        }
+        sim.state()[3]
+    }
+
+    /// On the clock edge the sampler latches its analog input against the threshold and
+    /// presents the result on OUT, holding it until the next edge. With IN above the
+    /// threshold OUT drives high; below, it drives low.
+    #[test]
+    fn sampler_latches_comparison_and_holds() {
+        // IN = 3 V, threshold = 2 V -> above -> OUT high.
+        let out_hi = sampler_clocked(3.0, 2.0);
+        assert!(
+            out_hi > 4.0,
+            "OUT high when IN ({}) > threshold: {out_hi}",
+            3.0
+        );
+        // IN = 1 V, threshold = 2 V -> below -> OUT low.
+        let out_lo = sampler_clocked(1.0, 2.0);
+        assert!(
+            out_lo < 1.0,
+            "OUT low when IN ({}) < threshold: {out_lo}",
+            1.0
+        );
+        // Same input, threshold moved across it flips the decision (the comparator axis).
+        let flipped = sampler_clocked(3.0, 4.0);
+        assert!(
+            flipped < 1.0,
+            "OUT low when threshold (4) rises above the same IN (3): {flipped}"
+        );
+    }
+
+    /// The sampler output is a one-tick-delayed, hold-until-next-edge latch — it changes
+    /// ONLY on a rising clock edge. With the clock held LOW (no edge ever fires) the output
+    /// stays at its reset Low even though IN sits well above the threshold: proof the output
+    /// follows the latched bit, not the live comparison.
+    #[test]
+    fn sampler_holds_low_without_a_clock_edge() {
+        // Nodes: 0 = gnd, 1 = IN (held at 4 V), 2 = CLK (held LOW at 0 V), 3 = OUT.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_SAMPLER],
+            &[1, 2, 3],
+            &[0, 0, 1],
+            &[0, 0, 2], // sampler c = CLK = node 2
+            &[0, 0, 0],
+            &[4.0, 0.0, 2.5], // IN = 4 V (> threshold), CLK = 0 V, threshold = 2.5 V
+            &[0.0; 3],
+        ));
+        for tk in 0..100 {
+            sim.step();
+            assert!(
+                sim.state()[3] < 1.0,
+                "with CLK never rising, OUT must hold its reset Low despite IN>threshold \
+                 (tick {tk}, got {})",
+                sim.state()[3]
+            );
+        }
+    }
+
+    /// A one-tick-delayed, hold-until-next-edge latch under a real clock: once an edge
+    /// latches OUT High (IN above threshold), OUT must stay High across the following ticks
+    /// — including the next edge, since IN is unchanged — never glitching low mid-period.
+    #[test]
+    fn sampler_holds_between_edges() {
+        // Nodes: 0 = gnd, 1 = IN (4 V), 2 = CLK, 3 = OUT, 4 = clock rail. PWM switch clocks.
+        let mut s = Sim::new(1);
+        assert!(s.set_netlist(
+            5,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_SAMPLER
+            ],
+            &[1, 4, 4, 2, 3],
+            &[0, 0, 2, 0, 1],
+            &[0, 0, 0, 0, 2],
+            &[0, 0, 0, 0, 0],
+            &[4.0, 5.0, 0.5, 1000.0, 2.5], // IN = 4 V > 2.5 V threshold
+            &[0.0; 5],
+        ));
+        // Run until OUT has latched high on an edge.
+        for _ in 0..200 {
+            s.step();
+        }
+        assert!(
+            s.state()[3] > 4.0,
+            "sampler should have latched OUT high (IN 4 V > 2.5 V): {}",
+            s.state()[3]
+        );
+        // Across a full clock period (spanning a rising edge) OUT must hold High — IN stays
+        // above threshold, so even the reload keeps it high; the point is no mid-period glitch.
+        for _ in 0..SWITCH_PERIOD_TICKS {
+            s.step();
+            assert!(
+                s.state()[3] > 4.0,
+                "OUT must hold High through an edge while IN stays above threshold: {}",
+                s.state()[3]
+            );
+        }
+    }
+
+    /// A three-terminal sampler netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the flip-flop's arity validation).
+    #[test]
+    fn sampler_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist(4, &[ELEM_SAMPLER], &[1], &[2], &[3], &[0], &[2.0], &[0.0]),
+            "valid three-terminal sampler installs"
+        );
+        assert!(
+            !sim.set_netlist(4, &[ELEM_SAMPLER], &[1], &[2], &[9], &[0], &[2.0], &[0.0]),
+            "out-of-range CLK terminal c is rejected"
+        );
+    }
+
+    /// A clocked sampler circuit (active sequential state) reproduces bit-for-bit: two
+    /// fresh `Sim`s run the same sampler netlist for N steps and agree on the snapshot-hash
+    /// sequence at EVERY tick — including the exact ticks where a clock edge latches. This
+    /// is the determinism guarantee with the sampler mechanism ACTIVE (not merely inert).
+    #[test]
+    fn sampler_run_is_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_SWITCH,
+                    ELEM_RESISTOR,
+                    ELEM_SAMPLER
+                ],
+                &[1, 4, 4, 2, 3],
+                &[0, 0, 2, 0, 1],
+                &[0, 0, 0, 0, 2],
+                &[0, 0, 0, 0, 0],
+                &[3.0, 5.0, 0.5, 1000.0, 2.0], // IN 3 V, threshold 2 V
+                &[0.0; 5],
+            ));
+            sim
+        };
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "clocked sampler diverged at tick {tk} (sequential state must be hashed)"
+            );
+        }
+    }
+
+    // --- Latched comparator (ADCMP601, ELEM_COMPARATOR = 23) -------------------
+    //
+    // An analog comparator (senses IN+ vs IN-) with a powered rail-to-rail output
+    // (swings the GND..VCC pins like a gate) and a level-sensitive ACTIVE-LOW latch
+    // enable LE. Its `value` is the hysteresis band V_H (0 = a clean compare). The
+    // crossbreed of the sampler (latched 1-bit decision, hashed state, constant stamp)
+    // and the powered gate (rail-to-rail output, dead-rail release). 6 terminals:
+    // a=OUT, b=IN+, c=IN-, d=VCC, e=GND, f=LE.
+
+    /// Build a powered comparator with IN+/IN- and the supply held by DC sources, LE left
+    /// unwired (f = 0 → the transparent floating default), hysteresis `vh`, then run a few
+    /// ticks (the output has a one-tick input-to-output delay) and return the settled OUT
+    /// voltage. Nodes: 0 = gnd (= GND/VEE pin), 1 = VCC (5 V), 2 = IN+, 3 = IN-, 4 = OUT.
+    fn comparator_dc(vp: f64, vn: f64, vh: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_COMPARATOR],
+            &[1, 2, 3, 4], // a: VCC src, IN+ src, IN- src, comparator OUT = node 4
+            &[0, 0, 0, 2], // b: src grounds; comparator IN+ = node 2
+            &[0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 1], // d: comparator VCC = node 1 (5 V)
+            &[0, 0, 0, 0], // e: comparator GND = node 0 (circuit ground)
+            &[0, 0, 0, 0], // f: comparator LE = 0 (unwired → transparent)
+            &[],
+            &[],
+            &[5.0, vp, vn, vh], // values: VCC 5 V, IN+ , IN- , hysteresis V_H
+            &[0.0; 4],          // aux (unused)
+            &[],                // params (defaults)
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim.state()[4]
+    }
+
+    /// The comparator's front end resolves `V(IN+) > V(IN-)` and its POWERED output stage
+    /// drives OUT to the supply rails: above → OUT ≈ VCC, below → OUT ≈ GND. With LE
+    /// transparent (unwired) the bit tracks the live comparison; the output is a clean
+    /// rail-to-rail swing (the powered-gate output path).
+    #[test]
+    fn comparator_compares_and_swings_rails() {
+        // IN+ (3 V) > IN- (1 V) → OUT drives HIGH to VCC (5 V).
+        let out_hi = comparator_dc(3.0, 1.0, 0.0);
+        assert!(
+            out_hi > 4.5,
+            "IN+ > IN- → OUT swings to VCC (~5 V): {out_hi}"
+        );
+        // IN+ (1 V) < IN- (3 V) → OUT drives LOW to GND (~0 V).
+        let out_lo = comparator_dc(1.0, 3.0, 0.0);
+        assert!(
+            out_lo < 0.5,
+            "IN+ < IN- → OUT swings to GND (~0 V): {out_lo}"
+        );
+    }
+
+    /// An unpowered comparator (VCC pin unwired, so its rail floats below GATE_MIN_RAIL) sits
+    /// DEAD: it releases its output (high-Z) just like a dead-rail gate, so the floored OUT
+    /// node reads ~0 V rather than a driven level — the "you must power the chip" lesson.
+    #[test]
+    fn comparator_unpowered_output_is_dead() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 gnd, 1 IN+ (3 V), 2 IN- (1 V), 3 OUT. VCC pin (d) left at ground → unpowered.
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_COMPARATOR],
+            &[1, 2, 3], // a
+            &[0, 0, 1], // b: comparator IN+ = node 1
+            &[0, 0, 2], // c: comparator IN- = node 2
+            &[0, 0, 0], // d: comparator VCC = ground → rail ≈ 0 → dead
+            &[0, 0, 0], // e: comparator GND = ground
+            &[0, 0, 0], // f: LE unwired
+            &[],
+            &[],
+            &[3.0, 1.0, 0.0],
+            &[0.0; 3],
+            &[],
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        assert!(
+            sim.state()[3].abs() < 0.5,
+            "unpowered comparator releases OUT (dead rail) → ~0 V, not a driven level: {}",
+            sim.state()[3]
+        );
+    }
+
+    /// The level-sensitive ACTIVE-LOW latch, on ONE continuous `Sim`. IN- is chopped by a PWM
+    /// switch so the LIVE comparison alternates each clock period (IN+ above IN- for part of the
+    /// period, below for the rest); LE is held LOW the whole run, so the front end is opaque.
+    /// The held bit must therefore IGNORE the chopped inputs and hold its reset Low — even
+    /// during the windows the live compare says HIGH. (The complementary `tracks` test below,
+    /// same circuit with LE HIGH, shows it DOES follow the same chopped compare, so this is a
+    /// latch and not a dead output.) This is the analog of `sampler_holds_low_without_a_clock`.
+    fn comparator_chopped_input(le_high: bool) -> Sim {
+        // Nodes: 0 gnd (=GND pin), 1 VCC (5 V), 2 IN+ (2.5 V fixed), 3 IN-, 4 OUT, 5 IN- rail,
+        //        6 LE rail. A switch chops the IN- rail (4 V) onto IN- through a pull-down, so
+        //        IN- swings 0 V (→ diff +2.5, live HIGH) ↔ ~4 V (→ diff −1.5, live LOW).
+        let mut sim = Sim::new(1);
+        let le_v = if le_high { 5.0 } else { 0.0 };
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,  // VCC 5 V        (node 1)
+                ELEM_VSOURCE,  // IN+ 2.5 V      (node 2)
+                ELEM_VSOURCE,  // IN- rail 4 V   (node 5)
+                ELEM_VSOURCE,  // LE rail        (node 6)
+                ELEM_SWITCH,   // chop node 5 onto IN- (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on IN-
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 6, 5, 3, 4], // a
+            &[0, 0, 0, 0, 3, 0, 2], // b: switch b = IN- (node 3); comparator IN+ = node 2
+            &[0, 0, 0, 0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 0, 0, 0, 1], // d: comparator VCC = node 1
+            &[0, 0, 0, 0, 0, 0, 0], // e: comparator GND = node 0
+            &[0, 0, 0, 0, 0, 0, 6], // f: comparator LE = node 6
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, le_v, 0.5, 1000.0, 0.0], // V_H = 0 (clean compare)
+            &[0.0; 7],
+            &[],
+        ));
+        sim
+    }
+
+    /// With LE held LOW the comparator is latched: the chopped inputs (which swing the live
+    /// compare HIGH for half of every period) never reach the front end, so OUT holds its reset
+    /// Low for the whole run.
+    #[test]
+    fn comparator_latched_low_holds_against_chopped_inputs() {
+        let mut sim = comparator_chopped_input(false); // LE low → latched
+        for tk in 0..400 {
+            sim.step();
+            assert!(
+                sim.state()[4].abs() < 0.5,
+                "LE low (latched): OUT holds reset Low despite the live compare going HIGH \
+                 (tick {tk}, got {})",
+                sim.state()[4]
+            );
+        }
+    }
+
+    /// The complement: the SAME chopped-input circuit with LE held HIGH is transparent, so OUT
+    /// DOES track the live compare — it must reach HIGH at some point (proving the hold above is
+    /// the latch gating the front end, not a stuck/dead output).
+    #[test]
+    fn comparator_transparent_tracks_chopped_inputs() {
+        let mut sim = comparator_chopped_input(true); // LE high → transparent
+        let mut saw_high = false;
+        for _ in 0..400 {
+            sim.step();
+            if sim.state()[4] > 4.5 {
+                saw_high = true;
+            }
+        }
+        assert!(
+            saw_high,
+            "LE high (transparent): OUT tracks the chopped compare and reaches HIGH"
+        );
+    }
+
+    /// Symmetric hysteresis (V_H > 0): the output is a Schmitt window about 0 — from a reset-Low
+    /// state it flips Low→High only once `diff = V(IN+) − V(IN-)` exceeds +V_H/2, and a diff that
+    /// stays inside the dead-band (`|diff| < V_H/2`) leaves the Low output unchanged.
+    #[test]
+    fn comparator_hysteresis_band() {
+        let vh = 2.0; // band is ±V_H/2 = ±1.0 V about 0
+                      // diff = +0.5 V is inside the +V_H/2 (1.0 V) band → a reset-Low output stays LOW.
+        let inside_pos = comparator_dc(2.5, 2.0, vh); // diff = +0.5
+        assert!(
+            inside_pos < 0.5,
+            "diff +0.5 V inside the +V_H/2 band → OUT stays LOW: {inside_pos}"
+        );
+        // diff = −0.5 V is inside the −V_H/2 band → a reset-Low output also stays LOW.
+        let inside_neg = comparator_dc(2.0, 2.5, vh); // diff = −0.5
+        assert!(
+            inside_neg < 0.5,
+            "diff −0.5 V inside the −V_H/2 band → OUT stays LOW: {inside_neg}"
+        );
+        // diff = +1.5 V is past the upper trip +V_H/2 → flips HIGH.
+        let trip_hi = comparator_dc(3.5, 2.0, vh); // diff = +1.5
+        assert!(
+            trip_hi > 4.5,
+            "diff +1.5 V past the +V_H/2 trip → OUT flips HIGH: {trip_hi}"
+        );
+    }
+
+    /// The H→L edge of the hysteresis window on ONE persistent comparator. IN- is chopped by a
+    /// PWM switch around the fixed IN+: for part of each period diff = +2.5 V (well past the
+    /// upper trip +V_H/2 = +1.0) which latches OUT HIGH, then diff = −1.5 V (past the LOWER trip
+    /// −V_H/2 = −1.0) which trips it LOW. Seeing HIGH then a later LOW proves the held HIGH state
+    /// only drops once diff crosses −V_H/2, the lower Schmitt edge (not a bare sign flip).
+    #[test]
+    fn comparator_hysteresis_upper_state_trips_at_lower_edge() {
+        // Nodes: 0 gnd (=GND), 1 VCC 5 V, 2 IN+ (2.5 V fixed), 3 IN-, 4 OUT, 5 IN- rail (4 V).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,  // VCC 5 V (node 1)
+                ELEM_VSOURCE,  // IN+ 2.5 V (node 2)
+                ELEM_VSOURCE,  // IN- rail 4 V (node 5)
+                ELEM_SWITCH,   // chop node 5 onto IN- (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on IN-
+                ELEM_COMPARATOR,
+            ],
+            &[1, 2, 5, 5, 3, 4], // a
+            &[0, 0, 0, 3, 0, 2], // b: switch b = IN- (node 3); comparator IN+ = node 2
+            &[0, 0, 0, 0, 0, 3], // c: comparator IN- = node 3
+            &[0, 0, 0, 0, 0, 1], // d: comparator VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: comparator GND = node 0
+            &[0, 0, 0, 0, 0, 0], // f: LE unwired → transparent
+            &[],
+            &[],
+            &[5.0, 2.5, 4.0, 0.5, 1000.0, 2.0], // V_H = 2.0
+            &[0.0; 6],
+            &[],
+        ));
+        let mut saw_high = false;
+        let mut saw_low_after_high = false;
+        for _ in 0..400 {
+            sim.step();
+            let out = sim.state()[4];
+            if out > 4.5 {
+                saw_high = true;
+            }
+            if saw_high && out < 0.5 {
+                saw_low_after_high = true;
+            }
+        }
+        assert!(
+            saw_high,
+            "transparent comparator should latch HIGH while IN- is pulled low (diff +2.5 V)"
+        );
+        assert!(
+            saw_low_after_high,
+            "once IN- rises so diff < −V_H/2 the HIGH state must trip LOW (the lower Schmitt edge)"
+        );
+    }
+
+    /// A comparator circuit (active sequential `cmp_q`) reproduces bit-for-bit: two fresh
+    /// `Sim`s run the same comparator netlist for N steps and agree on the snapshot-hash at
+    /// EVERY tick — the determinism guarantee with the comparator mechanism ACTIVE.
+    #[test]
+    fn comparator_run_is_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            // A PWM-chopped IN- crossing a fixed IN+ under a powered, transparent comparator —
+            // so the held bit flips back and forth (exercising the latch path), with hysteresis.
+            assert!(sim.set_netlist_pefgh(
+                6,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_VSOURCE,
+                    ELEM_SWITCH,
+                    ELEM_RESISTOR,
+                    ELEM_COMPARATOR,
+                ],
+                &[1, 2, 5, 5, 3, 4],
+                &[0, 0, 0, 3, 0, 2],
+                &[0, 0, 0, 0, 0, 3],
+                &[0, 0, 0, 0, 0, 1],
+                &[0, 0, 0, 0, 0, 0],
+                &[0, 0, 0, 0, 0, 0],
+                &[],
+                &[],
+                &[5.0, 2.5, 4.0, 0.5, 1000.0, 1.0], // V_H = 1.0
+                &[0.0; 6],
+                &[],
+            ));
+            sim
+        };
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "latched comparator diverged at tick {tk} (cmp_q must be hashed)"
+            );
+        }
+    }
+
+    /// A six-terminal comparator netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the sampler's / flip-flop's arity validation).
+    #[test]
+    fn comparator_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist_pefgh(
+                6,
+                &[ELEM_COMPARATOR],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[0],
+                &[5],
+                &[],
+                &[],
+                &[0.0],
+                &[0.0],
+                &[],
+            ),
+            "valid six-terminal comparator installs"
+        );
+        assert!(
+            !sim.set_netlist_pefgh(
+                6,
+                &[ELEM_COMPARATOR],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[0],
+                &[9], // LE out of range
+                &[],
+                &[],
+                &[0.0],
+                &[0.0],
+                &[],
+            ),
+            "out-of-range LE terminal f is rejected"
+        );
+    }
+
+    // --- Behavioral block / SPI master (ELEM_BEHAVIORAL = 25) ------------------
+    //
+    // The protocol / behavioral engine's element (ADR 0004): a clocked INTEGER state
+    // machine that runs beside the analog solve and talks to it only at its boundary
+    // pins. Program 1 is an SPI master (Mode 0): a rising START asserts CS low, shifts
+    // the configured word out on MOSI (MSB-first) clocked by SCLK at the structural
+    // divider (params[0] = half-period ticks, params[1] = bit count), sampling MISO on
+    // each rising edge. Its three outputs are powered (swing the GND..VCC rail, dead
+    // below GATE_MIN_RAIL) exactly like a gate; its eight u32 state words enter the
+    // snapshot hash so a behavioral netlist replays bit-for-bit.
+    //
+    // SPI master test pinout: a=SCLK, b=MOSI, c=CS, d=VCC, e=GND, f=MISO, g=START.
+
+    /// True iff a (pure-digital) output node reads logic-high: above half a 5 V rail. The
+    /// behavioral SPI outputs swing 0..VCC (= 5 V here), so a clean `> 2.5 V` decision turns
+    /// the observed node voltage back into the bit the master is driving.
+    fn spi_pin_high(v: f64) -> bool {
+        v > 2.5
+    }
+
+    /// Build a powered SPI-master netlist transmitting `data` with the given half-period and
+    /// bit count, START tied to a constant-high source (the block's `start_prev` resets Low, so
+    /// the first step sees exactly one rising START edge → one transaction), and MISO sourced
+    /// from `miso_node` (node `0` = grounded → MISO reads Low). Nodes: 0 = gnd (= GND pin),
+    /// 1 = VCC (5 V), 2 = START rail (5 V), 3 = SCLK, 4 = MOSI, 5 = CS, 6 = MISO rail.
+    /// Returns the installed `Sim` (already at t = 0, state zeroed).
+    fn spi_master(data: f64, half: f64, nbits: f64, miso_node: u32) -> Sim {
+        let mut sim = Sim::new(1);
+        // params: SPI block gets [half-period, bit-count] in slots 0/1; sources get defaults.
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // params[0] = SCLK half-period (ticks)
+        params[2 * PARAM_STRIDE + 1] = nbits; // params[1] = bit count
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],         // a: VCC src, START src, SPI SCLK = node 3
+            &[0, 0, 4],         // b: src grounds; SPI MOSI = node 4
+            &[0, 0, 5],         // c: SPI CS = node 5
+            &[0, 0, 1],         // d: SPI VCC = node 1 (5 V)
+            &[0, 0, 0],         // e: SPI GND = node 0
+            &[0, 0, miso_node], // f: SPI MISO = miso_node
+            &[0, 0, 2],         // g: SPI START = node 2 (held high)
+            &[],                // h unused
+            &[5.0, 5.0, 1.0],   // values: VCC 5 V, START 5 V, program id 1 (SPI master)
+            &[0.0, 0.0, data],  // aux: SPI data word to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// Run one SPI-master transaction of `data` (half-period `half`, `nbits` bits, MISO grounded)
+    /// and observe the powered output nodes tick by tick, returning the bits sampled on MOSI at
+    /// each SCLK **rising** edge, the SCLK rising-edge count, whether CS asserted (went Low) at
+    /// the start, and whether CS deasserted (went High) after the last bit. The observed pins are
+    /// one tick delayed from the internal state (the gate/sampler convention) but internally
+    /// consistent — exactly what a scope on the bus would see.
+    fn spi_observe(data: u32, half: f64, nbits: usize) -> (Vec<bool>, usize, bool, bool) {
+        let mut sim = spi_master(data as f64, half, nbits as f64, 0);
+        let mut prev_sclk = false;
+        let mut prev_cs = true; // CS idles HIGH (deasserted)
+        let mut rising_edges = 0usize;
+        let mut mosi_at_edge: Vec<bool> = Vec::new();
+        let mut cs_asserted = false;
+        let mut cs_deasserted_after_bits = false;
+        // A full transaction is nbits * 2 (rise+fall) * half ticks plus the load tick; run well
+        // past it so we also see CS deassert and the machine return to idle.
+        let total = nbits * 2 * (half as usize) + 16;
+        for _ in 0..total {
+            sim.step();
+            let sclk = spi_pin_high(sim.state()[3]);
+            let mosi = spi_pin_high(sim.state()[4]);
+            let cs = spi_pin_high(sim.state()[5]);
+            if prev_cs && !cs {
+                cs_asserted = true; // CS went Low (asserted) at the transaction start
+            }
+            if !prev_sclk && sclk {
+                rising_edges += 1;
+                mosi_at_edge.push(mosi); // sample the MOSI bit presented across this rising edge
+            }
+            if rising_edges >= nbits && cs {
+                cs_deasserted_after_bits = true; // CS back High after the last bit
+            }
+            prev_sclk = sclk;
+            prev_cs = cs;
+        }
+        (
+            mosi_at_edge,
+            rising_edges,
+            cs_asserted,
+            cs_deasserted_after_bits,
+        )
+    }
+
+    /// The SPI master shifts a byte: on a rising START it asserts CS low, then drives exactly
+    /// `nbits` SCLK pulses while presenting the data word MSB-first on MOSI (each bit stable
+    /// across the SCLK rising edge that samples it, Mode 0 / CPHA = 0), and deasserts CS high
+    /// after the last bit. Checked for the spec byte 0xA5 AND a non-palindromic byte (0xB3,
+    /// whose bit-reversal 0xCD differs) so the MSB-first ordering is genuinely under test —
+    /// 0xA5 alone is bit-symmetric and would pass either order.
+    #[test]
+    fn behavioral_spi_master_shifts_a_byte() {
+        let nbits = 8usize;
+        let half = 2.0;
+        for &data in &[0xA5u32, 0xB3u32] {
+            let (mosi_at_edge, rising_edges, cs_asserted, cs_deasserted) =
+                spi_observe(data, half, nbits);
+            // Expected MOSI bits, MSB-first (bit nbits-1 first).
+            let expected: Vec<bool> = (0..nbits)
+                .map(|k| (data >> (nbits - 1 - k)) & 1 != 0)
+                .collect();
+            assert!(
+                cs_asserted,
+                "CS must assert (go Low) when START rises (0x{data:02X})"
+            );
+            assert_eq!(
+                rising_edges, nbits,
+                "SPI master must produce exactly {nbits} SCLK pulses (0x{data:02X}), saw {rising_edges}"
+            );
+            assert_eq!(
+                mosi_at_edge, expected,
+                "MOSI must present 0x{data:02X} MSB-first at each SCLK rising edge"
+            );
+            assert!(
+                cs_deasserted,
+                "CS must deassert (go High) after the last bit (0x{data:02X}, transaction complete)"
+            );
+        }
+    }
+
+    /// With MOSI tied to MISO (an external wire), the master clocks its own transmitted bits
+    /// back in on MISO — so after the transaction the received word `shift_in` equals the
+    /// transmitted byte. Proves the receive path (rising-edge MISO sampling, MSB-first in).
+    #[test]
+    fn behavioral_spi_miso_loopback() {
+        // A NON-palindromic byte (0xB3 → bit-reversal 0xCD) so a transmit/receive ordering
+        // mismatch would corrupt the round-trip — the receive path is MSB-first, genuinely tested.
+        let data: u32 = 0xB3;
+        let nbits = 8usize;
+        let half = 2.0;
+        // MISO sourced from node 4 (= MOSI): a wire from MOSI back to MISO. The MOSI net is the
+        // SPI block's own powered output, so MISO reads exactly what the master drives.
+        let mut sim = spi_master(data as f64, half, nbits as f64, 4);
+
+        let total = nbits * 2 * (half as usize) + 16;
+        for _ in 0..total {
+            sim.step();
+        }
+        // The transaction has completed (back to idle); shift_in holds the received word.
+        let received = sim.beh_spi_shift_in(2);
+        assert_eq!(
+            received, data,
+            "MOSI→MISO loopback: received word 0x{received:02X} must equal transmitted 0x{data:02X}"
+        );
+        // And the state machine is back in idle with CS deasserted.
+        assert_eq!(
+            sim.beh_spi_fsm(2),
+            0,
+            "SPI master must return to idle after the transaction"
+        );
+    }
+
+    /// Idle is well-defined: with START held LOW (never a rising edge) the master never starts —
+    /// SCLK stays Low and CS stays High (deasserted) for the whole run, and MOSI stays Low.
+    #[test]
+    fn behavioral_idle_drives_clean_levels() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 = gnd, 1 = VCC (5 V), 2 = SCLK, 3 = MOSI, 4 = CS. START (g) = 0 (grounded →
+        // held Low, no edge ever fires); MISO (f) = 0 (grounded).
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2], // a: VCC src, SPI SCLK = node 2
+            &[0, 3], // b: MOSI = node 3
+            &[0, 4], // c: CS = node 4
+            &[0, 1], // d: VCC = node 1
+            &[0, 0], // e: GND = node 0
+            &[0, 0], // f: MISO = 0 (grounded)
+            &[0, 0], // g: START = 0 (grounded → held Low)
+            &[],
+            &[5.0, 1.0], // VCC 5 V, program id 1 (SPI master)
+            &[0.0, 0xA5 as f64],
+            &[], // params default (half = 4, nbits = 8) — irrelevant, never starts
+        ));
+        for tk in 0..120 {
+            sim.step();
+            assert!(
+                !spi_pin_high(sim.state()[2]),
+                "idle SCLK must stay Low (tick {tk}, got {})",
+                sim.state()[2]
+            );
+            assert!(
+                spi_pin_high(sim.state()[4]),
+                "idle CS must stay High/deasserted (tick {tk}, got {})",
+                sim.state()[4]
+            );
+            assert!(
+                !spi_pin_high(sim.state()[3]),
+                "idle MOSI must stay Low (tick {tk}, got {})",
+                sim.state()[3]
+            );
+        }
+    }
+
+    /// An unpowered SPI master (VCC pin left at ground → rail below GATE_MIN_RAIL) is DEAD: it
+    /// releases all three outputs (high-Z) and never advances its state, even with START high —
+    /// the powered-chip "you must power it" rule, and proof the timing comes from the declared
+    /// params under power, not from a floating rail.
+    #[test]
+    fn behavioral_unpowered_is_dead() {
+        let mut sim = Sim::new(1);
+        // Nodes: 0 = gnd, 1 = START rail (5 V), 2 = SCLK, 3 = MOSI, 4 = CS. VCC pin (d) = 0 → dead.
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2],
+            &[0, 3],
+            &[0, 4],
+            &[0, 0], // d: VCC = node 0 → unpowered
+            &[0, 0], // e: GND = node 0
+            &[0, 0], // f: MISO = 0
+            &[0, 1], // g: START = node 1 (high), but the chip is unpowered
+            &[],
+            &[5.0, 1.0],
+            &[0.0, 0xA5 as f64],
+            &[],
+        ));
+        for _ in 0..60 {
+            sim.step();
+        }
+        // No clock was ever generated; the state machine stayed idle (all-zero state).
+        assert_eq!(
+            sim.beh_spi_fsm(1),
+            0,
+            "an unpowered SPI master must not advance its state machine"
+        );
+        // The released outputs sit near 0 V (the GMIN-floored Z), not a driven rail.
+        assert!(
+            sim.state()[2].abs() < 0.5 && sim.state()[4].abs() < 0.5,
+            "unpowered outputs release (high-Z, ~0 V): SCLK {}, CS {}",
+            sim.state()[2],
+            sim.state()[4]
+        );
+    }
+
+    /// Build a powered **combinational** LUT (program 4) with truth table `truth`, its four inputs
+    /// IN0..IN3 = f/g/h/c driven to the given volts (5 = high, 0 = low) and CLK grounded, then run
+    /// to settle and return the OUT voltage. Nodes: 0 = gnd (= GND pin), 1 = VCC (5 V), 2..5 =
+    /// IN0..IN3, 6 = OUT (= LUT element index 5).
+    fn lut_comb(truth: u32, in0: f64, in1: f64, in2: f64, in3: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE]; // mode slot left 0 ⇒ combinational
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 3, 4, 5, 6], // a: rails + IN sources; LUT OUT = node 6
+            &[0, 0, 0, 0, 0, 0], // b: src grounds; LUT CLK = gnd (unused)
+            &[0, 0, 0, 0, 0, 5], // c: LUT IN3 = node 5
+            &[0, 0, 0, 0, 0, 1], // d: LUT VCC = node 1 (5 V)
+            &[0, 0, 0, 0, 0, 0], // e: LUT GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: LUT IN0 = node 2
+            &[0, 0, 0, 0, 0, 3], // g: LUT IN1 = node 3
+            &[0, 0, 0, 0, 0, 4], // h: LUT IN2 = node 4
+            &[5.0, in0, in1, in2, in3, BEH_PROG_LUT as f64], // values: rails + program id 4
+            &[0.0, 0.0, 0.0, 0.0, 0.0, truth as f64], // aux: LUT truth table (low 16 bits)
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        sim.state()[6]
+    }
+
+    /// A combinational LUT IS a programmable gate: every ≤4-input boolean is one truth table. With
+    /// the inputs grounded except IN0/IN1, the XOR table `0x6666`, AND `0x8888` and OR `0xEEEE`
+    /// each compute their function on (IN0, IN1) — proof the output is `bit[index]` of the table.
+    #[test]
+    fn behavioral_lut_combinational_is_a_programmable_gate() {
+        let hi = |v: f64| v > 2.5;
+        // XOR(IN0, IN1): 0,1,1,0 per nibble ⇒ 0x6666.
+        assert!(!hi(lut_comb(0x6666, 0.0, 0.0, 0.0, 0.0)), "0 XOR 0 = 0");
+        assert!(hi(lut_comb(0x6666, 5.0, 0.0, 0.0, 0.0)), "1 XOR 0 = 1");
+        assert!(hi(lut_comb(0x6666, 0.0, 5.0, 0.0, 0.0)), "0 XOR 1 = 1");
+        assert!(!hi(lut_comb(0x6666, 5.0, 5.0, 0.0, 0.0)), "1 XOR 1 = 0");
+        // AND(IN0, IN1): 0,0,0,1 ⇒ 0x8888.
+        assert!(!hi(lut_comb(0x8888, 5.0, 0.0, 0.0, 0.0)), "1 AND 0 = 0");
+        assert!(hi(lut_comb(0x8888, 5.0, 5.0, 0.0, 0.0)), "1 AND 1 = 1");
+        // OR(IN0, IN1): 0,1,1,1 ⇒ 0xEEEE.
+        assert!(!hi(lut_comb(0xEEEE, 0.0, 0.0, 0.0, 0.0)), "0 OR 0 = 0");
+        assert!(hi(lut_comb(0xEEEE, 5.0, 0.0, 0.0, 0.0)), "1 OR 0 = 1");
+    }
+
+    /// Drive a 3-bit flash ADC (program 5): VIN on `f`, VREF on `g`, reading the 3-bit code back off
+    /// D0/D1/D2 (`a`/`b`/`c`) as a 0..7 integer. Nodes: 1 = VCC (5 V), 2 = VIN, 3 = VREF, 4/5/6 = D0/D1/D2.
+    fn adc_code(vin: f64, vref: f64) -> u32 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 4 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 4], // a: VCC + VIN + VREF sources; ADC D0 = node 4
+            &[0, 0, 0, 5], // b: src grounds; ADC D1 = node 5
+            &[0, 0, 0, 6], // c: ADC D2 = node 6
+            &[0, 0, 0, 1], // d: ADC VCC = node 1 (5 V)
+            &[0, 0, 0, 0], // e: ADC GND = node 0
+            &[0, 0, 0, 2], // f: ADC VIN = node 2
+            &[0, 0, 0, 3], // g: ADC VREF = node 3
+            &[0, 0, 0, 0], // h: unused
+            &[5.0, vin, vref, BEH_PROG_FLASH_ADC as f64], // values: rails + program id 5
+            &[0.0, 0.0, 0.0, 0.0], // aux unused
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        let s = sim.state();
+        let hi = |v: f64| (v > 2.5) as u32;
+        hi(s[4]) | (hi(s[5]) << 1) | (hi(s[6]) << 2)
+    }
+
+    /// The 3-bit flash ADC quantizes its input by the floor rule `code = floor(8 * Vin / Vref)`
+    /// against the 5 V reference (LSB = 0.625 V): each band maps to its code, full scale saturates to
+    /// 7, and over-range clamps rather than wrapping. (The comparator-bank thresholds at k/8 of FS.)
+    #[test]
+    fn behavioral_flash_adc_3bit_quantizes() {
+        assert_eq!(adc_code(0.0, 5.0), 0, "0 V -> 0");
+        assert_eq!(adc_code(0.4, 5.0), 0, "0.4 V (< 1 LSB) -> 0");
+        assert_eq!(adc_code(0.7, 5.0), 1, "0.7 V (in [0.625, 1.25)) -> 1");
+        assert_eq!(adc_code(2.6, 5.0), 4, "2.6 V (just over half scale) -> 4");
+        assert_eq!(adc_code(4.4, 5.0), 7, "4.4 V (in [4.375, 5)) -> 7");
+        assert_eq!(adc_code(5.0, 5.0), 7, "full scale saturates to 7");
+        assert_eq!(adc_code(6.0, 5.0), 7, "over-range clamps to 7 (no wrap)");
+    }
+
+    /// Drive a 3-bit SAR ADC (program 6) at a fixed VIN against the 5 V VCC reference, clocked by a
+    /// 50 %-duty switch (a clean 0/5 V square wave, rising edges every SWITCH_PERIOD_TICKS), reading
+    /// the 3-bit code off D0/D1/D2 (a/b/c) whenever DONE (g) is asserted — i.e. on a completed
+    /// conversion, so the sample is never mid-search. Nodes: 0 = gnd, 1 = VCC (5 V), 2 = VIN,
+    /// 3 = CLK, 4 = clock source rail, 5/6/7 = D0/D1/D2, 8 = DONE.
+    fn sar_code(vin: f64) -> u32 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, VIN, clk-rail srcs; SWITCH a=4; R a=3; SAR D0 = node 5
+            &[0, 0, 0, 3, 0, 6], // b: src grounds; SWITCH b=3 (CLK); R b=0; SAR D1 = node 6
+            &[0, 0, 0, 0, 0, 7], // c: SAR D2 = node 7
+            &[0, 0, 0, 0, 0, 1], // d: SAR VCC = node 1 (5 V reference)
+            &[0, 0, 0, 0, 0, 0], // e: SAR GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: SAR VIN = node 2
+            &[0, 0, 0, 0, 0, 8], // g: SAR DONE = node 8
+            &[0, 0, 0, 0, 0, 3], // h: SAR CLK = node 3
+            &[5.0, vin, 5.0, 0.5, 1000.0, BEH_PROG_SAR_ADC as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0.0],                        // aux unused
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut done_code = None;
+        for _ in 0..400 {
+            sim.step();
+            let s = sim.state();
+            if s[8] > 2.5 {
+                done_code = Some(hi(s[5]) | (hi(s[6]) << 1) | (hi(s[7]) << 2));
+            }
+        }
+        done_code.expect("SAR completes at least one conversion (DONE asserted) within 400 ticks")
+    }
+
+    /// The 3-bit SAR ADC converges by binary search to the SAME code the flash ADC finds —
+    /// `floor(8 * VIN / VCC)` against the 5 V reference (LSB = 0.625 V) — taking 3 clocks instead of
+    /// one (the speed-vs-parts trade). Checked across the range, with full scale saturating to 7 and
+    /// over-range clamping (no wrap). The reads are gated on DONE, so a partial mid-search register
+    /// is never observed.
+    #[test]
+    fn behavioral_sar_adc_3bit_successive_approximation() {
+        assert_eq!(sar_code(0.0), 0, "0 V -> 0");
+        assert_eq!(sar_code(0.7), 1, "0.7 V (in [0.625, 1.25)) -> 1");
+        assert_eq!(sar_code(1.4), 2, "1.4 V (in [1.25, 1.875)) -> 2");
+        assert_eq!(sar_code(2.6), 4, "2.6 V (just over half scale) -> 4");
+        assert_eq!(sar_code(3.2), 5, "3.2 V (in [3.125, 3.75)) -> 5");
+        assert_eq!(sar_code(4.4), 7, "4.4 V (in [4.375, 5)) -> 7");
+        assert_eq!(sar_code(5.0), 7, "full scale saturates to 7");
+        assert_eq!(sar_code(6.0), 7, "over-range clamps to 7 (no wrap)");
+    }
+
+    /// End-to-end mixed-signal chain: a flash ADC (program 5) digitises VIN, and an R-2R DAC — the
+    /// CEC1083 resistor network exactly as `buildNetlist` composes it (two R spine, four 2R legs,
+    /// MSB at the output node) — reconstructs it. The convert/reconstruct worked example. Returns
+    /// AOUT (the ladder's node A). Proves the ADC's digital outputs drive the 20 k ladder legs
+    /// cleanly (the 1 Ohm logic driver is stiff vs the legs) so the two parts compose. Nodes:
+    /// 0 = GND, 1 = VCC (5 V, also VREF), 2 = VIN, 3 = AOUT (ladder A), 4/5 = ladder B/C,
+    /// 6/7/8 = D0/D1/D2 (the shared ADC-output / DAC-input nets).
+    fn adc_dac_aout(vin: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 9 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,    // VCC (5 V)
+                ELEM_VSOURCE,    // VIN
+                ELEM_BEHAVIORAL, // flash ADC (program 5)
+                ELEM_RESISTOR,   // R  spine A-B
+                ELEM_RESISTOR,   // R  spine B-C
+                ELEM_RESISTOR,   // 2R leg A-D2 (MSB at the output node)
+                ELEM_RESISTOR,   // 2R leg B-D1
+                ELEM_RESISTOR,   // 2R leg C-D0
+                ELEM_RESISTOR,   // 2R termination C-GND
+            ],
+            &[1, 2, 6, 3, 4, 3, 4, 5, 5], // a: VCC, VIN; ADC D0=6; R A=3,B=4; 2R A=3,B=4,C=5,C=5
+            &[0, 0, 7, 4, 5, 8, 7, 6, 0], // b: src gnds; ADC D1=7; R B=4,C=5; 2R D2=8,D1=7,D0=6,GND=0
+            &[0, 0, 8, 0, 0, 0, 0, 0, 0], // c: ADC D2 = node 8
+            &[0, 0, 1, 0, 0, 0, 0, 0, 0], // d: ADC VCC = node 1
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0], // e: ADC GND = node 0
+            &[0, 0, 2, 0, 0, 0, 0, 0, 0], // f: ADC VIN = node 2
+            &[0, 0, 1, 0, 0, 0, 0, 0, 0], // g: ADC VREF = node 1 (= VCC)
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0], // h: unused
+            &[
+                5.0,
+                vin,
+                BEH_PROG_FLASH_ADC as f64,
+                10000.0,
+                10000.0,
+                20000.0,
+                20000.0,
+                20000.0,
+                20000.0,
+            ],
+            &[0.0; 9], // aux unused
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        sim.state()[3] // AOUT = ladder node A
+    }
+
+    /// The ADC->DAC chain reconstructs the quantised staircase: AOUT = code/8 * 5 V, with
+    /// code = floor(8 * VIN / 5). Each input band maps to its step (one LSB = 0.625 V), and the top
+    /// step reaches only 7/8 of full scale (4.375 V) — the 3-bit reconstruction ceiling, the lesson
+    /// of the convert/reconstruct demo. (Tolerance covers the ~mV IR drop of the stiff logic driver
+    /// into the ladder legs.)
+    #[test]
+    fn adc_dac_reconstructs_quantised_staircase() {
+        let approx = |got: f64, want: f64| {
+            assert!((got - want).abs() < 0.02, "AOUT {got} should be ~{want}");
+        };
+        approx(adc_dac_aout(0.0), 0.0); // code 0
+        approx(adc_dac_aout(0.7), 0.625); // code 1 (1 LSB)
+        approx(adc_dac_aout(2.6), 2.5); // code 4 (half scale)
+        approx(adc_dac_aout(3.2), 3.125); // code 5
+        approx(adc_dac_aout(5.0), 4.375); // code 7 (full scale -> 7/8 ceiling)
+    }
+
+    /// Run a 3-bit counter (program 7) clocked by a 50 %-duty switch (rising edges every
+    /// SWITCH_PERIOD_TICKS) with RESET wired to `reset_node`, and return the de-duplicated sequence of
+    /// count values seen on Q0/Q1/Q2. Nodes: 0 = gnd, 1 = VCC (5 V), 2 = CLK, 3 = clock source rail,
+    /// 4/5/6 = Q0/Q1/Q2.
+    fn counter_sequence(reset_node: u32) -> Vec<u32> {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 5 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 3, 3, 2, 4], // a: VCC, clk-rail srcs; SWITCH a=3; R a=2; CTR Q0 = node 4
+            &[0, 0, 2, 0, 5], // b: src gnds; SWITCH b=2 (CLK); R b=0; CTR Q1 = node 5
+            &[0, 0, 0, 0, 6], // c: CTR Q2 = node 6
+            &[0, 0, 0, 0, 1], // d: CTR VCC = node 1
+            &[0, 0, 0, 0, 0], // e: CTR GND = node 0
+            &[0, 0, 0, 0, 2], // f: CTR CLK = node 2
+            &[0, 0, 0, 0, reset_node], // g: CTR RESET (0 = gnd = run; 1 = VCC = hold cleared)
+            &[0, 0, 0, 0, 0], // h: unused
+            &[5.0, 5.0, 0.5, 1000.0, BEH_PROG_COUNTER as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0; 5],
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut seq = Vec::new();
+        let mut last: Option<u32> = None;
+        for _ in 0..900 {
+            sim.step();
+            let s = sim.state();
+            let n = hi(s[4]) | (hi(s[5]) << 1) | (hi(s[6]) << 2);
+            if last != Some(n) {
+                seq.push(n);
+                last = Some(n);
+            }
+        }
+        seq
+    }
+
+    /// The 3-bit binary counter advances one step per rising clock edge and wraps 7 -> 0: the
+    /// de-duplicated Q0/Q1/Q2 sequence increments by +1 mod 8 throughout, reaching 7 and rolling over.
+    /// 900 ticks at ~50 ticks/edge gives two full wraps. (Drive a DAC from Q0..Q2 for a ramp.)
+    #[test]
+    fn behavioral_counter_counts_and_wraps() {
+        let seq = counter_sequence(0); // RESET = gnd: free-run
+        assert!(seq.len() >= 9, "counter should advance many steps: {seq:?}");
+        for w in seq.windows(2) {
+            assert_eq!(w[1], (w[0] + 1) % 8, "counter steps by +1 mod 8: {seq:?}");
+        }
+        assert!(seq.contains(&7), "counter reaches 7: {seq:?}");
+        assert!(
+            seq.windows(2).any(|w| w[0] == 7 && w[1] == 0),
+            "counter wraps 7 -> 0: {seq:?}"
+        );
+    }
+
+    /// RESET (active high) asynchronously clears the counter and dominates the clock: with RESET tied
+    /// to VCC the count never leaves 0 no matter how many clock edges arrive.
+    #[test]
+    fn behavioral_counter_reset_holds_zero() {
+        let seq = counter_sequence(1); // RESET = VCC (node 1): held cleared
+        assert_eq!(seq, vec![0], "RESET held high pins the count at 0: {seq:?}");
+    }
+
+    /// Run a sigma-delta ADC (program 8) at a fixed VIN against the 5 V VCC reference, clocked by a
+    /// 50 %-duty switch, and return (the settled D0/D1/D2 codes, the time-fraction the BS bit-stream is
+    /// high). Nodes: 0 = gnd, 1 = VCC (5 V), 2 = VIN, 3 = CLK, 4 = clock source rail, 5/6/7 = D0/D1/D2,
+    /// 8 = BS (1-bit modulator stream).
+    fn sigma_delta_run(vin: f64) -> (Vec<u32>, f64) {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 6 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, VIN, clk-rail srcs; SWITCH a=4; R a=3; SDM D0 = node 5
+            &[0, 0, 0, 3, 0, 6], // b: src gnds; SWITCH b=3 (CLK); R b=0; SDM D1 = node 6
+            &[0, 0, 0, 0, 0, 7], // c: SDM D2 = node 7
+            &[0, 0, 0, 0, 0, 1], // d: SDM VCC = node 1 (5 V reference)
+            &[0, 0, 0, 0, 0, 0], // e: SDM GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: SDM VIN = node 2
+            &[0, 0, 0, 0, 0, 8], // g: SDM BS (bit stream) = node 8
+            &[0, 0, 0, 0, 0, 3], // h: SDM CLK = node 3
+            &[5.0, vin, 5.0, 0.5, 1000.0, BEH_PROG_SIGMA_DELTA as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0; 6],
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut codes = Vec::new();
+        let mut bs_high = 0usize;
+        let mut samples = 0usize;
+        for t in 0..4000 {
+            sim.step();
+            if t >= 2000 {
+                // settle past the modulator startup
+                let s = sim.state();
+                codes.push(hi(s[5]) | (hi(s[6]) << 1) | (hi(s[7]) << 2));
+                bs_high += hi(s[8]) as usize;
+                samples += 1;
+            }
+        }
+        (codes, bs_high as f64 / samples as f64)
+    }
+
+    /// The 1st-order sigma-delta ADC oversamples a 1-bit modulator and decimates by counting 1s. At DC
+    /// inputs whose modulator limit-cycle period divides the decimation block (8) the code is steady:
+    /// x = VIN/5 in {0, 1/4, 1/2, 3/4, 1} -> dominant code {0, 2, 4, 6, 7}. And the 1-bit stream's
+    /// density tracks the input fraction (the defining sigma-delta property: density of 1s = VIN/VCC).
+    #[test]
+    fn behavioral_sigma_delta_oversamples() {
+        for (vin, want) in [(0.0, 0u32), (1.25, 2), (2.5, 4), (3.75, 6), (5.0, 7)] {
+            let (codes, density) = sigma_delta_run(vin);
+            // dominant settled code = the expected stable value
+            let mode = (0..=7u32)
+                .max_by_key(|&c| codes.iter().filter(|&&x| x == c).count())
+                .unwrap();
+            assert_eq!(
+                mode, want,
+                "vin {vin}: dominant code {mode} != {want} ({codes:?})"
+            );
+            // bit-stream density ≈ x = VIN/VCC (the noise-shaped average)
+            let x = vin / 5.0;
+            assert!(
+                (density - x).abs() < 0.12,
+                "vin {vin}: bit-stream density {density} not ~{x}"
+            );
+        }
+    }
+
+    /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth
+    /// table `1 << k` drives OUT high for EXACTLY the input combination whose index is `k` and low
+    /// for any other — checked at index 13 (`1101`: IN0,IN2,IN3 high, IN1 low) and index 1 (only
+    /// IN0 high), so both the LSB (`f`) and the MSB (`c`) genuinely move the index.
+    #[test]
+    fn behavioral_lut_four_input_index_ordering() {
+        let hi = |v: f64| v > 2.5;
+        // truth = 1<<13: high only at index 13 = IN0|IN2|IN3 (f,h,c high; g low).
+        assert!(
+            hi(lut_comb(1 << 13, 5.0, 0.0, 5.0, 5.0)),
+            "index 13 (1101) selects the only set entry ⇒ OUT high"
+        );
+        // Drop IN3 (c, the MSB) ⇒ index 5, a different entry ⇒ OUT low (proves c is bit 3).
+        assert!(
+            !hi(lut_comb(1 << 13, 5.0, 0.0, 5.0, 0.0)),
+            "clearing the MSB c moves the index off the set entry ⇒ OUT low"
+        );
+        // truth = 1<<1: high only at index 1 = IN0 alone (proves f is bit 0).
+        assert!(
+            hi(lut_comb(1 << 1, 5.0, 0.0, 0.0, 0.0)),
+            "index 1 ⇒ OUT high"
+        );
+        assert!(
+            !hi(lut_comb(1 << 1, 0.0, 0.0, 0.0, 0.0)),
+            "index 0 with the 1<<1 table ⇒ OUT low"
+        );
+    }
+
+    /// Build a powered **registered** LUT (program 4, mode slot set) whose truth table passes IN0
+    /// (`0xAAAA` ⇒ OUT = IN0), with IN0 (`f`) held at `in0_v` and CLK (`b`) chopped from a 5 V rail
+    /// by a 50 %-duty switch (pulled down between windows) so it sees rising edges. Nodes: 0 = gnd,
+    /// 1 = VCC (5 V), 2 = IN0, 3 = CLK, 4 = clock rail, 5 = OUT (LUT element index 5).
+    fn lut_registered_clocked(in0_v: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1.0; // LUT (elem 5) registered
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 2, 4, 4, 3, 5], // a: VCC, IN0, clk-rail srcs; SWITCH a=4; R a=3; LUT OUT=5
+            &[0, 0, 0, 3, 0, 3], // b: src grounds; SWITCH b=3 (CLK); R b=0; LUT CLK=3
+            &[0, 0, 0, 0, 0, 0], // c: LUT IN3 = gnd
+            &[0, 0, 0, 0, 0, 1], // d: LUT VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: LUT GND = node 0
+            &[0, 0, 0, 0, 0, 2], // f: LUT IN0 = node 2
+            &[0, 0, 0, 0, 0, 0], // g: LUT IN1 = gnd
+            &[0, 0, 0, 0, 0, 0], // h: LUT IN2 = gnd
+            &[5.0, in0_v, 5.0, 0.5, 1000.0, BEH_PROG_LUT as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0, 0.0, 0.0, 0.0, 0.0, 0xAAAA as f64],            // aux: pass-IN0 truth table
+            &params,
+        ));
+        sim
+    }
+
+    /// A registered LUT is a LUT followed by a flip-flop: with CLK held low it never latches (Q
+    /// holds its reset 0 even though IN0 is high), and under a real clock it latches IN0 onto Q and
+    /// drives OUT high — the building block of all sequential FPGA logic.
+    #[test]
+    fn behavioral_lut_registered_latches_on_clock() {
+        // No clock edge ever (CLK grounded via the switched node never rising)? Use a dedicated
+        // held-low clock: reuse the combinational rig but in registered mode with CLK at gnd.
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1.0; // registered
+                                                            // Nodes: 0 = gnd, 1 = VCC, 2 = IN0 (5 V), 3 = OUT. CLK (b) = gnd ⇒ no edge.
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],
+            &[0, 0, 0], // LUT CLK (b) = gnd ⇒ never rises
+            &[0, 0, 0], // IN3 = gnd
+            &[0, 0, 1], // VCC = node 1
+            &[0, 0, 0], // GND = node 0
+            &[0, 0, 2], // IN0 = node 2 (held high)
+            &[0, 0, 0], // IN1 = gnd
+            &[0, 0, 0], // IN2 = gnd
+            &[5.0, 5.0, BEH_PROG_LUT as f64],
+            &[0.0, 0.0, 0xAAAA as f64], // out = IN0
+            &params,
+        ));
+        for _ in 0..80 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.beh_lut_q(2),
+            0,
+            "a registered LUT with no clock edge must hold its reset Q=0 despite IN0 high"
+        );
+        assert!(
+            sim.state()[3].abs() < 0.5,
+            "OUT follows the held Q=0 (driven low, not the live IN0): {}",
+            sim.state()[3]
+        );
+
+        // Under a real clock the registered LUT latches IN0 (high) onto Q and drives OUT high.
+        let mut clocked = lut_registered_clocked(5.0);
+        for _ in 0..300 {
+            clocked.step();
+        }
+        assert_eq!(
+            clocked.beh_lut_q(5),
+            1,
+            "a clocked registered LUT latches IN0=1 onto Q"
+        );
+        assert!(
+            clocked.state()[5] > 4.0,
+            "registered OUT drives high once Q latches: {}",
+            clocked.state()[5]
+        );
+    }
+
+    /// An unpowered LUT releases its output (high-Z, ~0 V) regardless of its truth table — even the
+    /// all-ones table `0xFFFF` (which would drive high if powered) reads released when VCC is unwired.
+    #[test]
+    fn behavioral_lut_unpowered_is_released() {
+        // VCC pin (d) = node 0 ⇒ rail collapses ⇒ output released even though the table is all-ones.
+        let out = {
+            let mut sim = Sim::new(1);
+            let params = vec![0.0; 2 * PARAM_STRIDE];
+            assert!(sim.set_netlist_pefgh(
+                3,
+                &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+                &[1, 2], // a: a 5 V source on node 1; LUT OUT = node 2
+                &[0, 0], // b: LUT CLK = gnd
+                &[0, 0], // c: IN3 = gnd
+                &[0, 0], // d: LUT VCC = node 0 ⇒ unpowered
+                &[0, 0], // e: LUT GND = node 0
+                &[0, 1], // f: IN0 = node 1 (high) — but the chip is dead
+                &[0, 0], // g
+                &[0, 0], // h
+                &[5.0, BEH_PROG_LUT as f64],
+                &[0.0, 0xFFFF as f64], // all-ones table
+                &params,
+            ));
+            for _ in 0..40 {
+                sim.step();
+            }
+            sim.state()[2]
+        };
+        assert!(
+            out.abs() < 0.5,
+            "an unpowered LUT releases its output (~0 V), not a driven rail: {out}"
+        );
+    }
+
+    /// A registered LUT under an active clock (live sequential state) reproduces bit-for-bit: two
+    /// fresh `Sim`s run the same netlist and agree on the snapshot-hash sequence at EVERY tick,
+    /// including the exact ticks a clock edge latches Q. The determinism guarantee with the FPGA
+    /// logic element ACTIVE.
+    #[test]
+    fn behavioral_lut_run_is_reproducible() {
+        let mut a = lut_registered_clocked(5.0);
+        let mut b = lut_registered_clocked(5.0);
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "a registered-LUT circuit must replay bit-for-bit (diverged at tick {tk})"
+            );
+        }
+    }
+
+    /// A six-/seven-terminal behavioral netlist installs; an out-of-range terminal is rejected
+    /// fail-safe (mirrors the comparator's / sampler's arity validation).
+    #[test]
+    fn behavioral_netlist_validates() {
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist_pefgh(
+                8,
+                &[ELEM_BEHAVIORAL],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[5],
+                &[6],
+                &[7],
+                &[],
+                &[1.0],
+                &[0.0],
+                &[],
+            ),
+            "valid seven-terminal behavioral block installs"
+        );
+        assert!(
+            !sim.set_netlist_pefgh(
+                8,
+                &[ELEM_BEHAVIORAL],
+                &[1],
+                &[2],
+                &[3],
+                &[4],
+                &[5],
+                &[6],
+                &[9], // START out of range
+                &[],
+                &[1.0],
+                &[0.0],
+                &[],
+            ),
+            "out-of-range START terminal g is rejected"
+        );
+    }
+
+    /// A behavioral-block netlist (active integer state) reproduces bit-for-bit: two fresh `Sim`s
+    /// run the same SPI-master netlist for N steps and agree on the snapshot hash at EVERY tick —
+    /// the determinism guarantee with the protocol engine ACTIVE (its state words are hashed).
+    #[test]
+    fn behavioral_run_is_reproducible() {
+        let build = || spi_master(0xA5 as f64, 2.0, 8.0, 4); // MOSI→MISO loopback, active transaction
+        let (mut a, mut b) = (build(), build());
+        for tk in 0..600 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "behavioral block diverged at tick {tk} (its integer state must be hashed)"
+            );
+        }
+    }
+
+    // --- Behavioral programs 2 & 3: SPI slave + UART --------------------------
+    //
+    // Program 2 is the receiving end of the phase-1 SPI master (Mode 0). Pins:
+    // f=SCLK (in), g=MOSI (in), h=CS (in); a=MISO (out), b=RXVALID (out); d=VCC, e=GND.
+    // Program 3 is an async UART (TX+RX in one block). Pins: a=TX (out), b=RXVALID (out);
+    // f=RX (in), g=SEND (in); d=VCC, e=GND. aux = the byte to send; params[0] = baud
+    // divider (ticks/bit), params[1] = data bits. Both run at the base tick rate (no
+    // sub-ticking) and lay their integer state out their own way in `beh_state`.
+
+    /// Wire a phase-1 SPI **master** (program 1) to an SPI **slave** (program 2) on a shared
+    /// 4-wire bus: master SCLK(a)→slave SCLK(f), master MOSI(b)→slave MOSI(g), master CS(c)→slave
+    /// CS(h), slave MISO(a)→master MISO(f). The master is triggered once (START tied high), sending
+    /// `tx`; the slave replies `reply`. Nodes: 0=gnd, 1=VCC(5V), 2=START(5V), 3=SCLK, 4=MOSI,
+    /// 5=CS, 6=MISO, 7=RXVALID. Elements: [VCC src, START src, master, slave]; master is index 2,
+    /// slave index 3. Returns the installed `Sim` at t=0.
+    fn spi_master_slave(tx: f64, reply: f64, half: f64, nbits: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        // params: master gets [half, nbits] in slots 0/1; slave gets [_, nbits] in slot 1.
+        let mut params = vec![0.0; 4 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // master params[0] = SCLK half-period
+        params[2 * PARAM_STRIDE + 1] = nbits; // master params[1] = bit count
+        params[3 * PARAM_STRIDE + 1] = nbits; // slave  params[1] = bit count
+        assert!(sim.set_netlist_pefgh(
+            8,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 6],         // a: VCC src, START src, master SCLK=3, slave MISO=6
+            &[0, 0, 4, 7],         // b: src grounds; master MOSI=4, slave RXVALID=7
+            &[0, 0, 5, 0],         // c: master CS=5; slave c unused
+            &[0, 0, 1, 1],         // d: VCC = node 1 (both chips)
+            &[0, 0, 0, 0],         // e: GND = node 0
+            &[0, 0, 6, 3],         // f: master MISO=6, slave SCLK=3
+            &[0, 0, 2, 4],         // g: master START=2, slave MOSI=4
+            &[0, 0, 0, 5],         // h: slave CS=5 (master h unused)
+            &[5.0, 5.0, 1.0, 2.0], // values: VCC, START, master prog 1, slave prog 2
+            &[0.0, 0.0, tx, reply], // aux: master TX word, slave reply word
+            &params,
+        ));
+        sim
+    }
+
+    /// Full-duplex byte exchange over the 4-wire bus: a phase-1 SPI **master** (program 1) clocks a
+    /// byte to an SPI **slave** (program 2) while the slave clocks its reply back on MISO. After the
+    /// transaction the slave's received word equals the master's transmitted byte (and RXVALID
+    /// pulsed), and the master's `shift_in` equals the slave's reply word — a true full-duplex link.
+    /// Non-palindromic bytes (0x39 ↔ bit-reverse 0x9C; 0xC6 ↔ 0x63) so MSB-first ordering is genuinely
+    /// under test on BOTH directions.
+    #[test]
+    fn behavioral_spi_master_to_slave_link() {
+        let tx = 0x39u32; // master → slave
+        let reply = 0xC6u32; // slave → master
+        let nbits = 8usize;
+        let half = 2.0;
+        let mut sim = spi_master_slave(tx as f64, reply as f64, half, nbits as f64);
+        // Run well past one transaction (nbits*2*half SCLK ticks + cross-element pipeline delay).
+        let mut slave_rxvalid_pulsed = false;
+        for _ in 0..200 {
+            sim.step();
+            if sim.beh_spi_slave_rxvalid(3) != 0 {
+                slave_rxvalid_pulsed = true;
+            }
+        }
+        // Slave received the master's transmitted byte, MSB-first.
+        let rx = sim.beh_spi_slave_rx_word(3);
+        assert_eq!(
+            rx, tx,
+            "SPI slave must receive the master's byte 0x{tx:02X} (got 0x{rx:02X})"
+        );
+        assert!(
+            slave_rxvalid_pulsed,
+            "SPI slave RXVALID must pulse when a word is received"
+        );
+        // Master read back the slave's reply on MISO, MSB-first (full duplex).
+        let got = sim.beh_spi_shift_in(2);
+        assert_eq!(
+            got, reply,
+            "SPI master must read the slave's reply 0x{reply:02X} on MISO (got 0x{got:02X})"
+        );
+    }
+
+    /// UART loopback: with TX wired to RX, a byte sent on a rising SEND edge is framed out on TX,
+    /// sampled back in on RX, and latched — the received byte equals the transmitted one and
+    /// RXVALID pulsed. Checked for 0x5A AND a genuinely **non-palindromic** byte (0x53 = 0101_0011,
+    /// bit-reverse 0xCA differs) so the LSB-first framing/assembly ordering is actually under test —
+    /// 0x5A alone is bit-symmetric and would pass either order. Exercises start/data(LSB-first)/stop
+    /// framing end-to-end through the mid-bit RX sampler.
+    #[test]
+    fn behavioral_uart_loopback() {
+        let baud = 16usize;
+        let nbits = 8usize;
+        for &byte in &[0x5Au32, 0x53u32] {
+            let mut sim = uart_setup_loopback(byte as f64, baud as f64, nbits as f64);
+            // A full frame is (1 start + nbits data + 1 stop) * baud ticks, plus the 1.5-bit RX
+            // first-sample delay and a tick of output pipeline. Run generously past it.
+            let frame_ticks = (nbits + 2) * baud + 2 * baud; // + margin
+            let mut rxvalid_pulsed = false;
+            // UART is element index 2 in `uart_setup_loopback` (after VCC + SEND sources).
+            for _ in 0..(frame_ticks + 32) {
+                sim.step();
+                if sim.beh_uart_rxvalid(2) != 0 {
+                    rxvalid_pulsed = true;
+                }
+            }
+            let rx = sim.beh_uart_rx_word(2);
+            assert_eq!(
+                rx, byte,
+                "UART loopback must receive the transmitted byte 0x{byte:02X} (got 0x{rx:02X})"
+            );
+            assert!(
+                rxvalid_pulsed,
+                "UART RXVALID must pulse when a byte 0x{byte:02X} is received"
+            );
+        }
+    }
+
+    /// Build a UART loopback netlist with an explicit SEND source: TX(a) tied to RX(f) on node 3,
+    /// SEND(g) driven high by a source on node 2, VCC on node 1. Nodes: 0=gnd, 1=VCC(5V),
+    /// 2=SEND(5V), 3=TX/RX wire, 4=RXVALID. UART is element index 2 (after the two sources).
+    fn uart_setup_loopback(byte: f64, baud: f64, nbits: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = baud; // UART (elem 2) params[0] = baud divider
+        params[2 * PARAM_STRIDE + 1] = nbits; // UART params[1] = data bits
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],        // a: VCC src=1, SEND src=2, UART TX=3
+            &[0, 0, 4],        // b: src grounds; UART RXVALID=4
+            &[0, 0, 0],        // c: unused
+            &[0, 0, 1],        // d: UART VCC = node 1
+            &[0, 0, 0],        // e: UART GND = node 0
+            &[0, 0, 3],        // f: UART RX = node 3 (== TX: loopback)
+            &[0, 0, 2],        // g: UART SEND = node 2 (held high)
+            &[0, 0, 0],        // h: unused
+            &[5.0, 5.0, 3.0],  // values: VCC, SEND rail, UART program id 3
+            &[0.0, 0.0, byte], // aux: UART byte to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// With **no SEND pulse** the UART line idles HIGH (mark) for the whole run and never raises a
+    /// spurious RXVALID — the quiescent contract (an idle async line sits at mark, the receiver
+    /// waits for a real start bit). SEND (g) is grounded so no edge ever fires; TX is observed on
+    /// the bus node, RX is tied to TX so it sees the same idle-high line.
+    #[test]
+    fn behavioral_uart_idle_line_high() {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 2 * PARAM_STRIDE];
+        params[PARAM_STRIDE] = 16.0; // baud divider
+        params[PARAM_STRIDE + 1] = 8.0; // data bits
+                                        // Nodes: 0=gnd, 1=VCC(5V), 2=TX/RX wire, 3=RXVALID. SEND (g)=0 (grounded → never fires).
+        assert!(sim.set_netlist_pefgh(
+            4,
+            &[ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2],             // a: VCC src=1, UART TX=2
+            &[0, 3],             // b: src ground; UART RXVALID=3
+            &[0, 0],             // c: unused
+            &[0, 1],             // d: UART VCC = node 1
+            &[0, 0],             // e: UART GND = node 0
+            &[0, 2],             // f: UART RX = node 2 (== TX: loopback)
+            &[0, 0],             // g: UART SEND = 0 (grounded → no edge)
+            &[0, 0],             // h: unused
+            &[5.0, 3.0],         // values: VCC, UART program id 3
+            &[0.0, 0x5A as f64], // aux: a byte (never sent — SEND never rises)
+            &params,
+        ));
+        for tk in 0..200 {
+            sim.step();
+            assert!(
+                spi_pin_high(sim.state()[2]),
+                "idle UART TX must stay HIGH/mark (tick {tk}, got {})",
+                sim.state()[2]
+            );
+            assert_eq!(
+                sim.beh_uart_rxvalid(1),
+                0,
+                "idle UART must never raise RXVALID (tick {tk})"
+            );
+        }
+        // And nothing was ever received.
+        assert_eq!(
+            sim.beh_uart_rx_word(1),
+            0,
+            "idle UART must not latch any received byte"
+        );
+    }
+
+    /// A slave/UART netlist reproduces bit-for-bit: two fresh `Sim`s run the same master↔slave SPI
+    /// link AND a UART loopback for N steps and agree on the snapshot hash at EVERY tick — the
+    /// determinism guarantee with programs 2 & 3 ACTIVE (their integer state words are hashed).
+    #[test]
+    fn behavioral_slave_uart_run_is_reproducible() {
+        let build_spi = || spi_master_slave(0x39 as f64, 0xC6 as f64, 2.0, 8.0);
+        let (mut a, mut b) = (build_spi(), build_spi());
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "SPI master↔slave link diverged at tick {tk} (slave state must be hashed)"
+            );
+        }
+        let build_uart = || uart_setup_loopback(0x5A as f64, 16.0, 8.0);
+        let (mut c, mut d) = (build_uart(), build_uart());
+        for tk in 0..400 {
+            c.step();
+            d.step();
+            assert_eq!(
+                c.snapshot_hash(),
+                d.snapshot_hash(),
+                "UART loopback diverged at tick {tk} (UART state must be hashed)"
+            );
+        }
+    }
+
+    // --- Multi-rate sub-ticking (ADR 0004 step 3b) ----------------------------
+    //
+    // A behavioral block declares a structural sub-tick rate N in params[2]
+    // (BEH_SUBTICK_RATE_SLOT); the global S = max N drives the sub-tick loop in step().
+    // N unset/1 (every existing circuit) ⇒ S = 1 ⇒ the loop is skipped ⇒ byte-identical.
+
+    /// UART loopback with a declared sub-tick rate in `params[2]` — same wiring as
+    /// `uart_setup_loopback`, plus the rate. `rate <= 1` is the existing single-rate path.
+    fn uart_setup_loopback_rate(byte: f64, baud: f64, nbits: f64, rate: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = baud; // UART (elem 2) params[0] = baud divider
+        params[2 * PARAM_STRIDE + 1] = nbits; // params[1] = data bits
+        params[2 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // params[2] = sub-tick rate N
+        assert!(sim.set_netlist_pefgh(
+            5,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL],
+            &[1, 2, 3],        // a: VCC src=1, SEND src=2, UART TX=3
+            &[0, 0, 4],        // b: src grounds; UART RXVALID=4
+            &[0, 0, 0],        // c: unused
+            &[0, 0, 1],        // d: UART VCC = node 1
+            &[0, 0, 0],        // e: UART GND = node 0
+            &[0, 0, 3],        // f: UART RX = node 3 (== TX: loopback)
+            &[0, 0, 2],        // g: UART SEND = node 2 (held high)
+            &[0, 0, 0],        // h: unused
+            &[5.0, 5.0, 3.0],  // values: VCC, SEND rail, UART program id 3
+            &[0.0, 0.0, byte], // aux: UART byte to transmit
+            &params,
+        ));
+        sim
+    }
+
+    /// The first **analog** tick at which the UART loopback's latched received word equals `byte`,
+    /// at the given sub-tick rate — and whether RXVALID was observed pulsing at any analog-tick
+    /// boundary. The latched `rx_word` PERSISTS (it holds the last completed byte), so it is the
+    /// observable analog-boundary signal at ANY rate; RXVALID is a one-DIGITAL-tick pulse, so at a
+    /// high sub-tick rate it can fire and clear entirely within one analog tick's sub-ticks and so
+    /// is invisible at the boundary — the persistent `rx_word` is what we time the frame by. Returns
+    /// `(analog_tick, rxvalid_seen_at_boundary)` or `None` if the byte never arrives in `max_ticks`.
+    /// The UART is element index 2.
+    fn uart_rx_complete_tick(
+        byte: u32,
+        baud: f64,
+        nbits: f64,
+        rate: f64,
+        max_ticks: usize,
+    ) -> Option<(usize, bool)> {
+        let mut sim = uart_setup_loopback_rate(byte as f64, baud, nbits, rate);
+        let mut rxvalid_seen = false;
+        for tk in 0..max_ticks {
+            sim.step();
+            if sim.beh_uart_rxvalid(2) != 0 {
+                rxvalid_seen = true;
+            }
+            if sim.beh_uart_rx_word(2) == byte {
+                return Some((tk, rxvalid_seen));
+            }
+        }
+        None
+    }
+
+    /// **`subtick_n1_is_byte_identical`** — a behavioral circuit built with `params[2]` set to 1
+    /// (an explicitly declared rate of one sub-tick per analog tick) produces the **exact same
+    /// `snapshot_hash` stream** as the same circuit built with no rate param at all. This is the
+    /// hard requirement: declaring `N = 1` must take the `S = 1` path (the sub-tick branch is
+    /// skipped), so it is bit-for-bit the legacy engine. Covered for a UART loopback AND a
+    /// master↔slave SPI link (programs 2 & 3, with hashed integer state).
+    #[test]
+    fn subtick_n1_is_byte_identical() {
+        // UART: rate-1 vs no-rate.
+        let mut with_n1 = uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 1.0);
+        let mut without = uart_setup_loopback(0x5A as f64, 16.0, 8.0);
+        assert_eq!(with_n1.subtick_rate, 1, "declared N=1 must give global S=1");
+        assert_eq!(
+            without.subtick_rate, 1,
+            "no rate param must give global S=1"
+        );
+        for tk in 0..400 {
+            with_n1.step();
+            without.step();
+            assert_eq!(
+                with_n1.snapshot_hash(),
+                without.snapshot_hash(),
+                "UART: declared N=1 must be byte-identical to no rate param (tick {tk})"
+            );
+        }
+        // SPI master↔slave: rate-1 vs no-rate (both blocks at N=1).
+        let mut spi_n1 = spi_master_slave_rate(0x39 as f64, 0xC6 as f64, 2.0, 8.0, 1.0);
+        let mut spi_plain = spi_master_slave(0x39 as f64, 0xC6 as f64, 2.0, 8.0);
+        assert_eq!(spi_n1.subtick_rate, 1);
+        assert_eq!(spi_plain.subtick_rate, 1);
+        for tk in 0..400 {
+            spi_n1.step();
+            spi_plain.step();
+            assert_eq!(
+                spi_n1.snapshot_hash(),
+                spi_plain.snapshot_hash(),
+                "SPI: declared N=1 must be byte-identical to no rate param (tick {tk})"
+            );
+        }
+    }
+
+    /// **`subtick_speeds_up_uart`** (the payoff) — a UART loopback at `params[2] = 16` completes a
+    /// full frame in ~16× fewer **analog** ticks than the same UART at rate 1, because 16 digital
+    /// sub-ticks run per analog tick (megabaud against the 2 µs analog tick). We compare the analog
+    /// tick at which RXVALID first pulses in the loopback, and assert the byte still round-trips
+    /// (0x5A) in BOTH cases — the speedup must not corrupt the data.
+    #[test]
+    fn subtick_speeds_up_uart() {
+        let byte = 0x5Au32;
+        let (baud, nbits) = (16.0, 8.0);
+        // Rate 1: a full frame is (1 start + 8 data + 1 stop) * 16 baud ticks + RX sampling delay,
+        // and the byte arrives only because the loopback round-trips it (the helper returns `Some`
+        // ONLY when rx_word == byte, so reaching here proves the round-trip at rate 1). RXVALID is
+        // a single analog tick at rate 1, so it IS observed at a boundary there.
+        let (slow_tick, slow_rxvalid) =
+            uart_rx_complete_tick(byte, baud, nbits, 1.0, 4000).expect("rate-1 UART must receive");
+        assert!(
+            slow_rxvalid,
+            "rate-1 UART RXVALID must pulse at an analog-tick boundary"
+        );
+        // Rate 16: 16 digital sub-ticks per analog tick ⇒ the same frame completes in ~16× fewer
+        // ANALOG ticks (megabaud against the 2 µs analog tick). The byte still round-trips (again,
+        // the helper only returns `Some` when rx_word == 0x5A — the speedup did not corrupt it).
+        let (fast_tick, _fast_rxvalid) = uart_rx_complete_tick(byte, baud, nbits, 16.0, 4000)
+            .expect("rate-16 UART must receive");
+        // The speedup is real and close to the declared rate (16). The frame is the same number of
+        // DIGITAL ticks in both runs; at rate R it lands at ≈ that / R analog ticks, so the ratio is
+        // ≈ 16. Require ≥ 8× (comfortably proving the multi-rate kernel over-clocks the digital
+        // domain against the fixed analog Δt).
+        let speedup = (slow_tick + 1) as f64 / (fast_tick + 1) as f64;
+        assert!(
+            speedup >= 8.0,
+            "rate-16 UART must complete a frame ≥8× faster (slow tick {slow_tick}, fast tick \
+             {fast_tick}, speedup {speedup:.1}×)"
+        );
+    }
+
+    /// Wire an SPI **master**↔**slave** link (as `spi_master_slave`) with a declared sub-tick rate
+    /// in BOTH blocks' `params[2]`. `rate <= 1` is the existing single-rate path.
+    fn spi_master_slave_rate(tx: f64, reply: f64, half: f64, nbits: f64, rate: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 4 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE] = half; // master params[0] = SCLK half-period
+        params[2 * PARAM_STRIDE + 1] = nbits; // master params[1] = bit count
+        params[2 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // master sub-tick rate
+        params[3 * PARAM_STRIDE + 1] = nbits; // slave  params[1] = bit count
+        params[3 * PARAM_STRIDE + BEH_SUBTICK_RATE_SLOT] = rate; // slave sub-tick rate
+        assert!(sim.set_netlist_pefgh(
+            8,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_BEHAVIORAL, ELEM_BEHAVIORAL],
+            &[1, 2, 3, 6],         // a: VCC src, START src, master SCLK=3, slave MISO=6
+            &[0, 0, 4, 7],         // b: src grounds; master MOSI=4, slave RXVALID=7
+            &[0, 0, 5, 0],         // c: master CS=5; slave c unused
+            &[0, 0, 1, 1],         // d: VCC = node 1 (both chips)
+            &[0, 0, 0, 0],         // e: GND = node 0
+            &[0, 0, 6, 3],         // f: master MISO=6, slave SCLK=3
+            &[0, 0, 2, 4],         // g: master START=2, slave MOSI=4
+            &[0, 0, 0, 5],         // h: slave CS=5 (master h unused)
+            &[5.0, 5.0, 1.0, 2.0], // values: VCC, START, master prog 1, slave prog 2
+            &[0.0, 0.0, tx, reply], // aux: master TX word, slave reply word
+            &params,
+        ));
+        sim
+    }
+
+    /// **`subtick_spi_link_fast`** — the master↔slave SPI link from phase 2, with both blocks at
+    /// `params[2] = 8`: the full-duplex byte exchange completes in fewer analog ticks (each block
+    /// runs 8 sub-ticks per analog tick) and the received bytes still match in BOTH directions
+    /// (slave RX == master TX, master shift_in == slave reply).
+    #[test]
+    fn subtick_spi_link_fast() {
+        let tx = 0x39u32; // master → slave
+        let reply = 0xC6u32; // slave → master
+        let (half, nbits) = (2.0, 8.0);
+
+        // Find the analog tick at which the slave's RXVALID first pulses, at a given rate.
+        let rxvalid_tick = |rate: f64| -> Option<usize> {
+            let mut sim = spi_master_slave_rate(tx as f64, reply as f64, half, nbits, rate);
+            for tk in 0..4000 {
+                sim.step();
+                if sim.beh_spi_slave_rxvalid(3) != 0 {
+                    return Some(tk);
+                }
+            }
+            None
+        };
+        let slow = rxvalid_tick(1.0).expect("rate-1 SPI link must complete");
+        let fast = rxvalid_tick(8.0).expect("rate-8 SPI link must complete");
+        assert!(
+            (fast + 1) * 4 < (slow + 1),
+            "rate-8 SPI link must finish in far fewer analog ticks (slow {slow}, fast {fast})"
+        );
+
+        // The fast link still exchanges both bytes correctly.
+        let mut sim = spi_master_slave_rate(tx as f64, reply as f64, half, nbits, 8.0);
+        let mut slave_rxvalid_pulsed = false;
+        for _ in 0..400 {
+            sim.step();
+            if sim.beh_spi_slave_rxvalid(3) != 0 {
+                slave_rxvalid_pulsed = true;
+            }
+        }
+        assert!(slave_rxvalid_pulsed, "rate-8 SPI slave RXVALID must pulse");
+        assert_eq!(
+            sim.beh_spi_slave_rx_word(3),
+            tx,
+            "rate-8 SPI slave must receive the master's byte"
+        );
+        assert_eq!(
+            sim.beh_spi_shift_in(2),
+            reply,
+            "rate-8 SPI master must read the slave's reply (full duplex)"
+        );
+    }
+
+    /// **`subtick_run_is_reproducible`** — a fast-rate circuit run on two fresh `Sim`s produces the
+    /// identical `snapshot_hash` at EVERY analog tick. The sub-tick loop is deterministic float
+    /// arithmetic over structural counts, so the multi-rate path reproduces by construction.
+    #[test]
+    fn subtick_run_is_reproducible() {
+        let build = || uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 16.0);
+        let (mut a, mut b) = (build(), build());
+        assert_eq!(a.subtick_rate, 16, "the fast UART must run at S=16");
+        for tk in 0..400 {
+            a.step();
+            b.step();
+            assert_eq!(
+                a.snapshot_hash(),
+                b.snapshot_hash(),
+                "fast-rate UART diverged at analog tick {tk}"
+            );
+        }
+        // Also a fast SPI link (both programs active, both fast).
+        let build_spi = || spi_master_slave_rate(0x39 as f64, 0xC6 as f64, 2.0, 8.0, 8.0);
+        let (mut c, mut d) = (build_spi(), build_spi());
+        for tk in 0..400 {
+            c.step();
+            d.step();
+            assert_eq!(
+                c.snapshot_hash(),
+                d.snapshot_hash(),
+                "fast-rate SPI link diverged at analog tick {tk}"
+            );
+        }
+    }
+
+    /// **`subtick_rewind_replays`** — run a fast circuit M analog ticks recording the per-tick hash
+    /// sequence; reset to t=0 and re-run; assert the hash is identical at every analog tick. The
+    /// keyframe/rewind contract holds across sub-tick edges because the sub-tick index is transient
+    /// (never hashed) and all fast-domain sequential state (folded each analog-tick boundary) is the
+    /// quantised level / integer state, so a replay lands bit-for-bit even mid-frame.
+    #[test]
+    fn subtick_rewind_replays() {
+        const M: usize = 300;
+        let mut sim = uart_setup_loopback_rate(0x5A as f64, 16.0, 8.0, 16.0);
+        let mut hashes = Vec::with_capacity(M);
+        for _ in 0..M {
+            sim.step();
+            hashes.push(sim.snapshot_hash());
+        }
+        // Rewind to t=0 (reset) and re-simulate forward; every analog-tick hash must match.
+        sim.reset();
+        for (tk, &h) in hashes.iter().enumerate() {
+            sim.step();
+            assert_eq!(
+                sim.snapshot_hash(),
+                h,
+                "fast-rate UART rewind-replay diverged at analog tick {tk}"
+            );
+        }
+    }
+
     // --- Clock-driven switch (PWM) --------------------------------------------
     //
     // The switch (type 6) is a time-varying linear conductance: a pure
@@ -8750,6 +13134,356 @@ mod tests {
         let bad = sim.set_netlist(2, &[ELEM_SWITCH], &[9], &[0], &[0], &[0], &[0.5], &[0.0]);
         assert!(!bad, "out-of-range switch node rejected");
         assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    // --- Gated analog switch / transmission gate (ELEM_ASWITCH = 24) -----------
+    //
+    // The node-controlled cousin of the clock switch: a time-varying LINEAR conductance
+    // between a and b whose on/off comes from a control NODE (read off the committed
+    // previous-tick node_v, a one-tick delay), powered from VCC=d / GND=e (half-rail
+    // threshold, dead below GATE_MIN_RAIL) or — with no power pins — off a fixed control
+    // threshold. R_on = `value` (default ASWITCH_RON). It stays on the linear fast path
+    // (no Newton, no branch unknown, no new hashed state) so the golden is untouched. It is
+    // the switch the sample-and-hold / switched-capacitor / mux / VCO clusters need.
+
+    /// `set_netlist` accepts the analog-switch element type (type 24); a malformed netlist
+    /// containing one still fails safe through the same validation.
+    #[test]
+    fn aswitch_netlist_validates() {
+        let mut sim = Sim::new(1);
+        // a=1, b=2, CTRL=3, VCC=4, GND=0 (a powered five-terminal install).
+        let ok = sim.set_netlist_pe(
+            5,
+            &[ELEM_ASWITCH],
+            &[1],
+            &[2],
+            &[3],
+            &[4],
+            &[0],
+            &[100.0],
+            &[0.0],
+            &[],
+        );
+        assert!(ok, "valid analog-switch netlist installs");
+        assert_eq!(sim.element_count(), 1);
+        assert_eq!(
+            sim.element_at(0).kind,
+            ELEM_ASWITCH,
+            "analog switch stored as type 24"
+        );
+        // Out-of-range control node is still rejected (fail-safe).
+        let bad = sim.set_netlist_pe(
+            5,
+            &[ELEM_ASWITCH],
+            &[1],
+            &[2],
+            &[9],
+            &[4],
+            &[0],
+            &[100.0],
+            &[0.0],
+            &[],
+        );
+        assert!(!bad, "out-of-range CTRL node rejected");
+        assert_eq!(sim.node_voltages().len(), 1, "fell back to ground-only");
+    }
+
+    /// Build a powered analog switch passing a source into a resistive divider, with CTRL held
+    /// at `ctrl_v` and VCC at `rail`. Nodes: 0 = gnd, 1 = source (Vsrc), 2 = switch output / load
+    /// top, 3 = CTRL, 4 = VCC. The switch is a=1↔b=2 (R_on `ron`); a load resistor 2->0 pulls the
+    /// output down when the switch opens. After settling, returns the load-node (2) voltage.
+    fn aswitch_divider(vsrc: f64, ctrl_v: f64, rail: f64, ron: f64, rload: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            5,
+            &[
+                ELEM_VSOURCE,  // source at node 1
+                ELEM_VSOURCE,  // CTRL level at node 3
+                ELEM_VSOURCE,  // VCC rail at node 4
+                ELEM_ASWITCH,  // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_RESISTOR, // load 2->0
+            ],
+            &[1, 3, 4, 1, 2],
+            &[0, 0, 0, 2, 0],
+            &[0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[vsrc, ctrl_v, rail, ron, rload],
+            &[0.0; 5],
+            &[],
+        ));
+        // Purely resistive: the node settles within a couple of ticks (CTRL has a one-tick
+        // delay, so step a handful of times to clear it).
+        for _ in 0..10 {
+            sim.step();
+        }
+        sim.node_voltages()[2]
+    }
+
+    /// Driving CTRL above half-rail closes the switch (the load node rises toward the source,
+    /// a low end-to-end resistance ~R_on); driving CTRL low opens it (the load node decouples
+    /// to ~0 through the pull-down, the source isolated).
+    #[test]
+    fn aswitch_control_opens_and_closes_path() {
+        let vsrc = 5.0;
+        let rail = 5.0;
+        let ron = 100.0;
+        let rload = 100_000.0; // >> R_on, so a closed switch barely drops the signal
+                               // CTRL high (5 V > half of the 5 V rail) → closed → node 2 ≈ source.
+        let closed = aswitch_divider(vsrc, 5.0, rail, ron, rload);
+        // Divider: V2 = vsrc * Rload/(Ron+Rload) ≈ 4.995 V.
+        let expected_closed = vsrc * rload / (ron + rload);
+        assert!(
+            (closed - expected_closed).abs() < 0.05 && closed > 4.9,
+            "CTRL high closes the switch: node rises to ~source ({closed}, want ~{expected_closed})"
+        );
+        // CTRL low (0 V < half-rail) → open → node 2 decoupled to ~0 by the pull-down.
+        let open = aswitch_divider(vsrc, 0.0, rail, ron, rload);
+        assert!(
+            open.abs() < 1e-3,
+            "CTRL low opens the switch: load node decouples to ~0 ({open})"
+        );
+        // The closed-path through-current is the divider current (a real conducting path);
+        // sanity that closing actually conducts and opening does not.
+        assert!(
+            closed > 1000.0 * open + 1.0,
+            "closed conducts far more than open ({closed} vs {open})"
+        );
+    }
+
+    /// The half-rail threshold tracks the actual VCC, not a fixed level: the SAME control
+    /// voltage that closes the switch on a low rail leaves it open on a high rail (control
+    /// below half of the higher rail). This is the powered-gate threshold rule.
+    #[test]
+    fn aswitch_threshold_is_half_the_actual_rail() {
+        let vsrc = 5.0;
+        let ctrl = 3.0;
+        let ron = 100.0;
+        let rload = 100_000.0;
+        // Rail 5 V: half-rail = 2.5 V; CTRL 3 V > 2.5 → closed.
+        let on = aswitch_divider(vsrc, ctrl, 5.0, ron, rload);
+        assert!(on > 4.9, "CTRL 3 V > half of a 5 V rail closes it: {on}");
+        // Rail 8 V: half-rail = 4.0 V; CTRL 3 V < 4.0 → open.
+        let off = aswitch_divider(vsrc, ctrl, 8.0, ron, rload);
+        assert!(
+            off.abs() < 1e-3,
+            "the same CTRL 3 V is below half of an 8 V rail → open: {off}"
+        );
+    }
+
+    /// An unwired VCC (no power pins, but here the rail node floats to ~0) leaves the switch
+    /// DEAD: rail < GATE_MIN_RAIL forces it open regardless of the control level. Proven by
+    /// driving CTRL high while VCC sits at ~0 — the path must stay open.
+    #[test]
+    fn aswitch_unpowered_rail_is_dead() {
+        let vsrc = 5.0;
+        let ctrl = 5.0; // control fully high…
+        let rail = 0.0; // …but VCC at 0 V → rail below GATE_MIN_RAIL → dead.
+        let dead = aswitch_divider(vsrc, ctrl, rail, 100.0, 100_000.0);
+        assert!(
+            dead.abs() < 1e-3,
+            "an unpowered (rail≈0) analog switch is dead even with CTRL high: {dead}"
+        );
+    }
+
+    /// The unpowered FALLBACK (no power pins wired, d == 0 && e == 0): the switch follows a bare
+    /// control level against the fixed ASWITCH_FIXED_THRESH (1.5 V). CTRL above it closes; below
+    /// it opens. Nodes: 0 = gnd, 1 = source, 2 = load top, 3 = CTRL.
+    #[test]
+    fn aswitch_unpowered_fallback_uses_fixed_threshold() {
+        let pass = |ctrl_v: f64| -> f64 {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(
+                4,
+                &[
+                    ELEM_VSOURCE,  // source node 1
+                    ELEM_VSOURCE,  // CTRL node 3
+                    ELEM_ASWITCH,  // a=1, b=2, CTRL=3, no power pins (d=e=0)
+                    ELEM_RESISTOR, // load 2->0
+                ],
+                &[1, 3, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 3, 0], // c = CTRL
+                &[0, 0, 0, 0], // d = 0 (no VCC)  -> unpowered fallback
+                &[5.0, ctrl_v, 100.0, 100_000.0],
+                &[0.0; 4],
+            ));
+            for _ in 0..10 {
+                sim.step();
+            }
+            sim.node_voltages()[2]
+        };
+        // CTRL 3 V > 1.5 V threshold → closed.
+        assert!(
+            pass(3.0) > 4.9,
+            "bare control above 1.5 V closes the switch"
+        );
+        // CTRL 1 V < 1.5 V threshold → open.
+        assert!(
+            pass(1.0).abs() < 1e-3,
+            "bare control below 1.5 V leaves the switch open"
+        );
+    }
+
+    /// The switch follows a CTRL transition with the one-tick control delay (the control is read
+    /// from the COMMITTED previous-tick node_v). A PWM-switch chops the control line: the analog
+    /// path conducts while CTRL is high and opens while it is low, so the output node tracks the
+    /// control square wave (one tick behind), proving the node actually steers the conductance.
+    #[test]
+    fn aswitch_follows_a_control_transition() {
+        // Nodes: 0 gnd, 1 source 5 V, 2 load top, 3 CTRL, 4 VCC 5 V, 5 CTRL rail 5 V.
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,  // source 5 V (node 1)
+                ELEM_VSOURCE,  // VCC 5 V (node 4)
+                ELEM_VSOURCE,  // CTRL rail 5 V (node 5)
+                ELEM_SWITCH,   // chop node 5 onto CTRL (node 3), 50% duty
+                ELEM_RESISTOR, // pull-down on CTRL so it falls between switch windows
+                ELEM_ASWITCH,  // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_RESISTOR, // load 2->0
+            ],
+            &[1, 4, 5, 5, 3, 1, 2],
+            &[0, 0, 0, 3, 0, 2, 0],
+            &[0, 0, 0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[5.0, 5.0, 5.0, 0.5, 1000.0, 100.0, 100_000.0],
+            &[0.0; 7],
+            &[],
+        ));
+        // Over a full PWM period the output must reach both a high (switch closed, CTRL high)
+        // and a low (switch open, CTRL low) extreme — i.e. it tracks the control.
+        let mut saw_high = false;
+        let mut saw_low = false;
+        for _ in 0..(2 * SWITCH_PERIOD_TICKS) {
+            sim.step();
+            let v2 = sim.node_voltages()[2];
+            if v2 > 4.5 {
+                saw_high = true;
+            }
+            if v2.abs() < 0.5 {
+                saw_low = true;
+            }
+        }
+        assert!(
+            saw_high && saw_low,
+            "the analog switch output follows the chopped CTRL (saw_high={saw_high}, saw_low={saw_low})"
+        );
+    }
+
+    /// **Sample-and-hold smoke test (the payoff).** A source → ASWITCH → a capacitor to GND, with
+    /// CTRL chopped by a PWM switch (sample while CTRL high, hold while CTRL low). The cap's R_on·C
+    /// (fast) lets it charge toward the source during each ON window; once CTRL drops, the OPEN
+    /// switch isolates the cap and its backward-Euler companion holds the captured charge — the
+    /// only remaining path is the tiny SWITCH_GOFF leak (τ = C/G_off ≈ 1000 s), negligible over a
+    /// ~50 µs hold window. Proven in one fixed netlist: after the cap has captured ~source, it
+    /// must barely droop across a full OFF window (it holds), the mechanism that unlocks S&H.
+    #[test]
+    fn aswitch_sample_and_hold_captures_and_holds() {
+        // Nodes: 0 gnd, 1 source 4 V, 2 cap top (held node), 3 CTRL, 4 VCC 5 V, 5 CTRL rail 5 V.
+        // R_on 1 kΩ into C 0.1 µF → τ = 100 µs; the PWM ON window is 25 ticks = 50 µs, so the cap
+        // tops up toward the source each sample, then holds through the OFF window.
+        let vsrc = 4.0;
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_pe(
+            6,
+            &[
+                ELEM_VSOURCE,   // source 4 V (node 1)
+                ELEM_VSOURCE,   // VCC 5 V (node 4)
+                ELEM_VSOURCE,   // CTRL rail 5 V (node 5)
+                ELEM_SWITCH,    // chop node 5 onto CTRL (node 3), 50% duty
+                ELEM_RESISTOR,  // CTRL pull-down
+                ELEM_ASWITCH,   // a=1, b=2, CTRL=3, VCC=4, GND=0
+                ELEM_CAPACITOR, // hold cap 2->0
+            ],
+            &[1, 4, 5, 5, 3, 1, 2],
+            &[0, 0, 0, 3, 0, 2, 0],
+            &[0, 0, 0, 0, 0, 3, 0], // ASWITCH c = CTRL = node 3
+            &[0, 0, 0, 0, 0, 4, 0], // ASWITCH d = VCC = node 4
+            &[0, 0, 0, 0, 0, 0, 0], // ASWITCH e = GND = node 0
+            &[vsrc, 5.0, 5.0, 0.5, 1000.0, 1_000.0, 0.1e-6],
+            &[0.0; 7],
+            &[],
+        ));
+        // Settle several PWM periods so the cap has captured the source on the ON windows.
+        for _ in 0..20 * SWITCH_PERIOD_TICKS {
+            sim.step();
+        }
+        // The captured value must be near the source (the sample worked).
+        let captured = sim.node_voltages()[2];
+        assert!(
+            captured > 0.9 * vsrc,
+            "S&H captures ~the source on the sample window: {captured} (want > {})",
+            0.9 * vsrc
+        );
+        // Find an OFF window (switch open: CTRL low) and confirm the held node barely droops
+        // across it — the isolation/hold. Walk one full period sampling the cap, and over the
+        // stretch where CTRL is low the cap must stay essentially flat.
+        // CTRL (node 3) is the PWM output; when it is low (< 0.5 V) the ASWITCH is open.
+        let mut hold_start: Option<f64> = None;
+        let mut max_droop = 0.0f64;
+        for _ in 0..SWITCH_PERIOD_TICKS {
+            sim.step();
+            let ctrl = sim.node_voltages()[3];
+            let vcap = sim.node_voltages()[2];
+            if ctrl < 0.5 {
+                // switch open → holding
+                match hold_start {
+                    None => hold_start = Some(vcap),
+                    Some(v0) => max_droop = max_droop.max((v0 - vcap).abs()),
+                }
+            }
+        }
+        assert!(
+            hold_start.is_some(),
+            "expected an OFF (hold) window within one PWM period"
+        );
+        assert!(
+            max_droop < 0.02,
+            "the open switch holds the cap (max droop across the hold window {max_droop} V)"
+        );
+    }
+
+    /// Replay invariant for an analog-switch circuit: the switch state is a deterministic
+    /// function of the committed node voltages (no new hashed state), so a fixed netlist stepped
+    /// a fixed number of times reproduces its snapshot-hash stream exactly. The ASWITCH analogue
+    /// of `switch_run_is_reproducible`, with the mechanism ACTIVE (a chopped control + an S&H cap).
+    #[test]
+    fn aswitch_run_is_reproducible() {
+        let run = || {
+            // source → ASWITCH (gated by a PWM-chopped control) → hold cap; the control is
+            // exercised so the switch genuinely toggles across the run.
+            let mut sim = Sim::new(7);
+            assert!(sim.set_netlist_pe(
+                6,
+                &[
+                    ELEM_VSOURCE,   // source (node 1)
+                    ELEM_VSOURCE,   // VCC (node 4)
+                    ELEM_VSOURCE,   // CTRL rail (node 5)
+                    ELEM_SWITCH,    // chop node 5 onto CTRL (node 3)
+                    ELEM_RESISTOR,  // CTRL pull-down
+                    ELEM_ASWITCH,   // a=1, b=2, CTRL=3, VCC=4, GND=0
+                    ELEM_CAPACITOR, // hold cap 2->0
+                ],
+                &[1, 4, 5, 5, 3, 1, 2],
+                &[0, 0, 0, 3, 0, 2, 0],
+                &[0, 0, 0, 0, 0, 3, 0],
+                &[0, 0, 0, 0, 0, 4, 0],
+                &[0, 0, 0, 0, 0, 0, 0],
+                &[4.0, 5.0, 5.0, 0.5, 1000.0, 1_000.0, 1.0e-6],
+                &[0.0; 7],
+                &[],
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "analog-switch circuit must reproduce exactly");
     }
 
     // --- Sinusoidal AC voltage source -----------------------------------------

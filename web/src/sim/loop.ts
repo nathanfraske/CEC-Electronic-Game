@@ -64,7 +64,7 @@ export interface SimHandle {
     aux?: Float64Array,
     d?: Uint32Array,
     /**
-     * Optional per-device parameter block — `PARAM_STRIDE` (4) `f64`s per element, or
+     * Optional per-device parameter block — `PARAM_STRIDE` (8) `f64`s per element, or
      * omitted/empty for all model defaults (identical behaviour to today). Lets the save
      * format carry per-device parameters (op-amp GBW now; MOSFET/BJT/diode params as wired).
      */
@@ -75,6 +75,16 @@ export interface SimHandle {
      * 4-terminal shape). Trails `params` so existing callers stay source-compatible.
      */
     e?: Uint32Array,
+    /**
+     * Optional **sixth/seventh/eighth terminals** per element (`f`/`g`/`h`) — the wire-format
+     * provisioning from ADR 0002. No current part uses them, so they are normally omitted (or
+     * all-zero), meaning every such terminal is ground. Each must be one node index per element
+     * when supplied. Trails `e` so existing callers stay source-compatible; supplying any
+     * non-ground entry routes the install through the full `set_netlist_pefgh` boundary.
+     */
+    f?: Uint32Array,
+    g?: Uint32Array,
+    h?: Uint32Array,
   ): boolean;
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
@@ -112,7 +122,21 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       acFields: sim.ac_fields(),
     }),
     protocolVersion: () => sim.protocol_version(),
-    setNetlist: (nodeCount, types, a, b, values, c, aux, d, params, e) => {
+    setNetlist: (
+      nodeCount,
+      types,
+      a,
+      b,
+      values,
+      c,
+      aux,
+      d,
+      params,
+      e,
+      f,
+      g,
+      h,
+    ) => {
       // Default the control array `c` and the fourth terminal `d` to all-ground and
       // the aux scalars to all-zero when a caller omits them, then hand the wasm
       // boundary its native a,b,c,d,values,aux order. The core ignores c/d for
@@ -121,19 +145,49 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       const cc = c ?? new Uint32Array(types.length);
       const dd = d ?? new Uint32Array(types.length);
       const ax = aux ?? new Float64Array(types.length);
-      // Route to the full boundary (`set_netlist_pe`) when either a param block or a
-      // genuine fifth terminal is supplied; pass the missing one as empty (= all defaults
-      // / all ground). `e` is only "genuine" when it is well-formed (one entry per
-      // element) AND carries a non-ground GND pin: a gate whose GND is the common ground
-      // (the usual case) leaves `e` all-zero and rides its VCC on `d`, so the ordinary
-      // boundary already handles it. Requiring the exact length also fails safe — a
-      // malformed `e` can never make the whole install reject (the circuit still runs).
+      // A terminal array is "genuine" only when it is well-formed (one entry per element)
+      // AND carries at least one non-ground node — an all-ground array changes nothing, so
+      // the narrower boundary already handles it. Requiring the exact length also fails safe:
+      // a malformed terminal array can never make the whole install reject (the circuit still
+      // runs through the simpler path).
+      const genuine = (arr: Uint32Array | undefined): arr is Uint32Array =>
+        arr != null && arr.length === types.length && arr.some((x) => x !== 0);
       const hasParams = params != null && params.length > 0;
-      const hasE =
-        e != null && e.length === types.length && e.some((x) => x !== 0);
+      const hasE = genuine(e);
+      const hasF = genuine(f);
+      const hasG = genuine(g);
+      const hasH = genuine(h);
+      const pp = params ?? new Float64Array(0);
+      // Route to the fully-provisioned 8-terminal boundary (`set_netlist_pefgh`) when any of
+      // the sixth/seventh/eighth terminals is genuinely wired. No current part populates
+      // f/g/h (they ground out, so this path is dormant today), but the plumbing is exercised
+      // and ready for the first 6/7/8-terminal part. A non-genuine terminal passes empty
+      // (= all ground). `e` must be passed whenever it is genuine even on this path.
+      if (hasF || hasG || hasH) {
+        const ee = hasE && e != null ? e : new Uint32Array(0);
+        const ff = hasF ? f : new Uint32Array(0);
+        const gg = hasG ? g : new Uint32Array(0);
+        const hh = hasH ? h : new Uint32Array(0);
+        return sim.set_netlist_pefgh(
+          nodeCount,
+          types,
+          a,
+          b,
+          cc,
+          dd,
+          ee,
+          ff,
+          gg,
+          hh,
+          values,
+          ax,
+          pp,
+        );
+      }
+      // Otherwise route to `set_netlist_pe` when a param block or a genuine fifth terminal is
+      // supplied (the missing one passed empty), else the plain 4-terminal install.
       if (hasParams || hasE) {
         const ee = hasE && e != null ? e : new Uint32Array(0);
-        const pp = params ?? new Float64Array(0);
         return sim.set_netlist_pe(
           nodeCount,
           types,

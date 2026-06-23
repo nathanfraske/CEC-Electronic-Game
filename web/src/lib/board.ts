@@ -47,6 +47,8 @@ import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
 import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
 import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
+import { drawCompositeInternals } from "./internalsView";
+import type { CompositeInternals } from "./netlist";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -82,6 +84,9 @@ const TIER_ZOOM = 2.2;
 /** Deeper still: the tier illustration also gets its simple pinout labels (the
  * "full detail" LOD). Below this you get the cleaner label-free illustration. */
 const DETAIL_ZOOM = 4.5;
+/** Zoom past which a sealed composite IC, under the REALITY lens, opens to its live internal
+ * sub-circuit (the "zoom-to-open" mini-mode, ADR 0005) instead of the black-box symbol. */
+const INTERNALS_ZOOM = 2.5;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
@@ -210,12 +215,19 @@ const BAR_HALF = 18; // half-height (px): a full unipolar bar is ~2× this tall
 const BAR_W = 7; // bar width (px)
 const BAR_SEGS = 8; // number of stacked segments (the "LED" look)
 const BAR_SEG_GAP = 1; // gap between lit segments (px)
-const BAR_OFFSET = 16; // px the bar sits to the side of its anchor (clear of the conduit)
-// Signed volts→pixels with soft saturation: a reference voltage maps to a set fraction of
-// the half-height, and everything beyond compresses smoothly so a 5 V and a 230 V net both
-// stay on-screen. Mirrors the `saturate` curve the belt thickness uses.
-const BAR_V_REF = 12; // ~one rail (+12 V) sits at BAR_V_FRAC of the half-height
-const BAR_V_FRAC = 0.7; // where BAR_V_REF lands on the bar (70% up)
+// Placement: the gauge taps off the pipe along a short stub, then the column extends
+// outward. The collision box is the column's reach plus the stub plus a little padding;
+// if an UP gauge would hit a part or another pipe we flip it DOWN, and failing that slide
+// the anchor along the net's route (these fractions of the route length, each side of the
+// midpoint) until an up- or down-gauge box is clear.
+const GAUGE_STUB = 7; // px stub from the pipe to the gauge base (reads as a tap)
+const GAUGE_BOX_PAD = 4; // px padding around the collision box (breathing room)
+const GAUGE_BOX_W = 13; // px collision-box half-width (covers SP_W/BAR_W + the "~"/surface)
+const GAUGE_NUDGE_FRACS = [0.18, -0.18, 0.32, -0.32, 0.42, -0.42]; // along-route slides tried
+const GAUGE_PIPE_CLEAR = 5; // px: a route point this close to the box counts as a hit
+// Magnitude is shown as a fraction of the CIRCUIT's max rail (|level| / vMax), so the gauges
+// track the closed circuit's actual range — see `circuitVMax`. (The earlier fixed-reference
+// soft-saturation volts→px flattened every low-voltage circuit; it was replaced by this.)
 // A net counts as "appreciable swing" (envelope band + "~" AC badge) when its peak-to-peak
 // exceeds this fraction of the bar's full scale; below it the net reads as flat DC.
 const BAR_SWING_EPS = 0.02;
@@ -229,18 +241,18 @@ const BAR_OFF_COLOR = 0x6b6488; // unlit track / notch colour (the rail muted-vi
 const BAR_NOTCH_COLOR = 0xe9e4ff; // the always-drawn zero-notch line
 
 // --- analogy water standpipe voltage gauge -----------------------------------
-// The analogy twin of the reality LED bar: one thin glass/steel STANDPIPE per NET, drawn
-// at the same per-net anchor in the ANALOGY lens only. HEIGHT = water pressure = VOLTAGE
-// (via `voltsToPx`, reusing `BAR_HALF` so the standpipe and the bar agree on volts→px). A
-// horizontal ground line at the anchor is the zero level; a positive rail fills UP, a
-// negative rail drains into a SUMP below the line. The calm fill rises to the RMS level
-// (the effective pressure — matches the bar + the inspector number) with a bright surface
-// band at the waterline; a translucent "splash zone" (the tide / wet-mark) reaches on up to
-// the peak (Vmax) and down to Vmin in the sump. DC ⇒ no wet-mark, just the calm level.
+// The analogy twin of the reality LED bar: one thin glass/steel STANDPIPE per NET, drawn at
+// the same placement-aware per-net anchor (and on the same reach, BAR_HALF→H) in the ANALOGY
+// lens only, so the two lenses agree on size + magnitude. HEIGHT = water pressure = VOLTAGE,
+// scaled to the circuit max (`circuitVMax`). A ground line at the base is the zero level; the
+// column fills OUTWARD along the tap normal (the rail), draining into a SUMP back toward the
+// pipe for a bipolar AC net. The calm fill rises to the RMS level (the effective pressure —
+// matches the bar + the inspector number) with a bright surface band at the waterline; a
+// translucent "splash zone" (the tide / wet-mark) reaches on to the peak (Vmax) and into the
+// sump to Vmin. DC ⇒ no wet-mark, just the calm level.
 const SP_W = 9; // standpipe inner bore width (px)
 const SP_WALL_W = 1.3; // housing wall stroke width (px)
 const SP_WALL_ALPHA = 0.55; // housing wall (PIPE_WALL) alpha
-const SP_RADIUS = 2; // small radius on the glass housing
 const SP_WATER_ALPHA = 0.92; // calm RMS water fill
 const SP_WET_ALPHA = 0.26; // translucent splash/tide band (peak envelope)
 const SP_SURFACE_ALPHA = 0.95; // the bright surface band at the calm waterline
@@ -311,6 +323,10 @@ export interface SelectedPart {
   /** The electronic load's dynamic step frequency in Hz (0 = static; > 0 steps base→peak current).
    * Undefined → static. Only kind `"LOAD"` in CC mode uses it. */
   loadHz?: number;
+  /** A behavioral block's data word: the LUT's 16-bit truth table or a SPI/UART data word
+   * (→ the behavioral element's aux). Undefined → the kind's default. Only the behavioral
+   * kinds (`"LUT"`, `"SPIM"`, `"SPIS"`, `"UART"`) use it. */
+  word?: number;
 }
 
 /** A relocatable copy of a board fragment: the selected components (with their
@@ -387,6 +403,9 @@ export interface BoardCallbacks {
       id: number | null;
       at: Endpoint;
       initial: string;
+      /** The label's pinned colour (PIXI hex int) when editing one that has one, so
+       * the HUD swatch shows the current value; null for a new label or an unpinned one. */
+      initialColor: number | null;
       rect: AnchorRect;
     } | null,
   ) => void;
@@ -483,6 +502,15 @@ export class Board {
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
   private netNames = new Map<number, string>();
+  // Composite-IC internal topology (component id → its sub-elements + node indices) from the
+  // netlist, so a sealed chip can open to its live sub-circuit when zoomed in under the reality
+  // lens (ADR 0005). Refreshed on rebuild (setCompositeInternals); render-only, never hashed.
+  private compositeInternals?: Map<number, CompositeInternals>;
+  // Per-node pinned colour overrides (node index → PIXI hex int) from the net
+  // labels' `color`. When a node is present here the renderer paints its whole net
+  // this colour instead of the voltage colour. Refreshed on rebuild (setNodeColors);
+  // honoured at every colour choke-point via nodeColor/endpointColor. Render-only.
+  private nodeColorOverrides = new Map<number, number>();
 
   private w = 0;
   private h = 0;
@@ -1156,6 +1184,20 @@ export class Board {
     this.netNames = map ? new Map(map) : new Map();
   }
 
+  /** Install the composite-IC internal topology (component id → {@link CompositeInternals}) from
+   * the netlist, so a sealed chip can open to its live sub-circuit when zoomed in (ADR 0005).
+   * Refreshed whenever the netlist rebuilds; render-only. */
+  setCompositeInternals(map: Map<number, CompositeInternals> | null): void {
+    this.compositeInternals = map ?? undefined;
+  }
+
+  /** Install the per-node colour overrides (node index → PIXI hex int) from the
+   * netlist's labelled-net colours, so a pinned net paints its chosen colour
+   * instead of its voltage colour. Refreshed whenever the netlist rebuilds. */
+  setNodeColors(map: Map<number, number> | null): void {
+    this.nodeColorOverrides = map ? new Map(map) : new Map();
+  }
+
   /**
    * Drop the scope's recorded sample history so the trace starts fresh. Called
    * whenever the circuit actually changes — an example loaded, the board cleared, or
@@ -1631,6 +1673,8 @@ export class Board {
         this.selected.has(id),
         effLens,
         this.world.scale.x,
+        this.compositeInternals?.get(id),
+        snap.state,
       );
     }
 
@@ -1932,6 +1976,7 @@ export class Board {
           duty: c.duty,
           mode: c.mode,
           loadHz: c.loadHz,
+          word: c.word,
         };
     }
     this.cb.onSelect?.({
@@ -2119,6 +2164,22 @@ export class Board {
     this.emitSelect(); // refresh the inspector's displayed step frequency
   }
 
+  /**
+   * Set a behavioral block's **data word** (the LUT's 16-bit truth table, or a SPI/UART data
+   * word) from the inspector. Written into the behavioral element's `aux` by {@link buildNetlist}
+   * (folded into the netlist signature, so the sim reinstalls), so this rebuilds the netlist.
+   * No-op if unchanged.
+   */
+  setComponentWord(id: number, word: number): void {
+    const c = this.graph.components.get(id);
+    const next = Math.round(word);
+    if (!c || c.word === next) return;
+    this.pushUndo(this.graph.serialize());
+    c.word = next;
+    this.cb.onChange?.(this.graph);
+    this.emitSelect(); // refresh the inspector's displayed word
+  }
+
   /** Re-emit the current graph through `onChange` without any edit — used when the
    * Ideal/Real fidelity mode flips, which recompiles the netlist (resistor tolerances
    * appear/vanish, etc.) even though the board itself is unchanged. */
@@ -2176,13 +2237,15 @@ export class Board {
   }
 
   /**
-   * Commit the open net-label editor with `name` (from the HUD input). For a new
-   * label (pending id null) it adds one at the pending endpoint; for an existing
-   * one it renames it (an empty name removes it — see {@link BoardGraph}). No-op if
-   * nothing meaningful changed (e.g. an empty name on a not-yet-created label), so
-   * a stray blur doesn't push an empty undo. Closes the editor either way.
+   * Commit the open net-label editor with `name` (from the HUD input) and an optional
+   * pinned net `color` (a PIXI hex int; `undefined` ⇒ "Auto", the voltage colour). For
+   * a new label (pending id null) it adds one at the pending endpoint carrying the
+   * colour; for an existing one it renames it (an empty name removes it — see
+   * {@link BoardGraph}) and updates its colour. No-op if nothing meaningful changed
+   * (name AND colour unchanged, or an empty name on a not-yet-created label), so a
+   * stray blur doesn't push an empty undo. Closes the editor either way.
    */
-  commitLabel(name: string): void {
+  commitLabel(name: string, color?: number): void {
     const pending = this.pendingLabel;
     this.endLabelEdit();
     if (!pending) return;
@@ -2190,15 +2253,23 @@ export class Board {
     if (pending.id === null) {
       if (!trimmed) return; // nothing to add (empty name on a not-yet-created label)
       this.pushUndo(this.graph.serialize());
-      const l = this.graph.addNetLabel(pending.at, trimmed, pending.pos);
+      const l = this.graph.addNetLabel(pending.at, trimmed, pending.pos, color);
       this.redrawWires();
       if (l) this.selectLabel(l.id, false);
       this.cb.onChange?.(this.graph);
     } else {
       const existing = this.graph.netLabels.get(pending.id);
-      if (existing && existing.name === trimmed) return; // unchanged
+      // Unchanged ⇒ skip the undo entry: both the name and the pinned colour match.
+      if (existing && existing.name === trimmed && existing.color === color) {
+        return;
+      }
       this.pushUndo(this.graph.serialize());
       this.graph.renameNetLabel(pending.id, trimmed);
+      // renameNetLabel removes the label when the name is empty; only recolour a
+      // label that still exists (a non-empty name).
+      if (this.graph.netLabels.has(pending.id)) {
+        this.graph.setNetLabelColor(pending.id, color);
+      }
       this.redrawWires();
       this.cb.onChange?.(this.graph);
     }
@@ -2247,6 +2318,7 @@ export class Board {
       id: existing?.id ?? null,
       at: { ...at },
       initial: existing?.name ?? "",
+      initialColor: existing?.color ?? null,
       rect,
     });
   }
@@ -2406,11 +2478,28 @@ export class Board {
     return (this.nodeVmean[node] ?? 0) >= 0 ? rms : -rms;
   }
 
-  /** The colour-voltage ({@link nodeColorVoltage}) of the net an endpoint sits on, or `null`
-   * for an unconnected endpoint — the colour twin of {@link pinVoltage}. */
-  private colorVoltage(ep: Endpoint): number | null {
+  /**
+   * The display colour of a net node: its pinned override (a labelled net's `color`)
+   * when set, else its rail-identity voltage colour ({@link nodeColorVoltage} →
+   * {@link voltageColor}). The single colour choke-point — every wire/gauge/junction/
+   * label colour routes through here (or {@link endpointColor}) so the override is
+   * honoured in exactly one place. Magnitude/voltage logic at the call sites is
+   * unaffected; only the hue is overridden.
+   */
+  private nodeColor(node: number): number {
+    const ov = this.nodeColorOverrides.get(node);
+    return ov ?? voltageColor(this.nodeColorVoltage(node));
+  }
+
+  /**
+   * The display colour of the net an endpoint sits on — {@link nodeColor} of its
+   * resolved node, or {@link PALETTE.cyan} for an unconnected endpoint (matching the
+   * renderer's prior null-net default at every colour site). The colour twin of
+   * {@link pinVoltage}.
+   */
+  private endpointColor(ep: Endpoint): number {
     const node = this.endpointNode(ep);
-    return node === null ? null : this.nodeColorVoltage(node);
+    return node === null ? PALETTE.cyan : this.nodeColor(node);
   }
 
   private pinNode(ref: PinRef): number | null {
@@ -3751,8 +3840,10 @@ export class Board {
           });
         const node = this.endpointNode(w.from);
         nets.set(w.id, node);
-        const nv = node === null ? null : this.nodeColorVoltage(node);
-        wireColor.set(w.id, nv === null ? PALETTE.cyan : voltageColor(nv));
+        wireColor.set(
+          w.id,
+          node === null ? PALETTE.cyan : this.nodeColor(node),
+        );
       }
       nudgeParallel(condRoutes);
       // Follow-pass: each junction's shift = the perpendicular offset its runs picked up
@@ -3828,8 +3919,8 @@ export class Board {
       }
       // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the
       // instantaneous value — steady on AC at every speed, so the hue never strobes 0↔peak.
-      const cv = this.colorVoltage(w.from);
-      const color = cv === null ? PALETTE.cyan : voltageColor(cv);
+      // A pinned net-label colour overrides this (endpointColor); else it's the rail hue.
+      const color = this.endpointColor(w.from);
       // The INSTANTANEOUS net voltage stays the energy-flow direction (the power v·i sign that
       // sloshes the energy belt) — that reversal SHOULD track the live cycle, unlike the hue.
       const v = this.pinVoltage(w.from);
@@ -4057,21 +4148,30 @@ export class Board {
   }
 
   /**
-   * One representative gauge anchor per NET — the single source of truth shared by the
-   * reality LED bar ({@link drawNetBars}) and the analogy water standpipe
-   * ({@link drawNetStandpipes}) so the two lenses agree on where a net's gauge sits.
-   * Wires are grouped by node; each net's longest drawn conduit route wins, and the anchor
-   * is that route's midpoint plus the perpendicular **unit normal** (`nx`,`ny`) the caller
-   * offsets along to clear the pipe. The ground net (node 0) and unconnected wires (null)
-   * get no gauge.
+   * One representative, **placement-aware** gauge anchor per NET — the single source of
+   * truth shared by the reality LED bar ({@link drawNetBars}) and the analogy water
+   * standpipe ({@link drawNetStandpipes}) so the two lenses agree on where a net's gauge
+   * sits AND on which way it branches. Wires are grouped by node; each net's longest drawn
+   * conduit route wins. The gauge taps off the pipe: from the tap point `(tx,ty)` a short
+   * stub runs along the **outward normal** `(ox,oy)` to the gauge **base** `(bx,by)`, where
+   * the column extends a further `reach` px. The normal defaults to screen-UP and is flipped
+   * DOWN — or the tap slid along the route — when an upward box would clip a placed part or
+   * another wire's pipe (see {@link gaugeBoxClear}). Ground (node 0) IS gauged — it reads
+   * empty (0 V, the zero reference made visible); only unconnected wires (null) get no gauge.
+   *
+   * @param reach the column reach (px) past the base — the height the collision box must clear.
    */
   private netGaugeAnchors(
     nets: Map<number, number | null>,
     condRoutes: Map<number, Point[]>,
-  ): Map<number, { x: number; y: number; nx: number; ny: number }> {
+    reach: number,
+  ): Map<number, GaugeAnchor> {
     const longest = new Map<number, { route: Point[]; len: number }>();
     for (const [wid, node] of nets) {
-      if (node === null || node <= 0) continue;
+      // Include ground (node 0): it gets an EMPTY gauge (0 V → a drained standpipe / all-off
+      // bar), the zero reference made visible — the user asked for it explicitly. Only null
+      // (unconnected) and any negative sentinel are skipped.
+      if (node === null || node < 0) continue;
       const route = condRoutes.get(wid);
       if (!route || route.length < 2) continue;
       const len = routeLength(route);
@@ -4079,48 +4179,161 @@ export class Board {
       const cur = longest.get(node);
       if (!cur || len > cur.len) longest.set(node, { route, len });
     }
-    const anchors = new Map<
-      number,
-      { x: number; y: number; nx: number; ny: number }
-    >();
+
+    // Static obstacles, gathered once: every placed part's padded footprint box, and the
+    // OTHER wires' drawn routes (a gauge may sit on its own pipe but must clear the rest).
+    const partBoxes: Rectangle[] = [];
+    for (const c of this.graph.components.values()) {
+      partBoxes.push(this.componentBox(c));
+    }
+    const allRoutes = [...condRoutes.values()].filter((r) => r.length >= 2);
+
+    const anchors = new Map<number, GaugeAnchor>();
     for (const [node, best] of longest) {
-      const s = sampleRouteAt(best.route, best.len / 2);
-      // Perpendicular unit normal to the route at the midpoint (the side the gauge offsets to).
-      anchors.set(node, { x: s.x, y: s.y, nx: -s.dy, ny: s.dx });
+      // Try the midpoint first, then slide along the route; at each spot prefer UP then DOWN.
+      const ownRoute = best.route;
+      const fracs = [0.5, ...GAUGE_NUDGE_FRACS.map((f) => 0.5 + f)];
+      let chosen: GaugeAnchor | null = null;
+      let fallback: GaugeAnchor | null = null;
+      for (const f of fracs) {
+        const s = sampleRouteAt(
+          ownRoute,
+          best.len * Math.min(0.95, Math.max(0.05, f)),
+        );
+        // Perpendicular unit normal to the route here; "up" is whichever sense points −y.
+        let nx = -s.dy;
+        let ny = s.dx;
+        if (ny > 0) {
+          nx = -nx;
+          ny = -ny; // orient the primary candidate toward screen-up
+        }
+        for (const sign of [1, -1] as const) {
+          const ox = nx * sign;
+          const oy = ny * sign;
+          const cand = {
+            tx: s.x,
+            ty: s.y,
+            bx: s.x + ox * GAUGE_STUB,
+            by: s.y + oy * GAUGE_STUB,
+            ox,
+            oy,
+          };
+          // Keep the very first candidate as the least-bad fallback (midpoint, up).
+          fallback ??= cand;
+          if (this.gaugeBoxClear(cand, reach, ownRoute, partBoxes, allRoutes)) {
+            chosen = cand;
+            break;
+          }
+        }
+        if (chosen) break;
+      }
+      anchors.set(node, chosen ?? fallback!);
     }
     return anchors;
   }
 
   /**
+   * Cheap collision heuristic for a placement-aware gauge: is the gauge's world-space box —
+   * the stub + column reaching `reach` px out from the base along the outward normal, padded,
+   * `GAUGE_BOX_W` wide each side — clear of every placed part's footprint and of every drawn
+   * pipe **except its own**? Parts test as AABB overlap; pipes test as a sampled point-to-
+   * segment distance under {@link GAUGE_PIPE_CLEAR}. Correctness over completeness — these are
+   * small teaching boards, so a slightly conservative box is fine.
+   */
+  private gaugeBoxClear(
+    a: GaugeAnchor,
+    reach: number,
+    ownRoute: Point[],
+    partBoxes: Rectangle[],
+    allRoutes: Point[][],
+  ): boolean {
+    // Box spans from the tap (so the stub is covered) out to the column tip.
+    const tipX = a.bx + a.ox * reach;
+    const tipY = a.by + a.oy * reach;
+    const minX = Math.min(a.tx, tipX) - GAUGE_BOX_W - GAUGE_BOX_PAD;
+    const maxX = Math.max(a.tx, tipX) + GAUGE_BOX_W + GAUGE_BOX_PAD;
+    const minY = Math.min(a.ty, tipY) - GAUGE_BOX_W - GAUGE_BOX_PAD;
+    const maxY = Math.max(a.ty, tipY) + GAUGE_BOX_W + GAUGE_BOX_PAD;
+    for (const r of partBoxes) {
+      if (
+        minX < r.x + r.width &&
+        maxX > r.x &&
+        minY < r.y + r.height &&
+        maxY > r.y
+      ) {
+        return false;
+      }
+    }
+    // Pipe clearance: sample the box's centre line (base→tip) and reject if any sample sits
+    // within GAUGE_PIPE_CLEAR + half-width of a foreign route segment. Skip the own route.
+    const clr = GAUGE_PIPE_CLEAR + GAUGE_BOX_W;
+    const N = 5;
+    for (const route of allRoutes) {
+      if (route === ownRoute) continue;
+      for (let i = 0; i <= N; i++) {
+        const t = i / N;
+        const sx = a.bx + a.ox * reach * t;
+        const sy = a.by + a.oy * reach * t;
+        for (let j = 0; j + 1 < route.length; j++) {
+          const p0 = route[j]!;
+          const p1 = route[j + 1]!;
+          if (distToSegment(sx, sy, p0.x, p0.y, p1.x, p1.y) < clr) {
+            return false;
+          }
+        }
+      }
+    }
+    return true;
+  }
+
+  /**
    * Reality-lens pass: one segmented **LED voltage bar-gauge** per NET — the pre-attentive
    * MAGNITUDE channel for voltage (the rail-identity COLOUR already rides the conduit). Nets
-   * are grouped from the wire→node map; the bar anchors at the midpoint of the net's longest
-   * drawn conduit route, offset to the side so it stays clear of the pipe. The solid lit
-   * segments read RMS (a per-frame scalar, so it never strobes on AC); a translucent envelope
-   * band extends to the peak swing; a net that swings through ground is drawn centre-zero
-   * (the geometry itself signals bipolar AC). DC is the swing→0 limit of the same path.
+   * are grouped from the wire→node map; the bar taps off the net's longest drawn conduit
+   * route via a short stub at its placement-aware anchor ({@link netGaugeAnchors}), branching
+   * up or down to stay clear of parts + other pipes. Fills are a **fraction of the circuit's
+   * max rail** ({@link circuitVMax}) — the hottest net fills the whole bar, ground reads
+   * empty — so the gauges actually differ across a circuit. The solid lit segments read RMS
+   * (a per-frame scalar, so it never strobes on AC); a translucent envelope band extends to
+   * the peak swing; a net that swings through ground is drawn centre-zero (the geometry
+   * itself signals bipolar AC). DC is the swing→0 limit of the same path.
    */
   private drawNetBars(
     g: Graphics,
     nets: Map<number, number | null>,
     condRoutes: Map<number, Point[]>,
   ): void {
-    const anchors = this.netGaugeAnchors(nets, condRoutes);
+    const H = 2 * BAR_HALF; // full container reach (px) from the base outward
+    const anchors = this.netGaugeAnchors(nets, condRoutes, H);
+    // Scale every bar to the CIRCUIT's max rail magnitude so the fills actually differ: the
+    // hottest rail fills the whole bar, ground reads empty, the rest are proportional.
+    const vMax = this.circuitVMax(anchors.keys());
 
-    const H = 2 * BAR_HALF; // full container height (px)
-    const segH = H / BAR_SEGS; // one segment slot's height
+    const segH = H / BAR_SEGS; // one segment slot's height (along the column)
     const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
 
     for (const [node, a] of anchors) {
-      // Offset perpendicular to the route at the midpoint so the bar never sits on the pipe.
-      const bx = a.x + a.nx * BAR_OFFSET;
-      const by = a.y + a.ny * BAR_OFFSET;
+      // The column runs from the base (a.bx,a.by — past the stub) OUTWARD along (a.ox,a.oy).
+      // We lay it out along that axis as a signed coordinate `u` (0 at base, +H at the tip),
+      // then map every (x,y) back through the normal. The cross axis is the perpendicular.
+      const ux = a.ox;
+      const uy = a.oy;
+      const px = -uy; // unit cross axis (bar width direction)
+      const py = ux;
+      // Map a column-space point (along-axis u from base, cross-axis c from centre) to world.
+      const pt = (u: number, c: number) => ({
+        x: a.bx + ux * u + px * c,
+        y: a.by + uy * u + py * c,
+      });
 
       const { vrms, vmean, vmin, vmax } = this.netVStats(node);
-      const color = voltageColor(this.nodeColorVoltage(node));
+      // Tint by the net's pinned colour override when set, else the rail voltage
+      // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
+      const color = this.nodeColor(node);
 
       // Bipolar AC ⇒ centre-zero: swings through ground AND the DC mean is small versus the
-      // swing. Otherwise unipolar, growing from a baseline notch in the mean's direction.
+      // swing. Otherwise unipolar, growing from the base outward (the rail-identity colour
+      // already carries the sign, so magnitude simply grows outward).
       const halfPtp = (vmax - vmin) / 2;
       const bipolar =
         vmin < 0 &&
@@ -4128,53 +4341,50 @@ export class Board {
         Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
       // Significant swing (envelope band + "~" badge): peak-to-peak past a small fraction of
       // full scale, and only when a batch ran (a frozen frame has no real swing to show).
-      const ptpFrac = (voltsToPx(vmax, H) - voltsToPx(vmin, H)) / H;
+      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
       const swinging = live && ptpFrac > BAR_SWING_EPS;
 
-      // Per-side fill thresholds (px magnitude from the zero notch). `span` sets the
-      // saturation asymptote: a centre-zero bar gets half the height each way; a unipolar
-      // bar grows over the full height. RMS is unsigned (symmetric in the bipolar case).
-      let zeroY: number; // screen-y of the zero notch
-      let solidUp = 0,
-        solidDn = 0,
-        envUp = 0,
-        envDn = 0; // px extents up / down from the notch
+      // Fill fractions of vMax → px. A net AT the circuit max fills the whole reach; ground
+      // (0 V) → empty. Bipolar splits the reach about the centre notch (half each way).
+      const fr = (v: number, full: number) =>
+        Math.min(full, (Math.abs(v) / vMax) * full);
+      // `u0` is the along-axis coordinate of the zero notch; solid/env grow OUT (+) and,
+      // when bipolar, also back toward the base (−) into the sump.
+      let u0: number; // along-axis position of the zero notch
+      let solidOut: number;
+      let envOut: number;
+      let solidIn = 0; // only the bipolar case fills toward the sump
+      let envIn = 0;
       if (bipolar) {
-        zeroY = by; // notch in the middle
-        const rms = voltsToPx(vrms, BAR_HALF);
-        solidUp = rms;
-        solidDn = rms;
-        envUp = Math.max(rms, voltsToPx(vmax, BAR_HALF));
-        envDn = Math.max(rms, voltsToPx(-vmin, BAR_HALF));
+        u0 = BAR_HALF; // notch at the column's midpoint
+        const rms = fr(vrms, BAR_HALF);
+        solidOut = rms;
+        solidIn = rms;
+        envOut = Math.max(rms, fr(vmax, BAR_HALF));
+        envIn = Math.max(rms, fr(-vmin, BAR_HALF));
       } else {
-        // Unipolar: sign from the mean (rail identity); ≈0 reads as a positive rail.
-        const up = vmean >= 0;
-        zeroY = up ? by + BAR_HALF : by - BAR_HALF; // baseline at the bottom / top
-        const rms = voltsToPx(vrms, H);
-        // The peak reaches the most-extreme sample on the rail's side.
-        const peak = voltsToPx(up ? vmax : -vmin, H);
-        if (up) {
-          solidUp = rms;
-          envUp = Math.max(rms, peak);
-        } else {
-          solidDn = rms;
-          envDn = Math.max(rms, peak);
-        }
+        u0 = 0; // notch at the base
+        const rms = fr(vrms, H);
+        // The peak reaches the most-extreme sample on the rail's (mean's) side.
+        const peak = fr(vmean >= 0 ? vmax : vmin, H);
+        solidOut = rms;
+        envOut = Math.max(rms, peak);
       }
 
-      // The off-track + lit segments. Each slot is lit solid (RMS), as a translucent
-      // envelope band (peak swing), or left as a dim off-segment, by where its centre's
-      // signed level falls relative to the per-side extents above. One path; when the swing
-      // is ~zero the envelope extents collapse onto the solid fill → a single solid bar.
-      const x0 = bx - BAR_W / 2;
+      // 0) The tap stub from the pipe to the base, so the bar reads as branching off the pipe.
+      g.moveTo(a.tx, a.ty).lineTo(a.bx, a.by);
+      g.stroke({ width: 1.4, color, alpha: 0.55, cap: "round" });
+
+      // The off-track + lit segments. Each slot is lit solid (RMS), a translucent envelope
+      // band (peak swing), or a dim off-segment, by where its centre's signed level (out from
+      // the notch) falls relative to the extents. When swing≈0 the env collapses onto solid.
+      const w = BAR_W;
       for (let i = 0; i < BAR_SEGS; i++) {
-        const top = by - BAR_HALF + i * segH + BAR_SEG_GAP / 2;
-        const h = segH - BAR_SEG_GAP;
-        const cy = top + h / 2;
-        const lvl = zeroY - cy; // + = above the notch
+        const segU = i * segH + segH / 2; // segment centre along the axis (from base)
+        const lvl = segU - u0; // + = outward of the notch, − = inward (sump)
         const mag = Math.abs(lvl);
-        const solid = lvl >= 0 ? solidUp : solidDn;
-        const env = lvl >= 0 ? envUp : envDn;
+        const solid = lvl >= 0 ? solidOut : solidIn;
+        const env = lvl >= 0 ? envOut : envIn;
         let segColor = BAR_OFF_COLOR;
         let segAlpha = BAR_OFF_ALPHA;
         if (mag <= solid) {
@@ -4184,49 +4394,97 @@ export class Board {
           segColor = color;
           segAlpha = BAR_ENV_ALPHA;
         }
-        g.roundRect(x0, top, BAR_W, h, 1.5).fill({
+        // The segment slot, centred on the column axis (rotated rect via a 4-point poly).
+        const lo = i * segH + BAR_SEG_GAP / 2;
+        const hi = (i + 1) * segH - BAR_SEG_GAP / 2;
+        const c0 = pt(lo, -w / 2);
+        const c1 = pt(hi, -w / 2);
+        const c2 = pt(hi, w / 2);
+        const c3 = pt(lo, w / 2);
+        g.poly([c0.x, c0.y, c1.x, c1.y, c2.x, c2.y, c3.x, c3.y]).fill({
           color: segColor,
           alpha: segAlpha,
         });
       }
 
       // The zero notch — always drawn — a crisp line across the bar at the baseline.
-      g.moveTo(x0 - 1, zeroY).lineTo(x0 + BAR_W + 1, zeroY);
+      const n0 = pt(u0, -(w / 2 + 1));
+      const n1 = pt(u0, w / 2 + 1);
+      g.moveTo(n0.x, n0.y).lineTo(n1.x, n1.y);
       g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: 0.85 });
 
       // "~" AC badge beside the bar iff the net has an appreciable swing (DC ⇒ none).
-      if (swinging) this.drawTildeBadge(g, x0 + BAR_W + 5, by, color);
+      if (swinging) {
+        const b = pt(u0, w / 2 + 7);
+        this.drawTildeBadge(g, b.x, b.y, color);
+      }
     }
   }
 
   /**
+   * The CIRCUIT's maximum rail magnitude — `max |nodeColorVoltage(node)|` over the gauged
+   * nets — with a tiny floor so an all-zero board can't divide by zero. Every gauge fills as
+   * a fraction of this, so the bars/standpipes track the closed circuit's actual range
+   * (a 5 V circuit reads as 5 V at the top, not a fixed ~12 V reference that flattens it).
+   */
+  private circuitVMax(nodes: Iterable<number>): number {
+    let m = 1e-3;
+    for (const node of nodes) {
+      m = Math.max(m, Math.abs(this.nodeColorVoltage(node)));
+    }
+    return m;
+  }
+
+  /**
    * Analogy-lens pass: one **water standpipe** voltage gauge per NET — the analogy twin of
-   * the reality LED bar. HEIGHT = water pressure = VOLTAGE. A thin glass/steel housing sits
-   * at the net's anchor (shared with the bar via {@link netGaugeAnchors}); a horizontal
-   * ground line marks the zero level. The calm water rises to the RMS level (the effective
-   * pressure) with a bright rail-tinted surface band at the waterline; a translucent splash
-   * zone (the tide / wet-mark) reaches up to the peak (Vmax) and, for a bipolar AC net,
-   * down to Vmin in the SUMP below the line. A positive rail fills UP; a negative rail
-   * empties DOWNWARD into the sump. DC degrades cleanly — no wet-mark, just the calm level,
-   * the surface band, and the ground line (the swing→0 limit of the same path).
+   * the reality LED bar. HEIGHT = water pressure = VOLTAGE, **as a fraction of the circuit's
+   * max rail** ({@link circuitVMax}), so the hottest net fills the glass and ground reads
+   * empty. A thin glass/steel housing taps off the pipe at the net's placement-aware anchor
+   * (shared with the bar via {@link netGaugeAnchors}); a ground line across the base marks
+   * the zero level. The calm water rises to the RMS level (the effective pressure) with a
+   * bright rail-tinted surface band at the waterline; a translucent splash zone (the tide /
+   * wet-mark) reaches on to the peak (Vmax) and, for a bipolar AC net, into the SUMP back
+   * toward the pipe down to Vmin. The column fills OUTWARD along the tap normal; a bipolar
+   * net drains into the sump. DC degrades cleanly — no wet-mark, just the calm level, the
+   * surface band, and the ground line (the swing→0 limit of the same path).
    */
   private drawNetStandpipes(
     g: Graphics,
     nets: Map<number, number | null>,
     condRoutes: Map<number, Point[]>,
   ): void {
-    const anchors = this.netGaugeAnchors(nets, condRoutes);
-
-    const H = 2 * BAR_HALF; // full unipolar column reach (px) — matches the bar
+    const H = 2 * BAR_HALF; // full column reach (px) from the base outward — matches the bar
+    const anchors = this.netGaugeAnchors(nets, condRoutes, H);
+    // Scale every standpipe to the CIRCUIT's max rail magnitude: the hottest rail fills the
+    // whole pipe, ground reads empty, the rest are proportional (the two lenses agree).
+    const vMax = this.circuitVMax(anchors.keys());
     const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
 
     for (const [node, a] of anchors) {
-      // Offset perpendicular to the route so the standpipe never sits on the pipe.
-      const bx = a.x + a.nx * BAR_OFFSET;
-      const by = a.y + a.ny * BAR_OFFSET; // the ground (zero) level
+      // Column axis (a.ox,a.oy) runs OUTWARD from the base (a.bx,a.by — the ground/zero
+      // level, past the stub); `u` is along it (0 at base = ground, + outward, − into the
+      // sump toward the pipe), `c` is the cross axis. Fills are rotated rects via `pt`.
+      const ux = a.ox;
+      const uy = a.oy;
+      const px = -uy;
+      const py = ux;
+      const pt = (u: number, c: number) => ({
+        x: a.bx + ux * u + px * c,
+        y: a.by + uy * u + py * c,
+      });
+      // A band of the column between along-axis u0..u1, full SP_W wide → a 4-point poly.
+      const band = (u0: number, u1: number, hw = SP_W / 2) => {
+        const p0 = pt(u0, -hw);
+        const p1 = pt(u1, -hw);
+        const p2 = pt(u1, hw);
+        const p3 = pt(u0, hw);
+        return [p0.x, p0.y, p1.x, p1.y, p2.x, p2.y, p3.x, p3.y];
+      };
 
       const { vrms, vmean, vmin, vmax } = this.netVStats(node);
-      const color = voltageColor(this.nodeColorVoltage(node));
+      // Tint by the net's pinned colour override when set, else the rail voltage
+      // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
+      const color = this.nodeColor(node);
 
       // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline): swings through
       // ground AND the DC mean is small versus the swing — the SAME test the LED bar uses.
@@ -4237,110 +4495,111 @@ export class Board {
         Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
       // Appreciable swing (the wet-mark / tide band shows) only when a batch ran and the
       // peak-to-peak passes a small fraction of full scale — same gates as the bar.
-      const ptpFrac = (voltsToPx(vmax, H) - voltsToPx(vmin, H)) / H;
+      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
       const swinging = live && ptpFrac > BAR_SWING_EPS;
 
-      // Water heights (px) UP / DOWN from the ground line. `calm*` is the RMS waterline; the
-      // `wet*` extents are the splash/tide envelope (peak). The bipolar case centres the
-      // calm band on the baseline and lets the envelope slosh symmetrically into the sump;
-      // the unipolar case fills one side only, growing in the mean's (rail) direction. When
-      // the swing is ~0 the wet extents collapse onto the calm fill → a plain calm column.
-      let calmUp = 0,
-        calmDn = 0,
-        wetUp = 0,
-        wetDn = 0;
+      // Fill fractions of vMax → px (the net AT the circuit max fills the whole reach; ground
+      // → empty). `calmOut/In` is the RMS waterline; `wet*` the splash/tide envelope (peak).
+      // Bipolar centres the calm band on the ground line and sloshes the envelope into the
+      // sump; unipolar fills outward only. Swing≈0 collapses the wet extents onto the calm.
+      const fr = (v: number, full: number) =>
+        Math.min(full, (Math.abs(v) / vMax) * full);
+      let calmOut: number; // px outward from the ground line (the rail direction)
+      let wetOut: number;
+      let calmIn = 0; // only the bipolar case fills toward the sump
+      let wetIn = 0;
       if (bipolar) {
-        // Calm RMS brackets a near-zero mean → show a thin calm band each side of the
-        // baseline; the envelope (up to Vmax / down to Vmin) is the dominant feature.
-        const rms = voltsToPx(vrms, BAR_HALF);
-        calmUp = rms;
-        calmDn = rms;
-        wetUp = Math.max(rms, voltsToPx(vmax, BAR_HALF));
-        wetDn = Math.max(rms, voltsToPx(-vmin, BAR_HALF));
+        const rms = fr(vrms, BAR_HALF);
+        calmOut = rms;
+        calmIn = rms;
+        wetOut = Math.max(rms, fr(vmax, BAR_HALF));
+        wetIn = Math.max(rms, fr(-vmin, BAR_HALF));
       } else {
-        // Unipolar: sign from the mean (rail identity); ≈0 reads as a positive rail filling up.
-        const up = vmean >= 0;
-        const rms = voltsToPx(vrms, H);
-        const peak = voltsToPx(up ? vmax : -vmin, H);
-        if (up) {
-          calmUp = rms;
-          wetUp = Math.max(rms, peak);
-        } else {
-          calmDn = rms;
-          wetDn = Math.max(rms, peak);
-        }
+        const rms = fr(vrms, H);
+        const peak = fr(vmean >= 0 ? vmax : vmin, H);
+        calmOut = rms;
+        wetOut = Math.max(rms, peak);
       }
 
-      // Housing height encloses the full reach (the deeper of the calm/wet extents each way,
-      // with a little headroom) so the glass always contains the water + the tide line.
-      const upExt = Math.max(calmUp, swinging ? wetUp : 0);
-      const dnExt = Math.max(calmDn, swinging ? wetDn : 0);
-      const top = by - Math.max(upExt, 4) - 3;
-      const bot = by + Math.max(dnExt, 4) + 3;
-      const x0 = bx - SP_W / 2;
+      // Housing encloses the full reach (the deeper of calm/wet each way, with headroom) so
+      // the glass always contains the water + the tide line.
+      const outExt = Math.max(calmOut, swinging ? wetOut : 0);
+      const inExt = Math.max(calmIn, swinging ? wetIn : 0);
+      const uTop = Math.max(outExt, 4) + 3; // outward housing end (along +u)
+      const uBot = -(Math.max(inExt, 4) + 3); // sump-side housing end (along −u)
       const surfCol = mix(PIPE_WATER, color, SP_TINT); // rail-tinted surface band + cap
 
-      // 1) The splash / tide band (translucent) — the swing envelope, drawn FIRST so the
-      //    calm fill and the surface band sit crisply on top. From the calm waterline up to
-      //    the peak, and (bipolar) down to Vmin in the sump.
+      // 0) The tap stub from the pipe to the base (ground line), reads as branching off.
+      g.moveTo(a.tx, a.ty).lineTo(a.bx, a.by);
+      g.stroke({ width: 1.4, color: surfCol, alpha: 0.5, cap: "round" });
+
+      // 1) The splash / tide band (translucent) — the swing envelope, drawn FIRST so the calm
+      //    fill + surface band sit crisply on top. From the calm waterline out to the peak,
+      //    and (bipolar) into the sump down to Vmin.
       if (swinging) {
-        if (wetUp > calmUp) {
-          g.roundRect(x0, by - wetUp, SP_W, wetUp - calmUp, SP_RADIUS).fill({
+        if (wetOut > calmOut) {
+          g.poly(band(calmOut, wetOut)).fill({
             color: PIPE_WATER,
             alpha: SP_WET_ALPHA,
           });
         }
-        if (wetDn > calmDn) {
-          g.roundRect(x0, by + calmDn, SP_W, wetDn - calmDn, SP_RADIUS).fill({
+        if (wetIn > calmIn) {
+          g.poly(band(-calmIn, -wetIn)).fill({
             color: PIPE_WATER,
             alpha: SP_WET_ALPHA,
           });
         }
       }
 
-      // 2) The calm water — solid RMS fill from the baseline up to calmUp and into the sump
-      //    down to calmDn.
-      if (calmUp > 0) {
-        g.roundRect(x0, by - calmUp, SP_W, calmUp, SP_RADIUS).fill({
+      // 2) The calm water — solid RMS fill from the ground line out to calmOut and into the
+      //    sump to calmIn.
+      if (calmOut > 0) {
+        g.poly(band(0, calmOut)).fill({
           color: PIPE_WATER,
           alpha: SP_WATER_ALPHA,
         });
       }
-      if (calmDn > 0) {
-        g.roundRect(x0, by, SP_W, calmDn, SP_RADIUS).fill({
+      if (calmIn > 0) {
+        g.poly(band(0, -calmIn)).fill({
           color: PIPE_WATER,
           alpha: SP_WATER_ALPHA,
         });
       }
 
-      // 3) The bright rail-tinted surface band at each calm waterline (the meniscus that
-      //    carries the rail identity). Drawn where there is calm water on that side.
-      if (calmUp > 0) {
-        g.rect(x0, by - calmUp - SP_SURFACE_H / 2, SP_W, SP_SURFACE_H).fill({
+      // 3) The bright rail-tinted surface band at each calm waterline (the meniscus carrying
+      //    the rail identity). Drawn where there is calm water on that side.
+      const halfSurf = SP_SURFACE_H / 2;
+      if (calmOut > 0) {
+        g.poly(band(calmOut - halfSurf, calmOut + halfSurf)).fill({
           color: surfCol,
           alpha: SP_SURFACE_ALPHA,
         });
       }
-      if (calmDn > 0) {
-        g.rect(x0, by + calmDn - SP_SURFACE_H / 2, SP_W, SP_SURFACE_H).fill({
+      if (calmIn > 0) {
+        g.poly(band(-calmIn - halfSurf, -calmIn + halfSurf)).fill({
           color: surfCol,
           alpha: SP_SURFACE_ALPHA,
         });
       }
 
       // 4) The glass/steel housing outline (PIPE_WALL) over the whole reach.
-      g.roundRect(x0, top, SP_W, bot - top, SP_RADIUS).stroke({
+      g.poly(band(uBot, uTop)).stroke({
         width: SP_WALL_W,
         color: PIPE_WALL,
         alpha: SP_WALL_ALPHA,
       });
 
-      // 5) The ground (zero-level) line — always drawn — across the housing at the baseline.
-      g.moveTo(x0 - 1.5, by).lineTo(x0 + SP_W + 1.5, by);
+      // 5) The ground (zero-level) line — always drawn — across the housing at the base.
+      const gl0 = pt(0, -(SP_W / 2 + 1.5));
+      const gl1 = pt(0, SP_W / 2 + 1.5);
+      g.moveTo(gl0.x, gl0.y).lineTo(gl1.x, gl1.y);
       g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: SP_GROUND_ALPHA });
 
       // "~" AC badge beside the standpipe iff the net has an appreciable swing (DC ⇒ none).
-      if (swinging) this.drawTildeBadge(g, x0 + SP_W + 5, by, surfCol);
+      if (swinging) {
+        const b = pt(0, SP_W / 2 + 7);
+        this.drawTildeBadge(g, b.x, b.y, surfCol);
+      }
     }
   }
 
@@ -4488,8 +4747,7 @@ export class Board {
       // Use the nudged hub position when its runs were fanned into lanes (so the hub
       // sits on its pipes), else the plain cell.
       const p = junctionPos.get(j.id) ?? this.cellToWorld(j.cell);
-      const v = this.colorVoltage({ junctionId: j.id });
-      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const color = this.endpointColor({ junctionId: j.id });
       const hot = this.selectedJunctions.has(j.id);
       if (conduit) {
         this.drawJunctionConduit(
@@ -4583,8 +4841,7 @@ export class Board {
       const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
-      const v = this.colorVoltage(l.at);
-      const color = v === null ? PALETTE.cyan : voltageColor(v);
+      const color = this.endpointColor(l.at);
       const t = this.netLabelText(ti++);
       const editing = this.editingLabelId === l.id;
       t.text = l.name;
@@ -5451,6 +5708,8 @@ class ComponentNode {
     selected: boolean,
     lens: BoardLens,
     zoom: number,
+    internals?: CompositeInternals,
+    nodeV?: Float64Array,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -5466,7 +5725,29 @@ class ComponentNode {
         : lens === "analogy" && hasAnalogy(this.kindTag)
           ? "analogy"
           : null;
-    if (tier !== null && zoom >= TIER_ZOOM) {
+    // Zoom-to-open (ADR 0005): a sealed composite IC, zoomed in past INTERNALS_ZOOM under either
+    // non-schematic lens, opens to its live internal sub-circuit — the real gates/resistors it is
+    // simulated as, animated from the same snapshot — instead of the black-box symbol. The wires
+    // are skinned to the lens: water carriers (analogy) or electron drift (reality).
+    const showInternals =
+      !!internals &&
+      internals.elements.length > 0 &&
+      nodeV !== undefined &&
+      (lens === "reality" || lens === "analogy") &&
+      zoom >= INTERNALS_ZOOM;
+    if (showInternals && internals && nodeV !== undefined) {
+      this.connectorGlyph.visible = false;
+      this.tierGlyph.visible = false;
+      drawCompositeInternals(g, {
+        internals,
+        nodeV,
+        pins: this.pinPositions,
+        wPx: this.wPx,
+        hPx: this.hPx,
+        phase,
+        accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
+      });
+    } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
       tg.clear();
       // Render at a fixed REFERENCE size (≈ the info panel's), then scale the result
@@ -5564,7 +5845,7 @@ class ComponentNode {
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far.
-    const showPins = tier !== null && zoom >= DETAIL_ZOOM;
+    const showPins = (tier !== null || showInternals) && zoom >= DETAIL_ZOOM;
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];
@@ -5727,22 +6008,22 @@ interface RouteSample {
   dy: number;
 }
 
-function saturate(x: number): number {
-  return x / (1 + x);
+/**
+ * A placement-aware per-net gauge anchor (shared by the LED bar + the water standpipe):
+ * the tap point on the pipe `(tx,ty)`, the gauge base `(bx,by)` a short stub out along the
+ * chosen outward normal `(ox,oy)` (unit; up unless flipped/slid to dodge parts + pipes).
+ */
+interface GaugeAnchor {
+  tx: number;
+  ty: number;
+  bx: number;
+  by: number;
+  ox: number;
+  oy: number;
 }
 
-/**
- * Signed volts → pixel offset from the LED bar's zero notch, with soft saturation so a
- * 5 V and a 230 V net both stay on-screen. `span` is the asymptote (the magnitude a huge
- * voltage compresses toward): the reference {@link BAR_V_REF} lands at {@link BAR_V_FRAC}
- * of it, and the curve mirrors the `x/(1+x)` saturation the belt thickness uses. Positive
- * volts return a positive (upward) offset.
- */
-function voltsToPx(v: number, span: number): number {
-  const k = (1 - BAR_V_FRAC) / BAR_V_FRAC;
-  const u = Math.abs(v) / BAR_V_REF;
-  const mag = span * (u / (u + k));
-  return v >= 0 ? mag : -mag;
+function saturate(x: number): number {
+  return x / (1 + x);
 }
 
 function polyline(g: Graphics, pts: Point[]): void {

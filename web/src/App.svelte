@@ -36,10 +36,13 @@
   import {
     BoardGraph,
     formatValue,
+    PALETTE,
     PART_KINDS,
     AC_DEFAULT_AMP,
     loadUnit,
+    PLACEMENT_OVERRIDE_KEYS,
     type GraphSnapshot,
+    type HotSlot,
   } from "./lib/graph";
   import {
     hasValue,
@@ -101,6 +104,18 @@
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
   import { InfoDiagram, type DiagramMode } from "./lib/infoDiagram";
+  import {
+    codexCategories,
+    REFSHEET_OF,
+    PART_SYNONYMS as CODEX_SYNONYMS,
+    PART_META as CODEX_META,
+    PART_CAT_OF as CODEX_CAT_OF,
+    isDigital,
+    tierRows,
+    variantRows,
+    familyRows,
+    valueSummary,
+  } from "./lib/codex";
 
   const SEED = 1337;
   // Playback rate options, in **ticks of sim time per real second**. DT is 2 µs,
@@ -321,6 +336,20 @@
       color: "var(--cyan)",
     },
     {
+      tag: "ASW",
+      name: "Analog Switch",
+      desc: "Node-gated · passes analog A↔B",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
+      tag: "CMP",
+      name: "Comparator",
+      desc: "Open-loop · IN+ vs IN− → rail",
+      tier: "II",
+      color: "var(--accent)",
+    },
+    {
       tag: "AND",
       name: "AND Gate",
       desc: "High iff both inputs high",
@@ -398,6 +427,139 @@
       color: "var(--cyan)",
     },
     {
+      tag: "HADD",
+      name: "Half Adder",
+      desc: "Adds two bits → sum + carry",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "FADD",
+      name: "Full Adder",
+      desc: "Adds A+B+carry-in → the ALU cell",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "MUX2",
+      name: "2:1 Mux",
+      desc: "Picks A or B by select",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "DMUX",
+      name: "1:2 Demux",
+      desc: "Routes D to Y0/Y1 · 1-of-2 decode",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "MAJ3",
+      name: "Majority Gate",
+      desc: "High when ≥2 of 3 inputs high",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "SRL",
+      name: "SR Latch",
+      desc: "Set/reset memory · cross-coupled",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "DLATCH",
+      name: "D-Latch",
+      desc: "Transparent while EN high · holds",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "JKFF",
+      name: "JK Flip-Flop",
+      desc: "Universal flip-flop · tie J=K for T",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "TRI",
+      name: "Tri-State Buffer",
+      desc: "Drives A, or Hi-Z when OE low",
+      tier: "III",
+      color: "var(--ok)",
+    },
+    {
+      tag: "SAMP",
+      name: "Clocked Sampler",
+      desc: "Quantizes 1 bit on the clock edge",
+      tier: "II",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "LUT",
+      name: "FPGA Logic Cell",
+      desc: "4-input look-up table · any function",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "SPIM",
+      name: "SPI Master",
+      desc: "Clocks a word out on START",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "SPIS",
+      name: "SPI Slave",
+      desc: "Clocked by the master · replies on MISO",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "UART",
+      name: "UART",
+      desc: "Async serial · frames a byte on SEND",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
+      tag: "ADC",
+      name: "Flash ADC",
+      desc: "VIN -> 3-bit code, all at once",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "DAC",
+      name: "R-2R DAC",
+      desc: "3-bit code -> voltage (ladder)",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "SAR",
+      name: "SAR ADC",
+      desc: "VIN -> 3-bit code by binary search",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "SDM",
+      name: "Sigma-Delta ADC",
+      desc: "Oversampling: 1-bit stream -> code",
+      tier: "III",
+      color: "var(--cyan)",
+    },
+    {
+      tag: "CTR",
+      name: "Counter",
+      desc: "3-bit up-counter (counts clock edges)",
+      tier: "III",
+      color: "var(--violet)",
+    },
+    {
       tag: "LS",
       name: "Level Shifter",
       desc: "Translates rail A → rail B",
@@ -466,6 +628,8 @@
     Q: "Active & Switching",
     QP: "Active & Switching",
     OA: "Active & Switching",
+    ASW: "Active & Switching",
+    CMP: "Active & Switching",
     AND: "Logic & ICs",
     OR: "Logic & ICs",
     NAND: "Logic & ICs",
@@ -477,6 +641,25 @@
     NOT: "Logic & ICs",
     BUF: "Logic & ICs",
     FF: "Logic & ICs",
+    HADD: "Logic & ICs",
+    FADD: "Logic & ICs",
+    MUX2: "Logic & ICs",
+    DMUX: "Logic & ICs",
+    MAJ3: "Logic & ICs",
+    SRL: "Logic & ICs",
+    DLATCH: "Logic & ICs",
+    JKFF: "Logic & ICs",
+    TRI: "Logic & ICs",
+    SAMP: "Logic & ICs",
+    LUT: "Logic & ICs",
+    SPIM: "Logic & ICs",
+    SPIS: "Logic & ICs",
+    UART: "Logic & ICs",
+    ADC: "Logic & ICs",
+    DAC: "Logic & ICs",
+    SAR: "Logic & ICs",
+    SDM: "Logic & ICs",
+    CTR: "Logic & ICs",
     LS: "Logic & ICs",
     PU: "Logic & ICs",
     FP: "Logic & ICs",
@@ -590,6 +773,8 @@
     Q: ["switch", "amplifier", "current gain"],
     QP: ["switch", "high-side", "current gain"],
     OA: ["amplifier", "comparator", "buffer", "gain"],
+    ASW: ["analog switch", "transmission gate", "mux", "sample and hold"],
+    CMP: ["comparator", "schmitt", "threshold", "zero crossing", "adc"],
     AND: ["gate", "all"],
     OR: ["gate", "any"],
     NAND: ["universal", "gate"],
@@ -601,6 +786,46 @@
     NOT: ["inverter", "gate"],
     BUF: ["buffer", "line driver", "gate"],
     FF: ["latch", "register", "memory", "flip-flop"],
+    HADD: ["adder", "half adder", "sum", "carry", "arithmetic"],
+    FADD: ["adder", "full adder", "sum", "carry", "alu", "arithmetic"],
+    MUX2: ["mux", "multiplexer", "select", "data selector"],
+    DMUX: ["demux", "demultiplexer", "decoder", "one-hot", "address"],
+    MAJ3: ["majority", "voter", "tmr", "redundancy", "carry"],
+    SRL: ["sr latch", "set reset", "latch", "memory", "bistable"],
+    DLATCH: ["d latch", "transparent latch", "gated latch", "level sensitive"],
+    JKFF: ["jk flip-flop", "t flip-flop", "toggle", "divide by two", "counter"],
+    TRI: ["tri-state", "buffer", "bus driver", "output enable", "hi-z"],
+    SAMP: ["sampler", "adc", "sample and hold", "quantizer"],
+    LUT: [
+      "fpga",
+      "lut",
+      "look-up table",
+      "logic cell",
+      "programmable",
+      "gate array",
+    ],
+    SPIM: ["spi", "spi master", "serial", "bus", "mosi", "sclk"],
+    SPIS: ["spi", "spi slave", "serial", "peripheral", "miso"],
+    UART: ["uart", "serial", "rs232", "tx", "rx", "async"],
+    ADC: [
+      "adc",
+      "flash adc",
+      "analog to digital",
+      "converter",
+      "quantizer",
+      "a/d",
+    ],
+    DAC: ["dac", "r-2r", "ladder dac", "digital to analog", "converter", "d/a"],
+    SAR: ["sar", "successive approximation", "binary search adc", "adc", "a/d"],
+    SDM: ["sigma-delta", "delta-sigma", "oversampling adc", "modulator", "adc"],
+    CTR: [
+      "counter",
+      "binary counter",
+      "ripple",
+      "divider",
+      "sequencer",
+      "ramp",
+    ],
     LS: ["translator", "level", "interface"],
     PU: ["regulator", "reference", "pull-up", "open-drain"],
     FP: ["fpga", "fabric", "parallel logic"],
@@ -636,6 +861,12 @@
   // and every drop spread. Reassigned (never mutated) so `$state` notifies and the ghost
   // re-tints. Empty = the part's per-kind defaults (zero clicks to place a default part).
   let armedConfig = $state<Partial<Component>>({});
+  // Quick-recall hotbar: nine configured-part slots (index 0..8 ↔ keys 1..9), plus the
+  // Q pipette. A filled slot remembers a part's kind + its tuned config (the
+  // PLACEMENT_OVERRIDE_KEYS subset — value/wiper/temp and the identity-quality axes), so
+  // pressing its digit re-arms that exact part for place-and-repeat. Reassigned (never
+  // mutated in place) so `$state` notifies. Persisted in settings (see persistSettings).
+  let hotbar = $state<HotSlot[]>(Array(9).fill(null));
   // The multimeter function in Measure mode: voltmeter or ammeter.
   let probeMode = $state<"V" | "A">("V");
   // The board's detail lens (the owner's three tiers): schematic symbols always; in
@@ -686,6 +917,10 @@
     rect: AnchorRect;
   } | null>(null);
   let labelEditValue = $state("");
+  // The colour the open editor's net is pinned to (PIXI hex int), or null for
+  // "Auto" (the default voltage colour). Seeded from the existing label when the
+  // editor opens; threaded back through commitLabel on commit.
+  let labelEditColor = $state<number | null>(null);
   let labelInput = $state<HTMLInputElement>();
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
@@ -709,13 +944,21 @@
   // is selected (see the $effect). Falls back to schematic for kinds with no
   // detail drawer — `diagramHasDetail` gates the toggle's visibility.
   let diagramMode = $state<DiagramMode>("reality");
-  // Which tiers the current selection actually has distinct art for (a pure read of
-  // the kind). The schematic tier always exists; the others gate their toggle button.
-  const diagramHasDetail = $derived(selPart ? hasDetail(selPart.kind) : false);
+  // The kind the info drawer describes: the SELECTED placed part, or — when nothing is
+  // selected but a part is ARMED — the armed part, so you can preview its symbol / internals
+  // / pinout / equation BEFORE dropping it (arm-and-preview; press I or the bin ⓘ while armed).
+  const infoKind = $derived<string | null>(
+    selPart ? selPart.kind : (armedPart ?? null),
+  );
+  // True while the drawer is previewing an armed-but-unplaced part (no live electrical state).
+  const infoPreview = $derived(!selPart && armedPart != null);
+  // Which tiers the current info kind actually has distinct art for (a pure read of the
+  // kind). The schematic tier always exists; the others gate their toggle button.
+  const diagramHasDetail = $derived(infoKind ? hasDetail(infoKind) : false);
   // The analogy tier renders the full-panel illustration when one exists, else the
   // board's Factory glyph — so it's available when EITHER is present.
   const diagramHasFactory = $derived(
-    selPart ? hasFactory(selPart.kind) || hasAnalogy(selPart.kind) : false,
+    infoKind ? hasFactory(infoKind) || hasAnalogy(infoKind) : false,
   );
   // The tier the diagram should actually render in: the user's choice when that
   // tier's art exists, else clamped outward to schematic so nothing is ever blank.
@@ -729,12 +972,85 @@
   // Selecting a different part defaults the view to its reality internals when it has
   // them — so double-clicking an op-amp opens straight to "what's happening inside."
   $effect(() => {
-    const kind = selPart?.kind;
-    // Default the info diagram to the board's active lens on each new selection
+    const kind = infoKind;
+    // Default the info diagram to the board's active lens on each new selection (or armed
     // (still freely toggleable after). The lens is read untracked so changing the
     // board lens alone doesn't yank a manually-chosen info tab; effectiveDiagramMode
     // clamps outward to schematic when that tier's art doesn't exist for the kind.
     if (kind) diagramMode = untrack(() => boardLens);
+  });
+
+  // ── Component Codex ─────────────────────────────────────────────────────────
+  // The full-screen "discovery museum": a browsable, exhaustive per-component
+  // reference (master list + a detail pane that renders EVERY datum the model
+  // carries for the selected kind). Web/render-only — it reads the same modules the
+  // inspector does (via lib/codex.ts) and never touches the sim, netlist, or wasm.
+  let codexOpen = $state(false);
+  // The kind the detail pane describes; defaults to the first catalog kind when opened.
+  let codexKind = $state<string | null>(null);
+  // Master-list filter (name / tag / desc / synonym), mirroring the bin's `partSearch`.
+  let codexSearch = $state("");
+  // The codex's own diagram tier toggle, independent of the info drawer's.
+  let codexDiagramMode = $state<DiagramMode>("schematic");
+  // The grouped master list (every kind placed in its category, in display order).
+  const codexGroups = codexCategories();
+  // Which tiers the selected codex kind has distinct art for (gates the toggle, exactly
+  // like the info drawer) and the clamped tier the diagram actually renders.
+  const codexHasDetail = $derived(codexKind ? hasDetail(codexKind) : false);
+  const codexHasFactory = $derived(
+    codexKind ? hasFactory(codexKind) || hasAnalogy(codexKind) : false,
+  );
+  const effectiveCodexMode = $derived<DiagramMode>(
+    codexDiagramMode === "reality" && !codexHasDetail
+      ? "schematic"
+      : codexDiagramMode === "analogy" && !codexHasFactory
+        ? "schematic"
+        : codexDiagramMode,
+  );
+  // Open the Codex (defaulting the selection to the first catalog kind), or close it.
+  function openCodex(): void {
+    if (!codexKind) codexKind = codexGroups[0]?.kinds[0] ?? null;
+    codexOpen = true;
+  }
+  // Pick a kind in the master list; reset its diagram to the schematic symbol.
+  function selectCodexKind(kind: string): void {
+    codexKind = kind;
+    codexDiagramMode = "schematic";
+  }
+  // The Codex's own InfoDiagram (one Pixi sub-app per mounted canvas, destroyed on
+  // close to avoid leaks). The frame loop drives it when the overlay is open.
+  let codexDiagram: InfoDiagram | undefined;
+  function codexDiagramAction(node: HTMLCanvasElement) {
+    const d = new InfoDiagram();
+    codexDiagram = d;
+    void d.init(node);
+    return {
+      destroy() {
+        d.destroy();
+        if (codexDiagram === d) codexDiagram = undefined;
+      },
+    };
+  }
+  // The filtered master groups when a search is active (name/tag/desc/synonym), else null.
+  const codexFiltered = $derived.by(() => {
+    const q = codexSearch.trim().toLowerCase();
+    if (!q) return null;
+    const match = (kind: string): boolean => {
+      const name = (PART_KINDS[kind]?.name ?? "").toLowerCase();
+      const desc = (CODEX_META[kind]?.desc ?? "").toLowerCase();
+      return (
+        name.includes(q) ||
+        kind.toLowerCase().includes(q) ||
+        desc.includes(q) ||
+        (CODEX_SYNONYMS[kind] ?? []).some((s) => s.includes(q))
+      );
+    };
+    const out: { category: string; kinds: string[] }[] = [];
+    for (const g of codexGroups) {
+      const kinds = g.kinds.filter(match);
+      if (kinds.length > 0) out.push({ category: g.category, kinds });
+    }
+    return out;
   });
 
   /** Persist settings: the onboarding slice (mute + which cards have fired) plus the
@@ -749,6 +1065,7 @@
       boardLens,
       lodOn,
       camera: board?.getCamera(),
+      hotbar,
     });
   }
   // Debounced settings save for the camera (pan/zoom fire many events per second);
@@ -1083,6 +1400,26 @@
       : (CHANNEL_COLORS[(i - 1) % CHANNEL_COLORS.length] ?? "var(--accent)");
   const partName = (tag: string): string =>
     PARTS.find((p) => p.tag === tag)?.name ?? tag;
+  // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
+  // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
+  const partColor = (tag: string): string =>
+    `var(--${PART_KINDS[tag]?.colorKey ?? "bronze"})`;
+  // True when a hotbar slot mirrors the currently armed part + its captured config,
+  // so the strip highlights the live slot. Compares the kind and the
+  // PLACEMENT_OVERRIDE_KEYS-projected config (order-independent, value-equal).
+  const slotIsArmed = (slot: HotSlot): boolean => {
+    if (!slot || armedPart !== slot.kind) return false;
+    const live = partConfigOf({ kind: armedPart, ...armedConfig });
+    const keys = new Set([...Object.keys(live), ...Object.keys(slot.config)]);
+    for (const k of keys) {
+      if (
+        (live as Record<string, unknown>)[k] !==
+        (slot.config as Record<string, unknown>)[k]
+      )
+        return false;
+    }
+    return true;
+  };
 
   // One-line contextual hint that replaces the old mode buttons: it tells you
   // what a click will do right now, so the modeless board stays learnable.
@@ -1180,7 +1517,11 @@
         // selection). Otherwise it disarms a part, cancels any in-progress wire /
         // open label editor / selection, then switches to the neutral Pan tool so
         // Escape always leaves you in a safe "just navigate" state.
-        if (infoOpen) {
+        if (codexOpen) {
+          // The Codex is a full-screen modal — Escape closes it first, before any
+          // board action (it sits in front of everything else).
+          codexOpen = false;
+        } else if (infoOpen) {
           infoOpen = false;
         } else {
           if (armedPart) arm(null);
@@ -1192,7 +1533,7 @@
         setMode("pan"); // H = the hand / pan tool
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "i" || e.key === "I")) {
-        infoOpen = !infoOpen; // I = toggle the deep info panel for the selection
+        infoOpen = !infoOpen; // I = toggle the deep info panel (selection, or an armed preview)
         e.preventDefault();
       } else if (e.key === " ") {
         togglePlay(); // spacebar = play / pause
@@ -1214,6 +1555,17 @@
         e.preventDefault();
       } else if (e.key === "." || e.key === ">") {
         stepFwd(); // . / > = step one tick forward
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {
+        // Hotbar 1–9: Shift+N stores the armed part into slot N, plain N recalls it.
+        // Keyed off e.code so Shift+digit (which produces "!"/"@"/… in e.key on many
+        // layouts) still maps to the right slot. (0 is reserved for fit-view.)
+        const slot = Number(e.code.slice(5)) - 1;
+        if (e.shiftKey) assignSlot(slot);
+        else armFromSlot(slot);
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "q" || e.key === "Q")) {
+        pipette(); // Q = pipette: eyedrop the selected part's kind + config and arm it
         e.preventDefault();
       }
     };
@@ -1265,15 +1617,23 @@
         // showing stale data from the previous circuit until the run catches up.
         board?.clearScope();
         board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
+        // Composite-IC internals (component id → sub-circuit topology) so a sealed chip can open
+        // to its live internals when zoomed in under the reality lens (ADR 0005, zoom-to-open).
+        board?.setCompositeInternals(nl ? nl.compositeInternals : null);
         // Surface the net-label names (node index → name) so the scope legend and
         // the telemetry "Nodes" list can show `VCC` instead of `Node 3`.
         board?.setNetNames(nl ? nl.nodeNames : null);
+        // Surface the per-net colour overrides (node index → PIXI hex int) so a
+        // labelled net paints its pinned colour instead of its voltage colour.
+        board?.setNodeColors(nl ? nl.nodeColors : null);
         netNames = nl ? Object.fromEntries(nl.nodeNames) : {};
         if (nl) {
           // Pass the control-terminal array `c` (MOSFET gate / gate IN2; 0 for 2-pin
-          // parts), the second scalar `aux` (AC amplitude / gate function code), and
-          // the fourth terminal `d` (a transformer's secondary− node; 0 elsewhere).
-          // setNetlist takes c, aux, and d as trailing optionals.
+          // parts), the second scalar `aux` (AC amplitude / gate function code), the
+          // fourth terminal `d` (a transformer's secondary− node; 0 elsewhere), the fifth
+          // `e` (a powered gate's GND), and the provisioned sixth/seventh/eighth terminals
+          // `f`/`g`/`h` (ADR 0002 — all-ground today, no part uses them yet). setNetlist
+          // takes c, aux, d, params, e, f, g, h as trailing optionals.
           sim.setNetlist(
             nl.nodeCount,
             nl.types,
@@ -1285,6 +1645,9 @@
             nl.d,
             nl.params,
             nl.e,
+            nl.f,
+            nl.g,
+            nl.h,
           );
           controls?.resync();
         } else if (graph.components.size > 0) {
@@ -1381,6 +1744,8 @@
           if (req) {
             labelEdit = { id: req.id, initial: req.initial, rect: req.rect };
             labelEditValue = req.initial;
+            // Seed the swatch from the label's pinned colour (null ⇒ Auto).
+            labelEditColor = req.initialColor;
             // Focus + select the input next tick, once it has rendered.
             setTimeout(() => labelInput?.focus(), 0);
           } else {
@@ -1462,6 +1827,30 @@
           } else {
             selDisplay = null;
             selRmsMode = false;
+            // Arm-and-preview: nothing selected but a part armed + the drawer open → drive
+            // the info diagram from the ARMED (unplaced) kind and a neutral electrical state,
+            // so its symbol / internals render before you drop it.
+            if (infoOpen && armedPart) {
+              infoDiagram?.setMode(effectiveDiagramMode);
+              infoDiagram?.setPhase(b.flowPhase());
+              infoDiagram?.setState(
+                armedPart,
+                ZERO_ELECTRICAL,
+                partValue(armedPart),
+              );
+            }
+          }
+          // The Codex overlay's own diagram: a neutral, reference preview of the
+          // selected catalog kind (no live electrical state — the museum is static),
+          // driven on the same flow clock so its internals animate the same calm way.
+          if (codexOpen && codexKind) {
+            codexDiagram?.setMode(effectiveCodexMode);
+            codexDiagram?.setPhase(b.flowPhase());
+            codexDiagram?.setState(
+              codexKind,
+              ZERO_ELECTRICAL,
+              PART_KINDS[codexKind]?.defaultValue ?? 0,
+            );
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
@@ -1499,6 +1888,12 @@
       board?.setLens(boardLens);
       board?.setLod(lodOn);
       board?.setCamera(settings.camera);
+      // Restore the quick-recall hotbar (defensively: only a genuine 9-slot array, else
+      // an empty bar — a stale/short blob never leaves the strip mis-sized).
+      hotbar =
+        Array.isArray(settings.hotbar) && settings.hotbar.length === 9
+          ? settings.hotbar
+          : Array(9).fill(null);
 
       const saved = loadBoard();
       if (saved) {
@@ -1741,6 +2136,61 @@
       rememberConfig(selPart.kind, { loadHz: hz });
     } else setArmedAxis({ loadHz: hz });
   }
+  // Behavioral blocks (LUT / SPI / UART): the editable datum is `word` — the LUT's 16-bit truth
+  // table or a serial data word (→ the behavioral element's aux) — plus the LUT's output-register
+  // mode (→ Component.mode → params[4]). BEH_DEFWORD mirrors the per-kind default in netlist.ts
+  // (BEH_SPEC.defWord), so the inspector shows the same table the sim uses when `word` is unset.
+  const BEH_DEFWORD: Record<string, number> = {
+    LUT: 0x6666, // 2-input XOR
+    SPIM: 0xa5,
+    SPIS: 0x3c,
+    UART: 0x55,
+  };
+  function isBehavioralPart(kind: string): boolean {
+    return kind in BEH_DEFWORD;
+  }
+  // The LUT preset functions: name → 16-bit truth table (OUT = bit[IN0 | IN1<<1 | IN2<<2 | IN3<<3]).
+  const LUT_PRESETS: { name: string; table: number; hint: string }[] = [
+    { name: "XOR", table: 0x6666, hint: "IN0 ⊕ IN1" },
+    { name: "XNOR", table: 0x9999, hint: "IN0 ⊙ IN1" },
+    { name: "AND", table: 0x8888, hint: "IN0 · IN1" },
+    { name: "OR", table: 0xeeee, hint: "IN0 + IN1" },
+    { name: "NAND", table: 0x7777, hint: "¬(IN0 · IN1)" },
+    { name: "NOR", table: 0x1111, hint: "¬(IN0 + IN1)" },
+    { name: "BUF", table: 0xaaaa, hint: "OUT = IN0" },
+    { name: "NOT", table: 0x5555, hint: "OUT = ¬IN0" },
+    { name: "MAJ", table: 0xe8e8, hint: "majority(IN0, IN1, IN2)" },
+    { name: "PAR", table: 0x6996, hint: "parity — XOR of all 4 inputs" },
+    { name: "0", table: 0x0000, hint: "constant low" },
+    { name: "1", table: 0xffff, hint: "constant high" },
+  ];
+  function selWord(): number {
+    const w = selPart ? selPart.word : armedConfig.word;
+    return w ?? BEH_DEFWORD[infoKind ?? ""] ?? 0;
+  }
+  function setWord(w: number): void {
+    if (selPart) {
+      board?.setComponentWord(selPart.id, w);
+      rememberConfig(selPart.kind, { word: w });
+    } else setArmedAxis({ word: w });
+  }
+  // Parse a hex string from the truth-table / data-word field and set it, capped to the field's
+  // width (LUT 16-bit, serial 32-bit). Ignores non-hex input. Uses Math.min (not a 32-bit `&`,
+  // which would go negative on bit 31) — the maxlength already bounds the digits.
+  function setWordHex(s: string, mask: number): void {
+    const v = parseInt(s.replace(/[^0-9a-fA-F]/g, ""), 16);
+    if (!Number.isNaN(v)) setWord(Math.min(Math.max(0, v), mask));
+  }
+  // The LUT's output register, reusing Component.mode (0 = combinational, 1 = registered).
+  function selLutReg(): number {
+    return (selPart ? selPart.mode : armedConfig.mode) ?? 0;
+  }
+  function setLutReg(m: number): void {
+    if (selPart) {
+      board?.setComponentMode(selPart.id, m);
+      rememberConfig(selPart.kind, { mode: m });
+    } else setArmedAxis({ mode: m });
+  }
   // A logic gate's output mode: push-pull (drives both rails) vs open-drain (pulls low,
   // releases high — needs an external pull-up). The D flip-flop is always push-pull.
   function isGatePart(kind: string): boolean {
@@ -1756,6 +2206,7 @@
       hasDiodeTypes(kind) ||
       hasLedColors(kind) ||
       isDigitalPart(kind) ||
+      isBehavioralPart(kind) ||
       kind === "PULSE" ||
       kind === "LOAD"
     );
@@ -1862,6 +2313,84 @@
   function toggleArm(tag: string): void {
     arm(armedPart === tag ? null : tag);
   }
+
+  // --- Quick-recall hotbar (1–9) + the Q pipette ---------------------------------
+  // These arm a part with an EXPLICIT config (a saved slot or the eyedropped selection),
+  // so unlike `arm()` they must NOT re-seed `armedConfig` from the per-kind last-used
+  // memory — that would clobber the slot's tuned value/wiper/temp. `armWith` is the
+  // dedicated path: it arms `kind` with exactly `config` (a fresh copy for reactivity),
+  // does the same tool-switch `arm()` does, and pushes the config to the ghost.
+
+  /** Build a `Partial<Component>` from a captured part: the defined
+   * {@link PLACEMENT_OVERRIDE_KEYS} fields (now incl. value/wiper/temp) of a selected
+   * board part or of `{ kind, ...armedConfig }`. The single source for what a slot /
+   * the pipette stores, so a recalled part carpets place-and-repeat exactly as captured. */
+  function partConfigOf(src: Partial<Component>): Partial<Component> {
+    const out: Partial<Component> = {};
+    for (const key of PLACEMENT_OVERRIDE_KEYS) {
+      const v = src[key];
+      if (v !== undefined) (out as Record<string, unknown>)[key] = v;
+    }
+    return out;
+  }
+
+  /** Arm `kind` with an explicit `config` (slot recall / pipette), bypassing the
+   * per-kind last-used re-seed so the captured config survives. */
+  function armWith(kind: string, config: Partial<Component>): void {
+    armedPart = kind;
+    armedConfig = { ...config };
+    // Same intent-to-build tool switch as arm(): leave any non-building tool so the
+    // next click drops the part.
+    if (
+      mode === "measure" ||
+      mode === "junction" ||
+      mode === "label" ||
+      mode === "pan"
+    )
+      setMode("select");
+    board?.setArmed(kind, armedConfig);
+  }
+
+  /** Recall slot `i` (key i+1, or a click on a filled cell): arm its captured part. */
+  function armFromSlot(i: number): void {
+    const slot = hotbar[i];
+    if (!slot) return;
+    armWith(slot.kind, slot.config);
+  }
+
+  /** Assign the currently armed part into slot `i` (Shift+digit, or a click on an empty
+   * cell while armed). No-op when nothing is armed. Reassigns the array for `$state`. */
+  function assignSlot(i: number): void {
+    if (!armedPart) return;
+    const slot: HotSlot = {
+      kind: armedPart,
+      config: partConfigOf({ kind: armedPart, ...armedConfig }),
+    };
+    hotbar = hotbar.with(i, slot);
+    persistSettings();
+  }
+
+  /** Clear slot `i` (right-click a cell, or its × button). Reassigns for reactivity. */
+  function clearSlot(i: number): void {
+    if (!hotbar[i]) return;
+    hotbar = hotbar.with(i, null);
+    persistSettings();
+  }
+
+  /** Click handler for a hotbar cell: recall a filled slot, else (when armed) fill it. */
+  function clickSlot(i: number): void {
+    if (hotbar[i]) armFromSlot(i);
+    else assignSlot(i);
+  }
+
+  /** The Q pipette (eyedropper): copy the SELECTED board part — its kind + exact config
+   * (value/wiper/temp + identity-quality axes) — and arm it, so place-and-repeat carpets
+   * that configured part. A no-op when nothing is selected (Q only samples a live part). */
+  function pipette(): void {
+    if (!selPart) return;
+    armWith(selPart.kind, partConfigOf(selPart as Partial<Component>));
+  }
+
   function enterBuild(): void {
     setMode("select");
   }
@@ -2006,9 +2535,26 @@
     board?.setNodeLabel(i, name);
   }
   // --- net-label inline editor (Label tool) ---
+  // Swatch presets for pinning a net's colour: sourced from the renderer's own
+  // PALETTE (the design-system signal set, the same hexes the wires use) so a
+  // chosen swatch matches the net it paints. No raw hex invented here.
+  const NET_LABEL_SWATCHES: { name: string; hex: number }[] = [
+    { name: "Rose", hex: PALETTE.accent },
+    { name: "Violet", hex: PALETTE.violet },
+    { name: "Cyan", hex: PALETTE.cyan },
+    { name: "Green", hex: PALETTE.ok },
+    { name: "Amber", hex: PALETTE.warn },
+    { name: "Bronze", hex: PALETTE.bronze },
+    { name: "Red", hex: PALETTE.bad },
+  ];
+  // A PIXI hex int → a CSS `#rrggbb` string, for the swatch background.
+  function cssHex(n: number): string {
+    return "#" + (n & 0xffffff).toString(16).padStart(6, "0");
+  }
   function commitLabelEdit(): void {
     if (!labelEdit) return;
-    board?.commitLabel(labelEditValue);
+    // null ⇒ "Auto": pass undefined so the net reverts to its voltage colour.
+    board?.commitLabel(labelEditValue, labelEditColor ?? undefined);
     labelEdit = null;
   }
   function cancelLabelEdit(): void {
@@ -2220,6 +2766,38 @@
           </ul>
         </details>
       {/snippet}
+      {#if armedPart && !selPart}
+        <!-- Arm-time card, docked in the bin right where you picked the part (not in the top
+             toolbar). The head names the armed part with a ⓘ PREVIEW button (open the info
+             drawer on the armed-but-unplaced part — symbol/internals, pinout, equation — before
+             you drop it; same as the I key) and a disarm ×. Below, for kinds with identity/
+             quality axes, the CONFIGURATOR chips the inspector shows, but BEFORE placing — so
+             the ghost is the configured part and place-and-repeat carpets it. The default
+             (variant 0 / mid tier / push-pull / CC) needs zero clicks; this only lets you
+             change it. Driven by the dual-target setters, which (with nothing selected) write
+             `armedConfig` and re-tint the ghost. -->
+        <div class="bin-config" role="group" aria-label="Armed part">
+          <div class="bin-config-head">
+            <span class="bin-config-name">{partName(armedPart)}</span>
+            <span class="bin-config-actions">
+              <button
+                class="bin-config-info {infoOpen ? 'is-active' : ''}"
+                onclick={() => (infoOpen = !infoOpen)}
+                title="Preview this part's info & pinout before placing (I)"
+                aria-label="Preview armed part info">ⓘ</button
+              >
+              <button
+                class="armed-x"
+                onclick={() => arm(null)}
+                aria-label="Disarm">×</button
+              >
+            </span>
+          </div>
+          {#if hasConfig(armedPart)}
+            {@render partConfig(armedPart)}
+          {/if}
+        </div>
+      {/if}
       <p class="panel-note">
         Click a part to arm it, then click the board to drop (Esc to disarm) —
         or drag it on. Scroll to zoom, drag empty space to pan.
@@ -2324,268 +2902,330 @@
     {/if}
   </aside>
 
-  <main class="panel board">
-    <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
-         tier / family / open-drain / load mode + step / PULSE waveform) that today only
-         showed once a part was placed. Factored into a snippet — declared here at the board
-         root so it's in scope for BOTH render sites: the arm-time configurator panel in the
-         toolbar's armed-chip block, and the selected-part inspector in the board frame. Both
-         are driven by the dual-target sel*/set* helpers, so a click edits the selected part
-         or the pending (armed) config interchangeably. Value-SEMANTICS rows (the value
-         picker, AC amplitude/mains, LS rail, POT/thermistor) stay in the inspector only —
-         they're per-instance knobs, not arm-time axes. -->
-    {#snippet partConfig(kind: string)}
-      {#if hasTiers(kind)}
-        <!-- Quality tier (main gameplay): each grade is a preset bundle of the
+  <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
+       tier / family / open-drain / load mode + step / PULSE waveform) that today only
+       showed once a part was placed. Factored into a snippet — declared here at the
+       WORKSPACE root so it's in scope for all three render sites: the arm-time
+       configurator card docked in the parts bin, and the selected-part inspector in the
+       board frame. Both are driven by the dual-target sel*/set* helpers, so a click edits
+       the selected part or the pending (armed) config interchangeably. Value-SEMANTICS rows
+       (the value picker, AC amplitude/mains, LS rail, POT/thermistor) stay in the inspector
+       only — they're per-instance knobs, not arm-time axes. -->
+  {#snippet partConfig(kind: string)}
+    {#if hasTiers(kind)}
+      <!-- Quality tier (main gameplay): each grade is a preset bundle of the
              device's model parameters (a cap's ESR/ESL, an op-amp's GBW, an
              inductor's DCR/winding-C, a source's output impedance, a resistor's
              tolerance, a MOSFET's Kp, a BJT's β), so a better tier self-resonates
              higher / is faster / regulates stiffer / has more gain (and, later, costs
              more). The non-ideal grades bite only in Real mode; the sandbox keeps raw
              param editing. -->
-        <div class="insp-sub">quality tier</div>
-        <div class="insp-chips wrap">
-          {#each TIER_LABELS as label, i (label)}
-            <button
-              class="chip-val {selTier() === i ? 'is-active' : ''}"
-              onclick={() => setTier(i)}>{label}</button
-            >
-          {/each}
-        </div>
-      {/if}
-      {#if hasDiodeTypes(kind)}
-        {@const dv = diodeVariant(kind, selVariant())}
-        <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
+      <div class="insp-sub">quality tier</div>
+      <div class="insp-chips wrap">
+        {#each TIER_LABELS as label, i (label)}
+          <button
+            class="chip-val {selTier() === i ? 'is-active' : ''}"
+            onclick={() => setTier(i)}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if hasDiodeTypes(kind)}
+      {@const dv = diodeVariant(kind, selVariant())}
+      <!-- Diode TYPE (main gameplay): switching / rectifier / fast-recovery / power.
              Each preset sets the forward junction (Is/n → forward drop) and a current
              rating; the rating bites in Real mode (an over-rated diode FAILs). -->
-        <div class="insp-sub">diode type</div>
-        <div class="insp-chips wrap">
-          {#each DIODE_TYPES as dt, i (dt.label)}
-            <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{dt.label}</button
-            >
-          {/each}
+      <div class="insp-sub">diode type</div>
+      <div class="insp-chips wrap">
+        {#each DIODE_TYPES as dt, i (dt.label)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{dt.label}</button
+          >
+        {/each}
+      </div>
+      {#if dv}
+        <div class="insp-sub">
+          rated · <span class="mono">{formatValue(dv.ratedA, "A")}</span>
+          {#if realModels}<span class="mono">(FAIL above)</span>{/if}
         </div>
-        {#if dv}
-          <div class="insp-sub">
-            rated · <span class="mono">{formatValue(dv.ratedA, "A")}</span>
-            {#if realModels}<span class="mono">(FAIL above)</span>{/if}
-          </div>
-          {#if realModels}
-            <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
+        {#if realModels}
+          <!-- Reverse recovery (Real mode): a slower part (bigger transit time) sweeps
                  out more charge on switch-off — the reverse-current spike a switcher hates. -->
-            <div class="insp-sub">
-              reverse recovery · <span class="mono"
-                >{dv.tt === 0
-                  ? "none"
-                  : dv.tt <= 1e-6
-                    ? "fast"
-                    : dv.tt <= 4e-6
-                      ? "medium"
-                      : "slow"}</span
-              >
-            </div>
-          {/if}
+          <div class="insp-sub">
+            reverse recovery · <span class="mono"
+              >{dv.tt === 0
+                ? "none"
+                : dv.tt <= 1e-6
+                  ? "fast"
+                  : dv.tt <= 4e-6
+                    ? "medium"
+                    : "slow"}</span
+            >
+          </div>
         {/if}
       {/if}
-      {#if hasLedColors(kind)}
-        {@const colors = variantList(kind) ?? []}
-        <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
+    {/if}
+    {#if hasLedColors(kind)}
+      {@const colors = variantList(kind) ?? []}
+      <!-- LED COLOUR (main gameplay): the emitted colour sets the forward voltage
              (red ~1.9 V … blue/white ~3 V) and tints the glyph. -->
-        <div class="insp-sub">colour</div>
-        <div class="insp-chips wrap">
-          {#each colors as col, i (col.label)}
-            <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{col.label}</button
-            >
-          {/each}
-        </div>
-      {/if}
-      {#if isDigitalPart(kind)}
-        {@const lv = familyLevels(selFamily(), partValue(kind))}
-        <!-- The logic family sets the input thresholds and output levels:
+      <div class="insp-sub">colour</div>
+      <div class="insp-chips wrap">
+        {#each colors as col, i (col.label)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{col.label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if isDigitalPart(kind)}
+      {@const lv = familyLevels(selFamily(), partValue(kind))}
+      <!-- The logic family sets the input thresholds and output levels:
            Ideal = half-rail (no forbidden band); CMOS/TTL give honest noise
            margins. Packed into `aux` for the solver (func + 16*family). -->
-        <div class="insp-sub">logic family</div>
-        <div class="insp-chips wrap">
-          {#each LOGIC_FAMILIES as fam, i (fam.name)}
-            <button
-              class="chip-val {selFamily() === i ? 'is-active' : ''}"
-              onclick={() => setFamily(i)}>{fam.name}</button
-            >
-          {/each}
-        </div>
-        <div class="insp-sub">
-          thresholds · <span class="mono"
-            >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
-              lv.vIh,
-              "V",
-            )}</span
+      <div class="insp-sub">logic family</div>
+      <div class="insp-chips wrap">
+        {#each LOGIC_FAMILIES as fam, i (fam.name)}
+          <button
+            class="chip-val {selFamily() === i ? 'is-active' : ''}"
+            onclick={() => setFamily(i)}>{fam.name}</button
           >
-        </div>
-        <div class="insp-sub">
-          output · <span class="mono"
-            >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
-          >
-          · noise margin
-          <span class="mono"
-            >{formatValue(lv.nmHigh, "V")} hi · {formatValue(lv.nmLow, "V")} lo</span
-          >
-        </div>
-      {/if}
-      {#if isGatePart(kind)}
-        <!-- Output stage: push-pull drives both rails; open-drain pulls low and
+        {/each}
+      </div>
+      <div class="insp-sub">
+        thresholds · <span class="mono"
+          >low ≤ {formatValue(lv.vIl, "V")} · high &gt; {formatValue(
+            lv.vIh,
+            "V",
+          )}</span
+        >
+      </div>
+      <div class="insp-sub">
+        output · <span class="mono"
+          >{formatValue(lv.vOl, "V")} / {formatValue(lv.vOh, "V")}</span
+        >
+        · noise margin
+        <span class="mono"
+          >{formatValue(lv.nmHigh, "V")} hi · {formatValue(lv.nmLow, "V")} lo</span
+        >
+      </div>
+    {/if}
+    {#if isGatePart(kind)}
+      <!-- Output stage: push-pull drives both rails; open-drain pulls low and
            releases high (needs an external pull-up) — open-drain outputs on one
            net make a wired-AND bus (I²C / interrupt-line idiom). -->
-        <div class="insp-sub">output</div>
-        <div class="insp-chips">
-          <button
-            class="chip-val {selOpenDrain() ? '' : 'is-active'}"
-            onclick={() => setOpenDrain(false)}>Push-pull</button
-          >
-          <button
-            class="chip-val {selOpenDrain() ? 'is-active' : ''}"
-            onclick={() => setOpenDrain(true)}>Open-drain</button
-          >
+      <div class="insp-sub">output</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selOpenDrain() ? '' : 'is-active'}"
+          onclick={() => setOpenDrain(false)}>Push-pull</button
+        >
+        <button
+          class="chip-val {selOpenDrain() ? 'is-active' : ''}"
+          onclick={() => setOpenDrain(true)}>Open-drain</button
+        >
+      </div>
+      {#if selOpenDrain()}
+        <div class="insp-sub">
+          releases high · <span class="mono">add a pull-up to Vcc</span>
         </div>
-        {#if selOpenDrain()}
-          <div class="insp-sub">
-            releases high · <span class="mono">add a pull-up to Vcc</span>
-          </div>
-        {/if}
       {/if}
-      {#if kind === "PULSE"}
-        <!-- The pulse / clock generator: high level (amplitude), waveform (square or
+    {/if}
+    {#if kind === "PULSE"}
+      <!-- The pulse / clock generator: high level (amplitude), waveform (square or
              triangle), and duty cycle. `value` (the frequency, Hz) uses the row above. -->
-        <div class="insp-sub">high level</div>
-        <div class="insp-row">
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepAmpVal(-1)}
-            title="Next smaller level">−</button
-          >
-          <div class="insp-chips wrap">
-            {#each acAmpChips() as v (v)}
-              <button
-                class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
-              >
-            {/each}
-          </div>
-          <button
-            class="btn btn-ghost insp-step"
-            onclick={() => stepAmpVal(1)}
-            title="Next larger level">+</button
-          >
-        </div>
-        <div class="insp-sub">waveform</div>
+      <div class="insp-sub">high level</div>
+      <div class="insp-row">
+        <button
+          class="btn btn-ghost insp-step"
+          onclick={() => stepAmpVal(-1)}
+          title="Next smaller level">−</button
+        >
         <div class="insp-chips wrap">
-          {#each ["Square", "Triangle"] as wf, i (wf)}
+          {#each acAmpChips() as v (v)}
             <button
-              class="chip-val {selVariant() === i ? 'is-active' : ''}"
-              onclick={() => setVariant(i)}>{wf}</button
+              class="chip-val {selAmp() === v ? 'is-active' : ''}"
+              onclick={() => setAmp(v)}>{formatValue(v, "V")}</button
             >
           {/each}
         </div>
-        <div class="insp-sub">
-          duty · {Math.round(selDuty() * 100)}%
-        </div>
-        <div class="insp-row">
-          <span class="wiper-end">0</span>
-          <input
-            class="wiper-slider"
-            type="range"
-            min="0.05"
-            max="0.95"
-            step="0.01"
-            value={selDuty()}
-            aria-label="Pulse duty cycle"
-            oninput={(e) => setDuty(Number(e.currentTarget.value))}
-          />
-          <span class="wiper-end">1</span>
-        </div>
-      {/if}
-      {#if kind === "LOAD"}
-        <!-- The electronic load's MODE: constant-current (CC) draws a set current
+        <button
+          class="btn btn-ghost insp-step"
+          onclick={() => stepAmpVal(1)}
+          title="Next larger level">+</button
+        >
+      </div>
+      <div class="insp-sub">waveform</div>
+      <div class="insp-chips wrap">
+        {#each ["Square", "Triangle"] as wf, i (wf)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{wf}</button
+          >
+        {/each}
+      </div>
+      <div class="insp-sub">
+        duty · {Math.round(selDuty() * 100)}%
+      </div>
+      <div class="insp-row">
+        <span class="wiper-end">0</span>
+        <input
+          class="wiper-slider"
+          type="range"
+          min="0.05"
+          max="0.95"
+          step="0.01"
+          value={selDuty()}
+          aria-label="Pulse duty cycle"
+          oninput={(e) => setDuty(Number(e.currentTarget.value))}
+        />
+        <span class="wiper-end">1</span>
+      </div>
+    {/if}
+    {#if kind === "LOAD"}
+      <!-- The electronic load's MODE: constant-current (CC) draws a set current
              regardless of voltage; constant-resistance (CR) draws V/R. The mode sets
              the value chips' unit (A vs Ω) — handled in the inspector via loadChipsForMode
              + fmtVal — and which element buildNetlist emits. -->
-        <div class="insp-sub">mode</div>
-        <div class="insp-chips">
-          <button
-            class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
-            onclick={() => setLoadMode(0)}
-            title="Constant current — draw a set current regardless of voltage"
-            >CC</button
-          >
-          <button
-            class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
-            onclick={() => setLoadMode(1)}
-            title="Constant resistance — draw V/R like a fixed resistor"
-            >CR</button
-          >
-        </div>
-        {#if selLoadMode() === 0}
-          <!-- Dynamic load step (CC only): step the draw between the base level (the
+      <div class="insp-sub">mode</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selLoadMode() === 0 ? 'is-active' : ''}"
+          onclick={() => setLoadMode(0)}
+          title="Constant current — draw a set current regardless of voltage"
+          >CC</button
+        >
+        <button
+          class="chip-val {selLoadMode() === 1 ? 'is-active' : ''}"
+          onclick={() => setLoadMode(1)}
+          title="Constant resistance — draw V/R like a fixed resistor"
+          >CR</button
+        >
+      </div>
+      {#if selLoadMode() === 0}
+        <!-- Dynamic load step (CC only): step the draw between the base level (the
                value chips in the inspector) and a PEAK at a chosen rate/duty — the load-step
                that probes a supply's transient response. Off (0 Hz) = a static DC load. -->
-          <div class="insp-sub">dynamic load step</div>
-          <div class="insp-chips wrap">
-            {#each LOAD_STEP_HZ as hz (hz)}
-              <button
-                class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
-                onclick={() => setLoadHz(hz)}
-                >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
-              >
-            {/each}
-          </div>
-          {#if selLoadHz() > 0}
-            <!-- The peak current (the load's `amp` second scalar): the value chips set
+        <div class="insp-sub">dynamic load step</div>
+        <div class="insp-chips wrap">
+          {#each LOAD_STEP_HZ as hz (hz)}
+            <button
+              class="chip-val {selLoadHz() === hz ? 'is-active' : ''}"
+              onclick={() => setLoadHz(hz)}
+              >{hz === 0 ? "Off" : formatValue(hz, "Hz")}</button
+            >
+          {/each}
+        </div>
+        {#if selLoadHz() > 0}
+          <!-- The peak current (the load's `amp` second scalar): the value chips set
                  the BASE, this sets the PEAK it steps up to. Reuses the amp chips/stepper. -->
-            <div class="insp-sub">peak</div>
-            <div class="insp-row">
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(-1)}
-                title="Next smaller peak">−</button
-              >
-              <div class="insp-chips wrap">
-                {#each acAmpChips() as v (v)}
-                  <button
-                    class="chip-val {selAmp() === v ? 'is-active' : ''}"
-                    onclick={() => setAmp(v)}>{formatValue(v, "A")}</button
-                  >
-                {/each}
-              </div>
-              <button
-                class="btn btn-ghost insp-step"
-                onclick={() => stepAmpVal(1)}
-                title="Next larger peak">+</button
-              >
+          <div class="insp-sub">peak</div>
+          <div class="insp-row">
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepAmpVal(-1)}
+              title="Next smaller peak">−</button
+            >
+            <div class="insp-chips wrap">
+              {#each acAmpChips() as v (v)}
+                <button
+                  class="chip-val {selAmp() === v ? 'is-active' : ''}"
+                  onclick={() => setAmp(v)}>{formatValue(v, "A")}</button
+                >
+              {/each}
             </div>
-            <div class="insp-sub">
-              duty · {Math.round(selDuty() * 100)}%
-            </div>
-            <div class="insp-row">
-              <span class="wiper-end">0</span>
-              <input
-                class="wiper-slider"
-                type="range"
-                min="0.05"
-                max="0.95"
-                step="0.01"
-                value={selDuty()}
-                aria-label="Load step duty cycle"
-                oninput={(e) => setDuty(Number(e.currentTarget.value))}
-              />
-              <span class="wiper-end">1</span>
-            </div>
-          {/if}
+            <button
+              class="btn btn-ghost insp-step"
+              onclick={() => stepAmpVal(1)}
+              title="Next larger peak">+</button
+            >
+          </div>
+          <div class="insp-sub">
+            duty · {Math.round(selDuty() * 100)}%
+          </div>
+          <div class="insp-row">
+            <span class="wiper-end">0</span>
+            <input
+              class="wiper-slider"
+              type="range"
+              min="0.05"
+              max="0.95"
+              step="0.01"
+              value={selDuty()}
+              aria-label="Load step duty cycle"
+              oninput={(e) => setDuty(Number(e.currentTarget.value))}
+            />
+            <span class="wiper-end">1</span>
+          </div>
         {/if}
       {/if}
-    {/snippet}
+    {/if}
+    {#if kind === "LUT"}
+      <!-- FPGA logic cell: the 16-bit truth table is the program. Presets set the common
+             functions; the hex field reaches any of the 65 536 tables (OUT = bit
+             [IN0 | IN1<<1 | IN2<<2 | IN3<<3]). The output register makes it a clocked cell. -->
+      <div class="insp-sub">function · preset</div>
+      <div class="insp-chips wrap">
+        {#each LUT_PRESETS as p (p.name)}
+          <button
+            class="chip-val {selWord() === p.table ? 'is-active' : ''}"
+            onclick={() => setWord(p.table)}
+            title={p.hint}>{p.name}</button
+          >
+        {/each}
+      </div>
+      <div class="insp-sub">truth table · hex</div>
+      <div class="insp-row">
+        <span class="mono">0x</span>
+        <input
+          class="insp-hex mono"
+          type="text"
+          spellcheck="false"
+          maxlength="4"
+          value={selWord().toString(16).toUpperCase().padStart(4, "0")}
+          aria-label="LUT truth table (hex)"
+          onchange={(e) => setWordHex(e.currentTarget.value, 0xffff)}
+        />
+      </div>
+      <div class="insp-sub">output register</div>
+      <div class="insp-chips">
+        <button
+          class="chip-val {selLutReg() === 0 ? 'is-active' : ''}"
+          onclick={() => setLutReg(0)}
+          title="Output follows the table live (no clock)">Combinational</button
+        >
+        <button
+          class="chip-val {selLutReg() === 1 ? 'is-active' : ''}"
+          onclick={() => setLutReg(1)}
+          title="Output latched into a register on the rising CLK edge"
+          >Registered</button
+        >
+      </div>
+    {/if}
+    {#if kind === "SPIM" || kind === "SPIS" || kind === "UART"}
+      <!-- The data word the block sends: the SPI master's TX word / the slave's reply on
+             MISO / the UART's transmitted byte, set in hex. -->
+      <div class="insp-sub">
+        {kind === "SPIS" ? "reply word · hex" : "data word · hex"}
+      </div>
+      <div class="insp-row">
+        <span class="mono">0x</span>
+        <input
+          class="insp-hex mono"
+          type="text"
+          spellcheck="false"
+          maxlength="8"
+          value={selWord().toString(16).toUpperCase()}
+          aria-label="Serial data word (hex)"
+          onchange={(e) => setWordHex(e.currentTarget.value, 0xffffffff)}
+        />
+      </div>
+    {/if}
+  {/snippet}
+
+  <main class="panel board">
     <div class="board-tools">
       <span class="tool-label">Tool</span>
       <button
@@ -2661,6 +3301,13 @@
         ⓘ Info
       </button>
       <button
+        class="btn btn-ghost {codexOpen ? 'is-active' : ''}"
+        onclick={openCodex}
+        title="Codex: the full browsable reference — every component, exhaustively"
+      >
+        ⊞ Codex
+      </button>
+      <button
         class="btn btn-ghost {boardLens !== 'schematic' ? 'is-active' : ''}"
         onclick={cycleLens}
         disabled={!ready || !lodOn}
@@ -2690,20 +3337,6 @@
               aria-label="Disarm">×</button
             >
           </span>
-          {#if !selPart && hasConfig(armedPart)}
-            <!-- Arm-time CONFIGURATOR: the same identity/quality chips the inspector shows,
-                 but BEFORE placing — so the ghost is the configured part and place-and-repeat
-                 carpets it. The default (variant 0 / mid tier / push-pull / CC) needs zero
-                 clicks; this panel only lets you change it. Driven by the dual-target setters,
-                 which (with nothing selected) write `armedConfig` and re-tint the ghost. -->
-            <div
-              class="armed-config"
-              role="group"
-              aria-label="Configure armed part"
-            >
-              {@render partConfig(armedPart)}
-            </div>
-          {/if}
         </span>
       {/if}
       {#if demo}
@@ -2790,24 +3423,112 @@
         </span>
       </div>
 
+      <!-- Quick-recall hotbar: nine configured-part slots along the board's bottom edge.
+           Press a digit to arm that slot's part (place-and-repeat), Shift+digit to store
+           the armed part there, right-click (or the ×) to clear; Q pipettes the selected
+           part into your hand. A filled cell shows the part glyph tinted by its kind
+           colour + a compact name; the live (currently-armed) slot lights accent. -->
+      <div class="hotbar" role="toolbar" aria-label="Quick-recall hotbar">
+        {#each hotbar as slot, i (i)}
+          <!-- Operable from the keyboard via the global 1–9 / Shift+1–9 handlers (which do
+               exactly what a click here does), so the per-cell click is a pointer convenience;
+               the strip itself isn't a tab stop (tabindex −1). -->
+          <!-- svelte-ignore a11y_click_events_have_key_events -->
+          <div
+            class="hotcell {slot ? 'is-filled' : 'is-empty'} {slotIsArmed(slot)
+              ? 'is-armed'
+              : ''}"
+            style={slot ? `--c: ${partColor(slot.kind)}` : ""}
+            role="button"
+            tabindex="-1"
+            title={slot
+              ? `${partName(slot.kind)} — press ${i + 1} to arm · Shift+${i + 1} to reassign · right-click to clear`
+              : armedPart
+                ? `Empty — press Shift+${i + 1} (or click) to store ${partName(armedPart)} here`
+                : `Empty slot ${i + 1} — arm a part, then Shift+${i + 1} to store it here`}
+            onclick={() => clickSlot(i)}
+            oncontextmenu={(e) => {
+              e.preventDefault();
+              clearSlot(i);
+            }}
+          >
+            <kbd class="hotkey">{i + 1}</kbd>
+            {#if slot}
+              <span class="hotglyph">{slot.kind}</span>
+              <span class="hotname">{partName(slot.kind)}</span>
+              <button
+                class="hotclear"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  clearSlot(i);
+                }}
+                title="Clear this slot"
+                aria-label="Clear slot {i + 1}">×</button
+              >
+            {:else}
+              <span class="hotempty" aria-hidden="true"></span>
+            {/if}
+          </div>
+        {/each}
+      </div>
+
       {#if circuitWarning}
         <div class="circuit-warn">⚠ {circuitWarning}</div>
       {/if}
 
       {#if labelEdit}
-        <input
-          bind:this={labelInput}
-          class="net-label-input mono"
+        <div
+          class="net-label-editor"
           style="left: {labelEdit.rect.x}px; top: {labelEdit.rect.y}px;"
-          bind:value={labelEditValue}
-          placeholder="net name"
-          maxlength="24"
-          spellcheck="false"
-          autocomplete="off"
-          onkeydown={onLabelKey}
-          onblur={commitLabelEdit}
-          aria-label="Net label name"
-        />
+        >
+          <input
+            bind:this={labelInput}
+            class="net-label-input mono"
+            bind:value={labelEditValue}
+            placeholder="net name"
+            maxlength="24"
+            spellcheck="false"
+            autocomplete="off"
+            onkeydown={onLabelKey}
+            onblur={commitLabelEdit}
+            aria-label="Net label name"
+          />
+          <!-- Pin a colour to this net (overrides the voltage colour). The swatches
+               are the renderer PALETTE so the chip matches the wire it paints; "Auto"
+               clears the override. onpointerdown + preventDefault keeps the input
+               focused so its blur-commit doesn't fire mid-click. -->
+          <div class="net-label-swatches">
+            <button
+              type="button"
+              class="net-swatch net-swatch-auto {labelEditColor === null
+                ? 'is-active'
+                : ''}"
+              title="Auto (voltage colour)"
+              aria-label="Auto net colour (voltage)"
+              aria-pressed={labelEditColor === null}
+              onpointerdown={(e) => {
+                e.preventDefault();
+                labelEditColor = null;
+              }}>A</button
+            >
+            {#each NET_LABEL_SWATCHES as sw (sw.hex)}
+              <button
+                type="button"
+                class="net-swatch {labelEditColor === sw.hex
+                  ? 'is-active'
+                  : ''}"
+                style="--sw: {cssHex(sw.hex)};"
+                title={sw.name}
+                aria-label="{sw.name} net colour"
+                aria-pressed={labelEditColor === sw.hex}
+                onpointerdown={(e) => {
+                  e.preventDefault();
+                  labelEditColor = sw.hex;
+                }}
+              ></button>
+            {/each}
+          </div>
+        </div>
       {/if}
 
       {#if buildEx}
@@ -3176,7 +3897,11 @@
         <aside class="info-drawer">
           <div class="info-head">
             <span class="info-title">
-              {selPart ? partName(selPart.kind) : "Component Info"}
+              {infoKind
+                ? partName(infoKind)
+                : "Component Info"}{#if infoPreview}<span
+                  class="info-preview-tag">preview</span
+                >{/if}
             </span>
             <button
               class="intro-x"
@@ -3196,10 +3921,9 @@
           </div>
           <div class="info-body scroll">
             {#if infoTab === "info"}
-              {#if selPart}
-                {@const info = partInfo(selPart.kind)}
+              {#if infoKind}
+                {@const info = partInfo(infoKind)}
                 {#if info}
-                  {@const e = selDisplay ?? ZERO_ELECTRICAL}
                   {#if diagramHasDetail || diagramHasFactory}
                     <!-- The 3-tier view selector: Schematic (the datasheet symbol) →
                          Analogy (the machine-metaphor view) → Reality (the live
@@ -3251,7 +3975,7 @@
                   >
                     <canvas use:infoDiagramAction></canvas>
                   </div>
-                  {@const po = pinoutOf(selPart.kind, selPart.rot)}
+                  {@const po = pinoutOf(infoKind, selPart?.rot ?? 0)}
                   {#if po}
                     <div class="pinout-wrap">
                       <div class="pinout-cap">Pinout</div>
@@ -3310,32 +4034,43 @@
                   {/if}
                   <div class="info-eq mono">{info.equation}</div>
                   <p class="info-plain">{info.plain()}</p>
-                  <div class="info-live">
-                    <div class="info-live-head">
-                      Right now{#if selRmsMode}<span class="rms-tag">rms</span
-                        >{/if}
-                    </div>
-                    <div class="info-sub mono">
-                      {info.headline(e, selPart.value, selPart.amp)}
-                    </div>
-                    {#each info.derived(e, selPart.value, selPart.amp) as row (row.label)}
-                      <div class="info-row">
-                        <span>{row.label}</span>
-                        <span class="mono">{row.value}</span>
+                  {#if selPart}
+                    {@const e = selDisplay ?? ZERO_ELECTRICAL}
+                    <div class="info-live">
+                      <div class="info-live-head">
+                        Right now{#if selRmsMode}<span class="rms-tag">rms</span
+                          >{/if}
                       </div>
-                    {/each}
-                  </div>
+                      <div class="info-sub mono">
+                        {info.headline(e, selPart.value, selPart.amp)}
+                      </div>
+                      {#each info.derived(e, selPart.value, selPart.amp) as row (row.label)}
+                        <div class="info-row">
+                          <span>{row.label}</span>
+                          <span class="mono">{row.value}</span>
+                        </div>
+                      {/each}
+                    </div>
+                  {:else}
+                    <!-- Arm-and-preview: an armed-but-unplaced part has no live electrical
+                         state, so show the static teaching content (symbol/internals, pinout,
+                         equation, plain) and a nudge to drop it for the live readout. -->
+                    <p class="info-preview-note">
+                      Previewing the armed part — drop it on the board to see
+                      its live “right now” numbers.
+                    </p>
+                  {/if}
                 {:else}
                   <p class="info-empty">
-                    {partName(selPart.kind)} isn't simulated yet — no live math to
-                    show.
+                    {partName(infoKind)} isn't simulated yet — no live math to show.
                   </p>
                 {/if}
               {:else}
                 <p class="info-empty">
-                  Select a component on the board to see what it's doing — its
-                  governing equation, a plain explanation of how it works, and a
-                  live "right now" readout of its numbers.
+                  Select a component on the board — or arm a part from the bin —
+                  to see what it's doing: its governing equation, a plain
+                  explanation of how it works, and (when placed) a live "right
+                  now" readout.
                 </p>
               {/if}
             {:else}
@@ -3551,6 +4286,386 @@
   </aside>
 </div>
 
+<!-- ── Component Codex ────────────────────────────────────────────────────────
+     The full-screen "discovery museum": a master list of every component (grouped,
+     searchable) and a detail pane that renders the exhaustive reference for the
+     selected kind. A high-z dimmed-backdrop modal; Esc or the × closes it. All the
+     per-component data comes from lib/codex.ts (a pure read of the existing model). -->
+{#if codexOpen}
+  <!-- svelte-ignore a11y_click_events_have_key_events -->
+  <div
+    class="codex-backdrop"
+    onclick={() => (codexOpen = false)}
+    role="presentation"
+  >
+    <div
+      class="codex-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Component Codex"
+      tabindex="-1"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <header class="codex-head">
+        <div class="codex-head-title">
+          <span class="codex-mark">⊞</span>
+          <span class="codex-h1">Component Codex</span>
+          <span class="codex-h-sub mono"
+            >{Object.keys(CODEX_META).length} components · the full reference</span
+          >
+        </div>
+        <button
+          class="intro-x"
+          onclick={() => (codexOpen = false)}
+          aria-label="Close the Codex">×</button
+        >
+      </header>
+
+      <div class="codex-split">
+        <!-- ── Master list: every component, grouped by category, searchable ── -->
+        <nav class="codex-list" aria-label="Components">
+          <input
+            class="part-search codex-search"
+            type="search"
+            placeholder="Search components…"
+            bind:value={codexSearch}
+            aria-label="Search components"
+          />
+          <div class="codex-list-scroll scroll">
+            {#each codexFiltered ?? codexGroups as group (group.category)}
+              <details class="part-cat codex-cat" open>
+                <summary class="part-cat-head">
+                  <span class="part-cat-name">{group.category}</span>
+                  <span class="part-cat-count">{group.kinds.length}</span>
+                </summary>
+                <ul class="part-list codex-cat-list">
+                  {#each group.kinds as kind (kind)}
+                    {@const pk = PART_KINDS[kind]}
+                    <!-- svelte-ignore a11y_click_events_have_key_events -->
+                    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+                    <li
+                      class="part codex-row {codexKind === kind
+                        ? 'is-selected'
+                        : ''}"
+                      style="--c: var(--{pk?.colorKey ?? 'bronze'})"
+                      onclick={() => selectCodexKind(kind)}
+                      title={CODEX_META[kind]?.desc ?? pk?.name}
+                    >
+                      <span class="part-glyph">{kind}</span>
+                      <span class="part-body">
+                        <span class="part-name">{pk?.name ?? kind}</span>
+                        <span class="part-desc"
+                          >{CODEX_META[kind]?.desc ?? ""}</span
+                        >
+                      </span>
+                      <span class="part-tier"
+                        >{CODEX_META[kind]?.learnTier ?? ""}</span
+                      >
+                    </li>
+                  {/each}
+                </ul>
+              </details>
+            {/each}
+            {#if codexFiltered && codexFiltered.length === 0}
+              <p class="part-empty">No components match “{codexSearch}”.</p>
+            {/if}
+          </div>
+        </nav>
+
+        <!-- ── Detail pane: the exhaustive reference for the selected kind ── -->
+        <section class="codex-detail scroll" aria-label="Component detail">
+          {#if codexKind}
+            {@const pk = PART_KINDS[codexKind]}
+            {@const info = partInfo(codexKind)}
+            {@const po = pinoutOf(codexKind, 0)}
+            {@const meta = CODEX_META[codexKind]}
+            {@const tiers = tierRows(codexKind)}
+            {@const variants = variantRows(codexKind)}
+            {@const families = familyRows(codexKind, pk?.defaultValue ?? 5)}
+            {@const valSum = valueSummary(codexKind)}
+            {@const syns = CODEX_SYNONYMS[codexKind] ?? []}
+            {@const sheet = REFSHEET_OF[codexKind]}
+
+            <!-- 1 · Header -->
+            <div class="codex-d-head">
+              <span
+                class="codex-d-glyph"
+                style="--c: var(--{pk?.colorKey ?? 'bronze'})">{codexKind}</span
+              >
+              <div class="codex-d-titles">
+                <h2 class="codex-d-name">{pk?.name ?? codexKind}</h2>
+                <div class="codex-badges">
+                  <span class="codex-badge"
+                    >{CODEX_CAT_OF[codexKind] ?? "—"}</span
+                  >
+                  {#if meta}<span class="codex-badge codex-badge-tier"
+                      >Tier {meta.learnTier}</span
+                    >{/if}
+                  {#if pk?.ideal}<span class="codex-badge codex-badge-sim"
+                      >solver primitive</span
+                    >{/if}
+                </div>
+              </div>
+            </div>
+            {#if syns.length > 0}
+              <p class="codex-aka">
+                <span class="codex-aka-lbl">Also known as / used for</span>
+                {syns.join(" · ")}
+              </p>
+            {/if}
+
+            <!-- 2 · Diagram (Schematic / Analogy / Reality), like the info drawer -->
+            {#if codexHasFactory || codexHasDetail}
+              <div
+                class="diagram-toggle"
+                role="group"
+                aria-label="Component view tier"
+              >
+                <button
+                  class="seg {effectiveCodexMode === 'schematic'
+                    ? 'is-active'
+                    : ''}"
+                  onclick={() => (codexDiagramMode = "schematic")}
+                  title="Schematic — the symbol you'll meet on a datasheet"
+                  >Schematic</button
+                >
+                {#if codexHasFactory}
+                  <button
+                    class="seg {effectiveCodexMode === 'analogy'
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => (codexDiagramMode = "analogy")}
+                    title="Analogy — the machine-metaphor view">Analogy</button
+                  >
+                {/if}
+                {#if codexHasDetail}
+                  <button
+                    class="seg {effectiveCodexMode === 'reality'
+                      ? 'is-active'
+                      : ''}"
+                    onclick={() => (codexDiagramMode = "reality")}
+                    title="Reality — what's literally happening inside"
+                    >Reality</button
+                  >
+                {/if}
+              </div>
+            {/if}
+            <div
+              class="info-diagram codex-diagram {effectiveCodexMode ===
+              'reality'
+                ? 'is-detail'
+                : ''}"
+            >
+              <canvas use:codexDiagramAction></canvas>
+            </div>
+
+            <!-- 3 · Pinout -->
+            {#if po}
+              <div class="pinout-wrap">
+                <div class="pinout-cap">Pinout</div>
+                <div
+                  class="pinout"
+                  style="width: {po.width}px; height: {po.height}px;"
+                >
+                  <svg
+                    width={po.width}
+                    height={po.height}
+                    viewBox="0 0 {po.width} {po.height}"
+                    aria-hidden="true"
+                  >
+                    <rect
+                      class="pinout-body"
+                      x={po.body.x}
+                      y={po.body.y}
+                      width={po.body.w}
+                      height={po.body.h}
+                      rx="4"
+                    />
+                    {#each po.pins as p (p.label)}
+                      <line
+                        class="pinout-leg"
+                        x1={po.body.x + po.body.w / 2}
+                        y1={po.body.y + po.body.h / 2}
+                        x2={p.x}
+                        y2={p.y}
+                      />
+                    {/each}
+                    {#each po.pins as p (p.label)}
+                      <circle
+                        class="pinout-dot"
+                        cx={p.x}
+                        cy={p.y}
+                        r="4.5"
+                        style="fill: {po.color}"
+                      />
+                    {/each}
+                  </svg>
+                  {#each po.pins as p (p.label)}
+                    <div
+                      class="pinout-label"
+                      style="left: {p.lx}px; top: {p.ly}px; transform: translate({p.tx}, {p.ty});"
+                    >
+                      <span class="pinout-name" style="color: {po.color}"
+                        >{p.label}</span
+                      >
+                      {#if p.gloss}<span class="pinout-gloss">{p.gloss}</span
+                        >{/if}
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 4 · Governing law -->
+            {#if info}
+              <div class="codex-section">
+                <h3 class="codex-cap">Governing law</h3>
+                <div class="info-eq mono">{info.equation}</div>
+                <p class="info-plain">{info.plain()}</p>
+              </div>
+            {:else}
+              <div class="codex-section">
+                <h3 class="codex-cap">Governing law</h3>
+                <p class="info-plain codex-nomodel">
+                  No simulation model yet — {pk?.name ?? codexKind} is a preview of
+                  a later tech-tree tier, so it has no governing equation or live
+                  telemetry to show.
+                </p>
+              </div>
+            {/if}
+
+            <!-- 5 · Identity facts -->
+            <div class="codex-section">
+              <h3 class="codex-cap">Identity</h3>
+              <div class="codex-facts">
+                {#if pk?.unit}
+                  <div class="info-row">
+                    <span>Default value</span>
+                    <span class="mono"
+                      >{formatValue(pk.defaultValue, pk.unit)}</span
+                    >
+                  </div>
+                {/if}
+                <div class="info-row">
+                  <span>Category</span>
+                  <span class="mono">{CODEX_CAT_OF[codexKind] ?? "—"}</span>
+                </div>
+                <div class="info-row">
+                  <span>Terminals</span>
+                  <span class="mono">{pk?.pins.length ?? 0}-pin</span>
+                </div>
+                <div class="info-row">
+                  <span>Solver primitive</span>
+                  <span class="mono">{pk?.ideal ? "yes" : "no (preview)"}</span>
+                </div>
+                {#if po}
+                  {#each po.pins.filter((p) => p.gloss) as p (p.label)}
+                    <div class="info-row">
+                      <span>Pin {p.label}</span>
+                      <span class="mono">{p.gloss}</span>
+                    </div>
+                  {/each}
+                {/if}
+                {#if pk?.pins.length === 5 && isDigital(codexKind) && codexKind !== "FF"}
+                  <div class="info-row">
+                    <span>Package</span>
+                    <span class="mono">5-pin powered IC (VCC + GND)</span>
+                  </div>
+                {/if}
+              </div>
+            </div>
+
+            <!-- 6 · Quality tiers -->
+            {#if tiers.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">Quality tiers</h3>
+                <p class="codex-note">
+                  Each grade is a preset bundle of model parameters; the
+                  non-idealities bite only in Real (realistic) mode.
+                </p>
+                <div class="codex-table">
+                  {#each tiers as row (row.tier)}
+                    <div class="info-row">
+                      <span>{row.tier}</span>
+                      <span class="mono">{row.change}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 7 · Variants / ratings -->
+            {#if variants.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">
+                  {codexKind === "LED" ? "Colours" : "Variants & ratings"}
+                </h3>
+                <div class="codex-table">
+                  {#each variants as row (row.label)}
+                    <div class="info-row codex-row-wide">
+                      <span class="codex-vlabel">{row.label}</span>
+                      <span class="mono">{row.detail}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 8 · Logic levels (digital parts) -->
+            {#if families.length > 0}
+              <div class="codex-section">
+                <h3 class="codex-cap">
+                  Logic levels @ {formatValue(pk?.defaultValue ?? 5, "V")} rail
+                </h3>
+                <div class="codex-table">
+                  {#each families as row (row.family)}
+                    <div class="info-row codex-row-wide">
+                      <span class="codex-vlabel">{row.family}</span>
+                      <span class="mono">{row.detail}</span>
+                    </div>
+                  {/each}
+                </div>
+              </div>
+            {/if}
+
+            <!-- 9 · Value range -->
+            {#if valSum}
+              <div class="codex-section">
+                <h3 class="codex-cap">Standard values</h3>
+                <div class="info-row codex-row-wide">
+                  <span class="codex-vlabel">Range</span>
+                  <span class="mono">{valSum}</span>
+                </div>
+              </div>
+            {/if}
+
+            <!-- 10 · Refsheet link -->
+            {#if sheet}
+              <a
+                class="codex-refsheet"
+                href={import.meta.env.BASE_URL + "parts/" + sheet}
+                target="_blank"
+                rel="noopener"
+              >
+                <span class="codex-refsheet-mark mono">[ ]</span>
+                <span class="codex-refsheet-txt">
+                  <span class="codex-refsheet-h">Open the full teardown</span>
+                  <span class="codex-refsheet-sub"
+                    >the five-tier interactive refsheet · opens in a new tab</span
+                  >
+                </span>
+                <span class="codex-refsheet-go mono">&gt;&gt;</span>
+              </a>
+            {/if}
+          {:else}
+            <p class="info-empty">Select a component from the list to begin.</p>
+          {/if}
+        </section>
+      </div>
+    </div>
+  </div>
+{/if}
+
 <div class="hud-footer">
   <div class="transport">
     <button class="btn btn-accent" onclick={togglePlay} disabled={!ready}>
@@ -3694,8 +4809,8 @@
     font-size: 10px;
     color: var(--faint);
   }
-  /* The armed-part chip: shows what a board click will drop, with an × to disarm. The
-     wrap anchors the arm-time configurator popover directly beneath the chip. */
+  /* The armed-part chip: a compact toolbar status of what a board click will drop, with an
+     × to disarm. The configurator itself lives in the parts bin (.bin-config), not here. */
   .armed-wrap {
     position: relative;
     display: inline-flex;
@@ -3713,27 +4828,64 @@
     border-radius: 3px;
     background: var(--accent-soft);
   }
-  /* Arm-time configurator: a compact dark-HUD popover under the armed chip, holding the
-     same identity/quality chips (the partConfig snippet) so the part is configured BEFORE
-     it's dropped. Mirrors the value-pop styling; scrolls if a kind has many rows. */
-  .armed-config {
-    position: absolute;
-    z-index: 6;
-    top: calc(100% + 6px);
-    left: 0;
-    width: 248px;
-    max-height: 60vh;
+  /* Arm-time configurator, docked at the top of the parts bin (right where you picked the
+     part): the same identity/quality chips (the partConfig snippet) so the part is configured
+     BEFORE it's dropped. Accent-framed so it reads as the live selection; scrolls if a kind
+     has many rows. */
+  .bin-config {
+    margin-bottom: 10px;
+    max-height: 42vh;
     overflow-y: auto;
-    padding: 9px 11px 11px;
-    border: 1px solid var(--border-bright);
+    padding: 8px 10px 10px;
+    border: 1px solid var(--accent-line);
     border-radius: 5px;
-    background: oklch(0.165 0.028 285 / 0.97);
-    box-shadow: 0 12px 34px -12px #000;
-    backdrop-filter: blur(4px);
+    background: var(--accent-soft);
   }
-  /* The first sub-label needs no top gap inside the panel (the panel padding suffices). */
-  .armed-config > :global(.insp-sub:first-child) {
-    margin-top: 0;
+  .bin-config-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  .bin-config-name {
+    font-family: var(--font-display);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 12px;
+    color: var(--accent);
+  }
+  .bin-config-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  /* The ⓘ preview toggle: opens the info drawer on the armed-but-unplaced part. */
+  .bin-config-info {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+    color: var(--dim);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .bin-config-info:hover {
+    color: var(--text);
+    border-color: var(--accent);
+  }
+  .bin-config-info.is-active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  /* The first sub-label sits right under the head, so it needs no extra top gap. */
+  .bin-config > :global(.insp-sub:first-of-type) {
+    margin-top: 4px;
   }
   .armed-x {
     width: 18px;
@@ -3753,11 +4905,16 @@
     border-color: var(--accent);
   }
 
-  /* Inline net-label name editor: a small input floated over the board at the
-     labelled endpoint (Label tool). On-brand mono, accent focus ring. */
-  .net-label-input {
+  /* Inline net-label editor: a small name input + a colour-pin swatch row, floated
+     over the board at the labelled endpoint (Label tool). On-brand mono. */
+  .net-label-editor {
     position: absolute;
     z-index: 6;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .net-label-input {
     width: 116px;
     padding: 3px 7px;
     font-family: var(--font-mono);
@@ -3776,6 +4933,47 @@
   .net-label-input:focus {
     outline: none;
     border-color: var(--accent);
+  }
+  /* Swatch row: preset colours to pin to the net, plus an "Auto" (clear) chip.
+     The active swatch is ringed; colours come from the PALETTE (the wire hues). */
+  .net-label-swatches {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    padding: 4px 5px;
+    background: oklch(0.165 0.028 285 / 0.97);
+    border: 1px solid var(--accent-line);
+    border-radius: 3px;
+    box-shadow: 0 8px 22px -10px #000;
+  }
+  .net-swatch {
+    width: 15px;
+    height: 15px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--sw, transparent);
+    cursor: pointer;
+    line-height: 1;
+  }
+  .net-swatch:hover {
+    border-color: var(--text);
+  }
+  .net-swatch.is-active {
+    border-color: var(--text);
+    box-shadow: 0 0 0 1px var(--text);
+  }
+  /* The "Auto" chip carries a glyph, not a colour fill. */
+  .net-swatch-auto {
+    display: grid;
+    place-items: center;
+    color: var(--dim);
+    background: var(--surface);
+    font-family: var(--font-mono);
+    font-size: 10px;
+  }
+  .net-swatch-auto.is-active {
+    color: var(--text);
   }
 
   /* Telemetry node controls: per-node scope visibility + rename, scope sizer. */
@@ -4037,6 +5235,24 @@
     border-color: var(--accent);
     background: var(--accent-soft);
   }
+  /* Hex entry for a behavioral block's truth table / data word. */
+  .insp-hex {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    letter-spacing: 0.08em;
+    padding: 5px 9px;
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    background: var(--surface);
+    color: var(--text);
+    text-transform: uppercase;
+  }
+  .insp-hex:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
   .insp-more {
     margin-top: 8px;
     font-family: var(--font-mono);
@@ -4129,6 +5345,31 @@
     font-size: 16px;
     letter-spacing: 0.04em;
     color: var(--text);
+  }
+  /* "preview" badge beside the title when the drawer is showing an armed (unplaced) part. */
+  .info-preview-tag {
+    margin-left: 7px;
+    padding: 1px 6px;
+    font-family: var(--font-mono);
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    border: 1px solid var(--accent-line);
+    border-radius: 2px;
+    background: var(--accent-soft);
+    vertical-align: middle;
+  }
+  /* The "drop it to see live numbers" nudge that stands in for the live block in a preview. */
+  .info-preview-note {
+    margin: 12px 0 0;
+    padding: 9px 11px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dim);
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: var(--surface);
   }
   .info-tabs {
     display: flex;
@@ -5062,5 +6303,311 @@
   .scrub:disabled {
     opacity: 0.5;
     cursor: default;
+  }
+
+  /* ── Component Codex ─────────────────────────────────────────────────────────
+     The full-screen "discovery museum": a dimmed-backdrop modal floating a
+     master-detail reference above everything. Reuses the info-drawer atoms
+     (.pinout-*, .info-eq, .info-plain, .info-row, .diagram-toggle/.seg,
+     .info-diagram) and the bin atoms (.part, .part-cat) so it reads as one
+     bench-instrument surface; the codex-* classes add the museum shell. */
+  .codex-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    padding: clamp(12px, 3vh, 40px);
+    background: oklch(0.08 0.02 285 / 0.72);
+    backdrop-filter: blur(3px);
+  }
+  .codex-modal {
+    display: flex;
+    flex-direction: column;
+    width: min(1180px, 96vw);
+    height: min(880px, 92vh);
+    background: var(--bg);
+    border: 1px solid var(--border-bright);
+    border-radius: 6px;
+    box-shadow:
+      0 0 0 1px oklch(0 0 0 / 0.4),
+      0 30px 80px -24px #000;
+    overflow: hidden;
+  }
+  .codex-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 13px 16px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--bg-2), var(--bg));
+  }
+  .codex-head-title {
+    display: flex;
+    align-items: baseline;
+    gap: 11px;
+  }
+  .codex-mark {
+    color: var(--accent);
+    font-size: 17px;
+    text-shadow: 0 0 12px var(--accent-soft);
+  }
+  .codex-h1 {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 19px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .codex-h-sub {
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    color: var(--faint);
+  }
+  .codex-split {
+    flex: 1;
+    display: grid;
+    grid-template-columns: 290px 1fr;
+    min-height: 0;
+  }
+  /* Master list ------------------------------------------------------------- */
+  .codex-list {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    border-right: 1px solid var(--border);
+    background: var(--bg-2);
+  }
+  .codex-search {
+    margin: 12px 12px 8px;
+  }
+  .codex-list-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .codex-cat-list {
+    padding: 8px 0 2px;
+  }
+  /* The active row in the master list — an accent rail + glow, like a focused part. */
+  .codex-row.is-selected {
+    border-color: var(--accent);
+    border-left-color: var(--accent);
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      -7px 0 16px -12px var(--accent);
+  }
+  .codex-row.is-selected .part-glyph {
+    border-color: var(--c);
+    box-shadow: 0 0 12px -4px var(--c);
+  }
+  /* Detail pane ------------------------------------------------------------- */
+  .codex-detail {
+    overflow-y: auto;
+    padding: 18px 22px 28px;
+    min-height: 0;
+  }
+  .codex-d-head {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-bottom: 6px;
+  }
+  .codex-d-glyph {
+    --c: var(--bronze);
+    display: grid;
+    place-items: center;
+    width: 52px;
+    height: 52px;
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--c);
+    border: 1px solid color-mix(in oklch, var(--c) 45%, var(--border));
+    border-radius: var(--radius);
+    background: color-mix(in oklch, var(--c) 10%, transparent);
+    text-shadow: 0 0 12px color-mix(in oklch, var(--c) 55%, transparent);
+  }
+  .codex-d-titles {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    min-width: 0;
+  }
+  .codex-d-name {
+    margin: 0;
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 24px;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--text);
+    line-height: 1;
+  }
+  .codex-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .codex-badge {
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--dim);
+    padding: 2px 7px;
+    border: 1px solid var(--border);
+    border-radius: 2px;
+    background: var(--surface);
+  }
+  .codex-badge-tier {
+    color: var(--cyan);
+    border-color: color-mix(in oklch, var(--cyan) 40%, var(--border));
+  }
+  .codex-badge-sim {
+    color: var(--ok);
+    border-color: color-mix(in oklch, var(--ok) 40%, var(--border));
+  }
+  .codex-aka {
+    margin: 0 0 16px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .codex-aka-lbl {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 9.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--faint);
+    margin-bottom: 2px;
+  }
+  /* The codex hero diagram is the centrepiece — a touch taller than the drawer's. */
+  .codex-diagram {
+    height: 220px;
+  }
+  .codex-diagram.is-detail {
+    height: 280px;
+  }
+  /* A titled section block in the detail pane. */
+  .codex-section {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .codex-cap {
+    margin: 0 0 9px;
+    font-family: var(--font-display);
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--faint);
+  }
+  .codex-note {
+    margin: -3px 0 9px;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--faint);
+  }
+  .codex-nomodel {
+    padding: 9px 11px;
+    border: 1px dashed var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+  }
+  /* The fact / tier / variant tables share the .info-row atom; the first row needs
+     no top divider since the section header already rules off above it. */
+  .codex-facts .info-row:first-child,
+  .codex-table .info-row:first-child {
+    border-top: none;
+  }
+  /* A wide data row whose value wraps to its own line below the label (the long
+     variant / logic-level / value-range strings don't squeeze onto one line). */
+  .codex-row-wide {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 3px;
+  }
+  .codex-vlabel {
+    color: var(--dim);
+    font-weight: 500;
+  }
+  .codex-row-wide .mono {
+    color: var(--text);
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+  /* The prominent "open the full teardown" link → the five-tier refsheet, new tab. */
+  .codex-refsheet {
+    display: flex;
+    align-items: center;
+    gap: 13px;
+    margin-top: 20px;
+    padding: 13px 15px;
+    text-decoration: none;
+    border: 1px solid var(--accent-line);
+    border-radius: 5px;
+    background: linear-gradient(
+      135deg,
+      var(--accent-soft),
+      color-mix(in oklch, var(--accent) 4%, transparent)
+    );
+    transition:
+      border-color 0.14s var(--ease),
+      box-shadow 0.14s var(--ease),
+      transform 0.06s var(--ease);
+  }
+  .codex-refsheet:hover {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 1px var(--accent-soft),
+      0 8px 24px -16px var(--accent);
+  }
+  .codex-refsheet:active {
+    transform: translateY(1px);
+  }
+  .codex-refsheet-mark {
+    color: var(--accent);
+    font-size: 15px;
+    text-shadow: 0 0 10px var(--accent-soft);
+  }
+  .codex-refsheet-txt {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+  }
+  .codex-refsheet-h {
+    font-family: var(--font-display);
+    font-size: 14px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--text);
+  }
+  .codex-refsheet-sub {
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .codex-refsheet-go {
+    color: var(--accent);
+    font-size: 15px;
+    letter-spacing: 0.05em;
+  }
+  @media (max-width: 720px) {
+    .codex-split {
+      grid-template-columns: 1fr;
+      grid-template-rows: minmax(120px, 38%) 1fr;
+    }
+    .codex-list {
+      border-right: none;
+      border-bottom: 1px solid var(--border);
+    }
   }
 </style>

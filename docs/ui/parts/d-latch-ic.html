@@ -1,0 +1,684 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Transparent D-latch, five layers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:94ch;} p.intro b{color:var(--text);}
+  .modebar{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:14px;}
+  .seg{display:inline-flex; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;}
+  .seg button{font-family:var(--font-display); font-size:12.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); background:var(--surface); border:none; padding:8px 14px; cursor:pointer; transition:background .15s,color .15s;}
+  .seg button + button{border-left:1px solid var(--border);}
+  .seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+  .seg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); margin-right:2px;}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .scopewrap{padding:8px 10px 12px;}
+  .scopewrap svg{display:block; width:100%; height:auto;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:200px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].ta::-webkit-slider-thumb{background:var(--accent); box-shadow:0 0 10px -2px var(--accent);}
+  input[type=range].ta::-moz-range-thumb{background:var(--accent);}
+  input[type=range].tb::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].tb::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">CEC3014</span><span class="chip" id="chipReg">Q=0</span></div>
+  </div>
+
+  <h1 class="lede">The transparent D-latch, five layers down</h1>
+  <p class="intro">A transparent D-latch stores one bit, but unlike a flip-flop it is <b>level-sensitive</b>. This is the house part <b>CEC3014</b>, a Critical Error gated latch. While the enable EN is high the latch is <b>transparent</b> and the output Q simply follows the data input D; the instant EN goes low the latch <b>freezes</b> the last value of D and holds it. Inside it is the same cross-coupled NOR pair as the SR latch with a small <b>steering front end</b>: an inverter makes NOT D, and two AND gates gated by EN form the set and reset signals, so when EN is low both are low and the latch holds, and when EN is high the latch tracks D. Putting this level-sensitive latch beside an edge-triggered flip-flop is the clearest way to see the difference between <b>level and edge triggering</b>. The first tier is the logic symbol on the real pinout with the function table. The second is the flow network, the enable gate admitting D into the bistable. The third opens that as <b>pressure-pilot valves</b>. The fourth is the gate-level schematic, the steering inverter and AND gates feeding the cross-coupled NOR pair, all powered from the rails. The fifth is the silicon, a NOR cell laid out as its CMOS transistors.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; symbol</button>
+      <button data-t="t2">2 &middot; flow</button>
+      <button data-t="t3">3 &middot; valves</button>
+      <button data-t="t4">4 &middot; device</button>
+      <button data-t="t5">5 &middot; silicon</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">schematic</span>
+      <span class="scope-tag r" id="regTag">hold</span>
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" aria-label="transparent D-latch"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">State</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Timing diagram</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost" id="btnD">D = 0</button><button class="btn btn-ghost" id="btnEN">EN = 0</button></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">supply V_DD</span><span class="ic-val" id="labVdd">5.00 V</span></div><input type="range" id="vdd" min="180" max="1500" value="500"></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function flowDots(run,dots,path,len,norm,col,fwd){var on=(norm>0.02),sp=(0.2+norm*0.95);for(var i=0;i<dots.length;i++){var o=dots[i];if(run&&on){o.u=(o.u+sp*0.004)%1;}var uu=fwd?o.u:(1-o.u),pt=path.getPointAtLength(uu*len);o.el.setAttribute('cx',pt.x.toFixed(1));o.el.setAttribute('cy',pt.y.toFixed(1));o.el.setAttribute('opacity',(on?clamp(0.35+norm,0,1):0).toFixed(2));o.el.setAttribute('fill',col);}}
+  function th(i){return (i*0.61803398875)%1;}
+  function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff',BAD='#ff6b5c';
+  function wcol(v,VDD){return mix(LO,HI,clamp(v/VDD,0,1));}
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== CEC3014 : transparent D-latch (gated SR) =====
+  // The cross-coupled NOR latch of the CEC3007 with a steering front end : nD = NOT(D),
+  // S = AND(D, EN), R = AND(nD, EN). When EN is low both S and R are low and the latch holds.
+  // When EN is high S = D and R = nD, so Q tracks D. The steering makes the SR forbidden
+  // state unreachable, since D and nD are never both high.
+  function dlatch(D,EN,curQ,curQb){
+    var nD=D?0:1, S=(D&&EN)?1:0, R=(nD&&EN)?1:0;
+    var Q=curQ, Qb=curQb;
+    if(S){ Q=1; Qb=0; }                  // EN high, D high : set
+    else if(R){ Q=0; Qb=1; }             // EN high, D low  : reset
+    else { /* EN low : hold last value */ }
+    var transparent=(EN===1);
+    var mode=transparent?(D?'track 1':'track 0'):'hold';
+    return {D:D,EN:EN,nD:nD,S:S,R:R,Q:Q,Qn:Qb,transparent:transparent,mode:mode};
+  }
+  function fmtV(v){return v.toFixed(2)+' V';}
+  function fmtI(I){var a=Math.abs(I);if(a<1e-7)return '0';if(a<1e-3)return (I*1e6).toFixed(1)+' uA';if(a<1)return (I*1000).toFixed(2)+' mA';return I.toFixed(2)+' A';}
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
+  var t1={},t2={},t3={},t4={},t5={};
+
+  // ===== shared 6-lead package frame, CEC3014 house pinout, identical in every tier =====
+  var PKX0=190,PKX1=590,PKY0=116,PKY1=456;
+  // CEC3014 house pinout on a 6-pin SOT-23-6 frame, landscape, pin 1 (Q) at the lower-left.
+  //   bottom L-R : Q(1) GND(2) D(3)      top L-R : VCC(6) Qbar(5) EN(4)
+  var PIN={q:[270,PKY1], gnd:[390,PKY1], d:[510,PKY1], en:[510,PKY0], qb:[390,PKY0], vcc:[270,PKY0]};
+  var XQ=270,XGND=390,XD=510,XEN=510,XQB=390,XVCC=270;
+  function drawPkg(g){
+    g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));   // pin-1 marker by Q
+    function pin(x,top,num,name,col){
+      var ty=top?PKY0-28:PKY1;
+      g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      g.appendChild(el('text',{x:x,y:top?PKY0+15:PKY1-7,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},num));
+      g.appendChild(el('text',{x:x,y:top?ty-7:ty+41,'font-family':'var(--font-mono)','font-size':12,fill:col,'text-anchor':'middle'},name));
+    }
+    pin(XVCC,true,'6','VCC',HI); pin(XQB,true,'5','Qbar',CYAN); pin(XEN,true,'4','EN',WARM);
+    pin(XQ,false,'1','Q',CYAN); pin(XGND,false,'2','GND',LO); pin(XD,false,'3','D',ACCENT);
+  }
+
+  // gate-symbol helpers : AND, inverter, and NOR = OR + output bubble
+  function andG(g,cx,cy,dir){var s=dir==='l'?-1:1,w=30,h=24,xf=cx-(w/2)*s,y0=cy-h/2,y1=cy+h/2,xm=cx-1*s,r=h/2,xr=xm+r*s,sw=dir==='l'?0:1;
+    var body=el('path',{d:'M '+xf+' '+y0+' L '+xm+' '+y0+' A '+r+' '+r+' 0 0 '+sw+' '+xm+' '+y1+' L '+xf+' '+y1+' Z',fill:'oklch(0.19 0.025 285)',stroke:STEEL,'stroke-width':1.3});g.appendChild(body);
+    return {inA:[xf,cy-6],inB:[xf,cy+6],out:[xr,cy],cx:cx,cy:cy,body:body};}
+  function invTri(g,cx,cy,dir){
+    var s=dir==='l'?-1:1;
+    var t=el('path',{d:'M '+(cx-13*s)+' '+(cy-11)+' L '+(cx+13*s)+' '+cy+' L '+(cx-13*s)+' '+(cy+11)+' Z',fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.4});g.appendChild(t);
+    g.appendChild(el('circle',{cx:cx+17*s,cy:cy,r:3.6,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.2}));
+    return {cx:cx,cy:cy,outx:cx+21*s,inx:cx-13*s,tri:t};
+  }
+  function norG(g,cx,cy,dir){
+    var s=dir==='l'?-1:1, w=32,h=26;
+    var x0=cx-(w/2)*s, x1=cx+(w/2)*s, y0=cy-h/2, y1=cy+h/2, b1=x0+10*s, b2=cx+2*s;
+    var body=el('path',{d:'M '+x0+' '+y0+' Q '+b1+' '+cy+' '+x0+' '+y1+' Q '+b2+' '+y1+' '+x1+' '+cy+' Q '+b2+' '+y0+' '+x0+' '+y0+' Z',fill:'oklch(0.19 0.025 285)',stroke:STEEL,'stroke-width':1.4});g.appendChild(body);
+    var bx=x1+5*s, bub=el('circle',{cx:bx,cy:cy,r:3.8,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.3});g.appendChild(bub);
+    return {inA:[x0+5*s,cy-6.5], inB:[x0+5*s,cy+6.5], out:[bx+3.8*s,cy], cx:cx, cy:cy, dir:s, body:body, bub:bub};
+  }
+
+  // ============ TIER 1 : SYMBOL + PINOUT + FUNCTION TABLE ============
+  function buildT1(){
+    drawPkg(gT1);
+    var BX0=376, BX1=496, BY0=256, BY1=392, ENY=296, DY=360, QY=296;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.4,'stroke-linecap':'round','stroke-linejoin':'round'});gT1.appendChild(p);return p;}
+    // VCC and GND power the latch body ; Qbar brought out to pin 5
+    t1.wV=wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 230 L 396 230 L 396 '+BY0,HI,1.8);
+    gT1.appendChild(el('text',{x:362,y:226,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'end'},'VCC'));
+    t1.wG=wire('M '+XGND+' '+PKY1+' L '+XGND+' '+BY1,LO,1.8);
+    gT1.appendChild(el('text',{x:XGND+10,y:BY1+16,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'start'},'GND'));
+    // D and EN in (right-side pins) ; Q out left to pin 1 ; Qbar out top to pin 5
+    t1.wD=wire('M '+XD+' '+PKY1+' L '+XD+' '+DY+' L '+BX1+' '+DY,ACCENT,2.6);
+    t1.wEN=wire('M '+XEN+' '+PKY0+' L '+XEN+' '+ENY+' L '+BX1+' '+ENY,WARM,2.6);
+    t1.wQ=wire('M '+BX0+' '+QY+' L '+XQ+' '+QY+' L '+XQ+' '+PKY1,CYAN,2.6);
+    t1.wQb=wire('M 424 '+BY0+' L 424 184 L '+XQB+' 184 L '+XQB+' '+PKY0,CYAN,2.6);
+    // latch body
+    t1.box=el('rect',{x:BX0,y:BY0,width:BX1-BX0,height:BY1-BY0,rx:6,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':2});gT1.appendChild(t1.box);
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+23,'font-family':'var(--font-display)','font-size':15,fill:FAINT,'text-anchor':'middle','letter-spacing':'0.08em'},'CEC3014'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+38,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'D latch'));
+    gT1.appendChild(el('text',{x:BX1-9,y:DY+4,'font-family':'var(--font-mono)','font-size':12,fill:ACCENT,'text-anchor':'end'},'D'));
+    gT1.appendChild(el('text',{x:BX1-9,y:ENY+4,'font-family':'var(--font-mono)','font-size':12,fill:WARM,'text-anchor':'end'},'EN'));
+    gT1.appendChild(el('text',{x:BX0+9,y:QY+4,'font-family':'var(--font-mono)','font-size':12,fill:CYAN,'text-anchor':'start'},'Q'));
+    gT1.appendChild(el('text',{x:430,y:BY0+14,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'Qbar'));
+    // ----- function table -----
+    var TX=34, Hy=252, cE=64, cD=92, cQ=124, mX=152, r0=282,r1=308,r2=334;
+    gT1.appendChild(el('text',{x:TX,y:Hy-12,'font-family':'var(--font-mono)','font-size':9,fill:FAINT,'letter-spacing':'0.08em'},'FUNCTION'));
+    gT1.appendChild(el('text',{x:cE,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'middle'},'EN'));
+    gT1.appendChild(el('text',{x:cD,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'middle'},'D'));
+    gT1.appendChild(el('text',{x:cQ,y:Hy,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'middle'},'Q+'));
+    t1.rowHi=[];
+    [r0,r1,r2].forEach(function(yy){var rc=el('rect',{x:TX-6,y:yy-13,width:200,height:22,rx:3,fill:'oklch(0.62 0.16 250 / 0)'});gT1.appendChild(rc);t1.rowHi.push(rc);});
+    function cell(x,yy,txt,col){gT1.appendChild(el('text',{x:x,y:yy+3,'font-family':'var(--font-mono)','font-size':10,fill:col,'text-anchor':'middle'},txt));}
+    cell(cE,r0,'1',HI);cell(cD,r0,'0',LO);cell(cQ,r0,'0',LO);
+    cell(cE,r1,'1',HI);cell(cD,r1,'1',HI);cell(cQ,r1,'1',HI);
+    cell(cE,r2,'0',LO);cell(cD,r2,'X',DIM);cell(cQ,r2,'Q',DIM);
+    [['track',r0],['track',r1],['hold',r2]].forEach(function(pp){gT1.appendChild(el('text',{x:mX,y:pp[1]+3,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'start'},pp[0]));});
+    gT1.appendChild(el('text',{x:TX,y:r2+30,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'EN high : transparent'));
+    gT1.appendChild(el('text',{x:TX,y:r2+42,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'EN low  : frozen'));
+    // ----- state note + stored bit -----
+    t1.note=el('text',{x:TX,y:r2+62,'font-family':'var(--font-mono)','font-size':9.5,fill:CYAN,'text-anchor':'start'},'');gT1.appendChild(t1.note);
+    gT1.appendChild(el('text',{x:TX,y:r2+86,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'stored bit'));
+    t1.cell=el('rect',{x:TX,y:r2+92,width:54,height:40,rx:4,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.5});gT1.appendChild(t1.cell);
+    t1.storedVal=el('text',{x:TX+27,y:r2+121,'font-family':'var(--font-display)','font-size':24,fill:LO,'text-anchor':'middle'},'0');gT1.appendChild(t1.storedVal);
+    t1.qWord=el('text',{x:TX+66,y:r2+115,'font-family':'var(--font-mono)','font-size':9,fill:DIM,'text-anchor':'start'},'');gT1.appendChild(t1.qWord);
+  }
+  function updateT1(s){
+    t1.wD.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');
+    t1.wEN.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');
+    t1.wQ.setAttribute('stroke',s.Q?CYAN:'oklch(0.34 0.05 232)');
+    t1.wQb.setAttribute('stroke',s.Qn?CYAN:'oklch(0.34 0.05 232)');
+    var act=s.EN?(s.D?1:0):2;
+    for(var i=0;i<t1.rowHi.length;i++){t1.rowHi[i].setAttribute('fill', i===act?(s.EN?'oklch(0.62 0.16 250 / 0.18)':'oklch(0.74 0.085 72 / 0.16)'):'oklch(0.62 0.16 250 / 0)');}
+    t1.box.setAttribute('stroke',s.transparent?WARM:(s.Q?HI:STEEL));
+    t1.storedVal.textContent=''+s.Q;t1.storedVal.setAttribute('fill',s.Q?HI:LO);
+    t1.cell.setAttribute('stroke',s.Q?HI:STEEL);
+    t1.qWord.textContent='Q = '+s.Q;t1.qWord.setAttribute('fill',s.Q?HI:LO);
+    t1.note.textContent=s.transparent?'EN high : Q follows D':'EN low : Q frozen, holds';
+    t1.note.setAttribute('fill',s.transparent?WARM:CYAN);
+  }
+
+  // ============ TIER 2 : FLOW NETWORK (EN gate admitting D into the bistable) ============
+  function vvalve(g,cx,cy){
+    var v={cx:cx,cy:cy};
+    g.appendChild(el('circle',{cx:cx,cy:cy,r:9,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':1.3}));
+    v.plug=el('rect',{x:cx-7,y:cy-3,width:14,height:6,rx:1.5,fill:'#c7cfdd',stroke:STEEL,'stroke-width':0.8});g.appendChild(v.plug);
+    return v;
+  }
+  function setVvalve(v,open){
+    v.plug.setAttribute('width',(open?4:14).toFixed(1));
+    v.plug.setAttribute('x',(open?(v.cx-2):(v.cx-7)).toFixed(1));
+    v.plug.setAttribute('fill',open?'#5a647a':'#c7cfdd');
+  }
+  function buildT2(){
+    drawPkg(gT2);
+    var VY=160, GY=434, QX=318, QBX=406, CTOP=264, CBOT=378, FV=238, DV=402;
+    t2.CTOP=CTOP;t2.CBOT=CBOT;
+    function pipe(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.4,'stroke-linecap':'round','stroke-linejoin':'round'});gT2.appendChild(p);return p;}
+    // VCC and GND rails feed the bistable chambers
+    gT2.appendChild(el('line',{x1:286,y1:VY,x2:438,y2:VY,stroke:'oklch(0.5 0.11 232)','stroke-width':2}));
+    gT2.appendChild(el('line',{x1:286,y1:GY,x2:438,y2:GY,stroke:'oklch(0.42 0.05 250)','stroke-width':2}));
+    gT2.appendChild(el('text',{x:286,y:VY-6,'font-family':'var(--font-mono)','font-size':8,fill:HI},'VCC'));
+    gT2.appendChild(el('text',{x:286,y:GY+13,'font-family':'var(--font-mono)','font-size':8,fill:LO},'GND'));
+    pipe('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VY+' L 286 '+VY,HI,2);
+    pipe('M '+XGND+' '+PKY1+' L '+XGND+' '+GY,LO,2);
+    function tank(x,lab){
+      gT2.appendChild(el('rect',{x:x-26,y:CTOP,width:52,height:CBOT-CTOP,rx:3,fill:'oklch(0.16 0.02 285)',stroke:STEEL,'stroke-width':1.6}));
+      gT2.appendChild(el('text',{x:x,y:CTOP-20,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'middle'},lab));
+      var w=el('rect',{x:x-23,y:CBOT-2,width:46,height:0,fill:'oklch(0.6 0.14 232 / 0.55)'});gT2.appendChild(w);return w;
+    }
+    t2.qW=tank(QX,'Q'); t2.qbW=tank(QBX,'Qbar');
+    t2.qFill=pipe('M '+QX+' '+VY+' L '+QX+' '+CTOP,LO,2.4);
+    t2.qbFill=pipe('M '+QBX+' '+VY+' L '+QBX+' '+CTOP,LO,2.4);
+    t2.qDrain=pipe('M '+QX+' '+CBOT+' L '+QX+' '+GY,LO,2.4);
+    t2.qbDrain=pipe('M '+QBX+' '+CBOT+' L '+QBX+' '+GY,LO,2.4);
+    t2.qFv=vvalve(gT2,QX,FV); t2.qbFv=vvalve(gT2,QBX,FV);
+    t2.qDv=vvalve(gT2,QX,DV); t2.qbDv=vvalve(gT2,QBX,DV);
+    // cross-feedback (the bistable loop)
+    t2.fbQ=pipe('M '+(QX+26)+' 300 L 362 300 L 362 216 L '+QBX+' 216 L '+QBX+' '+(FV-9),CYAN,2);
+    t2.fbQb=pipe('M '+(QBX-26)+' 322 L 350 322 L 350 228 L '+QX+' 228 L '+QX+' '+(FV-9),CYAN,2);
+    // Q -> pin 1 ; Qbar -> pin 5
+    t2.outQ=pipe('M '+(QX-26)+' 350 L 276 350 L 276 446 L '+XQ+' 446 L '+XQ+' '+PKY1,CYAN,2.4);
+    t2.outQb=pipe('M '+QBX+' '+CTOP+' L '+QBX+' 200 L '+XQB+' 200 L '+XQB+' '+PKY0,CYAN,2.4);
+    // ===== steering front end (right) : inverter + two ANDs -> S, R =====
+    gT2.appendChild(el('text',{x:524,y:296,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'steering'));
+    t2.inv=invTri(gT2,558,352,'l');
+    t2.a1=andG(gT2,516,310,'l');   // S = D . EN
+    t2.a2=andG(gT2,520,352,'l');   // R = nD . EN
+    // D -> AND1 inB + inverter in
+    t2.wD=pipe('M '+XD+' '+PKY1+' L '+XD+' 446 L 588 446 L 588 '+t2.a1.inB[1]+' L '+t2.a1.inB[0]+' '+t2.a1.inB[1],ACCENT,2.2);
+    t2.wDi=pipe('M 588 352 L '+t2.inv.inx+' 352',ACCENT,2); gT2.appendChild(el('circle',{cx:588,cy:352,r:2.6,fill:STEEL}));
+    // EN -> AND1 inA + AND2 inA
+    t2.wEN=pipe('M '+XEN+' '+PKY0+' L '+XEN+' 286 L 576 286 L 576 '+t2.a2.inA[1],WARM,2.2);
+    t2.wENb=pipe('M 576 '+t2.a1.inA[1]+' L '+t2.a1.inA[0]+' '+t2.a1.inA[1],WARM,2); gT2.appendChild(el('circle',{cx:576,cy:t2.a1.inA[1],r:2.6,fill:STEEL}));
+    t2.wEN2=pipe('M 576 '+t2.a2.inA[1]+' L '+t2.a2.inA[0]+' '+t2.a2.inA[1],WARM,2); gT2.appendChild(el('circle',{cx:576,cy:t2.a2.inA[1],r:2.6,fill:STEEL}));
+    // nD -> AND2 inB
+    t2.wnD=pipe('M '+t2.inv.outx+' 352 L '+t2.a2.inB[0]+' 352 L '+t2.a2.inB[0]+' '+t2.a2.inB[1],STEEL,2);
+    gT2.appendChild(el('text',{x:540,y:344,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'nD'));
+    // S -> Qbar fill valve ; R -> Q fill valve
+    t2.wS=pipe('M '+t2.a1.out[0]+' '+t2.a1.out[1]+' L '+t2.a1.out[0]+' 206 L '+QBX+' 206 L '+QBX+' '+(FV-9),ACCENT,2.2);
+    t2.wR=pipe('M '+t2.a2.out[0]+' '+t2.a2.out[1]+' L 462 '+t2.a2.out[1]+' L 462 194 L 300 194 L 300 '+FV+' L '+(QX-9)+' '+FV,STEEL,2.2);
+    gT2.appendChild(el('text',{x:498,y:306,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'end'},'S'));
+    gT2.appendChild(el('text',{x:502,y:362,'font-family':'var(--font-mono)','font-size':7.5,fill:STEEL,'text-anchor':'end'},'R'));
+    gT2.appendChild(el('text',{x:592,y:438,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'end'},'D'));
+    gT2.appendChild(el('text',{x:580,y:280,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'end'},'EN'));
+    // legend
+    gT2.appendChild(el('text',{x:34,y:206,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'GATED'));
+    gT2.appendChild(el('text',{x:34,y:224,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'EN open : D is let'));
+    gT2.appendChild(el('text',{x:34,y:236,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'through, the cell'));
+    gT2.appendChild(el('text',{x:34,y:248,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'tracks D.'));
+    gT2.appendChild(el('text',{x:34,y:264,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'EN shut : the cell'));
+    gT2.appendChild(el('text',{x:34,y:276,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'holds.'));
+    t2.note=el('text',{x:34,y:418,'font-family':'var(--font-mono)','font-size':10,fill:OK,'text-anchor':'start'},'');gT2.appendChild(t2.note);
+  }
+  function updateT2(s){
+    var FULL=t2.CBOT-t2.CTOP-4;
+    function setW(w,frac){var th=clamp(frac,0,1)*FULL;var cy=parseFloat(w.getAttribute('y')),ch=t2.CBOT-2-cy,nh=ch+(th-ch)*0.18;w.setAttribute('y',(t2.CBOT-2-nh).toFixed(1));w.setAttribute('height',Math.max(nh,0).toFixed(1));}
+    setW(t2.qW,s.Q);setW(t2.qbW,s.Qn);
+    var qFill=(s.R===0&&s.Qn===0), qbFill=(s.S===0&&s.Q===0);
+    setVvalve(t2.qFv,qFill);setVvalve(t2.qbFv,qbFill);setVvalve(t2.qDv,!qFill);setVvalve(t2.qbDv,!qbFill);
+    t2.qFill.setAttribute('stroke',qFill?HI:'oklch(0.3 0.03 250)');t2.qbFill.setAttribute('stroke',qbFill?HI:'oklch(0.3 0.03 250)');
+    t2.qDrain.setAttribute('stroke',!qFill?LO:'oklch(0.3 0.03 250)');t2.qbDrain.setAttribute('stroke',!qbFill?LO:'oklch(0.3 0.03 250)');
+    t2.qW.setAttribute('fill',s.Q?'oklch(0.6 0.14 232 / 0.6)':'oklch(0.4 0.06 232 / 0.28)');
+    t2.qbW.setAttribute('fill',s.Qn?'oklch(0.6 0.14 232 / 0.6)':'oklch(0.4 0.06 232 / 0.28)');
+    t2.fbQ.setAttribute('stroke',s.Q?HI:'oklch(0.32 0.04 232)');t2.fbQb.setAttribute('stroke',s.Qn?HI:'oklch(0.32 0.04 232)');
+    t2.outQ.setAttribute('stroke',s.Q?HI:LO);t2.outQb.setAttribute('stroke',s.Qn?HI:LO);
+    t2.wD.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');t2.wDi.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');
+    t2.wEN.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t2.wENb.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t2.wEN2.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');
+    t2.inv.tri.setAttribute('stroke',s.nD?HI:STEEL);t2.wnD.setAttribute('stroke',s.nD?HI:'oklch(0.34 0.05 232)');
+    t2.a1.body.setAttribute('stroke',s.S?OK:STEEL);t2.a2.body.setAttribute('stroke',s.R?OK:STEEL);
+    t2.wS.setAttribute('stroke',s.S?ACCENT:'oklch(0.36 0.06 18)');
+    t2.wR.setAttribute('stroke',s.R?STEEL:'oklch(0.3 0.03 285)');
+    t2.note.textContent=s.transparent?(s.D?'EN open, D high : the cell fills, Q follows to 1':'EN open, D low : the cell drains, Q follows to 0'):'EN shut : both admissions closed, the cell holds';
+    t2.note.setAttribute('fill',s.transparent?WARM:OK);
+  }
+
+  // ============ TIER 3 : PRESSURE-PILOT VALVES (cross-piloting pair + EN steering) ============
+  function t3valve(g,cx,yT,yB){
+    var v={cx:cx,yT:yT,yB:yB,yM:(yT+yB)/2};
+    g.appendChild(el('rect',{x:cx-24,y:yT,width:48,height:yB-yT,rx:5,fill:'oklch(0.155 0.02 285)',stroke:STEEL,'stroke-width':1.4}));
+    g.appendChild(el('line',{x1:cx-15,y1:yT+9,x2:cx+15,y2:yT+9,stroke:'oklch(0.5 0.1 232)','stroke-width':2.4}));
+    g.appendChild(el('line',{x1:cx-15,y1:yB-9,x2:cx+15,y2:yB-9,stroke:'oklch(0.42 0.05 250)','stroke-width':2.4}));
+    v.up=el('line',{x1:cx,y1:v.yM,x2:cx,y2:yT+9,stroke:'oklch(0.3 0.03 250)','stroke-width':3});g.appendChild(v.up);
+    v.dn=el('line',{x1:cx,y1:v.yM,x2:cx,y2:yB-9,stroke:'oklch(0.3 0.03 250)','stroke-width':3});g.appendChild(v.dn);
+    v.plug=el('ellipse',{cx:cx,cy:v.yM,rx:13,ry:5.5,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1});g.appendChild(v.plug);
+    v.outDot=el('circle',{cx:cx,cy:v.yM,r:3.6,fill:STEEL});g.appendChild(v.outDot);
+    return v;
+  }
+  function t3set(v,outHigh){
+    v.up.setAttribute('stroke',outHigh?HI:'oklch(0.3 0.03 250)');
+    v.dn.setAttribute('stroke',outHigh?'oklch(0.3 0.03 250)':LO);
+    v.plug.setAttribute('cy',(outHigh?(v.yT+12):(v.yB-12)).toFixed(1));
+    v.outDot.setAttribute('fill',outHigh?HI:LO);
+  }
+  function buildT3(){
+    drawPkg(gT3);
+    var VY=172, GY=420, N1=300, N2=402, yT=246, yB=344, yM=295;
+    function pipe(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.2,'stroke-linecap':'round','stroke-linejoin':'round'});gT3.appendChild(p);return p;}
+    gT3.appendChild(el('line',{x1:270,y1:VY,x2:430,y2:VY,stroke:'oklch(0.5 0.1 232)','stroke-width':2}));
+    gT3.appendChild(el('line',{x1:270,y1:GY,x2:430,y2:GY,stroke:'oklch(0.42 0.05 250)','stroke-width':2}));
+    gT3.appendChild(el('text',{x:270,y:VY-6,'font-family':'var(--font-mono)','font-size':8,fill:HI},'VCC'));
+    gT3.appendChild(el('text',{x:270,y:GY+13,'font-family':'var(--font-mono)','font-size':8,fill:LO},'GND'));
+    pipe('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VY+' L 270 '+VY,HI,1.8);
+    pipe('M '+XGND+' '+PKY1+' L '+XGND+' '+GY,LO,1.8);
+    pipe('M '+N1+' '+VY+' L '+N1+' '+(yT+9),HI,1.8); pipe('M '+N2+' '+VY+' L '+N2+' '+(yT+9),HI,1.8);
+    pipe('M '+N1+' '+(yB-9)+' L '+N1+' '+GY,LO,1.8); pipe('M '+N2+' '+(yB-9)+' L '+N2+' '+GY,LO,1.8);
+    t3.v1=t3valve(gT3,N1,yT,yB); t3.v2=t3valve(gT3,N2,yT,yB);
+    gT3.appendChild(el('text',{x:N1,y:yT-8,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'NOR -> Q'));
+    gT3.appendChild(el('text',{x:N2,y:yT-8,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'NOR -> Qbar'));
+    // Q -> pin 1 ; Qbar -> pin 5
+    t3.wQ=pipe('M '+N1+' '+yM+' L 274 '+yM+' L 274 446 L '+XQ+' 446 L '+XQ+' '+PKY1,CYAN,2.4);
+    t3.wQb=pipe('M '+N2+' '+yM+' L '+N2+' 200 L '+XQB+' 200 L '+XQB+' '+PKY0,CYAN,2.4);
+    gT3.appendChild(el('text',{x:282,y:yM-6,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},'Q'));
+    // cross-pilots : Q pilots NOR2 inner ; Qbar pilots NOR1 inner
+    t3.xQ=pipe('M '+N1+' '+yM+' L '+N1+' 368 L '+(N2-13)+' 368 L '+(N2-13)+' '+yB,CYAN,2);
+    t3.xQb=pipe('M '+N2+' '+yM+' L '+N2+' 380 L '+(N1+13)+' 380 L '+(N1+13)+' '+yB,CYAN,2);
+    // ===== steering (right) : inverter + two ANDs -> S, R =====
+    gT3.appendChild(el('text',{x:524,y:282,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'steering'));
+    t3.inv=invTri(gT3,558,338,'l');
+    t3.a1=andG(gT3,516,298,'l');   // S = D . EN
+    t3.a2=andG(gT3,520,338,'l');   // R = nD . EN
+    t3.wD=pipe('M '+XD+' '+PKY1+' L '+XD+' 446 L 588 446 L 588 '+t3.a1.inB[1]+' L '+t3.a1.inB[0]+' '+t3.a1.inB[1],ACCENT,2.2);
+    t3.wDi=pipe('M 588 338 L '+t3.inv.inx+' 338',ACCENT,2); gT3.appendChild(el('circle',{cx:588,cy:338,r:2.6,fill:STEEL}));
+    t3.wEN=pipe('M '+XEN+' '+PKY0+' L '+XEN+' 276 L 576 276 L 576 '+t3.a2.inA[1],WARM,2.2);
+    t3.wENb=pipe('M 576 '+t3.a1.inA[1]+' L '+t3.a1.inA[0]+' '+t3.a1.inA[1],WARM,2); gT3.appendChild(el('circle',{cx:576,cy:t3.a1.inA[1],r:2.6,fill:STEEL}));
+    t3.wEN2=pipe('M 576 '+t3.a2.inA[1]+' L '+t3.a2.inA[0]+' '+t3.a2.inA[1],WARM,2); gT3.appendChild(el('circle',{cx:576,cy:t3.a2.inA[1],r:2.6,fill:STEEL}));
+    t3.wnD=pipe('M '+t3.inv.outx+' 338 L '+t3.a2.inB[0]+' 338 L '+t3.a2.inB[0]+' '+t3.a2.inB[1],STEEL,2);
+    gT3.appendChild(el('text',{x:540,y:330,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'nD'));
+    // S -> NOR2 outer pilot ; R -> NOR1 outer pilot
+    t3.wS=pipe('M '+t3.a1.out[0]+' '+t3.a1.out[1]+' L '+t3.a1.out[0]+' 394 L '+(N2+13)+' 394 L '+(N2+13)+' '+yB,ACCENT,2.2);
+    t3.wR=pipe('M '+t3.a2.out[0]+' '+t3.a2.out[1]+' L 462 '+t3.a2.out[1]+' L 462 404 L '+(N1-13)+' 404 L '+(N1-13)+' '+yB,STEEL,2.2);
+    gT3.appendChild(el('text',{x:498,y:294,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'end'},'S'));
+    gT3.appendChild(el('text',{x:502,y:348,'font-family':'var(--font-mono)','font-size':7.5,fill:STEEL,'text-anchor':'end'},'R'));
+    gT3.appendChild(el('text',{x:592,y:438,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'end'},'D'));
+    gT3.appendChild(el('text',{x:580,y:270,'font-family':'var(--font-mono)','font-size':8,fill:WARM,'text-anchor':'end'},'EN'));
+    function pdot(x){var c=el('circle',{cx:x,cy:yB,r:3.4,fill:STEEL});gT3.appendChild(c);return c;}
+    t3.pR=pdot(N1-13); t3.pQb=pdot(N1+13); t3.pQ=pdot(N2-13); t3.pS=pdot(N2+13);
+    // legend + note
+    gT3.appendChild(el('text',{x:34,y:206,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'VALVES'));
+    gT3.appendChild(el('text',{x:34,y:224,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'the cross-piloting'));
+    gT3.appendChild(el('text',{x:34,y:236,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'pair holds the bit.'));
+    gT3.appendChild(el('text',{x:34,y:248,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'EN steers D into'));
+    gT3.appendChild(el('text',{x:34,y:260,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'set / reset.'));
+    t3.note=el('text',{x:34,y:444,'font-family':'var(--font-mono)','font-size':10,fill:OK,'text-anchor':'start'},'');gT3.appendChild(t3.note);
+  }
+  function updateT3(s){
+    t3set(t3.v1,!!s.Q); t3set(t3.v2,!!s.Qn);
+    t3.wQ.setAttribute('stroke',s.Q?HI:LO);t3.wQb.setAttribute('stroke',s.Qn?HI:LO);
+    t3.xQ.setAttribute('stroke',s.Q?HI:'oklch(0.32 0.04 232)');t3.xQb.setAttribute('stroke',s.Qn?HI:'oklch(0.32 0.04 232)');
+    t3.wD.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');t3.wDi.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');
+    t3.wEN.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t3.wENb.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t3.wEN2.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');
+    t3.inv.tri.setAttribute('stroke',s.nD?HI:STEEL);t3.wnD.setAttribute('stroke',s.nD?HI:'oklch(0.34 0.05 232)');
+    t3.a1.body.setAttribute('stroke',s.S?OK:STEEL);t3.a2.body.setAttribute('stroke',s.R?OK:STEEL);
+    t3.wS.setAttribute('stroke',s.S?ACCENT:'oklch(0.36 0.06 18)');
+    t3.wR.setAttribute('stroke',s.R?STEEL:'oklch(0.3 0.03 285)');
+    t3.pR.setAttribute('fill',s.R?STEEL:'#566076');t3.pS.setAttribute('fill',s.S?ACCENT:'#566076');
+    t3.pQb.setAttribute('fill',s.Qn?HI:'#566076');t3.pQ.setAttribute('fill',s.Q?HI:'#566076');
+    t3.note.textContent=s.transparent?(s.D?'EN high, D high : S pushes NOR2, Q rises to 1':'EN high, D low : R pushes NOR1, Q falls to 0'):'EN low : no pilot pushes, the pair holds';
+    t3.note.setAttribute('fill',s.transparent?WARM:OK);
+  }
+
+  // ============ TIER 4 : GATE-LEVEL SCHEMATIC (steering + cross-coupled NOR, powered) ============
+  function buildT4(){
+    drawPkg(gT4);
+    var VY=186, GY=420;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT4.appendChild(p);return p;}
+    function node(x,y,col){var c=el('circle',{cx:x,cy:y,r:3.6,fill:col||STEEL});gT4.appendChild(c);return c;}
+    // rails
+    t4.vRail=wire('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VY+' L 590 '+VY,HI,1.9);
+    gT4.appendChild(el('text',{x:274,y:VY-5,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'start'},'VCC'));
+    t4.gRail=wire('M 270 '+GY+' L 590 '+GY,LO,1.9); wire('M '+XGND+' '+PKY1+' L '+XGND+' '+GY,LO,1.9);
+    gT4.appendChild(el('text',{x:274,y:GY+13,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'start'},'GND'));
+    // gates (all face left : signal flows D,EN -> steering -> S,R -> latch -> Q,Qbar)
+    t4.n1=norG(gT4,300,248,'l');   // NOR1 : R, Qbar -> Q
+    t4.n2=norG(gT4,350,360,'l');   // NOR2 : S, Q    -> Qbar
+    t4.inv=invTri(gT4,556,306,'l');// D -> nD
+    t4.a1=andG(gT4,494,248,'l');   // S = D . EN
+    t4.a2=andG(gT4,512,372,'l');   // R = nD . EN
+    gT4.appendChild(el('text',{x:300,y:230,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'NOR'));
+    gT4.appendChild(el('text',{x:350,y:342,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT,'text-anchor':'middle'},'NOR'));
+    gT4.appendChild(el('text',{x:494,y:230,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'AND'));
+    gT4.appendChild(el('text',{x:512,y:354,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'AND'));
+    gT4.appendChild(el('text',{x:556,y:288,'font-family':'var(--font-mono)','font-size':7,fill:FAINT,'text-anchor':'middle'},'INV'));
+    // supply leads : every gate to VCC and GND
+    t4.lv=[];t4.lg=[];
+    function sup(cx,yt,yb){t4.lv.push(wire('M '+cx+' '+yt+' L '+cx+' '+VY,'oklch(0.5 0.08 232)',1.2));t4.lg.push(wire('M '+cx+' '+yb+' L '+cx+' '+GY,'oklch(0.42 0.045 250)',1.2));}
+    sup(300,235,261); sup(350,347,373); sup(556,295,317); sup(494,236,260); sup(512,360,384);
+    // nodes
+    var QN=t4.n1.out, QBN=t4.n2.out;
+    t4.qDot=node(QN[0],QN[1],STEEL); t4.qbDot=node(QBN[0],QBN[1],STEEL);
+    gT4.appendChild(el('text',{x:QN[0]-6,y:QN[1]-7,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'end'},'Q'));
+    gT4.appendChild(el('text',{x:QBN[0]-6,y:QBN[1]+16,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'end'},'Qbar'));
+    // ---- steering input wiring ----
+    // D -> inverter input + AND1 inB
+    t4.wD=wire('M '+XD+' '+PKY1+' L '+XD+' 396 L 586 396 L 586 '+t4.a1.inB[1]+' L '+t4.a1.inB[0]+' '+t4.a1.inB[1],ACCENT,2);
+    t4.wDi=wire('M 586 306 L '+t4.inv.inx+' 306',ACCENT,2); node(586,306,STEEL);
+    // EN -> AND1 inA + AND2 inA
+    t4.wEN=wire('M '+XEN+' '+PKY0+' L '+XEN+' 220 L 576 220 L 576 '+t4.a2.inA[1],WARM,2);
+    t4.wENb1=wire('M 576 '+t4.a1.inA[1]+' L '+t4.a1.inA[0]+' '+t4.a1.inA[1],WARM,2); node(576,t4.a1.inA[1],STEEL);
+    t4.wENb2=wire('M 576 '+t4.a2.inA[1]+' L '+t4.a2.inA[0]+' '+t4.a2.inA[1],WARM,2); node(576,t4.a2.inA[1],STEEL);
+    // nD -> AND2 inB
+    t4.wnD=wire('M '+t4.inv.outx+' 306 L 535 306 L 535 '+t4.a2.inB[1]+' L '+t4.a2.inB[0]+' '+t4.a2.inB[1],STEEL,2);
+    // ---- S, R into the latch ----
+    t4.wS=wire('M '+t4.a1.out[0]+' '+t4.a1.out[1]+' L 466 '+t4.a1.out[1]+' L 466 '+t4.n2.inA[1]+' L '+t4.n2.inA[0]+' '+t4.n2.inA[1],ACCENT,2.2);
+    t4.wR=wire('M '+t4.a2.out[0]+' '+t4.a2.out[1]+' L 476 '+t4.a2.out[1]+' L 476 230 L 320 230 L 320 '+t4.n1.inA[1]+' L '+t4.n1.inA[0]+' '+t4.n1.inA[1],STEEL,2.2);
+    // ---- feedback ----
+    t4.fbQ=wire('M '+QN[0]+' '+QN[1]+' L '+QN[0]+' 390 L 376 390 L 376 '+t4.n2.inB[1]+' L '+t4.n2.inB[0]+' '+t4.n2.inB[1],CYAN,2);
+    t4.fbQb=wire('M '+QBN[0]+' '+QBN[1]+' L 318 '+QBN[1]+' L 318 200 L 332 200 L 332 '+t4.n1.inB[1]+' L '+t4.n1.inB[0]+' '+t4.n1.inB[1],CYAN,2);
+    // ---- outputs : Q -> pin 1 ; Qbar -> pin 5 ----
+    t4.wQ=wire('M '+QN[0]+' '+QN[1]+' L 252 '+QN[1]+' L 252 448 L '+XQ+' 448 L '+XQ+' '+PKY1,CYAN,2.4);
+    t4.wQb=wire('M '+QBN[0]+' '+QBN[1]+' L 308 '+QBN[1]+' L 308 412 L 396 412 L 396 178 L '+XQB+' 178 L '+XQB+' '+PKY0,CYAN,2.4);
+    // legend + note
+    gT4.appendChild(el('text',{x:34,y:240,'font-family':'var(--font-display)','font-size':11,fill:FAINT,'letter-spacing':'0.08em'},'REAL DEVICE'));
+    gT4.appendChild(el('text',{x:34,y:258,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'inverter + two ANDs'));
+    gT4.appendChild(el('text',{x:34,y:270,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'gate D by EN into'));
+    gT4.appendChild(el('text',{x:34,y:282,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'set / reset, feeding'));
+    gT4.appendChild(el('text',{x:34,y:294,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'the cross-coupled'));
+    gT4.appendChild(el('text',{x:34,y:306,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'NOR pair. all gates'));
+    gT4.appendChild(el('text',{x:34,y:318,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'powered VCC to GND.'));
+    t4.note=el('text',{x:34,y:404,'font-family':'var(--font-mono)','font-size':9.5,fill:OK,'text-anchor':'start'},'');gT4.appendChild(t4.note);
+  }
+  function updateT4(s){
+    var q=s.Q?HI:LO, qb=s.Qn?HI:LO;
+    t4.qDot.setAttribute('fill',q); t4.qbDot.setAttribute('fill',qb);
+    t4.wD.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');t4.wDi.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');
+    t4.wEN.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t4.wENb1.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');t4.wENb2.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');
+    t4.wnD.setAttribute('stroke',s.nD?HI:'oklch(0.34 0.05 232)');
+    t4.wS.setAttribute('stroke',s.S?ACCENT:'oklch(0.36 0.06 18)');
+    t4.wR.setAttribute('stroke',s.R?STEEL:'oklch(0.3 0.03 285)');
+    t4.fbQ.setAttribute('stroke',s.Q?HI:'oklch(0.34 0.05 232)');t4.fbQb.setAttribute('stroke',s.Qn?HI:'oklch(0.34 0.05 232)');
+    t4.wQ.setAttribute('stroke',q);t4.wQb.setAttribute('stroke',qb);
+    t4.n1.body.setAttribute('stroke',s.Q?OK:STEEL);t4.n1.bub.setAttribute('stroke',s.Q?OK:STEEL);
+    t4.n2.body.setAttribute('stroke',s.Qn?OK:STEEL);t4.n2.bub.setAttribute('stroke',s.Qn?OK:STEEL);
+    t4.a1.body.setAttribute('stroke',s.S?OK:STEEL);t4.a2.body.setAttribute('stroke',s.R?OK:STEEL);
+    t4.inv.tri.setAttribute('stroke',s.nD?OK:STEEL);
+    t4.note.textContent=s.transparent?(s.D?'EN and D high : AND1 sets S, NOR pair drives Q to 1':'EN high, D low : AND2 sets R, NOR pair drives Q to 0'):'EN low : both ANDs output 0, the NOR pair holds';
+    t4.note.setAttribute('fill',s.transparent?WARM:OK);
+  }
+
+  // ============ TIER 5 : SILICON (a NOR cell as CMOS, the latch device) ============
+  function buildT5(){
+    drawPkg(gT5);
+    t5.dev=[];t5.gateLabs=[];
+    var SURF=322, DH=36, GW=12, GT=SURF-24, VCCY=152, GNDY=438;
+    t5.SURF=SURF;
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:372,height:GNDY-SURF,rx:4,fill:'oklch(0.22 0.03 300)',stroke:'oklch(0.34 0.04 300)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:572,y:GNDY-12,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'p-substrate (NMOS pull-down)'));
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:198,height:GNDY-SURF-7,rx:4,fill:'oklch(0.25 0.05 232)',stroke:'oklch(0.37 0.06 232)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:210,y:GNDY-12,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'n-well (PMOS pull-up)'));
+    function diff(cx,isP,lab,col){gT5.appendChild(el('rect',{x:cx-9,y:SURF,width:18,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+21,'font-family':'var(--font-mono)','font-size':7,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+9,'font-family':'var(--font-mono)','font-size':7,fill:col||FAINT,'text-anchor':'middle'},lab));return cx;}
+    function gate(cx,lab,key,isP){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-7,width:GW,height:7,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:15,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});var c=el('path',{d:'',fill:isP?'rgba(255,138,77,0.55)':'rgba(95,208,255,0.5)',stroke:isP?HOLE:ELEC,'stroke-width':1.6,opacity:0});gT5.appendChild(c);t5.dev.push({g:{gx:cx,chan:c},key:key,isP:isP});return cx;}
+    diff(230,true,'VCC',HI); gate(254,'R','PA',true); diff(278,true,'',DIM); gate(302,'Qbar','PB',true); diff(326,true,'Q',CYAN);
+    diff(430,false,'Q',CYAN); gate(454,'R','NA',false); diff(478,false,'GND',LO); gate(502,'Qbar','NB',false); diff(526,false,'Q',CYAN);
+    function m(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT5.appendChild(p);return p;}
+    function dot(x,y,col){gT5.appendChild(el('circle',{cx:x,cy:y,r:2,fill:col}));}
+    // VCC and GND
+    m('M 230 '+SURF+' L 230 '+VCCY+' L '+XVCC+' '+VCCY,HI,2);m('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCY,HI,2);dot(230,SURF,HI);dot(XVCC,VCCY,HI);
+    m('M 478 '+SURF+' L 478 '+GNDY+' L '+XGND+' '+GNDY,LO,2);m('M '+XGND+' '+PKY1+' L '+XGND+' '+GNDY,LO,2);dot(478,SURF,LO);dot(XGND,GNDY,LO);
+    // output Q rail
+    t5.mQ=m('M 326 '+SURF+' L 326 246 L 526 246 L 526 '+SURF,CYAN,2.2);dot(326,SURF,CYAN);dot(526,SURF,CYAN);
+    t5.mQ2=m('M 430 '+SURF+' L 430 246',CYAN,2.2);dot(430,246,CYAN);
+    t5.wQ=m('M '+XQ+' '+PKY1+' L '+XQ+' 448 L 200 448 L 200 226 L 326 226 L 326 246',CYAN,2.2);dot(XQ,448,CYAN);
+    gT5.appendChild(el('text',{x:212,y:222,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'Q'));
+    // ===== off-slice block : the steering (D,EN -> S,R) and the twin NOR2 (S,Q -> Qbar) =====
+    gT5.appendChild(el('rect',{x:540,y:228,width:46,height:96,rx:4,fill:'oklch(0.15 0.018 285)',stroke:'oklch(0.32 0.03 285)','stroke-width':1,'stroke-dasharray':'3 2'}));
+    gT5.appendChild(el('text',{x:563,y:250,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'steer'));
+    gT5.appendChild(el('text',{x:563,y:262,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'+ NOR2'));
+    gT5.appendChild(el('text',{x:563,y:316,'font-family':'var(--font-mono)','font-size':6.5,fill:FAINT,'text-anchor':'middle'},'off slice'));
+    // gate A rail (R = nD . EN, from steering)
+    t5.mGA=m('M 254 '+GT+' L 254 290 L 454 290 L 454 '+GT,ORANGE,1.8);
+    t5.mGAf=m('M 454 290 L 540 290',ORANGE,1.8);dot(454,290,ORANGE);
+    gT5.appendChild(el('text',{x:486,y:286,'font-family':'var(--font-mono)','font-size':7.5,fill:ORANGE,'text-anchor':'middle'},'R'));
+    // gate B rail (Qbar, from the twin NOR2)
+    t5.mGB=m('M 302 '+GT+' L 302 272 L 502 272 L 502 '+GT,CYAN,1.8);
+    t5.mGBin=m('M 502 272 L 540 272',CYAN,1.8);dot(502,272,CYAN);
+    gT5.appendChild(el('text',{x:512,y:267,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'start'},'Qbar'));
+    // Q fed back into the twin NOR2
+    t5.mQfb=m('M 526 246 L 552 246 L 552 228',CYAN,1.6);dot(526,246,CYAN);
+    gT5.appendChild(el('text',{x:556,y:242,'font-family':'var(--font-mono)','font-size':7,fill:CYAN,'text-anchor':'start'},'Q'));
+    // D and EN pins drive the steering ; Qbar exits to pin 5
+    t5.wD=m('M '+XD+' '+PKY1+' L '+XD+' 446 L 590 446 L 590 312 L 586 312',ACCENT,1.8);
+    gT5.appendChild(el('text',{x:574,y:326,'font-family':'var(--font-mono)','font-size':7.5,fill:ACCENT,'text-anchor':'start'},'D'));
+    t5.wEN=m('M '+XEN+' '+PKY0+' L '+XEN+' 210 L 574 210 L 574 228',WARM,1.8);
+    gT5.appendChild(el('text',{x:578,y:222,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'start'},'EN'));
+    t5.wQbpin=m('M '+XQB+' '+PKY0+' L '+XQB+' 196 L 568 196 L 568 228',CYAN,2);
+    gT5.appendChild(el('text',{x:440,y:192,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'start'},'Qbar to pin 5'));
+    // legend + state
+    gT5.appendChild(el('text',{x:34,y:250,'font-family':'var(--font-display)','font-size':13,fill:FAINT,'letter-spacing':'0.1em'},'SILICON'));
+    gT5.appendChild(el('text',{x:34,y:268,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'one NOR cell of the'));
+    gT5.appendChild(el('text',{x:34,y:279,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'latch : two PMOS in'));
+    gT5.appendChild(el('text',{x:34,y:290,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'series to VCC over'));
+    gT5.appendChild(el('text',{x:34,y:301,'font-family':'var(--font-mono)','font-size':7.5,fill:FAINT},'two NMOS in parallel'));
+    gT5.appendChild(el('text',{x:34,y:312,'font-family':'var(--font-mono)','font-size':7.5,fill:DIM},'to GND.'));
+    gT5.appendChild(el('text',{x:34,y:331,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE},'gate R is the steered'));
+    gT5.appendChild(el('text',{x:34,y:342,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE},'reset, nD AND EN ;'));
+    gT5.appendChild(el('text',{x:34,y:353,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE},'steering tiles off slice.'));
+    t5.stateLab=el('text',{x:206,y:466,'font-family':'var(--font-mono)','font-size':11,fill:OK,'text-anchor':'start'},'');gT5.appendChild(t5.stateLab);
+  }
+  function updateT5(s){
+    var SURF=t5.SURF, w=9;
+    var on={PA:s.R===0, PB:s.Qn===0, NA:s.R===1, NB:s.Qn===1};
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k],gx=dv.g.gx;
+      if(on[dv.key]){var ds=14;dv.g.chan.setAttribute('d','M '+(gx-w)+' '+SURF+' L '+(gx+w)+' '+SURF+' L '+(gx+w)+' '+(SURF+ds)+' L '+(gx-w)+' '+(SURF+ds)+' Z');dv.g.chan.setAttribute('opacity','0.9');}
+      else dv.g.chan.setAttribute('opacity','0');}
+    var qc=s.Q?HI:LO;
+    t5.mQ.setAttribute('stroke',qc);t5.mQ2.setAttribute('stroke',qc);t5.wQ.setAttribute('stroke',qc);t5.mQfb.setAttribute('stroke',qc);
+    var gac=s.R?ORANGE:'oklch(0.42 0.05 50)';t5.mGA.setAttribute('stroke',gac);t5.mGAf.setAttribute('stroke',gac);
+    var gbc=s.Qn?HI:'oklch(0.34 0.05 232)';t5.mGB.setAttribute('stroke',gbc);t5.mGBin.setAttribute('stroke',gbc);t5.wQbpin.setAttribute('stroke',gbc);
+    t5.wD.setAttribute('stroke',s.D?ACCENT:'oklch(0.36 0.06 18)');
+    t5.wEN.setAttribute('stroke',s.EN?WARM:'oklch(0.36 0.05 70)');
+    var net={PA:s.R?ORANGE:LO, NA:s.R?ORANGE:LO, PB:s.Qn?HI:LO, NB:s.Qn?HI:LO};
+    for(var gi=0;gi<t5.gateLabs.length;gi++){t5.gateLabs[gi].txt.setAttribute('fill',net[t5.gateLabs[gi].key]||BRONZE);}
+    if(s.Q){t5.stateLab.textContent='R and Qbar both low : both series PMOS conduct, Q pulled up to VCC';t5.stateLab.setAttribute('fill',CYAN);}
+    else{t5.stateLab.textContent='R or Qbar is high : a parallel NMOS conducts, Q pulled down to GND';t5.stateLab.setAttribute('fill',WARM);}
+  }
+
+  buildT1();buildT2();buildT3();buildT4();buildT5();
+
+  // ===== timing-diagram scope : D, EN, Q over time =====
+  var scope=document.getElementById('scope');var sc={buf:[],N:120};
+  function buildScope(){
+    var L=42,R=292,T=12,B=200;sc.L=L;sc.R=R;sc.T=T;sc.B=B;
+    scope.appendChild(el('rect',{x:L,y:T,width:R-L,height:B-T,fill:'oklch(0.16 0.02 285)',stroke:'oklch(0.32 0.045 285)','stroke-width':1}));
+    sc.lanes={d:{hi:26,lo:58,col:ACCENT,lab:'D'},en:{hi:90,lo:122,col:WARM,lab:'EN'},q:{hi:154,lo:186,col:HI,lab:'Q'}};
+    sc.order=['d','en','q'];
+    for(var ki=0;ki<sc.order.length;ki++){var ln=sc.lanes[sc.order[ki]];
+      scope.appendChild(el('line',{x1:L,y1:ln.lo,x2:R,y2:ln.lo,stroke:'oklch(0.24 0.02 285)','stroke-width':1}));
+      scope.appendChild(el('line',{x1:L,y1:ln.hi,x2:R,y2:ln.hi,stroke:'oklch(0.22 0.02 285)','stroke-width':1,'stroke-dasharray':'2 3'}));
+      scope.appendChild(el('text',{x:L-6,y:(ln.hi+ln.lo)/2+3,'font-family':'var(--font-mono)','font-size':9.5,fill:ln.col,'text-anchor':'end'},ln.lab));}
+    sc.marks=el('g',{});scope.appendChild(sc.marks);
+    sc.pD=el('path',{d:'',fill:'none',stroke:ACCENT,'stroke-width':1.8,'stroke-linejoin':'round'});scope.appendChild(sc.pD);
+    sc.pEN=el('path',{d:'',fill:'none',stroke:WARM,'stroke-width':1.8,'stroke-linejoin':'round'});scope.appendChild(sc.pEN);
+    sc.pQ=el('path',{d:'',fill:'none',stroke:HI,'stroke-width':2.4,'stroke-linejoin':'round'});scope.appendChild(sc.pQ);
+    scope.appendChild(el('text',{x:(L+R)/2,y:B+8,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'time'));
+    scope.appendChild(el('text',{x:R-2,y:T+9,'font-family':'var(--font-mono)','font-size':7.5,fill:WARM,'text-anchor':'end'},'shaded : EN low, Q frozen'));
+  }
+  function pushScope(s){sc.buf.push({d:s.D,en:s.EN,q:s.Q});if(sc.buf.length>sc.N)sc.buf.shift();}
+  function stepPath(key){
+    var ln=sc.lanes[key],L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length;if(n<1)return '';
+    var dx=(R-L)/N;function X(i){return R-(n-1-i)*dx;}function Y(v){return v?ln.hi:ln.lo;}
+    var d='M '+X(0).toFixed(1)+' '+Y(b[0][key]);
+    for(var i=1;i<n;i++){d+=' L '+X(i).toFixed(1)+' '+Y(b[i-1][key])+' L '+X(i).toFixed(1)+' '+Y(b[i][key]);}
+    return d;
+  }
+  function drawScope(s){
+    sc.pD.setAttribute('d',stepPath('d'));sc.pEN.setAttribute('d',stepPath('en'));sc.pQ.setAttribute('d',stepPath('q'));
+    while(sc.marks.firstChild)sc.marks.removeChild(sc.marks.firstChild);
+    var L=sc.L,R=sc.R,N=sc.N,b=sc.buf,n=b.length,dx=(R-L)/N,qh=sc.lanes.q.hi,ql=sc.lanes.q.lo;
+    for(var i=0;i<n;i++){if(b[i].en===0){var x=R-(n-1-i)*dx;
+      sc.marks.appendChild(el('rect',{x:x-dx/2-0.3,y:qh-3,width:dx+0.6,height:(ql-qh)+6,fill:'oklch(0.78 0.16 75 / 0.12)'}));}}
+  }
+  buildScope();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roDE=trow('inputs D / EN'),roMode=trow('mode'),roQ=trow('output Q'),roQn=trow('output Qbar'),roState=trow('latch');
+
+  // ===== controls =====
+  var vddEl=document.getElementById('vdd'),labVdd=document.getElementById('labVdd'),
+      btnD=document.getElementById('btnD'),btnEN=document.getElementById('btnEN'),btnRun=document.getElementById('btnRun'),
+      visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),
+      chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true,tier='t1',dVal=0,enVal=0,qState=0,qbState=1;
+  footnote.innerHTML='The part shown is the CEC3014, the house transparent D-latch. It stores one bit, but it is level-sensitive rather than edge-triggered. The data input D and the enable EN are conditioned by a small steering front end : an inverter forms NOT D, one AND gate forms the set signal D AND EN, and a second AND gate forms the reset signal NOT D AND EN. Those set and reset signals drive the same cross-coupled NOR pair that makes up the CEC3007 SR latch. While EN is high the set and reset signals track D and its complement, so the latch is transparent and Q follows D continuously; the moment EN goes low both AND gates output zero, the cross-coupled pair sees no set or reset, and it holds the last value of D. Because D and NOT D can never both be high, the set and reset lines are never both high, so the forbidden state of the bare SR latch is unreachable, which is one reason the gated D-latch is the more useful building block. The CEC3014 brings out both Q on pin 1 and Qbar on pin 5. On the six-pin SOT-23-6 frame the pinout places Q on pin 1, ground on pin 2, D on pin 3, EN on pin 4, Qbar on pin 5, and VCC on pin 6, with the pin 1 indicator at the lower-left corner. The part runs from 1.8 V to 15 V in the house CMOS process. The transparent D-latch is the level-sensitive half of the story : cascade two of them on opposite enable phases and the result is an edge-triggered D flip-flop, which samples only at the clock edge instead of following its input the whole time the gate is open.';
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
+    var names={t1:'symbol . pinout',t2:'flow network',t3:'pressure pilot valves',t4:'real device . CEC3014',t5:'metal oxide silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  function syncBtns(){btnD.textContent='D = '+dVal;btnD.classList.toggle('is-active',!!dVal);btnEN.textContent='EN = '+enVal;btnEN.classList.toggle('is-active',!!enVal);}
+  btnD.addEventListener('click',function(){dVal=dVal?0:1;syncBtns();});
+  btnEN.addEventListener('click',function(){enVal=enVal?0:1;syncBtns();});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+  syncBtns();setTier('t1');
+
+  var tick=0;
+  function frame(){
+    if(running){tick++;}
+    var VDD=(+vddEl.value)/100;
+    var D=dVal?1:0, EN=enVal?1:0;
+    var m=dlatch(D,EN,qState,qbState);
+    qState=m.Q; qbState=m.Qn;
+    var s={D:D,EN:EN,nD:m.nD,S:m.S,R:m.R,Q:m.Q,Qn:m.Qn,transparent:m.transparent,mode:m.mode,VDD:VDD,run:running,tick:tick};
+    if(running)pushScope(s);
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else if(tier==='t3'){updateT3(s);}else if(tier==='t4'){updateT4(s);}else{updateT5(s);}
+    drawScope(s);
+    labVdd.textContent=fmtV(VDD);
+    roDE.textContent=D+' / '+EN;roDE.style.color=DIM;
+    roMode.textContent=m.mode;roMode.style.color=m.transparent?WARM:DIM;
+    roQ.textContent='Q = '+m.Q;roQ.style.color=m.Q?HI:LO;
+    roQn.textContent='= '+m.Qn;roQn.style.color=m.Qn?HI:LO;
+    roState.textContent=m.transparent?'transparent':'holding';roState.style.color=m.transparent?WARM:OK;
+    regTag.textContent=m.mode;if(chipReg){chipReg.textContent='Q='+m.Q;}
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();</script>
+</body>
+</html>

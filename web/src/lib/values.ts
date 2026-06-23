@@ -65,6 +65,26 @@ const CURATED_FULL: Record<string, number[]> = {
   BUF: [1.8, 2.5, 3.3, 5, 12, 15],
   // D flip-flop logic rail (V): the digital supply its outputs drive to.
   FF: [1.8, 2.5, 3.3, 5, 12, 15],
+  // Composite-logic ICs (adders, mux/demux, voter): the logic rail their outputs
+  // drive to, exactly like the gates they are built from.
+  HADD: [1.8, 2.5, 3.3, 5, 12, 15],
+  FADD: [1.8, 2.5, 3.3, 5, 12, 15],
+  MUX2: [1.8, 2.5, 3.3, 5, 12, 15],
+  DMUX: [1.8, 2.5, 3.3, 5, 12, 15],
+  MAJ3: [1.8, 2.5, 3.3, 5, 12, 15],
+  SRL: [1.8, 2.5, 3.3, 5, 12, 15],
+  DLATCH: [1.8, 2.5, 3.3, 5, 12, 15],
+  JKFF: [1.8, 2.5, 3.3, 5, 12, 15],
+  TRI: [1.8, 2.5, 3.3, 5, 12, 15],
+  // Clocked sampler comparison threshold (V): the level the input is quantized
+  // against on each clock edge — sub-volt up through a 5 V logic mid-rail.
+  SAMP: [0.5, 1, 1.65, 2.5, 3.3, 4, 5],
+  // Analog switch on-resistance R_on (Ω): from a near-ideal lab switch (~1 Ω) up to
+  // the kilohm range of a cheap CMOS gate.
+  ASW: [1, 5, 10, 25, 50, 100, 200, 500, 1000],
+  // Comparator input hysteresis V_H (V): 0 = a plain comparator, widening into the
+  // Schmitt band that rejects noise near the switching point.
+  CMP: [0, 0.02, 0.05, 0.1, 0.2, 0.5, 1],
   // Level shifter input rail A (V) — the threshold side; output rail B is the amp.
   LS: [1.8, 2.5, 3.3, 5, 12, 15],
   // Pull-up Vcc (V): the rail the resistor pulls its net toward.
@@ -129,6 +149,22 @@ const CURATED_CHIPS: Record<string, number[]> = {
   NOT: [3.3, 5, 12],
   BUF: [3.3, 5, 12],
   FF: [3.3, 5, 12],
+  // The logic rails the composite-logic ICs reach for first (as the gates do).
+  HADD: [3.3, 5, 12],
+  FADD: [3.3, 5, 12],
+  MUX2: [3.3, 5, 12],
+  DMUX: [3.3, 5, 12],
+  MAJ3: [3.3, 5, 12],
+  SRL: [3.3, 5, 12],
+  DLATCH: [3.3, 5, 12],
+  JKFF: [3.3, 5, 12],
+  TRI: [3.3, 5, 12],
+  // The sampler thresholds people reach for first (a 3.3 V mid, a 5 V mid).
+  SAMP: [1.65, 2.5, 3.3],
+  // The analog-switch on-resistances people reach for first (lab / typical / cheap).
+  ASW: [10, 100, 1000],
+  // The comparator hysteresis people reach for first (none / a light Schmitt band).
+  CMP: [0, 0.1, 0.5],
   LS: [1.8, 3.3, 5],
   PU: [3.3, 5, 12],
   // The turns ratios people reach for first: ¼, ½, 1:1, ×2, ×4.

@@ -6,7 +6,7 @@
 // read is guarded so a corrupt or stale blob (e.g. a schema change) degrades to "no
 // saved state" rather than throwing.
 
-import type { GraphSnapshot } from "./graph";
+import type { GraphSnapshot, HotSlot } from "./graph";
 
 const BOARD_KEY = "cec.board.v1";
 const SETTINGS_KEY = "cec.settings.v1";
@@ -32,6 +32,12 @@ export interface Settings {
   lodOn?: boolean;
   /** Last camera (pan + zoom), restored across refreshes. */
   camera?: { x: number; y: number; scale: number };
+  /**
+   * The 1–9 quick-recall hotbar (configured-part slots), restored across refreshes.
+   * Optional + always exactly nine entries; older blobs without it round-trip to an
+   * empty bar (so `SETTINGS_VERSION` stays at 1 — no field is removed or repurposed).
+   */
+  hotbar?: HotSlot[];
 }
 
 const SETTINGS_VERSION = 1;

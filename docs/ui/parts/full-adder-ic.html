@@ -1,0 +1,601 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Full adder, five layers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Saira:wght@400;500;600&family=Saira+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: oklch(0.135 0.022 285); --bg-2: oklch(0.165 0.028 285);
+    --surface: oklch(0.205 0.034 285); --surface-2: oklch(0.245 0.04 285);
+    --border: oklch(0.32 0.045 285); --border-bright: oklch(0.42 0.06 285);
+    --faint: oklch(0.55 0.025 285); --dim: oklch(0.74 0.02 285); --text: oklch(0.97 0.004 285);
+    --accent: oklch(0.64 0.255 350); --accent-line: color-mix(in oklch, var(--accent) 42%, transparent);
+    --accent-soft: color-mix(in oklch, var(--accent) 16%, transparent);
+    --violet: oklch(0.62 0.2 292); --cyan: oklch(0.82 0.13 215); --bronze: oklch(0.74 0.085 72);
+    --ok: oklch(0.8 0.17 150); --warn: oklch(0.78 0.16 75); --bad: oklch(0.6 0.24 25);
+    --font-body:"Saira",system-ui,sans-serif; --font-display:"Saira Condensed","Arial Narrow",sans-serif; --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+    color-scheme:dark; color:var(--text); background:var(--bg); font-family:var(--font-body); font-size:16px; line-height:1.5; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; min-height:100svh;
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in oklch, var(--violet) 12%, transparent), transparent 60%),
+      linear-gradient(to right, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px),
+      linear-gradient(to bottom, oklch(0.5 0.05 285 / 0.05) 1px, transparent 1px), var(--bg);
+    background-size: 100% 100%, 34px 34px, 34px 34px;}
+  .wrap{max-width:1180px; margin:0 auto; padding:0 16px 40px;}
+  .hud-header{display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 6px; border-bottom:1px solid var(--border); margin-bottom:16px;}
+  .brand{display:flex; align-items:center; gap:12px;}
+  .brand-mark{display:grid; place-items:center; width:30px; height:30px; color:var(--accent); border:1px solid var(--accent-line); border-radius:3px; box-shadow:0 0 0 1px var(--accent-soft), 0 0 18px -4px var(--accent); font-family:var(--font-mono); font-weight:600; font-size:15px;}
+  .brand-text{font-family:var(--font-display); font-weight:700; font-size:20px; letter-spacing:0.14em; text-transform:uppercase;}
+  .brand-sub{margin-left:8px; color:var(--accent); font-weight:500;}
+  .header-meta{display:flex; align-items:center; gap:8px;}
+  .chip{font-family:var(--font-mono); font-size:11px; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); padding:4px 9px; border:1px solid var(--border); border-radius:2px; background:var(--surface); white-space:nowrap;}
+  .chip-accent{color:var(--accent); border-color:var(--accent-line);}
+  h1.lede{font-family:var(--font-display); font-weight:600; font-size:25px; margin:0 0 6px;}
+  p.intro{color:var(--dim); font-size:14.5px; margin:0 0 16px; max-width:94ch;} p.intro b{color:var(--text);}
+  .modebar{display:flex; flex-wrap:wrap; gap:10px 18px; align-items:center; margin-bottom:14px;}
+  .seg{display:inline-flex; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden;}
+  .seg button{font-family:var(--font-display); font-size:12.5px; font-weight:600; letter-spacing:0.1em; text-transform:uppercase; color:var(--dim); background:var(--surface); border:none; padding:8px 14px; cursor:pointer; transition:background .15s,color .15s;}
+  .seg button + button{border-left:1px solid var(--border);}
+  .seg button.on{color:var(--text); background:var(--surface-2); box-shadow:inset 0 -2px 0 var(--accent);}
+  .seg-label{font-family:var(--font-mono); font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--faint); margin-right:2px;}
+  .main{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:16px; align-items:start;}
+  .board-frame{position:relative; border:1px solid var(--border-bright); border-radius:4px; overflow:hidden; background:linear-gradient(180deg,var(--bg-2),var(--bg)); box-shadow:inset 0 0 0 1px oklch(0 0 0 / 0.4), inset 0 0 60px -20px oklch(0 0 0 / 0.8);}
+  .board-frame svg{display:block; width:100%; height:auto;}
+  .scope-tag{position:absolute; top:10px; left:12px; font-family:var(--font-mono); font-size:10px; letter-spacing:0.18em; text-transform:uppercase; color:var(--faint); background:oklch(0.135 0.022 285 / 0.6); padding:3px 7px; border:1px solid var(--border); border-radius:2px;}
+  .scope-tag.r{left:auto; right:12px;}
+  .side{display:flex; flex-direction:column; gap:16px;}
+  .panel{border:1px solid var(--border); border-radius:4px; background:linear-gradient(180deg,var(--bg-2),var(--bg)); overflow:hidden;}
+  .panel-title{margin:0; padding:12px 14px 10px; font-family:var(--font-display); font-weight:600; font-size:12px; letter-spacing:0.2em; text-transform:uppercase; color:var(--dim); border-bottom:1px solid var(--border);}
+  .panel-body{padding:12px 14px;}
+  .ro{display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 0;}
+  .ro + .ro{border-top:1px solid var(--border);}
+  .ro-k{font-size:12px; letter-spacing:0.04em; text-transform:uppercase; color:var(--faint);}
+  .ro-v{font-family:var(--font-mono); font-size:13px; color:var(--text);}
+  .scopewrap{padding:8px 10px 12px;}
+  .scopewrap svg{display:block; width:100%; height:auto;}
+  .transport{margin-top:16px; border:1px solid var(--border); border-radius:4px; background:linear-gradient(0deg,var(--bg-2),transparent); padding:12px 14px; display:flex; flex-wrap:wrap; gap:16px 22px; align-items:center;}
+  .tg{display:flex; align-items:center; gap:9px;}
+  .btn{font-family:var(--font-display); font-size:13px; font-weight:600; letter-spacing:0.12em; text-transform:uppercase; color:var(--text); padding:8px 14px; border:1px solid var(--border-bright); border-radius:3px; background:var(--surface); cursor:pointer; transition:border-color .15s, background .15s, box-shadow .15s, color .15s;}
+  .btn:hover{background:var(--surface-2); border-color:var(--dim);}
+  .btn-ghost{font-family:var(--font-mono); letter-spacing:0.08em; padding:7px 11px; color:var(--dim); font-size:12px; text-transform:uppercase;}
+  .btn-ghost.is-active{color:var(--accent); border-color:var(--accent-line); background:var(--accent-soft);}
+  .in-ctl{display:flex; flex-direction:column; gap:5px; min-width:200px;}
+  .in-ctl .ic-top{display:flex; justify-content:space-between; align-items:baseline;}
+  .ic-name{font-family:var(--font-mono); font-size:11px; letter-spacing:0.08em; color:var(--c,var(--dim));}
+  .ic-val{font-family:var(--font-mono); font-size:11px; color:var(--text);}
+  input[type=range]{-webkit-appearance:none; appearance:none; width:100%; height:20px; background:transparent; cursor:pointer; margin:0;}
+  input[type=range]:focus{outline:none;}
+  input[type=range]::-webkit-slider-runnable-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-moz-range-track{height:4px; background:var(--surface-2); border-radius:2px;}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none; appearance:none; width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan); margin-top:-6px;}
+  input[type=range]::-moz-range-thumb{width:15px; height:15px; border-radius:50%; background:var(--cyan); border:2px solid var(--bg); box-shadow:0 0 10px -2px var(--cyan);}
+  input[type=range].tb::-webkit-slider-thumb{background:var(--bronze); box-shadow:0 0 10px -2px var(--bronze);}
+  input[type=range].tb::-moz-range-thumb{background:var(--bronze);}
+  footer{margin-top:20px; padding-top:16px; border-top:1px solid var(--border); font-size:12.5px; color:var(--faint); line-height:1.6;} footer b{color:var(--dim);}
+  @media (max-width:900px){ .main{grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud-header">
+    <div class="brand"><div class="brand-mark">CE</div><div class="brand-text">Critical Error<span class="brand-sub">logic gate study</span></div></div>
+    <div class="header-meta"><span class="chip chip-accent" id="chipType">CEC2018</span><span class="chip" id="chipReg">S0 C0</span></div>
+  </div>
+
+  <h1 class="lede">The full adder, five layers down</h1>
+  <p class="intro">A full adder adds three bits, two addends and a carry-in, and reports a sum and a carry-out. This is the house part <b>CEC2018</b>, a Critical Error Computing teaching chip that is the repeating cell of every ripple-carry adder. Two outputs fall out of the three inputs: the sum bit <b>SUM is the parity of A, B and CIN</b>, high when an odd number of the three are high, and the carry bit <b>COUT is the majority</b>, high when two or three of them are high. The standard build is two CEC2024 half adders and an OR: the first half adder sums A and B, the second sums that result with CIN to make SUM, and the two half-adder carries are OR-ed into COUT. The first tier is the logic symbol on the real pinout with the eight-row truth table. The second is the flow network, three input streams feeding a tally whose remainder is the sum and whose overflow is the carry. The third opens that as <b>pressure-pilot valves</b>, a parity valve that lifts on an odd count of pressurized lines and a majority valve that lifts once two of the three are pressurized. The fourth is the gate-level schematic, the five real gates that are the device: two XORs in series make SUM, two ANDs and an OR make COUT. The fifth is the silicon, a representative gate of the set laid out as its CMOS transistors on one die.</p>
+
+  <div class="modebar">
+    <span class="seg-label">view</span>
+    <div class="seg" id="tierSeg">
+      <button data-t="t1" class="on">1 &middot; symbol</button>
+      <button data-t="t2">2 &middot; flow</button>
+      <button data-t="t3">3 &middot; valves</button>
+      <button data-t="t4">4 &middot; device</button>
+      <button data-t="t5">5 &middot; silicon</button>
+    </div>
+  </div>
+
+  <div class="main">
+    <div class="board-frame">
+      <span class="scope-tag" id="visTag">schematic</span>
+      <span class="scope-tag r" id="regTag">add</span>
+      <svg id="scene" viewBox="0 0 780 540" xmlns="http://www.w3.org/2000/svg" aria-label="full adder"></svg>
+    </div>
+    <div class="side">
+      <div class="panel"><h2 class="panel-title">Operating point</h2><div class="panel-body" id="telemetry"></div></div>
+      <div class="panel"><h2 class="panel-title">Truth table</h2><div class="scopewrap"><svg id="scope" viewBox="0 0 300 210" xmlns="http://www.w3.org/2000/svg"></svg></div></div>
+    </div>
+  </div>
+
+  <div class="transport">
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnA">A = 1</button><button class="btn btn-ghost" id="btnB">B = 0</button><button class="btn btn-ghost is-active" id="btnCIN">CIN = 1</button></div>
+    <div class="tg"><button class="btn btn-ghost is-active" id="btnRun">pause</button></div>
+    <div class="in-ctl" style="--c:var(--bronze)"><div class="ic-top"><span class="ic-name">supply V_DD</span><span class="ic-val" id="labVdd">5.00 V</span></div><input type="range" class="tb" id="vdd" min="180" max="900" value="500"></div>
+  </div>
+
+  <footer id="footnote"></footer>
+</div>
+<script>
+(function(){
+  var svg=document.getElementById('scene');
+  var NS='http://www.w3.org/2000/svg';
+  function el(t,a,txt){var e=document.createElementNS(NS,t);if(a){for(var k in a){e.setAttribute(k,a[k]);}}if(txt!=null){e.textContent=txt;}return e;}
+  function lerp(a,b,t){return a+(b-a)*t;}
+  function clamp(v,lo,hi){return v<lo?lo:(v>hi?hi:v);}
+  function poly(arr){return arr.map(function(p){return p[0]+','+p[1];}).join(' ');}
+  function vcoil(cx,ya,yb,amp,coils){var n=Math.max(2,Math.round(coils*8)),d='';for(var k=0;k<=n;k++){var t=k/n,y=lerp(ya,yb,t),x=cx+Math.sin(t*coils*Math.PI*2)*amp;d+=(k===0?'M ':'L ')+x.toFixed(1)+' '+y.toFixed(1)+' ';}return d;}
+  function th(i){return (i*0.61803398875)%1;}
+  function mix(c1,c2,t){function h(c){return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)];}var a=h(c1),b=h(c2);return 'rgb('+Math.round(lerp(a[0],b[0],t))+','+Math.round(lerp(a[1],b[1],t))+','+Math.round(lerp(a[2],b[2],t))+')';}
+
+  var CYAN='#46d2e6',WARM='#ffe6c0',WATER='#46b6f0',WATER2='#7fd0ff',ORANGE='#ff9a4d',DIM='#b6b0c6',FAINT='#80798f',ACCENT='#ff5c8a',STEEL='#9aa6bd',OK='#7ad6a0',BRONZE='#d6a866',ELEC='#5fd0ff',OXIDE='#caa46a',HOLE='#ff7a59',LO='#566076',HI='#5fd0ff';
+  function wcol(v,VDD){return mix(LO,HI,clamp(v/VDD,0,1));}
+  function lvc(b,VDD){return b?HI:LO;}
+
+  var defs=el('defs',{});
+  var f1=el('filter',{id:'glow',x:'-80%',y:'-80%',width:'260%',height:'260%'});f1.appendChild(el('feGaussianBlur',{stdDeviation:'3.2'}));defs.appendChild(f1);
+  svg.appendChild(defs);
+
+  // ===== CEC2018 : 1-bit full adder. Five gates (two half-adders + an OR). =====
+  // SUM = A xor B xor CIN (parity); COUT = (A and B) or (CIN and (A xor B)) = majority(A,B,CIN).
+  function fullAdder(A,B,CIN,VDD){var t0=(A^B), t1=(A&B), t2=(t0&CIN), sum=(t0^CIN), cout=(t1|t2);return {A:A,B:B,CIN:CIN,t0:t0,t1:t1,t2:t2,sum:sum,cout:cout,VDD:VDD};}
+  function fmtV(v){return v.toFixed(2)+' V';}
+
+  // truth-table data : columns A B | COUT SUM ; key is the input bits to match
+  var TT_COLS=[{lab:'A',col:ACCENT},{lab:'B',col:ACCENT},{lab:'CIN',col:ACCENT},{lab:'COUT',col:CYAN},{lab:'SUM',col:CYAN}];
+  var TT_ROWS=[{vals:[0,0,0,0,0],key:[0,0,0]},{vals:[0,0,1,0,1],key:[0,0,1]},{vals:[0,1,0,0,1],key:[0,1,0]},{vals:[0,1,1,1,0],key:[0,1,1]},{vals:[1,0,0,0,1],key:[1,0,0]},{vals:[1,0,1,1,0],key:[1,0,1]},{vals:[1,1,0,1,0],key:[1,1,0]},{vals:[1,1,1,1,1],key:[1,1,1]}];
+
+  var gT1=el('g',{}),gT2=el('g',{}),gT3=el('g',{}),gT4=el('g',{}),gT5=el('g',{});
+  svg.appendChild(gT1);svg.appendChild(gT2);svg.appendChild(gT3);svg.appendChild(gT4);svg.appendChild(gT5);
+
+  // ===== shared SOIC-8 package frame, CEC2018 house pinout, identical in every tier =====
+  // bottom L-R : SUM(1) GND(2) A(3) B(4)   top L-R : NC(8) VCC(7) COUT(6) CIN(5)
+  var PKX0=150,PKX1=630,PKY0=116,PKY1=456;
+  var XSUM=210,XGND=330,XA=450,XB=570,XNC=210,XVCC=330,XCOUT=450,XCIN=570;
+  var PIN={sum:[XSUM,PKY1],gnd:[XGND,PKY1],a:[XA,PKY1],b:[XB,PKY1],nc:[XNC,PKY0],vcc:[XVCC,PKY0],cout:[XCOUT,PKY0],cin:[XCIN,PKY0]};
+  function drawPkg(g){
+    g.appendChild(el('rect',{x:PKX0,y:PKY0,width:PKX1-PKX0,height:PKY1-PKY0,rx:11,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':2}));
+    g.appendChild(el('circle',{cx:PKX0+20,cy:PKY1-18,r:5,fill:'none',stroke:DIM,'stroke-width':1.4}));
+    function pin(x,top,num,name,col){
+      var ty=top?PKY0-28:PKY1;
+      g.appendChild(el('rect',{x:x-7,y:ty,width:14,height:28,rx:2,fill:'oklch(0.3 0.02 285)',stroke:STEEL,'stroke-width':1}));
+      g.appendChild(el('text',{x:x,y:top?PKY0+15:PKY1-7,'font-family':'var(--font-mono)','font-size':10,fill:FAINT,'text-anchor':'middle'},num));
+      g.appendChild(el('text',{x:x,y:top?ty-7:ty+41,'font-family':'var(--font-mono)','font-size':12,fill:col,'text-anchor':'middle'},name));
+    }
+    pin(XNC,true,'8','NC',FAINT); pin(XVCC,true,'7','VCC',HI); pin(XCOUT,true,'6','COUT',CYAN); pin(XCIN,true,'5','CIN',ACCENT);
+    pin(XSUM,false,'1','SUM',CYAN); pin(XGND,false,'2','GND',LO); pin(XA,false,'3','A',ACCENT); pin(XB,false,'4','B',ACCENT);
+  }
+
+  // ===== gate-symbol helpers (the real device is the gates) =====
+  function andG(g,cx,cy,scl){scl=scl||1;var w=34*scl,h=28*scl,x0=cx-w/2,y0=cy-h/2,y1=cy+h/2,xm=cx-1,r=h/2,x1=xm+r;
+    var body=el('path',{d:'M '+x0+' '+y0+' L '+xm+' '+y0+' A '+r+' '+r+' 0 0 1 '+xm+' '+y1+' L '+x0+' '+y1+' Z',fill:'oklch(0.19 0.025 285)',stroke:STEEL,'stroke-width':1.6});g.appendChild(body);
+    return {inA:[x0,cy-6*scl],inB:[x0,cy+6*scl],out:[x1,cy],cx:cx,cy:cy,body:body};}
+  function orG(g,cx,cy,scl){scl=scl||1;var w=34*scl,h=28*scl,x0=cx-w/2,y0=cy-h/2,y1=cy+h/2,x1=cx+w/2;
+    var body=el('path',{d:'M '+x0+' '+y0+' Q '+(x0+10*scl)+' '+cy+' '+x0+' '+y1+' Q '+(cx+2*scl)+' '+y1+' '+x1+' '+cy+' Q '+(cx+2*scl)+' '+y0+' '+x0+' '+y0+' Z',fill:'oklch(0.19 0.025 285)',stroke:STEEL,'stroke-width':1.6});g.appendChild(body);
+    return {inA:[x0+5*scl,cy-6*scl],inB:[x0+5*scl,cy+6*scl],out:[x1,cy],cx:cx,cy:cy,body:body};}
+  function xorG(g,cx,cy,scl){scl=scl||1;function X(dx){return cx+dx*scl;}function Y(dy){return cy+dy*scl;}
+    var body=el('path',{d:'M '+X(-44)+' '+Y(-42)+' Q '+X(18)+' '+Y(-37)+' '+X(58)+' '+Y(0)+' Q '+X(18)+' '+Y(37)+' '+X(-44)+' '+Y(42)+' Q '+X(-20)+' '+Y(0)+' '+X(-44)+' '+Y(-42)+' Z',fill:'oklch(0.19 0.025 285)',stroke:STEEL,'stroke-width':1.8,'stroke-linejoin':'round'});g.appendChild(body);
+    var back=el('path',{d:'M '+X(-56)+' '+Y(-42)+' Q '+X(-32)+' '+Y(0)+' '+X(-56)+' '+Y(42),fill:'none',stroke:STEEL,'stroke-width':1.8});g.appendChild(back);
+    return {inA:[X(-48),Y(-16)],inB:[X(-48),Y(16)],out:[X(58),Y(0)],cx:cx,cy:cy,body:body,back:back};}
+  function invTri(g,cx,cy,dir){var s=dir==='r'?1:-1;
+    var tri=el('path',{d:'M '+(cx-13*s)+' '+(cy-11)+' L '+(cx+13*s)+' '+cy+' L '+(cx-13*s)+' '+(cy+11)+' Z',fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.4});g.appendChild(tri);
+    g.appendChild(el('circle',{cx:cx+17*s,cy:cy,r:3.6,fill:'oklch(0.135 0.02 285)',stroke:STEEL,'stroke-width':1.2}));
+    return {cx:cx,cy:cy,outx:cx+21*s,inx:cx-13*s,tri:tri};}
+
+  // ===== flow-tier valve (tier 2) : a plug in a pipe, lifts when open =====
+  function hgate(g,cx,cy,col){var v={cx:cx,cy:cy,col:col||WATER2};
+    g.appendChild(el('rect',{x:cx-14,y:cy-18,width:28,height:36,rx:3,fill:'oklch(0.18 0.025 285)',stroke:STEEL,'stroke-width':1.2}));
+    v.gate=el('rect',{x:cx-4,y:cy-16,width:8,height:32,rx:1,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1});g.appendChild(v.gate);
+    return v;}
+  function setGate(v,open){v.gate.setAttribute('height',(open?4:32).toFixed(1));v.gate.setAttribute('fill',open?'#5a647a':'#c7cfdd');}
+
+  // ===== pressure-pilot valve (tier 3) : spring-loaded plug, lift = open amount =====
+  function pvalve(g,cx,throatY){var v={cx:cx,throatY:throatY};
+    v.seatL=el('polygon',{points:poly([[cx-16,throatY-9],[cx-6,throatY],[cx-16,throatY+9]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':1});g.appendChild(v.seatL);
+    v.seatR=el('polygon',{points:poly([[cx+16,throatY-9],[cx+6,throatY],[cx+16,throatY+9]]),fill:'oklch(0.3 0.03 285)',stroke:STEEL,'stroke-width':1});g.appendChild(v.seatR);
+    v.fdots=[];for(var i=0;i<6;i++){var c=el('circle',{r:2.6,fill:WATER2,opacity:0});g.appendChild(c);v.fdots.push({el:c,u:i/6,th:th(i)});}
+    v.plug=el('ellipse',{cx:cx,cy:throatY,rx:9,ry:11,fill:'#c7cfdd',stroke:STEEL,'stroke-width':1.2});g.appendChild(v.plug);
+    v.spring=el('path',{d:'',fill:'none',stroke:BRONZE,'stroke-width':1.4});g.appendChild(v.spring);
+    v.cap=el('rect',{x:cx-13,y:throatY-42,width:26,height:5,rx:1.5,fill:'oklch(0.4 0.02 285)',stroke:STEEL,'stroke-width':0.8});g.appendChild(v.cap);
+    return v;}
+  function setPvalve(v,open,run,yA,yB){var lift=clamp(open,0,1)*16, py=v.throatY-lift;
+    v.plug.setAttribute('cy',py.toFixed(1));v.plug.setAttribute('fill',open>0.05?'#c7cfdd':'#aeb6c4');
+    v.spring.setAttribute('d',vcoil(v.cx,v.throatY-37,py-12,4,4));
+    var fn=open>0.05?0.9:0;
+    for(var i=0;i<v.fdots.length;i++){var d=v.fdots[i],vis=fn>d.th*0.5;if(run&&vis){d.u=(d.u+0.006)%1;}var y=lerp(yA,yB,d.u);d.el.setAttribute('cx',v.cx);d.el.setAttribute('cy',y.toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');}}
+
+  // ===== compact MOSFET cross-section helper (tier 5) =====
+  function mosfetC(group,gx,topY,botY,isP){var g={isP:isP};var GX=gx,CX=gx+18,TY=topY,BY=botY,MY=(TY+BY)/2;
+    g.GX=GX;g.CX=CX;g.TY=TY;g.BY=BY;g.topx=CX+22;g.botx=CX+22;g.gateLeadX=GX-22;g.gateY=MY;
+    group.appendChild(el('line',{x1:GX,y1:TY+5,x2:GX,y2:BY-5,stroke:STEEL,'stroke-width':2.8}));
+    [[TY+5,TY+16],[TY+19,BY-19],[BY-16,BY-5]].forEach(function(s){group.appendChild(el('line',{x1:CX,y1:s[0],x2:CX,y2:s[1],stroke:STEEL,'stroke-width':3}));});
+    g.chan=el('line',{x1:CX,y1:TY+5,x2:CX,y2:BY-5,stroke:OK,'stroke-width':4,'stroke-linecap':'round',opacity:0,filter:'url(#glow)'});group.appendChild(g.chan);
+    group.appendChild(el('path',{d:'M '+CX+' '+(TY+13)+' L '+(CX+22)+' '+(TY+13)+' L '+(CX+22)+' '+TY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('path',{d:'M '+CX+' '+(BY-13)+' L '+(CX+22)+' '+(BY-13)+' L '+(CX+22)+' '+BY,fill:'none',stroke:STEEL,'stroke-width':2}));
+    group.appendChild(el('line',{x1:GX,y1:MY,x2:GX-22,y2:MY,stroke:STEEL,'stroke-width':2}));
+    if(isP){g.bub=el('circle',{cx:GX-5,cy:MY,r:3.5,fill:'var(--bg-2)',stroke:STEEL,'stroke-width':1.2});group.appendChild(g.bub);}
+    return g;}
+
+  // ===== truth-table helper (used by tier 1 and the scope panel) =====
+  function makeTruth(parent,ox,oy,cols,rows,cw,rh,fs){
+    var hls=[],cells=[];
+    for(var c=0;c<cols.length;c++){parent.appendChild(el('text',{x:ox+c*cw,y:oy,'font-family':'var(--font-mono)','font-size':fs,fill:cols[c].col||DIM,'text-anchor':'middle'},cols[c].lab));}
+    parent.appendChild(el('line',{x1:ox-cw*0.62,y1:oy+6,x2:ox+(cols.length-0.38)*cw,y2:oy+6,stroke:'var(--border)','stroke-width':1}));
+    for(var r=0;r<rows.length;r++){var ry=oy+18+r*rh;
+      var hl=el('rect',{x:ox-cw*0.62,y:ry-rh*0.62,width:(cols.length-0.24)*cw,height:rh*0.9,rx:3,fill:'rgba(0,0,0,0)'});parent.appendChild(hl);hls.push(hl);
+      var rc=[];for(var c2=0;c2<cols.length;c2++){var t=el('text',{x:ox+c2*cw,y:ry+fs*0.34,'font-family':'var(--font-mono)','font-size':fs+1,fill:DIM,'text-anchor':'middle'},String(rows[r].vals[c2]));parent.appendChild(t);rc.push(t);}
+      cells.push(rc);}
+    return {hls:hls,cells:cells,rows:rows,cols:cols};}
+  function setTruthActive(tt,key){
+    for(var r=0;r<tt.rows.length;r++){var match=true;for(var k=0;k<key.length;k++){if(tt.rows[r].key[k]!==key[k]){match=false;break;}}
+      tt.hls[r].setAttribute('fill',match?'rgba(95,208,230,0.15)':'rgba(0,0,0,0)');
+      for(var c=0;c<tt.cols.length;c++){tt.cells[r][c].setAttribute('fill',match?HI:DIM);}}}
+
+  var t1={},t2={},t3={},t4={},t5={};
+  // ============ TIER 1 : SYMBOL + PINOUT + TRUTH TABLE ============
+  function buildT1(){
+    drawPkg(gT1);
+    var BX0=388,BX1=520,BY0=238,BY1=374, AY=272,BY=306,CY=340, SY=292,COY=326;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.4,'stroke-linecap':'round','stroke-linejoin':'round'});gT1.appendChild(p);return p;}
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 214 L 414 214 L 414 '+BY0,HI,1.6);gT1.appendChild(el('text',{x:418,y:226,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'start'},'VCC'));
+    wire('M '+XGND+' '+PKY1+' L '+XGND+' 398 L 414 398 L 414 '+BY1,LO,1.6);gT1.appendChild(el('text',{x:418,y:396,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'start'},'GND'));
+    t1.box=el('rect',{x:BX0,y:BY0,width:BX1-BX0,height:BY1-BY0,rx:6,fill:'oklch(0.17 0.022 285)',stroke:STEEL,'stroke-width':2});gT1.appendChild(t1.box);
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+42,'font-family':'var(--font-display)','font-size':30,fill:DIM,'text-anchor':'middle'},'\u03a3'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY0+60,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'middle'},'full adder'));
+    gT1.appendChild(el('text',{x:(BX0+BX1)/2,y:BY1-9,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'CEC2018'));
+    gT1.appendChild(el('text',{x:BX1-8,y:AY+4,'font-family':'var(--font-mono)','font-size':10,fill:ACCENT,'text-anchor':'end'},'A'));
+    gT1.appendChild(el('text',{x:BX1-8,y:BY+4,'font-family':'var(--font-mono)','font-size':10,fill:ACCENT,'text-anchor':'end'},'B'));
+    gT1.appendChild(el('text',{x:BX1-8,y:CY+4,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'end'},'CIN'));
+    gT1.appendChild(el('text',{x:BX0+8,y:SY+4,'font-family':'var(--font-mono)','font-size':10,fill:CYAN,'text-anchor':'start'},'SUM'));
+    gT1.appendChild(el('text',{x:BX0+8,y:COY+4,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'COUT'));
+    t1.wA=wire('M '+XA+' '+PKY1+' L '+XA+' 410 L 562 410 L 562 '+AY+' L '+BX1+' '+AY,LO,2.4);
+    t1.wB=wire('M '+XB+' '+PKY1+' L '+XB+' '+BY+' L '+BX1+' '+BY,LO,2.4);
+    t1.wCIN=wire('M '+XCIN+' '+PKY0+' L '+XCIN+' 192 L 546 192 L 546 '+CY+' L '+BX1+' '+CY,LO,2.4);
+    t1.wSUM=wire('M '+BX0+' '+SY+' L '+XSUM+' '+SY+' L '+XSUM+' '+PKY1,LO,2.4);
+    t1.wCOUT=wire('M '+BX0+' '+COY+' L 352 '+COY+' L 352 156 L '+XCOUT+' 156 L '+XCOUT+' '+PKY0,LO,2.4);
+    t1.nA=el('circle',{cx:XA,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nA);
+    t1.nB=el('circle',{cx:XB,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nB);
+    t1.nCIN=el('circle',{cx:XCIN,cy:PKY0,r:4,fill:STEEL});gT1.appendChild(t1.nCIN);
+    t1.nS=el('circle',{cx:XSUM,cy:PKY1,r:4,fill:STEEL});gT1.appendChild(t1.nS);
+    t1.nC=el('circle',{cx:XCOUT,cy:PKY0,r:4,fill:STEEL});gT1.appendChild(t1.nC);
+    t1.dA=el('text',{x:XA+15,y:438,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dA);
+    t1.dB=el('text',{x:XB+15,y:438,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dB);
+    t1.dCIN=el('text',{x:XCIN+15,y:138,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dCIN);
+    t1.dS=el('text',{x:XSUM-16,y:438,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dS);
+    t1.dC=el('text',{x:XCOUT-16,y:138,'font-family':'var(--font-mono)','font-size':12,fill:HI,'text-anchor':'middle'},'0');gT1.appendChild(t1.dC);
+    gT1.appendChild(el('text',{x:30,y:230,'font-family':'var(--font-display)','font-size':11,fill:FAINT,'letter-spacing':'0.08em'},'TRUTH TABLE'));
+    t1.tt=makeTruth(gT1,40,248,TT_COLS,TT_ROWS,22,18.5,9);
+    t1.note=el('text',{x:30,y:418,'font-family':'var(--font-body)','font-size':11,fill:OK,'text-anchor':'start'},'');gT1.appendChild(t1.note);
+  }
+  function updateT1(s){
+    var ca=lvc(s.A),cb=lvc(s.B),cc=lvc(s.CIN),cs=lvc(s.sum),cco=lvc(s.cout);
+    t1.wA.setAttribute('stroke',ca);t1.nA.setAttribute('fill',s.A?HI:STEEL);t1.dA.textContent=''+s.A;t1.dA.setAttribute('fill',s.A?HI:LO);
+    t1.wB.setAttribute('stroke',cb);t1.nB.setAttribute('fill',s.B?HI:STEEL);t1.dB.textContent=''+s.B;t1.dB.setAttribute('fill',s.B?HI:LO);
+    t1.wCIN.setAttribute('stroke',cc);t1.nCIN.setAttribute('fill',s.CIN?HI:STEEL);t1.dCIN.textContent=''+s.CIN;t1.dCIN.setAttribute('fill',s.CIN?HI:LO);
+    t1.wSUM.setAttribute('stroke',cs);t1.nS.setAttribute('fill',s.sum?HI:STEEL);t1.dS.textContent=''+s.sum;t1.dS.setAttribute('fill',s.sum?HI:LO);
+    t1.wCOUT.setAttribute('stroke',cco);t1.nC.setAttribute('fill',s.cout?HI:STEEL);t1.dC.textContent=''+s.cout;t1.dC.setAttribute('fill',s.cout?HI:LO);
+    t1.box.setAttribute('stroke',(s.sum||s.cout)?mix(STEEL,HI,0.4):STEEL);
+    setTruthActive(t1.tt,[s.A,s.B,s.CIN]);
+    var n=s.A+s.B+s.CIN;
+    t1.note.textContent=n+' of 3 high : sum '+s.sum+' carry '+s.cout;
+    t1.note.setAttribute('fill',s.cout?WARM:(s.sum?OK:FAINT));
+  }
+
+  // ============ TIER 2 : FLOW / TALLY ============
+  function buildT2(){
+    drawPkg(gT2);
+    var IY=178, AX=372,BX=430,CX=488, TALX=430, TBOT=330, CW=42, CH=22, SCX=300, CCX=558, CHT=344, CHB=388;
+    t2.CHT=CHT;t2.CHB=CHB;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2.2,'stroke-linecap':'round','stroke-linejoin':'round'});gT2.appendChild(p);return p;}
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 158 L 372 158',HI,1.6);gT2.appendChild(el('text',{x:368,y:154,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'end'},'VCC'));
+    function gauge(x,lab){var c=el('circle',{cx:x,cy:IY,r:10,fill:'oklch(0.3 0.06 18)',stroke:ACCENT,'stroke-width':1.5});gT2.appendChild(c);
+      gT2.appendChild(el('text',{x:x,y:IY+3.5,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},lab));return c;}
+    t2.gA=gauge(AX,'A');t2.gB=gauge(BX,'B');t2.gC=gauge(CX,'CIN');
+    function feed(d){gT2.appendChild(el('path',{d:d,fill:'none',stroke:ACCENT,'stroke-width':1.3,'stroke-dasharray':'4 3',opacity:0.45}));}
+    feed('M '+XA+' '+PKY1+' L '+XA+' 430 L 338 430 L 338 '+IY+' L '+(AX-10)+' '+IY);
+    feed('M '+XB+' '+PKY1+' L '+XB+' 204 L '+BX+' 204 L '+BX+' '+(IY+10));
+    feed('M '+XCIN+' '+PKY0+' L '+XCIN+' 150 L '+CX+' 150 L '+CX+' '+(IY-10));
+    // funnel from the three gauges into the tally top
+    wire('M '+AX+' '+(IY+10)+' L '+AX+' 214 L '+(TALX-CW/2)+' 232 M '+CX+' '+(IY+10)+' L '+CX+' 214 L '+(TALX+CW/2)+' 232 M '+BX+' '+(IY+10)+' L '+BX+' 232',STEEL,1.4);
+    // tally cells (stacked, fill bottom-up)
+    t2.cells=[];
+    for(var i=0;i<3;i++){var y=TBOT-(i+1)*CH;
+      gT2.appendChild(el('rect',{x:TALX-CW/2,y:y,width:CW,height:CH,rx:2,fill:'oklch(0.16 0.025 285)',stroke:STEEL,'stroke-width':1.2}));
+      var f=el('rect',{x:TALX-CW/2+2,y:y+2,width:CW-4,height:CH-4,rx:1.5,fill:'rgba(127,208,255,0.5)',opacity:0});gT2.appendChild(f);t2.cells.push(f);}
+    gT2.appendChild(el('text',{x:TALX,y:236,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'middle'},'tally'));
+    t2.countTxt=el('text',{x:TALX,y:TBOT+22,'font-family':'var(--font-display)','font-size':20,fill:DIM,'text-anchor':'middle'},'0');gT2.appendChild(t2.countTxt);
+    // chambers
+    function chamber(x,lab){gT2.appendChild(el('rect',{x:x-28,y:CHT,width:56,height:CHB-CHT,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.6}));
+      gT2.appendChild(el('text',{x:x,y:CHT-7,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'middle'},lab));
+      var lvl=el('rect',{x:x-25,y:CHB-3,width:50,height:0,rx:2,fill:'rgba(127,208,255,0.55)'});gT2.appendChild(lvl);return lvl;}
+    t2.sumLvl=chamber(SCX,'SUM');t2.coutLvl=chamber(CCX,'COUT');
+    // tally -> outputs (labeled rules)
+    t2.pSum=wire('M '+(TALX-CW/2)+' '+(TBOT-CH)+' L '+(SCX+28)+' '+(TBOT-CH)+' L '+(SCX+28)+' '+CHT,LO,2.2);
+    gT2.appendChild(el('text',{x:(SCX+TALX)/2,y:TBOT-CH-6,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'odd count'));
+    t2.pCout=wire('M '+(TALX+CW/2)+' '+(TBOT-2)+' L '+(CCX-28)+' '+(TBOT-2)+' L '+(CCX-28)+' '+CHT,LO,2.2);
+    gT2.appendChild(el('text',{x:(CCX+TALX)/2+4,y:TBOT-8,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'two or more'));
+    // outputs to pins
+    t2.wSUM=wire('M '+SCX+' '+CHB+' L '+SCX+' 416 L '+XSUM+' 416 L '+XSUM+' '+PKY1,LO,2.6);
+    t2.wCOUT=wire('M '+(CCX+28)+' '+((CHT+CHB)/2)+' L 606 '+((CHT+CHB)/2)+' L 606 138 L '+XCOUT+' 138 L '+XCOUT+' '+PKY0,LO,2.6);
+    gT2.appendChild(el('text',{x:30,y:230,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'TALLY'));
+    gT2.appendChild(el('text',{x:30,y:248,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'add the high bits'));
+    gT2.appendChild(el('text',{x:30,y:261,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'sum = the remainder'));
+    gT2.appendChild(el('text',{x:30,y:274,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'carry = the overflow'));
+    t2.stateLab=el('text',{x:30,y:418,'font-family':'var(--font-body)','font-size':11,fill:OK},'');gT2.appendChild(t2.stateLab);
+  }
+  function updateT2(s){
+    var n=s.A+s.B+s.CIN;
+    t2.gA.setAttribute('fill',s.A?'rgba(255,92,138,0.55)':'oklch(0.3 0.06 18)');
+    t2.gB.setAttribute('fill',s.B?'rgba(255,92,138,0.55)':'oklch(0.3 0.06 18)');
+    t2.gC.setAttribute('fill',s.CIN?'rgba(255,92,138,0.55)':'oklch(0.3 0.06 18)');
+    for(var i=0;i<3;i++){t2.cells[i].setAttribute('opacity', n>i?'1':'0');}
+    t2.countTxt.textContent=''+n;t2.countTxt.setAttribute('fill',n?CYAN:DIM);
+    var FULL=t2.CHB-t2.CHT-3;
+    function setLvl(lvl,on){var h=on?FULL:0;lvl.setAttribute('y',(t2.CHB-3-h).toFixed(1));lvl.setAttribute('height',h.toFixed(1));}
+    setLvl(t2.sumLvl,s.sum);setLvl(t2.coutLvl,s.cout);
+    t2.pSum.setAttribute('stroke',s.sum?HI:LO);t2.wSUM.setAttribute('stroke',s.sum?HI:LO);
+    t2.pCout.setAttribute('stroke',s.cout?HI:LO);t2.wCOUT.setAttribute('stroke',s.cout?HI:LO);
+    t2.stateLab.textContent='tally '+n+(s.cout?' : carry':'')+(s.sum?' : sum':((!s.cout)?' : zero':''));
+    t2.stateLab.setAttribute('fill',s.cout?WARM:(s.sum?OK:FAINT));
+  }
+
+  // ============ TIER 3 : PRESSURE PILOT VALVES (parity / majority) ============
+  function buildT3(){
+    drawPkg(gT3);
+    var RESY=158, SVX=322, CVX=470, THY=316, CHT=334, CHB=382;
+    t3.CHT=CHT;t3.CHB=CHB;
+    gT3.appendChild(el('rect',{x:288,y:RESY-8,width:216,height:16,rx:3,fill:'oklch(0.2 0.03 285)',stroke:STEEL,'stroke-width':1.2}));
+    gT3.appendChild(el('rect',{x:291,y:RESY-6,width:210,height:10,rx:2,fill:'rgba(70,182,240,0.4)'}));
+    gT3.appendChild(el('text',{x:292,y:RESY-13,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT,'text-anchor':'start'},'supply'));
+    gT3.appendChild(el('path',{d:'M '+XVCC+' '+PKY0+' L '+XVCC+' '+RESY+' L 288 '+RESY,fill:'none',stroke:HI,'stroke-width':2.4}));
+    gT3.appendChild(el('line',{x1:SVX,y1:RESY+8,x2:SVX,y2:THY-12,stroke:STEEL,'stroke-width':2.4}));
+    gT3.appendChild(el('line',{x1:CVX,y1:RESY+8,x2:CVX,y2:THY-12,stroke:STEEL,'stroke-width':2.4}));
+    t3.sumV=pvalve(gT3,SVX,THY);
+    t3.coutV=pvalve(gT3,CVX,THY);
+    gT3.appendChild(el('line',{x1:SVX,y1:THY+11,x2:SVX,y2:CHT,stroke:STEEL,'stroke-width':2.4}));
+    gT3.appendChild(el('line',{x1:CVX,y1:THY+11,x2:CVX,y2:CHT,stroke:STEEL,'stroke-width':2.4}));
+    function chamber(x){gT3.appendChild(el('rect',{x:x-28,y:CHT,width:56,height:CHB-CHT,rx:4,fill:'oklch(0.17 0.025 285)',stroke:STEEL,'stroke-width':1.6}));
+      var lvl=el('rect',{x:x-25,y:CHB-3,width:50,height:0,rx:2,fill:'rgba(127,208,255,0.55)'});gT3.appendChild(lvl);return lvl;}
+    t3.sumLvl=chamber(SVX);t3.coutLvl=chamber(CVX);
+    function pilots(cx){var ps=[];var lab=['A','B','CIN'];var dx=[-26,0,26];
+      for(var i=0;i<3;i++){var r=el('rect',{x:cx+dx[i]-7,y:THY-50,width:14,height:7,rx:1.5,fill:'oklch(0.3 0.06 18)',stroke:ACCENT,'stroke-width':1.1});gT3.appendChild(r);ps.push(r);
+        if(i!==1)gT3.appendChild(el('text',{x:cx+dx[i],y:THY-53,'font-family':'var(--font-mono)','font-size':6.5,fill:ACCENT,'text-anchor':'middle'},lab[i]));}
+      return ps;}
+    t3.sumP=pilots(SVX);t3.coutP=pilots(CVX);
+    gT3.appendChild(el('text',{x:SVX,y:THY-58,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM,'text-anchor':'middle'},'parity'));
+    gT3.appendChild(el('text',{x:CVX,y:THY-58,'font-family':'var(--font-mono)','font-size':8.5,fill:DIM,'text-anchor':'middle'},'majority'));
+    gT3.appendChild(el('text',{x:SVX-32,y:(CHT+CHB)/2+3,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'end'},'SUM'));
+    gT3.appendChild(el('text',{x:CVX-32,y:(CHT+CHB)/2+3,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'end'},'COUT'));
+    t3.wSUM=el('path',{d:'M '+SVX+' '+CHB+' L '+SVX+' 416 L '+XSUM+' 416 L '+XSUM+' '+PKY1,fill:'none',stroke:LO,'stroke-width':2.6,'stroke-linecap':'round'});gT3.appendChild(t3.wSUM);
+    t3.wCOUT=el('path',{d:'M '+(CVX+28)+' '+((CHT+CHB)/2)+' L 526 '+((CHT+CHB)/2)+' L 526 138 L '+XCOUT+' 138 L '+XCOUT+' '+PKY0,fill:'none',stroke:LO,'stroke-width':2.6,'stroke-linecap':'round'});gT3.appendChild(t3.wCOUT);
+    gT3.appendChild(el('text',{x:30,y:230,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'PILOT VALVES'));
+    gT3.appendChild(el('text',{x:30,y:248,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'parity valve lifts'));
+    gT3.appendChild(el('text',{x:30,y:261,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'on an odd count'));
+    gT3.appendChild(el('text',{x:30,y:278,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'majority valve lifts'));
+    gT3.appendChild(el('text',{x:30,y:291,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'once two are pressed'));
+    t3.stateLab=el('text',{x:30,y:418,'font-family':'var(--font-body)','font-size':11,fill:OK},'');gT3.appendChild(t3.stateLab);
+  }
+  function updateT3(s){
+    setPvalve(t3.sumV,s.sum,s.run,304,t3.CHT);
+    setPvalve(t3.coutV,s.cout,s.run,304,t3.CHT);
+    var FULL=t3.CHB-t3.CHT-3;
+    function setLvl(lvl,on){var h=on?FULL:0;lvl.setAttribute('y',(t3.CHB-3-h).toFixed(1));lvl.setAttribute('height',h.toFixed(1));}
+    setLvl(t3.sumLvl,s.sum);setLvl(t3.coutLvl,s.cout);
+    t3.wSUM.setAttribute('stroke',s.sum?HI:LO);t3.wCOUT.setAttribute('stroke',s.cout?HI:LO);
+    var act='oklch(0.3 0.06 18)',hot='rgba(255,92,138,0.55)',bits=[s.A,s.B,s.CIN];
+    for(var i=0;i<3;i++){t3.sumP[i].setAttribute('fill',bits[i]?hot:act);t3.coutP[i].setAttribute('fill',bits[i]?hot:act);}
+    var n=s.A+s.B+s.CIN;
+    t3.stateLab.textContent=n+' pressed : '+(s.cout?'carry':'')+(s.sum?(s.cout?' + sum':'sum'):(s.cout?'':'seated'));
+    t3.stateLab.setAttribute('fill',s.cout?WARM:(s.sum?OK:FAINT));
+  }
+
+  // ============ TIER 4 : GATE-LEVEL SCHEMATIC (the real device) ============
+  function buildT4(){
+    drawPkg(gT4);
+    var ABX=252, BBX=278, CBX=440;
+    function wire(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col||STEEL,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT4.appendChild(p);return p;}
+    function jd(x,y,col){gT4.appendChild(el('circle',{cx:x,cy:y,r:2.5,fill:col||STEEL}));}
+    t4.xor1=xorG(gT4,372,240,0.6); t4.and1=andG(gT4,372,340,0.82);
+    t4.xor2=xorG(gT4,486,246,0.6); t4.and2=andG(gT4,468,350,0.82); t4.or=orG(gT4,556,362,0.82);
+    gT4.appendChild(el('text',{x:372,y:212,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'XOR'));
+    gT4.appendChild(el('text',{x:486,y:218,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'XOR'));
+    gT4.appendChild(el('text',{x:372,y:368,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'AND'));
+    gT4.appendChild(el('text',{x:468,y:378,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'AND'));
+    gT4.appendChild(el('text',{x:556,y:390,'font-family':'var(--font-mono)','font-size':8,fill:DIM,'text-anchor':'middle'},'OR'));
+    // buses
+    t4.aBus=wire('M '+XA+' '+PKY1+' L '+XA+' 440 L '+ABX+' 440 L '+ABX+' 224',ACCENT,1.9);
+    t4.bBus=wire('M '+XB+' '+PKY1+' L '+XB+' 426 L '+BBX+' 426 L '+BBX+' 238',ACCENT,1.9);
+    t4.cBus=wire('M '+XCIN+' '+PKY0+' L '+XCIN+' 150 L '+CBX+' 150 L '+CBX+' 360',ACCENT,1.9);
+    gT4.appendChild(el('text',{x:ABX,y:220,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'A'));
+    gT4.appendChild(el('text',{x:BBX-9,y:236,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'middle'},'B'));
+    gT4.appendChild(el('text',{x:CBX+12,y:160,'font-family':'var(--font-mono)','font-size':9,fill:ACCENT,'text-anchor':'start'},'CIN'));
+    // input taps
+    t4.txa=wire('M '+ABX+' '+t4.xor1.inA[1]+' L '+t4.xor1.inA[0]+' '+t4.xor1.inA[1],ACCENT,1.9);jd(ABX,t4.xor1.inA[1]);
+    t4.taa=wire('M '+ABX+' '+t4.and1.inA[1]+' L '+t4.and1.inA[0]+' '+t4.and1.inA[1],ACCENT,1.9);jd(ABX,t4.and1.inA[1]);
+    t4.txb=wire('M '+BBX+' '+t4.xor1.inB[1]+' L '+t4.xor1.inB[0]+' '+t4.xor1.inB[1],ACCENT,1.9);jd(BBX,t4.xor1.inB[1]);
+    t4.tab=wire('M '+BBX+' '+t4.and1.inB[1]+' L '+t4.and1.inB[0]+' '+t4.and1.inB[1],ACCENT,1.9);jd(BBX,t4.and1.inB[1]);
+    t4.tcx=wire('M '+CBX+' '+t4.xor2.inB[1]+' L '+t4.xor2.inB[0]+' '+t4.xor2.inB[1],ACCENT,1.9);jd(CBX,t4.xor2.inB[1]);
+    t4.tca=wire('M '+CBX+' '+t4.and2.inB[1]+' L '+t4.and2.inB[0]+' '+t4.and2.inB[1],ACCENT,1.9);jd(CBX,t4.and2.inB[1]);
+    // t0 trunk : XOR1.out -> XOR2.inA + AND2.inA
+    t4.t0a=wire('M '+t4.xor1.out[0]+' '+t4.xor1.out[1]+' L 428 '+t4.xor1.out[1],CYAN,2);
+    t4.t0b=wire('M 428 '+t4.xor2.inA[1]+' L 428 '+t4.and2.inA[1],CYAN,2);
+    t4.t0c=wire('M 428 '+t4.xor2.inA[1]+' L '+t4.xor2.inA[0]+' '+t4.xor2.inA[1],CYAN,2);
+    t4.t0d=wire('M 428 '+t4.and2.inA[1]+' L '+t4.and2.inA[0]+' '+t4.and2.inA[1],CYAN,2);
+    jd(428,t4.xor1.out[1]);
+    gT4.appendChild(el('text',{x:434,y:t4.xor1.out[1]-5,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'t0'));
+    // t1, t2 -> OR
+    t4.t1w=wire('M '+t4.and1.out[0]+' '+t4.and1.out[1]+' L 396 '+t4.and1.out[1]+' L 396 378 L 516 378 L 516 '+t4.or.inA[1]+' L '+t4.or.inA[0]+' '+t4.or.inA[1],CYAN,2);
+    t4.t2w=wire('M '+t4.and2.out[0]+' '+t4.and2.out[1]+' L 524 '+t4.and2.out[1]+' L 524 '+t4.or.inB[1]+' L '+t4.or.inB[0]+' '+t4.or.inB[1],CYAN,2);
+    gT4.appendChild(el('text',{x:t4.and1.out[0]+8,y:t4.and1.out[1]-5,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'t1'));
+    gT4.appendChild(el('text',{x:t4.and2.out[0]+6,y:t4.and2.out[1]+12,'font-family':'var(--font-mono)','font-size':8,fill:CYAN,'text-anchor':'start'},'t2'));
+    // outputs
+    t4.wSUM=wire('M '+t4.xor2.out[0]+' '+t4.xor2.out[1]+' L 542 '+t4.xor2.out[1]+' L 542 418 L '+XSUM+' 418 L '+XSUM+' '+PKY1,CYAN,2.6);
+    t4.wCOUT=wire('M '+t4.or.out[0]+' '+t4.or.out[1]+' L 592 '+t4.or.out[1]+' L 592 138 L '+XCOUT+' 138 L '+XCOUT+' '+PKY0,CYAN,2.6);
+    gT4.appendChild(el('text',{x:548,y:t4.xor2.out[1]-6,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'SUM'));
+    gT4.appendChild(el('text',{x:596,y:t4.or.out[1]+4,'font-family':'var(--font-mono)','font-size':9,fill:CYAN,'text-anchor':'start'},'COUT'));
+    // power rails (faint)
+    wire('M '+XVCC+' '+PKY0+' L '+XVCC+' 166 L 232 166',HI,1.5);gT4.appendChild(el('text',{x:228,y:162,'font-family':'var(--font-mono)','font-size':8,fill:HI,'text-anchor':'end'},'VCC'));
+    wire('M '+XGND+' '+PKY1+' L '+XGND+' 444 L 232 444',LO,1.5);gT4.appendChild(el('text',{x:228,y:440,'font-family':'var(--font-mono)','font-size':8,fill:LO,'text-anchor':'end'},'GND'));
+    t4.inAV=el('text',{x:XA+15,y:438,'font-family':'var(--font-mono)','font-size':11,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inAV);
+    t4.inBV=el('text',{x:XB+15,y:438,'font-family':'var(--font-mono)','font-size':11,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inBV);
+    t4.inCV=el('text',{x:XCIN+15,y:138,'font-family':'var(--font-mono)','font-size':11,fill:ACCENT,'text-anchor':'middle'},'');gT4.appendChild(t4.inCV);
+    gT4.appendChild(el('text',{x:30,y:230,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'REAL DEVICE'));
+    gT4.appendChild(el('text',{x:30,y:248,'font-family':'var(--font-mono)','font-size':10,fill:DIM},'CEC2018'));
+    gT4.appendChild(el('text',{x:30,y:262,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'XOR,XOR -> SUM'));
+    gT4.appendChild(el('text',{x:30,y:274,'font-family':'var(--font-mono)','font-size':8.5,fill:FAINT},'AND,AND,OR -> COUT'));
+    gT4.appendChild(el('text',{x:30,y:288,'font-family':'var(--font-mono)','font-size':8,fill:FAINT},'t0 = A xor B shared'));
+    t4.stateLab=el('text',{x:30,y:418,'font-family':'var(--font-body)','font-size':11,fill:OK},'');gT4.appendChild(t4.stateLab);
+  }
+  function updateT4(s){
+    var ca=lvc(s.A),cb=lvc(s.B),cc=lvc(s.CIN),c0=lvc(s.t0),c1=lvc(s.t1),c2=lvc(s.t2),csu=lvc(s.sum),cco=lvc(s.cout);
+    [t4.aBus,t4.txa,t4.taa].forEach(function(w){w.setAttribute('stroke',ca);});
+    [t4.bBus,t4.txb,t4.tab].forEach(function(w){w.setAttribute('stroke',cb);});
+    [t4.cBus,t4.tcx,t4.tca].forEach(function(w){w.setAttribute('stroke',cc);});
+    [t4.t0a,t4.t0b,t4.t0c,t4.t0d].forEach(function(w){w.setAttribute('stroke',c0);});
+    t4.t1w.setAttribute('stroke',c1);t4.t2w.setAttribute('stroke',c2);
+    t4.wSUM.setAttribute('stroke',csu);t4.wCOUT.setAttribute('stroke',cco);
+    function lite(gate,on){gate.body.setAttribute('stroke',on?HI:STEEL);gate.body.setAttribute('fill',on?'rgba(95,208,255,0.12)':'oklch(0.19 0.025 285)');if(gate.back)gate.back.setAttribute('stroke',on?HI:STEEL);}
+    lite(t4.xor1,s.t0);lite(t4.and1,s.t1);lite(t4.xor2,s.sum);lite(t4.and2,s.t2);lite(t4.or,s.cout);
+    t4.inAV.textContent=''+s.A;t4.inAV.setAttribute('fill',s.A?HI:LO);
+    t4.inBV.textContent=''+s.B;t4.inBV.setAttribute('fill',s.B?HI:LO);
+    t4.inCV.textContent=''+s.CIN;t4.inCV.setAttribute('fill',s.CIN?HI:LO);
+    t4.stateLab.textContent='SUM '+s.sum+'  COUT '+s.cout;
+    t4.stateLab.setAttribute('fill',s.cout?WARM:(s.sum?OK:FAINT));
+  }
+
+  // ============ TIER 5 : METAL OXIDE SILICON (representative gate : the OR carry cell) ============
+  function buildT5(){
+    drawPkg(gT5);
+    var SURF=340, DH=40, GW=13, GT=SURF-22, VCCY=300, GNDY=442;
+    t5.SURF=SURF;
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:372,height:GNDY-SURF,rx:4,fill:'oklch(0.22 0.03 300)',stroke:'oklch(0.34 0.04 300)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:574,y:GNDY-9,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'end'},'p-type substrate'));
+    gT5.appendChild(el('rect',{x:206,y:SURF,width:184,height:GNDY-SURF-7,rx:4,fill:'oklch(0.25 0.05 232)',stroke:'oklch(0.37 0.06 232)','stroke-width':1}));
+    gT5.appendChild(el('text',{x:210,y:GNDY-14,'font-family':'var(--font-mono)','font-size':8,fill:FAINT,'text-anchor':'start'},'n-well'));
+    t5.gateLabs=[];t5.dev=[];
+    function diff(cx,isP,lab,col){gT5.appendChild(el('rect',{x:cx-9,y:SURF,width:18,height:DH,rx:2,fill:isP?'oklch(0.34 0.09 40)':'oklch(0.32 0.07 232)',stroke:STEEL,'stroke-width':0.8}));gT5.appendChild(el('text',{x:cx,y:SURF+22,'font-family':'var(--font-mono)','font-size':7,fill:isP?HOLE:CYAN,'text-anchor':'middle'},isP?'p+':'n+'));if(lab)gT5.appendChild(el('text',{x:cx,y:SURF+DH+9,'font-family':'var(--font-mono)','font-size':6.5,fill:col||FAINT,'text-anchor':'middle'},lab));return cx;}
+    function gate(cx,lab,key){gT5.appendChild(el('rect',{x:cx-GW/2,y:SURF-8,width:GW,height:8,fill:'rgba(202,164,106,0.5)',stroke:OXIDE,'stroke-width':0.7}));gT5.appendChild(el('rect',{x:cx-GW/2,y:GT,width:GW,height:16,rx:1.5,fill:'oklch(0.42 0.02 285)',stroke:STEEL,'stroke-width':0.9}));var t=el('text',{x:cx,y:GT-3,'font-family':'var(--font-mono)','font-size':7.5,fill:BRONZE,'text-anchor':'middle'},lab);gT5.appendChild(t);t5.gateLabs.push({txt:t,key:key});var c=el('path',{d:'',fill:'rgba(95,208,255,0.3)',stroke:ELEC,'stroke-width':1,opacity:0});gT5.appendChild(c);return {gx:cx,chan:c};}
+    function carrSet(n,col){var a=[];for(var i=0;i<n;i++){var c=el('circle',{r:2.2,fill:col,opacity:0});gT5.appendChild(c);a.push({el:c,u:i/n,th:th(i)});}return a;}
+    // PMOS (n-well) : NOR pull-up = p1 SERIES p2 + inverter pI
+    diff(228,true,'VCC',HI); var p1=gate(250,'t1','p1'); diff(272,true,'mid',FAINT); var p2=gate(294,'t2','p2'); diff(316,true,'nor',CYAN);
+    diff(344,true,'VCC',HI); var pI=gate(366,'nor','pI'); diff(388,true,'OR',null);
+    // NMOS (substrate) : NOR pull-down = n1 PARALLEL n2 + inverter nI
+    diff(420,false,'nor',CYAN); var n1=gate(442,'t1','n1'); diff(464,false,'GND',LO); var n2=gate(486,'t2','n2'); diff(508,false,'nor',CYAN);
+    diff(534,false,'OR',null); var nI=gate(556,'nor','nI'); diff(578,false,'GND',LO);
+    t5.dev.push({g:p1,key:'p1',isP:true},{g:p2,key:'p2',isP:true},{g:pI,key:'pI',isP:true},{g:n1,key:'n1',isP:false},{g:n2,key:'n2',isP:false},{g:nI,key:'nI',isP:false});
+    for(var k=0;k<t5.dev.length;k++){t5.dev[k].carr=carrSet(3,t5.dev[k].isP?HOLE:ELEC);}
+    function m(d,col,w){var p=el('path',{d:d,fill:'none',stroke:col,'stroke-width':w||2,'stroke-linecap':'round','stroke-linejoin':'round'});gT5.appendChild(p);return p;}
+    function dot(x,y,col){gT5.appendChild(el('circle',{cx:x,cy:y,r:2.2,fill:col}));}
+    // VCC rail : pin7 -> PMOS VCC diffs (228, 344)
+    m('M '+XVCC+' '+PKY0+' L '+XVCC+' '+VCCY+' L 228 '+VCCY+' L 228 '+SURF,HI,2);m('M 344 '+SURF+' L 344 '+VCCY+' L 330 '+VCCY,HI,2);
+    dot(228,SURF,HI);dot(344,SURF,HI);
+    // GND rail : pin2 -> NMOS GND diffs (464, 578)
+    m('M '+XGND+' '+PKY1+' L '+XGND+' '+GNDY+' L 578 '+GNDY,LO,2);m('M 464 '+SURF+' L 464 '+GNDY,LO,1.8);m('M 578 '+SURF+' L 578 '+GNDY,LO,1.8);
+    dot(464,SURF,LO);dot(578,SURF,LO);
+    // nor-node : PMOS nor (316) + NMOS nor (420,508) + inverter gates (366,556)
+    t5.norBus=m('M 316 '+SURF+' L 316 314 L 556 314',CYAN,1.8);
+    m('M 420 '+SURF+' L 420 314',CYAN,1.4);m('M 508 '+SURF+' L 508 314',CYAN,1.4);
+    m('M 366 '+GT+' L 366 314',CYAN,1.2);m('M 556 '+GT+' L 556 314',CYAN,1.2);
+    dot(316,SURF,CYAN);dot(420,SURF,CYAN);dot(508,SURF,CYAN);
+    gT5.appendChild(el('text',{x:392,y:310,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'middle'},'nor node'));
+    // OR output : PMOS OR (388) + NMOS OR (534) -> COUT pin
+    t5.outBus=m('M 388 '+SURF+' L 388 288 L 534 288 M '+XCOUT+' '+PKY0+' L '+XCOUT+' 288',CYAN,2.2);
+    m('M 534 '+SURF+' L 534 288',CYAN,1.6);
+    dot(388,SURF,CYAN);dot(534,SURF,CYAN);
+    gT5.appendChild(el('text',{x:455,y:284,'font-family':'var(--font-mono)','font-size':7.5,fill:CYAN,'text-anchor':'middle'},'OR = COUT'));
+    // t1 / t2 internal gate inputs (carry terms from the AND gates)
+    t5.t1w=m('M 250 '+(GT+16)+' L 250 422 L 442 422 L 442 '+(GT+16),ACCENT,1.4);
+    t5.t2w=m('M 294 '+(GT-4)+' L 294 260 L 486 260 L 486 '+(GT-4),ACCENT,1.4);
+    gT5.appendChild(el('text',{x:346,y:434,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'middle'},'t1 = A and B'));
+    gT5.appendChild(el('text',{x:390,y:256,'font-family':'var(--font-mono)','font-size':8,fill:ACCENT,'text-anchor':'middle'},'t2 = (A xor B) and CIN'));
+    gT5.appendChild(el('text',{x:272,y:SURF+58,'font-family':'var(--font-mono)','font-size':8,fill:HOLE,'text-anchor':'middle'},'NOR pull-up (series) | inv'));
+    gT5.appendChild(el('text',{x:498,y:SURF+58,'font-family':'var(--font-mono)','font-size':8,fill:ELEC,'text-anchor':'middle'},'NOR pull-down (parallel) + inv'));
+    gT5.appendChild(el('text',{x:30,y:230,'font-family':'var(--font-display)','font-size':12,fill:FAINT,'letter-spacing':'0.08em'},'SILICON'));
+    gT5.appendChild(el('text',{x:30,y:248,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'the carry OR gate :'));
+    gT5.appendChild(el('text',{x:30,y:261,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'OR = NOR + inv'));
+    gT5.appendChild(el('text',{x:30,y:274,'font-family':'var(--font-mono)','font-size':9,fill:FAINT},'six transistors'));
+    gT5.appendChild(el('text',{x:30,y:292,'font-family':'var(--font-mono)','font-size':8,fill:DIM},'the XOR and AND'));
+    gT5.appendChild(el('text',{x:30,y:304,'font-family':'var(--font-mono)','font-size':8,fill:DIM},'cells tile likewise'));
+    gT5.appendChild(el('text',{x:30,y:316,'font-family':'var(--font-mono)','font-size':8,fill:DIM},'on the same die'));
+    t5.stateLab=el('text',{x:30,y:418,'font-family':'var(--font-body)','font-size':11,fill:OK},'');gT5.appendChild(t5.stateLab);
+  }
+  function updateT5(s){
+    var SURF=t5.SURF, nor=s.cout?0:1, w=10;
+    var on={p1:(s.t1===0),p2:(s.t2===0),pI:(nor===0),n1:(s.t1===1),n2:(s.t2===1),nI:(nor===1)};
+    for(var k=0;k<t5.dev.length;k++){var dv=t5.dev[k],gx=dv.g.gx,o=on[dv.key];
+      if(o){dv.g.chan.setAttribute('d','M '+(gx-w)+' '+SURF+' L '+(gx+w)+' '+SURF+' L '+(gx+w)+' '+(SURF+11)+' L '+(gx-w)+' '+(SURF+11)+' Z');dv.g.chan.setAttribute('opacity','0.92');dv.g.chan.setAttribute('stroke',dv.isP?HOLE:ELEC);dv.g.chan.setAttribute('fill',dv.isP?'rgba(255,122,89,0.3)':'rgba(95,208,255,0.3)');}
+      else dv.g.chan.setAttribute('opacity','0');
+      var f=o?1:0;for(var j=0;j<dv.carr.length;j++){var d=dv.carr[j],vis=f>d.th*0.5;if(s.run&&vis){d.u=(d.u+0.012)%1;}var x=lerp(gx-w,gx+w,d.u);d.el.setAttribute('cx',x.toFixed(1));d.el.setAttribute('cy',(SURF+5.5).toFixed(1));d.el.setAttribute('opacity',vis?'0.9':'0');d.el.setAttribute('fill',dv.isP?HOLE:ELEC);}}
+    var lab={p1:s.t1,p2:s.t2,n1:s.t1,n2:s.t2,pI:nor,nI:nor};
+    for(var gi=0;gi<t5.gateLabs.length;gi++){var gl=t5.gateLabs[gi];if(lab[gl.key]!=null)gl.txt.setAttribute('fill',lab[gl.key]?HI:LO);}
+    t5.outBus.setAttribute('stroke',s.cout?HI:LO);t5.norBus.setAttribute('stroke',nor?HI:LO);
+    t5.t1w.setAttribute('stroke',s.t1?HI:LO);t5.t2w.setAttribute('stroke',s.t2?HI:LO);
+    t5.stateLab.textContent=s.cout?'a carry term high : COUT 1':'both carry terms low : 0';
+    t5.stateLab.setAttribute('fill',s.cout?WARM:FAINT);
+  }
+  buildT1();buildT2();buildT3();buildT4();buildT5();
+
+  // ===== scope : the live truth table =====
+  var scope=document.getElementById('scope');var sc={};
+  function buildScope(){
+    scope.appendChild(el('text',{x:150,y:16,'font-family':'var(--font-display)','font-size':10.5,fill:FAINT,'text-anchor':'middle','letter-spacing':'0.1em'},'A B CIN  to  COUT SUM'));
+    sc.tt=makeTruth(scope,52,38,TT_COLS,TT_ROWS,49,18,10);
+    scope.appendChild(el('line',{x1:24,y1:188,x2:276,y2:188,stroke:'var(--border)','stroke-width':1}));
+    sc.arith=el('text',{x:150,y:205,'font-family':'var(--font-mono)','font-size':12,fill:OK,'text-anchor':'middle'},'');scope.appendChild(sc.arith);
+  }
+  function updateScope(s){setTruthActive(sc.tt,[s.A,s.B,s.CIN]);
+    sc.arith.textContent=s.A+' + '+s.B+' + '+s.CIN+' = '+s.cout+''+s.sum+'  ( '+(s.cout*2+s.sum)+' )';}
+  buildScope();
+
+  // ===== telemetry =====
+  var tele=document.getElementById('telemetry');
+  function trow(k){var w=document.createElement('div');w.className='ro';var a=document.createElement('span');a.className='ro-k';a.textContent=k;var b=document.createElement('span');b.className='ro-v';w.appendChild(a);w.appendChild(b);tele.appendChild(w);return b;}
+  var roIn=trow('inputs A / B / CIN'),roSum=trow('SUM = parity'),roCout=trow('COUT = majority'),roArith=trow('A + B + CIN (decimal)'),roState=trow('state');
+
+  // ===== controls =====
+  var vddEl=document.getElementById('vdd'),labVdd=document.getElementById('labVdd'),
+      btnA=document.getElementById('btnA'),btnB=document.getElementById('btnB'),btnCIN=document.getElementById('btnCIN'),btnRun=document.getElementById('btnRun'),
+      visTag=document.getElementById('visTag'),regTag=document.getElementById('regTag'),
+      chipReg=document.getElementById('chipReg'),footnote=document.getElementById('footnote');
+  var running=true,tier='t1',aVal=1,bVal=0,cinVal=1;
+  footnote.innerHTML='The part shown is the CEC2018, the house 1-bit full adder, the repeating cell of a ripple-carry adder. It adds three bits: two addends A and B and a carry-in CIN from the next-lower stage. Two outputs fall out of the three inputs. The sum output SUM is the parity of the three inputs, high when an odd number of them are high, which is A xor B xor CIN. The carry output COUT is the majority, high when two or three of the inputs are high. Reading the eight-row truth table, the four cases with one high input give SUM 1 and COUT 0, the three cases with two high give SUM 0 and COUT 1, and all three high gives SUM 1 and COUT 1, which is binary three. The textbook build is two CEC2024 half adders and an OR gate: the first half adder adds A and B into a partial sum and a partial carry, the second half adder adds that partial sum to CIN to make the final SUM and a second partial carry, and the two partial carries are OR-ed to make COUT. Drawn on an 8-pin SOIC-8 frame, the house pin convention places the sum output SUM on pin 1, ground on pin 2, the addend A on pin 3, the addend B on pin 4, the carry-in CIN on pin 5, the carry-out COUT on pin 6, and the supply VCC on pin 7, with pin 8 a no-connect and the pin 1 indicator at the lower-left corner. The realistic tier draws the five gates as the genuine device: two static-CMOS XOR cells in series making the sum, two AND cells and an OR cell making the carry. The analogy tiers map the same function to plumbing: three streams feeding a tally whose remainder is the sum and whose overflow is the carry, then pressure-pilot valves where a parity valve lifts on an odd count of pressurized lines and a majority valve lifts once two of the three are pressurized. In the game simulator this maps to a buildNetlist composition, two XOR gates, two AND gates and an OR gate sharing the part VCC and GND, all ordinary powered logic gates, with no new sim element. The part runs from 1.8 V to 15 V in the house CMOS process.';
+
+  function setTier(t){tier=t;gT1.style.display=(t==='t1')?'':'none';gT2.style.display=(t==='t2')?'':'none';gT3.style.display=(t==='t3')?'':'none';gT4.style.display=(t==='t4')?'':'none';gT5.style.display=(t==='t5')?'':'none';
+    var names={t1:'symbol . pinout',t2:'flow network',t3:'pressure pilot valves',t4:'real device . CEC2018',t5:'metal oxide silicon'};visTag.textContent=names[t];
+    [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.classList.toggle('on',b.getAttribute('data-t')===t);});}
+  [].forEach.call(document.querySelectorAll('#tierSeg button'),function(b){b.addEventListener('click',function(){setTier(b.getAttribute('data-t'));});});
+  function syncBtns(){btnA.textContent='A = '+aVal;btnA.classList.toggle('is-active',!!aVal);btnB.textContent='B = '+bVal;btnB.classList.toggle('is-active',!!bVal);btnCIN.textContent='CIN = '+cinVal;btnCIN.classList.toggle('is-active',!!cinVal);}
+  btnA.addEventListener('click',function(){aVal=aVal?0:1;syncBtns();});
+  btnB.addEventListener('click',function(){bVal=bVal?0:1;syncBtns();});
+  btnCIN.addEventListener('click',function(){cinVal=cinVal?0:1;syncBtns();});
+  btnRun.addEventListener('click',function(){running=!running;this.textContent=running?'pause':'run';this.classList.toggle('is-active',running);});
+  syncBtns();setTier('t1');
+
+  var tick=0;
+  function frame(){
+    if(running){tick++;}
+    var VDD=(+vddEl.value)/100, A=aVal, B=bVal, CIN=cinVal;
+    var m=fullAdder(A,B,CIN,VDD);
+    var s={A:A,B:B,CIN:CIN,t0:m.t0,t1:m.t1,t2:m.t2,sum:m.sum,cout:m.cout,VDD:VDD,run:running,tick:tick};
+    if(tier==='t1'){updateT1(s);}else if(tier==='t2'){updateT2(s);}else if(tier==='t3'){updateT3(s);}else if(tier==='t4'){updateT4(s);}else{updateT5(s);}
+    updateScope(s);
+    labVdd.textContent=fmtV(VDD);
+    roIn.textContent=A+' / '+B+' / '+CIN;roIn.style.color=DIM;
+    roSum.textContent='SUM = '+m.sum;roSum.style.color=m.sum?HI:LO;
+    roCout.textContent='COUT = '+m.cout;roCout.style.color=m.cout?HI:LO;
+    roArith.textContent=A+' + '+B+' + '+CIN+' = '+(m.cout*2+m.sum);roArith.style.color=OK;
+    roState.textContent=(m.cout&&m.sum)?'carry + sum':(m.cout?'carry out':(m.sum?'sum, no carry':'zero'));roState.style.color=m.cout?WARM:(m.sum?OK:FAINT);
+    regTag.textContent='SUM '+m.sum+' . COUT '+m.cout;if(chipReg){chipReg.textContent='S'+m.sum+' C'+m.cout;}
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
