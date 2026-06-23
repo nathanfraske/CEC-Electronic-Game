@@ -41,6 +41,7 @@
     AC_DEFAULT_AMP,
     loadUnit,
     PLACEMENT_OVERRIDE_KEYS,
+    isFrame,
     type GraphSnapshot,
     type HotSlot,
   } from "./lib/graph";
@@ -1815,6 +1816,9 @@
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
           selPart = sel.single ?? null;
+          // Reset the IC-maker Seal name field when the selection changes, so a name typed for one
+          // frame doesn't bleed onto the next.
+          sealName = "";
         },
         onArm: (kind) => {
           // The board disarmed itself (right-click) — mirror it into the HUD, and drop
@@ -2079,6 +2083,18 @@
   }
   function setLabelText(t: string): void {
     if (selPart) board?.setComponentLabel(selPart.id, t);
+  }
+  // IC maker (ADR 0006): the optional name typed into the inspector's Seal field. Cleared after a
+  // seal (and whenever the selection changes, below) so the next frame starts blank and falls back
+  // to the auto CEC9xxx id.
+  let sealName = $state("");
+  // Seal the selected frame + its wired circuit into a placeable sealed IC. The board does the
+  // capture + collapse (drops the frame and internals, places the new chip where the frame sat);
+  // an empty name lets userIc auto-assign the next CEC9xxx. The board reselects the new instance.
+  function sealSelected(): void {
+    if (!selPart || !board || !isFrame(selPart.kind)) return;
+    board.sealFrame(selPart.id, sealName.trim() || undefined);
+    sealName = "";
   }
   function stepVal(dir: number): void {
     if (!selPart) return;
@@ -3796,6 +3812,31 @@
               onchange={(e) => setLabelText(e.currentTarget.value)}
             />
           </div>
+          {#if isFrame(kind)}
+            <!-- IC maker (ADR 0006 / docs/ui/ic-maker-guide.md): a frame is a package outline
+                 the player wired a circuit into. Sealing collapses the frame + its connected
+                 circuit into one placeable sealed IC (lands in the bin and as an instance where
+                 the frame was). The name is optional — blank auto-assigns the next CEC9xxx. -->
+            <div class="insp-sub">seal as IC</div>
+            <div class="insp-row">
+              <input
+                class="insp-name mono"
+                type="text"
+                placeholder="name (auto: CEC9xxx)"
+                bind:value={sealName}
+                maxlength="24"
+                aria-label="Name the sealed IC"
+                onkeydown={(e) => {
+                  if (e.key === "Enter") sealSelected();
+                }}
+              />
+            </div>
+            <div class="insp-row">
+              <button class="btn btn-accent insp-seal" onclick={sealSelected}>
+                Seal as IC
+              </button>
+            </div>
+          {/if}
           {#if hasValue(kind)}
             {@const cd = valueDecade(kind, selPart.value)}
             {#if kind === "MSW"}
@@ -5378,6 +5419,11 @@
     letter-spacing: 0.14em;
     text-transform: uppercase;
     color: var(--faint);
+  }
+  /* IC-maker "Seal as IC" action button: full-width within the inspector popover. */
+  .insp-seal {
+    flex: 1;
+    width: 100%;
   }
 
   /* Potentiometer wiper: a continuous slider across the track (A … B). */

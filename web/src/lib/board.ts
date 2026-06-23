@@ -24,6 +24,8 @@ import {
   formatValue,
   rotateOffset,
   isJunctionRef,
+  isPinRef,
+  isFrame,
   endpointKey,
   type Component,
   type PinRef,
@@ -32,6 +34,7 @@ import {
   type Wire,
   type GraphSnapshot,
 } from "./graph";
+import { captureSeal } from "./userIc";
 import {
   drawGlyph,
   flowStabilized,
@@ -2185,6 +2188,101 @@ export class Board {
    * appear/vanish, etc.) even though the board itself is unchanged. */
   emitChange(): void {
     this.cb.onChange?.(this.graph);
+  }
+
+  /**
+   * Seal an IC-maker frame and its wired circuit into one placeable sealed IC (ADR 0006 /
+   * docs/ui/ic-maker-guide.md). {@link captureSeal} BFSs the connected sub-graph (the frame +
+   * its internals), snapshots it, and registers the new kind `tag`; this method then COLLAPSES
+   * the live board: it drops the captured components / wires / junctions, places a fresh instance
+   * of `tag` where the frame sat, and re-points any EXTERNAL wire (one end on a frame pin, the
+   * other outside the capture) onto the instance's matching pin (same package-pin index) — so the
+   * outside circuit stays connected straight through. Because the seal has no element of its own
+   * and `flattenUserIcs` re-inlines the authored parts at build time, the netlist is byte-identical
+   * to the inline circuit (seal-as-same-netlist; the golden is untouched).
+   *
+   * One undo step (the whole collapse). The new instance is left selected so the inspector follows
+   * it. No-op (returns null) on any id that isn't a live frame. `name` is the free-form part name;
+   * omit it for the next auto `CEC9xxx`. Returns the registered tag.
+   */
+  sealFrame(frameId: number, name?: string): string | null {
+    const frame = this.graph.components.get(frameId);
+    if (!frame || !isFrame(frame.kind)) return null;
+
+    const before = this.graph.serialize();
+
+    // Capture the connected sub-graph + register the kind FIRST (read-only; the graph is untouched
+    // so the external-wire scan below still sees the original wiring).
+    const cap = captureSeal(this.graph, frameId, name);
+    if (!cap) return null;
+    const captured = new Set(cap.capturedComponentIds);
+    const capturedJ = new Set(cap.capturedJunctionIds);
+
+    // External wires: a wire touching a FRAME pin whose OTHER end is outside the capture (an
+    // endpoint on a component/junction not folded in). Record (frame pin index -> outside endpoint)
+    // so we can re-home them onto the placed instance after the collapse. (v1 ICs are authored
+    // standalone, so usually none — but a frame wired out to the rest of the board is handled.)
+    const inside = (e: Endpoint): boolean =>
+      isPinRef(e) ? captured.has(e.componentId) : capturedJ.has(e.junctionId);
+    const externals: { pinIndex: number; outside: Endpoint }[] = [];
+    for (const w of this.graph.wires.values()) {
+      const ends: [Endpoint, Endpoint][] = [
+        [w.from, w.to],
+        [w.to, w.from],
+      ];
+      for (const [end, other] of ends) {
+        if (isPinRef(end) && end.componentId === frameId && !inside(other)) {
+          externals.push({ pinIndex: end.pinIndex, outside: { ...other } });
+        }
+      }
+    }
+
+    // Collapse: drop the folded-in wires, junctions, and components. removeComponent also sweeps a
+    // component's incident wires (including the external ones), so the external endpoints are left
+    // bare — we re-wire them to the instance below.
+    for (const id of cap.capturedWireIds) this.graph.removeWire(id);
+    for (const id of cap.capturedComponentIds) this.graph.removeComponent(id);
+    for (const id of cap.capturedJunctionIds) this.graph.removeJunction(id);
+
+    // Place the sealed instance where the frame sat. Its pins come from the same package layout as
+    // the frame, so pin index i on the instance is the same package lead as frame pin index i.
+    const inst = this.graph.place(cap.tag, {
+      col: cap.frameCell.col,
+      row: cap.frameCell.row,
+    });
+    if (inst) {
+      for (const ex of externals) {
+        // Skip a stale outside endpoint (its node may have been pruned with the capture).
+        if (
+          isPinRef(ex.outside)
+            ? this.graph.components.has(ex.outside.componentId)
+            : this.graph.junctions.has(ex.outside.junctionId)
+        ) {
+          this.graph.connect(
+            { componentId: inst.id, pinIndex: ex.pinIndex },
+            ex.outside,
+          );
+        }
+      }
+    }
+
+    // Rebuild the visual nodes (the captured glyphs are gone, the instance is new), refresh wires,
+    // and push the single undo, then recompile + select the new chip.
+    this.pushUndo(before);
+    this.rebuildNodes();
+    this.redrawWires();
+    // Reselect just the new instance so the inspector follows the chip the seal produced.
+    this.selected.clear();
+    this.selectedWires.clear();
+    this.selectedJunctions.clear();
+    this.selectedLabels.clear();
+    this.lastWireClick = null;
+    if (inst) this.selected.add(inst.id);
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    this.emitSelect();
+    this.emitAnchor();
+    return cap.tag;
   }
 
   /**

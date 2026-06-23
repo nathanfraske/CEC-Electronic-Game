@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (89) — IC maker: the SEAL ACTION (capture + collapse) — sealing works in-app
+
+**State:** 🟢 built (agent) + gate-green + tested; merging to main. Branch `claude/kind-turing-hdelb3`.
+The mechanic is now hands-on: build a circuit, wire it to a frame's pins, select the frame, "Seal as IC".
+
+**What landed (agent, verified):** `graph.ts` `framePackage(tag)` + `isFrame(tag)` (reverse map built in
+the same frame-generation loop). `userIc.ts` **`captureSeal(graph, frameId, name?)`** — BFS the connected
+sub-graph from the frame, snapshot it (ids preserved), derive the package, auto-name `CEC9001++` (or a
+free-form name), `registerUserIc`; read-only, returns the captured ids + frame cell. `board.ts`
+**`sealFrame(frameId, name?)`** — the collapse: snapshot-for-undo, capture+register, record external
+wires, drop the captured comps/wires/junctions, place the sealed instance at the frame's cell, re-point
+externals onto its pins, one undo step, reselect. `App.svelte` — a **"Seal as IC"** button + optional name
+field in the selected-frame inspector popover. `netlist.test.ts` — 3 new tests (capture round-trip with
+two series resistors proving BFS gathers the whole sub-graph + seal-as-same-netlist; auto-name; non-frame
+returns undefined). **Web gate green, 6/6 tests; cargo 188 pass (determinism untouched, no Rust change).**
+
+**HOW TO USE (now on main):** drop a frame, build your circuit, wire each boundary net to a frame pin,
+select the frame → "Seal as IC" (name or auto CEC9xxx) → it collapses into a placeable chip in the bin +
+on the board.
+
+**KNOWN GAP — persistence (NEXT, important):** the user-IC registry is IN-MEMORY, so a page reload loses
+the sealed kind → a saved board's placed instance is orphaned (its tag no longer in `PART_KINDS`). Do
+persistence next (save/load the user-IC library with the board). Until then, sealing is per-session.
+
+**ALSO NEXT:** the **live zoomed-in view** (render the sealed instance's inner circuit at the authored
+layout, proportional to live values — wire `compositeInternals` for user ICs through the flatten);
+optionally the roomy **containment die** ("build inside the walls") if the owner wants literal build-inside
+vs. the current wire-to-pins; then tiers 2/4 (refsheet SVG).
+
+---
+
 ## 2026-06-23 (88) — IC maker: the SEAL expander, built + VERIFIED by test (the core mechanic)
 
 **State:** 🟢 core seal mechanic built + gate-green + unit-tested; on branch `claude/kind-turing-hdelb3`.
