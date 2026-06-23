@@ -487,6 +487,35 @@ const POT_WIPER_MIN = 0.5;
 // harmless to the transient solve, which never reads those slots).
 const TRANSIENT_TIER_KINDS = new Set(["V", "AC", "NM", "PM", "Q", "QP"]);
 
+/**
+ * One sub-element inside an expanded composite IC, for the zoom-to-open "mini-mode" view
+ * (ADR 0005). `index` is into `element_currents` (the live sub-element current); `nodes` are its
+ * resolved terminal node indices into `node_voltages`, in a..e order (for a gate: out, in1, in2,
+ * VCC, GND). `func` is the gate function code for an `ELEM_GATE`, else the element's `aux`.
+ */
+export interface CompositeSubElement {
+  index: number;
+  type: number;
+  func: number;
+  nodes: number[];
+}
+
+/**
+ * The internal topology of one expanded composite IC (`CEC_COMP`), recorded so the zoom-to-open
+ * view can draw the chip's real sub-circuit live from the same snapshot the board already reads
+ * (ADR 0005 phase 1). All node indices are into `node_voltages`, all element indices into
+ * `element_currents`. Built only for composites; absent for behavioral blocks (one opaque element)
+ * and leaf parts. Render-side only — never crosses to the core, never hashed.
+ */
+export interface CompositeInternals {
+  /** node index per external pin, by pin index (the package boundary). */
+  pinNodes: number[];
+  /** the private internal node indices (from `cecInternal`). */
+  internalNodes: number[];
+  /** the sub-elements (gates first, then `extra`), in emission order. */
+  elements: CompositeSubElement[];
+}
+
 export interface BuiltNetlist {
   nodeCount: number;
   types: Uint8Array;
@@ -548,6 +577,14 @@ export interface BuiltNetlist {
   legsOfComponent: Map<number, number[]>;
   /** component id → [nodeA, nodeB] (into `node_voltages`). */
   nodesOfComponent: Map<number, [number, number]>;
+  /**
+   * component id → the internal topology of an expanded composite IC (`CEC_COMP`), for the
+   * zoom-to-open "mini-mode" view (ADR 0005): its sub-elements (each with resolved terminal nodes
+   * and gate func) plus the internal and pin node indices, all referencing the same
+   * `node_voltages` / `element_currents` the rest of the renderer uses. Absent for non-composite
+   * parts. Render-side only; never crosses to the core, never hashed.
+   */
+  compositeInternals: Map<number, CompositeInternals>;
   /**
    * Net-label display name per node index (into `node_voltages`): a node carrying
    * one or more {@link NetLabel}s reports that name (e.g. `VCC`) so the scope and
@@ -773,6 +810,7 @@ export function buildNetlist(
   const elemOfComponent = new Map<number, number>();
   const legsOfComponent = new Map<number, number[]>();
   const nodesOfComponent = new Map<number, [number, number]>();
+  const compositeInternals = new Map<number, CompositeInternals>();
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
@@ -920,32 +958,63 @@ export function buildNetlist(
       const nGnd = nodeOfPin(comp.gndPin);
       const family = c.family ?? 0;
       const firstIdx = types.length;
+      // Record each sub-element's index + resolved terminal nodes for the zoom-to-open view
+      // (ADR 0005). The emission below is byte-identical to before — the recording only reads
+      // the same resolved refs — so the netlist crossing to the core (and the golden) is unchanged.
+      const subElements: CompositeSubElement[] = [];
       for (const [func, out, in1, in2] of comp.gates) {
+        const oN = resolve(out);
+        const i1 = resolve(in1);
+        const i2 = resolve(in2);
+        const ei = types.length;
         types.push(ELEM_GATE);
-        aArr.push(resolve(out));
-        bArr.push(resolve(in1));
-        cArr.push(resolve(in2));
+        aArr.push(oN);
+        bArr.push(i1);
+        cArr.push(i2);
         dArr.push(nVcc);
         eArr.push(nGnd);
         pushFGH();
         values.push(c.value); // vestigial logic rail (the gate is powered through d/e)
         auxArr.push(func + 16 * family);
+        subElements.push({
+          index: ei,
+          type: ELEM_GATE,
+          func,
+          nodes: [oN, i1, i2, nVcc, nGnd],
+        });
       }
       // Non-gate elements (a DFF, an analog switch, a pull-down resistor, an internally-railed
       // buffer): each raw step lists every terminal explicitly, emitted verbatim after the gates.
       for (const rs of comp.extra ?? []) {
+        const ra = resolve(rs.a);
+        const rb = resolve(rs.b);
+        const rc = resolve(rs.c);
+        const rd = resolve(rs.d);
+        const re = resolve(rs.e);
+        const ei = types.length;
         types.push(rs.t);
-        aArr.push(resolve(rs.a));
-        bArr.push(resolve(rs.b));
-        cArr.push(resolve(rs.c));
-        dArr.push(resolve(rs.d));
-        eArr.push(resolve(rs.e));
+        aArr.push(ra);
+        bArr.push(rb);
+        cArr.push(rc);
+        dArr.push(rd);
+        eArr.push(re);
         pushFGH();
         values.push(rs.value);
         auxArr.push(rs.aux);
+        subElements.push({
+          index: ei,
+          type: rs.t,
+          func: rs.aux,
+          nodes: [ra, rb, rc, rd, re],
+        });
       }
       elemOfComponent.set(c.id, firstIdx + comp.primary);
       nodesOfComponent.set(c.id, [nodeOfPin(comp.voutPin), nGnd]);
+      compositeInternals.set(c.id, {
+        pinNodes: kind.pins.map((p) => nodeOfPin(p.index)),
+        internalNodes: internals,
+        elements: subElements,
+      });
       continue;
     }
 
@@ -1282,6 +1351,7 @@ export function buildNetlist(
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,
+    compositeInternals,
     nodeNames,
     nodeColors,
     floatingSources,

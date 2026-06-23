@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (81) — Seal/zoom mini-mode: ADR 0005 phase 1 DONE (composite internals in buildNetlist)
+
+**State:** 🟢 phase 1 pushed; phase 2 (the renderer) next. Branch `claude/kind-turing-hdelb3`. Owner
+greenlit the build ("let's do it") after the ADR 0005 + 0006 design pass.
+
+**Phase 1 — composite-internals topology recorded in `buildNetlist` (`web/src/lib/netlist.ts`), web-only,
+golden-safe.** New exported types `CompositeSubElement { index, type, func, nodes[] }` and
+`CompositeInternals { pinNodes[], internalNodes[], elements[] }`, plus `BuiltNetlist.compositeInternals:
+Map<componentId, CompositeInternals>`. Built in the `CEC_COMP` expansion loop: as each sub-gate / `extra`
+element is emitted, its element index + resolved terminal nodes (a..e) + func are recorded; `pinNodes` =
+each external pin's node, `internalNodes` = the `cecInternal` nodes. **Emission is byte-identical** (the
+resolved refs are just captured into locals first), so the netlist crossing to the core and the golden are
+unchanged. Only `CEC_COMP` parts get an entry (behavioral blocks are one opaque element; leaf parts none).
+All node indices index `node_voltages`, element indices `element_currents` — the same snapshot the renderer
+already reads. Web gate green (check 0/0, lint, build).
+
+**NEXT — phase 2: the zoom-to-open renderer** (`web/src/lib/board.ts`, PixiJS). A composite chip expands
+in place to draw its live sub-circuit from `compositeInternals` + the per-frame snapshot (node voltages +
+element currents). Prototype on the **half-adder** (smallest: 2 gates) and the **R-2R DAC** (analog).
+NOTE: board.ts already references a "part-internals animation" (~line 1673) and has `pinNode()` (~2487) —
+check how it reads the snapshot and animates before adding the zoom view. Then phase 3 (generalise + tie to
+the schematic/analogy/reality ladder), 4 (remake behavioral ICs as compositions), 5 (the IC-maker
+authoring UI — ADR 0006: die boundary, port pads, packages, free-form/CEC9xxx naming, one-layer nesting).
+
+---
+
 ## 2026-06-23 (80) — Sigma-delta ADC (CEC1110): the ADC trilogy is complete + counter glyph kit out
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Two threads this stop: (1) the **sigma-delta
