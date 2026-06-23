@@ -5,6 +5,22 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (97) — Die leads inset from the corners (real package body margin)
+
+**State:** 🟢 web gate-green (check 0/0, lint, build, 39 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner (SOT-23-5 datasheet): make the pins NOT sit in the corners — leave a margin like the real package.
+
+**Cause + fix.** `dieLayout` already insets the leads from the corners by `DIE_CORNER_INSET`, but entry (93)
+had made `dieBounds` the TIGHT pin bbox, which shrank the walls onto the outermost leads and ate that
+margin. Restored `dieBounds` to the package **BODY box** (`framePackage` → `dieLayout`'s `w × h`,
+anchored at the frame): a lead sits ON the edge it belongs to (left/right for a dual, top/bottom for a
+SOT) but the body extends past the end leads on the lead-row axis, so **no lead is in a corner**.
+`drawDieWalls` / `containInDie` / `frameDieView` all follow `dieBounds`. Re-added the `dieLayout` import.
+Updated the bounds test: every lead on its edge AND never at a corner (checked for SOT-23, DIP, VSSOP).
+Presentation/geometry only — no Rust, golden untouched.
+
+---
+
 ## 2026-06-23 (96) — Drill-in die scaled to the real package aspect ratio
 
 **State:** 🟢 web gate-green (check 0/0, lint, build, 39 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
