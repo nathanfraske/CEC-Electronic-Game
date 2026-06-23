@@ -144,8 +144,17 @@ export function packageLayout(
  * ends) so the die's walls read as a real package edge with the interior left empty for building —
  * the inverse of {@link packageLayout}'s tight body. Presentation/geometry only.
  */
-export const DIE_PIN_PITCH = 3;
-export const DIE_CORNER_INSET = 2;
+export const DIE_PIN_PITCH = 4;
+export const DIE_CORNER_INSET = 3;
+
+/**
+ * The die's CROSS-AXIS interior span (in cells): the build depth between the two pinned edges of a
+ * dual/SOT die (the width of a dual body, the height of a SOT/SIP body). Big on purpose — the die
+ * editor is a full authoring canvas, so it must hold the "tons of components" an IC's circuit needs,
+ * not just a token gap between the leads. The long axis grows separately with the pin count
+ * ({@link edgeSpan}). Presentation/geometry only — never enters the solve or hash.
+ */
+export const DIE_INTERIOR_SPAN = 28;
 
 /** Span (in cells) an edge needs to seat `n` pins at {@link DIE_PIN_PITCH} with a corner inset on
  * each end: `2*inset + (n-1)*pitch`. At least one pitch wide so a single-pin edge still has a body. */
@@ -162,8 +171,8 @@ function dualDie(pinCount: number): {
   pins: PackagePin[];
 } {
   const half = Math.max(1, Math.ceil(pinCount / 2));
-  const h = edgeSpan(half);
-  const w = edgeSpan(2); // a comfortable interior width (two-pitch-wide body)
+  const h = edgeSpan(half); // long axis: pins down each column, spread by pitch
+  const w = DIE_INTERIOR_SPAN; // cross axis: the roomy build width between the two columns
   const pins: PackagePin[] = [];
   for (let i = 0; i < pinCount; i++) {
     const n = i + 1;
@@ -195,8 +204,8 @@ function sot23Die(pinCount: number): {
 } {
   const bottom = Math.ceil(pinCount / 2);
   const top = pinCount - bottom;
-  const w = edgeSpan(Math.max(bottom, top, 1));
-  const h = edgeSpan(2);
+  const w = edgeSpan(Math.max(bottom, top, 1)); // long axis: pins along each row, spread by pitch
+  const h = DIE_INTERIOR_SPAN; // cross axis: the roomy build height between the two rows
   const pins: PackagePin[] = [];
   for (let i = 0; i < bottom; i++) {
     pins.push({
@@ -221,8 +230,8 @@ function sipDie(pinCount: number): {
   h: number;
   pins: PackagePin[];
 } {
-  const w = edgeSpan(pinCount);
-  const h = edgeSpan(2);
+  const w = edgeSpan(pinCount); // long axis: all pins along the bottom row, spread by pitch
+  const h = DIE_INTERIOR_SPAN; // cross axis: the roomy build height above the row
   const pins: PackagePin[] = [];
   for (let i = 0; i < pinCount; i++) {
     pins.push({

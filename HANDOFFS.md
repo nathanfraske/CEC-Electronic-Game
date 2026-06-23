@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (92) — Die editor: pins truly ON the walls + a much bigger build interior
+
+**State:** 🟢 gate-green (check 0/0, lint, build, 34 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner feedback on (91): "Not quite on the walls yet" + "it needs to be a lot larger so [the] tons of
+components I need to fit actually fit." Both fixed; plus the prior agent's uncommitted gesture fix landed.
+
+**1. Pins ON the walls (not inset).** The walls are now the package **body box** — `dieBounds` returns
+`dieLayout`'s `w x h` anchored at the frame (no margin), and `drawDieWalls` draws it with **no inset**.
+`dieLayout` already seats every lead on that body's perimeter, so the wall rectangle passes exactly
+through the pins (leads cross the boundary like a real package). `DIE_INTERIOR_MARGIN` is now only the
+camera breathing-pad (re-doc'd), not a wall offset.
+
+**2. Much larger interior.** `DIE_INTERIOR_SPAN = 28` is the cross-axis build depth (dual width / SOT
+height), with pitch 3->4 + corner inset 2->3. DIP-8 die ≈ 28x18 cells (was ~7x13) — ~5x the build area.
+Long axis still grows with pin count (`edgeSpan`).
+
+**3. Label leak fixed.** A die frame no longer shows its internal `__DIE_*` tag as a body label
+(`ComponentNode.defaultLabel()` -> "" for die frames; package identity lives in the breadcrumb).
+
+**4. Entry framing.** `frameDieView` folds the die walls (`findDieFrameId` + `dieBounds`) into the camera
+fit, so the now-roomy die is fully visible on drill-in (the bare anchor cell alone would over-zoom).
+
+**5. Gesture fix (was uncommitted from 91).** Double-click-a-pad-to-name now fires from the **wiring**
+branch: first click starts the wire (pending), a second press on the SAME die pad within `DOUBLE_CLICK_MS`
+cancels it and opens the name editor. (The committed 91 put the check in the non-wiring branch, where the
+first click's wire-start pre-empted it — it could never fire.)
+
+Determinism untouched: `dieLayout`/`dieBounds` are presentation/geometry only (never in the solve or
+`snapshot_hash`); no Rust change. Updated the `dieBounds` "walls" test to the new pins-on-walls invariant.
+
+**OWNER VISUAL REVIEW:** pins sitting on the red walls; the bigger build area; no `__DIE_*` label;
+double-click a pad to name it.
+
+**NEXT (unchanged priority):** **persistence** (in-memory WIP dies + IC registry don't survive reload —
+needed for "save and come back"); then live zoomed-in view of a placed sealed chip; re-drill to edit;
+tiers 2/4 (refsheet SVG). Parked design-list: connector types + board sealing (TODOS 43 / ADR 0006).
+
+---
+
 ## 2026-06-23 (91) — Die editor refinement: pins on the walls + user-labelable pins
 
 **State:** 🟢 built (agent) + gate-green (34 web tests); merging to main. Branch `claude/kind-turing-hdelb3`.

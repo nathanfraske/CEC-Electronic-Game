@@ -94,16 +94,28 @@ describe("die editor — fresh die init", () => {
 });
 
 describe("die editor — bounds (walls)", () => {
-  it("derives a buildable box around the die frame's footprint", () => {
+  it("walls the die's body box with every package lead sitting ON the wall", () => {
     const die = freshDieGraph("SOT23_6")!;
     const b = dieBounds(die.snapshot, die.frameId)!;
     expect(b).not.toBeUndefined();
     const frame = die.snapshot.components[0]!;
-    // The box brackets the frame's anchor on every side (margin > 0), so the interior is roomy.
-    expect(b.minCol).toBeLessThan(frame.cell.col);
-    expect(b.minRow).toBeLessThan(frame.cell.row);
-    expect(b.maxCol).toBeGreaterThan(frame.cell.col);
-    expect(b.maxRow).toBeGreaterThan(frame.cell.row);
+    // The walls ARE the die body box: anchored at the frame, positive area (a roomy build interior).
+    expect(b.minCol).toBe(frame.cell.col);
+    expect(b.minRow).toBe(frame.cell.row);
+    expect(b.maxCol).toBeGreaterThan(b.minCol);
+    expect(b.maxRow).toBeGreaterThan(b.minRow);
+    // Every die-frame pin lands ON the wall rectangle (pins on the walls), not inset from it.
+    const k = PART_KINDS[frame.kind]!;
+    for (const p of k.pins) {
+      const col = frame.cell.col + p.dx;
+      const row = frame.cell.row + p.dy;
+      const onWall =
+        col === b.minCol ||
+        col === b.maxCol ||
+        row === b.minRow ||
+        row === b.maxRow;
+      expect(onWall).toBe(true);
+    }
   });
 
   it("has no bounds for a non-frame id", () => {
