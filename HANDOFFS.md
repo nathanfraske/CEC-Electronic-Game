@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (93) — Die editor: pins on the border (single wall), bottom label, frame click-through
+
+**State:** 🟢 gate-green (check 0/0, lint, build, 34 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner screenshot feedback on (92): (a) pins still didn't align with the border + a doubled/offset
+rectangle; (b) the label should sit at the bottom of the border, OUTSIDE; (c) the IC frame was
+clickable/rotatable/deletable and captured every click over the whole interior, so you couldn't place
+parts or click wires inside it.
+
+**(a) Pins on the border, one clean wall.** Two causes fixed: (1) the die frame was ALSO drawing the
+generic **IC-card body glyph** — a second rounded rect offset from the walls; now suppressed for die
+frames (a die frame draws no body, just pin dots; the walls ARE its outline). (2) `dieBounds` now hugs
+the **tight pin bounding box** (was the dieLayout body box, whose corner inset floated the dual top/bottom
+walls 3 cells off the pins), so every lead rides the wall on all sides. Also dropped the second
+concentric "die ring" hairline (it read as a misaligned border beside the pins) — single bright border.
+
+**(b) Label at the bottom, outside.** A die frame's on-canvas label now shows its **package name**
+("DIP-14"), never the internal `__DIE_*` tag, parked just **below the bottom wall** (`layoutLabels`
+die-frame branch + `defaultLabel` -> `PART_KINDS[tag].name`).
+
+**(c) Frame is click-through.** The die frame being edited is excluded from `bodyHitTest`, marquee
+selection, and gauge-obstacle boxes — so it can't be selected / moved / rotated / deleted, and clicks on
+empty space or wires inside it pass through. Only its PINS stay interactive (wire out + double-click name).
+
+Determinism untouched (presentation/geometry only; no Rust). Updated the `dieBounds` "walls" test to the
+pin-bbox invariant (every lead inside + on the box). Gate green.
+
+**STILL TODO — the owner's "scale it properly" ask (NOT done here):** a placed **sealed user IC has no
+live zoom-to-open view yet** — `flattenUserIcs` inlines its parts as flat elements, so there's no
+`compositeInternals` entry for the instance (unlike built-in `CEC_COMP`). The owner wants the sealed chip
+to "show a miniature version of your exact circuit inside" — i.e. render the **authored inner graph
+(components at their authored positions + wires) scaled to fit the chip**, animated live. That's the next
+build: map the inlined elements' node voltages back to the inner graph + a mini-board renderer (bigger
+than the composite-internals grid). THIS is the priority now.
+
+**OWNER VISUAL REVIEW:** pins on the single border; "DIP-14" under the bottom wall; placing/wiring freely
+inside the frame.
+
+---
+
 ## 2026-06-23 (92) — Die editor: pins truly ON the walls + a much bigger build interior
 
 **State:** 🟢 gate-green (check 0/0, lint, build, 34 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.

@@ -30,7 +30,6 @@ import {
   type GraphSnapshot,
   type Cell,
 } from "./graph";
-import { dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
 
 /**
@@ -92,14 +91,14 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
 }
 
 /**
- * The buildable-interior box (the "walls") for a die, in grid cells: the die frame's BODY box,
- * anchored at the frame and extending to its package footprint ({@link dieLayout}'s w x h). The
- * renderer draws this as the boundary and the soft-containment check keeps placement inside it.
- * Returns undefined if `frameId` isn't a frame in the snapshot (so a graph with no die has no walls).
+ * The buildable-interior box (the "walls") for a die, in grid cells: the TIGHT bounding box of the
+ * die frame's package leads. The renderer draws this as the boundary and the soft-containment check
+ * keeps placement inside it. Returns undefined if `frameId` isn't a frame in the snapshot (so a
+ * graph with no die has no walls to draw).
  *
- * The box is the package's own body, and {@link dieLayout} guarantees every lead sits on that body's
- * perimeter — so the walls land exactly ON the pins (the leads cross the wall like real package
- * leads), and the (now roomy) interior is the build area. Bigger packages get bigger dies.
+ * Because the box hugs the leads exactly, every package lead lands ON a wall (the leads ride the
+ * border on all sides — left/right columns for a dual, top/bottom rows for a SOT), and the roomy
+ * span between the pinned edges ({@link dieLayout}'s `DIE_INTERIOR_SPAN`) is the build interior.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
@@ -109,14 +108,23 @@ export function dieBounds(
   | undefined {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return undefined;
-  const pkg = framePackage(frame.kind);
-  if (!pkg) return undefined;
-  const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
+  const k = PART_KINDS[frame.kind];
+  if (!k || k.pins.length === 0) return undefined;
+  let minDx = Infinity;
+  let minDy = Infinity;
+  let maxDx = -Infinity;
+  let maxDy = -Infinity;
+  for (const p of k.pins) {
+    minDx = Math.min(minDx, p.dx);
+    minDy = Math.min(minDy, p.dy);
+    maxDx = Math.max(maxDx, p.dx);
+    maxDy = Math.max(maxDy, p.dy);
+  }
   return {
-    minCol: frame.cell.col,
-    minRow: frame.cell.row,
-    maxCol: frame.cell.col + w,
-    maxRow: frame.cell.row + h,
+    minCol: frame.cell.col + minDx,
+    minRow: frame.cell.row + minDy,
+    maxCol: frame.cell.col + maxDx,
+    maxRow: frame.cell.row + maxDy,
   };
 }
 

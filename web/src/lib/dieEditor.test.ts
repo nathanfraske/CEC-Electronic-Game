@@ -94,21 +94,24 @@ describe("die editor — fresh die init", () => {
 });
 
 describe("die editor — bounds (walls)", () => {
-  it("walls the die's body box with every package lead sitting ON the wall", () => {
+  it("walls hug the package leads so every lead sits ON the wall", () => {
     const die = freshDieGraph("SOT23_6")!;
     const b = dieBounds(die.snapshot, die.frameId)!;
     expect(b).not.toBeUndefined();
     const frame = die.snapshot.components[0]!;
-    // The walls ARE the die body box: anchored at the frame, positive area (a roomy build interior).
-    expect(b.minCol).toBe(frame.cell.col);
-    expect(b.minRow).toBe(frame.cell.row);
+    // A positive-area box (a roomy build interior between the pinned edges).
     expect(b.maxCol).toBeGreaterThan(b.minCol);
     expect(b.maxRow).toBeGreaterThan(b.minRow);
-    // Every die-frame pin lands ON the wall rectangle (pins on the walls), not inset from it.
+    // The box is exactly the leads' bounding box: every pin is INSIDE it and lands ON a wall (pins
+    // ride the border on all sides), none floats inset from it.
     const k = PART_KINDS[frame.kind]!;
     for (const p of k.pins) {
       const col = frame.cell.col + p.dx;
       const row = frame.cell.row + p.dy;
+      expect(col).toBeGreaterThanOrEqual(b.minCol);
+      expect(col).toBeLessThanOrEqual(b.maxCol);
+      expect(row).toBeGreaterThanOrEqual(b.minRow);
+      expect(row).toBeLessThanOrEqual(b.maxRow);
       const onWall =
         col === b.minCol ||
         col === b.maxCol ||
