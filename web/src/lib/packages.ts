@@ -173,17 +173,24 @@ export function packageLayout(
  * ends) so the die's walls read as a real package edge with the interior left empty for building —
  * the inverse of {@link packageLayout}'s tight body. Presentation/geometry only.
  */
-export const DIE_PIN_PITCH = 4;
+export const DIE_PIN_PITCH = 5;
 export const DIE_CORNER_INSET = 3;
 
 /**
- * The die's CROSS-AXIS interior span (in cells): the build depth between the two pinned edges of a
- * dual/SOT die (the width of a dual body, the height of a SOT/SIP body). Big on purpose — the die
- * editor is a full authoring canvas, so it must hold the "tons of components" an IC's circuit needs,
- * not just a token gap between the leads. The long axis grows separately with the pin count
- * ({@link edgeSpan}). Presentation/geometry only — never enters the solve or hash.
+ * The die's CROSS-AXIS span (cells) between the two pinned edges, PER PACKAGE FAMILY. Chosen so the
+ * drill-in die reads at the real package's ASPECT RATIO — a SOT-23 wider than tall (a few lead
+ * columns on the long edges, a short lead span across), a DIP/VSSOP taller than the gap between its
+ * two pin columns — while staying roomy enough to build inside. The LONG axis grows separately with
+ * the pin count ({@link edgeSpan}), so more pins ⇒ a longer body, exactly like the real parts; the
+ * two together give each package its true proportions at a comfortable build size. The smallest die
+ * (a 3-pin SOT-23) still clears a usable build floor. Presentation/geometry only — never enters the
+ * solve or hash.
  */
-export const DIE_INTERIOR_SPAN = 28;
+const DIE_CROSS: Record<PackageFamily, number> = {
+  dual: 13, // DIP/VSSOP: ~0.3" row spacing — narrower than the pin-column length once ≥4 pins/side
+  sot23: 11, // SOT-23: a short lead span, so the 3-column body reads landscape (wider than tall)
+  sip: 11,
+};
 
 /** Span (in cells) an edge needs to seat `n` pins at {@link DIE_PIN_PITCH} with a corner inset on
  * each end: `2*inset + (n-1)*pitch`. At least one pitch wide so a single-pin edge still has a body. */
@@ -200,8 +207,8 @@ function dualDie(pinCount: number): {
   pins: PackagePin[];
 } {
   const half = Math.max(1, Math.ceil(pinCount / 2));
-  const h = edgeSpan(half); // long axis: pins down each column, spread by pitch
-  const w = DIE_INTERIOR_SPAN; // cross axis: the roomy build width between the two columns
+  const h = edgeSpan(half); // long axis: pins down each column, spread by pitch (grows with pins)
+  const w = DIE_CROSS.dual; // cross axis: the row-spacing gap — narrower than h ⇒ a portrait body
   const pins: PackagePin[] = [];
   for (let i = 0; i < pinCount; i++) {
     const n = i + 1;
@@ -234,8 +241,8 @@ function sot23Die(pinCount: number): {
 } {
   const slots = sot23Slots(pinCount);
   const maxCol = slots.reduce((m, s) => Math.max(m, s.col), 0);
-  const w = edgeSpan(maxCol + 1); // long axis: the slot columns spread by pitch
-  const h = DIE_INTERIOR_SPAN; // cross axis: the roomy build height between the two rows
+  const w = edgeSpan(maxCol + 1); // long axis: the slot columns spread by pitch (the long body edge)
+  const h = DIE_CROSS.sot23; // cross axis: the short lead span ⇒ wider-than-tall (landscape) body
   const pins: PackagePin[] = slots.map((s, i) => ({
     number: i + 1,
     dx: DIE_CORNER_INSET + s.col * DIE_PIN_PITCH,
@@ -251,7 +258,7 @@ function sipDie(pinCount: number): {
   pins: PackagePin[];
 } {
   const w = edgeSpan(pinCount); // long axis: all pins along the bottom row, spread by pitch
-  const h = DIE_INTERIOR_SPAN; // cross axis: the roomy build height above the row
+  const h = DIE_CROSS.sip; // cross axis: the build height above the single pin row
   const pins: PackagePin[] = [];
   for (let i = 0; i < pinCount; i++) {
     pins.push({

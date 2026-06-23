@@ -5,6 +5,23 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (96) — Drill-in die scaled to the real package aspect ratio
+
+**State:** 🟢 web gate-green (check 0/0, lint, build, 39 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner: "is the drill-in die scaled in proportion to the actual dimensions?" — it was NOT (fixed cross-axis
+`DIE_INTERIOR_SPAN = 28`, so a SOT-23 rendered tall-skinny, DIPs too wide). Owner picked **"real shape,
+roomy"**: match each package's real aspect, scaled to a comfortable build size.
+
+**Fix (packages.ts):** replaced the fixed cross span with a **per-family `DIE_CROSS`** (dual 13, sot23 11,
+sip 11) and bumped `DIE_PIN_PITCH` 4→5 for build room. The long axis is still `edgeSpan(pinsPerSide)` (grows
+with pin count). Net: **SOT-23 ≈ 16w×11h (landscape)** — was 8×28; **DIP-8 13×21, DIP-14 13×36, DIP-16
+13×41, VSSOP-8 13×21 (portrait)**. So a SOT-23 reads wider-than-tall and a DIP taller-than-its-column-gap,
+matching reality; small packages are small-ish but clear a usable floor, bigger ones scale up. `dieBounds`
+(pin bbox) + `drawDieWalls` + `frameDieView` all follow automatically. New test locks the orientation
+(SOT-23 landscape, DIP/VSSOP portrait). Presentation/geometry only — no Rust, golden untouched.
+
+---
+
 ## 2026-06-23 (95) — Sealed USER-IC zoom-to-open: live scaled miniature of the exact authored circuit
 
 **State:** 🟢 gate-green (fmt/clippy clean; **188 sim-core tests, golden `0xeaac_3764_99e4_fa24` unchanged**;
