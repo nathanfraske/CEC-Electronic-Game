@@ -300,6 +300,50 @@ describe("packages — dieLayout (perimeter relayout)", () => {
   });
 });
 
+describe("packages — sot23 real pinouts", () => {
+  // The placed SOT-23 footprint must match the JEDEC pinouts (owner feedback): -3 = two bottom
+  // corners + one centred on top; -5 = bottom row + the two OUTER top slots (top-middle empty);
+  // -6 = all six. Map pin NUMBER -> "dx,dy"; positions only — the index->number order is unchanged.
+  const posByNumber = (pinCount: number): Map<number, string> => {
+    const m = new Map<number, string>();
+    for (const p of packageLayout("SOT-23", pinCount).pins) {
+      m.set(p.number, `${p.dx},${p.dy}`);
+    }
+    return m;
+  };
+
+  it("SOT-23-3: bottom-left, bottom-right, top-centre", () => {
+    const m = posByNumber(3);
+    expect(m.get(1)).toBe("0,1"); // bottom-left
+    expect(m.get(2)).toBe("2,1"); // bottom-right
+    expect(m.get(3)).toBe("1,0"); // top-centre
+  });
+
+  it("SOT-23-5: full bottom row + OUTER top pins (top-middle empty)", () => {
+    const m = posByNumber(5);
+    expect(m.get(1)).toBe("0,1");
+    expect(m.get(2)).toBe("1,1");
+    expect(m.get(3)).toBe("2,1");
+    expect(m.get(4)).toBe("2,0"); // top-right
+    expect(m.get(5)).toBe("0,0"); // top-left
+    // The defining gap: no lead sits at the top-middle slot (1,0).
+    const cells = new Set(
+      packageLayout("SOT-23", 5).pins.map((p) => `${p.dx},${p.dy}`),
+    );
+    expect(cells.has("1,0")).toBe(false);
+  });
+
+  it("SOT-23-6: all six slots filled (bottom 1-3, top 4-6 right->left)", () => {
+    const m = posByNumber(6);
+    expect(m.get(1)).toBe("0,1");
+    expect(m.get(2)).toBe("1,1");
+    expect(m.get(3)).toBe("2,1");
+    expect(m.get(4)).toBe("2,0");
+    expect(m.get(5)).toBe("1,0");
+    expect(m.get(6)).toBe("0,0");
+  });
+});
+
 describe("die editor — user-labelled pins -> sealed-chip labels", () => {
   it("carries the die frame's pin names through captureSeal onto the sealed kind's pin labels", () => {
     // Build a sealable SOT-23-3 die (V -> pin1, pin2 -> R -> GND), then NAME two of its pads.
