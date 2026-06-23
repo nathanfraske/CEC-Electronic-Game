@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (38) — Functional R-2R DAC wired (CEC1083 placeable)
+
+- ~~**Wire the functional DAC (CEC1083)**~~ — DONE. The 3-bit R-2R ladder is now a placeable part,
+  not just a glyph. Golden-safe `buildNetlist` resistor composition via a new `CEC_COMP.DAC` entry
+  (two R spine A-B-C, four 2R legs A→D2/B→D1/C→D0 + C→GND termination, plus a 1 MΩ VCC-GND bleeder so
+  the nominal VCC pin is never an isolated node). No sim-core change, no new program — pure
+  `ELEM_RESISTOR`, so the golden is byte-identical by construction. New `DAC` kind in graph.ts
+  (pins AOUT/GND/D0/D1/D2/VCC, fixed index order to match the CEC_COMP refs), partInfo, codex
+  (cat/meta/synonyms), App.svelte (PARTS/cat/keywords). Renders as the generic IC card (drawCard
+  fallback) like the ADC. Web gate green (check 0/0, lint clean, build ok). Note: a switch-less R-2R
+  ladder scales AOUT with the **external logic's** high level on the D pins; wire VCC to that same
+  rail and `AOUT = code/8 · VCC` holds exactly (matches the glyph tier-4 framing).
+- [ ] **Wire the functional SAR ADC (CEC1108)** — comparator + this DAC + a 3-bit SAR
+  register/controller loop (a small behavioral SAR program, or a composition). Now unblocked.
+- [ ] **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example, once both converters
+  are placeable (the DAC half is now done).
+
+---
+
 ## 2026-06-20 (37) — Protocol engine COMPLETE (all ADR-0004 phases)
 
 - ~~**Phase 4: behavioral CPU / FPGA**~~ — DONE as the **FPGA logic element** (`BEH_PROG_LUT=4`):

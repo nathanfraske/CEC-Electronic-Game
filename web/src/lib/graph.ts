@@ -1058,6 +1058,27 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // 3-bit R-2R ladder DAC (CEC1083): the reconstruct partner of the flash ADC — turns the binary
+  // code D2 D1 D0 into AOUT = (4·D2 + 2·D1 + D0)/8 · Vhigh. Pure resistors, no sim element of its
+  // own: buildNetlist expands it via CEC_COMP into a 3-bit R-2R ladder (two R spine, four 2R legs).
+  // Pin INDEX order is fixed AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5) to match the CEC_COMP refs;
+  // visually the data bits land on the left, AOUT on the right, VCC/GND top/bottom. No value picker.
+  DAC: kind(
+    "DAC",
+    "R-2R DAC",
+    "cyan",
+    [
+      pin("AOUT", 2, 1),
+      pin("GND", 1, 2),
+      pin("D0", 0, 2),
+      pin("D1", 0, 1),
+      pin("D2", 0, 0),
+      pin("VCC", 1, 0),
+    ],
+    0,
+    "",
+    true,
+  ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
   // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
   // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =

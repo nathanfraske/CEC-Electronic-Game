@@ -815,6 +815,18 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output drive", value: f(e.current, "A") },
     ],
   },
+  DAC: {
+    name: "R-2R DAC",
+    equation: "AOUT = (4 · D2 + 2 · D1 + D0) / 8 · Vhigh",
+    headline: (e) =>
+      `R-2R reconstruct · AOUT ${f(e.vAcross, "V")} · ladder ${f(e.current, "A")}`,
+    plain: () =>
+      "A digital-to-analog converter turns a binary code back into a voltage — the reconstruct half of the converter pair with the flash ADC. This is the most honest DAC there is: nothing but a resistor R-2R ladder, no op-amp, no switches, no reference pin. Each input bit is an ordinary logic level (0 or the supply high), and the ladder weights them by powers of two — the MSB D2 counts for 4, D1 for 2, the LSB D0 for 1 — then sums them, so the output settles to eight evenly-spaced steps from 0 to 7/8 of full scale, one LSB = full-scale/8. The trick is the repeated R-2R cell: at every node, looking toward the LSB end the resistance is 2R, so each step down the ladder halves a bit's contribution — binary weighting from one two-value building block. Drive D2..D0 from a counter to watch AOUT climb the reconstruction staircase; feed it back into a comparator and you have the heart of a successive-approximation ADC.",
+    derived: (e) => [
+      { label: "AOUT (code · LSB)", value: f(e.vAcross, "V") },
+      { label: "Ladder current", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

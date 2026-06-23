@@ -387,6 +387,34 @@ const CEC_COMP: Record<string, CecComp> = {
       { t: 17, a: 0, b: 2, c: 2, d: NI(0), e: 1, value: 5, aux: 7 },
     ],
   },
+  // R-2R ladder DAC (CEC1083): pins AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5). Pure resistors —
+  // a 3-bit R-2R ladder turns the binary code D2 D1 D0 into AOUT = (4·D2 + 2·D1 + D0)/8 · Vhigh,
+  // where Vhigh is the high level external logic drives onto the D pins. Two R form the A-B-C
+  // spine (node A = AOUT; B, C internal), four 2R are the bit legs (A→D2, B→D1, C→D0) plus the
+  // C→GND termination; each step toward the LSB halves a bit's weight, giving binary weighting
+  // from one repeated R-2R cell. No gates, no new sim element — golden-safe. VCC is nominal here
+  // (the real reference is the external logic's high level); a 1 MΩ bleeder ties it to GND so the
+  // pin is never an isolated node. Internals: B, C = 2.
+  DAC: {
+    internal: 2,
+    vccPin: 5,
+    gndPin: 1,
+    voutPin: 0,
+    primary: 0, // the A-B spine resistor (no gates precede it) — its current backs the part
+    gates: [],
+    extra: [
+      // Spine: two R. A(AOUT) - B - C.
+      { t: 1, a: 0, b: NI(0), c: 0, d: 0, e: 0, value: 10000, aux: 0 }, // R: A - B
+      { t: 1, a: NI(0), b: NI(1), c: 0, d: 0, e: 0, value: 10000, aux: 0 }, // R: B - C
+      // Bit legs: four 2R. A→D2 (MSB at the output node), B→D1, C→D0, and C→GND (termination).
+      { t: 1, a: 0, b: 4, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: A - D2
+      { t: 1, a: NI(0), b: 3, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: B - D1
+      { t: 1, a: NI(1), b: 2, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: C - D0
+      { t: 1, a: NI(1), b: 1, c: 0, d: 0, e: 0, value: 20000, aux: 0 }, // 2R: C - GND
+      // Bleeder: keep VCC referenced (never an isolated node) without loading the ladder.
+      { t: 1, a: 5, b: 1, c: 0, d: 0, e: 0, value: 1e6, aux: 0 }, // 1 MΩ VCC - GND
+    ],
+  },
 };
 
 /**

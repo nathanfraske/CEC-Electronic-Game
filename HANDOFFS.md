@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (76) — Functional R-2R DAC wired (CEC1083 now placeable)
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Closed the entry-75 open thread for the DAC: the
+**CEC1083 3-bit R-2R DAC is now a placeable, functional part** (it was glyph-only). Web-only change — no
+sim-core, no new program, golden byte-identical by construction.
+
+**How it's wired (golden-safe `buildNetlist` composition):**
+- New **`CEC_COMP.DAC`** entry in `web/src/lib/netlist.ts` — a pure-resistor R-2R ladder via the `extra`
+  RawStep machinery (same path the TRI uses): two **R** (10 k) spine A-B-C (node A = AOUT; B, C internal),
+  four **2R** (20 k) legs A→D2 (MSB at the output node), B→D1, C→D0, and the C→GND termination, plus a
+  **1 MΩ VCC-GND bleeder** so the nominal VCC pin is never an isolated MNA node. `internal: 2`,
+  `voutPin: 0` (AOUT), `primary: 0` (the A-B spine resistor backs the part current). All `ELEM_RESISTOR`
+  (t=1) — no new sim element, golden untouched.
+- **`DAC` kind** in `graph.ts`: pins **AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5)** — the pin INDEX order is
+  fixed to match the CEC_COMP refs (visually data bits left, AOUT right, VCC/GND top/bottom). No value
+  picker (not in values.ts), cyan.
+- **partInfo / codex (cat+meta+synonyms) / App.svelte (PARTS+cat+keywords)** rows added, mirroring the ADC.
+- Renders as the generic IC card (the `drawCard` fallback in glyphs.ts), exactly like the ADC/composites —
+  no bespoke board drawer needed.
+
+**Behavior note (important, by design):** this is a **switch-less** R-2R ladder — the D inputs are driven
+directly by external logic, so AOUT scales with the **external logic's high level**, not the DAC's own VCC
+pin. Wire VCC to the same rail that powers the driving logic (the natural setup) and `AOUT = (4·D2 + 2·D1 +
+D0)/8 · VCC` holds exactly. This matches the glyph tier-4 framing ("inputs driven 0 or VCC by external
+logic") and the catalogue. The VCC pin is otherwise nominal (the bleeder just keeps it referenced).
+
+**Verify:** web gate green — `pnpm -C web check` 0 errors / 0 warnings, `lint` clean, `build` ok,
+`build:wasm` ok. No cargo run (zero Rust changes; the R-2R is pure resistors).
+
+**NEXT (entry-75 thread, now narrowed):**
+- **Wire the functional SAR ADC (CEC1108)** — comparator + this DAC + a 3-bit SAR register/controller loop
+  (a small behavioral SAR program, or a composition). The DAC dependency is now satisfied.
+- **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example — both converters needed; the DAC
+  half is done, so this is buildable once the SAR/loop scaffolding or a counter→DAC example is set up.
+- Still open from before: optional DAC-glyph polish-remake; dense-RTL tier touch-ups.
+
+---
+
 ## 2026-06-22 (75) — DAC + SAR ADC glyphs landed; data-conversion glyph set complete
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Landed two more data-conversion glyphs via the
