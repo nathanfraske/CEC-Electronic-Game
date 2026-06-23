@@ -102,6 +102,73 @@ describe("IC maker — seal-as-same-netlist", () => {
     }
   });
 
+  it("exposes the sealed IC's authored inner circuit (userIcInternals) for the zoom-to-open mini-board, without changing the crossing arrays", () => {
+    // Seal a V + R + GND loop INSIDE a SOT-23-3 frame, so the sealed chip carries a real authored
+    // circuit (a source, a resistor, a ground) to draw a miniature of.
+    const inner = new BoardGraph();
+    const frame = place(inner, "SOT23_3", 0, 0);
+    const vin = place(inner, "V", 0, 4, 5);
+    const rin = place(inner, "R", 4, 4, 2200);
+    const gin = place(inner, "GND", 0, 8);
+    connect(inner, frame, 0, vin, 0); // frame pin 1 -> V+
+    connect(inner, vin, 1, gin, 0); // V- -> GND
+    connect(inner, frame, 0, rin, 0); // frame pin 1 -> R.A (shares V+)
+    connect(inner, rin, 1, frame, 1); // R.B -> frame pin 2
+    registerUserIc({
+      tag: "TESTMINI",
+      name: "Test Mini IC",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: frame.id,
+      graph: inner.serialize(),
+    });
+
+    try {
+      // Place the sealed instance on a fresh board and tie pin 2 to GND (so the inner R has a return).
+      const board = new BoardGraph();
+      const ic = place(board, "TESTMINI", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, ic, 1, gnd, 0); // IC pin 2 -> GND
+      const a = buildNetlist(board, false);
+      expect(a).not.toBeNull();
+
+      // The mini-board map carries an entry for the placed instance.
+      const mini = a!.userIcInternals.get(ic.id);
+      expect(mini).not.toBeUndefined();
+      // Its parts are the authored inner discretes (V + R + GND — the frame is excluded), each with
+      // resolved node indices (one per pin).
+      const kinds = mini!.parts.map((p) => p.kind).sort();
+      expect(kinds).toEqual(["GND", "R", "V"]);
+      const rPart = mini!.parts.find((p) => p.kind === "R");
+      expect(rPart).not.toBeUndefined();
+      expect(rPart!.value).toBe(2200);
+      expect(rPart!.nodes.length).toBe(2); // a node resolved per pin
+      // The wires + external pin anchors are present and resolved.
+      expect(mini!.wires.length).toBeGreaterThan(0);
+      expect(mini!.pinNodes.length).toBe(3); // SOT-23-3 has 3 leads
+      // The bbox spans a real authored extent (not a degenerate point).
+      expect(mini!.bbox.maxCol).toBeGreaterThan(mini!.bbox.minCol);
+
+      // Determinism: building the SAME board with NO sink request (the map is render-only) yields
+      // byte-identical crossing arrays — the userIcInternals construction never perturbs the netlist
+      // the core sees. Compare against the inline equivalent: V + 2.2k R + GND, pin2->GND.
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 2200);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0); // V+ -> R.A (the inner V+ net)
+      connect(flat, rf, 1, gf, 0); // R.B -> GND (the IC pin2 -> GND tie)
+      connect(flat, vf, 1, gf, 0); // V- -> GND
+      const b = buildNetlist(flat, false);
+      expect(b).not.toBeNull();
+      // Seal-as-same-netlist: identical element types + values to the inline build.
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]);
+      expect(a!.types.length).toBe(2); // V + the IC's inner R (GND is not an element)
+    } finally {
+      unregisterUserIc("TESTMINI");
+    }
+  });
+
   it("flattening is a strict no-op when no sealed IC is placed", () => {
     const g = new BoardGraph();
     const vs = place(g, "V", 0, 0, 5);

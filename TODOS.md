@@ -6,6 +6,35 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (95) — Sealed USER-IC zoom-to-open: live scaled miniature of the exact authored circuit
+
+- ~~**Sealed user IC "scale it properly" zoom**~~ — DONE. A placed sealed USER IC now OPENS, when zoomed in
+  past `INTERNALS_ZOOM` under the reality/analogy lens, to a **faithful scaled miniature of the exact inner
+  circuit the player drew** — the real component glyphs at their authored positions + the authored wires,
+  animated live from the same per-frame snapshot, lens-skinned (water/electron). Mirrors the built-in
+  composite zoom-to-open plumbing but lays parts at AUTHORED positions using the real `drawGlyph`, not a grid.
+  - `userIc.ts`: `flattenUserIcs(graph, sink?)` gained an OPTIONAL out-param (`FlattenRecord[]`) exposing each
+    instance's id offset — element output is byte-identical (the no-op early return leaves the sink empty).
+  - `netlist.ts`: new render-only `BuiltNetlist.userIcInternals` map (+ exported `UserIcInnerPart` /
+    `UserIcInnerWire` / `UserIcInternals` types), built from the sink: each inner part's authored cell/rot/value
+    + per-pin nodes (resolved via the STRIDE offset), the authored wires (endpoint cells + a colour node), the
+    external pin nodes, the authored bbox, and a GND reference. Never crosses the wasm boundary, never hashed.
+  - new `userIcInternalsView.ts` `drawUserIcInternals(g, opts)`: fits the bbox into the footprint at a uniform
+    scale, draws each part's REAL glyph into a pooled scaled child Graphics (render-big-then-scale, like the
+    tier illustration), and the wires/anchors into `g`, coloured by node level with flow carriers.
+  - `board.ts`: `setUserIcInternals` + a `userIcGlyphs` child container per node; a new `showUserIc` branch in
+    `ComponentNode.update` (threaded a new optional `userIc` arg). `App.svelte`: `setUserIcInternals` beside
+    `setCompositeInternals`.
+  - **Determinism preserved:** sim-core golden `0xeaac_3764_99e4_fa24` unchanged (188 tests pass);
+    `netlist.test.ts` seal-as-same-netlist + a new mini-board test (38 web tests). All gates green.
+- **OWNER VISUAL REVIEW:** zoom into a placed sealed chip (reality + analogy lens) — confirm the miniature
+  reads as YOUR circuit (parts in place, wires running to the leads), the fit/scale + inset look right, and
+  the live colour/flow animates. Tune `INTERNALS_ZOOM` / the inset margins / per-part electrical readout if
+  desired. (Current per-part glyph reads `vAcross` only — no per-inner-part current attribution; the wire
+  carriers carry the flow story. A follow-up could attribute inner element currents for richer glyph flow.)
+
+---
+
 ## 2026-06-23 (43) — DESIGN LIST: connector types + "sealing" boards (the seal mechanic, one level up)
 
 Owner idea, parked for design (NOT yet built — the IC-maker drill-in editor is the active work).
