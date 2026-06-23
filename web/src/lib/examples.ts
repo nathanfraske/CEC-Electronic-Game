@@ -2356,6 +2356,63 @@ export const EXAMPLES: ExampleSpec[] = [
       },
     ],
   },
+  {
+    id: "adc-dac-staircase",
+    name: "ADC → DAC: Convert & Reconstruct",
+    blurb:
+      "The two halves of every mixed-signal system, back to back. A flash ADC measures a smoothly rising-and-falling input and reports it as a 3-bit number; an R-2R DAC takes that number straight back to a voltage. Because 3 bits can only name 8 levels, the reconstruction can't be smooth — it comes out as an 8-step staircase chasing the original. That gap between the smooth input and the stepped output IS quantisation: the price of turning the continuous world into numbers.",
+    watch:
+      "widen the scope's time-base one notch (to ~4.8 ms) and watch VIN trace a smooth triangle climbing 0 → 5 V and back, while AOUT (the reconstruction) tracks it as a staircase, jumping one 0.625 V step (one LSB = 5 V ÷ 8) at a time. The top step tops out at 4.375 V — 7/8 of full scale — because a 3-bit converter never quite reaches the reference. More bits would mean more, smaller steps and a smoother copy.",
+    build() {
+      // VIN (a slow unipolar triangle, 0..5 V) → flash ADC → 3-bit code → R-2R DAC → AOUT.
+      // The ADC and DAC share the 5 V rail, which is also the ADC's VREF and the DAC's
+      // full-scale reference, so AOUT = code/8 · 5 V = the input quantised to 8 levels.
+      // Flash ADC pins: VIN(0) VREF(1) D2(2) D1(3) D0(4) VCC(5) GND(6).
+      // R-2R DAC pins:  AOUT(0) GND(1) D0(2) D1(3) D2(4) VCC(5).
+      const g = new BoardGraph();
+      const vin = comp(g, "PULSE", 0, 1, 200); // 200 Hz: one triangle period = the 4.8 ms scope preset
+      vin.amp = 5; // 0..5 V peak (= VREF, so the full code range 0..7 is swept)
+      vin.variant = 1; // triangle (vs the default square)
+      vin.duty = 0.5; // symmetric ramp up then down
+      const adc = comp(g, "ADC", 5, 0, 5);
+      const dac = comp(g, "DAC", 12, 0, 0);
+      const vcc = comp(g, "V", 0, 8, 5, 1); // 5 V supply (vertical), + at top
+      const gnd = comp(g, "GND", 9, 8, 0);
+      wire(g, vin, 0, adc, 0); // VIN+ → ADC.VIN (the analog input)
+      wire(g, vin, 1, gnd, 0); // VIN− → GND
+      wire(g, vcc, 0, adc, 1); // +5 V → ADC.VREF (full-scale reference)
+      wire(g, vcc, 0, adc, 5); // +5 V → ADC.VCC (power)
+      wire(g, vcc, 0, dac, 5); // +5 V → DAC.VCC (power / full-scale reference)
+      wire(g, adc, 6, gnd, 0); // ADC.GND → GND
+      wire(g, dac, 1, gnd, 0); // DAC.GND → GND
+      wire(g, adc, 2, dac, 4); // ADC.D2 → DAC.D2 (MSB)
+      wire(g, adc, 3, dac, 3); // ADC.D1 → DAC.D1
+      wire(g, adc, 4, dac, 2); // ADC.D0 → DAC.D0 (LSB)
+      wire(g, vcc, 1, gnd, 0); // V− → GND (the 0 V reference)
+      g.addNetLabel({ componentId: adc.id, pinIndex: 0 }, "VIN");
+      g.addNetLabel({ componentId: dac.id, pinIndex: 0 }, "AOUT");
+      g.addNetLabel({ componentId: vcc.id, pinIndex: 0 }, "+5V");
+      g.addNetLabel({ componentId: gnd.id, pinIndex: 0 }, "GND");
+      return g.serialize();
+    },
+    steps: [
+      {
+        do: "Place a Pulse source (PULSE) and a Flash ADC. Set the pulse to a Triangle wave. Wire the pulse to the ADC's VIN, power the ADC (VCC and VREF to +5 V, GND to ground), and Run.",
+        why: "The triangle is a stand-in for any smoothly changing signal. The flash ADC compares it against VREF and reports a 3-bit code on D2/D1/D0 — scope those three and watch them count up and down in binary as VIN sweeps. That code IS the digitised input.",
+        done: (p) => at(p, "PULSE") >= 1 && at(p, "ADC") >= 1 && p.wires >= 4,
+      },
+      {
+        do: "Place an R-2R DAC. Wire the ADC's D2/D1/D0 across to the DAC's D2/D1/D0, power the DAC (VCC to +5 V, GND to ground), and tap its AOUT. Run.",
+        why: "The DAC does the exact inverse of the ADC: it weights the three bits 4 / 2 / 1, sums them in its resistor ladder, and turns the code back into a voltage. Now the digital code becomes analog again — AOUT = code/8 · 5 V.",
+        done: (p) => at(p, "ADC") >= 1 && at(p, "DAC") >= 1 && p.complete,
+      },
+      {
+        do: "Open the scope, widen the time-base, and compare VIN with AOUT.",
+        why: "VIN is smooth; AOUT is a staircase chasing it in 0.625 V steps. That stepwise gap is quantisation error — the resolution limit of 3 bits. Swap in more bits (or watch the steps shrink in your head) and the copy gets smoother: that is the whole reason higher-resolution converters exist.",
+        done: (p) => p.complete,
+      },
+    ],
+  },
   // ── AC track ────────────────────────────────────────────────────────────
   // The AC source is the time-varying twin of V: kind "AC", pins + = 0 / − = 1,
   // fixed 5 V peak, and its `value` is the frequency in Hz. Every frequency below

@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (78) — Convert/reconstruct worked example (ADC → DAC staircase) + acceptance test
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The data-conversion arc now has a capstone demo,
+and the whole chain has an end-to-end test.
+
+**Worked example** `adc-dac-staircase` ("ADC → DAC: Convert & Reconstruct") in `web/src/lib/examples.ts`
+(placed as the capstone of the logic section, before the AC track): a **200 Hz unipolar triangle**
+(`PULSE`, `variant=1`/`duty=0.5`/`amp=5`) → **flash ADC** → 3-bit code → **R-2R DAC** → **AOUT**, all on a
+single 5 V rail that doubles as the ADC's VREF and the DAC's full-scale reference. AOUT reconstructs VIN as
+an **8-step staircase** (one LSB = 0.625 V; tops out at 4.375 V = 7/8 FS — the quantisation-ceiling
+lesson). Net labels VIN/AOUT/+5V/GND; 3 guided build steps. (200 Hz so one triangle period = the 4.8 ms
+scope preset — the watch text says to widen the time-base one notch.)
+
+**Acceptance test** `adc_dac_reconstructs_quantised_staircase` (sim-core) — builds the EXACT chain (flash
+ADC + the 6-resistor R-2R network `buildNetlist` composes) and asserts `AOUT = code/8 · 5` across the
+range. Confirms the ADC's 1 Ω logic driver (`GATE_GOUT`) holds the 20 k ladder legs cleanly, so the two
+parts compose with ~mV error. **185 sim-core tests pass; golden stable; fmt/clippy clean; web gate green.**
+
+**The data-conversion line is now COMPLETE end-to-end:** flash ADC (CEC1080), DAC (CEC1083), SAR ADC
+(CEC1108) — all functional + glyphs + catalogue, plus this worked example tying ADC↔DAC together.
+
+**NEXT — owner to steer (asked at end of session).** A menu of coherent next arcs, each building on what's
+here:
+- **Sigma-delta (ΣΔ) ADC** — completes the "three ways to digitise" trilogy (flash = parallel, SAR =
+  binary search, ΣΔ = oversampling + noise shaping). A behavioral program (1-bit modulator + decimator) +
+  glyph + demo. Most conceptually advanced; the "modern high-res" one. (Needs a counter for the decimator.)
+- **Counters + a waveform generator** — a real gap: no counter/register part yet. Build a counter (JK/T
+  chain composition, or a behavioral block), then the fun visual payoff **counter → DAC = ramp/sawtooth
+  generator**. Unlocks timers, frequency dividers, sequencers, memory addressing, and the ΣΔ decimator.
+  Lowest risk, high leverage, immediately visual.
+- **Sample-and-Hold (S&H)** — the ADC front-end we skipped (the SAR re-reads VIN each step). A composition
+  (analog switch + hold cap + op-amp buffer); lets the SAR sample fast/changing inputs. Foundational
+  mixed-signal; pairs directly with the converters.
+- **Analog building blocks** — current mirror, instrumentation amp, op-amp Schmitt trigger as worked
+  examples + glyphs (zero core code). Rounds out the analog catalogue.
+
+---
+
 ## 2026-06-23 (77) — Functional SAR ADC wired (CEC1108, sim-core behavioral program 6)
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The **CEC1108 3-bit SAR ADC is now a placeable,

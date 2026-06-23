@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (40) — Convert/reconstruct worked example (ADC → DAC staircase)
+
+- ~~**Convert↔reconstruct demo**~~ — DONE. New worked example **`adc-dac-staircase`** ("ADC → DAC: Convert
+  & Reconstruct") in `web/src/lib/examples.ts`, the capstone of the logic section: a 200 Hz unipolar
+  triangle (PULSE) → flash ADC → 3-bit code → R-2R DAC → AOUT, all on one 5 V rail (also the ADC VREF and
+  DAC reference). AOUT reconstructs VIN as an 8-step staircase (one LSB = 0.625 V; tops out at 4.375 V =
+  7/8 FS — the quantisation-ceiling lesson). 3 guided build steps; net labels VIN/AOUT/+5V/GND.
+- **Acceptance test** `adc_dac_reconstructs_quantised_staircase` (sim-core): builds the exact chain (flash
+  ADC + the 6-resistor R-2R network buildNetlist composes) and asserts AOUT = code/8·5 across the range.
+  Proves the ADC's 1 Ω logic driver holds the 20 k ladder legs cleanly (the two parts compose). 185
+  sim-core tests pass; golden stable; fmt/clippy clean; web gate green.
+- **NEXT (open question — owner to steer):** see HANDOFFS 78 for a menu of what to build next (S&H,
+  counter, sigma-delta teaser, instrumentation amp, current mirror, Schmitt, SRAM cell, etc.).
+
+---
+
 ## 2026-06-23 (39) — Functional SAR ADC wired (CEC1108 placeable, behavioral prog 6)
 
 - ~~**Wire the functional SAR ADC (CEC1108)**~~ — DONE. The 3-bit successive-approximation ADC is now a
@@ -42,8 +58,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   ladder scales AOUT with the **external logic's** high level on the D pins; wire VCC to that same
   rail and `AOUT = code/8 · VCC` holds exactly (matches the glyph tier-4 framing).
 - ~~**Wire the functional SAR ADC (CEC1108)**~~ — DONE (see entry 39): behavioral program 6.
-- [ ] **Convert↔reconstruct demo** (flash ADC → DAC) as a worked example, now that both ADCs (flash +
-  SAR) and the DAC are all placeable.
+- ~~**Convert↔reconstruct demo** (flash ADC → DAC) as a worked example~~ — DONE (see entry 40).
 
 ---
 

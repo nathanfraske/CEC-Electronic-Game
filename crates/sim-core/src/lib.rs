@@ -11800,6 +11800,74 @@ mod tests {
         assert_eq!(sar_code(6.0), 7, "over-range clamps to 7 (no wrap)");
     }
 
+    /// End-to-end mixed-signal chain: a flash ADC (program 5) digitises VIN, and an R-2R DAC — the
+    /// CEC1083 resistor network exactly as `buildNetlist` composes it (two R spine, four 2R legs,
+    /// MSB at the output node) — reconstructs it. The convert/reconstruct worked example. Returns
+    /// AOUT (the ladder's node A). Proves the ADC's digital outputs drive the 20 k ladder legs
+    /// cleanly (the 1 Ohm logic driver is stiff vs the legs) so the two parts compose. Nodes:
+    /// 0 = GND, 1 = VCC (5 V, also VREF), 2 = VIN, 3 = AOUT (ladder A), 4/5 = ladder B/C,
+    /// 6/7/8 = D0/D1/D2 (the shared ADC-output / DAC-input nets).
+    fn adc_dac_aout(vin: f64) -> f64 {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 9 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            9,
+            &[
+                ELEM_VSOURCE,    // VCC (5 V)
+                ELEM_VSOURCE,    // VIN
+                ELEM_BEHAVIORAL, // flash ADC (program 5)
+                ELEM_RESISTOR,   // R  spine A-B
+                ELEM_RESISTOR,   // R  spine B-C
+                ELEM_RESISTOR,   // 2R leg A-D2 (MSB at the output node)
+                ELEM_RESISTOR,   // 2R leg B-D1
+                ELEM_RESISTOR,   // 2R leg C-D0
+                ELEM_RESISTOR,   // 2R termination C-GND
+            ],
+            &[1, 2, 6, 3, 4, 3, 4, 5, 5], // a: VCC, VIN; ADC D0=6; R A=3,B=4; 2R A=3,B=4,C=5,C=5
+            &[0, 0, 7, 4, 5, 8, 7, 6, 0], // b: src gnds; ADC D1=7; R B=4,C=5; 2R D2=8,D1=7,D0=6,GND=0
+            &[0, 0, 8, 0, 0, 0, 0, 0, 0], // c: ADC D2 = node 8
+            &[0, 0, 1, 0, 0, 0, 0, 0, 0], // d: ADC VCC = node 1
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0], // e: ADC GND = node 0
+            &[0, 0, 2, 0, 0, 0, 0, 0, 0], // f: ADC VIN = node 2
+            &[0, 0, 1, 0, 0, 0, 0, 0, 0], // g: ADC VREF = node 1 (= VCC)
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0], // h: unused
+            &[
+                5.0,
+                vin,
+                BEH_PROG_FLASH_ADC as f64,
+                10000.0,
+                10000.0,
+                20000.0,
+                20000.0,
+                20000.0,
+                20000.0,
+            ],
+            &[0.0; 9], // aux unused
+            &params,
+        ));
+        for _ in 0..50 {
+            sim.step();
+        }
+        sim.state()[3] // AOUT = ladder node A
+    }
+
+    /// The ADC->DAC chain reconstructs the quantised staircase: AOUT = code/8 * 5 V, with
+    /// code = floor(8 * VIN / 5). Each input band maps to its step (one LSB = 0.625 V), and the top
+    /// step reaches only 7/8 of full scale (4.375 V) — the 3-bit reconstruction ceiling, the lesson
+    /// of the convert/reconstruct demo. (Tolerance covers the ~mV IR drop of the stiff logic driver
+    /// into the ladder legs.)
+    #[test]
+    fn adc_dac_reconstructs_quantised_staircase() {
+        let approx = |got: f64, want: f64| {
+            assert!((got - want).abs() < 0.02, "AOUT {got} should be ~{want}");
+        };
+        approx(adc_dac_aout(0.0), 0.0); // code 0
+        approx(adc_dac_aout(0.7), 0.625); // code 1 (1 LSB)
+        approx(adc_dac_aout(2.6), 2.5); // code 4 (half scale)
+        approx(adc_dac_aout(3.2), 3.125); // code 5
+        approx(adc_dac_aout(5.0), 4.375); // code 7 (full scale -> 7/8 ceiling)
+    }
+
     /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth
     /// table `1 << k` drives OUT high for EXACTLY the input combination whose index is `k` and low
     /// for any other — checked at index 13 (`1101`: IN0,IN2,IN3 high, IN1 low) and index 1 (only
