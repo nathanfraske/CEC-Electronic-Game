@@ -600,6 +600,43 @@ solved, here solved for free by the edge trigger. No new sim-core element; golde
 how D and T are JK special cases, and why the SR forbidden state becomes JK's most useful one.
 **Refsheet:** `jkff-ic.html`.
 
+### CEC3161 — 3-Bit Binary Counter
+
+*Critical Error Computing · "the part that counts — and where every ramp, timer, and address begins."*
+
+**Description.** The CEC3161 is a 3-bit binary up-counter: a clocked register that adds one to itself on
+every rising clock edge, marching Q0/Q1/Q2 through 0..7 and rolling over. It is the natural step up from
+the CEC3076's T flip-flop — where one toggle flop divides the clock by two, three in a row form a counter,
+each bit toggling at half the rate of the one below (Q0 = CLK/2, Q1 = CLK/4, Q2 = CLK/8). RESET clears it
+to zero. Counters are the workhorse of sequential logic — timers, frequency dividers, address generators,
+sequencers — and wired into a DAC they make a self-running staircase **ramp / sawtooth generator**. The
+named 4-bit parts (74x161 / 163 / 393) are the real-world cousins; CEC brings a bare 3-bit one to match
+the 3-bit converters.
+
+**Features.** 3-bit binary up-count (0..7, wraps) · counts on the rising CLK edge · asynchronous
+active-high RESET · Q0/Q1/Q2 also = CLK ÷2 / ÷4 / ÷8 (a frequency-divider chain) · single supply.
+
+**Pin configuration — 7-pin (SC70-8 with one N.C., or MSOP-8):**
+
+| Pin | Name | Function |
+|---|---|---|
+| 1 | **CLK** | Clock — increments the count on the LOW->HIGH edge. |
+| 2 | **RESET** | Asynchronous clear (HIGH = count forced to 0); leave low / unwired to run. |
+| 3 | **Q2** | Count bit 2 (MSB) — also CLK ÷8. |
+| 4 | **Q1** | Count bit 1 — also CLK ÷4. |
+| 5 | **Q0** | Count bit 0 (LSB) — also CLK ÷2. |
+| 6 | **VCC** | Positive supply. |
+| 7 | **GND** | Ground / 0 V reference. |
+
+**Function.** On CLK↑ (RESET low): count = (count + 1) mod 8 → Q2 Q1 Q0. RESET high → 0.
+
+**In the sim:** `ELEM_BEHAVIORAL` program 7 — a clocked integer register incremented on each rising CLK
+(`f`), asynchronously cleared by RESET (`g`), driving Q0/Q1/Q2 on `a`/`b`/`c` through the generic powered
+output path. No new sim-core element; golden-safe additive (the count state is zero until a counter is
+placed). **Teaches:** counting and the binary sequence, frequency division (each bit halves the rate),
+that a counter is a chain of toggle flip-flops, and — feeding a DAC — digital waveform synthesis (the
+counter -> DAC ramp generator). **Worked example:** `counter-ramp`.
+
 ---
 
 ## CEC analog & signal (sources, references, detectors)

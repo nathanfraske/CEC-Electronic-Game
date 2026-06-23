@@ -6,6 +6,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-23 (41) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator
+
+Owner picked **counters + ramp generator** from the entry-78 menu.
+
+- ~~**Counter part**~~ — DONE. New **sim-core behavioral program 7** (`BEH_PROG_COUNTER`): a clocked 3-bit
+  up-counter. Each rising CLK (`f`) does `count = (count+1) mod 8`, driving Q0/Q1/Q2 on `a`/`b`/`c` via
+  the **generic** output path (3 outputs fit a/b/c — no special drive branch like the SAR's DONE). RESET
+  (`g`, active-high) async-clears; unwired = free-run. State = count + CLK_PREV; `beh_counter_step` in the
+  commit phase. **Golden byte-identical** (additive program). Tests `behavioral_counter_counts_and_wraps`
+  (+1 mod 8, wraps 7→0) and `behavioral_counter_reset_holds_zero`. 187 sim-core tests pass; fmt/clippy
+  clean.
+- **Web part `CTR`** ("Counter"): graph.ts kind (pins CLK/RESET/Q2/Q1/Q0/VCC/GND), `BEH_SPEC.CTR`
+  (prog 7, `term:[4,3,2,5,6,0,1,-1]`), partInfo, codex, App rows. Renders as the generic IC card (violet).
+- ~~**Counter → DAC ramp generator**~~ — DONE. Worked example **`counter-ramp`** ("Counter → DAC Ramp
+  Generator"): a 2 kHz square clock → CTR → R-2R DAC → AOUT = an 8-step self-running sawtooth. The digital
+  twin of the ADC→DAC staircase (code from a counter, not a measured input). 3 guided build steps.
+- Catalogue **CEC3161** added (memory & sequential section). Web gate green.
+- **Glyph not built** (deferred — counter five-tier IC glyph is a follow-up, like the others got).
+- **NEXT options** unchanged from HANDOFFS 78/79 (sigma-delta ADC now has its counter/decimator
+  prerequisite; S&H; analog building blocks). Owner to steer.
+
+---
+
 ## 2026-06-23 (40) — Convert/reconstruct worked example (ADC → DAC staircase)
 
 - ~~**Convert↔reconstruct demo**~~ — DONE. New worked example **`adc-dac-staircase`** ("ADC → DAC: Convert

@@ -839,6 +839,18 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Output drive", value: f(e.current, "A") },
     ],
   },
+  CTR: {
+    name: "Counter",
+    equation: "count = (count + 1) mod 8, on each rising CLK",
+    headline: (e) =>
+      `binary up-count · Q0 ${f(e.vAcross, "V")} · drive ${f(e.current, "A")}`,
+    plain: () =>
+      "A binary counter is the most basic sequential machine there is: a register that adds one to itself on every clock edge. Three bits count 0 → 7 and roll over, so the outputs Q0/Q1/Q2 step through the binary numbers in order — each bit toggles at half the rate of the one below it, which is why a counter is also a chain of frequency dividers (Q0 = clock ÷2, Q1 = ÷4, Q2 = ÷8). RESET clears it to zero asynchronously; leave RESET unwired and it free-runs. It is the workhorse behind timers, clock dividers, address generators, and sequencers — and wire Q0/Q1/Q2 into a DAC and the staircase becomes a self-running ramp (sawtooth) generator. Counts on the rising edge, so drive CLK from a clock or pulse source.",
+    derived: (e) => [
+      { label: "Q0 (LSB) output", value: f(e.vAcross, "V") },
+      { label: "Output drive", value: f(e.current, "A") },
+    ],
+  },
   LS: {
     name: "Level Shifter",
     equation: "OUT @ rail B = IN @ rail A",

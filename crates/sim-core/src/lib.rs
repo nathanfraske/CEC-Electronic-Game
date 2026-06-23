@@ -1085,6 +1085,16 @@ const BEH_PROG_FLASH_ADC: u32 = 5;
 /// advanced in the commit phase. See [`beh_sar_adc_step`]. (The teaching SAR ADC, the speed-vs-parts
 /// opposite of the flash CEC1080: one comparator + one DAC, but N clocks per conversion.)
 const BEH_PROG_SAR_ADC: u32 = 6;
+/// Program id selecting the **3-bit binary counter** firmware (program 7) — a clocked up-counter, the
+/// fundamental sequential building block (a free-running register that increments). On each rising
+/// `CLK` (`f`) it advances `count = (count + 1) mod 8`, driving the three bits on `Q0`/`Q1`/`Q2`
+/// (`a`/`b`/`c`) — so it uses the GENERIC a/b/c output path (no special drive branch, unlike the SAR's
+/// fourth output). `RESET` (`g`, active-high) asynchronously clears the count to 0; unwired (`g` =
+/// ground) it reads low, so a counter with no reset wired simply free-runs. State is the count register
+/// and the CLK edge companion, advanced in the commit phase. Drive a DAC from `Q0..Q2` for a
+/// ramp/sawtooth generator; it also underlies timers, frequency dividers, sequencers, memory addressing
+/// and the sigma-delta decimator. See [`beh_counter_step`].
+const BEH_PROG_COUNTER: u32 = 7;
 
 // --- Behavioral program 2: SPI slave (Mode 0) ---------------------------------
 
@@ -1621,6 +1631,35 @@ fn beh_sar_adc_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, vin: f64, spa
         }
     }
     state[BEH_SAR_CLK_PREV] = clk as u32;
+}
+
+// --- Behavioral program 7: 3-bit binary counter -------------------------------
+
+/// Counter internal-state word indices (program 7) into an [`ELEM_BEHAVIORAL`]'s `[u32;
+/// `[`BEH_STATE_WORDS`]`]` block. `COUNT`: the running count (`0..`[`COUNTER_LEVELS`]`)`, driving
+/// `Q0`/`Q1`/`Q2`. `CLK_PREV`: the rising-edge companion.
+const BEH_CNT_COUNT: usize = 0;
+const BEH_CNT_CLK_PREV: usize = 1;
+
+/// Width of the binary counter — a 3-bit counter, to match the 3-bit DAC it most often drives.
+const COUNTER_BITS: u32 = 3;
+/// Counter modulus, `2^`[`COUNTER_BITS`]: the count wraps `COUNTER_LEVELS - 1 -> 0`.
+const COUNTER_LEVELS: u32 = 1 << COUNTER_BITS;
+
+/// Advance a behavioral **3-bit binary counter**'s integer state by one tick (program 7). `RESET`
+/// (active high) asynchronously clears the count to 0 and dominates the clock. Otherwise, on each
+/// **rising `CLK` edge** (`clk && !clk_prev`) it increments `count = (count + 1) mod `[`COUNTER_LEVELS`]
+/// (wrapping `7 -> 0`). `CLK_PREV` is updated last for the next tick's edge detection. Pure integer
+/// arithmetic — fully deterministic; mutates `state` in place (the only mutation site, run in the
+/// commit phase). The committed count drives `Q0`/`Q1`/`Q2` in [`Sim::eval_digital`] (one tick of
+/// state-to-output delay, like the other clocked programs).
+fn beh_counter_step(state: &mut [u32; BEH_STATE_WORDS], clk: bool, reset: bool) {
+    if reset {
+        state[BEH_CNT_COUNT] = 0; // asynchronous active-high clear
+    } else if clk && state[BEH_CNT_CLK_PREV] == 0 {
+        state[BEH_CNT_COUNT] = (state[BEH_CNT_COUNT] + 1) % COUNTER_LEVELS;
+    }
+    state[BEH_CNT_CLK_PREV] = clk as u32;
 }
 
 // --- AC voltage source model constants ----------------------------------------
@@ -5994,6 +6033,12 @@ impl Sim {
                                 let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
                                 (bit(code & 1 != 0), bit(code & 2 != 0), bit(code & 4 != 0))
                             }
+                            BEH_PROG_COUNTER => {
+                                // 3-bit binary counter: drive Q0/Q1/Q2 (a/b/c) from the committed
+                                // count (advanced on each rising CLK in the commit phase).
+                                let n = st[BEH_CNT_COUNT];
+                                (bit(n & 1 != 0), bit(n & 2 != 0), bit(n & 4 != 0))
+                            }
                             // Inert / unknown program: release all outputs.
                             _ => (Level::Z, Level::Z, Level::Z),
                         }
@@ -6531,6 +6576,13 @@ impl Sim {
                                 let clk = lvl(e.h);
                                 let vin = self.node_v[e.f] - vlow;
                                 beh_sar_adc_step(&mut self.beh_state[i], clk, vin, rail);
+                            }
+                            BEH_PROG_COUNTER => {
+                                // 3-bit counter: increment on each rising CLK (f); RESET (g, active
+                                // high) asynchronously clears. Drives Q0/Q1/Q2 in eval_digital.
+                                let clk = lvl(e.f);
+                                let reset = lvl(e.g);
+                                beh_counter_step(&mut self.beh_state[i], clk, reset);
                             }
                             // Inert / unknown program: no state advance.
                             _ => {}
@@ -11866,6 +11918,74 @@ mod tests {
         approx(adc_dac_aout(2.6), 2.5); // code 4 (half scale)
         approx(adc_dac_aout(3.2), 3.125); // code 5
         approx(adc_dac_aout(5.0), 4.375); // code 7 (full scale -> 7/8 ceiling)
+    }
+
+    /// Run a 3-bit counter (program 7) clocked by a 50 %-duty switch (rising edges every
+    /// SWITCH_PERIOD_TICKS) with RESET wired to `reset_node`, and return the de-duplicated sequence of
+    /// count values seen on Q0/Q1/Q2. Nodes: 0 = gnd, 1 = VCC (5 V), 2 = CLK, 3 = clock source rail,
+    /// 4/5/6 = Q0/Q1/Q2.
+    fn counter_sequence(reset_node: u32) -> Vec<u32> {
+        let mut sim = Sim::new(1);
+        let params = vec![0.0; 5 * PARAM_STRIDE];
+        assert!(sim.set_netlist_pefgh(
+            7,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_SWITCH,
+                ELEM_RESISTOR,
+                ELEM_BEHAVIORAL
+            ],
+            &[1, 3, 3, 2, 4], // a: VCC, clk-rail srcs; SWITCH a=3; R a=2; CTR Q0 = node 4
+            &[0, 0, 2, 0, 5], // b: src gnds; SWITCH b=2 (CLK); R b=0; CTR Q1 = node 5
+            &[0, 0, 0, 0, 6], // c: CTR Q2 = node 6
+            &[0, 0, 0, 0, 1], // d: CTR VCC = node 1
+            &[0, 0, 0, 0, 0], // e: CTR GND = node 0
+            &[0, 0, 0, 0, 2], // f: CTR CLK = node 2
+            &[0, 0, 0, 0, reset_node], // g: CTR RESET (0 = gnd = run; 1 = VCC = hold cleared)
+            &[0, 0, 0, 0, 0], // h: unused
+            &[5.0, 5.0, 0.5, 1000.0, BEH_PROG_COUNTER as f64], // SWITCH 0.5 duty, R 1 kΩ pull-down
+            &[0.0; 5],
+            &params,
+        ));
+        let hi = |v: f64| (v > 2.5) as u32;
+        let mut seq = Vec::new();
+        let mut last: Option<u32> = None;
+        for _ in 0..900 {
+            sim.step();
+            let s = sim.state();
+            let n = hi(s[4]) | (hi(s[5]) << 1) | (hi(s[6]) << 2);
+            if last != Some(n) {
+                seq.push(n);
+                last = Some(n);
+            }
+        }
+        seq
+    }
+
+    /// The 3-bit binary counter advances one step per rising clock edge and wraps 7 -> 0: the
+    /// de-duplicated Q0/Q1/Q2 sequence increments by +1 mod 8 throughout, reaching 7 and rolling over.
+    /// 900 ticks at ~50 ticks/edge gives two full wraps. (Drive a DAC from Q0..Q2 for a ramp.)
+    #[test]
+    fn behavioral_counter_counts_and_wraps() {
+        let seq = counter_sequence(0); // RESET = gnd: free-run
+        assert!(seq.len() >= 9, "counter should advance many steps: {seq:?}");
+        for w in seq.windows(2) {
+            assert_eq!(w[1], (w[0] + 1) % 8, "counter steps by +1 mod 8: {seq:?}");
+        }
+        assert!(seq.contains(&7), "counter reaches 7: {seq:?}");
+        assert!(
+            seq.windows(2).any(|w| w[0] == 7 && w[1] == 0),
+            "counter wraps 7 -> 0: {seq:?}"
+        );
+    }
+
+    /// RESET (active high) asynchronously clears the counter and dominates the clock: with RESET tied
+    /// to VCC the count never leaves 0 no matter how many clock edges arrive.
+    #[test]
+    fn behavioral_counter_reset_holds_zero() {
+        let seq = counter_sequence(1); // RESET = VCC (node 1): held cleared
+        assert_eq!(seq, vec![0], "RESET held high pins the count at 0: {seq:?}");
     }
 
     /// The 4-bit LUT index is assembled IN0 = `f` (LSB) … IN3 = `c` (MSB). A single-entry truth

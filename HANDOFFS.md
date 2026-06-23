@@ -5,6 +5,46 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (79) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator
+
+**State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. Owner picked **counters + ramp generator** from
+the entry-78 menu. The first sequential building block beyond flip-flops, plus a digital waveform demo.
+
+**Sim-core — behavioral program 7 (`BEH_PROG_COUNTER`):** a clocked 3-bit up-counter. On each rising CLK
+(`f`) it does `count = (count + 1) mod 8`, driving **Q0/Q1/Q2 on a/b/c via the GENERIC output path** — 3
+outputs fit a/b/c, so (unlike the SAR's 4th DONE output) it needs no special eval branch, just a match arm
+in the generic `(la,lb,lc)` block + a commit arm. **RESET (`g`, active-high) asynchronously clears**;
+unwired `g` = ground = low = free-run. State = COUNT + CLK_PREV (`beh_counter_step`, commit phase).
+**Golden byte-identical** (additive program; `beh_state` empty for existing circuits). Tests:
+`behavioral_counter_counts_and_wraps` (+1 mod 8, reaches 7, wraps 7→0) and
+`behavioral_counter_reset_holds_zero`. **187 sim-core tests pass; fmt/clippy clean.**
+
+**Web part `CTR` ("Counter"):** graph.ts kind (7 pins **CLK, RESET, Q2, Q1, Q0, VCC, GND**; violet),
+`BEH_SPEC.CTR` = `{ prog: 7, term: [4,3,2,5,6,0,1,-1] }` (a=Q0 b=Q1 c=Q2 d=VCC e=GND f=CLK g=RESET).
+partInfo, codex (cat/meta/synonyms), App (PARTS/cat/keywords). Generic IC card. Catalogue **CEC3161**
+added (memory & sequential).
+
+**Worked example `counter-ramp` ("Counter → DAC Ramp Generator"):** a 2 kHz square clock (PULSE) → CTR →
+R-2R DAC → AOUT = a self-running 8-step **sawtooth** (count/8 · 5 V, wraps). The digital twin of the
+ADC→DAC staircase — the code now comes from counting, not measuring. 3 guided build steps. (Watch text
+says to widen the scope a notch; ~2 kHz → one 8-count ramp ≈ 4 ms.)
+
+**Glyph deferred** — the counter five-tier IC glyph is a follow-up (like the converters got theirs
+separately).
+
+**NEXT — owner to steer (menu, refined):**
+- **Sigma-delta (ΣΔ) ADC** — now unblocked (its decimator can use the counter). Completes the ADC trilogy
+  (parallel / binary-search / oversampling). A behavioral program (1-bit modulator + decimator) + glyph +
+  demo. The conceptual capstone of the data-conversion arc.
+- **Counter glyph** — the five-tier IC refsheet for CEC3161 (rounds out the part just shipped).
+- **Sample-and-Hold (S&H)** — the ADC front-end (analog switch + hold cap + buffer); lets converters
+  sample fast inputs.
+- **Analog building blocks** — current mirror, instrumentation amp, op-amp Schmitt (examples + glyphs).
+- **Shift register / more sequential** — the counter's sibling; with the counter, opens sequencers,
+  serial-parallel conversion, memory addressing.
+
+---
+
 ## 2026-06-23 (78) — Convert/reconstruct worked example (ADC → DAC staircase) + acceptance test
 
 **State:** 🟢 pushed. Branch `claude/kind-turing-hdelb3`. The data-conversion arc now has a capstone demo,

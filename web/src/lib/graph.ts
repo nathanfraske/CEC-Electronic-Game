@@ -1103,6 +1103,28 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // 3-bit binary counter (CEC3161): the fundamental sequential block — a clocked register that
+  // increments. ELEM_BEHAVIORAL program 7: each rising CLK advances the count 0..7 (wrapping 7→0)
+  // on Q0/Q1/Q2; RESET (active-high) asynchronously clears it (unwired = runs free). value = the
+  // fixed program id (no value picker). Pins CLK/RESET (in, left), Q2/Q1/Q0 (out, right), VCC/GND.
+  // Drive a DAC from Q0/Q1/Q2 for a ramp/sawtooth generator. buildNetlist routes via BEH_SPEC.
+  CTR: kind(
+    "CTR",
+    "Counter",
+    "violet",
+    [
+      pin("CLK", 0, 0),
+      pin("RESET", 0, 2),
+      pin("Q2", 2, 0),
+      pin("Q1", 2, 1),
+      pin("Q0", 2, 2),
+      pin("VCC", 1, 0),
+      pin("GND", 1, 2),
+    ],
+    7,
+    "",
+    true,
+  ),
   // Analog switch (sim type 24): a node-gated transmission gate. Pins are ordered A,
   // B, CTRL, VCC, GND so buildNetlist's pin→terminal map is direct (pin 0 → a, 1 → b
   // = the switched signal path, 2 → c = CTRL digital control, 3 → d = VCC, 4 → e =
