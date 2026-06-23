@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (87) — IC maker: placeable package frames landed (authoring piece 1)
+
+**State:** 🟢 frame parts built (agent) + gate-green; on branch `claude/kind-turing-hdelb3`. First piece of
+the IC-maker authoring (per `docs/ui/ic-maker-guide.md`).
+
+**What landed:** 7 placeable **IC frame** parts generated from `packages.ts` — `DIP8/14/16`,
+`SOT23_3/5/6`, `VSSOP8` (pins = package leads, numbered; footprint = package layout). A frame has **no sim
+element** (not in `TYPE_OF`): `buildNetlist` skips it, its pins just join nets via the union-find, so it's
+a pure connection hub the player wires their circuit to (the pinout). Bin: new **"IC Frames"** category
+(`PART_CATEGORIES` / `PART_CAT_OF` / `PARTS` with `tier:"IC"` / `PART_SYNONYMS`). Crash-safe: generic
+IC-card drawer, `partInfo` undefined → graceful, no value picker, codex omits them. Files: `graph.ts`
+(generation loop + `frameTag`/`frameName`), `App.svelte` (bin). Web gate green.
+
+**Owner steers:** approved the plan; tiers 2/4 later via **reusing the refsheet SVG** (not blind re-draw).
+Key requirement: **everything must be proportional to the live electrical actuals** (flow ∝ current, level
+∝ voltage — the visual-language) — applies to the live sealed-circuit view especially.
+
+**Minor (flagged):** the inspector head shows "0" for a frame's value (value-less kind); cosmetic, deferred.
+
+**NEXT (the core mechanic):** (2) the **seal** — generalized expander: take the frame + the circuit wired
+to its pins (the connected sub-graph) + the pad→pin map → a placeable composite IC spliced into the netlist
+(fuse pad nets to pin nodes; ADR 0006). (3) **layout-preserving live view** — render the sealed internals
+with the board's own component glyphs at the authored positions, proportional to the live values. Prove on
+one IC (e.g. a CMOS AND from MOSFETs) end-to-end. Then tiers 2/4 (SVG reuse).
+
+---
+
 ## 2026-06-23 (86) — Direction change: author IC internals as real circuits + seal them (IC-maker guide)
 
 **State:** 🟡 design/guide written; mechanism build is NEXT. Branch `claude/kind-turing-hdelb3`.

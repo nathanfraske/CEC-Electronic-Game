@@ -587,6 +587,60 @@
       tier: "III",
       color: "var(--accent)",
     },
+    // IC-maker FRAMES (ADR 0006): placeable package outlines with numbered pins and NO sim
+    // element of their own - you wire your circuit to the frame's pins to define a future IC's
+    // pinout. Generated kinds in graph.ts (from packageOptions); the tags/names here MUST match
+    // those (frameTag/frameName). Neutral border tint; the "IC" badge marks them as IC-maker
+    // primitives rather than a I/II/III learning step. They render via the generic IC-card drawer.
+    {
+      tag: "DIP8",
+      name: "DIP-8",
+      desc: "8-pin DIP package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "DIP14",
+      name: "DIP-14",
+      desc: "14-pin DIP package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "DIP16",
+      name: "DIP-16",
+      desc: "16-pin DIP package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "SOT23_3",
+      name: "SOT-23-3",
+      desc: "3-pin SOT-23 package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "SOT23_5",
+      name: "SOT-23-5",
+      desc: "5-pin SOT-23 package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "SOT23_6",
+      name: "SOT-23-6",
+      desc: "6-pin SOT-23 package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
+    {
+      tag: "VSSOP8",
+      name: "VSSOP-8",
+      desc: "8-pin VSSOP package frame",
+      tier: "IC",
+      color: "var(--border)",
+    },
   ];
 
   // Parts bin folders. The order here is the display order; every part maps to
@@ -599,6 +653,7 @@
     "Protection",
     "Active & Switching",
     "Logic & ICs",
+    "IC Frames",
   ];
   const PART_CAT_OF: Record<string, string> = {
     V: "Sources",
@@ -664,6 +719,14 @@
     PU: "Logic & ICs",
     FP: "Logic & ICs",
     uC: "Logic & ICs",
+    // IC-maker frames (no sim element; you wire your own circuit to their numbered pins).
+    DIP8: "IC Frames",
+    DIP14: "IC Frames",
+    DIP16: "IC Frames",
+    SOT23_3: "IC Frames",
+    SOT23_5: "IC Frames",
+    SOT23_6: "IC Frames",
+    VSSOP8: "IC Frames",
   };
 
   // Parts FAMILIES collapse the big multi-member sets into ONE expandable bin row each,
@@ -830,6 +893,46 @@
     PU: ["regulator", "reference", "pull-up", "open-drain"],
     FP: ["fpga", "fabric", "parallel logic"],
     uC: ["mcu", "processor", "firmware", "computer"],
+    // IC-maker frames: searchable by "package"/"footprint"/"ic"/"pinout" and the package family.
+    DIP8: ["package", "footprint", "ic", "pinout", "dip", "frame", "ic maker"],
+    DIP14: ["package", "footprint", "ic", "pinout", "dip", "frame", "ic maker"],
+    DIP16: ["package", "footprint", "ic", "pinout", "dip", "frame", "ic maker"],
+    SOT23_3: [
+      "package",
+      "footprint",
+      "ic",
+      "pinout",
+      "sot-23",
+      "frame",
+      "ic maker",
+    ],
+    SOT23_5: [
+      "package",
+      "footprint",
+      "ic",
+      "pinout",
+      "sot-23",
+      "frame",
+      "ic maker",
+    ],
+    SOT23_6: [
+      "package",
+      "footprint",
+      "ic",
+      "pinout",
+      "sot-23",
+      "frame",
+      "ic maker",
+    ],
+    VSSOP8: [
+      "package",
+      "footprint",
+      "ic",
+      "pinout",
+      "vssop",
+      "frame",
+      "ic maker",
+    ],
   };
 
   // The state vector is node voltages (index 0 is ground); channels are labelled
