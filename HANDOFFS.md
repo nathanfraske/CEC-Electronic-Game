@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (82) — Seal/zoom mini-mode: ADR 0005 phase 2 DONE (zoom-to-open renderer)
+
+**State:** 🟢 pushed; **needs the owner's VISUAL check in the browser** (I can't run PixiJS here — the web
+gate is green but the look/animation is unverified). Branch `claude/kind-turing-hdelb3`.
+
+**HOW TO TRIGGER:** switch the board to the **Reality lens** and **zoom in** (scroll) onto a composite IC
+(half-adder, mux, JK flip-flop, R-2R DAC, …) past `INTERNALS_ZOOM` (2.5). The black-box symbol opens to its
+live internal sub-circuit. (Schematic/analogy lenses are unchanged; LOD must be on, which it is by default.)
+
+**What it does:** a composite chip, zoomed in under reality, draws its real sub-elements (the gates /
+resistors / DFF it is simulated as) wired together, animating from the same per-frame snapshot — wires
+colour by node level (rail→cyan), carriers flow along active wires on the board's flow clock, gate symbols
+tint by output level. Pin nodes are anchored at the real package pins, so you see the inside wired straight
+out to the boundary. This is "seal-as-same-netlist": purely a drawing over the netlist the sim already
+solves — no new sim, no hashing.
+
+**Files:** new **`web/src/lib/internalsView.ts`** (`drawCompositeInternals` + gate/part symbols, fully
+self-contained, render-only). **`board.ts`**: `INTERNALS_ZOOM=2.5`, field+setter `setCompositeInternals`,
+`ComponentNode.update()` gains `internals?`/`nodeV?` params and a first branch drawing internals when
+`lens==="reality" && zoom>=INTERNALS_ZOOM`; pin-label LOD extended to the internals view. **`App.svelte`**:
+`board.setCompositeInternals(nl.compositeInternals)` in `rebuildNetlist`. Phase-1 `CompositeInternals` also
+gained `vccNode`/`gndNode` (for rail normalisation). Web gate green (check 0/0, lint, build).
+
+**NEXT / known limits to refine after the owner sees it:** (a) layout is a simple centred grid + centroid
+nodes (not a routed schematic — wires can cross); (b) gate-symbol geometry is hand-rolled and unverified
+visually — may need tuning; (c) trigger is reality-lens-gated (by design; reconsider if owner wants
+zoom-alone); (d) then phase 3 (generalise + tie to the schematic/analogy/reality ladder), phase 4 (remake
+behavioral ICs as compositions — flash ADC first), phase 5 (the IC-maker authoring UI per ADR 0006).
+
+---
+
 ## 2026-06-23 (81) — Seal/zoom mini-mode: ADR 0005 phase 1 DONE (composite internals in buildNetlist)
 
 **State:** 🟢 phase 1 pushed; phase 2 (the renderer) next. Branch `claude/kind-turing-hdelb3`. Owner

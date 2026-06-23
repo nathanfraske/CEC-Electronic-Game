@@ -47,6 +47,8 @@ import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
 import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
 import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
+import { drawCompositeInternals } from "./internalsView";
+import type { CompositeInternals } from "./netlist";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -82,6 +84,9 @@ const TIER_ZOOM = 2.2;
 /** Deeper still: the tier illustration also gets its simple pinout labels (the
  * "full detail" LOD). Below this you get the cleaner label-free illustration. */
 const DETAIL_ZOOM = 4.5;
+/** Zoom past which a sealed composite IC, under the REALITY lens, opens to its live internal
+ * sub-circuit (the "zoom-to-open" mini-mode, ADR 0005) instead of the black-box symbol. */
+const INTERNALS_ZOOM = 2.5;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
@@ -497,6 +502,10 @@ export class Board {
   // display name for a labelled net, used when the node has no explicit telemetry
   // rename. Refreshed whenever the netlist rebuilds (see setNetNames).
   private netNames = new Map<number, string>();
+  // Composite-IC internal topology (component id → its sub-elements + node indices) from the
+  // netlist, so a sealed chip can open to its live sub-circuit when zoomed in under the reality
+  // lens (ADR 0005). Refreshed on rebuild (setCompositeInternals); render-only, never hashed.
+  private compositeInternals?: Map<number, CompositeInternals>;
   // Per-node pinned colour overrides (node index → PIXI hex int) from the net
   // labels' `color`. When a node is present here the renderer paints its whole net
   // this colour instead of the voltage colour. Refreshed on rebuild (setNodeColors);
@@ -1175,6 +1184,13 @@ export class Board {
     this.netNames = map ? new Map(map) : new Map();
   }
 
+  /** Install the composite-IC internal topology (component id → {@link CompositeInternals}) from
+   * the netlist, so a sealed chip can open to its live sub-circuit when zoomed in (ADR 0005).
+   * Refreshed whenever the netlist rebuilds; render-only. */
+  setCompositeInternals(map: Map<number, CompositeInternals> | null): void {
+    this.compositeInternals = map ?? undefined;
+  }
+
   /** Install the per-node colour overrides (node index → PIXI hex int) from the
    * netlist's labelled-net colours, so a pinned net paints its chosen colour
    * instead of its voltage colour. Refreshed whenever the netlist rebuilds. */
@@ -1657,6 +1673,8 @@ export class Board {
         this.selected.has(id),
         effLens,
         this.world.scale.x,
+        this.compositeInternals?.get(id),
+        snap.state,
       );
     }
 
@@ -5690,6 +5708,8 @@ class ComponentNode {
     selected: boolean,
     lens: BoardLens,
     zoom: number,
+    internals?: CompositeInternals,
+    nodeV?: Float64Array,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -5705,7 +5725,27 @@ class ComponentNode {
         : lens === "analogy" && hasAnalogy(this.kindTag)
           ? "analogy"
           : null;
-    if (tier !== null && zoom >= TIER_ZOOM) {
+    // Zoom-to-open (ADR 0005): a sealed composite IC, viewed under the REALITY lens and zoomed in
+    // past INTERNALS_ZOOM, opens to its live internal sub-circuit — the real gates/resistors it is
+    // simulated as, animated from the same snapshot — instead of the black-box symbol.
+    const showInternals =
+      !!internals &&
+      internals.elements.length > 0 &&
+      nodeV !== undefined &&
+      lens === "reality" &&
+      zoom >= INTERNALS_ZOOM;
+    if (showInternals && internals && nodeV !== undefined) {
+      this.connectorGlyph.visible = false;
+      this.tierGlyph.visible = false;
+      drawCompositeInternals(g, {
+        internals,
+        nodeV,
+        pins: this.pinPositions,
+        wPx: this.wPx,
+        hPx: this.hPx,
+        phase,
+      });
+    } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
       tg.clear();
       // Render at a fixed REFERENCE size (≈ the info panel's), then scale the result
@@ -5803,7 +5843,7 @@ class ComponentNode {
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far.
-    const showPins = tier !== null && zoom >= DETAIL_ZOOM;
+    const showPins = (tier !== null || showInternals) && zoom >= DETAIL_ZOOM;
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];

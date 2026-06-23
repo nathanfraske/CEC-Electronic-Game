@@ -512,6 +512,9 @@ export interface CompositeInternals {
   pinNodes: number[];
   /** the private internal node indices (from `cecInternal`). */
   internalNodes: number[];
+  /** the VCC / GND rail node indices, so the view can normalise a node to a logic level. */
+  vccNode: number;
+  gndNode: number;
   /** the sub-elements (gates first, then `extra`), in emission order. */
   elements: CompositeSubElement[];
 }
@@ -1013,6 +1016,8 @@ export function buildNetlist(
       compositeInternals.set(c.id, {
         pinNodes: kind.pins.map((p) => nodeOfPin(p.index)),
         internalNodes: internals,
+        vccNode: nVcc,
+        gndNode: nGnd,
         elements: subElements,
       });
       continue;
