@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (85) — In-app internal views for the refsheet logic ICs (zoom-to-open, expanded)
+
+**State:** 🟡 in progress. Branch `claude/kind-turing-hdelb3` (= main + wave-1 commit). Owner clarified the
+seal/zoom should give **every logic-IC refsheet part an in-app internal view** (not just the composites);
+**the refsheets stay codex reference** — we redraw their device tier in-board (PixiJS), via options 2+3.
+
+**Key finding (the gap):** the 34 `*-ic.html` refsheets were never wired into the app; the in-app board
+renders from separate PixiJS drawers (`DETAIL_DRAWERS` reality / `ANALOGY_DRAWERS` analogy), which only
+existed for the analog/discrete parts. The composites get my live zoom-to-open (internalsView). The basic
+gates, behavioral blocks, and special ICs had **no** in-app internal view. Filling that gap.
+
+**Integration pattern (clean, no board.ts change):** a kind with an entry in `DETAIL_DRAWERS`/
+`ANALOGY_DRAWERS` automatically opens to it via the EXISTING tier-zoom (`ComponentNode.update`) at
+`TIER_ZOOM` under the reality/analogy lens. So each batch is a self-contained drawer module + a
+registration loop in detailDrawers.ts + analogyDrawers.ts.
+
+**Wave 1 DONE (commit `3378d06`):** `web/src/lib/logicInternal.ts` — parametric CMOS pull-up/pull-down
+internal for the **gates** (AND/OR/NAND/NOR/XOR/XNOR/NOT/BUF/IMPLY/NIMPLY + NAND3/XORPASS), registered in
+both maps, live-lit from the output level. Web gate green. **Template for the rest.**
+
+**Waves 2-3 IN FLIGHT (2 background agents):** `behavioralInternal.ts` (LUT/SPIM/SPIS/UART/SAR/SDM — block
+diagrams) and `specialInternal.ts` (CMP/SAMP/analog-switch/NE555/Schmitt — device internals). They each
+export `draw<X>Internal` + `<X>_INTERNAL_KINDS` and DON'T touch the registries — **next agent: register
+each (import + `for (const k of <X>_INTERNAL_KINDS) DETAIL_DRAWERS[k]=... ; ANALOGY_DRAWERS[k]=...`), run
+the full gate, fix, commit.** Composites already covered by the live zoom (it takes precedence over the
+tier branch). After integration, all 34 refsheet parts have an in-app internal view.
+
+**NEEDS VISUAL REVIEW** (I can't render PixiJS here): every internal-view drawer's look; the gate CMOS
+layout; the dense flash-ADC live view. v1 shares one drawer across both lenses for gates (distinct analogy
+skin = follow-up).
+
+---
+
 ## 2026-06-23 (84) — Adversarial panel audit of the full branch diff → fixes → PR to main
 
 **State:** 🟢 audited, fixed, gate-green; pushed to `claude/kind-turing-hdelb3`. **Direct push to `main` is
