@@ -1719,22 +1719,15 @@ export class Board {
     const y = bounds.minRow * PITCH;
     const w = (bounds.maxCol - bounds.minCol) * PITCH;
     const h = (bounds.maxRow - bounds.minRow) * PITCH;
-    // A faint die fill so the buildable area reads as a surface, plus a bright dashed-ish border
-    // (drawn as a solid accent-line rect — cheap + legible) marking the wall you build inside.
+    // A faint die fill so the buildable area reads as a surface, plus a single bright border ON the
+    // pin line — the wall the leads ride and you build inside. (No second concentric ring: it read
+    // as a misaligned border floating beside the pins.)
     g.roundRect(x, y, w, h, 6);
     g.fill({ color: 0x1a1730, alpha: 0.45 });
     g.roundRect(x, y, w, h, 6);
     g.stroke({
       width: 2 / this.world.scale.x,
       color: PALETTE.accent,
-      alpha: 0.55,
-    });
-    // An inner hairline for the "die ring" look (a second, slightly inset outline).
-    const r2 = PITCH * 0.35;
-    g.roundRect(x + r2, y + r2, w - r2 * 2, h - r2 * 2, 5);
-    g.stroke({
-      width: 1 / this.world.scale.x,
-      color: PALETTE.border,
       alpha: 0.7,
     });
   }
@@ -2049,6 +2042,10 @@ export class Board {
   private bodyHitTest(wx: number, wy: number): Component | null {
     let best: Component | null = null;
     for (const c of this.graph.components.values()) {
+      // The die frame being edited is NOT a grabbable body: it is the build boundary, so it must be
+      // click-through (no select / move / rotate / delete) — only its PINS are interactive. Without
+      // this its full-interior box swallowed every click on empty space or a wire inside the die.
+      if (this.dieFrameId !== null && c.id === this.dieFrameId) continue;
       const box = this.componentBox(c);
       if (box.contains(wx, wy)) best = c; // later components are on top
     }
@@ -3476,6 +3473,7 @@ export class Board {
     const inside = (px: number, py: number): boolean =>
       px >= x && px <= x + w && py >= y && py <= y + h;
     for (const c of this.graph.components.values()) {
+      if (this.dieFrameId !== null && c.id === this.dieFrameId) continue; // never marquee the die frame
       const box = this.componentBox(c);
       if (inside(box.x + box.width / 2, box.y + box.height / 2)) {
         this.selected.add(c.id);
@@ -4636,6 +4634,7 @@ export class Board {
     // OTHER wires' drawn routes (a gauge may sit on its own pipe but must clear the rest).
     const partBoxes: Rectangle[] = [];
     for (const c of this.graph.components.values()) {
+      if (this.dieFrameId !== null && c.id === this.dieFrameId) continue; // the die frame isn't an obstacle
       partBoxes.push(this.componentBox(c));
     }
     const allRoutes = [...condRoutes.values()].filter((r) => r.length >= 2);
@@ -6126,6 +6125,12 @@ class ComponentNode {
       this.label.position.set(cx, minY - 16);
       this.value?.position.set(cx, maxY + 16);
       this.meter.position.set(cx, minY - 30);
+    } else if (isDieFrame(this.kindTag)) {
+      // Park the die's name just BELOW the bottom wall, outside the build area — like a chip's part
+      // designator under the package — so it never sits over the circuit you build inside.
+      let maxY = 0;
+      for (const p of this.pinPositions) maxY = Math.max(maxY, p.y);
+      this.label.position.set(this.wPx / 2, maxY + 18);
     } else {
       this.label.position.set(this.wPx / 2, this.hPx / 2);
     }
@@ -6159,11 +6164,12 @@ class ComponentNode {
     this.layoutLabels();
   }
 
-  /** The label shown when the part carries no custom name: its kind tag — EXCEPT a die frame,
-   *  whose tag is the internal "__DIE_*" id and whose body is the build area, so it shows nothing
-   *  (the package identity lives in the die-editor breadcrumb, not a watermark over the circuit). */
+  /** The label shown when the part carries no custom name: its kind tag — EXCEPT a die frame, which
+   *  shows its PACKAGE name (e.g. "DIP-14"), never the internal "__DIE_*" tag. layoutLabels parks a
+   *  die frame's label just below the bottom wall (outside the build area). */
   private defaultLabel(): string {
-    return isDieFrame(this.kindTag) ? "" : this.kindTag;
+    if (isDieFrame(this.kindTag)) return PART_KINDS[this.kindTag]?.name ?? "";
+    return this.kindTag;
   }
 
   update(
@@ -6276,6 +6282,12 @@ class ComponentNode {
         cg.stroke({ width: pw, color: core, alpha: 0.16, cap: "round" });
       }
       cg.visible = true;
+    } else if (isDieFrame(this.kindTag)) {
+      // A die frame draws NO body glyph: the die-editor WALLS (drawDieWalls) are its outline and its
+      // pin dots (added just below) are the port pads. A generic IC-card rect here would be a second,
+      // offset rectangle floating over the build area, occluding the wires + parts inside it.
+      this.connectorGlyph.visible = false;
+      this.tierGlyph.visible = false;
     } else {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
