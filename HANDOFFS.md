@@ -7,7 +7,7 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-23 (85) — In-app internal views for the refsheet logic ICs (zoom-to-open, expanded)
 
-**State:** 🟡 in progress. Branch `claude/kind-turing-hdelb3` (= main + wave-1 commit). Owner clarified the
+**State:** 🟢 all waves landed + pushed (on the branch, ahead of main → needs a PR to land on main). Owner clarified the
 seal/zoom should give **every logic-IC refsheet part an in-app internal view** (not just the composites);
 **the refsheets stay codex reference** — we redraw their device tier in-board (PixiJS), via options 2+3.
 
@@ -25,12 +25,15 @@ registration loop in detailDrawers.ts + analogyDrawers.ts.
 internal for the **gates** (AND/OR/NAND/NOR/XOR/XNOR/NOT/BUF/IMPLY/NIMPLY + NAND3/XORPASS), registered in
 both maps, live-lit from the output level. Web gate green. **Template for the rest.**
 
-**Waves 2-3 IN FLIGHT (2 background agents):** `behavioralInternal.ts` (LUT/SPIM/SPIS/UART/SAR/SDM — block
-diagrams) and `specialInternal.ts` (CMP/SAMP/analog-switch/NE555/Schmitt — device internals). They each
-export `draw<X>Internal` + `<X>_INTERNAL_KINDS` and DON'T touch the registries — **next agent: register
-each (import + `for (const k of <X>_INTERNAL_KINDS) DETAIL_DRAWERS[k]=... ; ANALOGY_DRAWERS[k]=...`), run
-the full gate, fix, commit.** Composites already covered by the live zoom (it takes precedence over the
-tier branch). After integration, all 34 refsheet parts have an in-app internal view.
+**Waves 2-3 DONE (agent-built, integrated):** `behavioralInternal.ts` (LUT/SPIM/SPIS/UART/SAR/SDM — block
+diagrams) and `specialInternal.ts` (CMP/SAMP/ASW — device internals). Both export `draw<X>Internal` +
+`<X>_INTERNAL_KINDS`, registered into `DETAIL_DRAWERS` + `ANALOGY_DRAWERS` (loops in detailDrawers.ts /
+analogyDrawers.ts). **NE555 + Schmitt skipped** — not placeable kinds in graph.ts (codex-only refsheets).
+Web gate green (check 0/0, lint, build).
+
+**COVERAGE NOW COMPLETE:** every placeable refsheet part has an in-app internal view — gates (CMOS,
+wave 1), behavioral (block diagrams), special (device), and the composites (live zoom-to-open, which takes
+precedence over the tier branch). Zoom in under the reality OR analogy lens to see them.
 
 **NEEDS VISUAL REVIEW** (I can't render PixiJS here): every internal-view drawer's look; the gate CMOS
 layout; the dense flash-ADC live view. v1 shares one drawer across both lenses for gates (distinct analogy

@@ -54,6 +54,11 @@ import {
   V_SCALE,
 } from "./tierKit";
 import { drawGateInternal, GATE_INTERNAL_KINDS } from "./logicInternal";
+import {
+  drawBehavioralInternal,
+  BEHAVIORAL_INTERNAL_KINDS,
+} from "./behavioralInternal";
+import { drawSpecialInternal, SPECIAL_INTERNAL_KINDS } from "./specialInternal";
 
 // Shared analogy palette: water (cool flow), warm (the moving current/energy),
 // pressure (the violet return / resistance), all from PALETTE so one source recolours.
@@ -2318,6 +2323,11 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
 // Gates open to the same CMOS internal under the analogy lens too (v1 shares the reality drawer;
 // a distinct water/valve skin is a follow-up), so they reveal under either lens at zoom.
 for (const k of GATE_INTERNAL_KINDS) ANALOGY_DRAWERS[k] = drawGateInternal;
+// Behavioral + special ICs open under the analogy lens too (v1 shares the reality drawer per kind).
+for (const k of BEHAVIORAL_INTERNAL_KINDS)
+  ANALOGY_DRAWERS[k] = drawBehavioralInternal;
+for (const k of SPECIAL_INTERNAL_KINDS)
+  ANALOGY_DRAWERS[k] = drawSpecialInternal;
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */
 export function hasAnalogy(kind: string): boolean {

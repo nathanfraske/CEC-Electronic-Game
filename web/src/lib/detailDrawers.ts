@@ -42,6 +42,11 @@ import {
   PULSE_K,
 } from "./tierKit";
 import { drawGateInternal, GATE_INTERNAL_KINDS } from "./logicInternal";
+import {
+  drawBehavioralInternal,
+  BEHAVIORAL_INTERNAL_KINDS,
+} from "./behavioralInternal";
+import { drawSpecialInternal, SPECIAL_INTERNAL_KINDS } from "./specialInternal";
 
 // The full-panel illustration primitives (TierOpts/TierBounds, the scales, and the
 // belt/stud/housing/mix/norm/dotPresence helpers) live in ./tierKit, shared with
@@ -1897,6 +1902,11 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
 // zoomed in under the reality lens opens to its pull-up / pull-down pair (the gate refsheets'
 // device tier). Registered here so it plugs into the existing tier-zoom with no board.ts change.
 for (const k of GATE_INTERNAL_KINDS) DETAIL_DRAWERS[k] = drawGateInternal;
+// Behavioral logic ICs (LUT/SPI/UART/SAR/SDM) open to a functional block diagram; the special
+// analog/mixed ICs (comparator/sampler/analog-switch) to their device internals. Same tier-zoom path.
+for (const k of BEHAVIORAL_INTERNAL_KINDS)
+  DETAIL_DRAWERS[k] = drawBehavioralInternal;
+for (const k of SPECIAL_INTERNAL_KINDS) DETAIL_DRAWERS[k] = drawSpecialInternal;
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */
 export function hasDetail(kind: string): boolean {
