@@ -5,10 +5,11 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
-## 2026-06-23 (84) — Adversarial panel audit of the full branch diff → fixes → merged to main
+## 2026-06-23 (84) — Adversarial panel audit of the full branch diff → fixes → PR to main
 
-**State:** 🟢 audited, fixed, gate-green, **merged to `main`** (owner asked to review on main). Branch
-`claude/kind-turing-hdelb3` (= main now).
+**State:** 🟢 audited, fixed, gate-green; pushed to `claude/kind-turing-hdelb3`. **Direct push to `main` is
+blocked by org policy (HTTP 403)** — git to the repo server forbids it — so landing via a **PR → main**
+(owner's choice) for review. Clean fast-forward (main `3c1a7e5` is an ancestor of HEAD `038bd77`).
 
 Ran a 4-agent adversarial review over the full `origin/main...HEAD` diff (~10k LOC of code; the ~20k of
 glyph HTML are static refsheets, spot-checked only) plus the full verification gate as ground truth.
