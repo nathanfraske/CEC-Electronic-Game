@@ -282,6 +282,25 @@ describe("packages — dieLayout (perimeter relayout)", () => {
     });
   }
 
+  it("die proportions match the real package aspect (SOT-23 landscape, DIP/VSSOP portrait)", () => {
+    // The drill-in die is scaled to the real package's proportions (owner: "scaled in proportion to
+    // the actual dimensions"): a SOT-23 is WIDER than tall (a few lead columns on the long edges, a
+    // short lead span across); a DIP/VSSOP is TALLER than the gap between its two pin columns.
+    for (const pinCount of [3, 5, 6]) {
+      const d = dieLayout("SOT-23", pinCount);
+      expect(d.w).toBeGreaterThan(d.h); // landscape
+    }
+    for (const [archetype, pinCount] of [
+      ["VSSOP", 8],
+      ["DIP", 8],
+      ["DIP", 14],
+      ["DIP", 16],
+    ] as const) {
+      const d = dieLayout(archetype, pinCount);
+      expect(d.h).toBeGreaterThan(d.w); // portrait
+    }
+  });
+
   it("the generated die-frame kind uses the dieLayout pins (perimeter), distinct from the production frame", () => {
     const prodKind = PART_KINDS["DIP8"]!;
     const dieKind = PART_KINDS[dieFrameTag("DIP8")]!;

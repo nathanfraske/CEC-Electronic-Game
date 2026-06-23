@@ -97,8 +97,9 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
  * graph with no die has no walls to draw).
  *
  * Because the box hugs the leads exactly, every package lead lands ON a wall (the leads ride the
- * border on all sides — left/right columns for a dual, top/bottom rows for a SOT), and the roomy
- * span between the pinned edges ({@link dieLayout}'s `DIE_INTERIOR_SPAN`) is the build interior.
+ * border on all sides — left/right columns for a dual, top/bottom rows for a SOT), and the span
+ * between the pinned edges ({@link dieLayout}, sized to the package's real proportions) is the
+ * build interior.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
