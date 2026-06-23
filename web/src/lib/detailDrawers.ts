@@ -41,6 +41,7 @@ import {
   FLOW_DOTS_MAX,
   PULSE_K,
 } from "./tierKit";
+import { drawGateInternal, GATE_INTERNAL_KINDS } from "./logicInternal";
 
 // The full-panel illustration primitives (TierOpts/TierBounds, the scales, and the
 // belt/stud/housing/mix/norm/dotPresence helpers) live in ./tierKit, shared with
@@ -1891,6 +1892,11 @@ const DETAIL_DRAWERS: Record<string, (g: Graphics, o: DetailOpts) => void> = {
   NTC: drawDetailThermistor,
   PTC: drawDetailThermistor,
 };
+
+// The basic logic gates share one parametric CMOS internal view (logicInternal.ts), so a gate
+// zoomed in under the reality lens opens to its pull-up / pull-down pair (the gate refsheets'
+// device tier). Registered here so it plugs into the existing tier-zoom with no board.ts change.
+for (const k of GATE_INTERNAL_KINDS) DETAIL_DRAWERS[k] = drawGateInternal;
 
 /** Whether a kind has a construction-detail (factory-internals) drawer. */
 export function hasDetail(kind: string): boolean {

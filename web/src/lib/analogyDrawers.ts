@@ -53,6 +53,7 @@ import {
   PULSE_K,
   V_SCALE,
 } from "./tierKit";
+import { drawGateInternal, GATE_INTERNAL_KINDS } from "./logicInternal";
 
 // Shared analogy palette: water (cool flow), warm (the moving current/energy),
 // pressure (the violet return / resistance), all from PALETTE so one source recolours.
@@ -2313,6 +2314,10 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   NTC: drawAnalogyThermistor,
   PTC: drawAnalogyThermistor,
 };
+
+// Gates open to the same CMOS internal under the analogy lens too (v1 shares the reality drawer;
+// a distinct water/valve skin is a follow-up), so they reveal under either lens at zoom.
+for (const k of GATE_INTERNAL_KINDS) ANALOGY_DRAWERS[k] = drawGateInternal;
 
 /** Whether a kind has a full-panel analogy illustration (vs. the board glyph). */
 export function hasAnalogy(kind: string): boolean {
