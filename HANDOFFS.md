@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (90) — IC maker: the DRILL-IN die editor (place -> Build -> inside -> Seal/Save)
+
+**State:** 🟢 built (agent) + gate-green + tested (17/17); merging to main. Branch `claude/kind-turing-hdelb3`.
+The authoring UX the owner asked for: place an empty package, click it, **Build** drills inside the die.
+
+**Flow:** place a frame -> click it -> inspector shows **"Build ▸"** -> drills INTO the die (stashes the
+outer board snapshot + camera), a bounded die canvas with the package pins as spaced perimeter leads and
+walls (soft containment) -> build the circuit inside, wire to the pins -> a top back-bar with **Seal**
+(validates `buildNetlist(inner) != null`, `captureSeal` + register, returns with the placeholder re-kinded
+to the sealed chip), **Save** (stash the WIP inner, return; placeholder stays a buildable frame), **Back**
+(return unchanged). All restore the outer board + camera.
+
+**Files:** new `web/src/lib/dieEditor.ts` (headless model: `freshDieGraph`, `findDieFrameId`, `dieBounds`,
+`dieIsSealable` = the Seal gate, `unusedDiePins`) + `dieEditor.test.ts` (9 cases incl. **re-kind-on-seal ->
+same netlist as inline**). `board.ts`: `swapGraph` (drill in/out — restore + clear cross-boundary undo +
+camera), `setDieFrame`/`inDie`/`drawDieWalls`/`containInDie` (a `dieWallLayer`), `setComponentKind`
+(collapse-to-chip), `liveGraph`, `frameDieView`. `App.svelte`: drill state + nav + back bar + Build button
++ persistence guards. Reuses `captureSeal`/`registerUserIc`/`flattenUserIcs` UNCHANGED (seal-as-same-netlist
++ golden intact; no Rust). **Gate green: web check 0/0, lint, build, 17/17 tests; cargo 188.**
+
+**OWNER VISUAL REVIEW (built blind):** the Build button + "or seal in place" ghost; the die walls /
+perimeter-pin spacing / fit-on-entry / soft-containment drag feel; the back-bar (breadcrumb, solvable+pin
+advisory, name field, Back/Save/Seal, disabled-Seal state); the collapse-to-chip on Seal.
+
+**KNOWN GAP — persistence (THE next thing):** inner graphs + the UserIc registry are IN-MEMORY. A reload
+loses WIP dies (a "Saved" frame reopens empty) and orphans sealed chips. localStorage is GUARDED so drilling
+can't corrupt the outer board, but **persistence is required for "save and come back" to truly work** — do it
+next (save/load the user-IC library + WIP dies with the board). Then: the live zoomed-in view of a placed
+sealed chip; re-drill into a sealed chip to edit; tiers 2/4 (refsheet SVG).
+
+---
+
 ## 2026-06-23 (89) — IC maker: the SEAL ACTION (capture + collapse) — sealing works in-app
 
 **State:** 🟢 built (agent) + gate-green + tested; merging to main. Branch `claude/kind-turing-hdelb3`.

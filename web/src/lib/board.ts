@@ -35,6 +35,7 @@ import {
   type GraphSnapshot,
 } from "./graph";
 import { captureSeal } from "./userIc";
+import { DIE_INTERIOR_MARGIN, dieBounds } from "./dieEditor";
 import {
   drawGlyph,
   flowStabilized,
@@ -417,6 +418,9 @@ export interface BoardCallbacks {
 export class Board {
   private readonly world = new Container();
   private readonly grid = new Graphics();
+  // The die-editor boundary ("walls"): drawn behind everything but the grid when the board is the
+  // inner canvas of an IC-maker frame (ADR 0006). Empty/invisible on the normal outer board.
+  private readonly dieWallLayer = new Graphics();
   private readonly wireLayer = new Graphics();
   private readonly groundLayer = new Graphics();
   private readonly groundLabels: Text[] = [];
@@ -643,6 +647,11 @@ export class Board {
   private pendingUndo: GraphSnapshot | null = null;
   private pointer = new Point(0, 0);
   private readonly undoStack: GraphSnapshot[] = [];
+  // IC-maker die editor (ADR 0006 / dieEditor.ts): when the active graph is a frame's inner canvas,
+  // this is the die frame's id (its pins are the package leads); null on the normal outer board.
+  // Drives the wall rendering + the soft containment check. App.svelte owns the drill-in/out
+  // navigation (the outer snapshot/camera stash); the Board only tracks which die it is showing.
+  private dieFrameId: number | null = null;
 
   // Probe (measure mode): two draggable DMM leads that snap to a pin or trace.
   private probeA: ProbePoint | null = null;
@@ -675,6 +684,10 @@ export class Board {
     private readonly cb: BoardCallbacks = {},
   ) {
     this.world.addChild(this.grid);
+    // The die boundary sits just above the grid and below the wires/parts, so it reads as the
+    // canvas's "wall" the circuit is built inside. Non-interactive; invisible unless in die mode.
+    this.dieWallLayer.eventMode = "none";
+    this.world.addChild(this.dieWallLayer);
     this.world.addChild(this.wireLayer);
     this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
@@ -1229,6 +1242,9 @@ export class Board {
    */
   private placeCell(kind: string, cell: Cell, rot = 0): Component | undefined {
     const before = this.graph.serialize();
+    // Soft containment (IC-maker die editor, ADR 0006): inside a die, clamp the drop anchor to the
+    // walls so new parts land in the buildable interior. Identity on the normal outer board.
+    cell = this.containInDie(cell);
     // Apply the arm-time configurator's choices when dropping the armed kind — both
     // place-and-repeat (click) and a drag-from-bin of the armed part carpet the
     // configured part; dragging a *different* kind gets its plain per-kind defaults.
@@ -1528,6 +1544,183 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
+  /**
+   * Swap the active graph as part of a die-editor drill IN/OUT navigation (IC maker, ADR 0006 /
+   * docs/ui/dieEditor.ts): replace the contents with `snapshot` and restore `camera` (or frame the
+   * view if none). Unlike {@link loadGraph} this does NOT push a cross-boundary undo and it CLEARS
+   * the undo stack — so a Ctrl+Z can never undo across the boundary into the other canvas (which
+   * would mix the inner die and the outer board). The caller (App.svelte) stashes the OUTER
+   * snapshot + camera itself and hands them back on drill-out, so the navigation is reversible at
+   * the App level without corrupting either graph. Fires `onChange` so the HUD/netlist follow the
+   * newly-active graph.
+   */
+  swapGraph(
+    snapshot: GraphSnapshot,
+    camera?: { x: number; y: number; scale: number },
+  ): void {
+    this.endLabelEdit();
+    this.graph.restore(snapshot);
+    this.rebuildNodes();
+    this.clearSelection();
+    this.redrawWires();
+    // Undo must not cross the die boundary: drop the previous canvas's history.
+    this.undoStack.length = 0;
+    this.pendingUndo = null;
+    if (camera) this.setCamera(camera);
+    else this.frameDieView(snapshot);
+    this.cb.onChange?.(this.graph);
+  }
+
+  /**
+   * Frame the view on a freshly-entered die: centre the loaded graph's components in the canvas at
+   * a comfortable zoom, so the die's perimeter pins are visible and roomy on entry. A best-effort
+   * fit — falls back to the identity view for an empty graph.
+   */
+  private frameDieView(snapshot: GraphSnapshot): void {
+    const cells = snapshot.components.map((c) => c.cell);
+    if (cells.length === 0) {
+      this.resetView();
+      return;
+    }
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const cell of cells) {
+      const p = this.cellToWorld(cell);
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    // Pad the content box by the die's interior margin so the walls (drawn beyond the pins) fit.
+    const pad = DIE_INTERIOR_MARGIN * PITCH * 1.5;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    const sx = this.app.screen.width / bw;
+    const sy = this.app.screen.height / bh;
+    const scale = Math.max(MIN_SCALE, Math.min(MAX_SCALE, Math.min(sx, sy)));
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    this.world.scale.set(scale);
+    this.world.position.set(
+      this.app.screen.width / 2 - cx * scale,
+      this.app.screen.height / 2 - cy * scale,
+    );
+    this.viewportDirty = true;
+    this.applyTextRes();
+  }
+
+  /**
+   * The live board graph (read-only use by the HUD): lets the die editor capture the in-place inner
+   * circuit with {@link captureSeal} while it is the active graph, without a serialize round-trip.
+   * Callers must not mutate it directly — go through the Board's edit methods so undo/redraw stay
+   * consistent.
+   */
+  liveGraph(): BoardGraph {
+    return this.graph;
+  }
+
+  /**
+   * Re-kind a placed component in place (IC maker collapse-to-chip): change its `kind` tag, keeping
+   * its cell + rotation, then rebuild its node and recompile. Used on Seal to turn the outer
+   * placeholder FRAME into the sealed chip once its die has been sealed (so the frame visibly
+   * becomes the IC where it sat). One undo step. No-op on a missing id or an unknown tag.
+   */
+  setComponentKind(id: number, tag: string): void {
+    const c = this.graph.components.get(id);
+    if (!c || !PART_KINDS[tag] || c.kind === tag) return;
+    this.pushUndo(this.graph.serialize());
+    c.kind = tag;
+    // Re-default the part's primary value to the new kind's default (a sealed IC has no value
+    // picker, so this just keeps the field sane); geometry (cell/rot) is preserved.
+    c.value = PART_KINDS[tag]!.defaultValue;
+    this.rebuildNodes();
+    this.redrawWires();
+    this.clearSelection();
+    this.selected.add(id);
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    this.emitSelect();
+    this.emitAnchor();
+  }
+
+  /**
+   * Mark (or clear) which frame in the active graph is the die being edited (IC maker, ADR 0006).
+   * Set to a frame id when the board is showing a frame's inner canvas — the renderer then draws
+   * the boundary walls and placement is softly contained inside them; pass null on the normal outer
+   * board. Redraws the walls immediately so the change is visible without waiting for a sim frame.
+   */
+  setDieFrame(frameId: number | null): void {
+    this.dieFrameId = frameId;
+    this.drawDieWalls();
+  }
+
+  /** True when the board is currently editing an IC-maker die (its inner canvas). */
+  inDie(): boolean {
+    return this.dieFrameId !== null;
+  }
+
+  /**
+   * Draw the die's boundary walls (the buildable interior box) in world space, behind the wires and
+   * parts. A clear when not in die mode (or the die frame is gone). The box comes from
+   * {@link dieBounds} (the die frame's footprint grown by the interior margin), so it tracks the
+   * package's pin spread. Pure presentation — it never affects connectivity or the netlist.
+   */
+  private drawDieWalls(): void {
+    const g = this.dieWallLayer;
+    g.clear();
+    if (this.dieFrameId === null) return;
+    const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
+    if (!bounds) return;
+    // Pad the wall a little OUTSIDE the pin-grown bounds so the perimeter pins sit comfortably
+    // within the interior rather than on the wall line.
+    const inset = PITCH * 0.5;
+    const x = bounds.minCol * PITCH - inset;
+    const y = bounds.minRow * PITCH - inset;
+    const w = (bounds.maxCol - bounds.minCol) * PITCH + inset * 2;
+    const h = (bounds.maxRow - bounds.minRow) * PITCH + inset * 2;
+    // A faint die fill so the buildable area reads as a surface, plus a bright dashed-ish border
+    // (drawn as a solid accent-line rect — cheap + legible) marking the wall you build inside.
+    g.roundRect(x, y, w, h, 6);
+    g.fill({ color: 0x1a1730, alpha: 0.45 });
+    g.roundRect(x, y, w, h, 6);
+    g.stroke({
+      width: 2 / this.world.scale.x,
+      color: PALETTE.accent,
+      alpha: 0.55,
+    });
+    // An inner hairline for the "die ring" look (a second, slightly inset outline).
+    const r2 = PITCH * 0.35;
+    g.roundRect(x + r2, y + r2, w - r2 * 2, h - r2 * 2, 5);
+    g.stroke({
+      width: 1 / this.world.scale.x,
+      color: PALETTE.border,
+      alpha: 0.7,
+    });
+  }
+
+  /**
+   * Soft containment for the die editor: clamp a candidate placement/move cell to inside the die's
+   * walls (ADR 0006 — "a soft containment check is fine for v1"). Outside die mode it is the
+   * identity, so the normal board is unaffected. The clamp keeps a part's ANCHOR inside the box (a
+   * wide part may still overhang slightly — acceptable for v1; the walls are guidance, not a hard
+   * DRC).
+   */
+  private containInDie(cell: Cell): Cell {
+    if (this.dieFrameId === null) return cell;
+    const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
+    if (!bounds) return cell;
+    return {
+      col: Math.max(bounds.minCol, Math.min(bounds.maxCol, cell.col)),
+      row: Math.max(bounds.minRow, Math.min(bounds.maxRow, cell.row)),
+    };
+  }
+
   /** Reset zoom and pan to the identity view. */
   resetView(): void {
     this.world.scale.set(1);
@@ -1654,6 +1847,9 @@ export class Board {
     this.redrawWires();
     this.advanceWireRms();
     this.drawGround();
+    // Keep the die walls crisp as the view zooms (the wall stroke is scale-dependent). A clear no-op
+    // outside die mode.
+    if (this.dieFrameId !== null) this.drawDieWalls();
     this.drawNetLabels();
     // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
     const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
@@ -3471,7 +3667,14 @@ export class Board {
       for (const id of this.dragging.ids) {
         const o = this.dragging.origins.get(id);
         if (!o) continue;
-        this.graph.move(id, { col: o.col + dc, row: o.row + dr });
+        // Soft containment in the die editor: keep dragged parts inside the walls (identity on the
+        // outer board). The die frame itself is left where it is — dragging it is meaningless.
+        this.graph.move(
+          id,
+          id === this.dieFrameId
+            ? { col: o.col, row: o.row }
+            : this.containInDie({ col: o.col + dc, row: o.row + dr }),
+        );
         this.nodes.get(id)?.reposition();
       }
       this.redrawWires();

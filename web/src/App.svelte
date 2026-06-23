@@ -42,9 +42,17 @@
     loadUnit,
     PLACEMENT_OVERRIDE_KEYS,
     isFrame,
+    framePackage,
     type GraphSnapshot,
     type HotSlot,
   } from "./lib/graph";
+  import {
+    freshDieGraph,
+    findDieFrameId,
+    dieIsSealable,
+    unusedDiePins,
+  } from "./lib/dieEditor";
+  import { captureSeal } from "./lib/userIc";
   import {
     hasValue,
     isESeries,
@@ -1805,8 +1813,11 @@
           hasGround = gnd;
           rebuildNetlist(graph);
           advanceBuild(graph);
-          // Persist the current board so a refresh restores it (debounced).
-          saveBoardDebounced(graph.serialize());
+          // Persist the current board so a refresh restores it (debounced) — but NOT while drilled
+          // into a die: that graph is the inner IC circuit, and saving it would overwrite the outer
+          // board in localStorage. The outer board is re-persisted on exit (in-die edits are kept
+          // in-memory; persistence of in-progress dies is out of scope — see the die editor block).
+          if (!drill) saveBoardDebounced(graph.serialize());
           // Any edit — place, move, rotate, rewire, or a value change — rewinds
           // the scope and the clock to t=0 so you always watch the new circuit
           // from the start rather than mid-flight in the old one.
@@ -1833,9 +1844,10 @@
         },
         onPersist: (graph) => {
           // A cosmetic change (e.g. a net label dragged): save it + refresh undo,
-          // but don't rebuild the netlist or rewind the running sim.
+          // but don't rebuild the netlist or rewind the running sim. Suppressed while drilled into a
+          // die (the inner graph must not overwrite the outer board's localStorage entry).
           canUndo = b.canUndo();
-          saveBoardDebounced(graph.serialize());
+          if (!drill) saveBoardDebounced(graph.serialize());
         },
         onAnchor: (rect) => {
           anchor = rect;
@@ -1874,10 +1886,12 @@
           // it up and it returns to a shimmer. Module flag read by the tier drawers.
           setApparentRateScale(tps * DT_SECONDS);
           // Persist the camera (pan + zoom) when it moves — debounced so a pan/zoom
-          // gesture collapses into one write, and the view is restored on refresh.
+          // gesture collapses into one write, and the view is restored on refresh. Suppressed while
+          // drilled into a die: that camera is the die's view, and persisting it would restore the
+          // outer board at the die's pan/zoom on refresh (the outer camera is restored on exit).
           const cam = b.getCamera();
           const camKey = `${Math.round(cam.x)},${Math.round(cam.y)},${cam.scale.toFixed(3)}`;
-          if (camKey !== lastCamKey) {
+          if (camKey !== lastCamKey && !drill) {
             lastCamKey = camKey;
             scheduleSettingsSave();
           }
@@ -2096,6 +2110,187 @@
     board.sealFrame(selPart.id, sealName.trim() || undefined);
     sealName = "";
   }
+
+  // ---------------------------------------------------------------------------
+  // IC-maker DIE EDITOR (ADR 0006 / docs/ui/ic-maker-guide.md, lib/dieEditor.ts)
+  //
+  // "Drill INTO the package to build the IC inside it." Clicking Build on a placed empty FRAME
+  // saves the outer board + camera, then swaps the editor to that frame's own inner canvas — a DIE
+  // (a frame of the same package, positioned roomily) the player wires their sub-circuit into. The
+  // back bar's Seal / Save / Back exit and restore the outer board.
+  //
+  // The inner graph for each placed frame lives in this in-memory map, keyed by the OUTER frame
+  // component id. PERSISTENCE IS OUT OF SCOPE for v1: these inner graphs are NOT saved to
+  // localStorage and are lost on refresh (a frame the player saved-in-progress reopens empty after a
+  // reload). The seal itself (a finished, registered UserIc) is also in-memory in the userIc
+  // REGISTRY — persisting the user IC library + the in-progress dies is a follow-up.
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive store, only touched in handlers; see above
+  const innerGraphs = new Map<number, GraphSnapshot>();
+
+  // The active drill context: null on the outer board, set while editing a die. Holds what the
+  // exits need to restore the outer board + identify the die. One level only (the guide's one-layer
+  // nesting — no user IC inside a user IC), so a single context, not a stack.
+  let drill = $state<{
+    /** the OUTER frame component id this die belongs to (key into {@link innerGraphs}). */
+    frameId: number;
+    /** the die frame's id WITHIN the inner graph (its pins are the package leads). */
+    innerFrameId: number;
+    /** the frame's package kind tag (for the breadcrumb + a fresh re-entry). */
+    frameTag: string;
+    /** display name shown in the breadcrumb (the part's label or the package name). */
+    name: string;
+    /** the outer board snapshot, restored on every exit so the outer board can't be corrupted. */
+    outerSnapshot: GraphSnapshot;
+    /** the outer camera (pan + zoom), restored on exit. */
+    outerCamera: { x: number; y: number; scale: number };
+  } | null>(null);
+
+  // Live seal advisory while inside a die: whether it currently compiles (the hard gate) and how
+  // many package leads are still unwired (a soft warning). Recomputed from the board's live inner
+  // graph on each edit (partCount/wireCount tick on onChange, so this re-derives in step).
+  const dieStatus = $derived.by(() => {
+    if (!drill || !board) return null;
+    // Touch the edit counters so this recomputes when the inner circuit changes.
+    void partCount;
+    void wireCount;
+    const snap = board.serialize();
+    const unused = unusedDiePins(snap, drill.innerFrameId);
+    const total = framePackage(drill.frameTag)?.pinCount ?? 0;
+    return {
+      sealable: dieIsSealable(snap),
+      used: total - unused.length,
+      total,
+    };
+  });
+
+  /**
+   * Drill INTO a frame to build its die. Stashes the outer board + camera, loads (or creates) the
+   * frame's inner graph, marks the die frame, and shows the back bar. The outer board is hidden but
+   * fully preserved in `drill.outerSnapshot` for the exits. No-op if already drilled in, the part
+   * isn't a frame, or the package is unknown.
+   */
+  function buildSelectedFrame(): void {
+    if (!selPart || !board || drill || !isFrame(selPart.kind)) return;
+    const frameId = selPart.id;
+    const frameTag = selPart.kind;
+    const name = selPart.label?.trim() || partName(frameTag);
+
+    // Reuse a saved in-progress die for this frame, else start a fresh one (just the die).
+    let inner = innerGraphs.get(frameId);
+    let innerFrameId: number;
+    if (inner) {
+      const fid = findDieFrameId(inner);
+      if (fid === undefined) return; // corrupt stored die — refuse rather than break
+      innerFrameId = fid;
+    } else {
+      const fresh = freshDieGraph(frameTag);
+      if (!fresh) return;
+      inner = fresh.snapshot;
+      innerFrameId = fresh.frameId;
+      innerGraphs.set(frameId, inner);
+    }
+
+    // Stash the outer board, then swap to the die (swapGraph clears cross-boundary undo + frames
+    // the view on the die since no camera is passed).
+    drill = {
+      frameId,
+      innerFrameId,
+      frameTag,
+      name,
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+    };
+    board.swapGraph(inner);
+    board.setDieFrame(innerFrameId);
+    // Editing tools, not a leftover armed part, on entry.
+    arm(null);
+    setMode("select");
+  }
+
+  /** Restore the outer board + camera and leave die mode. The optional `mutate` runs on a fresh
+   * BoardGraph of the stashed outer snapshot BEFORE it is loaded — used by Seal to re-kind the
+   * placeholder frame into the sealed chip as part of the same restore (so it lands sealed). */
+  function exitDie(mutate?: (outer: GraphSnapshot) => GraphSnapshot): void {
+    if (!drill || !board) return;
+    const ctx = drill;
+    const outer = mutate ? mutate(ctx.outerSnapshot) : ctx.outerSnapshot;
+    // Leave die mode BEFORE the swap, so swapGraph's onChange sees the outer board with `drill`
+    // cleared and persists it normally (the per-edit saves were suppressed while inside the die, so
+    // the outer board needs to be re-persisted now; the inner graph never reached localStorage).
+    board.setDieFrame(null);
+    drill = null;
+    board.swapGraph(outer, ctx.outerCamera);
+  }
+
+  /** Back/Cancel: store the in-progress die (so re-entering resumes it) and return to the outer
+   * board unchanged — the placeholder stays a buildable frame. */
+  function dieBack(): void {
+    if (!drill || !board) return;
+    innerGraphs.set(drill.frameId, board.serialize());
+    exitDie();
+  }
+
+  /** Save: identical to Back for v1 — stash the in-progress die and return; the placeholder stays a
+   * frame you can re-enter to finish. (Kept distinct so the bar reads with the owner's three exits,
+   * and so a future "save also persists" can diverge here.) */
+  function dieSave(): void {
+    dieBack();
+  }
+
+  /**
+   * Seal: validate the die is a real IC (it must compile — {@link dieIsSealable}), capture it with
+   * the existing seal engine ({@link captureSeal} on the live inner graph + {@link findDieFrameId}),
+   * then return to the outer board with the placeholder frame RE-KINDED to the sealed chip. Unwired
+   * leads are allowed (a soft warning only), so this never blocks on pin usage — only on solvability.
+   */
+  function dieSeal(): void {
+    if (!drill || !board) return;
+    const ctx = drill;
+    const live = board.liveGraph();
+    // Hard gate: the authored circuit must be simulatable, or it isn't an IC.
+    if (buildNetlist(live) === null) {
+      circuitWarning =
+        "This die can't be sealed yet: the circuit doesn't solve (needs a reference/ground and a complete path). Wire it up, then Seal.";
+      return;
+    }
+    const cap = captureSeal(
+      live,
+      ctx.innerFrameId,
+      sealName.trim() || undefined,
+    );
+    if (!cap) return;
+    sealName = "";
+    // The die is now a sealed IC: drop its in-progress inner graph (the registered UserIc carries
+    // the authored circuit from here on) and restore the outer board with the placeholder re-kinded
+    // to the sealed chip where it sat.
+    innerGraphs.delete(ctx.frameId);
+    exitDie((outer) => {
+      const comps = outer.components.map((c) =>
+        c.id === ctx.frameId
+          ? {
+              ...c,
+              kind: cap.tag,
+              value: PART_KINDS[cap.tag]?.defaultValue ?? 0,
+            }
+          : c,
+      );
+      return { ...outer, components: comps };
+    });
+  }
+
+  /**
+   * Abandon any active die and forget all in-progress inner graphs. Called before the OUTER board
+   * is wholesale REPLACED (load a save, a worked example, or reset) — the inner graphs are keyed by
+   * outer frame ids that won't survive a new board, so they're dropped rather than left stale. Just
+   * clears die state; it does NOT restore the old outer board (the caller is loading a new one). A
+   * no-op when not drilled in / with no stored dies.
+   */
+  function resetDieState(): void {
+    board?.setDieFrame(null);
+    drill = null;
+    innerGraphs.clear();
+  }
+
   function stepVal(dir: number): void {
     if (!selPart) return;
     // Electronic load: step through the mode's own value list (CC amps / CR ohms),
@@ -2616,6 +2811,7 @@
         if (!graph || typeof graph !== "object" || !("components" in graph)) {
           throw new Error("not a circuit");
         }
+        resetDieState(); // abandon any open die — the outer board is being replaced
         board?.loadGraph(graph as GraphSnapshot);
         demo = null;
         showIntro = false;
@@ -2695,6 +2891,7 @@
     e.stopPropagation();
   }
   function loadExample(ex: ExampleSpec): void {
+    resetDieState(); // abandon any open die — the outer board is being replaced
     board?.loadGraph(ex.build());
     // Start paused so you can take in the circuit before it runs (the intro
     // banner / transport invites you to press Run).
@@ -2725,12 +2922,14 @@
   function toggleDemo(): void {
     const ex = demoExRef;
     if (!ex?.demo) return;
+    resetDieState();
     demoOn = !demoOn;
     board?.loadGraph(demoOn ? ex.build() : ex.demo.alt());
     controls?.resume();
     syncRunning();
   }
   function startBuild(ex: ExampleSpec): void {
+    resetDieState();
     board?.clear();
     demo = null;
     buildEx = ex;
@@ -3535,6 +3734,77 @@
       oncontextmenu={(e) => e.preventDefault()}
     >
       <canvas class="board-canvas" bind:this={canvasEl}></canvas>
+
+      <!-- IC-maker DIE EDITOR back bar (ADR 0006). Shown only while drilled INTO a frame: a
+           breadcrumb naming the IC + its package, a live seal advisory (does it compile / how many
+           leads are wired), and the three exits — Seal (validate + collapse to chip), Save (stash
+           the in-progress die + return), Back (return unchanged). Every exit restores the outer
+           board + camera. -->
+      {#if drill}
+        {@const pkg = framePackage(drill.frameTag)}
+        <div class="die-bar" role="region" aria-label="IC die editor">
+          <div class="die-crumb">
+            <span class="die-crumb-board">Board</span>
+            <span class="die-crumb-sep">▸</span>
+            <span class="die-crumb-here">
+              Die · {drill.name}
+              {#if pkg}
+                <span class="die-crumb-pkg">{pkg.archetype}-{pkg.pinCount}</span
+                >
+              {/if}
+            </span>
+          </div>
+          {#if dieStatus}
+            <div
+              class="die-status mono {dieStatus.sealable ? 'is-ok' : 'is-bad'}"
+              title={dieStatus.sealable
+                ? "This die compiles — ready to seal"
+                : "Wire a complete, reference-anchored circuit before sealing"}
+            >
+              {dieStatus.sealable ? "● solvable" : "○ not solvable"} ·
+              {dieStatus.used}/{dieStatus.total} pins
+            </div>
+          {/if}
+          <input
+            class="insp-name mono die-seal-name"
+            type="text"
+            placeholder="name (auto: CEC9xxx)"
+            bind:value={sealName}
+            maxlength="24"
+            aria-label="Name the sealed IC"
+            onkeydown={(e) => {
+              if (e.key === "Enter") dieSeal();
+            }}
+          />
+          <div class="die-actions">
+            <button
+              class="btn btn-ghost"
+              onclick={dieBack}
+              title="Discard nothing — return to the board; the frame stays buildable"
+            >
+              Back
+            </button>
+            <button
+              class="btn btn-ghost"
+              onclick={dieSave}
+              title="Keep this in-progress die and return to the board"
+            >
+              Save
+            </button>
+            <button
+              class="btn btn-accent"
+              onclick={dieSeal}
+              disabled={!dieStatus?.sealable}
+              title={dieStatus?.sealable
+                ? "Seal this die into a placeable IC where the frame sits"
+                : "The circuit must solve before it can be sealed"}
+            >
+              Seal ✓
+            </button>
+          </div>
+        </div>
+      {/if}
+
       <div class="board-overlay">
         <span class="scope-tag">{hint}</span>
         <span class="scope-tag">
@@ -3812,12 +4082,24 @@
               onchange={(e) => setLabelText(e.currentTarget.value)}
             />
           </div>
-          {#if isFrame(kind)}
-            <!-- IC maker (ADR 0006 / docs/ui/ic-maker-guide.md): a frame is a package outline
-                 the player wired a circuit into. Sealing collapses the frame + its connected
-                 circuit into one placeable sealed IC (lands in the bin and as an instance where
-                 the frame was). The name is optional — blank auto-assigns the next CEC9xxx. -->
-            <div class="insp-sub">seal as IC</div>
+          {#if isFrame(kind) && !drill}
+            <!-- IC maker (ADR 0006 / docs/ui/ic-maker-guide.md): a frame is an empty package. The
+                 primary flow is BUILD — drill INTO the frame to construct its die (the inner
+                 circuit) on its own canvas, then Seal from inside. The secondary "seal as IC" here
+                 collapses the frame + whatever is wired to it ON THE OUTER BOARD in place (the older
+                 inline-author path). Hidden while already inside a die (the back bar seals there).
+                 The name is optional — blank auto-assigns the next CEC9xxx. -->
+            <div class="insp-sub">build the IC inside</div>
+            <div class="insp-row">
+              <button
+                class="btn btn-accent insp-seal"
+                onclick={buildSelectedFrame}
+                title="Drill into this package and build its circuit on the die"
+              >
+                Build ▸
+              </button>
+            </div>
+            <div class="insp-sub">or seal in place</div>
             <div class="insp-row">
               <input
                 class="insp-name mono"
@@ -3832,7 +4114,7 @@
               />
             </div>
             <div class="insp-row">
-              <button class="btn btn-accent insp-seal" onclick={sealSelected}>
+              <button class="btn btn-ghost insp-seal" onclick={sealSelected}>
                 Seal as IC
               </button>
             </div>
@@ -5424,6 +5706,83 @@
   .insp-seal {
     flex: 1;
     width: 100%;
+  }
+
+  /* IC-maker DIE EDITOR back bar: a glass strip across the top of the board canvas while drilled
+     into a frame, holding the breadcrumb, the live seal advisory, the name field, and the three
+     exits. Positioned like the hotbar/overlay (over the canvas, below the value popover). */
+  .die-bar {
+    position: absolute;
+    z-index: 4;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: calc(100% - 24px);
+    padding: 6px 8px 6px 14px;
+    background: oklch(0.135 0.022 285 / 0.84);
+    backdrop-filter: blur(4px);
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    box-shadow:
+      0 0 0 1px oklch(0 0 0 / 0.3),
+      0 8px 22px -14px oklch(0 0 0 / 0.9),
+      inset 0 0 18px -10px var(--accent);
+  }
+  .die-crumb {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--font-display);
+    font-size: 13px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .die-crumb-board {
+    color: var(--dim);
+  }
+  .die-crumb-sep {
+    color: var(--faint);
+    font-size: 11px;
+  }
+  .die-crumb-here {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .die-crumb-pkg {
+    margin-left: 6px;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    text-transform: none;
+  }
+  .die-status {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+  }
+  .die-status.is-ok {
+    color: var(--ok);
+    border-color: color-mix(in oklch, var(--ok) 42%, transparent);
+  }
+  .die-status.is-bad {
+    color: var(--warn);
+    border-color: color-mix(in oklch, var(--warn) 42%, transparent);
+  }
+  .die-seal-name {
+    width: 150px;
+    flex: 0 0 auto;
+  }
+  .die-actions {
+    display: flex;
+    gap: 6px;
   }
 
   /* Potentiometer wiper: a continuous slider across the track (A … B). */
