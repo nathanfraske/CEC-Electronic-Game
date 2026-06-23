@@ -54,6 +54,16 @@ sim-core change, golden trivially safe**). Phased: (1) composite-internals topol
 to the abstraction ladder; (4) remake select behavioral ICs as compositions for live zoom (flash ADC
 first); (5) build-and-seal authoring (Tier C). **NEXT concrete step: phase 1.**
 
+Owner then added scope: a **full designable IC maker** (make arbitrary ICs, define pinouts + package
+formats) -> **`docs/adr/0006-user-defined-ics-packages-pinouts.md`** written. A user IC =
+`{ graph (the sub-circuit), package (archetype + pin-1), pins (port net -> numbered pin + name + role) }`,
+expanded by a **generalised `CEC_COMP`** (same seal-as-same-netlist determinism) and rendered from a
+**parametric package-format library** (DIP/SOIC/SOT-23/SC70/MSOP/QFP...). Built-ins become factory-preset
+user ICs (one expander, one package model). Package/pinout are presentation + node-binding only — no hash
+impact. Phases: package library -> user-IC model + generic expander -> pinout/package UI -> persistence +
+user part bin -> optional auto-glyph + Tier-A sealed-behavior backing. Both ADRs are design-only (no code
+yet); start with 0005 phase 1.
+
 ---
 
 ## 2026-06-23 (79) — 3-bit binary counter (CEC3161) + counter→DAC ramp generator

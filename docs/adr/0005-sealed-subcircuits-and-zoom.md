@@ -88,7 +88,9 @@ Adopt **seal-as-the-same-netlist** as the spine, surfaced by a **zoom-to-open** 
    gesture walks black-box -> analogy -> live discrete.
 4. **Remake selected behavioral ICs as compositions** for live zoom (owner-chosen; flash ADC the likely
    first — it has a vivid discrete form). Each remake is an ADR-0004-style golden check.
-5. **Build-and-seal authoring** (Tier C): the player-built, spec-verified, collapsed sealed part.
+5. **Build-and-seal authoring** (Tier C): the player-built, spec-verified, collapsed sealed part — the
+   full **IC maker** (arbitrary sub-circuits, user-defined pinouts, package formats) is specified in
+   **ADR 0006**.
 
 ## Notes
 
