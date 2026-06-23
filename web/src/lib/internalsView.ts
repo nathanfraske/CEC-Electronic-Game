@@ -52,6 +52,8 @@ export interface InternalsOpts {
   hPx: number;
   /** the board's bounded flow clock, for animating carriers along the wires. */
   phase: number;
+  /** the live-signal "hot" colour, skinned by lens (analogy water vs reality electron). */
+  accent: number;
 }
 
 /** Draw a small logic-gate body centred at (cx, cy). */
@@ -155,7 +157,7 @@ function partSymbol(
  * level and carry flow dots; each element draws its symbol tinted by its output level.
  */
 export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
-  const { internals, nodeV, pins, wPx, hPx, phase } = o;
+  const { internals, nodeV, pins, wPx, hPx, phase, accent } = o;
   const { elements, pinNodes, internalNodes, vccNode, gndNode } = internals;
   if (elements.length === 0) return;
 
@@ -229,7 +231,7 @@ export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
       const np = pos.get(nd);
       if (!np) continue;
       const lv = level(nd);
-      const col = mix(PALETTE.rail, PALETTE.cyan, lv);
+      const col = mix(PALETTE.rail, accent, lv);
       g.moveTo(ep.x, ep.y)
         .lineTo(np.x, np.y)
         .stroke({ width: 1.3, color: col, alpha: 0.45 + 0.45 * lv });
@@ -242,7 +244,7 @@ export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
         for (let d = 0; d < 3; d++) {
           const f = (((phase * 0.6 + d / 3) % 1) + 1) % 1;
           g.circle(ax + (bx - ax) * f, ay + (by - ay) * f, 0.9).fill({
-            color: PALETTE.cyan,
+            color: accent,
             alpha: 0.75 * lv,
           });
         }
@@ -260,8 +262,8 @@ export function drawCompositeInternals(g: Graphics, o: InternalsOpts): void {
     const el = elements[k]!;
     const ep = ePos[k]!;
     const out = level(el.nodes[0] ?? gndNode);
-    const fill = mix(0x141022, PALETTE.cyan, 0.14 + 0.4 * out);
-    const line = mix(PALETTE.border, PALETTE.cyan, 0.3 + 0.6 * out);
+    const fill = mix(0x141022, accent, 0.14 + 0.4 * out);
+    const line = mix(PALETTE.border, accent, 0.3 + 0.6 * out);
     if (el.type === T_GATE) gateSymbol(g, el.func, ep.x, ep.y, sym, fill, line);
     else partSymbol(g, el.type, ep.x, ep.y, sym, fill, line);
   }

@@ -5725,14 +5725,15 @@ class ComponentNode {
         : lens === "analogy" && hasAnalogy(this.kindTag)
           ? "analogy"
           : null;
-    // Zoom-to-open (ADR 0005): a sealed composite IC, viewed under the REALITY lens and zoomed in
-    // past INTERNALS_ZOOM, opens to its live internal sub-circuit — the real gates/resistors it is
-    // simulated as, animated from the same snapshot — instead of the black-box symbol.
+    // Zoom-to-open (ADR 0005): a sealed composite IC, zoomed in past INTERNALS_ZOOM under either
+    // non-schematic lens, opens to its live internal sub-circuit — the real gates/resistors it is
+    // simulated as, animated from the same snapshot — instead of the black-box symbol. The wires
+    // are skinned to the lens: water carriers (analogy) or electron drift (reality).
     const showInternals =
       !!internals &&
       internals.elements.length > 0 &&
       nodeV !== undefined &&
-      lens === "reality" &&
+      (lens === "reality" || lens === "analogy") &&
       zoom >= INTERNALS_ZOOM;
     if (showInternals && internals && nodeV !== undefined) {
       this.connectorGlyph.visible = false;
@@ -5744,6 +5745,7 @@ class ComponentNode {
         wPx: this.wPx,
         hPx: this.hPx,
         phase,
+        accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
