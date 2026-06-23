@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (91) — Die editor refinement: pins on the walls + user-labelable pins
+
+**State:** 🟢 built (agent) + gate-green (34 web tests); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner feedback on the die editor (screenshot): put the pins on the die edges + let the user name them.
+
+**1. Perimeter pins.** New `dieLayout(archetype, pinCount)` (packages.ts) — a LARGE footprint with the
+package's pins on the perimeter edges (dual -> left/right, sot23 -> bottom/top), **same pin numbering as
+`packageLayout`** (visual relayout only). The die editor now uses generated **die-frame kinds**
+(`dieFrameTag`/`isDieFrame` in graph.ts) with the `dieLayout` pins, so the leads sit on the walls and the
+interior is open to build in. Pin indices/numbers unchanged → `captureSeal`/`flattenUserIcs`/the sealed
+chip (which keeps the small `packageLayout` footprint) map straight through; seal-as-same-netlist intact.
+
+**2. Labelable pins.** Per-pin user names (default = pin number), click-to-edit in the die editor, carried
+through `captureSeal` into `UserIc.pinNames` and used as the sealed `PartKind` pins' labels (so a placed
+sealed chip shows the named pins). Presentation-only; never touches the netlist.
+
+**Tests (34 total, all green):** `dieLayout` count+numbering matches `packageLayout` for every package;
+die-frame kind uses perimeter pins + is distinct from the production frame; pin-name -> sealed-kind-label
+propagation (and default-to-number). Plus the existing re-kind-on-seal -> same-netlist. Check 0/0, lint,
+build green. No Rust change.
+
+**OWNER VISUAL REVIEW:** pin placement/spacing on the walls, the click-to-name affordance, named pins
+showing on the sealed chip.
+
+**Also committed this stop (separate, already pushed `1e5cf25`):** design-list note — connector types +
+board sealing (TODOS 43 + ADR 0006 future-direction).
+
+**NEXT (unchanged priority):** **persistence** (the in-memory WIP dies + IC registry don't survive a
+reload — required for "save and come back"); then the live zoomed-in view of a placed sealed chip;
+re-drill into a sealed chip to edit; tiers 2/4 (refsheet SVG).
+
+---
+
 ## 2026-06-23 (90) — IC maker: the DRILL-IN die editor (place -> Build -> inside -> Seal/Save)
 
 **State:** 🟢 built (agent) + gate-green + tested (17/17); merging to main. Branch `claude/kind-turing-hdelb3`.

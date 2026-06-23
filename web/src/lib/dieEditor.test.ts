@@ -5,8 +5,16 @@
 // collapse expanding to the SAME netlist as the inline circuit — are verifiable without a browser.
 // The navigation/rendering (drill in/out, the walls, the back bar) is UI and is NOT covered here.
 import { describe, it, expect } from "vitest";
-import { BoardGraph, framePackage } from "./graph";
+import {
+  BoardGraph,
+  framePackage,
+  isFrame,
+  isDieFrame,
+  dieFrameTag,
+  PART_KINDS,
+} from "./graph";
 import type { Component, GraphSnapshot } from "./graph";
+import { packageLayout, dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
 import {
   freshDieGraph,
@@ -52,8 +60,11 @@ describe("die editor — fresh die init", () => {
     expect(die!.snapshot.wires.length).toBe(0);
     const frame = die!.snapshot.components[0]!;
     expect(frame.id).toBe(die!.frameId);
-    expect(frame.kind).toBe("SOT23_6");
-    // The die frame carries the same package as the placed outer frame.
+    // The die frame is the INTERNAL perimeter variant of the placeable frame (pins on the walls),
+    // but still a frame that resolves to the SAME package as the placed outer frame.
+    expect(frame.kind).toBe(dieFrameTag("SOT23_6"));
+    expect(isFrame(frame.kind)).toBe(true);
+    expect(isDieFrame(frame.kind)).toBe(true);
     expect(framePackage(frame.kind)).toEqual({
       archetype: "SOT-23",
       pinCount: 6,
@@ -206,6 +217,130 @@ describe("die editor — seal + collapse (seal-as-same-netlist)", () => {
       expect(a!.types.length).toBe(2); // V + the IC's inner R
     } finally {
       unregisterUserIc("DIEPKG");
+    }
+  });
+});
+
+describe("packages — dieLayout (perimeter relayout)", () => {
+  // Every starter package: the die layout must carry the SAME pin numbers in the SAME index order
+  // as the production layout (only the positions differ), so a sealed die maps each lead straight
+  // through to the chip's matching pin (the seal-as-same-netlist contract). Also: the die is larger
+  // (roomy interior) and every pin sits on a perimeter EDGE (dx or dy at an extreme).
+  const cases: { archetype: string; pinCount: number }[] = [
+    { archetype: "SOT-23", pinCount: 3 },
+    { archetype: "SOT-23", pinCount: 5 },
+    { archetype: "SOT-23", pinCount: 6 },
+    { archetype: "VSSOP", pinCount: 8 },
+    { archetype: "DIP", pinCount: 8 },
+    { archetype: "DIP", pinCount: 14 },
+    { archetype: "DIP", pinCount: 16 },
+  ];
+
+  for (const { archetype, pinCount } of cases) {
+    it(`${archetype}-${pinCount}: same pin count + numbering/index order as packageLayout`, () => {
+      const prod = packageLayout(archetype, pinCount);
+      const die = dieLayout(archetype, pinCount);
+      expect(die.pins.length).toBe(prod.pins.length);
+      expect(die.pinCount).toBe(prod.pinCount);
+      // Index i -> the same package pin NUMBER in both layouts (the load-bearing invariant).
+      expect(die.pins.map((p) => p.number)).toEqual(
+        prod.pins.map((p) => p.number),
+      );
+    });
+
+    it(`${archetype}-${pinCount}: a roomy die with every pin on a perimeter edge`, () => {
+      const prod = packageLayout(archetype, pinCount);
+      const die = dieLayout(archetype, pinCount);
+      // The die body is at least as large as the production footprint (and, for multi-pin parts,
+      // strictly larger on the pin axis), so the interior is buildable.
+      expect(die.w).toBeGreaterThanOrEqual(prod.w);
+      expect(die.h).toBeGreaterThanOrEqual(prod.h);
+      // Every pin sits on an outer edge of the die's bounding box (dx in {0,w} or dy in {0,h}).
+      for (const p of die.pins) {
+        const onEdge =
+          p.dx === 0 || p.dx === die.w || p.dy === 0 || p.dy === die.h;
+        expect(onEdge).toBe(true);
+      }
+      // Pins are actually spread apart (no two share a cell) — the whole point of the relayout.
+      const cells = new Set(die.pins.map((p) => p.dx + "," + p.dy));
+      expect(cells.size).toBe(die.pins.length);
+    });
+  }
+
+  it("the generated die-frame kind uses the dieLayout pins (perimeter), distinct from the production frame", () => {
+    const prodKind = PART_KINDS["DIP8"]!;
+    const dieKind = PART_KINDS[dieFrameTag("DIP8")]!;
+    expect(prodKind).toBeDefined();
+    expect(dieKind).toBeDefined();
+    // Same number of pins + same labels (the package numbers), but a larger footprint.
+    expect(dieKind.pins.length).toBe(prodKind.pins.length);
+    expect(dieKind.pins.map((p) => p.label)).toEqual(
+      prodKind.pins.map((p) => p.label),
+    );
+    expect(dieKind.h).toBeGreaterThan(prodKind.h);
+    // The die-frame kind resolves to the same package and is recognised as a (die) frame.
+    expect(isFrame(dieFrameTag("DIP8"))).toBe(true);
+    expect(isDieFrame(dieFrameTag("DIP8"))).toBe(true);
+    expect(isDieFrame("DIP8")).toBe(false);
+  });
+});
+
+describe("die editor — user-labelled pins -> sealed-chip labels", () => {
+  it("carries the die frame's pin names through captureSeal onto the sealed kind's pin labels", () => {
+    // Build a sealable SOT-23-3 die (V -> pin1, pin2 -> R -> GND), then NAME two of its pads.
+    const g = new BoardGraph();
+    const die = freshDieGraph("SOT23_3")!;
+    g.restore(die.snapshot);
+    const frame = g.components.get(die.frameId)!;
+    const v = place(g, "V", 30, 8, 5);
+    const r = place(g, "R", 30, 12, 1000);
+    const gnd = place(g, "GND", 30, 16);
+    connect(g, v, 0, frame, 0); // V+ -> pin1 (index 0)
+    connect(g, v, 1, gnd, 0);
+    connect(g, frame, 1, r, 0); // pin2 (index 1) -> R.A
+    connect(g, r, 1, gnd, 0);
+    // Name pin index 0 "VCC" and pin index 2 "OUT"; leave index 1 unnamed (falls back to "2").
+    frame.pinNames = ["VCC", "", "OUT"];
+
+    const cap = captureSeal(g, die.frameId, "NAMEPKG");
+    expect(cap).not.toBeUndefined();
+    try {
+      const ic = getUserIc("NAMEPKG")!;
+      // The names rode through onto the UserIc.
+      expect(ic.pinNames).toEqual(["VCC", "", "OUT"]);
+      // ...and onto the placeable kind's pin LABELS, with the package number as the fallback.
+      const labels = PART_KINDS["NAMEPKG"]!.pins.map((p) => p.label);
+      expect(labels).toEqual(["VCC", "2", "OUT"]);
+    } finally {
+      unregisterUserIc("NAMEPKG");
+    }
+  });
+
+  it("a die with no pin names seals with the package numbers as labels (and no pinNames on the IC)", () => {
+    const g = new BoardGraph();
+    const die = freshDieGraph("SOT23_3")!;
+    g.restore(die.snapshot);
+    const frame = g.components.get(die.frameId)!;
+    const r = place(g, "R", 30, 8, 1000);
+    const v = place(g, "V", 30, 12, 5);
+    const gnd = place(g, "GND", 30, 16);
+    connect(g, v, 0, frame, 0);
+    connect(g, frame, 1, r, 0);
+    connect(g, r, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+
+    const cap = captureSeal(g, die.frameId, "PLAINPKG");
+    expect(cap).not.toBeUndefined();
+    try {
+      const ic = getUserIc("PLAINPKG")!;
+      expect(ic.pinNames).toBeUndefined();
+      expect(PART_KINDS["PLAINPKG"]!.pins.map((p) => p.label)).toEqual([
+        "1",
+        "2",
+        "3",
+      ]);
+    } finally {
+      unregisterUserIc("PLAINPKG");
     }
   });
 });

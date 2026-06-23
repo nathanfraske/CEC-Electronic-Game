@@ -137,3 +137,131 @@ export function packageLayout(
     pin1: { dx: pin1.dx, dy: pin1.dy },
   };
 }
+
+/**
+ * Cells between adjacent perimeter pins on a {@link dieLayout}, and the inset from each corner.
+ * A roomy spread (pins {@link DIE_PIN_PITCH} cells apart, {@link DIE_CORNER_INSET} in from the
+ * ends) so the die's walls read as a real package edge with the interior left empty for building —
+ * the inverse of {@link packageLayout}'s tight body. Presentation/geometry only.
+ */
+export const DIE_PIN_PITCH = 3;
+export const DIE_CORNER_INSET = 2;
+
+/** Span (in cells) an edge needs to seat `n` pins at {@link DIE_PIN_PITCH} with a corner inset on
+ * each end: `2*inset + (n-1)*pitch`. At least one pitch wide so a single-pin edge still has a body. */
+function edgeSpan(n: number): number {
+  return 2 * DIE_CORNER_INSET + Math.max(1, n - 1) * DIE_PIN_PITCH;
+}
+
+/** Dual die: pins down the LEFT edge (1..half, top->bottom) and up the RIGHT edge (half+1..N,
+ * bottom->top) — the classic DIP arrangement, spanning a roomy die. SAME pin numbering/order as
+ * {@link dualLayout}, so pin INDEX i is the same lead in both (the seal maps straight through). */
+function dualDie(pinCount: number): {
+  w: number;
+  h: number;
+  pins: PackagePin[];
+} {
+  const half = Math.max(1, Math.ceil(pinCount / 2));
+  const h = edgeSpan(half);
+  const w = edgeSpan(2); // a comfortable interior width (two-pitch-wide body)
+  const pins: PackagePin[] = [];
+  for (let i = 0; i < pinCount; i++) {
+    const n = i + 1;
+    if (n <= half) {
+      // left column, top -> bottom
+      pins.push({
+        number: n,
+        dx: 0,
+        dy: DIE_CORNER_INSET + (n - 1) * DIE_PIN_PITCH,
+      });
+    } else {
+      const k = n - half; // 1..(pinCount-half) up the right column
+      pins.push({
+        number: n,
+        dx: w,
+        dy: DIE_CORNER_INSET + (half - k) * DIE_PIN_PITCH,
+      });
+    }
+  }
+  return { w, h, pins };
+}
+
+/** SOT-23 die: pins along the BOTTOM edge (left->right, 1..bottom) then the TOP edge (right->left,
+ * bottom+1..N). SAME pin numbering/order as {@link sot23Layout}, so the index map is identical. */
+function sot23Die(pinCount: number): {
+  w: number;
+  h: number;
+  pins: PackagePin[];
+} {
+  const bottom = Math.ceil(pinCount / 2);
+  const top = pinCount - bottom;
+  const w = edgeSpan(Math.max(bottom, top, 1));
+  const h = edgeSpan(2);
+  const pins: PackagePin[] = [];
+  for (let i = 0; i < bottom; i++) {
+    pins.push({
+      number: i + 1,
+      dx: DIE_CORNER_INSET + i * DIE_PIN_PITCH,
+      dy: h,
+    });
+  }
+  for (let i = 0; i < top; i++) {
+    pins.push({
+      number: bottom + i + 1,
+      dx: DIE_CORNER_INSET + (top - 1 - i) * DIE_PIN_PITCH,
+      dy: 0,
+    });
+  }
+  return { w, h, pins };
+}
+
+/** SIP die: all pins along the bottom edge, left->right. SAME order as {@link sipLayout}. */
+function sipDie(pinCount: number): {
+  w: number;
+  h: number;
+  pins: PackagePin[];
+} {
+  const w = edgeSpan(pinCount);
+  const h = edgeSpan(2);
+  const pins: PackagePin[] = [];
+  for (let i = 0; i < pinCount; i++) {
+    pins.push({
+      number: i + 1,
+      dx: DIE_CORNER_INSET + i * DIE_PIN_PITCH,
+      dy: h,
+    });
+  }
+  return { w, h, pins };
+}
+
+/**
+ * The DIE-EDITOR footprint for a package: a LARGE body whose pins sit on the PERIMETER edges,
+ * spaced {@link DIE_PIN_PITCH} cells apart, with the interior left empty for authoring the IC's
+ * circuit (the inverse of {@link packageLayout}'s tight production body). It is a VISUAL relayout
+ * ONLY: the pins carry the SAME `number`s in the SAME index order as {@link packageLayout}, so a
+ * die frame's pin index i is the same lead as the sealed chip's pin index i — the seal-as-same-
+ * netlist contract and the (small) sealed footprint are unchanged. Never enters the solve or hash.
+ *
+ * Unknown archetypes fall back to a dual perimeter so the editor always has a die to draw.
+ */
+export function dieLayout(archetype: string, pinCount: number): PackageLayout {
+  const a = PACKAGE_ARCHETYPES[archetype];
+  const family: PackageFamily = a?.family ?? "dual";
+  const policy: DiePolicy = a?.policy ?? "expandable";
+  const geo =
+    family === "sot23"
+      ? sot23Die(pinCount)
+      : family === "sip"
+        ? sipDie(pinCount)
+        : dualDie(pinCount);
+  const pin1 = geo.pins.find((p) => p.number === 1) ?? { dx: 0, dy: 0 };
+  return {
+    archetype,
+    pinCount,
+    policy,
+    w: geo.w,
+    h: geo.h,
+    pins: geo.pins,
+    pin1: { dx: pin1.dx, dy: pin1.dy },
+  };
+}
