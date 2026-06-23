@@ -5,6 +5,24 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (94) — SOT-23 real (JEDEC) pinouts
+
+**State:** 🟢 gate-green (check 0/0, lint, build, 37 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner: the SOT packages' pins must sit where they are IRL. Fixed both the production footprint
+(`sot23Layout`) and the die relayout (`sot23Die`) via one shared slot table `sot23Slots(n)` in
+packages.ts: **-3** = bottom-left + bottom-right + **top-centre** (bottom-middle empty); **-5** = full
+bottom row (1-3) + **outer** top pins (4 top-right, 5 top-left, **top-middle empty**); **-6** = all six
+(unchanged). Pin **index→number order is unchanged** (positions only), so the seal-as-same-netlist
+mapping + every sealed sot23 chip are electrically identical; determinism untouched (no Rust). New tests
+lock the three pinouts (37 total).
+
+**NEXT (still the priority):** the sealed-chip **scaled miniature zoom** — see entry (93): a placed user
+IC has no live zoom-to-open view yet (`flattenUserIcs` inlines parts as flat elements; no
+`compositeInternals` entry). Build the authored-mini-board renderer (authored positions + wires, scaled
+to the chip, animated from the inlined elements' node voltages via the STRIDE id offset).
+
+---
+
 ## 2026-06-23 (93) — Die editor: pins on the border (single wall), bottom label, frame click-through
 
 **State:** 🟢 gate-green (check 0/0, lint, build, 34 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.

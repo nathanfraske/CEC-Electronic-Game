@@ -80,21 +80,50 @@ function dualLayout(pinCount: number): {
   return { w: 3, h: half, pins };
 }
 
-/** SOT-23 family layout: pins along the bottom row left-to-right, then the top row right-to-left
- * (so pin 1 is bottom-left and the highest pin is top-left), as the real packages are numbered. */
+/**
+ * The real SOT-23 family lead slots as `(col, row)` on the 3-wide body (`row 1` = bottom edge,
+ * `row 0` = top edge; `col 0` = left … `col 2` = right), by ascending pin number — matching the
+ * JEDEC pinouts the owner called out:
+ *   - **-3**: pin 1 bottom-left, pin 2 bottom-right, pin 3 **centered on top** (bottom-middle empty).
+ *   - **-5**: pins 1-3 along the bottom, then pin 4 **top-right** and pin 5 **top-left**
+ *     (the **top-middle slot is empty** — the gap a real SOT-23-5 has).
+ *   - **-6**: all six slots filled (bottom 1-3 left→right, top 4-6 right→left).
+ * Pin index `i` is pin number `i + 1`, so the seal's index→number order is unchanged (positions
+ * only). Presentation/geometry — never enters the solve or hash.
+ */
+function sot23Slots(pinCount: number): { col: number; row: number }[] {
+  if (pinCount === 3) {
+    return [
+      { col: 0, row: 1 }, // pin 1 — bottom-left
+      { col: 2, row: 1 }, // pin 2 — bottom-right
+      { col: 1, row: 0 }, // pin 3 — top-centre
+    ];
+  }
+  // The family's expansions: the bottom row fills left→right, then the rest fill the top row
+  // right→left. A 5-lead part omits the TOP-MIDDLE slot (col 1).
+  const bottom = Math.min(3, pinCount);
+  const slots: { col: number; row: number }[] = [];
+  for (let c = 0; c < bottom; c++) slots.push({ col: c, row: 1 });
+  const topCols = pinCount === 5 ? [2, 0] : [2, 1, 0];
+  for (let i = 0; i < pinCount - bottom; i++) {
+    slots.push({ col: topCols[i] ?? 0, row: 0 });
+  }
+  return slots;
+}
+
+/** SOT-23 family production footprint: the real {@link sot23Slots} positions on the tight 3-wide,
+ * 2-tall body (`dx = col`, `dy = row`). */
 function sot23Layout(pinCount: number): {
   w: number;
   h: number;
   pins: PackagePin[];
 } {
-  const bottom = Math.ceil(pinCount / 2);
-  const top = pinCount - bottom;
-  const w = Math.max(bottom, top, 1);
-  const pins: PackagePin[] = [];
-  for (let i = 0; i < bottom; i++) pins.push({ number: i + 1, dx: i, dy: 1 });
-  for (let i = 0; i < top; i++) {
-    pins.push({ number: bottom + i + 1, dx: top - 1 - i, dy: 0 });
-  }
+  const pins: PackagePin[] = sot23Slots(pinCount).map((s, i) => ({
+    number: i + 1,
+    dx: s.col,
+    dy: s.row,
+  }));
+  const w = pins.reduce((m, p) => Math.max(m, p.dx), 0) + 1;
   return { w, h: 2, pins };
 }
 
@@ -195,32 +224,23 @@ function dualDie(pinCount: number): {
   return { w, h, pins };
 }
 
-/** SOT-23 die: pins along the BOTTOM edge (left->right, 1..bottom) then the TOP edge (right->left,
- * bottom+1..N). SAME pin numbering/order as {@link sot23Layout}, so the index map is identical. */
+/** SOT-23 die: the real {@link sot23Slots} positions spread onto the roomy die — each slot column
+ * mapped to a pitch-spaced `dx`, and its row to the bottom (`dy = h`) or top (`dy = 0`) edge. SAME
+ * pin numbering/index order as {@link sot23Layout}, so the seal maps each lead straight through. */
 function sot23Die(pinCount: number): {
   w: number;
   h: number;
   pins: PackagePin[];
 } {
-  const bottom = Math.ceil(pinCount / 2);
-  const top = pinCount - bottom;
-  const w = edgeSpan(Math.max(bottom, top, 1)); // long axis: pins along each row, spread by pitch
+  const slots = sot23Slots(pinCount);
+  const maxCol = slots.reduce((m, s) => Math.max(m, s.col), 0);
+  const w = edgeSpan(maxCol + 1); // long axis: the slot columns spread by pitch
   const h = DIE_INTERIOR_SPAN; // cross axis: the roomy build height between the two rows
-  const pins: PackagePin[] = [];
-  for (let i = 0; i < bottom; i++) {
-    pins.push({
-      number: i + 1,
-      dx: DIE_CORNER_INSET + i * DIE_PIN_PITCH,
-      dy: h,
-    });
-  }
-  for (let i = 0; i < top; i++) {
-    pins.push({
-      number: bottom + i + 1,
-      dx: DIE_CORNER_INSET + (top - 1 - i) * DIE_PIN_PITCH,
-      dy: 0,
-    });
-  }
+  const pins: PackagePin[] = slots.map((s, i) => ({
+    number: i + 1,
+    dx: DIE_CORNER_INSET + s.col * DIE_PIN_PITCH,
+    dy: s.row === 1 ? h : 0,
+  }));
   return { w, h, pins };
 }
 
