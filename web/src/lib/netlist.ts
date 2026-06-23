@@ -11,6 +11,7 @@
 import {
   AC_DEFAULT_AMP,
   BoardGraph,
+  PART_KINDS,
   endpointKey,
   isJunctionRef,
 } from "./graph";
@@ -25,7 +26,7 @@ import {
   PARAM_STRIDE,
 } from "./tiers";
 import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
-import { flattenUserIcs } from "./userIc";
+import { flattenUserIcs, getUserIc, type FlattenRecord } from "./userIc";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -567,6 +568,54 @@ export interface CompositeInternals {
   elements: CompositeSubElement[];
 }
 
+/** One inner part of a sealed USER IC, for the zoom-to-open mini-board: the authored discrete part
+ * with its authored grid position/rotation/value and resolved per-pin node indices. Unlike a built-in
+ * composite's {@link CompositeSubElement} (a generic-grid sub-element), this keeps the real kind tag
+ * and the player's drawn position so the view can render the EXACT circuit's glyphs in place. */
+export interface UserIcInnerPart {
+  /** the inner component's kind tag (a real part — keys `PART_KINDS`). */
+  kind: string;
+  /** the authored anchor cell (the inner graph's component cell, the part's footprint top-left). */
+  cell: { col: number; row: number };
+  /** the authored orientation (90° clockwise steps, 0..3). */
+  rot: number;
+  /** the authored primary scalar (`Component.value`), so the glyph reads e.g. a switch's state. */
+  value: number;
+  /** resolved node index per pin (by pin index), into `node_voltages` / the snapshot `state`. */
+  nodes: number[];
+}
+
+/** One authored wire of a sealed USER IC, for the zoom-to-open mini-board: its two endpoint cells
+ * (resolved from the pin/junction the wire touches) and a node to colour it by live level. */
+export interface UserIcInnerWire {
+  /** the authored cell of the `from` endpoint (a pin's cell, or a junction's cell). */
+  from: { col: number; row: number };
+  /** the authored cell of the `to` endpoint. */
+  to: { col: number; row: number };
+  /** a node index (one endpoint's net) for colouring the wire by voltage level. */
+  node: number;
+}
+
+/**
+ * The authored inner circuit of one sealed USER IC instance, for the zoom-to-open mini-board (the
+ * owner's "show a miniature version of your exact circuit inside, scaled properly"). Built from the
+ * IC's authored sub-graph plus the flatten id offset, so every node index references the SAME
+ * `node_voltages` the rest of the renderer reads. Render-side only — never crosses to the core, never
+ * hashed (exactly like {@link CompositeInternals}).
+ */
+export interface UserIcInternals {
+  /** the inner parts at their authored positions (every inner component except the frame). */
+  parts: UserIcInnerPart[];
+  /** the authored wires (endpoint cells + a node for colouring). */
+  wires: UserIcInnerWire[];
+  /** node per EXTERNAL package pin index (the placed instance's pins), for anchoring leads. */
+  pinNodes: number[];
+  /** the authored extent in cells (incl. the frame's pins), for the fit-to-footprint scale. */
+  bbox: { minCol: number; minRow: number; maxCol: number; maxRow: number };
+  /** a reference low node for the voltage "level" normalisation (0 if unknown). */
+  gndNode: number;
+}
+
 export interface BuiltNetlist {
   nodeCount: number;
   types: Uint8Array;
@@ -637,6 +686,14 @@ export interface BuiltNetlist {
    */
   compositeInternals: Map<number, CompositeInternals>;
   /**
+   * component id → the authored inner circuit of a sealed USER IC instance, for the zoom-to-open
+   * mini-board: the real inner parts at their authored positions + the authored wires, each with
+   * node indices into the SAME `node_voltages` the rest of the renderer reads (resolved via the
+   * flatten id offset). The user-IC twin of {@link compositeInternals}. Absent for non-user-IC parts.
+   * Render-side only — never crosses to the core, never hashed.
+   */
+  userIcInternals: Map<number, UserIcInternals>;
+  /**
    * Net-label display name per node index (into `node_voltages`): a node carrying
    * one or more {@link NetLabel}s reports that name (e.g. `VCC`) so the scope and
    * telemetry can show it instead of `Node 3`. Built from the labels after node
@@ -666,7 +723,10 @@ export function buildNetlist(
   // Seal expansion (IC maker, ADR 0006): inline any placed sealed-IC instance's authored inner
   // circuit before compiling, so the sim sees the real discrete parts (seal-as-same-netlist). A
   // strict no-op when no sealed IC is placed, so every normal circuit (and the golden) is unchanged.
-  graph = flattenUserIcs(graph);
+  // The `flatSink` collects each instance's id offset (render-only — it does not change the flatten's
+  // element output) so we can build the zoom-to-open mini-board map (`userIcInternals`) below.
+  const flatSink: FlattenRecord[] = [];
+  graph = flattenUserIcs(graph, flatSink);
   // Union-find over wire endpoints: pins (keyed "componentId:pinIndex") AND
   // junctions (keyed "j<id>"). A junction is not an element — it only joins the
   // wire-ends that meet at it into one net, exactly like a wire does.
@@ -1370,6 +1430,116 @@ export function buildNetlist(
     }
   }
 
+  // Zoom-to-open mini-board (the owner's "show a miniature version of your exact circuit inside"):
+  // for each placed sealed USER IC instance, record its authored inner circuit — the real inner parts
+  // at their authored positions + the authored wires — with node indices into THIS netlist's
+  // `node_voltages` (resolved via the flatten id offset `flatSink` captured above). Render-only: it
+  // reads only the resolved node numbering, never an element array, so the netlist crossing to the
+  // core (and the golden) is unchanged. Empty unless a user IC is placed (`flatSink` is empty then).
+  const userIcInternals = new Map<number, UserIcInternals>();
+  for (const rec of flatSink) {
+    const def = getUserIc(rec.tag);
+    if (!def) continue;
+    const o = rec.offset;
+    // Reconstruct the IC's authored sub-graph so its pin/junction geometry helpers are available
+    // (the snapshot is plain data). The frame is included so its pins frame the bbox + anchor leads.
+    const innerGraph = new BoardGraph();
+    innerGraph.restore(def.graph);
+    // An inner endpoint's FLATTENED key: the frame's pins are the placed instance's pins (same
+    // index); every other inner component/junction is offset by `o`. Mirrors `flattenUserIcs`'s remap
+    // so the resolved net matches the compiled netlist exactly.
+    const flatKey = (e: Endpoint): string =>
+      isJunctionRef(e)
+        ? endpointKey({ junctionId: e.junctionId + o })
+        : endpointKey({
+            componentId:
+              e.componentId === def.frameId
+                ? rec.instanceId
+                : e.componentId + o,
+            pinIndex: e.pinIndex,
+          });
+    const nodeOfEndpoint = (e: Endpoint): number =>
+      nodeIndex.get(find(flatKey(e))) ?? 0;
+    // The authored cell of a wire endpoint (a pin's absolute cell, or a junction's cell), in the
+    // inner graph's own coordinates — what the mini-board lays out and scales.
+    const cellOfEndpoint = (e: Endpoint): { col: number; row: number } => {
+      const c = innerGraph.endpointCell(e);
+      return c ? { col: c.col, row: c.row } : { col: 0, row: 0 };
+    };
+
+    // Parts: every inner component except the frame, at its authored cell/rot/value, with each pin
+    // resolved to its node via the flattened key (so the glyph animates from the live snapshot).
+    const parts: UserIcInnerPart[] = [];
+    for (const comp of def.graph.components) {
+      if (comp.id === def.frameId) continue;
+      const kind = PART_KINDS[comp.kind];
+      if (!kind) continue;
+      parts.push({
+        kind: comp.kind,
+        cell: { col: comp.cell.col, row: comp.cell.row },
+        rot: comp.rot,
+        value: comp.value,
+        nodes: kind.pins.map((p) =>
+          nodeOfEndpoint({ componentId: comp.id, pinIndex: p.index }),
+        ),
+      });
+    }
+    // Wires: authored endpoint cells + a node (the `from` endpoint's net) for level colouring.
+    const wires: UserIcInnerWire[] = def.graph.wires.map((w) => ({
+      from: cellOfEndpoint(w.from),
+      to: cellOfEndpoint(w.to),
+      node: nodeOfEndpoint(w.from),
+    }));
+    // External pin nodes: the placed instance's per-pin nodes (the package boundary leads). The
+    // instance survives the flatten as a no-element hub, so it is present; guard defensively anyway.
+    const instComp = graph.components.get(rec.instanceId);
+    const instKind = instComp ? graph.kindOf(instComp) : undefined;
+    const pinNodes = instKind
+      ? instKind.pins.map(
+          (p) => nodeIndex.get(find(key(rec.instanceId, p.index))) ?? 0,
+        )
+      : [];
+    // Authored extent over every inner component's pin cells + junction cells (frame included), so
+    // the fit-to-footprint scale spans the whole drawn circuit.
+    let minCol = Infinity;
+    let minRow = Infinity;
+    let maxCol = -Infinity;
+    let maxRow = -Infinity;
+    const grow = (c: { col: number; row: number }): void => {
+      if (c.col < minCol) minCol = c.col;
+      if (c.row < minRow) minRow = c.row;
+      if (c.col > maxCol) maxCol = c.col;
+      if (c.row > maxRow) maxRow = c.row;
+    };
+    for (const comp of innerGraph.components.values()) {
+      const kind = innerGraph.kindOf(comp);
+      if (!kind) continue;
+      for (const p of kind.pins) grow(innerGraph.pinCell(comp, p));
+    }
+    for (const j of innerGraph.junctions.values()) grow(j.cell);
+    if (!isFinite(minCol)) {
+      minCol = 0;
+      minRow = 0;
+      maxCol = 1;
+      maxRow = 1;
+    }
+    // A reference low node for level normalisation: the inner GND part's net if one is present, else
+    // node 0 (the netlist's ground).
+    let gndNode = 0;
+    for (const comp of def.graph.components) {
+      if (comp.kind !== "GND") continue;
+      gndNode = nodeOfEndpoint({ componentId: comp.id, pinIndex: 0 });
+      break;
+    }
+    userIcInternals.set(rec.instanceId, {
+      parts,
+      wires,
+      pinNodes,
+      bbox: { minCol, minRow, maxCol, maxRow },
+      gndNode,
+    });
+  }
+
   const sig =
     nodeCount +
     "|" +
@@ -1409,6 +1579,7 @@ export function buildNetlist(
     legsOfComponent,
     nodesOfComponent,
     compositeInternals,
+    userIcInternals,
     nodeNames,
     nodeColors,
     floatingSources,

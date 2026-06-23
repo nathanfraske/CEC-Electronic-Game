@@ -35,7 +35,7 @@ import {
   type Wire,
   type GraphSnapshot,
 } from "./graph";
-import { captureSeal } from "./userIc";
+import { captureSeal, isUserIc } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
@@ -53,7 +53,8 @@ import { apparentFreq, blurFactor, mix, setStudsVisible } from "./tierKit";
 import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
 import { drawCompositeInternals } from "./internalsView";
-import type { CompositeInternals } from "./netlist";
+import { drawUserIcInternals } from "./userIcInternalsView";
+import type { CompositeInternals, UserIcInternals } from "./netlist";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -530,6 +531,11 @@ export class Board {
   // netlist, so a sealed chip can open to its live sub-circuit when zoomed in under the reality
   // lens (ADR 0005). Refreshed on rebuild (setCompositeInternals); render-only, never hashed.
   private compositeInternals?: Map<number, CompositeInternals>;
+  // Sealed USER-IC inner circuits (component id → the authored parts/wires + node indices) from the
+  // netlist, so a placed sealed chip opens to a scaled miniature of the EXACT circuit the player
+  // drew when zoomed in (the owner's zoom-to-open ask). Refreshed on rebuild (setUserIcInternals);
+  // render-only, never hashed.
+  private userIcInternals?: Map<number, UserIcInternals>;
   // Per-node pinned colour overrides (node index → PIXI hex int) from the net
   // labels' `color`. When a node is present here the renderer paints its whole net
   // this colour instead of the voltage colour. Refreshed on rebuild (setNodeColors);
@@ -1228,6 +1234,14 @@ export class Board {
     this.compositeInternals = map ?? undefined;
   }
 
+  /** Install the sealed USER-IC inner circuits (component id → {@link UserIcInternals}) from the
+   * netlist, so a placed sealed chip can open to a scaled miniature of its exact authored circuit
+   * when zoomed in (the owner's zoom-to-open ask). Refreshed whenever the netlist rebuilds;
+   * render-only. */
+  setUserIcInternals(map: Map<number, UserIcInternals> | null): void {
+    this.userIcInternals = map ?? undefined;
+  }
+
   /** Install the per-node colour overrides (node index → PIXI hex int) from the
    * netlist's labelled-net colours, so a pinned net paints its chosen colour
    * instead of its voltage colour. Refreshed whenever the netlist rebuilds. */
@@ -1902,6 +1916,7 @@ export class Board {
         this.world.scale.x,
         this.compositeInternals?.get(id),
         snap.state,
+        this.userIcInternals?.get(id),
       );
     }
 
@@ -5973,6 +5988,10 @@ class ComponentNode {
   // The full-panel analogy/reality illustration, centred on the part and shown only
   // when the lens + zoom call for it (below the schematic glyph so pin dots sit on top).
   private readonly tierGlyph = new Graphics();
+  // The zoom-to-open mini-board's inner-part glyphs (a pool of scaled child Graphics, one per inner
+  // part). Lives under the rotated glyph holder so the miniature inherits the instance's rotation;
+  // populated by `drawUserIcInternals` only for a sealed USER IC zoomed in (hidden otherwise).
+  private readonly userIcGlyphs = new Container();
   private readonly glyph = new Graphics();
   private readonly failBox = new Graphics();
   private readonly label: Text;
@@ -6013,6 +6032,10 @@ class ComponentNode {
     this.glyphHolder.addChild(this.connectorGlyph);
     this.glyphHolder.addChild(this.tierGlyph);
     this.glyphHolder.addChild(this.glyph);
+    // The mini-board's inner-part glyphs sit ABOVE the wires drawn into `glyph` (symbols on top of
+    // their traces, like internalsView) but start hidden — only a zoomed-in sealed USER IC shows them.
+    this.userIcGlyphs.visible = false;
+    this.glyphHolder.addChild(this.userIcGlyphs);
     this.view.addChild(this.glyphHolder);
     // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
     // upright; positioned at the rotated pin and shown only at the deepest zoom.
@@ -6180,9 +6203,14 @@ class ComponentNode {
     zoom: number,
     internals?: CompositeInternals,
     nodeV?: Float64Array,
+    userIc?: UserIcInternals,
   ): void {
     const g = this.glyph;
     g.clear();
+    // Default the mini-board glyphs hidden every frame; the zoom-to-open USER-IC branch below turns
+    // them on (via `drawUserIcInternals`). So a chip that scrolls out of zoom-to-open, or any
+    // non-user-IC part, never leaves stale inner glyphs showing.
+    this.userIcGlyphs.visible = false;
 
     // LOD: zoomed in under an analogy/reality lens, the part morphs into its
     // full-panel tier illustration (centred on the part, animated from the same live
@@ -6205,6 +6233,17 @@ class ComponentNode {
       nodeV !== undefined &&
       (lens === "reality" || lens === "analogy") &&
       zoom >= INTERNALS_ZOOM;
+    // Zoom-to-open for a sealed USER IC: zoomed in past INTERNALS_ZOOM under a non-schematic lens, a
+    // placed sealed chip opens to a scaled miniature of the EXACT circuit the player authored — its
+    // real part glyphs at their authored positions + the authored wires, animated from the same
+    // snapshot — instead of the black-box symbol. (A user IC is never a CEC_COMP, so `showInternals`
+    // above is false for it; the two zoom-to-open paths are mutually exclusive.)
+    const showUserIc =
+      !!userIc &&
+      isUserIc(this.kindTag) &&
+      nodeV !== undefined &&
+      (lens === "reality" || lens === "analogy") &&
+      zoom >= INTERNALS_ZOOM;
     if (showInternals && internals && nodeV !== undefined) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
@@ -6216,6 +6255,19 @@ class ComponentNode {
         hPx: this.hPx,
         phase,
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
+      });
+    } else if (showUserIc && userIc && nodeV !== undefined) {
+      this.connectorGlyph.visible = false;
+      this.tierGlyph.visible = false;
+      drawUserIcInternals(g, {
+        internals: userIc,
+        nodeV,
+        pins: this.pinPositions,
+        wPx: this.wPx,
+        hPx: this.hPx,
+        phase,
+        accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
+        partLayer: this.userIcGlyphs,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
@@ -6325,7 +6377,7 @@ class ComponentNode {
     // labels (the package number or the player's name) show at the working die zoom.
     const showPins = isDieFrame(this.kindTag)
       ? zoom >= TIER_ZOOM
-      : (tier !== null || showInternals) && zoom >= DETAIL_ZOOM;
+      : (tier !== null || showInternals || showUserIc) && zoom >= DETAIL_ZOOM;
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];

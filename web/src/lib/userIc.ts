@@ -123,6 +123,20 @@ export function unregisterUserIc(tag: string): void {
   delete PART_KINDS[tag];
 }
 
+/** One flatten record: the placed instance id, the id offset its inner parts were inlined at, and
+ * its kind tag. Collected via the optional `sink` of {@link flattenUserIcs} so a render-only caller
+ * (the zoom-to-open mini-board) can map an inner component's authored id (`innerId`) to its
+ * flattened netlist id (`innerId + offset`) and read its live state — WITHOUT changing the flatten's
+ * element output. */
+export interface FlattenRecord {
+  /** the placed sealed-IC component id (the instance on the outer board). */
+  instanceId: number;
+  /** the id offset its inner components/wires/junctions were inlined at (a multiple of STRIDE). */
+  offset: number;
+  /** the instance's kind tag (keys {@link getUserIc}). */
+  tag: string;
+}
+
 /**
  * Inline every placed sealed-IC instance's inner circuit into a copy of `graph`, ready for
  * `buildNetlist`. For each instance: its inner components/wires are added with offset ids, and each
@@ -130,8 +144,17 @@ export function unregisterUserIc(tag: string): void {
  * external board net and the inner net become one (the pad-to-lead fusion). The instance itself stays
  * as a no-element hub (its kind has no `TYPE_OF`). A strict no-op (returns the input) when no sealed
  * IC is placed, so normal circuits are unaffected.
+ *
+ * The optional `sink` is filled with one {@link FlattenRecord} per processed instance (in id order),
+ * exposing each instance's id offset to a render-only caller without altering the returned graph or
+ * the element arrays it compiles to. When there are no sealed ICs the early no-op return leaves
+ * `sink` untouched (empty) and returns the input unchanged — so the element output stays
+ * byte-identical to today in every case.
  */
-export function flattenUserIcs(graph: BoardGraph): BoardGraph {
+export function flattenUserIcs(
+  graph: BoardGraph,
+  sink?: FlattenRecord[],
+): BoardGraph {
   let any = false;
   for (const c of graph.components.values()) {
     if (REGISTRY.has(c.kind)) {
@@ -159,6 +182,10 @@ export function flattenUserIcs(graph: BoardGraph): BoardGraph {
     const inner = def.graph;
     const o = off;
     off += STRIDE;
+    // Expose this instance's id offset to a render-only caller (the zoom-to-open mini-board). Pushing
+    // here does NOT touch the element arrays the flatten compiles to — it only records the mapping
+    // already computed above, so the netlist crossing the wasm boundary (and the golden) is unchanged.
+    sink?.push({ instanceId: inst.id, offset: o, tag: inst.kind });
     // An inner endpoint -> outer: the frame's pins become the placed instance's pins (same index);
     // every other inner component/junction is offset into a private id range.
     const remap = (e: Endpoint): Endpoint =>

@@ -5,6 +5,62 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-23 (95) — Sealed USER-IC zoom-to-open: live scaled miniature of the exact authored circuit
+
+**State:** 🟢 gate-green (fmt/clippy clean; **188 sim-core tests, golden `0xeaac_3764_99e4_fa24` unchanged**;
+web check 0/0, lint clean, **38 vitest**, build OK). Branch `claude/kind-turing-hdelb3`. NOT pushed, no PR
+(owner reviews/merges).
+
+**The owner's "scale it properly" ask is DONE.** A placed sealed USER IC now opens — zoomed past
+`INTERNALS_ZOOM` under the reality OR analogy lens — to a **faithful, scaled miniature of the EXACT inner
+circuit the player drew**: the real component glyphs at their authored positions + the authored wires,
+animated live from the same per-frame snapshot, lens-skinned. This mirrors the built-in composite
+(`compositeInternals`) zoom-to-open plumbing but lays parts at AUTHORED positions using the real `drawGlyph`
+(not the generic grid `internalsView` uses).
+
+**How it works (the data path).** `flattenUserIcs(graph, sink?)` already inlines a sealed instance's inner
+parts at id `innerId + STRIDE·k`; it now takes an OPTIONAL `FlattenRecord[]` sink that records each
+instance's `{instanceId, offset, tag}` — **element output byte-identical** (the no-op early return leaves the
+sink empty). `buildNetlist` passes a sink and, after the element/node build, fills a new render-only
+`BuiltNetlist.userIcInternals` map: for each record it reconstructs the IC's authored sub-graph (for
+pin/junction cell geometry), and records each inner part's authored cell/rot/value + per-pin node indices
+(resolved with the SAME `nodeIndex.get(find(flatKey(e)))` the netlist uses, `flatKey` mirroring the flatten
+remap), the authored wires (endpoint cells + a node for colouring), the external instance pin nodes, the
+authored bbox (incl. frame pins), and a GND reference node. **This map never crosses the wasm boundary and is
+never hashed** (exactly like `compositeInternals`).
+
+**The renderer (`web/src/lib/userIcInternalsView.ts`, new).** `drawUserIcInternals(g, opts)` fits the bbox
+(authored cells × PITCH) into the footprint at a single uniform scale with an inset margin, centred. Each
+inner part draws its **REAL glyph** into a pooled scaled child Graphics (`partLayer` — pins at the part's
+rotated cell offsets at unit PITCH, then `.scale.set(s)` + `.position.set(...)`): the **render-big-then-scale
+trick** the tier illustration uses, so the drawers' fixed-pixel detail (lead insets, zigzag amplitude) stays
+in proportion. Wires + external-pin anchors draw straight into `g`, coloured `rail→accent` by node level with
+flow carriers (the `internalsView` colour/flow approach). Per-part glyph gets a live `vAcross` (no per-inner
+current attribution — the wire carriers tell the flow story).
+
+**Wiring.** `board.ts`: `setUserIcInternals` (beside `setCompositeInternals`) + a `userIcGlyphs` Container per
+`ComponentNode` (under the rotated glyph holder, so the miniature inherits the instance's rotation; hidden by
+default each frame, recursively destroyed with the node). A new `showUserIc` branch in `ComponentNode.update`
+(gated `isUserIc(kind) && has-entry && nodeV && reality|analogy && zoom≥INTERNALS_ZOOM`), with a new optional
+`userIc` arg threaded through `update(...)`. `App.svelte`: `board?.setUserIcInternals(...)` in `rebuildNetlist`.
+
+**Files:** `web/src/lib/userIc.ts` (sink param + `FlattenRecord`), `web/src/lib/netlist.ts` (types + map +
+build), `web/src/lib/userIcInternalsView.ts` (NEW renderer), `web/src/lib/board.ts` (field + setter + branch +
+container + threaded arg), `web/src/App.svelte` (setter call), `web/src/lib/netlist.test.ts` (new mini-board +
+seal-as-same-netlist test).
+
+**Determinism check (explicit):** sim-core `cargo test` 188/188 with `golden_snapshot_hash_is_stable` green
+(`0xeaac_3764_99e4_fa24`); `netlist.test.ts` asserts the sealed circuit's crossing arrays (`types`/`values`)
+are byte-identical to the inline reference AND that `userIcInternals` carries the inner resistor with resolved
+nodes. The whole feature is presentation/render-only.
+
+**OWNER VISUAL REVIEW:** zoom into a placed sealed chip under reality + analogy — confirm the miniature reads
+as YOUR exact circuit (parts in place, wires out to the leads), the fit/scale + inset margins look right, and
+the live colour/flow animates. Tune `INTERNALS_ZOOM`, the inset, or add per-inner-part current attribution if
+you want richer per-glyph flow.
+
+---
+
 ## 2026-06-23 (94) — SOT-23 real (JEDEC) pinouts
 
 **State:** 🟢 gate-green (check 0/0, lint, build, 37 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.

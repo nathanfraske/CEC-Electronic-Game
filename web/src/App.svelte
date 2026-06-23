@@ -1742,6 +1742,9 @@
         // Composite-IC internals (component id → sub-circuit topology) so a sealed chip can open
         // to its live internals when zoomed in under the reality lens (ADR 0005, zoom-to-open).
         board?.setCompositeInternals(nl ? nl.compositeInternals : null);
+        // Sealed USER-IC inner circuits (component id → authored parts/wires) so a placed sealed
+        // chip opens to a scaled miniature of the exact circuit the player drew, when zoomed in.
+        board?.setUserIcInternals(nl ? nl.userIcInternals : null);
         // Surface the net-label names (node index → name) so the scope legend and
         // the telemetry "Nodes" list can show `VCC` instead of `Node 3`.
         board?.setNetNames(nl ? nl.nodeNames : null);
