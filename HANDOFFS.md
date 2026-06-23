@@ -42,8 +42,17 @@ valves → device → silicon) and the **info-drawer tiers** (`schematic`/`analo
 `infoDiagram.ts` / `analogyDrawers.ts` / `detailDrawers.ts`). The deep question (the ideation flags it):
 the **seal's determinism/hash contract** — a sealed block must simulate identically whether sealed or
 expanded (the composition expanders like `CEC_COMP` already do exactly this for the gate ICs; the seal is
-the generalisation + a zoom UI). Needs a design pass / ADR before code. This is big and architectural —
-the agent is discussing scope/approach with the owner now; do NOT start building it blind.
+the generalisation + a zoom UI).
+
+**Design pass DONE — owner picked "ADR first" -> `docs/adr/0005-sealed-subcircuits-and-zoom.md` written.**
+Decision: **seal-as-the-same-netlist** (the seal is a *rendering*, not a second model — sealed and opened
+are the same expanded netlist, so determinism is free) + a **zoom-to-open** board view that is **almost
+entirely web-side** (the sim already solves the real elements; the web already has the snapshot — only
+`buildNetlist` needs to record each composite's sub-element/sub-node topology for the renderer; **no
+sim-core change, golden trivially safe**). Phased: (1) composite-internals topology in `buildNetlist`;
+(2) zoom-to-open renderer, prototype on the half-adder + R-2R DAC; (3) generalise across `CEC_COMP` + tie
+to the abstraction ladder; (4) remake select behavioral ICs as compositions for live zoom (flash ADC
+first); (5) build-and-seal authoring (Tier C). **NEXT concrete step: phase 1.**
 
 ---
 
