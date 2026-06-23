@@ -30,6 +30,7 @@ import {
   type GraphSnapshot,
   type Cell,
 } from "./graph";
+import { dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
 
 /**
@@ -91,15 +92,15 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
 }
 
 /**
- * The buildable-interior box (the "walls") for a die, in grid cells: the TIGHT bounding box of the
- * die frame's package leads. The renderer draws this as the boundary and the soft-containment check
- * keeps placement inside it. Returns undefined if `frameId` isn't a frame in the snapshot (so a
- * graph with no die has no walls to draw).
+ * The buildable-interior box (the "walls") for a die, in grid cells: the package BODY box, anchored
+ * at the frame and extending to {@link dieLayout}'s `w × h`. The renderer draws this as the boundary
+ * and the soft-containment check keeps placement inside it. Returns undefined if `frameId` isn't a
+ * frame in the snapshot (so a graph with no die has no walls to draw).
  *
- * Because the box hugs the leads exactly, every package lead lands ON a wall (the leads ride the
- * border on all sides — left/right columns for a dual, top/bottom rows for a SOT), and the span
- * between the pinned edges ({@link dieLayout}, sized to the package's real proportions) is the
- * build interior.
+ * The leads sit ON the edge they belong to (left/right columns for a dual, top/bottom rows for a
+ * SOT) but are inset from the CORNERS by `DIE_CORNER_INSET` — `dieLayout` builds that corner margin
+ * into `w`/`h`, so the body extends past the outermost leads on the lead-row axis, exactly as a real
+ * package's body extends past its end pins (the leads are never jammed into the corners).
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
@@ -109,23 +110,14 @@ export function dieBounds(
   | undefined {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return undefined;
-  const k = PART_KINDS[frame.kind];
-  if (!k || k.pins.length === 0) return undefined;
-  let minDx = Infinity;
-  let minDy = Infinity;
-  let maxDx = -Infinity;
-  let maxDy = -Infinity;
-  for (const p of k.pins) {
-    minDx = Math.min(minDx, p.dx);
-    minDy = Math.min(minDy, p.dy);
-    maxDx = Math.max(maxDx, p.dx);
-    maxDy = Math.max(maxDy, p.dy);
-  }
+  const pkg = framePackage(frame.kind);
+  if (!pkg) return undefined;
+  const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
   return {
-    minCol: frame.cell.col + minDx,
-    minRow: frame.cell.row + minDy,
-    maxCol: frame.cell.col + maxDx,
-    maxRow: frame.cell.row + maxDy,
+    minCol: frame.cell.col,
+    minRow: frame.cell.row,
+    maxCol: frame.cell.col + w,
+    maxRow: frame.cell.row + h,
   };
 }
 

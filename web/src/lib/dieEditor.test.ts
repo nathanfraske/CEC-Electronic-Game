@@ -94,30 +94,38 @@ describe("die editor — fresh die init", () => {
 });
 
 describe("die editor — bounds (walls)", () => {
-  it("walls hug the package leads so every lead sits ON the wall", () => {
-    const die = freshDieGraph("SOT23_6")!;
-    const b = dieBounds(die.snapshot, die.frameId)!;
-    expect(b).not.toBeUndefined();
-    const frame = die.snapshot.components[0]!;
-    // A positive-area box (a roomy build interior between the pinned edges).
-    expect(b.maxCol).toBeGreaterThan(b.minCol);
-    expect(b.maxRow).toBeGreaterThan(b.minRow);
-    // The box is exactly the leads' bounding box: every pin is INSIDE it and lands ON a wall (pins
-    // ride the border on all sides), none floats inset from it.
-    const k = PART_KINDS[frame.kind]!;
-    for (const p of k.pins) {
-      const col = frame.cell.col + p.dx;
-      const row = frame.cell.row + p.dy;
-      expect(col).toBeGreaterThanOrEqual(b.minCol);
-      expect(col).toBeLessThanOrEqual(b.maxCol);
-      expect(row).toBeGreaterThanOrEqual(b.minRow);
-      expect(row).toBeLessThanOrEqual(b.maxRow);
-      const onWall =
-        col === b.minCol ||
-        col === b.maxCol ||
-        row === b.minRow ||
-        row === b.maxRow;
-      expect(onWall).toBe(true);
+  it("leads sit ON their edge but inset from the corners (not jammed into the corners)", () => {
+    // The walls are the package BODY box: every lead lands ON the edge it belongs to, but the body
+    // extends past the outermost leads on the lead-row axis, so no lead sits in a corner — exactly
+    // as a real SOT-23 / DIP body extends past its end pins (owner: "leave some room in the corners").
+    for (const tag of ["SOT23_6", "DIP8", "VSSOP8"]) {
+      const die = freshDieGraph(tag)!;
+      const b = dieBounds(die.snapshot, die.frameId)!;
+      const frame = die.snapshot.components[0]!;
+      expect(b.maxCol).toBeGreaterThan(b.minCol);
+      expect(b.maxRow).toBeGreaterThan(b.minRow);
+      const k = PART_KINDS[frame.kind]!;
+      for (const p of k.pins) {
+        const col = frame.cell.col + p.dx;
+        const row = frame.cell.row + p.dy;
+        // Inside the body box…
+        expect(col).toBeGreaterThanOrEqual(b.minCol);
+        expect(col).toBeLessThanOrEqual(b.maxCol);
+        expect(row).toBeGreaterThanOrEqual(b.minRow);
+        expect(row).toBeLessThanOrEqual(b.maxRow);
+        // …on at least one wall (its edge)…
+        const onWall =
+          col === b.minCol ||
+          col === b.maxCol ||
+          row === b.minRow ||
+          row === b.maxRow;
+        expect(onWall).toBe(true);
+        // …but NOT at a corner (never on two perpendicular walls at once).
+        const atCorner =
+          (col === b.minCol || col === b.maxCol) &&
+          (row === b.minRow || row === b.maxRow);
+        expect(atCorner).toBe(false);
+      }
     }
   });
 
