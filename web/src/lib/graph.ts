@@ -1263,8 +1263,22 @@ function frameName(archetype: string, pinCount: number): string {
   // Human display name in the conventional package form: "DIP-8", "SOT-23-6", "VSSOP-8".
   return archetype + "-" + pinCount;
 }
+/**
+ * Reverse lookup for the generated frame kinds: a frame's tag -> the package archetype +
+ * pin count it was built from (e.g. "SOT23_6" -> { archetype: "SOT-23", pinCount: 6 }).
+ * Populated alongside the frame `PART_KINDS` below from the SAME `packageOptions()` source,
+ * so it can never drift from the generated kinds. The archetype is the CANONICAL key (with
+ * its hyphen, as `packageLayout`/the package picker expect) — not the hyphen-stripped tag
+ * form — so {@link framePackage} feeds straight into `packageLayout` and a `UserIc.package`.
+ */
+const FRAME_PACKAGES = new Map<
+  string,
+  { archetype: string; pinCount: number }
+>();
+
 for (const { archetype, pinCount } of packageOptions()) {
   const tag = frameTag(archetype, pinCount);
+  FRAME_PACKAGES.set(tag, { archetype, pinCount });
   const pins = packageLayout(archetype, pinCount).pins.map((p) =>
     pin(String(p.number), p.dx, p.dy),
   );
@@ -1279,6 +1293,24 @@ for (const { archetype, pinCount } of packageOptions()) {
     "",
     true,
   );
+}
+
+/**
+ * The package an IC-maker FRAME kind was generated from, or undefined for any non-frame tag.
+ * The inverse of `frameTag` (resolved by table, not by re-parsing the tag): hands back the
+ * canonical archetype + pin count so a sealed {@link UserIc} can carry its package and the
+ * renderer can lay out its footprint via `packageLayout`.
+ */
+export function framePackage(
+  tag: string,
+): { archetype: string; pinCount: number } | undefined {
+  return FRAME_PACKAGES.get(tag);
+}
+
+/** Whether a part-kind tag is an IC-maker frame (a no-element package outline the player
+ * wires their circuit into, then seals). The seal UI gates on this. */
+export function isFrame(tag: string): boolean {
+  return FRAME_PACKAGES.has(tag);
 }
 
 function pin(label: string, dx: number, dy: number): Pin {
