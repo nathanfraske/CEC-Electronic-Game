@@ -549,6 +549,78 @@ describe("IC maker — persistence (save/reload round-trip)", () => {
       unregisterUserIc("TESTPERSIST");
     }
   });
+
+  it("nested ICs survive the save round-trip: userIcsForGraph embeds the nested def transitively", () => {
+    // Inner IC: a 1 kOhm R in a SOT-23-3 package.
+    const innerDie = new BoardGraph();
+    const inF = place(innerDie, "SOT23_3", 0, 0);
+    const r = place(innerDie, "R", 4, 0, 1000);
+    connect(innerDie, inF, 0, r, 0);
+    connect(innerDie, r, 1, inF, 1);
+    registerUserIc({
+      tag: "NESTINNER",
+      name: "Nest Inner",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: inF.id,
+      graph: innerDie.serialize(),
+    });
+    // Outer IC: PLACES a NESTINNER instance inside its own die.
+    const outerDie = new BoardGraph();
+    const oF = place(outerDie, "SOT23_3", 0, 0);
+    const ni = place(outerDie, "NESTINNER", 6, 0);
+    connect(outerDie, oF, 0, ni, 0);
+    connect(outerDie, ni, 1, oF, 1);
+    registerUserIc({
+      tag: "NESTOUTER",
+      name: "Nest Outer",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: oF.id,
+      graph: outerDie.serialize(),
+    });
+
+    try {
+      // A board that places ONLY the OUTER IC (NESTINNER appears solely inside OUTER's die).
+      const board = new BoardGraph();
+      const vs = place(board, "V", 0, 0, 5);
+      const ic = place(board, "NESTOUTER", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, vs, 0, ic, 0);
+      connect(board, ic, 1, gnd, 0);
+      connect(board, vs, 1, gnd, 0);
+
+      // The embedded library must carry BOTH the outer AND the transitively-nested inner def.
+      const defs = userIcsForGraph(board.serialize());
+      expect(defs.map((d) => d.tag).sort()).toEqual(["NESTINNER", "NESTOUTER"]);
+
+      // Fresh session: forget BOTH defs, then re-register ONLY from the round-tripped envelope.
+      const wire = JSON.parse(JSON.stringify(defs)) as typeof defs;
+      unregisterUserIc("NESTOUTER");
+      unregisterUserIc("NESTINNER");
+      expect(getUserIc("NESTINNER")).toBeUndefined(); // gone, as after a reload
+      registerUserIcs(wire);
+      expect(getUserIc("NESTINNER")).not.toBeUndefined(); // restored — the nested def WAS embedded
+
+      // The placed OUTER still flattens recursively to the real R (it would be lost if INNER were
+      // missing from the save): identical to the inline V + 1 kOhm R + GND.
+      const a = buildNetlist(board, false);
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 1000);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0);
+      connect(flat, rf, 1, gf, 0);
+      connect(flat, vf, 1, gf, 0);
+      const b = buildNetlist(flat, false);
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]);
+      expect(a!.types.length).toBe(2); // V + the nested R, restored from the save envelope
+    } finally {
+      unregisterUserIc("NESTOUTER");
+      unregisterUserIc("NESTINNER");
+    }
+  });
 });
 
 describe("IC maker — reseal updates the existing def", () => {

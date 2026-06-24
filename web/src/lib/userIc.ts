@@ -194,14 +194,24 @@ export function resealUserIc(
 export function userIcsForGraph(graph: GraphSnapshot): UserIc[] {
   const out: UserIc[] = [];
   const seen = new Set<string>();
-  for (const c of graph.components) {
-    if (seen.has(c.kind)) continue;
-    const def = REGISTRY.get(c.kind);
-    if (def) {
+  // Collect the placed ICs AND, transitively, every IC NESTED inside a collected IC's die — because a
+  // board places only its top-level ICs (a nested INNER lives solely inside OUTER's graph, never as a
+  // board component). Without the descent, a save embedding OUTER but not INNER couldn't be flattened
+  // after a fresh-session reload (INNER unregistered -> its hub never expands -> the inner parts vanish).
+  // `seen` (by tag) dedups and bounds a reseal cycle (A in B in A: the second A is already seen). A board
+  // with no IC returns []; one with only single-level ICs returns exactly the placed defs (their dies
+  // hold no further ICs), so existing saves are unchanged.
+  const scan = (comps: { kind: string }[]): void => {
+    for (const c of comps) {
+      if (seen.has(c.kind)) continue;
+      const def = REGISTRY.get(c.kind);
+      if (!def) continue;
       seen.add(c.kind);
       out.push(def);
+      scan(def.graph.components); // descend into the IC's die for deeper nested ICs
     }
-  }
+  };
+  scan(graph.components);
   return out;
 }
 
@@ -267,19 +277,28 @@ export function flattenUserIcs(
   // Recursive nesting: an inner circuit may itself place sealed ICs, so we inline in WAVES to a fixed
   // point. Each wave inlines the user-IC instances NOT yet flattened (in id order) — which may surface
   // deeper nested instances (their kind is still a user-IC tag) for the next wave. `flattened` stops an
-  // already-inlined hub from being re-processed; `MAX_DEPTH` bounds a pathological RESEAL cycle (A
-  // contains B contains A): past it, any still-nested instance is simply left a no-element hub. A board
-  // with NO nesting settles in ONE wave — wave 1's `pending` equals the old single-pass instance list,
-  // produced in the same id order with the same offsets — so the element output (and the golden) is
-  // byte-identical to before.
+  // already-inlined hub from being re-processed.
+  //
+  // Two bounds keep this safe. `MAX_DEPTH` caps the wave count (one nesting level per wave) — generous
+  // for any real hierarchy (a LUT->SRAM->inverter is ~4-6 deep) while bounding a RESEAL cycle's descent.
+  // `MAX_INSTANCES` is the HARD budget on total inlined instances: flatten runs on EVERY netlist rebuild,
+  // so a pathological geometric fan-out (k nested ICs per level -> ~k^depth) or a cycle must not freeze
+  // the per-edit build. On hitting either bound the deepest instances are left as no-element hubs and we
+  // warn once — a silently truncated netlist would read as "your inner parts vanished" with no clue.
+  //
+  // A board with NO nesting settles in ONE wave: wave 1's `pending` equals the old single-pass instance
+  // list (same id order, same offsets), neither bound bites, and the `maxId` guard below is inert for the
+  // small authored ids real circuits use — so the element output (and the golden) is byte-identical.
   const flattened = new Set<number>();
-  const MAX_DEPTH = 8;
+  const MAX_DEPTH = 24;
+  const MAX_INSTANCES = 4096;
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const pending = comps
       .filter((c) => REGISTRY.has(c.kind) && !flattened.has(c.id))
       .sort((a, b) => a.id - b.id);
     if (pending.length === 0) break;
     for (const inst of pending) {
+      if (flattened.size >= MAX_INSTANCES) break;
       flattened.add(inst.id);
       const def = REGISTRY.get(inst.kind)!;
       const inner = def.graph;
@@ -302,24 +321,45 @@ export function flattenUserIcs(
                 e.componentId === def.frameId ? inst.id : e.componentId + o,
               pinIndex: e.pinIndex,
             };
+      let maxId = 0;
       for (const ic of inner.components) {
         if (ic.id === def.frameId) continue; // the frame is replaced by the placed instance
-        comps.push({ ...ic, id: ic.id + o, cell: { ...ic.cell } });
+        const id = ic.id + o;
+        comps.push({ ...ic, id, cell: { ...ic.cell } });
+        if (id > maxId) maxId = id;
       }
       for (const j of inner.junctions ?? []) {
-        junctions.push({ ...j, id: j.id + o, cell: { ...j.cell } });
+        const id = j.id + o;
+        junctions.push({ ...j, id, cell: { ...j.cell } });
+        if (id > maxId) maxId = id;
       }
       for (const w of inner.wires) {
+        const id = w.id + o;
         wires.push({
-          id: w.id + o,
+          id,
           from: remap(w.from),
           to: remap(w.to),
           ...(w.waypoints && w.waypoints.length > 0
             ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
             : {}),
         });
+        if (id > maxId) maxId = id;
       }
+      // Keep every instance's id range disjoint even if an authored inner id was >= STRIDE (only
+      // reachable via a crafted snapshot — authored ids are small + never compacted): bump `off` past
+      // everything just inlined so the next instance can't reuse one of these ids. Inert (maxId < off)
+      // for normal ids, so the no-nesting / single-level output stays byte-identical.
+      if (maxId >= off) off = maxId + 1;
     }
+    if (flattened.size >= MAX_INSTANCES) break;
+  }
+  // If user-IC instances remain unflattened, a bound was hit (an over-deep / over-wide hierarchy or a
+  // reseal cycle): the deepest cells are no-element hubs, so their inner parts are absent from this
+  // netlist. Surface it rather than emit a silently-wrong circuit.
+  if (comps.some((c) => REGISTRY.has(c.kind) && !flattened.has(c.id))) {
+    console.warn(
+      `flattenUserIcs: IC nesting exceeded the flatten budget (MAX_DEPTH=${MAX_DEPTH}, MAX_INSTANCES=${MAX_INSTANCES}); deepest cells were left unexpanded (their inner parts are absent from this netlist). Check for a reseal cycle or an excessively deep/wide nesting.`,
+    );
   }
 
   const out = new BoardGraph();
