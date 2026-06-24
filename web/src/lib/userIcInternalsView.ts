@@ -278,8 +278,20 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   for (const id of wireOrder) {
     const rd = condRoutes.get(id);
     if (!rd) continue;
+    const w = innerGraph.wires.get(id);
+    // Flange the PIN ends (not junctions) so the inner pipes mesh into the inner parts, same as the board.
+    const ends: [boolean, boolean] = w
+      ? [!isJunctionRef(w.from), !isJunctionRef(w.to)]
+      : [false, false];
     const rounded = roundedPoints(rd, PW * 2);
-    drawConduitSkin(innerG, rounded, colorOf.get(id) ?? PALETTE.cyan, PW, lens);
+    drawConduitSkin(
+      innerG,
+      rounded,
+      colorOf.get(id) ?? PALETTE.cyan,
+      PW,
+      lens,
+      ends,
+    );
   }
   for (const d of cross.dots) {
     innerG.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
