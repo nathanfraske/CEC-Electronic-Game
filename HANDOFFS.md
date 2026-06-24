@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (115) — Pipe-taper panel fix, IC package connection redesign, standpipe auto-realign
+
+**State:** 🟢 all gates green (cargo fmt/clippy/golden; web check 0/0, lint, test **64**, build); golden
+UNCHANGED (render/interaction-only). Branch `claude/kind-turing-hdelb3`. All **visual** — owner should
+eyeball. Addresses every item in the owner's 5-screenshot feedback round.
+
+**1. Jank tapers/junctions → clean ROUND plug (board.ts).** Ran a 4-lens design panel (Workflow); all four
+converged on "disc, not trapezoid." `drawConduitSkin`'s 4-point port-mouth flare (read as a triangular
+ARROWHEAD once opaque) is replaced by a concentric round GROMMET (dark-moat disc + opaque core disc at the
+cap radius). `drawJunctionConduit`'s per-direction blanking nubs + small hub (read as a spiky asterisk) are
+replaced by ONE dark collar disc + an opaque colour hub sized to SWALLOW the arriving grommets. Removed the
+now-dead `junctionDirs` accumulation + `used`/`lens` params. Occlusion preserved (grommet ≤ pipe wall).
+
+**2. IC PACKAGE CONNECTION REDESIGN (owner's sketch: external rectangular leads = the pins; internal dots
+w/ a small pipe to each lead; pins inset from corners).**
+- `glyphs.ts userIcBodyBox`: body now OVERHANGS the end leads on the long axis (14% of span) so corner
+  leads sit INSET from the corners; `IC_LEAD_LEN` 5→7, `LEAD_W`→5 (more elongated tabs).
+- `userIcInternalsView.ts`: the open replica draws, per pin, an internal connector DOT just inside the wall
+  + a SHORT pipe through the wall to the lead root (the rectangular lead carries on to the solder tip).
+  Frame-pin wire-ends SNAP to that dot so the inner circuit stays inside the body. `dotInset` capped to
+  0.28·short-side so opposite dots never cross on the thin real footprint.
+- `dieEditor.ts dieBounds`: walls OVERHANG the end leads by `DIE_END_MARGIN=4` on the long axis (corner
+  pads no longer jammed in corners — screenshot 1), sit on the lead line on the short axis.
+- `board.ts`: the die frame now draws rectangular SOLDER LEADS sticking out past each pad (builder nicety);
+  a sealed user IC's pin marker is already a rect pad (from 114).
+
+**3. DOWN-BEND routing (board.ts).** New `dieFramePinExit` + `frameLeadRoute`: a wire touching a die-frame
+pad leaves PERPENDICULAR to its edge with one elbow (an L), not the mid-split Z — committed route
+(`routeForWire`) AND the live drag preview. Render/interaction-only (connectivity unchanged); the ordinary
+board (no die frame) is untouched.
+
+**4. Package text fades on zoom (board.ts).** A user IC's designator (parked at body centre) fades to
+transparent as zoom → `INTERNALS_ZOOM`, so it doesn't cover the open circuit.
+
+**5. Standpipe/gauge AUTO-REALIGN (board.ts `netGaugeAnchors`).** Now tries ALL of a net's routes
+(longest-first), not just the longest, sliding along each + up/down; first clear box wins. So the GND
+standpipe relocates off other pipes instead of sitting on them (screenshot 4 / the deferred 114 item).
+
+**Owner: eyeball** the opened IC (leads + internal dots + small pipes lining up), the builder (leads out +
+down-bend trace), the junctions/tapers, the zoomed package text, and a crowded GND gauge.
+
+---
+
 ## 2026-06-24 (114) — IC internals line up by proportional scaling + rectangular solder leads + pipe-fix round 2
 
 **State:** 🟢 web gate green (`check` 0/0, `lint`, `test` **64**, `build`); golden UNCHANGED (render-only).

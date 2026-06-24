@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (115) — Taper panel fix + IC package connection redesign + standpipe auto-realign
+
+- ~~**Jank tapers/junctions**~~ — DONE (board.ts, design-panel-led). Triangular port-mouth flare → round
+  GROMMET disc; junction nubs+hub → dark collar disc + opaque swallowing hub. Dead `junctionDirs`/params
+  removed.
+- ~~**IC package connection redesign**~~ — DONE. Body overhangs end leads (corner leads inset); elongated
+  rectangular leads (`IC_LEAD_LEN` 5→7); open replica draws internal connector DOT + short pipe → lead per
+  pin (frame-pin wire-ends snap to the dot); `dieBounds` walls overhang end leads (`DIE_END_MARGIN=4`) so
+  builder pads aren't in corners; die frame draws rectangular leads sticking out.
+- ~~**Down-bend routing**~~ — DONE (board.ts). `dieFramePinExit` + `frameLeadRoute`: a die-frame-pad wire
+  exits perpendicular with one elbow (committed + live preview); ordinary board untouched.
+- ~~**Package text fades on zoom**~~ — DONE (board.ts). User-IC designator → transparent as zoom →
+  INTERNALS_ZOOM.
+- ~~**Standpipe/gauge auto-realign**~~ — DONE (board.ts `netGaugeAnchors`). Tries ALL of a net's routes
+  (longest-first) + slides; GND gauge relocates off other pipes.
+- [ ] **Owner eyeball** the IC redesign + builder + tapers/junctions + zoomed text + crowded GND gauge;
+  fine-tune the lead/dot constants (`IC_LEAD_LEN`, `LEAD_W`, `DIE_END_MARGIN`, `dotInset` frac) if needed.
+
 ## 2026-06-24 (114) — IC internals proportional fit + rectangular leads + pipe-fix round 2
 
 - ~~**IC internals align with the leads by pure scaling**~~ — DONE. `dieLayout` (packages.ts) is now the
