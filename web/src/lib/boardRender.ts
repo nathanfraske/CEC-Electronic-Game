@@ -31,6 +31,7 @@ export const PIPE_WALL = 0x6b6488; // steel pipe wall
 export const PIPE_WATER = 0x8fd6ff; // bright water carriers
 const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
 export const COND_ELEC = 0x9fe6ff; // electron carriers (drift against the current)
+const SOLDERMASK = 0x14502f; // REALITY trace rim: dark soldermask green (copper sits in a mask opening)
 
 // Clamp on a flow belt's per-frame arc-length advance (px). AC flow reverses each
 // half-cycle; at high tps a frame can otherwise span many cycles and the eased
@@ -608,8 +609,12 @@ export function drawConduitSkin(
   // wall rim (the soft halo), then the opaque voltage-tinted core. The carriers walk this same path.
   polyline(g, rp);
   g.stroke({ width: pw + 5, color: 0x0d0b16, alpha: 0.9, cap, join });
+  // The rim: analogy = a faint soft steel pipe-wall halo; reality = a harder, flatter dark SOLDERMASK-green
+  // edge (a copper trace sitting in a mask opening), so the trace reads as a flat board deposit, not a tube.
   polyline(g, rp);
-  g.stroke({ width: pw + 3, color: wallCol, alpha: 0.24, cap, join });
+  if (lens === "reality")
+    g.stroke({ width: pw + 2, color: SOLDERMASK, alpha: 0.6, cap, join });
+  else g.stroke({ width: pw + 3, color: wallCol, alpha: 0.24, cap, join });
   polyline(g, rp);
   g.stroke({
     width: Math.max(1, pw - 1),
@@ -619,8 +624,16 @@ export function drawConduitSkin(
     join,
   });
   if (lens === "reality") {
+    // A crisp metallic highlight down the copper so it reads as shiny flat metal (brighter + a touch wider
+    // than a hairline) — the reality twin of the analogy water-shine.
     polyline(g, rp);
-    g.stroke({ width: 1.2, color: 0xffffff, alpha: 0.08, cap, join });
+    g.stroke({
+      width: Math.max(1, pw * 0.45),
+      color: 0xffffff,
+      alpha: 0.13,
+      cap,
+      join,
+    });
   }
   // Port plug at each end: the round line-cap already paints a clean ph-radius dome where the pipe
   // meets a pin/junction, so the connection needs no flare. The old 4-point taper flared out to
@@ -657,14 +670,32 @@ export function drawJunctionConduit(
   g: Graphics,
   p: Point,
   color: number,
+  /** The lens, so REALITY can dome the hub into a shiny solder joint (analogy stays a flat confluence
+   * basin). Defaults to analogy (flat) so any un-threaded caller is back-compat. */
+  lens: BoardLens = "analogy",
 ): void {
   const pw = 5; // matches the thin pipe body
   // Dark collar disc first: a ROUND rim that knocks back each arriving pipe's moat/bloom and blanks
   // all unused cardinals at once (no radiating stubs). It's the KiCad-style dark backing ring.
   g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: 0x0d0b16, alpha: 0.92 });
-  // Opaque colour hub on top, big enough to cover the pipe-end grommets (dark radius ≤ ~7) so the
-  // tie reads as ONE node the pipes plug into. The 2px dark ring between collar and hub stays legible.
-  g.circle(p.x, p.y, pw / 2 + 1.5).fill({ color, alpha: 0.95 });
+  // Opaque colour hub on top (the net's voltage identity), big enough to cover the pipe-end grommets
+  // (dark radius ≤ ~7) so the tie reads as ONE node the pipes plug into.
+  const r = pw / 2 + 1.5;
+  g.circle(p.x, p.y, r).fill({ color, alpha: 0.95 });
+  if (lens === "reality") {
+    // REALITY: a domed SOLDER JOINT — an offset light crescent + a tight white specular speck so the flat
+    // hub reads convex & shiny (metal soldered to metal = one node), vs the analogy's flat basin. Kept on
+    // the net-coloured hub (identity preserved) and concentric/under the collar, so it never spikes or
+    // breaks the over/under occlusion, and it shrinks with `r` so the sealed-IC replica degrades cleanly.
+    g.circle(p.x - r * 0.26, p.y - r * 0.26, r * 0.66).fill({
+      color: 0xd8d2e0,
+      alpha: 0.22,
+    });
+    g.circle(p.x - r * 0.34, p.y - r * 0.34, Math.max(0.8, r * 0.24)).fill({
+      color: 0xffffff,
+      alpha: 0.55,
+    });
+  }
 }
 
 // --- wire routing -----------------------------------------------------------

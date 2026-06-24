@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (123) — Batch: opened-IC fit/rotation, bridges-over, pipe↔component mesh; reality-lens panel in flight
+
+**State:** 🟢 all merged to main; branch `claude/kind-turing-hdelb3` synced to `3e8281a`. Working through the
+owner's consolidated queue ("work through it all"). Each item below is its own merged PR (render-only,
+golden `0xeaac…fa24` unmoved).
+
+- **Opened-IC fit + orientation (PR #189):** the replica now fits the inner circuit to the actual package
+  BODY rectangle (was a square `max(wPx,hPx)` that overflowed it), and orients each inner part EXACTLY like
+  the die editor — CANONICAL pins into a child carrying `rot` + **`mirror`** (was passing pre-rotated pins to
+  drawers that infer orientation → the CEC9002 rot1+mirror PM/NM rendered degenerate). Added render-only
+  `mirror` to `UserIcInnerPart` + both builders.
+- **Bridges render OVER (PR #190):** `applyCrossings` returns `overpasses`; new pure `wireDrawOrder` gives a
+  stable cycle-safe topo order so a hopping wire draws AFTER the wire it hops. Board + replica both use it.
+  New `boardRender.test.ts` (10 edge cases).
+- **Pipe↔component mesh (PR #191):** from a 3-panel brainstorm. `drawConduitSkin` draws a FLANGE COUPLING
+  collar at PIN ends (concentric dark rim + voltage-core face, sized off `pw`, capped < half-pitch) so the
+  pipe seats into a flanged port; junction/free ends keep the flush grommet via a new optional
+  `ends:[isPinFrom,isPinTo]` arg (`!isJunctionRef`). One choke-point → all components + the replica, both
+  views. First cut — radii are tunable.
+
+**In flight — Reality-lens + junction redesign (task #17, panel running):** owner wants the REALITY lens to
+look like real electronics (copper/solder/vias/pads/leads), DISTINCT from the analogy water-plumbing, at every
+tube/contact/junction; and better junction forms. 3-agent panel → consolidate to `docs/ui/reality-lens-and-
+junctions.md` → implement. Junction agent's picks: reality = **raised solder-blob dome** (cheapest, reuses the
+sheen, degrades to today's hub); analogy = **tap-count flanged tee/cross manifold** (teaches 3-way vs 4-way,
+reuses the pin-flange bolt vocabulary); **2-way ties draw nothing**; everything **falls back to the plain hub
+at a few px** (replica). Key gap: `drawJunctionConduit` takes **no `lens` param yet** — thread it from
+`drawJunctions` + the replica (both have `lens` in scope).
+
+**Queue order:** reality-lens doc+impl (#17) → Phase 2 recursive zoom (#9, flagship; design noted below) →
+Phase 5 zoom meter (#12) → Phase 3 silicon (#10) → Phase 4 LUT/inverter-element (#11) → replica follow-ups (#16).
+
+**Phase 2 design note:** recursion hinges on a nested IC's on-screen size (footprint × cumulative container
+scale × camera zoom) crossing `INTERNALS_ZOOM` (board.ts:6570); render its own `UserIcInternals` (Phase 1 emits
+them, keyed by the inlined hub id). Main new plumbing: map each nested-IC inner part → its flattened internals
+(UserIcInnerPart needs the inner/flattened id, or a resolver).
+
+---
+
 ## 2026-06-24 (122) — Phase 1 LANDED: recursive IC nesting (sealed cells inside cells)
 
 **State:** 🟢 gates green; **merged to main** (`a06b708`, PR #188, CI #376 green). Branch synced. Phase 1 of
