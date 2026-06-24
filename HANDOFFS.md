@@ -5,6 +5,26 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (99) — Tool model: the Pan tool is inert + opt-in (Escape → Build)
+
+**State:** 🟢 web gate-green (check 0/0, lint, build, 42 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
+Owner QoL: default to Build; make Pan a select-only tool that interacts with nothing.
+
+**Done.** The default tool was already `select` (which the code calls "Build"). Made the **Pan tool purely
+navigational**: a pointer-down in pan mode now early-returns into a view-pan and touches nothing — no
+select, no wire, no junction, no body-grab (`board.ts onPointerDown`). Removed `yieldPanToSelect` (pan no
+longer flips to Build when you click a part/wire) + its dead calls, and dropped `"pan"` from the
+pin/junction wiring branches. **Escape now returns to Build (`setMode("select")`), not Pan** (`App.svelte`),
+so the ONLY way into Pan is to pick it (H / toolbar). Updated the pan status-hint + removed the now-dead
+`onMode` toolbar-follow handler (the App `setMode` already syncs the toolbar). Presentation/UX only — no
+sim, no determinism impact.
+
+**Still open (editing-UX batch, see TODOS):** occluded-wire select, junction remove/move, mirror/flip a
+component. Also logged: the **denser-package** brainstorm (full design — a density scalar on
+`UserIc.package`, golden-safe heat-as-derating) and stimulus **Phase 2** (clock/AC drives).
+
+---
+
 ## 2026-06-24 (98) — Settable per-pin TEST STIMULI in the IC-maker die editor (power a die in isolation)
 
 **State:** 🟢 gate-green (fmt/clippy clean; **sim-core golden `0xeaac_3764_99e4_fa24` unchanged**, 188
