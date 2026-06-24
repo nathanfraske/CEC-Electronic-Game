@@ -136,7 +136,9 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     partLayer.addChild(new Graphics());
   }
   for (let i = partLayer.children.length - 1; i >= wantChildren; i--) {
-    partLayer.removeChildAt(i).destroy();
+    // `{ children: true }`: a part slot can now own a nested detail `dg` Graphics (Part B), so free the
+    // whole subtree — a bare `.destroy()` would orphan the `dg`'s GPU buffers (leaks as the pool shrinks).
+    partLayer.removeChildAt(i).destroy({ children: true });
   }
   const innerG = partLayer.children[wantChildren - 1] as Graphics; // the LAST slot
   innerG.clear();
@@ -147,7 +149,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   innerG.scale.set(1, 1);
   innerG.rotation = 0;
   for (let i = innerG.children.length - 1; i >= 0; i--) {
-    innerG.removeChildAt(i).destroy();
+    innerG.removeChildAt(i).destroy({ children: true });
   }
   if (parts.length === 0 && wires.length === 0) {
     partLayer.visible = false;
