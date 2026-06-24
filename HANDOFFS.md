@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (124) — Opened-IC polish landed; reality-lens first cut landed; Phase 2 + Phase 4 DESIGNED (docs)
+
+**State:** 🟢 all merged to main; branch `claude/kind-turing-hdelb3` at `4b66ea1` + 2 doc commits (phase2/phase4)
+ahead, pushed. Long owner-driven session; everything render-only, golden `0xeaac…fa24` untouched.
+
+**Landed to main since (123):**
+- **Reality lens first cut (PR #192):** `docs/ui/reality-lens-and-junctions.md` (3-panel) + impl — `lens` threaded
+  into `drawJunctionConduit`, reality junction = solder dome, reality trace = soldermask-green rim + sheen.
+- **Opened-IC fixes (PR #193):** orthogonal corners (`roundedPoints` pull-back capped 0.5→0.42·leg so short
+  frame-down-bend legs don't blend into a diagonal S); **reverted the pin flange** (owner: "ain't it");
+  **restored lead-connectors** (short conduit in the scaled container from each frame-pin world cell to its
+  package lead root `(rootGlyph−pos)/s`).
+
+**DESIGNED (docs on branch, ready to implement) — owner asked for big investigations:**
+- **`docs/phase2-recursive-zoom-and-divergences.md`** — Phase 2 recursive zoom-to-open + the full opened-IC ↔
+  die-editor divergence audit. Plan: thread `cameraZoom`+`allInternals`+depth/cumScale into
+  `UserIcInternalsOpts`; add **`flatId` (= comp.id+offset) to `UserIcInnerPart`** (= the nested instance's
+  `FlattenRecord.instanceId`, so `allInternals.get(flatId)` → its internals); recurse per part on
+  `s·cumScale·cameraZoom`. **Base case = the transistor-detail fix (C-1):** gate per part on `absScale ≥
+  TIER_ZOOM`, draw `drawDetail`/`drawAnalogy` (copy board.ts:6641-6677). Ranked divergences: C-1 detail (do
+  first), C-2 **schematic-blank** (S–M, add plain-polyline branch + drop the `wantUserIc` lens gate), C-5 the
+  **part-body-over-wire clip** (S, ~1-liner: draw wires last / trim at body box), C-3 gauges (L), C-4 flow-dots (L).
+- **`docs/phase4-lut-and-inverter-element.md`** — Inverter = a `buildNetlist` **expansion** (PMOS+NMOS pair, no
+  new `ELEM_*`, golden-safe), 4-pin `[Y,A,VCC,GND]`; 4-LUT teardown nests to depth 4, ~21 inlined instances
+  (≪ MAX_INSTANCES 4096); SRAM bit = 2 cross-coupled INV + access switch + inspector stored-bit dial.
+
+**NEXT (recommended order):** implement Phase 2 base case = transistor-detail (C-1) + schematic (C-2) + clip
+(C-5) — these resolve the owner's open opened-IC feedback; then the full recursive zoom (Phase 2 Part A); then
+Phase 4 (Inverter element → 4-LUT). Also queued: zoom-meter HUD (Phase 5, task #12), reality-lens deferred
+polish (vias/jumpers/fillets/manifolds, task #17), replica gauges/flow-dots (task #16).
+
+---
+
 ## 2026-06-24 (123) — Batch: opened-IC fit/rotation, bridges-over, pipe↔component mesh; reality-lens panel in flight
 
 **State:** 🟢 all merged to main; branch `claude/kind-turing-hdelb3` synced to `3e8281a`. Working through the
