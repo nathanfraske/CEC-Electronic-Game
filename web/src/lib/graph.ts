@@ -1481,6 +1481,73 @@ export function rotateOffset(
   return { col: x, row: y };
 }
 
+/**
+ * The footprint CENTRE of a part kind, in **local pin-offset units** (fractional,
+ * not snapped): the bounding-box centre of its pins' `(dx, dy)` offsets relative to
+ * the anchor cell. Used to rotate/flip a part **in place** (about its centre rather
+ * than its anchor ≈ pin 0) — see {@link rotateInPlaceShift} / {@link flipInPlaceShift}.
+ * A 1-pin part (or empty pin list) centres on that pin (0,0 for an empty list).
+ */
+export function footprintCenter(kind: PartKind): { cx: number; cy: number } {
+  if (kind.pins.length === 0) return { cx: 0, cy: 0 };
+  let minDx = Infinity;
+  let maxDx = -Infinity;
+  let minDy = Infinity;
+  let maxDy = -Infinity;
+  for (const p of kind.pins) {
+    if (p.dx < minDx) minDx = p.dx;
+    if (p.dx > maxDx) maxDx = p.dx;
+    if (p.dy < minDy) minDy = p.dy;
+    if (p.dy > maxDy) maxDy = p.dy;
+  }
+  return { cx: (minDx + maxDx) / 2, cy: (minDy + maxDy) / 2 };
+}
+
+/**
+ * The integer cell shift that keeps a part's **footprint centre fixed** when its
+ * rotation changes from `oldRot` to `newRot` (the mirror held). Because both the pin
+ * positions and the rendered glyph derive from `cell + rotateOffset(offset, rot, mirror)`,
+ * shifting `cell` by this amount and then setting `rot = newRot` pivots the part about
+ * its centre instead of its anchor — the part stops swinging/jumping on rotate. Each
+ * axis is rounded so the part stays on the integer lattice (the centre is preserved to
+ * within that rounding). Pure geometry: pins keep their INDEX, so connectivity and the
+ * compiled netlist are byte-identical (the cell shift is just a tiny move).
+ */
+export function rotateInPlaceShift(
+  center: { cx: number; cy: number },
+  oldRot: number,
+  newRot: number,
+  mirror: boolean,
+): { col: number; row: number } {
+  const before = rotateOffset(center.cx, center.cy, oldRot, mirror);
+  const after = rotateOffset(center.cx, center.cy, newRot, mirror);
+  return {
+    col: Math.round(before.col - after.col),
+    row: Math.round(before.row - after.row),
+  };
+}
+
+/**
+ * The integer cell shift that keeps a part's **footprint centre fixed** when its
+ * mirror toggles from `oldMirror` to `newMirror` (the rotation held). The flip twin of
+ * {@link rotateInPlaceShift}: shift `cell` by this, then set `mirror = newMirror`, and
+ * the part flips about its centre rather than its anchor. Each axis rounded to the
+ * lattice; pure geometry (connectivity / netlist unchanged).
+ */
+export function flipInPlaceShift(
+  center: { cx: number; cy: number },
+  rot: number,
+  oldMirror: boolean,
+  newMirror: boolean,
+): { col: number; row: number } {
+  const before = rotateOffset(center.cx, center.cy, rot, oldMirror);
+  const after = rotateOffset(center.cx, center.cy, rot, newMirror);
+  return {
+    col: Math.round(before.col - after.col),
+    row: Math.round(before.row - after.row),
+  };
+}
+
 /** Format an ideal value in engineering notation, e.g. 1000 Ω -> "1 kΩ". */
 export function formatValue(value: number, unit: string): string {
   if (!unit) return "";

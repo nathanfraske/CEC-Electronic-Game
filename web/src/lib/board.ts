@@ -23,6 +23,9 @@ import {
   snap,
   formatValue,
   rotateOffset,
+  footprintCenter,
+  rotateInPlaceShift,
+  flipInPlaceShift,
   isJunctionRef,
   isPinRef,
   isFrame,
@@ -463,6 +466,18 @@ export class Board {
   private readonly pasteGhostLayer = new Container();
   private readonly pasteGhostGlyphs: Graphics[] = [];
   private readonly ghostGlyph = new Graphics();
+  // Holds the ghost's glyph + tier illustration and carries the rotation/flip (scale.x),
+  // exactly like a placed ComponentNode's `glyphHolder` — so the tier glyph can use the same
+  // centre-position + uniform-scale and compose identically under mirror + rotation.
+  private readonly ghostGlyphHolder = new Container();
+  // The ghost's tier illustration (analogy/reality), drawn under the same rotation/flip as
+  // the schematic ghost glyph when the active lens + zoom call for it, so the preview shows
+  // what the placed part will actually look like (drawDetail/drawAnalogy). Hidden otherwise.
+  private readonly ghostTierGlyph = new Graphics();
+  // Upright pin-name labels for the armed ghost (A/K, D/S/G, …) at its rotated/flipped pin
+  // positions, matching the placed-part `pinTexts` look — so the pinout reads before dropping.
+  // A growable pool, sized on demand to the armed kind's pin count.
+  private readonly ghostPinTexts: Text[] = [];
   // Net-label name tags ("VCC" etc.): a Graphics for each tag's pill background +
   // leader, plus a growable pool of Text for the names. Drawn in the world so they
   // pan/zoom with the board; pooled like the scope legend so re-layout is cheap.
@@ -564,6 +579,12 @@ export class Board {
   // ghost reflects it, and the part drops pre-flipped. Resets with the rotation when a
   // fresh kind is armed; independent of any selected part's mirror.
   private armedMirror = false;
+  // Accumulated grid-cell shift that keeps the armed part's footprint CENTRE fixed under
+  // the cursor as it is rotated/flipped in place (the same compensation rotateSelection
+  // applies to a placed part's `cell`). Applied to the snapped drop cell in BOTH the ghost
+  // render and the drop, so the part lands exactly where the ghost previewed. Resets to
+  // (0,0) with armedRot/armedMirror when a fresh kind is armed.
+  private armedCellShift: Cell = { col: 0, row: 0 };
   // Arm-time configurator: the player's pre-placement choices for the armed part on
   // the config axes (variant / tier / family / openDrain / mode / loadHz / duty / amp).
   // Threaded into `graph.place` on every drop so place-and-repeat carpets the configured
@@ -743,7 +764,12 @@ export class Board {
     this.world.addChild(this.marqueeLayer);
     // The ghost rides above the components so the preview is never occluded, and
     // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
-    this.ghostLayer.addChild(this.ghostGlyph);
+    // The holder carries the rotation/flip; inside it the tier illustration sits BELOW the
+    // schematic glyph (so the glyph's pin dots draw on top). Upright pin labels live on the
+    // ghost layer itself (not the rotated holder) so they stay readable, added on demand.
+    this.ghostGlyphHolder.addChild(this.ghostTierGlyph);
+    this.ghostGlyphHolder.addChild(this.ghostGlyph);
+    this.ghostLayer.addChild(this.ghostGlyphHolder);
     this.ghostLayer.eventMode = "none";
     this.ghostLayer.alpha = GHOST_ALPHA;
     this.ghostLayer.visible = false;
@@ -856,6 +882,7 @@ export class Board {
     if (kind !== this.armed) {
       this.armedRot = 0;
       this.armedMirror = false;
+      this.armedCellShift = { col: 0, row: 0 };
     }
     this.armed = kind;
     this.armedConfig = kind !== null ? (config ?? {}) : {};
@@ -879,7 +906,23 @@ export class Board {
    */
   rotateArmed(): void {
     if (!this.armed) return;
-    this.armedRot = (this.armedRot + 1) % 4;
+    const kind = PART_KINDS[this.armed];
+    const newRot = (this.armedRot + 1) % 4;
+    // Pivot the ghost about the footprint centre under the cursor (not the anchor), so
+    // it doesn't swing away on rotate — accumulate the same cell shift a placed part gets.
+    if (kind) {
+      const s = rotateInPlaceShift(
+        footprintCenter(kind),
+        this.armedRot,
+        newRot,
+        this.armedMirror,
+      );
+      this.armedCellShift = {
+        col: this.armedCellShift.col + s.col,
+        row: this.armedCellShift.row + s.row,
+      };
+    }
+    this.armedRot = newRot;
     this.updateGhost();
   }
 
@@ -890,7 +933,23 @@ export class Board {
    */
   flipArmed(): void {
     if (!this.armed) return;
-    this.armedMirror = !this.armedMirror;
+    const kind = PART_KINDS[this.armed];
+    const newMirror = !this.armedMirror;
+    // Pivot the ghost about the footprint centre under the cursor (not the anchor), so it
+    // doesn't jump sideways on flip — accumulate the same cell shift a placed part gets.
+    if (kind) {
+      const s = flipInPlaceShift(
+        footprintCenter(kind),
+        this.armedRot,
+        this.armedMirror,
+        newMirror,
+      );
+      this.armedCellShift = {
+        col: this.armedCellShift.col + s.col,
+        row: this.armedCellShift.row + s.row,
+      };
+    }
+    this.armedMirror = newMirror;
     this.updateGhost();
   }
 
@@ -946,13 +1005,16 @@ export class Board {
    */
   private updateGhost(): void {
     const g = this.ghostGlyph;
+    const tg = this.ghostTierGlyph;
     // Armed-part placement ghost: the real glyph at the snapped cell.
     if (this.armed !== null && this.pointerInside) {
       const kind = PART_KINDS[this.armed];
       if (kind) {
+        // Snap to the cursor cell, then apply the in-place rotate/flip compensation so the
+        // ghost (and the drop) pivots about the footprint centre, not the anchor.
         const cell = {
-          col: snap(this.pointer.x, PITCH),
-          row: snap(this.pointer.y, PITCH),
+          col: snap(this.pointer.x, PITCH) + this.armedCellShift.col,
+          row: snap(this.pointer.y, PITCH) + this.armedCellShift.row,
         };
         const o = this.cellToWorld(cell);
         // The ghost reflects the arm-time configurator where it's cheap: an LED previews
@@ -964,33 +1026,98 @@ export class Board {
           this.armed === "LED"
             ? ledTint(this.armedConfig.variant ?? 0)
             : PALETTE[kind.colorKey];
+        const wPx = (kind.w - 1) * PITCH;
+        const hPx = (kind.h - 1) * PITCH;
         const pins = kind.pins.map((p) => ({
           x: p.dx * PITCH,
           y: p.dy * PITCH,
         }));
         g.clear();
-        // Orient the glyph in place exactly like a placed component's holder does
-        // (flip BEFORE rotate — PixiJS applies scale before rotation), so the preview
-        // matches the orientation + flip it will be dropped at.
-        g.scale.x = this.armedMirror ? -1 : 1;
-        g.rotation = (this.armedRot * Math.PI) / 2;
-        drawGlyph(g, {
-          kind: this.armed,
-          pins,
-          wPx: (kind.w - 1) * PITCH,
-          hPx: (kind.h - 1) * PITCH,
-          color,
-          electrical: ZERO_ELECTRICAL,
-          phase: 0,
-        });
-        // Pin dots, matching the real node so the ghost reads as the same part.
+        tg.clear();
+        // Orient via the holder exactly like a placed component (flip BEFORE rotate — PixiJS
+        // applies scale before rotation), so both the schematic glyph and the tier
+        // illustration ride the same transform and the preview matches the drop. The glyph +
+        // tier sit at the holder's origin; the holder carries mirror + rotation.
+        const holder = this.ghostGlyphHolder;
+        holder.scale.x = this.armedMirror ? -1 : 1;
+        holder.rotation = (this.armedRot * Math.PI) / 2;
+        g.scale.x = 1;
+        g.rotation = 0;
+        // Follow the active lens like a placed part does (ComponentNode.update): once
+        // zoomed in past TIER_ZOOM under the analogy/reality lens, preview the tier
+        // illustration (drawDetail/drawAnalogy) so the ghost matches the placed part;
+        // otherwise fall back to the schematic glyph.
+        const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+        const tier =
+          effLens === "reality" && hasDetail(this.armed)
+            ? "reality"
+            : effLens === "analogy" && hasAnalogy(this.armed)
+              ? "analogy"
+              : null;
+        const showTier = tier !== null && this.world.scale.x >= TIER_ZOOM;
+        if (showTier) {
+          // Mirror ComponentNode.update's tier render: draw at a fixed REFERENCE size,
+          // then scale down onto the footprint so the fixed-pixel details stay matched.
+          const REF_HW = 130;
+          const REF_HH = 80;
+          const targetHW = wPx / 2 + PITCH * 0.7;
+          const scale = targetHW / REF_HW;
+          const anchors = pins.map((p, i) => ({
+            label: kind.pins[i]?.label ?? "",
+            x: (p.x - wPx / 2) / scale,
+            y: (p.y - hPx / 2) / scale,
+          }));
+          const opts = {
+            kind: this.armed,
+            bounds: { hw: REF_HW, hh: REF_HH },
+            color,
+            electrical: ZERO_ELECTRICAL,
+            phase: 0,
+            value: kind.defaultValue,
+            wiper: this.armedConfig.wiper,
+            temp: this.armedConfig.temp,
+            anchors,
+          };
+          tg.position.set(wPx / 2, hPx / 2);
+          setStudsVisible(false);
+          if (tier === "reality") drawDetail(tg, opts);
+          else drawAnalogy(tg, opts);
+          setStudsVisible(true);
+          // Uniform scale only — the holder already carries the mirror + rotation, exactly
+          // like the placed-part tierGlyph (a child of its glyphHolder).
+          tg.scale.set(scale);
+          tg.visible = true;
+        } else {
+          tg.visible = false;
+          drawGlyph(g, {
+            kind: this.armed,
+            pins,
+            wPx,
+            hPx,
+            color,
+            electrical: ZERO_ELECTRICAL,
+            phase: 0,
+          });
+        }
+        // Pin dots, matching the real node so the ghost reads as the same part (on top of
+        // either the schematic glyph or the tier illustration).
         for (const p of pins) g.circle(p.x, p.y, PIN_R).fill({ color });
+        // Pin-name labels at the (rotated/flipped) pin positions, matching the placed-part
+        // pinTexts look, so the pinout is visible before dropping.
+        this.layoutGhostPinLabels(kind, color);
         this.ghostLayer.alpha = GHOST_ALPHA;
         this.ghostLayer.position.set(o.x, o.y);
         this.ghostLayer.visible = true;
         return;
       }
     }
+    // Not the armed-part ghost: hide its tier glyph + pin labels, and reset the holder to
+    // identity so the junction/label tool ghosts below (which reuse `this.ghostGlyph` and
+    // draw at the origin) aren't rotated/flipped by a leftover armed transform.
+    tg.visible = false;
+    for (const t of this.ghostPinTexts) t.visible = false;
+    this.ghostGlyphHolder.scale.x = 1;
+    this.ghostGlyphHolder.rotation = 0;
     // Junction-placer ghost: a translucent junction snapped to the wire under the
     // cursor (or the grid), so the tool reads as active instead of looking inert.
     if (this.armed === null && this.mode === "junction" && this.pointerInside) {
@@ -1038,6 +1165,56 @@ export class Board {
     }
     this.ghostLayer.visible = false;
     g.clear();
+  }
+
+  /**
+   * Lay out the armed ghost's upright pin-name labels (A/K, D/S/G, …) at its rotated /
+   * flipped pin positions, matching the placed-part `pinTexts` look (IBM Plex Mono 9px,
+   * weight 600, anchored centre, parked 9px above the pin). The labels live on `ghostLayer`
+   * (un-rotated, like a placed node's `view`), so each is positioned at `rotPx(pin)` —
+   * staying readable while the glyph itself spins. The pool grows on demand to the kind's
+   * pin count; unused entries are hidden.
+   */
+  private layoutGhostPinLabels(
+    kind: (typeof PART_KINDS)[string],
+    color: number,
+  ): void {
+    const pins = kind.pins;
+    // Grow the pool to cover this kind's pins.
+    while (this.ghostPinTexts.length < pins.length) {
+      const t = new Text({
+        text: "",
+        style: {
+          fill: color,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 9,
+          fontWeight: "600",
+        },
+      });
+      t.anchor.set(0.5);
+      t.resolution = DPR;
+      t.visible = false;
+      this.ghostPinTexts.push(t);
+      this.ghostLayer.addChild(t);
+    }
+    for (let i = 0; i < this.ghostPinTexts.length; i++) {
+      const t = this.ghostPinTexts[i]!;
+      const p = pins[i];
+      if (p) {
+        t.text = p.label;
+        t.style.fill = color;
+        const r = rotPx(
+          p.dx * PITCH,
+          p.dy * PITCH,
+          this.armedRot,
+          this.armedMirror,
+        );
+        t.position.set(r.x, r.y - 9);
+        t.visible = true;
+      } else {
+        t.visible = false;
+      }
+    }
   }
 
   /** Where the label-tool ghost sits: a pin, then a junction, then the grid-snapped
@@ -1543,13 +1720,33 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
-  /** Rotate the selected components 90° clockwise (connectivity is unchanged). */
+  /**
+   * Rotate the selected components 90° clockwise, **in place** about each part's
+   * footprint centre rather than its anchor (≈ pin 0). The anchor `cell` is shifted to
+   * compensate (in grid space, so the pin cells AND the glyph — both derived from
+   * `cell + rotateOffset(offset, rot, mirror)` — stay perfectly consistent), so a part
+   * pivots under itself instead of swinging away. Geometry only: the cell shift is a tiny
+   * move, pins keep their INDEX, so connectivity and the netlist are unchanged. One undo.
+   */
   rotateSelection(): void {
     if (this.selected.size === 0) return;
     this.pushUndo(this.graph.serialize());
     for (const id of this.selected) {
       const c = this.graph.components.get(id);
-      if (c) c.rot = (c.rot + 1) % 4;
+      if (c) {
+        const kind = this.graph.kindOf(c);
+        const newRot = (c.rot + 1) % 4;
+        if (kind) {
+          const s = rotateInPlaceShift(
+            footprintCenter(kind),
+            c.rot,
+            newRot,
+            !!c.mirror,
+          );
+          c.cell = { col: c.cell.col + s.col, row: c.cell.row + s.row };
+        }
+        c.rot = newRot;
+      }
       this.nodes.get(id)?.reposition();
     }
     this.redrawWires();
@@ -1558,16 +1755,31 @@ export class Board {
   }
 
   /**
-   * Horizontally flip (mirror) the selected components — toggle each part's `mirror`.
+   * Horizontally flip (mirror) the selected components — toggle each part's `mirror`,
+   * **in place** about its footprint centre (the `cell` shifted to compensate, exactly
+   * like {@link rotateSelection}) so a part flips under itself instead of jumping sideways.
    * Geometry/render only: pins keep their INDEX, so connectivity and the netlist are
-   * unchanged (exactly like {@link rotateSelection}); one undo covers the whole flip.
+   * unchanged; one undo covers the whole flip.
    */
   flipSelection(): void {
     if (this.selected.size === 0) return;
     this.pushUndo(this.graph.serialize());
     for (const id of this.selected) {
       const c = this.graph.components.get(id);
-      if (c) c.mirror = !c.mirror;
+      if (c) {
+        const kind = this.graph.kindOf(c);
+        const newMirror = !c.mirror;
+        if (kind) {
+          const s = flipInPlaceShift(
+            footprintCenter(kind),
+            c.rot,
+            !!c.mirror,
+            newMirror,
+          );
+          c.cell = { col: c.cell.col + s.col, row: c.cell.row + s.row };
+        }
+        c.mirror = newMirror;
+      }
       this.nodes.get(id)?.reposition();
     }
     this.redrawWires();
@@ -3482,9 +3694,14 @@ export class Board {
     // wire under the cursor. (Pins / junctions / bodies above keep their behaviour;
     // shift-click still falls through so you can multi-select while armed.)
     if (this.armed && !additive) {
+      // Drop where the ghost previewed: the snapped cursor cell + the in-place rotate/flip
+      // compensation, so the part lands centred under the cursor exactly like the ghost.
       this.placeCell(
         this.armed,
-        { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
+        {
+          col: snap(wp.x, PITCH) + this.armedCellShift.col,
+          row: snap(wp.y, PITCH) + this.armedCellShift.row,
+        },
         this.armedRot,
         this.armedMirror,
       );
@@ -4519,7 +4736,9 @@ export class Board {
       // through its bends.
       let sampleRoute = route;
       if (conduit) {
-        const pw = 5 + 6 * normC;
+        // Narrower than before (was 5 + 6·normC) so parallel/overlapping pipes pile up
+        // into far less haze while a high-current bus is still visibly fatter.
+        const pw = 4 + 5 * normC;
         const rd = condRoutes.get(w.id) ?? route;
         sampleRoute = roundedPoints(rd, Math.min(pw * 2, PITCH * 0.7));
         this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
@@ -5229,15 +5448,17 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const join = "round" as const;
-    const coreAlpha = lens === "analogy" ? 0.32 : 0.36;
+    // Lower core alpha (was 0.32/0.36) so overlapping pipes stop stacking into a haze; the
+    // fill colour + the carriers walking the same path keep it legible.
+    const coreAlpha = lens === "analogy" ? 0.26 : 0.3;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
     // `rp` is the already-rounded draw path (aligning stubs + rounded elbows). Two
     // translucent layers only — a faint wall rim + a voltage-tinted fill (no dark bore;
     // the stacked bore muddied the pipe and made crossings read opaque). The grid +
     // overlaps show through; the fill colour + the carriers (which walk this same path)
-    // stay the readable part.
+    // stay the readable part. Wall alpha trimmed (was 0.3) to de-haze parallel runs.
     polyline(g, rp);
-    g.stroke({ width: pw + 3, color: wallCol, alpha: 0.3, cap, join });
+    g.stroke({ width: pw + 3, color: wallCol, alpha: 0.24, cap, join });
     polyline(g, rp);
     g.stroke({
       width: Math.max(1, pw - 1),
@@ -5330,7 +5551,8 @@ export class Board {
         g.circle(p.x, p.y, JUNCTION_R).fill({ color });
       }
       if (hot) {
-        g.circle(p.x, p.y, (conduit ? 9 : JUNCTION_R) + 3).stroke({
+        // Hug the (now smaller) conduit hub — was 9+3; the trimmed hub reads ~radius 4.
+        g.circle(p.x, p.y, (conduit ? 6 : JUNCTION_R) + 3).stroke({
           width: 1.5,
           color: PALETTE.accent,
           alpha: 0.9,
@@ -5354,9 +5576,12 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    const coreAlpha = lens === "analogy" ? 0.34 : 0.38;
-    const pw = 6;
-    const arm = PITCH * 0.32;
+    // Trimmed (was 0.34/0.38) so the tap node reads small, in step with the de-hazed pipes.
+    const coreAlpha = lens === "analogy" ? 0.28 : 0.32;
+    // Match the thinner pipe body (was 6) and shorten the blanking nubs so an unused arm is
+    // a short stub, not a long spoke — the junction reads as a small node, not a fat asterisk.
+    const pw = 5;
+    const arm = PITCH * 0.24;
     const dirs: [number, number, number][] = [
       [1, 0, -1],
       [2, 1, 0],
@@ -5368,7 +5593,7 @@ export class Board {
       const ex = p.x + ux * arm;
       const ey = p.y + uy * arm;
       g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.22, cap });
+      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.2, cap });
       g.moveTo(p.x, p.y).lineTo(ex, ey);
       g.stroke({
         width: Math.max(1, pw - 2),
@@ -5378,9 +5603,10 @@ export class Board {
       });
     }
     // Hub: the nubs already overlap here (up to four arms over the run ends), so a
-    // heavy fill piles into an opaque dot. Keep it translucent to match the pipes.
-    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: wallCol, alpha: 0.2 });
-    g.circle(p.x, p.y, pw / 2 + 1).fill({ color, alpha: coreAlpha * 0.5 });
+    // heavy fill piles into an opaque dot. Keep it small + translucent to match the pipes
+    // (radii trimmed from +3.5/+1 so the tap reads as a node, not a blob).
+    g.circle(p.x, p.y, pw / 2 + 2).fill({ color: wallCol, alpha: 0.2 });
+    g.circle(p.x, p.y, pw / 2 + 0.5).fill({ color, alpha: coreAlpha * 0.5 });
   }
 
   /**
@@ -6422,20 +6648,27 @@ class ComponentNode {
       cg.clear();
       const bodyCx = this.wPx / 2;
       const bodyCy = this.hPx / 2;
-      const pw = 5 + 5 * Math.min(1, Math.abs(electrical.current) / 0.02);
+      // Narrower (was 5 + 5·…) so it doesn't read fatter than the wire-pipe feeding it.
+      const pw = 4 + 4 * Math.min(1, Math.abs(electrical.current) / 0.02);
       const core = tier === "reality" ? COND_ELEC : PIPE_WATER;
       for (const p of this.pinPositions) {
+        // Start the stub a little INSIDE the pin (not AT it) so it doesn't double the
+        // wire conduit's own port-mouth flare that already lands on the pin — the pipe
+        // then flows into the part once, cleanly, instead of as an overlapped/oddly-
+        // translucent doubled stub (most visible on the multi-pin MOSFET bodies).
+        const sx = p.x + (bodyCx - p.x) * 0.2;
+        const sy = p.y + (bodyCy - p.y) * 0.2;
         const ex = p.x + (bodyCx - p.x) * 0.62;
         const ey = p.y + (bodyCy - p.y) * 0.62;
-        cg.moveTo(p.x, p.y).lineTo(ex, ey);
+        cg.moveTo(sx, sy).lineTo(ex, ey);
         cg.stroke({
           width: pw + 3,
           color: PIPE_WALL,
-          alpha: 0.3,
+          alpha: 0.22,
           cap: "round",
         });
-        cg.moveTo(p.x, p.y).lineTo(ex, ey);
-        cg.stroke({ width: pw, color: core, alpha: 0.16, cap: "round" });
+        cg.moveTo(sx, sy).lineTo(ex, ey);
+        cg.stroke({ width: pw, color: core, alpha: 0.13, cap: "round" });
       }
       cg.visible = true;
     } else if (isDieFrame(this.kindTag)) {

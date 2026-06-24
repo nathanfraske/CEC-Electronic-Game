@@ -6,6 +6,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (103) — Four rendering/UX QoL (rotate/flip in place, ghost pinout/lens, pipe declutter)
+
+- ~~**Rotate & flip a part IN PLACE (about its footprint centre, not the anchor)**~~ — DONE. New
+  pure helpers in `graph.ts`: `footprintCenter(kind)` (fractional bbox-centre of pin offsets) +
+  `rotateInPlaceShift` / `flipInPlaceShift` (the rounded `cell` shift that holds the centre fixed
+  across a rot/mirror change). Wired into `board.rotateSelection`/`flipSelection` (per selected
+  part — each pivots about its own centre, was per-anchor swing) AND the armed ghost via a new
+  `armedCellShift` accumulator (bumped in `rotateArmed`/`flipArmed`, added to the snapped cell in
+  `updateGhost` + the drop). One undo. Geometry only (pins keep INDEX) → netlist byte-identical.
+- ~~**Pin labels in the armed ghost**~~ — DONE. `ghostPinTexts` pool + `layoutGhostPinLabels` draw
+  the pin names at the ghost's rotated/flipped pins, matching the placed-part `pinTexts` style.
+- ~~**Ghost follows the active lens (reality/analogy)**~~ — DONE. New `ghostGlyphHolder` +
+  `ghostTierGlyph`; `updateGhost` mirrors `ComponentNode.update`'s tier-selection (lens + TIER_ZOOM)
+  and previews `drawDetail`/`drawAnalogy`, falling back to the schematic glyph.
+- ~~**Pipe-view (conduit/analogy) declutter**~~ — DONE (visual tuning, palette tokens only):
+  shrank the conduit junction node (`drawJunctionConduit` `pw` 6→5, shorter nubs, smaller hub),
+  cleaned the device pipe-in stubs (`connectorGlyph` now starts inside the pin so it doesn't double
+  the wire's port mouth — the MOSFET "doubled stub" — narrower + lower alpha), and reduced pipe
+  width + wall/core alpha (`drawConduitSkin`). Exact constants in HANDOFFS (103) for easy nudging.
+  - **Owner visual review:** in-place rotate/flip at all 4 rotations on asymmetric parts; the
+    ghost pinout + lens preview; the pipe view under the analogy lens.
+
 ## 2026-06-24 (102) — Re-open + reseal a sealed user IC, and persist sealed-IC defs
 
 - ~~**Persist sealed-IC definitions + re-drill to edit + reseal-updates-the-def**~~ — DONE.
