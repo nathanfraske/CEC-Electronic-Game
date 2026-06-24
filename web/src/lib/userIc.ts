@@ -123,6 +123,63 @@ export function unregisterUserIc(tag: string): void {
   delete PART_KINDS[tag];
 }
 
+/**
+ * Re-seal an EXISTING sealed IC in place: swap its authored inner circuit (and the pin names derived
+ * from the new die frame) while keeping its `tag`, display `name`, and `package`. Used by the die
+ * editor's "Reseal" path (re-opening a placed sealed chip, editing its die, sealing again): every
+ * placed instance of `tag` updates because {@link registerUserIc} re-derives `PART_KINDS[tag]` and
+ * `flattenUserIcs` reads the registry's `graph` at build time. A no-op if `tag` is unknown (nothing
+ * to re-seal). `pinNames` may be passed (the new frame's per-pin names) or omitted to clear them.
+ *
+ * Distinct from re-running {@link captureSeal} with the tag as the NAME: that would also overwrite
+ * the entry, but it forces `name === tag`, losing a free-form display name. This preserves it.
+ */
+export function resealUserIc(
+  tag: string,
+  graph: GraphSnapshot,
+  frameId: number,
+  pinNames?: string[],
+): void {
+  const prev = REGISTRY.get(tag);
+  if (!prev) return;
+  const keep = pinNames && pinNames.some((n) => n && n.trim());
+  registerUserIc({
+    tag: prev.tag,
+    name: prev.name,
+    package: prev.package,
+    frameId,
+    graph,
+    ...(keep ? { pinNames: [...pinNames] } : {}),
+  });
+}
+
+/**
+ * The sealed-IC definitions for every DISTINCT user-IC kind actually PLACED in `graph`, so a saved
+ * board can embed exactly the ICs it uses (and round-trip them — a {@link UserIc} is plain JSON).
+ * Reads each placed instance's `kind` and, when it's a registered user IC, returns its definition
+ * once. Returns `[]` when the board places no sealed IC (so a normal save carries no `userIcs`).
+ */
+export function userIcsForGraph(graph: GraphSnapshot): UserIc[] {
+  const out: UserIc[] = [];
+  const seen = new Set<string>();
+  for (const c of graph.components) {
+    if (seen.has(c.kind)) continue;
+    const def = REGISTRY.get(c.kind);
+    if (def) {
+      seen.add(c.kind);
+      out.push(def);
+    }
+  }
+  return out;
+}
+
+/** Register a batch of sealed-IC definitions (from a save's embedded library). Idempotent — each
+ * just calls {@link registerUserIc}, so re-loading a board re-installs its ICs (overwriting any
+ * same-tag entry with the saved one). A no-op on an empty/absent list. */
+export function registerUserIcs(defs: UserIc[]): void {
+  for (const ic of defs) registerUserIc(ic);
+}
+
 /** One flatten record: the placed instance id, the id offset its inner parts were inlined at, and
  * its kind tag. Collected via the optional `sink` of {@link flattenUserIcs} so a render-only caller
  * (the zoom-to-open mini-board) can map an inner component's authored id (`innerId`) to its

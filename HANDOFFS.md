@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (102) — Sealed user ICs: persist defs + re-open to edit + reseal
+
+**State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core
+-p sim-protocol --all-targets -D warnings` clean, `cargo test -p sim-core -p sim-protocol`
+**188 passed** (golden `0xeaac_3764_99e4_fa24` unchanged). Web: `build:wasm` ok, `format` +
+`lint` clean, `check` **0 errors / 0 warnings**, `build` ok, `test` **50 passed** (2 new).
+Branch `claude/kind-turing-hdelb3`. **Not** pushed/PR'd — owner reviews + merges.
+
+**Shipped (IC maker, ADR 0006) — three owner-reported problems fixed:**
+1. **Persist sealed-IC defs with the board.** Previously a `CEC9xxx`'s inner circuit lived only in
+   the in-memory `userIc.ts` REGISTRY, so save+reload made every placed instance an unknown kind.
+   New `userIcsForGraph(graph)` (defs for the distinct user ICs actually placed) + `registerUserIcs`
+   (idempotent batch). Embedded as an optional `userIcs?: UserIc[]` at **all three** load sites —
+   the Download/Load file envelope (**version 1 → 2**), the localStorage autosave/restore
+   (`storage.ts`, now a `{ graph, userIcs? }` blob that still accepts a legacy bare snapshot), and
+   `savedExample`/`fromSaved` (`examples.ts`). **Backward-compat:** omitted when empty; a save with
+   no `userIcs` loads exactly as today. Every loader re-registers BEFORE restoring the graph.
+2. **Re-open a placed sealed IC to edit (re-drill).** An **Edit ▸** inspector button for a placed
+   user IC (mirrors the frame's Build). `editUserIcSelected()` drills into a `structuredClone` of
+   `ic.graph` (a copy, so the registry def is untouched until reseal); `drill` gained `editingTag`.
+3. **Reseal updates the existing def.** `resealUserIc(tag, graph, frameId, pinNames?)` swaps the
+   `UserIc`'s graph + pin names, keeps tag/name/package, re-runs `registerUserIc` (re-derives
+   `PART_KINDS[tag]`) → every placed instance follows. `dieSeal()` branches on `editingTag`: reseal
+   same tag + exit without minting/re-kinding. Back-bar reads "Editing <tag>" / "Reseal ✓".
+
+**How reseal-overwrite is wired:** `resealUserIc` (NOT `captureSeal` with tag-as-name, which would
+force `name === tag`) → `registerUserIc` overwrites the REGISTRY entry and re-derives the placeable
+`PART_KINDS[tag]`. `flattenUserIcs` reads the registry's `graph` at build time, so existing placed
+instances recompile to the new circuit with no re-placement.
+
+**Determinism:** all definition+presentation — a sealed IC still flattens to its real discrete parts
+at `buildNetlist` (seal-as-same-netlist). No sim-core / netlist-emission change; golden untouched.
+
+**Needs owner visual review:** drilling into a placed sealed IC, the Reseal flow end-to-end, and
+that placed instances visibly update (footprint + pin labels) after a reseal.
+
+**Files:** `web/src/lib/userIc.ts`, `web/src/lib/storage.ts`, `web/src/lib/examples.ts`,
+`web/src/App.svelte`, `web/src/lib/netlist.test.ts`.
+
 ## 2026-06-24 (101) — Editing-UX QoL (occluded-wire + junctions) + product-run reliability ideation
 
 **State:** 🟢 web gate-green (check 0/0, lint, build, 48 vitest incl. +2 dissolveJunction). Branch

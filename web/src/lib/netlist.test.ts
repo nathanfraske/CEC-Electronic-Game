@@ -11,6 +11,9 @@ import {
   unregisterUserIc,
   captureSeal,
   getUserIc,
+  userIcsForGraph,
+  registerUserIcs,
+  resealUserIc,
 } from "./userIc";
 
 function place(
@@ -267,6 +270,120 @@ describe("IC maker — captureSeal (capture end-to-end)", () => {
     const g = new BoardGraph();
     const r = place(g, "R", 0, 0, 1000);
     expect(captureSeal(g, r.id)).toBeUndefined();
+  });
+});
+
+describe("IC maker — persistence (save/reload round-trip)", () => {
+  it("survives a JSON round-trip + fresh session: the placed instance still expands to the inline netlist", () => {
+    // Seal a V + R loop inside a SOT-23-3 die (the authored circuit), so its def round-trips through
+    // a save. captureSeal registers it and hands back a real UserIc (its graph + frameId).
+    const author = new BoardGraph();
+    const frame = place(author, "SOT23_3", 0, 0);
+    const vin = place(author, "V", 0, 4, 5);
+    const rin = place(author, "R", 4, 4, 1000);
+    const gin = place(author, "GND", 0, 8);
+    connect(author, frame, 0, vin, 0); // pin 1 -> V+
+    connect(author, vin, 1, gin, 0); // V- -> GND
+    connect(author, vin, 0, rin, 0); // V+ -> R.A (shares pin-1 net)
+    connect(author, rin, 1, frame, 1); // R.B -> pin 2
+    const cap = captureSeal(author, frame.id, "TESTPERSIST");
+    expect(cap).not.toBeUndefined();
+
+    try {
+      // A board that PLACES the sealed IC. userIcsForGraph picks out exactly the def it uses.
+      const board = new BoardGraph();
+      const ic = place(board, "TESTPERSIST", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, ic, 1, gnd, 0); // pin 2 -> GND (the inner R's return)
+      const snap = board.serialize();
+      const defs = userIcsForGraph(snap);
+      expect(defs.map((d) => d.tag)).toEqual(["TESTPERSIST"]); // exactly the placed IC
+
+      // Serialize the embedded library, then simulate a FRESH session: drop the registry entry and
+      // re-register only from the parsed JSON (the save envelope's userIcs).
+      const wire = JSON.parse(JSON.stringify(defs)) as typeof defs;
+      unregisterUserIc("TESTPERSIST");
+      expect(getUserIc("TESTPERSIST")).toBeUndefined(); // gone, as after a reload
+      registerUserIcs(wire);
+      expect(getUserIc("TESTPERSIST")).not.toBeUndefined(); // restored from the save
+
+      // The restored kind still expands seal-as-same-netlist: the placed instance equals the inline
+      // V + 1k R + GND (pin2 -> GND) reference.
+      const a = buildNetlist(board, false);
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 1000);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0);
+      connect(flat, rf, 1, gf, 0);
+      connect(flat, vf, 1, gf, 0);
+      const b = buildNetlist(flat, false);
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]);
+      expect(a!.types.length).toBe(2); // V + the IC's inner R
+    } finally {
+      unregisterUserIc("TESTPERSIST");
+    }
+  });
+});
+
+describe("IC maker — reseal updates the existing def", () => {
+  it("resealUserIc swaps the inner circuit in place (one entry; placed instances recompile to the new value)", () => {
+    // Seal tag T with a 1k inner R.
+    const a1 = new BoardGraph();
+    const f1 = place(a1, "SOT23_3", 0, 0);
+    const r1 = place(a1, "R", 4, 0, 1000);
+    connect(a1, f1, 0, r1, 0); // pin 1 -> R.A
+    connect(a1, r1, 1, f1, 1); // R.B -> pin 2
+    const cap = captureSeal(a1, f1.id, "TESTRESEAL");
+    expect(cap).not.toBeUndefined();
+
+    try {
+      expect(getUserIc("TESTRESEAL")!.graph.components.length).toBe(2); // frame + 1k R
+
+      // A new authored die for the SAME package, now a 2k R: serialize it and RE-SEAL into tag T.
+      const a2 = new BoardGraph();
+      const f2 = place(a2, "SOT23_3", 0, 0);
+      const r2 = place(a2, "R", 4, 0, 2000);
+      connect(a2, f2, 0, r2, 0);
+      connect(a2, r2, 1, f2, 1);
+      resealUserIc("TESTRESEAL", a2.serialize(), f2.id);
+
+      // Still exactly ONE registry entry for T, and its graph now reflects the 2k value (not a dup).
+      const def = getUserIc("TESTRESEAL");
+      expect(def).not.toBeUndefined();
+      const innerR = def!.graph.components.find((c) => c.kind === "R");
+      expect(innerR!.value).toBe(2000);
+
+      // A placed instance of T now compiles the 2k resistor (the def was updated, not duplicated):
+      // assert against the inline V + 2k R + GND reference.
+      const board = new BoardGraph();
+      const vs = place(board, "V", 0, 0, 5);
+      const ic = place(board, "TESTRESEAL", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, vs, 0, ic, 0);
+      connect(board, ic, 1, gnd, 0);
+      connect(board, vs, 1, gnd, 0);
+      const a = buildNetlist(board, false);
+
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 2000);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0);
+      connect(flat, rf, 1, gf, 0);
+      connect(flat, vf, 1, gf, 0);
+      const b = buildNetlist(flat, false);
+
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]); // 2000, not 1000
+    } finally {
+      unregisterUserIc("TESTRESEAL");
+    }
   });
 });
 

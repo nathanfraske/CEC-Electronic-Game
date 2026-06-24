@@ -6,6 +6,48 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (102) — Re-open + reseal a sealed user IC, and persist sealed-IC defs
+
+- ~~**Persist sealed-IC definitions + re-drill to edit + reseal-updates-the-def**~~ — DONE.
+  Three problems fixed for the IC maker (ADR 0006): (a) a sealed `CEC9xxx`'s inner definition
+  lived only in the in-memory `userIc.ts` REGISTRY, so save+reload turned every placed instance
+  into an unknown kind; (b) no way to re-open a sealed chip to edit it; (c) a reseal had to mint a
+  new tag. All three shipped.
+  - **Persist:** new `userIcsForGraph(graph): UserIc[]` (the defs for every distinct user IC
+    PLACED in the graph) + `registerUserIcs(defs)` (idempotent batch register) in `userIc.ts`.
+    The downloaded save envelope gained an optional `userIcs?: UserIc[]` (**version 1 → 2**;
+    omitted when empty, so a plain board's save is byte-identical and an older save with no
+    `userIcs` loads exactly as before). Embedded at the **three** load sites: the Download/Load
+    file path (`saveCircuit`/`onLoadFile` in `App.svelte`), the **localStorage** autosave/restore
+    (`saveBoard`/`loadBoard` in `storage.ts`, wrapped in a `{ graph, userIcs? }` blob that also
+    accepts a legacy bare snapshot), and `savedExample`/`fromSaved` (`examples.ts`). Every loader
+    re-registers the defs BEFORE the graph is restored, so the placed `CEC9xxx` kinds resolve.
+  - **Edit (re-drill):** an **Edit ▸** button in the inspector for a placed sealed user IC
+    (`isUserIc(selPart.kind)`), mirroring the frame's **Build**. `editUserIcSelected()` reuses the
+    drill machinery — stash the outer board/camera, `swapGraph(structuredClone(ic.graph))` (a COPY
+    so edits don't touch the registry until reseal), `setDieFrame(ic.frameId)`. The `drill` state
+    gained `editingTag?: string` (the IC being edited; `buildSelectedFrame` leaves it undefined =
+    "mint a new CEC9xxx on seal").
+  - **Reseal:** new `resealUserIc(tag, graph, frameId, pinNames?)` in `userIc.ts` — swaps the
+    existing `UserIc`'s graph + pin names while keeping its tag/name/package, then re-runs
+    `registerUserIc` (re-derives `PART_KINDS[tag]`), so every placed instance follows. `dieSeal()`
+    branches on `drill.editingTag`: reseal into the same tag + exit WITHOUT minting/re-kinding
+    (instances are already kind=tag); the fresh-frame path is unchanged. Chosen over re-running
+    `captureSeal` with the tag-as-name (which would force `name === tag`, losing a free-form name).
+  - **UX:** back-bar breadcrumb reads **"Editing <tag>"** and the Seal button reads **"Reseal ✓"**
+    when editing; the seal-name field + Save button are hidden in the edit flow (the tag is fixed).
+    Edit is a no-op for a stale tag (`getUserIc` undefined).
+  - **Determinism:** definition+presentation only — a sealed IC still flattens to its real discrete
+    parts at `buildNetlist` (seal-as-same-netlist). **No sim-core change; golden
+    `0xeaac_3764_99e4_fa24` unchanged.** New vitest (`netlist.test.ts`, +2 → **50**): a
+    persistence round-trip (`userIcsForGraph` → JSON → `unregisterUserIc` → `registerUserIcs` →
+    placed instance still equals the inline netlist) and a reseal-updates-the-def check (1k → 2k,
+    one registry entry, placed instance recompiles the 2k).
+  - **Owner visual review:** drill-into-a-sealed-IC, the Reseal flow, and that placed instances
+    visibly update (footprint/pin labels) after a reseal.
+  - Files: `web/src/lib/userIc.ts`, `web/src/lib/storage.ts`, `web/src/lib/examples.ts`,
+    `web/src/App.svelte`, `web/src/lib/netlist.test.ts`.
+
 ## 2026-06-24 (100) — Mirror / flip a component (placement QoL)
 
 - ~~**Mirror/flip a component**~~ — DONE. Any placed (or armed, or pasted) part can now be
