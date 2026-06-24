@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (125) — Phase 2 Part A IMPLEMENTED: recursive nested zoom-to-open
+
+**State:** 🟢 branch `claude/phase2-part-a` (off latest main, which already had the Phase 2 base case —
+per-part tier detail + schematic + clip — merged). Render-only; golden `0xeaac…fa24` untouched. All gates
+green (build:wasm, web check/format/lint/build/test 77 passed, `golden_snapshot_hash_is_stable` ok).
+
+**What landed (Part A of `docs/phase2-recursive-zoom-and-divergences.md`):**
+- **A.2 `flatId`** — added `flatId?: number` to `UserIcInnerPart` (`netlist.ts`); the LIVE builder sets it to
+  `comp.id + o` for an inner part that `isUserIc`, leaving it absent in `userIcGeometry` (static fallback). It
+  equals the nested instance's own `FlattenRecord.instanceId`, so `userIcInternals.get(flatId)` resolves. New
+  headless vitest asserts a nested IC's inner-part `flatId` → the placed instance's flattened internals (real R).
+- **A.1 threading** — `UserIcInternalsOpts` gains `internalsZoom`, `allInternals`, `depth`, `cumulativeScale`.
+  Board passes `INTERNALS_ZOOM` + the full `userIcInternals` map (threaded through `ComponentNode.update`'s new
+  `allUserIcInternals` arg); top call defaults `depth 0` / `cumulativeScale 1`.
+- **A.3 recurse** — per inner part, when `isUserIc` AND `flatId` resolves AND `cumulativeScale·s·cameraZoom ≥
+  internalsZoom`, recurse `drawUserIcInternals` into a pooled per-part holder subtree (`frameG` package frame +
+  `nestedLayer` scaled inner partLayer), passing the nested package frame/pins, `depth+1`, `cumulativeScale·s`,
+  same `allInternals`/`nodeV`/`lens`. Below threshold → existing detail/glyph base case.
+- **A.4 depth-guard + cull** — `RECURSE_MAX_DEPTH = 24` hard stop; the geometric size-cull is the real economy
+  (each level's `s < 1` shrinks the child, so only finitely many levels open at a fixed zoom). On stop-recursing
+  the nested subtree is `destroy({ children: true })`-ed (no leak); a `WeakMap<Graphics, SlotRecord>` holds the
+  per-slot `dg`/`frameG`/`nestedLayer` so pool index shifts never mis-key, and the trailing innerG slot's record
+  is dropped each frame.
+- **A.5 live signals** — free: each nested `UserIcInternals.nodeOfInner` resolves into the same flattened
+  `nodeV`, passed down unchanged.
+
+**Threshold choice:** open at `cumulativeScale·s·cameraZoom ≥ INTERNALS_ZOOM` — the faithful per-part mirror of
+the top level's `zoom ≥ INTERNALS_ZOOM` (both compare a magnification, not a px count); tier-detail base case
+keeps its `absScale ≥ TIER_ZOOM` gate (`absScale` now includes `cumulativeScale`).
+
+**Not done (deliberately, task = Part A only):** Parts B/C divergences were already landed in the base case;
+none were re-touched. No extra gauges/flow-dots inside nested levels beyond what the base case already draws.
+
+**Next / owner eye:** confirm the nested open *feels* right at real zoom (the cull threshold) on a 2-level
+example; then Phase 3 (transistor silicon leaf) / Phase 4 (LUT + inverter element).
+
+---
+
 ## 2026-06-24 (124) — Opened-IC polish landed; reality-lens first cut landed; Phase 2 + Phase 4 DESIGNED (docs)
 
 **State:** 🟢 all merged to main; branch `claude/kind-turing-hdelb3` at `4b66ea1` + 2 doc commits (phase2/phase4)

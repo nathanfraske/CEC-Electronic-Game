@@ -29,9 +29,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Nested save round-trip**~~ — DONE. `userIcsForGraph` collects nested defs transitively.
 - ~~**Audit Phase 1 with a panel**~~ — DONE. 3 reviewers (determinism GOLDEN-SAFE, consumer SHIP, correctness)
   → all findings (DoS cap, depth warn, collision, save-embed) fixed + probe-verified.
-- [ ] **Phase 2** — recursive zoom-to-open LoD: `drawUserIcInternals` recurses when a nested IC's on-screen
-  size crosses the open threshold. The nested `userIcInternals` entries already exist (keyed by inlined hub
-  id). Live signals via recursive `nodeOfInner`.
+- ~~**Phase 2 Part A** — recursive zoom-to-open LoD~~ — DONE (branch `claude/phase2-part-a`). `flatId` (=
+  `comp.id + offset`) added to `UserIcInnerPart`; `drawUserIcInternals` recurses into a nested sealed-IC inner
+  part when `cumulativeScale·s·cameraZoom ≥ INTERNALS_ZOOM`, depth-guarded at `RECURSE_MAX_DEPTH = 24`, pooled
+  per-slot subtree destroyed on cull. Live signals free via each level's `nodeOfInner` + the same `nodeV`.
+  Parts B/C of the doc were already landed in the base case. Golden untouched.
 
 ## 2026-06-24 (121) — Recursive-IC LoD Phase 0 LANDED (opened IC via the real pipeline)
 

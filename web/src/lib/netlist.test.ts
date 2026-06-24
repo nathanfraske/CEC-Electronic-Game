@@ -394,6 +394,70 @@ describe("IC maker — seal-as-same-netlist", () => {
     }
   });
 
+  it("Phase 2 Part A: a nested-IC inner part carries a flatId that resolves to its own UserIcInternals", () => {
+    // Inner IC: a 1 kOhm R in a SOT-23-3 package (pin1 -> R -> pin2).
+    const innerDie = new BoardGraph();
+    const innerFrame = place(innerDie, "SOT23_3", 0, 0);
+    const r = place(innerDie, "R", 4, 0, 1000);
+    connect(innerDie, innerFrame, 0, r, 0); // pin 1 -> R.A
+    connect(innerDie, r, 1, innerFrame, 1); // R.B -> pin 2
+    registerUserIc({
+      tag: "FLATINNER",
+      name: "Flat Inner",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: innerFrame.id,
+      graph: innerDie.serialize(),
+    });
+
+    // Outer IC: a SOT-23-3 package that PLACES a FLATINNER instance (the nested sealed IC), wiring
+    // outer pin1 -> inner pin1 and inner pin2 -> outer pin2.
+    const outerDie = new BoardGraph();
+    const outerFrame = place(outerDie, "SOT23_3", 0, 0);
+    const innerInst = place(outerDie, "FLATINNER", 6, 0);
+    connect(outerDie, outerFrame, 0, innerInst, 0);
+    connect(outerDie, innerInst, 1, outerFrame, 1);
+    registerUserIc({
+      tag: "FLATOUTER",
+      name: "Flat Outer",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: outerFrame.id,
+      graph: outerDie.serialize(),
+    });
+
+    try {
+      const sealed = new BoardGraph();
+      const vs = place(sealed, "V", 0, 0, 5);
+      const ic = place(sealed, "FLATOUTER", 4, 0);
+      const gnd = place(sealed, "GND", 0, 6);
+      connect(sealed, vs, 0, ic, 0);
+      connect(sealed, ic, 1, gnd, 0);
+      connect(sealed, vs, 1, gnd, 0);
+      const a = buildNetlist(sealed, false);
+      expect(a).not.toBeNull();
+
+      // The OUTER instance's internals carry one inner part: the nested FLATINNER hub. That inner part
+      // must carry a `flatId` (it is itself a sealed user IC).
+      const outer = a!.userIcInternals.get(ic.id);
+      expect(outer).not.toBeUndefined();
+      const nestedPart = outer!.parts.find((p) => p.kind === "FLATINNER");
+      expect(nestedPart).not.toBeUndefined();
+      expect(nestedPart!.flatId).not.toBeUndefined();
+
+      // The flatId resolves in the SAME map to the nested IC's OWN internals — exactly the entry the
+      // recursive zoom (Part A) descends into. Its inner part is the real 1 kOhm R.
+      const nestedInternals = a!.userIcInternals.get(nestedPart!.flatId!);
+      expect(nestedInternals).not.toBeUndefined();
+      expect(nestedInternals!.parts.some((p) => p.kind === "R")).toBe(true);
+
+      // A plain (non-IC) inner part carries NO flatId (render-only, IC-only field).
+      const innerR = nestedInternals!.parts.find((p) => p.kind === "R");
+      expect(innerR!.flatId).toBeUndefined();
+    } finally {
+      unregisterUserIc("FLATOUTER");
+      unregisterUserIc("FLATINNER");
+    }
+  });
+
   it("flattening is a strict no-op when no sealed IC is placed", () => {
     const g = new BoardGraph();
     const vs = place(g, "V", 0, 0, 5);
