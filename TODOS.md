@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (123) — Owner queue: opened-IC polish, bridges-over, mesh; reality-lens panel
+
+- ~~**Opened-IC fit + part orientation**~~ — DONE (PR #189). Fit to the body rectangle; orient parts like the
+  die editor (canonical pins + child rot/**mirror**); render-only `mirror` on `UserIcInnerPart`.
+- ~~**Bridges render OVER not under**~~ — DONE (PR #190). `wireDrawOrder` topo draw order; 10-case test.
+- ~~**Pipe↔component mesh coupling**~~ — DONE (PR #191). Flange collar at pin ends in `drawConduitSkin`
+  (`ends` arg); 3-panel brainstorm. First cut — radii tunable.
+- [ ] **Reality-lens + junction redesign** (#17) — panel → `docs/ui/reality-lens-and-junctions.md` → implement.
+  Reality lens should read as real electronics (copper/solder/vias/pads/leads), distinct from analogy plumbing,
+  at every tube/contact/junction; better junction forms (solder dome / tap-count manifold; 2-way invisible;
+  small-scale fallback). Thread `lens` into `drawJunctionConduit` (the missing param).
+- [ ] **Phase 2** recursive zoom-to-open (#9, flagship) — next after the reality-lens doc+first-cut.
+- [ ] **Phase 5** zoom meter (#12), **Phase 3** silicon leaf (#10), **Phase 4** LUT + CEC9002→Inverter element
+  (#11), **replica follow-ups** lead-connectors/gauges/flow-dots (#16).
+
 ## 2026-06-24 (122) — Recursive-IC LoD Phase 1 LANDED (recursive nesting)
 
 - ~~**Phase 1: recursive `flattenUserIcs`**~~ — DONE, merged to main (PR #188, `a06b708`). Wave-based fixed
