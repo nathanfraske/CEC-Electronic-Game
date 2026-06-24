@@ -304,7 +304,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   for (const j of innerGraph.junctions.values()) {
     const node = nodeOfInner({ junctionId: j.id });
     const p = junctionPos.get(j.id) ?? cellToWorld(j.cell);
-    drawJunctionConduit(innerG, p, netColor(node));
+    drawJunctionConduit(innerG, p, netColor(node), lens);
   }
 
   // TODO(phase-0-followup): the per-net voltage gauges/standpipes (drawNetBars/drawNetStandpipes),

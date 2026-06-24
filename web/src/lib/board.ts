@@ -5557,7 +5557,7 @@ export class Board {
       const color = this.endpointColor({ junctionId: j.id });
       const hot = this.selectedJunctions.has(j.id);
       if (conduit) {
-        this.drawJunctionConduit(g, p, color);
+        this.drawJunctionConduit(g, p, color, conduit);
       } else {
         g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({
           color: 0x0d0b16,
@@ -5581,8 +5581,13 @@ export class Board {
    * {@link drawJunctionConduit} in `./boardRender` so the sealed-IC opened view can draw the
    * SAME hub; every internal call site is unchanged.
    */
-  private drawJunctionConduit(g: Graphics, p: Point, color: number): void {
-    drawJunctionConduit(g, p, color);
+  private drawJunctionConduit(
+    g: Graphics,
+    p: Point,
+    color: number,
+    lens: BoardLens,
+  ): void {
+    drawJunctionConduit(g, p, color, lens);
   }
 
   /**
