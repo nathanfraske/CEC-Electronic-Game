@@ -55,7 +55,15 @@
     unusedDiePins,
     dieTestGraph,
   } from "./lib/dieEditor";
-  import { captureSeal } from "./lib/userIc";
+  import {
+    captureSeal,
+    getUserIc,
+    isUserIc,
+    resealUserIc,
+    registerUserIcs,
+    userIcsForGraph,
+    type UserIc,
+  } from "./lib/userIc";
   import {
     hasValue,
     isESeries,
@@ -2197,11 +2205,14 @@
   // exits need to restore the outer board + identify the die. One level only (the guide's one-layer
   // nesting — no user IC inside a user IC), so a single context, not a stack.
   let drill = $state<{
-    /** the OUTER frame component id this die belongs to (key into {@link innerGraphs}). */
+    /** the OUTER frame component id this die belongs to (key into {@link innerGraphs}). For an EDIT
+     * drill (`editingTag` set) the outer part is a placed sealed IC, not a frame, so this is just the
+     * id we drilled FROM — the inner graph isn't stashed in `innerGraphs` (the registry owns it). */
     frameId: number;
     /** the die frame's id WITHIN the inner graph (its pins are the package leads). */
     innerFrameId: number;
-    /** the frame's package kind tag (for the breadcrumb + a fresh re-entry). */
+    /** the frame's package kind tag (for the breadcrumb + a fresh re-entry). When editing a sealed
+     * IC this is the die-frame kind read off the IC's authored graph (so `framePackage` resolves). */
     frameTag: string;
     /** display name shown in the breadcrumb (the part's label or the package name). */
     name: string;
@@ -2209,6 +2220,12 @@
     outerSnapshot: GraphSnapshot;
     /** the outer camera (pan + zoom), restored on exit. */
     outerCamera: { x: number; y: number; scale: number };
+    /**
+     * Set when EDITING an already-sealed IC (re-drilled from a placed instance): the IC's kind tag.
+     * Seal then RE-SEALS into this same tag (updating its registry def, so every placed instance
+     * follows) instead of minting a new CEC9xxx. Undefined for a fresh-frame Build (mint a new tag).
+     */
+    editingTag?: string;
   } | null>(null);
 
   // Live seal advisory while inside a die: whether it currently compiles (the hard gate) and how
@@ -2278,6 +2295,42 @@
     setMode("select");
   }
 
+  /**
+   * RE-OPEN a placed sealed user IC to edit its die. Mirrors {@link buildSelectedFrame} but the
+   * source is the registered {@link UserIc}'s authored circuit (not a fresh/stashed frame): stash the
+   * outer board + camera, swap to a COPY of the IC's inner graph (structuredClone so edits don't
+   * mutate the registry until Reseal), mark the die frame, and record `editingTag` so Seal RE-SEALS
+   * into the same tag. No-op unless the selection is a registered user IC and we're not already
+   * drilled in. A stale tag (no def) is a silent no-op (the guard the spec calls for).
+   */
+  function editUserIcSelected(): void {
+    if (!selPart || !board || drill || !isUserIc(selPart.kind)) return;
+    const tag = selPart.kind;
+    const ic = getUserIc(tag);
+    if (!ic) return; // stale/unknown tag — refuse rather than break
+    // The IC's authored graph holds its die frame at ic.frameId; its kind is the die-frame variant
+    // (so framePackage resolves for the breadcrumb + the pin-count advisory). Copy the graph so the
+    // editor mutates a throwaway, leaving the registry def untouched until Reseal overwrites it.
+    const inner = structuredClone(ic.graph);
+    const frameComp = inner.components.find((c) => c.id === ic.frameId);
+    if (!frameComp || !isFrame(frameComp.kind)) return; // corrupt def — refuse
+    const name = selPart.label?.trim() || ic.name || partName(tag);
+
+    drill = {
+      frameId: selPart.id,
+      innerFrameId: ic.frameId,
+      frameTag: frameComp.kind,
+      name,
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+      editingTag: tag,
+    };
+    board.swapGraph(inner);
+    board.setDieFrame(ic.frameId);
+    arm(null);
+    setMode("select");
+  }
+
   /** Restore the outer board + camera and leave die mode. The optional `mutate` runs on a fresh
    * BoardGraph of the stashed outer snapshot BEFORE it is loaded — used by Seal to re-kind the
    * placeholder frame into the sealed chip as part of the same restore (so it lands sealed). */
@@ -2296,10 +2349,12 @@
   }
 
   /** Back/Cancel: store the in-progress die (so re-entering resumes it) and return to the outer
-   * board unchanged — the placeholder stays a buildable frame. */
+   * board unchanged — the placeholder stays a buildable frame. When EDITING a sealed IC, there is no
+   * placeholder frame and the registry def must stay untouched until Reseal, so we DON'T stash the
+   * edited copy (it's discarded); the IC keeps its previously-sealed circuit. */
   function dieBack(): void {
     if (!drill || !board) return;
-    innerGraphs.set(drill.frameId, board.serialize());
+    if (!drill.editingTag) innerGraphs.set(drill.frameId, board.serialize());
     exitDie();
   }
 
@@ -2326,6 +2381,21 @@
         "This die can't be sealed yet: the circuit doesn't solve (needs a reference/ground and a complete path). Wire it up, then Seal.";
       return;
     }
+
+    // EDIT path: re-seal into the EXISTING tag (update its registry def, keeping its name + package),
+    // so every placed instance follows the new circuit. We do NOT re-kind anything (the instances are
+    // already kind=tag) — just snapshot the edited die + its frame's pin names into the same UserIc.
+    if (ctx.editingTag) {
+      const snap = live.serialize();
+      const frame = snap.components.find((c) => c.id === ctx.innerFrameId);
+      resealUserIc(ctx.editingTag, snap, ctx.innerFrameId, frame?.pinNames);
+      sealName = "";
+      // Just leave the die — the outer board is restored verbatim (instances already carry the tag,
+      // and re-deriving PART_KINDS[tag] in resealUserIc refreshed their footprint/pin labels).
+      exitDie();
+      return;
+    }
+
     const cap = captureSeal(
       live,
       ctx.innerFrameId,
@@ -2842,11 +2912,17 @@
   function saveCircuit(): void {
     const graph = board?.serialize();
     if (!graph) return;
+    // Embed the sealed-IC definitions this board places (via userIcsForGraph), so a downloaded save
+    // is self-contained — a placed CEC9xxx resolves on Load even in a fresh session. Omitted when the
+    // board uses no sealed IC, so a plain circuit's save is byte-for-byte as before (and version stays
+    // readable by older builds: the extra field is additive). version 2 marks the userIcs-aware shape.
+    const userIcs = userIcsForGraph(graph);
     const payload = {
       format: "cec-circuit",
-      version: 1,
+      version: 2,
       savedAt: new Date().toISOString(),
       graph,
+      ...(userIcs.length > 0 ? { userIcs } : {}),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
@@ -2878,6 +2954,7 @@
         const parsed = JSON.parse(String(reader.result)) as {
           format?: string;
           graph?: unknown;
+          userIcs?: UserIc[];
         };
         const graph =
           parsed && parsed.format === "cec-circuit" ? parsed.graph : parsed;
@@ -2885,6 +2962,11 @@
           throw new Error("not a circuit");
         }
         resetDieState(); // abandon any open die — the outer board is being replaced
+        // Re-register any embedded sealed-IC defs BEFORE loading, so the placed CEC9xxx kinds resolve
+        // (an older save with no userIcs registers nothing — it loads exactly as before).
+        if (parsed && parsed.format === "cec-circuit") {
+          registerUserIcs(parsed.userIcs ?? []);
+        }
         board?.loadGraph(graph as GraphSnapshot);
         demo = null;
         showIntro = false;
@@ -3912,7 +3994,11 @@
             <span class="die-crumb-board">Board</span>
             <span class="die-crumb-sep">▸</span>
             <span class="die-crumb-here">
-              Die · {drill.name}
+              {#if drill.editingTag}
+                Editing {drill.editingTag}
+              {:else}
+                Die · {drill.name}
+              {/if}
               {#if pkg}
                 <span class="die-crumb-pkg">{pkg.archetype}-{pkg.pinCount}</span
                 >
@@ -3936,41 +4022,51 @@
           >
             dbl-click a pin to name it
           </span>
-          <input
-            class="insp-name mono die-seal-name"
-            type="text"
-            placeholder="name (auto: CEC9xxx)"
-            bind:value={sealName}
-            maxlength="24"
-            aria-label="Name the sealed IC"
-            onkeydown={(e) => {
-              if (e.key === "Enter") dieSeal();
-            }}
-          />
+          {#if !drill.editingTag}
+            <!-- The seal NAME only applies to a fresh seal (a mint). When editing, the tag is fixed
+                 (Reseal updates the existing def), so the name field is omitted. -->
+            <input
+              class="insp-name mono die-seal-name"
+              type="text"
+              placeholder="name (auto: CEC9xxx)"
+              bind:value={sealName}
+              maxlength="24"
+              aria-label="Name the sealed IC"
+              onkeydown={(e) => {
+                if (e.key === "Enter") dieSeal();
+              }}
+            />
+          {/if}
           <div class="die-actions">
             <button
               class="btn btn-ghost"
               onclick={dieBack}
-              title="Discard nothing — return to the board; the frame stays buildable"
+              title={drill.editingTag
+                ? "Discard these edits — return to the board; the IC keeps its sealed circuit"
+                : "Discard nothing — return to the board; the frame stays buildable"}
             >
               Back
             </button>
-            <button
-              class="btn btn-ghost"
-              onclick={dieSave}
-              title="Keep this in-progress die and return to the board"
-            >
-              Save
-            </button>
+            {#if !drill.editingTag}
+              <button
+                class="btn btn-ghost"
+                onclick={dieSave}
+                title="Keep this in-progress die and return to the board"
+              >
+                Save
+              </button>
+            {/if}
             <button
               class="btn btn-accent"
               onclick={dieSeal}
               disabled={!dieStatus?.sealable}
               title={dieStatus?.sealable
-                ? "Seal this die into a placeable IC where the frame sits"
+                ? drill.editingTag
+                  ? "Reseal: update this IC's circuit on every placed instance"
+                  : "Seal this die into a placeable IC where the frame sits"
                 : "The circuit must solve before it can be sealed"}
             >
-              Seal ✓
+              {drill.editingTag ? "Reseal ✓" : "Seal ✓"}
             </button>
           </div>
         </div>
@@ -4357,6 +4453,21 @@
             <div class="insp-row">
               <button class="btn btn-ghost insp-seal" onclick={sealSelected}>
                 Seal as IC
+              </button>
+            </div>
+          {/if}
+          {#if isUserIc(kind) && !drill}
+            <!-- IC maker (ADR 0006): a PLACED sealed user IC. EDIT re-opens its authored die (a copy)
+                 to tweak the inner circuit, then Reseal updates the def — every placed instance of
+                 this kind follows. Mirrors the frame's Build; hidden while already inside a die. -->
+            <div class="insp-sub">edit this IC</div>
+            <div class="insp-row">
+              <button
+                class="btn btn-accent insp-seal"
+                onclick={editUserIcSelected}
+                title="Re-open this sealed IC's circuit to edit, then reseal to update every instance"
+              >
+                Edit ▸
               </button>
             </div>
           {/if}

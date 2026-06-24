@@ -11,6 +11,7 @@ import {
   type Component,
   type GraphSnapshot,
 } from "./graph";
+import { registerUserIcs, type UserIc } from "./userIc";
 import potDimmer from "./circuits/pot-dimmer";
 
 /** Live progress passed to a build step's completion check. */
@@ -107,6 +108,13 @@ export interface SavedCircuit {
   version?: number;
   savedAt?: string;
   graph: GraphSnapshot;
+  /**
+   * Sealed-IC definitions the circuit places (the IC maker, ADR 0006): embedded so a saved circuit
+   * that uses a CEC9xxx is self-contained and its placed instances resolve. {@link fromSaved}
+   * re-registers them before handing back the graph. Absent on a plain circuit — then nothing is
+   * registered and the load is exactly as before.
+   */
+  userIcs?: UserIc[];
 }
 
 /** Normalise a saved circuit (envelope or bare snapshot) to a **fresh** GraphSnapshot.
@@ -114,6 +122,9 @@ export interface SavedCircuit {
  * guided-build target) and the board mutates whatever graph it loads — the source
  * module must stay pristine. */
 export function fromSaved(saved: SavedCircuit | GraphSnapshot): GraphSnapshot {
+  // Re-register any embedded sealed-IC defs FIRST (idempotent), so a placed CEC9xxx resolves to its
+  // kind before the graph is used. A bare snapshot / a circuit with no userIcs registers nothing.
+  if ("userIcs" in saved && saved.userIcs) registerUserIcs(saved.userIcs);
   const graph = "graph" in saved ? saved.graph : saved;
   return JSON.parse(JSON.stringify(graph)) as GraphSnapshot;
 }

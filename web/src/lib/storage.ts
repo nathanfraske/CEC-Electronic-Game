@@ -7,6 +7,7 @@
 // saved state" rather than throwing.
 
 import type { GraphSnapshot, HotSlot } from "./graph";
+import { userIcsForGraph, registerUserIcs, type UserIc } from "./userIc";
 
 const BOARD_KEY = "cec.board.v1";
 const SETTINGS_KEY = "cec.settings.v1";
@@ -51,27 +52,56 @@ function available(): boolean {
   }
 }
 
+/** The localStorage board blob: the snapshot, plus the sealed-IC definitions any placed `CEC9xxx`
+ * needs to resolve on restore (omitted when the board uses none, so a normal board's blob is
+ * unchanged). Mirrors the downloaded save envelope's optional `userIcs`. A legacy blob is a BARE
+ * snapshot (no `graph` wrapper) — {@link loadBoard} accepts both. */
+interface BoardBlob {
+  graph: GraphSnapshot;
+  userIcs?: UserIc[];
+}
+
 /** Persist the board, swallowing quota/serialization errors (a failed save must
- * never interrupt editing). */
+ * never interrupt editing). Embeds the sealed-IC definitions the board places (via
+ * {@link userIcsForGraph}) so a refresh restores them — without them a placed `CEC9xxx`
+ * would reload as an unknown kind. The wrapper is omitted of `userIcs` when there are none,
+ * keeping a plain board's persisted shape a bare snapshot wrapped only in `{ graph }`. */
 export function saveBoard(snapshot: GraphSnapshot): void {
   if (!available()) return;
   try {
-    localStorage.setItem(BOARD_KEY, JSON.stringify(snapshot));
+    const defs = userIcsForGraph(snapshot);
+    const blob: BoardBlob =
+      defs.length > 0
+        ? { graph: snapshot, userIcs: defs }
+        : { graph: snapshot };
+    localStorage.setItem(BOARD_KEY, JSON.stringify(blob));
   } catch {
     // Quota exceeded or private-mode write block — fine, just don't persist.
   }
 }
 
 /** The last saved board, or `null` if there is none / it's unreadable. Validated
- * lightly (it must look like a snapshot with a components array). */
+ * lightly (it must look like a snapshot with a components array). Accepts either the
+ * current `{ graph, userIcs? }` wrapper or a legacy bare snapshot. Any embedded sealed-IC
+ * definitions are RE-REGISTERED before returning, so the placed `CEC9xxx` kinds resolve when
+ * the caller restores the graph. */
 export function loadBoard(): GraphSnapshot | null {
   if (!available()) return null;
   try {
     const raw = localStorage.getItem(BOARD_KEY);
     if (!raw) return null;
-    const obj = JSON.parse(raw) as GraphSnapshot;
+    const parsed = JSON.parse(raw) as BoardBlob | GraphSnapshot;
+    // A wrapped blob carries `graph`; a legacy save is the bare snapshot itself.
+    const obj = (
+      parsed && typeof parsed === "object" && "graph" in parsed
+        ? (parsed as BoardBlob).graph
+        : parsed
+    ) as GraphSnapshot;
     if (!obj || !Array.isArray(obj.components) || !Array.isArray(obj.wires)) {
       return null;
+    }
+    if (parsed && typeof parsed === "object" && "userIcs" in parsed) {
+      registerUserIcs((parsed as BoardBlob).userIcs ?? []);
     }
     return obj;
   } catch {
