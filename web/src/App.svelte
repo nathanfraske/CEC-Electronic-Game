@@ -1567,8 +1567,8 @@
             ? "LABEL · click a pin, junction, or trace to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
             : armedPart
               ? hasConfig(armedPart)
-                ? `PLACING ${partName(armedPart)} · set its type below, then click to drop · R rotate · Esc cancel`
-                : `PLACING ${partName(armedPart)} · click to drop · R to rotate · Esc to cancel`
+                ? `PLACING ${partName(armedPart)} · set its type below, then click to drop · R rotate · F flip · Esc cancel`
+                : `PLACING ${partName(armedPart)} · click to drop · R rotate · F flip · Esc cancel`
               : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
   );
 
@@ -1626,6 +1626,12 @@
           // handled the floating paste
         } else if (armedPart) board?.rotateArmed();
         else board?.rotateSelection();
+        e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "f" || e.key === "F")) {
+        // F mirrors (horizontal flip): the armed-part ghost if a part is armed, else the
+        // current selection. (Paste has no per-group flip — its parts carry their own.)
+        if (armedPart) board?.flipArmed();
+        else board?.flipSelection();
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "b" || e.key === "B")) {
         enterBuild(); // b = Build (place + select)
@@ -2898,6 +2904,9 @@
   function rotateSel(): void {
     board?.rotateSelection();
   }
+  function flipSel(): void {
+    board?.flipSelection();
+  }
   function resetView(): void {
     board?.resetView();
   }
@@ -3839,6 +3848,14 @@
       >
         Rotate <kbd class="hk">R</kbd>
       </button>
+      <button
+        class="btn btn-ghost"
+        onclick={flipSel}
+        disabled={!ready || selCount === 0}
+        title="Flip (mirror) selected (F)"
+      >
+        Flip <kbd class="hk">F</kbd>
+      </button>
       <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
         Reset View
       </button>
@@ -4625,7 +4642,11 @@
                   >
                     <canvas use:infoDiagramAction></canvas>
                   </div>
-                  {@const po = pinoutOf(infoKind, selPart?.rot ?? 0)}
+                  {@const po = pinoutOf(
+                    infoKind,
+                    selPart?.rot ?? 0,
+                    selPart?.mirror,
+                  )}
                   {#if po}
                     <div class="pinout-wrap">
                       <div class="pinout-cap">Pinout</div>

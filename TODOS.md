@@ -6,6 +6,41 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (100) — Mirror / flip a component (placement QoL)
+
+- ~~**Mirror/flip a component**~~ — DONE. Any placed (or armed, or pasted) part can now be
+  **horizontally flipped** beside rotation — notably to put a P-MOSFET source-up without the
+  180° rotation also moving the gate. A new optional `Component.mirror` (a horizontal reflection
+  `dx → −dx` applied BEFORE `rot`): `orient(dx,dy,rot,mirror) = rotateOffset(mirror ? −dx : dx, dy, rot)`,
+  implemented as an optional 4th param on `rotateOffset` (graph.ts) and the pixel-space `rotPx`
+  (board.ts), both defaulting false so every existing 3-arg caller is unchanged.
+  - **Render:** `ComponentNode.reposition()` sets `glyphHolder.scale.x = mirror ? -1 : 1` THEN
+    `rotation` — PixiJS applies scale before rotation, so it composes exactly like the reflect-then-
+    rotate `rotateOffset`, and the body lines up with the pin dots/labels at all 4 rotations. Same
+    `scale.x` on the armed ghost + the paste ghost so the preview shows the flip.
+  - **Threaded** through every orientation site: `pinCell`, `componentBox`, gauge-routing
+    (`pinOutward`), the `rotPx` callers (pin labels + FAIL box), the inspector reference pinout
+    (`pinoutOf` gained an optional `mirror`; `SelectedPart.mirror` feeds it), serialize/restore
+    (deep-copied, falsy flip dropped — mirrors the pinNames/pinTests pattern), and paste (each
+    part carries its own `mirror`; no group reflection).
+  - **Actions:** `board.flipSelection()` (toggles `mirror` on the selection, one undo) +
+    `board.flipArmed()` (toggles `armedMirror`, refreshes the ghost; carried into `placeCell` so a
+    part drops pre-flipped). `App.svelte`: an **F** keybind (armed → `flipArmed`, else `flipSelection`)
+    beside R, a **Flip** button next to Rotate, and "F flip" added to the placement hints.
+  - **Determinism:** geometry/render only — pins keep their INDEX, so wire endpoints (pin refs)
+    and the union-find keys (`id:pinIndex`) are unchanged → connectivity + the compiled netlist are
+    byte-identical regardless of flip, exactly like rotation. **No sim-core change; golden
+    `0xeaac_3764_99e4_fa24` unchanged.** New vitest (`netlist.test.ts`, +4 → **46**): the
+    x-negated-rotation identity, a mirrored `pinCell`, serialize→restore round-trip, and a
+    flip-doesn't-move-the-netlist determinism check (types/values/a/b/c + nodeCount byte-identical).
+  - **Owner visual review:** confirm a flipped glyph's body aligns with its pin dots/labels at all
+    4 rotations for the asymmetric parts (PMOS/NMOS, BJT, op-amp, gates, transformer). The armed +
+    paste ghosts mirror via `scale.x` like the live holder.
+  - Files: `web/src/lib/graph.ts`, `web/src/lib/board.ts`, `web/src/lib/pinout.ts`,
+    `web/src/App.svelte`, `web/src/lib/netlist.test.ts`.
+
+---
+
 ## 2026-06-24 (98) — Settable per-pin TEST STIMULI in the IC-maker die editor
 
 - ~~**Die-pin test stimuli (power a die in isolation so it solves + seals)**~~ — DONE. A logic IC is
@@ -1882,7 +1917,7 @@ Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate 
 - [ ] Re-enable `wasm-opt` once binaryen is provisioned in the build image.
 - [ ] GitHub Pages: still needs the owner to set Settings → Pages → Source: GitHub Actions, then the `pages` workflow deploys.
 
-- [ ] **Editing & tool UX (owner QoL batch).** ✅ Pan tool is now inert + opt-in (only via H/toolbar; Esc → Build; no yield-to-select). Default is already Build. Still open: **select a wire occluded behind a component** (hit-test reach-through); **remove a junction** from a wire (without nuking its wires); **move a junction** individually; **mirror/flip a component** (a `Component` reflection beside `rot` — also the clean way to put a PMOS source-up).
+- [ ] **Editing & tool UX (owner QoL batch).** ✅ Pan tool is now inert + opt-in (only via H/toolbar; Esc → Build; no yield-to-select). Default is already Build. ✅ **Mirror/flip a component** shipped (`Component.mirror`, F key + Flip button — entry (100)). Still open: **select a wire occluded behind a component** (hit-test reach-through); **remove a junction** from a wire (without nuking its wires); **move a junction** individually.
 - [ ] **Denser / "larger" package variants (owner idea; full brainstorm done).** Density as an optional scalar on `UserIc.package` (default Standard = today's numbers): a bigger drill-in canvas (a `dieScale` on `dieLayout`) + a capacity budget at seal, with cost / availability / power-density-heat tradeoffs (heat = derate `RATED_CURRENT_SLOT` in Real mode → reuses the FAIL mask, **golden-safe**, zero sim-core change). The "internals shrink when you zoom" visual already falls out of `userIcInternalsView`'s fit-to-footprint scale. Phased: (1) density scalar + canvas/zoom (pure presentation); (2) capacity-budget seal gate; (3) heat-as-derating; (4) economy hooks; (5) body-size archetypes (SOIC→TSSOP→QFN) + density-biased parasitics. Density is a per-*package* axis, orthogonal to per-part `tier`/`variant`.
 - [ ] **Pin test-stimuli Phase 2+** (base GND/VCC/Input shipped): Clock/Pulse + Sine/AC drives (test sequential + analog ICs; clock A@f and B@f/2 auto-cycles a 2-input truth table), then −V/VREF, pull-up/pull-down + output load.
 

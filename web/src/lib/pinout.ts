@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Pinout geometry for the info panel: a labelled, oriented terminal diagram built
 // purely from a kind's `PART_KINDS.pins` and the placed part's rotation. It is
-// reference, not telemetry — a pure function of (kind, rot), with no live
+// reference, not telemetry — a pure function of (kind, rot, mirror), with no live
 // `ElectricalState` and nothing that touches the sim, the netlist, or the golden.
 // The HUD renders the returned coordinates as an SVG body + dots + leader lines
 // with DOM text labels (so they stay selectable / screen-reader legible).
@@ -99,12 +99,16 @@ const GLOSS: Record<string, Record<string, string>> = {
  * and scaled to px; each gets a dot, an outward-pointing label anchor, and a CSS
  * transform that flips the label box to the correct side.
  */
-export function pinoutOf(kind: string, rot: number): Pinout | null {
+export function pinoutOf(
+  kind: string,
+  rot: number,
+  mirror = false,
+): Pinout | null {
   const pk = PART_KINDS[kind];
   if (!pk || pk.pins.length === 0) return null;
 
   const pos = pk.pins.map((p) => {
-    const r = rotateOffset(p.dx, p.dy, rot);
+    const r = rotateOffset(p.dx, p.dy, rot, mirror);
     return { label: p.label, col: r.col, row: r.row };
   });
   const cols = pos.map((p) => p.col);
