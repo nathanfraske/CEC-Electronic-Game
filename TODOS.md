@@ -6,6 +6,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (112) — Pipe quick-wins + remove device tubes + IC package leads/filled internals
+
+- ~~**Pipe-legibility quick-wins**~~ — DONE (board.ts): opaque conduit core (QW1) + dark moat (QW2) so
+  crossings occlude; opaque junction hub (QW5); `NUDGE_SPACING` 9→13 (QW4); quieter carriers (QW3) +
+  capped/dimmer shimmer (QW8). Deferred: crossing hop-knockout (QW6/7), gauge-chrome cull (QW9).
+- ~~**Remove "tubes into each component"**~~ — DONE. The per-pin `connectorGlyph` stubs are gone; wire
+  conduits still land on the pins.
+- ~~**IC package: leads on the outside + readable internals**~~ — DONE. New `userIcBodyBox` +
+  `drawUserIcPackageBody` + `drawUserIcPackage` glyph (glyphs.ts): leads from each pin to a dark body;
+  `userIcInternalsView` fills the BODY box with the circuit (was crammed into the whole footprint). All
+  render-only; golden untouched. Owner to eyeball.
+- [ ] **Follow-up (if internals still small on SOT-23):** enlarge the package body when zoomed into the
+  replica (the short footprint limits a square circuit to the body height).
+
 ## 2026-06-24 (111) — IC pin-label overlap fix + per-circuit gauge scaling
 
 - ~~**Placed user-IC pin labels overlapped at zoom-in**~~ — FIXED. The (108) 1:1 lead-bridging anchored
