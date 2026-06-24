@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (110) — Pipe-view legibility design review (doc) + OR-gate seal triage
+
+- ~~**Design review: analogy pipe-view legibility in dense areas**~~ — DONE (doc). 3-lens workflow →
+  `docs/pipe-legibility-review.md`. Root cause: one flat translucent Graphics, no opaque primitive, so
+  overlapping pipes SUM into bloom instead of occluding. Ranked diagnosis + a quick-win bundle + structural
+  options + recommendation, all render-side / golden-safe.
+- [ ] **Implement the pipe-legibility quick-wins** (owner wants a before/after look first): QW1 opaque
+  conduit core + QW2 dark moat + QW5 opaque junction hub (the structural trio); QW6/QW7 crossing
+  dead-zone + hop knockout; QW4 `NUDGE_SPACING` 9→13; dimming polish QW3/QW8/QW9/QW10. See the doc §2/§4.
+- [ ] **(structural, owner decides)** S2 hover/selection FOCUS-dim — bright the net you care about, wash the
+  rest. The truest fix for "lots of things close together." Doc §3.
+- **OR-gate "can't be sealed" (file cfdfd3ed)** — NOT a code bug: reproduced headlessly and the current
+  branch seals it (`dieIsSealable(dieTestGraph(graph,1))`=true). It's the pre-`dbd916f` Seal-gate behaviour
+  → owner's running build predates the reseal-gate fix; rebuild/redeploy from the branch.
+
 ## 2026-06-24 (109) — Voltage gauges: fixed full-scale standpipe + halfway marker, DC "~" bug
 
 - ~~**"~" AC badge fired on a DC loop (owner bug)**~~ — FIXED. Both voltage gauges shared a swing test

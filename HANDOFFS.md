@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (110) — Pipe-view legibility DESIGN REVIEW (doc only) + OR-gate seal = stale-build
+
+**State:** 🟢 no code change this entry. Branch `claude/kind-turing-hdelb3`.
+
+**Pipe legibility (owner: "pipes look janky / hard to read when things are close together").** Ran a
+3-lens design-review workflow (opacity-haze / density-LOD-focus / clean-topology) → wrote
+`docs/pipe-legibility-review.md`. **Diagnosis (root cause):** the whole conduit pass paints into ONE flat
+translucent `Graphics` (`board.ts` `wireLayer` ~457, drawn ~4559) in arbitrary route order with PixiJS
+default 'normal' blend and **no opaque primitive** — so overlapping pipes/carriers/gauges SUM (source-over)
+into pale-cyan bloom instead of occluding. Ranked contributors: translucent conduit core (`coreAlpha 0.26`
+~5495), the carrier water-blobs (~4810, the dominant bloom), parallel lanes narrower than the pipe body
+(`NUDGE_SPACING 9` < `pw+3` ~12, ~7080), the crossing hop having no knockout gap (`applyCrossings` ~7206),
+faint junction hubs, and the now-fixed-full-height standpipe chrome (my (109) change ADDED constant mass).
+**Recommended quick-wins (all render-side, golden-safe, NOT yet implemented — owner wants a before/after
+look first):** QW1 opaque conduit core + QW2 dark "moat" + QW5 opaque junction hub (the structural trio so
+crossings occlude); QW6/QW7 crossing dead-zone 3→1px + hop knockout gap; QW4 `NUDGE_SPACING` 9→13; plus
+dimming polish QW3/QW8/QW9/QW10. **Structural follow-up:** S2 hover/selection FOCUS-dim (bright the net you
+care about, wash the rest) is the truest fix for density — defer to owner. Full table + file:line in the doc.
+
+**OR-gate "can't be sealed" (owner, file cfdfd3ed — a raw `__DIE_SOT23_5` graph + 6 MOSFETs).** Reproduced
+headlessly against current code: `dieIsSealable(dieTestGraph(graph, 1))` = **true** (ideal AND real);
+pinTests survive the round-trip; `openDieGraphInBuilder` sets `drill.innerFrameId=1`; `liveGraph()` ===
+the serialized graph; marking a pad fires `onChange`→`boardRev++`. **Every path is correct — the current
+branch seals this die.** The advisory is the PRE-`dbd916f` behaviour (Seal gate checked the raw circuit
+without the injected stimuli; an externally-powered logic gate never solves bare). Conclusion: the owner's
+running build predates the reseal-gate fix → rebuild/redeploy from the branch. Flagged to confirm.
+
+---
+
 ## 2026-06-24 (109) — Voltage gauges: fixed full-scale standpipe + halfway marker, and the DC "~" bug
 
 **State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden UNCHANGED
