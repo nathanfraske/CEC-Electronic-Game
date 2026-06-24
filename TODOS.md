@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (117) — IC body = full-size frame card, pads inside, leads stick out
+
+- ~~**Body = actual frame outline (not a sliver)**~~ — DONE (glyphs.ts). `userIcBodyBox` = pin bbox grown
+  by `IC_BODY_PAD=10` every side (matches `drawCard`); SOT-23-5 body 72×46 (was a 12px sliver). Every
+  archetype.
+- ~~**Round pads INSIDE + rectangular leads OUT**~~ — DONE. Pads reverted to round (board.ts), leads stick
+  out `IC_LEAD_LEN=11` past the body (glyphs.ts). Replica simplified (no snap/dot/pipe).
+- [ ] **Connection pins at the OUTER lead tips** — wires still connect at the round pad inside the body
+  (like the SOT23_5 ref). Moving the wire connection out to the lead tip = deeper change (board routes to
+  the pin's grid cell). Pending owner confirm.
+- [ ] Owner eyeball the full-size frame body + leads on a placed/opened IC, every archetype.
+
 ## 2026-06-24 (116) — Fix: IC body full-size, leads extend out
 
 - ~~**Body narrowed instead of leads extending**~~ — DONE (glyphs.ts). `userIcBodyBox` now keeps the body
