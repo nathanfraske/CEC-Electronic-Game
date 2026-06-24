@@ -29,6 +29,7 @@ import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
 import {
   flattenUserIcs,
   getUserIc,
+  isUserIc,
   type FlattenRecord,
   type UserIc,
 } from "./userIc";
@@ -592,6 +593,13 @@ export interface UserIcInnerPart {
   value: number;
   /** resolved node index per pin (by pin index), into `node_voltages` / the snapshot `state`. */
   nodes: number[];
+  /** When this inner part is ITSELF a sealed user IC, its FLATTENED hub id within this build's netlist
+   * — the key into the netlist's `Map<number, UserIcInternals>` (board.ts `userIcInternals`), so the
+   * zoom-to-open replica can RECURSE into its inner circuit (Phase 2 Part A). It equals the nested
+   * instance's own `FlattenRecord.instanceId` (the inner component inlined at `comp.id + offset`), so
+   * `allInternals.get(flatId)` resolves to the nested IC's `UserIcInternals`. Absent for a plain part
+   * and for the static (unpowered) fallback (no flatten ran). Render-only; never hashed. */
+  flatId?: number;
 }
 
 /** One authored wire of a sealed USER IC, for the zoom-to-open mini-board: its two endpoint cells
@@ -1625,6 +1633,10 @@ export function buildNetlist(
         nodes: kind.pins.map((p) =>
           nodeOfEndpoint({ componentId: comp.id, pinIndex: p.index }),
         ),
+        // When this inner part is itself a sealed user IC, its FLATTENED hub id is `comp.id + o` (the id
+        // `flattenUserIcs`'s remap inlined it at — the same id the nested instance's own FlattenRecord
+        // carries). That keys `userIcInternals`, so the zoom-to-open replica can recurse into it (Part A).
+        ...(isUserIc(comp.kind) ? { flatId: comp.id + o } : {}),
       });
     }
     // Wires: authored endpoint cells + a node (the `from` endpoint's net) for level colouring.

@@ -2229,6 +2229,7 @@ export class Board {
         this.compositeInternals?.get(id),
         snap.state,
         this.userIcInternals?.get(id),
+        this.userIcInternals,
       );
     }
 
@@ -6534,6 +6535,7 @@ class ComponentNode {
     internals?: CompositeInternals,
     nodeV?: Float64Array,
     userIc?: UserIcInternals,
+    allUserIcInternals?: Map<number, UserIcInternals>,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -6636,6 +6638,11 @@ class ComponentNode {
         // editor does past TIER_ZOOM. `zoom` is already `this.world.scale.x` (no loop.ts change).
         cameraZoom: zoom,
         tierZoom: TIER_ZOOM,
+        // Phase 2 Part A: the recursion's open threshold + the full inner-circuit map, so a nested
+        // sealed-IC inner part (carrying `flatId`) can look up ITS internals and open in turn once it
+        // grows large enough on screen. Top level is depth 0, cumulativeScale 1 (the opts defaults).
+        internalsZoom: INTERNALS_ZOOM,
+        allInternals: allUserIcInternals,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
