@@ -5,6 +5,74 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (100) — Mirror / flip a component (placement QoL)
+
+**State:** 🟢 full gate-green. fmt clean; clippy clean; **sim-core golden `0xeaac_3764_99e4_fa24`
+unchanged**, 188 sim-core tests; web check 0/0, lint clean, build OK, **46 vitest** (+4 new mirror
+cases). Branch `claude/kind-turing-hdelb3`. NOT pushed, no PR (owner reviews/merges).
+
+**Goal.** Let the player **mirror (horizontally flip)** a placed component the way rotation already
+works — notably to put a P-MOSFET source-up (the glyph draws Drain top / Source bottom) without the
+180° rotation also moving the gate.
+
+**The transform.** New optional `Component.mirror` = a horizontal reflection (`dx → −dx`) composed
+with `rot` and applied **before** it: `orient(dx,dy,rot,mirror) = rotateOffset(mirror ? −dx : dx, dy, rot)`.
+Implemented as an **optional 4th param** on `rotateOffset` (graph.ts) and the pixel-space twin
+`rotPx` (board.ts) — `mirror = false` default, so every existing 3-arg caller is byte-unchanged.
+
+**Render (the load-bearing correctness bit).** `ComponentNode.reposition()` sets
+`glyphHolder.scale.x = mirror ? -1 : 1` **then** `glyphHolder.rotation`. PixiJS applies scale before
+rotation in the local→parent matrix, and `rotateOffset`'s `(x,y)→(−y,x)` *is* PixiJS clockwise
+rotation — so `scale.x=−1` then `rotation` matches `orient(...)` exactly, and the mirrored body lines
+up with the pin dots (drawn at `rotateOffset(pin)` via `pinCell`) and the upright pin labels (placed
+via `rotPx`) at all 4 rotations. The armed ghost (`updateGhost`) and paste ghost (`updatePasteGhost`)
+get the same `scale.x` so the preview shows the flip.
+
+**Threaded through every orientation site** (grep'd `rotateOffset(` / `rotPx(` / `c.rot`):
+`pinCell` (graph.ts); `componentBox` + gauge-routing `pinOutward` + the `rotPx` callers (pin labels,
+FAIL box) (board.ts); the inspector reference pinout `pinoutOf` (gained an optional `mirror`, fed by
+a new `SelectedPart.mirror` → `App.svelte`); `serialize`/`restore` (deep-copy, falsy flip dropped —
+same optional-field pattern as `pinNames`/`pinTests`); paste (`ClipboardSnippet.comps.mirror`, copied
+in `copySelection`, applied as `nc.mirror` in `commitPaste` — each part carries its OWN flip, no group
+reflection).
+
+**Actions.** `board.flipSelection()` (toggles `mirror` on the selection, one undo, rebuild +
+redraw — mirrors `rotateSelection`) and `board.flipArmed()` (toggles a new `armedMirror`, refreshes
+the ghost — mirrors `rotateArmed`); `armedMirror` resets with `armedRot` on a fresh arm and is carried
+into `placeCell(kind, cell, rot, mirror)` so a part drops pre-flipped. **Armed ghost done (not
+deferred).** `App.svelte`: an **F** keybind (no collision — armed → `flipArmed`, else `flipSelection`;
+paste has no group flip by design) beside the R handler, a **Flip** button next to **Rotate** (same
+`btn btn-ghost` styling + `F` kbd badge), and "F flip" appended to the two placement status hints.
+
+**Determinism (verified).** Mirror changes pin POSITIONS (render/geometry) only — pins keep their
+INDEX, so wire endpoints (pin refs `{componentId, pinIndex}`) and the union-find keys
+(`id:pinIndex`) are index-based, NOT position-based → connectivity + the compiled netlist are
+byte-identical regardless of flip, exactly like rotation. **No sim-core change.** New vitest
+(`netlist.test.ts`): (1) `rotateOffset(dx,dy,rot,true)` == the x-negated rotation (incl. rot 0 & 1);
+(2) a mirrored `pinCell` is the reflected cell; (3) serialize→restore round-trips `mirror`;
+(4) build a circuit, flip a component, rebuild → `types`/`values`/`a`/`b`/`c` + `nodeCount`
+byte-identical. (Test note: normalize `+0` before `toEqual` to dodge Vitest's `-0`/`+0` distinction.)
+
+**Owner visual review.** Confirm a flipped glyph's body sits correctly over its pin dots + labels at
+**all 4 rotations** for the asymmetric parts (PMOS/NMOS D/S/G, BJT C/E/B, op-amp, the 5-pin gates,
+the 4-pin transformer). The math + the PixiJS scale-before-rotation ordering line them up by
+construction, but a quick eyeball on a flipped+rotated PMOS is the thing to spot-check.
+
+**One deliberately-deferred site.** The sealed-USER-IC **zoom-to-open mini-board**
+(`userIcInternalsView.ts`, `UserIcInnerPart`) renders inner discretes with a DIFFERENT strategy than
+the board's `ComponentNode` — it bakes `rot` into the pin coordinates and draws with NO container
+rotation. Mirror there can't be added the same `scale.x=−1` way (reflect and rotate don't commute, so
+a container flip after baked-rot ≠ the holder's reflect-then-rotate, and multi-pin glyph bodies draw
+partly from `wPx/hPx`, not just pins). It's purely cosmetic (render-only, never hashed) and only bites
+if a part was flipped INSIDE a die before sealing — left rot-only as before, a clean separate
+follow-up if owners want it.
+
+**Files:** `web/src/lib/graph.ts`, `web/src/lib/board.ts`, `web/src/lib/pinout.ts`,
+`web/src/App.svelte`, `web/src/lib/netlist.test.ts` (+4). Plus TODOS.md (entry 100 + tombstoned the
+QoL-batch line) and this handoff.
+
+---
+
 ## 2026-06-24 (99) — Tool model: the Pan tool is inert + opt-in (Escape → Build)
 
 **State:** 🟢 web gate-green (check 0/0, lint, build, 42 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.

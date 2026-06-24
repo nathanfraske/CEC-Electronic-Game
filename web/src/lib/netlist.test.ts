@@ -3,7 +3,7 @@
 // buildNetlist runs in node (no PixiJS) — letting us verify determinism-critical compilation
 // (e.g. the IC-maker seal expands to the SAME netlist as the inline circuit) without a browser.
 import { describe, it, expect } from "vitest";
-import { BoardGraph } from "./graph";
+import { BoardGraph, rotateOffset } from "./graph";
 import type { Component } from "./graph";
 import { buildNetlist } from "./netlist";
 import {
@@ -267,5 +267,99 @@ describe("IC maker — captureSeal (capture end-to-end)", () => {
     const g = new BoardGraph();
     const r = place(g, "R", 0, 0, 1000);
     expect(captureSeal(g, r.id)).toBeUndefined();
+  });
+});
+
+describe("mirror / flip (horizontal reflection)", () => {
+  it("rotateOffset(..., mirror=true) equals the x-negated rotation", () => {
+    // The mirror is a reflect-then-rotate: orient(dx,dy,rot,true) = rotateOffset(-dx, dy, rot).
+    const cases: [number, number, number][] = [
+      [1, 0, 0],
+      [1, 0, 1],
+      [2, 3, 0],
+      [2, 3, 1],
+      [3, -1, 2],
+      [0, 2, 3],
+    ];
+    for (const [dx, dy, rot] of cases) {
+      expect(rotateOffset(dx, dy, rot, true)).toEqual(
+        rotateOffset(-dx, dy, rot),
+      );
+    }
+    // rot=0 mirror just negates x; rot=1 (CW) then sends (x,y)->(-y,x). Normalize the
+    // result (+0) so a mathematically-zero coord doesn't trip toEqual's -0/+0 distinction.
+    const norm = (r: { col: number; row: number }) => ({
+      col: r.col + 0,
+      row: r.row + 0,
+    });
+    expect(norm(rotateOffset(1, 0, 0, true))).toEqual({ col: -1, row: 0 });
+    expect(norm(rotateOffset(1, 0, 1, true))).toEqual({ col: 0, row: -1 });
+    // mirror=false is the plain rotation (the 3-arg behaviour is unchanged).
+    expect(rotateOffset(1, 0, 1, false)).toEqual(rotateOffset(1, 0, 1));
+  });
+
+  it("a mirrored component's pinCell is the reflected cell", () => {
+    const g = new BoardGraph();
+    // N-MOSFET has an asymmetric pinout (D top, S bottom, G left at dx<0), so a flip
+    // actually moves pins. Pin 2 (G) sits at dx=0, dy=1 (left of the body's centre column).
+    const m = place(g, "NM", 5, 5);
+    const kind = g.kindOf(m)!;
+    const gate = kind.pins[2]!; // G at (dx=0, dy=1)
+    const drain = kind.pins[0]!; // D at (dx=2, dy=0)
+    // Un-mirrored: anchor + raw offset (rot=0).
+    expect(g.pinCell(m, drain)).toEqual({ col: 5 + 2, row: 5 + 0 });
+    // Mirror: dx negates first, so D (dx=2) reflects to the left of the anchor.
+    m.mirror = true;
+    expect(g.pinCell(m, drain)).toEqual({ col: 5 - 2, row: 5 + 0 });
+    // G sat at dx=0, so the flip leaves it on the same column (only dy carries).
+    expect(g.pinCell(m, gate)).toEqual({ col: 5 + 0, row: 5 + 1 });
+  });
+
+  it("serialize -> restore round-trips mirror (and drops a falsy flip)", () => {
+    const g = new BoardGraph();
+    const flipped = place(g, "R", 0, 0, 1000);
+    const plain = place(g, "R", 4, 0, 1000);
+    flipped.mirror = true;
+    const snap = g.serialize();
+    // Serialized only on the flipped part (the optional-field pattern: a falsy flip is absent).
+    const sFlipped = snap.components.find((c) => c.id === flipped.id)!;
+    const sPlain = snap.components.find((c) => c.id === plain.id)!;
+    expect(sFlipped.mirror).toBe(true);
+    expect(sPlain.mirror).toBeUndefined();
+    // Restore brings the flip back faithfully.
+    const g2 = new BoardGraph();
+    g2.restore(snap);
+    expect(g2.components.get(flipped.id)!.mirror).toBe(true);
+    expect(g2.components.get(plain.id)!.mirror).toBeUndefined();
+  });
+
+  it("determinism: flipping a component does not touch the netlist", () => {
+    // A small circuit with an asymmetric part: V -> N-MOSFET (drain), source -> GND,
+    // gate -> a resistor divider tap. Connectivity is by pin INDEX, never position.
+    const build = (mirror: boolean) => {
+      const g = new BoardGraph();
+      const v = place(g, "V", 0, 0, 5);
+      const m = place(g, "NM", 4, 0);
+      const r = place(g, "R", 8, 0, 1000);
+      const gnd = place(g, "GND", 0, 6);
+      if (mirror) m.mirror = true;
+      connect(g, v, 0, m, 0); // V+ -> NM.Drain
+      connect(g, m, 1, gnd, 0); // NM.Source -> GND
+      connect(g, m, 2, r, 0); // NM.Gate -> R.A
+      connect(g, r, 1, gnd, 0); // R.B -> GND
+      connect(g, v, 1, gnd, 0); // V- -> GND
+      return buildNetlist(g, false);
+    };
+    const base = build(false);
+    const flip = build(true);
+    expect(base).not.toBeNull();
+    expect(flip).not.toBeNull();
+    // The crossing arrays + node count are byte-identical — mirror is geometry only.
+    expect([...flip!.types]).toEqual([...base!.types]);
+    expect([...flip!.values]).toEqual([...base!.values]);
+    expect([...flip!.a]).toEqual([...base!.a]);
+    expect([...flip!.b]).toEqual([...base!.b]);
+    expect([...flip!.c]).toEqual([...base!.c]);
+    expect(flip!.nodeCount).toBe(base!.nodeCount);
   });
 });

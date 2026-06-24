@@ -102,6 +102,19 @@ export interface Component {
   /** Orientation in 90° clockwise steps (0..3). */
   rot: number;
   /**
+   * Optional **horizontal reflection** (a flip across the vertical axis: `dx → −dx`),
+   * composed with {@link Component.rot} and applied BEFORE it — see {@link rotateOffset}
+   * and {@link orient}. Lets any part be mirrored as a placement QoL (e.g. a P-MOSFET
+   * flipped source-up without the gate also moving, which a 180° rotation would do).
+   * **Presentation / geometry only:** it changes where pins *draw*, never their INDEX,
+   * so wire endpoints (pin refs) and the union-find keys (`id:pinIndex`) are unchanged —
+   * connectivity and the compiled netlist are byte-identical regardless of mirror, exactly
+   * like rotation (no sim-core change, the golden can't move). Optional, so older snapshots
+   * and un-flipped parts round-trip unchanged; deep-copied by `serialize`/`restore` so undo
+   * is safe (mirrors the `pinNames`/`pinTests` optional-field pattern).
+   */
+  mirror?: boolean;
+  /**
    * Optional custom label the player gives this part (e.g. `"R1"`, `"Vin"`, `"Load"`).
    * Shown on the board in place of the kind tag when set. **Pure presentation** — it has
    * no effect on the netlist or the sim. Optional, so older snapshots and parts that were
@@ -1442,12 +1455,22 @@ export function snap(value: number, pitch: number): number {
 }
 
 /** Rotate an (dx,dy) offset by `rot` 90° clockwise steps: (x,y) → (−y,x). */
+/**
+ * The full orientation transform of a pin offset: a horizontal reflection (`dx → −dx`,
+ * when `mirror`) applied FIRST, then `rot` 90°-CW steps `(x,y) → (−y,x)`. So
+ * `orient(dx, dy, rot, mirror) = rotateOffset(mirror ? −dx : dx, dy, rot)`, which is exactly
+ * what this function computes. The reflect-before-rotate order matches the PixiJS render
+ * (`scale.x = −1` then `rotation` — scale is applied before rotation in the local→parent
+ * matrix), so the mirrored glyph body and the pin dots/labels stay aligned at all 4 rotations.
+ * `mirror` defaults false, so the existing 3-arg callers are unchanged.
+ */
 export function rotateOffset(
   dx: number,
   dy: number,
   rot: number,
+  mirror = false,
 ): { col: number; row: number } {
-  let x = dx;
+  let x = mirror ? -dx : dx;
   let y = dy;
   const k = ((rot % 4) + 4) % 4;
   for (let i = 0; i < k; i++) {
@@ -1691,9 +1714,9 @@ export class BoardGraph {
     if (w) delete w.waypoints;
   }
 
-  /** Absolute cell of a pin (anchor + rotated pin offset). */
+  /** Absolute cell of a pin (anchor + the oriented pin offset: reflect-then-rotate). */
   pinCell(component: Component, pin: Pin): Cell {
-    const r = rotateOffset(pin.dx, pin.dy, component.rot);
+    const r = rotateOffset(pin.dx, pin.dy, component.rot, component.mirror);
     return {
       col: component.cell.col + r.col,
       row: component.cell.row + r.row,
@@ -2038,6 +2061,9 @@ export class BoardGraph {
       components: [...this.components.values()].map((c) => ({
         ...c,
         cell: { ...c.cell },
+        // Carry the horizontal flip as an explicit optional field (a falsy flip drops to
+        // absent), mirroring the pinNames/pinTests pattern so older/un-flipped snapshots stay clean.
+        ...(c.mirror ? { mirror: true } : {}),
         // Deep-copy the per-pin names so an undo snapshot can't share (and later mutate) the
         // live component's array. Absent for the common no-names case.
         ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
@@ -2085,6 +2111,7 @@ export class BoardGraph {
       this.components.set(c.id, {
         ...c,
         cell: { ...c.cell },
+        ...(c.mirror ? { mirror: true } : {}),
         ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
         ...(c.pinTests
           ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }

@@ -297,6 +297,9 @@ export interface SelectedPart {
   /** Orientation in 90° CW steps (0..3), so the info-panel pinout can be drawn
    * matching the way the part actually points on the board. */
   rot: number;
+  /** Horizontal flip (mirror), so the info-panel pinout matches the board. Undefined →
+   * not flipped. Presentation only (pins keep their index). */
+  mirror?: boolean;
   /** An AC source's peak amplitude in volts (its second scalar, beside `value` =
    * frequency). Undefined for kinds that have no amplitude. */
   amp?: number;
@@ -348,6 +351,7 @@ interface ClipboardSnippet {
     row: number;
     value: number;
     rot: number;
+    mirror?: boolean;
     amp?: number;
     wiper?: number;
     temp?: number;
@@ -556,6 +560,10 @@ export class Board {
   // a part is armed and nothing is selected, the ghost reflects it, and the part
   // is dropped at this rotation. Independent of any selected part's rotation.
   private armedRot = 0;
+  // Placement mirror (horizontal flip) for the armed part: F flips it while armed, the
+  // ghost reflects it, and the part drops pre-flipped. Resets with the rotation when a
+  // fresh kind is armed; independent of any selected part's mirror.
+  private armedMirror = false;
   // Arm-time configurator: the player's pre-placement choices for the armed part on
   // the config axes (variant / tier / family / openDrain / mode / loadHz / duty / amp).
   // Threaded into `graph.place` on every drop so place-and-repeat carpets the configured
@@ -843,9 +851,12 @@ export class Board {
   setArmed(kind: string | null, config?: Partial<Component>): void {
     // Arming a part and a floating paste are mutually exclusive placements.
     if (kind !== null) this.cancelPaste();
-    // Arming a fresh kind starts it at rotation 0 (R then rotates from there);
-    // re-arming the same kind keeps the rotation the player dialled in.
-    if (kind !== this.armed) this.armedRot = 0;
+    // Arming a fresh kind starts it at rotation 0 / un-flipped (R / F then adjust from
+    // there); re-arming the same kind keeps the orientation the player dialled in.
+    if (kind !== this.armed) {
+      this.armedRot = 0;
+      this.armedMirror = false;
+    }
     this.armed = kind;
     this.armedConfig = kind !== null ? (config ?? {}) : {};
     this.updateCursor();
@@ -869,6 +880,17 @@ export class Board {
   rotateArmed(): void {
     if (!this.armed) return;
     this.armedRot = (this.armedRot + 1) % 4;
+    this.updateGhost();
+  }
+
+  /**
+   * Horizontally flip (mirror) the armed part's placement. Used by F while a part is
+   * armed and nothing is selected; the ghost reflects it immediately and the part drops
+   * pre-flipped. No-op when nothing is armed.
+   */
+  flipArmed(): void {
+    if (!this.armed) return;
+    this.armedMirror = !this.armedMirror;
     this.updateGhost();
   }
 
@@ -947,8 +969,10 @@ export class Board {
           y: p.dy * PITCH,
         }));
         g.clear();
-        // Rotate the glyph in place exactly like a placed component's holder
-        // does, so the preview matches the orientation it will be dropped at.
+        // Orient the glyph in place exactly like a placed component's holder does
+        // (flip BEFORE rotate — PixiJS applies scale before rotation), so the preview
+        // matches the orientation + flip it will be dropped at.
+        g.scale.x = this.armedMirror ? -1 : 1;
         g.rotation = (this.armedRot * Math.PI) / 2;
         drawGlyph(g, {
           kind: this.armed,
@@ -1278,8 +1302,14 @@ export class Board {
    * Place a part at a grid cell, recording undo and refreshing the view. `rot`
    * (90° CW steps) sets the dropped orientation — the armed placement rotation, so
    * a part lands at the angle the ghost previewed; it defaults to 0 (drag-drop).
+   * `mirror` drops the part pre-flipped (the armed placement flip); defaults false.
    */
-  private placeCell(kind: string, cell: Cell, rot = 0): Component | undefined {
+  private placeCell(
+    kind: string,
+    cell: Cell,
+    rot = 0,
+    mirror = false,
+  ): Component | undefined {
     const before = this.graph.serialize();
     // Soft containment (IC-maker die editor, ADR 0006): inside a die, clamp the drop anchor to the
     // walls so new parts land in the buildable interior. Identity on the normal outer board.
@@ -1290,9 +1320,10 @@ export class Board {
     const overrides = kind === this.armed ? this.armedConfig : undefined;
     const c = this.graph.place(kind, cell, overrides);
     if (c) {
-      // Drop at the requested orientation (the armed placement rotation) so the
-      // part lands exactly as the ghost previewed it; addNode reads c.rot.
+      // Drop at the requested orientation (the armed placement rotation + flip) so the
+      // part lands exactly as the ghost previewed it; addNode reads c.rot/c.mirror.
       c.rot = ((rot % 4) + 4) % 4;
+      if (mirror) c.mirror = true;
       // Auto-splice: if a pin landed on an existing pin / junction / trace, wire it
       // in (splitting a trace through the pin's cell). Done before the undo push so
       // a single undo reverts the whole drop-and-splice.
@@ -1519,6 +1550,24 @@ export class Board {
     for (const id of this.selected) {
       const c = this.graph.components.get(id);
       if (c) c.rot = (c.rot + 1) % 4;
+      this.nodes.get(id)?.reposition();
+    }
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /**
+   * Horizontally flip (mirror) the selected components — toggle each part's `mirror`.
+   * Geometry/render only: pins keep their INDEX, so connectivity and the netlist are
+   * unchanged (exactly like {@link rotateSelection}); one undo covers the whole flip.
+   */
+  flipSelection(): void {
+    if (this.selected.size === 0) return;
+    this.pushUndo(this.graph.serialize());
+    for (const id of this.selected) {
+      const c = this.graph.components.get(id);
+      if (c) c.mirror = !c.mirror;
       this.nodes.get(id)?.reposition();
     }
     this.redrawWires();
@@ -2025,7 +2074,7 @@ export class Board {
     let maxx = 0;
     let maxy = 0;
     for (const p of kind?.pins ?? []) {
-      const r = rotateOffset(p.dx, p.dy, c.rot);
+      const r = rotateOffset(p.dx, p.dy, c.rot, c.mirror);
       minx = Math.min(minx, r.col);
       miny = Math.min(miny, r.row);
       maxx = Math.max(maxx, r.col);
@@ -2215,6 +2264,7 @@ export class Board {
           kind: c.kind,
           value: c.value,
           rot: c.rot,
+          mirror: c.mirror,
           amp: c.amp,
           wiper: c.wiper,
           temp: c.temp,
@@ -3426,6 +3476,7 @@ export class Board {
         this.armed,
         { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) },
         this.armedRot,
+        this.armedMirror,
       );
       return;
     }
@@ -3560,6 +3611,7 @@ export class Board {
         row: c.cell.row,
         value: c.value,
         rot: c.rot,
+        mirror: c.mirror,
         amp: c.amp,
         wiper: c.wiper,
         temp: c.temp,
@@ -3649,6 +3701,9 @@ export class Board {
       if (!nc) continue;
       nc.value = cc.value;
       nc.rot = (cc.rot + p.rot) % 4;
+      // Carry each part's own horizontal flip (no group reflection — paste only rotates
+      // the group). Pins keep their index, so the pasted netlist is unchanged.
+      if (cc.mirror) nc.mirror = true;
       if (cc.amp !== undefined) nc.amp = cc.amp;
       if (cc.wiper !== undefined) nc.wiper = cc.wiper;
       if (cc.temp !== undefined) nc.temp = cc.temp;
@@ -3732,6 +3787,9 @@ export class Board {
       const g = this.pasteGlyph(i++);
       g.clear();
       g.position.set(o.x, o.y);
+      // Flip BEFORE rotate (scale precedes rotation in PixiJS), matching the live holder,
+      // so a pasted part's flip previews correctly. The group rotation `p.rot` is added on.
+      g.scale.x = cc.mirror ? -1 : 1;
       g.rotation = (((cc.rot + p.rot) % 4) * Math.PI) / 2;
       const color = PALETTE[kind.colorKey];
       const pins = kind.pins.map((pp) => ({
@@ -5134,7 +5192,7 @@ export class Board {
     const ox = pin.dx - (kind.w - 1) / 2;
     const oy = pin.dy - (kind.h - 1) / 2;
     if (ox === 0 && oy === 0) return null;
-    const rr = rotateOffset(ox, oy, c.rot);
+    const rr = rotateOffset(ox, oy, c.rot, c.mirror);
     const ax = Math.abs(rr.col);
     const ay = Math.abs(rr.row);
     if (Math.abs(ax - ay) < 0.4) return null; // corner pin → ambiguous facing
@@ -6167,7 +6225,7 @@ class ComponentNode {
       let minY = 0;
       let maxY = 0;
       for (const p of this.pinPositions) {
-        const r = rotPx(p.x, p.y, this.component.rot);
+        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
         minX = Math.min(minX, r.x);
         maxX = Math.max(maxX, r.x);
         minY = Math.min(minY, r.y);
@@ -6191,6 +6249,11 @@ class ComponentNode {
   reposition(): void {
     const p = this.anchor();
     this.view.position.set(p.x, p.y);
+    // Horizontal flip BEFORE rotation: PixiJS applies scale before rotation in the
+    // local→parent matrix, so `scale.x = −1` then `rotation` composes exactly like
+    // `rotateOffset(dx, dy, rot, mirror)` (reflect dx, then rotate) — the mirrored body
+    // lines up with the pin dots/labels (which use that same orient) at all 4 rotations.
+    this.glyphHolder.scale.x = this.component.mirror ? -1 : 1;
     this.glyphHolder.rotation = (this.component.rot * Math.PI) / 2;
     this.layoutLabels();
   }
@@ -6411,7 +6474,7 @@ class ComponentNode {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];
       if (showPins && p) {
-        const r = rotPx(p.x, p.y, this.component.rot);
+        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
         t.position.set(r.x, r.y - 9);
         t.visible = true;
       } else {
@@ -6439,7 +6502,7 @@ class ComponentNode {
       let minY = 0;
       let maxY = 0;
       for (const p of this.pinPositions) {
-        const r = rotPx(p.x, p.y, this.component.rot);
+        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
         minX = Math.min(minX, r.x);
         maxX = Math.max(maxX, r.x);
         minY = Math.min(minY, r.y);
@@ -6495,9 +6558,19 @@ function distToSegment(
   return Math.hypot(px - cx, py - cy);
 }
 
-/** Rotate a pixel offset by `rot` 90° clockwise steps: (x,y) → (−y,x). */
-function rotPx(x: number, y: number, rot: number): { x: number; y: number } {
-  let rx = x;
+/**
+ * Orient a pixel offset: a horizontal flip (`x → −x`, when `mirror`) applied FIRST, then
+ * `rot` 90°-CW steps `(x,y) → (−y,x)`. The pixel-space twin of {@link rotateOffset}, used to
+ * place the upright pin labels / FAIL box over the glyph (whose holder uses `scale.x = −1`
+ * then `rotation`, the same reflect-before-rotate order). `mirror` defaults false.
+ */
+function rotPx(
+  x: number,
+  y: number,
+  rot: number,
+  mirror = false,
+): { x: number; y: number } {
+  let rx = mirror ? -x : x;
   let ry = y;
   const k = ((rot % 4) + 4) % 4;
   for (let i = 0; i < k; i++) {
