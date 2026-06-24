@@ -278,20 +278,8 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   for (const id of wireOrder) {
     const rd = condRoutes.get(id);
     if (!rd) continue;
-    const w = innerGraph.wires.get(id);
-    // Flange the PIN ends (not junctions) so the inner pipes mesh into the inner parts, same as the board.
-    const ends: [boolean, boolean] = w
-      ? [!isJunctionRef(w.from), !isJunctionRef(w.to)]
-      : [false, false];
     const rounded = roundedPoints(rd, PW * 2);
-    drawConduitSkin(
-      innerG,
-      rounded,
-      colorOf.get(id) ?? PALETTE.cyan,
-      PW,
-      lens,
-      ends,
-    );
+    drawConduitSkin(innerG, rounded, colorOf.get(id) ?? PALETTE.cyan, PW, lens);
   }
   for (const d of cross.dots) {
     innerG.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
@@ -307,10 +295,34 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     drawJunctionConduit(innerG, p, netColor(node), lens);
   }
 
-  // TODO(phase-0-followup): the per-net voltage gauges/standpipes (drawNetBars/drawNetStandpipes),
-  // the carrier flow-dots (beltDots/sampleRouteAt off an inner-current feed), and the explicit
-  // lead-connectors from each frame pad out to its package pin. Conduits + junctions + parts + scale
-  // land first; these are additive and need a per-inner-wire current the struct doesn't carry yet.
+  // --- LEAD CONNECTORS: tie each inner frame-pin net OUT to its package lead. A short conduit (in the
+  // SCALED container `innerG`, so it's the SAME width as the inner pipes) from the frame pin's world cell
+  // to the package lead ROOT on the body edge — the lead root lives in glyph space, so it's mapped back
+  // into container/world coords ((root − pos)/s). The inner net then reads as one continuous run from the
+  // part, through the frame pin, out to the solder lead the package carries on to its tip. ---
+  const bcx = bodyB.x + bodyB.w / 2;
+  const bcy = bodyB.y + bodyB.h / 2;
+  for (let i = 0; i < internals.pinCells.length; i++) {
+    const pc = internals.pinCells[i];
+    const pp = pins[i];
+    if (!pc || !pp || degenerate) continue;
+    const fpW = new Point(pc.col * PITCH, pc.row * PITCH); // frame pin in world (container) coords
+    const rootG = bodyB.alongX
+      ? { x: pp.x, y: pp.y < bcy ? bodyB.y : bodyB.y + bodyB.h }
+      : { x: pp.x < bcx ? bodyB.x : bodyB.x + bodyB.w, y: pp.y };
+    const rootW = new Point((rootG.x - px) / s, (rootG.y - py) / s);
+    drawConduitSkin(
+      innerG,
+      [fpW, rootW],
+      netColor(internals.pinNodes[i] ?? null),
+      PW,
+      lens,
+    );
+  }
+
+  // TODO(phase-0-followup): per-net voltage gauges/standpipes (drawNetBars/drawNetStandpipes) and the
+  // carrier flow-dots (beltDots/sampleRouteAt) — additive, need a per-inner-wire current the struct
+  // doesn't carry yet.
 
   // --- INNER PARTS: each draws its REAL glyph into its pooled child Graphics at WORLD scale (the
   // container does the shrink). Positioned at the part's authored anchor cell × PITCH, pins at the
