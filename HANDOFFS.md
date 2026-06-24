@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (113) — Game-design brainstorm trilogy (GDD → divergent idea bank → grounded roadmap)
+
+**State:** docs only (no code). Branch `claude/kind-turing-hdelb3`. Three multi-agent panels, sequenced
+per owner request. They discovered + built on a DEEP existing design corpus (`game-design.md`,
+`game-progression.md`, `game-contracts-economy.md`, `game-rewards.md`, `reality-roadmap.md`,
+`frameworks-roadmap.md`, `parts-roadmap.md`, `parts-catalog-ideation.md`, `fidelity-ceiling.md`,
+`floating-networks.md`, `multi-rate-domains.md`, the `*-ideation.md` set) — so the brainstorm is grounded,
+not greenfield.
+
+- **`docs/game-design-master-brainstorm.md`** — 5-lens synthesis. Spine = contracts-as-purchase-orders +
+  sandbox substrate + Lux-gated era tech tree (the sim is the sole judge ⇒ no hand-authored puzzles);
+  "fidelity IS the progression"; two-currency firewall (Credits/Lux); debugging elevated to a core verb.
+- **`docs/divergence-idea-bank.md`** — 7-domain UNFILTERED ~250-idea well + "constellations" + "wildest 25".
+- **`docs/grounded-directions-roadmap.md`** — triages the well vs engine feasibility / teaching / game fit.
+  Headline: readiness is concentrated in a few reusable MECHANISMS, not 30 parts. NOW/NEXT slate leans on
+  already-specced golden-safe seams — the **external-input/sensor channel** (→ a whole transducer catalog),
+  the **web-side thermal `Tj` node** (highest teaching-per-engine-work, zero sim-core change), **saturating
+  core** (the diode pattern again, → honest SMPS/inrush), **opto/PV** (on the sensor channel + floating-node
+  GMIN), plus the **Replay codec, debugging/teardown verb, KCL/KVL X-ray, Ideal/Real split-replay,
+  colorblind encoding**. Moonshots (6 spikes): mechanical node/voice-coil, Replay Theater, Bench Buddy
+  tutor, memristor, Hash-Hunt, fenced Twin Bench. Cuts: RF solver (kept as freq-domain lesson), world/MMO,
+  LLM-on-grading-path. Three pickable thrusts: **A** deepen the reality ramp · **B** open the social/UGC
+  loop · **C** sharpen the learning loop + reach. Keystone cheap spike flagged: the **"Ear Lens"** (audio).
+
+(Code from (112) — pipe legibility, removed device tubes, IC package leads + filled internals — is on
+`main` via PR #178 and needs the owner's visual eyeball.)
+
+---
+
 ## 2026-06-24 (112) — Pipe-legibility quick-wins + remove device tubes + IC package leads & filled internals
 
 **State:** 🟢 web gate green (`check` 0/0, `lint`, `build`, `test` **64**); golden UNCHANGED (render-only).

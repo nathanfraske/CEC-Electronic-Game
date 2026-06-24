@@ -6,6 +6,17 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (113) — Game-design brainstorm trilogy (docs)
+
+- ~~**Game-design master brainstorm**~~ — DONE. `docs/game-design-master-brainstorm.md` (5-lens synthesis:
+  contracts spine, fidelity-as-progression, two-currency economy, debugging-as-verb, wildcard appendix).
+- ~~**Divergent idea bank**~~ — DONE. `docs/divergence-idea-bank.md` (~250 unfiltered ideas, 7 domains,
+  constellations, wildest-25).
+- ~~**Grounded directions roadmap**~~ — DONE. `docs/grounded-directions-roadmap.md` (triage → NOW/NEXT
+  slate, LATER, 6 moonshots, cuts/traps, 3 pickable thrusts A/B/C). The actionable bridge from the well.
+- [ ] **Owner decision:** pick a near-term thrust (A deepen reality ramp / B social-UGC loop / C learning
+  loop+reach), or green-light the keystone cheap spikes (sensor channel, web-side thermal `Tj`, Ear Lens).
+
 ## 2026-06-24 (112) — Pipe quick-wins + remove device tubes + IC package leads/filled internals
 
 - ~~**Pipe-legibility quick-wins**~~ — DONE (board.ts): opaque conduit core (QW1) + dark moat (QW2) so
