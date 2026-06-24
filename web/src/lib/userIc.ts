@@ -9,8 +9,9 @@
 //
 // Determinism: flattening is a pure graph->graph transform (deterministic id remap in sorted order);
 // it is a strict no-op when no sealed IC is placed, so every existing circuit (and the golden) is
-// byte-identical. One-layer nesting (an inner circuit never contains another user IC) keeps it a
-// single pass.
+// byte-identical. Nesting is RECURSIVE: an inner circuit may itself place sealed ICs, inlined in waves
+// to a fixed point (depth-guarded against reseal cycles). A board with no nesting settles in one wave,
+// byte-identical to the old single pass — so existing circuits and the golden are unaffected.
 import {
   BoardGraph,
   PART_KINDS,
@@ -257,49 +258,67 @@ export function flattenUserIcs(
   const wires = [...snap.wires];
   const junctions = [...(snap.junctions ?? [])];
 
-  // Deterministic per-instance id offset (instances processed in id order). The base sits well above
-  // any realistic hand/saved id; each instance gets its own stride so inner ids never collide.
+  // Deterministic per-instance id offset. The base sits well above any realistic hand/saved id; each
+  // PROCESSED instance gets its own STRIDE-sized private range so inlined ids never collide — and since
+  // `off` only ever increases, that holds ACROSS recursion levels too.
   const STRIDE = 1_000_000;
   let off = STRIDE;
-  const instances = snap.components
-    .filter((c) => REGISTRY.has(c.kind))
-    .sort((a, b) => a.id - b.id);
 
-  for (const inst of instances) {
-    const def = REGISTRY.get(inst.kind)!;
-    const inner = def.graph;
-    const o = off;
-    off += STRIDE;
-    // Expose this instance's id offset to a render-only caller (the zoom-to-open mini-board). Pushing
-    // here does NOT touch the element arrays the flatten compiles to — it only records the mapping
-    // already computed above, so the netlist crossing the wasm boundary (and the golden) is unchanged.
-    sink?.push({ instanceId: inst.id, offset: o, tag: inst.kind });
-    // An inner endpoint -> outer: the frame's pins become the placed instance's pins (same index);
-    // every other inner component/junction is offset into a private id range.
-    const remap = (e: Endpoint): Endpoint =>
-      isJunctionRef(e)
-        ? { junctionId: e.junctionId + o }
-        : {
-            componentId:
-              e.componentId === def.frameId ? inst.id : e.componentId + o,
-            pinIndex: e.pinIndex,
-          };
-    for (const ic of inner.components) {
-      if (ic.id === def.frameId) continue; // the frame is replaced by the placed instance
-      comps.push({ ...ic, id: ic.id + o, cell: { ...ic.cell } });
-    }
-    for (const j of inner.junctions ?? []) {
-      junctions.push({ ...j, id: j.id + o, cell: { ...j.cell } });
-    }
-    for (const w of inner.wires) {
-      wires.push({
-        id: w.id + o,
-        from: remap(w.from),
-        to: remap(w.to),
-        ...(w.waypoints && w.waypoints.length > 0
-          ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
-          : {}),
-      });
+  // Recursive nesting: an inner circuit may itself place sealed ICs, so we inline in WAVES to a fixed
+  // point. Each wave inlines the user-IC instances NOT yet flattened (in id order) — which may surface
+  // deeper nested instances (their kind is still a user-IC tag) for the next wave. `flattened` stops an
+  // already-inlined hub from being re-processed; `MAX_DEPTH` bounds a pathological RESEAL cycle (A
+  // contains B contains A): past it, any still-nested instance is simply left a no-element hub. A board
+  // with NO nesting settles in ONE wave — wave 1's `pending` equals the old single-pass instance list,
+  // produced in the same id order with the same offsets — so the element output (and the golden) is
+  // byte-identical to before.
+  const flattened = new Set<number>();
+  const MAX_DEPTH = 8;
+  for (let depth = 0; depth < MAX_DEPTH; depth++) {
+    const pending = comps
+      .filter((c) => REGISTRY.has(c.kind) && !flattened.has(c.id))
+      .sort((a, b) => a.id - b.id);
+    if (pending.length === 0) break;
+    for (const inst of pending) {
+      flattened.add(inst.id);
+      const def = REGISTRY.get(inst.kind)!;
+      const inner = def.graph;
+      const o = off;
+      off += STRIDE;
+      // Expose this instance's id offset to a render-only caller (the zoom-to-open mini-board); for a
+      // nested instance `inst.id` is its already-inlined (offset) id. Pushing here does NOT touch the
+      // element arrays the flatten compiles to — only the render-side mapping — so the netlist crossing
+      // the wasm boundary (and the golden) is unchanged.
+      sink?.push({ instanceId: inst.id, offset: o, tag: inst.kind });
+      // An inner endpoint -> outer: the frame's pins become the (already-placed) instance's pins (same
+      // index); every other inner component/junction is offset into this instance's private id range.
+      // For a NESTED instance, `inst.id` is its inlined hub id, so the child's frame pins fuse onto that
+      // hub — which the parent's inner wiring already connected to — tying the two levels on one net.
+      const remap = (e: Endpoint): Endpoint =>
+        isJunctionRef(e)
+          ? { junctionId: e.junctionId + o }
+          : {
+              componentId:
+                e.componentId === def.frameId ? inst.id : e.componentId + o,
+              pinIndex: e.pinIndex,
+            };
+      for (const ic of inner.components) {
+        if (ic.id === def.frameId) continue; // the frame is replaced by the placed instance
+        comps.push({ ...ic, id: ic.id + o, cell: { ...ic.cell } });
+      }
+      for (const j of inner.junctions ?? []) {
+        junctions.push({ ...j, id: j.id + o, cell: { ...j.cell } });
+      }
+      for (const w of inner.wires) {
+        wires.push({
+          id: w.id + o,
+          from: remap(w.from),
+          to: remap(w.to),
+          ...(w.waypoints && w.waypoints.length > 0
+            ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
+            : {}),
+        });
+      }
     }
   }
 
