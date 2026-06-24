@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (109) — Voltage gauges: fixed full-scale standpipe + halfway marker, and the DC "~" bug
+
+**State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden UNCHANGED
+(render-only, `board.ts` only). Branch `claude/kind-turing-hdelb3`. (An adversarial review workflow ran
+over this — fold any findings into a follow-up if it flags anything.)
+
+**Owner-reported on a DC loop:** (a) the analogy water **standpipes** were each sized to their own fill,
+so heights weren't comparable; (b) a **"~" AC badge** appeared next to them while running on a pure DC
+circuit.
+
+**Root cause of the "~":** both voltage gauges (reality LED bar `drawNetBars`, analogy standpipe
+`drawNetStandpipes`) had DUPLICATED swing detection using `ptpFrac = (|vmax| + |vmin|) / vMax`. That
+equals true peak-to-peak only for a centre-zero net; on a +5 V DC rail (vmin≈vmax≈5) it read `10/vMax` ≈ 2,
+far over `BAR_SWING_EPS` (0.02) → `swinging` true → the "~" badge AND the spurious tide/wet-mark band fired
+on every non-zero DC net.
+
+**Fixes (all in `board.ts`, presentation-only → golden-safe):**
+1. **Shared `netSwing(s, vMax, live)` helper** (near `netVStats`) returns `{bipolar, swinging}` with
+   `ptp = vmax − vmin` (true peak-to-peak, ≥ 0, **exactly 0 for DC**). Both gauges now call it (their
+   duplicated `bipolar`/`ptpFrac`/`swinging` blocks removed), so they can't diverge and a DC rail shows
+   neither the tide band nor the "~". AC behaviour is unchanged (bipolar ±V and offset-sine still swing).
+2. **Standpipe fixed full-scale glass + halfway marker.** The housing is now a FIXED height
+   (`uTop = (bipolar?BAR_HALF:H) + 3`, `uBot = -(…)+3`) instead of being sized to the fill — so the glass
+   TOP marks the circuit max rail `vMax` and every net's waterline reads against the SAME scale (hottest
+   rail brims, ground empty, the rest proportional). Added a faint half-scale tick (`halfTick`) at
+   `fullOut/2` (and `-fullIn/2` for bipolar). The water fill (`calmOut = |v|/vMax · reach`) is unchanged,
+   so "fill = the node's voltage" already held; only the glass height + marker are new. The LED bar was
+   NOT changed (it already draws all `BAR_SEGS` segments = a fixed scale).
+
+The collision box is unaffected (`netGaugeAnchors` already reserves `reach = H`). Removed now-dead locals
+(`halfPtp`, `ptpFrac`, `outExt`, `inExt`).
+
+---
+
 ## 2026-06-24 (108) — Literal 1:1 zoom-in replica: leads bridge to the edge pins
 
 **State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden untouched (no

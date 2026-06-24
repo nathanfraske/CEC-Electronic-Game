@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (109) — Voltage gauges: fixed full-scale standpipe + halfway marker, DC "~" bug
+
+- ~~**"~" AC badge fired on a DC loop (owner bug)**~~ — FIXED. Both voltage gauges shared a swing test
+  `(|vmax| + |vmin|)/vMax` that only equals peak-to-peak for a centre-zero net; on a +5 V DC rail it read
+  ~2 → the badge + spurious tide band showed. New shared `netSwing` helper uses `vmax − vmin` (=0 for DC).
+  Both `drawNetBars` + `drawNetStandpipes` call it (dedup), so DC shows neither the "~" nor the wet-mark,
+  and real AC is unchanged.
+- ~~**Standpipes now fixed full-scale with a halfway marker (owner ask)**~~ — DONE. The glass is a FIXED
+  height (top = the loop's max rail `vMax`) instead of being sized to its fill, so every net's waterline
+  reads against the same scale; fill = the node's voltage (already true); added a faint half-scale tick at
+  vMax/2 (±vMax/2 for bipolar). LED bar unchanged (already segmented). Render-only; golden untouched.
+
 ## 2026-06-24 (107) — Deeper zoom + datasheet edge-mounted pin labels (+ connector/BGA ideation)
 
 - ~~**Deeper zoom (fill the screen with an IC)**~~ — DONE. `MAX_SCALE` 8 → 20 in `board.ts` so you can

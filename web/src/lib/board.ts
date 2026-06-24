@@ -4935,6 +4935,33 @@ export class Board {
   }
 
   /**
+   * Shared swing classification for a net's voltage gauge — the reality LED bar
+   * ({@link drawNetBars}) AND the analogy water standpipe ({@link drawNetStandpipes}) read it from
+   * here so the two lenses never diverge. `bipolar` — a centre-zero AC net (it swings through ground
+   * AND its DC mean is small versus the swing) → the gauge fills each way from a midpoint. `swinging`
+   * — the net has appreciable peak-to-peak (the envelope/tide band + the **"~" AC badge** show), and
+   * only when a sub-frame batch actually ran.
+   *
+   * Peak-to-peak is `vmax − vmin` (always ≥ 0) → it is **0 for a DC rail**, so a pure DC net is
+   * neither bipolar nor swinging: no tide band, no "~". (The old `|vmax| + |vmin|` only equalled
+   * peak-to-peak for a centre-zero net; on a +5 V DC rail it read 10, far over the threshold, so the
+   * "~" badge fired on every non-zero DC net — the owner's DC-loop bug.)
+   */
+  private netSwing(
+    s: { vmean: number; vmin: number; vmax: number },
+    vMax: number,
+    live: boolean,
+  ): { bipolar: boolean; swinging: boolean } {
+    const ptp = s.vmax - s.vmin; // true peak-to-peak (≥ 0); exactly 0 for DC
+    const bipolar =
+      s.vmin < 0 &&
+      s.vmax > 0 &&
+      Math.abs(s.vmean) < BAR_BIPOLAR_MEAN_FRAC * (ptp / 2);
+    const swinging = live && ptp / vMax > BAR_SWING_EPS;
+    return { bipolar, swinging };
+  }
+
+  /**
    * One representative, **placement-aware** gauge anchor per NET — the single source of
    * truth shared by the reality LED bar ({@link drawNetBars}) and the analogy water
    * standpipe ({@link drawNetStandpipes}) so the two lenses agree on where a net's gauge
@@ -5119,18 +5146,14 @@ export class Board {
       // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
       const color = this.nodeColor(node);
 
-      // Bipolar AC ⇒ centre-zero: swings through ground AND the DC mean is small versus the
-      // swing. Otherwise unipolar, growing from the base outward (the rail-identity colour
-      // already carries the sign, so magnitude simply grows outward).
-      const halfPtp = (vmax - vmin) / 2;
-      const bipolar =
-        vmin < 0 &&
-        vmax > 0 &&
-        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
-      // Significant swing (envelope band + "~" badge): peak-to-peak past a small fraction of
-      // full scale, and only when a batch ran (a frozen frame has no real swing to show).
-      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
-      const swinging = live && ptpFrac > BAR_SWING_EPS;
+      // Bipolar AC ⇒ centre-zero (grows each way from a midpoint notch); a swing shows the envelope
+      // band + "~" badge. Both come from the shared classifier, so the bar + standpipe never diverge
+      // and a DC rail (peak-to-peak 0) shows neither.
+      const { bipolar, swinging } = this.netSwing(
+        { vmean, vmin, vmax },
+        vMax,
+        live,
+      );
 
       // Fill fractions of vMax → px. A net AT the circuit max fills the whole reach; ground
       // (0 V) → empty. Bipolar splits the reach about the centre notch (half each way).
@@ -5274,17 +5297,14 @@ export class Board {
       // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
       const color = this.nodeColor(node);
 
-      // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline): swings through
-      // ground AND the DC mean is small versus the swing — the SAME test the LED bar uses.
-      const halfPtp = (vmax - vmin) / 2;
-      const bipolar =
-        vmin < 0 &&
-        vmax > 0 &&
-        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
-      // Appreciable swing (the wet-mark / tide band shows) only when a batch ran and the
-      // peak-to-peak passes a small fraction of full scale — same gates as the bar.
-      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
-      const swinging = live && ptpFrac > BAR_SWING_EPS;
+      // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline); a swing shows the tide band
+      // + "~" badge. Shared with the LED bar so the two lenses agree — and a DC rail (peak-to-peak 0)
+      // shows neither.
+      const { bipolar, swinging } = this.netSwing(
+        { vmean, vmin, vmax },
+        vMax,
+        live,
+      );
 
       // Fill fractions of vMax → px (the net AT the circuit max fills the whole reach; ground
       // → empty). `calmOut/In` is the RMS waterline; `wet*` the splash/tide envelope (peak).
@@ -5309,12 +5329,15 @@ export class Board {
         wetOut = Math.max(rms, peak);
       }
 
-      // Housing encloses the full reach (the deeper of calm/wet each way, with headroom) so
-      // the glass always contains the water + the tide line.
-      const outExt = Math.max(calmOut, swinging ? wetOut : 0);
-      const inExt = Math.max(calmIn, swinging ? wetIn : 0);
-      const uTop = Math.max(outExt, 4) + 3; // outward housing end (along +u)
-      const uBot = -(Math.max(inExt, 4) + 3); // sump-side housing end (along −u)
+      // FIXED full-scale housing: the glass always spans the whole reach so its TOP marks the
+      // circuit's max rail (vMax) and every net's waterline reads against the SAME scale — the hottest
+      // rail brims, ground sits empty, the rest fill proportionally. (Was sized to the fill, so each
+      // glass had its own height and you couldn't compare levels at a glance.) `fullOut` is the vMax
+      // level outward; a bipolar net also reaches `fullIn` into the sump for −vMax.
+      const fullOut = bipolar ? BAR_HALF : H;
+      const fullIn = bipolar ? BAR_HALF : 0;
+      const uTop = fullOut + 3; // outward housing end (along +u) — vMax + a little headroom
+      const uBot = -(fullIn + 3); // sump-side housing end (along −u)
       const surfCol = mix(PIPE_WATER, color, SP_TINT); // rail-tinted surface band + cap
 
       // 0) The tap stub from the pipe to the base (ground line), reads as branching off.
@@ -5382,6 +5405,21 @@ export class Board {
       const gl1 = pt(0, SP_W / 2 + 1.5);
       g.moveTo(gl0.x, gl0.y).lineTo(gl1.x, gl1.y);
       g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: SP_GROUND_ALPHA });
+
+      // 5b) Half-scale marker(s): a faint tick across the glass at vMax/2 (and −vMax/2 for a bipolar
+      //     net), so the waterline reads against a fixed scale — top = the loop's max rail, this = half.
+      const halfTick = (uu: number): void => {
+        const m0 = pt(uu, -(SP_W / 2 + 1.5));
+        const m1 = pt(uu, SP_W / 2 + 1.5);
+        g.moveTo(m0.x, m0.y).lineTo(m1.x, m1.y);
+        g.stroke({
+          width: 1,
+          color: BAR_NOTCH_COLOR,
+          alpha: SP_GROUND_ALPHA * 0.5,
+        });
+      };
+      halfTick(fullOut / 2);
+      if (bipolar) halfTick(-fullIn / 2);
 
       // "~" AC badge beside the standpipe iff the net has an appreciable swing (DC ⇒ none).
       if (swinging) {
