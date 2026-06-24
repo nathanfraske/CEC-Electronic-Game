@@ -623,6 +623,20 @@ export interface UserIcInternals {
    * WHERE the authored wires actually land. Lets the zoom-to-open replica anchor each package pin (its
    * dot + lead + label) exactly on the lead bridging into it, a 1:1 of the die the player built. */
   pinCells: { col: number; row: number }[];
+  /** the reconstructed inner sub-graph (frame included), so the zoom-to-open replica can route the REAL
+   * inner `Wire`s — with waypoints + the die down-bend — through the shared `routeForWire`, instead of
+   * the lossy `wires` projection above (which drops waypoints). Render-only, never hashed. */
+  innerGraph: BoardGraph;
+  /** resolve an inner-graph endpoint to its OUTER node index (into the snapshot `state`), or `null` when
+   * the endpoint sits on no solved net (a genuinely floating inner wire — live — or the whole static
+   * fallback, which carries no nodes). `null` is load-bearing for the replica: it colours floating runs
+   * cyan (the die editor's unconnected cue) and, crucially, lets `applyCrossings` tell distinct nets
+   * apart — a `0` fallback would alias every unresolved run to ground and sprout phantom tie-dots at
+   * different-net crossings. Mirrors the board's `endpointNode` (also `number | null`). Render-only. */
+  nodeOfInner: (e: Endpoint) => number | null;
+  /** the inner graph's die-frame component id (`UserIc.frameId`), so the replica can tell a frame pad
+   * from an inner pin when routing (the down-bend) — what `routeForWire` needs as its `dieFrameId`. */
+  frameId: number;
 }
 
 /** The frame's authored pin cells (die-editor perimeter positions), by external pin index. The seal
@@ -709,6 +723,13 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
     bbox: { minCol, minRow, maxCol, maxRow },
     gndNode: 0,
     pinCells: framePinCells(innerGraph, def.frameId),
+    // Static (unpowered) fallback: carry the already-built inner graph + the frame id, but every endpoint
+    // resolves to `null` (no solve, no nodes) — the view then draws every run at its `nodeV`-absent at-rest
+    // grey and, because the net is `null` not `0`, `applyCrossings` adds no phantom tie-dots between the
+    // authored runs (a `0` for all would alias the whole circuit into one net).
+    innerGraph,
+    nodeOfInner: () => null,
+    frameId: def.frameId,
   };
 }
 
@@ -1654,6 +1675,16 @@ export function buildNetlist(
       bbox: { minCol, minRow, maxCol, maxRow },
       gndNode,
       pinCells: framePinCells(innerGraph, def.frameId),
+      // Render-only: carry the reconstructed inner graph + the frame id so the replica can route the real
+      // wires. `nodeOfInner` is the same flatten-aware resolver `nodeOfEndpoint` uses, but kept NULLABLE
+      // (no `?? 0` fallback): a floating inner endpoint must resolve to `null`, not ground, so the replica
+      // colours it cyan and `applyCrossings` doesn't alias distinct floating runs into one phantom net.
+      innerGraph,
+      nodeOfInner: (e) => {
+        const n = nodeIndex.get(find(flatKey(e)));
+        return n === undefined ? null : n;
+      },
+      frameId: def.frameId,
     });
   }
 
