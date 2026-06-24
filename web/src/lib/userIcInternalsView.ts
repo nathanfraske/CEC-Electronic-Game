@@ -48,10 +48,6 @@ export interface UserIcInternalsOpts {
   /** footprint pin positions (glyph-local px), by external pin index — the FALLBACK anchor used only
    * when the internals carry no authored `pinCells` (the package boundary positions). */
   pins: { x: number; y: number }[];
-  /** OUTPUT: filled (by external pin index) with the glyph-local px where each package pin was drawn —
-   * the die-editor position the authored lead bridges to — so the caller can park the pin LABEL there
-   * (a 1:1 replica: dot + lead + label all on the same edge point). Cleared + rewritten each call. */
-  outPinPx?: { x: number; y: number }[];
   wPx: number;
   hPx: number;
   /** the board's bounded flow clock, for animating carriers along the wires. */
@@ -73,19 +69,8 @@ export interface UserIcInternalsOpts {
  * and external-pin anchors are drawn into `g`. Returns nothing.
  */
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
-  const {
-    internals,
-    nodeV,
-    pins,
-    outPinPx,
-    wPx,
-    hPx,
-    phase,
-    accent,
-    partLayer,
-  } = o;
-  const { parts, wires, pinNodes, bbox, gndNode, pinCells } = internals;
-  if (outPinPx) outPinPx.length = 0;
+  const { internals, nodeV, pins, wPx, hPx, phase, accent, partLayer } = o;
+  const { parts, wires, pinNodes, bbox, gndNode } = internals;
 
   // Pool: one child Graphics per inner part, reused across frames (cleared, not recreated). Shrink
   // the pool if the netlist now has fewer parts (e.g. a different IC under the cursor).
@@ -153,17 +138,11 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
   }
 
-  // --- External package pins: anchor each lead WHERE THE AUTHORED WIRE LANDS (the frame's die-editor
-  // pin cell), so the inner circuit visibly bridges out to the boundary pin — a 1:1 of the die the
-  // player built. Falls back to the caller's footprint `pins` only when no authored pinCells exist.
-  // The drawn px is reported via `outPinPx` so the caller parks the pin label on the same edge point. ---
-  const extPx = pinCells.length
-    ? pinCells.map((c) => toPx(c.col, c.row))
-    : pins;
-  for (let i = 0; i < extPx.length; i++) {
-    const p = extPx[i];
+  // --- External package pins: anchor each lead at the package's footprint pin position (the spread
+  // package edge), lining up with the pin dot + label the node draws there; energise by net level. ---
+  for (let i = 0; i < pins.length; i++) {
+    const p = pins[i];
     if (!p) continue;
-    if (outPinPx) outPinPx[i] = { x: p.x, y: p.y };
     const nd = pinNodes[i];
     const lv = nd === undefined ? 0 : level(nd);
     // The package lead: a clear dot on the boundary, energised by its net level when live.

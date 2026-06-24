@@ -1774,6 +1774,9 @@
         // showing stale data from the previous circuit until the run catches up.
         board?.clearScope();
         board?.setProbeNodes(nl ? nl.nodesOfComponent : null);
+        // Per-net circuit grouping so each voltage gauge scales to its OWN circuit's max rail
+        // (two separate boards don't share a "highest voltage" reference).
+        board?.setCircuitOfNode(nl ? nl.circuitOfNode : null);
         // Composite-IC internals (component id → sub-circuit topology) so a sealed chip can open
         // to its live internals when zoomed in under the reality lens (ADR 0005, zoom-to-open).
         board?.setCompositeInternals(nl ? nl.compositeInternals : null);

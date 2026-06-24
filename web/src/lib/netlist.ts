@@ -808,6 +808,14 @@ export interface BuiltNetlist {
   nodeColors: Map<number, number>;
   /** Current-source component ids whose forced current has no return path. */
   floatingSources: number[];
+  /**
+   * The CIRCUIT a node belongs to, by node index — a representative root so two nodes share a value
+   * iff an element bridges them (a maximal connected component of the board, ground EXCLUDED as a
+   * bridge so two separate loops that only share a ground stay distinct circuits). Lets a voltage
+   * gauge scale to the max rail of ITS OWN circuit, not the whole board. Render-side only: never
+   * crosses the wasm boundary, never enters the snapshot hash. Ground (node 0) maps to itself.
+   */
+  circuitOfNode: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
   sig: string;
 }
@@ -1670,6 +1678,41 @@ export function buildNetlist(
     (hSig ? "|h:" + hSig : "") +
     paramsSig;
 
+  // Per-net CIRCUIT grouping (render-only): two nets are the SAME circuit when an element bridges
+  // them, so a voltage gauge can scale to the max rail of ITS OWN circuit rather than the whole board
+  // (two separate loops keep separate references). Ground (node 0) does NOT propagate — circuits
+  // joined only by a shared ground stay distinct (the owner's separate AC + DC boards). Derived from
+  // the existing terminal arrays; never crosses the wasm boundary, never enters the hash.
+  const cuf = Array.from({ length: nodeCount }, (_, i) => i);
+  const cfind = (x: number): number => {
+    let r = x;
+    while (cuf[r] !== r) r = cuf[r]!;
+    while (cuf[x] !== r) {
+      const nx = cuf[x]!;
+      cuf[x] = r;
+      x = nx;
+    }
+    return r;
+  };
+  const cunion = (x: number, y: number): void => {
+    if (x === 0 || y === 0) return; // ground is not a circuit bridge
+    const rx = cfind(x);
+    const ry = cfind(y);
+    if (rx !== ry) cuf[rx] = ry;
+  };
+  for (let i = 0; i < aArr.length; i++) {
+    const terms = [aArr[i]!, bArr[i]!, cArr[i]!, dArr[i]!, eArr[i]!];
+    let base = 0;
+    for (const t of terms) {
+      if (t !== 0) {
+        base = t;
+        break;
+      }
+    }
+    if (base !== 0) for (const t of terms) cunion(base, t);
+  }
+  const circuitOfNode = Array.from({ length: nodeCount }, (_, i) => cfind(i));
+
   return {
     nodeCount,
     types: Uint8Array.from(types),
@@ -1692,6 +1735,7 @@ export function buildNetlist(
     nodeNames,
     nodeColors,
     floatingSources,
+    circuitOfNode,
     sig,
   };
 }

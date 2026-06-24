@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (111) — Fix IC pin-label overlap (revert 1:1 bridging) + per-circuit gauge scaling
+
+**State:** 🟢 web gate green (`check` 0/0, `lint`, `build`, `test` **64** +1); golden UNCHANGED
+(render-only). Branch `claude/kind-turing-hdelb3`. Two owner-reported bugs.
+
+**1. Placed user-IC pin labels collapsed/overlapped at zoom-in (screenshot: VCC/Y/GND/A/B piled on
+"CEC9001").** Cause: the (108) "1:1 lead-bridging" anchored the replica's pins + labels at the
+*die-editor* layout scaled into the tiny SOT-23 footprint (~26 px tall) — a ~50× shrink that crushed
+all 5 pins into a few px, so the (large, zoomed) labels overlapped. **Fix (reverted the broken
+behaviour):** the replica's external pins anchor at the COMPACT package positions again
+(`userIcInternalsView` `extPx = pins`), the node's pin DOTS always draw (no `showUserIc` skip), and the
+pin LABELS park at `this.pinPositions` (the spread package edges) — so the pinout stays readable.
+Removed the dead `miniPinPx`/`outPinPx` plumbing. (`pinCells` is still built in `netlist.ts` + tested —
+kept as the geometry a PROPER bridging redo would use: anchor leads to the package edges and route the
+inner circuit's frame-pin wires out to them, instead of scaling the die layout into the footprint.)
+
+**2. Standpipes/bars shared ONE "highest voltage" across unconnected circuits** (owner: a DC loop read
+low beside a higher-peak AC loop it wasn't wired to). Cause: `circuitVMax` took `max|V|` over EVERY
+gauged net on the board. **Fix:** `buildNetlist` now emits **`circuitOfNode`** (render-only) — a
+union-find over each element's terminal nodes, **ground (node 0) excluded as a bridge**, so two loops
+that share only a ground stay distinct circuits. The renderer (`board.ts`) stores it via
+`setCircuitOfNode` (wired in App.svelte's `rebuildNetlist`) and `drawNetBars`/`drawNetStandpipes` now
+compute `circuitVMaxByGroup` and scale each gauge to ITS OWN circuit's max (`circuitGroup(node)`
+lookup per net). Golden-safe: derived from existing terminal arrays, never crosses the wasm boundary
+or the hash; not in `sig`. +1 test (two separate V→R→GND loops land in different groups; ground = its
+own group 0).
+
+---
+
 ## 2026-06-24 (110) — Pipe-view legibility DESIGN REVIEW (doc only) + OR-gate seal = stale-build
 
 **State:** 🟢 no code change this entry. Branch `claude/kind-turing-hdelb3`.
