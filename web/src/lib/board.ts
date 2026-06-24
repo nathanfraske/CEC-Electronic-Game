@@ -1536,7 +1536,7 @@ export class Board {
     for (const id of this.selectedLabels) this.graph.removeNetLabel(id);
     for (const id of this.selected) this.graph.removeComponent(id);
     for (const id of this.selectedWires) this.graph.removeWire(id);
-    for (const id of this.selectedJunctions) this.graph.removeJunction(id);
+    for (const id of this.selectedJunctions) this.graph.dissolveJunction(id);
     this.rebuildNodes();
     this.clearSelection();
     this.redrawWires();
@@ -3413,7 +3413,17 @@ export class Board {
         this.selectJunction(jid, true);
         return;
       }
-      if (this.mode === "wire" || this.mode === "select") {
+      if (this.mode === "select") {
+        // Select/Build: a junction is a draggable node. Select it and arm a move so a plain DRAG
+        // repositions it (its incident wires follow by reference) and a click just selects it —
+        // Delete or right-click then removes it, HEALING the wire it joined (`dissolveJunction`).
+        // Branch-wiring out of a junction is the Wire tool's job.
+        if (!this.selectedJunctions.has(jid)) this.selectJunction(jid, false);
+        this.junctionDrag = { id: jid, moved: false };
+        this.pendingUndo = this.graph.serialize();
+        return;
+      }
+      if (this.mode === "wire") {
         const now = performance.now();
         const dbl =
           this.lastJunctionTap !== null &&
@@ -3434,10 +3444,10 @@ export class Board {
       }
     }
 
-    // In pan mode a body press is NOT a grab — it falls through to the empty-space
-    // branch below and pans, so the hand tool never accidentally drags a part.
-    // (Shift/ctrl still selects so multi-select works from any tool.)
-    const body = this.bodyHitTest(wp.x, wp.y);
+    // Alt-click is "reach the wire behind the part": with Alt held we skip the body hit-test, so a
+    // press over a component falls through to the wire/empty handling below and grabs the occluded
+    // trace instead of the part on top of it. (Pin/junction above still win — they're the real nodes.)
+    const body = e.altKey ? null : this.bodyHitTest(wp.x, wp.y);
     // Double-click a component body opens its info panel — works from Select and Pan
     // alike, before the mode-specific handling below. The first click selects (and,
     // for a manual switch, toggles) as usual; the second click within the window
@@ -4218,7 +4228,9 @@ export class Board {
     const jid = this.junctionHitTest(wp.x, wp.y);
     if (jid !== null) {
       this.pushUndo(this.graph.serialize());
-      this.graph.removeJunction(jid);
+      // Remove the junction but heal the wire it joined (keep the connection); right-click on a
+      // real 3+-way branch falls back to dropping the incident wires (dissolveJunction).
+      this.graph.dissolveJunction(jid);
       this.selectedJunctions.delete(jid);
       this.redrawWires();
       this.redrawSelection();

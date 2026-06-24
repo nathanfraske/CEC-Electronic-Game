@@ -363,3 +363,53 @@ describe("mirror / flip (horizontal reflection)", () => {
     expect(flip!.nodeCount).toBe(base!.nodeCount);
   });
 });
+
+describe("graph — dissolveJunction (remove a junction, keep the wire)", () => {
+  it("heals a 2-way junction into one wire and preserves the netlist", () => {
+    const g = new BoardGraph();
+    const v = place(g, "V", 0, 0, 5);
+    const r = place(g, "R", 6, 0, 1000);
+    const gnd = place(g, "GND", 0, 6);
+    // V+ -> J -> R.A (a junction splitting that run); R.B -> GND; V- -> GND.
+    const j = g.addJunction({ col: 3, row: 0 }, true);
+    g.connect({ componentId: v.id, pinIndex: 0 }, { junctionId: j.id });
+    g.connect({ junctionId: j.id }, { componentId: r.id, pinIndex: 0 });
+    connect(g, r, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+
+    const before = buildNetlist(g)!;
+    expect(before).not.toBeNull();
+    const wiresBefore = g.serialize().wires.length;
+
+    expect(g.dissolveJunction(j.id)).toBe(true);
+
+    const snap = g.serialize();
+    expect(snap.junctions?.length ?? 0).toBe(0); // the dot is gone
+    expect(snap.wires.length).toBe(wiresBefore - 1); // its two wires merged into one
+
+    const after = buildNetlist(g)!;
+    // Connectivity preserved -> byte-identical netlist (a 2-way junction is a pure pass-through).
+    expect([...after.types]).toEqual([...before.types]);
+    expect([...after.values]).toEqual([...before.values]);
+    expect(after.nodeCount).toBe(before.nodeCount);
+  });
+
+  it("falls back to a destructive remove for a real 3-way branch", () => {
+    const g = new BoardGraph();
+    const v = place(g, "V", 0, 0, 5);
+    const r1 = place(g, "R", 6, 0, 1000);
+    const r2 = place(g, "R", 6, 6, 1000);
+    const gnd = place(g, "GND", 0, 10);
+    // A real branch: J fans V+ out to both R1 and R2 (three wire-ends on the junction).
+    const j = g.addJunction({ col: 3, row: 0 }, true);
+    g.connect({ componentId: v.id, pinIndex: 0 }, { junctionId: j.id });
+    g.connect({ junctionId: j.id }, { componentId: r1.id, pinIndex: 0 });
+    g.connect({ junctionId: j.id }, { componentId: r2.id, pinIndex: 0 });
+    connect(g, r1, 1, gnd, 0);
+    connect(g, r2, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+
+    expect(g.dissolveJunction(j.id)).toBe(false); // 3-way: not a clean pass-through
+    expect(g.serialize().junctions?.length ?? 0).toBe(0); // still removed
+  });
+});
