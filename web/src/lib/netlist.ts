@@ -26,7 +26,12 @@ import {
   PARAM_STRIDE,
 } from "./tiers";
 import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
-import { flattenUserIcs, getUserIc, type FlattenRecord } from "./userIc";
+import {
+  flattenUserIcs,
+  getUserIc,
+  type FlattenRecord,
+  type UserIc,
+} from "./userIc";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -614,6 +619,97 @@ export interface UserIcInternals {
   bbox: { minCol: number; minRow: number; maxCol: number; maxRow: number };
   /** a reference low node for the voltage "level" normalisation (0 if unknown). */
   gndNode: number;
+  /** the frame's authored pin CELLS (the die-editor perimeter positions), by EXTERNAL pin index —
+   * WHERE the authored wires actually land. Lets the zoom-to-open replica anchor each package pin (its
+   * dot + lead + label) exactly on the lead bridging into it, a 1:1 of the die the player built. */
+  pinCells: { col: number; row: number }[];
+}
+
+/** The frame's authored pin cells (die-editor perimeter positions), by external pin index. The seal
+ * keeps pin index order, so `pinCells[i]` is the same lead as external pin `i`. Render-only. */
+function framePinCells(
+  innerGraph: BoardGraph,
+  frameId: number,
+): { col: number; row: number }[] {
+  const out: { col: number; row: number }[] = [];
+  const frame = innerGraph.components.get(frameId);
+  const kind = frame ? innerGraph.kindOf(frame) : undefined;
+  if (frame && kind) {
+    for (const p of kind.pins) {
+      const c = innerGraph.pinCell(frame, p);
+      out.push({ col: c.col, row: c.row });
+    }
+  }
+  return out;
+}
+
+/**
+ * A NODE-FREE {@link UserIcInternals} built purely from a sealed user IC's authored graph — the same
+ * parts / wire-cells / bbox geometry the in-netlist builder produces, but with every node field
+ * zeroed (no solve needed). The zoom-to-open miniature uses this as the fallback so a placed chip
+ * still reveals "the circuit as you built it" even when the outer board doesn't solve (unpowered):
+ * the view ({@link drawUserIcInternals}) draws it STATICALLY — level 0, no live colour/flow — when no
+ * `nodeV` snapshot is passed. Render-only, never hashed (exactly like the live builder above).
+ */
+export function userIcGeometry(def: UserIc): UserIcInternals {
+  const innerGraph = new BoardGraph();
+  innerGraph.restore(def.graph);
+  // Parts: every inner component except the frame, at its authored cell/rot/value. Nodes are zeroed
+  // (a static render reads no live level), one per pin so the shape matches the live struct.
+  const parts: UserIcInnerPart[] = [];
+  for (const comp of def.graph.components) {
+    if (comp.id === def.frameId) continue;
+    const kind = PART_KINDS[comp.kind];
+    if (!kind) continue;
+    parts.push({
+      kind: comp.kind,
+      cell: { col: comp.cell.col, row: comp.cell.row },
+      rot: comp.rot,
+      value: comp.value,
+      nodes: kind.pins.map(() => 0),
+    });
+  }
+  const cellOf = (e: Endpoint): { col: number; row: number } => {
+    const c = innerGraph.endpointCell(e);
+    return c ? { col: c.col, row: c.row } : { col: 0, row: 0 };
+  };
+  const wires: UserIcInnerWire[] = def.graph.wires.map((w) => ({
+    from: cellOf(w.from),
+    to: cellOf(w.to),
+    node: 0,
+  }));
+  // Authored extent over every inner component's pin cells + junction cells (frame included), so the
+  // fit-to-footprint scale spans the whole drawn circuit — identical to the live builder.
+  let minCol = Infinity;
+  let minRow = Infinity;
+  let maxCol = -Infinity;
+  let maxRow = -Infinity;
+  const grow = (c: { col: number; row: number }): void => {
+    if (c.col < minCol) minCol = c.col;
+    if (c.row < minRow) minRow = c.row;
+    if (c.col > maxCol) maxCol = c.col;
+    if (c.row > maxRow) maxRow = c.row;
+  };
+  for (const comp of innerGraph.components.values()) {
+    const kind = innerGraph.kindOf(comp);
+    if (!kind) continue;
+    for (const p of kind.pins) grow(innerGraph.pinCell(comp, p));
+  }
+  for (const j of innerGraph.junctions.values()) grow(j.cell);
+  if (!isFinite(minCol)) {
+    minCol = 0;
+    minRow = 0;
+    maxCol = 1;
+    maxRow = 1;
+  }
+  return {
+    parts,
+    wires,
+    pinNodes: [],
+    bbox: { minCol, minRow, maxCol, maxRow },
+    gndNode: 0,
+    pinCells: framePinCells(innerGraph, def.frameId),
+  };
 }
 
 export interface BuiltNetlist {
@@ -782,31 +878,43 @@ export function buildNetlist(
     else union(k, rep);
   }
 
-  // How many pins share each net, so we can tell a ground that's actually wired
-  // into the circuit from one just sitting on the board.
+  // Every GND symbol is the SAME global ground — real-schematic convention (and what a breadboard
+  // does): several ground symbols form ONE common reference WITHOUT a wire between them, so the
+  // player needn't hand-tie every ground together (that surprise is exactly the "my sources can't
+  // share a ground" trap). Union all GND pins onto the first; whether that net is the node-0
+  // reference (vs. a lone floating ground) is decided below. Deterministic — `sorted` is by id.
+  let gndKey: string | null = null;
+  for (const c of sorted) {
+    if (c.kind !== "GND") continue;
+    const k = key(c.id, 0); // GND is a 1-pin part
+    find(k);
+    if (gndKey === null) gndKey = k;
+    else union(k, gndKey);
+  }
+
+  // How many pins share each net, and which nets carry a NON-GND pin — so we can tell a ground that
+  // is actually wired into the circuit from one (or several) just sitting on the board.
   const netSize = new Map<string, number>();
+  const netHasNonGnd = new Set<string>();
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind) continue;
     for (const p of kind.pins) {
       const r = find(key(c.id, p.index));
       netSize.set(r, (netSize.get(r) ?? 0) + 1);
+      if (c.kind !== "GND") netHasNonGnd.add(r);
     }
   }
 
-  // Ground (node 0): a *connected* explicit GND part's net wins if one is placed
-  // — this is what lets a current-source-only loop simulate (no voltage source to
-  // borrow a reference from). A GND floating on the board with nothing wired to it
-  // is ignored, so it can't make a disconnected circuit falsely "solve". Otherwise
-  // fall back to the first voltage source's "−" pin (index 1).
+  // Ground (node 0): the unified GND net wins when it is actually wired into the circuit (it carries
+  // at least one non-GND pin) — this is what lets a current-source-only loop simulate (no voltage
+  // source to borrow a reference from). Ground symbols sitting on the board with nothing else wired
+  // to them are ignored, so they can't make a disconnected circuit falsely "solve". Otherwise fall
+  // back to the first voltage source's "−" pin (index 1).
   let groundRoot: string | null = null;
-  for (const c of sorted) {
-    if (c.kind !== "GND") continue;
-    const r = find(key(c.id, 0)); // GND is a 1-pin part
-    if ((netSize.get(r) ?? 0) > 1) {
-      groundRoot = r; // wired to at least one other pin
-      break;
-    }
+  if (gndKey !== null) {
+    const r = find(gndKey);
+    if (netHasNonGnd.has(r)) groundRoot = r;
   }
   if (groundRoot === null) {
     for (const c of sorted) {
@@ -1537,6 +1645,7 @@ export function buildNetlist(
       pinNodes,
       bbox: { minCol, minRow, maxCol, maxRow },
       gndNode,
+      pinCells: framePinCells(innerGraph, def.frameId),
     });
   }
 

@@ -39,7 +39,7 @@ import {
   type GraphSnapshot,
   type PinTest,
 } from "./graph";
-import { captureSeal, isUserIc } from "./userIc";
+import { captureSeal, isUserIc, getUserIc, type UserIc } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
@@ -58,7 +58,11 @@ import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
 import { drawCompositeInternals } from "./internalsView";
 import { drawUserIcInternals } from "./userIcInternalsView";
-import type { CompositeInternals, UserIcInternals } from "./netlist";
+import {
+  type CompositeInternals,
+  type UserIcInternals,
+  userIcGeometry,
+} from "./netlist";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -116,7 +120,7 @@ const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
 // Zoom further in than before so the full-detail tier (with pinout labels) has room
 // to read. The LOD swaps still gate on TIER_ZOOM / DETAIL_ZOOM, well below this.
-const MAX_SCALE = 8;
+const MAX_SCALE = 20; // deep enough that a single IC fills the screen (zoom-to-open 1:1 replica)
 const UNDO_LIMIT = 60;
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
@@ -4931,6 +4935,33 @@ export class Board {
   }
 
   /**
+   * Shared swing classification for a net's voltage gauge — the reality LED bar
+   * ({@link drawNetBars}) AND the analogy water standpipe ({@link drawNetStandpipes}) read it from
+   * here so the two lenses never diverge. `bipolar` — a centre-zero AC net (it swings through ground
+   * AND its DC mean is small versus the swing) → the gauge fills each way from a midpoint. `swinging`
+   * — the net has appreciable peak-to-peak (the envelope/tide band + the **"~" AC badge** show), and
+   * only when a sub-frame batch actually ran.
+   *
+   * Peak-to-peak is `vmax − vmin` (always ≥ 0) → it is **0 for a DC rail**, so a pure DC net is
+   * neither bipolar nor swinging: no tide band, no "~". (The old `|vmax| + |vmin|` only equalled
+   * peak-to-peak for a centre-zero net; on a +5 V DC rail it read 10, far over the threshold, so the
+   * "~" badge fired on every non-zero DC net — the owner's DC-loop bug.)
+   */
+  private netSwing(
+    s: { vmean: number; vmin: number; vmax: number },
+    vMax: number,
+    live: boolean,
+  ): { bipolar: boolean; swinging: boolean } {
+    const ptp = s.vmax - s.vmin; // true peak-to-peak (≥ 0); exactly 0 for DC
+    const bipolar =
+      s.vmin < 0 &&
+      s.vmax > 0 &&
+      Math.abs(s.vmean) < BAR_BIPOLAR_MEAN_FRAC * (ptp / 2);
+    const swinging = live && ptp / vMax > BAR_SWING_EPS;
+    return { bipolar, swinging };
+  }
+
+  /**
    * One representative, **placement-aware** gauge anchor per NET — the single source of
    * truth shared by the reality LED bar ({@link drawNetBars}) and the analogy water
    * standpipe ({@link drawNetStandpipes}) so the two lenses agree on where a net's gauge
@@ -5115,18 +5146,14 @@ export class Board {
       // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
       const color = this.nodeColor(node);
 
-      // Bipolar AC ⇒ centre-zero: swings through ground AND the DC mean is small versus the
-      // swing. Otherwise unipolar, growing from the base outward (the rail-identity colour
-      // already carries the sign, so magnitude simply grows outward).
-      const halfPtp = (vmax - vmin) / 2;
-      const bipolar =
-        vmin < 0 &&
-        vmax > 0 &&
-        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
-      // Significant swing (envelope band + "~" badge): peak-to-peak past a small fraction of
-      // full scale, and only when a batch ran (a frozen frame has no real swing to show).
-      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
-      const swinging = live && ptpFrac > BAR_SWING_EPS;
+      // Bipolar AC ⇒ centre-zero (grows each way from a midpoint notch); a swing shows the envelope
+      // band + "~" badge. Both come from the shared classifier, so the bar + standpipe never diverge
+      // and a DC rail (peak-to-peak 0) shows neither.
+      const { bipolar, swinging } = this.netSwing(
+        { vmean, vmin, vmax },
+        vMax,
+        live,
+      );
 
       // Fill fractions of vMax → px. A net AT the circuit max fills the whole reach; ground
       // (0 V) → empty. Bipolar splits the reach about the centre notch (half each way).
@@ -5270,17 +5297,14 @@ export class Board {
       // colour; the gauge fill/magnitude below stays voltage-driven (unchanged).
       const color = this.nodeColor(node);
 
-      // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline): swings through
-      // ground AND the DC mean is small versus the swing — the SAME test the LED bar uses.
-      const halfPtp = (vmax - vmin) / 2;
-      const bipolar =
-        vmin < 0 &&
-        vmax > 0 &&
-        Math.abs(vmean) < BAR_BIPOLAR_MEAN_FRAC * halfPtp;
-      // Appreciable swing (the wet-mark / tide band shows) only when a batch ran and the
-      // peak-to-peak passes a small fraction of full scale — same gates as the bar.
-      const ptpFrac = (Math.abs(vmax) + Math.abs(vmin)) / vMax;
-      const swinging = live && ptpFrac > BAR_SWING_EPS;
+      // Bipolar AC ⇒ centre-zero (calm level at the mean ≈ the baseline); a swing shows the tide band
+      // + "~" badge. Shared with the LED bar so the two lenses agree — and a DC rail (peak-to-peak 0)
+      // shows neither.
+      const { bipolar, swinging } = this.netSwing(
+        { vmean, vmin, vmax },
+        vMax,
+        live,
+      );
 
       // Fill fractions of vMax → px (the net AT the circuit max fills the whole reach; ground
       // → empty). `calmOut/In` is the RMS waterline; `wet*` the splash/tide envelope (peak).
@@ -5305,12 +5329,15 @@ export class Board {
         wetOut = Math.max(rms, peak);
       }
 
-      // Housing encloses the full reach (the deeper of calm/wet each way, with headroom) so
-      // the glass always contains the water + the tide line.
-      const outExt = Math.max(calmOut, swinging ? wetOut : 0);
-      const inExt = Math.max(calmIn, swinging ? wetIn : 0);
-      const uTop = Math.max(outExt, 4) + 3; // outward housing end (along +u)
-      const uBot = -(Math.max(inExt, 4) + 3); // sump-side housing end (along −u)
+      // FIXED full-scale housing: the glass always spans the whole reach so its TOP marks the
+      // circuit's max rail (vMax) and every net's waterline reads against the SAME scale — the hottest
+      // rail brims, ground sits empty, the rest fill proportionally. (Was sized to the fill, so each
+      // glass had its own height and you couldn't compare levels at a glance.) `fullOut` is the vMax
+      // level outward; a bipolar net also reaches `fullIn` into the sump for −vMax.
+      const fullOut = bipolar ? BAR_HALF : H;
+      const fullIn = bipolar ? BAR_HALF : 0;
+      const uTop = fullOut + 3; // outward housing end (along +u) — vMax + a little headroom
+      const uBot = -(fullIn + 3); // sump-side housing end (along −u)
       const surfCol = mix(PIPE_WATER, color, SP_TINT); // rail-tinted surface band + cap
 
       // 0) The tap stub from the pipe to the base (ground line), reads as branching off.
@@ -5378,6 +5405,21 @@ export class Board {
       const gl1 = pt(0, SP_W / 2 + 1.5);
       g.moveTo(gl0.x, gl0.y).lineTo(gl1.x, gl1.y);
       g.stroke({ width: 1, color: BAR_NOTCH_COLOR, alpha: SP_GROUND_ALPHA });
+
+      // 5b) Half-scale marker(s): a faint tick across the glass at vMax/2 (and −vMax/2 for a bipolar
+      //     net), so the waterline reads against a fixed scale — top = the loop's max rail, this = half.
+      const halfTick = (uu: number): void => {
+        const m0 = pt(uu, -(SP_W / 2 + 1.5));
+        const m1 = pt(uu, SP_W / 2 + 1.5);
+        g.moveTo(m0.x, m0.y).lineTo(m1.x, m1.y);
+        g.stroke({
+          width: 1,
+          color: BAR_NOTCH_COLOR,
+          alpha: SP_GROUND_ALPHA * 0.5,
+        });
+      };
+      halfTick(fullOut / 2);
+      if (bipolar) halfTick(-fullIn / 2);
 
       // "~" AC badge beside the standpipe iff the net has an appreciable swing (DC ⇒ none).
       if (swinging) {
@@ -6332,6 +6374,19 @@ class ComponentNode {
   private readonly color: number;
   private readonly kindTag: string;
   private readonly unit: string;
+  /** Cached node-free authored geometry for the zoom-to-open miniature when the board doesn't solve
+   * (no live internals map). Rebuilt only when the registry def changes — a reseal mints a new UserIc
+   * object, so a reference compare catches it. */
+  private staticUserIc?: UserIcInternals;
+  private staticUserIcDef?: UserIc;
+  /** Which way pin LABELS push to sit OUTSIDE the body (datasheet edge-mount): `true` = up/down (pins
+   * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
+   * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
+  private labelPushVertical = true;
+  /** Filled by {@link drawUserIcInternals} with the glyph-local px where each package pin was drawn in
+   * the zoom-to-open replica (the die-editor edge position the lead bridges to) — so the pin LABELS
+   * park there too, matching the dots + leads exactly (a 1:1 of the authored die). */
+  private readonly miniPinPx: { x: number; y: number }[] = [];
 
   constructor(
     private readonly component: Component,
@@ -6351,6 +6406,22 @@ class ComponentNode {
       // pinNames, so this is the kind label as before.
       const named = component.pinNames?.[p.index]?.trim();
       this.pinLabels.push(named ? named : p.label);
+    }
+    // Edge-mount axis for the pin labels: if the pins spread wider in X than Y they sit in rows on
+    // the top/bottom edges (SOT-23, SIP) → labels push vertically out of those edges; otherwise they
+    // sit in columns on the left/right edges (DIP/VSSOP) → labels push horizontally. Datasheet style.
+    {
+      let lminX = Infinity;
+      let lmaxX = -Infinity;
+      let lminY = Infinity;
+      let lmaxY = -Infinity;
+      for (const pp of this.pinPositions) {
+        lminX = Math.min(lminX, pp.x);
+        lmaxX = Math.max(lmaxX, pp.x);
+        lminY = Math.min(lminY, pp.y);
+        lmaxY = Math.max(lmaxY, pp.y);
+      }
+      this.labelPushVertical = lmaxX - lminX >= lmaxY - lminY;
     }
 
     this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
@@ -6568,12 +6639,27 @@ class ComponentNode {
     // real part glyphs at their authored positions + the authored wires, animated from the same
     // snapshot — instead of the black-box symbol. (A user IC is never a CEC_COMP, so `showInternals`
     // above is false for it; the two zoom-to-open paths are mutually exclusive.)
-    const showUserIc =
-      !!userIc &&
+    const wantUserIc =
       isUserIc(this.kindTag) &&
-      nodeV !== undefined &&
       (lens === "reality" || lens === "analogy") &&
       zoom >= INTERNALS_ZOOM;
+    // Prefer the LIVE node-resolved internals (animated from the snapshot). When the board doesn't
+    // solve there is no live map, so fall back to the authored circuit's STATIC geometry (node-free),
+    // cached and rebuilt only when the registry def changes (a reseal mints a new object — caught by a
+    // reference compare). So a placed chip still opens to "the circuit as you built it" unpowered (the
+    // view draws it at level 0 when `nodeV` is absent).
+    let effUserIc = userIc;
+    if (wantUserIc && !effUserIc) {
+      const def = getUserIc(this.kindTag);
+      if (def) {
+        if (def !== this.staticUserIcDef) {
+          this.staticUserIc = userIcGeometry(def);
+          this.staticUserIcDef = def;
+        }
+        effUserIc = this.staticUserIc;
+      }
+    }
+    const showUserIc = wantUserIc && !!effUserIc;
     if (showInternals && internals && nodeV !== undefined) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
@@ -6586,13 +6672,14 @@ class ComponentNode {
         phase,
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
       });
-    } else if (showUserIc && userIc && nodeV !== undefined) {
+    } else if (showUserIc && effUserIc) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
       drawUserIcInternals(g, {
-        internals: userIc,
+        internals: effUserIc,
         nodeV,
         pins: this.pinPositions,
+        outPinPx: this.miniPinPx, // where the replica drew each package pin → park its label there
         wPx: this.wPx,
         hPx: this.hPx,
         phase,
@@ -6703,24 +6790,55 @@ class ComponentNode {
       });
     }
     // pin dots on top (over either the schematic glyph or the tier illustration) —
-    // they mark the real connection points the wires meet.
-    for (const p of this.pinPositions) {
-      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    // they mark the real connection points the wires meet. SKIP them when the zoom-to-open replica is
+    // showing: it draws each package pin at the die-editor edge position the lead bridges to (these
+    // compact-footprint dots would sit at the wrong spot and double them up).
+    if (!showUserIc) {
+      for (const p of this.pinPositions) {
+        g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+      }
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
     // EXCEPT a die frame, whose perimeter pins are the port pads being named, so their
     // labels (the package number or the player's name) show at the working die zoom.
+    // A sealed USER IC always labels its pins at detail zoom (its pinout IS the player's pad names —
+    // "the chip, labelled how you built it"), without needing the zoom-to-open miniature to be open.
     const showPins = isDieFrame(this.kindTag)
       ? zoom >= TIER_ZOOM
-      : (tier !== null || showInternals || showUserIc) && zoom >= DETAIL_ZOOM;
+      : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
+        ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
+          zoom >= DETAIL_ZOOM);
+    const lcx = this.wPx / 2;
+    const lcy = this.hPx / 2;
+    const LABEL_MARGIN = 12; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
-      const p = this.pinPositions[i];
+      // When the zoom-to-open replica is showing, park the label where IT drew the package pin (the
+      // die-editor edge position the lead bridges to), so dot + lead + label line up as a 1:1 replica;
+      // otherwise use the compact footprint position.
+      const p =
+        showUserIc && this.miniPinPx[i]
+          ? this.miniPinPx[i]
+          : this.pinPositions[i];
       if (showPins && p) {
-        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
-        t.position.set(r.x, r.y - 9);
+        // Park the label OUTSIDE the chip, on the edge this pin sits on — NOT on top of the body.
+        // Push it out from the footprint centre along the pins' edge axis, then rotate that offset
+        // point with the part so the label tracks the pin's real edge at every rotation/mirror. The
+        // text itself stays upright (it lives on the un-rotated `view`).
+        let ox = 0;
+        let oy = 0;
+        if (this.labelPushVertical)
+          oy = p.y >= lcy ? LABEL_MARGIN : -LABEL_MARGIN;
+        else ox = p.x >= lcx ? LABEL_MARGIN : -LABEL_MARGIN;
+        const r = rotPx(
+          p.x + ox,
+          p.y + oy,
+          this.component.rot,
+          this.component.mirror,
+        );
+        t.position.set(r.x, r.y);
         t.visible = true;
       } else {
         t.visible = false;

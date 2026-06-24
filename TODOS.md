@@ -6,6 +6,128 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (110) — Pipe-view legibility design review (doc) + OR-gate seal triage
+
+- ~~**Design review: analogy pipe-view legibility in dense areas**~~ — DONE (doc). 3-lens workflow →
+  `docs/pipe-legibility-review.md`. Root cause: one flat translucent Graphics, no opaque primitive, so
+  overlapping pipes SUM into bloom instead of occluding. Ranked diagnosis + a quick-win bundle + structural
+  options + recommendation, all render-side / golden-safe.
+- [ ] **Implement the pipe-legibility quick-wins** (owner wants a before/after look first): QW1 opaque
+  conduit core + QW2 dark moat + QW5 opaque junction hub (the structural trio); QW6/QW7 crossing
+  dead-zone + hop knockout; QW4 `NUDGE_SPACING` 9→13; dimming polish QW3/QW8/QW9/QW10. See the doc §2/§4.
+- [ ] **(structural, owner decides)** S2 hover/selection FOCUS-dim — bright the net you care about, wash the
+  rest. The truest fix for "lots of things close together." Doc §3.
+- **OR-gate "can't be sealed" (file cfdfd3ed)** — NOT a code bug: reproduced headlessly and the current
+  branch seals it (`dieIsSealable(dieTestGraph(graph,1))`=true). It's the pre-`dbd916f` Seal-gate behaviour
+  → owner's running build predates the reseal-gate fix; rebuild/redeploy from the branch.
+
+## 2026-06-24 (109) — Voltage gauges: fixed full-scale standpipe + halfway marker, DC "~" bug
+
+- ~~**"~" AC badge fired on a DC loop (owner bug)**~~ — FIXED. Both voltage gauges shared a swing test
+  `(|vmax| + |vmin|)/vMax` that only equals peak-to-peak for a centre-zero net; on a +5 V DC rail it read
+  ~2 → the badge + spurious tide band showed. New shared `netSwing` helper uses `vmax − vmin` (=0 for DC).
+  Both `drawNetBars` + `drawNetStandpipes` call it (dedup), so DC shows neither the "~" nor the wet-mark,
+  and real AC is unchanged.
+- ~~**Standpipes now fixed full-scale with a halfway marker (owner ask)**~~ — DONE. The glass is a FIXED
+  height (top = the loop's max rail `vMax`) instead of being sized to its fill, so every net's waterline
+  reads against the same scale; fill = the node's voltage (already true); added a faint half-scale tick at
+  vMax/2 (±vMax/2 for bipolar). LED bar unchanged (already segmented). Render-only; golden untouched.
+
+## 2026-06-24 (107) — Deeper zoom + datasheet edge-mounted pin labels (+ connector/BGA ideation)
+
+- ~~**Deeper zoom (fill the screen with an IC)**~~ — DONE. `MAX_SCALE` 8 → 20 in `board.ts` so you can
+  zoom right into a placed chip to read its internals.
+- ~~**Edge-mounted pin labels (datasheet style, not on top of the chip)**~~ — DONE. Pin labels now sit
+  OUTSIDE the body on the edge each pin is on. New `labelPushVertical` (from the pin spread: SOT-23 ⇒
+  vertical, DIP ⇒ horizontal); labels push `LABEL_MARGIN` out in local coords then `rotPx`-rotate so
+  they track the real edge at every rotation/mirror, staying upright. Same across placed parts, sealed
+  user ICs, and die frames.
+- ~~**Literal 1:1 zoom-in lead-bridging**~~ — DONE. The zoom-to-open replica now draws each external
+  package pin WHERE THE AUTHORED WIRE LANDS (the frame's die-editor pin cell), so the inner circuit
+  visibly bridges out to the boundary pins — a 1:1 of the die you built. Added `pinCells` to
+  `UserIcInternals` (frame's authored pin cells, computed via `framePinCells` in BOTH `userIcGeometry`
+  and the live builder); `userIcInternalsView` anchors the dot + energised lead at `toPx(pinCells[i])`
+  and reports the px via `outPinPx`; `board.ts` parks the pin LABEL there (reusing the `pinTexts` pool)
+  and skips the compact pin dots when the replica is open (`showUserIc`), and labels the replica's pins
+  whenever it's open (not gated on `DETAIL_ZOOM`). +1 assertion (geo/live `pinCells` match).
+- ~~**Brainstorm: connectors + large/many-pin packages (BGA "and whatnot")**~~ — DONE. New
+  `docs/connectors-and-large-packages-ideation.md`: data-driven layout engine, 4-side QFP, dedicated
+  §2A BGA anti-clutter treatment (progressive-disclosure ball-map, X-ray/flip, fan-out stubs,
+  pick-by-coordinate). Connectors (VGA/USB) repositioned as "later, fun." All no-element ⇒ golden-safe.
+
+## 2026-06-24 (106) — Global ground unification + package/pinout verification
+
+- ~~**Multiple GND symbols not sharing a reference (owner bug)**~~ — FIXED. An AND gate with three
+  separate 5 V sources + a "common ground" wouldn't solve until all pins were linked to one source.
+  Root cause: `buildNetlist` made only the FIRST wired GND part node 0; every other GND symbol was a
+  separate isolated net, so a multi-symbol "common ground" floated as disconnected reference islands.
+  Fix: union **every** `GND` pin onto one global ground (node 0) — real schematic convention, no wire
+  needed between ground symbols. Node-0 selection now requires the unified ground to carry ≥1 non-GND
+  pin (`netHasNonGnd`), so lone floating grounds don't falsely solve. Web-side (`netlist.ts`) only;
+  deterministic; golden untouched. +2 tests (two un-wired grounds → one node 0; floating grounds → null).
+  - Verified the non-bug half: voltage sources genuinely CAN share one ground (the owner's exact
+    flattened netlist solves to Y≈5 V in sim-core; the solver handles parallel ideal sources w/o NaN).
+  - Ground-loop sim is NOT blocked by this (loops need finite ground-trace impedance, a separate future
+    mechanism; an ideal node can't show a loop regardless) — see invisible-electronics-ideation.md.
+- ~~**Package/pinout + rotation-text verification (owner ask)**~~ — DONE, no change needed. Cross-checked
+  `packages.ts` SOT-23-3/5/6, DIP/VSSOP-8/14/16 against JEDEC pinouts (all correct), and confirmed pin
+  labels stay upright + aligned at all 4 rotations + mirror (`rotPx`, labels on the un-rotated `view`).
+
+## 2026-06-24 (105) — IC reseal-gate fix + placed-IC pinout labels + unpowered zoom-to-open
+
+- ~~**BUG: "die can't be sealed yet — doesn't solve" on Reseal (owner, af0060c9)**~~ — FIXED. The
+  Seal/Reseal button's hard gate (`dieSeal` in `App.svelte`) still checked the RAW `buildNetlist(live)`
+  (from the original IC-maker commit, pre-stimuli), so a logic die powered from OUTSIDE its package
+  (CEC9001 AND gate — needs the frame's GND/VCC/input TEST STIMULI to solve) was blocked even though
+  the `dieStatus` "● solvable" pill — which gates on the stimuli-aware `dieIsSealable(dieTestGraph(...))`
+  — said it was fine. Now `dieSeal` gates on the SAME `dieIsSealable(dieTestGraph(live.serialize(),
+  innerFrameId))`, so the pill and the button agree. Seal CAPTURE still reads the RAW graph (sealed IC
+  = real discrete parts, ADR 0005, golden untouched). Invariant already covered by `dieEditor.test.ts`.
+- ~~**Pinout labels on a placed sealed user IC (Task B)**~~ — DONE. `board.ts` `showPins` now includes
+  `isUserIc(this.kindTag)`, so a placed CEC9xxx shows its pin names (the player's pad names A/B/GND/Y/
+  VCC, already on `PART_KINDS[tag].pins[i].label`) at detail zoom — like a real datasheet pinout — not
+  only when the zoom-to-open miniature is open.
+- ~~**Zoom-to-open shows the authored circuit even UNPOWERED (Task C)**~~ — DONE. The mini-board used
+  to require a live solve (the `userIcInternals` map is built inside `buildNetlist`; null when the board
+  doesn't solve). New node-free `userIcGeometry(def)` in `netlist.ts` (same parts/wire-cells/bbox as the
+  live builder, nodes zeroed); `userIcInternalsView.ts` `nodeV?` optional (draws at level 0 when absent
+  — rail wires, no carriers); `board.ts` falls back to a cached `userIcGeometry(getUserIc(kindTag))`
+  when there's no live map (rebuilt only on a reseal), and the `showUserIc` gate dropped its
+  `nodeV !== undefined` requirement. So a chip placed without external power opens to its real circuit
+  (static) instead of a black box. Built-in composite internals stay live-only (out of scope). +1 test.
+- Determinism: presentation/web-side only — no `crates/` change; golden `0xeaac_3764_99e4_fa24`
+  unchanged (188 Rust tests green).
+
+## 2026-06-24 (104) — Persist in-progress (unsealed) dies + re-open a raw saved die into the builder
+
+- ~~**Persist the in-progress (unsealed) WIP dies with the board**~~ — DONE. The WIP-die map
+  (`innerGraphs` in `App.svelte`, keyed by OUTER frame id) is no longer in-memory-only: it now
+  rides in the save's new `innerDies?: { frameId; graph }[]`. New pure, headless helpers in
+  `dieEditor.ts`: `innerDiesForSave(innerGraphs, graph)` (the entries whose frame is still PLACED on
+  the board — stale entries for deleted frames are dropped) + `restoreInnerDies(innerDies, map)`
+  (clear + rebuild). Embedded at **all** save/load sites: the download envelope (`saveCircuit`,
+  **version 2 → 3**) + `onLoadFile` in `App.svelte`; the localStorage blob (`saveBoard`/`loadBoard`
+  in `storage.ts`, `loadBoard(innerGraphs?)` restores into the live map); and `fromSaved` in
+  `examples.ts` (optional map param). The capture point already existed (`dieBack`/`dieSave` write
+  `innerGraphs.set(frameId, board.serialize())` before `exitDie`, whose `swapGraph` then re-persists
+  the outer board — now with the dies). **Backward-compat:** `innerDies` omitted when empty; any
+  v1/v2 save loads exactly as before (an absent field clears the map to empty).
+- ~~**Re-open a RAW saved `__DIE_*` graph straight into the die builder**~~ — DONE. New pure
+  helpers `isStandaloneDieGraph(snap)` (only frame is the internal `__DIE_*` die-frame, vs a normal
+  board) + `placeableFrameTag(dieTag)` (strip the `__DIE_` prefix). `onLoadFile` detects a die saved
+  in isolation and calls the new `openDieGraphInBuilder(snap)` (App.svelte): synthesize a fresh outer
+  board, place the matching PLACEABLE frame, stash the loaded die under its id, then drill in (mirrors
+  `buildSelectedFrame`). So loading the owner's existing die files drops you into the editor with the
+  circuit, ready to Seal — instead of a flat board with the die-frame as a placed part.
+- ~~**Tests**~~ — DONE (`dieEditor.test.ts`, +8): innerDies round-trip (JSON stringify/parse → the
+  WIP survives, ids/values intact), placed-vs-stale filtering, `restoreInnerDies` clears first,
+  `placeableFrameTag` inverse, and `isStandaloneDieGraph` true/false cases (bare die, built die,
+  normal board, board with an empty placeable frame).
+  - **Owner visual review:** save an unsealed WIP (build inside a frame, exit, Save/refresh) →
+    reload → re-drill the frame restores it; load a raw `__DIE_*` file → opens in the IC builder.
+- Determinism: graph/save plumbing only — an unsealed frame has no sim element, and a sealed/placed
+  IC still flattens to its real parts at `buildNetlist`. No `crates/` change; golden unchanged.
+
 ## 2026-06-24 (103) — Four rendering/UX QoL (rotate/flip in place, ghost pinout/lens, pipe declutter)
 
 - ~~**Rotate & flip a part IN PLACE (about its footprint centre, not the anchor)**~~ — DONE. New

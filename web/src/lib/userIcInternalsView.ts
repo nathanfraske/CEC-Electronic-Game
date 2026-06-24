@@ -40,10 +40,18 @@ function mix(a: number, b: number, t: number): number {
 
 export interface UserIcInternalsOpts {
   internals: UserIcInternals;
-  /** node voltages, indexed by node number (the sim snapshot's `state`). */
-  nodeV: Float64Array;
-  /** footprint pin positions (glyph-local px), by external pin index. */
+  /** node voltages, indexed by node number (the sim snapshot's `state`). ABSENT when the board does
+   * not solve — the view then draws the authored circuit STATICALLY (every level 0: rail-coloured
+   * wires, no flow carriers, parts at rest), so a placed chip still opens to "the circuit as you
+   * built it" unpowered. */
+  nodeV?: Float64Array;
+  /** footprint pin positions (glyph-local px), by external pin index — the FALLBACK anchor used only
+   * when the internals carry no authored `pinCells` (the package boundary positions). */
   pins: { x: number; y: number }[];
+  /** OUTPUT: filled (by external pin index) with the glyph-local px where each package pin was drawn —
+   * the die-editor position the authored lead bridges to — so the caller can park the pin LABEL there
+   * (a 1:1 replica: dot + lead + label all on the same edge point). Cleared + rewritten each call. */
+  outPinPx?: { x: number; y: number }[];
   wPx: number;
   hPx: number;
   /** the board's bounded flow clock, for animating carriers along the wires. */
@@ -65,8 +73,19 @@ export interface UserIcInternalsOpts {
  * and external-pin anchors are drawn into `g`. Returns nothing.
  */
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
-  const { internals, nodeV, pins, wPx, hPx, phase, accent, partLayer } = o;
-  const { parts, wires, pinNodes, bbox, gndNode } = internals;
+  const {
+    internals,
+    nodeV,
+    pins,
+    outPinPx,
+    wPx,
+    hPx,
+    phase,
+    accent,
+    partLayer,
+  } = o;
+  const { parts, wires, pinNodes, bbox, gndNode, pinCells } = internals;
+  if (outPinPx) outPinPx.length = 0;
 
   // Pool: one child Graphics per inner part, reused across frames (cleared, not recreated). Shrink
   // the pool if the netlist now has fewer parts (e.g. a different IC under the cursor).
@@ -105,7 +124,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
   // every touched net (so a 5 V logic IC and a ±12 V analog IC each scale to their own range).
   // Floored so a quiet chip doesn't blow tiny noise up to full scale.
-  const vAt = (n: number): number => nodeV[n] ?? 0;
+  const vAt = (n: number): number => (nodeV ? (nodeV[n] ?? 0) : 0);
   const vlow = vAt(gndNode);
   let rail = 1;
   for (const p of parts)
@@ -134,15 +153,24 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
   }
 
-  // --- External-pin anchors: tie each package lead to its inner net, so the inside visibly runs out
-  // to the boundary pins (mirrors `internalsView`'s pin anchoring). ---
-  const nAnchor = Math.min(pinNodes.length, pins.length);
-  for (let i = 0; i < nAnchor; i++) {
-    const p = pins[i];
+  // --- External package pins: anchor each lead WHERE THE AUTHORED WIRE LANDS (the frame's die-editor
+  // pin cell), so the inner circuit visibly bridges out to the boundary pin — a 1:1 of the die the
+  // player built. Falls back to the caller's footprint `pins` only when no authored pinCells exist.
+  // The drawn px is reported via `outPinPx` so the caller parks the pin label on the same edge point. ---
+  const extPx = pinCells.length
+    ? pinCells.map((c) => toPx(c.col, c.row))
+    : pins;
+  for (let i = 0; i < extPx.length; i++) {
+    const p = extPx[i];
+    if (!p) continue;
+    if (outPinPx) outPinPx[i] = { x: p.x, y: p.y };
     const nd = pinNodes[i];
-    if (!p || nd === undefined) continue;
-    const lv = level(nd);
-    g.circle(p.x, p.y, 1.6).fill({ color: PALETTE.dim, alpha: 0.7 });
+    const lv = nd === undefined ? 0 : level(nd);
+    // The package lead: a clear dot on the boundary, energised by its net level when live.
+    g.circle(p.x, p.y, 2.4).fill({
+      color: mix(PALETTE.dim, accent, lv),
+      alpha: 0.9,
+    });
     // A short stub from the lead toward the centre, so a lead with a live net reads as energised
     // even before it reaches its first inner part.
     if (lv > 0.12) {

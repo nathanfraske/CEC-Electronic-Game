@@ -8,6 +8,7 @@
 
 import type { GraphSnapshot, HotSlot } from "./graph";
 import { userIcsForGraph, registerUserIcs, type UserIc } from "./userIc";
+import { restoreInnerDies, type InnerDie } from "./dieEditor";
 
 const BOARD_KEY = "cec.board.v1";
 const SETTINGS_KEY = "cec.settings.v1";
@@ -54,26 +55,35 @@ function available(): boolean {
 
 /** The localStorage board blob: the snapshot, plus the sealed-IC definitions any placed `CEC9xxx`
  * needs to resolve on restore (omitted when the board uses none, so a normal board's blob is
- * unchanged). Mirrors the downloaded save envelope's optional `userIcs`. A legacy blob is a BARE
- * snapshot (no `graph` wrapper) — {@link loadBoard} accepts both. */
+ * unchanged) and the in-progress (unsealed) dies of any frame still on the board (omitted when none,
+ * so a board with no half-built frame is unchanged). Mirrors the downloaded save envelope's optional
+ * `userIcs` / `innerDies`. A legacy blob is a BARE snapshot (no `graph` wrapper) — {@link loadBoard}
+ * accepts both. */
 interface BoardBlob {
   graph: GraphSnapshot;
   userIcs?: UserIc[];
+  /** the work-in-progress dies of placed-but-unsealed frames, so re-drilling a frame after a refresh
+   * resumes its half-built circuit. Built by the caller (App.svelte) from its `innerGraphs` map; see
+   * {@link restoreInnerDies}. Absent when no placed frame has a stashed die. */
+  innerDies?: InnerDie[];
 }
 
 /** Persist the board, swallowing quota/serialization errors (a failed save must
  * never interrupt editing). Embeds the sealed-IC definitions the board places (via
  * {@link userIcsForGraph}) so a refresh restores them — without them a placed `CEC9xxx`
- * would reload as an unknown kind. The wrapper is omitted of `userIcs` when there are none,
- * keeping a plain board's persisted shape a bare snapshot wrapped only in `{ graph }`. */
-export function saveBoard(snapshot: GraphSnapshot): void {
+ * would reload as an unknown kind — plus any in-progress (unsealed) dies the caller passes,
+ * so a half-built frame resumes on reload. Each wrapper field is omitted when empty, keeping a
+ * plain board's persisted shape a bare snapshot wrapped only in `{ graph }`. */
+export function saveBoard(
+  snapshot: GraphSnapshot,
+  innerDies?: InnerDie[],
+): void {
   if (!available()) return;
   try {
     const defs = userIcsForGraph(snapshot);
-    const blob: BoardBlob =
-      defs.length > 0
-        ? { graph: snapshot, userIcs: defs }
-        : { graph: snapshot };
+    const blob: BoardBlob = { graph: snapshot };
+    if (defs.length > 0) blob.userIcs = defs;
+    if (innerDies && innerDies.length > 0) blob.innerDies = innerDies;
     localStorage.setItem(BOARD_KEY, JSON.stringify(blob));
   } catch {
     // Quota exceeded or private-mode write block — fine, just don't persist.
@@ -82,10 +92,13 @@ export function saveBoard(snapshot: GraphSnapshot): void {
 
 /** The last saved board, or `null` if there is none / it's unreadable. Validated
  * lightly (it must look like a snapshot with a components array). Accepts either the
- * current `{ graph, userIcs? }` wrapper or a legacy bare snapshot. Any embedded sealed-IC
- * definitions are RE-REGISTERED before returning, so the placed `CEC9xxx` kinds resolve when
- * the caller restores the graph. */
-export function loadBoard(): GraphSnapshot | null {
+ * current `{ graph, userIcs?, innerDies? }` wrapper or a legacy bare snapshot. Any embedded sealed-IC
+ * definitions are RE-REGISTERED before returning, so the placed `CEC9xxx` kinds resolve when the
+ * caller restores the graph; any embedded in-progress dies are restored into `innerGraphs` (when the
+ * caller passes the live map), so re-drilling a frame resumes its half-built circuit. */
+export function loadBoard(
+  innerGraphs?: Map<number, GraphSnapshot>,
+): GraphSnapshot | null {
   if (!available()) return null;
   try {
     const raw = localStorage.getItem(BOARD_KEY);
@@ -102,6 +115,15 @@ export function loadBoard(): GraphSnapshot | null {
     }
     if (parsed && typeof parsed === "object" && "userIcs" in parsed) {
       registerUserIcs((parsed as BoardBlob).userIcs ?? []);
+    }
+    // Restore the in-progress dies into the live map (cleared first), so re-drilling a placed frame
+    // finds its saved WIP. Only when the caller hands us the map; an absent field clears it to empty.
+    if (innerGraphs) {
+      const blob =
+        parsed && typeof parsed === "object" && "innerDies" in parsed
+          ? (parsed as BoardBlob)
+          : undefined;
+      restoreInnerDies(blob?.innerDies, innerGraphs);
     }
     return obj;
   } catch {
@@ -151,18 +173,19 @@ export function resetAll(): void {
 /**
  * A trailing-edge debounced wrapper around {@link saveBoard}: rapid edits (dragging a
  * value, nudging a part) collapse into one write a short time after they stop, so we
- * don't thrash localStorage on every frame of an interaction.
+ * don't thrash localStorage on every frame of an interaction. The optional `innerDies`
+ * (the in-progress unsealed dies of placed frames) ride along with each snapshot.
  */
 export function makeDebouncedBoardSaver(
   delayMs = 400,
-): (snap: GraphSnapshot) => void {
+): (snap: GraphSnapshot, innerDies?: InnerDie[]) => void {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let pending: GraphSnapshot | null = null;
-  return (snap: GraphSnapshot) => {
-    pending = snap;
+  let pending: { snap: GraphSnapshot; innerDies?: InnerDie[] } | null = null;
+  return (snap: GraphSnapshot, innerDies?: InnerDie[]) => {
+    pending = { snap, innerDies };
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
-      if (pending) saveBoard(pending);
+      if (pending) saveBoard(pending.snap, pending.innerDies);
       pending = null;
       timer = undefined;
     }, delayMs);

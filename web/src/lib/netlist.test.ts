@@ -11,7 +11,7 @@ import {
   flipInPlaceShift,
 } from "./graph";
 import type { Component } from "./graph";
-import { buildNetlist } from "./netlist";
+import { buildNetlist, userIcGeometry } from "./netlist";
 import {
   registerUserIc,
   unregisterUserIc,
@@ -60,6 +60,43 @@ describe("buildNetlist (headless smoke)", () => {
     const nl = buildNetlist(g, false);
     expect(nl).not.toBeNull();
     expect(nl!.types.length).toBe(2); // V + R (GND is not an element)
+  });
+
+  it("every GND symbol is the SAME global ground (node 0) — no wire needed between them", () => {
+    // Two independent V+R branches, each returning to its OWN ground symbol, NOT wired together.
+    // Real schematic convention: every GND is the same node, so they share one reference and the
+    // board solves — without the player hand-tying the grounds (the owner's "sources can't share a
+    // common ground" trap, now fixed).
+    const g = new BoardGraph();
+    const v1 = place(g, "V", 0, 0, 5);
+    const r1 = place(g, "R", 4, 0, 1000);
+    const gndA = place(g, "GND", 0, 4);
+    connect(g, v1, 0, r1, 0);
+    connect(g, r1, 1, gndA, 0);
+    connect(g, v1, 1, gndA, 0);
+
+    const v2 = place(g, "V", 0, 10, 3);
+    const r2 = place(g, "R", 4, 10, 2200);
+    const gndB = place(g, "GND", 0, 14); // a SECOND ground symbol, NOT wired to gndA
+    connect(g, v2, 0, r2, 0);
+    connect(g, r2, 1, gndB, 0);
+    connect(g, v2, 1, gndB, 0);
+
+    const nl = buildNetlist(g, false);
+    expect(nl).not.toBeNull();
+    // Both resistors' "B" leads return to ground — and both grounds are the SAME node 0.
+    expect(nl!.nodesOfComponent.get(r1.id)![1]).toBe(0); // R1.B -> node 0 (gndA)
+    expect(nl!.nodesOfComponent.get(r2.id)![1]).toBe(0); // R2.B -> node 0 (gndB), unified w/ gndA
+    // Exactly three nodes: the one shared ground + each source's hot node (4 only if NOT unified).
+    expect(nl!.nodeCount).toBe(3);
+  });
+
+  it("lone floating ground symbols don't make a disconnected board falsely solve", () => {
+    // Two GND symbols, nothing else wired to either, and no V source → no real reference.
+    const g = new BoardGraph();
+    place(g, "GND", 0, 0);
+    place(g, "GND", 4, 0);
+    expect(buildNetlist(g, false)).toBeNull();
   });
 });
 
@@ -175,6 +212,74 @@ describe("IC maker — seal-as-same-netlist", () => {
       expect(a!.types.length).toBe(2); // V + the IC's inner R (GND is not an element)
     } finally {
       unregisterUserIc("TESTMINI");
+    }
+  });
+
+  it("userIcGeometry builds the SAME authored geometry as the live builder, but NODE-FREE (the unpowered zoom-to-open fallback)", () => {
+    // Same V + R + GND loop sealed in a SOT-23-3 frame as the live-internals test above.
+    const inner = new BoardGraph();
+    const frame = place(inner, "SOT23_3", 0, 0);
+    const vin = place(inner, "V", 0, 4, 5);
+    const rin = place(inner, "R", 4, 4, 2200);
+    const gin = place(inner, "GND", 0, 8);
+    connect(inner, frame, 0, vin, 0);
+    connect(inner, vin, 1, gin, 0);
+    connect(inner, frame, 0, rin, 0);
+    connect(inner, rin, 1, frame, 1);
+    registerUserIc({
+      tag: "TESTGEO",
+      name: "Test Geo IC",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: frame.id,
+      graph: inner.serialize(),
+    });
+
+    try {
+      // LIVE internals (node-resolved): place on a SOLVING board so buildNetlist resolves nodes.
+      const board = new BoardGraph();
+      const ic = place(board, "TESTGEO", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, ic, 1, gnd, 0);
+      const a = buildNetlist(board, false);
+      const live = a!.userIcInternals.get(ic.id);
+      expect(live).not.toBeUndefined();
+
+      // STATIC geometry: node-free, from the registry def directly (NO solve) — what the board falls
+      // back to when the outer circuit doesn't solve, so a placed chip still opens to its real circuit.
+      const geo = userIcGeometry(getUserIc("TESTGEO")!);
+
+      // Identical authored GEOMETRY to the live builder: same parts (kinds/cells/values, frame
+      // excluded, same order), same wire endpoint cells, same bbox extent.
+      expect(geo.parts.map((p) => p.kind)).toEqual(
+        live!.parts.map((p) => p.kind),
+      );
+      expect(geo.parts.map((p) => p.cell)).toEqual(
+        live!.parts.map((p) => p.cell),
+      );
+      expect(geo.parts.map((p) => p.value)).toEqual(
+        live!.parts.map((p) => p.value),
+      );
+      expect(geo.wires.map((w) => w.from)).toEqual(
+        live!.wires.map((w) => w.from),
+      );
+      expect(geo.wires.map((w) => w.to)).toEqual(live!.wires.map((w) => w.to));
+      expect(geo.bbox).toEqual(live!.bbox);
+      // The frame's authored pin cells (where the leads bridge to in the 1:1 zoom-in replica) match
+      // the live builder's exactly, one per package lead.
+      expect(geo.pinCells).toEqual(live!.pinCells);
+      expect(geo.pinCells.length).toBe(3); // SOT-23-3 has 3 leads
+
+      // ...but every NODE field is zeroed (no netlist): the view renders it at level 0 (static).
+      expect(geo.parts.every((p) => p.nodes.every((n) => n === 0))).toBe(true);
+      expect(geo.wires.every((w) => w.node === 0)).toBe(true);
+      expect(geo.pinNodes).toEqual([]);
+      expect(geo.gndNode).toBe(0);
+      // The per-pin node arrays keep the live builder's LENGTH (shape matches), just zero-filled.
+      const rLive = live!.parts.find((p) => p.kind === "R")!;
+      const rGeo = geo.parts.find((p) => p.kind === "R")!;
+      expect(rGeo.nodes.length).toBe(rLive.nodes.length);
+    } finally {
+      unregisterUserIc("TESTGEO");
     }
   });
 
