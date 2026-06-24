@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (118) — User IC: connection MOVED to the leads, pads gone, freed interior + conduit traces + lens
+
+**State:** 🟢 gates green (web check 0/0, lint, test **64**, build; golden unchanged; cargo fmt/clippy clean).
+Branch `claude/kind-turing-hdelb3`. Big owner-directed rework (with an annotated screenshot: round pads were
+sitting ON the internal MOSFETs; traces were flat gray; parts ignored the lens).
+
+**Model change — the pins ARE the outer LEAD TIPS, the body sits INSIDE them:**
+- **`userIc.ts userIcPartKind`** pushes each pad OUT past the package's array edge by `LEAD_GAP=1` cell
+  (then normalizes), so the placed footprint's pins are the lead tips. SOT-23-5 footprint 3×2 → **3×4
+  cells**; DIP-8 → 5×4. (Render-only; the seal maps pins by INDEX so connectivity/golden are untouched —
+  tests stay green. Existing saved ICs shift footprint — accepted.)
+- **`glyphs.ts userIcBodyBox`** now insets the STICK axis by `IC_LEAD_LEN=16` (body inside the lead tips)
+  and outsets the ARRAY axis by `IC_BODY_PAD=10`. SOT body 72×46, DIP 72×98 — leads bridge body edge→tip,
+  the tip being the connection. `drawUserIcPackageBody` draws each lead from the tip in to the body edge.
+- **`board.ts`** draws NO round pad for a user IC — the leads are the only connection, so nothing sits
+  inside the body to overlap the circuit (the owner's core complaint).
+- **`userIcInternalsView.ts`** retargets the affine map to the BODY INTERIOR (stick axis = body edges so
+  frame pins land at the lead roots; array axis = pin extent so they line up with the leads) — the circuit
+  now has the full package room.
+
+**Two render fixes in the opened view (owner):**
+- **Traces** are now proper CONDUIT pipes (dark moat + voltage-coloured core + flow carriers) with a
+  grommet at each wire end and a junction hub where 3+ tie — not flat gray rectangles.
+- **Inner parts follow the LENS**: pass a lens-derived `style` (analogy → factory, else schematic) and
+  draw via `drawGlyphIn(child, opts, style)` (was `drawGlyph`, locked to the global style).
+
+**Owner: eyeball** — opened IC should have leads as the only connection (no pads overlapping parts), the
+circuit filling the body, pipe-style traces + junction dots, and parts that switch with the lens toggle.
+
+---
+
 ## 2026-06-24 (117) — IC body = full-size frame card (drawCard box), pads INSIDE, leads stick out
 
 **State:** 🟢 gates green (web check 0/0, lint, test, build; golden unchanged; cargo fmt/clippy clean).

@@ -1962,16 +1962,16 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
-const IC_BODY_PAD = 10; // px the body grows beyond the pin bbox on every side (matches the fallback card)
-const IC_LEAD_LEN = 11; // px the rectangular solder leads stick OUT past the body edge (the tabs)
+const IC_BODY_PAD = 10; // px the body overhangs the end pins on the ARRAY axis (the card overhang)
+const IC_LEAD_LEN = 16; // px each lead spans from the body edge OUT to its pin (the solder lead tip)
 
 /**
- * The package BODY box (glyph-local px) for a user IC: the pin bounding box GROWN by {@link IC_BODY_PAD}
- * on every side — the SAME full-size card the fallback placeable frame draws ({@link drawCard}) — so the
- * package reads as a real chip body with the pads sitting INSIDE it (inset from the corners), NOT a thin
- * sliver. The rectangular solder leads then stick OUT past this box ({@link drawUserIcPackageBody}).
- * `alongX` = pins arrayed on the top/bottom edges (SOT) vs the left/right edges (DIP), used to point each
- * lead outward. Shared by the closed-chip glyph + the open replica, and identical for EVERY archetype.
+ * The package BODY box (glyph-local px) for a user IC. The pins ARE the outer LEAD TIPS (the perimeter
+ * where board wires land); the body sits INSIDE them — pulled in by {@link IC_LEAD_LEN} on the stick axis
+ * (the leads bridge body edge → tip) and pushed out by {@link IC_BODY_PAD} on the array axis (the card
+ * overhangs the end pins). So the ENTIRE interior is free for the circuit, the leads are the only
+ * connection, and nothing overlaps the internals. `alongX` = pins on the top/bottom edges (SOT) vs the
+ * left/right edges (DIP). Shared by the closed-chip glyph + the open replica, identical for every archetype.
  */
 export function userIcBodyBox(
   pins: { x: number; y: number }[],
@@ -2002,28 +2002,36 @@ export function userIcBodyBox(
     maxY = hPx;
   }
   const alongX = maxX - minX >= maxY - minY;
-  // The full-size card: the pin bbox grown by IC_BODY_PAD on every side, so the pads ride INSIDE the body
-  // (inset from the corners) and the leads stick out past it — the look the owner traced on the frame box.
-  return {
-    x: minX - IC_BODY_PAD,
-    y: minY - IC_BODY_PAD,
-    w: Math.max(1, maxX - minX + 2 * IC_BODY_PAD),
-    h: Math.max(1, maxY - minY + 2 * IC_BODY_PAD),
-    alongX,
-    lead: IC_LEAD_LEN,
-  };
+  // Inset the STICK axis (where the leads are) by IC_LEAD_LEN so the body sits inside the lead tips;
+  // outset the ARRAY axis by IC_BODY_PAD so the card overhangs the end leads (corner leads never jammed).
+  return alongX
+    ? {
+        x: minX - IC_BODY_PAD,
+        y: minY + IC_LEAD_LEN,
+        w: Math.max(1, maxX - minX + 2 * IC_BODY_PAD),
+        h: Math.max(1, maxY - minY - 2 * IC_LEAD_LEN),
+        alongX,
+        lead: IC_LEAD_LEN,
+      }
+    : {
+        x: minX + IC_LEAD_LEN,
+        y: minY - IC_BODY_PAD,
+        w: Math.max(1, maxX - minX - 2 * IC_LEAD_LEN),
+        h: Math.max(1, maxY - minY + 2 * IC_BODY_PAD),
+        alongX,
+        lead: IC_LEAD_LEN,
+      };
 }
 
-const LEAD_W = 9; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
+const LEAD_W = 12; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
 const LEAD_TUCK = 2; // px the lead tucks UNDER the body rim at its root so there's no seam
 
 /**
- * Draw a user IC's PACKAGE: the full-size body card (the {@link userIcBodyBox}, grown past the pins like
- * the placeable-frame card), with a RECTANGULAR solder lead sticking OUT past each body edge, aligned with
- * its pin and pointing away from the centre (a flat metal tab, like a real chip's leads viewed top-down).
- * The leads are drawn first so the body, on top, covers their roots and they read as emerging from under
- * the package. The pads (the connection points + the internal-connector dots) are the round pin dots the
- * board draws INSIDE this body. The interior is the caller's — the zoom-to-open circuit fills it.
+ * Draw a user IC's PACKAGE: the full-size body card (the {@link userIcBodyBox}, sitting INSIDE the lead
+ * tips), with a RECTANGULAR solder lead bridging each body edge OUT to its pin — the lead TIP being the
+ * connection point board wires land on (a flat metal tab, like a real chip's leads viewed top-down). The
+ * leads are drawn first so the body, on top, covers their roots and they read as emerging from under the
+ * package. The whole interior is free — the zoom-to-open circuit fills it; nothing overlaps the parts.
  */
 export function drawUserIcPackageBody(
   g: Graphics,
@@ -2033,36 +2041,41 @@ export function drawUserIcPackageBody(
   color: number,
 ): void {
   const b = userIcBodyBox(pins, wPx, hPx);
-  const cy = b.y + b.h / 2;
-  const cx = b.x + b.w / 2;
-  // Leads first (under the body rim): a flat rectangular tab that sticks OUT past the body edge nearest
-  // each pin, aligned with the pin and pointing away from the centre, tucked LEAD_TUCK px under the rim so
-  // the body (drawn on top) covers the root — leaving the tab proud of the package like a real solder lead.
+  // Leads first (under the body rim): a flat rectangular tab from each pin (the outer lead TIP) IN to the
+  // body edge nearest it, tucked LEAD_TUCK px under the rim so the body (drawn on top) covers the root —
+  // leaving the tab proud of the package like a real solder lead, with its tip the connection point.
   for (const p of pins) {
     let rx: number;
     let ry: number;
     let rw: number;
     let rh: number;
     if (b.alongX) {
-      // SOT-style: pins near the top/bottom edges → a vertical tab out the top or bottom.
-      const top = p.y < cy;
+      // SOT-style: pins above/below the body → a vertical tab from the tip down/up to the body edge.
+      const top = p.y < b.y;
       rx = p.x - LEAD_W / 2;
       rw = LEAD_W;
-      ry = top ? b.y - IC_LEAD_LEN : b.y + b.h - LEAD_TUCK;
-      rh = IC_LEAD_LEN + LEAD_TUCK;
+      ry = top ? p.y : b.y + b.h - LEAD_TUCK;
+      rh = top ? b.y + LEAD_TUCK - p.y : p.y - (b.y + b.h - LEAD_TUCK);
     } else {
-      // DIP-style: pins near the left/right edges → a horizontal tab out the left or right.
-      const left = p.x < cx;
+      // DIP-style: pins left/right of the body → a horizontal tab from the tip in to the body edge.
+      const left = p.x < b.x;
       ry = p.y - LEAD_W / 2;
       rh = LEAD_W;
-      rx = left ? b.x - IC_LEAD_LEN : b.x + b.w - LEAD_TUCK;
-      rw = IC_LEAD_LEN + LEAD_TUCK;
+      rx = left ? p.x : b.x + b.w - LEAD_TUCK;
+      rw = left ? b.x + LEAD_TUCK - p.x : p.x - (b.x + b.w - LEAD_TUCK);
     }
-    g.rect(rx, ry, rw, rh).fill({ color: 0x9a93b3, alpha: 0.95 });
-    g.rect(rx, ry, rw, rh).stroke({ width: 0.6, color: 0x6f6a8a, alpha: 0.8 });
+    g.rect(rx, ry, Math.max(1, rw), Math.max(1, rh)).fill({
+      color: 0x9a93b3,
+      alpha: 0.95,
+    });
+    g.rect(rx, ry, Math.max(1, rw), Math.max(1, rh)).stroke({
+      width: 0.6,
+      color: 0x6f6a8a,
+      alpha: 0.8,
+    });
   }
   // Body: the full-size card (matching the placeable-frame look), ringed in the part's colour, so the
-  // pads ride inside it and the internals read against it.
+  // whole interior reads against it and the circuit has the full package to live in.
   g.roundRect(b.x, b.y, b.w, b.h, 4).fill({ color: 0x16121f, alpha: 0.95 });
   g.roundRect(b.x, b.y, b.w, b.h, 4).stroke({ width: 1.6, color, alpha: 0.9 });
 }

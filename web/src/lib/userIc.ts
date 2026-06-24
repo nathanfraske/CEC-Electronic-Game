@@ -80,18 +80,49 @@ export function userIcTags(): string[] {
   return [...REGISTRY.keys()];
 }
 
+/** Cells each lead tip is pushed OUT past the body, so the package body sits INSIDE the ring of leads
+ * and the leads are the connection points (board wires land on the tips), freeing the whole interior. */
+const LEAD_GAP = 1;
+
 /** Build the placeable `PartKind` for a sealed IC from its package (footprint + numbered pins).
  * Each pin's LABEL is the player's name for that lead ({@link UserIc.pinNames} by index) when set,
  * else the package pin number — so a sealed chip shows the names the author gave its pads. */
 function userIcPartKind(ic: UserIc): PartKind {
   const lay = packageLayout(ic.package.archetype, ic.package.pinCount);
-  const pins: Pin[] = lay.pins.map((p, i) => {
+  // Push each pad OUT past the package's array (long) edge by LEAD_GAP, so the pad becomes the outer LEAD
+  // TIP and the body card sits inside the ring (render-only — the seal maps pins by INDEX, not position).
+  let minDx = Infinity;
+  let maxDx = -Infinity;
+  let minDy = Infinity;
+  let maxDy = -Infinity;
+  for (const p of lay.pins) {
+    minDx = Math.min(minDx, p.dx);
+    maxDx = Math.max(maxDx, p.dx);
+    minDy = Math.min(minDy, p.dy);
+    maxDy = Math.max(maxDy, p.dy);
+  }
+  const alongX = maxDx - minDx >= maxDy - minDy;
+  const pushed = lay.pins.map((p) => {
+    let dx = p.dx;
+    let dy = p.dy;
+    if (alongX) {
+      if (p.dy === minDy) dy -= LEAD_GAP;
+      else if (p.dy === maxDy) dy += LEAD_GAP;
+    } else {
+      if (p.dx === minDx) dx -= LEAD_GAP;
+      else if (p.dx === maxDx) dx += LEAD_GAP;
+    }
+    return { dx, dy, number: p.number };
+  });
+  const shiftX = Math.min(...pushed.map((p) => p.dx));
+  const shiftY = Math.min(...pushed.map((p) => p.dy));
+  const pins: Pin[] = pushed.map((p, i) => {
     const named = ic.pinNames?.[i]?.trim();
     return {
       index: i,
       label: named ? named : String(p.number),
-      dx: p.dx,
-      dy: p.dy,
+      dx: p.dx - shiftX,
+      dy: p.dy - shiftY,
     };
   });
   const w = pins.reduce((m, p) => Math.max(m, p.dx), 0) + 1;

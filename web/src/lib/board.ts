@@ -6714,6 +6714,8 @@ class ComponentNode {
         color: this.color,
         phase,
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
+        // The inner parts follow the board lens: analogy → factory machines, else schematic symbols.
+        style: lens === "analogy" ? "factory" : "schematic",
         partLayer: this.userIcGlyphs,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
@@ -6840,12 +6842,14 @@ class ComponentNode {
       });
     }
     // pin dots on top (over either the schematic glyph or the tier illustration) — they mark the real
-    // connection points the wires meet. Drawn at the package pin positions so the pinout reads cleanly
-    // even with the zoom-to-open replica open. A USER IC keeps ROUND pads sitting INSIDE its body (like
-    // the placeable-frame card) — the rectangular tabs are the LEADS the package glyph draws sticking out.
-    for (const p of this.pinPositions) {
-      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    // connection points the wires meet. A USER IC draws NONE: its pins ARE the outer lead TIPS (the
+    // rectangular tabs the package glyph draws sticking out of the body), which are the only visible
+    // connection — no round pad, so nothing sits inside the body to overlap the circuit (owner ask).
+    if (!isUserIc(this.kindTag)) {
+      for (const p of this.pinPositions) {
+        g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+      }
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
