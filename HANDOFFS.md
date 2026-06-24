@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (117) — IC body = full-size frame card (drawCard box), pads INSIDE, leads stick out
+
+**State:** 🟢 gates green (web check 0/0, lint, test, build; golden unchanged; cargo fmt/clippy clean).
+Branch `claude/kind-turing-hdelb3`. Owner-directed rework of the user-IC package look (with a traced ref).
+
+Owner: the body should be the **outline of the actual frame** (the same full-size box the placeable frame
+draws), NOT a thin sliver; the rectangular **leads stick OUT past** that box; the connection pads sit on
+it. Applies to **every archetype**. Implemented to match the `drawCard` reference exactly:
+- **`glyphs.ts userIcBodyBox`** → the pin bbox GROWN by `IC_BODY_PAD = 10` on every side (identical to
+  `drawCard`'s `(-10,-10,w+20,h+20)`), so the body is full-size with pads inset inside it (SOT-23-5 body
+  is now 72×46 — exactly the SOT23_5 placeholder box — was a 12-px sliver).
+- **`drawUserIcPackageBody`** → rectangular leads (`LEAD_W=9`) stick OUT `IC_LEAD_LEN=11` past the body
+  edge nearest each pin, pointing away from centre, tucked under the rim; body is the full card (fill
+  `0x16121f`, ringed in colour) like the frame.
+- **`board.ts`** → user-IC pads reverted to ROUND (sit inside the body, like the frame's pads); the
+  rectangular tabs are the leads, drawn by the glyph.
+- **`userIcInternalsView.ts`** → simplified: dropped the snap + per-pin dot/pipe (the circuit's frame
+  pins map straight onto the package pins inside the body, where the board draws the round pad; the lead
+  is the outward tab). Wires use `toPx` directly.
+
+**OPEN NUANCE (told owner):** the wire still *connects* at the round pad INSIDE the body (like the
+SOT23_5 reference), not literally at the outer lead tip. Moving the connection point out to the tip is a
+deeper change (board routes wires to the pin's grid cell) — offered to do it next if wanted.
+
+---
+
 ## 2026-06-24 (116) — Fix: IC body full-size, leads EXTEND OUT (don't narrow the body)
 
 **State:** 🟢 gates green (web check 0/0, lint, test, build; golden unchanged). Branch
