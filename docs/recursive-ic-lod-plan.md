@@ -76,6 +76,25 @@ A 4-pin package option (so an inverter doesn't waste a SOT-23-5 pin); the SRAM c
 (2-inverter latch + a settable stored bit, abstracting the bitstream write); the 4-LUT worked example
 (INV → SRAM bit → MUX2 → 16-bit + 16:1 tree) as a built-once teardown that then becomes a primitive.
 
+### Phase 5 — Zoom meter + scale reference (HUD)
+
+Owner-directed (2026-06-24): as you descend the recursive LoD you lose your sense of "how deep am I." Add a
+**HUD overlay** with two coupled readouts, render-only (no sim/golden touch):
+
+- **Magnification meter** — the current on-screen magnification (camera zoom × the cumulative fit-scale of
+  whatever nesting level you're inside), shown as a number (e.g. `×42` or `1 cell = 6.2 mm`). It reads the
+  same camera transform the board already keeps, multiplied by the nested-container scales Phase 2 stacks,
+  so it stays honest at any depth.
+- **Scale bar** — a labelled reference rule (like a map's scale bar / a micrograph's µm bar) that grows and
+  shrinks with zoom and **snaps to nice round physical units** as you cross decades: board cells at the top,
+  then mm → µm → nm as you dive toward the silicon (tie the unit ramp to the five-tier glyph's package →
+  device → silicon tiers so "you're now at the transistor's gate-oxide scale" is legible). Pre-attentive,
+  uppercase-tracked HUD label per the design system (`docs/ui/visual-language.md`).
+
+Lives in the HUD shell (`web/src/App.svelte` + a small `web/src/lib/*` helper), fed by the camera/zoom
+state. Pairs naturally with Phase 2 (recursive zoom-to-open), which is what produces the multi-decade range
+worth metering.
+
 ## Audit protocol — every step
 
 After each step: (1) **gate** — `pnpm -C web check && lint && build && test`, plus `cargo` fmt/clippy and the
@@ -93,8 +112,13 @@ never moves. All recursion is depth-guarded.
 
 ## Progress
 
-- [ ] Phase 0 (0.1–0.6) — rendering foundation _(in progress)_
+- [x] Phase 0 (0.1–0.6) — rendering foundation: opened IC runs the real wire pipeline in a scaled
+  container, coloured by the die editor's rail-identity `voltageColor`, faithful junction-follow-pass +
+  crossing dots, null-aware nets (floating→cyan, no phantom ties). Audited by a 4-reviewer panel + a
+  fix-verification pass. _(lead-connectors deferred to a phase-0 follow-up — see the TODO in
+  `userIcInternalsView.ts`)_
 - [ ] Phase 1 — recursive nesting
 - [ ] Phase 2 — recursive zoom-to-open LoD
 - [ ] Phase 3 — silicon leaf
 - [ ] Phase 4 — realism polish + LUT example
+- [ ] Phase 5 — zoom meter + scale reference HUD

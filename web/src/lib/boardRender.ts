@@ -29,13 +29,14 @@ export const PITCH = 26;
 // bore, voltage-tinted water) or a REALITY metal conductor (bright sheath, glowing core).
 export const PIPE_WALL = 0x6b6488; // steel pipe wall
 export const PIPE_WATER = 0x8fd6ff; // bright water carriers
-export const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
+const COND_CASING = 0xc8915a; // copper conductor sheath (reads as real wire)
 export const COND_ELEC = 0x9fe6ff; // electron carriers (drift against the current)
 
-// reverses each half-cycle; at high tps a frame can otherwise span many cycles and
-// the eased reversal would still read as a hard jump. Clamping the per-frame pixel
-// delta keeps the reversal a smooth back-and-forth slosh at any ticks-per-second
-// without affecting the steady DC stream (whose per-frame delta stays well under).
+// Clamp on a flow belt's per-frame arc-length advance (px). AC flow reverses each
+// half-cycle; at high tps a frame can otherwise span many cycles and the eased
+// reversal would still read as a hard jump. Clamping the per-frame pixel delta keeps
+// the reversal a smooth back-and-forth slosh at any ticks-per-second without affecting
+// the steady DC stream (whose per-frame delta stays well under).
 export const MAX_FLOW_PX_PER_FRAME = 14;
 // Safety cap on dots per belt so a very long trace can't spawn unbounded graphics.
 export const MAX_BELT_DOTS = 64;
@@ -43,6 +44,61 @@ export const MAX_BELT_DOTS = 64;
 const NUDGE_SPACING = 13; // px between conduits sharing a channel (clears the pipe body + dark moat)
 const BUMP_W = 11; // hop half-width (wider arc to fit the opaque pipe + moat)
 const BUMP_H = 17; // hop height (taller so the over-pipe clears the under-pipe's full width + moat)
+
+// --- net colour (rail identity) ----------------------------------------------
+
+function lerpColor(a: number, b: number, t: number): number {
+  const ar = (a >> 16) & 255;
+  const ag = (a >> 8) & 255;
+  const ab = a & 255;
+  const br = (b >> 16) & 255;
+  const bg = (b >> 8) & 255;
+  const bb = b & 255;
+  const r = Math.round(ar + (br - ar) * t);
+  const gg = Math.round(ag + (bg - ag) * t);
+  const bl = Math.round(ab + (bb - ab) * t);
+  return (r << 16) | (gg << 8) | bl;
+}
+
+/**
+ * Map a net voltage to its **rail-identity** colour. The standard rails get their
+ * conventional PC / bench wire-colour code so they're recognised at a glance — +3.3 V
+ * orange, +5 V red, +12 V yellow, −12 V blue, +1.8 V violet, GND dark — and the rest follow
+ * a coherent perceptual ramp that doubles as a coarse magnitude cue: cool blue/purple as it
+ * goes more negative, dark at ground, then progressively **hotter and whiter** as it climbs
+ * (24 V / 48 V light yellow → mains-level near-white, "high and hot"). Anchored at the
+ * standard rails and interpolated between, **signed and unclamped** (a −5 V rail no longer
+ * collapses to ground-grey — the old clamp's bug). This is the at-a-glance *identity* +
+ * coarse channel; the precise magnitude lives on the LED bar (reality) / standpipe (analogy).
+ */
+export function voltageColor(v: number): number {
+  const stops: [number, number][] = [
+    [-48, 0x5a3ad0], // very negative → deep violet-blue
+    [-12, 0x3a6ee0], // −12 V blue (PC)
+    [-5, 0x46d2e6], // −5 V cyan
+    [0, 0x4a4660], // GND dark blue-grey
+    [1.8, 0x9a78ff], // +1.8 V violet (low-V logic)
+    [3.3, 0xe6843a], // +3.3 V orange (PC)
+    [5, 0xe0533a], // +5 V red (PC)
+    [9, 0xd98a4a], // +9 V amber-bronze (battery)
+    [12, 0xe8c24a], // +12 V yellow (PC)
+    [24, 0xf0d96a], // +24 V light yellow (industrial)
+    [48, 0xf5e9a0], // +48 V pale yellow (telecom / PoE)
+    [120, 0xf2f2f5], // ~120 Vrms (US mains) → near-white (high voltage)
+    [230, 0xffffff], // ~230 Vrms (EU mains) → white
+  ];
+  if (v <= stops[0]![0]) return stops[0]![1];
+  const last = stops[stops.length - 1]!;
+  if (v >= last[0]) return last[1];
+  for (let i = 0; i + 1 < stops.length; i++) {
+    const s0 = stops[i]!;
+    const s1 = stops[i + 1]!;
+    if (v <= s1[0]) {
+      return lerpColor(s0[1], s1[1], (v - s0[0]) / (s1[0] - s0[0] || 1));
+    }
+  }
+  return last[1];
+}
 
 /** The lens (fidelity tier) a part / wire renders in. Mirrors the info panel's `DiagramMode`;
  *  re-exported by `board.ts` so existing importers keep working. */
@@ -203,7 +259,7 @@ export function nudgeParallel(routes: Map<number, Point[]>): void {
   apply(vGroups, "x");
 }
 
-export function conduitSegs(pts: Point[]): ConduitSeg[] {
+function conduitSegs(pts: Point[]): ConduitSeg[] {
   const out: ConduitSeg[] = [];
   for (let i = 0; i + 1 < pts.length; i++) {
     const a = pts[i]!;

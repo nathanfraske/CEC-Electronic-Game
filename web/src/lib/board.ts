@@ -92,6 +92,7 @@ import {
   dieFramePinExit,
   frameLeadRoute,
   routeForWire,
+  voltageColor,
   type Dir,
   type BoardLens,
 } from "./boardRender";
@@ -6611,6 +6612,8 @@ class ComponentNode {
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
         // The inner parts follow the board lens: analogy → factory machines, else schematic symbols.
         style: lens === "analogy" ? "factory" : "schematic",
+        // The conduit skin follows the board lens too (analogy pipes vs reality conductors).
+        lens,
         partLayer: this.userIcGlyphs,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
@@ -6942,56 +6945,5 @@ function fmtSI(value: number, unit: string): string {
 }
 
 // --- trace ("belt") geometry + colour ---------------------------------------
-
-function lerpColor(a: number, b: number, t: number): number {
-  const ar = (a >> 16) & 255;
-  const ag = (a >> 8) & 255;
-  const ab = a & 255;
-  const br = (b >> 16) & 255;
-  const bg = (b >> 8) & 255;
-  const bb = b & 255;
-  const r = Math.round(ar + (br - ar) * t);
-  const gg = Math.round(ag + (bg - ag) * t);
-  const bl = Math.round(ab + (bb - ab) * t);
-  return (r << 16) | (gg << 8) | bl;
-}
-
-/**
- * Map a net voltage to its **rail-identity** colour. The standard rails get their
- * conventional PC / bench wire-colour code so they're recognised at a glance — +3.3 V
- * orange, +5 V red, +12 V yellow, −12 V blue, +1.8 V violet, GND dark — and the rest follow
- * a coherent perceptual ramp that doubles as a coarse magnitude cue: cool blue/purple as it
- * goes more negative, dark at ground, then progressively **hotter and whiter** as it climbs
- * (24 V / 48 V light yellow → mains-level near-white, "high and hot"). Anchored at the
- * standard rails and interpolated between, **signed and unclamped** (a −5 V rail no longer
- * collapses to ground-grey — the old clamp's bug). This is the at-a-glance *identity* +
- * coarse channel; the precise magnitude lives on the LED bar (reality) / standpipe (analogy).
- */
-function voltageColor(v: number): number {
-  const stops: [number, number][] = [
-    [-48, 0x5a3ad0], // very negative → deep violet-blue
-    [-12, 0x3a6ee0], // −12 V blue (PC)
-    [-5, 0x46d2e6], // −5 V cyan
-    [0, 0x4a4660], // GND dark blue-grey
-    [1.8, 0x9a78ff], // +1.8 V violet (low-V logic)
-    [3.3, 0xe6843a], // +3.3 V orange (PC)
-    [5, 0xe0533a], // +5 V red (PC)
-    [9, 0xd98a4a], // +9 V amber-bronze (battery)
-    [12, 0xe8c24a], // +12 V yellow (PC)
-    [24, 0xf0d96a], // +24 V light yellow (industrial)
-    [48, 0xf5e9a0], // +48 V pale yellow (telecom / PoE)
-    [120, 0xf2f2f5], // ~120 Vrms (US mains) → near-white (high voltage)
-    [230, 0xffffff], // ~230 Vrms (EU mains) → white
-  ];
-  if (v <= stops[0]![0]) return stops[0]![1];
-  const last = stops[stops.length - 1]!;
-  if (v >= last[0]) return last[1];
-  for (let i = 0; i + 1 < stops.length; i++) {
-    const s0 = stops[i]!;
-    const s1 = stops[i + 1]!;
-    if (v <= s1[0]) {
-      return lerpColor(s0[1], s1[1], (v - s0[0]) / (s1[0] - s0[0] || 1));
-    }
-  }
-  return last[1];
-}
+// `voltageColor` (the rail-identity net colour) now lives in `boardRender.ts` so the sealed-IC
+// opened view colours its inner wires with the exact same function — imported above.
