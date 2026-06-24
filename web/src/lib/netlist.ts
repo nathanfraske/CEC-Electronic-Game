@@ -855,31 +855,43 @@ export function buildNetlist(
     else union(k, rep);
   }
 
-  // How many pins share each net, so we can tell a ground that's actually wired
-  // into the circuit from one just sitting on the board.
+  // Every GND symbol is the SAME global ground — real-schematic convention (and what a breadboard
+  // does): several ground symbols form ONE common reference WITHOUT a wire between them, so the
+  // player needn't hand-tie every ground together (that surprise is exactly the "my sources can't
+  // share a ground" trap). Union all GND pins onto the first; whether that net is the node-0
+  // reference (vs. a lone floating ground) is decided below. Deterministic — `sorted` is by id.
+  let gndKey: string | null = null;
+  for (const c of sorted) {
+    if (c.kind !== "GND") continue;
+    const k = key(c.id, 0); // GND is a 1-pin part
+    find(k);
+    if (gndKey === null) gndKey = k;
+    else union(k, gndKey);
+  }
+
+  // How many pins share each net, and which nets carry a NON-GND pin — so we can tell a ground that
+  // is actually wired into the circuit from one (or several) just sitting on the board.
   const netSize = new Map<string, number>();
+  const netHasNonGnd = new Set<string>();
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind) continue;
     for (const p of kind.pins) {
       const r = find(key(c.id, p.index));
       netSize.set(r, (netSize.get(r) ?? 0) + 1);
+      if (c.kind !== "GND") netHasNonGnd.add(r);
     }
   }
 
-  // Ground (node 0): a *connected* explicit GND part's net wins if one is placed
-  // — this is what lets a current-source-only loop simulate (no voltage source to
-  // borrow a reference from). A GND floating on the board with nothing wired to it
-  // is ignored, so it can't make a disconnected circuit falsely "solve". Otherwise
-  // fall back to the first voltage source's "−" pin (index 1).
+  // Ground (node 0): the unified GND net wins when it is actually wired into the circuit (it carries
+  // at least one non-GND pin) — this is what lets a current-source-only loop simulate (no voltage
+  // source to borrow a reference from). Ground symbols sitting on the board with nothing else wired
+  // to them are ignored, so they can't make a disconnected circuit falsely "solve". Otherwise fall
+  // back to the first voltage source's "−" pin (index 1).
   let groundRoot: string | null = null;
-  for (const c of sorted) {
-    if (c.kind !== "GND") continue;
-    const r = find(key(c.id, 0)); // GND is a 1-pin part
-    if ((netSize.get(r) ?? 0) > 1) {
-      groundRoot = r; // wired to at least one other pin
-      break;
-    }
+  if (gndKey !== null) {
+    const r = find(gndKey);
+    if (netHasNonGnd.has(r)) groundRoot = r;
   }
   if (groundRoot === null) {
     for (const c of sorted) {

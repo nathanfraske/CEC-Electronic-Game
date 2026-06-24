@@ -61,6 +61,43 @@ describe("buildNetlist (headless smoke)", () => {
     expect(nl).not.toBeNull();
     expect(nl!.types.length).toBe(2); // V + R (GND is not an element)
   });
+
+  it("every GND symbol is the SAME global ground (node 0) — no wire needed between them", () => {
+    // Two independent V+R branches, each returning to its OWN ground symbol, NOT wired together.
+    // Real schematic convention: every GND is the same node, so they share one reference and the
+    // board solves — without the player hand-tying the grounds (the owner's "sources can't share a
+    // common ground" trap, now fixed).
+    const g = new BoardGraph();
+    const v1 = place(g, "V", 0, 0, 5);
+    const r1 = place(g, "R", 4, 0, 1000);
+    const gndA = place(g, "GND", 0, 4);
+    connect(g, v1, 0, r1, 0);
+    connect(g, r1, 1, gndA, 0);
+    connect(g, v1, 1, gndA, 0);
+
+    const v2 = place(g, "V", 0, 10, 3);
+    const r2 = place(g, "R", 4, 10, 2200);
+    const gndB = place(g, "GND", 0, 14); // a SECOND ground symbol, NOT wired to gndA
+    connect(g, v2, 0, r2, 0);
+    connect(g, r2, 1, gndB, 0);
+    connect(g, v2, 1, gndB, 0);
+
+    const nl = buildNetlist(g, false);
+    expect(nl).not.toBeNull();
+    // Both resistors' "B" leads return to ground — and both grounds are the SAME node 0.
+    expect(nl!.nodesOfComponent.get(r1.id)![1]).toBe(0); // R1.B -> node 0 (gndA)
+    expect(nl!.nodesOfComponent.get(r2.id)![1]).toBe(0); // R2.B -> node 0 (gndB), unified w/ gndA
+    // Exactly three nodes: the one shared ground + each source's hot node (4 only if NOT unified).
+    expect(nl!.nodeCount).toBe(3);
+  });
+
+  it("lone floating ground symbols don't make a disconnected board falsely solve", () => {
+    // Two GND symbols, nothing else wired to either, and no V source → no real reference.
+    const g = new BoardGraph();
+    place(g, "GND", 0, 0);
+    place(g, "GND", 4, 0);
+    expect(buildNetlist(g, false)).toBeNull();
+  });
 });
 
 describe("IC maker — seal-as-same-netlist", () => {

@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (106) — Global ground unification + package/pinout verification
+
+- ~~**Multiple GND symbols not sharing a reference (owner bug)**~~ — FIXED. An AND gate with three
+  separate 5 V sources + a "common ground" wouldn't solve until all pins were linked to one source.
+  Root cause: `buildNetlist` made only the FIRST wired GND part node 0; every other GND symbol was a
+  separate isolated net, so a multi-symbol "common ground" floated as disconnected reference islands.
+  Fix: union **every** `GND` pin onto one global ground (node 0) — real schematic convention, no wire
+  needed between ground symbols. Node-0 selection now requires the unified ground to carry ≥1 non-GND
+  pin (`netHasNonGnd`), so lone floating grounds don't falsely solve. Web-side (`netlist.ts`) only;
+  deterministic; golden untouched. +2 tests (two un-wired grounds → one node 0; floating grounds → null).
+  - Verified the non-bug half: voltage sources genuinely CAN share one ground (the owner's exact
+    flattened netlist solves to Y≈5 V in sim-core; the solver handles parallel ideal sources w/o NaN).
+  - Ground-loop sim is NOT blocked by this (loops need finite ground-trace impedance, a separate future
+    mechanism; an ideal node can't show a loop regardless) — see invisible-electronics-ideation.md.
+- ~~**Package/pinout + rotation-text verification (owner ask)**~~ — DONE, no change needed. Cross-checked
+  `packages.ts` SOT-23-3/5/6, DIP/VSSOP-8/14/16 against JEDEC pinouts (all correct), and confirmed pin
+  labels stay upright + aligned at all 4 rotations + mirror (`rotPx`, labels on the un-rotated `view`).
+
 ## 2026-06-24 (105) — IC reseal-gate fix + placed-IC pinout labels + unpowered zoom-to-open
 
 - ~~**BUG: "die can't be sealed yet — doesn't solve" on Reseal (owner, af0060c9)**~~ — FIXED. The

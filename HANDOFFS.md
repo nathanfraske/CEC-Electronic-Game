@@ -5,6 +5,46 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (106) — Global ground unification (every GND symbol = node 0) + package/pinout verify
+
+**State:** 🟢 full gate green. Rust: golden `0xeaac_3764_99e4_fa24` UNCHANGED (web-side change only —
+no `crates/`). Web: `check` 0/0, `lint` clean, `build` ok, `test` **63 passed** (+2 new). Branch
+`claude/kind-turing-hdelb3`.
+
+**Owner-reported bug:** building an AND gate with **three separate 5 V sources** (A, B, VCC) + a
+"common ground" + Y→R→GND **didn't solve** until every pin was linked to ONE source. Root cause found
+by exhaustive testing (netlist compiler AND the real sim-core MNA solve, incl. the owner's exact
+flattened netlist): **multiple GND *symbols* were NOT unified** — the compiler made only the *first*
+wired GND the node-0 reference; every other GND symbol was its own isolated net, so a "common ground"
+built from several ground symbols floated as separate reference islands → singular/garbled solve.
+(Verified the non-bug half too: sources genuinely CAN share one ground — the owner's exact circuit
+solves to Y≈5 V; the sim-core solver even handles parallel/redundant ideal sources without NaN.)
+
+**Fix (`web/src/lib/netlist.ts`, `buildNetlist`):** a new pass unions **every** `GND` part's pin onto
+one net BEFORE node numbering, so all ground symbols are the same global ground (node 0) — real
+schematic / breadboard convention, no wire needed between them. Node-0 selection now uses that unified
+net when it carries ≥1 **non-GND** pin (new `netHasNonGnd` set), so lone floating grounds still can't
+make a disconnected board falsely solve (and two bare grounds wired to nothing else no longer count as
+a reference — slightly more correct than before). Deterministic (`sorted` by id); golden-safe (sim-core
+untouched; node renumbering is web-side only). Tests: two un-wired GND symbols → one node 0 (nodeCount
+3 not 4); both branches' returns read node 0; two floating grounds + no source → `null`.
+
+**Ground-loops note (owner asked):** unifying does NOT block future ground-loop sim. A ground loop is
+an *impedance* phenomenon (two ground points at different potentials via finite trace R/L forming an
+EMI pickup loop); the engine models every ground net as one *ideal* zero-Ω node, so it can't show a
+loop today regardless. Ground loops will come from explicitly modelling ground-trace impedance (or
+distinct chassis/earth/signal-ground part types) — see `docs/invisible-electronics-ideation.md` — not
+from bare GND glyphs being accidentally separate nets. So this fix is compatible with that future work.
+
+**Package/pinout verification (owner asked, no change needed):** cross-checked `web/src/lib/packages.ts`
+against JEDEC. SOT-23-3 (1 BL, 2 BR, 3 TC), SOT-23-5 (1·2·3 bottom L→R, 4 TR, 5 TL, top-mid empty),
+SOT-23-6 (4·5·6 top R→L), DIP/VSSOP-8/14/16 (pin 1 TL, CCW down-left/up-right) — all match the standard
+pinouts. Pin-label TEXT under rotation/mirror is correct: labels live on the un-rotated `view` layer,
+positioned via `rotPx` (same mirror-then-rotate math as the geometry), parked 9 px above each pin, so
+they stay upright + aligned at all 4 rotations. No issues found.
+
+---
+
 ## 2026-06-24 (105) — IC reseal-gate fix + placed-IC pinout labels + unpowered zoom-to-open
 
 **State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core -p
