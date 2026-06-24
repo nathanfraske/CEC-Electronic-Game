@@ -311,9 +311,25 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       ? { x: pp.x, y: pp.y < bcy ? bodyB.y : bodyB.y + bodyB.h }
       : { x: pp.x < bcx ? bodyB.x : bodyB.x + bodyB.w, y: pp.y };
     const rootW = new Point((rootG.x - px) / s, (rootG.y - py) / s);
+    // Orthogonal STAPLE, not a raw diagonal: exit BOTH ends along the lead axis (alongX leads are
+    // vertical, else horizontal), joined by one cross leg, then rounded — so the connector reads as a
+    // clean bent run from the frame pin out to the lead, never a diagonal (owner).
+    const leadPts = bodyB.alongX
+      ? [
+          fpW,
+          new Point(fpW.x, (fpW.y + rootW.y) / 2),
+          new Point(rootW.x, (fpW.y + rootW.y) / 2),
+          rootW,
+        ]
+      : [
+          fpW,
+          new Point((fpW.x + rootW.x) / 2, fpW.y),
+          new Point((fpW.x + rootW.x) / 2, rootW.y),
+          rootW,
+        ];
     drawConduitSkin(
       innerG,
-      [fpW, rootW],
+      roundedPoints(leadPts, PW * 2),
       netColor(internals.pinNodes[i] ?? null),
       PW,
       lens,
