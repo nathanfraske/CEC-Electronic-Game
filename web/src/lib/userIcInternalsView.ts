@@ -37,11 +37,15 @@ import {
   applyCrossings,
   wireDrawOrder,
   pinExit,
+  polyline,
   roundedPoints,
   routeForWire,
   voltageColor,
   type BoardLens,
 } from "./boardRender";
+import { drawDetail, hasDetail } from "./detailDrawers";
+import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
+import { setStudsVisible, type TierOpts } from "./tierKit";
 import type { UserIcInternals } from "./netlist";
 
 export interface UserIcInternalsOpts {
@@ -68,6 +72,15 @@ export interface UserIcInternalsOpts {
   /** the board's detail lens (analogy water vs reality electron), threaded into the conduit skin so the
    * inner wires get the SAME pipe/conductor look the die editor draws under the active lens. */
   lens: BoardLens;
+  /** The camera/world transform (board.ts `this.world.scale.x`, the `zoom` arg of `ComponentNode.update`).
+   * The on-screen magnification of an inner part = the container fit-scale `s` × `cameraZoom`. Used to
+   * gate the per-part tier-DETAIL swap (Part B / C-1): an inner part whose ABSOLUTE on-screen scale
+   * `s · cameraZoom ≥ tierZoom` renders its `drawDetail`/`drawAnalogy` illustration (as the die editor
+   * does past TIER_ZOOM) instead of the small schematic glyph. */
+  cameraZoom: number;
+  /** The board's TIER_ZOOM threshold — the world scale past which the die editor swaps a part to its
+   * tier-detail illustration. The replica fires the same swap when `s · cameraZoom ≥ tierZoom`. */
+  tierZoom: number;
   /**
    * A persistent container (added under the instance's rotated glyph holder) that becomes the SCALED
    * inner-view: child[0] is a pooled {@link Graphics} for the wires + junctions (cleared every frame),
@@ -97,25 +110,44 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     style,
     lens,
     partLayer,
+    cameraZoom,
+    tierZoom,
   } = o;
   const { parts, wires, innerGraph, nodeOfInner, frameId } = internals;
+  // The schematic lens (C-2) draws plain orthogonal polyline traces + plain junction dots instead of
+  // the conduit pipe/grommet skin — mirroring the die editor's non-conduit (`else`) branch in
+  // `redrawWires`/`drawJunctions`. `conduitLens` is null in schematic so the shared route family still
+  // runs but the final SKIN switches.
+  const schematic = lens === "schematic";
 
   // Draw the PACKAGE first, glyph-local (NOT scaled): the leads out to the solder pins + the dark
   // body. The scaled inner circuit then fills the body interior, so it reads as the real chip opened
   // up (leads on the outside).
   drawUserIcPackageBody(g, pins, wPx, hPx, color);
 
-  // Pool layout: child[0] = innerG (wires + junctions, cleared each frame), child[1..N] = the inner
-  // part glyphs. Grow/shrink the part pool when the netlist under the cursor changes.
-  if (partLayer.children.length === 0) partLayer.addChild(new Graphics()); // innerG slot
-  const innerG = partLayer.children[0] as Graphics;
-  innerG.clear();
-  const wantChildren = parts.length + 1; // + innerG
+  // Pool layout (C-5 — wires LAST so they paint OVER the part bodies, never under): child[0..N-1] =
+  // the inner part glyphs/details, child[N] = innerG (all wires + junctions, cleared each frame), drawn
+  // AFTER the parts. In Pixi later children render on top, so the inner traces now land cleanly on the
+  // part pins instead of a large detail body occluding a wire elbow routing past it (matches a schematic
+  // where nets sit over symbols; the conduit grommets already flare into the pin so the read stays
+  // continuous). Grow/shrink the part pool when the netlist under the cursor changes.
+  const wantChildren = parts.length + 1; // + innerG (the trailing slot)
   while (partLayer.children.length < wantChildren) {
     partLayer.addChild(new Graphics());
   }
   for (let i = partLayer.children.length - 1; i >= wantChildren; i--) {
     partLayer.removeChildAt(i).destroy();
+  }
+  const innerG = partLayer.children[wantChildren - 1] as Graphics; // the LAST slot
+  innerG.clear();
+  // The innerG holder carries no per-part transform — wires draw in raw container/world coords. A slot
+  // pooled from a former PART (the trailing index shifts as parts.length changes) may carry a nested
+  // detail `dg` child; drop any children so a stale illustration can't render under the wires.
+  innerG.position.set(0, 0);
+  innerG.scale.set(1, 1);
+  innerG.rotation = 0;
+  for (let i = innerG.children.length - 1; i >= 0; i--) {
+    innerG.removeChildAt(i).destroy();
   }
   if (parts.length === 0 && wires.length === 0) {
     partLayer.visible = false;
@@ -279,7 +311,17 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     const rd = condRoutes.get(id);
     if (!rd) continue;
     const rounded = roundedPoints(rd, PW * 2);
-    drawConduitSkin(innerG, rounded, colorOf.get(id) ?? PALETTE.cyan, PW, lens);
+    const c = colorOf.get(id) ?? PALETTE.cyan;
+    if (schematic) {
+      // C-2: plain double-stroke polyline (faint halo + bright core), mirroring redrawWires' non-conduit
+      // `else` branch (board.ts ~4782). The route family above already orthogonalised + crossed it.
+      polyline(innerG, rounded);
+      innerG.stroke({ width: PW + 4, color: c, alpha: 0.16 });
+      polyline(innerG, rounded);
+      innerG.stroke({ width: PW, color: c, alpha: 0.95 });
+    } else {
+      drawConduitSkin(innerG, rounded, c, PW, lens);
+    }
   }
   for (const d of cross.dots) {
     innerG.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
@@ -292,7 +334,15 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   for (const j of innerGraph.junctions.values()) {
     const node = nodeOfInner({ junctionId: j.id });
     const p = junctionPos.get(j.id) ?? cellToWorld(j.cell);
-    drawJunctionConduit(innerG, p, netColor(node), lens);
+    if (schematic) {
+      // C-2: plain filled junction dot (dark backing + net-coloured core), mirroring drawJunctions'
+      // non-conduit branch (board.ts ~4558). JUNCTION_R is 4 on the board (board-local const).
+      const JR = 4;
+      innerG.circle(p.x, p.y, JR + 1.5).fill({ color: 0x0d0b16, alpha: 1 });
+      innerG.circle(p.x, p.y, JR).fill({ color: netColor(node) });
+    } else {
+      drawJunctionConduit(innerG, p, netColor(node), lens);
+    }
   }
 
   // --- LEAD CONNECTORS: tie each inner frame-pin net OUT to its package lead. A short conduit (in the
@@ -327,13 +377,16 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
           new Point((fpW.x + rootW.x) / 2, rootW.y),
           rootW,
         ];
-    drawConduitSkin(
-      innerG,
-      roundedPoints(leadPts, PW * 2),
-      netColor(internals.pinNodes[i] ?? null),
-      PW,
-      lens,
-    );
+    const leadColor = netColor(internals.pinNodes[i] ?? null);
+    const leadRounded = roundedPoints(leadPts, PW * 2);
+    if (schematic) {
+      polyline(innerG, leadRounded);
+      innerG.stroke({ width: PW + 4, color: leadColor, alpha: 0.16 });
+      polyline(innerG, leadRounded);
+      innerG.stroke({ width: PW, color: leadColor, alpha: 0.95 });
+    } else {
+      drawConduitSkin(innerG, leadRounded, leadColor, PW, lens);
+    }
   }
 
   // TODO(phase-0-followup): per-net voltage gauges/standpipes (drawNetBars/drawNetStandpipes) and the
@@ -346,7 +399,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   // die editor draws the part. ---
   for (let k = 0; k < parts.length; k++) {
     const part = parts[k]!;
-    const child = partLayer.children[k + 1] as Graphics; // +1: child[0] is innerG
+    const child = partLayer.children[k] as Graphics; // child[0..N-1] are parts; innerG is the LAST slot
     child.clear();
     const kind = PART_KINDS[part.kind];
     if (!kind) {
@@ -377,21 +430,87 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       electrical = { current: 0, vAcross: vAt(na) - vAt(nb) };
     }
     const partColor = PALETTE[kind.colorKey];
-    // drawGlyphIn with the explicit lens-derived style, so the inner parts switch schematic ↔ factory
-    // with the board toggler (drawGlyph would lock them to the global style and ignore the lens).
-    drawGlyphIn(
-      child,
-      {
+
+    // C-1 (Part B) — TIER-DETAIL gate. The die editor swaps a part to its full tier illustration
+    // (`drawDetail`/`drawAnalogy`) once the WORLD scale passes TIER_ZOOM (board.ts:6634). Inside the
+    // opened IC a part's effective magnification is the container fit-scale `s` × cameraZoom, so the
+    // faithful translation is `s · cameraZoom ≥ tierZoom`. The tier follows the lens (the replica
+    // already receives it); schematic never has a detail (hasDetail/hasAnalogy false ⇒ never fires).
+    const partTier =
+      lens === "reality" && hasDetail(part.kind)
+        ? "reality"
+        : lens === "analogy" && hasAnalogy(part.kind)
+          ? "analogy"
+          : null;
+    const absScale = s * cameraZoom; // on-screen px per world px for this opened IC's interior
+    // The detail is drawn into a NESTED Graphics `dg` inside the rot+mirror holder `child`, so it
+    // inherits the part's orientation while carrying its OWN REF→footprint scale (mirroring board.ts'
+    // separate tierGlyph at `wPx/2, hPx/2`). `dg` is pooled as child.children[0]; the small glyph and
+    // the detail are mutually exclusive per frame (one is cleared/hidden while the other draws).
+    let dg = child.children[0] as Graphics | undefined;
+    if (partTier !== null && absScale >= tierZoom) {
+      // REF-then-scale, EXACTLY board.ts:6642-6673 — render big so the drawers' fixed-px details
+      // (studs, throats, spring/piston clamps like `anchorX − 40`) don't distort at the tiny footprint.
+      if (!dg) {
+        dg = new Graphics();
+        child.addChild(dg);
+      }
+      dg.clear();
+      dg.visible = true;
+      const REF_HW = 130;
+      const REF_HH = 80;
+      const partWPx = (kind.w - 1) * PITCH;
+      const partHPx = (kind.h - 1) * PITCH;
+      const targetHW = partWPx / 2 + PITCH * 0.7; // same target the board uses (this.wPx/2 + PITCH·0.7)
+      const detScale = targetHW / REF_HW;
+      // CANONICAL anchors (from UNROTATED kind.pins): the holder carries rot+mirror, so a drawer that
+      // infers orientation from pin positions (MOSFET valve, polarised sources) stays correct — never
+      // pre-rotate these (the same lesson as the glyph base case + the part-orientation fix). Centred on
+      // the footprint, so a glyph-local pin (p − footprint-centre) is (that / detScale) in REF px.
+      const anchors = glyphPins.map((p, i) => ({
+        label: kind.pins[i]?.label ?? "",
+        x: (p.x - partWPx / 2) / detScale,
+        y: (p.y - partHPx / 2) / detScale,
+      }));
+      const opts: TierOpts = {
         kind: part.kind,
-        pins: glyphPins,
-        wPx: (kind.w - 1) * PITCH,
-        hPx: (kind.h - 1) * PITCH,
+        bounds: { hw: REF_HW, hh: REF_HH },
         color: partColor,
-        electrical,
+        electrical, // the SAME { current: 0, vAcross } the glyph base case built (C-4 will feed current)
         phase,
         value: part.value,
-      },
-      style,
-    );
+        anchors,
+      };
+      // Hide the illustration's decorative studs (board.ts:6669) — the inner wires' grommets mark the
+      // real connections; avoids the doubled-terminal clutter.
+      setStudsVisible(false);
+      if (partTier === "reality") drawDetail(dg, opts);
+      else drawAnalogy(dg, opts);
+      setStudsVisible(true);
+      // Centre the detail on the footprint (board.ts positions tierGlyph at `wPx/2, hPx/2`) and apply
+      // the REF→footprint scale. The holder `child` already carries position/rotation/mirror.
+      dg.position.set(partWPx / 2, partHPx / 2);
+      dg.scale.set(detScale);
+    } else {
+      // Base case: the small schematic/factory glyph drawn straight into the holder, as before. Hide
+      // any pooled detail Graphics so a part that zoomed back out doesn't leave a stale illustration.
+      if (dg) dg.visible = false;
+      // drawGlyphIn with the explicit lens-derived style, so the inner parts switch schematic ↔ factory
+      // with the board toggler (drawGlyph would lock them to the global style and ignore the lens).
+      drawGlyphIn(
+        child,
+        {
+          kind: part.kind,
+          pins: glyphPins,
+          wPx: (kind.w - 1) * PITCH,
+          hPx: (kind.h - 1) * PITCH,
+          color: partColor,
+          electrical,
+          phase,
+          value: part.value,
+        },
+        style,
+      );
+    }
   }
 }

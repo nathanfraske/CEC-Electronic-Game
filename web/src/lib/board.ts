@@ -6568,10 +6568,11 @@ class ComponentNode {
     // real part glyphs at their authored positions + the authored wires, animated from the same
     // snapshot — instead of the black-box symbol. (A user IC is never a CEC_COMP, so `showInternals`
     // above is false for it; the two zoom-to-open paths are mutually exclusive.)
-    const wantUserIc =
-      isUserIc(this.kindTag) &&
-      (lens === "reality" || lens === "analogy") &&
-      zoom >= INTERNALS_ZOOM;
+    // C-2: the opened replica fires under ALL THREE lenses (reality, analogy AND schematic) — the
+    // schematic lens draws the inner circuit as plain orthogonal traces + junction dots (the replica's
+    // schematic branch) instead of staying a blank black-box. (The CEC_COMP composite path above stays
+    // non-schematic; the two zoom-to-open paths remain mutually exclusive.)
+    const wantUserIc = isUserIc(this.kindTag) && zoom >= INTERNALS_ZOOM;
     // Prefer the LIVE node-resolved internals (animated from the snapshot). When the board doesn't
     // solve there is no live map, so fall back to the authored circuit's STATIC geometry (node-free),
     // cached and rebuilt only when the registry def changes (a reseal mints a new object — caught by a
@@ -6630,6 +6631,11 @@ class ComponentNode {
         // The conduit skin follows the board lens too (analogy pipes vs reality conductors).
         lens,
         partLayer: this.userIcGlyphs,
+        // Phase 2 / C-1: the camera transform + the tier threshold, so the replica can swap each inner
+        // part to its tier-DETAIL illustration once `s · cameraZoom ≥ TIER_ZOOM`, exactly as the die
+        // editor does past TIER_ZOOM. `zoom` is already `this.world.scale.x` (no loop.ts change).
+        cameraZoom: zoom,
+        tierZoom: TIER_ZOOM,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;
