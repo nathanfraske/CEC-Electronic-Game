@@ -1882,6 +1882,10 @@ Tier-A behavioral unless noted; build on the tick-pure digital pattern the gate 
 - [ ] Re-enable `wasm-opt` once binaryen is provisioned in the build image.
 - [ ] GitHub Pages: still needs the owner to set Settings → Pages → Source: GitHub Actions, then the `pages` workflow deploys.
 
+- [ ] **Editing & tool UX (owner QoL batch).** ✅ Pan tool is now inert + opt-in (only via H/toolbar; Esc → Build; no yield-to-select). Default is already Build. Still open: **select a wire occluded behind a component** (hit-test reach-through); **remove a junction** from a wire (without nuking its wires); **move a junction** individually; **mirror/flip a component** (a `Component` reflection beside `rot` — also the clean way to put a PMOS source-up).
+- [ ] **Denser / "larger" package variants (owner idea; full brainstorm done).** Density as an optional scalar on `UserIc.package` (default Standard = today's numbers): a bigger drill-in canvas (a `dieScale` on `dieLayout`) + a capacity budget at seal, with cost / availability / power-density-heat tradeoffs (heat = derate `RATED_CURRENT_SLOT` in Real mode → reuses the FAIL mask, **golden-safe**, zero sim-core change). The "internals shrink when you zoom" visual already falls out of `userIcInternalsView`'s fit-to-footprint scale. Phased: (1) density scalar + canvas/zoom (pure presentation); (2) capacity-budget seal gate; (3) heat-as-derating; (4) economy hooks; (5) body-size archetypes (SOIC→TSSOP→QFN) + density-biased parasitics. Density is a per-*package* axis, orthogonal to per-part `tier`/`variant`.
+- [ ] **Pin test-stimuli Phase 2+** (base GND/VCC/Input shipped): Clock/Pulse + Sine/AC drives (test sequential + analog ICs; clock A@f and B@f/2 auto-cycles a 2-input truth table), then −V/VREF, pull-up/pull-down + output load.
+
 Superseded earlier items (tombstoned):
 - ~~Replace the placeholder dynamics with the real analog solver~~ → done (Lane A; arbitrary netlist).
 - ~~Wire the board graph into the solver~~ → done (`netlist.ts` + integration).

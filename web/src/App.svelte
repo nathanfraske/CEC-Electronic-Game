@@ -1556,7 +1556,7 @@
   // what a click will do right now, so the modeless board stays learnable.
   const hint = $derived(
     mode === "pan"
-      ? "PAN · drag anywhere to move around the board · pick a tool (B/W/M/J/L) to build · Esc returns here"
+      ? "PAN · drag anywhere to move the view — it won't select or grab anything · pick a tool (B/W/J/L/M) to build · Esc → Build"
       : mode === "measure"
         ? probeMode === "A"
           ? "AMMETER · click a part/wire to clamp it and read the current through it (the voltmeter stays put — both can be live)"
@@ -1646,8 +1646,9 @@
         // Universal cancel, in order of least-destructive first: a first Esc just
         // closes the open info drawer (without dropping your armed part or
         // selection). Otherwise it disarms a part, cancels any in-progress wire /
-        // open label editor / selection, then switches to the neutral Pan tool so
-        // Escape always leaves you in a safe "just navigate" state.
+        // open label editor / selection, then returns to Build (the default editing
+        // tool) so Escape leaves you ready to build — never in the inert Pan tool
+        // (Pan is opt-in: the only way in is to pick it with H or the toolbar).
         if (codexOpen) {
           // The Codex is a full-screen modal — Escape closes it first, before any
           // board action (it sits in front of everything else).
@@ -1657,7 +1658,7 @@
         } else {
           if (armedPart) arm(null);
           board?.escape();
-          setMode("pan");
+          setMode("select");
         }
         e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "h" || e.key === "H")) {
@@ -1867,11 +1868,6 @@
           // the configurator choices so the panel closes with it.
           armedPart = kind;
           if (kind === null) armedConfig = {};
-        },
-        onMode: (m) => {
-          // The board switched its own tool (Pan yields to Build when you grab a
-          // part/wire) — mirror it so the toolbar selector follows.
-          mode = m;
         },
         onPersist: (graph) => {
           // A cosmetic change (e.g. a net label dragged): save it + refresh undo,

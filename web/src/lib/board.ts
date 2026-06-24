@@ -3254,11 +3254,15 @@ export class Board {
       return;
     }
 
-    // Pan tool: the neutral navigation tool Esc lands on. It does NOT blanket-grab
-    // — dragging a PART BODY or empty space pans, but the build flow still works:
-    // starting a wire from a pin/junction, reshaping a trace, and dropping an armed
-    // part all fall through to their normal handlers below (which now also accept
-    // "pan"). Only an outright body/empty drag reaches the pan at the very end.
+    // Pan tool: pure navigation — it interacts with NOTHING. A press anywhere (over a part,
+    // a wire, a pin, or empty space) only pans the view; the Build/Wire/Junction/Label/Measure
+    // tools are how you touch the circuit. The ONLY way into Pan is to pick it (H or the
+    // toolbar) — Escape returns to Build, not Pan. (A mode switch cancels any in-progress wire,
+    // so none is ever pending here.)
+    if (this.mode === "pan") {
+      this.panning = { lastX: e.global.x, lastY: e.global.y };
+      return;
+    }
     if (this.mode === "measure") {
       if (this.measurePress(wp.x, wp.y)) return;
       if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
@@ -3330,10 +3334,7 @@ export class Board {
     }
 
     const pin = this.pinHitTest(wp.x, wp.y);
-    if (
-      pin &&
-      (this.mode === "wire" || this.mode === "select" || this.mode === "pan")
-    ) {
+    if (pin && (this.mode === "wire" || this.mode === "select")) {
       // Inside a die: remember this press on the die frame's perimeter pin so a SECOND press on it
       // (which, the wire now pending, lands in the wiring branch above) is recognised as the
       // double-click "name this pad" gesture. The first click still starts a wire as usual.
@@ -3362,11 +3363,7 @@ export class Board {
         this.selectJunction(jid, true);
         return;
       }
-      if (
-        this.mode === "wire" ||
-        this.mode === "select" ||
-        this.mode === "pan"
-      ) {
+      if (this.mode === "wire" || this.mode === "select") {
         const now = performance.now();
         const dbl =
           this.lastJunctionTap !== null &&
@@ -3410,11 +3407,7 @@ export class Board {
       }
       this.lastBodyTap = { id: body.id, t: now };
     }
-    // Pan tool yields to direct manipulation: a plain click on a part grabs it and
-    // switches to Build/Select so you can move it (the toolbar follows via onMode).
-    // Empty space still pans; this only fires when actually over a body.
-    if (body && this.mode === "pan" && !additive) this.yieldPanToSelect();
-    if (body && (this.mode !== "pan" || additive)) {
+    if (body) {
       if (additive) {
         this.selectComponent(body.id, true);
         return;
@@ -3439,9 +3432,6 @@ export class Board {
 
     const wireId = this.wireHitTest(wp.x, wp.y);
     if (wireId !== null) {
-      // Same yield for wires: clicking a trace in Pan switches to Build and grabs
-      // the segment to reshape (KiCad-style), rather than just panning the view.
-      if (this.mode === "pan" && !additive) this.yieldPanToSelect();
       this.selectWire(wireId, additive);
       // Remember where on the run the click landed, so Delete can drop just that leg
       // of a multi-bend wire (resolved against the live geometry at delete time).
@@ -3479,13 +3469,6 @@ export class Board {
     if (!additive) this.clearSelection();
     this.panning = { lastX: e.global.x, lastY: e.global.y };
   };
-
-  /** Leave the Pan tool for Build/Select (and tell the HUD), used when a Pan-mode
-   * click lands directly on a part or wire so it grabs instead of panning. */
-  private yieldPanToSelect(): void {
-    this.setMode("select");
-    this.cb.onMode?.("select");
-  }
 
   private beginDrag(body: Component, wp: Point): void {
     const ids = this.selected.has(body.id) ? [...this.selected] : [body.id];
