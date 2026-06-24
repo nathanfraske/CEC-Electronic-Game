@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (101) — Editing-UX QoL (occluded-wire + junctions) + product-run reliability ideation
+
+**State:** 🟢 web gate-green (check 0/0, lint, build, 48 vitest incl. +2 dissolveJunction). Branch
+`claude/kind-turing-hdelb3`. The **editing & tool-UX QoL batch is now complete** (pan-inert + mirror were
+prior; these are the last two).
+
+**QoL shipped:**
+1. **Occluded-wire select (Alt-click).** In the pointer handler, `body = e.altKey ? null : bodyHitTest(...)`,
+   so Alt-click skips the part on top and grabs the **wire behind it** (pin/junction above still win).
+2. **Junction drag-to-move in Build/Select.** A plain press on a junction in Select mode now selects it +
+   arms `junctionDrag` (drag → `moveJunction`, wires follow by ref; click → just selects). Branch-wiring
+   from a junction stays the Wire tool. (Wire-mode keeps the old double-click-to-drag.)
+3. **Healing junction remove (`graph.dissolveJunction`).** Delete / right-click on a junction now **keeps
+   the wire**: a 2-way junction merges its two wires into one (the dot's cell kept as a waypoint),
+   connectivity-preserving so the **netlist is byte-identical** (test asserts it). 3+-way branches fall
+   back to the destructive `removeJunction`. Seal-capture + wiring-cleanup keep `removeJunction`.
+   Presentation/editing only — no sim-core change, golden safe.
+
+**Ideation recorded — `docs/product-run-reliability-ideation.md` (POINTER FOR FUTURE AGENTS).** Owner +
+I agreed (2026-06-24) that the *statistical / funded / time×scale* realism non-idealities (solder-joint
+quality, ESD survival, electrolytic wear-out, tolerance, **derating margin**, counterfeit parts) are a
+better fit as **production-run / field-reliability outcomes** (yield, RMAs, recalls) than per-bench
+glitches; the *instant/visible* ones (heat, EMI, parasitics) stay at the **bench**; FCC/UL are **gates**.
+When picking up a realism item, decide which of the three rails it's on (doc §3). Deterministic,
+design-hash-seeded, golden-safe (reads measured margins off the graded replay). Recommended first build:
+the production-run report card. Sits beside the heat / density / invisible-electronics ideation docs.
+
+---
+
 ## 2026-06-24 (100) — Mirror / flip a component (placement QoL)
 
 **State:** 🟢 full gate-green. fmt clean; clippy clean; **sim-core golden `0xeaac_3764_99e4_fa24`

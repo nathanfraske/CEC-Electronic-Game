@@ -1562,14 +1562,14 @@
           ? "AMMETER · click a part/wire to clamp it and read the current through it (the voltmeter stays put — both can be live)"
           : "VOLTMETER · click two points to read ΔV (one point = vs GND) · the ammeter stays put alongside it"
         : mode === "junction"
-          ? "JUNCTION · click a wire to drop a junction · double-click a junction to drag it"
+          ? "JUNCTION · click a wire to drop a junction · move or remove junctions in the Build tool"
           : mode === "label"
             ? "LABEL · click a pin, junction, or trace to name its net · same name elsewhere = same net (no wire) · right-click a tag to delete"
             : armedPart
               ? hasConfig(armedPart)
                 ? `PLACING ${partName(armedPart)} · set its type below, then click to drop · R rotate · F flip · Esc cancel`
                 : `PLACING ${partName(armedPart)} · click to drop · R rotate · F flip · Esc cancel`
-              : "BUILD · arm a part & click to place · drag a pin to wire · drag a wire to bend",
+              : "BUILD · arm & click to place · drag a pin to wire · drag a wire to bend · drag a junction to move it (Del/right-click removes it, keeping the wire) · Alt-click reaches a wire behind a part",
   );
 
   // The displayed tick as a wall-clock duration of simulated time (tick × DT).

@@ -1952,6 +1952,66 @@ export class BoardGraph {
     this.pruneJunctions();
   }
 
+  /**
+   * Remove a junction but KEEP the wires it joined ("take the dot off the wire"). If the junction
+   * ties exactly TWO wire-ends, those two wires are merged into one continuous wire (the junction's
+   * cell preserved as a waypoint) so the connection survives. Any other degree — a real branch with
+   * 3+ ends, or a lone / self-looping end — can't be healed that way, so it falls back to
+   * {@link removeJunction} (which drops the incident wires). Returns true iff it healed (the 2-way
+   * merge). CONNECTIVITY-PRESERVING: the two far ends were already one net *through* the junction, so
+   * merging keeps them one net and the compiled netlist is unchanged (a 2-way junction is a pure
+   * pass-through).
+   */
+  dissolveJunction(id: number): boolean {
+    if (!this.junctions.has(id)) return false;
+    const ends: { wid: number; far: Endpoint; wps: Cell[] }[] = [];
+    for (const [wid, w] of this.wires) {
+      const jFrom = isJunctionRef(w.from) && w.from.junctionId === id;
+      const jTo = isJunctionRef(w.to) && w.to.junctionId === id;
+      if (jFrom && jTo) {
+        // A wire looping from the junction back to itself isn't a clean pass-through.
+        this.removeJunction(id);
+        return false;
+      }
+      if (jFrom || jTo) {
+        // The non-junction end, and this wire's waypoints oriented far -> junction.
+        const raw = w.waypoints ?? [];
+        ends.push({
+          wid,
+          far: jFrom ? w.to : w.from,
+          wps: jFrom ? [...raw].reverse() : [...raw],
+        });
+      }
+    }
+    if (ends.length !== 2) {
+      this.removeJunction(id);
+      return false;
+    }
+    const j = this.junctions.get(id)!;
+    const [a, b] = ends;
+    // far(a) -> [a wps: far->J] -> the junction cell -> [J->far(b): reverse(b wps)] -> far(b).
+    const waypoints: Cell[] = [
+      ...a.wps.map((c) => ({ ...c })),
+      { ...j.cell },
+      ...[...b.wps].reverse().map((c) => ({ ...c })),
+    ];
+    this.wires.delete(a.wid);
+    this.wires.delete(b.wid);
+    this.junctions.delete(id);
+    for (const [lid, l] of this.netLabels) {
+      if (junctionTouches(l.at, id)) this.netLabels.delete(lid);
+    }
+    const nid = this.nextWireId++;
+    this.wires.set(nid, {
+      id: nid,
+      from: { ...a.far },
+      to: { ...b.far },
+      ...(waypoints.length > 0 ? { waypoints } : {}),
+    });
+    this.pruneJunctions();
+    return true;
+  }
+
   /** True if any net label is attached to the given junction. */
   private junctionHasLabel(junctionId: number): boolean {
     for (const l of this.netLabels.values()) {
