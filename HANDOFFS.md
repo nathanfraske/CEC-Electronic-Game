@@ -5,6 +5,23 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (119) — Hotfix: (118) flipped SOT to portrait + too many junction dots
+
+**State:** 🟢 gates green. Branch `claude/kind-turing-hdelb3`. Fixes two (118) regressions the owner caught.
+
+- **Aspect flip:** pushing the pins out to the lead tips made the SOT footprint taller than wide (3×4
+  cells), so `userIcBodyBox`'s `alongX = bbox wider-than-tall` test flipped it to a PORTRAIT DIP (sideways
+  leads, tall narrow body). Fixed: `alongX` now = which axis has MORE DISTINCT pin coordinates
+  (`distinctX >= distinctY`) — robust to the push. SOT-23-5 back to a wide 72×46; DIP stays 72×98.
+- **Junction clutter:** the replica drew a grommet at EVERY wire end (dozens of dots). Now only true
+  JUNCTIONS (3+ wire-ends at a point) get a hub; plain ends are capped by the pipe itself.
+
+(Owner shared two saves — a `__DIE_SOT23_5` die build [6 MOSFETs] + a board with the sealed `CEC9001`.
+Footprint change is render-only; saves load + work [wires connect by pin INDEX]. CEC9001 footprint grew
+3×2→3×4 so its placed layout may shift/overlap neighbours — nudge if needed.)
+
+---
+
 ## 2026-06-24 (118) — User IC: connection MOVED to the leads, pads gone, freed interior + conduit traces + lens
 
 **State:** 🟢 gates green (web check 0/0, lint, test **64**, build; golden unchanged; cargo fmt/clippy clean).

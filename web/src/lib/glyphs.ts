@@ -2001,7 +2001,12 @@ export function userIcBodyBox(
     minY = 0;
     maxY = hPx;
   }
-  const alongX = maxX - minX >= maxY - minY;
+  // The array axis is the one the pins are arrayed ALONG (several per stick edge) — found by which axis
+  // has MORE distinct pin coordinates, NOT the bbox aspect. (Pushing the leads out to the tips can make a
+  // wide SOT's bbox taller than wide; the aspect test would then wrongly flip it to a portrait DIP.)
+  const nx = new Set(pins.map((p) => Math.round(p.x))).size;
+  const ny = new Set(pins.map((p) => Math.round(p.y))).size;
+  const alongX = nx >= ny;
   // Inset the STICK axis (where the leads are) by IC_LEAD_LEN so the body sits inside the lead tips;
   // outset the ARRAY axis by IC_BODY_PAD so the card overhangs the end leads (corner leads never jammed).
   return alongX
