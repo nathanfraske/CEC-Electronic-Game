@@ -12,6 +12,7 @@ import {
   type GraphSnapshot,
 } from "./graph";
 import { registerUserIcs, type UserIc } from "./userIc";
+import { restoreInnerDies, type InnerDie } from "./dieEditor";
 import potDimmer from "./circuits/pot-dimmer";
 
 /** Live progress passed to a build step's completion check. */
@@ -115,16 +116,37 @@ export interface SavedCircuit {
    * registered and the load is exactly as before.
    */
   userIcs?: UserIc[];
+  /**
+   * In-progress (unsealed) dies of frames placed on the board (the IC maker WIP): each frame's
+   * half-built inner circuit, keyed by the OUTER frame's component id, so saving a board mid-build and
+   * reloading lets you re-drill a frame and resume. {@link fromSaved} restores them into the live
+   * `innerGraphs` map when one is passed. Absent on a plain circuit (and on every pre-authored example
+   * — examples ship sealed), so the load is exactly as before. (version 2 -> 3 marks this shape.)
+   */
+  innerDies?: InnerDie[];
 }
 
 /** Normalise a saved circuit (envelope or bare snapshot) to a **fresh** GraphSnapshot.
  * Deep-cloned because `build()` is called more than once (the Watch view and the
  * guided-build target) and the board mutates whatever graph it loads — the source
- * module must stay pristine. */
-export function fromSaved(saved: SavedCircuit | GraphSnapshot): GraphSnapshot {
+ * module must stay pristine. When an `innerGraphs` map is passed, any embedded in-progress
+ * (unsealed) dies are restored into it (the map cleared first), so re-drilling a placed frame
+ * resumes its WIP; omit the map to ignore them (e.g. an example, which carries none). */
+export function fromSaved(
+  saved: SavedCircuit | GraphSnapshot,
+  innerGraphs?: Map<number, GraphSnapshot>,
+): GraphSnapshot {
   // Re-register any embedded sealed-IC defs FIRST (idempotent), so a placed CEC9xxx resolves to its
   // kind before the graph is used. A bare snapshot / a circuit with no userIcs registers nothing.
   if ("userIcs" in saved && saved.userIcs) registerUserIcs(saved.userIcs);
+  // Restore any embedded in-progress dies into the live map (cleared first) — only when the caller
+  // hands us one; an absent field clears it to empty (a plain circuit / example has no WIP dies).
+  if (innerGraphs) {
+    restoreInnerDies(
+      "innerDies" in saved ? saved.innerDies : undefined,
+      innerGraphs,
+    );
+  }
   const graph = "graph" in saved ? saved.graph : saved;
   return JSON.parse(JSON.stringify(graph)) as GraphSnapshot;
 }

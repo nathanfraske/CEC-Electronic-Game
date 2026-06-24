@@ -54,6 +54,11 @@
     dieIsSealable,
     unusedDiePins,
     dieTestGraph,
+    innerDiesForSave,
+    restoreInnerDies,
+    isStandaloneDieGraph,
+    placeableFrameTag,
+    type InnerDie,
   } from "./lib/dieEditor";
   import {
     captureSeal,
@@ -1861,9 +1866,12 @@
           advanceBuild(graph);
           // Persist the current board so a refresh restores it (debounced) — but NOT while drilled
           // into a die: that graph is the inner IC circuit, and saving it would overwrite the outer
-          // board in localStorage. The outer board is re-persisted on exit (in-die edits are kept
-          // in-memory; persistence of in-progress dies is out of scope — see the die editor block).
-          if (!drill) saveBoardDebounced(graph.serialize());
+          // board in localStorage. The outer board is re-persisted on exit. The in-progress dies of
+          // any placed frame ride along (so re-drilling a frame after a refresh resumes its WIP).
+          if (!drill) {
+            const snap = graph.serialize();
+            saveBoardDebounced(snap, innerDiesForSaveOf(snap));
+          }
           // Any edit — place, move, rotate, rewire, or a value change — rewinds
           // the scope and the clock to t=0 so you always watch the new circuit
           // from the start rather than mid-flight in the old one.
@@ -1888,7 +1896,10 @@
           // but don't rebuild the netlist or rewind the running sim. Suppressed while drilled into a
           // die (the inner graph must not overwrite the outer board's localStorage entry).
           canUndo = b.canUndo();
-          if (!drill) saveBoardDebounced(graph.serialize());
+          if (!drill) {
+            const snap = graph.serialize();
+            saveBoardDebounced(snap, innerDiesForSaveOf(snap));
+          }
         },
         onAnchor: (rect) => {
           anchor = rect;
@@ -2074,7 +2085,9 @@
           ? settings.hotbar
           : Array(9).fill(null);
 
-      const saved = loadBoard();
+      // Pass the live `innerGraphs` so any persisted in-progress (unsealed) dies are restored into it
+      // (cleared first) before the outer board loads — re-drilling a frame then resumes its WIP.
+      const saved = loadBoard(innerGraphs);
       if (saved) {
         board.loadGraph(saved);
         controls?.pause();
@@ -2178,12 +2191,21 @@
   // back bar's Seal / Save / Back exit and restore the outer board.
   //
   // The inner graph for each placed frame lives in this in-memory map, keyed by the OUTER frame
-  // component id. PERSISTENCE IS OUT OF SCOPE for v1: these inner graphs are NOT saved to
-  // localStorage and are lost on refresh (a frame the player saved-in-progress reopens empty after a
-  // reload). The seal itself (a finished, registered UserIc) is also in-memory in the userIc
-  // REGISTRY — persisting the user IC library + the in-progress dies is a follow-up.
+  // component id. It IS now persisted with the board: on save, {@link innerDiesForSave} marshals the
+  // entries whose frame is still placed into the save's `innerDies` (localStorage + the downloaded
+  // JSON); on load, every site rebuilds this map from that field (via {@link restoreInnerDies}) BEFORE
+  // restoring the outer board, so re-drilling a frame resumes its half-built circuit. Frame ids are
+  // preserved by serialize/restore, so the keys line up again. (The seal itself rides in the save's
+  // `userIcs` — the userIc REGISTRY def — from PR #174.)
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive store, only touched in handlers; see above
   const innerGraphs = new Map<number, GraphSnapshot>();
+
+  /** The in-progress (unsealed) dies to embed in a save: the {@link innerGraphs} entries whose frame
+   * is still placed in `graph` (so a deleted frame's stale die is dropped). A thin wrapper over the
+   * pure {@link innerDiesForSave} so the call sites read cleanly. */
+  function innerDiesForSaveOf(graph: GraphSnapshot): InnerDie[] {
+    return innerDiesForSave(innerGraphs, graph);
+  }
 
   // A BoardGraph for the live die SOLVE: the inner graph with its frame's TEST STIMULI injected
   // (GND/VCC/Input drive as virtual sources) so a die normally powered from outside its package
@@ -2329,6 +2351,55 @@
     board.setDieFrame(ic.frameId);
     arm(null);
     setMode("select");
+  }
+
+  /**
+   * Open a RAW saved DIE graph (a `__DIE_*` snapshot saved in isolation — the owner's existing die
+   * files) straight into the die BUILDER, instead of dropping the die-frame onto a flat board as a
+   * placed part. Synthesizes a fresh OUTER board with the matching PLACEABLE frame, stashes the loaded
+   * die under that frame's id, then drills in (exactly as {@link buildSelectedFrame} does for a freshly
+   * built frame) — so you land in the editor with your circuit, ready to seal. No-op (returns false,
+   * so the caller can fall back to a flat load) if the package can't be resolved. Returns true when it
+   * opened the builder.
+   */
+  function openDieGraphInBuilder(dieSnap: GraphSnapshot): boolean {
+    if (!board) return false;
+    const innerFrameId = findDieFrameId(dieSnap);
+    if (innerFrameId === undefined) return false;
+    const dieFrame = dieSnap.components.find((c) => c.id === innerFrameId);
+    if (!dieFrame) return false;
+    // The placeable frame this die pairs with (the die tag minus the "__DIE_" prefix), placed on a
+    // fresh outer board so there is an outer context to drill out to.
+    const placeTag = placeableFrameTag(dieFrame.kind);
+    if (!placeTag || !PART_KINDS[placeTag]) return false;
+    const frameTag = framePackage(placeTag) ? placeTag : undefined;
+    if (!frameTag) return false;
+
+    const outer = new BoardGraph();
+    const placed = outer.place(frameTag, { col: 6, row: 4 });
+    if (!placed) return false;
+    const outerSnap = outer.serialize();
+
+    // Stash the loaded die under the synthesized outer frame's id, then load the empty outer board and
+    // drill straight in (mirrors buildSelectedFrame's stash + swap + setDieFrame). The map is keyed by
+    // the OUTER frame id, so re-entry after a Back resolves the same WIP.
+    innerGraphs.clear();
+    innerGraphs.set(placed.id, dieSnap);
+    board.loadGraph(outerSnap);
+    const name = partName(frameTag);
+    drill = {
+      frameId: placed.id,
+      innerFrameId,
+      frameTag,
+      name,
+      outerSnapshot: outerSnap,
+      outerCamera: board.getCamera(),
+    };
+    board.swapGraph(dieSnap);
+    board.setDieFrame(innerFrameId);
+    arm(null);
+    setMode("select");
+    return true;
   }
 
   /** Restore the outer board + camera and leave die mode. The optional `mutate` runs on a fresh
@@ -2913,16 +2984,20 @@
     const graph = board?.serialize();
     if (!graph) return;
     // Embed the sealed-IC definitions this board places (via userIcsForGraph), so a downloaded save
-    // is self-contained — a placed CEC9xxx resolves on Load even in a fresh session. Omitted when the
-    // board uses no sealed IC, so a plain circuit's save is byte-for-byte as before (and version stays
-    // readable by older builds: the extra field is additive). version 2 marks the userIcs-aware shape.
+    // is self-contained — a placed CEC9xxx resolves on Load even in a fresh session — plus the
+    // in-progress (unsealed) dies of any placed frame, so saving mid-build and reloading lets you
+    // re-drill a frame and resume. Each field is omitted when empty, so a plain circuit's save is
+    // byte-for-byte as before (and the fields are additive — older builds ignore them). version 2
+    // marked the userIcs-aware shape; version 3 adds innerDies.
     const userIcs = userIcsForGraph(graph);
+    const innerDies = innerDiesForSaveOf(graph);
     const payload = {
       format: "cec-circuit",
-      version: 2,
+      version: 3,
       savedAt: new Date().toISOString(),
       graph,
       ...(userIcs.length > 0 ? { userIcs } : {}),
+      ...(innerDies.length > 0 ? { innerDies } : {}),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
@@ -2955,6 +3030,7 @@
           format?: string;
           graph?: unknown;
           userIcs?: UserIc[];
+          innerDies?: InnerDie[];
         };
         const graph =
           parsed && parsed.format === "cec-circuit" ? parsed.graph : parsed;
@@ -2967,7 +3043,21 @@
         if (parsed && parsed.format === "cec-circuit") {
           registerUserIcs(parsed.userIcs ?? []);
         }
-        board?.loadGraph(graph as GraphSnapshot);
+        const snap = graph as GraphSnapshot;
+        // A RAW die snapshot saved in isolation (a `__DIE_*` graph — the owner's existing die files):
+        // open it straight into the die BUILDER instead of dropping the die-frame as a flat part.
+        // resetDieState() already cleared innerGraphs; openDieGraphInBuilder rebuilds it + drills in.
+        if (isStandaloneDieGraph(snap) && openDieGraphInBuilder(snap)) {
+          demo = null;
+          showIntro = false;
+          flashIo("Die loaded — opened in the IC builder. Seal when ready.");
+          return;
+        }
+        // A normal board: restore any embedded in-progress (unsealed) dies into innerGraphs BEFORE the
+        // outer board loads, so re-drilling a placed frame resumes its WIP (an older save with no
+        // innerDies clears the map to empty — exactly as before).
+        restoreInnerDies(parsed?.innerDies, innerGraphs);
+        board?.loadGraph(snap);
         demo = null;
         showIntro = false;
         flashIo("Circuit loaded.");

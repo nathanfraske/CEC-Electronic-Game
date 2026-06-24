@@ -30,8 +30,10 @@
 import {
   BoardGraph,
   PART_KINDS,
+  DIE_FRAME_PREFIX,
   dieFrameTag,
   framePackage,
+  isDieFrame,
   isFrame,
   isPinRef,
   type GraphSnapshot,
@@ -278,4 +280,90 @@ export function unusedDiePins(
     if (!wired.has(i)) unused.push(i);
   }
   return unused;
+}
+
+// --- Persisting in-progress (unsealed) dies with the board -----------------------------------------
+//
+// A sealed IC's authored circuit rides in the save's `userIcs` (the registry def). But an UNSEALED
+// frame's work-in-progress die lives only in the in-memory `innerGraphs` map in App.svelte, keyed by
+// the OUTER frame's component id — so without help it is lost on save+reload (the frame re-opens
+// blank). These pure helpers (headless-testable, no Pixi) marshal that map to/from the save envelope.
+// Determinism is untouched: this is graph/save plumbing — an unsealed frame still has no sim element,
+// and once sealed/placed an IC flattens to its real parts at buildNetlist, so the golden cannot move.
+
+/**
+ * One in-progress die for the save envelope: the OUTER frame component id it belongs to (the key into
+ * App.svelte's `innerGraphs`) and the work-in-progress inner graph (the die frame + everything the
+ * player has wired inside it). Plain JSON — round-trips through the downloaded save / localStorage.
+ */
+export interface InnerDie {
+  /** the OUTER frame component id this die belongs to (preserved by serialize/restore, so it still
+   * matches the placed frame on reload — the `innerGraphs` key lines up again). */
+  frameId: number;
+  /** the work-in-progress inner graph (the die frame + the authored sub-circuit). */
+  graph: GraphSnapshot;
+}
+
+/**
+ * The in-progress dies to embed in a save: one {@link InnerDie} per entry of `innerGraphs` whose frame
+ * id is actually PLACED in `graph` (a frame still on the outer board). Filtering to placed frames keeps
+ * the save tight — it never carries a die for a frame the player deleted (its `innerGraphs` entry is
+ * stale once the frame is gone). Returns `[]` when no placed frame has a stashed die, so a plain board
+ * embeds no `innerDies` and its save shape is unchanged.
+ */
+export function innerDiesForSave(
+  innerGraphs: ReadonlyMap<number, GraphSnapshot>,
+  graph: GraphSnapshot,
+): InnerDie[] {
+  const placed = new Set<number>();
+  for (const c of graph.components) {
+    if (isFrame(c.kind)) placed.add(c.id);
+  }
+  const out: InnerDie[] = [];
+  for (const [frameId, inner] of innerGraphs) {
+    if (placed.has(frameId)) out.push({ frameId, graph: inner });
+  }
+  return out;
+}
+
+/**
+ * Rebuild the live `innerGraphs` map from a save's `innerDies` (in place): clear it, then install each
+ * saved WIP die under its outer-frame id. Called on every load BEFORE/while restoring the outer board,
+ * so re-drilling a placed frame finds its saved work-in-progress (the frame keeps its id across
+ * serialize/restore, so the key matches). A no-op clear when `innerDies` is absent/empty — an older
+ * save with no field simply leaves the map empty, exactly as today.
+ */
+export function restoreInnerDies(
+  innerDies: InnerDie[] | undefined,
+  innerGraphs: Map<number, GraphSnapshot>,
+): void {
+  innerGraphs.clear();
+  for (const d of innerDies ?? []) innerGraphs.set(d.frameId, d.graph);
+}
+
+/**
+ * The PLACEABLE frame tag a die-frame tag pairs with — the inverse of {@link dieFrameTag}, i.e. the die
+ * tag with its {@link DIE_FRAME_PREFIX} stripped (e.g. "__DIE_SOT23_5" -> "SOT23_5"). Used to recover a
+ * raw saved die snapshot into the builder: it tells us which placeable frame to synthesize on a fresh
+ * outer board so we can drill back into the loaded die. Returns undefined for a non-die tag.
+ */
+export function placeableFrameTag(dieTag: string): string | undefined {
+  if (!isDieFrame(dieTag)) return undefined;
+  return dieTag.slice(DIE_FRAME_PREFIX.length);
+}
+
+/**
+ * Whether a loaded snapshot is a DIE graph saved in ISOLATION (the owner's existing `__DIE_*` saves) —
+ * a graph whose only frame is the internal die-frame variant, rather than a normal outer board. The
+ * loader uses this to OPEN such a file straight into the die builder (synthesize an outer context +
+ * drill in) instead of dropping the die-frame onto a flat board as a placed part. True only when
+ * {@link findDieFrameId} resolves a frame AND that frame is a die-frame ({@link isDieFrame}); a normal
+ * board never contains a `__DIE_*` frame (those are interior-only, never placeable), so this is false
+ * for every ordinary save — including one that merely places sealed ICs or empty placeable frames.
+ */
+export function isStandaloneDieGraph(snapshot: GraphSnapshot): boolean {
+  const fid = findDieFrameId(snapshot);
+  if (fid === undefined) return false;
+  const frame = snapshot.components.find((c) => c.id === fid);
+  return !!frame && isDieFrame(frame.kind);
 }

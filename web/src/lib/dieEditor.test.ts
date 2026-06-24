@@ -23,6 +23,11 @@ import {
   dieIsSealable,
   unusedDiePins,
   dieTestGraph,
+  innerDiesForSave,
+  restoreInnerDies,
+  isStandaloneDieGraph,
+  placeableFrameTag,
+  type InnerDie,
 } from "./dieEditor";
 import { getUserIc, unregisterUserIc, captureSeal } from "./userIc";
 
@@ -513,5 +518,127 @@ describe("die editor — user-labelled pins -> sealed-chip labels", () => {
     } finally {
       unregisterUserIc("PLAINPKG");
     }
+  });
+});
+
+describe("die editor — persisting in-progress (unsealed) dies", () => {
+  it("round-trips an innerDies payload: a WIP die survives JSON + restore", () => {
+    // Build a fresh die for a frame and add a part inside it (the half-built work-in-progress).
+    const inner = new BoardGraph();
+    const die = freshDieGraph("SOT23_5")!;
+    inner.restore(die.snapshot);
+    const frame = inner.components.get(die.frameId)!;
+    const r = place(inner, "R", 30, 8, 4700);
+    connect(inner, frame, 0, r, 0); // pin1 -> R.A (some real WIP wiring)
+    const wip = inner.serialize();
+
+    // Stash it in an innerGraphs map keyed by an OUTER frame id (the key the save uses), then marshal
+    // -> JSON -> parse -> restore, exactly as a board Save + reload does.
+    const OUTER_ID = 7;
+    const innerGraphs = new Map<number, GraphSnapshot>([[OUTER_ID, wip]]);
+
+    // The outer board must actually PLACE that frame, or innerDiesForSave drops it as stale.
+    const outer = new BoardGraph();
+    const placeholder = outer.place("SOT23_5", { col: 4, row: 0 })!;
+    // Force the placeholder id to match the map key (place() assigns 1 on a fresh board).
+    const outerSnap = outer.serialize();
+    const outerWithKey: GraphSnapshot = {
+      ...outerSnap,
+      components: outerSnap.components.map((c) =>
+        c.id === placeholder.id ? { ...c, id: OUTER_ID } : c,
+      ),
+    };
+
+    const innerDies = innerDiesForSave(innerGraphs, outerWithKey);
+    expect(innerDies.length).toBe(1);
+    expect(innerDies[0]!.frameId).toBe(OUTER_ID);
+
+    // Serialize the whole save payload + read it back.
+    const roundTripped = JSON.parse(JSON.stringify({ innerDies })) as {
+      innerDies: InnerDie[];
+    };
+    const restored = new Map<number, GraphSnapshot>();
+    restoreInnerDies(roundTripped.innerDies, restored);
+
+    // The restored map yields the same inner graph: the WIP (frame + the 4.7k R + its wire) survived.
+    expect(restored.has(OUTER_ID)).toBe(true);
+    const back = restored.get(OUTER_ID)!;
+    expect(back.components.length).toBe(wip.components.length);
+    expect(back.wires.length).toBe(wip.wires.length);
+    const backFrameId = findDieFrameId(back);
+    expect(backFrameId).toBe(die.frameId); // ids preserved, so re-drilling keys line up
+    const backR = back.components.find((c) => c.kind === "R");
+    expect(backR?.value).toBe(4700);
+  });
+
+  it("innerDiesForSave keeps only dies whose frame is still PLACED on the board", () => {
+    const die = freshDieGraph("SOT23_3")!;
+    const innerGraphs = new Map<number, GraphSnapshot>([
+      [10, die.snapshot], // a frame still on the board
+      [11, die.snapshot], // a frame the player deleted (stale entry)
+    ]);
+    // Outer board places only frame id 10 (a real frame kind).
+    const outer = new BoardGraph();
+    const f = outer.place("SOT23_3", { col: 0, row: 0 })!;
+    const snap = outer.serialize();
+    const placed: GraphSnapshot = {
+      ...snap,
+      components: snap.components.map((c) =>
+        c.id === f.id ? { ...c, id: 10 } : c,
+      ),
+    };
+    const dies = innerDiesForSave(innerGraphs, placed);
+    expect(dies.map((d) => d.frameId)).toEqual([10]); // the stale id 11 is dropped
+  });
+
+  it("restoreInnerDies clears the map first (an absent/empty payload empties it)", () => {
+    const die = freshDieGraph("DIP8")!;
+    const m = new Map<number, GraphSnapshot>([[1, die.snapshot]]);
+    restoreInnerDies(undefined, m);
+    expect(m.size).toBe(0); // a save with no innerDies loads to an empty map
+    restoreInnerDies([{ frameId: 5, graph: die.snapshot }], m);
+    expect([...m.keys()]).toEqual([5]);
+  });
+
+  it("placeableFrameTag is the inverse of the die-frame prefix", () => {
+    expect(placeableFrameTag(dieFrameTag("SOT23_5"))).toBe("SOT23_5");
+    expect(placeableFrameTag(dieFrameTag("DIP14"))).toBe("DIP14");
+    // A non-die tag (a placeable frame or a normal part) has no die prefix to strip.
+    expect(placeableFrameTag("SOT23_5")).toBeUndefined();
+    expect(placeableFrameTag("R")).toBeUndefined();
+  });
+});
+
+describe("die editor — recognising a raw saved DIE graph", () => {
+  it("a bare die snapshot (just the die frame) is a standalone die graph", () => {
+    const die = freshDieGraph("SOT23_5")!;
+    expect(isStandaloneDieGraph(die.snapshot)).toBe(true);
+  });
+
+  it("a built-but-unsealed die snapshot is still a standalone die graph", () => {
+    const inner = new BoardGraph();
+    const die = freshDieGraph("DIP8")!;
+    inner.restore(die.snapshot);
+    const frame = inner.components.get(die.frameId)!;
+    const r = place(inner, "R", 30, 8, 1000);
+    connect(inner, frame, 0, r, 0);
+    expect(isStandaloneDieGraph(inner.serialize())).toBe(true);
+  });
+
+  it("a normal board (no die-frame) is NOT a standalone die graph", () => {
+    const g = new BoardGraph();
+    place(g, "V", 0, 0, 5);
+    place(g, "R", 4, 0, 1000);
+    place(g, "GND", 0, 6);
+    expect(isStandaloneDieGraph(g.serialize())).toBe(false);
+  });
+
+  it("a board that merely places an empty PLACEABLE frame is NOT a standalone die graph", () => {
+    // A placeable frame (SOT23_5) is a frame but NOT the internal __DIE_ variant, so a board carrying
+    // one must still load flat — only an isolated __DIE_* snapshot opens in the builder.
+    const g = new BoardGraph();
+    place(g, "SOT23_5", 2, 2);
+    place(g, "V", 0, 0, 5);
+    expect(isStandaloneDieGraph(g.serialize())).toBe(false);
   });
 });

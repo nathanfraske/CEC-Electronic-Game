@@ -6,6 +6,36 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (104) — Persist in-progress (unsealed) dies + re-open a raw saved die into the builder
+
+- ~~**Persist the in-progress (unsealed) WIP dies with the board**~~ — DONE. The WIP-die map
+  (`innerGraphs` in `App.svelte`, keyed by OUTER frame id) is no longer in-memory-only: it now
+  rides in the save's new `innerDies?: { frameId; graph }[]`. New pure, headless helpers in
+  `dieEditor.ts`: `innerDiesForSave(innerGraphs, graph)` (the entries whose frame is still PLACED on
+  the board — stale entries for deleted frames are dropped) + `restoreInnerDies(innerDies, map)`
+  (clear + rebuild). Embedded at **all** save/load sites: the download envelope (`saveCircuit`,
+  **version 2 → 3**) + `onLoadFile` in `App.svelte`; the localStorage blob (`saveBoard`/`loadBoard`
+  in `storage.ts`, `loadBoard(innerGraphs?)` restores into the live map); and `fromSaved` in
+  `examples.ts` (optional map param). The capture point already existed (`dieBack`/`dieSave` write
+  `innerGraphs.set(frameId, board.serialize())` before `exitDie`, whose `swapGraph` then re-persists
+  the outer board — now with the dies). **Backward-compat:** `innerDies` omitted when empty; any
+  v1/v2 save loads exactly as before (an absent field clears the map to empty).
+- ~~**Re-open a RAW saved `__DIE_*` graph straight into the die builder**~~ — DONE. New pure
+  helpers `isStandaloneDieGraph(snap)` (only frame is the internal `__DIE_*` die-frame, vs a normal
+  board) + `placeableFrameTag(dieTag)` (strip the `__DIE_` prefix). `onLoadFile` detects a die saved
+  in isolation and calls the new `openDieGraphInBuilder(snap)` (App.svelte): synthesize a fresh outer
+  board, place the matching PLACEABLE frame, stash the loaded die under its id, then drill in (mirrors
+  `buildSelectedFrame`). So loading the owner's existing die files drops you into the editor with the
+  circuit, ready to Seal — instead of a flat board with the die-frame as a placed part.
+- ~~**Tests**~~ — DONE (`dieEditor.test.ts`, +8): innerDies round-trip (JSON stringify/parse → the
+  WIP survives, ids/values intact), placed-vs-stale filtering, `restoreInnerDies` clears first,
+  `placeableFrameTag` inverse, and `isStandaloneDieGraph` true/false cases (bare die, built die,
+  normal board, board with an empty placeable frame).
+  - **Owner visual review:** save an unsealed WIP (build inside a frame, exit, Save/refresh) →
+    reload → re-drill the frame restores it; load a raw `__DIE_*` file → opens in the IC builder.
+- Determinism: graph/save plumbing only — an unsealed frame has no sim element, and a sealed/placed
+  IC still flattens to its real parts at `buildNetlist`. No `crates/` change; golden unchanged.
+
 ## 2026-06-24 (103) — Four rendering/UX QoL (rotate/flip in place, ghost pinout/lens, pipe declutter)
 
 - ~~**Rotate & flip a part IN PLACE (about its footprint centre, not the anchor)**~~ — DONE. New
