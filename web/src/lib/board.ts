@@ -89,6 +89,7 @@ import {
   drawJunctionConduit,
   cellToWorld,
   pinOutward,
+  pinExit,
   wireRoute,
   dieFramePinExit,
   frameLeadRoute,
@@ -4645,8 +4646,8 @@ export class Board {
           w.id,
           conduitDrawRoute(
             route,
-            this.pinOutward(w.from),
-            this.pinOutward(w.to),
+            pinExit(w.from, this.graph, this.dieFrameId),
+            pinExit(w.to, this.graph, this.dieFrameId),
           ),
         );
         if (isJunctionRef(w.from))

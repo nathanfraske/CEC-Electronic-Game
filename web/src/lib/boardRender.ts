@@ -43,8 +43,9 @@ export const MAX_FLOW_PX_PER_FRAME = 14;
 export const MAX_BELT_DOTS = 64;
 
 const NUDGE_SPACING = 13; // px between conduits sharing a channel (clears the pipe body + dark moat)
-const BUMP_W = 11; // hop half-width (wider arc to fit the opaque pipe + moat)
-const BUMP_H = 17; // hop height (taller so the over-pipe clears the under-pipe's full width + moat)
+const BUMP_W = 15; // hop half-width (wider so the dome ramps gently, not an acute peak)
+const BUMP_H = 16; // hop crest height (clears the under-pipe's full width + moat)
+const BUMP_FLAT = 0.42; // crest plateau as a fraction of BUMP_W (a flat top rounds into a smooth dome)
 
 // --- net colour (rail identity) ----------------------------------------------
 
@@ -367,8 +368,12 @@ export function applyCrossings(
         const hy = a.y;
         const inter: Point[] = [];
         for (const bx of xs) {
+          // A flat-topped trapezoid, not a sharp triangle peak: the two crest corners round into a smooth
+          // gentle DOME (owner traced a smoother hump), while the BUMP_H crest plateau still clears the
+          // under-trace's full width. The wider BUMP_W ramps in/out gradually instead of an acute apex.
           inter.push(new Point(bx - BUMP_W, hy));
-          inter.push(new Point(bx, hy - BUMP_H));
+          inter.push(new Point(bx - BUMP_W * BUMP_FLAT, hy - BUMP_H));
+          inter.push(new Point(bx + BUMP_W * BUMP_FLAT, hy - BUMP_H));
           inter.push(new Point(bx + BUMP_W, hy));
         }
         inter.sort((p, q) => dir * (p.x - q.x));
@@ -722,6 +727,20 @@ export function pinOutward(ep: Endpoint, graph: BoardGraph): Dir | null {
   return ax > ay
     ? { x: Math.sign(rr.col), y: 0 }
     : { x: 0, y: Math.sign(rr.row) };
+}
+
+/** The conduit's exit direction at a pin end for {@link conduitDrawRoute}. A die-frame PAD already leaves
+ *  PERPENDICULAR to its edge via the down-bend ({@link frameLeadRoute}); its {@link pinOutward} (computed
+ *  from the die-frame's own geometry) can point along a DIFFERENT axis, so splicing an align-stub there
+ *  bends the trace diagonally (owner: frame-pin traces "curve instead" of running orthogonal inward). A
+ *  frame pad therefore gets `null` — no stub, the clean down-bend exit stands; every other pin keeps its
+ *  facing. Use this, not raw `pinOutward`, when feeding `conduitDrawRoute`. */
+export function pinExit(
+  ep: Endpoint,
+  graph: BoardGraph,
+  dieFrameId: number | null,
+): Dir | null {
+  return dieFramePinExit(ep, graph, dieFrameId) ? null : pinOutward(ep, graph);
 }
 
 export function wireRoute(pa: Point, pb: Point): Point[] {
