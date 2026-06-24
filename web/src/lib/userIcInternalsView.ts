@@ -35,6 +35,7 @@ import {
   drawJunctionConduit,
   nudgeParallel,
   applyCrossings,
+  wireDrawOrder,
   pinOutward,
   roundedPoints,
   routeForWire,
@@ -264,24 +265,23 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     pts[rec.from ? 0 : pts.length - 1] = new Point(jp.x, jp.y);
   }
   // Same-net crossings → a tie dot; different-net crossings → a bridge hop baked into the route.
-  const crossDots = applyCrossings(
+  const cross = applyCrossings(
     condRoutes,
     nets,
     (id) => colorOf.get(id) ?? PALETTE.cyan,
   );
-  for (const w of innerGraph.wires.values()) {
-    const rd = condRoutes.get(w.id);
+  // Draw a hopping wire AFTER the wire it hops, so every bridge reads as going OVER (same as the board).
+  const wireOrder = wireDrawOrder(
+    [...innerGraph.wires.keys()],
+    cross.overpasses,
+  );
+  for (const id of wireOrder) {
+    const rd = condRoutes.get(id);
     if (!rd) continue;
     const rounded = roundedPoints(rd, PW * 2);
-    drawConduitSkin(
-      innerG,
-      rounded,
-      colorOf.get(w.id) ?? PALETTE.cyan,
-      PW,
-      lens,
-    );
+    drawConduitSkin(innerG, rounded, colorOf.get(id) ?? PALETTE.cyan, PW, lens);
   }
-  for (const d of crossDots) {
+  for (const d of cross.dots) {
     innerG.circle(d.x, d.y, 4.5).fill({ color: 0x0d0b16, alpha: 0.9 });
     innerG.circle(d.x, d.y, 3).fill({ color: d.color });
   }
