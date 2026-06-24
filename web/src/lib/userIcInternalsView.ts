@@ -36,7 +36,7 @@ import {
   nudgeParallel,
   applyCrossings,
   wireDrawOrder,
-  pinOutward,
+  pinExit,
   roundedPoints,
   routeForWire,
   voltageColor,
@@ -198,8 +198,8 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       w.id,
       conduitDrawRoute(
         route,
-        pinOutward(w.from, innerGraph),
-        pinOutward(w.to, innerGraph),
+        pinExit(w.from, innerGraph, frameId),
+        pinExit(w.to, innerGraph, frameId),
       ),
     );
     if (isJunctionRef(w.from))

@@ -724,6 +724,20 @@ export function pinOutward(ep: Endpoint, graph: BoardGraph): Dir | null {
     : { x: 0, y: Math.sign(rr.row) };
 }
 
+/** The conduit's exit direction at a pin end for {@link conduitDrawRoute}. A die-frame PAD already leaves
+ *  PERPENDICULAR to its edge via the down-bend ({@link frameLeadRoute}); its {@link pinOutward} (computed
+ *  from the die-frame's own geometry) can point along a DIFFERENT axis, so splicing an align-stub there
+ *  bends the trace diagonally (owner: frame-pin traces "curve instead" of running orthogonal inward). A
+ *  frame pad therefore gets `null` — no stub, the clean down-bend exit stands; every other pin keeps its
+ *  facing. Use this, not raw `pinOutward`, when feeding `conduitDrawRoute`. */
+export function pinExit(
+  ep: Endpoint,
+  graph: BoardGraph,
+  dieFrameId: number | null,
+): Dir | null {
+  return dieFramePinExit(ep, graph, dieFrameId) ? null : pinOutward(ep, graph);
+}
+
 export function wireRoute(pa: Point, pb: Point): Point[] {
   const dx = pb.x - pa.x;
   const dy = pb.y - pa.y;
