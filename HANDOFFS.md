@@ -5,6 +5,56 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (105) — IC reseal-gate fix + placed-IC pinout labels + unpowered zoom-to-open
+
+**State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core -p
+sim-protocol --all-targets -D warnings` clean, `cargo test -p sim-core -p sim-protocol` **188 passed**
+(golden `0xeaac_3764_99e4_fa24` UNCHANGED), `sim-protocol` ok. Web: `build:wasm` ok, `format` + `lint`
+clean, `check` **0 errors / 0 warnings**, `build` ok, `test` **61 passed** (+1 new `userIcGeometry`).
+Branch `claude/kind-turing-hdelb3`. **All presentation/web-side — no `crates/` change; the golden
+cannot move.** Three owner-reported/-requested items:
+
+**1. BUG — "This die can't be sealed yet: doesn't solve" on Reseal (owner, file af0060c9).** A logic
+die (CEC9001 AND gate) is powered from OUTSIDE its package, so it only solves with its frame's TEST
+STIMULI injected. The **status pill** (`dieStatus`) already gated on the stimuli-aware
+`dieIsSealable(dieTestGraph(snap, innerFrameId))` → showed "● solvable", but the **Seal/Reseal button**
+(`dieSeal`, App.svelte) still hard-gated on the RAW `buildNetlist(live) === null` (from the original
+IC-maker commit 2c00588, written before stimuli existed) → blocked. **Fix:** `dieSeal` now gates on
+`!dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))` — the SAME stimuli-injected graph as
+the pill, so they agree. The seal CAPTURE still reads the RAW live graph (never the injected copy), so
+the sealed IC stays the player's real discrete parts (ADR 0005, golden untouched). The library
+invariant is already covered by `dieEditor.test.ts` (raw die unsealable, `dieTestGraph` die sealable).
+
+**2. Pinout labels on a PLACED sealed user IC (Task B).** The chip now shows its pin names
+(A/B/GND/Y/VCC — the player's pad names, already baked into `PART_KINDS[tag].pins[i].label` by
+`registerUserIc`) at normal detail zoom, like a real datasheet pinout — not only when the zoom-to-open
+miniature is open. One-line gate change in `board.ts`: `showPins` now includes `isUserIc(this.kindTag)`
+(`... || isUserIc(this.kindTag)) && zoom >= DETAIL_ZOOM`).
+
+**3. Zoom-to-open shows the authored circuit even UNPOWERED (Task C).** The mini-board used to need a
+live solve (`nodeV !== undefined` + a live `userIcInternals` map, which is built INSIDE `buildNetlist`
+and is null when the board doesn't solve) — so a chip placed without external power zoomed to a black
+box. Now it opens to the authored circuit STATICALLY when there's no solve:
+- **`netlist.ts`** new `userIcGeometry(def): UserIcInternals` — a NODE-FREE build from the IC's authored
+  graph (same parts/wire-cells/bbox geometry as the in-netlist builder, every node field zeroed). Test
+  asserts it matches the live builder's geometry exactly, with zeroed nodes.
+- **`userIcInternalsView.ts`** `nodeV?` is now optional; `vAt` returns 0 when absent → the view draws at
+  level 0 (rail-coloured wires, no flow carriers, parts at rest).
+- **`board.ts`** the node prefers the live internals, else lazily builds + caches `userIcGeometry` from
+  `getUserIc(kindTag)` (rebuilt only when the def object changes — a reseal mints a new one). The
+  `showUserIc` gate dropped the `nodeV !== undefined` requirement (now `wantUserIc && !!effUserIc`); the
+  draw call passes `nodeV` (may be undefined). Composite (built-in) internals are unchanged — still
+  live-only (out of scope; the request was the user's OWN authored ICs).
+
+**Files:** `web/src/App.svelte` (dieSeal gate), `web/src/lib/board.ts` (showPins + static fallback +
+cache fields + imports), `web/src/lib/netlist.ts` (`userIcGeometry`), `web/src/lib/userIcInternalsView.ts`
+(`nodeV?`), `web/src/lib/netlist.test.ts` (+1 test). **Owner visual review:** (a) re-edit a placed
+CEC9xxx, mark GND/VCC/input pads, hit Reseal ✓ — it seals (no false "doesn't solve"); (b) zoom a placed
+chip — pin labels at detail zoom; (c) place a chip with NO external power, zoom in under reality/analogy
+— it opens to the authored circuit (static, no flow) instead of the black box.
+
+---
+
 ## 2026-06-24 (104) — Persist in-progress (unsealed) dies + re-open a raw saved die into the builder
 
 **State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core -p

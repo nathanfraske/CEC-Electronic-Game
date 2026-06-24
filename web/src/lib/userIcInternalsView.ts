@@ -40,8 +40,11 @@ function mix(a: number, b: number, t: number): number {
 
 export interface UserIcInternalsOpts {
   internals: UserIcInternals;
-  /** node voltages, indexed by node number (the sim snapshot's `state`). */
-  nodeV: Float64Array;
+  /** node voltages, indexed by node number (the sim snapshot's `state`). ABSENT when the board does
+   * not solve — the view then draws the authored circuit STATICALLY (every level 0: rail-coloured
+   * wires, no flow carriers, parts at rest), so a placed chip still opens to "the circuit as you
+   * built it" unpowered. */
+  nodeV?: Float64Array;
   /** footprint pin positions (glyph-local px), by external pin index. */
   pins: { x: number; y: number }[];
   wPx: number;
@@ -105,7 +108,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
   // every touched net (so a 5 V logic IC and a ±12 V analog IC each scale to their own range).
   // Floored so a quiet chip doesn't blow tiny noise up to full scale.
-  const vAt = (n: number): number => nodeV[n] ?? 0;
+  const vAt = (n: number): number => (nodeV ? (nodeV[n] ?? 0) : 0);
   const vlow = vAt(gndNode);
   let rail = 1;
   for (const p of parts)

@@ -26,7 +26,12 @@ import {
   PARAM_STRIDE,
 } from "./tiers";
 import { diodeVariant, RATED_CURRENT_SLOT, DIODE_TT_SLOT } from "./diodes";
-import { flattenUserIcs, getUserIc, type FlattenRecord } from "./userIc";
+import {
+  flattenUserIcs,
+  getUserIc,
+  type FlattenRecord,
+  type UserIc,
+} from "./userIc";
 
 /** Deterministic per-component pseudo-random in [-1, 1] (a 32-bit integer hash of the id),
  * stable across rebuilds — so a resistor's tolerance deviation is fixed for that part, not
@@ -614,6 +619,74 @@ export interface UserIcInternals {
   bbox: { minCol: number; minRow: number; maxCol: number; maxRow: number };
   /** a reference low node for the voltage "level" normalisation (0 if unknown). */
   gndNode: number;
+}
+
+/**
+ * A NODE-FREE {@link UserIcInternals} built purely from a sealed user IC's authored graph — the same
+ * parts / wire-cells / bbox geometry the in-netlist builder produces, but with every node field
+ * zeroed (no solve needed). The zoom-to-open miniature uses this as the fallback so a placed chip
+ * still reveals "the circuit as you built it" even when the outer board doesn't solve (unpowered):
+ * the view ({@link drawUserIcInternals}) draws it STATICALLY — level 0, no live colour/flow — when no
+ * `nodeV` snapshot is passed. Render-only, never hashed (exactly like the live builder above).
+ */
+export function userIcGeometry(def: UserIc): UserIcInternals {
+  const innerGraph = new BoardGraph();
+  innerGraph.restore(def.graph);
+  // Parts: every inner component except the frame, at its authored cell/rot/value. Nodes are zeroed
+  // (a static render reads no live level), one per pin so the shape matches the live struct.
+  const parts: UserIcInnerPart[] = [];
+  for (const comp of def.graph.components) {
+    if (comp.id === def.frameId) continue;
+    const kind = PART_KINDS[comp.kind];
+    if (!kind) continue;
+    parts.push({
+      kind: comp.kind,
+      cell: { col: comp.cell.col, row: comp.cell.row },
+      rot: comp.rot,
+      value: comp.value,
+      nodes: kind.pins.map(() => 0),
+    });
+  }
+  const cellOf = (e: Endpoint): { col: number; row: number } => {
+    const c = innerGraph.endpointCell(e);
+    return c ? { col: c.col, row: c.row } : { col: 0, row: 0 };
+  };
+  const wires: UserIcInnerWire[] = def.graph.wires.map((w) => ({
+    from: cellOf(w.from),
+    to: cellOf(w.to),
+    node: 0,
+  }));
+  // Authored extent over every inner component's pin cells + junction cells (frame included), so the
+  // fit-to-footprint scale spans the whole drawn circuit — identical to the live builder.
+  let minCol = Infinity;
+  let minRow = Infinity;
+  let maxCol = -Infinity;
+  let maxRow = -Infinity;
+  const grow = (c: { col: number; row: number }): void => {
+    if (c.col < minCol) minCol = c.col;
+    if (c.row < minRow) minRow = c.row;
+    if (c.col > maxCol) maxCol = c.col;
+    if (c.row > maxRow) maxRow = c.row;
+  };
+  for (const comp of innerGraph.components.values()) {
+    const kind = innerGraph.kindOf(comp);
+    if (!kind) continue;
+    for (const p of kind.pins) grow(innerGraph.pinCell(comp, p));
+  }
+  for (const j of innerGraph.junctions.values()) grow(j.cell);
+  if (!isFinite(minCol)) {
+    minCol = 0;
+    minRow = 0;
+    maxCol = 1;
+    maxRow = 1;
+  }
+  return {
+    parts,
+    wires,
+    pinNodes: [],
+    bbox: { minCol, minRow, maxCol, maxRow },
+    gndNode: 0,
+  };
 }
 
 export interface BuiltNetlist {

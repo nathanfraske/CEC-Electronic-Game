@@ -39,7 +39,7 @@ import {
   type GraphSnapshot,
   type PinTest,
 } from "./graph";
-import { captureSeal, isUserIc } from "./userIc";
+import { captureSeal, isUserIc, getUserIc, type UserIc } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
@@ -58,7 +58,11 @@ import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
 import { drawCompositeInternals } from "./internalsView";
 import { drawUserIcInternals } from "./userIcInternalsView";
-import type { CompositeInternals, UserIcInternals } from "./netlist";
+import {
+  type CompositeInternals,
+  type UserIcInternals,
+  userIcGeometry,
+} from "./netlist";
 
 /** Interaction modes surfaced as a toolbar in the HUD. */
 export type Mode =
@@ -6332,6 +6336,11 @@ class ComponentNode {
   private readonly color: number;
   private readonly kindTag: string;
   private readonly unit: string;
+  /** Cached node-free authored geometry for the zoom-to-open miniature when the board doesn't solve
+   * (no live internals map). Rebuilt only when the registry def changes — a reseal mints a new UserIc
+   * object, so a reference compare catches it. */
+  private staticUserIc?: UserIcInternals;
+  private staticUserIcDef?: UserIc;
 
   constructor(
     private readonly component: Component,
@@ -6568,12 +6577,27 @@ class ComponentNode {
     // real part glyphs at their authored positions + the authored wires, animated from the same
     // snapshot — instead of the black-box symbol. (A user IC is never a CEC_COMP, so `showInternals`
     // above is false for it; the two zoom-to-open paths are mutually exclusive.)
-    const showUserIc =
-      !!userIc &&
+    const wantUserIc =
       isUserIc(this.kindTag) &&
-      nodeV !== undefined &&
       (lens === "reality" || lens === "analogy") &&
       zoom >= INTERNALS_ZOOM;
+    // Prefer the LIVE node-resolved internals (animated from the snapshot). When the board doesn't
+    // solve there is no live map, so fall back to the authored circuit's STATIC geometry (node-free),
+    // cached and rebuilt only when the registry def changes (a reseal mints a new object — caught by a
+    // reference compare). So a placed chip still opens to "the circuit as you built it" unpowered (the
+    // view draws it at level 0 when `nodeV` is absent).
+    let effUserIc = userIc;
+    if (wantUserIc && !effUserIc) {
+      const def = getUserIc(this.kindTag);
+      if (def) {
+        if (def !== this.staticUserIcDef) {
+          this.staticUserIc = userIcGeometry(def);
+          this.staticUserIcDef = def;
+        }
+        effUserIc = this.staticUserIc;
+      }
+    }
+    const showUserIc = wantUserIc && !!effUserIc;
     if (showInternals && internals && nodeV !== undefined) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
@@ -6586,11 +6610,11 @@ class ComponentNode {
         phase,
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
       });
-    } else if (showUserIc && userIc && nodeV !== undefined) {
+    } else if (showUserIc && effUserIc) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
       drawUserIcInternals(g, {
-        internals: userIc,
+        internals: effUserIc,
         nodeV,
         pins: this.pinPositions,
         wPx: this.wPx,
@@ -6712,9 +6736,15 @@ class ComponentNode {
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
     // EXCEPT a die frame, whose perimeter pins are the port pads being named, so their
     // labels (the package number or the player's name) show at the working die zoom.
+    // A sealed USER IC always labels its pins at detail zoom (its pinout IS the player's pad names —
+    // "the chip, labelled how you built it"), without needing the zoom-to-open miniature to be open.
     const showPins = isDieFrame(this.kindTag)
       ? zoom >= TIER_ZOOM
-      : (tier !== null || showInternals || showUserIc) && zoom >= DETAIL_ZOOM;
+      : (tier !== null ||
+          showInternals ||
+          showUserIc ||
+          isUserIc(this.kindTag)) &&
+        zoom >= DETAIL_ZOOM;
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];

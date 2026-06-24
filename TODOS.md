@@ -6,6 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (105) — IC reseal-gate fix + placed-IC pinout labels + unpowered zoom-to-open
+
+- ~~**BUG: "die can't be sealed yet — doesn't solve" on Reseal (owner, af0060c9)**~~ — FIXED. The
+  Seal/Reseal button's hard gate (`dieSeal` in `App.svelte`) still checked the RAW `buildNetlist(live)`
+  (from the original IC-maker commit, pre-stimuli), so a logic die powered from OUTSIDE its package
+  (CEC9001 AND gate — needs the frame's GND/VCC/input TEST STIMULI to solve) was blocked even though
+  the `dieStatus` "● solvable" pill — which gates on the stimuli-aware `dieIsSealable(dieTestGraph(...))`
+  — said it was fine. Now `dieSeal` gates on the SAME `dieIsSealable(dieTestGraph(live.serialize(),
+  innerFrameId))`, so the pill and the button agree. Seal CAPTURE still reads the RAW graph (sealed IC
+  = real discrete parts, ADR 0005, golden untouched). Invariant already covered by `dieEditor.test.ts`.
+- ~~**Pinout labels on a placed sealed user IC (Task B)**~~ — DONE. `board.ts` `showPins` now includes
+  `isUserIc(this.kindTag)`, so a placed CEC9xxx shows its pin names (the player's pad names A/B/GND/Y/
+  VCC, already on `PART_KINDS[tag].pins[i].label`) at detail zoom — like a real datasheet pinout — not
+  only when the zoom-to-open miniature is open.
+- ~~**Zoom-to-open shows the authored circuit even UNPOWERED (Task C)**~~ — DONE. The mini-board used
+  to require a live solve (the `userIcInternals` map is built inside `buildNetlist`; null when the board
+  doesn't solve). New node-free `userIcGeometry(def)` in `netlist.ts` (same parts/wire-cells/bbox as the
+  live builder, nodes zeroed); `userIcInternalsView.ts` `nodeV?` optional (draws at level 0 when absent
+  — rail wires, no carriers); `board.ts` falls back to a cached `userIcGeometry(getUserIc(kindTag))`
+  when there's no live map (rebuilt only on a reseal), and the `showUserIc` gate dropped its
+  `nodeV !== undefined` requirement. So a chip placed without external power opens to its real circuit
+  (static) instead of a black box. Built-in composite internals stay live-only (out of scope). +1 test.
+- Determinism: presentation/web-side only — no `crates/` change; golden `0xeaac_3764_99e4_fa24`
+  unchanged (188 Rust tests green).
+
 ## 2026-06-24 (104) — Persist in-progress (unsealed) dies + re-open a raw saved die into the builder
 
 - ~~**Persist the in-progress (unsealed) WIP dies with the board**~~ — DONE. The WIP-die map
