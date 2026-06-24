@@ -623,6 +623,17 @@ export interface UserIcInternals {
    * WHERE the authored wires actually land. Lets the zoom-to-open replica anchor each package pin (its
    * dot + lead + label) exactly on the lead bridging into it, a 1:1 of the die the player built. */
   pinCells: { col: number; row: number }[];
+  /** the reconstructed inner sub-graph (frame included), so the zoom-to-open replica can route the REAL
+   * inner `Wire`s — with waypoints + the die down-bend — through the shared `routeForWire`, instead of
+   * the lossy `wires` projection above (which drops waypoints). Render-only, never hashed. */
+  innerGraph: BoardGraph;
+  /** resolve an inner-graph endpoint to its OUTER node index (into the snapshot `state`). For the live
+   * struct this is the flatten-aware `nodeOfEndpoint`; for the static fallback every node is 0. The
+   * exact resolver the builder already uses for `parts[].nodes` / `wires[].node` — exposed, not new. */
+  nodeOfInner: (e: Endpoint) => number;
+  /** the inner graph's die-frame component id (`UserIc.frameId`), so the replica can tell a frame pad
+   * from an inner pin when routing (the down-bend) — what `routeForWire` needs as its `dieFrameId`. */
+  frameId: number;
 }
 
 /** The frame's authored pin cells (die-editor perimeter positions), by external pin index. The seal
@@ -709,6 +720,11 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
     bbox: { minCol, minRow, maxCol, maxRow },
     gndNode: 0,
     pinCells: framePinCells(innerGraph, def.frameId),
+    // Static (unpowered) fallback: carry the already-built inner graph + the frame id, but every node
+    // resolves to 0 — the view draws it at level 0, no live colour/flow (matching the zeroed fields above).
+    innerGraph,
+    nodeOfInner: () => 0,
+    frameId: def.frameId,
   };
 }
 
@@ -1654,6 +1670,11 @@ export function buildNetlist(
       bbox: { minCol, minRow, maxCol, maxRow },
       gndNode,
       pinCells: framePinCells(innerGraph, def.frameId),
+      // Render-only: carry the reconstructed inner graph + the SAME endpoint→outer-node resolver the
+      // part/wire nodes above already use, plus the frame id — so the replica can route the real wires.
+      innerGraph,
+      nodeOfInner: nodeOfEndpoint,
+      frameId: def.frameId,
     });
   }
 
