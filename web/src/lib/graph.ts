@@ -174,6 +174,31 @@ export interface Component {
    * and unnamed parts round-trip unchanged; deep-copied by `serialize`/`restore` so undo is safe.
    */
   pinNames?: string[];
+  /**
+   * Per-pin TEST STIMULI, by pin index — the IC-maker DIE EDITOR's "power the die in isolation"
+   * affordance (ADR 0006 / docs/ui/ic-maker-guide.md §3). Only meaningful on a die FRAME (its pins
+   * are the package leads): the player marks a perimeter pin with a {@link PinTestRole} so the die,
+   * which is normally powered from OUTSIDE (a logic IC's VCC/GND), can solve, animate, and pass the
+   * Seal gate while being authored in isolation. {@link dieTestGraph} injects these as virtual
+   * sources ONLY for (a) the live die solve in the editor and (b) the {@link dieIsSealable} gate.
+   *
+   * **AUTHORING-ONLY scaffolding — NEVER captured into the sealed IC.** `captureSeal` reads the RAW
+   * live die graph, so the sealed netlist is exactly the player's real discrete parts and the
+   * sim-core golden is untouched (the hard determinism rule, ADR 0005). A sparse array: index i is
+   * pin i's stimulus (or null). Optional, so older snapshots round-trip unchanged; deep-copied by
+   * `serialize`/`restore` so undo is safe.
+   */
+  pinTests?: (PinTest | null)[];
+}
+
+/**
+ * A die-pin test stimulus (authoring-only): `gnd` = 0 V reference, `vcc` = a settable supply,
+ * `in` = a settable input drive. `value` is the voltage for `vcc`/`in` (ignored for `gnd`).
+ */
+export type PinTestRole = "gnd" | "vcc" | "in";
+export interface PinTest {
+  role: PinTestRole;
+  value: number;
 }
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
@@ -2016,6 +2041,11 @@ export class BoardGraph {
         // Deep-copy the per-pin names so an undo snapshot can't share (and later mutate) the
         // live component's array. Absent for the common no-names case.
         ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+        // Deep-copy the per-pin test stimuli (die-editor authoring-only) so undo can't share the
+        // live array; each slot is a {role,value} or null. Absent for the common no-tests case.
+        ...(c.pinTests
+          ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }
+          : {}),
       })),
       wires: [...this.wires.values()].map((w) => ({
         id: w.id,
@@ -2056,6 +2086,9 @@ export class BoardGraph {
         ...c,
         cell: { ...c.cell },
         ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+        ...(c.pinTests
+          ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }
+          : {}),
       });
     }
     for (const j of s.junctions ?? []) {

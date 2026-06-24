@@ -6,6 +6,37 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (98) — Settable per-pin TEST STIMULI in the IC-maker die editor
+
+- ~~**Die-pin test stimuli (power a die in isolation so it solves + seals)**~~ — DONE. A logic IC is
+  powered through its VCC/GND pins from OUTSIDE its package, so a die solved in isolation in the editor
+  had no ground reference (`buildNetlist` → null → "not solvable", couldn't test or seal). Now each
+  frame pad can carry a **TEST stimulus** — **GND** (0 V ref), **VCC** (settable supply), or **Input**
+  (settable drive) — injected as virtual sources ONLY for the live die solve + the Seal gate.
+  - `graph.ts`: new `PinTestRole` / `PinTest` types; `Component.pinTests?: (PinTest | null)[]` (sparse,
+    by pin index), deep-copied in `serialize`/`restore` beside `pinNames`.
+  - `dieEditor.ts`: new `dieTestGraph(snapshot, frameId)` returns a COPY with the frame's stimuli
+    injected (one shared virtual `GND`; a `V` per VCC/IN pad, `+`→lead, `−`→that ground; a wire for
+    each GND pad) at far-off cells — or the SAME snapshot reference (strict no-op) when there are no
+    stimuli. Authoring-only; never fed to `captureSeal`.
+  - `board.ts`: `setComponentPinTest(id, pinIndex, test)` (mirrors `setComponentPinName` but fires
+    `onChange` so the netlist rebuilds); the `onPinNameEdit` payload gained `test: PinTest | null`.
+  - `App.svelte`: `rebuildNetlist` + `dieStatus` solve/gate the INJECTED graph when drilled in
+    (`dieSolveGraph` / `dieTestGraph`); a `boardRev` counter refreshes the seal advisory on a stimulus
+    change; the pad popover gained a **None/GND/VCC/IN** role row + a volts input (live-applied), with a
+    **guarded blur** so clicking a role/value doesn't close the panel under the player. New CSS in
+    `app.css` (`.pin-test-*`).
+  - **Determinism preserved (HARD RULE):** the seal capture path is untouched (raw die graph), so the
+    sealed netlist + sim-core golden `0xeaac_3764_99e4_fa24` are unchanged. New `dieEditor.test.ts`
+    cases: a power-fed die is NOT sealable raw but IS once a pad is GND/VCC; `dieTestGraph` is a strict
+    no-op (same reference) with no stimuli.
+- **OWNER VISUAL REVIEW:** drill into a powered-logic frame (e.g. a CMOS gate die), double-click a wall
+  pad, set VCC + GND (+ an Input), confirm the die powers up / animates live and "● solvable" lights so
+  it Seals — then confirm the **sealed chip** placed on the board is still your raw discrete parts (the
+  stimuli are gone). Check the popover focus feel (role/value clicks don't close it; Esc cancels).
+
+---
+
 ## 2026-06-23 (95) — Sealed USER-IC zoom-to-open: live scaled miniature of the exact authored circuit
 
 - ~~**Sealed user IC "scale it properly" zoom**~~ — DONE. A placed sealed USER IC now OPENS, when zoomed in

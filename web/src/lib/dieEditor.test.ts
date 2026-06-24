@@ -22,6 +22,7 @@ import {
   dieBounds,
   dieIsSealable,
   unusedDiePins,
+  dieTestGraph,
 } from "./dieEditor";
 import { getUserIc, unregisterUserIc, captureSeal } from "./userIc";
 
@@ -155,6 +156,90 @@ describe("die editor — seal gate (sealable = solvable)", () => {
     connect(g, frame, 1, r, 0); // pin2 -> R.A
     connect(g, r, 1, gnd, 0); // R.B -> GND
     expect(dieIsSealable(g.serialize())).toBe(true);
+  });
+});
+
+describe("die editor — test stimuli (dieTestGraph) power an isolated die", () => {
+  it("a power-fed die (no internal reference) is NOT sealable raw, but IS once a pin is marked GND", () => {
+    // Model a logic-IC-like die: the internals (two resistors hung off three leads) have NO ground
+    // reference of their own — the real chip takes GND/VCC from OUTSIDE its package — so solved in
+    // isolation buildNetlist returns null. Marking pin1 as the GND reference + pin2 as VCC injects
+    // the missing supply so it powers up and the Seal gate passes.
+    const g = new BoardGraph();
+    const die = freshDieGraph("SOT23_3")!;
+    g.restore(die.snapshot);
+    const frame = g.components.get(die.frameId)!;
+    // pin2 (VCC) -> R1 -> pin3 -> R2 -> pin1 (GND): a divider with no on-die reference.
+    const r1 = place(g, "R", 30, 8, 1000);
+    const r2 = place(g, "R", 30, 12, 1000);
+    connect(g, frame, 1, r1, 0); // pin2 -> R1.A
+    connect(g, frame, 2, r1, 1); // pin3 -> R1.B
+    connect(g, frame, 2, r2, 0); // pin3 -> R2.A
+    connect(g, frame, 0, r2, 1); // pin1 -> R2.B
+    const rawSnap = g.serialize();
+
+    // Raw, in isolation: no reference -> not solvable -> not sealable.
+    expect(dieIsSealable(rawSnap)).toBe(false);
+
+    // Mark pin1 (index 0) as GND and pin2 (index 1) as a 5 V supply.
+    frame.pinTests = [
+      { role: "gnd", value: 0 },
+      { role: "vcc", value: 5 },
+      null,
+    ];
+    const stimSnap = g.serialize();
+
+    // Injected, the die now has a reference (+ a supply) -> solvable -> sealable.
+    expect(dieIsSealable(dieTestGraph(stimSnap, die.frameId))).toBe(true);
+    // The injected graph added the virtual sources (the shared GND + the VCC source); the RAW graph
+    // is untouched (still has only its authored parts), so the seal capture path stays pristine.
+    const injected = dieTestGraph(stimSnap, die.frameId);
+    expect(injected.components.length).toBeGreaterThan(
+      stimSnap.components.length,
+    );
+    expect(stimSnap.components.length).toBe(rawSnap.components.length);
+  });
+
+  it("an `in` stimulus alone (a settable input drive + its return) makes a referenceless die solvable", () => {
+    // A single resistor between two leads, no reference. An IN drive on one lead (its V− tied to the
+    // shared virtual ground) supplies both the missing reference and a drive voltage.
+    const g = new BoardGraph();
+    const die = freshDieGraph("SOT23_3")!;
+    g.restore(die.snapshot);
+    const frame = g.components.get(die.frameId)!;
+    const r = place(g, "R", 30, 8, 1000);
+    connect(g, frame, 0, r, 0); // pin1 -> R.A
+    connect(g, frame, 1, r, 1); // pin2 -> R.B
+    expect(dieIsSealable(g.serialize())).toBe(false);
+    frame.pinTests = [
+      { role: "in", value: 3.3 },
+      { role: "gnd", value: 0 },
+      null,
+    ];
+    expect(dieIsSealable(dieTestGraph(g.serialize(), die.frameId))).toBe(true);
+  });
+
+  it("dieTestGraph is a STRICT no-op (returns the same reference) when there are no pinTests", () => {
+    // No stimuli set -> the injected graph IS the input snapshot, unchanged (no extra components,
+    // same object). This is what keeps an already-solvable / fully-wired die byte-identical.
+    const g = new BoardGraph();
+    const die = freshDieGraph("SOT23_3")!;
+    g.restore(die.snapshot);
+    const frame = g.components.get(die.frameId)!;
+    const r = place(g, "R", 30, 8, 1000);
+    const v = place(g, "V", 30, 12, 5);
+    const gnd = place(g, "GND", 30, 16);
+    connect(g, v, 0, frame, 0);
+    connect(g, frame, 1, r, 0);
+    connect(g, r, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+    const snap = g.serialize();
+    // No pinTests at all -> same reference back.
+    expect(dieTestGraph(snap, die.frameId)).toBe(snap);
+    // An all-null pinTests array is also a no-op.
+    frame.pinTests = [null, null, null];
+    const snap2 = g.serialize();
+    expect(dieTestGraph(snap2, die.frameId)).toBe(snap2);
   });
 });
 

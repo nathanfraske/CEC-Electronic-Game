@@ -14,11 +14,18 @@
 //                              ({@link buildNetlist} non-null/solvable).
 //   - {@link unusedDiePins}  : which package leads the player left unwired (the "all pins used"
 //                              advisory before sealing).
+//   - {@link dieTestGraph}   : injects the frame's per-pin TEST STIMULI (GND / VCC / Input drive)
+//                              as virtual sources so a die that is normally powered from OUTSIDE
+//                              (a logic IC's VCC/GND) can solve, animate, and pass the Seal gate
+//                              while authored in isolation. AUTHORING-ONLY — never sealed.
 //
 // The seal ENGINE itself (captureSeal / registerUserIc / flattenUserIcs in userIc.ts) is reused
 // unchanged — this module only sets up the die and validates it. Determinism is untouched: a die
 // is an ordinary BoardGraph, and a sealed die expands to its real authored netlist exactly as a
-// frame sealed inline would (seal-as-same-netlist), so the golden never moves.
+// frame sealed inline would (seal-as-same-netlist), so the golden never moves. The test stimuli
+// are likewise determinism-safe: they are injected ONLY for the live editor solve + the Seal gate,
+// NEVER before {@link captureSeal} (which reads the RAW live die graph), so the sealed netlist is
+// exactly the player's real discrete parts.
 
 import {
   BoardGraph,
@@ -29,6 +36,8 @@ import {
   isPinRef,
   type GraphSnapshot,
   type Cell,
+  type Component,
+  type Wire,
 } from "./graph";
 import { dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
@@ -144,6 +153,103 @@ export function dieIsSealable(snapshot: GraphSnapshot): boolean {
   const g = new BoardGraph();
   g.restore(snapshot);
   return buildNetlist(g) !== null;
+}
+
+/**
+ * A COPY of the die graph with the frame's per-pin TEST STIMULI injected as virtual sources, so a
+ * die that is normally powered from OUTSIDE its package (a logic IC takes VCC/GND from the board it
+ * sits on) can be solved, animated, and Seal-gated while authored in ISOLATION in the die editor.
+ *
+ * Each non-null {@link PinTest} on `frame.pinTests` becomes a virtual source wired to that lead:
+ *   - `gnd` → a wire from a single shared virtual {@link BoardGraph} `GND` part to the pin (a 0 V
+ *     reference, the thing a logic die lacks on its own — this is what makes it solvable);
+ *   - `vcc` / `in` → a `V` source at the pin's voltage (its `+` to the lead, its `−` to that same
+ *     shared ground), so the die powers up / sees an input drive.
+ * (`buildNetlist` roots node 0 on a wired GND part, else a V source's `−` pin — netlist.ts lines
+ * 797-819 — so the shared ground anchors the reference and every V source hangs off it.)
+ *
+ * **STRICT NO-OP** when the frame has no stimuli (absent or all-null `pinTests`): returns the input
+ * `snapshot` UNCHANGED (same reference), so a fully-powered die (one wired up the ordinary way) is
+ * byte-identical and nothing is ever added to an already-solvable graph.
+ *
+ * **AUTHORING-ONLY — the result is NEVER sealed.** The seal capture ({@link captureSeal}) reads the
+ * RAW live die graph, not this injected copy, so the sealed IC stays exactly the player's real
+ * discrete parts and the sim-core golden is untouched (the hard determinism rule, ADR 0005). This
+ * graph is used ONLY for the live editor solve and the {@link dieIsSealable} gate.
+ *
+ * The injected parts are placed at far-off negative cells (well outside the build area) so they
+ * never overlap the authored circuit or each other; the returned snapshot advances
+ * `nextComponentId` / `nextWireId` past them. Returns `snapshot` unchanged if `frameId` is missing.
+ */
+export function dieTestGraph(
+  snapshot: GraphSnapshot,
+  frameId: number,
+): GraphSnapshot {
+  const frame = snapshot.components.find((c) => c.id === frameId);
+  const tests = frame?.pinTests;
+  // Strict no-op: no frame, or no non-null stimulus → hand back the same snapshot untouched.
+  if (!frame || !tests || !tests.some((t) => t)) return snapshot;
+
+  const components: Component[] = snapshot.components.map((c) => ({ ...c }));
+  const wires: Wire[] = snapshot.wires.map((w) => ({ ...w }));
+  let nextC = snapshot.nextComponentId;
+  let nextW = snapshot.nextWireId;
+
+  // One shared virtual ground (node 0), far off-grid so it never overlaps the build area. Every
+  // `gnd` pin and every V source's `−` lead ties back to this single reference.
+  const gndId = nextC++;
+  components.push({
+    id: gndId,
+    kind: "GND",
+    cell: { col: -8, row: -8 },
+    value: 0,
+    rot: 0,
+  });
+
+  const wire = (a: Wire["from"], b: Wire["to"]): void => {
+    wires.push({ id: nextW++, from: a, to: b });
+  };
+
+  // Walk pins low→high; lay each injected V source at its own far-off cell so none collide.
+  let vCol = -12;
+  for (let i = 0; i < tests.length; i++) {
+    const t = tests[i];
+    if (!t) continue;
+    if (t.role === "gnd") {
+      // Tie the lead straight to the shared ground (a 0 V reference for this pin).
+      wire(
+        { componentId: gndId, pinIndex: 0 },
+        { componentId: frameId, pinIndex: i },
+      );
+    } else {
+      // A virtual supply / input drive: V's `+` (pin 0) to the lead, V's `−` (pin 1) to ground.
+      const vId = nextC++;
+      components.push({
+        id: vId,
+        kind: "V",
+        cell: { col: vCol, row: -10 },
+        value: t.value,
+        rot: 0,
+      });
+      vCol -= 2; // next source one cell-pair further out, so injected parts never overlap
+      wire(
+        { componentId: vId, pinIndex: 0 },
+        { componentId: frameId, pinIndex: i },
+      );
+      wire(
+        { componentId: vId, pinIndex: 1 },
+        { componentId: gndId, pinIndex: 0 },
+      );
+    }
+  }
+
+  return {
+    ...snapshot,
+    components,
+    wires,
+    nextComponentId: nextC,
+    nextWireId: nextW,
+  };
 }
 
 /**

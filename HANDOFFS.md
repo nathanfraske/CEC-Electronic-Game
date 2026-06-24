@@ -5,6 +5,69 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (98) — Settable per-pin TEST STIMULI in the IC-maker die editor (power a die in isolation)
+
+**State:** 🟢 gate-green (fmt/clippy clean; **sim-core golden `0xeaac_3764_99e4_fa24` unchanged**, 188
+sim-core tests; web check 0/0, lint clean, build OK, **42 vitest** incl. the new `dieEditor` stimulus
+cases). Branch `claude/kind-turing-hdelb3`. NOT pushed, no PR (owner reviews/merges).
+
+**The problem.** A logic IC (e.g. a CMOS gate) is powered through its VCC/GND pins from OUTSIDE its
+package. So a die solved IN ISOLATION in the die editor has no ground reference — `buildNetlist` returns
+null → "not solvable", and the die can't be tested live or sealed. Owner's fix: let the player mark each
+frame pad with a TEST role — **GND** (0 V ref), **VCC** (settable supply), or **Input** (settable drive)
+— injected as virtual sources ONLY while solving the die in the editor, so it powers up, animates, and
+the Seal gate passes.
+
+**HARD determinism rule honoured.** The stimuli are AUTHORING-ONLY scaffolding. `captureSeal` still reads
+the **RAW** live die graph (never the injected copy), so the sealed IC stays exactly the player's real
+discrete parts (seal-as-same-netlist, ADR 0005). The injection feeds ONLY (a) the live editor solve and
+(b) the `dieIsSealable` gate. Sealed netlist + sim-core golden untouched — verified.
+
+**What I built (the data path).**
+- **`graph.ts`** — new exported `PinTestRole` (`"gnd" | "vcc" | "in"`) + `PinTest { role, value }`;
+  `Component.pinTests?: (PinTest | null)[]` (sparse, by pin index — the die-frame authoring field),
+  deep-copied in `serialize`/`restore` beside `pinNames` (`...(c.pinTests ? {pinTests: c.pinTests.map(...)} : {})`).
+- **`dieEditor.ts`** — new `dieTestGraph(snapshot, frameId)`: returns a COPY of the die graph with the
+  frame's stimuli injected — ONE shared virtual `GND` (far-off cell `-8,-8`); for each `gnd` pad a wire
+  `GND→lead`; for each `vcc`/`in` pad a `V` source at the pad voltage with `+`→lead and `−`→the shared
+  ground (`buildNetlist` roots node 0 on a wired GND, V's `−` as fallback). **Strict no-op** (returns the
+  SAME snapshot reference) when the frame has no stimuli. Thorough doc: authoring-only, never sealed.
+- **`board.ts`** — `setComponentPinTest(id, pinIndex, test)` mirrors `setComponentPinName` (materialize
+  full-length array, set slot, drop to undefined if all null, rebuild the node, push undo) BUT fires
+  `onChange` (not just `onPersist`) because a stimulus changes the SOLVE. The `onPinNameEdit` payload
+  gained `test: PinTest | null` (= `c.pinTests?.[pinIndex] ?? null`) so the popover seeds its controls.
+- **`App.svelte`** — `rebuildNetlist` solves `dieSolveGraph(graph, drill.innerFrameId)` (a fresh
+  `BoardGraph.restore(dieTestGraph(graph.serialize(), …))`) when drilled in; `dieStatus`'s `sealable`
+  now gates on `dieIsSealable(dieTestGraph(snap, …))` (unused-pins stays on the RAW snap). A `boardRev`
+  `$state` counter bumps in `onChange` and is a `dieStatus` dep so the advisory refreshes on a stimulus
+  edit (which doesn't move part/wire counts). The seal capture path (`doSeal` → `captureSeal` on the live
+  graph) is **untouched**.
+
+**The pad popover (UI).** Extended the lone name input into a small panel: the name input + a **None /
+GND / VCC / IN** role row (active one highlighted) + a volts input shown for VCC/IN (defaults 5 V VCC,
+0 V IN; only reset on a real role change so re-clicks don't clobber a typed value). Role/value apply
+**LIVE** via `setComponentPinTest`.
+
+**Pad-editor focus handling (the fiddly bit).** The panel previously closed on the name input's
+`onblur`. Replaced with a **guarded blur** (`onPinNameBlur`): bound the popover container
+(`bind:this={pinNamePopover}`); if `e.relatedTarget` is INSIDE the popover, commit the name via the
+underlying `board.setComponentPinName` (NOT `commitPinName`, which fires the close callback) and KEEP the
+panel open; otherwise commit + close as before. Role buttons use `onmousedown` + `preventDefault` so a
+click never blur-closes the name input. Escape still cancels (`onPinNameKey`). So the player can set
+name + role + value without the panel vanishing under them.
+
+**Files:** `web/src/lib/graph.ts`, `web/src/lib/dieEditor.ts`, `web/src/lib/dieEditor.test.ts` (+3
+cases), `web/src/lib/board.ts`, `web/src/App.svelte`, `web/src/app.css` (`.pin-test-*`),
+`docs/ui/ic-maker-guide.md` (§3 note), `TODOS.md`, `HANDOFFS.md`. No new source files (SPDX intact).
+
+**OWNER VISUAL REVIEW:** drill into a powered-logic frame (a CMOS gate die), double-click a wall pad,
+set VCC + GND (+ an Input on a signal pad); confirm the die powers up / animates and "● solvable" lights
+so it Seals. Then confirm the **placed sealed chip** is still your raw discrete parts (stimuli gone).
+Sanity-check the popover focus feel (role/value clicks keep it open; clicking the board / Esc closes it)
+and the `.pin-test-*` styling against the HUD.
+
+---
+
 ## 2026-06-23 (97) — Die leads inset from the corners (real package body margin)
 
 **State:** 🟢 web gate-green (check 0/0, lint, build, 39 vitest); merging to main. Branch `claude/kind-turing-hdelb3`.
