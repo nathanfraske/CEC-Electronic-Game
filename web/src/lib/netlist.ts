@@ -584,6 +584,10 @@ export interface UserIcInnerPart {
   cell: { col: number; row: number };
   /** the authored orientation (90° clockwise steps, 0..3). */
   rot: number;
+  /** the authored horizontal flip. The replica must orient the glyph EXACTLY as the die editor does —
+   * canonical pins drawn into a rotated+mirrored holder — or a drawer that infers orientation from pin
+   * positions (e.g. the MOSFET) renders a rotated/mirrored part wrong. Render-only. */
+  mirror: boolean;
   /** the authored primary scalar (`Component.value`), so the glyph reads e.g. a switch's state. */
   value: number;
   /** resolved node index per pin (by pin index), into `node_voltages` / the snapshot `state`. */
@@ -679,6 +683,7 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
       kind: comp.kind,
       cell: { col: comp.cell.col, row: comp.cell.row },
       rot: comp.rot,
+      mirror: !!comp.mirror,
       value: comp.value,
       nodes: kind.pins.map(() => 0),
     });
@@ -1615,6 +1620,7 @@ export function buildNetlist(
         kind: comp.kind,
         cell: { col: comp.cell.col, row: comp.cell.row },
         rot: comp.rot,
+        mirror: !!comp.mirror,
         value: comp.value,
         nodes: kind.pins.map((p) =>
           nodeOfEndpoint({ componentId: comp.id, pinIndex: p.index }),
