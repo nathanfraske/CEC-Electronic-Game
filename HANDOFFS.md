@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (120) — Opened-IC replica matches the die editor: UNIFORM scale (un-stretch) + lead connectors
+
+**State:** 🟢 gates green. Branch `claude/kind-turing-hdelb3`. Owner: the sealed/zoomed replica looked
+scrambled vs the die-editor build (which is clean) — "they should be the same basically."
+
+**Root cause:** `drawUserIcInternals` fit the circuit with a SEPARATE `sx`/`sy` (non-uniform), so the
+authored layout was STRETCHED — parts positioned on the stretched grid but their glyphs drawn at a uniform
+`min(sx,sy)`, so wires no longer met part pins (the "scrambled" look).
+
+**Fix (`userIcInternalsView.ts`):**
+- ONE uniform scale `s = min(fitX, fitY)`, centred in the body interior — the circuit keeps the exact
+  die-editor proportions, just scaled down (parts/wires line up again).
+- **Lead connectors:** a short conduit from each frame pin (post-fit) out to its lead ROOT on the body
+  edge, taking up the centred-fit margin so the inner net ties to its external lead (package carries it to
+  the tip). Frame-pin array coord already equals the lead-root array coord, so each connector is a clean
+  perpendicular stub.
+
+(Builds on (118)-(119): conduit-style traces, junction-only hubs, lens-following parts, wide-SOT detector.)
+
+**Owner: eyeball** — opened IC should now read like the die editor (undistorted, same layout), with the
+inner net wiring out through short connectors to the leads.
+
+---
+
 ## 2026-06-24 (119) — Hotfix: (118) flipped SOT to portrait + too many junction dots
 
 **State:** 🟢 gates green. Branch `claude/kind-turing-hdelb3`. Fixes two (118) regressions the owner caught.
