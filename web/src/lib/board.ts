@@ -728,6 +728,9 @@ export class Board {
   private ammeter: { kind: "comp" | "wire"; id: number } | null = null;
   private lastWireCurrents = new Map<number, number>();
   private probeNodes: Map<number, [number, number]> | null = null;
+  /** Circuit-group root per node index (the netlist's `circuitOfNode`) so a voltage gauge scales to
+   * its OWN circuit's max rail, not the whole board's. Null until a netlist installs it. */
+  private circuitOfNode: number[] | null = null;
   private lastState: Float64Array = new Float64Array();
   private electrical: Map<number, ElectricalState> | undefined;
   // Per-node RMS voltage over this frame's sub-frame batch (non-aliased, unlike the
@@ -1268,6 +1271,12 @@ export class Board {
   setProbeNodes(map: Map<number, [number, number]> | null): void {
     this.probeNodes = map;
     this.clearProbe();
+  }
+
+  /** Supply the per-node circuit grouping (the netlist's `circuitOfNode`) so each voltage gauge
+   * scales to its OWN circuit's max rail. Null clears it (gauges fall back to one global reference). */
+  setCircuitOfNode(c: number[] | null): void {
+    this.circuitOfNode = c;
   }
 
   /** Switch the meter between voltmeter ("V") and ammeter ("A"). */
@@ -5120,14 +5129,16 @@ export class Board {
   ): void {
     const H = 2 * BAR_HALF; // full container reach (px) from the base outward
     const anchors = this.netGaugeAnchors(nets, condRoutes, H);
-    // Scale every bar to the CIRCUIT's max rail magnitude so the fills actually differ: the
-    // hottest rail fills the whole bar, ground reads empty, the rest are proportional.
-    const vMax = this.circuitVMax(anchors.keys());
+    // Scale every bar to the max rail magnitude of ITS OWN circuit so the fills actually differ AND
+    // a separate board doesn't borrow this one's range: the hottest rail in each circuit fills its
+    // whole bar, ground reads empty, the rest are proportional.
+    const vMaxByGroup = this.circuitVMaxByGroup(anchors.keys());
 
     const segH = H / BAR_SEGS; // one segment slot's height (along the column)
     const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
 
     for (const [node, a] of anchors) {
+      const vMax = vMaxByGroup.get(this.circuitGroup(node)) ?? 1e-3;
       // The column runs from the base (a.bx,a.by — past the stub) OUTWARD along (a.ox,a.oy).
       // We lay it out along that axis as a signed coordinate `u` (0 at base, +H at the tip),
       // then map every (x,y) back through the normal. The cross axis is the perpendicular.
@@ -5233,17 +5244,29 @@ export class Board {
   }
 
   /**
-   * The CIRCUIT's maximum rail magnitude — `max |nodeColorVoltage(node)|` over the gauged
-   * nets — with a tiny floor so an all-zero board can't divide by zero. Every gauge fills as
-   * a fraction of this, so the bars/standpipes track the closed circuit's actual range
-   * (a 5 V circuit reads as 5 V at the top, not a fixed ~12 V reference that flattens it).
+   * The maximum rail magnitude PER CIRCUIT — `max |nodeColorVoltage|` over the nets in each connected
+   * circuit ({@link circuitGroup} groups them via the netlist's `circuitOfNode`, ground excluded as a
+   * bridge) — with a tiny floor so an all-zero board can't divide by zero. A gauge fills as a fraction
+   * of ITS OWN circuit's max, so two physically separate boards (e.g. an AC loop and a DC loop) each
+   * read against their own range, not a shared global reference. Returns a map keyed by group root;
+   * pair it with {@link circuitGroup} per net. (Was a single whole-board max — the bug where a DC
+   * standpipe read low next to a higher-peak AC one it wasn't even wired to.)
    */
-  private circuitVMax(nodes: Iterable<number>): number {
-    let m = 1e-3;
+  private circuitVMaxByGroup(nodes: Iterable<number>): Map<number, number> {
+    const byGroup = new Map<number, number>();
     for (const node of nodes) {
-      m = Math.max(m, Math.abs(this.nodeColorVoltage(node)));
+      const g = this.circuitGroup(node);
+      const v = Math.abs(this.nodeColorVoltage(node));
+      byGroup.set(g, Math.max(byGroup.get(g) ?? 1e-3, v));
     }
-    return m;
+    return byGroup;
+  }
+
+  /** The circuit-group a node belongs to (its `circuitOfNode` root). With no netlist grouping
+   * installed every net falls into one global group (0) — the old whole-board behaviour. */
+  private circuitGroup(node: number): number {
+    const co = this.circuitOfNode;
+    return co && node >= 0 && node < co.length ? co[node]! : 0;
   }
 
   /**
@@ -5266,12 +5289,14 @@ export class Board {
   ): void {
     const H = 2 * BAR_HALF; // full column reach (px) from the base outward — matches the bar
     const anchors = this.netGaugeAnchors(nets, condRoutes, H);
-    // Scale every standpipe to the CIRCUIT's max rail magnitude: the hottest rail fills the
-    // whole pipe, ground reads empty, the rest are proportional (the two lenses agree).
-    const vMax = this.circuitVMax(anchors.keys());
+    // Scale every standpipe to the max rail magnitude of ITS OWN circuit (not the whole board): the
+    // hottest rail in each circuit fills its pipe, ground reads empty, the rest proportional — so a
+    // DC loop no longer reads low beside a higher-peak AC loop it isn't wired to (the two lenses agree).
+    const vMaxByGroup = this.circuitVMaxByGroup(anchors.keys());
     const live = this.nodeVrms !== undefined; // a sub-frame batch ran (not paused)
 
     for (const [node, a] of anchors) {
+      const vMax = vMaxByGroup.get(this.circuitGroup(node)) ?? 1e-3;
       // Column axis (a.ox,a.oy) runs OUTWARD from the base (a.bx,a.by — the ground/zero
       // level, past the stub); `u` is along it (0 at base = ground, + outward, − into the
       // sump toward the pipe), `c` is the cross axis. Fills are rotated rects via `pt`.
@@ -6383,10 +6408,6 @@ class ComponentNode {
    * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
    * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
   private labelPushVertical = true;
-  /** Filled by {@link drawUserIcInternals} with the glyph-local px where each package pin was drawn in
-   * the zoom-to-open replica (the die-editor edge position the lead bridges to) — so the pin LABELS
-   * park there too, matching the dots + leads exactly (a 1:1 of the authored die). */
-  private readonly miniPinPx: { x: number; y: number }[] = [];
 
   constructor(
     private readonly component: Component,
@@ -6679,7 +6700,6 @@ class ComponentNode {
         internals: effUserIc,
         nodeV,
         pins: this.pinPositions,
-        outPinPx: this.miniPinPx, // where the replica drew each package pin → park its label there
         wPx: this.wPx,
         hPx: this.hPx,
         phase,
@@ -6789,15 +6809,12 @@ class ComponentNode {
         wiper: this.component.wiper,
       });
     }
-    // pin dots on top (over either the schematic glyph or the tier illustration) —
-    // they mark the real connection points the wires meet. SKIP them when the zoom-to-open replica is
-    // showing: it draws each package pin at the die-editor edge position the lead bridges to (these
-    // compact-footprint dots would sit at the wrong spot and double them up).
-    if (!showUserIc) {
-      for (const p of this.pinPositions) {
-        g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-        g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
-      }
+    // pin dots on top (over either the schematic glyph or the tier illustration) — they mark the real
+    // connection points the wires meet. Drawn at the package edge positions (spread across the
+    // footprint) so the pinout reads cleanly even with the zoom-to-open replica open.
+    for (const p of this.pinPositions) {
+      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
@@ -6815,13 +6832,11 @@ class ComponentNode {
     const LABEL_MARGIN = 12; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
-      // When the zoom-to-open replica is showing, park the label where IT drew the package pin (the
-      // die-editor edge position the lead bridges to), so dot + lead + label line up as a 1:1 replica;
-      // otherwise use the compact footprint position.
-      const p =
-        showUserIc && this.miniPinPx[i]
-          ? this.miniPinPx[i]
-          : this.pinPositions[i];
+      // Park the label at the PACKAGE pin position (the compact footprint edge — spread across the
+      // body) so the pinout stays readable. The zoom-to-open replica's own inner pins are the
+      // die-editor layout scaled into this small footprint — far too tightly packed to label without
+      // the names colliding (a SOT-23 die crushes to a few px), so the label rides the package edge.
+      const p = this.pinPositions[i];
       if (showPins && p) {
         // Park the label OUTSIDE the chip, on the edge this pin sits on — NOT on top of the body.
         // Push it out from the footprint centre along the pins' edge axis, then rotate that offset

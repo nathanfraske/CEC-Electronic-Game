@@ -98,6 +98,39 @@ describe("buildNetlist (headless smoke)", () => {
     place(g, "GND", 4, 0);
     expect(buildNetlist(g, false)).toBeNull();
   });
+
+  it("circuitOfNode keeps separate circuits in separate groups (per-circuit gauge scaling)", () => {
+    const g = new BoardGraph();
+    // Circuit A: V(5) -> R1 -> R2 -> GND (an intermediate net M between the resistors).
+    const vA = place(g, "V", 0, 0, 5);
+    const r1 = place(g, "R", 4, 0, 1000);
+    const r2 = place(g, "R", 8, 0, 1000);
+    const gndA = place(g, "GND", 0, 6);
+    connect(g, vA, 0, r1, 0); // V+ -> R1.a (net X)
+    connect(g, r1, 1, r2, 0); // R1.b -> R2.a (net M)
+    connect(g, r2, 1, gndA, 0); // R2.b -> GND
+    connect(g, vA, 1, gndA, 0); // V- -> GND
+    // Circuit B: a SEPARATE V(3) -> R -> its own GND (it shares ONLY ground with A — not a bridge).
+    const vB = place(g, "V", 0, 12, 3);
+    const rB = place(g, "R", 4, 12, 2200);
+    const gndB = place(g, "GND", 0, 18);
+    connect(g, vB, 0, rB, 0);
+    connect(g, rB, 1, gndB, 0);
+    connect(g, vB, 1, gndB, 0);
+
+    const nl = buildNetlist(g, false);
+    expect(nl).not.toBeNull();
+    const co = nl!.circuitOfNode;
+    const X = nl!.nodesOfComponent.get(vA.id)![0]; // V_A +
+    const M = nl!.nodesOfComponent.get(r1.id)![1]; // between R1 and R2
+    const Y = nl!.nodesOfComponent.get(vB.id)![0]; // V_B +
+    // A's two nets are one circuit; B is a different circuit (sharing only ground, which doesn't bridge).
+    expect(co[X]).toBe(co[M]);
+    expect(co[X]).not.toBe(co[Y]);
+    // Ground (node 0) is its own group, not merged into either circuit.
+    expect(co[0]).toBe(0);
+    expect(co[X]).not.toBe(0);
+  });
 });
 
 describe("IC maker — seal-as-same-netlist", () => {

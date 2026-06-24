@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (111) — IC pin-label overlap fix + per-circuit gauge scaling
+
+- ~~**Placed user-IC pin labels overlapped at zoom-in**~~ — FIXED. The (108) 1:1 lead-bridging anchored
+  the replica pins/labels at the die-editor layout scaled into the tiny SOT-23 footprint (~50× shrink →
+  pins crushed together → labels collide). Reverted: labels + dots back at the spread COMPACT package
+  positions; replica anchors at `pins` again; dead `miniPinPx`/`outPinPx` removed. (`pinCells` kept in
+  `netlist.ts` for a future PROPER bridging — anchor leads to the package edges, route inner wires out.)
+- [ ] **Follow-up (deferred): proper 1:1 lead-bridging** — anchor the inner circuit's frame-pin wires
+  to the package edge positions (not the die layout scaled into the footprint), so leads visibly reach
+  the edge pins without collapsing. Use `UserIcInternals.pinCells` (already built/tested).
+- ~~**Standpipes shared one "highest voltage" across unconnected circuits**~~ — FIXED. A DC loop read low
+  beside a higher-peak AC loop it wasn't wired to. `buildNetlist` now emits `circuitOfNode` (union-find
+  over element terminals, ground NOT a bridge); `board.ts` scales each gauge to its OWN circuit's max
+  (`circuitVMaxByGroup` + `circuitGroup`), wired via `setCircuitOfNode` in `rebuildNetlist`. Render-only;
+  golden untouched. +1 test.
+
 ## 2026-06-24 (110) — Pipe-view legibility design review (doc) + OR-gate seal triage
 
 - ~~**Design review: analogy pipe-view legibility in dense areas**~~ — DONE (doc). 3-lens workflow →
