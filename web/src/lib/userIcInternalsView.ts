@@ -222,10 +222,12 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     tallyEnd(a.x, a.y, w.node);
     tallyEnd(b.x, b.y, w.node);
   }
-  // Grommets + junctions: a round plug at each wire end; a bigger opaque hub where 3+ wires tie off.
+  // JUNCTION hubs only: a dot where 3+ wire-ends tie together (the real net junctions). Plain wire ends
+  // at part pins are already terminated by the pipe's round cap, so they get NO dot — keeps it uncluttered.
   for (const e of endHits.values()) {
+    if (e.n < 3) continue;
     const lv = level(e.node);
-    const r = e.n >= 3 ? PW * 1.3 : PW * 0.8;
+    const r = PW * 1.3;
     g.circle(e.x, e.y, r + 1).fill({ color: 0x0d0b16, alpha: 0.92 });
     g.circle(e.x, e.y, r).fill({
       color: mix(PALETTE.rail, accent, lv),
