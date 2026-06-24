@@ -2446,8 +2446,13 @@
     if (!drill || !board) return;
     const ctx = drill;
     const live = board.liveGraph();
-    // Hard gate: the authored circuit must be simulatable, or it isn't an IC.
-    if (buildNetlist(live) === null) {
+    // Hard gate: the authored circuit must be simulatable, or it isn't an IC. Gate on the SAME
+    // stimuli-injected graph as the `dieStatus` "● solvable" pill (`dieTestGraph` wires the frame's
+    // GND/VCC/input test pads as virtual sources) — a logic die is powered from OUTSIDE its package,
+    // so it only solves with those stimuli, and the pill and the Seal button must agree. The SEAL
+    // CAPTURE below still reads the RAW live graph (never the injected copy), so the sealed IC stays
+    // the player's real discrete parts and the golden is untouched (ADR 0005).
+    if (!dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))) {
       circuitWarning =
         "This die can't be sealed yet: the circuit doesn't solve (needs a reference/ground and a complete path). Wire it up, then Seal.";
       return;
