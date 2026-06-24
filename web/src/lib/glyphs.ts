@@ -1962,14 +1962,15 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
-const IC_LEAD_LEN = 5; // px the package leads stick out of the body to the solder pins
+const IC_LEAD_LEN = 7; // px the package leads stick out of the body to the solder pins (elongated tabs)
 
 /**
- * The package BODY box (glyph-local px) for a user IC: the pin bounding box pulled IN by a lead length
- * on the sides the pins sit on, so the pins become LEADS sticking OUT of the body (the solder points on
- * a PCB) and the whole interior is free for the zoom-to-open circuit. `alongX` = the pins are arrayed in
- * rows on the top/bottom edges (SOT-23) vs. columns on the left/right (DIP). Shared by the closed-chip
- * glyph and the open replica so they match.
+ * The package BODY box (glyph-local px) for a user IC. On the STICK (short) axis the pin bounding box is
+ * pulled IN by a lead length, so the pins become elongated LEADS sticking OUT of the body to the solder
+ * points. On the ARRAY (long) axis the body is pushed OUT past the end leads, so the corner leads sit
+ * INSET from the body corners — a real package's body overhangs its end pins, and the owner's rule is
+ * "pins are never shoved in the corners." `alongX` = the pins are arrayed in rows on the top/bottom
+ * edges (SOT-23) vs. columns on the left/right (DIP). Shared by the closed-chip glyph + the open replica.
  */
 export function userIcBodyBox(
   pins: { x: number; y: number }[],
@@ -2001,14 +2002,24 @@ export function userIcBodyBox(
   }
   const alongX = maxX - minX >= maxY - minY;
   const lead = IC_LEAD_LEN;
-  const x = alongX ? minX : minX + lead;
-  const y = alongX ? minY + lead : minY;
-  const w = Math.max(1, alongX ? maxX - minX : maxX - minX - 2 * lead);
-  const h = Math.max(1, alongX ? maxY - minY - 2 * lead : maxY - minY);
+  // Overhang past the end leads on the long axis (14% of the lead span, clamped), so the body reads as
+  // a real chip whose plastic extends past its end pins — corner leads never jammed into the corners.
+  const span = alongX ? maxX - minX : maxY - minY;
+  const end = Math.max(4, Math.min(40, span * 0.14));
+  const x = alongX ? minX - end : minX + lead;
+  const y = alongX ? minY + lead : minY - end;
+  const w = Math.max(
+    1,
+    alongX ? maxX - minX + 2 * end : maxX - minX - 2 * lead,
+  );
+  const h = Math.max(
+    1,
+    alongX ? maxY - minY - 2 * lead : maxY - minY + 2 * end,
+  );
   return { x, y, w, h, alongX, lead };
 }
 
-const LEAD_W = 4.6; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
+const LEAD_W = 5; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
 const LEAD_TUCK = 2; // px the lead tucks UNDER the body so there's no seam at the rim
 
 /**

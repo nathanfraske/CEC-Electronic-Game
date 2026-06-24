@@ -102,16 +102,22 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
   return best;
 }
 
+/** Cells the die walls overhang past the END leads on the package's LONG (array) axis, so the corner
+ * leads sit INSET from the wall corners — a real package's body overhangs its end pins, and the owner's
+ * rule is "pins are never shoved in the corners." On the SHORT (lead-stick) axis the wall sits on the
+ * lead line, so the leads cross the boundary and stick out beyond it. */
+const DIE_END_MARGIN = 4;
+
 /**
- * The buildable-interior box (the "walls") for a die, in grid cells: the package BODY box, anchored
- * at the frame and extending to {@link dieLayout}'s `w × h`. The renderer draws this as the boundary
- * and the soft-containment check keeps placement inside it. Returns undefined if `frameId` isn't a
- * frame in the snapshot (so a graph with no die has no walls to draw).
+ * The buildable-interior box (the "walls") for a die, in grid cells: the package BODY box, anchored at
+ * the frame. The renderer draws this as the boundary and the soft-containment check keeps placement
+ * inside it. Returns undefined if `frameId` isn't a frame in the snapshot (so a graph with no die has
+ * no walls to draw).
  *
  * {@link dieLayout} is the production footprint scaled up PROPORTIONALLY by `DIE_SCALE`, so the leads
- * ride the same relative positions as the real package (corner leads sit at the corners, just like a
- * DIP) and the box is roomy enough to author the circuit between them. The box extent is the scaled
- * `w × h`, one cell past the outermost leads on the high side — the slack the player builds in.
+ * ride the same relative positions as the real package. The walls then overhang the end leads by
+ * {@link DIE_END_MARGIN} on the long (array) axis — so the corner leads read INSET from the corners
+ * (never jammed in) — while the short (lead-stick) axis sits on the lead line, the leads crossing it.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
@@ -124,11 +130,15 @@ export function dieBounds(
   const pkg = framePackage(frame.kind);
   if (!pkg) return undefined;
   const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
+  // dieLayout pins span [0, w-1] × [0, h-1]. Overhang the long axis past the end leads by DIE_END_MARGIN
+  // on both sides; sit the short axis on the lead line (so the leads cross the wall and stick out).
+  const alongX = w >= h;
+  const m = DIE_END_MARGIN;
   return {
-    minCol: frame.cell.col,
-    minRow: frame.cell.row,
-    maxCol: frame.cell.col + w,
-    maxRow: frame.cell.row + h,
+    minCol: frame.cell.col - (alongX ? m : 0),
+    minRow: frame.cell.row - (alongX ? 0 : m),
+    maxCol: frame.cell.col + (w - 1) + (alongX ? m : 0),
+    maxRow: frame.cell.row + (h - 1) + (alongX ? 0 : m),
   };
 }
 

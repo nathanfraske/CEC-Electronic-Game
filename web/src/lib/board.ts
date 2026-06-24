@@ -4580,9 +4580,6 @@ export class Board {
         ? effLens
         : null;
     this.conduitDrawRoutes.clear();
-    // Which cardinal arms each junction actually uses, so a conduit junction can cap
-    // the unused ones (a 4-way fitting). Accumulated from the wires' end directions.
-    const junctionDirs = new Map<number, number>();
     // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
     // share a channel, computed once up front so the per-wire draw below just uses them.
     const condRoutes = new Map<number, Point[]>();
@@ -4694,23 +4691,6 @@ export class Board {
     for (const w of this.graph.wires.values()) {
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
-      if (conduit) {
-        if (isJunctionRef(w.from)) {
-          const id = w.from.junctionId;
-          junctionDirs.set(
-            id,
-            (junctionDirs.get(id) ?? 0) | dirBit(route[0]!, route[1]!),
-          );
-        }
-        if (isJunctionRef(w.to)) {
-          const id = w.to.junctionId;
-          junctionDirs.set(
-            id,
-            (junctionDirs.get(id) ?? 0) |
-              dirBit(route[route.length - 1]!, route[route.length - 2]!),
-          );
-        }
-      }
       // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the
       // instantaneous value — steady on AC at every speed, so the hue never strobes 0↔peak.
       // A pinned net-label colour overrides this (endpointColor); else it's the rail hue.
@@ -4889,7 +4869,7 @@ export class Board {
         }
       }
     }
-    this.drawJunctions(g, conduit, junctionDirs, junctionPos);
+    this.drawJunctions(g, conduit, junctionPos);
     // Same-net conduit crossings tie with a junction dot (the different-net ones bridged
     // over via the baked-in hop).
     for (const d of conduitCrossDots) {
@@ -4992,7 +4972,11 @@ export class Board {
     condRoutes: Map<number, Point[]>,
     reach: number,
   ): Map<number, GaugeAnchor> {
-    const longest = new Map<number, { route: Point[]; len: number }>();
+    // Group every gauged wire's drawn route BY NODE, longest first. The longest route is the most
+    // central place to tap, but when it's crowded a shorter route of the SAME net is a valid fallback
+    // tap — so we keep all of a net's routes and try each in turn (the owner: the GND standpipe should
+    // relocate to a clear stretch instead of sitting on top of another pipe).
+    const routesByNode = new Map<number, { route: Point[]; len: number }[]>();
     for (const [wid, node] of nets) {
       // Include ground (node 0): it gets an EMPTY gauge (0 V → a drained standpipe / all-off
       // bar), the zero reference made visible — the user asked for it explicitly. Only null
@@ -5002,9 +4986,11 @@ export class Board {
       if (!route || route.length < 2) continue;
       const len = routeLength(route);
       if (len <= 0) continue;
-      const cur = longest.get(node);
-      if (!cur || len > cur.len) longest.set(node, { route, len });
+      const arr = routesByNode.get(node) ?? [];
+      arr.push({ route, len });
+      routesByNode.set(node, arr);
     }
+    for (const arr of routesByNode.values()) arr.sort((a, b) => b.len - a.len);
 
     // Static obstacles, gathered once: every placed part's padded footprint box, and the
     // OTHER wires' drawn routes (a gauge may sit on its own pipe but must clear the rest).
@@ -5016,41 +5002,47 @@ export class Board {
     const allRoutes = [...condRoutes.values()].filter((r) => r.length >= 2);
 
     const anchors = new Map<number, GaugeAnchor>();
-    for (const [node, best] of longest) {
-      // Try the midpoint first, then slide along the route; at each spot prefer UP then DOWN.
-      const ownRoute = best.route;
-      const fracs = [0.5, ...GAUGE_NUDGE_FRACS.map((f) => 0.5 + f)];
+    for (const [node, routes] of routesByNode) {
       let chosen: GaugeAnchor | null = null;
       let fallback: GaugeAnchor | null = null;
-      for (const f of fracs) {
-        const s = sampleRouteAt(
-          ownRoute,
-          best.len * Math.min(0.95, Math.max(0.05, f)),
-        );
-        // Perpendicular unit normal to the route here; "up" is whichever sense points −y.
-        let nx = -s.dy;
-        let ny = s.dx;
-        if (ny > 0) {
-          nx = -nx;
-          ny = -ny; // orient the primary candidate toward screen-up
-        }
-        for (const sign of [1, -1] as const) {
-          const ox = nx * sign;
-          const oy = ny * sign;
-          const cand = {
-            tx: s.x,
-            ty: s.y,
-            bx: s.x + ox * GAUGE_STUB,
-            by: s.y + oy * GAUGE_STUB,
-            ox,
-            oy,
-          };
-          // Keep the very first candidate as the least-bad fallback (midpoint, up).
-          fallback ??= cand;
-          if (this.gaugeBoxClear(cand, reach, ownRoute, partBoxes, allRoutes)) {
-            chosen = cand;
-            break;
+      // Try the net's routes longest-first; on each, the midpoint then slides along the route,
+      // and at each spot prefer UP then DOWN. First clear box anywhere on any route wins.
+      for (const best of routes) {
+        const ownRoute = best.route;
+        const fracs = [0.5, ...GAUGE_NUDGE_FRACS.map((f) => 0.5 + f)];
+        for (const f of fracs) {
+          const s = sampleRouteAt(
+            ownRoute,
+            best.len * Math.min(0.95, Math.max(0.05, f)),
+          );
+          // Perpendicular unit normal to the route here; "up" is whichever sense points −y.
+          let nx = -s.dy;
+          let ny = s.dx;
+          if (ny > 0) {
+            nx = -nx;
+            ny = -ny; // orient the primary candidate toward screen-up
           }
+          for (const sign of [1, -1] as const) {
+            const ox = nx * sign;
+            const oy = ny * sign;
+            const cand = {
+              tx: s.x,
+              ty: s.y,
+              bx: s.x + ox * GAUGE_STUB,
+              by: s.y + oy * GAUGE_STUB,
+              ox,
+              oy,
+            };
+            // Keep the very first candidate as the least-bad fallback (longest route, midpoint, up).
+            fallback ??= cand;
+            if (
+              this.gaugeBoxClear(cand, reach, ownRoute, partBoxes, allRoutes)
+            ) {
+              chosen = cand;
+              break;
+            }
+          }
+          if (chosen) break;
         }
         if (chosen) break;
       }
@@ -5542,50 +5534,20 @@ export class Board {
       polyline(g, rp);
       g.stroke({ width: 1.2, color: 0xffffff, alpha: 0.08, cap, join });
     }
-    // Taper each end into a port mouth, oriented along the end segment — the conduit
-    // flares open where it plugs into a part (or junction), so it reads as connected.
-    const mouthR = PITCH * 0.34;
+    // Port plug at each end: the round line-cap already paints a clean ph-radius dome where the pipe
+    // meets a pin/junction, so the connection needs no flare. The old 4-point taper flared out to
+    // ~8.8px and — now that the core is opaque — read as a hard triangular ARROWHEAD pointing into the
+    // pin (three of them made a junction a spiky asterisk). Replace it with a concentric round GROMMET:
+    // a dark-moat disc + an opaque voltage-core disc, both at/under the cap radius so nothing protrudes.
+    // The pipe simply plugs in — solid, round, no apex, no orientation, no spike. Same two colours/alphas
+    // as the body, so there's no translucency seam, and it never paints proud of the pipe wall (so the
+    // crossing over/under occlusion is preserved).
     const ph = (pw + 5) / 2;
-    for (const [ei, ni] of [
-      [0, 1],
-      [rp.length - 1, rp.length - 2],
-    ] as const) {
+    for (const ei of [0, rp.length - 1] as const) {
       const e = rp[ei];
-      const nb = rp[ni];
-      if (!e || !nb) continue;
-      const d = Math.hypot(nb.x - e.x, nb.y - e.y) || 1;
-      const ux = (nb.x - e.x) / d;
-      const uy = (nb.y - e.y) / d;
-      const px = -uy;
-      const py = ux;
-      const fl = Math.min(14, d * 0.8);
-      const bx = e.x + ux * fl;
-      const by = e.y + uy * fl;
-      // The port mouth matches the opaque pipe body now (was translucent, which clashed against the
-      // solid core): a dark moat funnel with an OPAQUE voltage-core funnel inside it, so the pipe
-      // simply widens into the part/junction with no translucency seam.
-      g.poly([
-        e.x + px * mouthR,
-        e.y + py * mouthR,
-        e.x - px * mouthR,
-        e.y - py * mouthR,
-        bx - px * ph,
-        by - py * ph,
-        bx + px * ph,
-        by + py * ph,
-      ]).fill({ color: 0x0d0b16, alpha: 0.9 });
-      const im = mouthR - 2.5;
-      const ip = Math.max(0.5, ph - 2.5);
-      g.poly([
-        e.x + px * im,
-        e.y + py * im,
-        e.x - px * im,
-        e.y - py * im,
-        bx - px * ip,
-        by - py * ip,
-        bx + px * ip,
-        by + py * ip,
-      ]).fill({ color, alpha: coreAlpha });
+      if (!e) continue;
+      g.circle(e.x, e.y, ph).fill({ color: 0x0d0b16, alpha: 0.9 });
+      g.circle(e.x, e.y, Math.max(1, ph - 2)).fill({ color, alpha: coreAlpha });
     }
   }
 
@@ -5597,7 +5559,6 @@ export class Board {
   private drawJunctions(
     g: Graphics,
     conduit: BoardLens | null,
-    junctionDirs: Map<number, number>,
     junctionPos: Map<number, Point>,
   ): void {
     for (const j of this.graph.junctions.values()) {
@@ -5607,13 +5568,7 @@ export class Board {
       const color = this.endpointColor({ junctionId: j.id });
       const hot = this.selectedJunctions.has(j.id);
       if (conduit) {
-        this.drawJunctionConduit(
-          g,
-          p,
-          color,
-          junctionDirs.get(j.id) ?? 0,
-          conduit,
-        );
+        this.drawJunctionConduit(g, p, color);
       } else {
         g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({
           color: 0x0d0b16,
@@ -5622,7 +5577,7 @@ export class Board {
         g.circle(p.x, p.y, JUNCTION_R).fill({ color });
       }
       if (hot) {
-        // Hug the (now smaller) conduit hub — was 9+3; the trimmed hub reads ~radius 4.
+        // Hug the conduit hub — its dark collar disc reads ~radius 6, so 6+3 clears it by 3px.
         g.circle(p.x, p.y, (conduit ? 6 : JUNCTION_R) + 3).stroke({
           width: 1.5,
           color: PALETTE.accent,
@@ -5633,51 +5588,20 @@ export class Board {
   }
 
   /**
-   * A conduit junction: a clean rounded hub where the wire conduits meet. Each unused
-   * cardinal direction gets a SHORT round-capped blanking nub (the rounded end is the
-   * cap — no harsh perpendicular plate, which read as a cluttered asterisk). Kept
-   * translucent to match the pipes.
+   * A conduit junction: one clean ROUND node the pipes tie off into. A dark collar disc blanks every
+   * unused cardinal at once (replacing the old per-direction blanking nubs, which read as an asterisk's
+   * arms beside the opaque pipes), then an opaque colour disc on top — sized to SWALLOW the arriving
+   * pipe-end grommets — so a 3-way tie reads as a single solid dot, not a spiky cluster. Drawn after
+   * every pipe (drawJunctions runs last), so the hub paints on top of the pipe ends.
    */
-  private drawJunctionConduit(
-    g: Graphics,
-    p: Point,
-    color: number,
-    used: number,
-    lens: BoardLens,
-  ): void {
-    const cap = "round" as const;
-    const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    // Trimmed (was 0.34/0.38) so the tap node reads small, in step with the de-hazed pipes.
-    const coreAlpha = lens === "analogy" ? 0.28 : 0.32;
-    // Match the thinner pipe body (was 6) and shorten the blanking nubs so an unused arm is
-    // a short stub, not a long spoke — the junction reads as a small node, not a fat asterisk.
-    const pw = 5;
-    const arm = PITCH * 0.24;
-    const dirs: [number, number, number][] = [
-      [1, 0, -1],
-      [2, 1, 0],
-      [4, 0, 1],
-      [8, -1, 0],
-    ];
-    for (const [bit, ux, uy] of dirs) {
-      if (used & bit) continue; // a used arm is the wire conduit itself
-      const ex = p.x + ux * arm;
-      const ey = p.y + uy * arm;
-      g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({ width: pw + 3, color: wallCol, alpha: 0.2, cap });
-      g.moveTo(p.x, p.y).lineTo(ex, ey);
-      g.stroke({
-        width: Math.max(1, pw - 2),
-        color,
-        alpha: coreAlpha * 0.5,
-        cap,
-      });
-    }
-    // Hub: an OPAQUE node — a dark backing disc knocks out the pipe bloom directly under the tie,
-    // then a solid colour disc on top, so the junction reads as a crisp discrete dot ABOVE the haze
-    // instead of a dim spot in it (the proven same-net cross-dot recipe).
-    g.circle(p.x, p.y, pw / 2 + 2.5).fill({ color: 0x0d0b16, alpha: 0.92 });
-    g.circle(p.x, p.y, pw / 2 + 0.5).fill({ color, alpha: 0.95 });
+  private drawJunctionConduit(g: Graphics, p: Point, color: number): void {
+    const pw = 5; // matches the thin pipe body
+    // Dark collar disc first: a ROUND rim that knocks back each arriving pipe's moat/bloom and blanks
+    // all unused cardinals at once (no radiating stubs). It's the KiCad-style dark backing ring.
+    g.circle(p.x, p.y, pw / 2 + 3.5).fill({ color: 0x0d0b16, alpha: 0.92 });
+    // Opaque colour hub on top, big enough to cover the pipe-end grommets (dark radius ≤ ~7) so the
+    // tie reads as ONE node the pipes plug into. The 2px dark ring between collar and hub stays legible.
+    g.circle(p.x, p.y, pw / 2 + 1.5).fill({ color, alpha: 0.95 });
   }
 
   /**
@@ -5768,6 +5692,60 @@ export class Board {
   }
 
   /**
+   * If `ep` is a pad on the die frame (die-editor only), the axis a trace should LEAVE it on: "v"
+   * (vertical) for a top/bottom-edge package (SOT, wide), "h" for a side-edge package (DIP, tall). Lets
+   * a builder→internal trace DOWN-BEND — exit perpendicular to the pad's edge with a single elbow —
+   * instead of the generic mid-split Z-route (owner: "for the builder to the internal connections it
+   * should allow a down-bend"). Null when not a frame pad, so the ordinary board is unaffected.
+   */
+  private dieFramePinExit(ep: Endpoint): "v" | "h" | null {
+    if (this.dieFrameId === null) return null;
+    if (!isPinRef(ep) || ep.componentId !== this.dieFrameId) return null;
+    const frame = this.graph.components.get(this.dieFrameId);
+    const kind = frame ? PART_KINDS[frame.kind] : undefined;
+    if (!kind) return null;
+    let minDx = Infinity;
+    let maxDx = -Infinity;
+    let minDy = Infinity;
+    let maxDy = -Infinity;
+    for (const pin of kind.pins) {
+      if (pin.dx < minDx) minDx = pin.dx;
+      if (pin.dx > maxDx) maxDx = pin.dx;
+      if (pin.dy < minDy) minDy = pin.dy;
+      if (pin.dy > maxDy) maxDy = pin.dy;
+    }
+    // Pads sit on the long (array) edges; a trace leaves perpendicular to that edge.
+    return maxDx - minDx >= maxDy - minDy ? "v" : "h";
+  }
+
+  /**
+   * The DOWN-BEND route from/into a die-frame pad: leave the pad PERPENDICULAR to its edge and reach the
+   * target with a single elbow (an L, not the mid-split Z {@link wireRoute} draws). `exitFrom`/`exitTo`
+   * are the pad exit axes ({@link dieFramePinExit}); `exitFrom` wins if both ends are pads. Falls back to
+   * a straight segment when already aligned. Used only when one end is a frame pad — pure geometry, the
+   * wire's logical connectivity is unchanged.
+   */
+  private frameLeadRoute(
+    pa: Point,
+    pb: Point,
+    exitFrom: "v" | "h" | null,
+    exitTo: "v" | "h" | null,
+  ): Point[] {
+    const near = (m: number, n: number): boolean => Math.abs(m - n) < 1;
+    if (exitFrom === "v") {
+      return near(pa.x, pb.x) ? [pa, pb] : [pa, new Point(pa.x, pb.y), pb];
+    }
+    if (exitFrom === "h") {
+      return near(pa.y, pb.y) ? [pa, pb] : [pa, new Point(pb.x, pa.y), pb];
+    }
+    // The frame pad is `pb`: bend so the LAST leg into pb is perpendicular to its edge.
+    if (exitTo === "v") {
+      return near(pa.x, pb.x) ? [pa, pb] : [pa, new Point(pb.x, pa.y), pb];
+    }
+    return near(pa.y, pb.y) ? [pa, pb] : [pa, new Point(pa.x, pb.y), pb];
+  }
+
+  /**
    * The full orthogonal polyline for a wire: the auto L-route when it has no
    * manual waypoints, otherwise an orthogonal leg bending through each waypoint in
    * order (from → wp[0] → … → wp[n-1] → to). Empty if either endpoint has gone
@@ -5780,7 +5758,15 @@ export class Board {
     if (!a || !b) return [];
     const wps = w.waypoints ?? [];
     const anchors = [a, ...wps, b].map((c) => this.cellToWorld(c));
-    if (anchors.length === 2) return this.wireRoute(anchors[0]!, anchors[1]!);
+    if (anchors.length === 2) {
+      // A wire touching a die-frame pad down-bends (perpendicular exit + one elbow); everything else
+      // gets the ordinary mid-split Z-route.
+      const exitFrom = this.dieFramePinExit(w.from);
+      const exitTo = this.dieFramePinExit(w.to);
+      return exitFrom || exitTo
+        ? this.frameLeadRoute(anchors[0]!, anchors[1]!, exitFrom, exitTo)
+        : this.wireRoute(anchors[0]!, anchors[1]!);
+    }
     // Chain an orthogonal leg through each consecutive anchor pair, dropping the
     // duplicated joint between legs so the polyline is continuous.
     const out: Point[] = [];
@@ -6119,7 +6105,14 @@ export class Board {
     const end = snapTo
       ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
       : (junctionPt ?? this.pointer);
-    const route = this.wireRoute(ps, end);
+    // Preview the same down-bend a committed wire would get when it starts on (or snaps to) a die-frame
+    // pad — so the builder shows the perpendicular exit live as you drag, not a Z that snaps on release.
+    const exitFrom = this.dieFramePinExit(this.wiring.from);
+    const exitTo = snapTo ? this.dieFramePinExit(snapTo) : null;
+    const route =
+      exitFrom || exitTo
+        ? this.frameLeadRoute(ps, end, exitFrom, exitTo)
+        : this.wireRoute(ps, end);
     polyline(g, route);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
     polyline(g, route);
@@ -6685,6 +6678,18 @@ class ComponentNode {
       }
     }
     const showUserIc = wantUserIc && !!effUserIc;
+    // A sealed USER IC's package designator (parked at the body centre) fades out as you zoom in toward
+    // the open replica, so the inner circuit isn't covered by the part name (owner: "when you zoom in
+    // the text on the package should become transparent"). Non-ICs keep their label fully opaque.
+    if (isUserIc(this.kindTag)) {
+      const fadeStart = INTERNALS_ZOOM - 1; // begin fading ~one zoom-step before the replica opens
+      this.label.alpha = Math.max(
+        0,
+        Math.min(1, 1 - (zoom - fadeStart) / (INTERNALS_ZOOM - fadeStart)),
+      );
+    } else {
+      this.label.alpha = 1;
+    }
     if (showInternals && internals && nodeV !== undefined) {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
@@ -6762,6 +6767,53 @@ class ComponentNode {
       // offset rectangle floating over the build area, occluding the wires + parts inside it.
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;
+      // …but DO draw the package's rectangular SOLDER LEADS sticking OUT past each port pad (owner
+      // nicety: "would be cool in the builder to see the rectangular traces out from it"). A flat metal
+      // tab runs from each pad OUTWARD (away from the build-area centre, perpendicular to its edge), so
+      // the frame reads as the real chip you build inside — the external tabs you'll wire to once sealed.
+      const pp = this.pinPositions;
+      if (pp.length > 0) {
+        let lminX = Infinity;
+        let lmaxX = -Infinity;
+        let lminY = Infinity;
+        let lmaxY = -Infinity;
+        for (const p of pp) {
+          if (p.x < lminX) lminX = p.x;
+          if (p.x > lmaxX) lmaxX = p.x;
+          if (p.y < lminY) lminY = p.y;
+          if (p.y > lmaxY) lmaxY = p.y;
+        }
+        const leadAlongX = lmaxX - lminX >= lmaxY - lminY;
+        const lcx = (lminX + lmaxX) / 2;
+        const lcy = (lminY + lmaxY) / 2;
+        const LEAD_OUT = PITCH * 1.1; // how far the tab sticks out past the pad
+        const LEAD_WID = PITCH * 0.45; // tab width
+        for (const p of pp) {
+          let rx: number;
+          let ry: number;
+          let rw: number;
+          let rh: number;
+          if (leadAlongX) {
+            const down = p.y >= lcy; // bottom pads stick down, top pads stick up
+            rx = p.x - LEAD_WID / 2;
+            rw = LEAD_WID;
+            ry = down ? p.y : p.y - LEAD_OUT;
+            rh = LEAD_OUT;
+          } else {
+            const right = p.x >= lcx; // right pads stick right, left pads stick left
+            ry = p.y - LEAD_WID / 2;
+            rh = LEAD_WID;
+            rx = right ? p.x : p.x - LEAD_OUT;
+            rw = LEAD_OUT;
+          }
+          g.rect(rx, ry, rw, rh).fill({ color: 0x9a93b3, alpha: 0.9 });
+          g.rect(rx, ry, rw, rh).stroke({
+            width: 1,
+            color: 0x6f6a8a,
+            alpha: 0.8,
+          });
+        }
+      }
     } else {
       this.connectorGlyph.visible = false;
       this.tierGlyph.visible = false;

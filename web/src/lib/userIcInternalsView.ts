@@ -16,6 +16,7 @@ import { PALETTE, PART_KINDS, rotateOffset } from "./graph";
 import {
   drawGlyph,
   drawUserIcPackageBody,
+  userIcBodyBox,
   ZERO_ELECTRICAL,
   type ElectricalState,
 } from "./glyphs";
@@ -137,6 +138,37 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
         }
       : { x: wPx / 2, y: hPx / 2 };
 
+  // Package geometry (same body box the closed-chip glyph uses), so the internals read like the owner's
+  // sketch: each external lead is a rectangular tab (drawn by drawUserIcPackageBody) ending at the solder
+  // tip; just INSIDE the body wall is an internal connector DOT, joined to its lead by a short pipe. The
+  // inner circuit wires to the DOT, not the tip — so it stays inside the package.
+  const bodyB = userIcBodyBox(pins, wPx, hPx);
+  const bcx = bodyB.x + bodyB.w / 2;
+  const bcy = bodyB.y + bodyB.h / 2;
+  // The dot sits a short way inside the wall — CAPPED to a fraction of the body's short side so the
+  // opposite-edge dots never cross/invert on a thin package body (the real footprint is only a few px).
+  const stickExtent = bodyB.alongX ? bodyB.h : bodyB.w;
+  const dotInset = Math.min(bodyB.lead, stickExtent * 0.28);
+  // The body-EDGE point (the lead's inner root) for an external pin, and the internal DOT just inside it.
+  const edgeOf = (p: { x: number; y: number }): { x: number; y: number } =>
+    bodyB.alongX
+      ? { x: p.x, y: p.y >= bcy ? bodyB.y + bodyB.h : bodyB.y }
+      : { x: p.x >= bcx ? bodyB.x + bodyB.w : bodyB.x, y: p.y };
+  const dotOf = (p: { x: number; y: number }): { x: number; y: number } => {
+    const e = edgeOf(p);
+    return bodyB.alongX
+      ? { x: e.x, y: e.y >= bcy ? e.y - dotInset : e.y + dotInset }
+      : { x: e.x >= bcx ? e.x - dotInset : e.x + dotInset, y: e.y };
+  };
+  // Which external pin (if any) an authored cell lands on — its wire end snaps to that pin's inner DOT.
+  const framePinIndex = (col: number, row: number): number => {
+    for (let i = 0; i < pinCells.length; i++) {
+      const pc = pinCells[i];
+      if (pc && pc.col === col && pc.row === row) return i;
+    }
+    return -1;
+  };
+
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
   // every touched net (so a 5 V logic IC and a ±12 V analog IC each scale to their own range).
   // Floored so a quiet chip doesn't blow tiny noise up to full scale.
@@ -150,11 +182,14 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     Math.max(0, Math.min(1, (vAt(n) - vlow) / rail));
 
   // --- Wires: authored endpoint cells → footprint px, coloured by net level + flow carriers. A wire
-  // endpoint that sits on a frame pin lands EXACTLY on that package pin under the proportional map
-  // above (no special-casing needed) — so the inner circuit wires out to the leads by pure scaling. ---
+  // endpoint that lands on a frame pin snaps to that pin's inner DOT (just inside the body wall), so the
+  // inner circuit stays INSIDE the package and the short pipe + rectangular lead carry it out. ---
   for (const w of wires) {
-    const a = toPx(w.from.col, w.from.row);
-    const b = toPx(w.to.col, w.to.row);
+    const fi = framePinIndex(w.from.col, w.from.row);
+    const ti = framePinIndex(w.to.col, w.to.row);
+    const a =
+      fi >= 0 && pins[fi] ? dotOf(pins[fi]!) : toPx(w.from.col, w.from.row);
+    const b = ti >= 0 && pins[ti] ? dotOf(pins[ti]!) : toPx(w.to.col, w.to.row);
     const lv = level(w.node);
     const col = mix(PALETTE.rail, accent, lv);
     g.moveTo(a.x, a.y)
@@ -171,11 +206,31 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
   }
 
-  // --- External package pins: NO separate marker here. The package leads are the rectangular solder
-  // tabs drawn by `drawUserIcPackageBody` above, the authored wires (drawn just above) carry the
-  // internal circuit OUT to each lead (the proportional map lands a frame-pin endpoint exactly on its
-  // package pin), and the board draws the rectangular solder PAD over the lead tip. So the internal
-  // side shows only the connection from the inner circuit to the external lead — nothing more. ---
+  // --- External pins, as the owner drew them: just inside the body wall, an internal connector DOT
+  // (where the inner circuit ties to this pin), joined by a SHORT pipe through the wall to the lead root
+  // — and the rectangular lead (drawn by drawUserIcPackageBody) carries on to the external solder tip.
+  // So a pin reads: inner dot → small pipe → external rectangular lead, exactly like the sketch. ---
+  for (let i = 0; i < pins.length; i++) {
+    const p = pins[i];
+    if (!p) continue;
+    const nd = pinNodes[i];
+    const lv = nd === undefined ? 0 : level(nd);
+    const e = edgeOf(p);
+    const dt = dotOf(p);
+    // The short pipe through the package wall: internal dot → lead root (the lead carries on to the tip).
+    g.moveTo(dt.x, dt.y)
+      .lineTo(e.x, e.y)
+      .stroke({
+        width: 1.8,
+        color: mix(PALETTE.rail, accent, lv),
+        alpha: 0.5 + 0.4 * lv,
+      });
+    // The internal connector dot, energised by its net level.
+    g.circle(dt.x, dt.y, 1.9).fill({
+      color: mix(PALETTE.dim, accent, lv),
+      alpha: 0.95,
+    });
+  }
 
   // --- Inner parts: each draws its REAL glyph into a pooled child Graphics, scaled onto the
   // footprint. The glyph is drawn at unit (PITCH) scale with pins at the part's rotated cell offsets,
