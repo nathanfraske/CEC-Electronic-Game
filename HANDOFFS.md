@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (108) — Literal 1:1 zoom-in replica: leads bridge to the edge pins
+
+**State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden untouched (no
+`crates/`). Branch `claude/kind-turing-hdelb3`. Completes the (107) "NEXT" item.
+
+The zoom-to-open replica drew its package pin ANCHORS at the COMPACT footprint positions while the
+authored WIRES reached the (scaled) die-editor frame-pin positions — so leads didn't terminate on the
+pin dots. Now it's a literal replica:
+- **`netlist.ts`** — `UserIcInternals` gains `pinCells` (the frame's authored pin cells = die-editor
+  perimeter positions, by external pin index), built by a new `framePinCells(innerGraph, frameId)`
+  helper used in BOTH `userIcGeometry` (static/unpowered) and the live builder, so they stay identical.
+- **`userIcInternalsView.ts`** — external pins now anchor at `toPx(pinCells[i])` (where the wires land),
+  drawing a clearer lead dot (r 2.4, level-energised) + the inward stub; reports each drawn px back via
+  a new `outPinPx` output array. Falls back to the caller's `pins` only if `pinCells` is empty.
+- **`board.ts`** — passes `outPinPx: this.miniPinPx`; when `showUserIc`, parks each pin LABEL at
+  `miniPinPx[i]` (reusing the `pinTexts` pool, same edge-mount push) and SKIPS the compact pin dots
+  (they'd sit at the wrong spot); `showPins` is now true whenever the replica is open (so it always
+  shows its 1:1 pinout, not gated on `DETAIL_ZOOM`). Faithful because `dieLayout` (roomy) and
+  `packageLayout` (tight) already share pin number + index order — only scale differs.
+
+Net effect: zoom into a placed chip → it opens to the EXACT circuit you authored, with the package pins
+on the edges and every lead bridging from an inner part out to its boundary pin + label. +1 test
+assertion (geo vs live `pinCells` match). Presentation/web-side; golden-safe.
+
+---
+
 ## 2026-06-24 (107) — Deeper zoom + datasheet edge-mounted pin labels (+ connector/BGA ideation)
 
 **State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden untouched

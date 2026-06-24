@@ -15,13 +15,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   vertical, DIP ⇒ horizontal); labels push `LABEL_MARGIN` out in local coords then `rotPx`-rotate so
   they track the real edge at every rotation/mirror, staying upright. Same across placed parts, sealed
   user ICs, and die frames.
-- [ ] **NEXT — literal 1:1 zoom-in lead-bridging.** Make the zoom-to-open miniature draw its external
-  pins where the authored WIRES actually land (the die-editor frame-pin positions), so leads bridge
-  inside↔outside "to the exact places." Add `pinCells` to `UserIcInternals` (compute in `userIcGeometry`
-  + the live builder), anchor/lead/label each pin at `toPx(pinCells[i])` in `userIcInternalsView`, and
-  in `board.ts` reposition `pinTexts` to those positions (+ skip compact pin dots) when `showUserIc`.
-  Faithful because `dieLayout` and `packageLayout` already share pin number/index order (only scale
-  differs). See HANDOFFS (107).
+- ~~**Literal 1:1 zoom-in lead-bridging**~~ — DONE. The zoom-to-open replica now draws each external
+  package pin WHERE THE AUTHORED WIRE LANDS (the frame's die-editor pin cell), so the inner circuit
+  visibly bridges out to the boundary pins — a 1:1 of the die you built. Added `pinCells` to
+  `UserIcInternals` (frame's authored pin cells, computed via `framePinCells` in BOTH `userIcGeometry`
+  and the live builder); `userIcInternalsView` anchors the dot + energised lead at `toPx(pinCells[i])`
+  and reports the px via `outPinPx`; `board.ts` parks the pin LABEL there (reusing the `pinTexts` pool)
+  and skips the compact pin dots when the replica is open (`showUserIc`), and labels the replica's pins
+  whenever it's open (not gated on `DETAIL_ZOOM`). +1 assertion (geo/live `pinCells` match).
 - ~~**Brainstorm: connectors + large/many-pin packages (BGA "and whatnot")**~~ — DONE. New
   `docs/connectors-and-large-packages-ideation.md`: data-driven layout engine, 4-side QFP, dedicated
   §2A BGA anti-clutter treatment (progressive-disclosure ball-map, X-ray/flip, fan-out stubs,

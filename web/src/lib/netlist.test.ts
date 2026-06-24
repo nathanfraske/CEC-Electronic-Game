@@ -264,6 +264,10 @@ describe("IC maker — seal-as-same-netlist", () => {
       );
       expect(geo.wires.map((w) => w.to)).toEqual(live!.wires.map((w) => w.to));
       expect(geo.bbox).toEqual(live!.bbox);
+      // The frame's authored pin cells (where the leads bridge to in the 1:1 zoom-in replica) match
+      // the live builder's exactly, one per package lead.
+      expect(geo.pinCells).toEqual(live!.pinCells);
+      expect(geo.pinCells.length).toBe(3); // SOT-23-3 has 3 leads
 
       // ...but every NODE field is zeroed (no netlist): the view renders it at level 0 (static).
       expect(geo.parts.every((p) => p.nodes.every((n) => n === 0))).toBe(true);

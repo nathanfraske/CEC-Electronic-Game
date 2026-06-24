@@ -6345,6 +6345,10 @@ class ComponentNode {
    * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
    * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
   private labelPushVertical = true;
+  /** Filled by {@link drawUserIcInternals} with the glyph-local px where each package pin was drawn in
+   * the zoom-to-open replica (the die-editor edge position the lead bridges to) — so the pin LABELS
+   * park there too, matching the dots + leads exactly (a 1:1 of the authored die). */
+  private readonly miniPinPx: { x: number; y: number }[] = [];
 
   constructor(
     private readonly component: Component,
@@ -6637,6 +6641,7 @@ class ComponentNode {
         internals: effUserIc,
         nodeV,
         pins: this.pinPositions,
+        outPinPx: this.miniPinPx, // where the replica drew each package pin → park its label there
         wPx: this.wPx,
         hPx: this.hPx,
         phase,
@@ -6747,10 +6752,14 @@ class ComponentNode {
       });
     }
     // pin dots on top (over either the schematic glyph or the tier illustration) —
-    // they mark the real connection points the wires meet.
-    for (const p of this.pinPositions) {
-      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+    // they mark the real connection points the wires meet. SKIP them when the zoom-to-open replica is
+    // showing: it draws each package pin at the die-editor edge position the lead bridges to (these
+    // compact-footprint dots would sit at the wrong spot and double them up).
+    if (!showUserIc) {
+      for (const p of this.pinPositions) {
+        g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+      }
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
@@ -6760,17 +6769,21 @@ class ComponentNode {
     // "the chip, labelled how you built it"), without needing the zoom-to-open miniature to be open.
     const showPins = isDieFrame(this.kindTag)
       ? zoom >= TIER_ZOOM
-      : (tier !== null ||
-          showInternals ||
-          showUserIc ||
-          isUserIc(this.kindTag)) &&
-        zoom >= DETAIL_ZOOM;
+      : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
+        ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
+          zoom >= DETAIL_ZOOM);
     const lcx = this.wPx / 2;
     const lcy = this.hPx / 2;
     const LABEL_MARGIN = 12; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
-      const p = this.pinPositions[i];
+      // When the zoom-to-open replica is showing, park the label where IT drew the package pin (the
+      // die-editor edge position the lead bridges to), so dot + lead + label line up as a 1:1 replica;
+      // otherwise use the compact footprint position.
+      const p =
+        showUserIc && this.miniPinPx[i]
+          ? this.miniPinPx[i]
+          : this.pinPositions[i];
       if (showPins && p) {
         // Park the label OUTSIDE the chip, on the edge this pin sits on — NOT on top of the body.
         // Push it out from the footprint centre along the pins' edge axis, then rotate that offset

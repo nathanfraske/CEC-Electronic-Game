@@ -619,6 +619,28 @@ export interface UserIcInternals {
   bbox: { minCol: number; minRow: number; maxCol: number; maxRow: number };
   /** a reference low node for the voltage "level" normalisation (0 if unknown). */
   gndNode: number;
+  /** the frame's authored pin CELLS (the die-editor perimeter positions), by EXTERNAL pin index —
+   * WHERE the authored wires actually land. Lets the zoom-to-open replica anchor each package pin (its
+   * dot + lead + label) exactly on the lead bridging into it, a 1:1 of the die the player built. */
+  pinCells: { col: number; row: number }[];
+}
+
+/** The frame's authored pin cells (die-editor perimeter positions), by external pin index. The seal
+ * keeps pin index order, so `pinCells[i]` is the same lead as external pin `i`. Render-only. */
+function framePinCells(
+  innerGraph: BoardGraph,
+  frameId: number,
+): { col: number; row: number }[] {
+  const out: { col: number; row: number }[] = [];
+  const frame = innerGraph.components.get(frameId);
+  const kind = frame ? innerGraph.kindOf(frame) : undefined;
+  if (frame && kind) {
+    for (const p of kind.pins) {
+      const c = innerGraph.pinCell(frame, p);
+      out.push({ col: c.col, row: c.row });
+    }
+  }
+  return out;
 }
 
 /**
@@ -686,6 +708,7 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
     pinNodes: [],
     bbox: { minCol, minRow, maxCol, maxRow },
     gndNode: 0,
+    pinCells: framePinCells(innerGraph, def.frameId),
   };
 }
 
@@ -1622,6 +1645,7 @@ export function buildNetlist(
       pinNodes,
       bbox: { minCol, minRow, maxCol, maxRow },
       gndNode,
+      pinCells: framePinCells(innerGraph, def.frameId),
     });
   }
 
