@@ -6,6 +6,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (116) — Fix: IC body full-size, leads extend out
+
+- ~~**Body narrowed instead of leads extending**~~ — DONE (glyphs.ts). `userIcBodyBox` now keeps the body
+  FULL pin extent on the short axis; `drawUserIcPackageBody` draws the rectangular leads sticking OUT past
+  the body (was: body inset by the lead length → thin sliver). SOT-23-5 body short side 26px (was 12).
+- [ ] Owner eyeball the full-size body + extending leads (placed + opened).
+
 ## 2026-06-24 (115) — Taper panel fix + IC package connection redesign + standpipe auto-realign
 
 - ~~**Jank tapers/junctions**~~ — DONE (board.ts, design-panel-led). Triangular port-mouth flare → round

@@ -5,6 +5,21 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (116) — Fix: IC body full-size, leads EXTEND OUT (don't narrow the body)
+
+**State:** 🟢 gates green (web check 0/0, lint, test, build; golden unchanged). Branch
+`claude/kind-turing-hdelb3`. One-file fix to (115).
+
+Owner caught it: (115)'s `userIcBodyBox` pulled the body IN by the lead length on the short axis, so the
+package shrank to a thin sliver to fit the leads INSIDE the same footprint ("you just made everything
+narrower"). Fixed so the body spans the FULL pin extent on the short axis and the rectangular leads
+EXTEND OUT past it (drawUserIcPackageBody now draws each tab sticking outward beyond the pin, tucked under
+the body rim at its root). Verified numerically: SOT-23-5 body short side 26px (was 12), total w/ leads
+67×40; DIP bodies 52 wide. The replica's internal dots ride the full-size body edge (dot gap 12px, no
+cross). Long-axis corner overhang kept. Owner to eyeball.
+
+---
+
 ## 2026-06-24 (115) — Pipe-taper panel fix, IC package connection redesign, standpipe auto-realign
 
 **State:** 🟢 all gates green (cargo fmt/clippy/golden; web check 0/0, lint, test **64**, build); golden
