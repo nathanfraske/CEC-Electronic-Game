@@ -59,6 +59,17 @@ internals once, as a normal circuit, and both the live reality view (tier 5) and
 > `captureSeal` into `UserIc.pinNames`, and becomes the **label on the sealed chip's matching pin**
 > (`userIcPartKind`, falling back to the number). Names are presentation only — never in the netlist.
 > (Pad **roles** remain a future addition.)
+>
+> **Test stimuli (so a power-fed IC solves + seals here).** A logic IC is powered through its VCC/GND
+> pins **from outside** its package, so a die solved *in isolation* in the editor has no ground
+> reference — `buildNetlist` returns null and it can't run or seal. In the same pad popover you can
+> mark a pad with a **TEST stimulus**: **GND** (a 0 V reference), **VCC** (a settable supply voltage),
+> or **Input** (a settable drive voltage). The editor injects these as virtual sources **only while
+> solving the die here** (`dieTestGraph` in `dieEditor.ts`), so the die powers up, animates live, and
+> the **Seal gate passes**. They are **authoring-only scaffolding and are NEVER part of the sealed
+> chip** (`captureSeal` reads the raw die graph) — the sealed netlist + the sim-core golden are
+> exactly the player's real discrete parts. Stored on the die frame as `Component.pinTests` (by pin
+> index); cleared by picking **None**.
 
 ## 4. Build the circuit inside
 

@@ -45,12 +45,15 @@
     framePackage,
     type GraphSnapshot,
     type HotSlot,
+    type PinTest,
+    type PinTestRole,
   } from "./lib/graph";
   import {
     freshDieGraph,
     findDieFrameId,
     dieIsSealable,
     unusedDiePins,
+    dieTestGraph,
   } from "./lib/dieEditor";
   import { captureSeal } from "./lib/userIc";
   import {
@@ -1044,6 +1047,12 @@
   } | null>(null);
   let pinNameValue = $state("");
   let pinNameInput = $state<HTMLInputElement>();
+  // The die port-pad popover also sets the pad's TEST STIMULUS (authoring-only). These mirror the
+  // current role (`"none"` = no stimulus) + value (volts, for VCC/IN) into the controls; the
+  // container ref backs the guarded blur (clicking a role button must NOT blur-close the name input).
+  let pinTestRole = $state<PinTestRole | "none">("none");
+  let pinTestValue = $state(5);
+  let pinNamePopover = $state<HTMLDivElement>();
   // Set when the circuit can't actually solve (e.g. a current source with no
   // return path) so the HUD can warn instead of showing a meaningless reading.
   let circuitWarning = $state<string | null>(null);
@@ -1721,7 +1730,13 @@
       let netlist: BuiltNetlist | null = null;
       let netlistSig = "";
       const rebuildNetlist = (graph: BoardGraph): void => {
-        const nl = buildNetlist(graph, realModels);
+        // While drilled into a die, solve the graph with the frame's TEST STIMULI injected (so a
+        // power-fed IC powers up + animates in isolation); on the outer board, solve as-is. The
+        // injection is a strict no-op when no stimuli are set. Authoring-only — never sealed.
+        const nl = buildNetlist(
+          drill ? dieSolveGraph(graph, drill.innerFrameId) : graph,
+          realModels,
+        );
         // Onboarding: a non-null netlist means the circuit forms a solvable loop —
         // the trigger for the "a circuit is a loop" / "reading a part" concept cards.
         solvable = nl !== null;
@@ -1824,6 +1839,9 @@
           bodeHasAc = acSrc;
           phaseScopeFreq = maxAcFreq;
           hasGround = gnd;
+          // Bump the board revision so the die seal advisory (`dieStatus`) re-derives even on an
+          // edit that doesn't change the part/wire counts — e.g. setting a pad's TEST STIMULUS.
+          boardRev++;
           rebuildNetlist(graph);
           advanceBuild(graph);
           // Persist the current board so a refresh restores it (debounced) — but NOT while drilled
@@ -1893,6 +1911,9 @@
               rect: req.rect,
             };
             pinNameValue = req.initial;
+            // Seed the TEST STIMULUS controls from the pad's current stimulus (none → the defaults).
+            pinTestRole = req.test ? req.test.role : "none";
+            pinTestValue = req.test ? req.test.value : 5;
             setTimeout(() => pinNameInput?.focus(), 0);
           } else {
             pinNameEdit = null;
@@ -2154,6 +2175,22 @@
   // eslint-disable-next-line svelte/prefer-svelte-reactivity -- non-reactive store, only touched in handlers; see above
   const innerGraphs = new Map<number, GraphSnapshot>();
 
+  // A BoardGraph for the live die SOLVE: the inner graph with its frame's TEST STIMULI injected
+  // (GND/VCC/Input drive as virtual sources) so a die normally powered from outside its package
+  // powers up + passes the Seal gate while authored in isolation. AUTHORING-ONLY — built from a
+  // throwaway snapshot, never fed to the seal capture (which reads the RAW live die), so the sealed
+  // netlist + the sim-core golden are untouched. A strict no-op when the frame has no stimuli.
+  function dieSolveGraph(graph: BoardGraph, frameId: number): BoardGraph {
+    const solve = new BoardGraph();
+    solve.restore(dieTestGraph(graph.serialize(), frameId));
+    return solve;
+  }
+
+  // Bumped on every onChange so the die seal advisory ($derived `dieStatus`) refreshes even when an
+  // edit doesn't change the component/wire counts it otherwise keys on — notably setting a pin's
+  // TEST STIMULUS, which changes the solve (the injected graph) but not the authored part count.
+  let boardRev = $state(0);
+
   // The active drill context: null on the outer board, set while editing a die. Holds what the
   // exits need to restore the outer board + identify the die. One level only (the guide's one-layer
   // nesting — no user IC inside a user IC), so a single context, not a stack.
@@ -2177,14 +2214,19 @@
   // graph on each edit (partCount/wireCount tick on onChange, so this re-derives in step).
   const dieStatus = $derived.by(() => {
     if (!drill || !board) return null;
-    // Touch the edit counters so this recomputes when the inner circuit changes.
+    // Touch the edit counters so this recomputes when the inner circuit changes. boardRev also bumps
+    // on a stimulus edit (which leaves the part/wire counts unchanged) so the gate refreshes then too.
     void partCount;
     void wireCount;
+    void boardRev;
     const snap = board.serialize();
+    // The Seal gate runs on the die with its TEST STIMULI injected, so a power-fed IC (no on-die
+    // reference) reads "solvable" once the player marks a GND/VCC pad. The unused-pins advisory stays
+    // on the RAW snapshot (a stimulus is not a wire — those leads still count as unconnected here).
     const unused = unusedDiePins(snap, drill.innerFrameId);
     const total = framePackage(drill.frameTag)?.pinCount ?? 0;
     return {
-      sealable: dieIsSealable(snap),
+      sealable: dieIsSealable(dieTestGraph(snap, drill.innerFrameId)),
       used: total - unused.length,
       total,
     };
@@ -2922,6 +2964,60 @@
     if (!pinNameEdit) return;
     board?.cancelPinNameEdit();
     pinNameEdit = null;
+  }
+  // IC-maker die editor: the port-pad TEST STIMULUS controls (in the same popover as the name).
+  // A stimulus (GND / VCC / Input drive) is injected as a virtual source ONLY for the live die solve
+  // + the Seal gate (dieTestGraph) — authoring-only, never sealed. Applying LIVE goes through
+  // board.setComponentPinTest, which rebuilds the netlist so the readout updates immediately.
+  // Push the current role+value to the pad (null clears it when role is "none").
+  function applyPinTest(): void {
+    if (!pinNameEdit) return;
+    const test: PinTest | null =
+      pinTestRole === "none"
+        ? null
+        : { role: pinTestRole, value: pinTestValue };
+    board?.setComponentPinTest(
+      pinNameEdit.componentId,
+      pinNameEdit.pinIndex,
+      test,
+    );
+  }
+  // Pick a role from the button row. Switching INTO vcc/in seeds a sensible default voltage (5 V for
+  // a supply, 0 V for an input drive) — but only when the role actually changes, so re-clicking the
+  // active role never clobbers a value the player typed. Then apply live.
+  function setPinTestRole(role: PinTestRole | "none"): void {
+    if (role !== pinTestRole) {
+      if (role === "vcc") pinTestValue = 5;
+      else if (role === "in") pinTestValue = 0;
+    }
+    pinTestRole = role;
+    applyPinTest();
+  }
+  // A value-input change (VCC/IN volts): clamp to a finite number, then apply live.
+  function onPinTestValueInput(): void {
+    if (!Number.isFinite(pinTestValue)) pinTestValue = 0;
+    applyPinTest();
+  }
+  // Guarded blur on the NAME input: the popover also holds the stimulus controls, so a blur whose
+  // focus is moving to another control INSIDE the popover must NOT close it — only commit the name
+  // (re-label the pad) and stay open. A blur to anywhere else commits + closes as before. (The role
+  // buttons additionally preventDefault their mousedown so clicking them doesn't blur the input at
+  // all; this guard covers the value input + any tab-through.)
+  function onPinNameBlur(e: FocusEvent): void {
+    if (!pinNameEdit) return;
+    const next = e.relatedTarget as Node | null;
+    if (next && pinNamePopover?.contains(next)) {
+      // Focus stayed inside the popover: commit the name only (via the underlying setter, which does
+      // NOT close the editor — board.commitPinName would fire the close callback), and keep the panel
+      // open so the player can finish setting the role/value.
+      board?.setComponentPinName(
+        pinNameEdit.componentId,
+        pinNameEdit.pinIndex,
+        pinNameValue,
+      );
+      return;
+    }
+    commitPinNameEdit();
   }
   function onPinNameKey(e: KeyboardEvent): void {
     if (e.key === "Enter") {
@@ -3982,13 +4078,16 @@
         </div>
       {/if}
 
-      <!-- IC-maker die editor: the port-pad name editor — a small input over a die frame's
-           perimeter pin (opened by double-clicking the pin). Enter / blur commits, Escape cancels.
-           A blank name reverts the pad to its package pin number. The placeholder shows that number
-           so the player sees the default. -->
+      <!-- IC-maker die editor: the port-pad editor — a small panel over a die frame's perimeter pin
+           (opened by double-clicking the pin). It NAMES the pad AND sets its TEST STIMULUS (None /
+           GND / VCC / Input drive) so a power-fed IC solves + seals in the editor. The stimulus is
+           authoring-only and is never part of the sealed chip. Enter / blur (outside the panel)
+           commits the name + closes; Escape cancels. A blank name reverts the pad to its package pin
+           number. Role + value apply LIVE. -->
       {#if pinNameEdit}
         <div
-          class="net-label-editor"
+          class="net-label-editor pin-pad-editor"
+          bind:this={pinNamePopover}
           style="left: {pinNameEdit.rect.x}px; top: {pinNameEdit.rect.y}px;"
         >
           <input
@@ -4000,9 +4099,52 @@
             spellcheck="false"
             autocomplete="off"
             onkeydown={onPinNameKey}
-            onblur={commitPinNameEdit}
+            onblur={onPinNameBlur}
             aria-label="Pin name"
           />
+          <!-- TEST STIMULUS role row. mousedown.preventDefault keeps the name input from blur-closing
+               the panel when a role button is clicked. -->
+          <div
+            class="pin-test-roles"
+            role="group"
+            aria-label="Pin test stimulus"
+          >
+            {#each [{ r: "none", l: "None" }, { r: "gnd", l: "GND" }, { r: "vcc", l: "VCC" }, { r: "in", l: "IN" }] as opt (opt.r)}
+              <button
+                type="button"
+                class="pin-test-role mono {pinTestRole === opt.r
+                  ? 'is-active'
+                  : ''}"
+                onmousedown={(e) => {
+                  e.preventDefault();
+                  setPinTestRole(opt.r as PinTestRole | "none");
+                }}
+                title={opt.r === "none"
+                  ? "No test stimulus"
+                  : opt.r === "gnd"
+                    ? "0 V reference (the die's ground)"
+                    : opt.r === "vcc"
+                      ? "Supply voltage (powers the die)"
+                      : "Input drive voltage"}
+              >
+                {opt.l}
+              </button>
+            {/each}
+          </div>
+          {#if pinTestRole === "vcc" || pinTestRole === "in"}
+            <div class="pin-test-value">
+              <input
+                class="net-label-input pin-test-volts mono"
+                type="number"
+                step="0.1"
+                bind:value={pinTestValue}
+                oninput={onPinTestValueInput}
+                onkeydown={(e) => e.stopPropagation()}
+                aria-label="Stimulus voltage"
+              />
+              <span class="pin-test-unit mono">V</span>
+            </div>
+          {/if}
         </div>
       {/if}
 

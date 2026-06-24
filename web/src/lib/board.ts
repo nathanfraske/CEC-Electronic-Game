@@ -34,6 +34,7 @@ import {
   type Cell,
   type Wire,
   type GraphSnapshot,
+  type PinTest,
 } from "./graph";
 import { captureSeal, isUserIc } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
@@ -428,6 +429,9 @@ export interface BoardCallbacks {
       /** the package pin number shown as the placeholder/fallback when the name is blank. */
       number: number;
       initial: string;
+      /** the pad's current TEST STIMULUS (die-editor authoring-only) so the popover can seed its
+       * role/value controls; null when the pin has no stimulus. See {@link Board.setComponentPinTest}. */
+      test: PinTest | null;
       rect: AnchorRect;
     } | null,
   ) => void;
@@ -2330,6 +2334,47 @@ export class Board {
   }
 
   /**
+   * Set a die frame's port-pad TEST STIMULUS (the IC-maker die editor): pin `pinIndex` on component
+   * `id` gets a {@link PinTest} (`gnd` / `vcc` / `in`) or `null` to clear it. Unlike a pin NAME (pure
+   * presentation), a stimulus changes the SOLVE — {@link dieTestGraph} injects it as a virtual source
+   * so a power-fed die powers up + passes the Seal gate. So after updating `c.pinTests` (materialize a
+   * full-length array of nulls, set the slot, drop to undefined if all null) this rebuilds the node
+   * (so the pad re-renders) AND fires {@link BoardCallbacks.onChange} (NOT just onPersist) so App's
+   * `rebuildNetlist` recompiles the injected die and the live readout updates. Undoable. No-op on a
+   * missing component or an out-of-range pin. (Authoring-only — never sealed; see {@link dieTestGraph}.)
+   */
+  setComponentPinTest(
+    id: number,
+    pinIndex: number,
+    test: PinTest | null,
+  ): void {
+    const c = this.graph.components.get(id);
+    if (!c) return;
+    const k = this.graph.kindOf(c);
+    if (!k || pinIndex < 0 || pinIndex >= k.pins.length) return;
+    this.pushUndo(this.graph.serialize());
+    // Materialize a full-length tests array (sparse slots as null), set the slot, then drop the
+    // array entirely if nothing is set (keeps the common case off the snapshot).
+    const tests: (PinTest | null)[] = (c.pinTests ?? []).slice();
+    while (tests.length < k.pins.length) tests.push(null);
+    tests[pinIndex] = test;
+    c.pinTests = tests.some((t) => t) ? tests : undefined;
+    // Rebuild this node (mirrors setComponentPinName) so the pad reflects the change.
+    const node = this.nodes.get(id);
+    if (node) {
+      node.destroy();
+      this.nodes.delete(id);
+      this.addNode(c);
+    }
+    this.redrawWires();
+    this.redrawSelection();
+    // A stimulus changes the netlist (the injected die solves differently), so rebuild — onChange,
+    // not just onPersist.
+    this.cb.onChange?.(this.graph);
+    this.emitSelect();
+  }
+
+  /**
    * Flip a manual switch (kind `MSW`) between closed (value 1) and open (value 0).
    * Routed through {@link setComponentValue}, so the flip is undoable and rebuilds
    * the netlist exactly like an inspector value edit — the sim sees the new state
@@ -2729,6 +2774,7 @@ export class Board {
       pinIndex,
       number: Number.isFinite(number) ? number : pinIndex + 1,
       initial: c.pinNames?.[pinIndex] ?? "",
+      test: c.pinTests?.[pinIndex] ?? null,
       rect,
     });
   }
