@@ -108,10 +108,10 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
  * and the soft-containment check keeps placement inside it. Returns undefined if `frameId` isn't a
  * frame in the snapshot (so a graph with no die has no walls to draw).
  *
- * The leads sit ON the edge they belong to (left/right columns for a dual, top/bottom rows for a
- * SOT) but are inset from the CORNERS by `DIE_CORNER_INSET` — `dieLayout` builds that corner margin
- * into `w`/`h`, so the body extends past the outermost leads on the lead-row axis, exactly as a real
- * package's body extends past its end pins (the leads are never jammed into the corners).
+ * {@link dieLayout} is the production footprint scaled up PROPORTIONALLY by `DIE_SCALE`, so the leads
+ * ride the same relative positions as the real package (corner leads sit at the corners, just like a
+ * DIP) and the box is roomy enough to author the circuit between them. The box extent is the scaled
+ * `w × h`, one cell past the outermost leads on the high side — the slack the player builds in.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,

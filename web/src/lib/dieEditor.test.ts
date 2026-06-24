@@ -14,7 +14,7 @@ import {
   PART_KINDS,
 } from "./graph";
 import type { Component, GraphSnapshot } from "./graph";
-import { packageLayout, dieLayout } from "./packages";
+import { packageLayout, dieLayout, DIE_SCALE } from "./packages";
 import { buildNetlist } from "./netlist";
 import {
   freshDieGraph,
@@ -100,10 +100,11 @@ describe("die editor — fresh die init", () => {
 });
 
 describe("die editor — bounds (walls)", () => {
-  it("leads sit ON their edge but inset from the corners (not jammed into the corners)", () => {
-    // The walls are the package BODY box: every lead lands ON the edge it belongs to, but the body
-    // extends past the outermost leads on the lead-row axis, so no lead sits in a corner — exactly
-    // as a real SOT-23 / DIP body extends past its end pins (owner: "leave some room in the corners").
+  it("every lead sits inside the die's wall box, which has buildable interior room", () => {
+    // The walls are the package BODY box (dieLayout's scaled w×h, anchored at the frame). The
+    // proportional die editor places every lead INSIDE that box — containment for the soft-placement
+    // check + the seal mapping — and the box is strictly larger than the lead span on both axes, so
+    // there's room to author the circuit between the leads.
     for (const tag of ["SOT23_6", "DIP8", "VSSOP8"]) {
       const die = freshDieGraph(tag)!;
       const b = dieBounds(die.snapshot, die.frameId)!;
@@ -114,24 +115,19 @@ describe("die editor — bounds (walls)", () => {
       for (const p of k.pins) {
         const col = frame.cell.col + p.dx;
         const row = frame.cell.row + p.dy;
-        // Inside the body box…
+        // Inside the body box (so containment + the seal mapping see every lead).
         expect(col).toBeGreaterThanOrEqual(b.minCol);
         expect(col).toBeLessThanOrEqual(b.maxCol);
         expect(row).toBeGreaterThanOrEqual(b.minRow);
         expect(row).toBeLessThanOrEqual(b.maxRow);
-        // …on at least one wall (its edge)…
-        const onWall =
-          col === b.minCol ||
-          col === b.maxCol ||
-          row === b.minRow ||
-          row === b.maxRow;
-        expect(onWall).toBe(true);
-        // …but NOT at a corner (never on two perpendicular walls at once).
-        const atCorner =
-          (col === b.minCol || col === b.maxCol) &&
-          (row === b.minRow || row === b.maxRow);
-        expect(atCorner).toBe(false);
       }
+      // The interior is at least as large as the lead span on both axes — room between the leads.
+      const dxs = k.pins.map((p) => p.dx);
+      const dys = k.pins.map((p) => p.dy);
+      const leadW = Math.max(...dxs) - Math.min(...dxs);
+      const leadH = Math.max(...dys) - Math.min(...dys);
+      expect(b.maxCol - b.minCol).toBeGreaterThanOrEqual(leadW);
+      expect(b.maxRow - b.minRow).toBeGreaterThanOrEqual(leadH);
     }
   });
 
@@ -334,11 +330,12 @@ describe("die editor — seal + collapse (seal-as-same-netlist)", () => {
   });
 });
 
-describe("packages — dieLayout (perimeter relayout)", () => {
-  // Every starter package: the die layout must carry the SAME pin numbers in the SAME index order
-  // as the production layout (only the positions differ), so a sealed die maps each lead straight
-  // through to the chip's matching pin (the seal-as-same-netlist contract). Also: the die is larger
-  // (roomy interior) and every pin sits on a perimeter EDGE (dx or dy at an extreme).
+describe("packages — dieLayout (proportional enlargement)", () => {
+  // Every starter package: the die layout is the production footprint scaled up PROPORTIONALLY by
+  // DIE_SCALE — SAME pin numbers in the SAME index order, SAME relative positions + aspect ratio,
+  // just roomy. That's what lets a sealed die map each lead straight through to the chip's matching
+  // pin (seal-as-same-netlist) AND lets the zoom-to-open replica scale the circuit back onto the
+  // package pins with no re-routing.
   const cases: { archetype: string; pinCount: number }[] = [
     { archetype: "SOT-23", pinCount: 3 },
     { archetype: "SOT-23", pinCount: 5 },
@@ -361,20 +358,23 @@ describe("packages — dieLayout (perimeter relayout)", () => {
       );
     });
 
-    it(`${archetype}-${pinCount}: a roomy die with every pin on a perimeter edge`, () => {
+    it(`${archetype}-${pinCount}: a proportional enlargement of the production footprint`, () => {
       const prod = packageLayout(archetype, pinCount);
       const die = dieLayout(archetype, pinCount);
-      // The die body is at least as large as the production footprint (and, for multi-pin parts,
-      // strictly larger on the pin axis), so the interior is buildable.
+      // The die IS the production footprint scaled about cell 0 by DIE_SCALE: an n-cell span becomes
+      // (n-1)*s+1 cells (the +1 keeps the inclusive cell dimension). Same aspect ratio, roomy interior.
+      expect(die.w).toBe((prod.w - 1) * DIE_SCALE + 1);
+      expect(die.h).toBe((prod.h - 1) * DIE_SCALE + 1);
+      // At least as large as the production body (strictly larger on any multi-cell axis), so buildable.
       expect(die.w).toBeGreaterThanOrEqual(prod.w);
       expect(die.h).toBeGreaterThanOrEqual(prod.h);
-      // Every pin sits on an outer edge of the die's bounding box (dx in {0,w} or dy in {0,h}).
-      for (const p of die.pins) {
-        const onEdge =
-          p.dx === 0 || p.dx === die.w || p.dy === 0 || p.dy === die.h;
-        expect(onEdge).toBe(true);
+      // Every lead is its production position scaled by DIE_SCALE — the SAME relative spot on the body,
+      // which is exactly what makes the zoom-to-open replica line up by pure scaling (no re-routing).
+      for (let i = 0; i < die.pins.length; i++) {
+        expect(die.pins[i]!.dx).toBe(prod.pins[i]!.dx * DIE_SCALE);
+        expect(die.pins[i]!.dy).toBe(prod.pins[i]!.dy * DIE_SCALE);
       }
-      // Pins are actually spread apart (no two share a cell) — the whole point of the relayout.
+      // Pins stay spread apart (no two share a cell) — proportional scaling preserves distinctness.
       const cells = new Set(die.pins.map((p) => p.dx + "," + p.dy));
       expect(cells.size).toBe(die.pins.length);
     });
@@ -399,7 +399,7 @@ describe("packages — dieLayout (perimeter relayout)", () => {
     }
   });
 
-  it("the generated die-frame kind uses the dieLayout pins (perimeter), distinct from the production frame", () => {
+  it("the generated die-frame kind uses the dieLayout pins (scaled up), distinct from the production frame", () => {
     const prodKind = PART_KINDS["DIP8"]!;
     const dieKind = PART_KINDS[dieFrameTag("DIP8")]!;
     expect(prodKind).toBeDefined();
