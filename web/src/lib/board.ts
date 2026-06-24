@@ -77,6 +77,7 @@ import {
   dirBit,
   nudgeParallel,
   applyCrossings,
+  wireDrawOrder,
   conduitDrawRoute,
   routeLength,
   advanceBeltOffset,
@@ -4623,6 +4624,10 @@ export class Board {
     // the hub stays on its cell (schematic, or an unnudged junction).
     const junctionPos = new Map<number, Point>();
     let conduitCrossDots: { x: number; y: number; color: number }[] = [];
+    // Wire draw order. Conduit bridges (the up-bump at a different-net crossing) must paint OVER the
+    // trace they hop, so a hopping wire is drawn AFTER the wire it hops (set below from applyCrossings).
+    // Default = the graph's natural order (schematic mode has no bridges).
+    let wireOrder: number[] = [...this.graph.wires.keys()];
     if (conduit) {
       const wireColor = new Map<number, number>();
       // Junction run-ends, with the connecting leg's axis (recorded pre-nudge from the
@@ -4714,13 +4719,17 @@ export class Board {
       }
       // Same-net crossings → junction dots; different-net crossings → a bridge hop
       // baked into the horizontal wire's route.
-      conduitCrossDots = applyCrossings(
+      const cross = applyCrossings(
         condRoutes,
         nets,
         (id) => wireColor.get(id) ?? PALETTE.cyan,
       );
+      conduitCrossDots = cross.dots;
+      wireOrder = wireDrawOrder([...this.graph.wires.keys()], cross.overpasses);
     }
-    for (const w of this.graph.wires.values()) {
+    for (const id of wireOrder) {
+      const w = this.graph.wires.get(id);
+      if (!w) continue;
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
       // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the

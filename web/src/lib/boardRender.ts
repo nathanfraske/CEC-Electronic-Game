@@ -296,10 +296,16 @@ export function applyCrossings(
   routes: Map<number, Point[]>,
   nets: Map<number, number | null>,
   colorOf: (id: number) => number,
-): { x: number; y: number; color: number }[] {
+): {
+  dots: { x: number; y: number; color: number }[];
+  /** Bridge over/under constraints: `[hopper, hopped]` means the hopping wire's bump must be DRAWN
+   * AFTER (on top of) the wire it hops, so the bridge reads as going OVER. Feed to {@link wireDrawOrder}. */
+  overpasses: [number, number][];
+} {
   const ids = [...routes.keys()];
   const cache = new Map(ids.map((id) => [id, conduitSegs(routes.get(id)!)]));
   const dots: { x: number; y: number; color: number }[] = [];
+  const overpasses: [number, number][] = [];
   const bumps = new Map<number, Map<number, number[]>>(); // wireId → segIdx → x list
   const addBump = (id: number, seg: number, x: number): void => {
     let m = bumps.get(id);
@@ -333,7 +339,11 @@ export function applyCrossings(
             if (sameNet) {
               dots.push({ x: vv.fixed, y: h.fixed, color: colorOf(A) });
             } else {
-              addBump(sa.axis === "H" ? A : B, h.i, vv.fixed);
+              // The HORIZONTAL wire hops; record that it must draw OVER the vertical one it hops.
+              const hopper = sa.axis === "H" ? A : B;
+              const hopped = sa.axis === "H" ? B : A;
+              addBump(hopper, h.i, vv.fixed);
+              overpasses.push([hopper, hopped]);
             }
           }
         }
@@ -363,7 +373,56 @@ export function applyCrossings(
     }
     routes.set(id, out);
   }
-  return dots;
+  return { dots, overpasses };
+}
+
+/**
+ * Draw order for conduit wires so every BRIDGE reads as going OVER: a hopping wire is placed AFTER the
+ * wire it hops (its up-bump then paints on top). A stable topological order over `ids` (original order
+ * preserved where unconstrained), honouring each `[hopper, hopped]` overpass as "hopper after hopped".
+ * Cycle-safe: if two wires mutually hop (interlocking L-routes crossing twice — rare), the remaining
+ * cycle is flushed in original order so it always terminates. Render-only.
+ */
+export function wireDrawOrder(
+  ids: number[],
+  overpasses: [number, number][],
+): number[] {
+  // Each wire's set of still-unplaced prerequisites (the wires it must come AFTER).
+  const need = new Map<number, Set<number>>();
+  const known = new Set(ids);
+  for (const [hopper, hopped] of overpasses) {
+    if (hopper === hopped || !known.has(hopper) || !known.has(hopped)) continue;
+    let s = need.get(hopper);
+    if (!s) need.set(hopper, (s = new Set()));
+    s.add(hopped);
+  }
+  if (need.size === 0) return ids.slice(); // no crossings → original order, zero cost
+  const placed = new Set<number>();
+  const order: number[] = [];
+  let queue = ids.slice();
+  // At most one pass per wire (longest dependency chain ≤ ids.length); guard bounds it hard.
+  for (let guard = 0; queue.length > 0 && guard <= ids.length; guard++) {
+    const next: number[] = [];
+    for (const id of queue) {
+      const s = need.get(id);
+      const ready = !s || [...s].every((p) => placed.has(p));
+      if (ready) {
+        order.push(id);
+        placed.add(id);
+      } else {
+        next.push(id);
+      }
+    }
+    if (next.length === queue.length) {
+      // No progress this pass ⇒ a cycle remains; flush it in original order and stop.
+      for (const id of next) order.push(id);
+      return order;
+    }
+    queue = next;
+  }
+  // Anything left after the guard (defensive) keeps original order.
+  for (const id of queue) order.push(id);
+  return order;
 }
 
 /** The short aligning stub from a pin: when the route leaves the pin perpendicular to
