@@ -139,9 +139,10 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     if (p.y > pmaxY) pmaxY = p.y;
   }
   // The pins are now the outer LEAD TIPS; the package body sits INSIDE them, and the circuit fills that
-  // body INTERIOR (the full package room, nothing overlapping). Target the authored frame-pin extent onto
-  // the body interior: the STICK axis (where the leads are) spans the body edges, so the frame pins land
-  // at the lead ROOTS; the ARRAY axis spans the pins' own extent, so they line up with the leads.
+  // body INTERIOR. Fit the authored frame-pin extent into the body interior with a SINGLE UNIFORM scale
+  // (centred) — NOT a separate sx/sy. A non-uniform fit stretches the circuit so the parts no longer line
+  // up with their wires (the "scrambled" look); a uniform fit keeps the exact die-editor proportions, just
+  // scaled down. Any aspect slack is taken up as a centred margin, bridged by the lead connectors below.
   const bodyB = userIcBodyBox(pins, wPx, hPx);
   const tx0 = bodyB.alongX ? pminX : bodyB.x;
   const tx1 = bodyB.alongX ? pmaxX : bodyB.x + bodyB.w;
@@ -149,16 +150,16 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const ty1 = bodyB.alongX ? bodyB.y + bodyB.h : pmaxY;
   const haveMap =
     isFinite(fminC) && isFinite(pminX) && fmaxC > fminC && fmaxR > fminR;
-  const sx = haveMap ? (tx1 - tx0) / ((fmaxC - fminC) * PITCH) : 1;
-  const sy = haveMap ? (ty1 - ty0) / ((fmaxR - fminR) * PITCH) : 1;
-  const partScale = Math.min(sx, sy);
-  // Authored cell (col,row) → footprint px: frame pins land at the lead roots, parts in between.
+  const domW = (fmaxC - fminC) * PITCH;
+  const domH = (fmaxR - fminR) * PITCH;
+  const s = haveMap ? Math.min((tx1 - tx0) / domW, (ty1 - ty0) / domH) : 1;
+  const ox = tx0 + (tx1 - tx0 - domW * s) / 2; // centre the fitted circuit in the body interior
+  const oy = ty0 + (ty1 - ty0 - domH * s) / 2;
+  const partScale = s;
+  // Authored cell (col,row) → footprint px, at one uniform scale (undistorted, like the die editor).
   const toPx = (col: number, row: number): { x: number; y: number } =>
     haveMap
-      ? {
-          x: tx0 + (col - fminC) * PITCH * sx,
-          y: ty0 + (row - fminR) * PITCH * sy,
-        }
+      ? { x: ox + (col - fminC) * PITCH * s, y: oy + (row - fminR) * PITCH * s }
       : { x: wPx / 2, y: hPx / 2 };
 
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
@@ -233,6 +234,37 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       color: mix(PALETTE.rail, accent, lv),
       alpha: 0.95,
     });
+  }
+  // Lead connectors: a short conduit from each frame pin (where the circuit meets the perimeter, after
+  // the uniform fit) out to its lead ROOT on the body edge — taking up the centred-fit margin so the inner
+  // net visibly ties to its external lead (the package then carries each lead on out to its solder tip).
+  const bcx = bodyB.x + bodyB.w / 2;
+  const bcy = bodyB.y + bodyB.h / 2;
+  for (let i = 0; i < pinCells.length; i++) {
+    const pc = pinCells[i];
+    const pp = pins[i];
+    if (!pc || !pp) continue;
+    const fp = toPx(pc.col, pc.row);
+    const root = bodyB.alongX
+      ? { x: pp.x, y: pp.y < bcy ? bodyB.y : bodyB.y + bodyB.h }
+      : { x: pp.x < bcx ? bodyB.x : bodyB.x + bodyB.w, y: pp.y };
+    const lv = pinNodes[i] === undefined ? 0 : level(pinNodes[i]!);
+    g.moveTo(fp.x, fp.y)
+      .lineTo(root.x, root.y)
+      .stroke({
+        width: PW + 2,
+        color: 0x0d0b16,
+        alpha: 0.9,
+        cap: "round",
+      });
+    g.moveTo(fp.x, fp.y)
+      .lineTo(root.x, root.y)
+      .stroke({
+        width: PW,
+        color: mix(PALETTE.rail, accent, lv),
+        alpha: 0.5 + 0.45 * lv,
+        cap: "round",
+      });
   }
 
   // --- Inner parts: each draws its REAL glyph into a pooled child Graphics, scaled onto the
