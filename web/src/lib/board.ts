@@ -4775,11 +4775,7 @@ export class Board {
         const pw = 4 + 5 * normC;
         const rd = condRoutes.get(w.id) ?? route;
         sampleRoute = roundedPoints(rd, Math.min(pw * 2, PITCH * 0.7));
-        // Flange the PIN ends (not junctions) so the pipe meshes into the part's pad.
-        this.drawConduitSkin(g, sampleRoute, color, pw, conduit, [
-          !isJunctionRef(w.from),
-          !isJunctionRef(w.to),
-        ]);
+        this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
         this.conduitDrawRoutes.set(w.id, sampleRoute);
       } else {
         polyline(g, route);
@@ -5535,9 +5531,8 @@ export class Board {
     color: number,
     pw: number,
     lens: BoardLens,
-    ends?: [boolean, boolean],
   ): void {
-    drawConduitSkin(g, rp, color, pw, lens, ends);
+    drawConduitSkin(g, rp, color, pw, lens);
   }
 
   /**

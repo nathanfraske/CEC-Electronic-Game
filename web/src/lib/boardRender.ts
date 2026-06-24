@@ -149,8 +149,12 @@ export function roundedPoints(pts: Point[], r: number, steps = 6): Point[] {
     const n = pts[i + 1]!;
     const d1 = Math.hypot(v.x - p.x, v.y - p.y) || 1;
     const d2 = Math.hypot(n.x - v.x, n.y - v.y) || 1;
-    const r1 = Math.min(r, d1 / 2);
-    const r2 = Math.min(r, d2 / 2);
+    // Pull back at most 0.42·leg (not 0.5): when a SHORT leg is shared by two bends, two 0.5·leg
+    // pull-backs meet at its midpoint and the arcs blend into a diagonal S (the owner's "bending at an
+    // angle" in the dense sealed-IC routes). Capping under half always leaves a straight middle, so each
+    // bend stays a crisp orthogonal corner. Inert for normal long legs (the radius `r` binds there).
+    const r1 = Math.min(r, d1 * 0.42);
+    const r2 = Math.min(r, d2 * 0.42);
     const ax = v.x + ((p.x - v.x) / d1) * r1;
     const ay = v.y + ((p.y - v.y) / d1) * r1;
     const bx = v.x + ((n.x - v.x) / d2) * r2;
@@ -592,10 +596,6 @@ export function drawConduitSkin(
   color: number,
   pw: number,
   lens: BoardLens,
-  /** Whether each route end ([from, to]) is a component PIN (→ a flange coupling collar the part's pad
-   * seats into) vs a junction/free end (→ the flush grommet, since a junction hub paints over it).
-   * Omitted ⇒ both flush (back-compat). */
-  ends?: [boolean, boolean],
 ): void {
   const cap = "round" as const;
   const join = "round" as const;
@@ -647,15 +647,8 @@ export function drawConduitSkin(
   for (const ei of [0, rp.length - 1] as const) {
     const e = rp[ei];
     if (!e) continue;
-    // A PIN end gets a FLANGE COUPLING: a wider concentric collar the component pad seats into, so the
-    // pipe reads as plugging into a flanged port instead of abutting a flat pad. It reuses the junction
-    // hub idiom (dark collar + voltage-core face) — concentric + round so it never re-creates the old
-    // arrowhead — sized off pw and capped under half-pitch so it can't balloon on a crushed SOT or crowd
-    // a multi-pin IC. A JUNCTION/free end keeps the flush grommet (a junction hub paints over it).
-    const isPin = ends ? ends[ei === 0 ? 0 : 1] : false;
-    const r = isPin ? Math.min(Math.max(ph + 5, 10), PITCH * 0.46) : ph;
-    g.circle(e.x, e.y, r).fill({ color: 0x0d0b16, alpha: 0.9 });
-    g.circle(e.x, e.y, Math.max(1, r - 2)).fill({ color, alpha: coreAlpha });
+    g.circle(e.x, e.y, ph).fill({ color: 0x0d0b16, alpha: 0.9 });
+    g.circle(e.x, e.y, Math.max(1, ph - 2)).fill({ color, alpha: coreAlpha });
   }
 }
 
