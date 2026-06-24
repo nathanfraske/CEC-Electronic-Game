@@ -4817,14 +4817,16 @@ export class Board {
                 size,
               );
             } else if (conduit === "analogy") {
-              g.circle(s.x, s.y, 2 + 1.6 * normC).fill({
+              // Smaller + dimmer than before (was r 2+1.6·, α 0.45+0.4·): the carriers now ride the
+              // OPAQUE core, so they stay legible at lower strength and stop dominating dense clusters.
+              g.circle(s.x, s.y, 1.6 + 1.2 * normC).fill({
                 color: PIPE_WATER,
-                alpha: (0.45 + 0.4 * normC) * fade,
+                alpha: (0.3 + 0.32 * normC) * fade,
               });
             } else {
-              g.circle(s.x, s.y, 1.7 + 1.2 * normC).fill({
+              g.circle(s.x, s.y, 1.4 + 1 * normC).fill({
                 color: COND_ELEC,
-                alpha: (0.5 + 0.4 * normC) * fade,
+                alpha: (0.32 + 0.32 * normC) * fade,
               });
             }
           }
@@ -4836,7 +4838,8 @@ export class Board {
         // live band, not aliased strobing dots. Shown in every lens.
         if (blur > 0.02) {
           const vib = 0.9 + 0.1 * Math.sin(this.phase * SHIMMER_VIB);
-          const half = (width * 0.6 + 4 + 5 * normC) * vib;
+          // Capped so a dense AC region's auras don't bloom into a wall of light.
+          const half = Math.min(16, (width * 0.6 + 4 + 5 * normC) * vib);
           const glow = mix(color, 0xffffff, 0.35);
           const hot = mix(color, 0xffffff, 0.75);
           const stroke = (w: number, c: number, a: number): void => {
@@ -4849,7 +4852,7 @@ export class Board {
               join: "round",
             });
           };
-          stroke(3 * half, color, blur * (0.1 + 0.08 * normC)); // wide voltage aura
+          stroke(1.8 * half, color, blur * (0.06 + 0.05 * normC)); // narrower, dimmer voltage aura
           stroke(2 * half, glow, blur * (0.2 + 0.18 * normC)); // brightened glow
           stroke(Math.max(1.2, 0.84 * half), hot, blur * (0.5 + 0.3 * normC)); // hot core
           const sparks = 3 + Math.round(3 * normC);
@@ -5515,15 +5518,16 @@ export class Board {
   ): void {
     const cap = "round" as const;
     const join = "round" as const;
-    // Lower core alpha (was 0.32/0.36) so overlapping pipes stop stacking into a haze; the
-    // fill colour + the carriers walking the same path keep it legible.
-    const coreAlpha = lens === "analogy" ? 0.26 : 0.3;
+    // OPAQUE core (was 0.26/0.3): a later pipe's core now KNOCKS OUT the one it crosses, so two pipes
+    // read as two (a clean over/under) instead of two translucent fills summing into a brighter blob.
+    const coreAlpha = 0.95;
     const wallCol = lens === "analogy" ? PIPE_WALL : COND_CASING;
-    // `rp` is the already-rounded draw path (aligning stubs + rounded elbows). Two
-    // translucent layers only — a faint wall rim + a voltage-tinted fill (no dark bore;
-    // the stacked bore muddied the pipe and made crossings read opaque). The grid +
-    // overlaps show through; the fill colour + the carriers (which walk this same path)
-    // stay the readable part. Wall alpha trimmed (was 0.3) to de-haze parallel runs.
+    // `rp` is the already-rounded draw path. Layers, outside-in: a near-opaque dark MOAT (a thin
+    // trench wider than the wall, laid first so each later route knocks back the previous pipe's halo
+    // — restoring the dark grid gap the eye uses to separate adjacent/crossing pipes), a faint steel
+    // wall rim (the soft halo), then the opaque voltage-tinted core. The carriers walk this same path.
+    polyline(g, rp);
+    g.stroke({ width: pw + 5, color: 0x0d0b16, alpha: 0.9, cap, join });
     polyline(g, rp);
     g.stroke({ width: pw + 3, color: wallCol, alpha: 0.24, cap, join });
     polyline(g, rp);
@@ -5669,11 +5673,11 @@ export class Board {
         cap,
       });
     }
-    // Hub: the nubs already overlap here (up to four arms over the run ends), so a
-    // heavy fill piles into an opaque dot. Keep it small + translucent to match the pipes
-    // (radii trimmed from +3.5/+1 so the tap reads as a node, not a blob).
-    g.circle(p.x, p.y, pw / 2 + 2).fill({ color: wallCol, alpha: 0.2 });
-    g.circle(p.x, p.y, pw / 2 + 0.5).fill({ color, alpha: coreAlpha * 0.5 });
+    // Hub: an OPAQUE node — a dark backing disc knocks out the pipe bloom directly under the tie,
+    // then a solid colour disc on top, so the junction reads as a crisp discrete dot ABOVE the haze
+    // instead of a dim spot in it (the proven same-net cross-dot recipe).
+    g.circle(p.x, p.y, pw / 2 + 2.5).fill({ color: 0x0d0b16, alpha: 0.92 });
+    g.circle(p.x, p.y, pw / 2 + 0.5).fill({ color, alpha: 0.95 });
   }
 
   /**
@@ -6702,6 +6706,7 @@ class ComponentNode {
         pins: this.pinPositions,
         wPx: this.wPx,
         hPx: this.hPx,
+        color: this.color,
         phase,
         accent: lens === "analogy" ? PIPE_WATER : COND_ELEC,
         partLayer: this.userIcGlyphs,
@@ -6747,37 +6752,10 @@ class ComponentNode {
       setStudsVisible(true);
       tg.scale.set(scale);
       tg.visible = true;
-      // Bridge each pin to the body with a pipe stub BEHIND the illustration, so the
-      // wire-pipes flow continuously into the part (the illustration masks the inner
-      // length where it has its own detail; only the pin→body gap shows). Matches the
-      // wire conduit: steel wall + a faint water/electron core, width tracking current.
-      const cg = this.connectorGlyph;
-      cg.clear();
-      const bodyCx = this.wPx / 2;
-      const bodyCy = this.hPx / 2;
-      // Narrower (was 5 + 5·…) so it doesn't read fatter than the wire-pipe feeding it.
-      const pw = 4 + 4 * Math.min(1, Math.abs(electrical.current) / 0.02);
-      const core = tier === "reality" ? COND_ELEC : PIPE_WATER;
-      for (const p of this.pinPositions) {
-        // Start the stub a little INSIDE the pin (not AT it) so it doesn't double the
-        // wire conduit's own port-mouth flare that already lands on the pin — the pipe
-        // then flows into the part once, cleanly, instead of as an overlapped/oddly-
-        // translucent doubled stub (most visible on the multi-pin MOSFET bodies).
-        const sx = p.x + (bodyCx - p.x) * 0.2;
-        const sy = p.y + (bodyCy - p.y) * 0.2;
-        const ex = p.x + (bodyCx - p.x) * 0.62;
-        const ey = p.y + (bodyCy - p.y) * 0.62;
-        cg.moveTo(sx, sy).lineTo(ex, ey);
-        cg.stroke({
-          width: pw + 3,
-          color: PIPE_WALL,
-          alpha: 0.22,
-          cap: "round",
-        });
-        cg.moveTo(sx, sy).lineTo(ex, ey);
-        cg.stroke({ width: pw, color: core, alpha: 0.13, cap: "round" });
-      }
-      cg.visible = true;
+      // (Removed the per-pin pipe stubs that used to bridge each pin into the body — they read as odd
+      // translucent "tubes" into every part. The wire conduits already land on the pins via their own
+      // port-mouth flare, so the flow still reads continuous into the part without them.)
+      this.connectorGlyph.visible = false;
     } else if (isDieFrame(this.kindTag)) {
       // A die frame draws NO body glyph: the die-editor WALLS (drawDieWalls) are its outline and its
       // pin dots (added just below) are the port pads. A generic IC-card rect here would be a second,
@@ -7092,7 +7070,7 @@ function dirBit(a: Point, b: Point): number {
 
 type Dir = { x: number; y: number };
 
-const NUDGE_SPACING = 9; // px between conduits sharing a channel
+const NUDGE_SPACING = 13; // px between conduits sharing a channel (clears the pipe body + dark moat)
 
 /**
  * Fan apart conduits that run along the SAME grid line (overlapping collinear segments)

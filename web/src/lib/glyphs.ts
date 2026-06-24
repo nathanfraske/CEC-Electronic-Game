@@ -7,6 +7,7 @@
 
 import { Graphics } from "pixi.js";
 import { apparentFreq, blurFactor, shimmerFlow } from "./tierKit";
+import { isUserIc } from "./userIc";
 
 /**
  * Per-element **AC measurements** for the last full cycle, measured by the solver
@@ -1961,6 +1962,85 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
+const IC_LEAD_LEN = 5; // px the package leads stick out of the body to the solder pins
+
+/**
+ * The package BODY box (glyph-local px) for a user IC: the pin bounding box pulled IN by a lead length
+ * on the sides the pins sit on, so the pins become LEADS sticking OUT of the body (the solder points on
+ * a PCB) and the whole interior is free for the zoom-to-open circuit. `alongX` = the pins are arrayed in
+ * rows on the top/bottom edges (SOT-23) vs. columns on the left/right (DIP). Shared by the closed-chip
+ * glyph and the open replica so they match.
+ */
+export function userIcBodyBox(
+  pins: { x: number; y: number }[],
+  wPx: number,
+  hPx: number,
+): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  alongX: boolean;
+  lead: number;
+} {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of pins) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  if (!isFinite(minX)) {
+    minX = 0;
+    maxX = wPx;
+    minY = 0;
+    maxY = hPx;
+  }
+  const alongX = maxX - minX >= maxY - minY;
+  const lead = IC_LEAD_LEN;
+  const x = alongX ? minX : minX + lead;
+  const y = alongX ? minY + lead : minY;
+  const w = Math.max(1, alongX ? maxX - minX : maxX - minX - 2 * lead);
+  const h = Math.max(1, alongX ? maxY - minY - 2 * lead : maxY - minY);
+  return { x, y, w, h, alongX, lead };
+}
+
+/**
+ * Draw a user IC's PACKAGE: a short metal lead from each solder pin to the body edge it faces (like a
+ * chip's gull-wing leads on a PCB), then the dark rounded body ringed in the part's colour. The interior
+ * is left for the caller — the zoom-to-open circuit fills it, or it stays empty for the closed chip.
+ */
+export function drawUserIcPackageBody(
+  g: Graphics,
+  pins: { x: number; y: number }[],
+  wPx: number,
+  hPx: number,
+  color: number,
+): void {
+  const b = userIcBodyBox(pins, wPx, hPx);
+  const cy = b.y + b.h / 2;
+  const cx = b.x + b.w / 2;
+  // Leads first (behind the body): a short stub from each pin to the body edge it sits on.
+  for (const p of pins) {
+    let sx = p.x;
+    let sy = p.y;
+    if (b.alongX) sy = p.y >= cy ? b.y + b.h : b.y;
+    else sx = p.x >= cx ? b.x + b.w : b.x;
+    g.moveTo(sx, sy).lineTo(p.x, p.y);
+    g.stroke({ width: 3, color: 0x9a93b3, alpha: 0.95, cap: "round" });
+  }
+  // Body: a dark rounded package (so the internals read against it), ringed in the part's colour.
+  g.roundRect(b.x, b.y, b.w, b.h, 3).fill({ color: 0x0d0b16, alpha: 0.95 });
+  g.roundRect(b.x, b.y, b.w, b.h, 3).stroke({ width: 1.6, color, alpha: 0.9 });
+}
+
+function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
+  drawUserIcPackageBody(g, o.pins, o.wPx, o.hPx, o.color);
+}
+
 // --- Factory style: components as machines/buildings (the Factorio lens) ------
 // Same keys, same pin geometry, same animation helpers — only the body art
 // changes, so wiring is identical across styles (see docs/ui/teaching-tools.md).
@@ -3010,6 +3090,7 @@ export function drawGlyphIn(
   const map = style === "factory" ? FACTORY_DRAWERS : DRAWERS;
   const drawer = map[o.kind] ?? DRAWERS[o.kind];
   if (drawer) drawer(g, o);
+  else if (isUserIc(o.kind)) drawUserIcPackage(g, o);
   else drawCard(g, o);
 }
 

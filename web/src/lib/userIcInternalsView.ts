@@ -13,7 +13,13 @@
 // hashing — the seal is purely a drawing over the same netlist (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics } from "pixi.js";
 import { PALETTE, PART_KINDS, rotateOffset } from "./graph";
-import { drawGlyph, ZERO_ELECTRICAL, type ElectricalState } from "./glyphs";
+import {
+  drawGlyph,
+  drawUserIcPackageBody,
+  userIcBodyBox,
+  ZERO_ELECTRICAL,
+  type ElectricalState,
+} from "./glyphs";
 import type { UserIcInternals } from "./netlist";
 
 /** Grid pitch in pixels — mirrors `PITCH` in board.ts (the cell size everything snaps to). The
@@ -50,6 +56,8 @@ export interface UserIcInternalsOpts {
   pins: { x: number; y: number }[];
   wPx: number;
   hPx: number;
+  /** the IC's identity colour, for the package body rim. */
+  color: number;
   /** the board's bounded flow clock, for animating carriers along the wires. */
   phase: number;
   /** the live-signal "hot" colour, skinned by lens (analogy water vs reality electron). */
@@ -69,8 +77,13 @@ export interface UserIcInternalsOpts {
  * and external-pin anchors are drawn into `g`. Returns nothing.
  */
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
-  const { internals, nodeV, pins, wPx, hPx, phase, accent, partLayer } = o;
+  const { internals, nodeV, pins, wPx, hPx, color, phase, accent, partLayer } =
+    o;
   const { parts, wires, pinNodes, bbox, gndNode } = internals;
+
+  // Draw the PACKAGE first: the leads out to the solder pins + the dark body. The authored circuit
+  // then fills the body interior below, so it reads as the real chip opened up (leads on the outside).
+  drawUserIcPackageBody(g, pins, wPx, hPx, color);
 
   // Pool: one child Graphics per inner part, reused across frames (cleared, not recreated). Shrink
   // the pool if the netlist now has fewer parts (e.g. a different IC under the cursor).
@@ -92,14 +105,16 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const cellsH = Math.max(1, bbox.maxRow - bbox.minRow);
   const srcW = cellsW * PITCH;
   const srcH = cellsH * PITCH;
-  const insetX = wPx * 0.16 + 6;
-  const insetY = hPx * 0.16 + 6;
-  const dstW = Math.max(1, wPx - 2 * insetX);
-  const dstH = Math.max(1, hPx - 2 * insetY);
+  // FILL the package BODY (not the whole footprint): the body is the pin bbox minus the leads, so the
+  // circuit fills the interior at a readable size — the leads carry the pins outside, freeing the body.
+  const body = userIcBodyBox(pins, wPx, hPx);
+  const wall = 2.5; // keep the circuit just inside the body rim
+  const dstW = Math.max(1, body.w - 2 * wall);
+  const dstH = Math.max(1, body.h - 2 * wall);
   const scale = Math.min(dstW / srcW, dstH / srcH);
-  // Centre the scaled drawing in the footprint.
-  const offX = (wPx - srcW * scale) / 2;
-  const offY = (hPx - srcH * scale) / 2;
+  // Centre the scaled drawing in the body box.
+  const offX = body.x + (body.w - srcW * scale) / 2;
+  const offY = body.y + (body.h - srcH * scale) / 2;
   // Authored cell (col,row) → footprint pixel.
   const toPx = (col: number, row: number): { x: number; y: number } => ({
     x: offX + (col - bbox.minCol) * PITCH * scale,

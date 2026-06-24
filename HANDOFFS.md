@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (112) — Pipe-legibility quick-wins + remove device tubes + IC package leads & filled internals
+
+**State:** 🟢 web gate green (`check` 0/0, `lint`, `build`, `test` **64**); golden UNCHANGED (render-only).
+Branch `claude/kind-turing-hdelb3`. All **visual / unverified-by-CI** — owner should eyeball. Three owner asks.
+
+**1. Pipe-legibility quick-wins (from `docs/pipe-legibility-review.md`), all in `board.ts`:**
+- **QW1 opaque conduit core** — `drawConduitSkin` core alpha 0.26/0.3 → **0.95**, so a later pipe's core
+  KNOCKS OUT the one it crosses (two pipes read as two, not a summed blob).
+- **QW2 dark moat** — a near-opaque dark stroke `pw+5 @ 0x0d0b16 α0.9` laid BEFORE the wall, restoring the
+  dark grid gap between adjacent/crossing pipes.
+- **QW5 opaque junction hub** — `drawJunctionConduit` hub now dark-backing disc + solid colour disc
+  (crisp node above the haze, not a dim spot in it).
+- **QW4 `NUDGE_SPACING` 9 → 13** (parallel lanes clear the body + moat).
+- **QW3 quieter carriers** (analogy/​reality blob radius + alpha cut — they ride the opaque core now).
+- **QW8 shimmer** capped (`half ≤ 16`) + aura `3·half → 1.8·half`, dimmer (fast-AC only).
+- Deferred (lower value once cores occlude): QW6/QW7 crossing hop knockout, QW9 gauge-chrome cull.
+
+**2. Removed the "tubes into each component"** (owner: "they look odd"). The per-pin `connectorGlyph` stubs
+(pin→body pipe in the tier-illustration branch, `board.ts`) are gone — set `visible=false`, drawing block
+deleted. The wire conduits still land on the pins via their port-mouth flare, so flow reads continuous.
+
+**3. IC package = real leads + filled internals** (owner: pins should be the SOLDER leads on the outside,
+freeing the body to show the circuit, which was "super super tiny"). New in `glyphs.ts`:
+`userIcBodyBox(pins,wPx,hPx)` (pin bbox pulled in by a lead length on the pin sides → the body box;
+`alongX` = SOT-23 rows vs DIP columns) + `drawUserIcPackageBody(g,pins,wPx,hPx,color)` (a metal lead from
+each pin to the body edge + a dark rounded body ringed in the part colour) + `drawUserIcPackage` glyph,
+routed in `drawGlyphIn` so a placed user IC uses it instead of `drawCard`. `userIcInternalsView` now draws
+that package body first, then **fills the BODY box** with the authored circuit (was: scaled into the whole
+tiny footprint with big insets) — so the internals are readable. `drawUserIcInternals` gained a `color`
+opt (passed from `board.ts`). NOTE: for the short SOT-23 footprint the body is still wide-and-short, so a
+square circuit fills the height; if the owner wants it bigger, a follow-up could enlarge the body when
+zoomed into the replica. Eyeball needed.
+
+**Also queued (owner request):** a game-design brainstorm workflow is running (progression / reality-ramp /
+core-loop / UGC / out-of-left-field → a GDD doc), to be followed by a massive divergent "everything we
+could do" panel and then a grounding/feasibility panel.
+
+---
+
 ## 2026-06-24 (111) — Fix IC pin-label overlap (revert 1:1 bridging) + per-circuit gauge scaling
 
 **State:** 🟢 web gate green (`check` 0/0, `lint`, `build`, `test` **64** +1); golden UNCHANGED
