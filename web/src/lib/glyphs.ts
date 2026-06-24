@@ -1962,15 +1962,15 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
-const IC_LEAD_LEN = 7; // px the package leads stick out of the body to the solder pins (elongated tabs)
+const IC_LEAD_LEN = 7; // px the rectangular solder leads stick OUT past the body edge (the tabs)
 
 /**
- * The package BODY box (glyph-local px) for a user IC. On the STICK (short) axis the pin bounding box is
- * pulled IN by a lead length, so the pins become elongated LEADS sticking OUT of the body to the solder
- * points. On the ARRAY (long) axis the body is pushed OUT past the end leads, so the corner leads sit
- * INSET from the body corners — a real package's body overhangs its end pins, and the owner's rule is
- * "pins are never shoved in the corners." `alongX` = the pins are arrayed in rows on the top/bottom
- * edges (SOT-23) vs. columns on the left/right (DIP). Shared by the closed-chip glyph + the open replica.
+ * The package BODY box (glyph-local px) for a user IC. The body spans the FULL pin extent on the short
+ * (stick) axis — so the package keeps its size and the leads EXTEND OUT past it (owner: "make the solder
+ * leads extend the package", NOT narrow the body) — and OVERHANGS the end leads on the long (array) axis
+ * so the corner leads sit INSET from the corners (never jammed in). `alongX` = the pins are arrayed in
+ * rows on the top/bottom edges (SOT-23) vs. columns on the left/right (DIP). Shared by the closed-chip
+ * glyph + the open replica.
  */
 export function userIcBodyBox(
   pins: { x: number; y: number }[],
@@ -2002,20 +2002,15 @@ export function userIcBodyBox(
   }
   const alongX = maxX - minX >= maxY - minY;
   const lead = IC_LEAD_LEN;
-  // Overhang past the end leads on the long axis (14% of the lead span, clamped), so the body reads as
-  // a real chip whose plastic extends past its end pins — corner leads never jammed into the corners.
+  // Long (array) axis: overhang the end leads by 14% of the span (clamped) so the corner leads read
+  // inset from the corners. Short (stick) axis: the FULL pin extent — the body keeps its size and the
+  // leads stick OUT past its edges (drawn by drawUserIcPackageBody), instead of the body shrinking.
   const span = alongX ? maxX - minX : maxY - minY;
   const end = Math.max(4, Math.min(40, span * 0.14));
-  const x = alongX ? minX - end : minX + lead;
-  const y = alongX ? minY + lead : minY - end;
-  const w = Math.max(
-    1,
-    alongX ? maxX - minX + 2 * end : maxX - minX - 2 * lead,
-  );
-  const h = Math.max(
-    1,
-    alongX ? maxY - minY - 2 * lead : maxY - minY + 2 * end,
-  );
+  const x = alongX ? minX - end : minX;
+  const y = alongX ? minY : minY - end;
+  const w = Math.max(1, alongX ? maxX - minX + 2 * end : maxX - minX);
+  const h = Math.max(1, alongX ? maxY - minY : maxY - minY + 2 * end);
   return { x, y, w, h, alongX, lead };
 }
 
@@ -2039,31 +2034,28 @@ export function drawUserIcPackageBody(
   const b = userIcBodyBox(pins, wPx, hPx);
   const cy = b.y + b.h / 2;
   const cx = b.x + b.w / 2;
-  // Leads first (behind the body): a flat rectangular tab from each pin to the body edge it sits on,
-  // tucked LEAD_TUCK px under the body so the rim covers its root with no seam.
+  // Leads first (behind the body): a flat rectangular tab that EXTENDS OUT past each pin (beyond the
+  // body edge it sits on), tucked LEAD_TUCK px under the body rim at its root so there's no seam — the
+  // body then draws over the root, leaving the tab sticking out like a real chip's solder lead.
   for (const p of pins) {
     let rx: number;
     let ry: number;
     let rw: number;
     let rh: number;
     if (b.alongX) {
-      // Pins on the top/bottom edges → a vertical lead, centred on the pin's x.
+      // Pins on the top/bottom edges → a vertical lead that sticks out above/below the body.
       const bottom = p.y >= cy;
-      const inner =
-        (bottom ? b.y + b.h : b.y) + (bottom ? -LEAD_TUCK : LEAD_TUCK);
       rx = p.x - LEAD_W / 2;
       rw = LEAD_W;
-      ry = Math.min(p.y, inner);
-      rh = Math.abs(p.y - inner);
+      ry = bottom ? p.y - LEAD_TUCK : p.y - IC_LEAD_LEN;
+      rh = IC_LEAD_LEN + LEAD_TUCK;
     } else {
-      // Pins on the left/right edges → a horizontal lead, centred on the pin's y.
+      // Pins on the left/right edges → a horizontal lead that sticks out left/right of the body.
       const right = p.x >= cx;
-      const inner =
-        (right ? b.x + b.w : b.x) + (right ? -LEAD_TUCK : LEAD_TUCK);
       ry = p.y - LEAD_W / 2;
       rh = LEAD_W;
-      rx = Math.min(p.x, inner);
-      rw = Math.abs(p.x - inner);
+      rx = right ? p.x - LEAD_TUCK : p.x - IC_LEAD_LEN;
+      rw = IC_LEAD_LEN + LEAD_TUCK;
     }
     g.rect(rx, ry, rw, rh).fill({ color: 0x9a93b3, alpha: 0.95 });
     g.rect(rx, ry, rw, rh).stroke({ width: 0.6, color: 0x6f6a8a, alpha: 0.8 });
