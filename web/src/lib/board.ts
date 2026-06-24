@@ -5561,9 +5561,9 @@ export class Board {
       const fl = Math.min(14, d * 0.8);
       const bx = e.x + ux * fl;
       const by = e.y + uy * fl;
-      // Keep the flare translucent: it STACKS over the two pipe-body strokes, so a
-      // heavy fill here composites far denser than the run and reads as a cloudy blob.
-      // Light wall + a faint voltage tint just hint the port mouth opening.
+      // The port mouth matches the opaque pipe body now (was translucent, which clashed against the
+      // solid core): a dark moat funnel with an OPAQUE voltage-core funnel inside it, so the pipe
+      // simply widens into the part/junction with no translucency seam.
       g.poly([
         e.x + px * mouthR,
         e.y + py * mouthR,
@@ -5573,7 +5573,7 @@ export class Board {
         by - py * ph,
         bx + px * ph,
         by + py * ph,
-      ]).fill({ color: wallCol, alpha: 0.16 });
+      ]).fill({ color: 0x0d0b16, alpha: 0.9 });
       const im = mouthR - 2.5;
       const ip = Math.max(0.5, ph - 2.5);
       g.poly([
@@ -5585,7 +5585,7 @@ export class Board {
         by - py * ip,
         bx + px * ip,
         by + py * ip,
-      ]).fill({ color, alpha: coreAlpha * 0.4 });
+      ]).fill({ color, alpha: coreAlpha });
     }
   }
 
@@ -6789,10 +6789,23 @@ class ComponentNode {
     }
     // pin dots on top (over either the schematic glyph or the tier illustration) — they mark the real
     // connection points the wires meet. Drawn at the package edge positions (spread across the
-    // footprint) so the pinout reads cleanly even with the zoom-to-open replica open.
+    // footprint) so the pinout reads cleanly even with the zoom-to-open replica open. A USER IC gets a
+    // RECTANGULAR solder pad at each lead tip (matching its flat rectangular leads) instead of a round
+    // stud, so the chip reads as a real package — leads + pads, not dots.
+    const rectPads = isUserIc(this.kindTag);
     for (const p of this.pinPositions) {
-      g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
-      g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+      if (rectPads) {
+        const o = PIN_R + 1.5;
+        const r = PIN_R - 0.5;
+        g.rect(p.x - o, p.y - o, 2 * o, 2 * o).fill({
+          color: 0x0d0b16,
+          alpha: 1,
+        });
+        g.rect(p.x - r, p.y - r, 2 * r, 2 * r).fill({ color: this.color });
+      } else {
+        g.circle(p.x, p.y, PIN_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(p.x, p.y, PIN_R).fill({ color: this.color });
+      }
     }
     // The deepest LOD: a simple pin-name label by each pin (A/K, B/C/E, …), upright
     // at the rotated pin. Only with a tier illustration showing and zoomed in far —
@@ -7153,8 +7166,8 @@ function nudgeParallel(routes: Map<number, Point[]>): void {
   apply(vGroups, "x");
 }
 
-const BUMP_W = 8; // hop half-width
-const BUMP_H = 11; // hop height
+const BUMP_W = 11; // hop half-width (wider arc to fit the opaque pipe + moat)
+const BUMP_H = 17; // hop height (taller so the over-pipe clears the under-pipe's full width + moat)
 
 interface ConduitSeg {
   i: number;
@@ -7224,11 +7237,16 @@ function applyCrossings(
           const h = sa.axis === "H" ? sa : sb;
           const vv = sa.axis === "H" ? sb : sa;
           if (
-            vv.fixed > h.lo + 3 &&
-            vv.fixed < h.hi - 3 &&
-            h.fixed > vv.lo + 3 &&
-            h.fixed < vv.hi - 3
+            vv.fixed > h.lo + BUMP_W &&
+            vv.fixed < h.hi - BUMP_W &&
+            h.fixed > vv.lo + 4 &&
+            h.fixed < vv.hi - 4
           ) {
+            // A SAME-net crossing ties the nets → a junction dot. A DIFFERENT-net crossing gets a
+            // BRIDGE: the horizontal pipe hops over the vertical one. The interior margin is now BUMP_W
+            // (was 3), so the whole hop fits INSIDE the segment — near a junction it no longer distorts
+            // past the end (the abrupt pop the owner saw); the bump is also taller now (BUMP_H) to clear
+            // the wider opaque pipe + its dark moat.
             if (sameNet) {
               dots.push({ x: vv.fixed, y: h.fixed, color: colorOf(A) });
             } else {

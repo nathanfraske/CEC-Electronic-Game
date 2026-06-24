@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (114) — IC internals proportional fit + rectangular leads + pipe-fix round 2
+
+- ~~**IC internals align with the leads by pure scaling**~~ — DONE. `dieLayout` (packages.ts) is now the
+  production footprint × `DIE_SCALE=8` (proportional, same aspect); `drawUserIcInternals` maps frame-pin
+  bbox → package-pin bbox so frame pins land exactly on the leads with NO re-routing. Tests updated to the
+  proportional contract (dieEditor.test.ts). Render-only; golden untouched.
+- ~~**Rectangular solder leads + pads on user ICs**~~ — DONE. `drawUserIcPackageBody` (glyphs.ts) draws flat
+  rectangular metal leads; `board.ts` draws a rectangular solder pad (not a round dot) at each lead tip; the
+  internal side shows only the connecting wire out to the lead.
+- ~~**Pipe taper translucency clash**~~ — DONE (board.ts). Port-mouth flare is now opaque (dark moat funnel +
+  opaque core funnel) on pins-to-parts and junctions.
+- ~~**Bridges layered-over / abrupt opacity near junctions**~~ — DONE (board.ts). Bumps resized (`BUMP_W`
+  8→11, `BUMP_H` 11→17) + crossing dead-zone widened to `BUMP_W` so each hop fits inside its segment. Bridges
+  kept (owner likes them).
+- [ ] **Standpipe/gauge relocation** — the GND gauge still overlaps pipes. `netGaugeAnchors` should try ALL
+  of the net's routes (not just the longest) and slide to the first clear box; fall back to the least-bad.
+  (The 4th of the owner's pipe screenshots; deferred from this round.)
+
 ## 2026-06-24 (113) — Game-design brainstorm trilogy (docs)
 
 - ~~**Game-design master brainstorm**~~ — DONE. `docs/game-design-master-brainstorm.md` (5-lens synthesis:

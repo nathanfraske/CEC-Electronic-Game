@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (114) — IC internals line up by proportional scaling + rectangular solder leads + pipe-fix round 2
+
+**State:** 🟢 web gate green (`check` 0/0, `lint`, `test` **64**, `build`); golden UNCHANGED (render-only).
+Branch `claude/kind-turing-hdelb3`. All **visual / unverified-by-CI** — owner should eyeball. Two owner asks
++ a third (pipe) still partly open.
+
+**1. IC internals now align with the leads BY PURE SCALING (owner: "scale it up exactly proportionally,
+just expanding it for build area … it should just line up").** Root cause: the die-editor build area was a
+custom per-family perimeter relayout at a DIFFERENT aspect ratio than the production footprint, so the
+authored circuit's frame pins could never land on the package pins by uniform scaling.
+- **`packages.ts`** — `dieLayout` is now the production `packageLayout` scaled up PROPORTIONALLY by
+  `DIE_SCALE = 8` (same pins, same numbering/index order, same aspect — just roomy). Removed the old
+  `DIE_PIN_PITCH`/`DIE_CORNER_INSET`/`DIE_CROSS`/`edgeSpan`/`dualDie`/`sot23Die`/`sipDie` machinery.
+- **`userIcInternalsView.ts`** — `drawUserIcInternals` maps the FRAME-PIN cell bbox → the PACKAGE-PIN px
+  bbox (`sx`/`sy` ≈ 1/DIE_SCALE), so every frame-pin endpoint lands EXACTLY on its package pin and the
+  interior parts fall into place between them — NO re-routing (removed the old `atPin` re-route + the
+  separate external-pin anchor blob). The authored wires carry the circuit out to the leads on their own.
+- **`dieEditor.ts`** — `dieBounds` doc updated (proportional, not corner-inset). **`dieEditor.test.ts`** —
+  the two die-layout tests that encoded the OLD perimeter relayout now assert the PROPORTIONAL contract
+  (`die.w == (prod.w-1)*DIE_SCALE+1`, each `die.pin == prod.pin * DIE_SCALE`, containment + interior room).
+
+**2. IC pins are RECTANGULAR SOLDER LEADS now (owner: "as they would be in real life … straight
+rectangular solder leads, and all the internal pin shows is the connection from the internal to the
+external").** `glyphs.ts` `drawUserIcPackageBody` draws each lead as a flat metal RECTANGLE (tucked under
+the body), not a rounded stub; `board.ts` draws a RECTANGULAR solder PAD (not a round dot) at each user-IC
+lead tip. The open-replica internal side shows ONLY the connecting wire → the lead (the anchor blob is gone).
+
+**3. Pipe legibility round 2 (board.ts) — 3 of the owner's 4 screenshot issues:**
+- ~~taper translucency clash~~ — port-mouth flare is now an OPAQUE dark-moat funnel + opaque voltage-core
+  funnel (was `α0.16`/`coreAlpha*0.4`), matching the opaque pipe body on both pins-to-parts and junctions.
+- ~~bridges layered over / abrupt opacity near a junction~~ — bumps resized (`BUMP_W 8→11`, `BUMP_H 11→17`)
+  to clear the wider opaque pipe + moat, and the crossing dead-zone is now `BUMP_W` (was 3) so the whole hop
+  fits INSIDE the segment (no pop past the end near a junction). Bridges kept (owner: "I do still like them").
+- **STILL OPEN:** standpipe/gauge relocation — the GND gauge still overlaps pipes; `netGaugeAnchors` should
+  try ALL of the net's routes (not just the longest) to find a clear spot. Next task.
+
+---
+
 ## 2026-06-24 (113) — Game-design brainstorm trilogy (GDD → divergent idea bank → grounded roadmap)
 
 **State:** docs only (no code). Branch `claude/kind-turing-hdelb3`. Three multi-agent panels, sequenced

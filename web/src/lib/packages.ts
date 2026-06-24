@@ -168,136 +168,38 @@ export function packageLayout(
 }
 
 /**
- * Cells between adjacent perimeter pins on a {@link dieLayout}, and the inset from each corner.
- * A roomy spread (pins {@link DIE_PIN_PITCH} cells apart, {@link DIE_CORNER_INSET} in from the
- * ends) so the die's walls read as a real package edge with the interior left empty for building —
- * the inverse of {@link packageLayout}'s tight body. Presentation/geometry only.
+ * How many cells the build-area die is enlarged from the production footprint. The die editor IS the
+ * footprint scaled up EXACTLY PROPORTIONALLY by this factor — same pin layout + aspect ratio, just
+ * roomy enough to author the circuit inside. Because it's a pure proportional enlargement, the sealed
+ * chip's zoom-to-open view scales the authored circuit straight back down ONTO the package pins, so it
+ * lines up with no re-routing. (Was a custom per-family perimeter layout at a DIFFERENT aspect — the
+ * reason the zoomed-in internals didn't line up with the leads.) Presentation/geometry only.
  */
-export const DIE_PIN_PITCH = 5;
-export const DIE_CORNER_INSET = 3;
+export const DIE_SCALE = 8;
 
 /**
- * The die's CROSS-AXIS span (cells) between the two pinned edges, PER PACKAGE FAMILY. Chosen so the
- * drill-in die reads at the real package's ASPECT RATIO — a SOT-23 wider than tall (a few lead
- * columns on the long edges, a short lead span across), a DIP/VSSOP taller than the gap between its
- * two pin columns — while staying roomy enough to build inside. The LONG axis grows separately with
- * the pin count ({@link edgeSpan}), so more pins ⇒ a longer body, exactly like the real parts; the
- * two together give each package its true proportions at a comfortable build size. The smallest die
- * (a 3-pin SOT-23) still clears a usable build floor. Presentation/geometry only — never enters the
- * solve or hash.
- */
-const DIE_CROSS: Record<PackageFamily, number> = {
-  dual: 13, // DIP/VSSOP: ~0.3" row spacing — narrower than the pin-column length once ≥4 pins/side
-  sot23: 11, // SOT-23: a short lead span, so the 3-column body reads landscape (wider than tall)
-  sip: 11,
-};
-
-/** Span (in cells) an edge needs to seat `n` pins at {@link DIE_PIN_PITCH} with a corner inset on
- * each end: `2*inset + (n-1)*pitch`. At least one pitch wide so a single-pin edge still has a body. */
-function edgeSpan(n: number): number {
-  return 2 * DIE_CORNER_INSET + Math.max(1, n - 1) * DIE_PIN_PITCH;
-}
-
-/** Dual die: pins down the LEFT edge (1..half, top->bottom) and up the RIGHT edge (half+1..N,
- * bottom->top) — the classic DIP arrangement, spanning a roomy die. SAME pin numbering/order as
- * {@link dualLayout}, so pin INDEX i is the same lead in both (the seal maps straight through). */
-function dualDie(pinCount: number): {
-  w: number;
-  h: number;
-  pins: PackagePin[];
-} {
-  const half = Math.max(1, Math.ceil(pinCount / 2));
-  const h = edgeSpan(half); // long axis: pins down each column, spread by pitch (grows with pins)
-  const w = DIE_CROSS.dual; // cross axis: the row-spacing gap — narrower than h ⇒ a portrait body
-  const pins: PackagePin[] = [];
-  for (let i = 0; i < pinCount; i++) {
-    const n = i + 1;
-    if (n <= half) {
-      // left column, top -> bottom
-      pins.push({
-        number: n,
-        dx: 0,
-        dy: DIE_CORNER_INSET + (n - 1) * DIE_PIN_PITCH,
-      });
-    } else {
-      const k = n - half; // 1..(pinCount-half) up the right column
-      pins.push({
-        number: n,
-        dx: w,
-        dy: DIE_CORNER_INSET + (half - k) * DIE_PIN_PITCH,
-      });
-    }
-  }
-  return { w, h, pins };
-}
-
-/** SOT-23 die: the real {@link sot23Slots} positions spread onto the roomy die — each slot column
- * mapped to a pitch-spaced `dx`, and its row to the bottom (`dy = h`) or top (`dy = 0`) edge. SAME
- * pin numbering/index order as {@link sot23Layout}, so the seal maps each lead straight through. */
-function sot23Die(pinCount: number): {
-  w: number;
-  h: number;
-  pins: PackagePin[];
-} {
-  const slots = sot23Slots(pinCount);
-  const maxCol = slots.reduce((m, s) => Math.max(m, s.col), 0);
-  const w = edgeSpan(maxCol + 1); // long axis: the slot columns spread by pitch (the long body edge)
-  const h = DIE_CROSS.sot23; // cross axis: the short lead span ⇒ wider-than-tall (landscape) body
-  const pins: PackagePin[] = slots.map((s, i) => ({
-    number: i + 1,
-    dx: DIE_CORNER_INSET + s.col * DIE_PIN_PITCH,
-    dy: s.row === 1 ? h : 0,
-  }));
-  return { w, h, pins };
-}
-
-/** SIP die: all pins along the bottom edge, left->right. SAME order as {@link sipLayout}. */
-function sipDie(pinCount: number): {
-  w: number;
-  h: number;
-  pins: PackagePin[];
-} {
-  const w = edgeSpan(pinCount); // long axis: all pins along the bottom row, spread by pitch
-  const h = DIE_CROSS.sip; // cross axis: the build height above the single pin row
-  const pins: PackagePin[] = [];
-  for (let i = 0; i < pinCount; i++) {
-    pins.push({
-      number: i + 1,
-      dx: DIE_CORNER_INSET + i * DIE_PIN_PITCH,
-      dy: h,
-    });
-  }
-  return { w, h, pins };
-}
-
-/**
- * The DIE-EDITOR footprint for a package: a LARGE body whose pins sit on the PERIMETER edges,
- * spaced {@link DIE_PIN_PITCH} cells apart, with the interior left empty for authoring the IC's
- * circuit (the inverse of {@link packageLayout}'s tight production body). It is a VISUAL relayout
- * ONLY: the pins carry the SAME `number`s in the SAME index order as {@link packageLayout}, so a
- * die frame's pin index i is the same lead as the sealed chip's pin index i — the seal-as-same-
- * netlist contract and the (small) sealed footprint are unchanged. Never enters the solve or hash.
- *
- * Unknown archetypes fall back to a dual perimeter so the editor always has a die to draw.
+ * The DIE-EDITOR footprint for a package: the production {@link packageLayout} scaled up
+ * PROPORTIONALLY by {@link DIE_SCALE}. SAME pin layout, SAME aspect ratio, SAME numbering + index
+ * order — just larger so there's room to author the circuit inside (the pins ride the same relative
+ * positions as the tight production body). Because it's an exact proportional enlargement, the seal
+ * stays a 1:1 of the pins (index i ↔ the same lead) AND the zoom-to-open replica lines up by pure
+ * scaling. Never enters the solve or hash.
  */
 export function dieLayout(archetype: string, pinCount: number): PackageLayout {
-  const a = PACKAGE_ARCHETYPES[archetype];
-  const family: PackageFamily = a?.family ?? "dual";
-  const policy: DiePolicy = a?.policy ?? "expandable";
-  const geo =
-    family === "sot23"
-      ? sot23Die(pinCount)
-      : family === "sip"
-        ? sipDie(pinCount)
-        : dualDie(pinCount);
-  const pin1 = geo.pins.find((p) => p.number === 1) ?? { dx: 0, dy: 0 };
+  const pkg = packageLayout(archetype, pinCount);
+  const s = DIE_SCALE;
+  // A pure proportional enlargement about cell 0: an n-cell span → n*s cells (so the +1 keeps the
+  // inclusive cell DIMENSION). Same pins, same aspect — just roomy to build in, and it scales straight
+  // back onto the package pins when the sealed chip is zoomed open.
   return {
-    archetype,
-    pinCount,
-    policy,
-    w: geo.w,
-    h: geo.h,
-    pins: geo.pins,
-    pin1: { dx: pin1.dx, dy: pin1.dy },
+    ...pkg,
+    w: (pkg.w - 1) * s + 1,
+    h: (pkg.h - 1) * s + 1,
+    pins: pkg.pins.map((p) => ({
+      number: p.number,
+      dx: p.dx * s,
+      dy: p.dy * s,
+    })),
+    pin1: { dx: pkg.pin1.dx * s, dy: pkg.pin1.dy * s },
   };
 }

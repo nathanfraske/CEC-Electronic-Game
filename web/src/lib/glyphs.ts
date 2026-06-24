@@ -2008,10 +2008,15 @@ export function userIcBodyBox(
   return { x, y, w, h, alongX, lead };
 }
 
+const LEAD_W = 4.6; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
+const LEAD_TUCK = 2; // px the lead tucks UNDER the body so there's no seam at the rim
+
 /**
- * Draw a user IC's PACKAGE: a short metal lead from each solder pin to the body edge it faces (like a
- * chip's gull-wing leads on a PCB), then the dark rounded body ringed in the part's colour. The interior
- * is left for the caller — the zoom-to-open circuit fills it, or it stays empty for the closed chip.
+ * Draw a user IC's PACKAGE: a straight RECTANGULAR solder lead from each pin to the body edge it faces
+ * (a flat metal tab, like a real chip's leads viewed top-down — not a round stud), then the dark rounded
+ * body ringed in the part's colour. The leads are drawn first so the body, on top, covers their roots
+ * (they read as emerging from under the package). The interior is left for the caller — the zoom-to-open
+ * circuit fills it (wiring out to these leads), or it stays empty for the closed chip.
  */
 export function drawUserIcPackageBody(
   g: Graphics,
@@ -2023,14 +2028,34 @@ export function drawUserIcPackageBody(
   const b = userIcBodyBox(pins, wPx, hPx);
   const cy = b.y + b.h / 2;
   const cx = b.x + b.w / 2;
-  // Leads first (behind the body): a short stub from each pin to the body edge it sits on.
+  // Leads first (behind the body): a flat rectangular tab from each pin to the body edge it sits on,
+  // tucked LEAD_TUCK px under the body so the rim covers its root with no seam.
   for (const p of pins) {
-    let sx = p.x;
-    let sy = p.y;
-    if (b.alongX) sy = p.y >= cy ? b.y + b.h : b.y;
-    else sx = p.x >= cx ? b.x + b.w : b.x;
-    g.moveTo(sx, sy).lineTo(p.x, p.y);
-    g.stroke({ width: 3, color: 0x9a93b3, alpha: 0.95, cap: "round" });
+    let rx: number;
+    let ry: number;
+    let rw: number;
+    let rh: number;
+    if (b.alongX) {
+      // Pins on the top/bottom edges → a vertical lead, centred on the pin's x.
+      const bottom = p.y >= cy;
+      const inner =
+        (bottom ? b.y + b.h : b.y) + (bottom ? -LEAD_TUCK : LEAD_TUCK);
+      rx = p.x - LEAD_W / 2;
+      rw = LEAD_W;
+      ry = Math.min(p.y, inner);
+      rh = Math.abs(p.y - inner);
+    } else {
+      // Pins on the left/right edges → a horizontal lead, centred on the pin's y.
+      const right = p.x >= cx;
+      const inner =
+        (right ? b.x + b.w : b.x) + (right ? -LEAD_TUCK : LEAD_TUCK);
+      ry = p.y - LEAD_W / 2;
+      rh = LEAD_W;
+      rx = Math.min(p.x, inner);
+      rw = Math.abs(p.x - inner);
+    }
+    g.rect(rx, ry, rw, rh).fill({ color: 0x9a93b3, alpha: 0.95 });
+    g.rect(rx, ry, rw, rh).stroke({ width: 0.6, color: 0x6f6a8a, alpha: 0.8 });
   }
   // Body: a dark rounded package (so the internals read against it), ringed in the part's colour.
   g.roundRect(b.x, b.y, b.w, b.h, 3).fill({ color: 0x0d0b16, alpha: 0.95 });

@@ -16,7 +16,6 @@ import { PALETTE, PART_KINDS, rotateOffset } from "./graph";
 import {
   drawGlyph,
   drawUserIcPackageBody,
-  userIcBodyBox,
   ZERO_ELECTRICAL,
   type ElectricalState,
 } from "./glyphs";
@@ -79,7 +78,7 @@ export interface UserIcInternalsOpts {
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const { internals, nodeV, pins, wPx, hPx, color, phase, accent, partLayer } =
     o;
-  const { parts, wires, pinNodes, bbox, gndNode } = internals;
+  const { parts, wires, pinNodes, gndNode, pinCells } = internals;
 
   // Draw the PACKAGE first: the leads out to the solder pins + the dark body. The authored circuit
   // then fills the body interior below, so it reads as the real chip opened up (leads on the outside).
@@ -99,27 +98,44 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   }
   partLayer.visible = true;
 
-  // Authored extent (cells) → pixels. Fit it into the footprint with an inset margin, centred, at a
-  // single uniform scale so the schematic keeps its drawn aspect ratio (the owner's "exact circuit").
-  const cellsW = Math.max(1, bbox.maxCol - bbox.minCol);
-  const cellsH = Math.max(1, bbox.maxRow - bbox.minRow);
-  const srcW = cellsW * PITCH;
-  const srcH = cellsH * PITCH;
-  // FILL the package BODY (not the whole footprint): the body is the pin bbox minus the leads, so the
-  // circuit fills the interior at a readable size — the leads carry the pins outside, freeing the body.
-  const body = userIcBodyBox(pins, wPx, hPx);
-  const wall = 2.5; // keep the circuit just inside the body rim
-  const dstW = Math.max(1, body.w - 2 * wall);
-  const dstH = Math.max(1, body.h - 2 * wall);
-  const scale = Math.min(dstW / srcW, dstH / srcH);
-  // Centre the scaled drawing in the body box.
-  const offX = body.x + (body.w - srcW * scale) / 2;
-  const offY = body.y + (body.h - srcH * scale) / 2;
-  // Authored cell (col,row) → footprint pixel.
-  const toPx = (col: number, row: number): { x: number; y: number } => ({
-    x: offX + (col - bbox.minCol) * PITCH * scale,
-    y: offY + (row - bbox.minRow) * PITCH * scale,
-  });
+  // The authored circuit is laid out in die-editor cells, and the die editor is the production
+  // footprint scaled up PROPORTIONALLY (DIE_SCALE). So map the FRAME-PIN extent (cells) straight onto
+  // the PACKAGE-PIN extent (footprint px): every frame pin lands EXACTLY on its package pin and the
+  // interior parts fall into place between them — the circuit lines up with the leads by pure scaling,
+  // no re-routing. (`sx`/`sy` come out ≈ 1/DIE_SCALE since the layout is a proportional enlargement.)
+  let fminC = Infinity;
+  let fmaxC = -Infinity;
+  let fminR = Infinity;
+  let fmaxR = -Infinity;
+  for (const c of pinCells) {
+    if (c.col < fminC) fminC = c.col;
+    if (c.col > fmaxC) fmaxC = c.col;
+    if (c.row < fminR) fminR = c.row;
+    if (c.row > fmaxR) fmaxR = c.row;
+  }
+  let pminX = Infinity;
+  let pmaxX = -Infinity;
+  let pminY = Infinity;
+  let pmaxY = -Infinity;
+  for (const p of pins) {
+    if (p.x < pminX) pminX = p.x;
+    if (p.x > pmaxX) pmaxX = p.x;
+    if (p.y < pminY) pminY = p.y;
+    if (p.y > pmaxY) pmaxY = p.y;
+  }
+  const haveMap =
+    isFinite(fminC) && isFinite(pminX) && fmaxC > fminC && fmaxR > fminR;
+  const sx = haveMap ? (pmaxX - pminX) / ((fmaxC - fminC) * PITCH) : 1;
+  const sy = haveMap ? (pmaxY - pminY) / ((fmaxR - fminR) * PITCH) : 1;
+  const partScale = Math.min(sx, sy);
+  // Authored cell (col,row) → footprint px: frame pins map onto package pins, parts in between.
+  const toPx = (col: number, row: number): { x: number; y: number } =>
+    haveMap
+      ? {
+          x: pminX + (col - fminC) * PITCH * sx,
+          y: pminY + (row - fminR) * PITCH * sy,
+        }
+      : { x: wPx / 2, y: hPx / 2 };
 
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
   // every touched net (so a 5 V logic IC and a ±12 V analog IC each scale to their own range).
@@ -133,7 +149,9 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const level = (n: number): number =>
     Math.max(0, Math.min(1, (vAt(n) - vlow) / rail));
 
-  // --- Wires: authored endpoint cells → mini coords, coloured by net level + flow carriers. ---
+  // --- Wires: authored endpoint cells → footprint px, coloured by net level + flow carriers. A wire
+  // endpoint that sits on a frame pin lands EXACTLY on that package pin under the proportional map
+  // above (no special-casing needed) — so the inner circuit wires out to the leads by pure scaling. ---
   for (const w of wires) {
     const a = toPx(w.from.col, w.from.row);
     const b = toPx(w.to.col, w.to.row);
@@ -153,38 +171,15 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
   }
 
-  // --- External package pins: anchor each lead at the package's footprint pin position (the spread
-  // package edge), lining up with the pin dot + label the node draws there; energise by net level. ---
-  for (let i = 0; i < pins.length; i++) {
-    const p = pins[i];
-    if (!p) continue;
-    const nd = pinNodes[i];
-    const lv = nd === undefined ? 0 : level(nd);
-    // The package lead: a clear dot on the boundary, energised by its net level when live.
-    g.circle(p.x, p.y, 2.4).fill({
-      color: mix(PALETTE.dim, accent, lv),
-      alpha: 0.9,
-    });
-    // A short stub from the lead toward the centre, so a lead with a live net reads as energised
-    // even before it reaches its first inner part.
-    if (lv > 0.12) {
-      const cx = wPx / 2;
-      const cy = hPx / 2;
-      const ex = p.x + (cx - p.x) * 0.18;
-      const ey = p.y + (cy - p.y) * 0.18;
-      g.moveTo(p.x, p.y)
-        .lineTo(ex, ey)
-        .stroke({
-          width: 1.2,
-          color: mix(PALETTE.rail, accent, lv),
-          alpha: 0.5 * lv,
-        });
-    }
-  }
+  // --- External package pins: NO separate marker here. The package leads are the rectangular solder
+  // tabs drawn by `drawUserIcPackageBody` above, the authored wires (drawn just above) carry the
+  // internal circuit OUT to each lead (the proportional map lands a frame-pin endpoint exactly on its
+  // package pin), and the board draws the rectangular solder PAD over the lead tip. So the internal
+  // side shows only the connection from the inner circuit to the external lead — nothing more. ---
 
   // --- Inner parts: each draws its REAL glyph into a pooled child Graphics, scaled onto the
   // footprint. The glyph is drawn at unit (PITCH) scale with pins at the part's rotated cell offsets,
-  // then the child is scaled by `scale` and positioned at the part's authored anchor — so the
+  // then the child is scaled by `partScale` and positioned at the part's authored anchor — so the
   // drawers' fixed-pixel detail (lead insets, zigzag amplitude) stays in proportion. ---
   for (let k = 0; k < parts.length; k++) {
     const part = parts[k]!;
@@ -199,7 +194,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     // The part's anchor cell in footprint px (its top-left, pin offsets are relative to it).
     const anchor = toPx(part.cell.col, part.cell.row);
     child.position.set(anchor.x, anchor.y);
-    child.scale.set(scale);
+    child.scale.set(partScale);
     // Per-pin glyph-local positions: authored pin offset rotated by the part's own rot, × PITCH
     // (unit scale — the child's transform does the shrink). drawGlyph routes the symbol between them.
     const glyphPins = kind.pins.map((pin) => {
