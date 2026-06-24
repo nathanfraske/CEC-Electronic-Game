@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (121) — Phase 0 LANDED: opened sealed-IC renders via the REAL board pipeline (identical to die editor)
+
+**State:** 🟢 gates green; **merged to main** (`00c2940`, PR #187, CI #374 green). Branch `claude/kind-turing-hdelb3`
+synced. This is **Phase 0** of `docs/recursive-ic-lod-plan.md` (the "zoom from a LUT to the silicon" feature).
+
+**What shipped (render-only; golden `0xeaac…fa24` untouched):**
+- **Scaled-container architecture** (`userIcInternalsView.ts`): the inner circuit draws at FULL world scale
+  (PITCH) into `partLayer` (child[0]=pooled `innerG` for wires+junctions, child[1..N]=one Graphics/part),
+  then the container is uniformly scaled+positioned onto the chip footprint. No per-element scale math; this
+  is the recursion substrate for Phase 2.
+- **Runs the die editor's actual pipeline** over `internals.innerGraph`: `routeForWire` → `conduitDrawRoute`
+  → `nudgeParallel` → junction-follow-pass → `applyCrossings` → `roundedPoints` → `drawConduitSkin`;
+  junctions via `drawJunctionConduit`. Engine lives in `boardRender.ts` (extracted in 0.1–0.4, commit 0ac09d0).
+- **Rail-identity colour:** `voltageColor` MOVED to `boardRender.ts` (board.ts imports it back) so the opened
+  IC uses the EXACT same hue code as the die editor (GND dark, +5 red, +3.3 orange, −5 cyan…), not a gradient.
+- **Null-aware nets:** `UserIcInternals.nodeOfInner` is now `number | null` (live: no `?? 0`; static:
+  `() => null`). Floating run → cyan; static/unpowered → at-rest grey; and `applyCrossings` no longer aliases
+  distinct runs into one phantom net (was sprouting false tie-dots at every crossing). `parts[].nodes` /
+  `pinNodes` KEEP the old `?? 0` resolver (still `number`).
+
+**Audit:** 4-reviewer panel (correctness / regressions+pooling / determinism+golden / adversarial) → fixes →
+fix-verification pass → **SHIP, 0 blockers / 0 majors**. The panel/verifier confirmed the junction-follow-pass
+is a line-by-line faithful port of `redrawWires`/`drawJunctions`, and golden safety (proof: only `.ts`, struct
+field consumed solely by the view, nothing hashed / no wasm-boundary change).
+
+**DEFERRED (owner: eyeball this):** the **lead-connectors** — the short stub bridging each inner net out to its
+package pin — are NOT drawn yet (tracked `TODO(phase-0-followup)` in `userIcInternalsView.ts`). The inner
+circuit's frame-pin terminals land near the body edge but aren't visibly tied into the lead roots. If it reads
+as "floating," restore them as the next AUDITED step (geometry is available; no current data needed). Also
+deferred: per-net gauges/standpipes + carrier flow-dots (need a per-inner-wire current the struct lacks).
+
+**Owner interjection logged:** zoom meter + scale-reference HUD added as **Phase 5** in the plan (magnification
+readout = camera zoom × nested fit-scales; scale bar snapping cells→mm→µm→nm toward silicon; pairs with Phase 2).
+
+**Next:** Phase 1 — recursive `flattenUserIcs` (fixed-point, depth-guarded) so sealed cells nest (today it's
+one-pass: `userIc.ts:12`). Golden-safe = strict no-op when no sealed IC is placed. See plan §"Phase 1".
+
+---
+
 ## 2026-06-24 (120) — Opened-IC replica matches the die editor: UNIFORM scale (un-stretch) + lead connectors
 
 **State:** 🟢 gates green. Branch `claude/kind-turing-hdelb3`. Owner: the sealed/zoomed replica looked

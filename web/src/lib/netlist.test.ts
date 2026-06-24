@@ -316,6 +316,84 @@ describe("IC maker — seal-as-same-netlist", () => {
     }
   });
 
+  it("recursive nesting: a sealed IC placed INSIDE another sealed IC inlines to the fully-flat netlist", () => {
+    // Inner IC: a 1 kOhm R in a SOT-23-3 package (pin1 -> R -> pin2).
+    const innerDie = new BoardGraph();
+    const innerFrame = place(innerDie, "SOT23_3", 0, 0);
+    const r = place(innerDie, "R", 4, 0, 1000);
+    connect(innerDie, innerFrame, 0, r, 0); // pin 1 -> R.A
+    connect(innerDie, r, 1, innerFrame, 1); // R.B -> pin 2
+    registerUserIc({
+      tag: "INNERPKG",
+      name: "Inner Pkg",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: innerFrame.id,
+      graph: innerDie.serialize(),
+    });
+
+    // Outer IC: a SOT-23-3 package that itself PLACES an INNERPKG instance, wiring outer pin1 ->
+    // inner pin1 and inner pin2 -> outer pin2. So OUTERPKG is "a package wrapping a package wrapping a
+    // 1 kOhm R" — the one-pass flatten would leave the nested INNERPKG an empty hub (no R); the
+    // recursive flatten must inline BOTH layers down to the real resistor.
+    const outerDie = new BoardGraph();
+    const outerFrame = place(outerDie, "SOT23_3", 0, 0);
+    const innerInst = place(outerDie, "INNERPKG", 6, 0);
+    connect(outerDie, outerFrame, 0, innerInst, 0); // outer pin1 -> inner pin1
+    connect(outerDie, innerInst, 1, outerFrame, 1); // inner pin2 -> outer pin2
+    registerUserIc({
+      tag: "OUTERPKG",
+      name: "Outer Pkg",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: outerFrame.id,
+      graph: outerDie.serialize(),
+    });
+
+    try {
+      // Place the OUTER IC on a board: V+ -> OUTER.pin1, OUTER.pin2 -> GND, V- -> GND.
+      const sealed = new BoardGraph();
+      const vs = place(sealed, "V", 0, 0, 5);
+      const ic = place(sealed, "OUTERPKG", 4, 0);
+      const gnd = place(sealed, "GND", 0, 6);
+      connect(sealed, vs, 0, ic, 0);
+      connect(sealed, ic, 1, gnd, 0);
+      connect(sealed, vs, 1, gnd, 0);
+      const a = buildNetlist(sealed, false);
+
+      // Inline reference: the same V + 1 kOhm R + GND, no ICs at all.
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 1000);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0);
+      connect(flat, rf, 1, gf, 0);
+      connect(flat, vf, 1, gf, 0);
+      const b = buildNetlist(flat, false);
+
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      // Both package layers vanish recursively, leaving the real inner R fused across V+ and GND:
+      // identical element types + values to the fully-inline build.
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]);
+      expect(a!.types.length).toBe(2); // V + the doubly-nested R (one-pass would give just V)
+      // The render-only mini-board map carries an entry for BOTH the placed OUTER instance and the
+      // (inlined) nested INNER instance, so a future recursive zoom can descend into either.
+      expect(a!.userIcInternals.get(ic.id)).not.toBeUndefined();
+      const nestedTags = [...a!.userIcInternals.values()].map((m) =>
+        m.parts
+          .map((p) => p.kind)
+          .sort()
+          .join(","),
+      );
+      // One internals view is the OUTER (containing the nested INNERPKG hub), one is the INNER
+      // (containing the real R). The INNER's parts include the discrete R.
+      expect(nestedTags.some((t) => t.includes("R"))).toBe(true);
+    } finally {
+      unregisterUserIc("OUTERPKG");
+      unregisterUserIc("INNERPKG");
+    }
+  });
+
   it("flattening is a strict no-op when no sealed IC is placed", () => {
     const g = new BoardGraph();
     const vs = place(g, "V", 0, 0, 5);
@@ -469,6 +547,78 @@ describe("IC maker — persistence (save/reload round-trip)", () => {
       expect(a!.types.length).toBe(2); // V + the IC's inner R
     } finally {
       unregisterUserIc("TESTPERSIST");
+    }
+  });
+
+  it("nested ICs survive the save round-trip: userIcsForGraph embeds the nested def transitively", () => {
+    // Inner IC: a 1 kOhm R in a SOT-23-3 package.
+    const innerDie = new BoardGraph();
+    const inF = place(innerDie, "SOT23_3", 0, 0);
+    const r = place(innerDie, "R", 4, 0, 1000);
+    connect(innerDie, inF, 0, r, 0);
+    connect(innerDie, r, 1, inF, 1);
+    registerUserIc({
+      tag: "NESTINNER",
+      name: "Nest Inner",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: inF.id,
+      graph: innerDie.serialize(),
+    });
+    // Outer IC: PLACES a NESTINNER instance inside its own die.
+    const outerDie = new BoardGraph();
+    const oF = place(outerDie, "SOT23_3", 0, 0);
+    const ni = place(outerDie, "NESTINNER", 6, 0);
+    connect(outerDie, oF, 0, ni, 0);
+    connect(outerDie, ni, 1, oF, 1);
+    registerUserIc({
+      tag: "NESTOUTER",
+      name: "Nest Outer",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: oF.id,
+      graph: outerDie.serialize(),
+    });
+
+    try {
+      // A board that places ONLY the OUTER IC (NESTINNER appears solely inside OUTER's die).
+      const board = new BoardGraph();
+      const vs = place(board, "V", 0, 0, 5);
+      const ic = place(board, "NESTOUTER", 4, 0);
+      const gnd = place(board, "GND", 0, 6);
+      connect(board, vs, 0, ic, 0);
+      connect(board, ic, 1, gnd, 0);
+      connect(board, vs, 1, gnd, 0);
+
+      // The embedded library must carry BOTH the outer AND the transitively-nested inner def.
+      const defs = userIcsForGraph(board.serialize());
+      expect(defs.map((d) => d.tag).sort()).toEqual(["NESTINNER", "NESTOUTER"]);
+
+      // Fresh session: forget BOTH defs, then re-register ONLY from the round-tripped envelope.
+      const wire = JSON.parse(JSON.stringify(defs)) as typeof defs;
+      unregisterUserIc("NESTOUTER");
+      unregisterUserIc("NESTINNER");
+      expect(getUserIc("NESTINNER")).toBeUndefined(); // gone, as after a reload
+      registerUserIcs(wire);
+      expect(getUserIc("NESTINNER")).not.toBeUndefined(); // restored — the nested def WAS embedded
+
+      // The placed OUTER still flattens recursively to the real R (it would be lost if INNER were
+      // missing from the save): identical to the inline V + 1 kOhm R + GND.
+      const a = buildNetlist(board, false);
+      const flat = new BoardGraph();
+      const vf = place(flat, "V", 0, 0, 5);
+      const rf = place(flat, "R", 4, 0, 1000);
+      const gf = place(flat, "GND", 0, 6);
+      connect(flat, vf, 0, rf, 0);
+      connect(flat, rf, 1, gf, 0);
+      connect(flat, vf, 1, gf, 0);
+      const b = buildNetlist(flat, false);
+      expect(a).not.toBeNull();
+      expect(b).not.toBeNull();
+      expect([...a!.types]).toEqual([...b!.types]);
+      expect([...a!.values]).toEqual([...b!.values]);
+      expect(a!.types.length).toBe(2); // V + the nested R, restored from the save envelope
+    } finally {
+      unregisterUserIc("NESTOUTER");
+      unregisterUserIc("NESTINNER");
     }
   });
 });

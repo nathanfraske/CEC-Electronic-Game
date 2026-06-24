@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (121) — Recursive-IC LoD Phase 0 LANDED (opened IC via the real pipeline)
+
+- ~~**Phase 0.1–0.4: extract `boardRender.ts`**~~ — DONE (commit 0ac09d0). `this`-free render engine + route
+  family + `UserIcInternals.{innerGraph,nodeOfInner,frameId}`.
+- ~~**Phase 0.5/0.6: opened IC runs the real board pipeline in a scaled container**~~ — DONE, merged to main
+  (PR #187, `00c2940`). Rail-identity `voltageColor` (moved to boardRender), junction-follow-pass, crossing
+  dots, null-aware nets (floating→cyan / static→grey, no phantom ties), fit floor + NaN guard.
+- ~~**Audit every step with a panel**~~ — DONE. 4-reviewer panel + fix-verification → SHIP (0/0).
+- [ ] **Phase 0 follow-up — lead-connectors** — restore the stub tying each inner net out to its package pin
+  (deferred; `TODO(phase-0-followup)` in `userIcInternalsView.ts`). Owner to eyeball whether it's needed.
+- [ ] **Phase 0 follow-up — per-net gauges/standpipes + carrier flow-dots** — need a per-inner-wire current
+  the `UserIcInternals` struct doesn't carry yet.
+- [ ] **Phase 1** — recursive `flattenUserIcs` (fixed-point, depth-guarded); golden-safe no-op when no sealed
+  IC placed. (Unblocks nested cell libraries — the LUT-explosion fix.)
+- [ ] **Phase 5** (owner request 2026-06-24) — zoom meter (magnification readout) + scale-reference bar HUD.
+
 ## 2026-06-24 (118) — User IC: connection at the leads, pads removed, freed interior + conduit traces + lens
 
 - ~~**Connection at the external leads, internal pads removed**~~ — DONE. `userIcPartKind` pushes pins out
