@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (122) — Recursive-IC LoD Phase 1 LANDED (recursive nesting)
+
+- ~~**Phase 1: recursive `flattenUserIcs`**~~ — DONE, merged to main (PR #188, `a06b708`). Wave-based fixed
+  point; nested cells inline to a fixed point. Bounds: MAX_INSTANCES=4096 (fan-out/cycle), MAX_DEPTH=24 +
+  truncation warn, id-range disjoint bump. Golden-safe (single-level byte-identical).
+- ~~**Nested save round-trip**~~ — DONE. `userIcsForGraph` collects nested defs transitively.
+- ~~**Audit Phase 1 with a panel**~~ — DONE. 3 reviewers (determinism GOLDEN-SAFE, consumer SHIP, correctness)
+  → all findings (DoS cap, depth warn, collision, save-embed) fixed + probe-verified.
+- [ ] **Phase 2** — recursive zoom-to-open LoD: `drawUserIcInternals` recurses when a nested IC's on-screen
+  size crosses the open threshold. The nested `userIcInternals` entries already exist (keyed by inlined hub
+  id). Live signals via recursive `nodeOfInner`.
+
 ## 2026-06-24 (121) — Recursive-IC LoD Phase 0 LANDED (opened IC via the real pipeline)
 
 - ~~**Phase 0.1–0.4: extract `boardRender.ts`**~~ — DONE (commit 0ac09d0). `this`-free render engine + route

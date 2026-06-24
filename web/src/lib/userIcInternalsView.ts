@@ -17,7 +17,7 @@
 // `g` (unscaled). No new simulation, no hashing — the seal is purely a drawing over the same netlist
 // (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics, Point } from "pixi.js";
-import { PALETTE, PART_KINDS, rotateOffset, isJunctionRef } from "./graph";
+import { PALETTE, PART_KINDS, isJunctionRef } from "./graph";
 import {
   drawGlyphIn,
   drawUserIcPackageBody,
@@ -122,12 +122,15 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   }
   partLayer.visible = true;
 
-  // --- 0.6 THE FIT: shrink the inner circuit's FULL extent (the authored bbox, in world px) onto the
-  // chip footprint with a SINGLE UNIFORM scale, centred on the body. Targeting the footprint (not the
-  // lead-inset body interior) is what stops a SOT collapsing to a ~1px sliver — the package ring is
-  // just a frame, the circuit is allowed to fill it. The container transform applies `s`; everything
-  // inside draws at world scale, so a part at cell (c,r) sits at (c·PITCH, r·PITCH) and the container
-  // maps it to glyph-local (px + c·PITCH·s, py + r·PITCH·s). ---
+  // --- 0.6 THE FIT: shrink the inner circuit's FULL extent (the authored bbox, in world px) into the
+  // package BODY rectangle with a SINGLE UNIFORM scale, centred on the body — so the inner circuit fills
+  // the package the way the die circuit fills its frame in the editor. Fit to the actual body interior
+  // (bodyB.w × bodyB.h), NOT a square `max(wPx,hPx)`: userIcBodyBox swaps the footprint's aspect (it
+  // insets the lead/stick axis and outsets the array axis), so a square target mismatches the body and
+  // the circuit ends up over-wide / narrow. Each side is floored at PITCH so a degenerate (sliver) body
+  // can't collapse the scale. A small inset keeps the conduits off the body rim. The container transform
+  // applies `s`; everything inside draws at world scale, so a part at cell (c,r) sits at (c·PITCH,
+  // r·PITCH) and the container maps it to glyph-local (px + c·PITCH·s, py + r·PITCH·s). ---
   const domMinX = internals.bbox.minCol * PITCH;
   const domMaxX = internals.bbox.maxCol * PITCH;
   const domMinY = internals.bbox.minRow * PITCH;
@@ -137,16 +140,16 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const bodyB = userIcBodyBox(pins, wPx, hPx);
   const centreX = bodyB.x + bodyB.w / 2;
   const centreY = bodyB.y + bodyB.h / 2;
-  // A square target (a touch larger than the footprint) keeps a tall or wide die opening at a usable
-  // size; the uniform `s` then never distorts. Guard a degenerate/empty bbox (single cell, or no
-  // parts): fall back to centre + unit scale. A single-AXIS-degenerate bbox (one row or one column of
-  // parts — a future SIP package) floors the flat span at one cell (`|| PITCH`) so `s` tracks the real
-  // axis and the flat axis renders as a one-cell band, never a divide-by-zero or a zero-height sliver.
+  // Fit to the body rectangle (aspect-preserving), inset a hair for a rim margin; floor each side at
+  // PITCH so a sliver body can't collapse `s`. Guard a degenerate/empty bbox (single cell, no parts):
+  // fall back to centre + unit scale. The `|| PITCH` on the domain handles a single-axis-flat bbox.
+  const INSET = 0.92;
+  const fitW = Math.max(bodyB.w * INSET, PITCH);
+  const fitH = Math.max(bodyB.h * INSET, PITCH);
   const degenerate = !(domW > 0) && !(domH > 0);
-  const target = Math.max(wPx, hPx) + PITCH * 0.7;
   const s = degenerate
     ? 1
-    : Math.min(target / (domW || PITCH), target / (domH || PITCH));
+    : Math.min(fitW / (domW || PITCH), fitH / (domH || PITCH));
   // Land the bbox centre on the body centre: px + (worldBboxCentre)·s = bodyCentre.
   const px = degenerate ? centreX : centreX - ((domMinX + domMaxX) / 2) * s;
   const py = degenerate ? centreY : centreY - ((domMinY + domMaxY) / 2) * s;
@@ -311,15 +314,19 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       continue;
     }
     child.visible = true;
-    // The part's anchor cell in WORLD px (its top-left; pin offsets are relative to it). The child
-    // draws at scale 1 (world); the container transform shrinks + positions it.
+    // Orient the child EXACTLY as the die editor's glyph holder does (board.ts `ComponentNode.reposition`):
+    // CANONICAL (unrotated) pins drawn into a holder that carries the part's rotation + mirror — NOT
+    // pre-rotated pins. A drawer that infers orientation from pin positions (the MOSFET valve, diodes,
+    // polarised sources) renders a rotated/mirrored part WRONG when handed already-rotated pins; rotating
+    // the container instead keeps every part identical to the editor. The parent `partLayer` then uniformly
+    // scales the whole thing. (scale.x = −1 is the horizontal flip, matching the holder's `scale.x`.)
     child.position.set(part.cell.col * PITCH, part.cell.row * PITCH);
-    child.scale.set(1);
-    // Per-pin glyph-local positions: authored pin offset rotated by the part's own rot, × PITCH.
-    const glyphPins = kind.pins.map((pin) => {
-      const r = rotateOffset(pin.dx, pin.dy, part.rot);
-      return { x: r.col * PITCH, y: r.row * PITCH };
-    });
+    child.scale.set(part.mirror ? -1 : 1, 1);
+    child.rotation = (part.rot * Math.PI) / 2;
+    const glyphPins = kind.pins.map((pin) => ({
+      x: pin.dx * PITCH,
+      y: pin.dy * PITCH,
+    }));
     // A live electrical readout for the glyph: voltage across the part's first two terminals, sign
     // from their level difference. (Current isn't attributed per inner part here — the glyph reads
     // vAcross for its field/charge animation.) Cheap + honest.

@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (122) — Phase 1 LANDED: recursive IC nesting (sealed cells inside cells)
+
+**State:** 🟢 gates green; **merged to main** (`a06b708`, PR #188, CI #376 green). Branch synced. Phase 1 of
+`docs/recursive-ic-lod-plan.md` — the LUT-explosion unblock (now a cell can nest cells).
+
+**What shipped (`web/src/lib/userIc.ts`, `netlist.test.ts`):**
+- **`flattenUserIcs` is now RECURSIVE** (was one-pass; `userIc.ts:12` updated): inlines in WAVES to a fixed
+  point. Each wave inlines the user-IC instances not yet flattened (id-sorted), surfacing deeper nested
+  instances for the next wave. A nested instance's frame pins fuse onto its already-inlined hub id, tying
+  parent↔child on one net at matching pin indices (hand-traced + tested).
+- **Bounds (from the audit):** `MAX_INSTANCES=4096` hard budget (bounds geometric fan-out / reseal cycle —
+  a k=8/d=8 nesting that hung >60s now caps <1s), `MAX_DEPTH=24` + a one-shot `console.warn` on truncation
+  (no silent part-drop), and `off = max(off, maxId+1)` to keep id ranges disjoint (closes a crafted-id
+  collision). All inert for normal ids → single-level byte-identical.
+- **`userIcsForGraph` collects nested defs TRANSITIVELY** so a save placing OUTER also embeds INNER (else a
+  fresh-session reload couldn't flatten the nesting). New tests: 2-level nesting → flat V+R; nested save
+  round-trip.
+
+**Golden-safe:** no-IC hits the unchanged early `return graph`; single-level is byte-identical (proven by
+the determinism auditor); nested sink records are render-only. Hash `0xeaac…fa24` unmoved.
+
+**Audit:** 3-reviewer panel — determinism **GOLDEN-SAFE** (byte-identity proof), consumer **SHIP** (caught
+the `userIcsForGraph` gap, fixed), correctness verified the happy path + found the 3 bounds issues (all
+fixed + probe-verified). 66 vitest pass.
+
+**Next:** Phase 2 — recursive zoom-to-open LoD. `drawUserIcInternals` recurses: a nested IC inside the
+replica, once its on-screen size crosses the open threshold, renders its OWN internals (its
+`userIcInternals` entry already exists, keyed by the inlined hub id — Phase 1 emits it). Live signals stay
+real via the recursive `nodeOfInner`. See plan §"Phase 2".
+
+**Owner: eyeball** — Phase 0's opened-IC view (rail-identity colour, junctions) + whether the deferred
+lead-connectors are needed. Phase 1 is netlist-only (no new visuals yet); build a nested IC (e.g. the SRAM =
+2 inverter ICs) and it should now simulate with the inner parts present.
+
+---
+
 ## 2026-06-24 (121) — Phase 0 LANDED: opened sealed-IC renders via the REAL board pipeline (identical to die editor)
 
 **State:** 🟢 gates green; **merged to main** (`00c2940`, PR #187, CI #374 green). Branch `claude/kind-turing-hdelb3`
