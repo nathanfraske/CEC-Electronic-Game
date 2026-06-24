@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (107) — Deeper zoom + datasheet edge-mounted pin labels (+ connector/BGA ideation)
+
+**State:** 🟢 web gate green (`check` 0/0, `lint` clean, `test` 63, `build` ok); golden untouched
+(no `crates/`). Branch `claude/kind-turing-hdelb3`. First slice of the owner's "zoom in to a 1:1 chip
+replica" ask — the deeper **1:1 lead-bridging** refinement is the NEXT step (see below).
+
+**Shipped (`web/src/lib/board.ts`):**
+1. **Deeper zoom** — `MAX_SCALE` 8 → 20 so a single IC can fill the screen (the owner wants to zoom
+   right into a placed chip and read its internals). Wheel + camera clamps both honour it.
+2. **Edge-mounted pin labels** — pin name labels now sit OUTSIDE the body on the edge each pin is on
+   (datasheet style), not parked 9 px ON TOP of the chip as before. New per-node `labelPushVertical`
+   (derived once from the pin spread: wider-in-X ⇒ rows on top/bottom edges ⇒ push labels vertically,
+   e.g. SOT-23; else columns on left/right ⇒ push horizontally, e.g. DIP). The label loop pushes each
+   label `LABEL_MARGIN` (12 px) out of its edge in LOCAL coords, then `rotPx`-rotates the offset point
+   so it tracks the pin's real edge at every rotation/mirror (text stays upright on the un-rotated
+   `view`). Applies uniformly to placed parts, sealed user ICs, and die frames → the pinout reads the
+   same across all of them.
+
+**NEXT (the literal 1:1 the owner emphasized): zoom-in lead-bridging.** The zoom-to-open miniature
+(`userIcInternalsView.drawUserIcInternals`) currently scales the authored circuit into the footprint
+but draws its external pin ANCHORS at the COMPACT `pins[i]` positions, while the authored WIRES reach
+the (scaled) die-editor frame-pin positions — so leads don't terminate exactly on the pin dots. To make
+it a literal replica (pins on the edges, leads bridging inside↔outside "to the exact places"): add
+`pinCells: {col,row}[]` (the frame's authored pin cells) to `UserIcInternals`, computed in BOTH
+`userIcGeometry` and the live builder (`netlist.ts` ~1473-1540) via `innerGraph.pinCell(frame, pin)`;
+in the view, anchor + lead-stub + label each external pin at `toPx(pinCells[i])` (where the wires
+actually land); and in `board.ts`, when `showUserIc` is on, reposition the node's `pinTexts` to those
+scaled positions (reuse the pool) and skip the compact pin dots. Owner's exact words: "see the exact
+same thing going to the exact places and pinouts that you made … pins on the outside, bridging between
+the inside and the outside." Note the die-editor (`dieLayout`, roomy perimeter) and sealed
+(`packageLayout`, tight body) already share pin NUMBER + INDEX order — only scale differs — so the
+replica is faithful once anchors use the die-editor cells.
+
+**Ideation (`docs/connectors-and-large-packages-ideation.md`, NEW):** owner asked how we'll model
+connectors + large/many-pin packages, headlined by **BGA** (balls in a grid *under* the chip — "how
+without it becoming a cluttered mess"). Doc proposes a data-driven row-spec/grid layout engine (SOT-23/
+DIP rewritten as data behind the current functions, golden-safe), 4-side QFP, and a dedicated **§2A
+BGA** treatment: progressive-disclosure ball-map (only WIRED balls light up), X-ray/flip bottom view,
+fan-out stubs, pick-by-coordinate wiring. Connectors (VGA/USB/HDMI) repositioned as the "later, fun"
+tier. All no-element ⇒ golden-safe. Phased build order ends with BGA (needs representation invention).
+
+---
+
 ## 2026-06-24 (106) — Global ground unification (every GND symbol = node 0) + package/pinout verify
 
 **State:** 🟢 full gate green. Rust: golden `0xeaac_3764_99e4_fa24` UNCHANGED (web-side change only —

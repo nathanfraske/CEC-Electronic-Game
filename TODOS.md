@@ -6,6 +6,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (107) — Deeper zoom + datasheet edge-mounted pin labels (+ connector/BGA ideation)
+
+- ~~**Deeper zoom (fill the screen with an IC)**~~ — DONE. `MAX_SCALE` 8 → 20 in `board.ts` so you can
+  zoom right into a placed chip to read its internals.
+- ~~**Edge-mounted pin labels (datasheet style, not on top of the chip)**~~ — DONE. Pin labels now sit
+  OUTSIDE the body on the edge each pin is on. New `labelPushVertical` (from the pin spread: SOT-23 ⇒
+  vertical, DIP ⇒ horizontal); labels push `LABEL_MARGIN` out in local coords then `rotPx`-rotate so
+  they track the real edge at every rotation/mirror, staying upright. Same across placed parts, sealed
+  user ICs, and die frames.
+- [ ] **NEXT — literal 1:1 zoom-in lead-bridging.** Make the zoom-to-open miniature draw its external
+  pins where the authored WIRES actually land (the die-editor frame-pin positions), so leads bridge
+  inside↔outside "to the exact places." Add `pinCells` to `UserIcInternals` (compute in `userIcGeometry`
+  + the live builder), anchor/lead/label each pin at `toPx(pinCells[i])` in `userIcInternalsView`, and
+  in `board.ts` reposition `pinTexts` to those positions (+ skip compact pin dots) when `showUserIc`.
+  Faithful because `dieLayout` and `packageLayout` already share pin number/index order (only scale
+  differs). See HANDOFFS (107).
+- ~~**Brainstorm: connectors + large/many-pin packages (BGA "and whatnot")**~~ — DONE. New
+  `docs/connectors-and-large-packages-ideation.md`: data-driven layout engine, 4-side QFP, dedicated
+  §2A BGA anti-clutter treatment (progressive-disclosure ball-map, X-ray/flip, fan-out stubs,
+  pick-by-coordinate). Connectors (VGA/USB) repositioned as "later, fun." All no-element ⇒ golden-safe.
+
 ## 2026-06-24 (106) — Global ground unification + package/pinout verification
 
 - ~~**Multiple GND symbols not sharing a reference (owner bug)**~~ — FIXED. An AND gate with three

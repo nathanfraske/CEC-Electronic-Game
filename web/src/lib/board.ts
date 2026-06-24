@@ -120,7 +120,7 @@ const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
 // Zoom further in than before so the full-detail tier (with pinout labels) has room
 // to read. The LOD swaps still gate on TIER_ZOOM / DETAIL_ZOOM, well below this.
-const MAX_SCALE = 8;
+const MAX_SCALE = 20; // deep enough that a single IC fills the screen (zoom-to-open 1:1 replica)
 const UNDO_LIMIT = 60;
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
@@ -6341,6 +6341,10 @@ class ComponentNode {
    * object, so a reference compare catches it. */
   private staticUserIc?: UserIcInternals;
   private staticUserIcDef?: UserIc;
+  /** Which way pin LABELS push to sit OUTSIDE the body (datasheet edge-mount): `true` = up/down (pins
+   * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
+   * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
+  private labelPushVertical = true;
 
   constructor(
     private readonly component: Component,
@@ -6360,6 +6364,22 @@ class ComponentNode {
       // pinNames, so this is the kind label as before.
       const named = component.pinNames?.[p.index]?.trim();
       this.pinLabels.push(named ? named : p.label);
+    }
+    // Edge-mount axis for the pin labels: if the pins spread wider in X than Y they sit in rows on
+    // the top/bottom edges (SOT-23, SIP) → labels push vertically out of those edges; otherwise they
+    // sit in columns on the left/right edges (DIP/VSSOP) → labels push horizontally. Datasheet style.
+    {
+      let lminX = Infinity;
+      let lmaxX = -Infinity;
+      let lminY = Infinity;
+      let lmaxY = -Infinity;
+      for (const pp of this.pinPositions) {
+        lminX = Math.min(lminX, pp.x);
+        lmaxX = Math.max(lmaxX, pp.x);
+        lminY = Math.min(lminY, pp.y);
+        lmaxY = Math.max(lmaxY, pp.y);
+      }
+      this.labelPushVertical = lmaxX - lminX >= lmaxY - lminY;
     }
 
     this.tierGlyph.position.set(this.wPx / 2, this.hPx / 2);
@@ -6745,12 +6765,29 @@ class ComponentNode {
           showUserIc ||
           isUserIc(this.kindTag)) &&
         zoom >= DETAIL_ZOOM;
+    const lcx = this.wPx / 2;
+    const lcy = this.hPx / 2;
+    const LABEL_MARGIN = 12; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       const p = this.pinPositions[i];
       if (showPins && p) {
-        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
-        t.position.set(r.x, r.y - 9);
+        // Park the label OUTSIDE the chip, on the edge this pin sits on — NOT on top of the body.
+        // Push it out from the footprint centre along the pins' edge axis, then rotate that offset
+        // point with the part so the label tracks the pin's real edge at every rotation/mirror. The
+        // text itself stays upright (it lives on the un-rotated `view`).
+        let ox = 0;
+        let oy = 0;
+        if (this.labelPushVertical)
+          oy = p.y >= lcy ? LABEL_MARGIN : -LABEL_MARGIN;
+        else ox = p.x >= lcx ? LABEL_MARGIN : -LABEL_MARGIN;
+        const r = rotPx(
+          p.x + ox,
+          p.y + oy,
+          this.component.rot,
+          this.component.mirror,
+        );
+        t.position.set(r.x, r.y);
         t.visible = true;
       } else {
         t.visible = false;
