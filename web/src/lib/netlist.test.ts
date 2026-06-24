@@ -3,7 +3,13 @@
 // buildNetlist runs in node (no PixiJS) — letting us verify determinism-critical compilation
 // (e.g. the IC-maker seal expands to the SAME netlist as the inline circuit) without a browser.
 import { describe, it, expect } from "vitest";
-import { BoardGraph, rotateOffset } from "./graph";
+import {
+  BoardGraph,
+  rotateOffset,
+  footprintCenter,
+  rotateInPlaceShift,
+  flipInPlaceShift,
+} from "./graph";
 import type { Component } from "./graph";
 import { buildNetlist } from "./netlist";
 import {
@@ -478,6 +484,93 @@ describe("mirror / flip (horizontal reflection)", () => {
     expect([...flip!.b]).toEqual([...base!.b]);
     expect([...flip!.c]).toEqual([...base!.c]);
     expect(flip!.nodeCount).toBe(base!.nodeCount);
+  });
+});
+
+describe("in-place rotate / flip (pivot about the footprint centre)", () => {
+  // The world cell of a part's footprint centre = anchor cell + the oriented centre offset.
+  // rotateInPlaceShift / flipInPlaceShift keep THIS fixed (within rounding) as rot/mirror change.
+  const centerCell = (
+    cell: { col: number; row: number },
+    center: { cx: number; cy: number },
+    rot: number,
+    mirror: boolean,
+  ) => {
+    const o = rotateOffset(center.cx, center.cy, rot, mirror);
+    return { col: cell.col + o.col, row: cell.row + o.row };
+  };
+
+  it("a 2-pin R's footprint centre is preserved across each rotate, and the netlist is byte-identical", () => {
+    const g = new BoardGraph();
+    const v = place(g, "V", 0, 0, 5);
+    const r = place(g, "R", 4, 0, 1000);
+    const gnd = place(g, "GND", 0, 6);
+    connect(g, v, 0, r, 0);
+    connect(g, r, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+    const before = buildNetlist(g, false);
+    expect(before).not.toBeNull();
+
+    const center = footprintCenter(g.kindOf(r)!); // R: pins (0,0)+(2,0) → centre (1,0)
+    expect(center).toEqual({ cx: 1, cy: 0 });
+    const center0 = centerCell(r.cell, center, r.rot, !!r.mirror);
+
+    // Rotate through all four quarter-turns the way rotateSelection does: shift the cell to
+    // compensate, then bump rot. The footprint centre must stay put each step (within rounding).
+    for (let i = 0; i < 4; i++) {
+      const newRot = (r.rot + 1) % 4;
+      const s = rotateInPlaceShift(center, r.rot, newRot, !!r.mirror);
+      r.cell = { col: r.cell.col + s.col, row: r.cell.row + s.row };
+      r.rot = newRot;
+      const c = centerCell(r.cell, center, r.rot, !!r.mirror);
+      // |Δ| ≤ 1 cell per axis (Math.round on a fractional centre), and ~0 for this symmetric R.
+      expect(Math.abs(c.col - center0.col)).toBeLessThanOrEqual(1);
+      expect(Math.abs(c.row - center0.row)).toBeLessThanOrEqual(1);
+    }
+    // A full turn lands back at rot 0 and the exact starting centre.
+    expect(r.rot).toBe(0);
+    expect(centerCell(r.cell, center, r.rot, !!r.mirror)).toEqual(center0);
+
+    // Geometry only: pins keep their INDEX, so the compiled netlist is byte-identical.
+    const after = buildNetlist(g, false);
+    expect(after).not.toBeNull();
+    expect([...after!.types]).toEqual([...before!.types]);
+    expect([...after!.values]).toEqual([...before!.values]);
+    expect([...after!.a]).toEqual([...before!.a]);
+    expect([...after!.b]).toEqual([...before!.b]);
+    expect(after!.nodeCount).toBe(before!.nodeCount);
+  });
+
+  it("a flip preserves the footprint centre and leaves the netlist byte-identical", () => {
+    const g = new BoardGraph();
+    const v = place(g, "V", 0, 0, 5);
+    const r = place(g, "R", 4, 0, 1000);
+    const gnd = place(g, "GND", 0, 6);
+    connect(g, v, 0, r, 0);
+    connect(g, r, 1, gnd, 0);
+    connect(g, v, 1, gnd, 0);
+    const before = buildNetlist(g, false);
+    expect(before).not.toBeNull();
+
+    const center = footprintCenter(g.kindOf(r)!);
+    const center0 = centerCell(r.cell, center, r.rot, !!r.mirror);
+
+    // Flip the way flipSelection does: shift the cell to compensate, then toggle mirror.
+    const newMirror = !r.mirror;
+    const s = flipInPlaceShift(center, r.rot, !!r.mirror, newMirror);
+    r.cell = { col: r.cell.col + s.col, row: r.cell.row + s.row };
+    r.mirror = newMirror;
+    expect(r.mirror).toBe(true);
+    // The centre is preserved exactly (the R centre dx=1 reflects to an integer shift).
+    expect(centerCell(r.cell, center, r.rot, !!r.mirror)).toEqual(center0);
+
+    const after = buildNetlist(g, false);
+    expect(after).not.toBeNull();
+    expect([...after!.types]).toEqual([...before!.types]);
+    expect([...after!.values]).toEqual([...before!.values]);
+    expect([...after!.a]).toEqual([...before!.a]);
+    expect([...after!.b]).toEqual([...before!.b]);
+    expect(after!.nodeCount).toBe(before!.nodeCount);
   });
 });
 

@@ -5,6 +5,61 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-24 (103) — Four rendering/UX QoL: in-place rotate/flip + ghost pinout/lens + pipe declutter
+
+**State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core -p
+sim-protocol --all-targets -D warnings` clean, `cargo test -p sim-core` **188 passed** (golden
+`0xeaac_3764_99e4_fa24` UNCHANGED), `sim-protocol` ok. Web: `build:wasm` ok, `format` + `lint`
+clean, `check` **0 errors / 0 warnings**, `build` ok, `test` **52 passed** (+2 new in-place
+rotate/flip). Branch `claude/kind-turing-hdelb3`. **Not** pushed/PR'd — owner reviews + merges.
+**All four are presentation/geometry only — no `crates/` change; netlist is by pin INDEX so
+rotation/flip/cell-shifts never move connectivity (golden can't move).**
+
+**Shipped:**
+1. **Rotate & flip a part IN PLACE (about its footprint centre, not the anchor).** New pure helpers
+   in `graph.ts`: `footprintCenter(kind)` (bbox-centre of pin offsets, fractional), and the integer
+   cell shifts `rotateInPlaceShift(center, oldRot, newRot, mirror)` /
+   `flipInPlaceShift(center, rot, oldMirror, newMirror)` (= `round(rotateOffset(center, old) −
+   rotateOffset(center, new))` per axis). `board.rotateSelection`/`flipSelection` now shift each
+   selected part's `cell` by this before bumping `rot`/toggling `mirror`, so a part pivots under
+   itself (was: swung about the anchor ≈ pin 0). The ARMED ghost pivots too: a new `armedCellShift`
+   accumulator (reset with `armedRot`/`armedMirror` on a fresh arm) is bumped in
+   `rotateArmed`/`flipArmed` and added to the snapped cell in BOTH `updateGhost` and the drop site,
+   so the part lands where the ghost showed. One undo, as before. Each part rotates about its OWN
+   centre (single + multi-select) — the old per-anchor swing is gone.
+2. **Pin labels in the armed ghost.** New `ghostPinTexts` pool + `layoutGhostPinLabels(kind, color)`:
+   upright pin-name labels (A/K, D/S/G…) at the ghost's rotated/flipped pin positions, matching the
+   placed-part `pinTexts` look (IBM Plex Mono 9px / 600, anchored centre, parked 9px above the pin,
+   positioned via `rotPx`). Pool grows on demand; hidden when the ghost isn't the armed-part ghost.
+3. **Ghost follows the active lens.** The armed ghost gained a `ghostGlyphHolder` Container (carries
+   mirror `scale.x` + rotation, exactly like a placed `ComponentNode.glyphHolder`) holding the
+   schematic glyph + a new `ghostTierGlyph`. `updateGhost` now mirrors `ComponentNode.update`'s
+   tier-selection (`effLens` from `lodEnabled`/`lens`; `reality`→`hasDetail`, `analogy`→`hasAnalogy`;
+   gated on `world.scale.x >= TIER_ZOOM`) and renders `drawDetail`/`drawAnalogy` at REF size scaled
+   onto the footprint (uniform `scale.set(scale)`, the holder carries mirror+rotation) — falls back
+   to the schematic glyph otherwise.
+4. **Pipe-view (conduit/analogy) declutter** — visual tuning, palette tokens only. **Constants
+   changed (easy to nudge):** (a) conduit JUNCTION node `drawJunctionConduit`: `pw` 6→5, arm
+   `PITCH*0.32`→`*0.24`, hub fill radii `pw/2+3.5`/`+1`→`pw/2+2`/`+0.5`, coreAlpha 0.34/0.38→
+   0.28/0.32, arm wall alpha 0.22→0.2; selected-junction ring in `drawJunctions` `9+3`→`6+3`.
+   (b) device pipe-in stubs `connectorGlyph` (ComponentNode): stub now STARTS 20% in from the pin
+   (was AT the pin, doubling the wire's port-mouth flare → the MOSFET "doubled stub"), `pw` base
+   `5+5·…`→`4+4·…`, wall alpha 0.3→0.22, core alpha 0.16→0.13. (c) pipe body `drawConduitSkin`:
+   width `5+6·normC`→`4+5·normC`, wall alpha 0.3→0.24, coreAlpha 0.32/0.36→0.26/0.30.
+
+**Determinism:** geometry/presentation only — the in-place shifts move a part like a tiny move (pins
+keep INDEX), so wires follow by pin-ref and `buildNetlist` is byte-identical. New vitest
+(`netlist.test.ts`, "in-place rotate / flip"): a 2-pin R's footprint-centre grid position is
+preserved across each of the 4 rotates (and a full turn returns exactly) and across a flip, with
+`buildNetlist` byte-identical before/after.
+
+**Needs owner visual review:** in-place rotate/flip at all 4 rotations incl. asymmetric parts
+(MOSFET/BJT/op-amp); the armed-ghost pinout labels + the lens preview (zoom past TIER_ZOOM under
+analogy/reality before dropping); the pipe view under the analogy lens (junction size, the MOSFET
+pipe-in stubs, parallel-pipe haze) — tweak the constants above to taste.
+
+**Files:** `web/src/lib/graph.ts`, `web/src/lib/board.ts`, `web/src/lib/netlist.test.ts`.
+
 ## 2026-06-24 (102) — Sealed user ICs: persist defs + re-open to edit + reseal
 
 **State:** 🟢 full gate green. Rust: `cargo fmt --check` clean, `cargo clippy -p sim-core
