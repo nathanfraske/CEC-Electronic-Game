@@ -14,10 +14,12 @@
 import { Container, Graphics } from "pixi.js";
 import { PALETTE, PART_KINDS, rotateOffset } from "./graph";
 import {
-  drawGlyph,
+  drawGlyphIn,
   drawUserIcPackageBody,
+  userIcBodyBox,
   ZERO_ELECTRICAL,
   type ElectricalState,
+  type GlyphStyle,
 } from "./glyphs";
 import type { UserIcInternals } from "./netlist";
 
@@ -61,6 +63,9 @@ export interface UserIcInternalsOpts {
   phase: number;
   /** the live-signal "hot" colour, skinned by lens (analogy water vs reality electron). */
   accent: number;
+  /** the glyph style the inner parts draw in, so they FOLLOW the board lens (analogy → factory machines,
+   * reality/schematic → schematic symbols) instead of being stuck in one style. */
+  style: GlyphStyle;
   /**
    * A persistent container (added under the instance's rotated glyph holder) into which the inner
    * parts' real glyphs are drawn. The view pools one child {@link Graphics} per part here and reuses
@@ -76,8 +81,18 @@ export interface UserIcInternalsOpts {
  * and external-pin anchors are drawn into `g`. Returns nothing.
  */
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
-  const { internals, nodeV, pins, wPx, hPx, color, phase, accent, partLayer } =
-    o;
+  const {
+    internals,
+    nodeV,
+    pins,
+    wPx,
+    hPx,
+    color,
+    phase,
+    accent,
+    style,
+    partLayer,
+  } = o;
   const { parts, wires, pinNodes, gndNode, pinCells } = internals;
 
   // Draw the PACKAGE first: the leads out to the solder pins + the dark body. The authored circuit
@@ -123,24 +138,28 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     if (p.y < pminY) pminY = p.y;
     if (p.y > pmaxY) pmaxY = p.y;
   }
+  // The pins are now the outer LEAD TIPS; the package body sits INSIDE them, and the circuit fills that
+  // body INTERIOR (the full package room, nothing overlapping). Target the authored frame-pin extent onto
+  // the body interior: the STICK axis (where the leads are) spans the body edges, so the frame pins land
+  // at the lead ROOTS; the ARRAY axis spans the pins' own extent, so they line up with the leads.
+  const bodyB = userIcBodyBox(pins, wPx, hPx);
+  const tx0 = bodyB.alongX ? pminX : bodyB.x;
+  const tx1 = bodyB.alongX ? pmaxX : bodyB.x + bodyB.w;
+  const ty0 = bodyB.alongX ? bodyB.y : pminY;
+  const ty1 = bodyB.alongX ? bodyB.y + bodyB.h : pmaxY;
   const haveMap =
     isFinite(fminC) && isFinite(pminX) && fmaxC > fminC && fmaxR > fminR;
-  const sx = haveMap ? (pmaxX - pminX) / ((fmaxC - fminC) * PITCH) : 1;
-  const sy = haveMap ? (pmaxY - pminY) / ((fmaxR - fminR) * PITCH) : 1;
+  const sx = haveMap ? (tx1 - tx0) / ((fmaxC - fminC) * PITCH) : 1;
+  const sy = haveMap ? (ty1 - ty0) / ((fmaxR - fminR) * PITCH) : 1;
   const partScale = Math.min(sx, sy);
-  // Authored cell (col,row) → footprint px: frame pins map onto package pins, parts in between.
+  // Authored cell (col,row) → footprint px: frame pins land at the lead roots, parts in between.
   const toPx = (col: number, row: number): { x: number; y: number } =>
     haveMap
       ? {
-          x: pminX + (col - fminC) * PITCH * sx,
-          y: pminY + (row - fminR) * PITCH * sy,
+          x: tx0 + (col - fminC) * PITCH * sx,
+          y: ty0 + (row - fminR) * PITCH * sy,
         }
       : { x: wPx / 2, y: hPx / 2 };
-
-  // The authored frame pins map (via toPx) straight onto the package pins, which sit INSIDE the full-size
-  // body card; the board draws the round connector pads there, and drawUserIcPackageBody draws the
-  // rectangular leads sticking out past the body. So the inner circuit just wires to its pins — no
-  // re-routing, no separate dot/pipe (the pad IS the internal connector, the lead IS its tab outward).
 
   // Voltage "level" normalisation: low reference = the inner GND net; rail = the peak swing among
   // every touched net (so a 5 V logic IC and a ±12 V analog IC each scale to their own range).
@@ -154,9 +173,20 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const level = (n: number): number =>
     Math.max(0, Math.min(1, (vAt(n) - vlow) / rail));
 
-  // --- Wires: authored endpoint cells → footprint px, coloured by net level + flow carriers. A wire
-  // endpoint on a frame pin lands exactly on that package pin (inside the body) under the proportional
-  // map, where the board's round pad marks it — so the circuit wires to its pins with no re-routing. ---
+  // --- Wires: drawn as proper CONDUIT pipes (a dark moat + a voltage-coloured core + flow carriers),
+  // like the board's traces — NOT flat gray lines. Then a grommet plugs each wire end and a bigger hub
+  // marks every junction (where 3+ wire-ends tie together), so the inner net reads like the real bus. ---
+  const PW = 2.6; // core pipe width (glyph-local; the camera zoom scales it up like the board's pipes)
+  const endHits = new Map<
+    string,
+    { x: number; y: number; n: number; node: number }
+  >();
+  const tallyEnd = (x: number, y: number, node: number): void => {
+    const k = `${Math.round(x)},${Math.round(y)}`;
+    const cur = endHits.get(k);
+    if (cur) cur.n++;
+    else endHits.set(k, { x, y, n: 1, node });
+  };
   for (const w of wires) {
     const a = toPx(w.from.col, w.from.row);
     const b = toPx(w.to.col, w.to.row);
@@ -164,16 +194,43 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     const col = mix(PALETTE.rail, accent, lv);
     g.moveTo(a.x, a.y)
       .lineTo(b.x, b.y)
-      .stroke({ width: 1.4, color: col, alpha: 0.45 + 0.45 * lv });
+      .stroke({
+        width: PW + 2,
+        color: 0x0d0b16,
+        alpha: 0.9,
+        cap: "round",
+        join: "round",
+      });
+    g.moveTo(a.x, a.y)
+      .lineTo(b.x, b.y)
+      .stroke({
+        width: PW,
+        color: col,
+        alpha: 0.5 + 0.45 * lv,
+        cap: "round",
+        join: "round",
+      });
     if (lv > 0.12) {
       for (let d = 0; d < 3; d++) {
         const f = (((phase * 0.6 + d / 3) % 1) + 1) % 1;
-        g.circle(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, 0.9).fill({
+        g.circle(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, PW * 0.45).fill({
           color: accent,
-          alpha: 0.75 * lv,
+          alpha: 0.8 * lv,
         });
       }
     }
+    tallyEnd(a.x, a.y, w.node);
+    tallyEnd(b.x, b.y, w.node);
+  }
+  // Grommets + junctions: a round plug at each wire end; a bigger opaque hub where 3+ wires tie off.
+  for (const e of endHits.values()) {
+    const lv = level(e.node);
+    const r = e.n >= 3 ? PW * 1.3 : PW * 0.8;
+    g.circle(e.x, e.y, r + 1).fill({ color: 0x0d0b16, alpha: 0.92 });
+    g.circle(e.x, e.y, r).fill({
+      color: mix(PALETTE.rail, accent, lv),
+      alpha: 0.95,
+    });
   }
 
   // --- Inner parts: each draws its REAL glyph into a pooled child Graphics, scaled onto the
@@ -210,15 +267,21 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       electrical = { current: 0, vAcross: vAt(na) - vAt(nb) };
     }
     const color = PALETTE[kind.colorKey];
-    drawGlyph(child, {
-      kind: part.kind,
-      pins: glyphPins,
-      wPx: (kind.w - 1) * PITCH,
-      hPx: (kind.h - 1) * PITCH,
-      color,
-      electrical,
-      phase,
-      value: part.value,
-    });
+    // drawGlyphIn with the explicit lens-derived style, so the inner parts switch schematic ↔ factory
+    // with the board toggler (drawGlyph would lock them to the global style and ignore the lens).
+    drawGlyphIn(
+      child,
+      {
+        kind: part.kind,
+        pins: glyphPins,
+        wPx: (kind.w - 1) * PITCH,
+        hPx: (kind.h - 1) * PITCH,
+        color,
+        electrical,
+        phase,
+        value: part.value,
+      },
+      style,
+    );
   }
 }

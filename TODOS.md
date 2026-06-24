@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-24 (118) — User IC: connection at the leads, pads removed, freed interior + conduit traces + lens
+
+- ~~**Connection at the external leads, internal pads removed**~~ — DONE. `userIcPartKind` pushes pins out
+  to the lead tips (`LEAD_GAP=1`); `userIcBodyBox` insets the body inside them (`IC_LEAD_LEN=16`/
+  `IC_BODY_PAD=10`); `board.ts` draws no round pad for user ICs. Pads no longer overlap the internals.
+- ~~**Circuit fills the full package interior**~~ — DONE. Replica affine retargeted to the body interior.
+- ~~**Inner traces = proper conduit pipes + junctions**~~ — DONE. Moat + coloured core + carriers, grommet
+  per end, junction hub where 3+ tie (was flat gray lines).
+- ~~**Inner parts follow the board lens**~~ — DONE. `drawGlyphIn(child, opts, style)` with a lens-derived
+  style (analogy → factory, else schematic).
+- [ ] Owner eyeball the opened IC (leads-only connection, filled interior, pipe traces, lens-following parts).
+
 ## 2026-06-24 (117) — IC body = full-size frame card, pads inside, leads stick out
 
 - ~~**Body = actual frame outline (not a sliver)**~~ — DONE (glyphs.ts). `userIcBodyBox` = pin bbox grown
