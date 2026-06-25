@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (141) — IMPLEMENT: build-gates-as-subassemblies, milestone 1+2 ON MAIN (P0–P4a)
+
+**State:** 🟢 **on `main`** (PR #205 merged, sha `29efe99`; P4a follow-up landing via a milestone-2 PR).
+Golden `0xeaac_3764_99e4_fa24` **untouched** — every phase is web/doc only, **no `.rs` changed** (verified
+`git diff --name-only origin/main...` is Rust-free). 107 web tests green; CI (web-build + rust-core) green.
+Built from the 8-agent audit plan (`docs/cell-characterization-build-plan.md`; the 27-item design delta folded into
+`docs/cell-characterization-and-integration-hierarchy.md`). Owner directive: power through, audit each
+phase, land on main for morning review.
+
+**Shipped (the full "build a gate as a subassembly, place it on your board" loop works end to end):**
+- **P0** — doc precision pass (audit corrections; ADR 0005/0006 reconciled). Doc-only.
+- **P1** — `UserIc.role` ('ic'|'subassembly', default absent) + **"My Subassemblies"** bin (board bin =
+  ICs only). `entryRole()` reads the def; `captureSeal` gained an optional `role`.
+- **P2** — **starter gate templates** (`gateTemplates.ts`): "New gate ▸ INV / NAND2 / NOR2" drops a
+  SOT-23-5, seeds its die with a pre-wired CMOS template that **solves + switches** (real NM/PM FETs,
+  named pins, preset VCC/GND/IN stimuli), drills in. Seal ⇒ role='ic' directly. Tested.
+- **P3** — `PinRole` (in/out/vcc/gnd/clk) + `derivePinRoles` (stimulus+name at capture) +
+  `integrationTier()` SSI→ULSI **badge** on rows.
+- **P3b** — **`tapeOut(tag, target?)`**: subassembly → board-placeable IC (the audit's BLOCKER). "⬡ Tape
+  out" control on My-Subassemblies rows; re-package grows pins (identity map, connectivity preserved).
+- **P4a** — **"Subassembly (nested-only)" toggle** in the die-editor seal panel — makes the loop usable
+  now without the full box-capture.
+
+**Deliberately deferred (DO NOT rush unattended — determinism is sacred):**
+- **P4 (full overworld box-capture)** — `captureRegion(graph, regionIds)`: union-find the nets; a net
+  with ≥1 inside AND ≥1 outside endpoint = a boundary PIN; synthesize a die-frame sized to that count;
+  re-id region parts + internal wires; wire each boundary net to a frame pin; seal as a subassembly.
+  Bug-prone graph surgery (junction-on-boundary, re-id collisions) — design in doc §4.9; P4a covers the
+  intent meanwhile.
+- **P5 Tier-1 telemetry / P6 `solveCell` scratch-Sim / P7 characterization sweep + truth-table panel /
+  P8 sequential / P9 wide-cell fabric** — P6–P9 touch sim-wasm/sim-core (the hashed boundary). Plan
+  (`docs/cell-characterization-build-plan.md`; §7 of the doc) has each phase's golden-safety + file:symbol steps + the D7/D8
+  hardening tests. Land these ATTENDED, one phase per gated PR, re-running `golden_snapshot_hash_is_stable`.
+
+**Next:** owner review. If continuing: P4-full (web, golden-safe) is the natural next; then P5; P6+ need
+the sim-wasm scratch-Sim (`set_netlist_pefgh` install is already free) + the ScratchSim newtype (D8).
+
+---
+
 ## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels (bench-realism+EMI · accessibility · mid-game/classroom/sharing · component-reality curriculum)
 
 **State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`. Owner asked for design docs covering BOTH
