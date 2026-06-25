@@ -2546,6 +2546,16 @@
     setMode("select");
   }
 
+  /** Grow/shrink a FREE-FORM (BLOCK) subassembly die's pin count while building it (§4.10 expandable
+   * boundaries). Re-kinds the die frame via the board, then syncs the breadcrumb's `drill.frameTag`. */
+  function changeDiePins(delta: number): void {
+    if (!board || !drill) return;
+    const cur = framePackage(drill.frameTag)?.pinCount;
+    if (cur === undefined) return;
+    const newTag = board.setDieFramePins(cur + delta);
+    if (newTag) drill = { ...drill, frameTag: newTag };
+  }
+
   /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
    * nets that cross the selection boundary, and register it as a bare subassembly (→ "My
    * Subassemblies"; reach the board via Tape out). Non-destructive — the board is untouched. */
@@ -4643,6 +4653,28 @@
               {/if}
             </span>
           </div>
+          {#if pkg && pkg.archetype === "BLOCK"}
+            <!-- Free-form subassembly: expandable boundaries (§4.10) — grow/shrink the BLOCK's pins
+                 while building. The new pin is unconnected until you wire it. -->
+            <div
+              class="die-pins"
+              title="Add or remove pins on this free-form subassembly"
+            >
+              <span class="die-pins-label">Pins</span>
+              <button
+                class="die-pins-btn"
+                onclick={() => changeDiePins(-1)}
+                disabled={pkg.pinCount <= 1}
+                aria-label="Remove a pin">−</button
+              >
+              <span class="die-pins-n mono">{pkg.pinCount}</span>
+              <button
+                class="die-pins-btn"
+                onclick={() => changeDiePins(1)}
+                aria-label="Add a pin">+</button
+              >
+            </div>
+          {/if}
           {#if dieStatus}
             <div
               class="die-status mono {dieStatus.sealable ? 'is-ok' : 'is-bad'}"
@@ -6801,6 +6833,45 @@
     letter-spacing: 0.08em;
     color: var(--accent);
     text-transform: none;
+  }
+  .die-pins {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+  }
+  .die-pins-label {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dim);
+  }
+  .die-pins-btn {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1;
+    color: var(--accent);
+    background: transparent;
+    border: 1px solid color-mix(in oklch, var(--accent) 45%, transparent);
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .die-pins-btn:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--accent) 16%, transparent);
+  }
+  .die-pins-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+  .die-pins-n {
+    min-width: 14px;
+    text-align: center;
+    font-size: 11px;
+    color: var(--text);
   }
   .die-status {
     font-size: 10px;
