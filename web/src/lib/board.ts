@@ -2048,9 +2048,9 @@ export class Board {
     if (this.dieFrameId === null) return;
     const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
     if (!bounds) return;
-    // The walls sit exactly on the die BODY box, which {@link dieBounds}/{@link dieLayout} place so
-    // every package lead lands ON the wall line — the leads cross the boundary like a real package's
-    // (no inset that would float the pins inside the interior).
+    // The walls sit on the die BODY box, which {@link dieBounds} now matches to `userIcBodyBox` (the
+    // sealed package body) so the buildable area equals what the seal keeps — no overhang. The leads
+    // overhang slightly past the array ends and cross OUT past the stick-axis walls, like a real package.
     const x = bounds.minCol * PITCH;
     const y = bounds.minRow * PITCH;
     const w = (bounds.maxCol - bounds.minCol) * PITCH;

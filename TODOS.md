@@ -30,9 +30,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ## 2026-06-25 (129) — Owner: drill-in walls ≠ sealed body (WYSIWYG break → overhang)
 
-- [ ] **Die-editor walls must match the sealed package body** (#20) — owner: "the dimensions do not match anymore,
-  the drill in is wider than the real thing, which makes it so you can have overhanging wires/components." ROOT
-  CAUSE: two regions use different margin conventions —
+- ~~**Die-editor walls must match the sealed package body** (#20)~~ — DONE. `dieBounds` now derives its box from
+  the SEALED body margins (`IC_BODY_PAD`/`IC_LEAD_LEN` ÷ `PITCH`, exported from glyphs) instead of the 4-cell
+  `DIE_END_MARGIN` — so the drill-in buildable area equals `userIcBodyBox` (the seal target): array axis overhangs
+  by the small card pad, stick axis insets so the leads cross OUT (real-package look). No more authoring into
+  margin that overhangs the real body. `dieEditor.test.ts` updated to the new contract. Render-only; golden ok.
+- ~~**Phase 3 silicon zoom "does nothing"**~~ — DONE. `SILICON_ZOOM` 9→5, `SILICON_ZOOM_FULL` 15→8 so the
+  silicon cross-section appears when a transistor reaches ~a quarter of the screen (was ~half), reachable on a
+  normal zoom-in. NB it's a REALITY-lens tier (schematic/analogy never show it) — owner must be in reality lens.
+  ORIGINAL ROOT CAUSE (for history): two regions use different margin conventions —
   - `dieBounds` (drill-in walls, `dieEditor.ts:122`): array axis `+DIE_END_MARGIN = 4 cells (104px)` each side;
     stick axis sits ON the lead line (0 inset).
   - `userIcBodyBox` (sealed body / opened-replica fit target, `glyphs.ts:1976`): array axis `+IC_BODY_PAD = 10px`

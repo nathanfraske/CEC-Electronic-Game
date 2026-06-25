@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (132) — Owner fixes: silicon zoom reachable + #20 drill-in walls = sealed body
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3` (synced to main `6280493` — IC library + Phase 3 already landed
+via PR #200). Two owner-feedback fixes. Render-only; golden `0xeaac…fa24` untouched. Gate green (check 0-err,
+lint, build, **web test 98**, golden ok). Owner confirmed **"My ICs is working"**.
+
+- **Silicon zoom "does nothing" → reachable.** Wiring was correct (sil computed, `drawMosfetSilicon` called,
+  `absScale` threaded in all 3 paths) — the threshold was just too deep: `SILICON_ZOOM 9→5`, `SILICON_ZOOM_FULL
+  15→8` (`tierKit.ts`), so the cross-section appears when a transistor reaches ~¼ screen (was ~½). **NB it's a
+  REALITY-lens tier** (tier 5 = physical; schematic/analogy never show it) — the owner must be in the reality
+  lens. Told them. (If it still reads as nothing under reality + a real zoom, there's a deeper bug — get a shot.)
+- **#20 die-editor walls = sealed body (no overhang).** `dieBounds` (`dieEditor.ts`) now derives its box from the
+  SEALED body margins — `IC_BODY_PAD`/`IC_LEAD_LEN` (newly `export`ed from glyphs) ÷ `PITCH` — instead of the
+  4-cell `DIE_END_MARGIN`. So the drill-in buildable area equals `userIcBodyBox` (the seal's fit target): the
+  array axis overhangs by the small card pad, the stick axis insets so the leads cross OUT past the wall (real
+  package). No more authoring into margin that overhangs the real body. `dieEditor.test.ts` updated to the new
+  contract (leads cross out ≤1 cell; array overhang now <1 cell, not 4). `drawDieWalls` comment updated.
+
+**Heads-up:** a PARALLEL Claude session (owner-confirmed) is pushing game-design docs to this SAME shared branch
+(Probe teaching arc, onboarding, product-simulation). Expect to rebase on push; their commits are docs-only.
+
+**Next:** owner to verify silicon (reality lens) + the drill-in fit; then Phase 4 (Inverter element + 4-LUT) or
+the IC-library follow-ups (#21 static-fallback variant; export/import; rename/delete chrome).
+
+---
+
 ## 2026-06-25 (131) — Phase 3 silicon leaf cross-checked + landed (owner asked: phase 3 + IC library)
 
 **State:** 🟢 branch `claude/kind-turing-hdelb3` (rebased onto the parallel agent's docs commit `eca9596`).
