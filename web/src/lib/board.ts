@@ -5085,6 +5085,13 @@ export class Board {
       effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
         ? effLens
         : null;
+    // Inside a FREE-FORM (box-captured) subassembly die, the wires that land on a frame pin are the
+    // package's PINOUT leads, not internal board traces — so they draw as plain schematic leads even when
+    // the lens skins everything else as conduits (owner round 2: "just pinouts, not solder traces"). The
+    // internal circuit still gets the conduit treatment.
+    const freeFormDie =
+      this.dieFrameId !== null &&
+      isFreeFormFrame(this.graph.components.get(this.dieFrameId)?.kind ?? "");
     this.conduitDrawRoutes.clear();
     // Conduit draw routes (logical route + pin-align stubs), fanned apart where they
     // share a channel, computed once up front so the per-wire draw below just uses them.
@@ -5205,6 +5212,11 @@ export class Board {
       if (!w) continue;
       const route = this.routeForWire(w);
       if (route.length < 2) continue;
+      // A lead onto a free-form subassembly's frame pin renders as a schematic pinout (see `freeFormDie`).
+      const frameLead =
+        freeFormDie &&
+        ((isPinRef(w.from) && w.from.componentId === this.dieFrameId) ||
+          (isPinRef(w.to) && w.to.componentId === this.dieFrameId));
       // Colour by the net's SIGNED-RMS effective voltage (rail identity), not the
       // instantaneous value — steady on AC at every speed, so the hue never strobes 0↔peak.
       // A pinned net-label colour overrides this (endpointColor); else it's the rail hue.
@@ -5242,7 +5254,7 @@ export class Board {
       // plain route. Sampling the carriers on THIS keeps the particles on the pipe
       // through its bends.
       let sampleRoute = route;
-      if (conduit) {
+      if (conduit && !frameLead) {
         // Narrower than before (was 5 + 6·normC) so parallel/overlapping pipes pile up
         // into far less haze while a high-current bus is still visibly fatter.
         const pw = 4 + 5 * normC;
@@ -7183,8 +7195,10 @@ class ComponentNode {
       // nicety: "would be cool in the builder to see the rectangular traces out from it"). A flat metal
       // tab runs from each pad OUTWARD (away from the build-area centre, perpendicular to its edge), so
       // the frame reads as the real chip you build inside — the external tabs you'll wire to once sealed.
+      // EXCEPT a FREE-FORM (box-captured) subassembly: it's a logical grouping, NOT a physical package,
+      // so its boundary pins are plain pinout pads (the dots below), no solder tabs (owner round 2).
       const pp = this.pinPositions;
-      if (pp.length > 0) {
+      if (pp.length > 0 && !isFreeFormFrame(this.kindTag)) {
         let lminX = Infinity;
         let lmaxX = -Infinity;
         let lminY = Infinity;
