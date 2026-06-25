@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms
+
+- ~~**Master implementation plan**~~ — DONE (`docs/implementation-plan.md`). Consolidated owner-decision ledger
+  (A–F) + the dependency-ordered build sequence. Workflow + 2 critics; restored ~12 dropped decisions.
+- ~~**Contracts deep-dive**~~ — DONE (`docs/game-contracts-deep-dive.md`). Grading, the per-family SIM-PASS
+  matrix, tiered-reality-vs-score (→ rider-hybrid). Fixed the aliasing clamp (all transient families) + SMPS
+  harmonics → analytic path.
+- ~~**Product-sim failure modes + economics**~~ — DONE (`docs/game-product-sim-failure-modes.md`). 12-mode
+  catalog + reliability v2 + P&L. Fixed marginal-row recall-share + reputation scale.
+- ~~**Lux + Lab Book**~~ — DONE (`docs/game-lux-and-lab-book.md`). Faucet + 5-type challenge deck → Lux →
+  unlock. Firewall hardened (one-shot PREDICT/BUILD; capped generated deck).
+- ~~**Tech-tree format + categorization**~~ — DONE (`docs/game-tech-tree-format.md`). Hybrid era-spine
+  journey-map + era×domain. Fixed AC-render-overlay / bin-not-built / unlocksFidelity / Era-1-EC.
+- [ ] **Fold the 4 brainstorms' open-questions into `implementation-plan.md`** so the ledger stays the single
+  source of truth (deferred; each doc has its own §Open-questions now).
+- [ ] **IMPLEMENT (cheapest first):** product-sim Phase-1 report card + the MVP economy loop (see the plan's
+  phased table). Heads-up: docs referencing `coaching.ts` mean `concepts.ts` (partially built).
+
 ## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
 
 - ~~**Fundamentals scaffold arc**~~ — DONE (`docs/ui/fundamentals-scaffold-arc.md`). Show-don't-tell,

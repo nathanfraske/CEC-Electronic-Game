@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms (contracts · product-sim · Lux/LabBook · tech-tree)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent (136).
+Owner drove a deep planning pass: consolidate decisions + draft an implementation plan, then four standalone
+brainstorms. **All five landed** (each via a multi-lens workflow + 2 adversarial critics, SHIP-WITH-FIXES,
+every BLOCKER/MAJOR applied vs live code):
+
+- **`docs/implementation-plan.md`** (`8f53d9e`) — the planning capstone: the consolidated **owner-decision
+  ledger** (groups A–F, BLOCKER/PRE-BUILD/TUNING) + the **master build sequence** (spine `P0a→P0→P1→P2→O2`;
+  smallest fun slice `P0a+P0+O1`; the shared grader/seed built ONCE; the EMI-kernel block). Restored ~12
+  decisions the consolidator dropped.
+- **`docs/game-lux-and-lab-book.md`** (`24755e3`) — Lux faucet + the Lab Book challenge deck
+  (PREDICT/BUILD/BREAK/REVERSE/DEMONSTRATE) → Lux → license a tier → unlock a part. **Firewall hardened:**
+  PREDICT/BUILD one-shot; generated deck capped (bounded Lux).
+- **`docs/game-product-sim-failure-modes.md`** (`42dfe2c`) — the 12-mode failure catalog + reliability v2 +
+  full P&L economics. Fixed the marginal-row recall-share + unified reputation to the 0..100 scale.
+- **`docs/game-contracts-deep-dive.md`** (this commit) — grading (`SpecLine`, pass/fail-gates + score-coaches),
+  the per-family **SIM-PASS MATRIX**, and the **tiered-reality-vs-score** decision (→ the rider-hybrid).
+  Fixed: the <62.5 kHz aliasing clamp now binds **every** transient-graded family (regulator step + standing
+  ramp), and SMPS ripple harmonics route to the analytic AC path (dropped "kHz SMPS fine").
+- **`docs/game-tech-tree-format.md`** (this commit) — the hybrid era-spine journey-map + **era×domain**
+  categorization. Fixed: AC side-rail is a **render overlay** (no new `TechNode`s); bin-greying is specced-not-
+  built; added `unlocksFidelity`; Era-1 carries the `EC` chip **and** the fidelity toggle (not part-less).
+
+**Cross-doc through-lines held:** one shared grader/seed (`mulberry32`, not `SEED=1337`); Lux only from
+understanding; everything web-side so the **Rust gates stay green-unchanged** (the golden-safety proof).
+
+**Follow-up (deferred):** fold the 4 brainstorms' new open-questions into the implementation-plan ledger so it
+stays the single source of truth (each doc has its own §Open-questions in the meantime). Note: the earlier docs'
+references to a hypothetical `coaching.ts` are actually `concepts.ts` (partially built). Then: implement from
+the plan — cheapest first = product-sim Phase-1 report card + the MVP economy loop.
+
+---
+
 ## 2026-06-25 (136) — My ICs: rename + remove chrome; variants surfaced (owner ask)
 
 **State:** 🟢 branch `claude/kind-turing-hdelb3`. Owner: "rename an IC after it's made, in My ICs" + "implement
