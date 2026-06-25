@@ -5,7 +5,12 @@
 // renderer and the simulation netlist builder can both read it. Grid snapping
 // and the CEC palette mirror live here as plain values for the GPU layer.
 
-import { packageLayout, dieLayout, packageOptions } from "./packages";
+import {
+  packageLayout,
+  dieLayout,
+  packageOptions,
+  BLOCK_ARCHETYPE,
+} from "./packages";
 
 /** Logical grid cell. The board is an integer lattice; geometry is derived. */
 export interface Cell {
@@ -1422,6 +1427,69 @@ for (const { archetype, pinCount } of packageOptions())
 export function ensureFrameKind(archetype: string, pinCount: number): string {
   registerFrameKind(archetype, pinCount);
   return frameTag(archetype, pinCount);
+}
+
+/** A free-form die frame's custom geometry (§4.10): the box size + each pin's box-relative cell. */
+export interface FreeFormGeom {
+  w: number;
+  h: number;
+  pins: { dx: number; dy: number; name?: string }[];
+}
+
+/** Die-frame tag prefix for a FREE-FORM subassembly (a box-captured 1:1 cell with arbitrary geometry).
+ * Starts with {@link DIE_FRAME_PREFIX} so `isDieFrame` recognizes it. */
+export const FREE_FORM_DIE_PREFIX = DIE_FRAME_PREFIX + "FF_";
+/** kind tag -> its stored free-form box geometry (so `dieBounds`/the renderer use the captured box, not a
+ * package layout). Re-populated on-demand via {@link registerFreeFormFrame}. */
+const FREE_FORM_GEOM = new Map<string, FreeFormGeom>();
+
+/**
+ * Register (idempotently re-register) a FREE-FORM die-frame kind (§4.10) for a subassembly tag — a `w×h`
+ * box with pins at ARBITRARY positions, vs a package archetype's fixed layout. Used by `captureRegion`
+ * (the box matches the selection; pins sit where wires crossed the boundary) and pin/box editing. The
+ * kind is keyed by the subassembly tag, so re-registering with new geometry (pins moved, box resized)
+ * just overwrites it. Registers it as a frame (so `isFrame`/`framePackage` resolve, archetype = BLOCK,
+ * pinCount = pins.length) and stores the geometry for {@link freeFormGeom}. Returns the die-frame tag.
+ * Presentation/registry only — never the solve or hash.
+ */
+export function registerFreeFormFrame(
+  subTag: string,
+  geom: FreeFormGeom,
+): string {
+  const dieTag = FREE_FORM_DIE_PREFIX + subTag;
+  FRAME_PACKAGES.set(dieTag, {
+    archetype: BLOCK_ARCHETYPE,
+    pinCount: geom.pins.length,
+  });
+  FREE_FORM_GEOM.set(dieTag, {
+    w: geom.w,
+    h: geom.h,
+    pins: geom.pins.map((p) => ({ ...p })),
+  });
+  const kindPins = geom.pins.map((p, i) =>
+    pin(p.name?.trim() ? p.name.trim() : String(i + 1), p.dx, p.dy),
+  );
+  PART_KINDS[dieTag] = kind(
+    dieTag,
+    "Subassembly",
+    "border",
+    kindPins,
+    0,
+    "",
+    true,
+  );
+  return dieTag;
+}
+
+/** The stored free-form box geometry for a free-form die-frame kind, or undefined for any other kind.
+ * `dieBounds` + the renderer read this so a captured subassembly's walls match its box (not a package). */
+export function freeFormGeom(kind: string): FreeFormGeom | undefined {
+  return FREE_FORM_GEOM.get(kind);
+}
+
+/** Whether a tag is a free-form die-frame ({@link registerFreeFormFrame}). */
+export function isFreeFormFrame(tag: string): boolean {
+  return tag.startsWith(FREE_FORM_DIE_PREFIX);
 }
 
 /**

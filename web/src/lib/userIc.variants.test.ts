@@ -509,6 +509,24 @@ describe("IC variants — determinism contract", () => {
       expect(def.pinNames).toContain("VCC"); // outside V source → VCC pin
       expect(def.pinNames).toContain("GND"); // outside GND → GND pin
 
+      // 1:1 copy: the captured graph holds R1 + R2 (+ the free-form frame) — the real parts, not a
+      // re-laid-out fan. And it carries free-form geometry (a box + a pin per crossing).
+      const nonFrame = def.graph.components.filter((c) => c.kind === "R");
+      expect(nonFrame.length).toBe(2);
+      expect(def.freeForm).toBeDefined();
+      expect(def.freeForm!.pins.length).toBe(2);
+      expect(def.freeForm!.w).toBeGreaterThan(0);
+      expect(def.freeForm!.h).toBeGreaterThan(0);
+      // Every pin sits ON the box edge (a crossing point), not floating inside.
+      for (const p of def.freeForm!.pins) {
+        const onEdge =
+          p.dx === 0 ||
+          p.dx === def.freeForm!.w - 1 ||
+          p.dy === 0 ||
+          p.dy === def.freeForm!.h - 1;
+        expect(onEdge).toBe(true);
+      }
+
       // The subassembly flattens to the real 2-resistor series chain when placed + powered.
       const g = new BoardGraph();
       const vs = place(g, "V", 0, 0, 5);

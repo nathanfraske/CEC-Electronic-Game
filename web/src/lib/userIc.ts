@@ -21,7 +21,7 @@ import {
   framePackage,
   frameTag,
   dieFrameTag,
-  ensureFrameKind,
+  registerFreeFormFrame,
   isFrame,
   type GraphSnapshot,
   type Endpoint,
@@ -32,6 +32,8 @@ import {
   type Wire,
   type Junction,
   type NetLabel,
+  type FreeFormGeom,
+  type Cell,
 } from "./graph";
 import { packageLayout, BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
 
@@ -68,6 +70,15 @@ export interface UserIc {
    * netlist (the `pinNames` pattern).
    */
   pinRoles?: PinRole[];
+  /**
+   * Optional FREE-FORM box geometry (§4.10) for a box-captured subassembly: the box `w×h` (cells) and
+   * each pin's box-relative cell, so the cell is a faithful 1:1 copy of the selection with pins where
+   * wires crossed the boundary — NOT a stock package layout. When present, {@link userIcPartKind} builds
+   * the placeable footprint from this (not `package`), and a free-form die-frame is registered for it
+   * ({@link registerFreeFormFrame}) so the die editor + walls match the box. Persistent so the kind can
+   * be re-registered on load; `package` is kept too (archetype BLOCK) for the bin label + the tint.
+   */
+  freeForm?: FreeFormGeom;
 }
 
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
@@ -219,6 +230,31 @@ const LEAD_GAP = 1;
  * Each pin's LABEL is the player's name for that lead ({@link UserIc.pinNames} by index) when set,
  * else the package pin number — so a sealed chip shows the names the author gave its pads. */
 function userIcPartKind(ic: UserIc): PartKind {
+  // Free-form (box-captured) subassembly: pins sit at their captured box-relative cells (on the box
+  // edge, where wires crossed) and the footprint IS the box — no package layout, no lead-push.
+  if (ic.freeForm) {
+    const pins: Pin[] = ic.freeForm.pins.map((p, i) => ({
+      index: i,
+      label: ic.pinNames?.[i]?.trim()
+        ? ic.pinNames[i]!.trim()
+        : p.name?.trim()
+          ? p.name.trim()
+          : String(i + 1),
+      dx: p.dx,
+      dy: p.dy,
+    }));
+    return {
+      tag: ic.tag,
+      name: ic.name,
+      colorKey: "accent",
+      pins,
+      w: ic.freeForm.w,
+      h: ic.freeForm.h,
+      defaultValue: 0,
+      unit: "",
+      ideal: true,
+    };
+  }
   const lay = packageLayout(ic.package.archetype, ic.package.pinCount);
   // Push each pad OUT past the package's array (long) edge by LEAD_GAP, so the pad becomes the outer LEAD
   // TIP and the body card sits inside the ring (render-only — the seal maps pins by INDEX, not position).
@@ -277,6 +313,9 @@ function userIcPartKind(ic: UserIc): PartKind {
 export function registerUserIc(ic: UserIc): void {
   REGISTRY.set(ic.tag, ic);
   PART_KINDS[ic.tag] = userIcPartKind(ic);
+  // A free-form (box-captured) subassembly carries its own die-frame geometry; re-register that frame
+  // kind so re-opening it for editing (and the walls) match the captured box on a fresh load.
+  if (ic.freeForm) registerFreeFormFrame(ic.tag, ic.freeForm);
 }
 
 /** Forget a sealed IC (and unregister its kind). When `tag` is a multi-variant FAMILY, this cascades:
@@ -1172,8 +1211,8 @@ export function captureRegion(
     noteEndpoint(w.to);
   }
 
-  // Boundary roots become pins (deterministic order: by the net's smallest inside-pin key). Internal
-  // roots keep their wiring.
+  // Boundary roots become pins (one per net that crosses the box edge), ordered by the net's smallest
+  // inside-pin key for determinism.
   const boundaryRoots = [...insidePins.keys()]
     .filter((r) => hasOutside.has(r))
     .sort((a, b) => {
@@ -1186,38 +1225,160 @@ export function captureRegion(
   );
   if (boundaryRoots.length === 0) return undefined; // nothing leaves the selection — no pins
   if (boundaryRoots.length > BLOCK_MAX_PINS) return undefined; // too many pins for a free-form block
-  // A captured subassembly is a FREE-FORM block with EXACTLY its boundary pins (§4.10) — not rounded
-  // up to a stock IC package. The BLOCK frame for this pin count is registered on-demand.
-  ensureFrameKind(BLOCK_ARCHETYPE, boundaryRoots.length);
-  const pkg = {
-    archetype: BLOCK_ARCHETYPE,
-    pinCount: boundaryRoots.length,
-  };
+  const pinIndexOf = new Map<string, number>();
+  boundaryRoots.forEach((r, i) => pinIndexOf.set(r, i));
 
-  // Clone the region's components (preserve ids). The synthesized frame takes a fresh id above all of
-  // them, so no re-id pass is needed.
-  const capComps = full.components
-    .filter((c) => region.has(c.id))
-    .map((c) => ({
-      ...c,
-      cell: { ...c.cell },
-      ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
-      ...(c.pinTests
-        ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }
-        : {}),
-    }));
-  // Copy only INTERNAL-net wires (a boundary net's region wiring is replaced by the frame-pin fan).
-  const capWires: Wire[] = full.wires
-    .filter((w) => internalRoots.has(find(endpointKey(w.from))))
-    .map((w) => ({
-      id: w.id,
-      from: { ...w.from },
-      to: { ...w.to },
-      ...(w.waypoints && w.waypoints.length > 0
-        ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
-        : {}),
-    }));
-  // Junctions referenced by a copied internal wire.
+  // The captured box = the bounding box of the captured parts' footprints, padded by one cell so pins sit
+  // on a clear edge ring. The cell is a 1:1 copy: parts keep their RELATIVE positions, shifted so the
+  // box's top-left maps to the frame origin (§4.10 — copy it over exactly, box = the selection).
+  const capCompsRaw = full.components.filter((c) => region.has(c.id));
+  let minCol = Infinity;
+  let minRow = Infinity;
+  let maxCol = -Infinity;
+  let maxRow = -Infinity;
+  for (const c of capCompsRaw) {
+    const k = PART_KINDS[c.kind];
+    const fw = k?.w ?? 1;
+    const fh = k?.h ?? 1;
+    minCol = Math.min(minCol, c.cell.col);
+    minRow = Math.min(minRow, c.cell.row);
+    maxCol = Math.max(maxCol, c.cell.col + fw - 1);
+    maxRow = Math.max(maxRow, c.cell.row + fh - 1);
+  }
+  const PAD = 1;
+  minCol -= PAD;
+  minRow -= PAD;
+  maxCol += PAD;
+  maxRow += PAD;
+  const boxW = maxCol - minCol + 1;
+  const boxH = maxRow - minRow + 1;
+  const shiftCol = REGION_FRAME_ORIGIN.col - minCol;
+  const shiftRow = REGION_FRAME_ORIGIN.row - minRow;
+  const shiftCell = (c: Cell): Cell => ({
+    col: c.col + shiftCol,
+    row: c.row + shiftRow,
+  });
+
+  // An endpoint is "captured" if it's a pin on a selected part, or a junction whose net is fully internal.
+  const capturedEndpoint = (e: Endpoint): boolean =>
+    isPinRef(e)
+      ? region.has(e.componentId)
+      : internalRoots.has(find(endpointKey(e)));
+
+  // For each boundary net, find a representative crossing wire (one endpoint inside, one outside) to
+  // POSITION its pin: on the box edge in the outside endpoint's direction, aligned with the inside pin's
+  // row/col — i.e. where the wire actually leaves the box.
+  const clamp = (v: number, lo: number, hi: number): number =>
+    Math.max(lo, Math.min(hi, v));
+  const cx = (minCol + maxCol) / 2;
+  const cy = (minRow + maxRow) / 2;
+  const repCells = new Map<string, { inCell: Cell; outCell: Cell }>();
+  for (const w of full.wires) {
+    const fromIn = capturedEndpoint(w.from);
+    const toIn = capturedEndpoint(w.to);
+    if (fromIn === toIn) continue;
+    const insideE = fromIn ? w.from : w.to;
+    const outsideE = fromIn ? w.to : w.from;
+    if (!isPinRef(insideE) || !region.has(insideE.componentId)) continue;
+    const root = find(endpointKey(insideE));
+    if (!pinIndexOf.has(root) || repCells.has(root)) continue;
+    const inCell = graph.endpointCell(insideE);
+    const outCell = graph.endpointCell(outsideE);
+    if (inCell && outCell) repCells.set(root, { inCell, outCell });
+  }
+  const pinGeom: { dx: number; dy: number; name?: string }[] = new Array(
+    boundaryRoots.length,
+  );
+  const pinNames: string[] = [];
+  const pinRoles: PinRole[] = [];
+  boundaryRoots.forEach((root, i) => {
+    const rep = repCells.get(root);
+    let dx: number;
+    let dy: number;
+    if (rep) {
+      const ddx = rep.outCell.col - cx;
+      const ddy = rep.outCell.row - cy;
+      if (Math.abs(ddx) >= Math.abs(ddy)) {
+        dx = ddx < 0 ? 0 : boxW - 1;
+        dy = clamp(rep.inCell.row - minRow, 0, boxH - 1);
+      } else {
+        dy = ddy < 0 ? 0 : boxH - 1;
+        dx = clamp(rep.inCell.col - minCol, 0, boxW - 1);
+      }
+    } else {
+      dx = 0;
+      dy = clamp(i, 0, boxH - 1);
+    }
+    const kinds = outsideKinds.get(root) ?? new Set<string>();
+    let name: string;
+    if (kinds.has("GND")) {
+      name = "GND";
+      pinRoles[i] = "gnd";
+    } else if (kinds.has("V") || kinds.has("VAC") || kinds.has("PULSE")) {
+      name = "VCC";
+      pinRoles[i] = "vcc";
+    } else {
+      name = "P" + (i + 1);
+    }
+    pinNames[i] = name;
+    pinGeom[i] = { dx, dy, name };
+  });
+
+  // Register the free-form die frame (its kind carries the box + pins-at-crossings), then build the
+  // captured graph as a 1:1 copy: parts at their shifted positions, internal wires verbatim, each
+  // crossing wire retargeted to its net's frame pin (keeping the inside routing).
+  const tag = trimmed || nextAutoTag();
+  const frameKind = registerFreeFormFrame(tag, {
+    w: boxW,
+    h: boxH,
+    pins: pinGeom,
+  });
+
+  const capComps = capCompsRaw.map((c) => ({
+    ...c,
+    cell: shiftCell(c.cell),
+    ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+    ...(c.pinTests
+      ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }
+      : {}),
+  }));
+  const maxId = (ids: number[]): number =>
+    ids.reduce((m, i) => Math.max(m, i), 0);
+  const frameId =
+    maxId([
+      ...capCompsRaw.map((c) => c.id),
+      ...full.wires.map((w) => w.id),
+      ...(full.junctions ?? []).map((j) => j.id),
+      ...(full.netLabels ?? []).map((l) => l.id),
+    ]) + 1;
+
+  const capWires: Wire[] = [];
+  for (const w of full.wires) {
+    const fromIn = capturedEndpoint(w.from);
+    const toIn = capturedEndpoint(w.to);
+    const wp =
+      w.waypoints && w.waypoints.length > 0
+        ? { waypoints: w.waypoints.map(shiftCell) }
+        : {};
+    if (fromIn && toIn) {
+      // Internal wire — verbatim (shifted).
+      capWires.push({ id: w.id, from: { ...w.from }, to: { ...w.to }, ...wp });
+    } else if (fromIn !== toIn) {
+      // Crossing wire — retarget the OUTSIDE end to the net's frame pin, keep the inside end + routing.
+      const insideE = fromIn ? w.from : w.to;
+      if (!isPinRef(insideE) || !region.has(insideE.componentId)) continue;
+      const pi = pinIndexOf.get(find(endpointKey(insideE)));
+      if (pi === undefined) continue;
+      const frameEnd = { componentId: frameId, pinIndex: pi };
+      capWires.push({
+        id: w.id,
+        from: fromIn ? { ...w.from } : frameEnd,
+        to: fromIn ? frameEnd : { ...w.to },
+        ...wp,
+      });
+    }
+  }
+  // Junctions referenced by a copied wire.
   const usedJ = new Set<number>();
   for (const w of capWires) {
     if (isJunctionRef(w.from)) usedJ.add(w.from.junctionId);
@@ -1227,60 +1388,21 @@ export function captureRegion(
     .filter((j) => usedJ.has(j.id))
     .map((j) => ({
       id: j.id,
-      cell: { ...j.cell },
+      cell: shiftCell(j.cell),
       ...(j.free ? { free: true } : {}),
     }));
 
-  // The synthesized die frame: a fresh id above every captured id; pins named/role-tagged from the
-  // outside source kind where it's a rail (GND / a V source), else generic.
-  const maxId = (ids: number[]): number =>
-    ids.reduce((m, i) => Math.max(m, i), 0);
-  const frameId =
-    maxId([
-      ...capComps.map((c) => c.id),
-      ...capWires.map((w) => w.id),
-      ...capJuncs.map((j) => j.id),
-      ...(full.netLabels ?? []).map((l) => l.id),
-    ]) + 1;
-  const pinNames: string[] = [];
-  const pinRoles: PinRole[] = [];
-  boundaryRoots.forEach((root, i) => {
-    const kinds = outsideKinds.get(root) ?? new Set<string>();
-    if (kinds.has("GND")) {
-      pinNames[i] = "GND";
-      pinRoles[i] = "gnd";
-    } else if (kinds.has("V") || kinds.has("VAC") || kinds.has("PULSE")) {
-      pinNames[i] = "VCC";
-      pinRoles[i] = "vcc";
-    } else {
-      pinNames[i] = "P" + (i + 1);
-    }
-  });
-
-  const frameKind = dieFrameTag(frameTag(pkg.archetype, pkg.pinCount));
+  // The free-form die frame component (kind = the registered free-form geometry).
   capComps.push({
     id: frameId,
     kind: frameKind,
     cell: { ...REGION_FRAME_ORIGIN },
     value: 0,
     rot: 0,
-    pinNames: [...pinNames],
+    pinNames: pinGeom.map((p) => p.name ?? ""),
   } as (typeof capComps)[number]);
 
-  // Boundary wires: fan every inside pin of boundary net i to frame pin i (so the region-side stays
-  // one node and the outside link becomes the package lead).
-  let nextW = maxId(capWires.map((w) => w.id)) + 1;
-  boundaryRoots.forEach((root, i) => {
-    for (const p of insidePins.get(root)!.values()) {
-      capWires.push({
-        id: nextW++,
-        from: { componentId: frameId, pinIndex: i },
-        to: { ...p },
-      });
-    }
-  });
-
-  // Carry net labels anchored on a captured internal endpoint (boundary nets are named by their pins).
+  // Carry net labels anchored on a captured endpoint (keep the inner net names).
   const capLabels: NetLabel[] = (full.netLabels ?? [])
     .filter((l) => {
       if (isJunctionRef(l.at)) return usedJ.has(l.at.junctionId);
@@ -1290,7 +1412,7 @@ export function captureRegion(
       id: l.id,
       name: l.name,
       at: { ...l.at },
-      ...(l.pos ? { pos: { ...l.pos } } : {}),
+      ...(l.pos ? { pos: shiftCell(l.pos) } : {}),
       ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
       ...(l.color !== undefined ? { color: l.color } : {}),
     }));
@@ -1306,11 +1428,11 @@ export function captureRegion(
     nextNetLabelId: maxId(capLabels.map((l) => l.id)) + 1,
   };
 
-  const tag = trimmed || nextAutoTag();
   registerUserIc({
     tag,
     name: trimmed || tag,
-    package: { archetype: pkg.archetype, pinCount: pkg.pinCount },
+    package: { archetype: BLOCK_ARCHETYPE, pinCount: boundaryRoots.length },
+    freeForm: { w: boxW, h: boxH, pins: pinGeom },
     frameId,
     graph: snapshot,
     pinNames: [...pinNames],
