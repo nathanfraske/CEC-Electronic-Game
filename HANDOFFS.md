@@ -72,6 +72,56 @@ and the **solo-pre-reader MVP caveat**. Then implement from the **reuse-vs-new-s
 surface: the Probe persona layer, the magic-smoke presentation, the shared grader/sampler + parametric
 generator). **Heads-up:** another agent is active on this branch (die-editor/zoom-meter) — these changes are
 docs-only and were rebased onto their latest before push.
+## 2026-06-25 (129) — IC LIBRARY + USER-SELECTED VARIANTS (v1) — the LUT-enabler
+
+**State:** 🟢 branch `claude/ic-library-variants` (off `origin/main` `33facd0`). Implements
+`docs/ic-library-and-variants.md` v1. **PART_KINDS/REGISTRY/FAMILIES population + localStorage + Svelte UI
+only** — NO Rust, NO `loop.ts`. Golden `0xeaac_3764_99e4_fa24` **unmoved** (`golden_snapshot_hash_is_stable`
+ok). Full gate green: fmt, clippy, cargo test (188), build:wasm, web check (0 err), web format, lint, web build,
+web test **94** (+9 `userIc.variants.test.ts`).
+
+**What shipped:**
+- **`web/src/lib/userLibrary.ts`** (NEW) — persistent library, key `cec.library.v1` (sibling of the board key
+  so a board reset keeps it). `loadLibrary`/`saveLibrary`/`libraryEntries`/`addToLibrary` (upsert by tag, reads
+  the live registry — a family snapshots its ordered variant defs)/`removeFromLibrary`/`renameLibraryIc`/
+  `registerLibrary` (registers all into PART_KINDS/REGISTRY/FAMILIES at startup). `inLibrary`/`importToLibrary`
+  kept for the deferred banner/import.
+- **`userIc.ts`** — `UserIcFamily` + `FAMILIES` registry; `resolveUserIc` (clamped like `diodeVariant`),
+  `userIcVariants`/`hasUserIcVariants`/`userIcFamilyTargets`/`nextVariantTag`; `appendUserIcVariant` (promote
+  single→family on 2nd seal, append-only, same-package-constrained), `registerUserIcFamilies` (sidecar regroup),
+  `registerUserIcFamily` (atomic from ordered defs, for the library). Flatten membership widened to
+  `REGISTRY.has(c.kind) || FAMILIES.has(c.kind)` (all 3 sites); `def = resolveUserIc(inst.kind, inst.variant??0)`;
+  sink pushes the RESOLVED child tag so the opened-IC render resolves the chosen variant's die. `userIcsForGraph`
+  family-aware (pushes EVERY variant, recurses each, dedups by resolved child tag); `userIcFamiliesForGraph`
+  sidecar. `captureSeal` gained `intoFamily?` + a reserved-tag refusal. `isReservedTag` (built-in/die-frame/`#`)
+  vs `collidesWithBuiltin` (registration guard — accepts a real `#` child def).
+- **`storage.ts`** — `BoardBlob.userIcFamilies?` sidecar; `saveBoard` embeds it; `loadBoard` calls
+  `registerUserIcFamilies` after `registerUserIcs`.
+- **`board.ts`** — `sealFrame(id, name?, intoFamily?)` threads `intoFamily` to `captureSeal`.
+- **`App.svelte`** — `registerLibrary()` in onMount BEFORE `loadBoard`; `libRev` `$state` + `savedIcParts`
+  `$derived`; "My ICs" collapsible bin category (top, hidden empty, places via arm/drag, package pin-ring SVG
+  glyph via widened `partRow` + `glyphKind`); search fold-in; auto-add on seal + reseal; inspector + arm-time
+  variant picker (`hasUserIcVariants` block in `partConfig`, `hasConfig` gated); seal-panel "Variant of …"
+  dropdown (`sealVariantOf`); `userIcFamilies` in the download envelope + `onLoadFile` registration.
+
+**The 8 gaps:** (1) golden literal verified unmoved. (2) "My ICs" is a REAL new category — `partRow` type widened
++ SVG glyph, not verbatim; `hasConfig()` gated. (3) `userIcsForGraph` pushes every variant, recurses each
+variant's die, dedups by RESOLVED CHILD tag (test: a 2-variant family whose variants nest DIFFERENT leaves
+embeds both leaves). (4) `variantTags` sidecar is the ordered truth; index=position; round-trip test pins
+`variant:1` and proves it resolves the same die after reload. (5) append-only — new variant = highest index,
+default index 0; no reorder API. (6) `registerUserIcs` skips a def colliding with a built-in (test: a rogue
+def tagged `R` doesn't clobber the resistor). (7) delete keeps the registry entry alive (the library CRUD never
+unregisters; placed copies keep expanding). (8) `captureSeal`/`isReservedTag` refuse a seal name colliding with
+a built-in/die-frame/`#` (test).
+
+**Deferred (noted, not built):** `cec-iclib` export/import envelope, board-load "add to library" banner, per-row
+rename/delete management chrome, cross-package variants. (`removeFromLibrary`/`renameLibraryIc` stay exported +
+callable.)
+
+**Owner eye / follow-ups:** the seal-into flow places the family tile at variant 0 (the just-sealed variant is
+the highest index, not auto-selected) — fine for v1, but a "place the new variant" affordance is a nice polish.
+Child `PART_KINDS["INV#i"]` tiles are created by `registerUserIc` (harmless dead weight; never placed/shown).
+Wire the deferred management chrome + import envelope next.
 
 ---
 
