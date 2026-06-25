@@ -33,6 +33,7 @@ import {
   housing,
   mix,
   norm,
+  siliconBlend,
   stud,
   CUR_SCALE,
   V_SCALE,
@@ -1330,6 +1331,31 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
   stud(g, B.x, B.y, PALETTE.bronze);
 }
 
+// The MOSFET illustration's shared geometry + live solution, computed once in
+// {@link drawDetailMOSFET} and handed to {@link drawMosfetSilicon} so the device tier and
+// its silicon-leaf tier are laid out on the EXACT same body/well/lead coordinates (the
+// pins never move across the handoff) and driven by the SAME `id`/`dir`/`on` numbers.
+interface MosfetGeo {
+  nch: boolean;
+  carrier: number;
+  id: number; // norm(|I_D|), the gate-controlled drive (0..1)
+  dir: number; // current sign → carrier travel direction
+  on: boolean; // conducting (channel inverted)
+  D: { x: number; y: number };
+  S: { x: number; y: number };
+  G: { x: number; y: number };
+  bodyL: number;
+  bodyR: number;
+  bodyT: number;
+  bodyB: number;
+  bandH: number;
+  dBandB: number; // drain-well (top) lower edge
+  sBandT: number; // source-well (bottom) upper edge
+  surf: number; // the silicon surface (channel face) x
+  dLeadX: number;
+  sLeadX: number;
+}
+
 // ============================================================================
 // MOSFET — ported from mosfet-tiers.html tier 3: metal-oxide-silicon. The metal GATE
 // sits behind a thin OXIDE over a doped body, between a SOURCE and a DRAIN. The gate
@@ -1344,6 +1370,13 @@ function drawDetailBJT(g: Graphics, o: DetailOpts): void {
 //     (A conducting device has an inverted channel and a charged gate — the live
 //     drain current is the visible proxy for "the gate has cleared threshold".)
 //   • carrier = kind (NM electrons / PM holes) → channel + stream colour, gate sign.
+//
+// PHASE 3 — recursive-LoD silicon leaf. Zoomed far enough on screen (past SILICON_ZOOM,
+// `o.absScale` px-per-world-px), the device illustration hands off to the metal-oxide
+// CROSS-SECTION ({@link drawMosfetSilicon}, the five-tier glyph's tier 5): substrate +
+// well, doped n+/p+ source/drain diffusions, the gate stack (metal · oxide · the inverted
+// channel), the depletion edge, and carriers drifting source→drain — all animated off the
+// SAME solution as the device tier, so the lit channel carries straight across the swap.
 // ============================================================================
 function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   const { hw, hh } = o.bounds;
@@ -1375,85 +1408,135 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   const surf = bodyL; // channel hugs the left (surface) face
   const dLeadX = Math.min(bodyR - 8, D.x);
   const sLeadX = Math.min(bodyR - 8, S.x);
+  const geo: MosfetGeo = {
+    nch,
+    carrier,
+    id,
+    dir,
+    on,
+    D,
+    S,
+    G,
+    bodyL,
+    bodyR,
+    bodyT,
+    bodyB,
+    bandH,
+    dBandB,
+    sBandT,
+    surf,
+    dLeadX,
+    sLeadX,
+  };
 
-  // --- the doped body + the drain (top) / source (bottom) wells ----------------
-  housing(g, bodyL, bodyT, bodyR - bodyL, bodyB - bodyT, PALETTE.dim, 6);
-  g.rect(bodyL + 2, bodyT + 3, bodyR - bodyL - 4, bandH - 3).fill({
-    color: carrier,
-    alpha: 0.18,
-  });
-  g.rect(bodyL + 2, sBandT, bodyR - bodyL - 4, bandH - 3).fill({
-    color: carrier,
-    alpha: 0.18,
-  });
+  // Phase 3 — the recursive-LoD SILICON LEAF. Once the part is magnified far enough on
+  // screen (past SILICON_ZOOM; `o.absScale` is the live px-per-world-px the host threads
+  // from the camera), the device illustration hands off to the metal-oxide cross-section
+  // (the five-tier glyph's tier 5). `sil` cross-fades 0→1 over the band; `devA = 1 − sil`
+  // fades the device tier out beneath it. Both paint into the SAME pooled Graphics (no
+  // allocation in the hot path), driven by the SAME `id`/`dir`/`on` solution, so the lit
+  // channel + carriers carry straight across the swap. `absScale` absent (info panel /
+  // codex — no camera) ⇒ sil = 0 ⇒ this stays the device tier exactly as before.
+  const sil = siliconBlend(o.absScale);
+  const devA = 1 - sil;
 
-  // --- the inversion channel (vertical, PINCHED at the drain), lit by the gate ---
-  if (on) {
-    // Full at the source (bottom) and pinching toward the drain (top) the harder
-    // it's driven; both width and brightness ride the drain current.
-    const wS = 3 + 16 * id; // source-side (bottom) width
-    const wD = wS * (0.62 - 0.4 * id); // drain-side (top) width (pinch-off)
-    g.poly([
-      surf + 2,
-      sBandT,
-      surf + 2 + wS,
-      sBandT,
-      surf + 2 + wD,
-      dBandB,
-      surf + 2,
-      dBandB,
-    ]).fill({ color: carrier, alpha: 0.3 + 0.5 * id });
-    // a thin depletion band hugging the inversion layer to the right
-    g.poly([
-      surf + 2 + wS,
-      sBandT,
-      surf + 2 + wS + 13,
-      sBandT,
-      surf + 2 + wD + 10,
-      dBandB,
-      surf + 2 + wD,
-      dBandB,
-    ]).fill({ color: PALETTE.violet, alpha: 0.1 + 0.1 * id });
+  // --- DEVICE tier (fades out as silicon rises; skipped once fully silicon) -----
+  if (devA > 0.01) {
+    // every device-tier alpha rides `devA`, so the whole illustration dissolves uniformly
+    const a = (x: number): number => x * devA;
+    // --- the doped body + the drain (top) / source (bottom) wells --------------
+    housing(g, bodyL, bodyT, bodyR - bodyL, bodyB - bodyT, PALETTE.dim, 6);
+    g.rect(bodyL + 2, bodyT + 3, bodyR - bodyL - 4, bandH - 3).fill({
+      color: carrier,
+      alpha: a(0.18),
+    });
+    g.rect(bodyL + 2, sBandT, bodyR - bodyL - 4, bandH - 3).fill({
+      color: carrier,
+      alpha: a(0.18),
+    });
+
+    // --- the inversion channel (vertical, PINCHED at the drain), lit by the gate -
+    if (on) {
+      // Full at the source (bottom) and pinching toward the drain (top) the harder
+      // it's driven; both width and brightness ride the drain current.
+      const wS = 3 + 16 * id; // source-side (bottom) width
+      const wD = wS * (0.62 - 0.4 * id); // drain-side (top) width (pinch-off)
+      g.poly([
+        surf + 2,
+        sBandT,
+        surf + 2 + wS,
+        sBandT,
+        surf + 2 + wD,
+        dBandB,
+        surf + 2,
+        dBandB,
+      ]).fill({ color: carrier, alpha: a(0.3 + 0.5 * id) });
+      // a thin depletion band hugging the inversion layer to the right
+      g.poly([
+        surf + 2 + wS,
+        sBandT,
+        surf + 2 + wS + 13,
+        sBandT,
+        surf + 2 + wD + 10,
+        dBandB,
+        surf + 2 + wD,
+        dBandB,
+      ]).fill({ color: PALETTE.violet, alpha: a(0.1 + 0.1 * id) });
+    }
+
+    // --- thin oxide + metal gate on the LEFT face of the channel ----------------
+    g.rect(surf - 7, dBandB, 5, sBandT - dBandB).fill({
+      color: OXIDE,
+      alpha: a(0.6),
+    });
+    g.rect(surf - 7, dBandB, 5, sBandT - dBandB).stroke({
+      width: 1,
+      color: OXIDE,
+      alpha: a(0.9),
+    });
+    g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).fill({
+      color: 0x2a2740,
+      alpha: a(0.95),
+    });
+    g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).stroke({
+      width: 1.2,
+      color: PALETTE.rail,
+      alpha: a(0.9),
+    });
+
+    // --- gate-plate charge + field lines through the oxide (none cross) --------
+    const gateCharge = id;
+    const nMarks = 5;
+    for (let k = 0; k < nMarks; k++) {
+      const gy = dBandB + 8 + ((k + 0.5) / nMarks) * (sBandT - dBandB - 16);
+      const chg = Math.min(1, gateCharge * 1.2);
+      if (chg <= 0.03) continue;
+      // + on the gate for n-channel (carriers pulled to the surface), − for p-channel
+      g.moveTo(surf - 18, gy).lineTo(surf - 12, gy);
+      if (nch) g.moveTo(surf - 15, gy - 3).lineTo(surf - 15, gy + 3);
+      g.stroke({ width: 1.5, color: PALETTE.accent, alpha: a(chg) });
+      // field line reaching right through the oxide (charge does NOT cross)
+      g.moveTo(surf - 7, gy)
+        .lineTo(surf, gy)
+        .stroke({ width: 1, color: OXIDE, alpha: a(0.2 + 0.6 * gateCharge) });
+    }
+
+    // --- carrier stream IN-BODY: source well → up the channel → drain well -----
+    // (the source/drain LEAD currents are drawn once in the shared section below, at
+    // full density, so the wires into the part never dim during the cross-fade.)
+    if (on) {
+      const cx = surf + 4;
+      const cm = id * devA; // in-body carrier density fades with the device tier
+      belt(g, sLeadX, sBandT, cx, sBandT, cm, dir, o.phase, carrier, 2.4);
+      belt(g, cx, sBandT, cx, dBandB, cm, dir, o.phase, carrier, 2.4);
+      belt(g, cx, dBandB, dLeadX, dBandB, cm, dir, o.phase, carrier, 2.4);
+    }
   }
 
-  // --- thin oxide + metal gate on the LEFT face of the channel ------------------
-  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).fill({
-    color: OXIDE,
-    alpha: 0.6,
-  });
-  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).stroke({
-    width: 1,
-    color: OXIDE,
-    alpha: 0.9,
-  });
-  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).fill({
-    color: 0x2a2740,
-    alpha: 0.95,
-  });
-  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).stroke({
-    width: 1.2,
-    color: PALETTE.rail,
-    alpha: 0.9,
-  });
+  // --- SILICON tier (fades in past SILICON_ZOOM; same solution drives it) -------
+  if (sil > 0.01) drawMosfetSilicon(g, o, geo, sil);
 
-  // --- gate-plate charge + field lines through the oxide (none cross) ----------
-  const gateCharge = id;
-  const nMarks = 5;
-  for (let k = 0; k < nMarks; k++) {
-    const gy = dBandB + 8 + ((k + 0.5) / nMarks) * (sBandT - dBandB - 16);
-    const a = Math.min(1, gateCharge * 1.2);
-    if (a <= 0.03) continue;
-    // + on the gate for n-channel (carriers pulled to the surface), − for p-channel
-    g.moveTo(surf - 18, gy).lineTo(surf - 12, gy);
-    if (nch) g.moveTo(surf - 15, gy - 3).lineTo(surf - 15, gy + 3);
-    g.stroke({ width: 1.5, color: PALETTE.accent, alpha: a });
-    // field line reaching right through the oxide (charge does NOT cross)
-    g.moveTo(surf - 7, gy)
-      .lineTo(surf, gy)
-      .stroke({ width: 1, color: OXIDE, alpha: 0.2 + 0.6 * gateCharge });
-  }
-
-  // --- gate / drain / source leads + studs -------------------------------------
+  // --- gate / drain / source leads + studs (SHARED — both tiers anchor here) ----
   g.moveTo(surf - 24, 0)
     .lineTo(G.x, G.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
@@ -1464,19 +1547,197 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
     .lineTo(S.x, S.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
 
-  // --- carrier stream: source (bottom) → up the channel → drain (top) ----------
+  // Lead-current carriers live on the shared leads (drawn at full density at both tiers,
+  // so the wires into the part never dim during the cross-fade).
   if (on) {
-    const cx = surf + 4;
     belt(g, S.x, S.y, sLeadX, sBandT, id, dir, o.phase, carrier, 2.4);
-    belt(g, sLeadX, sBandT, cx, sBandT, id, dir, o.phase, carrier, 2.4);
-    belt(g, cx, sBandT, cx, dBandB, id, dir, o.phase, carrier, 2.4);
-    belt(g, cx, dBandB, dLeadX, dBandB, id, dir, o.phase, carrier, 2.4);
     belt(g, dLeadX, dBandB, D.x, D.y, id, dir, o.phase, carrier, 2.4);
   }
 
   stud(g, D.x, D.y, PALETTE.bronze);
   stud(g, S.x, S.y, PALETTE.bronze);
   stud(g, G.x, G.y, PALETTE.bronze);
+}
+
+// ============================================================================
+// MOSFET SILICON LEAF (the five-tier glyph's tier 5) — the metal-oxide CROSS-SECTION of
+// the device tier above, on the SAME body coordinates so the pins never move across the
+// handoff. p-type substrate (NMOS) or an n-WELL in the substrate (PMOS) holds two heavily
+// doped n+/p+ diffusions (drain top, source bottom); a metal gate over a thin oxide caps
+// the surface between them; a strong-enough gate field inverts a CHANNEL of minority
+// carriers along the surface, PINCHED toward the drain in saturation, with a depletion
+// edge beneath it; carriers drift source→drain (electrons cyan for NMOS, holes warm for
+// PMOS). Every part is driven by the SAME live `geo.id`/`dir`/`on` the device tier uses,
+// and `sil` (the cross-fade weight) scales every alpha so it dissolves IN smoothly. Pure
+// presentation into the shared pooled Graphics — no allocation, no sim/netlist/hash touch.
+// ============================================================================
+function drawMosfetSilicon(
+  g: Graphics,
+  o: DetailOpts,
+  geo: MosfetGeo,
+  sil: number,
+): void {
+  const { nch, carrier, id, dir, on, bodyL, bodyR, bodyT, bodyB } = geo;
+  const { bandH, dBandB, sBandT, surf, dLeadX, sLeadX } = geo;
+  const a = (x: number): number => x * sil; // every silicon alpha rides the cross-fade
+  const hotCarrier = mix(carrier, 0xffffff, 0.5); // brightened core of the carrier sheet
+  const OXIDE = mix(PALETTE.warn, 0xffffff, 0.2);
+  // n-type silicon reads cyan, p-type bronze/violet (a stable doping colour code).
+  const NTYPE = mix(PALETTE.cyan, PALETTE.dim, 0.45);
+  const PTYPE = mix(PALETTE.bronze, PALETTE.violet, 0.35);
+  const bulkType = nch ? PTYPE : NTYPE; // substrate the channel sits in
+  const diffType = nch ? NTYPE : PTYPE; // n+/p+ source & drain diffusions
+  const innerL = bodyL + 2;
+  const innerR = bodyR - 2;
+  const innerW = innerR - innerL;
+
+  // --- the bulk: p-substrate (NMOS) or, for PMOS, an n-WELL inside the substrate -
+  g.rect(bodyL, bodyT, bodyR - bodyL, bodyB - bodyT).fill({
+    color: bulkType,
+    alpha: a(0.16),
+  });
+  if (!nch) {
+    // PMOS lives in an n-well: a tub enclosing the diffusions, tinted n-type, sitting
+    // in the (faint) p-substrate drawn above. Its floor is just below the source well.
+    g.roundRect(
+      bodyL,
+      bodyT,
+      bodyR - bodyL,
+      sBandT - bodyT + bandH * 0.7,
+      5,
+    ).fill({
+      color: NTYPE,
+      alpha: a(0.2),
+    });
+    g.roundRect(
+      bodyL,
+      bodyT,
+      bodyR - bodyL,
+      sBandT - bodyT + bandH * 0.7,
+      5,
+    ).stroke({ width: 1, color: NTYPE, alpha: a(0.5) });
+  }
+
+  // --- the n+/p+ source & drain diffusions (brighter, doping-dot textured) -------
+  const diffBand = (yT: number, yB: number): void => {
+    g.rect(innerL, yT, innerW, yB - yT).fill({
+      color: diffType,
+      alpha: a(0.5),
+    });
+    g.rect(innerL, yT, innerW, yB - yT).stroke({
+      width: 1,
+      color: diffType,
+      alpha: a(0.7),
+    });
+    // doping marks: a fixed lattice of +/− glyphs (n+ → '+', p+ → '−'); deterministic,
+    // no RNG. The sign mirrors the majority dopant of the diffusion.
+    const cols = 5;
+    const rows = 2;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const dx = innerL + ((c + 0.5) / cols) * innerW;
+        const dy = yT + ((r + 0.5) / rows) * (yB - yT);
+        g.moveTo(dx - 2.2, dy).lineTo(dx + 2.2, dy);
+        if (nch) g.moveTo(dx, dy - 2.2).lineTo(dx, dy + 2.2); // '+' for n+, '−' for p+
+        g.stroke({ width: 0.9, color: 0xffffff, alpha: a(0.4) });
+      }
+    }
+  };
+  diffBand(bodyT, dBandB); // drain (top)
+  diffBand(sBandT, bodyB); // source (bottom)
+
+  // --- the gate stack on the LEFT surface: oxide sliver + metal/poly plate --------
+  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).fill({
+    color: OXIDE,
+    alpha: a(0.7),
+  });
+  g.rect(surf - 7, dBandB, 5, sBandT - dBandB).stroke({
+    width: 1,
+    color: OXIDE,
+    alpha: a(0.95),
+  });
+  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).fill({
+    color: 0x2a2740,
+    alpha: a(0.95),
+  });
+  g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).stroke({
+    width: 1.2,
+    color: PALETTE.rail,
+    alpha: a(0.95),
+  });
+
+  // --- the depletion region + the inverted CHANNEL along the surface -------------
+  if (on) {
+    const wS = 3 + 16 * id; // source-side (bottom) channel width
+    const wD = wS * (0.62 - 0.4 * id); // drain-side (top) width (pinch-off)
+    // depletion: a wider band under the gate where the field has swept the bulk clear.
+    g.poly([
+      surf + 2,
+      sBandT,
+      surf + 2 + wS + 16,
+      sBandT,
+      surf + 2 + wD + 13,
+      dBandB,
+      surf + 2,
+      dBandB,
+    ]).fill({ color: PALETTE.violet, alpha: a(0.12 + 0.12 * id) });
+    // inversion layer: a bright minority-carrier sheet hugging the surface, pinched.
+    g.poly([
+      surf + 2,
+      sBandT,
+      surf + 2 + wS,
+      sBandT,
+      surf + 2 + wD,
+      dBandB,
+      surf + 2,
+      dBandB,
+    ]).fill({ color: carrier, alpha: a(0.4 + 0.5 * id) });
+    g.poly([
+      surf + 2,
+      sBandT,
+      surf + 2 + wS * 0.45,
+      sBandT,
+      surf + 2 + wD * 0.45,
+      dBandB,
+      surf + 2,
+      dBandB,
+    ]).fill({ color: mix(carrier, 0xffffff, 0.6), alpha: a(0.3 + 0.45 * id) });
+  } else {
+    // off: no channel — a thin "no inversion" gap at the surface reads the cutoff.
+    g.rect(surf + 2, dBandB, 2, sBandT - dBandB).fill({
+      color: PALETTE.dim,
+      alpha: a(0.25),
+    });
+  }
+
+  // --- gate-plate charges + the field through the oxide (charge never crosses) ----
+  const nMarks = 5;
+  for (let k = 0; k < nMarks; k++) {
+    const gy = dBandB + 8 + ((k + 0.5) / nMarks) * (sBandT - dBandB - 16);
+    const chg = Math.min(1, id * 1.2);
+    if (chg <= 0.03) continue;
+    // + on the metal for n-channel (pulls electrons up to the surface), − for p-channel
+    g.moveTo(surf - 18, gy).lineTo(surf - 12, gy);
+    if (nch) g.moveTo(surf - 15, gy - 3).lineTo(surf - 15, gy + 3);
+    g.stroke({ width: 1.5, color: PALETTE.accent, alpha: a(chg) });
+    g.moveTo(surf - 7, gy)
+      .lineTo(surf, gy)
+      .stroke({ width: 1, color: OXIDE, alpha: a(0.2 + 0.6 * id) });
+  }
+
+  // --- minority carriers drifting source → up the channel → drain -----------------
+  // (electrons for NMOS, holes for PMOS; density + alpha ride `id·sil`, motion on the
+  // bounded phase — magnitude never rides speed; the lead currents are the shared belts.)
+  if (on) {
+    const cx = surf + 4;
+    const cm = id * sil;
+    belt(g, sLeadX, sBandT, cx, sBandT, cm, dir, o.phase, carrier, 2.2);
+    belt(g, cx, sBandT, cx, dBandB, cm, dir, o.phase, carrier, 2.2);
+    belt(g, cx, dBandB, dLeadX, dBandB, cm, dir, o.phase, carrier, 2.2);
+    // a second, brighter inner lane so the channel reads as a dense carrier sheet
+    // (brightened carrier colour — electrons for NMOS, holes for PMOS).
+    belt(g, cx + 3, sBandT, cx + 3, dBandB, cm, dir, o.phase, hotCarrier, 1.6);
+  }
 }
 
 // ============================================================================

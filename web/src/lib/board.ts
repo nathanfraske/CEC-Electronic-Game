@@ -1125,6 +1125,9 @@ export class Board {
             wiper: this.armedConfig.wiper,
             temp: this.armedConfig.temp,
             anchors,
+            // Same on-screen magnification the placed part passes, so the ghost previews the
+            // same tier (device → silicon) the drop will show. ZERO_ELECTRICAL keeps it idle.
+            absScale: this.world.scale.x,
           };
           tg.position.set(wPx / 2, hPx / 2);
           setStudsVisible(false);
@@ -6711,6 +6714,10 @@ class ComponentNode {
         wiper: this.component.wiper,
         temp: this.component.temp,
         anchors,
+        // On-screen magnification (px-per-world-px) so a detail drawer can hand off to its
+        // silicon leaf when the part grows big enough (Phase 3). At the board level the world
+        // scale IS that magnification; `zoom` is already `this.world.scale.x`.
+        absScale: zoom,
       };
       // Hide the illustration's own decorative studs on the board — the real pin
       // dots below mark the connections (and avoid the doubled-terminal clutter).
