@@ -5,6 +5,29 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (128) — Zoom meter → metric (no "cells"); MAX_SCALE 20 → 1000 (deep recursive dive)
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3`. Two owner-feedback tweaks on the just-landed zoom meter.
+Render-only/TS-only; golden `0xeaac…fa24` untouched (confirmed). Gate green (check 0-err, lint, build, test 85).
+
+- **Metric meter (owner: "instead of cells, give a metric number"):** dropped the `scaleBar` "N cells"
+  branch — it's now METRIC at every level, anchored on **one board cell = `MM_PER_TOP_CELL = 2.5 mm`** (≈ the
+  0.1"/2.54 mm breadboard & DIP pin pitch, rounded — a 4-cell resistor ≈ 10 mm, DIP-8 ≈ 10×5 mm). Open board
+  now reads mm; ramps mm → µm → nm as you dive. `ScaleBar.cells` field removed; tests updated.
+- **Deeper zoom (owner: "much deeper, maybe max 1000×, for the recursive IC plan"):** `MAX_SCALE 20 → 1000`
+  in `board.ts`. The dive needs camera zoom ≈ `INTERNALS_ZOOM / fitScale^N` to open depth N (~a decade per
+  level), so 20× barely opened the top IC; 1000× reaches ~2–3 nested levels. Float-safe for the pan transform
+  at board coords (world.position < ~1e6 px). Wheel zoom is exponential, so a bigger ceiling = more notches,
+  same feel. Fit-to-content shares the clamp but always pads content, so its scale stays single-digit —
+  raising the cap doesn't change fit behaviour.
+
+**Owner eye:** `MM_PER_TOP_CELL` (where mm/µm/nm boundaries land) + whether 1000× is deep enough for the
+target nesting (bump higher if the 4-LUT wants 4 levels — but mind float precision past ~1e4×).
+
+**Next:** Phase 3 (transistor silicon leaf), Phase 4 (Inverter element + 4-LUT), or the designed IC library.
+
+---
+
 ## 2026-06-25 (127) — Phase 5 zoom meter + scale reference HUD (owner-picked next build)
 
 **State:** 🟢 on branch `claude/kind-turing-hdelb3` (Phase 2 Part A already merged to main at `27182cd`). New work:

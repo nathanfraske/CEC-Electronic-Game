@@ -9,12 +9,13 @@
 
 import { PITCH } from "./boardRender";
 
-/** Teaching anchor: the physical size one TOP-LEVEL board cell (PITCH world px) stands for. A real
- * 0.1" component pitch is 2.54 mm; this single calibration is what the whole physical ramp hangs off.
- * As you open ICs the current level's cell is `viewScale` times smaller (viewScale = ∏ of the fit
- * scales you've descended through), so the same screen length crosses mm → µm → nm decade by decade.
- * Tunable: it sets only where the unit boundaries fall, never the rendered geometry. */
-export const MM_PER_TOP_CELL = 2.54;
+/** THE physical anchor for the whole scale: one TOP-LEVEL board cell (PITCH world px) is this many
+ * millimetres. 2.5 mm ≈ the 0.1" (2.54 mm) breadboard / DIP pin pitch — the universal electronics grid
+ * — so the board reads at bench scale (a 4-cell resistor ≈ 10 mm, a DIP-8 ≈ 10×5 mm). Everything metric
+ * hangs off this: as you open ICs the current level's cell is `viewScale` times smaller (viewScale = ∏
+ * of the fit-scales you've descended through), so the same screen length crosses mm → µm → nm decade by
+ * decade. Tunable: it sets only where the unit boundaries fall, never the rendered geometry. */
+export const MM_PER_TOP_CELL = 2.5;
 
 const EPS = 1e-12;
 
@@ -69,31 +70,19 @@ export function formatMag(m: number): string {
 export interface ScaleBar {
   /** Width of the bar in SCREEN px (already snapped to the nice length). */
   px: number;
-  /** The bar's label, e.g. "5 cells", "2 mm", "200 µm", "10 nm". */
+  /** The bar's metric label, e.g. "5 mm", "200 µm", "10 nm". */
   label: string;
-  /** True on the open board (abstract board cells); false once inside an IC (physical units). */
-  cells: boolean;
 }
 
 /** Build the scale bar: aim for ~`targetPx` screen px, snap the length to a nice 1 / 2 / 5 value, and
- * return the snapped bar's pixel width + label. On the open board (viewScale ≥ 1) the unit is abstract
- * board CELLS; once inside an IC (viewScale < 1) it's physical mm → µm → nm. */
+ * return the snapped bar's pixel width + label. Always METRIC, anchored on one board cell =
+ * {@link MM_PER_TOP_CELL} mm: the open board reads in mm, then µm → nm as you dive into nested ICs. */
 export function scaleBar(
   zoom: number,
   viewScale: number,
   targetPx = 90,
 ): ScaleBar {
-  if (viewScale >= 1) {
-    // Top board: a cell is the natural unit. cellPx = screen px per board cell.
-    const cellPx = PITCH * Math.max(zoom, EPS);
-    const cells = niceLength(targetPx / cellPx) || 1;
-    return {
-      px: cells * cellPx,
-      label: cells === 1 ? "1 cell" : `${fmtNum(cells)} cells`,
-      cells: true,
-    };
-  }
   const mmpp = mmPerScreenPx(zoom, viewScale);
   const niceMm = niceLength(targetPx * mmpp) || mmpp; // guard a degenerate view
-  return { px: niceMm / mmpp, label: formatMm(niceMm), cells: false };
+  return { px: niceMm / mmpp, label: formatMm(niceMm) };
 }

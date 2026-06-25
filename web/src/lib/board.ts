@@ -161,9 +161,13 @@ const AUTO_CYCLES = 3;
 const AUTO_SPAN_MIN = 120;
 const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
-// Zoom further in than before so the full-detail tier (with pinout labels) has room
-// to read. The LOD swaps still gate on TIER_ZOOM / DETAIL_ZOOM, well below this.
-const MAX_SCALE = 20; // deep enough that a single IC fills the screen (zoom-to-open 1:1 replica)
+// Zoom deep enough to DIVE the recursive IC zoom (Phase 2): each nested level opens only once its
+// on-screen size crosses INTERNALS_ZOOM, and each level is shrunk by its fit-scale (~0.05–0.15), so
+// reaching depth N needs camera zoom ≈ INTERNALS_ZOOM / fitScale^N — i.e. roughly a decade per level.
+// 1000× reaches ~2–3 nested levels; it's also float-safe for the pan transform at board coordinates
+// (world.position stays well under ~1e6 px). The LOD swaps still gate on TIER_ZOOM / INTERNALS_ZOOM,
+// far below this. (The wheel zoom is exponential, so a bigger ceiling is just more notches, same feel.)
+const MAX_SCALE = 1000;
 const UNDO_LIMIT = 60;
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;

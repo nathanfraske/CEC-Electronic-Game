@@ -4190,9 +4190,10 @@
         </span>
       </div>
 
-      <!-- Zoom meter (Phase 5): magnification ×M + a snapped scale rule that ramps board-cells → mm →
-           µm → nm as you dive through the recursive IC zoom. A non-interactive bench-instrument readout
-           pinned bottom-left; the scale rule is a ⊔ bracket whose width is the snapped physical length. -->
+      <!-- Zoom meter (Phase 5): magnification ×M + a snapped METRIC scale rule (mm → µm → nm, anchored
+           on one board cell = MM_PER_TOP_CELL) that shrinks as you dive through the recursive IC zoom. A
+           non-interactive bench-instrument readout pinned bottom-left; the rule is a ⊔ bracket whose
+           width is the snapped physical length. -->
       <div
         class="zoom-meter"
         aria-hidden="true"

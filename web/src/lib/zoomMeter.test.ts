@@ -60,20 +60,19 @@ describe("zoomMeter", () => {
     expect(mmPerScreenPx(1, 0.1)).toBeCloseTo(mmPerScreenPx(1, 1) / 10, 12);
   });
 
-  it("scaleBar shows CELLS on the open board and a snapped px width near target", () => {
+  it("scaleBar is metric on the open board too (mm), snapped near the target width", () => {
     const bar = scaleBar(1, 1, 90);
-    expect(bar.cells).toBe(true);
-    expect(bar.label).toMatch(/cells?$/);
-    // 90px target / 26px-per-cell ≈ 3.46 cells → snaps to 2 cells → 52px.
-    expect(bar.px).toBeCloseTo(2 * PITCH, 9);
-    expect(bar.label).toBe("2 cells");
+    expect(bar.label).toMatch(/(m|mm|µm|nm)$/);
+    // 90px target × (2.5mm / 26px) ≈ 8.65 mm → snaps to 5 mm.
+    expect(bar.label).toBe("5 mm");
+    // snapped DOWN, so the bar width is within the same decade as the target (≥ target/5, ≤ target).
+    expect(bar.px).toBeGreaterThan(90 / 5);
+    expect(bar.px).toBeLessThanOrEqual(90);
   });
 
-  it("scaleBar switches to physical units once inside an IC, staying near target width", () => {
+  it("scaleBar ramps to smaller units as you dive into nested ICs", () => {
     const bar = scaleBar(8, 0.05, 90);
-    expect(bar.cells).toBe(false);
     expect(bar.label).toMatch(/(mm|µm|nm)$/);
-    // the snapped bar is within the same decade as the target (snap is DOWN, so ≥ target/5).
     expect(bar.px).toBeGreaterThan(90 / 5);
     expect(bar.px).toBeLessThanOrEqual(90);
   });
