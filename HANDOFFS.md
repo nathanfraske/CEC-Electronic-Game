@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (157) — FIX (owner): floor free-form frame-pin leg width
+
+**State:** 🟢 **about to PR**. Web/render only, golden untouched, 122 web tests, full gate green. Owner
+picked "floor the thin ones, leave VCC/OUT untouched" for the thickness half of (156). Done.
+
+**Change (board.ts `redrawWires` schematic branch):** a FRAME-PIN leg now draws at `Math.max(width,
+LEAD_WIDTH_FLOOR=3.0)` (was the raw current-scaled `width`, `BELT_WIDTH_MIN 1.4 → MAX 7.0`). A zero-current
+digital input (a CMOS gate draws ~no DC current — no shoot-through in the steady-state solve) no longer
+collapses to a hairline; a current-carrying lead (VCC/OUT) already exceeds 3.0, so it's untouched. Floor
+gated on `frameLead` only (regular schematic-lens wires unchanged). Combined with (156)'s routing fix, the
+input pinout leg is now a solid, cleanly-nudged/bent leg matching VCC/OUT — just thinner (correct: it
+carries nothing).
+
+**NEXT (owner's next item):** "ability to move pins along the edges of the sub-assembly." Existing pin/box
+editing lives in board.ts (`clampPinToBox`, `resizeFreeFormBox`, free-form geom) + App.svelte (`changeBox`/
+`freeFormBox`); `registerFreeFormFrame`/`freeFormGeom`/`FreeFormGeom{w,h,pins:[{dx,dy,name}]}` in graph.ts;
+reseal reads geometry back via `freeFormGeom` (userIc.ts `resealUserIc`). Backlog note flagged pin-DRAG
+conflicts with wire-from-pin (needs a modifier or pin-edit mode). Scope: drag a frame pin along its box
+edge, clamp to the perimeter, persist via re-register + reseal.
+
+---
+
 ## 2026-06-25 (156) — FIX (owner): free-form frame-pin legs ignored the pipe nudge/bend
 
 **State:** 🟢 **about to PR** (routing half). Web/render only, golden untouched, 122 web tests, full gate

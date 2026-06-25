@@ -294,6 +294,10 @@ const FLOW_DIR_SAT = 0.05;
 // is legible at a glance (saturating normalization keeps a huge current bounded).
 const BELT_WIDTH_MIN = 1.4;
 const BELT_WIDTH_MAX = 7.0;
+// Free-form frame-pin PINOUT legs never draw thinner than this: a zero-current digital input (a CMOS gate
+// draws ~no DC current) would otherwise collapse to a wispy hairline. A current-carrying lead (VCC/OUT)
+// already exceeds it, so its heavier current-scaled width is untouched — only the thin legs are floored.
+const LEAD_WIDTH_FLOOR = 3.0;
 // Chevron (arrowhead) half-size range (px): scales with current so more amps draw
 // visibly bigger arrows, bounded by the same saturating normalization.
 const CHEVRON_SIZE_MIN = 3.0;
@@ -5275,10 +5279,13 @@ export class Board {
             ? roundedPoints(condRoutes.get(w.id)!, Math.min(8, PITCH * 0.7))
             : route;
         sampleRoute = legRoute;
+        // Floor a FRAME-PIN leg's width so a no-current digital input reads as a solid pinout leg, not a
+        // hairline; a current-carrying lead (VCC/OUT) already exceeds the floor, so it stays untouched.
+        const legWidth = frameLead ? Math.max(width, LEAD_WIDTH_FLOOR) : width;
         polyline(g, legRoute);
-        g.stroke({ width: width + 4, color, alpha: 0.16 });
+        g.stroke({ width: legWidth + 4, color, alpha: 0.16 });
         polyline(g, legRoute);
-        g.stroke({ width, color, alpha: 0.95 });
+        g.stroke({ width: legWidth, color, alpha: 0.95 });
         // Register the DRAWN route in conduitDrawRoutes so the conduit-mode hit-test (which only knows
         // that map) can still select these pinout leads — otherwise they become un-clickable (round 3).
         if (conduit) this.conduitDrawRoutes.set(w.id, legRoute);
