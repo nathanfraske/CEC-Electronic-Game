@@ -31,6 +31,10 @@ import {
   isFrame,
   isDieFrame,
   endpointKey,
+  framePackage,
+  frameTag,
+  dieFrameTag,
+  ensureFrameKind,
   type Component,
   type PinRef,
   type Endpoint,
@@ -39,6 +43,7 @@ import {
   type GraphSnapshot,
   type PinTest,
 } from "./graph";
+import { BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
 import {
   captureSeal,
   captureRegion,
@@ -2052,6 +2057,53 @@ export class Board {
   setDieFrame(frameId: number | null): void {
     this.dieFrameId = frameId;
     this.drawDieWalls();
+  }
+
+  /**
+   * Grow/shrink the pin count of a FREE-FORM (BLOCK) subassembly die (§4.10 "expandable boundaries") by
+   * re-kinding its die frame to `BLOCK_<newCount>` (registered on-demand). On shrink, wires landing on a
+   * removed pin (index ≥ newCount) are dropped and the pin names/tests are truncated. The frame node +
+   * walls redraw. No-op (returns null) unless drilled into a BLOCK die and `1 ≤ newCount ≤ BLOCK_MAX_PINS`
+   * and it actually changes. Returns the NEW placeable frame tag (e.g. `"BLOCK7"`) so the caller can keep
+   * its breadcrumb / drill state in sync. Presentation/registry only — never the solve or hash; the new
+   * pin is unconnected (NC), so the netlist is unchanged until the player wires it.
+   */
+  setDieFramePins(newCount: number): string | null {
+    if (this.dieFrameId === null) return null;
+    const fid = this.dieFrameId;
+    const frame = this.graph.components.get(fid);
+    if (!frame) return null;
+    const pkg = framePackage(frame.kind);
+    if (!pkg || pkg.archetype !== BLOCK_ARCHETYPE) return null; // only BLOCK is expandable
+    if (newCount < 1 || newCount > BLOCK_MAX_PINS || newCount === pkg.pinCount)
+      return null;
+    this.pushUndo(this.graph.serialize());
+    ensureFrameKind(BLOCK_ARCHETYPE, newCount);
+    // On shrink, drop wires touching a now-removed frame pin, and truncate the pin names/tests.
+    if (newCount < pkg.pinCount) {
+      const removed = (e: Endpoint): boolean =>
+        isPinRef(e) && e.componentId === fid && e.pinIndex >= newCount;
+      for (const w of [...this.graph.wires.values()]) {
+        if (removed(w.from) || removed(w.to)) this.graph.removeWire(w.id);
+      }
+      if (frame.pinNames) frame.pinNames = frame.pinNames.slice(0, newCount);
+      if (frame.pinTests) frame.pinTests = frame.pinTests.slice(0, newCount);
+    }
+    frame.kind = dieFrameTag(frameTag(BLOCK_ARCHETYPE, newCount));
+    // Rebuild the frame node (so its pins reflect the new count) + walls + wires.
+    const node = this.nodes.get(fid);
+    if (node) {
+      node.destroy();
+      this.nodes.delete(fid);
+      this.addNode(frame);
+    }
+    this.drawDieWalls();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph); // pin count changed → re-evaluate the die's sealable status
+    this.cb.onPersist?.(this.graph);
+    this.emitSelect();
+    return frameTag(BLOCK_ARCHETYPE, newCount);
   }
 
   /** True when the board is currently editing an IC-maker die (its inner canvas). */
