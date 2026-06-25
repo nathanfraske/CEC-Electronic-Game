@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (136) — My ICs: rename + remove chrome; variants surfaced (owner ask)
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3`. Owner: "rename an IC after it's made, in My ICs" + "implement
+the variants." UI/persistence only; golden `0xeaac…fa24` untouched. Gate green (check 0-err, lint, build, test 99).
+
+- **Rename + remove (the deferred IC-library chrome, §7).** Wired `renameLibraryIc`/`removeFromLibrary` (they
+  already existed, just unwired) into the **My ICs** rows: hover a row → **✎ rename** (inline input → commits a
+  display-name change, the tag/placed instances stay stable; re-registers so the bin tile + placed labels
+  refresh) and **× remove** (confirm; drops the library row but NEVER unregisters the kind — gap #7, so placed
+  copies keep working + re-appear on reload). New `renamingTag`/`renameValue` `$state` + `startRenameIc`/
+  `commitRenameIc`/`removeIc`; controls `stopPropagation` so a click never arms the part. CSS in `app.css`
+  (`.ic-row-ctl`/`.ic-row-btn`/`.ic-variant-badge`/`.ic-rename`, faint-until-row-hover).
+- **Variants were ALREADY fully implemented** (PR #200): the seal-panel **"Variant of …"** dropdown
+  (`sealVariantOf`, `userIcFamilyTargets` lists every IC so you can variant any single one → `appendUserIcVariant`
+  promotes it to a family), the inspector **variant picker** (`hasUserIcVariants` gate), `resolveUserIc` clamp,
+  the save sidecar. The owner hadn't discovered it — so I **surfaced it**: a **⎇N variant badge** on a family's
+  My ICs row (title points to the inspector picker). No backend change needed; verified the flow end-to-end.
+
+**Still open (variant follow-ups):** #21 (static/unpowered zoom-to-open fallback shows variant-0 geometry — uses
+`getUserIc` not `resolveUserIc(tag, variant)`; powered path is correct); cross-package variants (deferred v1).
+
+**Next:** owner keeps building the LUT; #21; the INV-composite FET rendering (#22); Phase 4 Design 2 (4-LUT).
+
+---
+
 ## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
 
 **State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent.

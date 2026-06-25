@@ -525,6 +525,66 @@ body {
   border-radius: 2px;
 }
 
+/* "My ICs" per-row controls (rename / remove) + variant badge. Faint until row hover, so a tidy bin
+   stays uncluttered; the buttons stop propagation so they never arm the part. */
+.ic-row-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+.ic-variant-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  padding: 1px 5px;
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+  background: var(--accent-soft);
+}
+.ic-row-btn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  color: var(--dim);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity 0.12s,
+    color 0.12s,
+    border-color 0.12s;
+}
+.part:hover .ic-row-btn {
+  opacity: 0.85;
+}
+.ic-row-btn:hover {
+  color: var(--text);
+  border-color: var(--border-bright);
+  background: var(--surface-2);
+}
+.ic-row-del:hover {
+  color: var(--bad);
+  border-color: color-mix(in oklch, var(--bad) 55%, transparent);
+}
+.ic-rename {
+  width: 100%;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--accent-line);
+  border-radius: 2px;
+  padding: 2px 5px;
+  outline: none;
+}
+
 /* A "My ICs" row glyph holds a tiny package pin-ring SVG (instead of tag text); the SVG inherits the
    accent --c via currentColor. The .part-glyph grid already centres it. */
 .part-glyph-ic svg {
