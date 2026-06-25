@@ -1578,44 +1578,40 @@ function drawMosfetSilicon(
   sil: number,
 ): void {
   const { nch, carrier, id, dir, on, bodyL, bodyR, bodyT, bodyB } = geo;
-  const { bandH, dBandB, sBandT, surf, dLeadX, sLeadX } = geo;
+  const { dBandB, sBandT, surf, dLeadX, sLeadX } = geo;
   const a = (x: number): number => x * sil; // every silicon alpha rides the cross-fade
   const hotCarrier = mix(carrier, 0xffffff, 0.5); // brightened core of the carrier sheet
   const OXIDE = mix(PALETTE.warn, 0xffffff, 0.2);
   // n-type silicon reads cyan, p-type bronze/violet (a stable doping colour code).
   const NTYPE = mix(PALETTE.cyan, PALETTE.dim, 0.45);
   const PTYPE = mix(PALETTE.bronze, PALETTE.violet, 0.35);
-  const bulkType = nch ? PTYPE : NTYPE; // substrate the channel sits in
   const diffType = nch ? NTYPE : PTYPE; // n+/p+ source & drain diffusions
+  // The wafer is ALWAYS a p-substrate; a PMOS device lives in an n-WELL tub sunk into it (spec §8.5).
+  // So for PMOS inset the doped region from the bulk (right) edge, leaving a p-substrate rim the well
+  // sits inside — the visible "n-well embedded in p-substrate" boundary is the whole teaching point.
+  const wellInset = nch ? 0 : 14;
   const innerL = bodyL + 2;
-  const innerR = bodyR - 2;
+  const innerR = bodyR - 2 - wellInset;
   const innerW = innerR - innerL;
 
-  // --- the bulk: p-substrate (NMOS) or, for PMOS, an n-WELL inside the substrate -
+  // --- the bulk: a p-substrate wafer (always), plus an n-WELL tub for PMOS -------
   g.rect(bodyL, bodyT, bodyR - bodyL, bodyB - bodyT).fill({
-    color: bulkType,
+    color: PTYPE,
     alpha: a(0.16),
   });
   if (!nch) {
-    // PMOS lives in an n-well: a tub enclosing the diffusions, tinted n-type, sitting
-    // in the (faint) p-substrate drawn above. Its floor is just below the source well.
-    g.roundRect(
-      bodyL,
-      bodyT,
-      bodyR - bodyL,
-      sBandT - bodyT + bandH * 0.7,
-      5,
-    ).fill({
+    // PMOS n-well: a tub open at the surface (left), enclosing BOTH p+ diffusions, its right wall set
+    // in from the bulk edge so the p-substrate reads as the rim toward the bulk.
+    const wR = bodyR - wellInset / 2;
+    g.roundRect(bodyL, bodyT, wR - bodyL, bodyB - bodyT, 5).fill({
       color: NTYPE,
       alpha: a(0.2),
     });
-    g.roundRect(
-      bodyL,
-      bodyT,
-      bodyR - bodyL,
-      sBandT - bodyT + bandH * 0.7,
-      5,
-    ).stroke({ width: 1, color: NTYPE, alpha: a(0.5) });
+    g.roundRect(bodyL, bodyT, wR - bodyL, bodyB - bodyT, 5).stroke({
+      width: 1,
+      color: NTYPE,
+      alpha: a(0.5),
+    });
   }
 
   // --- the n+/p+ source & drain diffusions (brighter, doping-dot textured) -------
