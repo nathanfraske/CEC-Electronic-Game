@@ -20,6 +20,18 @@ Web/render/registry only, golden `0xeaac…fa24` untouched, 112 web tests.
 - [ ] **Region tool v2** — persist the rect across mode switches + live-update as you wire (today: single
   mode, draw→preview→seal, clears on switch).
 
+## 2026-06-25 (146) — IMPLEMENT: free-form die box resize + clobber-bug fix
+
+Web/render/registry only, golden untouched, 113 web tests.
+- ~~**Box resize**~~ — free-form die editor shows a **Box W−/+ H−/+** stepper; `resizeFreeFormBox` re-registers
+  the frame in place (pin count fixed → kind tag stable), `clampPinToBox` re-pins a lead on a shrunk wall.
+  `resealUserIc` reads the edited box off the frame kind so it PERSISTS through reseal (tested).
+- ~~**Latent clobber bug**~~ — a free-form die reports archetype BLOCK, so the generic Pins stepper showed
+  for it and `setDieFramePins` would re-kind it to a stock BLOCK, destroying the captured box. Now refused
+  (`isFreeFormFrame`); the Box stepper shows for free-form dies, the Pins stepper only for blank BLOCK dies.
+- [ ] **Pin-drag** — move a pin along the box wall by dragging in the die editor (die-frame-pin hit-test +
+  perimeter snap → re-`registerFreeFormFrame`). The push tail; auto-placed pins are already correct (1:1).
+
 ## 2026-06-25 (141) — IMPLEMENT: build gates as subassemblies (P0–P4a ON MAIN)
 
 From the 8-agent audit plan (`docs/cell-characterization-build-plan.md`). All web/doc, golden `0xeaac…fa24` untouched. PR #205

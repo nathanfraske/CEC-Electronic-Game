@@ -5,7 +5,11 @@
 // byte-identity; variant selection is a pure graph→graph choice) and the family round-trip without a
 // browser. Mirrors netlist.test.ts's place/connect helpers + register/unregister harness.
 import { describe, it, expect } from "vitest";
-import { BoardGraph } from "./graph";
+import {
+  BoardGraph,
+  registerFreeFormFrame,
+  FREE_FORM_DIE_PREFIX,
+} from "./graph";
 import type { Component } from "./graph";
 import { buildNetlist } from "./netlist";
 import {
@@ -682,6 +686,50 @@ describe("IC variants — determinism contract", () => {
       expect(nl!.types.length).toBe(3); // V + R1 + R2
     } finally {
       unregisterUserIc("BoxR");
+    }
+  });
+
+  it("pin/box editing: resealing a free-form subassembly persists an EDITED box (read off the frame kind)", () => {
+    // Capture a free-form subassembly, then simulate the die editor's box-resize: re-register its
+    // free-form frame with a bigger box (what board.resizeFreeFormBox does). Reseal must read that NEW
+    // geometry off the frame kind and persist it — not silently revert to the captured box.
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 0, 5);
+    const r1 = place(b, "R", 4, 0, 1000);
+    const r2 = place(b, "R", 8, 0, 2000);
+    const gnd = place(b, "GND", 12, 0);
+    connect(b, v, 0, r1, 0);
+    connect(b, r1, 1, r2, 0);
+    connect(b, r2, 1, gnd, 0);
+    connect(b, v, 1, gnd, 0);
+    const cap = captureRegion(b, [r1.id, r2.id], "EditBox");
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("EditBox")!;
+      const oldW = def.freeForm!.w;
+      const oldH = def.freeForm!.h;
+      const frameKind = def.graph.components.find(
+        (c) => c.id === def.frameId,
+      )!.kind;
+      expect(frameKind.startsWith(FREE_FORM_DIE_PREFIX)).toBe(true);
+
+      // Resize the box (+3 W, +2 H), keeping the same pins — re-registers the frame kind in place.
+      const subTag = frameKind.slice(FREE_FORM_DIE_PREFIX.length);
+      registerFreeFormFrame(subTag, {
+        w: oldW + 3,
+        h: oldH + 2,
+        pins: def.freeForm!.pins,
+      });
+
+      // Reseal the (unchanged) inner graph — the edited box must ride through onto the def.
+      resealUserIc("EditBox", def.graph, def.frameId, def.pinNames);
+      const after = getUserIc("EditBox")!;
+      expect(after.freeForm!.w).toBe(oldW + 3);
+      expect(after.freeForm!.h).toBe(oldH + 2);
+      expect(after.role).toBe("subassembly"); // still a subassembly (audit blocker stays fixed)
+      expect(after.freeForm!.pins.length).toBe(def.freeForm!.pins.length); // pin count unchanged
+    } finally {
+      unregisterUserIc("EditBox");
     }
   });
 

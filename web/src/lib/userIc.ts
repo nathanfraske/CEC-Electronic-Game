@@ -22,6 +22,8 @@ import {
   frameTag,
   dieFrameTag,
   registerFreeFormFrame,
+  freeFormGeom,
+  isFreeFormFrame,
   isFrame,
   type GraphSnapshot,
   type Endpoint,
@@ -401,14 +403,29 @@ export function resealUserIc(
   const prev = REGISTRY.get(tag);
   if (!prev) return;
   const keep = pinNames && pinNames.some((n) => n && n.trim());
-  // Spread the prior def so EVERY field rides through — notably `freeForm`, `role`, and `pinRoles`
-  // (audit blocker: re-editing + resealing a captured subassembly otherwise reverted its faithful box +
-  // pins-at-crossings to a generic package and flipped it back to a board IC). Only the edited inner
-  // graph / frame id / pin names are overridden.
+  // A FREE-FORM subassembly's die frame carries its live box+pins geometry in its KIND (re-registered by
+  // pin/box editing). Read it back so a resize / pin-move PERSISTS through the reseal — otherwise the
+  // spread below keeps `prev.freeForm`, silently reverting the player's edits to the captured geometry.
+  // (The pinCount can't change here — pin/box editing never adds/removes a pin — so the package stays.)
+  let freeForm = prev.freeForm;
+  const frame = graph.components.find((c) => c.id === frameId);
+  if (frame && isFreeFormFrame(frame.kind)) {
+    const geom = freeFormGeom(frame.kind);
+    if (geom)
+      freeForm = {
+        w: geom.w,
+        h: geom.h,
+        pins: geom.pins.map((p) => ({ ...p })),
+      };
+  }
+  // Spread the prior def so EVERY field rides through — notably `role` and `pinRoles` (audit blocker:
+  // re-editing + resealing a captured subassembly otherwise flipped it back to a board IC). The edited
+  // inner graph / frame id / pin names / free-form geometry are overridden.
   registerUserIc({
     ...prev,
     frameId,
     graph,
+    freeForm,
     pinNames: keep ? [...pinNames] : prev.pinNames,
   });
 }

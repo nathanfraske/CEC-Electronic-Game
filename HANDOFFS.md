@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (146) — IMPLEMENT: free-form die BOX resize + fix a latent clobber bug
+
+**State:** 🟢 on branch, **about to PR**. Web/render/registry only, golden untouched, **113 web tests**,
+full gate green. PRs #213 (zoom) + #214 (live region tool) already on main.
+
+**Box resize (pin/box editing, the "expand and contract the size of the block" half of #25):** in the die
+editor a free-form (box-captured) subassembly now shows a **Box `W− W+ {w}×{h} H− H+`** stepper (replacing
+the generic Pins stepper, which doesn't apply to a free-form die). Each step re-registers the free-form
+frame IN PLACE — the pin COUNT is fixed (so the kind tag + every inner wire's pin index is untouched), only
+`w×h` + the pin cells move; a pin on a shrunk wall re-pins onto the new edge (`clampPinToBox`).
+- **board.ts** — `resizeFreeFormBox(dw,dh)`, `freeFormBoxSize()`, `isFreeFormDie()`; `clampPinToBox` helper.
+- **userIc.ts** — `resealUserIc` now reads the (edited) box+pins off the die frame's **kind** (`freeFormGeom`)
+  so a resize PERSISTS through reseal instead of reverting to the captured box. Test added.
+- **App.svelte** — reactive `freeFormBox` (`$derived` on boardRev+drill); `changeBox`; the Box stepper
+  (free-form die) vs the Pins stepper (generic blank BLOCK die), split on `isFreeFormFrame(drill.frameTag)`.
+
+**LATENT BUG FIXED:** a free-form die reports archetype BLOCK, so the existing **Pins** stepper showed for
+it and `setDieFramePins` would re-kind it to a stock `__DIE_BLOCK_N` — **destroying the captured box + pin
+placements**. `setDieFramePins` now refuses a free-form frame (`isFreeFormFrame`), and the UI shows the Box
+stepper for free-form dies instead.
+
+**Remaining (push tail):** **pin-DRAG** — move a pin along the box wall by dragging it in the die editor
+(`registerFreeFormFrame` with the moved pin; mirror the box-resize path; needs a die-frame-pin hit-test +
+perimeter snap). The auto-placed pins are already correct (1:1 at the crossings), so this is refinement.
+Then the engine ("1"). Owner: **audit after the push**.
+
+---
+
 ## 2026-06-25 (145) — IMPLEMENT: live region tool (draw a box → free-form subassembly) + zoom-gauge fix
 
 **State:** 🟢 zoom-gauge fix MERGED (PR #213). Live region tool on branch, **about to PR**. Web/render/

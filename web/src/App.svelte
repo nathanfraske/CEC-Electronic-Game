@@ -42,6 +42,7 @@
     loadUnit,
     PLACEMENT_OVERRIDE_KEYS,
     isFrame,
+    isFreeFormFrame,
     framePackage,
     ensureFrameKind,
     type GraphSnapshot,
@@ -2569,6 +2570,22 @@
     if (newTag) drill = { ...drill, frameTag: newTag };
   }
 
+  /** The free-form die's live box size, refreshed whenever the board changes (boardRev), so the editor's
+   * "Box W×H" readout tracks resizes. Null unless we're editing a free-form (box-captured) subassembly. */
+  let freeFormBox = $derived.by(() => {
+    // Read boardRev (bumped by every edit incl. resizeFreeFormBox's onChange) and drill (set on die
+    // entry/exit) so the readout re-derives on both; `rev >= 0` is always true — it's just the dep touch.
+    const rev = boardRev;
+    return drill && rev >= 0 ? (board?.freeFormBoxSize() ?? null) : null;
+  });
+
+  /** Resize the free-form die's box (pin/box editing, §4.10) by (dw, dh) cells. The kind tag is unchanged
+   * (the pin count doesn't move), so `drill.frameTag` stays valid; the readout follows via freeFormBox. */
+  function changeBox(dw: number, dh: number): void {
+    if (!board || !drill) return;
+    board.resizeFreeFormBox(dw, dh);
+  }
+
   /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
    * nets that cross the selection boundary, and register it as a bare subassembly (→ "My
    * Subassemblies"; reach the board via Tape out). Non-destructive — the board is untouched. */
@@ -4736,8 +4753,44 @@
               {/if}
             </span>
           </div>
-          {#if pkg && pkg.archetype === "BLOCK"}
-            <!-- Free-form subassembly: expandable boundaries (§4.10) — grow/shrink the BLOCK's pins
+          {#if isFreeFormFrame(drill.frameTag) && freeFormBox}
+            <!-- Free-form (box-captured) subassembly (§4.10): resize the BOX — "expand and contract the
+                 size of the block". The pin COUNT is fixed by the capture (each lead is a real crossing);
+                 a pin that sat on a shrunk wall re-pins onto the new edge. Move pins by dragging them on
+                 the wall (the pin-drag is a follow-up). -->
+            <div
+              class="die-pins"
+              title="Resize this subassembly's box — drag a wall pin to move it"
+            >
+              <span class="die-pins-label">Box</span>
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(-1, 0)}
+                disabled={freeFormBox.w <= 2}
+                aria-label="Narrower">W−</button
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(1, 0)}
+                aria-label="Wider">W+</button
+              >
+              <span class="die-pins-n mono"
+                >{freeFormBox.w}×{freeFormBox.h}</span
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(0, -1)}
+                disabled={freeFormBox.h <= 2}
+                aria-label="Shorter">H−</button
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(0, 1)}
+                aria-label="Taller">H+</button
+              >
+            </div>
+          {:else if pkg && pkg.archetype === "BLOCK"}
+            <!-- Generic blank subassembly: expandable pin count (§4.10) — grow/shrink the BLOCK's pins
                  while building. The new pin is unconnected until you wire it. -->
             <div
               class="die-pins"
