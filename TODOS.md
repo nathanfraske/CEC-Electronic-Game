@@ -6,7 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-24 (123) — Owner queue: opened-IC polish, bridges-over, mesh; reality-lens panel
+## 2026-06-25 (129) — Owner: drill-in walls ≠ sealed body (WYSIWYG break → overhang)
+
+- [ ] **Die-editor walls must match the sealed package body** (#20) — owner: "the dimensions do not match anymore,
+  the drill in is wider than the real thing, which makes it so you can have overhanging wires/components." ROOT
+  CAUSE: two regions use different margin conventions —
+  - `dieBounds` (drill-in walls, `dieEditor.ts:122`): array axis `+DIE_END_MARGIN = 4 cells (104px)` each side;
+    stick axis sits ON the lead line (0 inset).
+  - `userIcBodyBox` (sealed body / opened-replica fit target, `glyphs.ts:1976`): array axis `+IC_BODY_PAD = 10px`
+    each side; stick axis `−IC_LEAD_LEN = 16px` INSET each side.
+  ⇒ the drill-in authoring surface is ~188px wider + 32px taller than the sealed body, so parts/wires placed in
+  that extra margin fall outside the "real" package when sealed/opened. FIX (WYSIWYG): make the die-editor
+  **buildable surface + soft containment** (`drawDieWalls` `board.ts:2042`, `containInDie`) track the SAME region
+  the seal uses — derive the walls from `userIcBodyBox` geometry (in cells) rather than the raw `dieLayout`
+  footprint + `DIE_END_MARGIN`. Keep the frame leads rendering OUT past the body (real-package look); only the
+  buildable body region should shrink to the sealed body. Verify the opened replica then fills the body with no
+  overhang and the existing examples/goldens are render-only-unaffected. **Queued behind the in-flight Phase 3 +
+  IC-library workflows** (both touch `board.ts`/`userIcInternalsView.ts`); land after to avoid 3-way conflicts.
+
+
 
 - ~~**Opened-IC fit + part orientation**~~ — DONE (PR #189). Fit to the body rectangle; orient parts like the
   die editor (canonical pins + child rot/**mirror**); render-only `mirror` on `UserIcInnerPart`.
