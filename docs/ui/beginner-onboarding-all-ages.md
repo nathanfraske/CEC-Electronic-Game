@@ -454,7 +454,8 @@ highest-leverage move is voicing the already-authored `plain()` strings.**
 
 - [ ] **Voice the Probe** (highest-leverage; app has **no audio today**): presentation-only TTS
   of `plain()` + card bodies, keyed by id, gated by `readAloud`. Golden-safe; never drives
-  sim input.
+  sim input. **Voice direction (owner):** a deliberately **retro, clearly-robotic TTS** (old
+  Microsoft "Sam"-era) — see §9 #7.
 - [ ] **Audio is never the sole channel.** Every cue has a visual equivalent. **Captions:**
   read-aloud text **is** the on-screen card; non-speech sonification gets a visual caption.
 
@@ -685,9 +686,13 @@ level, tier, mode-you're-in, or upfront picker.
    pull `body`), or detect behaviourally? *Recommendation:* short-default with `body` one pull
    deeper — never a picker. The ≤ 12-word cap and "is the welcome line too much" ([§9 open-Q2])
    remain open. **Owner confirm.**
-7. **Read-aloud voice source.** Browser `SpeechSynthesis` vs pre-rendered Probe VO?
-   *Recommendation:* `SpeechSynthesis` of `plain()` strings for MVP (golden-safe, localizes
-   with the string table); revisit VO once copy stabilizes. **Scope call.**
+7. **Read-aloud voice source — DIRECTION (owner, 2026-06-25): a deliberately *retro, robotic*
+   TTS** (the old Microsoft "Sam" / SAPI4-era voice), not a warm VO — on-brand for the bench-bot
+   + Critical**Error**Computing (see [probe-teaching-arc.md] §9 #11). *Engine still TBD:* browser
+   `SpeechSynthesis` tuned ugly (golden-safe, localizes with the string table) vs a small bundled
+   retro-formant TTS vs pre-rendered clips. *Caveat:* a retro English formant voice may not exist
+   per-locale, so non-English falls back to the platform `SpeechSynthesis` voice. **Owner picks the
+   engine.**
 8. **Reduced-motion default.** Confirm **CALM (slow), not STILL**, with an explicit `still`
    toggle. **Owner sign-off.**
 9. **Rail-pattern vocabulary.** Which texture set maps to which rail without clashing with
