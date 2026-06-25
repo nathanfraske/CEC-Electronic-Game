@@ -42,6 +42,7 @@
     loadUnit,
     PLACEMENT_OVERRIDE_KEYS,
     isFrame,
+    isFreeFormFrame,
     framePackage,
     ensureFrameKind,
     type GraphSnapshot,
@@ -66,6 +67,7 @@
     getUserIc,
     isUserIc,
     resealUserIc,
+    registerUserIc,
     registerUserIcs,
     registerUserIcFamilies,
     userIcsForGraph,
@@ -2473,8 +2475,13 @@
     // on the RAW snapshot (a stimulus is not a wire — those leads still count as unconnected here).
     const unused = unusedDiePins(snap, drill.innerFrameId);
     const total = framePackage(drill.frameTag)?.pinCount ?? 0;
+    // A subassembly is a FRAGMENT (powered by its parent), so it seals without solving standalone — keep
+    // the pill in lock-step with the Seal gate (dieSeal applies the SAME bypass), or they'd disagree.
+    const editingSub =
+      !!drill.editingTag && getUserIc(drill.editingTag)?.role === "subassembly";
     return {
-      sealable: dieIsSealable(dieTestGraph(snap, drill.innerFrameId)),
+      sealable:
+        editingSub || dieIsSealable(dieTestGraph(snap, drill.innerFrameId)),
       used: total - unused.length,
       total,
     };
@@ -2567,6 +2574,22 @@
     if (cur === undefined) return;
     const newTag = board.setDieFramePins(cur + delta);
     if (newTag) drill = { ...drill, frameTag: newTag };
+  }
+
+  /** The free-form die's live box size, refreshed whenever the board changes (boardRev), so the editor's
+   * "Box W×H" readout tracks resizes. Null unless we're editing a free-form (box-captured) subassembly. */
+  let freeFormBox = $derived.by(() => {
+    // Read boardRev (bumped by every edit incl. resizeFreeFormBox's onChange) and drill (set on die
+    // entry/exit) so the readout re-derives on both; `rev >= 0` is always true — it's just the dep touch.
+    const rev = boardRev;
+    return drill && rev >= 0 ? (board?.freeFormBoxSize() ?? null) : null;
+  });
+
+  /** Resize the free-form die's box (pin/box editing, §4.10) by (dw, dh) cells. The kind tag is unchanged
+   * (the pin count doesn't move), so `drill.frameTag` stays valid; the readout follows via freeFormBox. */
+  function changeBox(dw: number, dh: number): void {
+    if (!board || !drill) return;
+    board.resizeFreeFormBox(dw, dh);
   }
 
   /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
@@ -2679,6 +2702,36 @@
   }
 
   /**
+   * Open a user IC / subassembly straight from the LIBRARY BIN for die editing — no placed instance
+   * needed. A captured subassembly is nested-only (never on the board), so {@link editUserIcSelected}'s
+   * place-then-reopen path can't reach it; this is how you edit its circuit, box, and pins. Mirrors
+   * {@link editUserIcSelected} but synthesizes the outer context from the CURRENT board (stash it, swap
+   * the canvas to a COPY of the def's die, mark `editingTag`); `frameId` is unused on an `editingTag`
+   * exit (see {@link exitDie}), so a sentinel `-1` is fine. Reseal updates the def (and every placed
+   * instance, of which a subassembly has none). No-op if already drilled or the tag isn't a user IC. */
+  function editLibraryDie(tag: string): void {
+    if (!board || drill) return;
+    const ic = getUserIc(tag);
+    if (!ic) return; // stale/unknown tag — refuse rather than break
+    const inner = structuredClone(ic.graph);
+    const frameComp = inner.components.find((c) => c.id === ic.frameId);
+    if (!frameComp || !isFrame(frameComp.kind)) return; // corrupt def — refuse
+    drill = {
+      frameId: -1, // no placed instance; unused on an editingTag exit (exitDie skips it)
+      innerFrameId: ic.frameId,
+      frameTag: frameComp.kind,
+      name: ic.name || partName(tag),
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+      editingTag: tag,
+    };
+    board.swapGraph(inner);
+    board.setDieFrame(ic.frameId);
+    arm(null);
+    setMode("select");
+  }
+
+  /**
    * Open a RAW saved DIE graph (a `__DIE_*` snapshot saved in isolation — the owner's existing die
    * files) straight into the die BUILDER, instead of dropping the die-frame onto a flat board as a
    * placed part. Synthesizes a fresh OUTER board with the matching PLACEABLE frame, stashes the loaded
@@ -2752,7 +2805,16 @@
    * edited copy (it's discarded); the IC keeps its previously-sealed circuit. */
   function dieBack(): void {
     if (!drill || !board) return;
-    if (!drill.editingTag) innerGraphs.set(drill.frameId, board.serialize());
+    if (!drill.editingTag) {
+      innerGraphs.set(drill.frameId, board.serialize());
+    } else {
+      // Editing an existing def — the edit is DISCARDED. A box-resize during the edit re-registered the
+      // free-form frame kind IN PLACE (global FREE_FORM_GEOM / PART_KINDS), which Back can't undo via the
+      // graph; re-register the unchanged def so that registry edit reverts too (else re-opening would
+      // show the discarded box). A no-op for a non-free-form def (re-derives the same PART_KINDS entry).
+      const def = getUserIc(drill.editingTag);
+      if (def) registerUserIc(def);
+    }
     exitDie();
   }
 
@@ -2779,7 +2841,17 @@
     // so it only solves with those stimuli, and the pill and the Seal button must agree. The SEAL
     // CAPTURE below still reads the RAW live graph (never the injected copy), so the sealed IC stays
     // the player's real discrete parts and the golden is untouched (ADR 0005).
-    if (!dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))) {
+    // A SUBASSEMBLY is a FRAGMENT powered by its PARENT (like a logic IC drawing VCC/GND from the board),
+    // so it need not solve STANDALONE — a captured R-divider (no internal source) never will, and the
+    // capture frame carries no test stimuli for dieTestGraph to power it with. Only gate a real IC (fresh
+    // seal, or an 'ic' reseal) on solvability; a subassembly reseal banks the fragment as-is. Without this,
+    // box-resizing a captured subassembly couldn't be saved (reseal blocked on the solvability gate).
+    const isSubassemblyReseal =
+      !!ctx.editingTag && getUserIc(ctx.editingTag)?.role === "subassembly";
+    if (
+      !isSubassemblyReseal &&
+      !dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))
+    ) {
       circuitWarning =
         "This die can't be sealed yet: the circuit doesn't solve (needs a reference/ground and a complete path). Wire it up, then Seal.";
       return;
@@ -3819,6 +3891,15 @@
             <span class="ic-row-ctl">
               {#if part.isSubassembly}
                 <button
+                  class="ic-row-btn ic-row-edit"
+                  title="Open this subassembly's die — edit its circuit, resize the box, rename pins"
+                  aria-label="Edit {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    editLibraryDie(part.tag);
+                  }}>⊡ Edit</button
+                >
+                <button
                   class="ic-row-btn ic-row-tapeout"
                   title="Tape out → board IC (choose a package, make it placeable)"
                   aria-label="Tape out {part.name}"
@@ -4736,8 +4817,44 @@
               {/if}
             </span>
           </div>
-          {#if pkg && pkg.archetype === "BLOCK"}
-            <!-- Free-form subassembly: expandable boundaries (§4.10) — grow/shrink the BLOCK's pins
+          {#if isFreeFormFrame(drill.frameTag) && freeFormBox}
+            <!-- Free-form (box-captured) subassembly (§4.10): resize the BOX — "expand and contract the
+                 size of the block". The pin COUNT is fixed by the capture (each lead is a real crossing);
+                 a pin that sat on a shrunk wall re-pins onto the new edge. Move pins by dragging them on
+                 the wall (the pin-drag is a follow-up). -->
+            <div
+              class="die-pins"
+              title="Resize this subassembly's box — drag a wall pin to move it"
+            >
+              <span class="die-pins-label">Box</span>
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(-1, 0)}
+                disabled={freeFormBox.w <= 2}
+                aria-label="Narrower">W−</button
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(1, 0)}
+                aria-label="Wider">W+</button
+              >
+              <span class="die-pins-n mono"
+                >{freeFormBox.w}×{freeFormBox.h}</span
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(0, -1)}
+                disabled={freeFormBox.h <= 2}
+                aria-label="Shorter">H−</button
+              >
+              <button
+                class="die-pins-btn"
+                onclick={() => changeBox(0, 1)}
+                aria-label="Taller">H+</button
+              >
+            </div>
+          {:else if pkg && pkg.archetype === "BLOCK"}
+            <!-- Generic blank subassembly: expandable pin count (§4.10) — grow/shrink the BLOCK's pins
                  while building. The new pin is unconnected until you wire it. -->
             <div
               class="die-pins"

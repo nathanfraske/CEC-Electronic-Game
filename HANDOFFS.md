@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (146) — IMPLEMENT: free-form subassembly EDITING (open from bin + box resize) + bug fixes
+
+**State:** 🟢 on **PR #215** (box-resize landed first; bin-edit + revert folded in). Web/render/registry
+only, golden untouched, **113 web tests**, full gate green. PRs #213 (zoom) + #214 (live region tool) on main.
+
+**Bin-edit (the reachability keystone — audit found box-resize was nearly UNREACHABLE):** "My Subassemblies"
+rows had only Tape out / Rename / Remove — no way to OPEN a captured subassembly's die (it's nested-only, so
+the place-then-reopen path can't reach it). Added **`⊡ Edit`** on each subassembly row → `editLibraryDie(tag)`:
+stashes the current board as the outer context, swaps the canvas to a COPY of the def's die, marks
+`editingTag` (reseal updates the def). `frameId` is unused on an `editingTag` exit, so a sentinel `-1`. Now
+you can open a subassembly to edit its circuit, resize its box, (later) move pins.
+**Revert fix:** a box-resize re-registers the free-form frame kind IN PLACE (global `FREE_FORM_GEOM`), which
+the graph/undo can't revert — so **`dieBack` now re-registers the unchanged def** on a discarded `editingTag`
+exit (else Back-after-resize leaked the box into the registry → re-open showed it). Known rough edge:
+in-die **Ctrl+Z doesn't revert a box-resize** (geometry lives in the registry, not the undo stack) — re-resize
+to fix; documented follow-up.
+
+**Box resize (pin/box editing, the "expand and contract the size of the block" half of #25):** in the die
+editor a free-form (box-captured) subassembly now shows a **Box `W− W+ {w}×{h} H− H+`** stepper (replacing
+the generic Pins stepper, which doesn't apply to a free-form die). Each step re-registers the free-form
+frame IN PLACE — the pin COUNT is fixed (so the kind tag + every inner wire's pin index is untouched), only
+`w×h` + the pin cells move; a pin on a shrunk wall re-pins onto the new edge (`clampPinToBox`).
+- **board.ts** — `resizeFreeFormBox(dw,dh)`, `freeFormBoxSize()`, `isFreeFormDie()`; `clampPinToBox` helper.
+- **userIc.ts** — `resealUserIc` now reads the (edited) box+pins off the die frame's **kind** (`freeFormGeom`)
+  so a resize PERSISTS through reseal instead of reverting to the captured box. Test added.
+- **App.svelte** — reactive `freeFormBox` (`$derived` on boardRev+drill); `changeBox`; the Box stepper
+  (free-form die) vs the Pins stepper (generic blank BLOCK die), split on `isFreeFormFrame(drill.frameTag)`.
+
+**LATENT BUG FIXED:** a free-form die reports archetype BLOCK, so the existing **Pins** stepper showed for
+it and `setDieFramePins` would re-kind it to a stock `__DIE_BLOCK_N` — **destroying the captured box + pin
+placements**. `setDieFramePins` now refuses a free-form frame (`isFreeFormFrame`), and the UI shows the Box
+stepper for free-form dies instead.
+
+**Remaining (push tail):** **pin-DRAG** — move a pin along the box wall in the die editor. **Design note
+(scouted):** a press on a die-frame pin currently calls `startWiring` (you wire internal parts to the frame
+pins) — so a plain pin-drag CONFLICTS with wire-from-pin. It needs a disambiguator: **Alt/Option-drag a
+frame pin = move it** (snap to the nearest free perimeter cell → `registerFreeFormFrame` with the moved pin,
+mirroring `resizeFreeFormBox`), plain drag still wires. Not a quick add (don't break die wiring). The
+auto-placed pins are already correct (1:1 at the crossings), so this is pure refinement. Then the engine
+("1"). Owner: **audit after the push** — doing a focused self-audit of the free-form feature next.
+
+---
+
 ## 2026-06-25 (145) — IMPLEMENT: live region tool (draw a box → free-form subassembly) + zoom-gauge fix
 
 **State:** 🟢 zoom-gauge fix MERGED (PR #213). Live region tool on branch, **about to PR**. Web/render/

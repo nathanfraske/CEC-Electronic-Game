@@ -35,6 +35,10 @@ import {
   frameTag,
   dieFrameTag,
   ensureFrameKind,
+  registerFreeFormFrame,
+  freeFormGeom,
+  isFreeFormFrame,
+  FREE_FORM_DIE_PREFIX,
   type Component,
   type PinRef,
   type Endpoint,
@@ -227,6 +231,33 @@ const PROBE_MINUS = 0x7c90a4;
 // The live region tool's overlay colour — the teal the BLOCK subassembly body uses (glyphs.ts
 // BLOCK_BODY_COLOR), so the rectangle you draw reads as "this becomes a teal subassembly".
 const REGION_COLOR = 0x49a08c;
+
+/** Re-pin a free-form lead onto a RESIZED box's perimeter (pin/box editing). Keeps the wall the pin was
+ * on — a pin on the right/bottom wall follows that wall outward on grow / inward on shrink — and clamps an
+ * along-edge coordinate into the new range. Growing keeps a pin's absolute position (so it can't collide);
+ * a hard shrink may stack two leads on one edge cell (rare with ±1 steps — a visual nit, never a netlist
+ * one: leads stay distinct by INDEX). Pure geometry. */
+function clampPinToBox(
+  p: { dx: number; dy: number; name?: string },
+  oldW: number,
+  oldH: number,
+  newW: number,
+  newH: number,
+): { dx: number; dy: number; name?: string } {
+  let dx = p.dx;
+  let dy = p.dy;
+  if (dx >= oldW - 1)
+    dx = newW - 1; // right wall → follow it
+  else if (dx <= 0)
+    dx = 0; // left wall
+  else dx = Math.min(dx, newW - 1); // mid top/bottom wall → clamp inside
+  if (dy >= oldH - 1)
+    dy = newH - 1; // bottom wall → follow it
+  else if (dy <= 0)
+    dy = 0; // top wall
+  else dy = Math.min(dy, newH - 1);
+  return { ...p, dx, dy };
+}
 
 // The belt carries two layers: charge carriers (voltage-coloured chevrons) and
 // the energy they deliver (warm-orange dots). `*_PX_RATE` are belt speeds in
@@ -2113,8 +2144,12 @@ export class Board {
     const fid = this.dieFrameId;
     const frame = this.graph.components.get(fid);
     if (!frame) return null;
+    // A FREE-FORM (box-captured) die also reports archetype BLOCK, but its pins live at arbitrary cells —
+    // re-kinding it to a stock BLOCK layout here would DESTROY its captured geometry. Free-form dies grow
+    // via resizeFreeFormBox (box) / pin editing instead, so refuse them outright.
+    if (isFreeFormFrame(frame.kind)) return null;
     const pkg = framePackage(frame.kind);
-    if (!pkg || pkg.archetype !== BLOCK_ARCHETYPE) return null; // only BLOCK is expandable
+    if (!pkg || pkg.archetype !== BLOCK_ARCHETYPE) return null; // only a generic BLOCK is pin-expandable
     if (newCount < 1 || newCount > BLOCK_MAX_PINS || newCount === pkg.pinCount)
       return null;
     this.pushUndo(this.graph.serialize());
@@ -2144,6 +2179,66 @@ export class Board {
     this.cb.onPersist?.(this.graph);
     this.emitSelect();
     return frameTag(BLOCK_ARCHETYPE, newCount);
+  }
+
+  /** True when the die being edited is a FREE-FORM (box-captured) subassembly — gates the box/pin editing
+   * controls (a stock package's footprint is fixed; only a free-form box resizes). */
+  isFreeFormDie(): boolean {
+    if (this.dieFrameId === null) return false;
+    const frame = this.graph.components.get(this.dieFrameId);
+    return !!frame && isFreeFormFrame(frame.kind);
+  }
+
+  /** The free-form die's current box size in cells (for the editor's "Box W×H" readout), or null when the
+   * die isn't free-form. */
+  freeFormBoxSize(): { w: number; h: number } | null {
+    if (this.dieFrameId === null) return null;
+    const frame = this.graph.components.get(this.dieFrameId);
+    if (!frame || !isFreeFormFrame(frame.kind)) return null;
+    const geom = freeFormGeom(frame.kind);
+    return geom ? { w: geom.w, h: geom.h } : null;
+  }
+
+  /**
+   * Resize a FREE-FORM die frame's box by (dw, dh) cells — the "expand and contract the size of the
+   * block" of pin/box editing (§4.10). Re-registers the free-form frame IN PLACE: the pin COUNT is
+   * unchanged, so the kind tag (and every inner wire's frame-pin index) is untouched — only the box
+   * `w×h` and the pin cells move. Any pin that sat on a now-shrunk edge is re-pinned onto the new
+   * perimeter (its side preserved, along-edge position clamped) so leads never end up off the box.
+   * No-op (returns false) unless the die is free-form and the size actually changes. Render/registry
+   * only — never the solve or the hash; reseal reads the new geometry off the frame kind.
+   */
+  resizeFreeFormBox(dw: number, dh: number): boolean {
+    if (this.dieFrameId === null) return false;
+    const fid = this.dieFrameId;
+    const frame = this.graph.components.get(fid);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom) return false;
+    const MIN = 2;
+    const MAX = BLOCK_MAX_PINS + 6; // a generous ceiling; the box is presentation, not a pin budget
+    const w = Math.max(MIN, Math.min(MAX, geom.w + dw));
+    const h = Math.max(MIN, Math.min(MAX, geom.h + dh));
+    if (w === geom.w && h === geom.h) return false; // already at the clamp / no change
+    this.pushUndo(this.graph.serialize());
+    // Re-pin each lead onto the NEW perimeter: keep the side it was on, clamp the along-edge coordinate.
+    const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, w, h));
+    const subTag = frame.kind.slice(FREE_FORM_DIE_PREFIX.length);
+    registerFreeFormFrame(subTag, { w, h, pins });
+    // Rebuild the frame node so its pins reflect the new box; redraw walls + wires + selection.
+    const node = this.nodes.get(fid);
+    if (node) {
+      node.destroy();
+      this.nodes.delete(fid);
+      this.addNode(frame);
+    }
+    this.drawDieWalls();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    this.cb.onPersist?.(this.graph);
+    this.emitSelect();
+    return true;
   }
 
   /** True when the board is currently editing an IC-maker die (its inner canvas). */
