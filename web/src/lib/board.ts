@@ -47,10 +47,12 @@ import { BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
 import {
   captureSeal,
   captureRegion,
+  previewRegion,
   isUserIc,
   getUserIc,
   type UserIc,
   type RegionCapture,
+  type RegionBox,
 } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
@@ -122,6 +124,7 @@ export type Mode =
   | "measure"
   | "junction"
   | "label"
+  | "region"
   | "pan";
 
 /** A multimeter lead anchored to a pin (which it follows) or a point on a net. */
@@ -220,6 +223,10 @@ const MAX_TEXT_RES = 4;
 // Multimeter lead colours: red "+" and steel "−", like a real DMM.
 const PROBE_PLUS = 0xe0533a;
 const PROBE_MINUS = 0x7c90a4;
+
+// The live region tool's overlay colour — the teal the BLOCK subassembly body uses (glyphs.ts
+// BLOCK_BODY_COLOR), so the rectangle you draw reads as "this becomes a teal subassembly".
+const REGION_COLOR = 0x49a08c;
 
 // The belt carries two layers: charge carriers (voltage-coloured chevrons) and
 // the energy they deliver (warm-orange dots). `*_PX_RATE` are belt speeds in
@@ -449,6 +456,11 @@ export interface BoardCallbacks {
   /** Fired when the board changes its own mode (e.g. the Pan tool yields to Build
    * when you grab a part/wire), so the HUD's tool selector follows. */
   onMode?: (mode: Mode) => void;
+  /** Live state of the region tool's pending rectangle (the free-form subassembly the player is mapping
+   * out on the board): `null` when there's no rectangle, else its inferred pin count + a refusal reason
+   * (too few / too many crossings) so the HUD can show a "Seal region" affordance or explain why not.
+   * Render-only — sealing happens via {@link Board.sealPendingRegion}. */
+  onRegion?: (info: { pinCount: number; reason?: string } | null) => void;
   /** A presentation-only change that must persist (e.g. dragging a net label's tag):
    * the HUD should save the board + refresh undo state, but NOT rebuild the netlist or
    * rewind the clock the way {@link BoardCallbacks.onChange} does. */
@@ -509,6 +521,11 @@ export class Board {
   private readonly groundLabels: Text[] = [];
   private readonly selectionLayer = new Graphics();
   private readonly marqueeLayer = new Graphics();
+  // The live region tool's overlay: the pending rectangle + a dot marker per inferred boundary pin,
+  // drawn ABOVE the parts so the player sees where pins will land as they size the box. The labels
+  // (GND / VCC / Pn) are a growable Text pool, like the net-label tags.
+  private readonly regionLayer = new Graphics();
+  private readonly regionLabels: Text[] = [];
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
   // Translucent placement preview ("ghost") of the armed part at the snapped
@@ -748,6 +765,19 @@ export class Board {
     y1: number;
     additive: boolean;
   } | null = null;
+  // The live region tool's pending rectangle (world coords), the free-form subassembly the player is
+  // mapping out on the board. It PERSISTS after the drag (unlike the marquee) so the pins preview live
+  // and the player can re-draw / seal when ready. `regionDrawing` is true only mid-drag.
+  private pendingRegion: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null = null;
+  private regionDrawing = false;
+  // The last region state pushed to the HUD, so a drag that doesn't change the pin count/refusal doesn't
+  // churn Svelte reactivity every pointer-move.
+  private lastRegionKey = "";
   // In-memory copy/paste clipboard: a relocatable snippet of the board (components
   // + their internal wires + net labels on their pins). `pasteSeq` grows the paste
   // offset so repeated pastes fan out instead of stacking exactly.
@@ -822,6 +852,10 @@ export class Board {
     // non-interactive and hidden until a select-mode empty drag begins.
     this.marqueeLayer.eventMode = "none";
     this.world.addChild(this.marqueeLayer);
+    // The region tool's overlay (pending rectangle + boundary-pin markers) rides just above the marquee
+    // so its dots/labels read over the parts. Non-interactive; empty until the player draws a region.
+    this.regionLayer.eventMode = "none";
+    this.world.addChild(this.regionLayer);
     // The ghost rides above the components so the preview is never occluded, and
     // below the pending-wire/probe overlays. It is non-interactive and starts hidden.
     // The holder carries the rotation/flip; inside it the tier illustration sits BELOW the
@@ -925,6 +959,7 @@ export class Board {
     if (mode !== "wire") this.cancelWiring();
     if (mode !== "measure") this.clearProbe();
     if (mode !== "label") this.endLabelEdit();
+    if (mode !== "region") this.clearPendingRegion(); // leaving the region tool drops its rectangle
     this.updateCursor();
     this.updateGhost();
   }
@@ -1028,6 +1063,10 @@ export class Board {
       this.cancelWiring();
       return;
     }
+    if (this.pendingRegion !== null) {
+      this.clearPendingRegion();
+      return;
+    }
     this.clearSelection();
   }
 
@@ -1039,7 +1078,8 @@ export class Board {
           ? "grab"
           : this.mode === "measure" ||
               this.mode === "junction" ||
-              this.mode === "label"
+              this.mode === "label" ||
+              this.mode === "region"
             ? "crosshair"
             : "default";
   }
@@ -2405,6 +2445,7 @@ export class Board {
     this.ammText.resolution = rounded;
     for (const t of this.groundLabels) t.resolution = rounded;
     for (const t of this.netLabelTexts) t.resolution = rounded;
+    for (const t of this.regionLabels) t.resolution = rounded;
     for (const node of this.nodes.values()) node.setTextRes(rounded);
   }
 
@@ -3686,6 +3727,15 @@ export class Board {
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
     }
+    // Region tool: a press anywhere (over a part or empty space) starts a fresh rectangle — the whole
+    // tool is "drag a box round the circuit you want to bottle up". A re-draw replaces the prior pending
+    // rect, so you size it by dragging again; the box persists on release for the live pin preview.
+    if (this.mode === "region") {
+      this.regionDrawing = true;
+      this.pendingRegion = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
+      this.drawPendingRegion();
+      return;
+    }
     if (this.mode === "measure") {
       if (this.measurePress(wp.x, wp.y)) return;
       if (!additive) this.panning = { lastX: e.global.x, lastY: e.global.y };
@@ -3979,6 +4029,176 @@ export class Board {
     this.emitSelect();
   }
 
+  // --- region tool (live free-form subassembly) ---------------------------
+
+  /** The normalized pending-region rectangle in WORLD coords, or null when there's no region or it's
+   * still too tiny to be a real box (a stray click / the very start of a drag). */
+  private regionRectWorld(): {
+    minX: number;
+    minY: number;
+    maxX: number;
+    maxY: number;
+  } | null {
+    const r = this.pendingRegion;
+    if (!r) return null;
+    const minX = Math.min(r.x0, r.x1);
+    const minY = Math.min(r.y0, r.y1);
+    const maxX = Math.max(r.x0, r.x1);
+    const maxY = Math.max(r.y0, r.y1);
+    if (maxX - minX < PITCH / 2 && maxY - minY < PITCH / 2) return null;
+    return { minX, minY, maxX, maxY };
+  }
+
+  /** The pending region's member component ids (footprint centre inside the rect, like the marquee) and
+   * its box in board CELLS (the drawn rect snapped to the grid) — the inputs to {@link captureRegion} /
+   * {@link previewRegion}. Null when there's no real rectangle yet. */
+  private regionIdsAndBox(): { ids: number[]; box: RegionBox } | null {
+    const w = this.regionRectWorld();
+    if (!w) return null;
+    const inside = (px: number, py: number): boolean =>
+      px >= w.minX && px <= w.maxX && py >= w.minY && py <= w.maxY;
+    const ids: number[] = [];
+    for (const c of this.graph.components.values()) {
+      if (this.dieFrameId !== null && c.id === this.dieFrameId) continue;
+      const box = this.componentBox(c);
+      if (inside(box.x + box.width / 2, box.y + box.height / 2)) ids.push(c.id);
+    }
+    const box: RegionBox = {
+      minCol: Math.round(w.minX / PITCH),
+      minRow: Math.round(w.minY / PITCH),
+      maxCol: Math.round(w.maxX / PITCH),
+      maxRow: Math.round(w.maxY / PITCH),
+    };
+    return { ids, box };
+  }
+
+  /** True when the region tool has a rectangle drawn (gates the HUD's "Seal region" affordance). */
+  hasPendingRegion(): boolean {
+    return this.pendingRegion !== null;
+  }
+
+  /** Drop the pending-region rectangle + clear its overlay (mode switch, cancel, or after a seal). */
+  clearPendingRegion(): void {
+    this.pendingRegion = null;
+    this.regionDrawing = false;
+    this.regionLayer.clear();
+    for (const t of this.regionLabels) t.visible = false;
+    this.emitRegion(null);
+  }
+
+  /** Seal the pending region into a free-form subassembly (the drawn rect IS the box, pins where wires
+   * cross it). Returns the capture (the HUD adds it to the library) or null if there's no usable region
+   * (nothing inside, or no net crosses the box). Clears the rectangle on success. */
+  sealPendingRegion(name?: string): RegionCapture | null {
+    const ib = this.regionIdsAndBox();
+    if (!ib || ib.ids.length === 0) return null;
+    const cap = captureRegion(this.graph, ib.ids, name, ib.box) ?? null;
+    if (cap) this.clearPendingRegion();
+    return cap;
+  }
+
+  /** Render the pending region: the box rectangle (cell-snapped, WYSIWYG with what seals) + a dot marker
+   * and label at each inferred boundary pin (from {@link previewRegion}, so the preview matches the seal
+   * pin-for-pin). Emits {@link BoardCallbacks.onRegion} with the live pin count / refusal so the HUD can
+   * show a "Seal region (N pins)" button. Render-only. */
+  private drawPendingRegion(): void {
+    const g = this.regionLayer;
+    g.clear();
+    for (const t of this.regionLabels) t.visible = false;
+    const ib = this.regionIdsAndBox();
+    if (!ib) {
+      // A rectangle exists but is still sub-cell (the very start of a drag): draw nothing yet.
+      this.emitRegion(
+        this.pendingRegion === null
+          ? null
+          : { pinCount: 0, reason: "drag a box around some parts" },
+      );
+      return;
+    }
+    const { ids, box } = ib;
+    const pre = previewRegion(this.graph, ids, box);
+    // The box to DRAW: the preview's ACTUAL box when it resolved (it may have grown the drag rect to
+    // swallow a part that pokes out, and the pins sit on THAT edge), else the raw drag rect so the player
+    // still sees the rectangle they're sweeping. Drawing the same box the pins reference keeps them in
+    // sync (no markers floating outside the wall).
+    const bb = pre.ok
+      ? {
+          minCol: pre.minCol,
+          minRow: pre.minRow,
+          maxCol: pre.minCol + pre.w - 1,
+          maxRow: pre.minRow + pre.h - 1,
+        }
+      : box;
+    // The box rectangle, snapped to cells (its edges sit on the pin grid the seal will use).
+    const x = bb.minCol * PITCH;
+    const y = bb.minRow * PITCH;
+    const w = (bb.maxCol - bb.minCol) * PITCH;
+    const h = (bb.maxRow - bb.minRow) * PITCH;
+    g.roundRect(x, y, w, h, 4).fill({ color: REGION_COLOR, alpha: 0.1 });
+    g.roundRect(x, y, w, h, 4).stroke({
+      width: 2 / this.world.scale.x,
+      color: REGION_COLOR,
+      alpha: 0.9,
+    });
+
+    if (!pre.ok) {
+      const reason =
+        pre.reason === "empty"
+          ? "no parts inside the box"
+          : pre.reason === "no-boundary"
+            ? "no wires cross the box"
+            : "too many crossings (max " + BLOCK_MAX_PINS + ")";
+      this.emitRegion({ pinCount: 0, reason });
+      return;
+    }
+    // A dot + label at each boundary pin (where a wire crosses the box edge — the future package lead).
+    let li = 0;
+    for (const p of pre.pins) {
+      const px = p.col * PITCH;
+      const py = p.row * PITCH;
+      g.circle(px, py, 5).fill({ color: REGION_COLOR, alpha: 1 });
+      g.circle(px, py, 5).stroke({
+        width: 1.5 / this.world.scale.x,
+        color: 0xffffff,
+        alpha: 0.95,
+      });
+      const t = this.regionLabelAt(li++);
+      t.text = p.name;
+      t.position.set(px + 8, py - 8);
+      t.visible = true;
+    }
+    this.emitRegion({ pinCount: pre.pins.length });
+  }
+
+  /** A pooled upright Text for a region pin label, grown on demand (mirrors the ghost pin-text pool). */
+  private regionLabelAt(i: number): Text {
+    let t = this.regionLabels[i];
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: {
+          fill: 0xffffff,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 11,
+          fontWeight: "600",
+        },
+      });
+      t.resolution = DPR;
+      t.eventMode = "none";
+      this.regionLabels[i] = t;
+      this.regionLayer.addChild(t);
+    }
+    return t;
+  }
+
+  /** Push the region tool's live state to the HUD, deduped so an unchanged drag doesn't churn Svelte. */
+  private emitRegion(info: { pinCount: number; reason?: string } | null): void {
+    const key = info ? `${info.pinCount}|${info.reason ?? ""}` : "null";
+    if (key === this.lastRegionKey) return;
+    this.lastRegionKey = key;
+    this.cb.onRegion?.(info);
+  }
+
   // --- copy / paste -------------------------------------------------------
 
   /** Copy the selected components, their *internal* wires (both ends on selected
@@ -4231,6 +4451,13 @@ export class Board {
       return;
     }
 
+    if (this.regionDrawing && this.pendingRegion) {
+      this.pendingRegion.x1 = wp.x;
+      this.pendingRegion.y1 = wp.y;
+      this.drawPendingRegion();
+      return;
+    }
+
     if (this.pasting) {
       this.updatePasteGhost();
       return;
@@ -4345,6 +4572,12 @@ export class Board {
       this.finalizeMarquee();
       this.marquee = null;
       this.marqueeLayer.clear();
+      return;
+    }
+    if (this.regionDrawing) {
+      // Keep the rectangle (the pending region) so its pins preview live and the player can seal it.
+      this.regionDrawing = false;
+      this.drawPendingRegion();
       return;
     }
     if (this.draggingProbe) {

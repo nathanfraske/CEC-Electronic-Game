@@ -1130,36 +1130,51 @@ export interface RegionCapture {
   pinCount: number;
 }
 
-/**
- * OVERWORLD CAPTURE (§4.9) — turn a box-selected region of the board into a bare `role='subassembly'`
- * cell, inferring the pinout from the nets that cross the selection boundary. NON-DESTRUCTIVE: it reads
- * the board and registers a new subassembly (which appears in "My Subassemblies"); it does NOT modify
- * the player's board.
- *
- * FAITHFUL 1:1 COPY (§4.10): the captured cell is the selection copied EXACTLY — parts keep their
- * relative positions, internal wires are verbatim, and the box is a FREE-FORM frame the size of the
- * selection's bounding box (not a stock package). The boundary rule: union-find the wire graph into nets;
- * a net with at least one endpoint INSIDE (a pin on a selected part) AND one OUTSIDE (a pin on a
- * non-selected part — including a board VCC/GND/source) becomes a **pin**, placed ON the box edge in the
- * outside endpoint's direction, aligned with the inside pin — i.e. where the wire actually crossed. Each
- * crossing wire keeps its inside routing and retargets its OUTSIDE end to that pin (flatten fuses by
- * INDEX, so connectivity is one-node-per-net regardless of pin placement). Pin cells are de-duplicated
- * onto distinct edge cells; the box bbox is rotation-aware. A region with no boundary net (nothing leaves
- * the selection) or more than {@link BLOCK_MAX_PINS} crossings is refused. Rails auto-named GND / VCC.
- *
- * Web-only graph→graph: nothing runs in sim-core or crosses the hashed boundary, and the golden places
- * no user IC. A captured subassembly reaches the board via Tape out ({@link tapeOut}).
- */
-export function captureRegion(
-  graph: BoardGraph,
-  regionIds: number[],
-  name?: string,
-): RegionCapture | undefined {
-  const region = new Set(regionIds.filter((id) => graph.components.has(id)));
-  if (region.size === 0) return undefined;
-  const trimmed = name && name.trim() ? name.trim() : "";
-  if (trimmed && isReservedTag(trimmed)) return undefined;
+/** An EXPLICIT capture box in board cells (inclusive corners) — the rectangle the player DREW with the
+ * live region tool, used verbatim as the subassembly's free-form box (§4.10: "copy over the exact size
+ * of the selection box"). Omitted ⇒ the box is the captured parts' bounding box (the marquee-select
+ * flow). When given it SEEDS the box, then captured part/pin cells are unioned in so a part can never
+ * hang outside its own box (a snug rect still grows by ~1 to swallow leads); no extra pad (the drawn
+ * rect already carries the margin the player wants). */
+export interface RegionBox {
+  minCol: number;
+  minRow: number;
+  maxCol: number;
+  maxRow: number;
+}
 
+/** The shared analysis of a region capture: the box geometry + the pins-at-crossings, computed ONCE so
+ * the live overlay preview ({@link previewRegion}) and the actual seal ({@link captureRegion}) agree pin
+ * for pin. `ok:false` carries the refusal reason (so the overlay can explain it). Everything else is the
+ * raw material the seal's build step consumes (the net roots, the captured-endpoint test, the box). */
+type RegionAnalysis =
+  | { ok: false; reason: "no-boundary" | "too-many" }
+  | {
+      ok: true;
+      full: GraphSnapshot;
+      find: (k: string) => string;
+      capturedEndpoint: (e: Endpoint) => boolean;
+      pinIndexOf: Map<string, number>;
+      boundaryRoots: string[];
+      capCompsRaw: GraphSnapshot["components"];
+      minCol: number;
+      minRow: number;
+      boxW: number;
+      boxH: number;
+      shiftCell: (c: Cell) => Cell;
+      pinGeom: { dx: number; dy: number; name?: string }[];
+      pinNames: string[];
+      pinRoles: PinRole[];
+    };
+
+/** Analyse a region (the union-find net model + the box + the pins-at-crossings) WITHOUT mutating
+ * anything — the pure core both {@link captureRegion} and {@link previewRegion} run. See those for the
+ * boundary rule and the `box` semantics. `region` is the pre-filtered set of in-region component ids. */
+function analyzeRegion(
+  graph: BoardGraph,
+  region: Set<number>,
+  box?: RegionBox,
+): RegionAnalysis {
   const full = graph.serialize();
 
   // Union-find over wire endpoints (pins + junctions), keyed by endpointKey — the same net model
@@ -1232,8 +1247,9 @@ export function captureRegion(
   const internalRoots = new Set(
     [...insidePins.keys()].filter((r) => !hasOutside.has(r)),
   );
-  if (boundaryRoots.length === 0) return undefined; // nothing leaves the selection — no pins
-  if (boundaryRoots.length > BLOCK_MAX_PINS) return undefined; // too many pins for a free-form block
+  if (boundaryRoots.length === 0) return { ok: false, reason: "no-boundary" }; // nothing leaves the selection
+  if (boundaryRoots.length > BLOCK_MAX_PINS)
+    return { ok: false, reason: "too-many" }; // too many pins for a free-form block
   const pinIndexOf = new Map<string, number>();
   boundaryRoots.forEach((r, i) => pinIndexOf.set(r, i));
 
@@ -1241,10 +1257,13 @@ export function captureRegion(
   // on a clear edge ring. The cell is a 1:1 copy: parts keep their RELATIVE positions, shifted so the
   // box's top-left maps to the frame origin (§4.10 — copy it over exactly, box = the selection).
   const capCompsRaw = full.components.filter((c) => region.has(c.id));
-  let minCol = Infinity;
-  let minRow = Infinity;
-  let maxCol = -Infinity;
-  let maxRow = -Infinity;
+  // Seed the bbox from the player's drawn rect when given (so the box IS that rect), else from nothing
+  // (the parts' own extent). Either way the loop below unions every captured part + pin cell in, so no
+  // part can fall outside the box; an explicit rect that already wraps the parts stays exactly itself.
+  let minCol = box ? box.minCol : Infinity;
+  let minRow = box ? box.minRow : Infinity;
+  let maxCol = box ? box.maxCol : -Infinity;
+  let maxRow = box ? box.maxRow : -Infinity;
   for (const c of capCompsRaw) {
     const k = PART_KINDS[c.kind];
     const fw = k?.w ?? 1;
@@ -1266,7 +1285,9 @@ export function captureRegion(
       }
     }
   }
-  const PAD = 1;
+  // Pad a parts-bbox capture by one cell so pins sit on a clear edge ring; an explicit drawn rect is
+  // used as-is (the player already sized the margin they want).
+  const PAD = box ? 0 : 1;
   minCol -= PAD;
   minRow -= PAD;
   maxCol += PAD;
@@ -1370,6 +1391,113 @@ export function captureRegion(
     pinNames[i] = name;
     pinGeom[i] = { dx, dy, name };
   });
+
+  return {
+    ok: true,
+    full,
+    find,
+    capturedEndpoint,
+    pinIndexOf,
+    boundaryRoots,
+    capCompsRaw,
+    minCol,
+    minRow,
+    boxW,
+    boxH,
+    shiftCell,
+    pinGeom,
+    pinNames,
+    pinRoles,
+  };
+}
+
+/** A live region-capture PREVIEW (the overlay the live rectangle tool draws as you size the box): the box
+ * in ABSOLUTE board cells + each inferred pin's absolute cell and auto-label, so the HUD can render a dot
+ * + tag exactly where {@link captureRegion} would seal one. `ok:false` carries the refusal reason. Pure
+ * read — registers nothing, mutates nothing. */
+export type RegionPreview =
+  | { ok: false; reason: "empty" | "no-boundary" | "too-many" }
+  | {
+      ok: true;
+      minCol: number;
+      minRow: number;
+      w: number;
+      h: number;
+      pins: { col: number; row: number; name: string }[];
+    };
+
+export function previewRegion(
+  graph: BoardGraph,
+  regionIds: number[],
+  box?: RegionBox,
+): RegionPreview {
+  const region = new Set(regionIds.filter((id) => graph.components.has(id)));
+  if (region.size === 0) return { ok: false, reason: "empty" };
+  const a = analyzeRegion(graph, region, box);
+  if (!a.ok) return a;
+  return {
+    ok: true,
+    minCol: a.minCol,
+    minRow: a.minRow,
+    w: a.boxW,
+    h: a.boxH,
+    // Pin dx/dy are box-relative; the box top-left sits at (minCol,minRow) in board cells.
+    pins: a.pinGeom.map((p) => ({
+      col: a.minCol + p.dx,
+      row: a.minRow + p.dy,
+      name: p.name ?? "",
+    })),
+  };
+}
+
+/**
+ * OVERWORLD CAPTURE (§4.9) — turn a box-selected region of the board into a bare `role='subassembly'`
+ * cell, inferring the pinout from the nets that cross the selection boundary. NON-DESTRUCTIVE: it reads
+ * the board and registers a new subassembly (which appears in "My Subassemblies"); it does NOT modify
+ * the player's board.
+ *
+ * FAITHFUL 1:1 COPY (§4.10): the captured cell is the selection copied EXACTLY — parts keep their
+ * relative positions, internal wires are verbatim, and the box is a FREE-FORM frame the size of the
+ * selection's bounding box (not a stock package). The boundary rule: union-find the wire graph into nets;
+ * a net with at least one endpoint INSIDE (a pin on a selected part) AND one OUTSIDE (a pin on a
+ * non-selected part — including a board VCC/GND/source) becomes a **pin**, placed ON the box edge in the
+ * outside endpoint's direction, aligned with the inside pin — i.e. where the wire actually crossed. Each
+ * crossing wire keeps its inside routing and retargets its OUTSIDE end to that pin (flatten fuses by
+ * INDEX, so connectivity is one-node-per-net regardless of pin placement). Pin cells are de-duplicated
+ * onto distinct edge cells; the box bbox is rotation-aware. A region with no boundary net (nothing leaves
+ * the selection) or more than {@link BLOCK_MAX_PINS} crossings is refused. Rails auto-named GND / VCC.
+ *
+ * Web-only graph→graph: nothing runs in sim-core or crosses the hashed boundary, and the golden places
+ * no user IC. A captured subassembly reaches the board via Tape out ({@link tapeOut}).
+ */
+export function captureRegion(
+  graph: BoardGraph,
+  regionIds: number[],
+  name?: string,
+  box?: RegionBox,
+): RegionCapture | undefined {
+  const region = new Set(regionIds.filter((id) => graph.components.has(id)));
+  if (region.size === 0) return undefined;
+  const trimmed = name && name.trim() ? name.trim() : "";
+  if (trimmed && isReservedTag(trimmed)) return undefined;
+
+  // The pins-at-crossings + box geometry (the pure analysis shared with the live overlay preview).
+  const a = analyzeRegion(graph, region, box);
+  if (!a.ok) return undefined; // no boundary net, or too many pins for a free-form block
+  const {
+    full,
+    find,
+    capturedEndpoint,
+    pinIndexOf,
+    boundaryRoots,
+    capCompsRaw,
+    boxW,
+    boxH,
+    shiftCell,
+    pinGeom,
+    pinNames,
+    pinRoles,
+  } = a;
 
   // Register the free-form die frame (its kind carries the box + pins-at-crossings), then build the
   // captured graph as a 1:1 copy: parts at their shifted positions, internal wires verbatim, each

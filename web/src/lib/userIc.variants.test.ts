@@ -22,6 +22,7 @@ import {
   getUserIc,
   captureSeal,
   captureRegion,
+  previewRegion,
   resealUserIc,
   tapeOut,
   isReservedTag,
@@ -588,6 +589,99 @@ describe("IC variants — determinism contract", () => {
       expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 5 });
     } finally {
       unregisterUserIc("Coll");
+    }
+  });
+
+  it("previewRegion (live tool): the overlay preview agrees pin-for-pin with the sealed capture", () => {
+    // The live rectangle tool draws previewRegion's box + pins as you size the rect; sealing then runs
+    // captureRegion. They MUST place the same pins at the same cells, or the overlay lies. Same series
+    // R1→R2 board as the captureRegion test.
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 0, 5);
+    const r1 = place(b, "R", 4, 0, 1000);
+    const r2 = place(b, "R", 8, 0, 2000);
+    const gnd = place(b, "GND", 12, 0);
+    connect(b, v, 0, r1, 0);
+    connect(b, r1, 1, r2, 0);
+    connect(b, r2, 1, gnd, 0);
+    connect(b, v, 1, gnd, 0);
+
+    const pre = previewRegion(b, [r1.id, r2.id]);
+    expect(pre.ok).toBe(true);
+    if (!pre.ok) return;
+    expect(pre.pins.length).toBe(2);
+    expect(pre.pins.map((p) => p.name).sort()).toEqual(["GND", "VCC"]);
+
+    const cap = captureRegion(b, [r1.id, r2.id], "PreSeal");
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("PreSeal")!;
+      // The preview box (absolute cells) maps onto the sealed free-form box: same width/height, and each
+      // preview pin's ABSOLUTE cell equals its box-relative (dx,dy) offset from the preview box origin.
+      expect(pre.w).toBe(def.freeForm!.w);
+      expect(pre.h).toBe(def.freeForm!.h);
+      const sealedAbs = new Set(
+        def.freeForm!.pins.map(
+          (p) => `${pre.minCol + p.dx},${pre.minRow + p.dy}`,
+        ),
+      );
+      for (const p of pre.pins)
+        expect(sealedAbs.has(`${p.col},${p.row}`)).toBe(true);
+    } finally {
+      unregisterUserIc("PreSeal");
+    }
+
+    // Refusal reasons surface so the overlay can explain them: empty selection, and a no-boundary region.
+    expect(previewRegion(b, [])).toEqual({ ok: false, reason: "empty" });
+    expect(previewRegion(b, [v.id, r1.id, r2.id, gnd.id])).toEqual({
+      ok: false,
+      reason: "no-boundary",
+    });
+  });
+
+  it("captureRegion explicit box (live rect): the DRAWN rectangle becomes the subassembly box", () => {
+    // The live tool passes the rectangle the player dragged. A rect LARGER than the parts must be used
+    // verbatim (box = the rect), not shrink-wrapped to the parts' bbox.
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 0, 5);
+    const r1 = place(b, "R", 4, 0, 1000);
+    const r2 = place(b, "R", 8, 0, 2000);
+    const gnd = place(b, "GND", 40, 0);
+    connect(b, v, 0, r1, 0);
+    connect(b, r1, 1, r2, 0);
+    connect(b, r2, 1, gnd, 0);
+    connect(b, v, 1, gnd, 0);
+
+    // A generous rect spanning cols 2..16, rows -3..4 — wider/taller than the two resistors.
+    const box = { minCol: 2, minRow: -3, maxCol: 16, maxRow: 4 };
+    const cap = captureRegion(b, [r1.id, r2.id], "BoxR", box);
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("BoxR")!;
+      // Box = the drawn rect exactly (it already encloses the parts, so the part-union doesn't grow it).
+      expect(def.freeForm!.w).toBe(box.maxCol - box.minCol + 1); // 15
+      expect(def.freeForm!.h).toBe(box.maxRow - box.minRow + 1); // 8
+      // Pins still sit on the (now larger) box edge.
+      for (const p of def.freeForm!.pins) {
+        const onEdge =
+          p.dx === 0 ||
+          p.dx === def.freeForm!.w - 1 ||
+          p.dy === 0 ||
+          p.dy === def.freeForm!.h - 1;
+        expect(onEdge).toBe(true);
+      }
+      // And it still flattens to the real series chain (box size is presentation; connectivity is by net).
+      const g = new BoardGraph();
+      const vs = place(g, "V", 0, 0, 5);
+      const gg = place(g, "GND", 0, 6);
+      const sub = place(g, "BoxR", 4, 0);
+      connect(g, vs, 0, sub, def.pinNames!.indexOf("VCC"));
+      connect(g, sub, def.pinNames!.indexOf("GND"), gg, 0);
+      connect(g, vs, 1, gg, 0);
+      const nl = buildNetlist(g, false);
+      expect(nl!.types.length).toBe(3); // V + R1 + R2
+    } finally {
+      unregisterUserIc("BoxR");
     }
   });
 

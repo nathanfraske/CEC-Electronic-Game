@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (145) — IMPLEMENT: live region tool (draw a box → free-form subassembly) + zoom-gauge fix
+
+**State:** 🟢 zoom-gauge fix MERGED (PR #213). Live region tool on branch, **about to PR**. Web/render/
+registry only, golden untouched, **112 web tests**, full gate green (check/lint/test/build).
+
+**Zoom gauge (owner: "20→10→5→…→500 when zooming in is wrong"):** `formatMm` flipped mm→µm at 1mm, so the
+`1 → 0.5 → 0.2` snap ladder rendered `1mm → 500µm → 200µm` (number jumps UP). Fix: hold each unit DOWN to
+0.1 of itself → `0.5 mm → 0.2 mm → 0.1 mm → 50 µm`, monotonic. Landed.
+
+**Live region tool (the "one big push" headline):** a new board **`region` mode** (toolbar **⬓ Region**,
+hotkey **G**, outer-board only): drag a box round part of the circuit → it shows a teal rectangle + a dot
++ label at every net that crosses the box edge (the future pins), LIVE as you size it → **⬡ Seal region**
+banks it as a free-form subassembly (→ "My Subassemblies"). Non-destructive.
+- **userIc.ts** — `captureRegion` gained an optional **explicit `box` (`RegionBox`)** so the DRAWN rect is
+  the subassembly box (not the parts bbox); the analysis was extracted into a shared `analyzeRegion`, and
+  a new **`previewRegion`** returns the box + pins-at-crossings WITHOUT registering — so the live overlay
+  and the actual seal agree pin-for-pin (a test asserts this). The drawn rect unions in part cells so a
+  clipped part never hangs outside its box; PAD=0 for an explicit rect (the player sized the margin).
+- **board.ts** — `Mode` += `"region"`; `pendingRegion` state + `regionLayer`/`regionLabels` overlay;
+  pointer down/move/up draw + resize the rect; `drawPendingRegion` (renders the preview box + pin dots,
+  emits `onRegion`), `sealPendingRegion`, `clearPendingRegion`, `hasPendingRegion`. Esc cancels; leaving
+  the mode clears it. The drawn rect tracks the PREVIEW box (post-union) so pins never float outside.
+- **App.svelte** — `onRegion` → `regionInfo`; `enterRegion`/`sealRegion`; the **⬓ Region** toolbar button
+  + a contextual seal panel (name field + **⬡ Seal region (N pins)** + live hint/refusal). `G` hotkey.
+- 2 new tests in `userIc.variants.test.ts`: `previewRegion` agrees with the seal; explicit-box capture.
+
+**Remaining (same push):** (A) **pin/box editing in the die** (#25) — open a captured subassembly, drag a
+pin along the box edge + resize the box (re-`registerFreeFormFrame`; mirror `setDieFramePins`). (B) v2 of
+the region tool — persist the rect ACROSS mode switches + live-update as you wire (today it's a single
+mode: draw→preview→seal; clears on mode switch). Then the engine ("1"). Owner said **audit after the push**.
+
+---
+
 ## 2026-06-25 (144) — IMPLEMENT: free-form capture rewrite — 1:1 copy + pins-at-crossings (the fix)
 
 **State:** 🟢 on branch (commit `665cdd6`, pushed; not yet PR'd — building the rest of the "one big

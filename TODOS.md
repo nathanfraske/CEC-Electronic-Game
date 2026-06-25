@@ -6,6 +6,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (145) — IMPLEMENT: live region tool + zoom-gauge fix
+
+Web/render/registry only, golden `0xeaac…fa24` untouched, 112 web tests.
+- ~~**Zoom gauge monotonic**~~ — `formatMm` holds each unit down to 0.1 (`0.5 mm → 0.2 mm → 0.1 mm → 50 µm`),
+  killing the `1mm→500µm` number-jumps-up confusion. PR #213, merged.
+- ~~**Live region tool**~~ — board `region` mode (⬓ Region / hotkey G, outer board): drag a box → live teal
+  rect + a dot+label at each net crossing the edge → ⬡ Seal region → free-form subassembly. `captureRegion`
+  gained an explicit `box` (the drawn rect IS the box); analysis extracted to `analyzeRegion`; new
+  `previewRegion` feeds the overlay (preview == seal, tested). board.ts overlay + App.svelte panel.
+- [ ] **Pin/box editing in the die** — open a captured subassembly, drag a pin along the edge + resize the
+  box (re-`registerFreeFormFrame`; mirror `setDieFramePins`). Next in the push.
+- [ ] **Region tool v2** — persist the rect across mode switches + live-update as you wire (today: single
+  mode, draw→preview→seal, clears on switch).
+
 ## 2026-06-25 (141) — IMPLEMENT: build gates as subassemblies (P0–P4a ON MAIN)
 
 From the 8-agent audit plan (`docs/cell-characterization-build-plan.md`). All web/doc, golden `0xeaac…fa24` untouched. PR #205
