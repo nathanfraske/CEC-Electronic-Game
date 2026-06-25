@@ -5,6 +5,24 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar (toolbar no longer overlaps)
+
+**State:** 🟢 on branch, **about to PR**. Web/UI only, golden untouched, 117 web tests, full gate green.
+Owner: the top toolbar got cluttered and OVERLAPPED (the region seal panel collided with Info/Codex) when
+a region was pending. Owner confirmed the capture loop is otherwise great.
+
+**Fix:** moved the region seal controls OUT of `.board-tools` (the top tool row) into a **floating
+`.region-bar`** overlaid on the board (top-centre, mirrors the existing `.die-bar`), shown when
+`regionInfo || mode === "region"`. Contents: a REGION title, the name input, **⬡ Seal (N)**, **×** cancel,
+and the live hint. Region mode is outer-board-only and the die-bar only shows while drilled in, so the two
+overlays never collide. Labels shortened (⬡ Seal, ×) since the bar has its own REGION title. `.region-bar`
+CSS mirrors `.die-bar` (absolute, blur, accent border). Removed the old in-toolbar `.region-controls`.
+
+**Remaining backlog:** pin-DRAG (Alt-drag); in-die Ctrl+Z of box-resize; device-aware characterization
+(OFFERED, await owner); then the engine ("1"). Owner said "continue on to the other points after."
+
+---
+
 ## 2026-06-25 (150) — FIX (owner round 3): captured-lead overshoot + non-interactable frame-pin wires
 
 **State:** 🟢 on branch, **about to PR**. Web only, golden untouched, **117 web tests**, full gate green.
