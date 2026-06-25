@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (155) — FIX (owner): sweep read VCC, not OUT → every gate characterized as "always HIGH"
+
+**State:** 🟢 **about to PR**. Web only, golden untouched, **122 web tests**, full gate green. Owner built a
+correct CMOS inverter (PMOS+NMOS, textbook wiring) and characterized it → truth table came back `0x3`
+("INVERTER → HIGH", both rows 1). The circuit was fine; the SWEEP had an **id-collision bug**.
+
+**Root cause:** `characterizeCell` appended its 1 GΩ sense resistor (id = `snap.nextComponentId+1`) but
+**never advanced `snap.nextComponentId` / `nextWireId`**. `dieTestGraph` then allocates its injected GND +
+V-sources from those same counters, so the **first injected supply (VCC) reused the sense resistor's id**.
+`BoardGraph.restore` collapsed the collision → `nodesOfComponent.get(senseId)[0]` resolved to the **VCC
+net** (a stiff 5 V) → every vector read HIGH → word `0x3`. Hit *any* gate whose first non-GND pin is VCC.
+
+**Fix + hardening:**
+- Extracted the wasm-free per-vector build into **`web/src/lib/sweepNetlist.ts`** (`sweepNetlist(graph,
+  frameId, pins, combo) → {nl, outNode, senseId}`). It now **advances both counters** after adding the
+  sense R (`snap.nextComponentId = senseId+1`, `snap.nextWireId = wId+2`) so dieTestGraph can't alias it.
+- `characterize.ts` now imports `sweepNetlist` + `SWEEP_VCC` and only owns the scratch-`Simulation` loop.
+- **Headless regression test** (`sweepNetlist reads the gate OUTPUT net, not a supply rail`): builds the
+  PMOS+NMOS inverter in a DIP8 die, asserts `outNode === (tied FET drains = OUT)` and `!== PMOS source
+  (VCC)` for both vectors. `buildNetlist` runs in node, so this locks the fix without wasm. Would have
+  failed before (outNode was the VCC net).
+
+**Owner: re-test →** re-open your inverter → **⊨ Characterize** → now expect `0→1, 1→0` and the chip
+reading **NOT** (word `0x1`). (You'll need to re-characterize; the old `0x3` was stored on the def.)
+
+---
+
 ## 2026-06-25 (154) — IMPLEMENT: characterization engine — the SWEEP + truth-table panel (the "1")
 
 **State:** 🟢 **about to PR**. Web only, golden untouched, **121 web tests**, full gate green + sim-core

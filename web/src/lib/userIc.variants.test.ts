@@ -12,6 +12,7 @@ import {
 } from "./graph";
 import type { Component } from "./graph";
 import { buildNetlist } from "./netlist";
+import { sweepNetlist } from "./sweepNetlist";
 import {
   registerUserIc,
   unregisterUserIc,
@@ -1034,6 +1035,42 @@ describe("IC variants — determinism contract", () => {
       expect(cleared).not.toContain(ELEM_BEHAVIORAL);
     } finally {
       unregisterUserIc("GATEY");
+    }
+  });
+
+  it("sweepNetlist reads the gate OUTPUT net, not a supply rail (id-collision regression)", () => {
+    const ELEM_NMOS = 11;
+    const ELEM_PMOS = 12;
+    // The owner's CMOS inverter, in a DIP8 die: PMOS + NMOS with drains tied to OUT. Frame pins
+    // 0=OUT, 1=VCC, 2=IN, 3=GND. Discrete MOSFET pins are 0=Drain, 1=Source, 2=Gate (glyphs.ts).
+    const inner = new BoardGraph();
+    const frame = place(inner, "DIP8", 0, 0);
+    const pm = place(inner, "PM", 4, 0);
+    const nm = place(inner, "NM", 4, 4);
+    connect(inner, pm, 0, frame, 0); // PMOS drain → OUT
+    connect(inner, pm, 1, frame, 1); // PMOS source → VCC
+    connect(inner, pm, 2, frame, 2); // PMOS gate → IN
+    connect(inner, nm, 0, frame, 0); // NMOS drain → OUT
+    connect(inner, nm, 1, frame, 3); // NMOS source → GND
+    connect(inner, nm, 2, frame, 2); // NMOS gate → IN
+    const snap = inner.serialize();
+    const pins = { inPins: [2], outPin: 0, gndPin: 3, vccPin: 1 };
+
+    // Both input vectors: the sense node must be the FETs' shared DRAIN net (= OUT), never the VCC net.
+    // Before the fix, the sense resistor's id collided with dieTestGraph's injected VCC source, so
+    // nodesOfComponent(sense)[0] resolved to VCC (a stiff 5 V) → every vector read HIGH (word 0x3).
+    for (const combo of [0, 1]) {
+      const built = sweepNetlist(snap, frame.id, pins, combo);
+      expect(built).not.toBeNull();
+      const types = [...built!.nl.types];
+      expect(types).toContain(ELEM_NMOS); // the gate compiled with its real FETs
+      expect(types).toContain(ELEM_PMOS);
+      const pmDrain = built!.nl.nodesOfComponent.get(pm.id)?.[0];
+      const pmSource = built!.nl.nodesOfComponent.get(pm.id)?.[1]; // the VCC net
+      const nmDrain = built!.nl.nodesOfComponent.get(nm.id)?.[0];
+      expect(pmDrain).toBe(nmDrain); // drains tied = the OUTPUT net
+      expect(built!.outNode).toBe(pmDrain); // the sense node IS that output net…
+      expect(built!.outNode).not.toBe(pmSource); // …and NOT the VCC rail (the bug)
     }
   });
 
