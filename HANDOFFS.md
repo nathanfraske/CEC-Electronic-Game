@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (131) — Phase 3 silicon leaf cross-checked + landed (owner asked: phase 3 + IC library)
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3` (rebased onto the parallel agent's docs commit `eca9596`).
+Phase 3 (silicon leaf) built by a cross-checked workflow, cross-check fix applied. Render-only; golden
+`0xeaac…fa24` untouched. Gate green (check 0-err, lint, build, web test 89 — +4 `tierKit.test.ts` siliconBlend;
+golden ok). **IC library workflow still running** (`wj9avi66j`) + dimension-mismatch fix queued (#20).
+
+**Phase 3 — MOSFET silicon leaf** (`detailDrawers.ts` + `tierKit.ts` + 2 call sites + `userIcInternalsView.ts`):
+when a MOSFET grows past `SILICON_ZOOM=9` (full at 15, a smoothstep `siliconBlend` cross-fade; `absScale`
+threaded into `TierOpts` from the board tier-glyph + ghost + opened-IC `dg` — info-panel/codex pass none ⇒
+device tier unchanged), `drawDetailMOSFET` dissolves from the device illustration into a **metal-oxide cross-
+section**: doped n+/p+ diffusions, gate-oxide + metal, the inversion channel + carriers driven off the SAME
+solved `id`/`dir` the device tier reads. No new Graphics (paints into the pooled tg/dg) ⇒ no leak.
+
+**Cross-check (3 lenses): golden PASS, regressions PASS, correctness FIX-REQUIRED → fixed.** The MAJOR: PMOS
+was painted all-n-type (no p-substrate). Fix (`736bc18`): the wafer is ALWAYS p-substrate; PMOS insets its p+
+region from the bulk edge and sinks an n-WELL tub (open at the surface, enclosing both diffusions) so the
+"n-well in p-substrate" boundary reads (spec §8.5). NITs (geo alloc when sil=0; byte-identical wording) left.
+
+**Owner eye:** the silicon look is iterate-able (doping colours, the `SILICON_ZOOM=9` entry, the well-rim width).
+
+**Next:** land Phase 3 → main; then the IC library when its workflow lands; then the #20 dimension fix.
+
+---
+
 ## 2026-06-25 (130) — DESIGN: the Probe failure-first teaching arc + the all-ages beginner journey (two panels)
 
 **State:** 🟢 **docs-only** — no code, no `sim-core`, no `loop.ts`; golden `0xeaac…fa24` untouched by
