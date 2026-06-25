@@ -385,6 +385,36 @@ describe("IC variants — determinism contract", () => {
     }
   });
 
+  it("role flag (P1): default seal is role-absent ('ic'); an explicit 'subassembly' round-trips on the def", () => {
+    // Default seal: role is ABSENT so every existing save is byte-identical and the cell is board-placeable.
+    const a1 = new BoardGraph();
+    const f1 = place(a1, "SOT23_3", 0, 0);
+    const r1 = place(a1, "R", 4, 0, 1000);
+    connect(a1, f1, 0, r1, 0);
+    connect(a1, r1, 1, f1, 1);
+    const cap1 = captureSeal(a1, f1.id, "RoleDefault");
+    expect(cap1).not.toBeUndefined();
+    try {
+      expect(getUserIc("RoleDefault")?.role).toBeUndefined(); // absent ⇒ 'ic'
+    } finally {
+      unregisterUserIc("RoleDefault");
+    }
+
+    // Explicit subassembly: the role bit persists on the def (read by entryRole for the bin split).
+    const a2 = new BoardGraph();
+    const f2 = place(a2, "SOT23_3", 0, 0);
+    const r2 = place(a2, "R", 4, 0, 2200);
+    connect(a2, f2, 0, r2, 0);
+    connect(a2, r2, 1, f2, 1);
+    const cap2 = captureSeal(a2, f2.id, "RoleSub", undefined, "subassembly");
+    expect(cap2).not.toBeUndefined();
+    try {
+      expect(getUserIc("RoleSub")?.role).toBe("subassembly");
+    } finally {
+      unregisterUserIc("RoleSub");
+    }
+  });
+
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {
     // A malicious/legacy save embedding a def tagged "R" must NOT overwrite the built-in resistor kind.
     const rogue: UserIc = rPackageDef("R", 1000); // tag "R" collides with the built-in

@@ -81,6 +81,7 @@
     libraryEntries,
     renameLibraryIc,
     removeFromLibrary,
+    entryRole,
     type LibraryEntry,
   } from "./lib/userLibrary";
   import {
@@ -1586,24 +1587,37 @@
     addToLibrary(tag, source);
     libRev++;
   }
-  /** The "My ICs" rows, derived from the library (most-recent first). Each row is shaped like a PARTS
-   * row (so `partRow` renders it) plus a `glyphKind` (the package tag) for the pin-ring thumbnail. */
+  /** Shape one library row as a PARTS row (so `partRow` renders it) + a `glyphKind` (package tag) for
+   * the pin-ring thumbnail. Shared by the "My ICs" and "My Subassemblies" bins. */
+  function libRow(e: LibraryEntry) {
+    const tag = e.variants ? familyTagOf(e) : e.ic.tag;
+    const n = e.variants ? e.variants.length : 0;
+    return {
+      tag,
+      name: e.name ?? e.ic.name,
+      desc:
+        `${e.ic.package.archetype} · ${e.ic.package.pinCount}-pin` +
+        (n > 1 ? ` · ${n} variants` : ""),
+      tier: "★",
+      color: "var(--accent)",
+      glyphKind: tag,
+    };
+  }
+  /** The "My ICs" rows: board-placeable library entries (role !== 'subassembly'), most-recent first. */
   const savedIcParts = $derived.by(() => {
     void libRev; // reactivity dependency: re-run when the library mutates
-    return libraryEntries().map((e: LibraryEntry) => {
-      const tag = e.variants ? familyTagOf(e) : e.ic.tag;
-      const n = e.variants ? e.variants.length : 0;
-      return {
-        tag,
-        name: e.name ?? e.ic.name,
-        desc:
-          `${e.ic.package.archetype} · ${e.ic.package.pinCount}-pin` +
-          (n > 1 ? ` · ${n} variants` : ""),
-        tier: "★",
-        color: "var(--accent)",
-        glyphKind: tag,
-      };
-    });
+    return libraryEntries()
+      .filter((e: LibraryEntry) => entryRole(e) !== "subassembly")
+      .map(libRow);
+  });
+  /** The "My Subassemblies" rows: bare, nested-only entries (role === 'subassembly'). Hidden from the
+   * board parts bin; offered only inside the die-editor place flow (§4.3 / §4.9). Promoted to a board
+   * IC via Tape out (P3b). */
+  const savedSubassemblyParts = $derived.by(() => {
+    void libRev;
+    return libraryEntries()
+      .filter((e: LibraryEntry) => entryRole(e) === "subassembly")
+      .map(libRow);
   });
   /** A family library row's family tag (strip the `#i` suffix off its variant-0 child tag). */
   function familyTagOf(e: LibraryEntry): string {
@@ -3765,6 +3779,24 @@
               </summary>
               <ul class="part-list">
                 {#each savedIcParts as part (part.tag)}
+                  {@render partRow(part)}
+                {/each}
+              </ul>
+            </details>
+          {/if}
+          <!-- "My Subassemblies" — bare, nested-only building blocks (role='subassembly', §4.3/§4.9).
+               Separated from My ICs so the subassembly-vs-IC vocabulary is visible; a subassembly
+               reaches the board only via Tape out (P3b). Empty until box-capture (P4) creates one. -->
+          {#if savedSubassemblyParts.length > 0}
+            <details class="part-cat" open>
+              <summary class="part-cat-head">
+                <span class="part-cat-name">My Subassemblies</span>
+                <span class="part-cat-count"
+                  >{savedSubassemblyParts.length}</span
+                >
+              </summary>
+              <ul class="part-list">
+                {#each savedSubassemblyParts as part (part.tag)}
                   {@render partRow(part)}
                 {/each}
               </ul>

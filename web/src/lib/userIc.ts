@@ -44,6 +44,15 @@ export interface UserIc {
    * package pin number in {@link userIcPartKind}. Pure presentation; never affects the netlist.
    */
   pinNames?: string[];
+  /**
+   * Bin role: `'ic'` (board-placeable, has a package + chosen pinout — the default and today's
+   * behavior) vs `'subassembly'` (a bare, nested-only building block, hidden from the board parts bin
+   * and offered only inside the die-editor place flow). Absent ⇒ `'ic'`. A subassembly reaches the
+   * board only via **Tape out** (`tapeOut`), which chooses a package + pinout and flips it to `'ic'`.
+   * Purely a bin filter — `flattenUserIcs`/`resolveUserIc`/the REGISTRY stay role-agnostic, so every
+   * existing save is byte-identical and the netlist is never affected.
+   */
+  role?: "ic" | "subassembly";
 }
 
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
@@ -731,6 +740,7 @@ export function captureSeal(
   frameId: number,
   name?: string,
   intoFamily?: string,
+  role?: "ic" | "subassembly",
 ): SealCapture | undefined {
   const frame = graph.components.get(frameId);
   if (!frame) return undefined;
@@ -892,6 +902,9 @@ export function captureSeal(
     frameId,
     graph: snapshot,
     ...pinNamesField,
+    // role defaults to 'ic' (absent) so every existing seal/save is byte-identical; only a free-form
+    // box-capture (P4) passes 'subassembly'. A package-authored seal stays board-placeable directly.
+    ...(role && role !== "ic" ? { role } : {}),
   });
 
   return {
