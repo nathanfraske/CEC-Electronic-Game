@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (143) — IMPLEMENT: free-form subassembly (arbitrary pinouts) + plan "2 then 1"
+
+**State:** 🟢 on `main` (PR #209 merged; the body-tint follow-up landing). Web-only, golden untouched,
+108 web tests, CI green. Owner picked **"finish the free-form subassembly, THEN the characterization
+engine"** ("2 then 1").
+
+- **Free-form subassembly v1 (PR #209)** — `BLOCK` archetype (arbitrary pin count, `counts:[]` so it's
+  out of `packageOptions`/the bin), `ensureFrameKind(archetype, pinCount)` (on-demand frame registration,
+  factored from the startup loop). `captureRegion` now emits a BLOCK subassembly with **exactly** its
+  boundary-net pin count (capped at `BLOCK_MAX_PINS=24`); "+ New ▸ Subassembly" seeds a BLOCK die.
+- **Body tint (this entry)** — a free-form BLOCK reads as a teal "block" body vs an accent-bodied chip
+  (`drawUserIcPackage` in glyphs.ts), a first visual "not an IC" cue.
+
+**Engine finding (for the "1" phase):** "see inside a placed gate" ALREADY works (the inner FETs animate
+their real currents on zoom — `elemCurrents`→`partCurrent`→lit MOSFET channel). The characterization
+**sweep can be web-only + golden-safe** via a SECOND `Simulation` (`new Simulation(seed)` is exported) —
+no risky new Rust — BUT the wasm is `--target web`, so the sweep's solve is **verified in-app**, not in
+headless tests. The collapse infra (CellBehavior + `Component.fidelity` + the flatten branch emitting one
+`ELEM_BEHAVIORAL` prog-4 LUT) IS headlessly testable + golden-safe.
+
+**Free-form follow-ups (the "2" phase, remaining):** distinct box SHAPE (vs chip leads) — `drawUserIc
+PackageBody`/`drawCard`; **interactive expandable pins** in the die editor (re-kind the BLOCK frame
+BLOCK_n→BLOCK_n±1; watch the outer-frame / `drill.frameTag` / crumb coupling); **drag-placed pins** on the
+box edges (the full §4.10 free-form box). Then the engine ("1").
+
+---
+
 ## 2026-06-25 (142) — IMPLEMENT: P4-full box-capture + bin "+ New" overhaul ON MAIN
 
 **State:** 🟢 on `main` (PRs #207, #208 merged). Web-only, golden `0xeaac…fa24` untouched, 108 web tests,

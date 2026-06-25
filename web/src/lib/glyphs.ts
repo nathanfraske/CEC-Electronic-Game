@@ -7,7 +7,12 @@
 
 import { Graphics } from "pixi.js";
 import { apparentFreq, blurFactor, shimmerFlow } from "./tierKit";
-import { isUserIc } from "./userIc";
+import { isUserIc, getUserIc } from "./userIc";
+import { BLOCK_ARCHETYPE } from "./packages";
+
+/** Body-outline tint for a FREE-FORM subassembly (§4.10) — a teal that reads as a bare "block / module"
+ * distinct from a packaged IC's accent body, so a subassembly looks like "not an IC" at a glance. */
+const BLOCK_BODY_COLOR = 0x49a08c;
 
 /**
  * Per-element **AC measurements** for the last full cycle, measured by the solver
@@ -2086,7 +2091,15 @@ export function drawUserIcPackageBody(
 }
 
 function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
-  drawUserIcPackageBody(g, o.pins, o.wPx, o.hPx, o.color);
+  // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip.
+  const isBlock = getUserIc(o.kind)?.package.archetype === BLOCK_ARCHETYPE;
+  drawUserIcPackageBody(
+    g,
+    o.pins,
+    o.wPx,
+    o.hPx,
+    isBlock ? BLOCK_BODY_COLOR : o.color,
+  );
 }
 
 // --- Factory style: components as machines/buildings (the Factorio lens) ------
