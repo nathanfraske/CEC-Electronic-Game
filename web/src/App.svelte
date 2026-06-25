@@ -1015,6 +1015,11 @@
   let tps = $state(500);
   let ready = $state(false);
   let mode = $state<Mode>("select");
+  // Live region tool (free-form subassembly): the board reports the pending rectangle's inferred pin
+  // count + any refusal reason via onRegion; null when no rectangle is drawn. `regionName` seeds the
+  // sealed subassembly's name.
+  let regionInfo = $state<{ pinCount: number; reason?: string } | null>(null);
+  let regionName = $state("");
   // Zoom-meter readouts (Phase 5), refreshed each frame from board.getViewMetrics(): camera zoom +
   // the cumulative fit-scale of the opened-IC level under the view centre (1 ⇒ open board). The
   // magnification ×M and the snapped scale bar derive from them via lib/zoomMeter.
@@ -1827,6 +1832,9 @@
       } else if (!e.ctrlKey && !e.metaKey && (e.key === "m" || e.key === "M")) {
         enterMeasure(); // m = Measure
         e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && (e.key === "g" || e.key === "G")) {
+        if (!drill) enterRegion(); // g = Region (draw a box → free-form subassembly); outer board only
+        e.preventDefault();
       } else if (e.key === "Escape") {
         // Universal cancel, in order of least-destructive first: a first Esc just
         // closes the open info drawer (without dropping your armed part or
@@ -2060,6 +2068,11 @@
           // the configurator choices so the panel closes with it.
           armedPart = kind;
           if (kind === null) armedConfig = {};
+        },
+        onRegion: (info) => {
+          // The live region tool's pending rectangle changed (drawn / resized / cleared) — mirror its
+          // pin count + refusal into the HUD so the "Seal region" panel can show/explain.
+          regionInfo = info;
         },
         onPersist: (graph) => {
           // A cosmetic change (e.g. a net label dragged): save it + refresh undo,
@@ -2570,6 +2583,25 @@
     circuitWarning = null;
     syncLibrary(cap.tag, "sealed"); // surface it in "My Subassemblies"
     libRev++;
+  }
+
+  /** Seal the live region tool's pending rectangle into a free-form subassembly (the rect IS the box,
+   * pins where wires cross it — §4.10). The board does the capture; here we name it, surface it in "My
+   * Subassemblies", and drop back to Select. Non-destructive — the player's board is untouched. */
+  function sealRegion(): void {
+    if (!board || drill) return;
+    const cap = board.sealPendingRegion(regionName.trim() || undefined);
+    if (!cap) {
+      circuitWarning =
+        "Couldn't seal the region: make sure the box contains parts that wire out to the rest of the board (those crossings become the pins).";
+      return;
+    }
+    circuitWarning = null;
+    regionName = "";
+    regionInfo = null;
+    syncLibrary(cap.tag, "sealed"); // surface it in "My Subassemblies"
+    libRev++;
+    setMode("select"); // the rectangle is consumed; hand back the normal tools
   }
 
   function buildSelectedFrame(): void {
@@ -3258,6 +3290,11 @@
   function enterMeasure(): void {
     arm(null);
     setMode("measure");
+  }
+  function enterRegion(): void {
+    arm(null);
+    regionName = "";
+    setMode("region");
   }
   function enterPan(): void {
     arm(null);
@@ -4461,6 +4498,16 @@
       >
         Measure <kbd class="hk">M</kbd>
       </button>
+      {#if !drill}
+        <button
+          class="btn btn-ghost {mode === 'region' ? 'is-active' : ''}"
+          onclick={enterRegion}
+          disabled={!ready}
+          title="Region: drag a box around part of the circuit to bottle it up as a free-form subassembly — pins appear where wires cross the box; seal when ready (G)"
+        >
+          ⬓ Region <kbd class="hk">G</kbd>
+        </button>
+      {/if}
       <button
         class="btn btn-ghost {mode === 'pan' ? 'is-active' : ''}"
         onclick={enterPan}
@@ -4483,6 +4530,42 @@
             title="Ammeter — click a part/wire for the current through it (coexists with the voltmeter)"
             >A</button
           >
+        </span>
+      {/if}
+      {#if mode === "region"}
+        <!-- Region tool: name + seal the pending rectangle (the live free-form subassembly). The pin
+             count / refusal reason comes from the board's onRegion (the same analysis the seal runs). -->
+        <span class="region-controls">
+          <input
+            class="insp-name mono region-name"
+            type="text"
+            placeholder="subassembly name (optional)"
+            bind:value={regionName}
+            maxlength="24"
+            aria-label="Name the sealed subassembly"
+            onkeydown={(e) => {
+              if (e.key === "Enter") sealRegion();
+            }}
+          />
+          <button
+            class="btn btn-accent"
+            onclick={sealRegion}
+            disabled={!ready || !regionInfo || regionInfo.pinCount < 1}
+            title="Seal the boxed region into a free-form subassembly — its pins are where wires cross the box"
+          >
+            ⬡ Seal region{regionInfo && regionInfo.pinCount > 0
+              ? ` (${regionInfo.pinCount} ${regionInfo.pinCount === 1 ? "pin" : "pins"})`
+              : ""}
+          </button>
+          <span class="region-hint">
+            {#if regionInfo && regionInfo.pinCount > 0}
+              drag to resize · Esc cancels
+            {:else if regionInfo && regionInfo.reason}
+              {regionInfo.reason}
+            {:else}
+              drag a box around the parts to bottle up
+            {/if}
+          </span>
         </span>
       {/if}
       <button
@@ -6290,6 +6373,24 @@
   .meter-toggle .btn {
     min-width: 30px;
     padding: 6px 9px;
+  }
+  /* Live region tool: the inline name + seal + hint shown while the Region tool is active. */
+  .region-controls {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .region-name {
+    width: 170px;
+    flex: 0 0 auto;
+  }
+  .region-hint {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.02em;
+    color: var(--dim);
+    opacity: 0.8;
+    white-space: nowrap;
   }
   /* Custom ticks-per-second entry next to the rate presets. */
   .rate-custom {
