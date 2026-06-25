@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration
+
+- ~~**Cell characterization + live inner telemetry + integration hierarchy**~~ — DONE
+  (`docs/cell-characterization-and-integration-hierarchy.md`). The "build a full CPU" mesh: sim and render are
+  already decoupled, so it is a **LoD split, not a solver merge**. Dual-face cell (characterize → one
+  `ELEM_BEHAVIORAL` LUT for scale; keep the discrete graph for the eye); on-zoom local DC solve on a separate
+  hash-isolated scratch `Sim` for live inner V/I; subassembly-vs-IC `role` flag over the existing recursive
+  sealed-cell system. 6-agent panel (SHIP-WITH-FIXES, determinism SOUND); I authored the file folding in the
+  conversational refinements. Golden `0xeaac…fa24` untouched (web/render/doc only, append-and-default-off).
+- ~~Powered-gate clarification~~ — captured (§2.0): "cheap digital solve" = logic-level eval of a *real powered*
+  gate (VCC/GND kept; not a 3-pin teaching gate, not CMOS). ~~"Tape out" rename~~, ~~re-packaging~~,
+  ~~chiplets-as-scale~~, ~~packaging-process promotion (not a one-click flip)~~ — all folded into §4.5/§4.5a/§4.9.
+- [ ] **OWNER REVIEW** of the exploration (14 open questions in §8) before any implementation — owner framed this
+  as "nail it on paper first; do NOT implement." Key calls to make: fidelity granularity, wide-cell route
+  (LUT4 fabric vs new wider `BEH_PROG_*`), SSI→ULSI band thresholds, Tape-out button wording.
+- [ ] **IF greenlit, smallest-first build order** (§7): ADR 0005/0006 reconciliation (doc) → `role` flag + "My
+  Subassemblies" bin → SSI→ULSI tier badge → Tier-1 forward-eval telemetry → `solveCell` wasm + scratch `Sim` →
+  the characterization sweep + flatten branch. The wide-cell **fabric** route is the real CPU-scale enabler.
+
 ## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms
 
 - ~~**Master implementation plan**~~ — DONE (`docs/implementation-plan.md`). Consolidated owner-decision ledger

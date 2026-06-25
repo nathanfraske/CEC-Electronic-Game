@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration (the "build a CPU" mesh)
+
+**State:** 🟢 docs-only, golden `0xeaac…fa24` untouched by construction; branch `claude/kind-turing-hdelb3`,
+fast-forwarded onto the other agent (137). Owner-directed exploration ("write it up, nail it on paper, do NOT
+implement"): how to build gates from transistors, keep the cheap solve at CPU scale, AND see all inner
+currents/voltages live. Landed via a 6-agent cross-checked panel (critic verdict SHIP-WITH-FIXES; determinism
+SOUND, every anchor re-verified vs live code), then I authored the file folding in all conversational refinements.
+
+- **`docs/cell-characterization-and-integration-hierarchy.md`** (NEW) — the core realization: sim and render are
+  **already decoupled** (renderer reads a per-frame snapshot, not the matrix), so the three asks mesh as a
+  **level-of-detail split, not a solver merge**. **§2 dual-face cell:** characterize a sealed cell at tape-out
+  (offscreen deterministic sweep → truth/next-state table) and emit **one `ELEM_BEHAVIORAL` prog-4 LUT**
+  (already exists end-to-end, `BEH_SPEC.LUT`) instead of flattening its FETs — zero analog cost for logic;
+  ≤4-in/≤1-bit only today, wider cells = a **LUT4 fabric** (the real new work). **§3 live inner telemetry:**
+  Tier-1 forward-eval everywhere + Tier-2 **on-zoom local DC solve** on a *separate hash-isolated scratch `Sim`*
+  (Thévenin pin boundary, NOT stiff VSOURCEs) feeding the existing `drawUserIcInternals`. **§4 hierarchy:** ~80%
+  relabel of shipped mechanism (recursive `flattenUserIcs` IS perverse stacking; `role` flag = subassembly vs IC).
+- **Folded in from the live conversation (panel didn't have these):** **§2.0** the powered-gate clarification
+  (the "cheap digital solve" = logic-level eval of a *real powered* gate — VCC/GND kept, quantize-vs-GND/family
+  threshold, drive to real rail, O(gates); **NOT** a 3-pin teaching gate, **NOT** CMOS; CMOS lives on the FET
+  face + the local solve). **§4.5 CORRECTED** the panel's wrong "promote = one-click `role` flip" → promotion
+  goes through the **full packaging process to choose the pinout**; the commit action is renamed **"Tape out"**;
+  **re-packaging allowed** (re-run, no instance churn). **§4.5a** chiplets = just another subassembly scale (a die
+  never holds a packaged IC). **§4.9** the building flow: **two libraries** ("My ICs" board / "My Subassemblies"
+  nested) over ONE recursive die editor, drill-in/out = the scale boundary, derived SSI→ULSI badge (no panel-per-scale).
+- **The 8086 endgame (§5), stated honestly:** collapse removes logic nets from the dense MNA but **supply nets
+  stay analog** and the digital evaluator is **O(cells×subtick_rate)** — a *massive* win over flattening every
+  FET (O(n³)), but **bounded**, not "free." §2.7 scopes cycle-equivalence (holds for synchronous/registered CPUs;
+  deep unregistered combinational chains need a costly GLOBAL sub-tick rate). §2.7a: `BEH_SUBTICK_RATE_SLOT ==
+  RATED_CURRENT_SLOT` (slot 2) — a sub-ticked cell forgoes a current rating.
+
+**Open for owner (§8, 14 Qs):** fidelity granularity (per-instance recommended); DC-read vs stepped inner sim;
+SSI→ULSI band thresholds; wide-cell route (fabric vs new wider `BEH_PROG_*`); Tape-out button wording. **No code
+written — exploration only**, per owner. Suggested first builds if greenlit (§7): ADR reconciliation → role flag +
+"My Subassemblies" bin → tier badge → Tier-1 telemetry → `solveCell` → characterization sweep.
+
+---
+
 ## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms (contracts · product-sim · Lux/LabBook · tech-tree)
 
 **State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent (136).
