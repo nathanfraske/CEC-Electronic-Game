@@ -2015,6 +2015,10 @@
           partCount = graph.components.size;
           wireCount = graph.wires.size;
           canUndo = b.canUndo();
+          // A persisted region rectangle follows the circuit live — refresh its boundary pins whenever
+          // the board changes (a no-op unless a region is pending). Lets you draw a box, wire/edit with
+          // the pins updating, then come back and seal.
+          b.refreshRegionOverlay();
           // Onboarding facts: has the player placed a source / a ground yet? (Drives
           // the first-encounter concept cards via their $effect triggers.)
           let src = false;
@@ -2625,6 +2629,13 @@
     syncLibrary(cap.tag, "sealed"); // surface it in "My Subassemblies"
     libRev++;
     setMode("select"); // the rectangle is consumed; hand back the normal tools
+  }
+
+  /** Discard the pending region rectangle without sealing (the panel's × Cancel, mirrors Esc). */
+  function cancelRegion(): void {
+    board?.clearPendingRegion();
+    regionInfo = null;
+    regionName = "";
   }
 
   function buildSelectedFrame(): void {
@@ -4613,9 +4624,11 @@
           >
         </span>
       {/if}
-      {#if mode === "region"}
-        <!-- Region tool: name + seal the pending rectangle (the live free-form subassembly). The pin
-             count / refusal reason comes from the board's onRegion (the same analysis the seal runs). -->
+      {#if regionInfo || mode === "region"}
+        <!-- Region tool: name + seal the pending rectangle (the live free-form subassembly). The box
+             PERSISTS across tool switches, so this panel shows whenever a region is pending (any tool) —
+             draw it, wire/edit the circuit (pins update live), then come back and seal. The pin count /
+             refusal reason comes from the board's onRegion (the same analysis the seal runs). -->
         <span class="region-controls">
           <input
             class="insp-name mono region-name"
@@ -4638,9 +4651,17 @@
               ? ` (${regionInfo.pinCount} ${regionInfo.pinCount === 1 ? "pin" : "pins"})`
               : ""}
           </button>
+          {#if regionInfo}
+            <button
+              class="btn btn-ghost"
+              onclick={cancelRegion}
+              title="Discard the region rectangle (Esc)">× Cancel</button
+            >
+          {/if}
           <span class="region-hint">
             {#if regionInfo && regionInfo.pinCount > 0}
-              drag to resize · Esc cancels
+              {mode === "region" ? "drag to resize" : "press G to resize"} · seal
+              or cancel
             {:else if regionInfo && regionInfo.reason}
               {regionInfo.reason}
             {:else}

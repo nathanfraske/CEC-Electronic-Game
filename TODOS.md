@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (147) — FIX (owner-reported): region pin alignment + persistence
+
+Web/render/registry only, golden untouched, 114 web tests.
+- ~~**Pins align to traces**~~ — `analyzeRegion` now places each boundary pin where the wire's ROUTED path
+  (endpoints + waypoints) actually crosses the box edge, not at the inside-pin's row/col. Fixes the "exits
+  right but pin on the bottom" misplacement + junction-routed nets. Tested.
+- ~~**Region persists**~~ — the rectangle survives tool switches (only Esc/Seal/Cancel/drill-in clear it);
+  `refreshRegionOverlay` (from onChange) updates pins live as you wire; seal panel shows in any tool with a
+  × Cancel; a stray click in region mode no longer wipes the box (regionPrev restore).
+- [ ] **Pin-drag** (still) — needs Alt-drag (a plain frame-pin press starts a wire).
+- [ ] **In-die Ctrl+Z of box-resize** (still) — geometry isn't in the undo stack.
+
 ## 2026-06-25 (145) — IMPLEMENT: live region tool + zoom-gauge fix
 
 Web/render/registry only, golden `0xeaac…fa24` untouched, 112 web tests.

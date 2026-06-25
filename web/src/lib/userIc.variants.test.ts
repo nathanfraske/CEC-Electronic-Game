@@ -643,6 +643,32 @@ describe("IC variants — determinism contract", () => {
     });
   });
 
+  it("region pins land on the edge the trace EXITS (aligned to the wire, not the inside pin)", () => {
+    // R inside the box: one lead wired straight UP to a GND above it, one wired straight RIGHT to a V on
+    // the same row. The GND net must exit the TOP edge (a vertical trace), the V net the RIGHT edge (a
+    // horizontal trace) — i.e. the pin sits where the wire crosses, not just "nearest the inside pin".
+    const b = new BoardGraph();
+    const r = place(b, "R", 5, 5, 1000);
+    const gnd = place(b, "GND", 5, 0); // directly ABOVE R.A → vertical exit (top edge)
+    const v = place(b, "V", 15, 5, 5); // to the RIGHT of R.B → horizontal exit (right edge)
+    connect(b, r, 0, gnd, 0); // R.A (5,5) → GND (5,0)
+    connect(b, r, 1, v, 0); // R.B → V (15,5)
+    const cap = captureRegion(b, [r.id], "ExitDir");
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("ExitDir")!;
+      const ff = def.freeForm!;
+      const gndPin = ff.pins[def.pinNames!.indexOf("GND")];
+      const vccPin = ff.pins[def.pinNames!.indexOf("VCC")];
+      expect(gndPin).toBeDefined();
+      expect(vccPin).toBeDefined();
+      expect(gndPin.dy).toBe(0); // GND trace exits UP → top edge
+      expect(vccPin.dx).toBe(ff.w - 1); // V trace exits RIGHT → right edge
+    } finally {
+      unregisterUserIc("ExitDir");
+    }
+  });
+
   it("captureRegion explicit box (live rect): the DRAWN rectangle becomes the subassembly box", () => {
     // The live tool passes the rectangle the player dragged. A rect LARGER than the parts must be used
     // verbatim (box = the rect), not shrink-wrapped to the parts' bbox.
