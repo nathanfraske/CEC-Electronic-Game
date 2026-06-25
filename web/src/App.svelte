@@ -2510,6 +2510,38 @@
     setMode("select");
   }
 
+  /** "New ▸ IC / Subassembly": drop a roomy default package (DIP-8) on the board, seed a BLANK die, and
+   * drill in to build an IC or subassembly from scratch (vs the pre-wired gate templates). For a
+   * subassembly we pre-check the seal-panel's nested-only toggle so Seal files it under My
+   * Subassemblies; the player can re-package at Tape out. Mirrors {@link newGateFromTemplate}. */
+  function newBlankDie(role: "ic" | "subassembly"): void {
+    if (!board || drill) return;
+    const frameTag = "DIP8";
+    if (!PART_KINDS[frameTag]) return;
+    const fresh = freshDieGraph(frameTag);
+    if (!fresh) return;
+    const placed = board.placeAt(
+      frameTag,
+      canvasEl.clientWidth / 2,
+      canvasEl.clientHeight / 2,
+    );
+    if (!placed) return;
+    innerGraphs.set(placed.id, fresh.snapshot);
+    drill = {
+      frameId: placed.id,
+      innerFrameId: fresh.frameId,
+      frameTag,
+      name: partName(frameTag),
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+    };
+    board.swapGraph(fresh.snapshot);
+    board.setDieFrame(fresh.frameId);
+    sealAsSubassembly = role === "subassembly"; // pre-set the seal-panel toggle
+    arm(null);
+    setMode("select");
+  }
+
   /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
    * nets that cross the selection boundary, and register it as a bare subassembly (→ "My
    * Subassemblies"; reach the board via Tape out). Non-destructive — the board is untouched. */
@@ -3867,58 +3899,99 @@
         {/if}
       {:else}
         <div class="part-cats scroll">
-          <!-- "New gate" — the build-a-gate-as-a-subassembly on-ramp (§4.10). One click drops a SOT-23-5
-               package, seeds its die with a pre-wired CMOS template that already solves + switches, and
-               drills in so you can see the transistors and Seal it as your own placeable gate. -->
-          <div class="new-gate">
-            <span class="new-gate-label">New gate</span>
-            <div class="new-gate-btns">
-              {#each GATE_TEMPLATE_KINDS as gk (gk)}
-                <button
-                  class="btn new-gate-btn"
-                  onclick={() => newGateFromTemplate(gk)}
-                  disabled={!!drill}
-                  title={`Build a ${gateTemplateName(gk)} from CMOS transistors (SOT-23-5)`}
-                >
-                  {gk}
-                </button>
-              {/each}
+          <!-- "+ New" — the create affordances: pre-wired gate templates, or a blank IC / subassembly
+               die to build from scratch (§4.9/§4.10). Drilling into the die editor either way; the
+               result lands in My ICs or My Subassemblies on Seal. -->
+          <details class="part-cat new-create" open>
+            <summary class="part-cat-head">
+              <span class="part-cat-name">+ New</span>
+            </summary>
+            <div class="new-create-body">
+              <div class="new-create-row">
+                <span class="new-create-label">Gate</span>
+                <div class="new-create-btns">
+                  {#each GATE_TEMPLATE_KINDS as gk (gk)}
+                    <button
+                      class="btn new-create-btn"
+                      onclick={() => newGateFromTemplate(gk)}
+                      disabled={!!drill}
+                      title={`Build a ${gateTemplateName(gk)} from CMOS transistors (SOT-23-5)`}
+                    >
+                      {gk}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+              <div class="new-create-row">
+                <span class="new-create-label">Blank</span>
+                <div class="new-create-btns">
+                  <button
+                    class="btn new-create-btn"
+                    onclick={() => newBlankDie("ic")}
+                    disabled={!!drill}
+                    title="Start a blank IC — drill into an empty DIP-8 package and build it"
+                  >
+                    IC
+                  </button>
+                  <button
+                    class="btn new-create-btn"
+                    onclick={() => newBlankDie("subassembly")}
+                    disabled={!!drill}
+                    title="Start a blank subassembly (nested-only; Tape out to the board later)"
+                  >
+                    Subassembly
+                  </button>
+                </div>
+              </div>
             </div>
-          </div>
-          <!-- "My ICs" — the personal IC library (docs/ic-library-and-variants.md). Rendered FIRST, and
-               only when non-empty, so a fresh player never sees an empty category. Each row places via
-               the SAME arm/drag path as a built-in (registerLibrary populated PART_KINDS[tag]). -->
-          {#if savedIcParts.length > 0}
-            <details class="part-cat" open>
-              <summary class="part-cat-head">
-                <span class="part-cat-name">My ICs</span>
+          </details>
+          <!-- "My ICs" — the personal IC library. Always shown (even empty) so the two-library structure
+               is clear; each row places via the SAME arm/drag path as a built-in. -->
+          <details class="part-cat" open>
+            <summary class="part-cat-head">
+              <span class="part-cat-name">My ICs</span>
+              {#if savedIcParts.length > 0}
                 <span class="part-cat-count">{savedIcParts.length}</span>
-              </summary>
+              {/if}
+            </summary>
+            {#if savedIcParts.length > 0}
               <ul class="part-list">
                 {#each savedIcParts as part (part.tag)}
                   {@render partRow(part)}
                 {/each}
               </ul>
-            </details>
-          {/if}
+            {:else}
+              <p class="part-empty-hint">
+                Build one with <strong>+ New ▸ Gate</strong> or
+                <strong>IC</strong>, then Seal it.
+              </p>
+            {/if}
+          </details>
           <!-- "My Subassemblies" — bare, nested-only building blocks (role='subassembly', §4.3/§4.9).
-               Separated from My ICs so the subassembly-vs-IC vocabulary is visible; a subassembly
-               reaches the board only via Tape out (P3b). Empty until box-capture (P4) creates one. -->
-          {#if savedSubassemblyParts.length > 0}
-            <details class="part-cat" open>
-              <summary class="part-cat-head">
-                <span class="part-cat-name">My Subassemblies</span>
+               Always shown so the subassembly-vs-IC vocabulary is visible; a subassembly reaches the
+               board only via Tape out (P3b). -->
+          <details class="part-cat" open>
+            <summary class="part-cat-head">
+              <span class="part-cat-name">My Subassemblies</span>
+              {#if savedSubassemblyParts.length > 0}
                 <span class="part-cat-count"
                   >{savedSubassemblyParts.length}</span
                 >
-              </summary>
+              {/if}
+            </summary>
+            {#if savedSubassemblyParts.length > 0}
               <ul class="part-list">
                 {#each savedSubassemblyParts as part (part.tag)}
                   {@render partRow(part)}
                 {/each}
               </ul>
-            </details>
-          {/if}
+            {:else}
+              <p class="part-empty-hint">
+                Box-select parts → <strong>⬡ Make subassembly</strong>, or
+                <strong>+ New ▸ Subassembly</strong>.
+              </p>
+            {/if}
+          </details>
           {#each PART_CATEGORIES as cat (cat)}
             {@const groups = familyGroups(cat)}
             {#if groups.length > 0}
@@ -7251,40 +7324,57 @@
   .part-cats {
     overflow-y: auto;
   }
-  .new-gate {
+  .new-create-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 10px 9px;
+  }
+  .new-create-row {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--border);
   }
-  .new-gate-label {
+  .new-create-label {
     font-family: "Saira Condensed", sans-serif;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     color: var(--text-dim);
+    width: 52px;
+    flex: 0 0 auto;
   }
-  .new-gate-btns {
+  .new-create-btns {
     display: flex;
+    flex-wrap: wrap;
     gap: 4px;
-    margin-left: auto;
   }
-  .new-gate-btn {
+  .new-create-btn {
     font-family: "IBM Plex Mono", monospace;
     font-size: 0.72rem;
-    padding: 2px 7px;
+    padding: 2px 8px;
     border: 1px solid var(--accent);
     color: var(--accent);
     background: transparent;
   }
-  .new-gate-btn:hover:not(:disabled) {
+  .new-create-btn:hover:not(:disabled) {
     background: color-mix(in oklch, var(--accent) 18%, transparent);
   }
-  .new-gate-btn:disabled {
+  .new-create-btn:disabled {
     opacity: 0.4;
     border-color: var(--border);
     color: var(--text-dim);
+  }
+  .part-empty-hint {
+    padding: 6px 12px 9px;
+    margin: 0;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--dim);
+  }
+  .part-empty-hint strong {
+    color: var(--text-dim);
+    font-weight: 600;
   }
   .part-cat {
     border-bottom: 1px solid var(--border);
