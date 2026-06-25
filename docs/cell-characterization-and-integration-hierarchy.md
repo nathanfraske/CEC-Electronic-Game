@@ -42,6 +42,49 @@ statement, re-checked per path.
 > nets — the recommended easy on-ramp; drill-in becomes re-open/inspect). **All §8 questions are RESOLVED**
 > (see the table at §8).
 
+> **Audit corrections (P0, 2026-06-25 — an 8-agent panel re-verified every claim vs live code; determinism
+> verdict SOUND, golden `0xeaac…fa24` cannot move under any phase).** Precisions folded in; each is anchored
+> and lands in its home section, collected here for review:
+> - **Heat is NEW web work, not "half-specced"** (§4.10a corrected): `RATED_CURRENT_SLOT` (lib.rs:2452) is
+>   only the slot constant — no derate code exists in sim-core. Density-as-heat = web-side lower the
+>   Real-mode slot-2 rating; the existing `flag_and_clamp_fails` (lib.rs:6803-6808) FAIL-flags it
+>   (`failed_elements` unhashed). It collides with the sub-tick rate (slot 2, §2.7a), so heat-on-*fabric*
+>   waits on moving the sub-tick rate off slot 2.
+> - **Digital vs Boundary fold** (§5/§6): a collapsed cell driving an *analog* load is a **Boundary** net
+>   (`classify_nets`, lib.rs:2207) that folds the **f64 `node_v`** (lib.rs:7360) — reproducible via the
+>   deterministic MNA solve, not the quantized level. Boundary signal nets **stay in the dense MNA** (a real
+>   cost). **Params are not hashed** (PARAM_STRIDE=8; only `beh_state`/new hashed fields touch the contract).
+> - **Wide-cell route split** (§2.5): **(a1) structural** one-LUT4-per-gate graph→element lowering is the
+>   8086 path (a ≤2-in gate *is* a 16-bit word); **(a2) function-level Shannon** only for a single
+>   >4-in-but-<16-in swept leaf. No Shannon/BDD/synthesis code exists in the repo today.
+> - **Registered-LUT ceiling** (§2.6/§2.9): prog-4 registered computes `Q+ = LUT(external inputs)` — the
+>   index does **not** include current Q (`beh_lut_live_index`, lib.rs:1539-1542), so only ≤4-input D-type
+>   next-state with **no self-state-dependence** collapses to one registered LUT; toggle/JK do not. The
+>   sequential sweep **requires a declared async reset/preset pin** (force a known Q, clock, read Q+).
+>   Inter-LUT interconnect must be **pure-Digital** for sub-tick equivalence (`run_digital_subticks`
+>   re-solves only `digital_rows`, lib.rs:6744-6747). Two quantizers: input `beh_level` (hard 0.5·rail,
+>   lib.rs:1385) vs output `fam.quantize` (family fractions, lib.rs:6177).
+> - **prog-4 emission trap** (§2.3/§2.8): emit `value=4` (`BEH_SPEC.LUT`, netlist.ts:513); mode rides
+>   `Component.mode → params[4]` (`BEH_LUT_MODE_SLOT`, lib.rs:1513; default 0 = combinational). A wrong/zero
+>   value = an inert block.
+> - **σ-composition math** (§4.10): **σ IS the fit-scale `s`** ⇒ `cumulativeScale = ∏σ` with **no change**
+>   to the scale-application path (userIcInternalsView.ts:288-295); `MAX_SCALE = 1000` bounds the **camera**,
+>   not `cumulativeScale` (board.ts), so a looser σ costs drill-depth, not a hard ceiling; σ's data-model
+>   home is a new `UserIc.process.sigma` (default 1.0); the content extent is the **internals bbox**, not
+>   `dieBounds`.
+> - **Tape-out has two prongs** (§4.5/§4.9): a cell **authored in a package die** (the P2 gate templates,
+>   any drill-in build) already has a pinout, so **Seal yields `role='ic'` directly — no promotion**; only a
+>   **free-form/box-captured** subassembly needs an explicit **Tape-out** (pick package, map nets→pins). Box
+>   capture is **unbuilt** today (`captureSeal` is a BFS, userIc.ts:729) — it needs a NEW `captureRegion`,
+>   and semantic pin roles IN/OUT/VCC/GND/CLK **do not exist yet** (P3 adds them).
+> - **Player gates coexist with built-ins** (§4.3): a player gate doesn't replace the built-in — it
+>   coexists, with an optional "set as my NAND" / curriculum-grey. Note `isReservedTag` (userIc.ts:169)
+>   currently **refuses** a built-in-name seal — revisit only as the naming case requires.
+> - **Tier-2 DC read freezes inner sequential** (§3.6): `commit_sequential_digital_state` runs only in
+>   `step()` (lib.rs:6503), so a flop-containing opened cell needs the stepped-sim variant to animate.
+> - **Two hardening tests, not assertions** (§6/§7): a cross-instance `snapshot_hash` equality test for a
+>   placed prog-4 LUT (D7), and a `ScratchSim` newtype that does **not** expose `snapshot_hash` (D8, P6).
+
 ---
 
 ## 0. The core realization (read this first)
@@ -916,11 +959,17 @@ alternative, σ continuous from gate-count, is smoother but bands less cleanly.)
 σ is not a free visual knob — **it is a real engineering tradeoff, and that is the point.** Packing more
 into less footprint = a tighter σ = denser integration, and the price is exactly the owner's intuition:
 
-- **Heat ↑.** More dissipation per unit area. The mechanism is already **golden-safe and half-specced** (the
-  existing density brainstorm in `TODOS.md`): in **Real mode**, density **derates `RATED_CURRENT_SLOT`**
-  (lib.rs:2452), which feeds the **existing FAIL mask** — a too-dense part runs hot and trips its current
-  limit *sooner*, and the renderer boxes it. **Zero sim-core change, hash untouched** (`failed_elements`
-  is not in `snapshot_hash`; the rating only flags, never alters the solve).
+- **Heat ↑.** More dissipation per unit area. The mechanism would be **NEW web-side work, but it rides an
+  existing golden-safe hook** — do **not** read this as already-built. `RATED_CURRENT_SLOT` (lib.rs:2452) is
+  only the slot *constant*; **no density/derate code exists in sim-core today** (repo-searched). What ships
+  is the *rating → FAIL* contract: in **Real mode** the web layer installs a slot-2 rating and
+  `flag_and_clamp_fails` (lib.rs:6803-6808) sets the FAIL mask when `|I| > rated` — **never altering the
+  solve** (`failed_elements` is not in `snapshot_hash`). So density-as-heat = *web-side* lower the Real-mode
+  slot-2 rating a too-dense part installs, and the existing FAIL mask boxes it. **Golden-safe by the
+  existing contract; the derate factor itself is NEW, not half-present.** ⚠️ It also collides with the
+  sub-tick rate (§2.7a: `BEH_SUBTICK_RATE_SLOT == RATED_CURRENT_SLOT == 2`) — a sub-ticked behavioral leaf
+  cannot *also* carry a slot-2 density rating, so heat-on-dense-*fabric* is gated behind moving the sub-tick
+  rate off slot 2 (`TODOS.md` density brainstorm), or deriving heat only on analog leaves / supply nets.
 - **Cost ↑.** Finer process / bigger die both cost more — the economy hooks (Credits) price the σ choice.
 
 So the dial reads: **tight σ = small board footprint but hotter + pricier; loose σ = bigger but cooler +
