@@ -24,14 +24,23 @@ statement, re-checked per path.
 >    You go through packaging **because** that is where you choose the pinout (which internal nets become
 >    pins, where they sit, the package body); the step cannot be skipped. **This corrects the panel's
 >    original §4.5, which wrongly proposed a one-click `role='ic'` flip** — see §4.5 as rewritten. (§4.5)
-> 4. **The seal/package commit action is renamed "Tape out."** Everywhere the UI currently says *Seal*
->    for committing a die into a placeable part, it becomes **Tape out** (the real semiconductor term for
->    committing a design to silicon). The recursive zoom-to-**open** mechanic keeps its own naming. (§4.5)
+> 4. **The *packaging* commit is named "Tape out"; the bare commit stays "Seal."** *Tape out* is the
+>    packaging step only (bare → board IC, where you choose the pinout). *Seal* finalizes a die into a
+>    reusable nested **subassembly**. (Refined 2026-06-25 — the earlier "rename Seal→Tape out everywhere"
+>    is superseded; tape-out is truer as the commit-to-package step, not an intermediate block.) (§4.10)
 >
 > Two more conversational refinements are folded in: the **powered-gate clarification** (§2.0 — the
 > "cheap digital solve" is a logic-level eval of a *real powered* gate, **not** an idealized 3-pin
 > teaching gate and **not** CMOS) and the **two-library building model** (§4.3 / §4.9 — "My ICs" vs
 > "My Subassemblies", with drill-in/out as the scale boundary).
+>
+> **Later additions (2026-06-25):** §2.9 the **characterization test-bench** (declare pin roles, derive
+> the rest from the rails/families, auto-sweep on a scratch `Sim`); §4.10 **subassembly portrayal +
+> proportional scale** (free-form box; footprint = content × per-tier process-shrink σ); §4.10a
+> **density has a cost** (heat via Real-mode rating-derate, money via the economy); §4.9 **overworld
+> authoring** (build on the board → box-select → "Make subassembly", pinout inferred from boundary-crossing
+> nets — the recommended easy on-ramp; drill-in becomes re-open/inspect). **All §8 questions are RESOLVED**
+> (see the table at §8).
 
 ---
 
@@ -414,6 +423,57 @@ Keep zoom-to-open on the existing renderer — but note that a *collapsed* cell 
 the inner-telemetry struct, so §3 carries genuinely new web work to feed that renderer for the collapsed
 case.
 
+### 2.9 The characterization test-bench — declare roles, derive the rest (owner ask)
+
+The owner asked the precise question: *to characterize a subassembly, what does the solver actually need
+me to give it — the pins? expected voltage ranges? current ranges? stimulus?* The happy answer is **far
+less than it looks**, because (a) a digital cell's levels are already fixed by the rails + gate families
+inside it, and (b) **the test-bench already half-exists.**
+
+**What ships today (the reuse target).** Phase-1 pin-stimuli is live: a player attaches **GND / VCC /
+Input(volts)** to die pins via a popover (`PinTest` enum + `Component.pinTests`, `graph.ts`), and the die
+solves *in isolation* through `dieTestGraph()` (`dieEditor.ts`) — injected **authoring-only**, gated in
+`App.svelte`'s `rebuildNetlist` when drilled in, and **never sealed** (the raw die graph stays untouched,
+so determinism holds). The Phase-2 plan already names the sweep mechanic in passing: *"clock A@f and
+B@f/2 auto-cycles a 2-input truth table."* **Characterization is that, automated** — sweep the inputs
+instead of toggling them by hand.
+
+**The reframe on "voltage ranges / current ranges."** Declaring expected V/I ranges is how you'd
+characterize an **analog** block (an op-amp: input range, output swing, supply current → a *macromodel*).
+For the **digital** cells we start with (gates, LUTs, registers) you need almost none of it, because the
+cell is built from **powered gates whose rails and family already define the levels.** Declare-vs-derive:
+
+| What the solver needs | Declare or derive? | Where it comes from |
+| --- | --- | --- |
+| **Pin roles** (IN / OUT / VCC / GND / CLK) | **Declare** — one tag per edge-pin | extends the pin popover that already labels pins; maps to the behavioral terminals (a=OUT, b=CLK, d=VCC, e=GND, f/g/h/c=IN — `BEH_SPEC.LUT.term`, netlist.ts:510-541) |
+| **Supply / rails** | **Declare** — wire the VCC/GND pins (or a nominal rail) | the rails **are** the 0/1 range; `gate_rails` (lib.rs:692) reads `V(GND)`/`V(VCC)` |
+| **Logic family** (CMOS/TTL) | **Derive** | inherited from the inner gates (`FAMILIES`, lib.rs:624 — CMOS 0.3/0.7, TTL 0.16/0.4) |
+| **Voltage thresholds / "ranges"** | **Derive — not typed** | rail × family fraction (`beh_level` 1385 / `quantize` 585) |
+| **Stimulus vectors** | **Derive — auto exhaustive sweep** | k input pins → 2ᵏ combos driven to the rails via the shipped stimulus machinery |
+| **Current rating** | **Optional** — declare *or* auto-measure worst-case | slot-2 rating; **FAIL-flag only, never alters the solve** (`flag_and_clamp_fails`, lib.rs:6776); note it shares the sub-tick slot (§2.7a) |
+
+**The mechanism end to end.** At **Seal** (the bare-subassembly commit — see §4.10 for why characterization
+runs here, not only at Tape out), spin up an **offscreen scratch `Sim`** — the exact pattern the
+contract-check already uses (`createSimulation`, never hashed, golden-safe) — install the die netlist via
+the existing `set_netlist_pefgh` (sim-wasm), and **sweep**: for each input combination drive the input
+pins to `V(GND)=0` / `V(VCC)=1`, solve, and read the output levels (`commit_net_levels` quantize). The
+**correctness guard** (§2.6) checks each output is clean two-level, stable, and a pure function of inputs
+(combinational) or inputs+clock-edge (sequential, via `beh_lut_step` on the CLK pin, lib.rs:1554). Pass →
+bake the **truth table** into one behavioral LUT (the cheap face). Fail (analog, multi-level, oscillating)
+→ refuse the cheap face, keep it analog. You drive inputs to the **rails**, not to ambiguous
+mid-voltages, which is exactly *why* you never type a voltage range: the definitive 0 and 1 are the supply
+you already wired, and for a cleanly-digital cell the truth table is even rail-invariant.
+
+**The one honest ceiling.** Exhaustive sweep is only tractable for **small** cells (2ᵏ explodes past ~16
+inputs). A 20-input ALU slice is **not** swept as one black box — you characterize its **leaf cells**
+(gates, ≤4-in LUTs) and compose them as a **fabric** (§2.5a, the owner's chosen wide-cell route). So
+characterization is bounded to small leaves; big subassemblies are *structures of characterized leaves*.
+That is the whole reason the fabric route is the CPU-scale enabler and not an optional nicety.
+
+**Open sub-questions this surfaces** (for §8): auto-capture the worst-case pin current from the sweep as
+the default rating, or leave it manual? For registered cells, auto-exercise only the declared clock, or
+let the author name a reset/enable pin so the next-state table is complete?
+
 ---
 
 ## 3. Live inner currents and voltages, in real time (the owner's R3)
@@ -652,20 +712,20 @@ subassembly does not carry. The **packaging process is what produces that data**
 the owner insists it can't be skipped: *"you need to be able to choose the pin out … you have to go
 through the packaging process."*
 
-**The action is renamed "Tape out."** The commit-a-die-into-a-placeable-part action currently called
-**Seal** becomes **Tape out** — the real semiconductor term for committing a design to silicon, and (per
-the owner) "awesome." Concretely:
+**Two commits, two names (owner-refined 2026-06-25).** The bare commit keeps **Seal**; the packaging commit
+is **Tape out** — truer to the real term (tape-out *is* the commit-to-package/fab step, not an intermediate
+block). Concretely:
 
-- **Tape out → board IC.** Run the packaging flow: choose the **pinout** (which internal nets surface as
+- **Seal → subassembly (bare).** The lighter, more common commit while you compose upward: finalize the die
+  as a reusable **nested-only** block (`role='subassembly'`, §4.3) with no board pinout chosen. (This is
+  also where **characterization** runs — §2.9 — since a subassembly's behavioral face is fixed at Seal.)
+- **Tape out → board IC.** The packaging commit: choose the **pinout** (which internal nets surface as
   pins, their placement) and the **package body** (DIP/SOT/etc.), producing a board-placeable part with
-  `role='ic'`. This reuses the **existing** capture/seal machinery — `captureSeal` already reads the
-  frame package (`framePackage`, userIc.ts:729/737) and `userIcPartKind` derives the `PartKind`
-  (userIc.ts:197); the seal panel already chooses the pinout. The work is **naming + making the pinout
-  choice the explicit gate of promotion**, not new packaging mechanism.
-- **Tape out → subassembly (bare).** The lighter commit: finalize the die as a reusable **nested-only**
-  block (`role='subassembly'`, §4.3) with no board pinout chosen. This is the cheaper, more common commit
-  while you are still composing upward; you only pay the pinout choice when you actually want the thing on
-  a board.
+  `role='ic'`. Reuses the **existing** capture machinery — `captureSeal` already reads the frame package
+  (`framePackage`, userIc.ts:729/737) and `userIcPartKind` derives the `PartKind` (userIc.ts:197); the
+  seal panel already chooses the pinout. The work is **naming + making the pinout choice the explicit gate
+  of promotion**, not new packaging mechanism. You only pay the pinout choice when you actually want the
+  thing on a board.
 - **Re-packaging = yes (owner decision 1).** An already-packaged IC can go back through Tape out to
   **choose a different pinout / package** — you are never stuck with an earlier pinout. This reuses the
   **existing** reseal path (`resealUserIc` keeps tag/name, swaps graph/package, userIc.ts:284). **No
@@ -703,7 +763,7 @@ says. Re-packaging (4.5) then lets them choose the multi-die part's external pin
 | Variant families (a CPU you reuse, variants of a cell) | `UserIcFamily` / `FAMILIES` / `resolveUserIc` (userIc.ts:61/74/119) | Existing |
 | "My ICs" bin / persistence | `LibraryEntry` / `libraryEntries` / `addToLibrary` / `renameLibraryIc` / `removeFromLibrary` | Existing |
 | Integration tier badge (SSI→ULSI) | derived count over flattened graph + `graphShape` histogram | **NEW** (web-only, derived) |
-| **Tape out** (commit + choose pinout) / re-package | `captureSeal` (userIc.ts:729) + the seal panel's pinout choice + `resealUserIc` (:284) | **Relabel** ("Seal"→"Tape out"); promotion gated on the pinout choice (§4.5) |
+| **Seal** (bare commit) / **Tape out** (package + choose pinout) / re-package | `captureSeal` (userIc.ts:729) + the seal panel's pinout choice + `resealUserIc` (:284) | **Relabel**: bare commit stays *Seal*, packaging commit is *Tape out*; promotion gated on the pinout choice (§4.5/§4.10) |
 | Chiplet / multi-die part | recursive subassembly stacking (`flattenUserIcs` waves) one tier up | **Existing** — just another integration scale (§4.5a) |
 | **Characterize / collapse (gates-as-cheap)** | `UserIc.behavior` + `ELEM_BEHAVIORAL` prog 4 + flatten branch | **NEW** (the flagship; §2) |
 
@@ -753,25 +813,124 @@ mode:
   (you can drop a bare subassembly *or* an already-packaged IC's die form as a cell). This is the literal
   enforcement of "you can't place a bare subassembly on a board": the board bin never lists one.
 - **Drill-in / drill-out IS the scale boundary.** There is no per-scale panel; there is **one** die editor
-  you recursively drill into. Each drill-in is one integration tier down; each Tape out commits one tier as
-  a reusable cell. SSI→VLSI is just **how many times you have drilled** / how many cells the flatten count
-  finds (§4.4) — a **badge**, not a mode the player switches. The same editor builds a NAND from FETs and a
-  CPU from ALU-slice subassemblies; only the cell population differs.
+  you recursively drill into. Each drill-in is one integration tier down; each commit (**Seal** or **Tape
+  out**) finalizes one tier as a reusable cell. SSI→VLSI is just **how many times you have drilled** / how
+  many cells the flatten count finds (§4.4) — a **badge**, not a mode the player switches. The same editor
+  builds a NAND from FETs and a CPU from ALU-slice subassemblies; only the cell population differs.
 - **The pipeline, end to end.** Drill into a die → place bare cells/subassemblies → wire the die-level
-  interconnect → **Tape out**. Tape out **as a subassembly** (bare, cheap, keep composing upward) or **as a
-  board IC** (choose the pinout + package, §4.5). Promote later by re-running Tape out with a pinout.
-  Re-package any IC by running Tape out again (decision 1). A "chiplet" is just this pipeline one tier up
-  over subassemblies (decision 2, §4.5a).
+  interconnect → **commit**: **Seal** it as a subassembly (bare, cheap, keep composing upward) or **Tape
+  out** as a board IC (choose the pinout + package, §4.5). Promote a subassembly later by running Tape out
+  with a pinout. Re-package any IC by running Tape out again (decision 1). A "chiplet" is just this pipeline
+  one tier up over subassemblies (decision 2, §4.5a).
+- **Authoring on the overworld — the easy on-ramp (owner ask 2026-06-25; RECOMMENDED).** You don't have to
+  start in a blank die. Build a circuit **right on the board (the overworld)** like any other, then
+  **box-select a region and "Make subassembly"**: the harness infers the pinout from the nets that **cross
+  the selection boundary** (a net wired both inside and outside the box = a pin), you label + role-tag those
+  pins (§2.9), and it **Seals** into a cell — optionally replacing the selection in place with an instance.
+  This is *modeless* and kills the **blind empty-frame** problem: you build with real signals and context,
+  watch it work, *then* box it up — the build-then-extract pedagogy a teaching tool wants. The **drill-in
+  die editor stays**, but as the way you **re-open** an existing cell to edit and as the recursive
+  **zoom-to-open** inspection view — not the only way to *create*. **Two front-ends, one back-end:**
+  extraction and drill-in both produce the same `(cell graph + inferred pinout)` the
+  characterize/flatten/library stack already consumes; the scale boundary (§4.10) is set by the selection
+  bounds instead of a placed frame. **One wrinkle:** a selection containing a **packaged board IC** uses
+  that IC's *subassembly* form inside the new cell (the §4.5a "no packaged IC inside a die" invariant), or
+  extraction declines it.
 - **Leads-vs-interconnect visual fidelity (the honesty cue).** A **package** has **leads** and sits on a
   **board**; a **die** has **interconnect** and sits inside a package. The renderer should carry that
   distinction so the boundary reads at a glance — a placed IC shows leads/pins; drilled-in, you see
   die-level interconnect, **never** leaded packages nested inside a die (the §4.5a invariant, which also
   keeps the #20 "leads overhanging the wall" class of bug impossible by construction).
 
-So the scales are unified, not paneled: **one recursive editor, two libraries (board vs nested), Tape out
-as the commit at every tier, and a derived SSI→ULSI badge** to name where you are. The only thing that
+So the scales are unified, not paneled: **one recursive editor, two libraries (board vs nested), Seal/Tape
+out as the commit at each tier, and a derived SSI→ULSI badge** to name where you are. The only thing that
 makes a part board-legal is having been **taped out with a pinout** — which is exactly the real-world rule
 the owner wanted to honor.
+
+> **Naming, settled (owner, 2026-06-25).** **Tape out** is the *packaging* commit only (bare → board IC,
+> where you choose the pinout). The **bare subassembly commit keeps "Seal."** So: *Seal* a die into a
+> reusable nested block (→ "My Subassemblies"); *Tape out* a block into a packaged board part (→ "My
+> ICs"). This is truer to the real term — tape-out *is* the commit-to-fab/package step, not an
+> intermediate block.
+
+### 4.10 Subassembly portrayal + proportional scale (owner asks: the box, the pinout, and "how big?")
+
+Two owner questions land here: *(1) are subassemblies free-form boxes where I place + label + role-tag
+pins on the edges and resize as needed? (2) when I drop one into the next layer up, how is its size chosen
+so it's proportional?*
+
+**Portrayal — today vs the box model.** What ships is a **templated package**: `UserIc.package =
+{ archetype, pinCount }` (userIc.ts:32-47); you pick an archetype (SOT-23-3/5/6, VSSOP-8, DIP-8/14/16 —
+`packages.ts:47-168`) and pins land on the edges by **JEDEC-standard numbering** (`dualLayout`/`sipLayout`).
+You drill in as a **die** whose walls auto-derive from that package body (`dieBounds`, dieEditor.ts:129;
+`IC_BODY_PAD`/`IC_LEAD_LEN`/`userIcBodyBox`, glyphs.ts). You **can** freely label pins (`pinNames`, the
+die-editor popover); you **cannot** place pins at custom positions or resize the box. The right way to add
+the owner's free-form box is to **split it by role** (the §4.3 two libraries):
+
+- **Board IC** (taped out, sits on the real board) → stays a **real package**: standard archetype, pins on
+  edges per spec, body sized to the footprint. Free-form "draw a box, stick pins anywhere" would *break*
+  the teaching authenticity — a DIP-8 is a DIP-8. (Pick package + label pins ships today.)
+- **Subassembly** (bare, nested-only, "My Subassemblies") → **NEW**: the free-form box the owner wants — a
+  resizable rectangle, pins you drop on the edges and **label + role-tag** (the §2.9 roles), *because it is
+  an internal hierarchical block, not a physical part.* It never sits on a board directly, so it needs no
+  JEDEC footprint.
+
+**Tape out is the bridge.** Promoting a subassembly to a board IC **maps its free-form edge-pins onto a
+real package's pins** (pick DIP-8, assign box-pin → physical pin). *That mapping is "choosing the pinout."*
+Re-packaging redoes it onto a different package (§4.5).
+
+**Proportional scale — today it's "fit-to-box," the opposite of proportional.** Internals are drawn at
+full board scale (`PITCH`) then the whole container is **uniformly scaled by a fit-scale `s` onto the chip
+footprint**, with `cumulativeScale = ∏ of the parents' s` (what the zoom meter reads,
+userIcInternalsView.ts). So today `s = footprint ÷ content-extent`, and the footprint is a **fixed
+archetype size** — a 4-gate cell and a 400-gate cell in the same package get wildly different internal
+scales (the dense one crushed 100× smaller). That is the non-proportionality.
+
+**The fix — size the box *from* the contents, on one shared length scale.** Anchor every layer to the zoom
+meter's `MM_PER_TOP_CELL = 2.5mm` (zoomMeter.ts). Then a placed cell's footprint **is** its real internal
+extent at that scale, so "proportional" becomes literally "to-scale": area tracks content, so the box's
+**side tracks √(cell-count)** (4 gates → side `L`; 16 → `2L`; 400 → `10L`). The content extent is just
+`dieBounds` of the contents (already computed) instead of the archetype size.
+
+**The integration tier becomes the *process shrink* (σ).** Raw to-scale explodes — a gate and a CPU at one
+cell-size means a building-sized CPU or sub-pixel gates. Real silicon's only fix is **denser process per
+tier**, so introduce a **per-tier shrink σ** (the "process node"):
+
+> **placed footprint = (content extent) × σ(tier)**, floored by **`max(content×σ, perimeter-to-fit-the
+> pins)`** so a 40-pin cell always has edge enough for 40 pins.
+
+This makes the **SSI→ULSI badge (§4.4) do double duty — label *and* spatial scale.** Within a tier
+(σ fixed): footprint ∝ √(content) — proportional. Across tiers: σ compresses, so a VLSI block of a million
+gates fits a fingernail *because its σ is tiny* — which is physically *why* real VLSI is dense. And the
+zoom meter stays honest because it is all one length scale: each drill-in multiplies `cumulativeScale` by
+that child's `(extent×σ)/parent-cell` ratio, and the meter reads a real shrinking dimension (2.5mm → µm →
+nm). You never need one impossible 10,000× plunge because **drilling resets the local budget per level**
+(each tier ≈ σ⁻¹, a tidy 5–20×, well inside the `MAX_SCALE = 1000` we set — that headroom is *for* this).
+
+**Recommended dial (owner-confirmed):** **√(content) within a tier + a fixed σ per tier, tuned looser for
+legibility** — proportional where it matters, bounded zoom per drill-in, tier badge earns its keep. (The
+alternative, σ continuous from gate-count, is smoother but bands less cleanly.)
+
+### 4.10a Density has a cost — heat and money (owner ask; designed-around, not built now)
+
+σ is not a free visual knob — **it is a real engineering tradeoff, and that is the point.** Packing more
+into less footprint = a tighter σ = denser integration, and the price is exactly the owner's intuition:
+
+- **Heat ↑.** More dissipation per unit area. The mechanism is already **golden-safe and half-specced** (the
+  existing density brainstorm in `TODOS.md`): in **Real mode**, density **derates `RATED_CURRENT_SLOT`**
+  (lib.rs:2452), which feeds the **existing FAIL mask** — a too-dense part runs hot and trips its current
+  limit *sooner*, and the renderer boxes it. **Zero sim-core change, hash untouched** (`failed_elements`
+  is not in `snapshot_hash`; the rating only flags, never alters the solve).
+- **Cost ↑.** Finer process / bigger die both cost more — the economy hooks (Credits) price the σ choice.
+
+So the dial reads: **tight σ = small board footprint but hotter + pricier; loose σ = bigger but cooler +
+cheaper.** That is what makes the proportional-scale model *matter* rather than merely look right — you are
+trading **board area vs heat vs cost**, the actual VLSI tradeoff. This folds in the existing `TODOS.md`
+density brainstorm (density scalar on `UserIc.package`; a `dieScale` on `dieLayout`; a capacity budget at
+the commit; heat-as-derating; economy hooks; SOIC→TSSOP→QFN body archetypes with density-biased
+parasitics) — *one source of truth*, so the two don't drift. **Not built now** (owner: "doesn't quite
+matter right now, but should be noted and designed around"); recorded here so the σ model and the
+density-cost model are one design from the start.
 
 ---
 
@@ -911,6 +1070,35 @@ opt in.
 
 ## 8. Open questions for the owner
 
+> **RESOLVED (owner, 2026-06-25).** The numbered questions below are answered; kept verbatim for the
+> reasoning. Decisions, by this section's numbering:
+> | Q | Decision |
+> | --- | --- |
+> | 8.1 Fidelity granularity | **Per-instance** |
+> | 8.2 Inner telemetry | **DC operating-point read** |
+> | 8.3 Tier bands | **Game-scaled curve, textbook names** |
+> | 8.4 Wide-cell strategy | **Fabric of LUT4s** |
+> | 8.5 Cycle-equivalence | **Accepted** (re-explore flagged later) |
+> | 8.6 Collapsed-cell zoom | **(c) transparent local-solve** — the build-toward goal |
+> | 8.7 Role default | **Default subassembly**; promote via packaging |
+> | 8.8 Leaf boundary | **Zoom depth + budget decides** — no forced floor |
+> | 8.9 Bidirectional buses | **Deferred, kept open** |
+> | 8.10 Truth-eval ownership | **Option A (TS port) + a CI cross-check test** vs Rust through wasm |
+> | 8.11 Eviction hysteresis | **Yes — warm-keep** N frames |
+> | 8.12 Double-solve gating | **Yes — gate Tier-2 to digital-run cells** |
+> | 8.13 "Tape out" wording | **Tape out = packaging only; bare commit stays "Seal"** (§4.10) |
+> | 8.14 Pinout prompt | **Only when promoting to a board IC** |
+>
+> **Scale dial (from §4.10):** **√(content) within a tier + fixed σ per tier, tuned looser for
+> legibility.** **Density-cost (§4.10a):** noted + designed-around (heat = Real-mode rating-derate; cost =
+> economy), **not built now.**
+>
+> **Newly open (raised by §2.9 / §4.10, for a later pass):** (i) characterization auto-captures the
+> worst-case pin current as the default rating, or leave it manual? (ii) sequential sweep — auto-exercise
+> only the declared clock, or let the author name a reset/enable pin for a complete next-state table?
+> (iii) free-form subassembly box — truly drag-anywhere edge-pins + drag-resize, or gridded (snap pins to
+> edge cells)? (Gridded is far easier to render/route and still feels free.)
+
 1. **Fidelity granularity.** Per-**instance** (`Component.fidelity`, like tier/variant — same CPU cell
    opened live in one spot, collapsed everywhere else) or per-**definition** ("always collapse above
    tier X")? Per-instance is more flexible and reuses the variant/tier axis, but a board then mixes
@@ -998,8 +1186,12 @@ separate sim.
 a logic-level eval of a **real powered gate** (VCC/GND kept; not a 3-pin teaching gate, not CMOS — §2.0).
 The building flow is **two libraries** ("My ICs" board-placeable vs "My Subassemblies" nested-only) over
 **one recursive die editor**, with drill-in/out as the scale boundary and a derived SSI→ULSI badge — not
-a panel per scale (§4.9). The commit action is renamed **Tape out** (§4.5). **Promotion goes through the
-full packaging process to choose the pinout — not a one-click `role` flip** (the panel's original §4.5 was
-corrected). **Re-packaging is allowed** (re-run Tape out; no instance churn). **Chiplets are just another
-scale of subassembly integration** — a die never contains a packaged IC, only bare cells/interconnect
-(§4.5a). None of these touch the solver; all are web/UI/persistence/render, so the golden is untouched.
+a panel per scale (§4.9). The **bare commit is "Seal," the packaging commit is "Tape out"** (§4.10).
+**Promotion goes through the full packaging process to choose the pinout — not a one-click `role` flip**
+(the panel's original §4.5 was corrected). **Re-packaging is allowed** (re-run Tape out; no instance
+churn). **Chiplets are just another scale of subassembly integration** — a die never contains a packaged
+IC, only bare cells/interconnect (§4.5a). Later sections add the **characterization test-bench** (§2.9 —
+declare roles, derive the rest, auto-sweep on a scratch `Sim`), **subassembly portrayal + proportional
+scale** (§4.10 — free-form box; footprint = content × per-tier shrink σ), and **density-as-cost** (§4.10a
+— heat + money). None of these touch the solver; all are web/UI/persistence/render, so the golden is
+untouched.

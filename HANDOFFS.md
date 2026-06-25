@@ -5,6 +5,46 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + portrayal/characterization/density/overworld
+
+**State:** 🟢 docs-only, golden `0xeaac…fa24` untouched; branch `claude/kind-turing-hdelb3` (0/0 with origin).
+Continued the (138) exploration through a full owner decision pass + three new sections. All in
+`docs/cell-characterization-and-integration-hierarchy.md`.
+
+- **All 14 §8 questions RESOLVED** (table at the top of §8). Headlines: wide-cell = **fabric of LUT4s**;
+  fidelity = **per-instance**; collapsed-cell zoom = **(c) local-solve** (build-toward); truth-eval
+  ownership = **Option A (TS port) + a CI cross-check test** vs Rust-through-wasm; leaf boundary = **zoom
+  depth/budget decides**; bidirectional buses **deferred**; double-solve **gated**; eviction **warm-keep**.
+- **§2.9 characterization test-bench (NEW).** Declare pin **roles** + the **supply**; **derive** family /
+  thresholds / voltage (rails × family fraction) and the **stimulus** (auto exhaustive 2ᵏ sweep). Reuses the
+  **already-shipped** Phase-1 pin-stimuli (`PinTest`/`dieTestGraph`, authoring-only, raw graph untouched)
+  on an **offscreen scratch `Sim`** (the contract-check pattern). Current = **optional rating** (slot 2,
+  FAIL-flag only). Ceiling: exhaustive sweep is **small-leaf only** → wide cells are a **fabric**.
+- **§4.10 portrayal + proportional scale (NEW).** Today = fit-to-box (`s = footprint/content`, NOT
+  proportional). Fix: size box **from** content on one length scale (`MM_PER_TOP_CELL` anchor) →
+  **footprint = content-extent × σ(tier)**, side ∝ √(cell-count), floored by pin-perimeter. **σ = the
+  per-tier process shrink = the SSI→ULSI badge doing double duty**; zoom meter stays honest (cumulativeScale
+  × σ per drill-in; the 1000× budget is the per-tier headroom). Dial = **√(content) within tier + fixed σ
+  per tier, looser for legibility**. Portrayal split: **board IC = real package** (templated), **subassembly
+  = free-form resizable box** with edge-pins you place/label/role-tag.
+- **§4.10a density-as-cost (NEW).** Tighter σ (more density) → **heat ↑** (Real-mode derate of
+  `RATED_CURRENT_SLOT` → existing FAIL mask, golden-safe) + **cost ↑** (economy). Folds in the existing
+  `TODOS.md` density brainstorm. **Designed-around, not built now.**
+- **Naming refined.** **"Tape out" = the PACKAGING commit only** (bare → board IC, choose pinout); the bare
+  subassembly commit **stays "Seal."** (Un-globalized the earlier Seal→Tape-out rename; §4.5/§4.10 + the
+  front-matter + the §4.6 table all reconciled.)
+- **§4.9 overworld authoring (NEW, owner ask, RECOMMENDED).** Build on the board → **box-select → "Make
+  subassembly"**; pinout **inferred from boundary-crossing nets**; Seals into a cell (optionally replaces
+  selection with an instance). Kills the **blind-empty-frame** problem (build-then-extract pedagogy).
+  **Drill-in stays** as re-open/edit + the recursive zoom-to-open. Two front-ends, one back-end. Wrinkle: a
+  selection containing a packaged IC uses its subassembly form (§4.5a invariant) or declines.
+
+**Next:** owner is wrapping the design pass. Nothing to build yet (explicit "on paper first"). If greenlit,
+the §7 phased path is unchanged (ADR reconciliation → role flag + "My Subassemblies" bin → tier badge →
+Tier-1 telemetry → `solveCell` → characterization sweep), with overworld-extract as the Seal front-end.
+
+---
+
 ## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration (the "build a CPU" mesh)
 
 **State:** 🟢 docs-only, golden `0xeaac…fa24` untouched by construction; branch `claude/kind-turing-hdelb3`,

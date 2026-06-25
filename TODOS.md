@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + 3 new sections
+
+- ~~**Resolve all §8 open questions**~~ — DONE. 14 owner decisions logged in a table at the top of §8
+  (`docs/cell-characterization-and-integration-hierarchy.md`). Wide-cell = fabric; fidelity = per-instance;
+  collapsed-zoom = (c) local-solve; truth-eval = Option A (TS port) + CI cross-check; etc.
+- ~~**§2.9 characterization test-bench**~~ — DONE. Declare pin roles + supply; derive family/thresholds/
+  voltage + auto-sweep; reuse shipped Phase-1 pin-stimuli on an offscreen scratch `Sim`; current = optional
+  rating; exhaustive sweep = small-leaf-only → fabric for wide cells.
+- ~~**§4.10 portrayal + proportional scale**~~ — DONE. footprint = content × σ(tier); side ∝ √(cell-count);
+  σ = per-tier process-shrink = the SSI→ULSI badge; board IC = real package, subassembly = free-form box.
+- ~~**§4.10a density-as-cost**~~ — DONE. heat = Real-mode derate of `RATED_CURRENT_SLOT` (FAIL mask, golden-
+  safe); cost = economy. Folds in the existing density brainstorm below. Designed-around, not built.
+- ~~**§4.9 overworld authoring**~~ — DONE. build → box-select → "Make subassembly"; pinout inferred from
+  boundary-crossing nets; drill-in becomes re-open/inspect. The recommended easy on-ramp (Seal front-end).
+- ~~**Naming**~~ — DONE. "Tape out" = packaging commit only; bare commit stays "Seal" (un-globalized).
+- [ ] **NEW open (deferred, in §8):** characterization rating auto-measured vs manual; sequential sweep
+  reset/enable pin; free-form box drag-anywhere vs gridded edge-pins. (Decide at build time.)
+- [ ] **Cross-ref:** the "Denser/larger package variants" brainstorm below is now the build-backlog for
+  §4.10a's density-as-cost design — keep them in sync.
+
 ## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration
 
 - ~~**Cell characterization + live inner telemetry + integration hierarchy**~~ — DONE
