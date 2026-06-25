@@ -214,6 +214,15 @@ export interface PinTest {
   value: number;
 }
 
+/**
+ * A sealed cell's SEMANTIC pin role (cell-characterization arc, §2.9) — what a pin *is*, persisted on
+ * the sealed {@link UserIc} (its `pinRoles`), distinct from the throwaway authoring-only
+ * {@link PinTestRole} stimulus. `in`/`clk` are driven inputs, `out` is observed, `vcc`/`gnd` are the
+ * rails. Read by Tape-out (which pin maps to which package pad) and the characterization sweep (which
+ * pins to drive vs observe). Absent ⇒ unknown (callers fall back to name/stimulus heuristics).
+ */
+export type PinRole = "in" | "out" | "vcc" | "gnd" | "clk";
+
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
  * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */
 export const AC_DEFAULT_AMP = 5;
@@ -1312,7 +1321,7 @@ export const PART_KINDS: Record<string, PartKind> = {
 // dedicated glyph. defaultValue 0 / unit "" -> the inspector shows no value picker.
 //
 // (archetype, pinCount) -> a clean tag + display name, e.g. SOT-23/6 -> "SOT23_6" / "SOT-23-6".
-function frameTag(archetype: string, pinCount: number): string {
+export function frameTag(archetype: string, pinCount: number): string {
   // Strip the hyphen from the archetype for a terse identifier, then join the pin count. Use an
   // underscore separator ONLY when the stripped name already ends in a digit (the SOT-23 family:
   // "SOT23" + 6 -> "SOT23_6"), so the count doesn't mash into the archetype's own digits; names

@@ -85,13 +85,17 @@ inside).
   node — the seal-as-same-netlist guarantee holds straight through the package wall.
 - A sealed blueprint's reproducibility = its sub-graph's reproducibility: save/load must round-trip every
   element param exactly (the `SavedCircuit` contract). Integer/structural params only, per ADR 0004.
-- **Depth is bounded by rule — one layer of user nesting.** A user IC may contain built-in parts (which
-  carry their own factory composition, e.g. gates inside a half-adder) but **never another user IC**, so
-  expansion is always shallow and finite: user IC -> built-in parts -> primitives. No recursion, no
-  runaway expand cost, and the "open the box" zoom always terminates. The **Tier-A sealed-behavior
-  backing** (`ic-buildings-ideation.md` §2.3) is therefore an *optional optimization* for large flat
-  designs, not a depth necessity. Enforcement: the user-IC library is unavailable on the authoring canvas
-  (you may place discretes + built-ins, not other user ICs).
+- **Depth is bounded by a perf budget, NOT a one-layer rule (SUPERSEDED 2026-06-25).** The original rule
+  here was "exactly one layer of user nesting — never another user IC." That is **no longer true**:
+  `flattenUserIcs` (web/src/lib/userIc.ts:539) is **live-recursive**, inlining sealed cells inside cells to
+  a fixed point, bounded by `MAX_DEPTH = 24` / `MAX_INSTANCES = 4096` (userIc.ts:582-583) — a **perf
+  budget**, not a model rule. Recursive nesting shipped (the zoom-to-open LoD arc); the 4-LUT teardown
+  counts 21 nested user-IC instances. The **Tier-A sealed-behavior backing** is therefore the *scale*
+  enabler (collapse a deep hierarchy to one cheap `ELEM_BEHAVIORAL`), not merely an optional flat-design
+  optimization — see `docs/cell-characterization-and-integration-hierarchy.md`. (Drill-in *authoring* is
+  still single-context — App.svelte:2378-2380 — but that is a UI choice off the gate critical path, not a
+  depth bound.) The old "library unavailable on the authoring canvas" enforcement is likewise retired:
+  placing a sealed cell inside another is the intended recursive-stacking mechanic.
 
 ## The authoring flow (UI surface)
 

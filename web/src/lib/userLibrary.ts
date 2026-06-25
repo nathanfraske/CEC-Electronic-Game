@@ -68,6 +68,16 @@ function rowTag(e: LibraryEntry): string {
   return hash >= 0 ? child.slice(0, hash) : child;
 }
 
+/**
+ * The bin role of a library row — read off the def (`e.ic.role`), NOT a separate `LibraryEntry` field
+ * (which a re-seal upsert would clobber). Absent ⇒ `'ic'` (board-placeable), so every existing row is
+ * unchanged. A `'subassembly'` row is hidden from the board parts bin and offered only inside the
+ * die-editor place flow (§4.3 / §4.9). See {@link entryRole} (re-exported for App.svelte's bin split).
+ */
+export function entryRole(e: LibraryEntry): "ic" | "subassembly" {
+  return e.ic.role === "subassembly" ? "subassembly" : "ic";
+}
+
 /** Load the library, falling back to an empty one on absence / corruption / version mismatch. */
 export function loadLibrary(): UserLibrary {
   if (!available()) return { v: 1, entries: [] };

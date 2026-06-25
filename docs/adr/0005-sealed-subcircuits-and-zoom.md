@@ -101,3 +101,13 @@ Adopt **seal-as-the-same-netlist** as the spine, surfaced by a **zoom-to-open** 
 - This ADR makes `ic-buildings-ideation.md` Tier C concrete in light of what we have actually built; the
   ideation doc's fidelity ladder (A behavioral / B macro-model / C sealed) is unchanged and still owns the
   per-IC tiering rationale.
+- **Companion note (2026-06-25) — characterize/collapse breaks "seal-as-same-netlist" in the SOLVE, by
+  design.** This ADR's framing is that a sealed cell *is* its sub-netlist (the netlist is the genuine
+  circuit). The cell-characterization arm
+  (`docs/cell-characterization-and-integration-hierarchy.md`) deliberately introduces a **fidelity-gated
+  exception**: a *collapsed* cell is **not** its discrete netlist in the global solve — one
+  `ELEM_BEHAVIORAL` prog-4 LUT stands in for its FETs, so an 8086-scale fabric stays cheap. The **render
+  path still shows the genuine circuit** (zoom-to-open animates the recorded graph, and a local solve
+  recovers real inner V/I), so "the box is honest" holds for the *eye*; only the *solve* swaps in the cheap
+  face, and only when the instance opts into `fidelity='behavioral'`. This is an intentional LoD exception,
+  not a regression — and it is golden-safe: the golden places no user IC, so flatten is a no-op for it.

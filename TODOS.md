@@ -6,6 +6,81 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels
+
+- ~~**Bench-realism + EMI kernel panel**~~ — DONE (`docs/bench-realism-and-emi-kernel.md`). Heat/reality/EMI
+  instruments + the small-loop EMI estimator on the analytic AC path. Fixed: `drawJunctionConduit` lens already
+  threaded; overlay lenses are NEW not REUSE; `acSweep` returns node voltages; thermistor `temp` hazard named.
+- ~~**Accessibility & reach panel**~~ — DONE (`docs/ui/accessibility-and-reach.md`). 8 a11y axes + the board→prose
+  engine. Fixed: player-built-board degrade example; `ConceptCard.short` is NEW authoring (4 cards need shorts).
+- ~~**Mid-game + classroom + sharing panel**~~ — DONE (`docs/game-midgame-classroom-sharing.md`). Campaign pacing,
+  seed-is-the-mechanism classroom, `ShareEnvelope` sharing. Fixed: digest ↔ Codec (roadmap #1); `customers.ts`
+  backs the existing `standing[CustomerId]`; M0 daily local-only until the digest lands.
+- ~~**Per-component reality curriculum panel**~~ — DONE (`docs/game-component-reality-curriculum.md`). Paced
+  non-idealities, the order, the ease-in. BLOCKER fixed: op-amp slew NOT modeled → CLASS B; rail CLIP is the real
+  time-domain bite; GBW is AC-only (Bode). Down-ranked unverified ZD/MOV/compliance.
+- [ ] **Task #16 (deferred):** once the IC-maker/seal mechanic is built, design how to teach it; then fold all four
+  panels' §Open-questions into `implementation-plan.md` (the single decision ledger).
+
+---
+
+## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + 3 new sections
+
+- ~~**Resolve all §8 open questions**~~ — DONE. 14 owner decisions logged in a table at the top of §8
+  (`docs/cell-characterization-and-integration-hierarchy.md`). Wide-cell = fabric; fidelity = per-instance;
+  collapsed-zoom = (c) local-solve; truth-eval = Option A (TS port) + CI cross-check; etc.
+- ~~**§2.9 characterization test-bench**~~ — DONE. Declare pin roles + supply; derive family/thresholds/
+  voltage + auto-sweep; reuse shipped Phase-1 pin-stimuli on an offscreen scratch `Sim`; current = optional
+  rating; exhaustive sweep = small-leaf-only → fabric for wide cells.
+- ~~**§4.10 portrayal + proportional scale**~~ — DONE. footprint = content × σ(tier); side ∝ √(cell-count);
+  σ = per-tier process-shrink = the SSI→ULSI badge; board IC = real package, subassembly = free-form box.
+- ~~**§4.10a density-as-cost**~~ — DONE. heat = Real-mode derate of `RATED_CURRENT_SLOT` (FAIL mask, golden-
+  safe); cost = economy. Folds in the existing density brainstorm below. Designed-around, not built.
+- ~~**§4.9 overworld authoring**~~ — DONE. build → box-select → "Make subassembly"; pinout inferred from
+  boundary-crossing nets; drill-in becomes re-open/inspect. The recommended easy on-ramp (Seal front-end).
+- ~~**Naming**~~ — DONE. "Tape out" = packaging commit only; bare commit stays "Seal" (un-globalized).
+- [ ] **NEW open (deferred, in §8):** characterization rating auto-measured vs manual; sequential sweep
+  reset/enable pin; free-form box drag-anywhere vs gridded edge-pins. (Decide at build time.)
+- [ ] **Cross-ref:** the "Denser/larger package variants" brainstorm below is now the build-backlog for
+  §4.10a's density-as-cost design — keep them in sync.
+
+## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration
+
+- ~~**Cell characterization + live inner telemetry + integration hierarchy**~~ — DONE
+  (`docs/cell-characterization-and-integration-hierarchy.md`). The "build a full CPU" mesh: sim and render are
+  already decoupled, so it is a **LoD split, not a solver merge**. Dual-face cell (characterize → one
+  `ELEM_BEHAVIORAL` LUT for scale; keep the discrete graph for the eye); on-zoom local DC solve on a separate
+  hash-isolated scratch `Sim` for live inner V/I; subassembly-vs-IC `role` flag over the existing recursive
+  sealed-cell system. 6-agent panel (SHIP-WITH-FIXES, determinism SOUND); I authored the file folding in the
+  conversational refinements. Golden `0xeaac…fa24` untouched (web/render/doc only, append-and-default-off).
+- ~~Powered-gate clarification~~ — captured (§2.0): "cheap digital solve" = logic-level eval of a *real powered*
+  gate (VCC/GND kept; not a 3-pin teaching gate, not CMOS). ~~"Tape out" rename~~, ~~re-packaging~~,
+  ~~chiplets-as-scale~~, ~~packaging-process promotion (not a one-click flip)~~ — all folded into §4.5/§4.5a/§4.9.
+- [ ] **OWNER REVIEW** of the exploration (14 open questions in §8) before any implementation — owner framed this
+  as "nail it on paper first; do NOT implement." Key calls to make: fidelity granularity, wide-cell route
+  (LUT4 fabric vs new wider `BEH_PROG_*`), SSI→ULSI band thresholds, Tape-out button wording.
+- [ ] **IF greenlit, smallest-first build order** (§7): ADR 0005/0006 reconciliation (doc) → `role` flag + "My
+  Subassemblies" bin → SSI→ULSI tier badge → Tier-1 forward-eval telemetry → `solveCell` wasm + scratch `Sim` →
+  the characterization sweep + flatten branch. The wide-cell **fabric** route is the real CPU-scale enabler.
+
+## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms
+
+- ~~**Master implementation plan**~~ — DONE (`docs/implementation-plan.md`). Consolidated owner-decision ledger
+  (A–F) + the dependency-ordered build sequence. Workflow + 2 critics; restored ~12 dropped decisions.
+- ~~**Contracts deep-dive**~~ — DONE (`docs/game-contracts-deep-dive.md`). Grading, the per-family SIM-PASS
+  matrix, tiered-reality-vs-score (→ rider-hybrid). Fixed the aliasing clamp (all transient families) + SMPS
+  harmonics → analytic path.
+- ~~**Product-sim failure modes + economics**~~ — DONE (`docs/game-product-sim-failure-modes.md`). 12-mode
+  catalog + reliability v2 + P&L. Fixed marginal-row recall-share + reputation scale.
+- ~~**Lux + Lab Book**~~ — DONE (`docs/game-lux-and-lab-book.md`). Faucet + 5-type challenge deck → Lux →
+  unlock. Firewall hardened (one-shot PREDICT/BUILD; capped generated deck).
+- ~~**Tech-tree format + categorization**~~ — DONE (`docs/game-tech-tree-format.md`). Hybrid era-spine
+  journey-map + era×domain. Fixed AC-render-overlay / bin-not-built / unlocksFidelity / Era-1-EC.
+- [ ] **Fold the 4 brainstorms' open-questions into `implementation-plan.md`** so the ledger stays the single
+  source of truth (deferred; each doc has its own §Open-questions now).
+- [ ] **IMPLEMENT (cheapest first):** product-sim Phase-1 report card + the MVP economy loop (see the plan's
+  phased table). Heads-up: docs referencing `coaching.ts` mean `concepts.ts` (partially built).
+
 ## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
 
 - ~~**Fundamentals scaffold arc**~~ — DONE (`docs/ui/fundamentals-scaffold-arc.md`). Show-don't-tell,

@@ -5,6 +5,159 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels (bench-realism+EMI · accessibility · mid-game/classroom/sharing · component-reality curriculum)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`. Owner asked for design docs covering BOTH
+how-to-build AND how-to-ease-the-player-in for the panels picked last round (IC-maker teaching **deferred** until
+the mechanic lands — Task #16). Plus a standalone panel on pacing each component's reality aspect over time. **All
+four landed** (each via a multi-lens workflow + 2 adversarial critics, SHIP-WITH-FIXES; every BLOCKER/MAJOR applied
+vs live code, then a second code-fact audit per doc before commit):
+
+- **`docs/bench-realism-and-emi-kernel.md`** — the heat/reality/EMI bench instruments + the invisible-electronics
+  EMI estimator kernel (small-loop-antenna model on the analytic AC path, off the hashed time-domain solve).
+  Fixed: `drawJunctionConduit` already takes a `lens` (the "one real gap" was false — removed); the
+  thermal/emi/return/rf **overlay lenses are NEW** (a `BoardLens` union extension), not existing REUSE; `acSweep`
+  yields node voltages not currents (harmonic I = Y·ΔV); named the **thermistor** as the one kind where
+  `Component.temp` enters the hashed netlist (Tj writes a separate display field); `failed_elements`-unhashed
+  anchor → `lib.rs:2481`.
+- **`docs/ui/accessibility-and-reach.md`** — the 8 a11y axes + the **board→prose** narration engine. Fixed (vs the
+  critics): a player-BUILT-board worked example (graceful degrade with no authored net names), and `ConceptCard.short`
+  flagged as **NEW authoring** (the 4 existing cards each need a short written — owner/content hand-off).
+- **`docs/game-midgame-classroom-sharing.md`** — campaign pacing (the 5-beat repeating measure + per-era escalation),
+  the seed-is-the-mechanism classroom mode (zero-backend T1), and the `ShareEnvelope`-over-`BoardBlob` sharing loop.
+  Fixed (cross-doc): `replayDigest`+`ShareEnvelope` are the web surface of roadmap #1 **the Codec** (one codec, not
+  two); `customers.ts` is the named registry backing the economy's **existing** `standing: Record<CustomerId,number>`
+  axis, not net-new; softened "only hard gate"; the 30-day-gap test marked NEW (not inherited); difficulty maps to
+  the per-era `band`; M0 daily ships local/unverified (verified leaderboard waits on the digest at M1).
+- **`docs/game-component-reality-curriculum.md`** — the paced per-component non-ideality curriculum (which reality,
+  in what order, how the player is eased into designing around each). **BLOCKER fixed:** op-amp **slew is NOT
+  modeled** (the transient op-amp is algebraic `Vsat·tanh`, no dV/dt state) — re-tagged `gap:physics`/CLASS B, and the
+  op-amp's real time-domain first bite is the **rail CLIP** (already modeled); **GBW is AC-only** (Bode/phase scope,
+  not a time-scope edge). Also: voltage/energy rating = a NEW web-side detector (not a free slot-2 mirror); ZD/MOV/
+  compliance down-ranked to roadmap-unverified; Step-1 LED reconciled as the pre-era cold-open; `Vsat·tanh` cite →
+  `lib.rs:3093`.
+
+**Through-line held:** every mechanic is web-side over the unhashed snapshot / analytic AC path → the Rust gates stay
+green-unchanged (golden `0xeaac…fa24`); `failed_elements` and `ac_measurements` are excluded from `snapshot_hash`, so
+heat/EMI/reality overlays only **flag**, never alter the solve.
+
+**Follow-up (deferred):** Task #16 — once the IC-maker/seal mechanic is built, plan how to teach it; then fold all the
+panels' §Open-questions into `implementation-plan.md` as the single decision ledger.
+
+---
+
+## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + portrayal/characterization/density/overworld
+
+**State:** 🟢 docs-only, golden `0xeaac…fa24` untouched; branch `claude/kind-turing-hdelb3` (0/0 with origin).
+Continued the (138) exploration through a full owner decision pass + three new sections. All in
+`docs/cell-characterization-and-integration-hierarchy.md`.
+
+- **All 14 §8 questions RESOLVED** (table at the top of §8). Headlines: wide-cell = **fabric of LUT4s**;
+  fidelity = **per-instance**; collapsed-cell zoom = **(c) local-solve** (build-toward); truth-eval
+  ownership = **Option A (TS port) + a CI cross-check test** vs Rust-through-wasm; leaf boundary = **zoom
+  depth/budget decides**; bidirectional buses **deferred**; double-solve **gated**; eviction **warm-keep**.
+- **§2.9 characterization test-bench (NEW).** Declare pin **roles** + the **supply**; **derive** family /
+  thresholds / voltage (rails × family fraction) and the **stimulus** (auto exhaustive 2ᵏ sweep). Reuses the
+  **already-shipped** Phase-1 pin-stimuli (`PinTest`/`dieTestGraph`, authoring-only, raw graph untouched)
+  on an **offscreen scratch `Sim`** (the contract-check pattern). Current = **optional rating** (slot 2,
+  FAIL-flag only). Ceiling: exhaustive sweep is **small-leaf only** → wide cells are a **fabric**.
+- **§4.10 portrayal + proportional scale (NEW).** Today = fit-to-box (`s = footprint/content`, NOT
+  proportional). Fix: size box **from** content on one length scale (`MM_PER_TOP_CELL` anchor) →
+  **footprint = content-extent × σ(tier)**, side ∝ √(cell-count), floored by pin-perimeter. **σ = the
+  per-tier process shrink = the SSI→ULSI badge doing double duty**; zoom meter stays honest (cumulativeScale
+  × σ per drill-in; the 1000× budget is the per-tier headroom). Dial = **√(content) within tier + fixed σ
+  per tier, looser for legibility**. Portrayal split: **board IC = real package** (templated), **subassembly
+  = free-form resizable box** with edge-pins you place/label/role-tag.
+- **§4.10a density-as-cost (NEW).** Tighter σ (more density) → **heat ↑** (Real-mode derate of
+  `RATED_CURRENT_SLOT` → existing FAIL mask, golden-safe) + **cost ↑** (economy). Folds in the existing
+  `TODOS.md` density brainstorm. **Designed-around, not built now.**
+- **Naming refined.** **"Tape out" = the PACKAGING commit only** (bare → board IC, choose pinout); the bare
+  subassembly commit **stays "Seal."** (Un-globalized the earlier Seal→Tape-out rename; §4.5/§4.10 + the
+  front-matter + the §4.6 table all reconciled.)
+- **§4.9 overworld authoring (NEW, owner ask, RECOMMENDED).** Build on the board → **box-select → "Make
+  subassembly"**; pinout **inferred from boundary-crossing nets**; Seals into a cell (optionally replaces
+  selection with an instance). Kills the **blind-empty-frame** problem (build-then-extract pedagogy).
+  **Drill-in stays** as re-open/edit + the recursive zoom-to-open. Two front-ends, one back-end. Wrinkle: a
+  selection containing a packaged IC uses its subassembly form (§4.5a invariant) or declines.
+
+**Next:** owner is wrapping the design pass. Nothing to build yet (explicit "on paper first"). If greenlit,
+the §7 phased path is unchanged (ADR reconciliation → role flag + "My Subassemblies" bin → tier badge →
+Tier-1 telemetry → `solveCell` → characterization sweep), with overworld-extract as the Seal front-end.
+
+---
+
+## 2026-06-25 (138) — DESIGN: cell-characterization + integration-hierarchy exploration (the "build a CPU" mesh)
+
+**State:** 🟢 docs-only, golden `0xeaac…fa24` untouched by construction; branch `claude/kind-turing-hdelb3`,
+fast-forwarded onto the other agent (137). Owner-directed exploration ("write it up, nail it on paper, do NOT
+implement"): how to build gates from transistors, keep the cheap solve at CPU scale, AND see all inner
+currents/voltages live. Landed via a 6-agent cross-checked panel (critic verdict SHIP-WITH-FIXES; determinism
+SOUND, every anchor re-verified vs live code), then I authored the file folding in all conversational refinements.
+
+- **`docs/cell-characterization-and-integration-hierarchy.md`** (NEW) — the core realization: sim and render are
+  **already decoupled** (renderer reads a per-frame snapshot, not the matrix), so the three asks mesh as a
+  **level-of-detail split, not a solver merge**. **§2 dual-face cell:** characterize a sealed cell at tape-out
+  (offscreen deterministic sweep → truth/next-state table) and emit **one `ELEM_BEHAVIORAL` prog-4 LUT**
+  (already exists end-to-end, `BEH_SPEC.LUT`) instead of flattening its FETs — zero analog cost for logic;
+  ≤4-in/≤1-bit only today, wider cells = a **LUT4 fabric** (the real new work). **§3 live inner telemetry:**
+  Tier-1 forward-eval everywhere + Tier-2 **on-zoom local DC solve** on a *separate hash-isolated scratch `Sim`*
+  (Thévenin pin boundary, NOT stiff VSOURCEs) feeding the existing `drawUserIcInternals`. **§4 hierarchy:** ~80%
+  relabel of shipped mechanism (recursive `flattenUserIcs` IS perverse stacking; `role` flag = subassembly vs IC).
+- **Folded in from the live conversation (panel didn't have these):** **§2.0** the powered-gate clarification
+  (the "cheap digital solve" = logic-level eval of a *real powered* gate — VCC/GND kept, quantize-vs-GND/family
+  threshold, drive to real rail, O(gates); **NOT** a 3-pin teaching gate, **NOT** CMOS; CMOS lives on the FET
+  face + the local solve). **§4.5 CORRECTED** the panel's wrong "promote = one-click `role` flip" → promotion
+  goes through the **full packaging process to choose the pinout**; the commit action is renamed **"Tape out"**;
+  **re-packaging allowed** (re-run, no instance churn). **§4.5a** chiplets = just another subassembly scale (a die
+  never holds a packaged IC). **§4.9** the building flow: **two libraries** ("My ICs" board / "My Subassemblies"
+  nested) over ONE recursive die editor, drill-in/out = the scale boundary, derived SSI→ULSI badge (no panel-per-scale).
+- **The 8086 endgame (§5), stated honestly:** collapse removes logic nets from the dense MNA but **supply nets
+  stay analog** and the digital evaluator is **O(cells×subtick_rate)** — a *massive* win over flattening every
+  FET (O(n³)), but **bounded**, not "free." §2.7 scopes cycle-equivalence (holds for synchronous/registered CPUs;
+  deep unregistered combinational chains need a costly GLOBAL sub-tick rate). §2.7a: `BEH_SUBTICK_RATE_SLOT ==
+  RATED_CURRENT_SLOT` (slot 2) — a sub-ticked cell forgoes a current rating.
+
+**Open for owner (§8, 14 Qs):** fidelity granularity (per-instance recommended); DC-read vs stepped inner sim;
+SSI→ULSI band thresholds; wide-cell route (fabric vs new wider `BEH_PROG_*`); Tape-out button wording. **No code
+written — exploration only**, per owner. Suggested first builds if greenlit (§7): ADR reconciliation → role flag +
+"My Subassemblies" bin → tier badge → Tier-1 telemetry → `solveCell` → characterization sweep.
+
+---
+
+## 2026-06-25 (137) — DESIGN: implementation plan + 4 deep brainstorms (contracts · product-sim · Lux/LabBook · tech-tree)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent (136).
+Owner drove a deep planning pass: consolidate decisions + draft an implementation plan, then four standalone
+brainstorms. **All five landed** (each via a multi-lens workflow + 2 adversarial critics, SHIP-WITH-FIXES,
+every BLOCKER/MAJOR applied vs live code):
+
+- **`docs/implementation-plan.md`** (`8f53d9e`) — the planning capstone: the consolidated **owner-decision
+  ledger** (groups A–F, BLOCKER/PRE-BUILD/TUNING) + the **master build sequence** (spine `P0a→P0→P1→P2→O2`;
+  smallest fun slice `P0a+P0+O1`; the shared grader/seed built ONCE; the EMI-kernel block). Restored ~12
+  decisions the consolidator dropped.
+- **`docs/game-lux-and-lab-book.md`** (`24755e3`) — Lux faucet + the Lab Book challenge deck
+  (PREDICT/BUILD/BREAK/REVERSE/DEMONSTRATE) → Lux → license a tier → unlock a part. **Firewall hardened:**
+  PREDICT/BUILD one-shot; generated deck capped (bounded Lux).
+- **`docs/game-product-sim-failure-modes.md`** (`42dfe2c`) — the 12-mode failure catalog + reliability v2 +
+  full P&L economics. Fixed the marginal-row recall-share + unified reputation to the 0..100 scale.
+- **`docs/game-contracts-deep-dive.md`** (this commit) — grading (`SpecLine`, pass/fail-gates + score-coaches),
+  the per-family **SIM-PASS MATRIX**, and the **tiered-reality-vs-score** decision (→ the rider-hybrid).
+  Fixed: the <62.5 kHz aliasing clamp now binds **every** transient-graded family (regulator step + standing
+  ramp), and SMPS ripple harmonics route to the analytic AC path (dropped "kHz SMPS fine").
+- **`docs/game-tech-tree-format.md`** (this commit) — the hybrid era-spine journey-map + **era×domain**
+  categorization. Fixed: AC side-rail is a **render overlay** (no new `TechNode`s); bin-greying is specced-not-
+  built; added `unlocksFidelity`; Era-1 carries the `EC` chip **and** the fidelity toggle (not part-less).
+
+**Cross-doc through-lines held:** one shared grader/seed (`mulberry32`, not `SEED=1337`); Lux only from
+understanding; everything web-side so the **Rust gates stay green-unchanged** (the golden-safety proof).
+
+**Follow-up (deferred):** fold the 4 brainstorms' new open-questions into the implementation-plan ledger so it
+stays the single source of truth (each doc has its own §Open-questions in the meantime). Note: the earlier docs'
+references to a hypothetical `coaching.ts` are actually `concepts.ts` (partially built). Then: implement from
+the plan — cheapest first = product-sim Phase-1 report card + the MVP economy loop.
+
+---
+
 ## 2026-06-25 (136) — My ICs: rename + remove chrome; variants surfaced (owner ask)
 
 **State:** 🟢 branch `claude/kind-turing-hdelb3`. Owner: "rename an IC after it's made, in My ICs" + "implement

@@ -21,7 +21,10 @@ import {
   registerUserIcFamilies,
   getUserIc,
   captureSeal,
+  tapeOut,
   isReservedTag,
+  derivePinRoles,
+  integrationTier,
   type UserIc,
 } from "./userIc";
 
@@ -382,6 +385,101 @@ describe("IC variants — determinism contract", () => {
       expect(cap!.tag).toBe("MyRpack");
     } finally {
       unregisterUserIc("MyRpack");
+    }
+  });
+
+  it("role flag (P1): default seal is role-absent ('ic'); an explicit 'subassembly' round-trips on the def", () => {
+    // Default seal: role is ABSENT so every existing save is byte-identical and the cell is board-placeable.
+    const a1 = new BoardGraph();
+    const f1 = place(a1, "SOT23_3", 0, 0);
+    const r1 = place(a1, "R", 4, 0, 1000);
+    connect(a1, f1, 0, r1, 0);
+    connect(a1, r1, 1, f1, 1);
+    const cap1 = captureSeal(a1, f1.id, "RoleDefault");
+    expect(cap1).not.toBeUndefined();
+    try {
+      expect(getUserIc("RoleDefault")?.role).toBeUndefined(); // absent ⇒ 'ic'
+    } finally {
+      unregisterUserIc("RoleDefault");
+    }
+
+    // Explicit subassembly: the role bit persists on the def (read by entryRole for the bin split).
+    const a2 = new BoardGraph();
+    const f2 = place(a2, "SOT23_3", 0, 0);
+    const r2 = place(a2, "R", 4, 0, 2200);
+    connect(a2, f2, 0, r2, 0);
+    connect(a2, r2, 1, f2, 1);
+    const cap2 = captureSeal(a2, f2.id, "RoleSub", undefined, "subassembly");
+    expect(cap2).not.toBeUndefined();
+    try {
+      expect(getUserIc("RoleSub")?.role).toBe("subassembly");
+    } finally {
+      unregisterUserIc("RoleSub");
+    }
+  });
+
+  it("pin roles + integration tier (P3): derivePinRoles tags from stimulus+name; integrationTier counts devices", () => {
+    // Stimulus authoritatively tags rails/inputs; the name fills in the output (which carries no test).
+    const roles = derivePinRoles(
+      ["Y", "A", "VCC", "GND"],
+      [
+        null,
+        { role: "in", value: 0 },
+        { role: "vcc", value: 5 },
+        { role: "gnd", value: 0 },
+      ],
+      4,
+    );
+    expect(roles[0]).toBe("out"); // Y, by name (no stimulus on the output)
+    expect(roles[1]).toBe("in"); // A, by stimulus
+    expect(roles[2]).toBe("vcc");
+    expect(roles[3]).toBe("gnd");
+
+    // integrationTier counts active devices over the expansion (the die frame is skipped): a 1-part
+    // cell is SSI.
+    expect(integrationTier(rPackageDef("TierR", 1000))).toBe("SSI");
+  });
+
+  it("tape out (P3b): promotes a subassembly to a board IC; re-package grows pins; no-op on an IC", () => {
+    // Seal a bare subassembly (role='subassembly') in a 3-pin package.
+    const a = new BoardGraph();
+    const f = place(a, "SOT23_3", 0, 0);
+    const r = place(a, "R", 4, 0, 1500);
+    connect(a, f, 0, r, 0);
+    connect(a, r, 1, f, 1);
+    const cap = captureSeal(a, f.id, "SubR", undefined, "subassembly");
+    expect(cap).not.toBeUndefined();
+    try {
+      expect(getUserIc("SubR")?.role).toBe("subassembly");
+      const devicesBefore = getUserIc("SubR")!.graph.components.length;
+
+      // Tape out with a bigger package: promotes to 'ic', grows to 5 pins, preserves the inner circuit.
+      const promoted = tapeOut("SubR", { archetype: "SOT-23", pinCount: 5 });
+      expect(promoted?.role).toBe("ic");
+      expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 5 });
+      expect(getUserIc("SubR")?.role).toBe("ic");
+      // Connectivity preserved (same component count — only the frame's body kind changed).
+      expect(getUserIc("SubR")!.graph.components.length).toBe(devicesBefore);
+
+      // Tape out is a no-op on a cell that is already an IC (nothing to promote).
+      expect(tapeOut("SubR")).toBeUndefined();
+    } finally {
+      unregisterUserIc("SubR");
+    }
+
+    // Keep-package tape out (the common "confirm the pinout") leaves the package untouched.
+    const b = new BoardGraph();
+    const f2 = place(b, "SOT23_3", 0, 0);
+    const r2 = place(b, "R", 4, 0, 2200);
+    connect(b, f2, 0, r2, 0);
+    connect(b, r2, 1, f2, 1);
+    captureSeal(b, f2.id, "SubR2", undefined, "subassembly");
+    try {
+      const promoted = tapeOut("SubR2");
+      expect(promoted?.role).toBe("ic");
+      expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 3 });
+    } finally {
+      unregisterUserIc("SubR2");
     }
   });
 

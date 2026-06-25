@@ -574,6 +574,28 @@ body {
   color: var(--bad);
   border-color: color-mix(in oklch, var(--bad) 55%, transparent);
 }
+/* Tape out — the subassembly's primary action (promote → board IC). Always visible (not faint-until-
+   hover like the secondary controls), accent-outlined, and auto-width to fit the label. */
+.ic-row-tapeout {
+  width: auto;
+  padding: 0 7px;
+  gap: 4px;
+  font-family: var(--font-display, "Saira Condensed", sans-serif);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  border-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  opacity: 0.92;
+}
+.part:hover .ic-row-tapeout {
+  opacity: 1;
+}
+.ic-row-tapeout:hover {
+  color: var(--accent);
+  background: color-mix(in oklch, var(--accent) 16%, transparent);
+  border-color: var(--accent);
+}
 .ic-rename {
   width: 100%;
   font-size: 12px;
