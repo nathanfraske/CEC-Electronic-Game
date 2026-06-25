@@ -5263,14 +5263,25 @@ export class Board {
         this.drawConduitSkin(g, sampleRoute, color, pw, conduit);
         this.conduitDrawRoutes.set(w.id, sampleRoute);
       } else {
-        polyline(g, route);
+        // A free-form frame-pin lead drawn as a thin schematic PINOUT leg (round 2: "just pinouts, not
+        // solder traces"). In the conduit lens, route it along the SAME nudged + rounded path the pipes
+        // use — `condRoutes` already carries the parallel-nudge + junction-follow for every wire — so a
+        // lead into a fanned-out junction (the input net) bends, fans, and lands EXACTLY like the internal
+        // pipes instead of cutting its own un-nudged, sharp-cornered path (owner: the input leg should
+        // "look identical to the others" and "respect the pipe auto-nudge and bend rules"). Plain
+        // schematic route when the lens itself is schematic (no conduit routes computed).
+        const legRoute =
+          conduit && condRoutes.has(w.id)
+            ? roundedPoints(condRoutes.get(w.id)!, Math.min(8, PITCH * 0.7))
+            : route;
+        sampleRoute = legRoute;
+        polyline(g, legRoute);
         g.stroke({ width: width + 4, color, alpha: 0.16 });
-        polyline(g, route);
+        polyline(g, legRoute);
         g.stroke({ width, color, alpha: 0.95 });
-        // A frame-pin lead drawn schematic WHILE the lens is in conduit mode: register its drawn route in
-        // conduitDrawRoutes so the conduit-mode hit-test (which only knows that map) can still select it —
-        // otherwise these pinout leads become un-clickable in the die editor (owner round 3).
-        if (conduit) this.conduitDrawRoutes.set(w.id, route);
+        // Register the DRAWN route in conduitDrawRoutes so the conduit-mode hit-test (which only knows
+        // that map) can still select these pinout leads — otherwise they become un-clickable (round 3).
+        if (conduit) this.conduitDrawRoutes.set(w.id, legRoute);
       }
 
       const len = routeLength(sampleRoute);

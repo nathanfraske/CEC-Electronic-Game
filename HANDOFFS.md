@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (156) — FIX (owner): free-form frame-pin legs ignored the pipe nudge/bend
+
+**State:** 🟢 **about to PR** (routing half). Web/render only, golden untouched, 122 web tests, full gate
+green. Owner: input traces "don't respect the pipe auto-nudge and bend rules" + should "look identical to
+the others." **Thickness half is still open — see below.**
+
+**Diagnostic finding (headless repro, `_diag.test.ts`, since removed):** all four free-form frame-pin leads
+(VCC/IN/OUT/GND) classify identically as `frameLead=true` → the **schematic** draw branch (round 2:
+"pinouts not solder traces"). Internal wires get conduit. So the input isn't misclassified. Two real
+causes of the visual gap: (1) the schematic legs were drawn from the **raw `routeForWire`**, bypassing
+`nudgeParallel` + conduit bend-rounding + the junction-follow — so the input (the only fan-out net, through
+a junction) cut its own un-nudged, sharp path; (2) leg `width` tracks current (`BELT_WIDTH_MIN 1.4 →
+BELT_WIDTH_MAX 7.0`), so a zero-current gate input reads wispy-thin while VCC/OUT read fat.
+
+**Fix (this PR — routing only, board.ts `redrawWires` schematic branch ~5265):** draw the schematic frame
+leg along its **nudged + rounded `condRoutes` path** (already computed for every wire, carries the
+parallel-nudge + junction-follow) instead of the raw route — so a leg into a fanned-out junction bends,
+fans, and lands exactly like the internal pipes. Still a thin schematic leg (no conduit skin → keeps round
+2). Hit-test registers the drawn route. Safe for direct leads (condRoute ≈ route, just rounded corners).
+
+**OPEN — thickness ("look identical"):** the input still reads thinner (no gate current). Options weighed:
+uniform "package-lead" width (current-independent — principled for pinout legs, current shows on internal
+pipes + standpipes) vs a min-width floor vs full conduit pipes (reverts round 2). Each changes how VCC/OUT
+legs look, so **asked the owner** which they want rather than guess. Next: implement per their answer.
+
+---
+
 ## 2026-06-25 (155) — FIX (owner): sweep read VCC, not OUT → every gate characterized as "always HIGH"
 
 **State:** 🟢 **about to PR**. Web only, golden untouched, **122 web tests**, full gate green. Owner built a
