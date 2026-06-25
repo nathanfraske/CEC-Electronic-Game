@@ -680,5 +680,12 @@ journey around it. Both honour §10 (no levels; pull-not-pick) to the letter:
   whole game — this §10 machinery personified), all-ages adaptation by pull, a first-class
   accessibility/reach spec, and a no-dark-patterns retention loop. Five persona journey maps
   span a pre-reader child + caregiver through an expert EE.
+- **[fundamentals-scaffold-arc.md]** — the **show-don't-tell, concept-by-concept** teaching this
+  brief gestures at in §2–§5, deepened: place / wire / loop-&-ground / carriers / colours / voltage
+  / current, each taught by **doing & experimenting** (never a wall of text), with the read-deeper
+  path always *presented* but one pull away. An **optional, non-hand-holdy** scaffold that **opens
+  up** at the Era-0→1 boundary (`era1-tolerances`) and lands the player in the contract loop. It
+  **migrates** the existing `concepts.ts` cards (`source`/`ground`/`loop`/`reading`) into the seven
+  fundamentals ids.
 
 The Probe is the **persona of this §10 coaching layer** — pulled, mutable, never a wall.

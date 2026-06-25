@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent.
+Owner ask: fully introduce a true novice — teach the literal basics (place, wire, ground/loop, carriers,
+colours, voltage, current) by **SHOW & EXPERIMENT, not text**, with an optional non-hand-holdy scaffold that
+**opens up after the ideal components** and lands them in the contract/experimentation loop.
+
+- **`docs/ui/fundamentals-scaffold-arc.md`** (NEW) — concept-by-concept show-don't-tell teaching: each
+  fundamental learned by DOING/WATCHING (place via the ghost+snap-ring; loop/ground via the dark→alive flip;
+  carriers/colours/voltage/current via changing a value and watching the render react), prose only as an
+  optional pull-deeper. The "curious → read deeper" path is always presented (one pull away). The scaffold is
+  OPTIONAL/non-hand-holdy and **recedes at the Era-0→1 boundary** (`unlockNode('era1-tolerances')`) — "opens
+  up" = conversion to the full sandbox + contract loop; the input UI (ghost/snap-ring) never retires.
+  Guided-discovery (not an unguided maze) enforced. Multi-lens workflow + 2 critics (SHIP-WITH-FIXES → fixed).
+  Cross-ref added to `onboarding-first-run.md` §11.
+
+**KEY DISCOVERY for implementers:** the first-encounter **concept-card layer is PARTIALLY BUILT** —
+`web/src/lib/concepts.ts` ships `CONCEPTS` (4 cards: `source`/`ground`/`loop`/`reading`) + `CONCEPT_ORDER`,
+fired by `offerConcept`/`pumpConcepts`/`dismissConcept`/`replayConcepts` in App.svelte, deduped by
+`seenConcepts`. The fundamentals doc **migrates** those 4 ids into 7 `FUNDAMENTALS_IDS` (mapping in §4.4).
+NOTE: the beginner-onboarding + economy docs referenced a hypothetical `coaching.ts` — that's actually
+`concepts.ts` (not yet re-pointed in those two docs; minor cleanup).
+
+**Next / owner eye:** the design pass now covers the intro (Probe arc + fundamentals + beginner journey), the
+economy/progression impl, and product-sim. Cheapest first builds: product-sim Phase-1 report card; the MVP
+economy loop; the fundamentals scaffold (rides today's render + `concepts.ts`). Open-questions across the
+panels await owner calls (esp. the economy **balance pass**).
+
+---
+
 ## 2026-06-25 (133) — DESIGN: product-simulation + economy/progression IMPLEMENTATION panels
 
 **State:** 🟢 docs-only, golden-safe by construction; branch `claude/kind-turing-hdelb3`, rebased onto the

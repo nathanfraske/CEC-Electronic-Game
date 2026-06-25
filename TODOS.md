@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
+
+- ~~**Fundamentals scaffold arc**~~ — DONE (`docs/ui/fundamentals-scaffold-arc.md`). Show-don't-tell,
+  concept-by-concept teaching (place/wire/loop-ground/carriers/colours/voltage/current) by doing+experimenting;
+  read-deeper always presented; optional non-hand-holdy scaffold that **opens up at the Era-0→1 boundary**;
+  lands in the contract loop. Workflow + 2 critics → fixed (machinery names `concepts.ts`/`offerConcept`;
+  7-id migration of the existing 4 cards; specified-but-unbuilt dependency banners). Cross-ref in
+  `onboarding-first-run.md` §11.
+- **NOTE (impl):** the concept-card layer is **partially built** — `concepts.ts` `CONCEPTS`
+  (source/ground/loop/reading) + `offerConcept`/`pumpConcepts`. The fundamentals doc migrates those into the
+  seven fundamentals ids.
+- [ ] **Doc cleanup (deferred):** beginner-onboarding §3.3 + the economy doc reference a hypothetical
+  `coaching.ts` — it's actually `concepts.ts`. Minor.
+- [ ] **OWNER CALLS:** unchanged — the economy balance pass + the panels' standing open-questions.
+
 ## 2026-06-25 (133) — DESIGN: product-sim + economy/progression implementation panels
 
 - ~~**Product-simulation expansion**~~ — DONE (`docs/game-product-simulation.md`, pushed). EMI/UL cert gates,
