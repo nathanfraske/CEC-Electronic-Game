@@ -1321,7 +1321,7 @@ export const PART_KINDS: Record<string, PartKind> = {
 // dedicated glyph. defaultValue 0 / unit "" -> the inspector shows no value picker.
 //
 // (archetype, pinCount) -> a clean tag + display name, e.g. SOT-23/6 -> "SOT23_6" / "SOT-23-6".
-function frameTag(archetype: string, pinCount: number): string {
+export function frameTag(archetype: string, pinCount: number): string {
   // Strip the hyphen from the archetype for a terse identifier, then join the pin count. Use an
   // underscore separator ONLY when the stripped name already ends in a digit (the SOT-23 family:
   // "SOT23" + 6 -> "SOT23_6"), so the count doesn't mash into the archetype's own digits; names

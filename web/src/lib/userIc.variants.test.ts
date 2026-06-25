@@ -21,6 +21,7 @@ import {
   registerUserIcFamilies,
   getUserIc,
   captureSeal,
+  tapeOut,
   isReservedTag,
   derivePinRoles,
   integrationTier,
@@ -437,6 +438,49 @@ describe("IC variants — determinism contract", () => {
     // integrationTier counts active devices over the expansion (the die frame is skipped): a 1-part
     // cell is SSI.
     expect(integrationTier(rPackageDef("TierR", 1000))).toBe("SSI");
+  });
+
+  it("tape out (P3b): promotes a subassembly to a board IC; re-package grows pins; no-op on an IC", () => {
+    // Seal a bare subassembly (role='subassembly') in a 3-pin package.
+    const a = new BoardGraph();
+    const f = place(a, "SOT23_3", 0, 0);
+    const r = place(a, "R", 4, 0, 1500);
+    connect(a, f, 0, r, 0);
+    connect(a, r, 1, f, 1);
+    const cap = captureSeal(a, f.id, "SubR", undefined, "subassembly");
+    expect(cap).not.toBeUndefined();
+    try {
+      expect(getUserIc("SubR")?.role).toBe("subassembly");
+      const devicesBefore = getUserIc("SubR")!.graph.components.length;
+
+      // Tape out with a bigger package: promotes to 'ic', grows to 5 pins, preserves the inner circuit.
+      const promoted = tapeOut("SubR", { archetype: "SOT-23", pinCount: 5 });
+      expect(promoted?.role).toBe("ic");
+      expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 5 });
+      expect(getUserIc("SubR")?.role).toBe("ic");
+      // Connectivity preserved (same component count — only the frame's body kind changed).
+      expect(getUserIc("SubR")!.graph.components.length).toBe(devicesBefore);
+
+      // Tape out is a no-op on a cell that is already an IC (nothing to promote).
+      expect(tapeOut("SubR")).toBeUndefined();
+    } finally {
+      unregisterUserIc("SubR");
+    }
+
+    // Keep-package tape out (the common "confirm the pinout") leaves the package untouched.
+    const b = new BoardGraph();
+    const f2 = place(b, "SOT23_3", 0, 0);
+    const r2 = place(b, "R", 4, 0, 2200);
+    connect(b, f2, 0, r2, 0);
+    connect(b, r2, 1, f2, 1);
+    captureSeal(b, f2.id, "SubR2", undefined, "subassembly");
+    try {
+      const promoted = tapeOut("SubR2");
+      expect(promoted?.role).toBe("ic");
+      expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 3 });
+    } finally {
+      unregisterUserIc("SubR2");
+    }
   });
 
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {

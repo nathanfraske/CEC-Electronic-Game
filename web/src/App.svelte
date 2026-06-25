@@ -73,6 +73,7 @@
     hasUserIcVariants,
     userIcFamilyTargets,
     integrationTier,
+    tapeOut,
     type UserIc,
     type UserIcFamilySidecar,
   } from "./lib/userIc";
@@ -1610,6 +1611,8 @@
       tier: integrationTier(e.ic),
       color: "var(--accent)",
       glyphKind: tag,
+      // Subassembly rows get a "Tape out" control (promote → board IC); IC rows don't.
+      isSubassembly: entryRole(e) === "subassembly",
     };
   }
   /** The "My ICs" rows: board-placeable library entries (role !== 'subassembly'), most-recent first. */
@@ -1692,6 +1695,16 @@
       return;
     if (renamingTag === tag) renamingTag = null;
     removeFromLibrary(tag);
+    libRev++;
+  }
+  /** Tape out a subassembly → board-placeable IC (§4.5). Promotes the def (role → 'ic'; keeps its
+   * package — the cell was authored in one), re-clones it into the library row so it moves from My
+   * Subassemblies to My ICs, and refreshes the bin. (Choosing a different package at tape-out is a
+   * follow-up once box-capture (P4) ships subassemblies without a chosen body.) */
+  function tapeOutIc(tag: string): void {
+    const promoted = tapeOut(tag);
+    if (!promoted) return;
+    addToLibrary(tag, "sealed"); // re-clone the now-'ic' def → the row re-files under My ICs
     libRev++;
   }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
@@ -3627,6 +3640,8 @@
         // When set (a "My ICs" row), draw a package pin-ring thumbnail of this kind instead of the tag
         // text — a built-in PARTS row leaves it undefined and keeps its terse tag glyph.
         glyphKind?: string;
+        // True for a "My Subassemblies" row — adds the Tape-out control (promote → board IC).
+        isSubassembly?: boolean;
       })}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -3693,6 +3708,17 @@
             <!-- "My ICs" row controls: a variant badge (family) + rename + remove. stopPropagation so a
                  control click never arms/places the part. -->
             <span class="ic-row-ctl">
+              {#if part.isSubassembly}
+                <button
+                  class="ic-row-btn ic-row-tapeout"
+                  title="Tape out → board IC (choose a package, make it placeable)"
+                  aria-label="Tape out {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    tapeOutIc(part.tag);
+                  }}>⬡ Tape out</button
+                >
+              {/if}
               {#if hasUserIcVariants(part.tag)}
                 <span
                   class="ic-variant-badge"

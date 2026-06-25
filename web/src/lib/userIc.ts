@@ -18,6 +18,8 @@ import {
   isJunctionRef,
   isPinRef,
   framePackage,
+  frameTag,
+  dieFrameTag,
   isFrame,
   type GraphSnapshot,
   type Endpoint,
@@ -301,6 +303,50 @@ export function unregisterUserIc(tag: string): void {
  * Distinct from re-running {@link captureSeal} with the tag as the NAME: that would also overwrite
  * the entry, but it forces `name === tag`, losing a free-form display name. This preserves it.
  */
+/**
+ * TAPE OUT — promote a bare `role='subassembly'` cell into a board-placeable `role='ic'` (§4.5). This
+ * is the ONLY path from a subassembly to the board: the player chooses the package (the "pinout") and
+ * the cell flips to an IC. A no-op (returns undefined) for an unknown tag or a cell that is already an
+ * `'ic'` (it doesn't need promoting). `target` re-packages to a chosen archetype/pinCount — its pin
+ * count must be ≥ the cell's current pins (you can grow the package / add NC pads, never lose pins);
+ * omitted, the cell keeps its existing package (the common "confirm the pinout" case for a cell already
+ * authored in a die). The placeable kind reads {@link UserIc.package} ({@link userIcPartKind}), and the
+ * inner wires reference frame pins by INDEX, so an identity re-package preserves connectivity exactly —
+ * a taped-out cell flattens/solves identically to its pre-tape-out die. Web-only graph/role mutation:
+ * nothing runs in sim-core or crosses the hashed boundary, and the golden places no user IC.
+ */
+export function tapeOut(
+  tag: string,
+  target?: { archetype: string; pinCount: number },
+): UserIc | undefined {
+  const def = REGISTRY.get(tag);
+  if (!def || def.role !== "subassembly") return undefined;
+  const pkg = target ?? def.package;
+  if (pkg.pinCount < def.package.pinCount) return undefined; // never lose pins
+  let graph = def.graph;
+  const repackaged =
+    pkg.archetype !== def.package.archetype ||
+    pkg.pinCount !== def.package.pinCount;
+  if (repackaged) {
+    // Swap the frame's die-frame kind so re-opening the die shows the chosen body. The placeable kind
+    // already derives its pins from `package` (userIcPartKind), so this is for editing consistency; the
+    // inner wires' frame pin INDICES (0..oldN-1 < new pinCount) stay valid — extra pads are NC.
+    if (!framePackage(frameTag(pkg.archetype, pkg.pinCount))) return undefined;
+    graph = structuredClone(def.graph);
+    const frame = graph.components.find((c) => c.id === def.frameId);
+    const newDieKind = dieFrameTag(frameTag(pkg.archetype, pkg.pinCount));
+    if (frame && PART_KINDS[newDieKind]) frame.kind = newDieKind;
+  }
+  const promoted: UserIc = {
+    ...def,
+    package: { ...pkg },
+    graph,
+    role: "ic",
+  };
+  registerUserIc(promoted);
+  return promoted;
+}
+
 export function resealUserIc(
   tag: string,
   graph: GraphSnapshot,
