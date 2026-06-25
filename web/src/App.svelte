@@ -85,6 +85,12 @@
     type LibraryEntry,
   } from "./lib/userLibrary";
   import {
+    gateTemplate,
+    gateTemplateName,
+    GATE_TEMPLATE_KINDS,
+    type GateTemplateKind,
+  } from "./lib/gateTemplates";
+  import {
     hasValue,
     isESeries,
     chipsOf,
@@ -2444,6 +2450,44 @@
    * fully preserved in `drill.outerSnapshot` for the exits. No-op if already drilled in, the part
    * isn't a frame, or the package is unknown.
    */
+  /**
+   * "New gate ▸ INV / NAND2 / NOR2": drop a SOT-23-5 package frame on the current board, seed its inner
+   * die with a pre-wired CMOS template ({@link gateTemplate}) that already solves + switches, then drill
+   * straight in — the smallest "build a gate as a part" on-ramp (no blank-frame, no manual wiring). The
+   * player edits/observes the real transistors, then Seals as today (authored-in-a-package ⇒ role='ic',
+   * board-placeable directly). Mirrors {@link buildSelectedFrame}'s stash + swap + setDieFrame, but
+   * places the frame for you and seeds the template instead of a blank die. Non-destructive: the frame
+   * lands on the existing board (its placement is one undo step on drill-out).
+   */
+  function newGateFromTemplate(kind: GateTemplateKind): void {
+    if (!board || drill) return;
+    const die = gateTemplate(kind);
+    if (!die) return;
+    const frameTag = "SOT23_5";
+    if (!PART_KINDS[frameTag]) return;
+    // Drop the package frame at the view centre on the CURRENT board (placeAt → undefined if the cell
+    // is occupied; the player can clear space and retry).
+    const placed = board.placeAt(
+      frameTag,
+      canvasEl.clientWidth / 2,
+      canvasEl.clientHeight / 2,
+    );
+    if (!placed) return;
+    innerGraphs.set(placed.id, die.snapshot);
+    drill = {
+      frameId: placed.id,
+      innerFrameId: die.frameId,
+      frameTag,
+      name: gateTemplateName(kind),
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+    };
+    board.swapGraph(die.snapshot);
+    board.setDieFrame(die.frameId);
+    arm(null);
+    setMode("select");
+  }
+
   function buildSelectedFrame(): void {
     if (!selPart || !board || drill || !isFrame(selPart.kind)) return;
     const frameId = selPart.id;
@@ -3768,6 +3812,24 @@
         {/if}
       {:else}
         <div class="part-cats scroll">
+          <!-- "New gate" — the build-a-gate-as-a-subassembly on-ramp (§4.10). One click drops a SOT-23-5
+               package, seeds its die with a pre-wired CMOS template that already solves + switches, and
+               drills in so you can see the transistors and Seal it as your own placeable gate. -->
+          <div class="new-gate">
+            <span class="new-gate-label">New gate</span>
+            <div class="new-gate-btns">
+              {#each GATE_TEMPLATE_KINDS as gk (gk)}
+                <button
+                  class="btn new-gate-btn"
+                  onclick={() => newGateFromTemplate(gk)}
+                  disabled={!!drill}
+                  title={`Build a ${gateTemplateName(gk)} from CMOS transistors (SOT-23-5)`}
+                >
+                  {gk}
+                </button>
+              {/each}
+            </div>
+          </div>
           <!-- "My ICs" — the personal IC library (docs/ic-library-and-variants.md). Rendered FIRST, and
                only when non-empty, so a fresh player never sees an empty category. Each row places via
                the SAME arm/drag path as a built-in (registerLibrary populated PART_KINDS[tag]). -->
@@ -7095,6 +7157,41 @@
   }
   .part-cats {
     overflow-y: auto;
+  }
+  .new-gate {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+  }
+  .new-gate-label {
+    font-family: "Saira Condensed", sans-serif;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-size: 0.78rem;
+    color: var(--text-dim);
+  }
+  .new-gate-btns {
+    display: flex;
+    gap: 4px;
+    margin-left: auto;
+  }
+  .new-gate-btn {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    padding: 2px 7px;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    background: transparent;
+  }
+  .new-gate-btn:hover:not(:disabled) {
+    background: color-mix(in oklch, var(--accent) 18%, transparent);
+  }
+  .new-gate-btn:disabled {
+    opacity: 0.4;
+    border-color: var(--border);
+    color: var(--text-dim);
   }
   .part-cat {
     border-bottom: 1px solid var(--border);
