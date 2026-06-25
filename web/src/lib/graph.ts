@@ -1365,8 +1365,12 @@ const FRAME_PACKAGES = new Map<
   { archetype: string; pinCount: number }
 >();
 
-for (const { archetype, pinCount } of packageOptions()) {
+/** Register the placeable FRAME kind + its paired internal DIE-FRAME kind for an (archetype, pinCount),
+ * and record both in {@link FRAME_PACKAGES}. Idempotent (a no-op if the tag is already registered), so
+ * it can run both at startup (over `packageOptions()`) and on-demand ({@link ensureFrameKind}). */
+function registerFrameKind(archetype: string, pinCount: number): void {
   const tag = frameTag(archetype, pinCount);
+  if (FRAME_PACKAGES.has(tag)) return;
   FRAME_PACKAGES.set(tag, { archetype, pinCount });
   const pins = packageLayout(archetype, pinCount).pins.map((p) =>
     pin(String(p.number), p.dx, p.dy),
@@ -1403,6 +1407,21 @@ for (const { archetype, pinCount } of packageOptions()) {
     "",
     true,
   );
+}
+
+for (const { archetype, pinCount } of packageOptions())
+  registerFrameKind(archetype, pinCount);
+
+/**
+ * Ensure a frame kind (+ its die-frame) exists for an (archetype, pinCount) that the stock
+ * {@link packageOptions} doesn't enumerate — for FREE-FORM "BLOCK" subassemblies (§4.10) with an
+ * ARBITRARY pin count, registered on the exact count needed (so the package picker / parts bin stay
+ * uncluttered). Idempotent. Returns the placeable frame tag. Presentation/registry only — never the
+ * solve or hash.
+ */
+export function ensureFrameKind(archetype: string, pinCount: number): string {
+  registerFrameKind(archetype, pinCount);
+  return frameTag(archetype, pinCount);
 }
 
 /**

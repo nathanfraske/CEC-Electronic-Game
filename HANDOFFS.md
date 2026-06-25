@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (142) — IMPLEMENT: P4-full box-capture + bin "+ New" overhaul ON MAIN
+
+**State:** 🟢 on `main` (PRs #207, #208 merged). Web-only, golden `0xeaac…fa24` untouched, 108 web tests,
+CI green. Continued from (141) with the owner engaged ("Continue on" + a bin request).
+
+- **P4-full (PR #207)** — `captureRegion(graph, regionIds)`: the overworld box-capture. Union-find the
+  wire graph; a net with ≥1 inside AND ≥1 outside endpoint becomes a **pin** (internal nets keep their
+  wiring; each boundary net fans its inside pins to the synthesized frame lead). Power pins auto-named
+  GND/VCC from the outside source. `board.makeSubassemblyFromSelection()` (non-destructive) + the
+  **⬡ Make subassembly** toolbar button (≥2 parts selected). Tested headlessly (V→R1→R2→GND → 2 pins →
+  series chain; whole-circuit/empty refused).
+- **Bin overhaul (PR #208, owner ask)** — a **"+ New"** create section (Gate ▸ INV/NAND2/NOR2 + Blank ▸
+  IC/Subassembly via `newBlankDie`), and **My ICs / My Subassemblies always visible** (empty-state hints).
+
+**Build loop now complete on main:** +New (gate template OR blank IC/subassembly) → build in the die →
+Seal (IC, or nested-only subassembly) → ⬡ Make subassembly from a board selection → ⬡ Tape out → place;
+SSI→ULSI badges throughout.
+
+**Still ahead (the characterization ENGINE — the CPU-scale payoff):** P5 Tier-1 telemetry (web) → **P6
+`solveCell` scratch-Sim (sim-wasm — the keystone)** → P7 characterization sweep + live truth-table panel →
+P8 sequential → P9 wide-cell fabric. P6+ touch the hashed boundary; land per-phase gated, re-running
+`golden_snapshot_hash_is_stable`. Steps in `docs/cell-characterization-build-plan.md`.
+
+---
+
 ## 2026-06-25 (141) — IMPLEMENT: build-gates-as-subassemblies, milestone 1+2 ON MAIN (P0–P4a)
 
 **State:** 🟢 **on `main`** (PR #205 merged, sha `29efe99`; P4a follow-up landing via a milestone-2 PR).

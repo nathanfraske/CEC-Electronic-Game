@@ -43,6 +43,7 @@
     PLACEMENT_OVERRIDE_KEYS,
     isFrame,
     framePackage,
+    ensureFrameKind,
     type GraphSnapshot,
     type HotSlot,
     type PinTest,
@@ -2516,7 +2517,10 @@
    * Subassemblies; the player can re-package at Tape out. Mirrors {@link newGateFromTemplate}. */
   function newBlankDie(role: "ic" | "subassembly"): void {
     if (!board || drill) return;
-    const frameTag = "DIP8";
+    // An IC gets a real package (DIP-8); a subassembly gets a FREE-FORM block (§4.10) — an 8-pin BLOCK
+    // frame (arbitrary pinout, re-packaged at Tape out), registered on-demand.
+    const frameTag =
+      role === "subassembly" ? ensureFrameKind("BLOCK", 8) : "DIP8";
     if (!PART_KINDS[frameTag]) return;
     const fresh = freshDieGraph(frameTag);
     if (!fresh) return;

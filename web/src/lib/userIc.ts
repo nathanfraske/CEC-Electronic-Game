@@ -21,6 +21,7 @@ import {
   framePackage,
   frameTag,
   dieFrameTag,
+  ensureFrameKind,
   isFrame,
   type GraphSnapshot,
   type Endpoint,
@@ -32,7 +33,7 @@ import {
   type Junction,
   type NetLabel,
 } from "./graph";
-import { packageLayout, packageOptions } from "./packages";
+import { packageLayout, BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
 
 /** A sealed, user-authored IC. */
 export interface UserIc {
@@ -1078,17 +1079,6 @@ export function captureSeal(
  * origin; the exact cell is presentation-only — connectivity is what the netlist reads). */
 const REGION_FRAME_ORIGIN = { col: 8, row: 8 };
 
-/** Pick the smallest stock package whose pin count covers `pins` (SOT-23-3/5/6 → VSSOP-8 → DIP-8/14/16),
- * or undefined if more pins are needed than the largest package offers. */
-function pickPackageForPins(
-  pins: number,
-): { archetype: string; pinCount: number } | undefined {
-  return packageOptions()
-    .slice()
-    .sort((a, b) => a.pinCount - b.pinCount)
-    .find((o) => o.pinCount >= pins);
-}
-
 /** The result of a region capture: the registered subassembly tag + its inferred pin count. */
 export interface RegionCapture {
   tag: string;
@@ -1195,8 +1185,14 @@ export function captureRegion(
     [...insidePins.keys()].filter((r) => !hasOutside.has(r)),
   );
   if (boundaryRoots.length === 0) return undefined; // nothing leaves the selection — no pins
-  const pkg = pickPackageForPins(boundaryRoots.length);
-  if (!pkg) return undefined; // more boundary nets than the largest package holds
+  if (boundaryRoots.length > BLOCK_MAX_PINS) return undefined; // too many pins for a free-form block
+  // A captured subassembly is a FREE-FORM block with EXACTLY its boundary pins (§4.10) — not rounded
+  // up to a stock IC package. The BLOCK frame for this pin count is registered on-demand.
+  ensureFrameKind(BLOCK_ARCHETYPE, boundaryRoots.length);
+  const pkg = {
+    archetype: BLOCK_ARCHETYPE,
+    pinCount: boundaryRoots.length,
+  };
 
   // Clone the region's components (preserve ids). The synthesized frame takes a fresh id above all of
   // them, so no re-id pass is needed.
