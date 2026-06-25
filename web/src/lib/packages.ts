@@ -48,7 +48,18 @@ export const PACKAGE_ARCHETYPES: Record<string, Archetype> = {
   "SOT-23": { family: "sot23", policy: "fixed", counts: [3, 5, 6] },
   VSSOP: { family: "dual", policy: "expandable", counts: [8] },
   DIP: { family: "dual", policy: "expandable", counts: [8, 14, 16] },
+  // Free-form SUBASSEMBLY body (§4.10): a bare block with an ARBITRARY pin count — what a captured /
+  // built subassembly uses instead of being rounded up to a stock IC package. `counts: []` keeps it
+  // OUT of `packageOptions()` (no package-picker / parts-bin clutter); its frames are registered
+  // on-demand for the exact pin count via `ensureFrameKind` (graph.ts). Reuses the dual-row geometry
+  // for now (a rectangle that grows with the pin count); a distinct box look is a follow-up.
+  BLOCK: { family: "dual", policy: "expandable", counts: [] },
 };
+
+/** The free-form subassembly archetype key (§4.10) — see {@link PACKAGE_ARCHETYPES}. */
+export const BLOCK_ARCHETYPE = "BLOCK";
+/** The largest pin count a free-form BLOCK subassembly supports (a sanity cap on capture). */
+export const BLOCK_MAX_PINS = 24;
 
 /** Every (archetype, pinCount) the starter library offers, e.g. for a package picker. */
 export function packageOptions(): { archetype: string; pinCount: number }[] {

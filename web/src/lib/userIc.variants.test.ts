@@ -503,7 +503,9 @@ describe("IC variants — determinism contract", () => {
       expect(cap!.pinCount).toBe(2);
       const def = getUserIc("SeriesR")!;
       expect(def.role).toBe("subassembly");
-      expect(def.package.pinCount).toBeGreaterThanOrEqual(2); // smallest covering package (SOT-23-3)
+      // Free-form block with EXACTLY its boundary pins (§4.10), not rounded up to a stock package.
+      expect(def.package.archetype).toBe("BLOCK");
+      expect(def.package.pinCount).toBe(2);
       expect(def.pinNames).toContain("VCC"); // outside V source → VCC pin
       expect(def.pinNames).toContain("GND"); // outside GND → GND pin
 
