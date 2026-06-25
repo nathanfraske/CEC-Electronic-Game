@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Headless tests for the bridge over/under draw order (pure id-ordering, no PixiJS render needed).
 import { describe, it, expect } from "vitest";
-import { wireDrawOrder } from "./boardRender";
+import { wireDrawOrder, snapToBoxEdge } from "./boardRender";
 
 describe("wireDrawOrder — bridges draw OVER the traces they hop", () => {
   it("no crossings → original order, unchanged", () => {
@@ -85,5 +85,27 @@ describe("wireDrawOrder — bridges draw OVER the traces they hop", () => {
         ],
       ),
     ).toEqual([2, 1]);
+  });
+});
+
+describe("snapToBoxEdge — Alt-drag a free-form pin to the nearest box edge", () => {
+  // Box 6 wide × 8 tall: cols 0..5, rows 0..7. A pin must always land ON the perimeter.
+  it("snaps a point already on an edge to that edge", () => {
+    expect(snapToBoxEdge(0, 3, 6, 8)).toEqual({ dx: 0, dy: 3 }); // left
+    expect(snapToBoxEdge(5, 2, 6, 8)).toEqual({ dx: 5, dy: 2 }); // right
+    expect(snapToBoxEdge(3, 0, 6, 8)).toEqual({ dx: 3, dy: 0 }); // top
+    expect(snapToBoxEdge(2, 7, 6, 8)).toEqual({ dx: 2, dy: 7 }); // bottom
+  });
+  it("projects an interior point onto the nearest edge", () => {
+    expect(snapToBoxEdge(3, 1, 6, 8)).toEqual({ dx: 3, dy: 0 }); // 1 from top wins
+    expect(snapToBoxEdge(4, 4, 6, 8)).toEqual({ dx: 5, dy: 4 }); // 1 from right wins
+  });
+  it("clamps a point dragged OUTSIDE the box back onto the perimeter", () => {
+    expect(snapToBoxEdge(-3, 2, 6, 8)).toEqual({ dx: 0, dy: 2 }); // off the left → left edge
+    expect(snapToBoxEdge(10, 9, 6, 8)).toEqual({ dx: 5, dy: 7 }); // off bottom-right → corner
+  });
+  it("resolves edge ties top → bottom → left → right", () => {
+    expect(snapToBoxEdge(0, 0, 6, 8)).toEqual({ dx: 0, dy: 0 }); // top-left corner → top
+    expect(snapToBoxEdge(2, 2, 6, 6)).toEqual({ dx: 2, dy: 0 }); // equidistant → top
   });
 });

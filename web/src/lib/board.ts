@@ -112,6 +112,7 @@ import {
   dieFramePinExit,
   frameLeadRoute,
   routeForWire,
+  snapToBoxEdge,
   voltageColor,
   type Dir,
   type BoardLens,
@@ -779,6 +780,10 @@ export class Board {
   private junctionDrag: { id: number; moved: boolean } | null = null;
   // Dragging a net label's tag pill (it follows the cursor; the anchor stays put).
   private labelDrag: { id: number; moved: boolean } | null = null;
+  // Dragging a FREE-FORM die-frame PIN along the box edge (Alt+drag, die editor only): rewrites the
+  // frame's stored geom so the pin slides to the nearest perimeter cell; incident wires follow because
+  // they reference it by index (connectivity/the netlist is untouched). `moved` gates the undo/persist.
+  private pinDrag: { pinIndex: number; moved: boolean } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
@@ -2257,6 +2262,48 @@ export class Board {
     this.cb.onPersist?.(this.graph);
     this.emitSelect();
     return true;
+  }
+
+  /**
+   * Live step of an Alt-drag of a free-form frame pin (see `pinDrag`): slide pin `pinDrag.pinIndex` to the
+   * nearest perimeter cell under the cursor, rewrite the frame's geom, and redraw. Re-registers the
+   * free-form frame kind in place — the pin INDEX is unchanged, so incident wires / pinTests / pinNames
+   * stay bound (it's the same mechanism `resizeFreeFormBox` uses, for one pin). No-op while the cursor
+   * stays on the same cell, so a slow drag doesn't thrash the registry.
+   */
+  private movePinDrag(wp: Point): void {
+    if (this.pinDrag === null || this.dieFrameId === null) return;
+    const frame = this.graph.components.get(this.dieFrameId);
+    if (!frame || !isFreeFormFrame(frame.kind)) return;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom) return;
+    const i = this.pinDrag.pinIndex;
+    const cur = geom.pins[i];
+    if (!cur) return;
+    const { dx, dy } = snapToBoxEdge(
+      snap(wp.x, PITCH) - frame.cell.col,
+      snap(wp.y, PITCH) - frame.cell.row,
+      geom.w,
+      geom.h,
+    );
+    if (dx === cur.dx && dy === cur.dy) return; // still on the same cell — nothing to redraw
+    this.pinDrag.moved = true;
+    const pins = geom.pins.map((p, k) => (k === i ? { ...p, dx, dy } : p));
+    registerFreeFormFrame(frame.kind.slice(FREE_FORM_DIE_PREFIX.length), {
+      w: geom.w,
+      h: geom.h,
+      pins,
+    });
+    // Rebuild the frame node so its pin graphics sit at the new cell; re-route incident wires (they follow
+    // by index) and refresh the selection halo. The box/walls are unchanged, so no drawDieWalls needed.
+    const node = this.nodes.get(this.dieFrameId);
+    if (node) {
+      node.destroy();
+      this.nodes.delete(this.dieFrameId);
+      this.addNode(frame);
+    }
+    this.redrawWires();
+    this.redrawSelection();
   }
 
   /** True when the board is currently editing an IC-maker die (its inner canvas). */
@@ -3921,6 +3968,22 @@ export class Board {
     }
 
     const pin = this.pinHitTest(wp.x, wp.y);
+    // Alt-drag a FREE-FORM die-frame pin MOVES it along the box edge (vs the default press, which starts
+    // a wire from the pin). Die editor only, free-form frames only — a stock package has a fixed pinout.
+    if (
+      pin &&
+      e.altKey &&
+      this.dieFrameId !== null &&
+      pin.componentId === this.dieFrameId &&
+      (this.mode === "wire" || this.mode === "select")
+    ) {
+      const frame = this.graph.components.get(this.dieFrameId);
+      if (frame && isFreeFormFrame(frame.kind) && freeFormGeom(frame.kind)) {
+        this.pinDrag = { pinIndex: pin.pinIndex, moved: false };
+        this.pendingUndo = this.graph.serialize();
+        return;
+      }
+    }
     if (pin && (this.mode === "wire" || this.mode === "select")) {
       // Inside a die: remember this press on the die frame's perimeter pin so a SECOND press on it
       // (which, the wire now pending, lands in the wiring branch above) is recognised as the
@@ -4611,6 +4674,11 @@ export class Board {
       return;
     }
 
+    if (this.pinDrag) {
+      this.movePinDrag(wp);
+      return;
+    }
+
     if (this.junctionDrag) {
       const cell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
       const j = this.graph.junctions.get(this.junctionDrag.id);
@@ -4726,6 +4794,18 @@ export class Board {
         this.cb.onChange?.(this.graph);
       }
       this.wireDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.pinDrag) {
+      // Commit only if the pin actually slid to a new cell (a bare Alt-click leaves it put). The pin
+      // INDEX is unchanged, so wire connectivity / the netlist `sig` are stable — this is pure geometry.
+      if (this.pinDrag.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        this.cb.onChange?.(this.graph);
+        this.cb.onPersist?.(this.graph);
+      }
+      this.pinDrag = null;
       this.pendingUndo = null;
       return;
     }
