@@ -142,6 +142,49 @@ export function cellBehaviorSig(graph: GraphSnapshot): number {
   return h >>> 0;
 }
 
+/**
+ * Name the common Boolean function a swept {@link CellBehavior.word} implements — a verification hint for
+ * the characterization truth-table panel ("recognized as NAND"). `word` is the prog-4 LUT word
+ * (`out = (word >> combo) & 1`, `combo = i0 | i1<<1 | …`), `inputs` the swept input count. Recognizes the
+ * 1- and 2-input primitives + constant outputs; returns `null` for anything else (≥3-input, or an unnamed
+ * function) — the truth table still stands on its own. Pure: no sim, headless-testable.
+ */
+export function recognizeGate(word: number, inputs: number): string | null {
+  if (inputs === 1) {
+    switch (word & 0b11) {
+      case 0b00:
+        return "LOW";
+      case 0b01:
+        return "NOT";
+      case 0b10:
+        return "BUFFER";
+      case 0b11:
+        return "HIGH";
+    }
+  }
+  if (inputs === 2) {
+    switch (word & 0xf) {
+      case 0x0:
+        return "LOW";
+      case 0x8:
+        return "AND";
+      case 0xe:
+        return "OR";
+      case 0x7:
+        return "NAND";
+      case 0x1:
+        return "NOR";
+      case 0x6:
+        return "XOR";
+      case 0x9:
+        return "XNOR";
+      case 0xf:
+        return "HIGH";
+    }
+  }
+  return null;
+}
+
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
  * For a multi-variant family this holds the FAMILY tag (pointing at variant 0, so any variant-unaware
  * path still resolves a valid inner circuit) AND each derived child tag `"<family>#i"`. */
@@ -487,6 +530,21 @@ export function resealUserIc(
     freeForm,
     pinNames: keep ? [...pinNames] : prev.pinNames,
   });
+}
+
+/**
+ * Store (or clear) a swept {@link CellBehavior} on a registered cell def, so a placed instance set to
+ * `fidelity:'behavioral'` collapses to one LUT in {@link flattenUserIcs}. Pass `undefined` to drop a stale
+ * characterization (e.g. when the inner logic changed and the {@link CellBehavior.sig} no longer matches).
+ * No-op when `tag` isn't registered. Spreads the prior def so every other field rides through unchanged.
+ */
+export function setUserIcBehavior(
+  tag: string,
+  behavior: CellBehavior | undefined,
+): void {
+  const prev = REGISTRY.get(tag);
+  if (!prev) return;
+  registerUserIc({ ...prev, behavior });
 }
 
 /**

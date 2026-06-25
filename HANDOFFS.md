@@ -5,6 +5,54 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (154) — IMPLEMENT: characterization engine — the SWEEP + truth-table panel (the "1")
+
+**State:** 🟢 **about to PR**. Web only, golden untouched, **121 web tests**, full gate green + sim-core
+golden re-confirmed. This is the engine's flagship: build a gate → **⊨ Characterize** → watch the swept
+truth table. Owner directive: "keep on and just let me know what to test." → **see "Owner: test this" below.**
+
+**The sweep (`web/src/lib/characterize.ts`, APP-ONLY — scratch wasm Sim, can't run headless):**
+- `characterizeCell(graph, frameId, pinRoles)`: parses roles → in/out/vcc/gnd pins; for each of `2^k`
+  input combos, `structuredClone`s the die graph, sets `frame.pinTests` (gnd=0, vcc=5, each in =
+  combo-bit?5:0), adds a **1 GΩ sense R** OUT→GND (its `nodesOfComponent[0]` IS the OUT node — no
+  sim-core change), `bg.restore(dieTestGraph(snap,frameId))` → `buildNetlist(bg,false)` → a **second,
+  throwaway `new Simulation(0)`** → `set_netlist_pefgh` → 64 steps → read OUT at half-rail → `word |=
+  bit<<combo`. Returns `{ok, behavior:{prog:4,word,mode:0,sig:cellBehaviorSig}, inputs, vectors}` or
+  `{ok:false, reason}`. Golden-safe: the scratch Sim is separate from the hashed loop instance.
+  Guards (clear reasons): no OUT / no GND / no inputs / >4 inputs / won't-solve.
+- `recognizeGate(word, inputs)` (**in userIc.ts**, pure + headless-tested): names the swept word
+  (NAND=0x7, NOR=0x1, XOR=0x6, AND=0x8, OR=0xE, XNOR=0x9, NOT/BUFFER; null for ≥3-in / unnamed).
+
+**Store → collapse wiring:**
+- `setUserIcBehavior(tag, behavior|undefined)` (userIc.ts) — binds the swept word to the def so the
+  already-landed COLLAPSE (153) can fire; `undefined` clears a stale sweep. Headless-tested end-to-end
+  (no behavior → inlines R; after `setUserIcBehavior` → ONE LUT; cleared → back to R).
+
+**UI (App.svelte + app.css):**
+- **⊨ Characterize** button on every *My Subassemblies* row (beside ⊡ Edit / ⬡ Tape out; cyan,
+  faint-until-row-hover). Also gave ⊡ Edit a proper auto-width label style (it was clipping in the 20px
+  glyph box).
+- `characterizeIc(tag)` runs the sweep, `setUserIcBehavior(tag, res.behavior)`, and opens the
+  **truth-table panel** (`.char-panel`, floating cyan telemetry card top-centre): title + recognized
+  gate chip + `LUT 0x…` word + the full I0..Ik→Y table (highs lit), × to close. Refusals surface in the
+  existing `circuitWarning`.
+
+**Owner: test this →**
+1. Build a 2-input gate in a die (e.g. NAND from FETs), or box-select one with the Region tool, so it
+   lands in **My Subassemblies**. Pins must be tagged **out / in / vcc / gnd** (capture auto-derives;
+   the refusal message tells you if one's missing).
+2. Hover the row → click **⊨ Characterize**.
+3. Expect the panel: truth table **00→1, 01→1, 10→1, 11→0** and the chip reading **NAND** (word
+   `0x7`). NOR→`0x1`, XOR→`0x6`, etc. A wiring gap shows a friendly reason instead.
+
+**NEXT (still app-verified):** (a) a **fidelity toggle** on a placed instance so it opts into
+`'behavioral'` and actually simulates as the cheap LUT (collapse is landed but nothing flips the flag in
+the UI yet); (b) the **steppable** "watch-it-compute" panel (light the conducting PUN/PDN path via
+`logicInternal.drawGateInternal`, verify each row vs the intended gate live). Registered (`mode≥1`)
+cells + >4-input cells are out of the v1 sweep.
+
+---
+
 ## 2026-06-25 (153) — IMPLEMENT: characterization engine — the COLLAPSE (gate → one LUT)
 
 **State:** 🟢 **about to PR**. Web only, golden untouched, **119 web tests**, full gate green. The testable

@@ -596,6 +596,31 @@ body {
   background: color-mix(in oklch, var(--accent) 16%, transparent);
   border-color: var(--accent);
 }
+/* Labeled secondary row buttons (Edit, Characterize) — auto-width to fit their text instead of the
+   20px glyph box, faint-until-row-hover like the other secondary controls. Characterize tints cyan
+   (a measurement / telemetry action — sweep the gate and read its truth table). */
+.ic-row-edit,
+.ic-row-char {
+  width: auto;
+  padding: 0 7px;
+  gap: 4px;
+  font-family: var(--font-display, "Saira Condensed", sans-serif);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.ic-row-char {
+  color: var(--cyan);
+  border-color: color-mix(in oklch, var(--cyan) 40%, transparent);
+}
+.part:hover .ic-row-char {
+  opacity: 0.92;
+}
+.ic-row-char:hover {
+  color: var(--cyan);
+  background: color-mix(in oklch, var(--cyan) 16%, transparent);
+  border-color: var(--cyan);
+}
 .ic-rename {
   width: 100%;
   font-size: 12px;
