@@ -1324,26 +1324,49 @@ function analyzeRegion(
       ? region.has(e.componentId)
       : internalRoots.has(find(endpointKey(e)));
 
-  // For each boundary net, find a representative crossing wire (one endpoint inside, one outside) to
-  // POSITION its pin: on the box edge in the outside endpoint's direction, aligned with the inside pin's
-  // row/col — i.e. where the wire actually leaves the box.
+  // Place each boundary net's pin WHERE ITS TRACE ACTUALLY CROSSES the box edge (so the lead lands ON the
+  // wire, not merely "near the inside pin"). Walk each wire's ROUTED path (endpoints + waypoints) and find
+  // the segment that steps from inside the box to outside; the pin sits on the box edge along that
+  // segment's row (a horizontal exit → a left/right edge) or column (a vertical exit → a top/bottom edge).
+  // Scans wires in order, first crossing per net wins (deterministic), and works even when a net leaves
+  // THROUGH a junction (the test is geometric, not "must be a pin-to-pin wire"). `clamp` keeps the
+  // along-edge coordinate inside the box.
   const clamp = (v: number, lo: number, hi: number): number =>
     Math.max(lo, Math.min(hi, v));
-  const cx = (minCol + maxCol) / 2;
-  const cy = (minRow + maxRow) / 2;
-  const repCells = new Map<string, { inCell: Cell; outCell: Cell }>();
+  const inBox = (c: Cell): boolean =>
+    c.col >= minCol && c.col <= maxCol && c.row >= minRow && c.row <= maxRow;
+  const crossDx = new Map<string, { dx: number; dy: number }>();
   for (const w of full.wires) {
-    const fromIn = capturedEndpoint(w.from);
-    const toIn = capturedEndpoint(w.to);
-    if (fromIn === toIn) continue;
-    const insideE = fromIn ? w.from : w.to;
-    const outsideE = fromIn ? w.to : w.from;
-    if (!isPinRef(insideE) || !region.has(insideE.componentId)) continue;
-    const root = find(endpointKey(insideE));
-    if (!pinIndexOf.has(root) || repCells.has(root)) continue;
-    const inCell = graph.endpointCell(insideE);
-    const outCell = graph.endpointCell(outsideE);
-    if (inCell && outCell) repCells.set(root, { inCell, outCell });
+    const root = find(endpointKey(w.from));
+    if (!pinIndexOf.has(root) || crossDx.has(root)) continue;
+    const a = graph.endpointCell(w.from);
+    const b = graph.endpointCell(w.to);
+    if (!a || !b) continue;
+    const path: Cell[] = [a, ...(w.waypoints ?? []), b];
+    for (let s = 0; s + 1 < path.length; s++) {
+      const p = path[s];
+      const q = path[s + 1];
+      if (inBox(p) === inBox(q)) continue; // this segment doesn't straddle the boundary
+      const insidePt = inBox(p) ? p : q;
+      const outsidePt = inBox(p) ? q : p;
+      let dx: number;
+      let dy: number;
+      if (insidePt.row === outsidePt.row) {
+        // horizontal exit → a vertical (left/right) edge, at the trace's row
+        dx = outsidePt.col < minCol ? 0 : boxW - 1;
+        dy = clamp(insidePt.row - minRow, 0, boxH - 1);
+      } else if (insidePt.col === outsidePt.col) {
+        // vertical exit → a horizontal (top/bottom) edge, at the trace's column
+        dy = outsidePt.row < minRow ? 0 : boxH - 1;
+        dx = clamp(insidePt.col - minCol, 0, boxW - 1);
+      } else {
+        // diagonal (a non-orthogonal waypoint, rare) — clamp the outside point onto the nearest edge
+        dx = clamp(outsidePt.col - minCol, 0, boxW - 1);
+        dy = clamp(outsidePt.row - minRow, 0, boxH - 1);
+      }
+      crossDx.set(root, { dx, dy });
+      break;
+    }
   }
   const pinGeom: { dx: number; dy: number; name?: string }[] = new Array(
     boundaryRoots.length,
@@ -1376,20 +1399,15 @@ function analyzeRegion(
     return { dx, dy }; // every edge cell taken (a tiny box, very rare) — keep it
   };
   boundaryRoots.forEach((root, i) => {
-    const rep = repCells.get(root);
+    const cross = crossDx.get(root);
     let dx: number;
     let dy: number;
-    if (rep) {
-      const ddx = rep.outCell.col - cx;
-      const ddy = rep.outCell.row - cy;
-      if (Math.abs(ddx) >= Math.abs(ddy)) {
-        dx = ddx < 0 ? 0 : boxW - 1;
-        dy = clamp(rep.inCell.row - minRow, 0, boxH - 1);
-      } else {
-        dy = ddy < 0 ? 0 : boxH - 1;
-        dx = clamp(rep.inCell.col - minCol, 0, boxW - 1);
-      }
+    if (cross) {
+      dx = cross.dx;
+      dy = cross.dy;
     } else {
+      // No wire path crossed the edge for this net (e.g. it's joined only by a same-name alias, no wire) —
+      // park it on the left edge so it still gets a distinct lead.
       dx = 0;
       dy = clamp(i, 0, boxH - 1);
     }

@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (147) — FIX (owner-reported): region pins align to traces + the rect now PERSISTS
+
+**State:** 🟢 on branch, **about to PR**. Web/render/registry only, golden untouched, **114 web tests**,
+full gate green. PRs #213/#214/#215 (free-form push) all on main. Owner tested the live region tool and hit
+two issues — both fixed.
+
+**1. Pins didn't align with the traces (`analyzeRegion`, userIc.ts).** The pin was placed at the INSIDE
+pin's row/col on the nearest edge — so a net exiting RIGHT to a part could land its pin on the BOTTOM.
+Rewrote placement to be GEOMETRIC: walk each wire's ROUTED path (endpoints + `waypoints`), find the segment
+that steps inside→outside the box, and put the pin on the box edge along that segment's row (horizontal
+exit) or column (vertical exit) — i.e. exactly where the trace crosses. Also fixes nets that leave THROUGH
+a junction (old code needed a pin-to-pin wire). Test added (`region pins land on the edge the trace EXITS`).
+Shared by preview + seal, so both agree.
+
+**2. Couldn't leave the region and come back (persistence, board.ts + App.svelte).** `setMode` no longer
+clears the rectangle — it PERSISTS across tool switches; only Esc / Seal / × Cancel / a drill-in drop it.
+- `Board.refreshRegionOverlay()` (called from the HUD `onChange`) re-derives the box's pins LIVE as you
+  wire/move/delete parts with a region pending.
+- `setDieFrame(non-null)` clears the region (a drill-in would strand a stale overlay over the inner canvas).
+- A stray CLICK in region mode no longer wipes a drawn box: the press stashes `regionPrev`, restored on
+  release if the "drag" stayed sub-cell.
+- The seal panel now shows whenever a region is pending (`regionInfo || mode==='region'`), in ANY tool,
+  with a **× Cancel** + a "press G to resize" hint; `cancelRegion()`.
+
+**Try:** G → drag a box → switch to Wire, add a wire that crosses the box (a pin appears live) → seal.
+
+**Remaining (push tail):** pin-DRAG (needs Alt-drag, see (146)); in-die Ctrl+Z of a box-resize; then the
+engine ("1").
+
+---
+
 ## 2026-06-25 (146) — IMPLEMENT: free-form subassembly EDITING (open from bin + box resize) + bug fixes
 
 **State:** 🟢 on **PR #215** (box-resize landed first; bin-edit + revert folded in). Web/render/registry

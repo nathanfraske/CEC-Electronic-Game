@@ -806,6 +806,14 @@ export class Board {
     y1: number;
   } | null = null;
   private regionDrawing = false;
+  // The region rectangle in effect when the current draw-drag STARTED, restored if that drag turns out to
+  // be a mere click (sub-cell) — so a stray click in region mode doesn't wipe a box you'd already drawn.
+  private regionPrev: {
+    x0: number;
+    y0: number;
+    x1: number;
+    y1: number;
+  } | null = null;
   // The last region state pushed to the HUD, so a drag that doesn't change the pin count/refusal doesn't
   // churn Svelte reactivity every pointer-move.
   private lastRegionKey = "";
@@ -990,7 +998,10 @@ export class Board {
     if (mode !== "wire") this.cancelWiring();
     if (mode !== "measure") this.clearProbe();
     if (mode !== "label") this.endLabelEdit();
-    if (mode !== "region") this.clearPendingRegion(); // leaving the region tool drops its rectangle
+    // The region rectangle PERSISTS across tool switches (so you can draw it, wire/edit the circuit with
+    // its pins updating live, then come back and seal) — it's dropped only by Esc, Seal, or a drill-in,
+    // not by leaving the tool. If a drag was mid-flight when the tool changed, settle it.
+    this.regionDrawing = false;
     this.updateCursor();
     this.updateGhost();
   }
@@ -2126,6 +2137,9 @@ export class Board {
    * board. Redraws the walls immediately so the change is visible without waiting for a sim frame.
    */
   setDieFrame(frameId: number | null): void {
+    // A persisted region rectangle belongs to the OUTER board; drilling into a die (or the graph swap that
+    // comes with it) would leave a stale overlay over the inner canvas — drop it on entry.
+    if (frameId !== null) this.clearPendingRegion();
     this.dieFrameId = frameId;
     this.drawDieWalls();
   }
@@ -3826,6 +3840,7 @@ export class Board {
     // tool is "drag a box round the circuit you want to bottle up". A re-draw replaces the prior pending
     // rect, so you size it by dragging again; the box persists on release for the live pin preview.
     if (this.mode === "region") {
+      this.regionPrev = this.pendingRegion; // restore it if this press is just a click (no real drag)
       this.regionDrawing = true;
       this.pendingRegion = { x0: wp.x, y0: wp.y, x1: wp.x, y1: wp.y };
       this.drawPendingRegion();
@@ -4172,13 +4187,22 @@ export class Board {
     return this.pendingRegion !== null;
   }
 
-  /** Drop the pending-region rectangle + clear its overlay (mode switch, cancel, or after a seal). */
+  /** Drop the pending-region rectangle + clear its overlay (Esc, cancel, a seal, or a drill-in). */
   clearPendingRegion(): void {
     this.pendingRegion = null;
     this.regionDrawing = false;
     this.regionLayer.clear();
     for (const t of this.regionLabels) t.visible = false;
     this.emitRegion(null);
+  }
+
+  /** Re-derive the persisted region overlay against the CURRENT board, so its boundary pins follow LIVE
+   * as you wire / move / delete parts with a region pending (the rectangle outlives the tool switch).
+   * Called from the HUD's onChange. A no-op when no region is pending or a drag is in flight (the
+   * pointer-move handler already redraws then). */
+  refreshRegionOverlay(): void {
+    if (this.pendingRegion !== null && !this.regionDrawing)
+      this.drawPendingRegion();
   }
 
   /** Seal the pending region into a free-form subassembly (the drawn rect IS the box, pins where wires
@@ -4670,8 +4694,14 @@ export class Board {
       return;
     }
     if (this.regionDrawing) {
-      // Keep the rectangle (the pending region) so its pins preview live and the player can seal it.
+      // Keep the rectangle (the pending region) so its pins preview live and the player can seal it. But
+      // if this "drag" never grew past a cell (a click), restore the box that was there before — a stray
+      // click in region mode must not wipe an already-drawn region.
       this.regionDrawing = false;
+      if (this.regionRectWorld() === null && this.regionPrev !== null) {
+        this.pendingRegion = this.regionPrev;
+      }
+      this.regionPrev = null;
       this.drawPendingRegion();
       return;
     }
