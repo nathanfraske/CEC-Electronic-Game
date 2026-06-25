@@ -99,6 +99,12 @@ export interface UserIcInternalsOpts {
    * can compute its own absolute on-screen scale without walking the Pixi tree:
    * `childAbsScale = cumulativeScale · thisLevel.s`. Defaults to 1 at the top. */
   cumulativeScale?: number;
+  /** The screen (renderer) rect in CSS px — `{ w: app.screen.width, h: app.screen.height }`. Enables the
+   * A.4 VIEW cull: an inner part whose body, mapped to screen space, lies a full viewport beyond the edge
+   * is skipped (no recurse, no detail/glyph draw, nested subtree freed) — so zooming deep into ONE nested
+   * cell doesn't redraw every off-screen sibling's whole subtree each frame (the size-cull bounds depth,
+   * this bounds breadth). Absent ⇒ no view cull (the static fallback / headless tests draw everything). */
+  viewport?: { w: number; h: number };
   /**
    * A persistent container (added under the instance's rotated glyph holder) that becomes the SCALED
    * inner-view: child[0] is a pooled {@link Graphics} for the wires + junctions (cleared every frame),
@@ -117,11 +123,40 @@ export interface UserIcInternalsOpts {
  * does the shrink. Returns nothing.
  */
 /** Hard recursion guard (Part A.4): the deepest the zoom-to-open replica will open a nested sealed IC.
- * Mirrors `flattenUserIcs`'s MAX_DEPTH so the two bounds agree. Belt-and-braces against a reseal cycle
- * that slipped flatten's own guard; in practice the on-screen-size cull stops recursion far sooner
- * (each level shrinks the child by its fit-scale `s < 1`, so for any fixed zoom only a finite, small
- * number of levels are large enough to open). */
+ * Mirrors `flattenUserIcs`'s MAX_DEPTH so the two bounds agree. This DEPTH cap is the termination
+ * GUARANTEE: a real IC's body is far smaller than the circuit it abstracts, so each level's fit-scale
+ * `s` is well below 1 and the on-screen-size cull (`absScale ≥ internalsZoom`) usually halts recursion
+ * far sooner — but `s = min(fitW/domW, fitH/domH)` is NOT clamped, so a contrived cell whose body is
+ * larger than its inner bbox could have `s > 1`; the depth cap (with flatten's own MAX_DEPTH) bounds
+ * that case regardless. The {@link UserIcInternalsOpts.viewport} cull bounds BREADTH the same way. */
 const RECURSE_MAX_DEPTH = 24;
+
+/** A.4 VIEW cull: is this inner-part holder near enough the screen to be worth drawing? The holder's
+ * local origin maps to screen as exactly its world transform's `(tx, ty)` (a matrix applied to `(0,0)`),
+ * and the local→screen scale magnitude is `absScale`, so the holder's screen footprint is a disc of
+ * radius `radLocal · absScale` about `(tx, ty)`. We keep it when that disc reaches within ONE viewport
+ * dimension of the screen rect — a deliberately generous margin so a one-frame-stale transform (the
+ * cull reads last render's matrix) or a fast pan can never blink a real part out; the genuinely distant
+ * siblings at deep zoom are many viewports away and still cull. A brand-new holder (identity transform →
+ * origin (0,0), inside the rect) is kept, so a level never culls itself on its first frame. */
+function holderNearViewport(
+  child: Container,
+  radLocal: number,
+  absScale: number,
+  vp: { w: number; h: number },
+): boolean {
+  const wt = child.worldTransform;
+  const sx = wt.tx;
+  const sy = wt.ty;
+  const rad = radLocal * absScale;
+  const m = Math.max(vp.w, vp.h); // one-viewport slack on every side
+  return (
+    sx + rad >= -m &&
+    sx - rad <= vp.w + m &&
+    sy + rad >= -m &&
+    sy - rad <= vp.h + m
+  );
+}
 
 /** The pooled sub-objects a single inner-part holder (a {@link Graphics} in `partLayer`) may own across
  * frames, indexed off the holder via {@link slotOf}. `dg` is the Part-B tier-detail Graphics; `frameG`
@@ -163,6 +198,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     allInternals,
     depth = 0,
     cumulativeScale = 1,
+    viewport,
   } = o;
   const { parts, wires, innerGraph, nodeOfInner, frameId } = internals;
   // The schematic lens (C-2) draws plain orthogonal polyline traces + plain junction dots instead of
@@ -496,6 +532,27 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     const slot = slotOf(child);
     const absScale = s * cumulativeScale * cameraZoom; // on-screen px per world px at this depth
 
+    // --- A.4 VIEW cull: skip a part whose body lies a full viewport beyond the screen edge — no recurse,
+    // no detail/glyph draw, and free any nested subtree so memory tracks what's visible. The size-cull
+    // (below) bounds recursion DEPTH; this bounds BREADTH, so zooming deep into ONE nested cell doesn't
+    // rebuild every off-screen sibling's whole subtree every frame. radLocal = the part footprint's
+    // diagonal (+PITCH overhang) from the holder origin, a conservative bound for any rotation. Only when
+    // a viewport was supplied (the static fallback / headless tests pass none and draw everything). ---
+    if (viewport) {
+      const radLocal =
+        Math.hypot((kind.w - 1) * PITCH, (kind.h - 1) * PITCH) + PITCH;
+      if (!holderNearViewport(child, radLocal, absScale, viewport)) {
+        if (slot.frameG || slot.nestedLayer) {
+          slot.frameG?.destroy({ children: true });
+          slot.nestedLayer?.destroy({ children: true });
+          slot.frameG = undefined;
+          slot.nestedLayer = undefined;
+        }
+        child.visible = false; // hides the holder + any pooled detail `dg`, so nothing stale draws
+        continue;
+      }
+    }
+
     // --- A.3 RECURSE: when this inner part is ITSELF a sealed user IC whose internals resolve in the
     // map, AND its absolute on-screen footprint has grown past the SAME open bar the top level uses
     // (`cumulativeScale · s · cameraZoom ≥ internalsZoom`), AND we are within the depth guard, draw its
@@ -551,6 +608,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
         allInternals,
         depth: depth + 1,
         cumulativeScale: s * cumulativeScale, // accumulate THIS level's fit-scale for the child
+        viewport, // nested levels cull off-screen sub-cells against the same screen rect
       });
       continue;
     }

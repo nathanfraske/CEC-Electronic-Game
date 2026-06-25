@@ -2230,6 +2230,7 @@ export class Board {
         snap.state,
         this.userIcInternals?.get(id),
         this.userIcInternals,
+        { w: this.app.screen.width, h: this.app.screen.height },
       );
     }
 
@@ -6536,6 +6537,7 @@ class ComponentNode {
     nodeV?: Float64Array,
     userIc?: UserIcInternals,
     allUserIcInternals?: Map<number, UserIcInternals>,
+    viewport?: { w: number; h: number },
   ): void {
     const g = this.glyph;
     g.clear();
@@ -6643,6 +6645,9 @@ class ComponentNode {
         // grows large enough on screen. Top level is depth 0, cumulativeScale 1 (the opts defaults).
         internalsZoom: INTERNALS_ZOOM,
         allInternals: allUserIcInternals,
+        // The screen rect for the A.4 view cull (skip off-screen inner parts so deep zoom into one
+        // nested cell doesn't redraw every off-screen sibling's subtree each frame).
+        viewport,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;

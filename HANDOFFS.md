@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (126) — Phase 2 Part A cross-checked + landed; A.4 VIEW cull added
+
+**State:** 🟢 PR #197 (`claude/kind-turing-hdelb3` → main) — Phase 2 Part A (cherry-picked from
+`claude/phase2-part-a`) + the IC-library design doc. Render-only; golden `0xeaac…fa24` untouched. Full gate
+green (build:wasm, web check 0-err / lint / build / test 77, `golden_snapshot_hash_is_stable` ok).
+
+**Cross-check verdict (4-agent workflow, 3 lenses): FIX-REQUIRED → resolved.**
+- **golden-determinism: PASS** — proven render-only (no `.rs`, no `loop.ts`; `flatId` is the already-computed
+  flatten id `comp.id+o`, spread into the unhashed `userIcInternals` map only; `sig` never references it).
+- **correctness + perf: FIX-REQUIRED**, two issues, both now fixed:
+  - **A.4 VIEW cull (was MAJOR, deferred by the implementer): now IMPLEMENTED.** The size-cull bounds recursion
+    *depth* but not *breadth* — zoom deep into one nested cell and every off-screen sibling subtree across the
+    whole opened IC still rebuilt every frame. Added `holderNearViewport(child, radLocal, absScale, viewport)`:
+    the holder's local origin maps to screen as its `worldTransform.(tx,ty)`, footprint radius `radLocal·absScale`;
+    keep when the disc reaches within ONE viewport dimension of the screen rect (generous margin ⇒ a one-frame-stale
+    transform / fast pan can never blink a real part out; distant siblings still cull). On cull: free the nested
+    subtree (`destroy({children:true})`) + `child.visible=false`. `viewport={w,h}` threaded board → `ComponentNode.update`
+    → opts, and down each recursion level. Absent ⇒ no cull (static fallback / headless tests draw all).
+  - **`s<1` termination claim (was MINOR): comment corrected.** `s=min(fitW/domW,fitH/domH)` is NOT clamped, so a
+    body larger than its inner bbox gives `s>1`. The real termination GUARANTEE is `RECURSE_MAX_DEPTH=24` (depth)
+    + the new view cull (breadth); the size-cull is the typical economy, not a proof. Comments now say so.
+
+**View cull is render-time (Pixi `worldTransform`), not headless-testable** without pulling pixi runtime into the
+node suite; it's conservative/fail-safe by construction (origin-in-rect default keeps a part).
+
+**Next / owner eye:** confirm the nested open *feels* right at real zoom on a 2-level example; then Phase 3
+(transistor silicon leaf) / Phase 4 (LUT + inverter element), or implement the now-designed IC library + variants.
+
+---
+
 ## 2026-06-24 (125) — Phase 2 Part A IMPLEMENTED: recursive nested zoom-to-open
 
 **State:** 🟢 branch `claude/phase2-part-a` (off latest main, which already had the Phase 2 base case —

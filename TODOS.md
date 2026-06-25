@@ -33,7 +33,10 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   `comp.id + offset`) added to `UserIcInnerPart`; `drawUserIcInternals` recurses into a nested sealed-IC inner
   part when `cumulativeScale·s·cameraZoom ≥ INTERNALS_ZOOM`, depth-guarded at `RECURSE_MAX_DEPTH = 24`, pooled
   per-slot subtree destroyed on cull. Live signals free via each level's `nodeOfInner` + the same `nodeV`.
-  Parts B/C of the doc were already landed in the base case. Golden untouched.
+  Parts B/C of the doc were already landed in the base case. Golden untouched. **Cross-check follow-up (PR #197):**
+  added the A.4 **VIEW cull** (`holderNearViewport` — skip + free off-screen inner parts via `worldTransform`, one
+  full-viewport margin) so deep zoom into one cell doesn't redraw every off-screen sibling subtree; corrected the
+  `s<1` termination comment (the real guarantee is `RECURSE_MAX_DEPTH` + view cull, not an `s<1` assumption).
 
 ## 2026-06-24 (121) — Recursive-IC LoD Phase 0 LANDED (opened IC via the real pipeline)
 
