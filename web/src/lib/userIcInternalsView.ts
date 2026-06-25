@@ -715,6 +715,10 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
         phase,
         value: part.value,
         anchors,
+        // On-screen magnification of THIS inner part (px-per-world-px at this depth) so its
+        // detail drawer can hand off to the silicon leaf when zoomed far enough (Phase 3) —
+        // the same `absScale` the C-1 tier gate above tests against `tierZoom`.
+        absScale,
       };
       // Hide the illustration's decorative studs (board.ts:6669) — the inner wires' grommets mark the
       // real connections; avoids the doubled-terminal clutter.
