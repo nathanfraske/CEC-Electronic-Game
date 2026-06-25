@@ -23,6 +23,7 @@ import {
   drawGlyphIn,
   drawUserIcPackageBody,
   userIcBodyBox,
+  pinLeadRoot,
   ZERO_ELECTRICAL,
   type ElectricalState,
   type GlyphStyle,
@@ -491,21 +492,20 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   // to the package lead ROOT on the body edge — the lead root lives in glyph space, so it's mapped back
   // into container/world coords ((root − pos)/s). The inner net then reads as one continuous run from the
   // part, through the frame pin, out to the solder lead the package carries on to its tip. ---
-  const bcx = bodyB.x + bodyB.w / 2;
-  const bcy = bodyB.y + bodyB.h / 2;
   for (let i = 0; i < internals.pinCells.length; i++) {
     const pc = internals.pinCells[i];
     const pp = pins[i];
     if (!pc || !pp || degenerate) continue;
     const fpW = new Point(pc.col * PITCH, pc.row * PITCH); // frame pin in world (container) coords
-    const rootG = bodyB.alongX
-      ? { x: pp.x, y: pp.y < bcy ? bodyB.y : bodyB.y + bodyB.h }
-      : { x: pp.x < bcx ? bodyB.x : bodyB.x + bodyB.w, y: pp.y };
-    const rootW = new Point((rootG.x - px) / s, (rootG.y - py) / s);
-    // Orthogonal STAPLE, not a raw diagonal: exit BOTH ends along the lead axis (alongX leads are
-    // vertical, else horizontal), joined by one cross leg, then rounded — so the connector reads as a
-    // clean bent run from the frame pin out to the lead, never a diagonal (owner).
-    const leadPts = bodyB.alongX
+    // Route THIS pin's lead to the body edge it actually sits on (per-pin, not the package-wide `alongX` —
+    // a free-form box carries pins on all four edges, so a side pin at mid-height must NOT drop to the
+    // bottom edge). The lead root lives in glyph space; map it back into container/world coords.
+    const root = pinLeadRoot(pp, bodyB);
+    const rootW = new Point((root.x - px) / s, (root.y - py) / s);
+    // Orthogonal STAPLE, not a raw diagonal: exit BOTH ends along the lead axis (a top/bottom edge → leads
+    // vertical, a left/right edge → horizontal), joined by one cross leg, then rounded — so the connector
+    // reads as a clean bent run from the frame pin out to the lead, never a diagonal (owner).
+    const leadPts = root.vertical
       ? [
           fpW,
           new Point(fpW.x, (fpW.y + rootW.y) / 2),

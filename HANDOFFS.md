@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (160) — FIX (owner): opened-IC lead connectors drop IN/OUT to the bottom
+
+**State:** 🟢 **about to PR**. Web/render only, golden untouched, **128 web tests** (+2), full gate green.
+ROOT-CAUSED + fixed the (159) "IN/OUT pipes go to the bottom" bug. Owner confirmed: **placed-IC zoom-to-open**
+(NOT the die editor — that path I'd verified clean), and **reload doesn't fix it** (reproducible from saved
+data). Owner's saved JSON carried the embedded def + geom, which cracked it.
+
+**Root cause (`userIcInternalsView.ts` LEAD CONNECTORS, the pipes from each inner frame-pin out to the
+package lead):** they used the package-wide `bodyB.alongX` (`userIcBodyBox`, glyphs.ts) to pick top/bottom
+vs left/right for EVERY pin. `alongX = (#distinct pin-X ≥ #distinct pin-Y)`. The inverter box has pins on
+ALL FOUR edges (IN/OUT sides, VCC/GND top/bottom) → 3 distinct X == 3 distinct Y → `alongX=true` → every
+lead treated as top/bottom. IN/OUT sit at mid-height (`pp.y == body centre`), so `pp.y < bcy` is false →
+their roots land on the **bottom** edge. VCC(top)/GND(bottom) happen to resolve right, which is why only
+IN/OUT were wrong. (Verified by hand-trace + a headless test; the die-editor wire routing was already
+correct — different code path.)
+
+**Fix:** new pure **`pinLeadRoot(pp, body)`** (glyphs.ts, beside `userIcBodyBox`) decides each pin's edge
+PER PIN — compares its offset from the body centre normalised by each axis' half-extent, picks the nearest
+edge, returns the root point + `vertical` (top/bottom → vertical staple, else horizontal). The lead
+connector now calls it instead of `bodyB.alongX`. **Stock DIP/SOT unchanged** (all pins on the two stick
+edges resolve exactly as `alongX` did). Headless test (`userIcInternalsView.test.ts`): the 4-edge inverter
+geom routes IN→left / OUT→right / VCC→top / GND→bottom, plus a regression guard that the old `alongX` would
+have dropped IN/OUT to the bottom.
+
+**Still OPEN:** pin-move feel (Alt "feels odd" → "Edit pins" toggle plan, latitude given).
+
+---
+
 ## 2026-06-25 (159) — FEATURE (owner): resizable parts bin + pin bug investigation
 
 **State:** 🟢 resizable bin **about to PR** (web/UI only, golden untouched, 126 web tests, gate green). Two

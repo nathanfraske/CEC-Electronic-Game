@@ -2033,6 +2033,31 @@ export function userIcBodyBox(
       };
 }
 
+/**
+ * Which body edge a single footprint pin's LEAD CONNECTOR ties out to in the opened-IC replica — decided
+ * PER PIN, not from the package-wide `alongX`. A free-form (box-captured) subassembly can carry pins on ALL
+ * FOUR edges at once (e.g. IN/OUT on the sides, VCC/GND top & bottom); the package `alongX` flag is a single
+ * boolean and so forces every pin to one stick axis — which wrongly drops a side pin sitting at mid-height
+ * onto the top/bottom edge. Pick the edge each pin is genuinely nearest by comparing its offset from the
+ * body centre normalised by the half-extent of each axis. For a stock DIP/SOT (every pin on its two stick
+ * edges) this resolves exactly as `alongX` did, so closed-package replicas are unchanged. Returns the
+ * lead-root point on the chosen edge plus whether the run is `vertical` (a top/bottom edge → vertical
+ * staple) or horizontal (left/right). Pure geometry.
+ */
+export function pinLeadRoot(
+  pp: { x: number; y: number },
+  body: { x: number; y: number; w: number; h: number },
+): { x: number; y: number; vertical: boolean } {
+  const bcx = body.x + body.w / 2;
+  const bcy = body.y + body.h / 2;
+  const halfW = body.w / 2 || 1;
+  const halfH = body.h / 2 || 1;
+  const vertical = Math.abs(pp.y - bcy) / halfH >= Math.abs(pp.x - bcx) / halfW;
+  return vertical
+    ? { x: pp.x, y: pp.y < bcy ? body.y : body.y + body.h, vertical }
+    : { x: pp.x < bcx ? body.x : body.x + body.w, y: pp.y, vertical };
+}
+
 const LEAD_W = 12; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
 const LEAD_TUCK = 2; // px the lead tucks UNDER the body rim at its root so there's no seam
 
