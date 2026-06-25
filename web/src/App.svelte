@@ -125,6 +125,7 @@
   import { hasAnalogy } from "./lib/analogyDrawers";
   import { apparentFreq, setApparentRateScale } from "./lib/tierKit";
   import { drawPhasor2D } from "./lib/hudPhasor";
+  import { formatMag, magnification, scaleBar } from "./lib/zoomMeter";
   import { partInfo } from "./lib/partInfo";
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
@@ -982,6 +983,13 @@
   let tps = $state(500);
   let ready = $state(false);
   let mode = $state<Mode>("select");
+  // Zoom-meter readouts (Phase 5), refreshed each frame from board.getViewMetrics(): camera zoom +
+  // the cumulative fit-scale of the opened-IC level under the view centre (1 ⇒ open board). The
+  // magnification ×M and the snapped scale bar derive from them via lib/zoomMeter.
+  let viewZoom = $state(1);
+  let viewScale = $state(1);
+  let magLabel = $derived(formatMag(magnification(viewZoom, viewScale)));
+  let scaleRule = $derived(scaleBar(viewZoom, viewScale));
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
   let armedPart = $state<string | null>(null);
   // The armed part's pre-placement configurator choices (variant / tier / family /
@@ -2047,6 +2055,11 @@
           }
           hash = snap.snapshotHash;
           channels = Array.from(snap.state);
+          // Zoom meter: read the metrics b.update() just latched (camera zoom + the nesting-level
+          // fit-scale under the view centre). Primitive assigns — Svelte only repaints on a change.
+          const vm = b.getViewMetrics();
+          viewZoom = vm.zoom;
+          viewScale = vm.viewScale;
           // Sweep the phase-scope play-head on the frame clock (cosmetic, fixed rate — the
           // traces are static between edits) and repaint just that small canvas.
           if (phaseSweep) {
@@ -4175,6 +4188,24 @@
         <span class="scope-tag">
           {partCount} parts · {wireCount} wires · {selCount} sel
         </span>
+      </div>
+
+      <!-- Zoom meter (Phase 5): magnification ×M + a snapped scale rule that ramps board-cells → mm →
+           µm → nm as you dive through the recursive IC zoom. A non-interactive bench-instrument readout
+           pinned bottom-left; the scale rule is a ⊔ bracket whose width is the snapped physical length. -->
+      <div
+        class="zoom-meter"
+        aria-hidden="true"
+        title="Magnification & scale reference"
+      >
+        <span class="zoom-mag mono">{magLabel}</span>
+        <div class="zoom-scale">
+          <div
+            class="zoom-rule"
+            style="width: {scaleRule.px.toFixed(1)}px"
+          ></div>
+          <span class="zoom-rule-label mono">{scaleRule.label}</span>
+        </div>
       </div>
 
       <!-- Quick-recall hotbar: nine configured-part slots along the board's bottom edge.

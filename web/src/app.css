@@ -655,6 +655,62 @@ body {
   box-shadow: 0 0 0 1px oklch(0 0 0 / 0.3);
 }
 
+/* Zoom meter (Phase 5) ---------------------------------------------------------
+ * A non-interactive bench-instrument readout pinned to the board's bottom-left:
+ * the magnification ×M over a snapped scale rule (a ⊔ bracket whose width is the
+ * round physical length, labelled cells → mm → µm → nm by depth). Reads with the
+ * same glass/mono/tracked language as the scope tags + hotbar. */
+.zoom-meter {
+  position: absolute;
+  z-index: 4;
+  left: 12px;
+  bottom: 12px;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 9px;
+  background: oklch(0.135 0.022 285 / 0.72);
+  backdrop-filter: blur(3px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 0.3),
+    0 8px 22px -14px oklch(0 0 0 / 0.9);
+}
+
+.zoom-mag {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.06em;
+  color: var(--text);
+  text-shadow: 0 0 10px color-mix(in oklch, var(--accent) 45%, transparent);
+}
+
+.zoom-scale {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+/* The scale rule: left/right/bottom borders make a ⊔ with end ticks; the inline
+ * width (px) is the snapped physical length, so the bar literally measures the view. */
+.zoom-rule {
+  height: 5px;
+  min-width: 8px;
+  border: 1px solid var(--border-bright);
+  border-top: none;
+  border-radius: 0 0 1px 1px;
+}
+
+.zoom-rule-label {
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
 /* Quick-recall hotbar (1–9) ----------------------------------------------------
  * A low-profile strip of nine slots along the board's bottom edge: a digit hotkey,
  * the captured part's glyph (tinted by its kind identity colour) + a compact name,

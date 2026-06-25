@@ -633,6 +633,9 @@ export class Board {
   // hovering and hides the moment the pointer leaves.
   private pointerInside = false;
   private viewportDirty = true;
+  // The cumulative fit-scale of the deepest OPENED IC level under the view centre (1 ⇒ the open board),
+  // latched each frame by the zoom-meter probe in `update`. Read via `getViewMetrics` for the HUD.
+  private viewScale = 1;
   // `phase` is the bounded visual flow clock fed to every drawer: it advances at a
   // fixed wall-clock rate (FLOW_HZ), so the flow reads at a constant calm pace no
   // matter the playback tps or the V/I magnitude. Its *direction* tracks the
@@ -2092,6 +2095,14 @@ export class Board {
     };
   }
 
+  /** The HUD zoom meter's inputs (Phase 5): `zoom` = camera scale (screen px per world px); `viewScale`
+   * = the cumulative fit-scale of the opened-IC level under the view centre (1 on the open board, the
+   * product of the fit-scales you've descended through once inside nested ICs). Render-only; feeds
+   * `lib/zoomMeter.ts`. */
+  getViewMetrics(): { zoom: number; viewScale: number } {
+    return { zoom: this.world.scale.x, viewScale: this.viewScale };
+  }
+
   /** Restore a saved camera (pan + zoom), clamped to the valid zoom range and
    * ignoring a malformed value (so a corrupt save can't break the view). */
   setCamera(cam: { x: number; y: number; scale: number } | undefined): void {
@@ -2207,6 +2218,14 @@ export class Board {
     this.drawNetLabels();
     // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
     const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+    // Per-frame view state shared across every node: the screen rect (for the opened-IC view cull) and
+    // ONE zoom-meter probe (Phase 5) seeded at the view centre. Each opened IC writes the probe if its
+    // body contains the centre and it's the deepest level seen, so after the loop `scale` is the
+    // cumulative fit-scale of the level you're looking into (1 ⇒ the open board).
+    const sw = this.app.screen.width;
+    const sh = this.app.screen.height;
+    const viewport = { w: sw, h: sh };
+    const viewProbe = { cx: sw / 2, cy: sh / 2, depth: -1, scale: 1 };
     for (const [id, node] of this.nodes) {
       const e = electrical?.get(id) ?? ZERO_ELECTRICAL;
       // Ease the glyph's flow/heat toward its measured RMS as the part's AC outruns the
@@ -2230,9 +2249,13 @@ export class Board {
         snap.state,
         this.userIcInternals?.get(id),
         this.userIcInternals,
-        { w: this.app.screen.width, h: this.app.screen.height },
+        viewport,
+        viewProbe,
       );
     }
+    // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
+    // open board, when no IC body claimed the centre this frame).
+    this.viewScale = viewProbe.depth >= 0 ? viewProbe.scale : 1;
 
     this.recordScope(snap, scopeBatch);
     this.drawScope();
@@ -6538,6 +6561,7 @@ class ComponentNode {
     userIc?: UserIcInternals,
     allUserIcInternals?: Map<number, UserIcInternals>,
     viewport?: { w: number; h: number },
+    viewProbe?: { cx: number; cy: number; depth: number; scale: number },
   ): void {
     const g = this.glyph;
     g.clear();
@@ -6648,6 +6672,8 @@ class ComponentNode {
         // The screen rect for the A.4 view cull (skip off-screen inner parts so deep zoom into one
         // nested cell doesn't redraw every off-screen sibling's subtree each frame).
         viewport,
+        // The HUD zoom-meter probe: records the deepest opened level under the view centre (Phase 5).
+        viewProbe,
       });
     } else if (tier !== null && zoom >= TIER_ZOOM) {
       const tg = this.tierGlyph;

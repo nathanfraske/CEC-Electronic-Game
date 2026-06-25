@@ -121,4 +121,6 @@ never moves. All recursion is depth-guarded.
 - [ ] Phase 2 — recursive zoom-to-open LoD
 - [ ] Phase 3 — silicon leaf
 - [ ] Phase 4 — realism polish + LUT example
-- [ ] Phase 5 — zoom meter + scale reference HUD
+- [x] Phase 5 — zoom meter + scale reference HUD (`lib/zoomMeter.ts` + a per-frame renderer probe at the
+  view centre → `Board.getViewMetrics` → the bottom-left HUD; magnification ×M + a snapped rule ramping
+  board-cells → mm → µm → nm. Render-only; golden untouched.)
