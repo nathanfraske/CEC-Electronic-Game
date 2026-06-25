@@ -2354,6 +2354,9 @@
   // IC-maker variant families: the family tag the next seal becomes a VARIANT of (the seal panel's
   // "Variant of …" dropdown; "" = a fresh "New IC"). Reset after each seal + when leaving the die.
   let sealVariantOf = $state("");
+  // Seal this die as a bare, nested-only SUBASSEMBLY (role='subassembly', §4.3) instead of a
+  // board-placeable IC — it lands in "My Subassemblies" and reaches the board only via Tape out.
+  let sealAsSubassembly = $state(false);
   /** Whether `tag` is currently a placeable user-IC seal-into target (a family or a single IC that a
    * second seal would promote). Guards the dropdown value against a since-removed target. */
   function hasFamilyTarget(tag: string): boolean {
@@ -2635,6 +2638,7 @@
     const ctx = drill;
     const outer = mutate ? mutate(ctx.outerSnapshot) : ctx.outerSnapshot;
     sealVariantOf = ""; // reset the "Variant of …" choice when leaving the die editor
+    sealAsSubassembly = false; // and the subassembly toggle
     // Close any open port-pad name editor so it doesn't linger over the outer board.
     if (pinNameEdit) cancelPinNameEdit();
     // Leave die mode BEFORE the swap, so swapGraph's onChange sees the outer board with `drill`
@@ -2711,6 +2715,8 @@
       ctx.innerFrameId,
       sealName.trim() || undefined,
       intoFamily,
+      // A subassembly is a fresh top-level seal only — a "Variant of …" inherits its family's role.
+      intoFamily ? undefined : sealAsSubassembly ? "subassembly" : undefined,
     );
     if (!cap) {
       circuitWarning = intoFamily
@@ -2720,6 +2726,7 @@
     }
     sealName = "";
     sealVariantOf = "";
+    sealAsSubassembly = false;
     // Mirror the just-sealed kind into the personal library so it's placeable from any board, forever.
     syncLibrary(cap.tag, "sealed");
     // The die is now a sealed IC: drop its in-progress inner graph (the registered UserIc carries
@@ -4575,6 +4582,20 @@
                 {/each}
               </select>
             {/if}
+            <!-- Seal as a bare, nested-only SUBASSEMBLY (§4.3): it lands in "My Subassemblies" and is
+                 placed only inside other dies; Tape out promotes it to a board IC. Disabled while
+                 sealing as a variant (a variant inherits its family's role). -->
+            <label
+              class="die-seal-sub"
+              title="Seal as a nested-only building block (reach the board later via Tape out)"
+            >
+              <input
+                type="checkbox"
+                bind:checked={sealAsSubassembly}
+                disabled={!!sealVariantOf}
+              />
+              <span>Subassembly (nested-only)</span>
+            </label>
           {/if}
           <div class="die-actions">
             <button
@@ -6693,6 +6714,18 @@
   .die-seal-name {
     width: 150px;
     flex: 0 0 auto;
+  }
+  .die-seal-sub {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    color: var(--dim);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .die-seal-sub input:disabled + span {
+    opacity: 0.45;
   }
   /* Quiet how-to for the port-pad naming affordance (double-click a wall pin). */
   .die-hint {
