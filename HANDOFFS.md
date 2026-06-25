@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (149) — FIX (owner round 2, cont.): free-form die renders as pinouts, not solder
+
+**State:** 🟢 on branch, **about to PR**. Web/render only, golden untouched, 116 web tests, full gate
+green. Capture-correctness half landed (PR #217). This = the RENDERING half (board.ts), visual-only
+(no unit test — owner verifies in-app).
+
+**Owner:** in the subassembly die editor the frame pins showed rectangular SOLDER LEADS and the
+connections to them showed as conduit SOLDER TRACES; they want plain PINOUTS.
+- **(A) No solder leads on free-form frame pins.** `ComponentNode.update()` drew the package's rectangular
+  lead tabs for EVERY die frame; now gated `!isFreeFormFrame(this.kindTag)` (board.ts ~7187) — a free-form
+  subassembly is a logical grouping, not a physical package, so its boundary pins are just pinout pads
+  (the dots). Package dies keep their leads (an earlier owner ask).
+- **(B) Frame-pin leads draw schematic, not conduit.** In `redrawWires`, inside a free-form die a wire that
+  lands on the frame pin (`frameLead`) now draws as a plain schematic lead even in the analogy/reality lens
+  (`if (conduit && !frameLead)`), so the package boundary reads as pinouts; the INTERNAL circuit still gets
+  the conduit skin. `freeFormDie` computed once per redraw. (GND wasn't special-cased — it only *looked*
+  right because its 0 V dark colour hid the conduit.)
+
+**Owner's open question — characterization:** told them VCC-vs-input among DC sources is statically
+ambiguous; "first DC = VCC, rest = inputs, no-driver = output Y" + auto-stimulus is the default, user swaps
+in the editor. **Offered device-aware** (gate→in, drain→out, source-to-rail→supply) for gates if wanted —
+AWAIT their call before building it.
+
+**Remaining backlog:** pin-DRAG (Alt-drag); in-die Ctrl+Z of box-resize; device-aware characterization
+(if owner wants); then the engine ("1").
+
+---
+
 ## 2026-06-25 (148) — FIX (owner round 2): capture junctions 1:1 + characterize pins + auto-stimulus
 
 **State:** 🟢 on branch, **about to PR**. Web/registry only, golden untouched, **116 web tests**, full
