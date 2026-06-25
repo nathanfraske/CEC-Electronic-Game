@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (141) — IMPLEMENT: build gates as subassemblies (P0–P4a ON MAIN)
+
+From the 8-agent audit plan (`docs/cell-characterization-build-plan.md`). All web/doc, golden `0xeaac…fa24` untouched. PR #205
+(P0–P3b) merged to main; P4a in a milestone-2 PR.
+- ~~**P0** doc precision pass~~ — audit corrections folded into the design doc + ADR 0005/0006.
+- ~~**P1** subassembly role flag + "My Subassemblies" bin~~ — `UserIc.role`, `entryRole`, board bin = ICs.
+- ~~**P2** starter gate templates~~ — `gateTemplates.ts` (INV/NAND2/NOR2), "New gate ▸" seeds a solving
+  CMOS die; tested (solvable netlist + FET counts).
+- ~~**P3** pin roles + integration-tier badge~~ — `PinRole`, `derivePinRoles`, `integrationTier`.
+- ~~**P3b** Tape out~~ — `tapeOut(tag, target?)` subassembly→IC; "⬡ Tape out" row control.
+- ~~**P4a** seal-as-subassembly toggle~~ — die-editor seal panel; makes the loop usable.
+- [ ] **P4 (full)** overworld box-capture — `captureRegion` (union-find boundary nets → pins, synth
+  frame, re-id). Deferred (bug-prone graph surgery); design in doc §4.9.
+- [ ] **P5–P9** Tier-1 telemetry → `solveCell` scratch-Sim → characterization sweep + truth-table panel →
+  sequential → wide-cell fabric. P6–P9 touch sim-wasm/sim-core — land ATTENDED, per-phase gated PRs,
+  re-run `golden_snapshot_hash_is_stable`. Steps in `docs/cell-characterization-build-plan.md` + doc §7.
+
 ## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels
 
 - ~~**Bench-realism + EMI kernel panel**~~ — DONE (`docs/bench-realism-and-emi-kernel.md`). Heat/reality/EMI
