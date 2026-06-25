@@ -911,6 +911,57 @@ describe("IC variants — determinism contract", () => {
     expect(cellBehaviorSig(g3.serialize())).not.toBe(sig1);
   });
 
+  it("characterization collapse: a placed cell with behavior + behavioral fidelity emits ONE LUT, not FETs", () => {
+    const ELEM_BEHAVIORAL = 25;
+    const ELEM_RESISTOR = 1;
+    // A user-IC def with a dummy inner part + pin roles (out/in/vcc/gnd on pins 0..3) + a stored swept
+    // behavior (the 16-bit word). When a placed instance opts into behavioral fidelity it must collapse to
+    // ONE behavioral LUT instead of inlining the inner part.
+    const inner = new BoardGraph();
+    const frame = place(inner, "DIP8", 0, 0);
+    const rIn = place(inner, "R", 6, 0, 1000);
+    connect(inner, frame, 0, rIn, 0); // pin0 (OUT) ↔ R
+    connect(inner, rIn, 1, frame, 1); // R ↔ pin1 (IN)
+    registerUserIc({
+      tag: "GATEX",
+      name: "GATEX",
+      package: { archetype: "DIP", pinCount: 8 },
+      frameId: frame.id,
+      graph: inner.serialize(),
+      pinRoles: ["out", "in", "vcc", "gnd"],
+      behavior: { prog: 4, word: 0x5555, mode: 0, sig: 0 },
+      role: "subassembly",
+    });
+    try {
+      const buildBoard = (behavioral: boolean): number[] => {
+        const g = new BoardGraph();
+        const v = place(g, "V", 0, 0, 5);
+        const gg = place(g, "GND", 0, 6);
+        const ic = place(g, "GATEX", 4, 0);
+        if (behavioral)
+          (ic as Component & { fidelity?: string }).fidelity = "behavioral";
+        connect(g, v, 0, ic, 2); // V+ → VCC (pin 2)
+        connect(g, ic, 3, gg, 0); // GND (pin 3) → GND
+        connect(g, v, 0, ic, 1); // V+ → IN (pin 1)
+        connect(g, ic, 0, gg, 0); // OUT (pin 0) → GND (a load)
+        connect(g, v, 1, gg, 0);
+        const nl = buildNetlist(g, false);
+        expect(nl).not.toBeNull();
+        return [...nl!.types];
+      };
+      // FULL fidelity (default): the inner R inlines → a resistor element, no behavioral block.
+      const full = buildBoard(false);
+      expect(full).toContain(ELEM_RESISTOR);
+      expect(full).not.toContain(ELEM_BEHAVIORAL);
+      // BEHAVIORAL fidelity: the cell collapses to exactly ONE behavioral LUT; the inner R is gone.
+      const collapsed = buildBoard(true);
+      expect(collapsed.filter((t) => t === ELEM_BEHAVIORAL).length).toBe(1);
+      expect(collapsed).not.toContain(ELEM_RESISTOR);
+    } finally {
+      unregisterUserIc("GATEX");
+    }
+  });
+
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {
     // A malicious/legacy save embedding a def tagged "R" must NOT overwrite the built-in resistor kind.
     const rogue: UserIc = rPackageDef("R", 1000); // tag "R" collides with the built-in

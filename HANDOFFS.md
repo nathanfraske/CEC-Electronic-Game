@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (153) — IMPLEMENT: characterization engine — the COLLAPSE (gate → one LUT)
+
+**State:** 🟢 **about to PR**. Web only, golden untouched, **119 web tests**, full gate green. The testable
+half of the engine's mechanism. Owner: "keep on and let me know what to test." (The SWEEP that produces the
+word + the truth-table PANEL are NEXT and are app-verified — owner will test those.)
+
+**The collapse (userIc.ts `flattenUserIcs` + graph.ts):**
+- `Component.fidelity?: 'full' | 'behavioral'` (graph.ts) — opt-in, default-off. Only a placed instance set
+  to `'behavioral'` whose def carries a `behavior` collapses; everything else inlines FETs as today.
+- `flattenUserIcs`: for such an instance, DON'T inline the inner FETs — replace the placed instance with a
+  **`LUT`** component (kind="LUT", `word`=behavior.word, `mode`=behavior.mode) and **remap its external
+  wires BY ROLE** onto the LUT's fixed visual pins `[0 OUT, 1 I0, 2 I1, 3 I2, 4 I3, 5 CLK, 6 VCC, 7 GND]`
+  (verified from `BEH_SPEC.LUT.term=[0,5,4,6,7,1,2,3]` + the core map a=OUT/b=CLK/c=I3/d=VCC/e=GND/f=I0/g=I1/
+  h=I2, netlist.ts:511-513). `out→0, in[k]→1+k(≤I3), clk→5, vcc→6, gnd→7`. Unwired LUT inputs default to
+  ground (node 0) in buildNetlist, so a ≤4-in gate needs no extra ties. buildNetlist's existing
+  `BEH_SPEC[c.kind]` path then emits ONE `ELEM_BEHAVIORAL` (type 25) with the word in `aux`, mode in
+  `params[ei*8+4]`. New objects (never mutate the shared snapshot). Test: full→inlines R; behavioral→one LUT,
+  no inner R.
+- **Golden-safe:** gated on behavior+fidelity (both default-absent); the golden places no user IC; a
+  combinational LUT folds an all-zero beh_state. The strict-no-op + single-variant-byte-identity tests still
+  pass.
+- **Known v1 limit (documented):** a collapsed cell's zoom-to-open inner FETs go static (no live currents)
+  until the P6 local solve — the cheap face is for the SOLVE.
+
+**NEXT — the SWEEP (app-verified; owner tests):** for a built FET gate, drive each of 2^k input vectors
+(inject input levels like dieTestGraph + VCC/GND), `new Simulation(seed)` (second web Sim, golden-safe), step
+to settle, read OUT level → assemble the 16-bit word → store `def.behavior={prog:4,word,mode,sig:cellBehaviorSig}`.
+Then a "characterize" button + the truth-table PANEL (step live, light the FET path, verify vs the intended
+gate). The collapse will then make the swept cell simulate as the cheap LUT.
+
+---
+
 ## 2026-06-25 (152) — START: characterization engine ("1") — data-model foundation landed
 
 **State:** 🟢 foundation **about to PR**. Web/registry only, golden untouched, **118 web tests**, full gate
