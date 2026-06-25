@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (144) — IMPLEMENT: free-form capture rewrite — 1:1 copy + pins-at-crossings (the fix)
+
+**State:** 🟢 on branch (commit `665cdd6`, pushed; not yet PR'd — building the rest of the "one big
+push"). Web/render/registry only, golden untouched, 108 web tests, check/lint/build green. An adversarial
+**audit panel is running** (`wz3s3186u`) on this rewrite — incorporate its findings before the PR.
+
+**Why:** owner box-captured a slice of an inverter → the subassembly was BROKEN (mangled wiring, pinout
+wrong + unset). Cause: the old `captureRegion` synthesized a generic BLOCK package frame + FANNED boundary
+nets to auto-distributed pins, losing the routing. Owner wants: a faithful **1:1 copy**, box = the
+selection, **pins where wires cross the boundary**, movable pins + resizable box, and a **live rectangle
+tool** (draw → auto-junction crossings → seal). Chose "**do it all as one big push**" + "audit after".
+
+**Done (the core fix, committed):**
+- **graph.ts** — `FreeFormGeom` + `registerFreeFormFrame(subTag, geom)`: a die-frame kind with an
+  ARBITRARY `w×h` box + pins at custom cells (vs a package layout), registered on-demand, geometry stored
+  for `freeFormGeom()` / `isFreeFormFrame()`. `FREE_FORM_DIE_PREFIX = "__DIE_FF_"`.
+- **userIc.ts** — `UserIc.freeForm` (persistent box+pins); `userIcPartKind` free-form path; `registerUserIc`
+  re-registers the free-form frame on load. **`captureRegion` REWRITTEN**: box = captured-parts bbox (+1
+  pad); parts copied 1:1 (shifted, exact relative layout); internal wires verbatim; each crossing wire
+  keeps its inside routing + retargets its OUTSIDE end to the net's frame pin, placed ON the box edge in
+  the exit direction aligned with the inside pin. Test verifies 1:1 (real R1+R2) + geometry + pins-on-edge.
+- **dieEditor.ts** — `dieBounds` uses the free-form box for a free-form frame.
+- The existing **⬡ Make subassembly** button already produces correct 1:1 free-form cells now.
+
+**Remaining (same push):** (1) the **live rectangle tool** — a board "region" mode that draws a rect +
+shows crossing pin-markers live, captures on confirm (reuse the marquee; `captureRegion` is the back-end;
+consider a rect-based entry vs the current `regionIds`/selection-bbox). (2) **pin/box editing in the die**
+— move a pin along the edge + resize the box (re-`registerFreeFormFrame` with new geometry; mirror the
+`setDieFramePins` pattern). Both app-verified. Then the PR + the engine ("1").
+
+---
+
 ## 2026-06-25 (143) — IMPLEMENT: free-form subassembly (arbitrary pinouts) + plan "2 then 1"
 
 **State:** 🟢 on `main` (PR #209 merged; the body-tint follow-up landing). Web-only, golden untouched,
