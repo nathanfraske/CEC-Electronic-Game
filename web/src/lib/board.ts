@@ -3812,6 +3812,28 @@ export class Board {
       return;
     }
 
+    // Alt+press on a FREE-FORM die-frame pin MOVES that pin along the box edge. This is tested FIRST —
+    // before the pending-wire branch below — because a single click on a pad leaves a wire pending
+    // (KiCad click-to-continue), and that branch would otherwise consume the Alt-press and wire two
+    // pads together instead of moving the pin. Any pending wire is cancelled. (Stock-package dies have
+    // a fixed pinout, so this only arms for free-form frames; everything else falls through unchanged.)
+    if (e.button === 0 && e.altKey && this.dieFrameId !== null) {
+      const pinHit = this.pinHitTest(wp.x, wp.y);
+      if (
+        pinHit &&
+        pinHit.componentId === this.dieFrameId &&
+        (this.mode === "wire" || this.mode === "select")
+      ) {
+        const frame = this.graph.components.get(this.dieFrameId);
+        if (frame && isFreeFormFrame(frame.kind) && freeFormGeom(frame.kind)) {
+          if (this.wiring) this.cancelWiring();
+          this.pinDrag = { pinIndex: pinHit.pinIndex, moved: false };
+          this.pendingUndo = this.graph.serialize();
+          return;
+        }
+      }
+    }
+
     // Click-to-continue wiring (KiCad-style): a left press WHILE a wire is already in
     // progress completes the current segment at whatever is under the cursor — a pin
     // or existing junction finishes it; a bare trace T's in with an auto-junction and
@@ -3967,23 +3989,9 @@ export class Board {
       }
     }
 
+    // (Alt+press on a free-form frame pin is handled at the TOP of this method — before the pending-wire
+    // branch — so it can't be pre-empted by a pending wire.)
     const pin = this.pinHitTest(wp.x, wp.y);
-    // Alt-drag a FREE-FORM die-frame pin MOVES it along the box edge (vs the default press, which starts
-    // a wire from the pin). Die editor only, free-form frames only — a stock package has a fixed pinout.
-    if (
-      pin &&
-      e.altKey &&
-      this.dieFrameId !== null &&
-      pin.componentId === this.dieFrameId &&
-      (this.mode === "wire" || this.mode === "select")
-    ) {
-      const frame = this.graph.components.get(this.dieFrameId);
-      if (frame && isFreeFormFrame(frame.kind) && freeFormGeom(frame.kind)) {
-        this.pinDrag = { pinIndex: pin.pinIndex, moved: false };
-        this.pendingUndo = this.graph.serialize();
-        return;
-      }
-    }
     if (pin && (this.mode === "wire" || this.mode === "select")) {
       // Inside a die: remember this press on the die frame's perimeter pin so a SECOND press on it
       // (which, the wire now pending, lands in the wiring branch above) is recognised as the

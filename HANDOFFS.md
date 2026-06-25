@@ -7,8 +7,17 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-25 (158) — FEATURE (owner): move free-form frame pins along the box edge (Alt-drag)
 
-**State:** 🟡 committed + about to PR; an **adversarial review workflow is running** over the diff (gates
-the merge, not the commit). Web/interaction only, golden untouched, **126 web tests** (+4), full gate green.
+**State:** 🟢 PR #227 open; **adversarial review done** (1 real bug found + FIXED, see below). Web/interaction
+only, golden untouched, **126 web tests** (+4), full gate green.
+
+**Audit (review workflow, 3 dims → verify):** found **1 real bug** — a pending wire pre-empted the Alt-drag.
+A single click on a pad leaves a wire PENDING (KiCad click-to-continue), and the pending-wire branch at the
+TOP of `onPointerDown` ran before the (lower) Alt-pin branch and didn't check `altKey`, so an Alt-press on a
+2nd pad got consumed by `continueOrFinishWiring` → wired the two pads together instead of moving the pin.
+**Fixed:** the Alt+free-form-frame-pin check now runs FIRST in `onPointerDown` (before the pending-wire
+branch) and `cancelWiring()`s any pending wire. The 2nd finding (Ctrl-Z doesn't restore a moved pin) is the
+SAME pre-existing geom-undo gap as box-resize (geom lives in the global registry, not the graph) — out of
+scope, documented backlog.
 
 **Feature:** inside a free-form subassembly die, **Alt-drag a frame pin** → it slides to the nearest box
 edge (snapping around corners); incident wires follow live. A plain drag still starts a wire from the pad
