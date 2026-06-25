@@ -2475,8 +2475,13 @@
     // on the RAW snapshot (a stimulus is not a wire — those leads still count as unconnected here).
     const unused = unusedDiePins(snap, drill.innerFrameId);
     const total = framePackage(drill.frameTag)?.pinCount ?? 0;
+    // A subassembly is a FRAGMENT (powered by its parent), so it seals without solving standalone — keep
+    // the pill in lock-step with the Seal gate (dieSeal applies the SAME bypass), or they'd disagree.
+    const editingSub =
+      !!drill.editingTag && getUserIc(drill.editingTag)?.role === "subassembly";
     return {
-      sealable: dieIsSealable(dieTestGraph(snap, drill.innerFrameId)),
+      sealable:
+        editingSub || dieIsSealable(dieTestGraph(snap, drill.innerFrameId)),
       used: total - unused.length,
       total,
     };
@@ -2836,7 +2841,17 @@
     // so it only solves with those stimuli, and the pill and the Seal button must agree. The SEAL
     // CAPTURE below still reads the RAW live graph (never the injected copy), so the sealed IC stays
     // the player's real discrete parts and the golden is untouched (ADR 0005).
-    if (!dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))) {
+    // A SUBASSEMBLY is a FRAGMENT powered by its PARENT (like a logic IC drawing VCC/GND from the board),
+    // so it need not solve STANDALONE — a captured R-divider (no internal source) never will, and the
+    // capture frame carries no test stimuli for dieTestGraph to power it with. Only gate a real IC (fresh
+    // seal, or an 'ic' reseal) on solvability; a subassembly reseal banks the fragment as-is. Without this,
+    // box-resizing a captured subassembly couldn't be saved (reseal blocked on the solvability gate).
+    const isSubassemblyReseal =
+      !!ctx.editingTag && getUserIc(ctx.editingTag)?.role === "subassembly";
+    if (
+      !isSubassemblyReseal &&
+      !dieIsSealable(dieTestGraph(live.serialize(), ctx.innerFrameId))
+    ) {
       circuitWarning =
         "This die can't be sealed yet: the circuit doesn't solve (needs a reference/ground and a complete path). Wire it up, then Seal.";
       return;
