@@ -39,7 +39,14 @@ import {
   type GraphSnapshot,
   type PinTest,
 } from "./graph";
-import { captureSeal, isUserIc, getUserIc, type UserIc } from "./userIc";
+import {
+  captureSeal,
+  captureRegion,
+  isUserIc,
+  getUserIc,
+  type UserIc,
+  type RegionCapture,
+} from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
@@ -1728,6 +1735,22 @@ export class Board {
     this.clearSelection();
     this.redrawWires();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** The ids of the currently-selected COMPONENTS (the marquee/box selection), for the overworld
+   * "Make subassembly" capture (§4.9). Wires/junctions/labels are excluded — `captureRegion` infers
+   * the internal wiring itself. */
+  getSelectedComponentIds(): number[] {
+    return [...this.selected];
+  }
+
+  /** Capture the current box selection as a bare subassembly (§4.9): infer the pinout from the nets
+   * crossing the selection boundary and register a `role='subassembly'` cell. NON-DESTRUCTIVE — the
+   * board is untouched (the subassembly is added to the library; the player places it / Tapes it out
+   * later). Returns the capture (tag + pin count) or null if there's no usable region (empty
+   * selection, or nothing leaves the boundary). */
+  makeSubassemblyFromSelection(name?: string): RegionCapture | null {
+    return captureRegion(this.graph, [...this.selected], name) ?? null;
   }
 
   /** Delete the current selection (components + wires + junctions + net labels). */

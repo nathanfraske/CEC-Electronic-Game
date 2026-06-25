@@ -21,6 +21,7 @@ import {
   registerUserIcFamilies,
   getUserIc,
   captureSeal,
+  captureRegion,
   tapeOut,
   isReservedTag,
   derivePinRoles,
@@ -481,6 +482,60 @@ describe("IC variants — determinism contract", () => {
     } finally {
       unregisterUserIc("SubR2");
     }
+  });
+
+  it("captureRegion (P4): box-select infers boundary pins, names rails, builds a correct subassembly", () => {
+    // Board: V+ → R1 → R2 → GND (series), V− → GND. Select {R1, R2}: the R1–R2 net is internal; the
+    // V-side and GND-side nets cross the boundary → two pins (VCC + GND).
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 0, 5);
+    const r1 = place(b, "R", 4, 0, 1000);
+    const r2 = place(b, "R", 8, 0, 2000);
+    const gnd = place(b, "GND", 12, 0);
+    connect(b, v, 0, r1, 0); // V+ → R1.A   (boundary: VCC)
+    connect(b, r1, 1, r2, 0); // R1.B → R2.A (internal)
+    connect(b, r2, 1, gnd, 0); // R2.B → GND  (boundary: GND)
+    connect(b, v, 1, gnd, 0); // V− → GND
+
+    const cap = captureRegion(b, [r1.id, r2.id], "SeriesR");
+    expect(cap).not.toBeUndefined();
+    try {
+      expect(cap!.pinCount).toBe(2);
+      const def = getUserIc("SeriesR")!;
+      expect(def.role).toBe("subassembly");
+      expect(def.package.pinCount).toBeGreaterThanOrEqual(2); // smallest covering package (SOT-23-3)
+      expect(def.pinNames).toContain("VCC"); // outside V source → VCC pin
+      expect(def.pinNames).toContain("GND"); // outside GND → GND pin
+
+      // The subassembly flattens to the real 2-resistor series chain when placed + powered.
+      const g = new BoardGraph();
+      const vs = place(g, "V", 0, 0, 5);
+      const gg = place(g, "GND", 0, 6);
+      const sub = place(g, "SeriesR", 4, 0);
+      const vccPin = def.pinNames!.indexOf("VCC");
+      const gndPin = def.pinNames!.indexOf("GND");
+      connect(g, vs, 0, sub, vccPin);
+      connect(g, sub, gndPin, gg, 0);
+      connect(g, vs, 1, gg, 0);
+      const nl = buildNetlist(g, false);
+      expect(nl).not.toBeNull();
+      // V + R1 + R2 = 3 elements (the frame flattens away; GND is not an element).
+      expect(nl!.types.length).toBe(3);
+    } finally {
+      unregisterUserIc("SeriesR");
+    }
+
+    // A region with NO boundary (select the WHOLE circuit) is refused — nothing leaves the selection.
+    const b2 = new BoardGraph();
+    const v2 = place(b2, "V", 0, 0, 5);
+    const r = place(b2, "R", 4, 0, 1000);
+    const gnd2 = place(b2, "GND", 8, 0);
+    connect(b2, v2, 0, r, 0);
+    connect(b2, r, 1, gnd2, 0);
+    connect(b2, v2, 1, gnd2, 0);
+    expect(captureRegion(b2, [v2.id, r.id, gnd2.id])).toBeUndefined();
+    // An empty selection is refused too.
+    expect(captureRegion(b2, [])).toBeUndefined();
   });
 
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {

@@ -1070,6 +1070,8 @@
   let partCount = $state(0);
   let wireCount = $state(0);
   let selCount = $state(0);
+  // Selected COMPONENT count (vs selCount which adds wires) — gates the overworld "Make subassembly".
+  let selComponentCount = $state(0);
   // The lone selected part (for the value inspector) + its "more values" toggle,
   // and its on-screen anchor rect for the floating popover.
   let selPart = $state<SelectedPart | null>(null);
@@ -2046,6 +2048,7 @@
         },
         onSelect: (sel) => {
           selCount = sel.components + sel.wires;
+          selComponentCount = sel.components;
           selPart = sel.single ?? null;
           // Reset the IC-maker Seal name field when the selection changes, so a name typed for one
           // frame doesn't bleed onto the next.
@@ -2505,6 +2508,22 @@
     board.setDieFrame(die.frameId);
     arm(null);
     setMode("select");
+  }
+
+  /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
+   * nets that cross the selection boundary, and register it as a bare subassembly (→ "My
+   * Subassemblies"; reach the board via Tape out). Non-destructive — the board is untouched. */
+  function makeSubassembly(): void {
+    if (!board || drill || selComponentCount < 1) return;
+    const cap = board.makeSubassemblyFromSelection();
+    if (!cap) {
+      circuitWarning =
+        "Couldn't make a subassembly: nothing in the selection wires out to the rest of the board, so there are no pins. Select parts that connect outward.";
+      return;
+    }
+    circuitWarning = null;
+    syncLibrary(cap.tag, "sealed"); // surface it in "My Subassemblies"
+    libRev++;
   }
 
   function buildSelectedFrame(): void {
@@ -4468,6 +4487,18 @@
       >
         Flip <kbd class="hk">F</kbd>
       </button>
+      {#if !drill && selComponentCount >= 2}
+        <!-- Overworld "Make subassembly" (§4.9): box-select parts, infer the pinout from the nets that
+             leave the selection, and bank it as a nested-only subassembly (Tape out → board IC). -->
+        <button
+          class="btn btn-accent"
+          onclick={makeSubassembly}
+          disabled={!ready}
+          title="Bundle the selected parts into a subassembly — pins are inferred from the wires leaving the selection"
+        >
+          ⬡ Make subassembly
+        </button>
+      {/if}
       <button class="btn btn-ghost" onclick={resetView} disabled={!ready}>
         Reset View
       </button>
