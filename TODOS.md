@@ -29,8 +29,16 @@ Web/render/registry only, golden untouched, 113 web tests.
 - ~~**Latent clobber bug**~~ — a free-form die reports archetype BLOCK, so the generic Pins stepper showed
   for it and `setDieFramePins` would re-kind it to a stock BLOCK, destroying the captured box. Now refused
   (`isFreeFormFrame`); the Box stepper shows for free-form dies, the Pins stepper only for blank BLOCK dies.
+- ~~**Bin-edit (reachability keystone)**~~ — "My Subassemblies" rows now have **⊡ Edit** → `editLibraryDie`
+  opens the subassembly's die from the bin (no placed instance; synthesizes the outer context). Without it
+  a captured subassembly was un-openable (nested-only), so box-resize/circuit-edit were unreachable.
+- ~~**Discarded-resize revert**~~ — `dieBack` re-registers the unchanged def on a discarded editingTag exit
+  so a box-resize that mutated the global frame registry reverts (Back no longer leaks the box).
 - [ ] **Pin-drag** — move a pin along the box wall by dragging in the die editor (die-frame-pin hit-test +
-  perimeter snap → re-`registerFreeFormFrame`). The push tail; auto-placed pins are already correct (1:1).
+  perimeter snap → re-`registerFreeFormFrame`). Needs a disambiguator (Alt-drag) — a plain press on a frame
+  pin starts a WIRE today. Auto-placed pins are already correct (1:1), so this is refinement.
+- [ ] **In-die undo of box-resize** — Ctrl+Z doesn't revert a resize (geometry lives in `FREE_FORM_GEOM`,
+  not the graph/undo stack). Minor; re-resize to fix. Proper fix: carry the box in the graph.
 
 ## 2026-06-25 (141) — IMPLEMENT: build gates as subassemblies (P0–P4a ON MAIN)
 

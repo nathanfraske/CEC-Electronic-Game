@@ -5,10 +5,22 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
-## 2026-06-25 (146) — IMPLEMENT: free-form die BOX resize + fix a latent clobber bug
+## 2026-06-25 (146) — IMPLEMENT: free-form subassembly EDITING (open from bin + box resize) + bug fixes
 
-**State:** 🟢 on branch, **about to PR**. Web/render/registry only, golden untouched, **113 web tests**,
-full gate green. PRs #213 (zoom) + #214 (live region tool) already on main.
+**State:** 🟢 on **PR #215** (box-resize landed first; bin-edit + revert folded in). Web/render/registry
+only, golden untouched, **113 web tests**, full gate green. PRs #213 (zoom) + #214 (live region tool) on main.
+
+**Bin-edit (the reachability keystone — audit found box-resize was nearly UNREACHABLE):** "My Subassemblies"
+rows had only Tape out / Rename / Remove — no way to OPEN a captured subassembly's die (it's nested-only, so
+the place-then-reopen path can't reach it). Added **`⊡ Edit`** on each subassembly row → `editLibraryDie(tag)`:
+stashes the current board as the outer context, swaps the canvas to a COPY of the def's die, marks
+`editingTag` (reseal updates the def). `frameId` is unused on an `editingTag` exit, so a sentinel `-1`. Now
+you can open a subassembly to edit its circuit, resize its box, (later) move pins.
+**Revert fix:** a box-resize re-registers the free-form frame kind IN PLACE (global `FREE_FORM_GEOM`), which
+the graph/undo can't revert — so **`dieBack` now re-registers the unchanged def** on a discarded `editingTag`
+exit (else Back-after-resize leaked the box into the registry → re-open showed it). Known rough edge:
+in-die **Ctrl+Z doesn't revert a box-resize** (geometry lives in the registry, not the undo stack) — re-resize
+to fix; documented follow-up.
 
 **Box resize (pin/box editing, the "expand and contract the size of the block" half of #25):** in the die
 editor a free-form (box-captured) subassembly now shows a **Box `W− W+ {w}×{h} H− H+`** stepper (replacing

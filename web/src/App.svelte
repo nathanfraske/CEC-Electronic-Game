@@ -67,6 +67,7 @@
     getUserIc,
     isUserIc,
     resealUserIc,
+    registerUserIc,
     registerUserIcs,
     registerUserIcFamilies,
     userIcsForGraph,
@@ -2696,6 +2697,36 @@
   }
 
   /**
+   * Open a user IC / subassembly straight from the LIBRARY BIN for die editing — no placed instance
+   * needed. A captured subassembly is nested-only (never on the board), so {@link editUserIcSelected}'s
+   * place-then-reopen path can't reach it; this is how you edit its circuit, box, and pins. Mirrors
+   * {@link editUserIcSelected} but synthesizes the outer context from the CURRENT board (stash it, swap
+   * the canvas to a COPY of the def's die, mark `editingTag`); `frameId` is unused on an `editingTag`
+   * exit (see {@link exitDie}), so a sentinel `-1` is fine. Reseal updates the def (and every placed
+   * instance, of which a subassembly has none). No-op if already drilled or the tag isn't a user IC. */
+  function editLibraryDie(tag: string): void {
+    if (!board || drill) return;
+    const ic = getUserIc(tag);
+    if (!ic) return; // stale/unknown tag — refuse rather than break
+    const inner = structuredClone(ic.graph);
+    const frameComp = inner.components.find((c) => c.id === ic.frameId);
+    if (!frameComp || !isFrame(frameComp.kind)) return; // corrupt def — refuse
+    drill = {
+      frameId: -1, // no placed instance; unused on an editingTag exit (exitDie skips it)
+      innerFrameId: ic.frameId,
+      frameTag: frameComp.kind,
+      name: ic.name || partName(tag),
+      outerSnapshot: board.serialize(),
+      outerCamera: board.getCamera(),
+      editingTag: tag,
+    };
+    board.swapGraph(inner);
+    board.setDieFrame(ic.frameId);
+    arm(null);
+    setMode("select");
+  }
+
+  /**
    * Open a RAW saved DIE graph (a `__DIE_*` snapshot saved in isolation — the owner's existing die
    * files) straight into the die BUILDER, instead of dropping the die-frame onto a flat board as a
    * placed part. Synthesizes a fresh OUTER board with the matching PLACEABLE frame, stashes the loaded
@@ -2769,7 +2800,16 @@
    * edited copy (it's discarded); the IC keeps its previously-sealed circuit. */
   function dieBack(): void {
     if (!drill || !board) return;
-    if (!drill.editingTag) innerGraphs.set(drill.frameId, board.serialize());
+    if (!drill.editingTag) {
+      innerGraphs.set(drill.frameId, board.serialize());
+    } else {
+      // Editing an existing def — the edit is DISCARDED. A box-resize during the edit re-registered the
+      // free-form frame kind IN PLACE (global FREE_FORM_GEOM / PART_KINDS), which Back can't undo via the
+      // graph; re-register the unchanged def so that registry edit reverts too (else re-opening would
+      // show the discarded box). A no-op for a non-free-form def (re-derives the same PART_KINDS entry).
+      const def = getUserIc(drill.editingTag);
+      if (def) registerUserIc(def);
+    }
     exitDie();
   }
 
@@ -3835,6 +3875,15 @@
                  control click never arms/places the part. -->
             <span class="ic-row-ctl">
               {#if part.isSubassembly}
+                <button
+                  class="ic-row-btn ic-row-edit"
+                  title="Open this subassembly's die — edit its circuit, resize the box, rename pins"
+                  aria-label="Edit {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    editLibraryDie(part.tag);
+                  }}>⊡ Edit</button
+                >
                 <button
                   class="ic-row-btn ic-row-tapeout"
                   title="Tape out → board IC (choose a package, make it placeable)"
