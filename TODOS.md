@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (148) — FIX (owner round 2): capture junctions 1:1 + characterize + auto-stimulus
+
+Web/registry only, golden untouched, 116 web tests.
+- ~~**Junction 1:1**~~ — a junction is captured iff its cell is inside the box; the crossing retarget
+  accepts a captured junction as the inside end. A branched net keeps its junction (no fan-out). Tested.
+- ~~**Characterize + auto-stimulus**~~ — GND/VCC/IN/OUTPUT(Y) labels + roles; the frame gets auto pinTests
+  (vcc 5 / gnd 0 / in 0; output null) so the die opens powered + "● solvable". Tested.
+- [ ] **Rendering (#31)** — NEXT PR: skip solder leads on free-form frame pins (board.ts ~7176); draw
+  frame-pin wires as schematic pinouts not conduits (redrawWires ~5084-5258).
+- [ ] **Device-aware characterization** (optional) — gate→in, drain→out, source-to-rail→supply, to nail
+  VCC-vs-input for gate subassemblies (the static heuristic guesses; user swaps in the editor).
+
 ## 2026-06-25 (147) — FIX (owner-reported): region pin alignment + persistence
 
 Web/render/registry only, golden untouched, 114 web tests.

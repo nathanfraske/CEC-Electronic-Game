@@ -1261,9 +1261,6 @@ function analyzeRegion(
       const kb = [...insidePins.get(b)!.keys()].sort()[0];
       return ka < kb ? -1 : ka > kb ? 1 : 0;
     });
-  const internalRoots = new Set(
-    [...insidePins.keys()].filter((r) => !hasOutside.has(r)),
-  );
   if (boundaryRoots.length === 0) return { ok: false, reason: "no-boundary" }; // nothing leaves the selection
   if (boundaryRoots.length > BLOCK_MAX_PINS)
     return { ok: false, reason: "too-many" }; // too many pins for a free-form block
@@ -1318,11 +1315,21 @@ function analyzeRegion(
     row: c.row + shiftRow,
   });
 
-  // An endpoint is "captured" if it's a pin on a selected part, or a junction whose net is fully internal.
+  // Whether a board cell sits inside the captured box (the drawn rect / parts bbox).
+  const inBox = (c: Cell): boolean =>
+    c.col >= minCol && c.col <= maxCol && c.row >= minRow && c.row <= maxRow;
+  // A JUNCTION whose cell is inside the box belongs to the subassembly — captured 1:1 with its branch
+  // wiring, so a net that fans out through a junction KEEPS that junction instead of splitting into a
+  // separate lead-to-each-pin. (The old `internalRoots` test wrongly excluded a junction on a BOUNDARY
+  // net: it dropped the source→junction wire and re-pinned every junction→pin branch on its own — the
+  // fan-out the owner saw. A junction OUTSIDE the box stays outside, and the net crosses there.)
+  const capturedJ = new Set<number>();
+  for (const j of full.junctions ?? []) if (inBox(j.cell)) capturedJ.add(j.id);
+
+  // An endpoint is "captured" (inside the subassembly) when it's a pin on a region part, or a junction
+  // whose cell is inside the box.
   const capturedEndpoint = (e: Endpoint): boolean =>
-    isPinRef(e)
-      ? region.has(e.componentId)
-      : internalRoots.has(find(endpointKey(e)));
+    isPinRef(e) ? region.has(e.componentId) : capturedJ.has(e.junctionId);
 
   // Place each boundary net's pin WHERE ITS TRACE ACTUALLY CROSSES the box edge (so the lead lands ON the
   // wire, not merely "near the inside pin"). Walk each wire's ROUTED path (endpoints + waypoints) and find
@@ -1333,8 +1340,6 @@ function analyzeRegion(
   // along-edge coordinate inside the box.
   const clamp = (v: number, lo: number, hi: number): number =>
     Math.max(lo, Math.min(hi, v));
-  const inBox = (c: Cell): boolean =>
-    c.col >= minCol && c.col <= maxCol && c.row >= minRow && c.row <= maxRow;
   const crossDx = new Map<string, { dx: number; dy: number }>();
   for (const w of full.wires) {
     const root = find(endpointKey(w.from));
@@ -1398,6 +1403,15 @@ function analyzeRegion(
     }
     return { dx, dy }; // every edge cell taken (a tiny box, very rare) — keep it
   };
+  // Characterize each boundary net from what it touches OUTSIDE the box (§2.9). Reliable: GND (touches a
+  // ground) and OUTPUTS (nothing outside drives the net → the subassembly itself does). Best-effort: the
+  // first DC-supply net is VCC; any further source-driven net (a second DC supply, or an AC/PULSE signal)
+  // is an INPUT. VCC-vs-input among DC sources is genuinely ambiguous from the static graph, so the player
+  // can swap a pin's role in the die editor (the stimulus follows the role). Distinct names so two supplies
+  // never both read "VCC".
+  let vccTaken = false;
+  let inN = 0;
+  let outN = 0;
   boundaryRoots.forEach((root, i) => {
     const cross = crossDx.get(root);
     let dx: number;
@@ -1417,11 +1431,18 @@ function analyzeRegion(
     if (kinds.has("GND")) {
       name = "GND";
       pinRoles[i] = "gnd";
-    } else if (kinds.has("V") || kinds.has("AC") || kinds.has("PULSE")) {
-      name = "VCC";
+    } else if (kinds.has("V") && !vccTaken) {
+      name = "VCC"; // first DC supply rail
       pinRoles[i] = "vcc";
+      vccTaken = true;
+    } else if (kinds.has("V") || kinds.has("AC") || kinds.has("PULSE")) {
+      inN += 1; // driven from outside by a (further) source → an input
+      name = inN === 1 ? "IN" : "IN" + inN;
+      pinRoles[i] = "in";
     } else {
-      name = "P" + (i + 1);
+      outN += 1; // nothing outside drives it → the subassembly drives it → an output (observed)
+      name = outN === 1 ? "Y" : "Y" + outN;
+      pinRoles[i] = "out";
     }
     pinNames[i] = name;
     pinGeom[i] = { dx, dy, name };
@@ -1575,10 +1596,12 @@ export function captureRegion(
       capWires.push({ id: w.id, from: { ...w.from }, to: { ...w.to }, ...wp });
     } else if (fromIn !== toIn) {
       // Crossing wire — retarget the OUTSIDE end to the net's frame pin, keep the inside end + routing.
+      // The inside end is whichever endpoint is captured: a region PIN *or* a captured JUNCTION. Accepting
+      // a junction here is what keeps a net that exits THROUGH a junction 1:1 — the source→junction wire
+      // becomes frame_pin→junction, and the junction's internal branches stay (no fan-out to each pin).
       const insideE = fromIn ? w.from : w.to;
-      if (!isPinRef(insideE) || !region.has(insideE.componentId)) continue;
       const pi = pinIndexOf.get(find(endpointKey(insideE)));
-      if (pi === undefined) continue;
+      if (pi === undefined) continue; // inside end isn't on a boundary net (no frame pin) — skip
       const frameEnd = { componentId: frameId, pinIndex: pi };
       capWires.push({
         id: w.id,
@@ -1602,6 +1625,19 @@ export function captureRegion(
       ...(j.free ? { free: true } : {}),
     }));
 
+  // Auto-set the frame's per-pin TEST STIMULI from the derived roles, so a captured subassembly opened in
+  // the die editor arrives already powered (VCC/GND/inputs driven) and reads "● solvable" — the player no
+  // longer dials in each stimulus by hand (§2.9). An OUTPUT is observed, so it gets no stimulus (null).
+  const framePinTests: (PinTest | null)[] = pinRoles.map((r) =>
+    r === "gnd"
+      ? { role: "gnd", value: 0 }
+      : r === "vcc"
+        ? { role: "vcc", value: 5 }
+        : r === "in" || r === "clk"
+          ? { role: "in", value: 0 }
+          : null,
+  );
+
   // The free-form die frame component (kind = the registered free-form geometry).
   capComps.push({
     id: frameId,
@@ -1610,6 +1646,7 @@ export function captureRegion(
     value: 0,
     rot: 0,
     pinNames: pinGeom.map((p) => p.name ?? ""),
+    ...(framePinTests.some((t) => t) ? { pinTests: framePinTests } : {}),
   } as (typeof capComps)[number]);
 
   // Carry net labels anchored on a captured endpoint (keep the inner net names).

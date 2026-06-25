@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (148) — FIX (owner round 2): capture junctions 1:1 + characterize pins + auto-stimulus
+
+**State:** 🟢 on branch, **about to PR**. Web/registry only, golden untouched, **116 web tests**, full
+gate green. Owner box-captured a CMOS inverter and reported: net fans out (junction not preserved), pins
+not auto-characterized, stimulus not auto-set, and a die-editor RENDERING issue (solder leads/traces vs
+pinouts). This entry = the capture-CORRECTNESS half (userIc.ts). **Rendering (#31) is NEXT, separate PR.**
+
+**1. Junctions preserved 1:1 (the big one).** `capturedEndpoint(junction)` used `internalRoots`, so a
+junction on a BOUNDARY net was treated as OUTSIDE → the source→junction wire was dropped and every
+junction→pin branch re-pinned to the frame separately (the fan-out). Fix: a junction is captured iff its
+CELL is inside the box (`inBox`); and the crossing-wire retarget now accepts a captured JUNCTION as the
+inside end (was: must be a region pin). So a net that branches at a junction keeps the junction — one
+frame_pin→junction wire, the branches intact. Test: `capture preserves a JUNCTION 1:1`.
+
+**2. Pin characterization + auto-stimulus (§2.9).** captureRegion now: GND (touches ground) → gnd; first
+DC-supply net → VCC; further source-driven nets → IN/IN2…; a net with NO outside driver → an OUTPUT
+**Y/Y2** (was a bare "P1"). Every role gets an auto **pinTest** on the frame (vcc 5 V / gnd 0 V / in 0 V;
+output = null/observed), so a captured subassembly opens in the die editor already POWERED + "● solvable"
+— no hand-dialling. Test: `capture characterizes pins + auto-sets the die's stimulus`.
+**Known limit (told owner):** VCC-vs-input among DC sources is genuinely ambiguous statically (their IN is
+a V source reaching gates THROUGH resistors) — first DC net = VCC is a guess; the player swaps the role in
+the die editor (stimulus follows). Could go device-aware (gate→in, drain→out, source-to-rail→supply) for
+gates if owner wants.
+
+**3. Rendering (#31) — investigated, NOT yet done.** Explore agent found: (A) free-form frame pins draw
+rectangular SOLDER LEADS at board.ts ~7176-7228 (skip for `isFreeFormFrame`); (B) frame-pin wires render as
+conduits not pinout leads in redrawWires ~5084-5258 (a wire touching the die frame should draw schematic).
+GND only "looks right" because its 0 V dark colour hides the conduit — no special-casing. Next PR.
+
+---
+
 ## 2026-06-25 (147) — FIX (owner-reported): region pins align to traces + the rect now PERSISTS
 
 **State:** 🟢 on branch, **about to PR**. Web/render/registry only, golden untouched, **114 web tests**,

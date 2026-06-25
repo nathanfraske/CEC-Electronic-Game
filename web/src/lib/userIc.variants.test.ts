@@ -669,6 +669,89 @@ describe("IC variants — determinism contract", () => {
     }
   });
 
+  it("capture preserves a JUNCTION 1:1 (a branched net keeps its junction, doesn't fan out)", () => {
+    // V (outside) → junction J → R1.A and J → R2.A (both inside): the net BRANCHES at J inside the box.
+    // The capture must keep J — one wire frame_pin→J, then J→R1 and J→R2 — not re-pin each resistor to
+    // the frame separately (the fan-out the owner saw). Box drawn to ENCLOSE the junction.
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 5, 5);
+    const r1 = place(b, "R", 10, 3, 1000);
+    const r2 = place(b, "R", 10, 8, 2000);
+    const gnd = place(b, "GND", 20, 5);
+    const j = b.addJunction({ col: 8, row: 5 }); // inside the box, between V and the resistors
+    b.connect({ componentId: v.id, pinIndex: 0 }, { junctionId: j.id }); // V → J (crosses the edge)
+    b.connect({ junctionId: j.id }, { componentId: r1.id, pinIndex: 0 }); // J → R1.A (internal)
+    b.connect({ junctionId: j.id }, { componentId: r2.id, pinIndex: 0 }); // J → R2.A (internal)
+    b.connect(
+      { componentId: r1.id, pinIndex: 1 },
+      { componentId: gnd.id, pinIndex: 0 },
+    );
+    b.connect(
+      { componentId: r2.id, pinIndex: 1 },
+      { componentId: gnd.id, pinIndex: 0 },
+    );
+
+    const cap = captureRegion(b, [r1.id, r2.id], "Junc", {
+      minCol: 6,
+      minRow: 1,
+      maxCol: 16,
+      maxRow: 11,
+    });
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("Junc")!;
+      // The branch junction survives in the captured graph (without the fix it was dissolved → fan-out).
+      expect((def.graph.junctions ?? []).length).toBeGreaterThanOrEqual(1);
+      // The branched net reaches the frame through the JUNCTION — exactly ONE frame-pin↔junction wire,
+      // not one frame-pin lead per resistor.
+      const frameJuncWires = def.graph.wires.filter((w) => {
+        const fromFrame =
+          "componentId" in w.from && w.from.componentId === def.frameId;
+        const toFrame =
+          "componentId" in w.to && w.to.componentId === def.frameId;
+        return (
+          (fromFrame && "junctionId" in w.to) ||
+          ("junctionId" in w.from && toFrame)
+        );
+      });
+      expect(frameJuncWires.length).toBe(1);
+    } finally {
+      unregisterUserIc("Junc");
+    }
+  });
+
+  it("capture characterizes pins (VCC / output) + auto-sets the die's stimulus", () => {
+    // V → R (inside) → an outside passive load. The V-side net is the SUPPLY (VCC, driven); the load-side
+    // net has no outside driver → an OUTPUT (observed, named Y — not a bare "P1"). The frame's per-pin
+    // TEST STIMULI are pre-set so the die auto-powers (no hand-dialling each pin).
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 0, 5);
+    const r = place(b, "R", 6, 0, 1000);
+    const load = place(b, "R", 14, 0, 2000); // outside passive load on the output
+    const gnd = place(b, "GND", 0, 6);
+    connect(b, v, 0, r, 0); // V+ → R.A  (VCC net)
+    connect(b, r, 1, load, 0); // R.B → load (OUTPUT net — outside is passive)
+    connect(b, load, 1, gnd, 0);
+    connect(b, v, 1, gnd, 0);
+    const cap = captureRegion(b, [r.id], "Char");
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("Char")!;
+      expect(def.pinNames).toContain("VCC");
+      expect(def.pinNames).toContain("Y"); // un-driven net → an OUTPUT, not "P1"
+      const vccIdx = def.pinNames!.indexOf("VCC");
+      const yIdx = def.pinNames!.indexOf("Y");
+      expect(def.pinRoles![vccIdx]).toBe("vcc");
+      expect(def.pinRoles![yIdx]).toBe("out");
+      // The frame carries auto-stimulus: VCC driven (5 V), the output observed (null).
+      const frame = def.graph.components.find((c) => c.id === def.frameId)!;
+      expect(frame.pinTests![vccIdx]).toEqual({ role: "vcc", value: 5 });
+      expect(frame.pinTests![yIdx]).toBeNull();
+    } finally {
+      unregisterUserIc("Char");
+    }
+  });
+
   it("captureRegion explicit box (live rect): the DRAWN rectangle becomes the subassembly box", () => {
     // The live tool passes the rectangle the player dragged. A rect LARGER than the parts must be used
     // verbatim (box = the rect), not shrink-wrapped to the parts' bbox.
