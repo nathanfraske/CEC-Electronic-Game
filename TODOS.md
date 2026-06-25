@@ -16,9 +16,15 @@ Following docs/cell-characterization-build-plan.md (engine = P5–P9). Web/regis
   instance with a `LUT` component (word/mode), remaps its wires BY ROLE to `[OUT,I0..I3,CLK,VCC,GND]`,
   skips FET inlining; buildNetlist emits ONE ELEM_BEHAVIORAL. Golden-safe (gated, default-off). Tested.
   Known limit: collapsed cell's zoom-to-open FETs go static until the P6 local solve.
-- [ ] **Sweep** (app-verified) — second web `Simulation`, drive 2^k input vectors, read OUT → word →
-  store def.behavior. Then a "characterize" button.
-- [ ] **Truth-table panel** (app-verified) — steppable, lit FET path, verify vs intended gate.
+- ~~**Sweep**~~ (app-verified) — `characterize.ts:characterizeCell`: second web `Simulation`, drive 2^k
+  input vectors (1 GΩ sense-R finds the OUT node), read OUT → 16-bit word → `setUserIcBehavior` stores it on
+  the def. **⊨ Characterize** button on My-Subassemblies rows; `recognizeGate` (userIc.ts) names the word.
+  Tested (sweep app-only; recognizeGate + setUserIcBehavior→collapse headless). See HANDOFFS (154).
+- [ ] **Truth-table panel** — STATIC version done (`.char-panel`: full table + recognized-gate chip + LUT
+  word). Still open: the **steppable** "watch-it-compute" view (light the conducting FET path, verify each
+  row vs the intended gate live).
+- [ ] **Fidelity toggle** — a placed instance has no UI to opt into `'behavioral'` yet, so the (landed)
+  collapse never fires from the bench. Add an inspector toggle, or default characterized cells to collapse.
 
 ## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar
 

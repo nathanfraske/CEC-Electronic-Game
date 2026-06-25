@@ -28,6 +28,8 @@ import {
   captureRegion,
   previewRegion,
   cellBehaviorSig,
+  recognizeGate,
+  setUserIcBehavior,
   resealUserIc,
   tapeOut,
   isReservedTag,
@@ -959,6 +961,79 @@ describe("IC variants — determinism contract", () => {
       expect(collapsed).not.toContain(ELEM_RESISTOR);
     } finally {
       unregisterUserIc("GATEX");
+    }
+  });
+
+  it("recognizeGate names the 1- and 2-input primitives from a swept word, null otherwise", () => {
+    // 2-input words use the sweep's combo encoding bit(i0 | i1<<1): AND=0x8, OR=0xE, NAND=0x7, NOR=0x1,
+    // XOR=0x6, XNOR=0x9. The NAND case is the owner's headline test (a built NAND must read "NAND").
+    expect(recognizeGate(0x8, 2)).toBe("AND");
+    expect(recognizeGate(0xe, 2)).toBe("OR");
+    expect(recognizeGate(0x7, 2)).toBe("NAND");
+    expect(recognizeGate(0x1, 2)).toBe("NOR");
+    expect(recognizeGate(0x6, 2)).toBe("XOR");
+    expect(recognizeGate(0x9, 2)).toBe("XNOR");
+    // 1-input: bit0 = out(0), bit1 = out(1). NOT = 0b01, BUFFER = 0b10, constants for 0b00 / 0b11.
+    expect(recognizeGate(0b01, 1)).toBe("NOT");
+    expect(recognizeGate(0b10, 1)).toBe("BUFFER");
+    expect(recognizeGate(0b00, 1)).toBe("LOW");
+    expect(recognizeGate(0b11, 1)).toBe("HIGH");
+    // An unnamed 2-input function and any ≥3-input table aren't named (the truth table stands alone).
+    expect(recognizeGate(0x2, 2)).toBeNull(); // out only when i0=1 & i1=0 — no common name
+    expect(recognizeGate(0x8000, 4)).toBeNull(); // 4-input AND — recognized only via the table
+  });
+
+  it("setUserIcBehavior stores/clears a swept word so the collapse fires only once bound (the sweep path)", () => {
+    const ELEM_BEHAVIORAL = 25;
+    const ELEM_RESISTOR = 1;
+    // Mirrors the in-app SWEEP → store → collapse path: a def with pin roles but NO behavior yet. A
+    // behavioral-fidelity instance can't collapse until setUserIcBehavior binds a word to the def.
+    const inner = new BoardGraph();
+    const frame = place(inner, "DIP8", 0, 0);
+    const rIn = place(inner, "R", 6, 0, 1000);
+    connect(inner, frame, 0, rIn, 0);
+    connect(inner, rIn, 1, frame, 1);
+    registerUserIc({
+      tag: "GATEY",
+      name: "GATEY",
+      package: { archetype: "DIP", pinCount: 8 },
+      frameId: frame.id,
+      graph: inner.serialize(),
+      pinRoles: ["out", "in", "vcc", "gnd"],
+      role: "subassembly",
+    });
+    try {
+      const buildBehavioral = (): number[] => {
+        const g = new BoardGraph();
+        const v = place(g, "V", 0, 0, 5);
+        const gg = place(g, "GND", 0, 6);
+        const ic = place(g, "GATEY", 4, 0);
+        (ic as Component & { fidelity?: string }).fidelity = "behavioral";
+        connect(g, v, 0, ic, 2);
+        connect(g, ic, 3, gg, 0);
+        connect(g, v, 0, ic, 1);
+        connect(g, ic, 0, gg, 0);
+        connect(g, v, 1, gg, 0);
+        const nl = buildNetlist(g, false);
+        expect(nl).not.toBeNull();
+        return [...nl!.types];
+      };
+      // No behavior bound yet → even a behavioral instance inlines the inner R (nothing to collapse to).
+      const before = buildBehavioral();
+      expect(before).toContain(ELEM_RESISTOR);
+      expect(before).not.toContain(ELEM_BEHAVIORAL);
+      // Bind a swept word (what characterizeCell hands back) → now the instance collapses to ONE LUT.
+      setUserIcBehavior("GATEY", { prog: 4, word: 0x7, mode: 0, sig: 0 });
+      const bound = buildBehavioral();
+      expect(bound.filter((t) => t === ELEM_BEHAVIORAL).length).toBe(1);
+      expect(bound).not.toContain(ELEM_RESISTOR);
+      // Clearing it (a stale-sig re-sweep) drops the word → back to inlining the discrete parts.
+      setUserIcBehavior("GATEY", undefined);
+      const cleared = buildBehavioral();
+      expect(cleared).toContain(ELEM_RESISTOR);
+      expect(cleared).not.toContain(ELEM_BEHAVIORAL);
+    } finally {
+      unregisterUserIc("GATEY");
     }
   });
 

@@ -67,6 +67,8 @@
     getUserIc,
     isUserIc,
     resealUserIc,
+    setUserIcBehavior,
+    recognizeGate,
     registerUserIc,
     registerUserIcs,
     registerUserIcFamilies,
@@ -80,6 +82,7 @@
     type UserIc,
     type UserIcFamilySidecar,
   } from "./lib/userIc";
+  import { characterizeCell, type SweepVector } from "./lib/characterize";
   import {
     registerLibrary,
     addToLibrary,
@@ -1716,6 +1719,62 @@
     if (!promoted) return;
     addToLibrary(tag, "sealed"); // re-clone the now-'ic' def → the row re-files under My ICs
     libRev++;
+  }
+
+  /** The truth-table panel for a freshly characterized cell (the sweep result, kept open so the player can
+   * read the table + the recognized gate). Null when no characterization is on screen. */
+  interface CharPanel {
+    tag: string;
+    name: string;
+    /** input-column indices `[0, 1, …, k-1]` (precomputed so the header iterates a dense array). */
+    cols: number[];
+    /** every input combination + its settled output, in index order. */
+    vectors: SweepVector[];
+    /** the assembled prog-4 LUT word (shown in hex). */
+    word: number;
+    /** the recognized Boolean function ("NAND") or null for an unnamed/≥3-input table. */
+    gate: string | null;
+  }
+  let charResult = $state<CharPanel | null>(null);
+
+  /**
+   * Characterize a player-built COMBINATIONAL subassembly (§2.9, the engine's "1"): sweep every input
+   * combination through a SCRATCH Simulation ({@link characterizeCell}), assemble the prog-4 LUT
+   * truth-table word, store it on the def via {@link setUserIcBehavior} (so a behavioral-fidelity instance
+   * collapses to one cheap LUT in `flattenUserIcs`), and surface the truth table so the player can verify
+   * what the gate computes. App-only — it spins up a second, throwaway wasm Simulation, so the running
+   * (hashed) sim and the golden are untouched. Refuses (via `circuitWarning`) a cell that isn't a
+   * tag-able ≤4-input gate or won't solve.
+   */
+  function characterizeIc(tag: string): void {
+    const ic = getUserIc(tag);
+    if (!ic) return;
+    let res: ReturnType<typeof characterizeCell>;
+    try {
+      res = characterizeCell(ic.graph, ic.frameId, ic.pinRoles ?? []);
+    } catch (err) {
+      circuitWarning = `Couldn't characterize “${ic.name || partName(tag)}”: ${
+        err instanceof Error ? err.message : String(err)
+      }`;
+      charResult = null;
+      return;
+    }
+    if (!res.ok) {
+      circuitWarning = `Can't characterize “${ic.name || partName(tag)}”: ${res.reason}.`;
+      charResult = null;
+      return;
+    }
+    circuitWarning = null;
+    setUserIcBehavior(tag, res.behavior); // bind the swept word to the def (collapse can now fire)
+    libRev++;
+    charResult = {
+      tag,
+      name: ic.name || partName(tag),
+      cols: [...Array(res.inputs).keys()],
+      vectors: res.vectors,
+      word: res.behavior.word,
+      gate: recognizeGate(res.behavior.word, res.inputs),
+    };
   }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
   // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
@@ -3911,6 +3970,15 @@
                   }}>⊡ Edit</button
                 >
                 <button
+                  class="ic-row-btn ic-row-char"
+                  title="Characterize — sweep every input and read out the truth table this gate computes"
+                  aria-label="Characterize {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    characterizeIc(part.tag);
+                  }}>⊨ Characterize</button
+                >
+                <button
                   class="ic-row-btn ic-row-tapeout"
                   title="Tape out → board IC (choose a package, make it placeable)"
                   aria-label="Tape out {part.name}"
@@ -5071,6 +5139,57 @@
 
       {#if circuitWarning}
         <div class="circuit-warn">⚠ {circuitWarning}</div>
+      {/if}
+
+      {#if charResult}
+        <!-- Characterization result (the engine's "1"): the truth table the swept cell computes, plus the
+             recognized gate + the prog-4 LUT word it collapsed to. Stays up until the player closes it. -->
+        <div
+          class="char-panel"
+          role="dialog"
+          aria-label="Truth table for {charResult.name}"
+        >
+          <div class="char-head">
+            <span class="char-title">{charResult.name}</span>
+            {#if charResult.gate}
+              <span class="char-gate" title="Recognized Boolean function"
+                >{charResult.gate}</span
+              >
+            {/if}
+            <span class="char-word mono" title="Collapsed prog-4 LUT word"
+              >LUT 0x{charResult.word.toString(16).toUpperCase()}</span
+            >
+            <button
+              class="char-close"
+              title="Close"
+              aria-label="Close truth table"
+              onclick={() => (charResult = null)}>×</button
+            >
+          </div>
+          <table class="char-tt mono">
+            <thead>
+              <tr>
+                {#each charResult.cols as i (i)}
+                  <th>I{i}</th>
+                {/each}
+                <th class="char-out">Y</th>
+              </tr>
+            </thead>
+            <tbody>
+              {#each charResult.vectors as v, vi (vi)}
+                <tr>
+                  {#each v.in as bit, bi (bi)}
+                    <td class:hi={bit === 1}>{bit}</td>
+                  {/each}
+                  <td class="char-out" class:hi={v.out === 1}>{v.out}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          <div class="char-foot">
+            Swept into a LUT — a behavioral copy simulates as one cheap cell.
+          </div>
+        </div>
       {/if}
 
       {#if labelEdit}
@@ -8174,6 +8293,108 @@
     box-shadow: 0 0 18px -8px var(--warn);
     backdrop-filter: blur(3px);
     z-index: 4;
+  }
+  /* Characterization truth-table panel — a floating telemetry card (the engine's "1"): the swept gate's
+     truth table, the recognized function, and the prog-4 LUT word it collapsed to. */
+  .char-panel {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 200px;
+    padding: 10px 12px 11px;
+    background: oklch(0.165 0.028 285 / 0.96);
+    border: 1px solid var(--cyan);
+    border-radius: 4px;
+    box-shadow: 0 0 22px -9px var(--cyan);
+    backdrop-filter: blur(3px);
+    z-index: 5;
+  }
+  .char-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .char-title {
+    font-family: var(--font-display, "Saira Condensed", sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .char-gate {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--cyan);
+    padding: 1px 6px;
+    border: 1px solid color-mix(in oklch, var(--cyan) 45%, transparent);
+    border-radius: 2px;
+    background: color-mix(in oklch, var(--cyan) 12%, transparent);
+  }
+  .char-word {
+    font-size: 11px;
+    color: var(--dim);
+  }
+  .char-close {
+    margin-left: auto;
+    width: 20px;
+    height: 20px;
+    display: grid;
+    place-items: center;
+    font-family: var(--font-mono);
+    font-size: 14px;
+    line-height: 1;
+    color: var(--dim);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    cursor: pointer;
+  }
+  .char-close:hover {
+    color: var(--text);
+    border-color: var(--border-bright);
+    background: var(--surface-2);
+  }
+  .char-tt {
+    border-collapse: collapse;
+    font-size: 12.5px;
+    margin: 0 auto;
+  }
+  .char-tt th,
+  .char-tt td {
+    padding: 2px 9px;
+    text-align: center;
+    color: var(--dim);
+    border: 1px solid var(--border);
+  }
+  .char-tt th {
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-2, var(--dim));
+  }
+  .char-tt td.hi {
+    color: var(--cyan);
+    font-weight: 600;
+  }
+  .char-tt .char-out {
+    border-left: 2px solid var(--cyan);
+  }
+  .char-tt td.char-out {
+    color: var(--dim);
+  }
+  .char-tt td.char-out.hi {
+    color: var(--accent);
+  }
+  .char-foot {
+    margin-top: 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: var(--dim);
+    text-align: center;
   }
   .hl {
     font-weight: 600;
