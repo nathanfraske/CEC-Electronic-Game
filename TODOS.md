@@ -23,6 +23,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   (ship divider → Credits → unlock a shelf). See each panel's reuse-vs-new + phased path.
 
 ## 2026-06-25 (130) — DESIGN PANELS: the Probe teaching arc + all-ages beginner onboarding
+## 2026-06-25 (134) — Phase 4 Design 1: the INV (CMOS inverter) element
+
+- ~~**INV element (Phase 4 Design 1)**~~ — DONE. First-class Inverter: 4-pin `[Y,A,VCC,GND]` (`PART_KINDS.INV`),
+  expands via `CEC_COMP.INV` to a real PMOS(12)+NMOS(11) push-pull pair (golden-safe, no sim-core change); opens
+  to its two FETs in zoom-to-open. Bin entry + "Logic & ICs" category; topology test in `netlist.test.ts`.
+- [ ] **INV quality tiers** — map `INV.tier` onto both FETs' `Kp` (Real-mode, `tierParams("PM"/"NM")` at the two
+  sub-element indices in the params loop); set `hasTiers` true. Mid = default ⇒ golden-safe. Small follow-up.
+- [ ] **Phase 4 Design 2 — the 4-LUT teardown** (#11): `CEC_SRBIT` (2× INV cross-coupled + access switch, with a
+  "Stored bit" inspector toggle) → `CEC_LUT4SLICE` → `CEC_LUT16` + the `examples.ts` "Inside a LUT" worked
+  example. 21 user-IC instances ≪ MAX_INSTANCES; builds on the INV element just landed.
+- [ ] **`inv-ic.html` 4-lead refsheet** — re-pin the canonical inverter glyph to 4 leads (docs polish).
+
+
 
 - ~~**Probe failure-first teaching-arc panel**~~ — DONE. `docs/ui/probe-teaching-arc.md`: the 4-act hook
   (proud broken LED → blameless blow-up → resistor → divider → build-from-scratch w/ per-session **changed

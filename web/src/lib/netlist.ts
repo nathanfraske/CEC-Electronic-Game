@@ -276,6 +276,25 @@ const CEC_COMP: Record<string, CecComp> = {
       [1, 5, NI(1), NI(2)], // COUT = OR(t1, t2)
     ],
   },
+  // Inverter (CEC9002): pins Y(0) A(1) VCC(2) GND(3). The real CMOS complementary pair — PMOS
+  // (drain=Y, source=VCC, gate=A) pulls Y up when A is low; NMOS (drain=Y, source=GND, gate=A) pulls Y
+  // down when A is high; the shared drain Y is the push-pull output. No gates, no new sim element
+  // (ELEM_PMOS=12 / ELEM_NMOS=11 already exist) → golden-safe. compositeInternals records the two FETs,
+  // so zoom-to-open draws the real transistors with live currents (and Phase 3 hands off to silicon).
+  INV: {
+    internal: 0,
+    vccPin: 2,
+    gndPin: 3,
+    voutPin: 0,
+    primary: 0, // the PMOS backs the part's glyph current
+    gates: [],
+    extra: [
+      // ELEM_PMOS (12): a=drain=Y(0), b=source=VCC(2), c=gate=A(1). value unused (square-law model).
+      { t: 12, a: 0, b: 2, c: 1, d: 0, e: 0, value: 0, aux: 0 },
+      // ELEM_NMOS (11): a=drain=Y(0), b=source=GND(3), c=gate=A(1). value unused.
+      { t: 11, a: 0, b: 3, c: 1, d: 0, e: 0, value: 0, aux: 0 },
+    ],
+  },
   // 2:1 mux (CEC2031): pins Y(0) GND(1) A(2) B(3) SEL(4) VCC(5). Y = A&~SEL | B&SEL.
   MUX2: {
     internal: 3,
