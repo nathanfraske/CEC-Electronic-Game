@@ -22,6 +22,7 @@ import {
   getUserIc,
   captureSeal,
   captureRegion,
+  resealUserIc,
   tapeOut,
   isReservedTag,
   derivePinRoles,
@@ -556,6 +557,38 @@ describe("IC variants — determinism contract", () => {
     expect(captureRegion(b2, [v2.id, r.id, gnd2.id])).toBeUndefined();
     // An empty selection is refused too.
     expect(captureRegion(b2, [])).toBeUndefined();
+  });
+
+  it("captureRegion audit fixes: distinct pins (same-side), reseal keeps freeForm/role, tape-out drops freeForm", () => {
+    // Same-side collision: a resistor whose BOTH pins exit RIGHT to two GND parts on the same row —
+    // before the fix both crossings resolved to the same edge cell. Pins must be pairwise-distinct.
+    const c = new BoardGraph();
+    const r = place(c, "R", 4, 4, 1000);
+    const g1 = place(c, "GND", 10, 4);
+    const g2 = place(c, "GND", 12, 4);
+    connect(c, r, 0, g1, 0); // R.A → GND (right)
+    connect(c, r, 1, g2, 0); // R.B → GND (right)
+    const capC = captureRegion(c, [r.id], "Coll");
+    expect(capC).not.toBeUndefined();
+    try {
+      const def = getUserIc("Coll")!;
+      expect(def.freeForm!.pins.length).toBe(2);
+      const cells = new Set(def.freeForm!.pins.map((p) => `${p.dx},${p.dy}`));
+      expect(cells.size).toBe(2); // pairwise-distinct edge cells
+
+      // Reseal (the standard die-editor edit path) must PRESERVE freeForm + role (audit blocker).
+      resealUserIc("Coll", def.graph, def.frameId, def.pinNames);
+      const after = getUserIc("Coll")!;
+      expect(after.freeForm).toBeDefined();
+      expect(after.role).toBe("subassembly");
+
+      // Tape out onto a real package must DROP freeForm so the chosen package lays out the footprint.
+      const promoted = tapeOut("Coll", { archetype: "SOT-23", pinCount: 5 });
+      expect(promoted?.freeForm).toBeUndefined();
+      expect(promoted?.package).toEqual({ archetype: "SOT-23", pinCount: 5 });
+    } finally {
+      unregisterUserIc("Coll");
+    }
   });
 
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {

@@ -384,6 +384,10 @@ export function tapeOut(
     graph,
     role: "ic",
   };
+  // Repackaging a FREE-FORM subassembly onto a real package: drop the free-form geometry so
+  // userIcPartKind (which prefers `freeForm`) lays the footprint out from the CHOSEN package — otherwise
+  // the placeable footprint silently keeps the old box and ignores the pinout the player picked (audit).
+  if (repackaged && promoted.freeForm) delete promoted.freeForm;
   registerUserIc(promoted);
   return promoted;
 }
@@ -397,13 +401,15 @@ export function resealUserIc(
   const prev = REGISTRY.get(tag);
   if (!prev) return;
   const keep = pinNames && pinNames.some((n) => n && n.trim());
+  // Spread the prior def so EVERY field rides through — notably `freeForm`, `role`, and `pinRoles`
+  // (audit blocker: re-editing + resealing a captured subassembly otherwise reverted its faithful box +
+  // pins-at-crossings to a generic package and flipped it back to a board IC). Only the edited inner
+  // graph / frame id / pin names are overridden.
   registerUserIc({
-    tag: prev.tag,
-    name: prev.name,
-    package: prev.package,
+    ...prev,
     frameId,
     graph,
-    ...(keep ? { pinNames: [...pinNames] } : {}),
+    pinNames: keep ? [...pinNames] : prev.pinNames,
   });
 }
 
@@ -1130,13 +1136,16 @@ export interface RegionCapture {
  * the board and registers a new subassembly (which appears in "My Subassemblies"); it does NOT modify
  * the player's board.
  *
- * The boundary rule: union-find the wire graph into nets; a net with at least one endpoint INSIDE the
- * region (a pin on a selected part) AND at least one OUTSIDE (a pin on a non-selected part — including a
- * board VCC/GND/source) is a **pin** of the cell. INTERNAL nets (entirely inside) keep their wiring
- * verbatim; for each BOUNDARY net every inside pin is fanned to the synthesized frame's lead, so the
- * region-side stays one node and the outside connection becomes the package pin. A region with no
- * boundary net (nothing leaves the selection) or more boundary nets than the largest package holds is
- * refused (returns undefined). Power pins are auto-named from the outside source kind (GND / VCC).
+ * FAITHFUL 1:1 COPY (§4.10): the captured cell is the selection copied EXACTLY — parts keep their
+ * relative positions, internal wires are verbatim, and the box is a FREE-FORM frame the size of the
+ * selection's bounding box (not a stock package). The boundary rule: union-find the wire graph into nets;
+ * a net with at least one endpoint INSIDE (a pin on a selected part) AND one OUTSIDE (a pin on a
+ * non-selected part — including a board VCC/GND/source) becomes a **pin**, placed ON the box edge in the
+ * outside endpoint's direction, aligned with the inside pin — i.e. where the wire actually crossed. Each
+ * crossing wire keeps its inside routing and retargets its OUTSIDE end to that pin (flatten fuses by
+ * INDEX, so connectivity is one-node-per-net regardless of pin placement). Pin cells are de-duplicated
+ * onto distinct edge cells; the box bbox is rotation-aware. A region with no boundary net (nothing leaves
+ * the selection) or more than {@link BLOCK_MAX_PINS} crossings is refused. Rails auto-named GND / VCC.
  *
  * Web-only graph→graph: nothing runs in sim-core or crosses the hashed boundary, and the golden places
  * no user IC. A captured subassembly reaches the board via Tape out ({@link tapeOut}).
@@ -1244,6 +1253,18 @@ export function captureRegion(
     minRow = Math.min(minRow, c.cell.row);
     maxCol = Math.max(maxCol, c.cell.col + fw - 1);
     maxRow = Math.max(maxRow, c.cell.row + fh - 1);
+    // Rotation/mirror-aware: union each pin's ACTUAL cell (the crossing geometry uses the same
+    // rotation-aware cell), so a rotated multi-cell part can never fall outside its own box (audit).
+    const np = k?.pins.length ?? 0;
+    for (let pi = 0; pi < np; pi++) {
+      const pc = graph.endpointCell({ componentId: c.id, pinIndex: pi });
+      if (pc) {
+        minCol = Math.min(minCol, pc.col);
+        minRow = Math.min(minRow, pc.row);
+        maxCol = Math.max(maxCol, pc.col);
+        maxRow = Math.max(maxRow, pc.row);
+      }
+    }
   }
   const PAD = 1;
   minCol -= PAD;
@@ -1291,6 +1312,31 @@ export function captureRegion(
   );
   const pinNames: string[] = [];
   const pinRoles: PinRole[] = [];
+  // Box-edge cells, clockwise from the top-left, so a colliding pin can walk to the next FREE edge cell
+  // — two leads must never share a cell (the outer board's pin-at-cell resolves only one, audit).
+  const perimeter: { dx: number; dy: number }[] = [];
+  for (let x = 0; x < boxW; x++) perimeter.push({ dx: x, dy: 0 });
+  for (let y = 1; y < boxH; y++) perimeter.push({ dx: boxW - 1, dy: y });
+  for (let x = boxW - 2; x >= 0; x--) perimeter.push({ dx: x, dy: boxH - 1 });
+  for (let y = boxH - 2; y >= 1; y--) perimeter.push({ dx: 0, dy: y });
+  const claimed = new Set<string>();
+  const claimCell = (dx: number, dy: number): { dx: number; dy: number } => {
+    if (!claimed.has(dx + "," + dy)) {
+      claimed.add(dx + "," + dy);
+      return { dx, dy };
+    }
+    let start = perimeter.findIndex((p) => p.dx === dx && p.dy === dy);
+    if (start < 0) start = 0;
+    for (let k = 1; k <= perimeter.length; k++) {
+      const c = perimeter[(start + k) % perimeter.length];
+      const key = c.dx + "," + c.dy;
+      if (!claimed.has(key)) {
+        claimed.add(key);
+        return c;
+      }
+    }
+    return { dx, dy }; // every edge cell taken (a tiny box, very rare) — keep it
+  };
   boundaryRoots.forEach((root, i) => {
     const rep = repCells.get(root);
     let dx: number;
@@ -1309,12 +1355,13 @@ export function captureRegion(
       dx = 0;
       dy = clamp(i, 0, boxH - 1);
     }
+    ({ dx, dy } = claimCell(dx, dy)); // ensure a distinct edge cell
     const kinds = outsideKinds.get(root) ?? new Set<string>();
     let name: string;
     if (kinds.has("GND")) {
       name = "GND";
       pinRoles[i] = "gnd";
-    } else if (kinds.has("V") || kinds.has("VAC") || kinds.has("PULSE")) {
+    } else if (kinds.has("V") || kinds.has("AC") || kinds.has("PULSE")) {
       name = "VCC";
       pinRoles[i] = "vcc";
     } else {
