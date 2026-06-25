@@ -5,6 +5,61 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (134) — DESIGN: fundamentals scaffold arc (show-don't-tell intro)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`, rebased onto the other agent.
+Owner ask: fully introduce a true novice — teach the literal basics (place, wire, ground/loop, carriers,
+colours, voltage, current) by **SHOW & EXPERIMENT, not text**, with an optional non-hand-holdy scaffold that
+**opens up after the ideal components** and lands them in the contract/experimentation loop.
+
+- **`docs/ui/fundamentals-scaffold-arc.md`** (NEW) — concept-by-concept show-don't-tell teaching: each
+  fundamental learned by DOING/WATCHING (place via the ghost+snap-ring; loop/ground via the dark→alive flip;
+  carriers/colours/voltage/current via changing a value and watching the render react), prose only as an
+  optional pull-deeper. The "curious → read deeper" path is always presented (one pull away). The scaffold is
+  OPTIONAL/non-hand-holdy and **recedes at the Era-0→1 boundary** (`unlockNode('era1-tolerances')`) — "opens
+  up" = conversion to the full sandbox + contract loop; the input UI (ghost/snap-ring) never retires.
+  Guided-discovery (not an unguided maze) enforced. Multi-lens workflow + 2 critics (SHIP-WITH-FIXES → fixed).
+  Cross-ref added to `onboarding-first-run.md` §11.
+
+**KEY DISCOVERY for implementers:** the first-encounter **concept-card layer is PARTIALLY BUILT** —
+`web/src/lib/concepts.ts` ships `CONCEPTS` (4 cards: `source`/`ground`/`loop`/`reading`) + `CONCEPT_ORDER`,
+fired by `offerConcept`/`pumpConcepts`/`dismissConcept`/`replayConcepts` in App.svelte, deduped by
+`seenConcepts`. The fundamentals doc **migrates** those 4 ids into 7 `FUNDAMENTALS_IDS` (mapping in §4.4).
+NOTE: the beginner-onboarding + economy docs referenced a hypothetical `coaching.ts` — that's actually
+`concepts.ts` (not yet re-pointed in those two docs; minor cleanup).
+
+**Next / owner eye:** the design pass now covers the intro (Probe arc + fundamentals + beginner journey), the
+economy/progression impl, and product-sim. Cheapest first builds: product-sim Phase-1 report card; the MVP
+economy loop; the fundamentals scaffold (rides today's render + `concepts.ts`). Open-questions across the
+panels await owner calls (esp. the economy **balance pass**).
+## 2026-06-25 (135) — QoL: in-package transistors now animate (real per-inner-part current)
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3` (synced past the parallel design-doc commits). Owner QoL note
+while hand-building the LUT: "the transistors do not really animate … in-package … supposed to per the refsheet."
+Root cause: the opened-IC inner part's `electrical` was built with **`current: 0`** (the C-4 / task #16
+deferral), so the MOSFET device/silicon tier (which rides `id = norm(current)`) showed no lit channel / no
+carrier drift. Render-only; golden `0xeaac…fa24` untouched. Gate green (check 0-err, lint, build, test 99).
+
+- **`netlist.ts`** — `UserIcInnerPart.elemIndex?` (render-only): the inner part's flattened element index
+  `elemOfComponent.get(comp.id + o)`; set in the LIVE builder (undefined for a nested-IC hub / static fallback).
+- **`userIcInternalsView.ts`** — `opts.elemCurrents`; each inner part's `electrical.current` now reads its REAL
+  solved current `elemCurrents[part.elemIndex]` (not 0); threaded down the recursion so nested levels animate too.
+- **`board.ts`** — pass `snap.elementCurrents` through `ComponentNode.update` into the draw call.
+
+**Caveat:** the device tier lights from CURRENT, so a no-load CMOS inverter (≈0 current at a static op-point)
+still shows little — physically honest, and consistent with a standalone transistor. A working LUT / loaded
+inverter / regenerative SRAM bit has current ⇒ the FETs animate. (A future refinement could light the channel
+from the gate OVERDRIVE Vgs even at no current, matching the refsheet's `imos` more closely — needs Vgs threaded.)
+
+**Also found (queued #22):** the INV *composite* zoom-to-open (`internalsView.ts` `partSymbol`) has no MOSFET
+case ⇒ a placed `INV` draws its FETs as generic boxes, not the device tier. Separate path; lower priority (the
+LUT is built from sealed dies, which use the now-animated user-IC view).
+
+**Next:** owner continues building the LUT (collecting QoL notes); the INV-composite FET rendering (#22); the
+gate-overdrive channel refinement; INV tiers; Phase 4 Design 2 (the 4-LUT teardown).
+
+---
+
 ## 2026-06-25 (133) — DESIGN: product-simulation + economy/progression IMPLEMENTATION panels
 
 **State:** 🟢 docs-only, golden-safe by construction; branch `claude/kind-turing-hdelb3`, rebased onto the

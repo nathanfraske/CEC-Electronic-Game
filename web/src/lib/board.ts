@@ -2258,6 +2258,7 @@ export class Board {
         this.userIcInternals,
         viewport,
         viewProbe,
+        snap.elementCurrents,
       );
     }
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
@@ -6575,6 +6576,7 @@ class ComponentNode {
     allUserIcInternals?: Map<number, UserIcInternals>,
     viewport?: { w: number; h: number },
     viewProbe?: { cx: number; cy: number; depth: number; scale: number },
+    elemCurrents?: Float64Array,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -6661,6 +6663,7 @@ class ComponentNode {
       drawUserIcInternals(g, {
         internals: effUserIc,
         nodeV,
+        elemCurrents,
         pins: this.pinPositions,
         wPx: this.wPx,
         hPx: this.hPx,

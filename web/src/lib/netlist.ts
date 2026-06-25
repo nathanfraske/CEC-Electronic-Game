@@ -612,6 +612,12 @@ export interface UserIcInnerPart {
   value: number;
   /** resolved node index per pin (by pin index), into `node_voltages` / the snapshot `state`. */
   nodes: number[];
+  /** This inner part's FLATTENED element index in the build's netlist (`elemOfComponent.get(comp.id +
+   * offset)`), so the zoom-to-open replica can read the part's REAL solved current from the snapshot's
+   * `elementCurrents[elemIndex]` and animate its glyph (e.g. a MOSFET's lit channel + drifting carriers,
+   * per its refsheet). Absent for a nested-IC hub (no element of its own) and the static fallback (no
+   * flatten ran). Render-only; never hashed. */
+  elemIndex?: number;
   /** When this inner part is ITSELF a sealed user IC, its FLATTENED hub id within this build's netlist
    * — the key into the netlist's `Map<number, UserIcInternals>` (board.ts `userIcInternals`), so the
    * zoom-to-open replica can RECURSE into its inner circuit (Phase 2 Part A). It equals the nested
@@ -1652,6 +1658,10 @@ export function buildNetlist(
         nodes: kind.pins.map((p) =>
           nodeOfEndpoint({ componentId: comp.id, pinIndex: p.index }),
         ),
+        // The inner part's flattened element index — keyed by the same `comp.id + o` the flatten remap
+        // inlined it at — so the replica can read its live current from `elementCurrents` and animate it
+        // (a leaf part resolves; a nested-IC hub has no element of its own → undefined).
+        elemIndex: elemOfComponent.get(comp.id + o),
         // When this inner part is itself a sealed user IC, its FLATTENED hub id is `comp.id + o` (the id
         // `flattenUserIcs`'s remap inlined it at — the same id the nested instance's own FlattenRecord
         // carries). That keys `userIcInternals`, so the zoom-to-open replica can recurse into it (Part A).
