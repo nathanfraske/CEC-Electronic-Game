@@ -30,9 +30,19 @@ describe("zoomMeter", () => {
     expect(formatMm(2000)).toBe("2 m");
     expect(formatMm(5)).toBe("5 mm");
     expect(formatMm(1)).toBe("1 mm");
-    expect(formatMm(0.5)).toBe("500 µm"); // 0.5 mm
     expect(formatMm(0.002)).toBe("2 µm");
     expect(formatMm(5e-6)).toBe("5 nm"); // 5e-6 mm
+  });
+
+  it("formatMm keeps sub-mm in mm down to 0.1 so the gauge reads monotonically", () => {
+    // The bug: flipping the unit at 1 made `1 mm → 0.5 mm` render as `1 → 500 µm`,
+    // reading like the gauge jumped UP as you zoomed in. Sub-mm now stays in mm
+    // until 0.1, so the ladder is 1 → 0.5 → 0.2 → 0.1 mm → 50 → 20 µm — strictly smaller.
+    expect(formatMm(0.5)).toBe("0.5 mm");
+    expect(formatMm(0.2)).toBe("0.2 mm");
+    expect(formatMm(0.1)).toBe("0.1 mm");
+    expect(formatMm(0.05)).toBe("50 µm");
+    expect(formatMm(0.02)).toBe("20 µm");
   });
 
   it("formatMag is compact across decades", () => {

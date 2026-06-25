@@ -49,12 +49,15 @@ function fmtNum(n: number): string {
   return Number(n.toFixed(2)).toString();
 }
 
-/** Format a physical length given in MILLIMETRES with the tier-appropriate unit (m / mm / µm / nm). */
+/** Format a physical length given in MILLIMETRES with the tier-appropriate unit (m / mm / µm / nm).
+ * Each unit holds DOWN to 0.1 of itself (so the bar reads `1 mm → 0.5 mm → 0.2 mm → 0.1 mm → 50 µm`,
+ * monotonically smaller) rather than flipping units at 1 — which made `1 mm → 0.5 mm` render as
+ * `1 → 500 µm` and look like the gauge jumped UP as you zoomed in. */
 export function formatMm(mm: number): string {
   const abs = Math.abs(mm);
   if (abs >= 1000) return `${fmtNum(mm / 1000)} m`;
-  if (abs >= 1) return `${fmtNum(mm)} mm`;
-  if (abs >= 1e-3) return `${fmtNum(mm * 1e3)} µm`;
+  if (abs >= 0.1) return `${fmtNum(mm)} mm`;
+  if (abs >= 1e-4) return `${fmtNum(mm * 1e3)} µm`;
   return `${fmtNum(mm * 1e6)} nm`;
 }
 
