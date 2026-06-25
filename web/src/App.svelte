@@ -4624,52 +4624,6 @@
           >
         </span>
       {/if}
-      {#if regionInfo || mode === "region"}
-        <!-- Region tool: name + seal the pending rectangle (the live free-form subassembly). The box
-             PERSISTS across tool switches, so this panel shows whenever a region is pending (any tool) —
-             draw it, wire/edit the circuit (pins update live), then come back and seal. The pin count /
-             refusal reason comes from the board's onRegion (the same analysis the seal runs). -->
-        <span class="region-controls">
-          <input
-            class="insp-name mono region-name"
-            type="text"
-            placeholder="subassembly name (optional)"
-            bind:value={regionName}
-            maxlength="24"
-            aria-label="Name the sealed subassembly"
-            onkeydown={(e) => {
-              if (e.key === "Enter") sealRegion();
-            }}
-          />
-          <button
-            class="btn btn-accent"
-            onclick={sealRegion}
-            disabled={!ready || !regionInfo || regionInfo.pinCount < 1}
-            title="Seal the boxed region into a free-form subassembly — its pins are where wires cross the box"
-          >
-            ⬡ Seal region{regionInfo && regionInfo.pinCount > 0
-              ? ` (${regionInfo.pinCount} ${regionInfo.pinCount === 1 ? "pin" : "pins"})`
-              : ""}
-          </button>
-          {#if regionInfo}
-            <button
-              class="btn btn-ghost"
-              onclick={cancelRegion}
-              title="Discard the region rectangle (Esc)">× Cancel</button
-            >
-          {/if}
-          <span class="region-hint">
-            {#if regionInfo && regionInfo.pinCount > 0}
-              {mode === "region" ? "drag to resize" : "press G to resize"} · seal
-              or cancel
-            {:else if regionInfo && regionInfo.reason}
-              {regionInfo.reason}
-            {:else}
-              drag a box around the parts to bottle up
-            {/if}
-          </span>
-        </span>
-      {/if}
       <button
         class="btn btn-ghost {infoOpen ? 'is-active' : ''}"
         onclick={() => (infoOpen = !infoOpen)}
@@ -4814,6 +4768,53 @@
       oncontextmenu={(e) => e.preventDefault()}
     >
       <canvas class="board-canvas" bind:this={canvasEl}></canvas>
+
+      <!-- Region tool's floating action bar — kept OUT of the top toolbar so it never crowds / overlaps
+           the tool buttons (owner). A top-centre overlay (mirrors the die-bar), shown whenever a region
+           rectangle is pending or the Region tool is active: name it, seal it, cancel it. Region mode is
+           outer-board-only and the die-bar only shows while drilled in, so the two never collide. -->
+      {#if regionInfo || mode === "region"}
+        <div class="region-bar" role="region" aria-label="Region tool">
+          <span class="region-bar-title mono">REGION</span>
+          <input
+            class="insp-name mono region-name"
+            type="text"
+            placeholder="subassembly name (optional)"
+            bind:value={regionName}
+            maxlength="24"
+            aria-label="Name the sealed subassembly"
+            onkeydown={(e) => {
+              if (e.key === "Enter") sealRegion();
+            }}
+          />
+          <button
+            class="btn btn-accent"
+            onclick={sealRegion}
+            disabled={!ready || !regionInfo || regionInfo.pinCount < 1}
+            title="Seal the boxed region into a free-form subassembly — its pins are where wires cross the box"
+          >
+            ⬡ Seal{regionInfo && regionInfo.pinCount > 0
+              ? ` (${regionInfo.pinCount} ${regionInfo.pinCount === 1 ? "pin" : "pins"})`
+              : ""}
+          </button>
+          {#if regionInfo}
+            <button
+              class="btn btn-ghost region-bar-x"
+              onclick={cancelRegion}
+              title="Discard the region rectangle (Esc)">×</button
+            >
+          {/if}
+          <span class="region-hint">
+            {#if regionInfo && regionInfo.pinCount > 0}
+              {mode === "region" ? "drag to resize" : "press G to resize"}
+            {:else if regionInfo && regionInfo.reason}
+              {regionInfo.reason}
+            {:else}
+              drag a box around the parts
+            {/if}
+          </span>
+        </div>
+      {/if}
 
       <!-- IC-maker DIE EDITOR back bar (ADR 0006). Shown only while drilled INTO a frame: a
            breadcrumb naming the IC + its package, a live seal advisory (does it compile / how many
@@ -6512,15 +6513,42 @@
     min-width: 30px;
     padding: 6px 9px;
   }
-  /* Live region tool: the inline name + seal + hint shown while the Region tool is active. */
-  .region-controls {
-    display: inline-flex;
+  /* Live region tool — a floating action bar OVER the board (mirrors .die-bar), kept out of the top
+     toolbar so it never crowds / overlaps the tool buttons (owner). Name + seal + cancel the region. */
+  .region-bar {
+    position: absolute;
+    z-index: 4;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
     align-items: center;
     gap: 8px;
+    max-width: calc(100% - 24px);
+    padding: 6px 10px;
+    background: oklch(0.135 0.022 285 / 0.84);
+    backdrop-filter: blur(4px);
+    border: 1px solid var(--accent-line);
+    border-radius: var(--radius);
+    box-shadow:
+      0 0 0 1px oklch(0 0 0 / 0.3),
+      0 8px 22px -14px oklch(0 0 0 / 0.9),
+      inset 0 0 18px -10px var(--accent);
+  }
+  .region-bar-title {
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--accent);
+    opacity: 0.9;
   }
   .region-name {
     width: 170px;
     flex: 0 0 auto;
+  }
+  .region-bar-x {
+    min-width: 30px;
+    padding: 6px 9px;
   }
   .region-hint {
     font-family: var(--font-mono);

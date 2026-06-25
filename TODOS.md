@@ -6,6 +6,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar
+
+Web/UI only, golden untouched, 117 web tests.
+- ~~**Toolbar overlap**~~ — the region seal panel crammed in `.board-tools` overflowed/overlapped Info/Codex
+  when a region was pending. Moved it to a floating `.region-bar` over the board (top-centre, mirrors
+  `.die-bar`): REGION title + name + ⬡ Seal (N) + × + hint. The tool row is no longer crowded by it.
+
 ## 2026-06-25 (150) — FIX (owner round 3): lead overshoot + non-interactable frame-pin wires
 
 Web only, golden untouched, 117 web tests.
