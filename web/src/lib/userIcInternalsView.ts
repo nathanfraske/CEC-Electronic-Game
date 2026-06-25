@@ -56,6 +56,10 @@ export interface UserIcInternalsOpts {
    * wires, no flow carriers, parts at rest), so a placed chip still opens to "the circuit as you
    * built it" unpowered. */
   nodeV?: Float64Array;
+  /** Per-ELEMENT solved current (the snapshot's `elementCurrents`), so each inner part's glyph reads its
+   * REAL current via `UserIcInnerPart.elemIndex` and animates (a MOSFET's lit channel + drifting carriers,
+   * a resistor's flow, …). Absent ⇒ parts draw at rest (current 0), the unpowered look. */
+  elemCurrents?: Float64Array;
   /** footprint pin positions (glyph-local px), by external pin index — the FALLBACK anchor used only
    * when the internals carry no authored `pinCells` (the package boundary positions). */
   pins: { x: number; y: number }[];
@@ -189,6 +193,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const {
     internals,
     nodeV,
+    elemCurrents,
     pins,
     wPx,
     hPx,
@@ -556,14 +561,17 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       x: pin.dx * PITCH,
       y: pin.dy * PITCH,
     }));
-    // A live electrical readout for the glyph: voltage across the part's first two terminals, sign
-    // from their level difference. (Current isn't attributed per inner part here — the glyph reads
-    // vAcross for its field/charge animation.) Cheap + honest.
+    // A live electrical readout for the glyph: the part's REAL solved current (from `elementCurrents`
+    // via its flattened `elemIndex`) so a MOSFET's channel lights + carriers drift, a resistor flows,
+    // etc.; plus the voltage across its first two terminals (sign from their level difference) for the
+    // field/charge animation. Current absent (unpowered / no elemIndex) ⇒ 0 = the at-rest look.
     const na = part.nodes[0];
     const nb = part.nodes[1];
+    const partCurrent =
+      part.elemIndex !== undefined ? (elemCurrents?.[part.elemIndex] ?? 0) : 0;
     let electrical: ElectricalState = ZERO_ELECTRICAL;
     if (na !== undefined && nb !== undefined) {
-      electrical = { current: 0, vAcross: vAt(na) - vAt(nb) };
+      electrical = { current: partCurrent, vAcross: vAt(na) - vAt(nb) };
     }
     const partColor = PALETTE[kind.colorKey];
 
@@ -636,6 +644,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       drawUserIcInternals(slot.frameG, {
         internals: nested,
         nodeV, // SAME snapshot — live at every depth (A.5; each level's own nodeOfInner resolves it)
+        elemCurrents, // SAME per-element currents — each nested part resolves via its own elemIndex
         pins: nestedPins,
         wPx: (kind.w - 1) * PITCH,
         hPx: (kind.h - 1) * PITCH,

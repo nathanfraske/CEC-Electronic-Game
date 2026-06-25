@@ -32,6 +32,31 @@ NOTE: the beginner-onboarding + economy docs referenced a hypothetical `coaching
 economy/progression impl, and product-sim. Cheapest first builds: product-sim Phase-1 report card; the MVP
 economy loop; the fundamentals scaffold (rides today's render + `concepts.ts`). Open-questions across the
 panels await owner calls (esp. the economy **balance pass**).
+## 2026-06-25 (135) — QoL: in-package transistors now animate (real per-inner-part current)
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3` (synced past the parallel design-doc commits). Owner QoL note
+while hand-building the LUT: "the transistors do not really animate … in-package … supposed to per the refsheet."
+Root cause: the opened-IC inner part's `electrical` was built with **`current: 0`** (the C-4 / task #16
+deferral), so the MOSFET device/silicon tier (which rides `id = norm(current)`) showed no lit channel / no
+carrier drift. Render-only; golden `0xeaac…fa24` untouched. Gate green (check 0-err, lint, build, test 99).
+
+- **`netlist.ts`** — `UserIcInnerPart.elemIndex?` (render-only): the inner part's flattened element index
+  `elemOfComponent.get(comp.id + o)`; set in the LIVE builder (undefined for a nested-IC hub / static fallback).
+- **`userIcInternalsView.ts`** — `opts.elemCurrents`; each inner part's `electrical.current` now reads its REAL
+  solved current `elemCurrents[part.elemIndex]` (not 0); threaded down the recursion so nested levels animate too.
+- **`board.ts`** — pass `snap.elementCurrents` through `ComponentNode.update` into the draw call.
+
+**Caveat:** the device tier lights from CURRENT, so a no-load CMOS inverter (≈0 current at a static op-point)
+still shows little — physically honest, and consistent with a standalone transistor. A working LUT / loaded
+inverter / regenerative SRAM bit has current ⇒ the FETs animate. (A future refinement could light the channel
+from the gate OVERDRIVE Vgs even at no current, matching the refsheet's `imos` more closely — needs Vgs threaded.)
+
+**Also found (queued #22):** the INV *composite* zoom-to-open (`internalsView.ts` `partSymbol`) has no MOSFET
+case ⇒ a placed `INV` draws its FETs as generic boxes, not the device tier. Separate path; lower priority (the
+LUT is built from sealed dies, which use the now-animated user-IC view).
+
+**Next:** owner continues building the LUT (collecting QoL notes); the INV-composite FET rendering (#22); the
+gate-overdrive channel refinement; INV tiers; Phase 4 Design 2 (the 4-LUT teardown).
 
 ---
 
