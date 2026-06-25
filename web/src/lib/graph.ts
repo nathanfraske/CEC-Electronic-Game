@@ -182,6 +182,15 @@ export interface Component {
    */
   word?: number;
   /**
+   * FIDELITY of a placed USER-IC instance (the characterization engine, §2.3): `"behavioral"` collapses
+   * the cell to its cheap characterized face (one prog-4 LUT) at netlist build instead of inlining its real
+   * discrete parts; `"full"`/undefined keeps today's behavior (flatten to the genuine FETs). Only acts when
+   * the instance's def actually carries a {@link UserIc.behavior}; otherwise it inlines regardless. Opt-in,
+   * default-off (like `tier`/`variant`/`mode`), so every existing save round-trips byte-identical and the
+   * golden — which places no user IC — is untouched.
+   */
+  fidelity?: "full" | "behavioral";
+  /**
    * Per-pin user names, by pin index — the IC-maker DIE EDITOR's "name the port pad" affordance
    * (ADR 0006 / docs/ui/ic-maker-guide.md §3). Only meaningful on a die FRAME (its pins are the
    * package leads): the player names a perimeter pin (`"VCC"`, `"OUT"`, `"A"`, …) and that name

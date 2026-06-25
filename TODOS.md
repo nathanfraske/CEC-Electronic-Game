@@ -12,10 +12,12 @@ Following docs/cell-characterization-build-plan.md (engine = P5–P9). Web/regis
 118 web tests.
 - ~~**CellBehavior data model + sig**~~ — `CellBehavior {prog,word,mode,sig}` + `UserIc.behavior?`;
   `cellBehaviorSig` (FNV-1a, canonical-ordered, frame-excluded, content-sensitive). Tested.
-- [ ] **Collapse** (testable, golden-sensitive) — flattenUserIcs emits ONE prog-4 LUT (wired by pinRole to
-  the fixed `[OUT,I0..I3,CLK,VCC,GND]` terminals) for an opted-in characterized instance instead of inlining
-  FETs; `Component.fidelity?` gate. See HANDOFFS (152) for the integration map.
-- [ ] **Sweep** (app-verified) — second web `Simulation`, drive 2^k input vectors, read OUT → word.
+- ~~**Collapse**~~ — `Component.fidelity?='behavioral'` + a def `behavior` ⇒ flattenUserIcs replaces the
+  instance with a `LUT` component (word/mode), remaps its wires BY ROLE to `[OUT,I0..I3,CLK,VCC,GND]`,
+  skips FET inlining; buildNetlist emits ONE ELEM_BEHAVIORAL. Golden-safe (gated, default-off). Tested.
+  Known limit: collapsed cell's zoom-to-open FETs go static until the P6 local solve.
+- [ ] **Sweep** (app-verified) — second web `Simulation`, drive 2^k input vectors, read OUT → word →
+  store def.behavior. Then a "characterize" button.
 - [ ] **Truth-table panel** (app-verified) — steppable, lit FET path, verify vs intended gate.
 
 ## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar

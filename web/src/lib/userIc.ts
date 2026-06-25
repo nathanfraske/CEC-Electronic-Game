@@ -789,6 +789,66 @@ export function flattenUserIcs(
       const inst2 = inst as { variant?: number };
       const def = resolveUserIc(inst.kind, inst2.variant ?? 0);
       if (!def) continue;
+
+      // COLLAPSE to the characterized LUT face (§2.3): when the cell carries a swept `behavior` AND this
+      // placed instance opted in (`fidelity === 'behavioral'`), emit ONE prog-4 LUT element instead of
+      // inlining the FETs. The cell's pins map BY ROLE onto the LUT's fixed visual pins
+      // [0 OUT, 1 I0, 2 I1, 3 I2, 4 I3, 5 CLK, 6 VCC, 7 GND] (BEH_SPEC.LUT, netlist.ts); unwired LUT inputs
+      // default to ground (node 0) in buildNetlist, so a ≤4-input gate needs no extra ties. Golden-safe:
+      // the golden places no user IC, and a combinational LUT folds an all-zero state block.
+      // (Render-side inner currents need the P6 local solve; until then a collapsed cell's zoom-to-open
+      // FETs are static — the documented trade-off for the cheap face.)
+      const instX = inst as {
+        fidelity?: string;
+        word?: number;
+        mode?: number;
+      };
+      if (def.behavior && def.pinRoles && instX.fidelity === "behavioral") {
+        const roles = def.pinRoles;
+        let inK = 0;
+        const lutPin: number[] = roles.map((r) =>
+          r === "out"
+            ? 0
+            : r === "vcc"
+              ? 6
+              : r === "gnd"
+                ? 7
+                : r === "clk"
+                  ? 5
+                  : r === "in"
+                    ? 1 + Math.min(inK++, 3)
+                    : -1,
+        );
+        // Replace the placed instance with the LUT carrier (a NEW object — never mutate the shared snap).
+        const ci = comps.findIndex((c) => c.id === inst.id);
+        if (ci >= 0)
+          comps[ci] = {
+            ...comps[ci],
+            kind: "LUT",
+            word: def.behavior.word,
+            mode: def.behavior.mode,
+          };
+        // Retarget the instance's external wire endpoints from cell-pin index to LUT pin (by role).
+        for (let wi = 0; wi < wires.length; wi++) {
+          const w = wires[wi]!;
+          let nf = w.from;
+          let nt = w.to;
+          if (isPinRef(w.from) && w.from.componentId === inst.id) {
+            const lp = lutPin[w.from.pinIndex];
+            if (lp !== undefined && lp >= 0)
+              nf = { componentId: inst.id, pinIndex: lp };
+          }
+          if (isPinRef(w.to) && w.to.componentId === inst.id) {
+            const lp = lutPin[w.to.pinIndex];
+            if (lp !== undefined && lp >= 0)
+              nt = { componentId: inst.id, pinIndex: lp };
+          }
+          if (nf !== w.from || nt !== w.to)
+            wires[wi] = { ...w, from: nf, to: nt };
+        }
+        continue; // collapsed — skip FET inlining
+      }
+
       const inner = def.graph;
       const o = off;
       off += STRIDE;
