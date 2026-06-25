@@ -100,11 +100,12 @@ describe("die editor — fresh die init", () => {
 });
 
 describe("die editor — bounds (walls)", () => {
-  it("every lead sits inside the die's wall box, which has buildable interior room", () => {
-    // The walls are the package BODY box (dieLayout's scaled w×h, anchored at the frame). The
-    // proportional die editor places every lead INSIDE that box — containment for the soft-placement
-    // check + the seal mapping — and the box is strictly larger than the lead span on both axes, so
-    // there's room to author the circuit between the leads.
+  it("walls match the sealed body box: leads inside on the array axis, crossing OUT on the stick axis", () => {
+    // The walls now equal `userIcBodyBox` (the SEALED package body) so the drill-in buildable area IS
+    // what the seal keeps — no overhang (owner: "the drill in is wider than the real thing"). The body
+    // overhangs the leads on the ARRAY axis by a small card pad; the STICK axis insets so the leads
+    // cross OUT past the wall (by the lead length, < 1 cell), like a real package.
+    const SLOP = 1; // > IC_LEAD_LEN/PITCH (~0.62): the most a stick-axis lead pokes past the wall
     for (const tag of ["SOT23_6", "DIP8", "VSSOP8"]) {
       const die = freshDieGraph(tag)!;
       const b = dieBounds(die.snapshot, die.frameId)!;
@@ -115,19 +116,25 @@ describe("die editor — bounds (walls)", () => {
       for (const p of k.pins) {
         const col = frame.cell.col + p.dx;
         const row = frame.cell.row + p.dy;
-        // Inside the body box (so containment + the seal mapping see every lead).
-        expect(col).toBeGreaterThanOrEqual(b.minCol);
-        expect(col).toBeLessThanOrEqual(b.maxCol);
-        expect(row).toBeGreaterThanOrEqual(b.minRow);
-        expect(row).toBeLessThanOrEqual(b.maxRow);
+        // No lead is more than the lead length outside the walls (stick-axis leads stick out; array-axis
+        // leads sit inside the body overhang).
+        expect(col).toBeGreaterThanOrEqual(b.minCol - SLOP);
+        expect(col).toBeLessThanOrEqual(b.maxCol + SLOP);
+        expect(row).toBeGreaterThanOrEqual(b.minRow - SLOP);
+        expect(row).toBeLessThanOrEqual(b.maxRow + SLOP);
       }
-      // The interior is at least as large as the lead span on both axes — room between the leads.
       const dxs = k.pins.map((p) => p.dx);
       const dys = k.pins.map((p) => p.dy);
       const leadW = Math.max(...dxs) - Math.min(...dxs);
       const leadH = Math.max(...dys) - Math.min(...dys);
-      expect(b.maxCol - b.minCol).toBeGreaterThanOrEqual(leadW);
-      expect(b.maxRow - b.minRow).toBeGreaterThanOrEqual(leadH);
+      // The body overhangs the leads on the ARRAY axis (room to author) — but ONLY by the small card
+      // pad now, NOT the old 4-cell DIE_END_MARGIN that made the drill-in wider than the sealed body.
+      const arrayOverhang = Math.max(
+        b.maxCol - b.minCol - leadW,
+        b.maxRow - b.minRow - leadH,
+      );
+      expect(arrayOverhang).toBeGreaterThan(0);
+      expect(arrayOverhang).toBeLessThan(1);
     }
   });
 

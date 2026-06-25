@@ -43,6 +43,10 @@ import {
 } from "./graph";
 import { dieLayout } from "./packages";
 import { buildNetlist } from "./netlist";
+import { PITCH } from "./boardRender";
+// The SEALED package body's margins (px), so the die-editor walls track the SAME body box the seal
+// fits the inner circuit into — see `userIcBodyBox` in glyphs.ts. (Keeps drill-in == sealed, no overhang.)
+import { IC_BODY_PAD, IC_LEAD_LEN } from "./glyphs";
 
 /**
  * Breathing room (in grid cells) the die-editor CAMERA leaves around the die body when it frames
@@ -102,11 +106,13 @@ export function findDieFrameId(snapshot: GraphSnapshot): number | undefined {
   return best;
 }
 
-/** Cells the die walls overhang past the END leads on the package's LONG (array) axis, so the corner
- * leads sit INSET from the wall corners — a real package's body overhangs its end pins, and the owner's
- * rule is "pins are never shoved in the corners." On the SHORT (lead-stick) axis the wall sits on the
- * lead line, so the leads cross the boundary and stick out beyond it. */
-const DIE_END_MARGIN = 4;
+/** The package-body margins the die walls use, IN CELLS — derived from the SEALED body's px margins
+ * (`userIcBodyBox`, glyphs.ts) so the drill-in buildable area IS the region the seal fits the circuit
+ * into (no authoring into margin that overhangs the real body). `DIE_BODY_PAD` overhangs the LONG
+ * (array) axis past the end leads (the card overhang); `DIE_LEAD_INSET` pulls the SHORT (lead-stick)
+ * axis IN off the lead line, so the leads stick OUT past the body like a real package. */
+const DIE_BODY_PAD = IC_BODY_PAD / PITCH; // array-axis overhang (~0.38 cell)
+const DIE_LEAD_INSET = IC_LEAD_LEN / PITCH; // stick-axis inset (~0.62 cell)
 
 /**
  * The buildable-interior box (the "walls") for a die, in grid cells: the package BODY box, anchored at
@@ -114,10 +120,11 @@ const DIE_END_MARGIN = 4;
  * inside it. Returns undefined if `frameId` isn't a frame in the snapshot (so a graph with no die has
  * no walls to draw).
  *
- * {@link dieLayout} is the production footprint scaled up PROPORTIONALLY by `DIE_SCALE`, so the leads
- * ride the same relative positions as the real package. The walls then overhang the end leads by
- * {@link DIE_END_MARGIN} on the long (array) axis — so the corner leads read INSET from the corners
- * (never jammed in) — while the short (lead-stick) axis sits on the lead line, the leads crossing it.
+ * This box matches `userIcBodyBox` (glyphs.ts) — the SAME body box the sealed IC / its zoom-to-open
+ * replica fits the inner circuit into — so what you author against the walls is exactly what the seal
+ * keeps, with no overhang (owner: "the drill in is wider than the real thing"). The long (array) axis
+ * overhangs the end leads by {@link DIE_BODY_PAD} (corner leads inset, never jammed); the short
+ * (lead-stick) axis insets by {@link DIE_LEAD_INSET} so the leads cross the wall and stick OUT.
  */
 export function dieBounds(
   snapshot: GraphSnapshot,
@@ -130,15 +137,16 @@ export function dieBounds(
   const pkg = framePackage(frame.kind);
   if (!pkg) return undefined;
   const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
-  // dieLayout pins span [0, w-1] × [0, h-1]. Overhang the long axis past the end leads by DIE_END_MARGIN
-  // on both sides; sit the short axis on the lead line (so the leads cross the wall and stick out).
+  // dieLayout pins span [0, w-1] × [0, h-1]. Overhang the array axis by DIE_BODY_PAD; INSET the stick
+  // axis by DIE_LEAD_INSET — exactly the margins userIcBodyBox applies to the sealed package body.
   const alongX = w >= h;
-  const m = DIE_END_MARGIN;
+  const pad = DIE_BODY_PAD;
+  const inset = DIE_LEAD_INSET;
   return {
-    minCol: frame.cell.col - (alongX ? m : 0),
-    minRow: frame.cell.row - (alongX ? 0 : m),
-    maxCol: frame.cell.col + (w - 1) + (alongX ? m : 0),
-    maxRow: frame.cell.row + (h - 1) + (alongX ? 0 : m),
+    minCol: frame.cell.col - (alongX ? pad : -inset),
+    minRow: frame.cell.row - (alongX ? -inset : pad),
+    maxCol: frame.cell.col + (w - 1) + (alongX ? pad : -inset),
+    maxRow: frame.cell.row + (h - 1) + (alongX ? -inset : pad),
   };
 }
 

@@ -57,16 +57,18 @@ export interface TierOpts {
 
 /**
  * On-screen magnification (px-per-world-px) at which a device-detail drawer hands off
- * to its **silicon cross-section** leaf (Phase 3, the five-tier glyph's tier 5). Chosen
- * well DEEPER than {@link TierOpts.absScale}'s device-tier entry bar (the board's
- * `TIER_ZOOM = 2.2`), so the device illustration is already read clearly before the
- * silicon takes over; the recursive dive's `MAX_SCALE = 1000` leaves ample headroom
- * above it. The handoff cross-fades over {@link SILICON_ZOOM}..{@link SILICON_ZOOM_FULL}.
+ * to its **silicon cross-section** leaf (Phase 3, the five-tier glyph's tier 5). Set
+ * DEEPER than {@link TierOpts.absScale}'s device-tier entry bar (the board's
+ * `TIER_ZOOM = 2.2`) so the device illustration reads first, but low enough that a normal
+ * "zoom into the transistor" reveals it: at `absScale = 5` a ~3-cell part spans ~a quarter
+ * of the screen, full silicon by `8` (~a third) — well within the recursive dive's
+ * `MAX_SCALE = 1000`. (Silicon is a REALITY-lens tier; schematic/analogy never show it.)
+ * The handoff cross-fades over {@link SILICON_ZOOM}..{@link SILICON_ZOOM_FULL}.
  */
-export const SILICON_ZOOM = 9;
+export const SILICON_ZOOM = 5;
 /** Upper end of the device→silicon cross-fade: at/above this the silicon is fully opaque
  * and the device illustration has faded out (a smooth swap, not a hard cut). */
-export const SILICON_ZOOM_FULL = 15;
+export const SILICON_ZOOM_FULL = 8;
 
 /**
  * The device→silicon cross-fade weight in [0,1] for an on-screen magnification `absScale`

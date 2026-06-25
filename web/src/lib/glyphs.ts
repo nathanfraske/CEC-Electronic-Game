@@ -1962,8 +1962,8 @@ function drawCard(g: Graphics, o: GlyphOpts): void {
   g.stroke({ width: 2, color: o.color, alpha: 0.95 });
 }
 
-const IC_BODY_PAD = 10; // px the body overhangs the end pins on the ARRAY axis (the card overhang)
-const IC_LEAD_LEN = 16; // px each lead spans from the body edge OUT to its pin (the solder lead tip)
+export const IC_BODY_PAD = 10; // px the body overhangs the end pins on the ARRAY axis (the card overhang)
+export const IC_LEAD_LEN = 16; // px each lead spans from the body edge OUT to its pin (the solder lead tip)
 
 /**
  * The package BODY box (glyph-local px) for a user IC. The pins ARE the outer LEAD TIPS (the perimeter
