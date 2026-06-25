@@ -5,6 +5,51 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (152) — START: characterization engine ("1") — data-model foundation landed
+
+**State:** 🟢 foundation **about to PR**. Web/registry only, golden untouched, **118 web tests**, full gate
+green. Owner picked the **characterization engine** as next (the "1" in "2 then 1"; free-form "2" is fully
+polished + on main). Following `docs/cell-characterization-build-plan.md` (P0a–P4 DONE; engine = P5–P9).
+
+**The engine (build-plan P7 flagship):** sweep a player's FET gate → a 16-bit truth-table word → COLLAPSE it
+so it simulates as ONE prog-4 behavioral LUT instead of its transistors → a watch-it-compute truth-table
+panel (step each input combo, light the conducting FET path). **Constraint:** the SWEEP runs a scratch wasm
+`Simulation` → **app-verified only** (can't run in headless vitest); the COLLAPSE (data model + netlist LUT
+emission) + the `sig` ARE testable here and are the golden-sensitive parts.
+
+**Landed this PR (testable + golden-safe foundation, userIc.ts):**
+- `interface CellBehavior { prog; word; mode; sig }` + `UserIc.behavior?`. prog 4 = LUT; word = ≤4-in truth
+  table (`out = (word >> (i0|i1<<1|i2<<2|i3<<3)) & 1`); mode 0 = comb / ≥1 = registered.
+- `cellBehaviorSig(graph)` — FNV-1a over a CANONICAL-ORDERED inner-graph serialization (sorted by id, fixed
+  field order; CLAUDE.md rule #1). Excludes the die FRAME (box-resize must not invalidate a sweep) but keeps
+  wires to frame pins. Test: deterministic + content-sensitive.
+
+**NEXT — the COLLAPSE (testable, golden-sensitive; do carefully). Integration map (Explore agent + verified):**
+- **flattenUserIcs (userIc.ts ~723-778):** the per-instance inline loop. For a collapsed instance (def has
+  `behavior` AND the placed instance opted into behavioral fidelity), DON'T inline the FETs — instead emit
+  ONE behavioral `LUT` element wired BY ROLE. **Subtlety the agent understated:** the LUT element has a
+  FIXED 8-terminal layout (`BEH_SPEC.LUT.term = [0,5,4,6,7,1,2,3]`, pins `[OUT,I0,I1,I2,I3,CLK,VCC,GND]`,
+  netlist.ts:509-513) — so a collapsed cell's wires must be remapped by `def.pinRoles` (out→OUT, in→I0..I3,
+  vcc→VCC, gnd→GND, clk→CLK), NOT by index, and unused LUT inputs tied to the GND net. VERIFY the LUT part
+  kind's pin order before wiring.
+- **buildNetlist (netlist.ts:1313-1336):** the `BEH_SPEC[c.kind]` path emits `ELEM_BEHAVIORAL` (type 25),
+  `value=prog(4)`, `aux=c.word ?? defWord`, `params[ei*8+BEH_LUT_MODE_SLOT(4)] = mode`. Cleanest: have
+  flattenUserIcs produce a `LUT` component (kind "LUT") wired by role so buildNetlist's existing path emits
+  it unchanged. Add `Component.fidelity?` (graph.ts, default-off like tier/mode) so only opted-in instances
+  collapse. Test: a placed collapsed cell → netlist has ONE ELEM_BEHAVIORAL LUT (not inlined FETs); golden
+  no-op unchanged. Golden-safe: golden places no user IC; a combinational LUT folds all-zero beh_state.
+- **THE SWEEP (app-verified, follow-up):** build the gate die netlist, for each of 2^k input vectors inject
+  input levels (like dieTestGraph) + VCC/GND, `new Simulation(seed)` (a second web Sim — golden-safe per the
+  summary finding; no sim-core ScratchSim needed for v1), step to settle, read the OUT level → assemble the
+  word. Then store `def.behavior = {prog:4, word, mode, sig:cellBehaviorSig(graph)}`.
+- **THE PANEL (app-verified, follow-up):** step the sweep live, light the PUN/PDN path via
+  `logicInternal.drawGateInternal`, fill the truth table; verify vs the intended gate (gate_logic_level).
+
+**Remaining backlog:** pin-DRAG (Alt-drag); in-die Ctrl+Z of box-resize; device-aware characterization
+(offered, owner deferred).
+
+---
+
 ## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar (toolbar no longer overlaps)
 
 **State:** 🟢 on branch, **about to PR**. Web/UI only, golden untouched, 117 web tests, full gate green.

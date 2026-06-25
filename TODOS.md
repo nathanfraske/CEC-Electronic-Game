@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (152) — START: characterization engine ("1") — foundation
+
+Following docs/cell-characterization-build-plan.md (engine = P5–P9). Web/registry only, golden untouched,
+118 web tests.
+- ~~**CellBehavior data model + sig**~~ — `CellBehavior {prog,word,mode,sig}` + `UserIc.behavior?`;
+  `cellBehaviorSig` (FNV-1a, canonical-ordered, frame-excluded, content-sensitive). Tested.
+- [ ] **Collapse** (testable, golden-sensitive) — flattenUserIcs emits ONE prog-4 LUT (wired by pinRole to
+  the fixed `[OUT,I0..I3,CLK,VCC,GND]` terminals) for an opted-in characterized instance instead of inlining
+  FETs; `Component.fidelity?` gate. See HANDOFFS (152) for the integration map.
+- [ ] **Sweep** (app-verified) — second web `Simulation`, drive 2^k input vectors, read OUT → word.
+- [ ] **Truth-table panel** (app-verified) — steppable, lit FET path, verify vs intended gate.
+
 ## 2026-06-25 (151) — FIX (owner): region seal controls → floating bar
 
 Web/UI only, golden untouched, 117 web tests.
