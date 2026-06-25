@@ -5,17 +5,13 @@
 // SECOND, throwaway Simulation — it never touches the global hashed instance, so the golden is untouched.
 //
 // APP-ONLY: this uses the wasm `Simulation`, which is initialised only in the running app — it can't run in
-// the headless test suite. So the sweep itself is verified in-app; the surrounding logic (pin-role parsing,
-// guards, the LUT-word indexing) is plain TS.
+// the headless test suite. The determinism-critical wiring (the per-vector netlist build + the OUT-node
+// pick) lives in `sweepNetlist.ts`, which is wasm-free and headless-tested; here we only drive the sim.
 import { Simulation } from "../wasm/sim_wasm.js";
-import { BoardGraph } from "./graph";
-import type { GraphSnapshot, PinRole, PinTest } from "./graph";
-import { buildNetlist } from "./netlist";
-import { dieTestGraph } from "./dieEditor";
+import type { GraphSnapshot, PinRole } from "./graph";
+import { sweepNetlist, SWEEP_VCC, type SweepPins } from "./sweepNetlist";
 import { cellBehaviorSig, type CellBehavior } from "./userIc";
 
-/** Sweep supply / input-HIGH level (volts) and the half-rail digital threshold. */
-const SWEEP_VCC = 5;
 /** Ticks (DT = 2µs each) run per input vector to settle a combinational gate before reading the output. */
 const SETTLE_STEPS = 64;
 
@@ -38,6 +34,22 @@ export type CharacterizeResult =
     }
   | { ok: false; reason: string };
 
+/** Parse the per-frame-pin semantic roles into the pins a sweep drives/observes. */
+function parsePins(pinRoles: (PinRole | undefined)[]): SweepPins {
+  const inPins: number[] = [];
+  let outPin = -1;
+  let gndPin = -1;
+  let vccPin = -1;
+  for (let i = 0; i < pinRoles.length; i++) {
+    const r = pinRoles[i];
+    if (r === "in") inPins.push(i);
+    else if (r === "out" && outPin < 0) outPin = i;
+    else if (r === "gnd" && gndPin < 0) gndPin = i;
+    else if (r === "vcc" && vccPin < 0) vccPin = i;
+  }
+  return { inPins, outPin, gndPin, vccPin };
+}
+
 /**
  * Sweep a small COMBINATIONAL gate cell into a prog-4 LUT word. `graph` is the cell's inner die graph,
  * `frameId` its die frame, `pinRoles` the per-frame-pin semantic roles. Returns the {@link CellBehavior} to
@@ -50,78 +62,31 @@ export function characterizeCell(
   frameId: number,
   pinRoles: (PinRole | undefined)[],
 ): CharacterizeResult {
-  const inPins: number[] = [];
-  let outPin = -1;
-  let gndPin = -1;
-  let vccPin = -1;
-  for (let i = 0; i < pinRoles.length; i++) {
-    const r = pinRoles[i];
-    if (r === "in") inPins.push(i);
-    else if (r === "out" && outPin < 0) outPin = i;
-    else if (r === "gnd" && gndPin < 0) gndPin = i;
-    else if (r === "vcc" && vccPin < 0) vccPin = i;
-  }
-  if (outPin < 0)
+  const pins = parsePins(pinRoles);
+  if (pins.outPin < 0)
     return { ok: false, reason: "tag one pin OUT (no output to read)" };
-  if (gndPin < 0)
+  if (pins.gndPin < 0)
     return { ok: false, reason: "tag one pin GND (no reference)" };
-  if (inPins.length === 0)
+  if (pins.inPins.length === 0)
     return { ok: false, reason: "no input pins to sweep" };
-  if (inPins.length > 4)
+  if (pins.inPins.length > 4)
     return {
       ok: false,
-      reason: `${inPins.length} inputs — only ≤4-input gates collapse to one LUT`,
+      reason: `${pins.inPins.length} inputs — only ≤4-input gates collapse to one LUT`,
     };
 
-  const k = inPins.length;
+  const k = pins.inPins.length;
   let word = 0;
   const vectors: SweepVector[] = [];
 
   for (let combo = 0; combo < 1 << k; combo++) {
-    // A throwaway copy of the die graph per vector (≤16 cheap builds for a ≤4-in gate).
-    const snap = structuredClone(graph);
-    const frame = snap.components.find((c) => c.id === frameId);
-    if (!frame) return { ok: false, reason: "die frame missing" };
-    // Drive the rails + this combination's inputs as virtual sources (dieTestGraph reads pinTests). The
-    // OUTPUT pin is left un-driven so it's free to settle to whatever the gate computes.
-    const tests: (PinTest | null)[] = (frame.pinTests ?? []).slice();
-    tests[gndPin] = { role: "gnd", value: 0 };
-    if (vccPin >= 0) tests[vccPin] = { role: "vcc", value: SWEEP_VCC };
-    inPins.forEach((p, idx) => {
-      tests[p] = { role: "in", value: (combo >> idx) & 1 ? SWEEP_VCC : 0 };
-    });
-    frame.pinTests = tests;
-    // A 1 GΩ SENSE resistor OUT→GND: high-Z (it can't disturb the gate's drive), and its node[0] in the
-    // built netlist IS the OUT net — the clean way to find the output node without a sim-core change.
-    const senseId = (snap.nextComponentId ?? 1_000_000) + 1;
-    snap.components.push({
-      id: senseId,
-      kind: "R",
-      cell: { col: -16, row: -16 },
-      value: 1e9,
-      rot: 0,
-    } as (typeof snap.components)[number]);
-    const wId = (snap.nextWireId ?? 1_000_000) + 1;
-    snap.wires.push({
-      id: wId,
-      from: { componentId: senseId, pinIndex: 0 },
-      to: { componentId: frameId, pinIndex: outPin },
-    });
-    snap.wires.push({
-      id: wId + 1,
-      from: { componentId: senseId, pinIndex: 1 },
-      to: { componentId: frameId, pinIndex: gndPin },
-    });
-
-    const bg = new BoardGraph();
-    bg.restore(dieTestGraph(snap, frameId));
-    const nl = buildNetlist(bg, false);
-    if (!nl)
+    const built = sweepNetlist(graph, frameId, pins, combo);
+    if (!built)
       return {
         ok: false,
         reason: `the gate doesn't solve at input ${combo} — wire it up so it has a complete path`,
       };
-    const outNode = nl.nodesOfComponent.get(senseId)?.[0] ?? 0;
+    const { nl, outNode } = built;
 
     const sim = new Simulation(0);
     try {
@@ -147,7 +112,7 @@ export function characterizeCell(
       const bit = v >= SWEEP_VCC / 2 ? 1 : 0;
       if (bit) word |= 1 << combo;
       vectors.push({
-        in: inPins.map((_, idx) => (combo >> idx) & 1),
+        in: pins.inPins.map((_, idx) => (combo >> idx) & 1),
         out: bit,
       });
     } finally {
