@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels (bench-realism+EMI · accessibility · mid-game/classroom/sharing · component-reality curriculum)
+
+**State:** 🟢 docs-only, golden-safe; branch `claude/kind-turing-hdelb3`. Owner asked for design docs covering BOTH
+how-to-build AND how-to-ease-the-player-in for the panels picked last round (IC-maker teaching **deferred** until
+the mechanic lands — Task #16). Plus a standalone panel on pacing each component's reality aspect over time. **All
+four landed** (each via a multi-lens workflow + 2 adversarial critics, SHIP-WITH-FIXES; every BLOCKER/MAJOR applied
+vs live code, then a second code-fact audit per doc before commit):
+
+- **`docs/bench-realism-and-emi-kernel.md`** — the heat/reality/EMI bench instruments + the invisible-electronics
+  EMI estimator kernel (small-loop-antenna model on the analytic AC path, off the hashed time-domain solve).
+  Fixed: `drawJunctionConduit` already takes a `lens` (the "one real gap" was false — removed); the
+  thermal/emi/return/rf **overlay lenses are NEW** (a `BoardLens` union extension), not existing REUSE; `acSweep`
+  yields node voltages not currents (harmonic I = Y·ΔV); named the **thermistor** as the one kind where
+  `Component.temp` enters the hashed netlist (Tj writes a separate display field); `failed_elements`-unhashed
+  anchor → `lib.rs:2481`.
+- **`docs/ui/accessibility-and-reach.md`** — the 8 a11y axes + the **board→prose** narration engine. Fixed (vs the
+  critics): a player-BUILT-board worked example (graceful degrade with no authored net names), and `ConceptCard.short`
+  flagged as **NEW authoring** (the 4 existing cards each need a short written — owner/content hand-off).
+- **`docs/game-midgame-classroom-sharing.md`** — campaign pacing (the 5-beat repeating measure + per-era escalation),
+  the seed-is-the-mechanism classroom mode (zero-backend T1), and the `ShareEnvelope`-over-`BoardBlob` sharing loop.
+  Fixed (cross-doc): `replayDigest`+`ShareEnvelope` are the web surface of roadmap #1 **the Codec** (one codec, not
+  two); `customers.ts` is the named registry backing the economy's **existing** `standing: Record<CustomerId,number>`
+  axis, not net-new; softened "only hard gate"; the 30-day-gap test marked NEW (not inherited); difficulty maps to
+  the per-era `band`; M0 daily ships local/unverified (verified leaderboard waits on the digest at M1).
+- **`docs/game-component-reality-curriculum.md`** — the paced per-component non-ideality curriculum (which reality,
+  in what order, how the player is eased into designing around each). **BLOCKER fixed:** op-amp **slew is NOT
+  modeled** (the transient op-amp is algebraic `Vsat·tanh`, no dV/dt state) — re-tagged `gap:physics`/CLASS B, and the
+  op-amp's real time-domain first bite is the **rail CLIP** (already modeled); **GBW is AC-only** (Bode/phase scope,
+  not a time-scope edge). Also: voltage/energy rating = a NEW web-side detector (not a free slot-2 mirror); ZD/MOV/
+  compliance down-ranked to roadmap-unverified; Step-1 LED reconciled as the pre-era cold-open; `Vsat·tanh` cite →
+  `lib.rs:3093`.
+
+**Through-line held:** every mechanic is web-side over the unhashed snapshot / analytic AC path → the Rust gates stay
+green-unchanged (golden `0xeaac…fa24`); `failed_elements` and `ac_measurements` are excluded from `snapshot_hash`, so
+heat/EMI/reality overlays only **flag**, never alter the solve.
+
+**Follow-up (deferred):** Task #16 — once the IC-maker/seal mechanic is built, plan how to teach it; then fold all the
+panels' §Open-questions into `implementation-plan.md` as the single decision ledger.
+
+---
+
 ## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + portrayal/characterization/density/overworld
 
 **State:** 🟢 docs-only, golden `0xeaac…fa24` untouched; branch `claude/kind-turing-hdelb3` (0/0 with origin).

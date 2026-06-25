@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (140) — DESIGN: 4 player-facing/build panels
+
+- ~~**Bench-realism + EMI kernel panel**~~ — DONE (`docs/bench-realism-and-emi-kernel.md`). Heat/reality/EMI
+  instruments + the small-loop EMI estimator on the analytic AC path. Fixed: `drawJunctionConduit` lens already
+  threaded; overlay lenses are NEW not REUSE; `acSweep` returns node voltages; thermistor `temp` hazard named.
+- ~~**Accessibility & reach panel**~~ — DONE (`docs/ui/accessibility-and-reach.md`). 8 a11y axes + the board→prose
+  engine. Fixed: player-built-board degrade example; `ConceptCard.short` is NEW authoring (4 cards need shorts).
+- ~~**Mid-game + classroom + sharing panel**~~ — DONE (`docs/game-midgame-classroom-sharing.md`). Campaign pacing,
+  seed-is-the-mechanism classroom, `ShareEnvelope` sharing. Fixed: digest ↔ Codec (roadmap #1); `customers.ts`
+  backs the existing `standing[CustomerId]`; M0 daily local-only until the digest lands.
+- ~~**Per-component reality curriculum panel**~~ — DONE (`docs/game-component-reality-curriculum.md`). Paced
+  non-idealities, the order, the ease-in. BLOCKER fixed: op-amp slew NOT modeled → CLASS B; rail CLIP is the real
+  time-domain bite; GBW is AC-only (Bode). Down-ranked unverified ZD/MOV/compliance.
+- [ ] **Task #16 (deferred):** once the IC-maker/seal mechanic is built, design how to teach it; then fold all four
+  panels' §Open-questions into `implementation-plan.md` (the single decision ledger).
+
+---
+
 ## 2026-06-25 (139) — DESIGN: cell-char doc — §8 resolved + 3 new sections
 
 - ~~**Resolve all §8 open questions**~~ — DONE. 14 owner decisions logged in a table at the top of §8
