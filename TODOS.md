@@ -52,7 +52,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   the `UserIcInternals` struct doesn't carry yet.
 - [ ] **Phase 1** — recursive `flattenUserIcs` (fixed-point, depth-guarded); golden-safe no-op when no sealed
   IC placed. (Unblocks nested cell libraries — the LUT-explosion fix.)
-- [ ] **Phase 5** (owner request 2026-06-24) — zoom meter (magnification readout) + scale-reference bar HUD.
+- ~~**Phase 5** (owner request 2026-06-24) — zoom meter (magnification readout) + scale-reference bar HUD.~~
+  DONE. `web/src/lib/zoomMeter.ts` (pure, unit-tested) turns camera `zoom` + the nesting-level `viewScale`
+  (recorded by a per-frame renderer probe at the view centre — deepest opened IC body under the centre) into
+  `×M` + a snapped scale rule that ramps board-cells → mm → µm → nm. HUD pinned bottom-left (`App.svelte` +
+  `.zoom-meter` in `app.css`). Render-only; golden untouched. Anchor `MM_PER_TOP_CELL = 2.54` is tunable.
 
 ## 2026-06-24 (118) — User IC: connection at the leads, pads removed, freed interior + conduit traces + lens
 

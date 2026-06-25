@@ -105,6 +105,12 @@ export interface UserIcInternalsOpts {
    * cell doesn't redraw every off-screen sibling's whole subtree each frame (the size-cull bounds depth,
    * this bounds breadth). Absent ⇒ no view cull (the static fallback / headless tests draw everything). */
   viewport?: { w: number; h: number };
+  /** A per-frame probe the HUD zoom meter reads (Phase 5): the renderer records, at the DEEPEST opened
+   * level whose package body (in screen space) contains the view-centre point `(cx, cy)`, that level's
+   * cumulative fit-scale — so the meter knows "how deep am I" honestly, from the same transforms that
+   * drew the view. Mutated in place (the board passes ONE object, threaded down every recursion level,
+   * and reads `scale` after the frame). Absent ⇒ not metered (static fallback / headless tests). */
+  viewProbe?: { cx: number; cy: number; depth: number; scale: number };
   /**
    * A persistent container (added under the instance's rotated glyph holder) that becomes the SCALED
    * inner-view: child[0] is a pooled {@link Graphics} for the wires + junctions (cleared every frame),
@@ -199,6 +205,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     depth = 0,
     cumulativeScale = 1,
     viewport,
+    viewProbe,
   } = o;
   const { parts, wires, innerGraph, nodeOfInner, frameId } = internals;
   // The schematic lens (C-2) draws plain orthogonal polyline traces + plain junction dots instead of
@@ -281,6 +288,42 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const py = degenerate ? centreY : centreY - ((domMinY + domMaxY) / 2) * s;
   partLayer.scale.set(s);
   partLayer.position.set(px, py);
+
+  // --- ZOOM-METER probe (Phase 5): this level IS being drawn opened, so if its package body contains
+  // the view centre and we're deeper than any level recorded so far, record THIS level's cumulative
+  // fit-scale (`cumulativeScale · s`) — the meter reads it as "how deep am I." The body is glyph-local
+  // (`bodyB`); `g`'s world transform maps it to screen, so we test the centre against the body's
+  // screen-space AABB (one-frame-stale transform is fine for a readout). ---
+  if (viewProbe && depth > viewProbe.depth) {
+    const wt = g.worldTransform;
+    const corners: [number, number][] = [
+      [bodyB.x, bodyB.y],
+      [bodyB.x + bodyB.w, bodyB.y],
+      [bodyB.x + bodyB.w, bodyB.y + bodyB.h],
+      [bodyB.x, bodyB.y + bodyB.h],
+    ];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const [lx, ly] of corners) {
+      const sxp = wt.a * lx + wt.c * ly + wt.tx;
+      const syp = wt.b * lx + wt.d * ly + wt.ty;
+      if (sxp < minX) minX = sxp;
+      if (sxp > maxX) maxX = sxp;
+      if (syp < minY) minY = syp;
+      if (syp > maxY) maxY = syp;
+    }
+    if (
+      viewProbe.cx >= minX &&
+      viewProbe.cx <= maxX &&
+      viewProbe.cy >= minY &&
+      viewProbe.cy <= maxY
+    ) {
+      viewProbe.depth = depth;
+      viewProbe.scale = cumulativeScale * s;
+    }
+  }
 
   // Net colour = the die editor's RAIL-IDENTITY code (`voltageColor`), so the opened IC reads with the
   // EXACT same hues the die-editor build does (GND dark, +5 red, +3.3 orange, −5 cyan, …) rather than a
@@ -609,6 +652,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
         depth: depth + 1,
         cumulativeScale: s * cumulativeScale, // accumulate THIS level's fit-scale for the child
         viewport, // nested levels cull off-screen sub-cells against the same screen rect
+        viewProbe, // SAME probe object — a deeper level under the view centre wins the meter
       });
       continue;
     }

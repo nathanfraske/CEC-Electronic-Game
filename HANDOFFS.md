@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (127) — Phase 5 zoom meter + scale reference HUD (owner-picked next build)
+
+**State:** 🟢 on branch `claude/kind-turing-hdelb3` (Phase 2 Part A already merged to main at `27182cd`). New work:
+the zoom meter. Render-only; golden `0xeaac…fa24` untouched. Full gate green (check 0-err, lint, build, test 85
+— +8 new `zoomMeter.test.ts`).
+
+**What:** as you dive the recursive IC zoom you lose your sense of depth — so a bottom-left HUD now shows the
+**magnification ×M** over a **snapped scale rule** that ramps board-cells → mm → µm → nm.
+- **`web/src/lib/zoomMeter.ts`** (pure, unit-tested): `mmPerScreenPx`, `magnification` (= `zoom/viewScale`),
+  `niceLength` (1/2/5×10^k snap), `formatMm`/`formatMag`, `scaleBar`. Anchor `MM_PER_TOP_CELL = 2.54` mm/top-cell
+  (one 0.1" pitch) sets only where the unit boundaries fall — TUNABLE.
+- **Renderer probe:** `drawUserIcInternals` writes a per-frame `viewProbe` (the deepest OPENED level whose
+  package body, in screen space via `g.worldTransform`, contains the view-centre) → its cumulative fit-scale.
+  Threaded board → `ComponentNode.update` → opts, and down each recursion level (same object). One-frame-stale
+  transform is fine for a readout.
+- **Board:** `viewScale` latched each frame after the node loop; `getViewMetrics()` → `{zoom, viewScale}`.
+- **App.svelte:** per-frame `getViewMetrics()` → `$state` → `$derived` `magLabel`/`scaleRule`; `.zoom-meter`
+  element (mono/tracked bench-instrument style, `.zoom-rule` is a ⊔ bracket whose width is the snapped length).
+
+**Behaviour:** open board reads `×{zoom}` + "N cells"; inside an IC it switches to physical units and ×M grows
+into the thousands as you nest (a deliberate regime jump when the view centre crosses into an opened IC body).
+
+**Owner eye (tunables, judgement calls):** the `MM_PER_TOP_CELL` calibration (where mm/µm/nm boundaries land),
+the bottom-left placement (sits over the corner registration tick), and whether the cells↔physical jump should
+ease rather than snap. All easy tweaks.
+
+**Next:** Phase 3 (transistor silicon leaf), Phase 4 (Inverter element + 4-LUT), or implement the now-designed
+IC library + variants (`docs/ic-library-and-variants.md`).
+
+---
+
 ## 2026-06-25 (126) — Phase 2 Part A cross-checked + landed; A.4 VIEW cull added
 
 **State:** 🟢 PR #197 (`claude/kind-turing-hdelb3` → main) — Phase 2 Part A (cherry-picked from
