@@ -1171,6 +1171,7 @@ type RegionAnalysis =
       full: GraphSnapshot;
       find: (k: string) => string;
       capturedEndpoint: (e: Endpoint) => boolean;
+      inBox: (c: Cell) => boolean;
       pinIndexOf: Map<string, number>;
       boundaryRoots: string[];
       capCompsRaw: GraphSnapshot["components"];
@@ -1453,6 +1454,7 @@ function analyzeRegion(
     full,
     find,
     capturedEndpoint,
+    inBox,
     pinIndexOf,
     boundaryRoots,
     capCompsRaw,
@@ -1544,6 +1546,7 @@ export function captureRegion(
     full,
     find,
     capturedEndpoint,
+    inBox,
     pinIndexOf,
     boundaryRoots,
     capCompsRaw,
@@ -1603,11 +1606,20 @@ export function captureRegion(
       const pi = pinIndexOf.get(find(endpointKey(insideE)));
       if (pi === undefined) continue; // inside end isn't on a boundary net (no frame pin) — skip
       const frameEnd = { componentId: frameId, pinIndex: pi };
+      // Keep only the INSIDE part of the routing. A crossing wire's OUTSIDE waypoints (between the box
+      // edge and the original outside endpoint) would make the retargeted lead OVERSHOOT past the frame
+      // pin — the stray stub the owner saw. The frame pin sits at the crossing cell, so the inside
+      // waypoints continue cleanly from it; if none survive, the lead routes straight to the inside end.
+      const insideWaypts = (w.waypoints ?? []).filter(inBox);
+      const cwp =
+        insideWaypts.length > 0
+          ? { waypoints: insideWaypts.map(shiftCell) }
+          : {};
       capWires.push({
         id: w.id,
         from: fromIn ? { ...w.from } : frameEnd,
         to: fromIn ? frameEnd : { ...w.to },
-        ...wp,
+        ...cwp,
       });
     }
   }

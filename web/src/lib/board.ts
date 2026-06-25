@@ -5267,6 +5267,10 @@ export class Board {
         g.stroke({ width: width + 4, color, alpha: 0.16 });
         polyline(g, route);
         g.stroke({ width, color, alpha: 0.95 });
+        // A frame-pin lead drawn schematic WHILE the lens is in conduit mode: register its drawn route in
+        // conduitDrawRoutes so the conduit-mode hit-test (which only knows that map) can still select it —
+        // otherwise these pinout leads become un-clickable in the die editor (owner round 3).
+        if (conduit) this.conduitDrawRoutes.set(w.id, route);
       }
 
       const len = routeLength(sampleRoute);

@@ -5,6 +5,29 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (150) — FIX (owner round 3): captured-lead overshoot + non-interactable frame-pin wires
+
+**State:** 🟢 on branch, **about to PR**. Web only, golden untouched, **117 web tests**, full gate green.
+Owner confirmed junctions are now correct; two NEW issues from the captured inverter's die editor — both
+fixed.
+
+**1. Overshoot (capture, userIc.ts).** A retargeted CROSSING wire kept the ORIGINAL wire's OUTSIDE
+waypoints — so the lead overshot past the frame pin (the stray VCC stub left of the pin). Fix: filter a
+crossing wire's waypoints to `inBox` (drop the outside routing; keep the inside). `analyzeRegion` now
+returns `inBox`; the internal wires still keep all waypoints 1:1. Test: `capture drops a crossing wire's
+OUTSIDE waypoints`.
+
+**2. Frame-pin wires not interactable (rendering regression I introduced in PR #218).** `wireHitTest` in
+conduit mode tests ONLY `conduitDrawRoutes` and returns null otherwise. My `frameLead` change drew those
+wires schematic and SKIPPED `conduitDrawRoutes.set`, so they fell out of the hit-test → un-clickable. Fix:
+the schematic branch now `conduitDrawRoutes.set(w.id, route)` when `conduit` is active, so the pinout leads
+are hit-testable again (drawn schematic, still selectable).
+
+**Remaining backlog:** pin-DRAG (Alt-drag); in-die Ctrl+Z of box-resize; device-aware characterization
+(OFFERED to owner, await); then the engine ("1").
+
+---
+
 ## 2026-06-25 (149) — FIX (owner round 2, cont.): free-form die renders as pinouts, not solder
 
 **State:** 🟢 on branch, **about to PR**. Web/render only, golden untouched, 116 web tests, full gate
