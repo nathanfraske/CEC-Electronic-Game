@@ -26,10 +26,13 @@ it and `setDieFramePins` would re-kind it to a stock `__DIE_BLOCK_N` — **destr
 placements**. `setDieFramePins` now refuses a free-form frame (`isFreeFormFrame`), and the UI shows the Box
 stepper for free-form dies instead.
 
-**Remaining (push tail):** **pin-DRAG** — move a pin along the box wall by dragging it in the die editor
-(`registerFreeFormFrame` with the moved pin; mirror the box-resize path; needs a die-frame-pin hit-test +
-perimeter snap). The auto-placed pins are already correct (1:1 at the crossings), so this is refinement.
-Then the engine ("1"). Owner: **audit after the push**.
+**Remaining (push tail):** **pin-DRAG** — move a pin along the box wall in the die editor. **Design note
+(scouted):** a press on a die-frame pin currently calls `startWiring` (you wire internal parts to the frame
+pins) — so a plain pin-drag CONFLICTS with wire-from-pin. It needs a disambiguator: **Alt/Option-drag a
+frame pin = move it** (snap to the nearest free perimeter cell → `registerFreeFormFrame` with the moved pin,
+mirroring `resizeFreeFormBox`), plain drag still wires. Not a quick add (don't break die wiring). The
+auto-placed pins are already correct (1:1 at the crossings), so this is pure refinement. Then the engine
+("1"). Owner: **audit after the push** — doing a focused self-audit of the free-form feature next.
 
 ---
 
