@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (129) — IC library + user-selected variants (v1) IMPLEMENTED
+
+- ~~**IC library + variants v1**~~ — DONE (branch `claude/ic-library-variants`). The LUT-enabler: persistent
+  `localStorage` library (`userLibrary.ts`, key `cec.library.v1`) + "My ICs" bin category (places via the
+  existing arm/drag path, package pin-ring glyph), auto-add on seal/reseal, `FAMILIES` registry in `userIc.ts`
+  (`resolveUserIc`/`userIcVariants`/`hasUserIcVariants`/`appendUserIcVariant`/`registerUserIcFamilies`/
+  `registerUserIcFamily`), flatten membership widened to `REGISTRY.has || FAMILIES.has` (golden-safe no-op
+  intact), variant selection a pure graph→graph choice before `buildNetlist`, inspector + arm-time variant
+  picker (reuses `selVariant`/`setVariant`), seal-panel "Variant of …" dropdown, `userIcFamilies` save sidecar
+  (board blob + download envelope + load registration). Golden `0xeaac…fa24` unmoved. Gate green (web check 0,
+  lint, build, test 94 — +9 `userIc.variants.test.ts`).
+- All 8 cross-check gaps handled (see HANDOFFS 129). **Deferred:** `cec-iclib` export/import envelope,
+  board-load "add to library" banner, per-row rename/delete chrome, cross-package variants (CRUD primitives
+  kept exported + callable).
+
 ## 2026-06-24 (123) — Owner queue: opened-IC polish, bridges-over, mesh; reality-lens panel
 
 - ~~**Opened-IC fit + part orientation**~~ — DONE (PR #189). Fit to the body rectangle; orient parts like the

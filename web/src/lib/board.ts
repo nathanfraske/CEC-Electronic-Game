@@ -2867,15 +2867,21 @@ export class Board {
    * it. No-op (returns null) on any id that isn't a live frame. `name` is the free-form part name;
    * omit it for the next auto `CEC9xxx`. Returns the registered tag.
    */
-  sealFrame(frameId: number, name?: string): string | null {
+  sealFrame(
+    frameId: number,
+    name?: string,
+    intoFamily?: string,
+  ): string | null {
     const frame = this.graph.components.get(frameId);
     if (!frame || !isFrame(frame.kind)) return null;
 
     const before = this.graph.serialize();
 
     // Capture the connected sub-graph + register the kind FIRST (read-only; the graph is untouched
-    // so the external-wire scan below still sees the original wiring).
-    const cap = captureSeal(this.graph, frameId, name);
+    // so the external-wire scan below still sees the original wiring). `intoFamily` (when set) appends
+    // the captured die as a new VARIANT of an existing family instead of a fresh tag (cap.tag is then
+    // the family tag); a package mismatch / unknown family makes captureSeal refuse (null).
+    const cap = captureSeal(this.graph, frameId, name, intoFamily);
     if (!cap) return null;
     const captured = new Set(cap.capturedComponentIds);
     const capturedJ = new Set(cap.capturedJunctionIds);
