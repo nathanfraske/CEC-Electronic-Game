@@ -130,3 +130,16 @@ dozen disconnected bench glitches.
 
 One-liner for the owner: **"You don't simulate a bad solder joint — you ship a product run, and it tells you
 how many came back. Derate, protect, certify, and fund quality, or eat the RMAs and the recall."**
+
+---
+
+## 8. Buildable expansion (2026-06-25)
+
+This ideation is operationalized into a buildable design in **`docs/game-product-simulation.md`** — concrete
+formulas (the stress-ratio → derating → Arrhenius → fleet-FIT → RMA → recall chain), the two cert labs (FCC/CISPR
+EMI + UL safety as a `margin = limit − measured` service with a ranked fix-it report), the RMA/recall/reputation
+economy (reputation is a *stake*, not a third currency), the **all-ages teaching bridge** (the fidelity ladder
+"bench works → ship a run → 8 of 100 came back / failed EMI", the Probe narrating a recall, an all-ages by-feel
+**fleet-grid**), a determinism/golden-safety proof (a hash-seeded distribution sample over the existing unhashed
+margins, canonical draw order, zero sim-core change), and a phased build path (**Phase-1 report card ships on
+heat + ratings alone**, no EMI kernel). Read this doc for the *why*/framing; that one for the *how*.
