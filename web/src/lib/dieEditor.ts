@@ -33,6 +33,7 @@ import {
   DIE_FRAME_PREFIX,
   dieFrameTag,
   framePackage,
+  freeFormGeom,
   isDieFrame,
   isFrame,
   isPinRef,
@@ -134,6 +135,17 @@ export function dieBounds(
   | undefined {
   const frame = snapshot.components.find((c) => c.id === frameId);
   if (!frame || !isFrame(frame.kind)) return undefined;
+  // Free-form (box-captured) subassembly: the walls ARE the captured box (§4.10), exactly — no package
+  // layout, no lead overhang/inset (its pins already sit on the box edge).
+  const ff = freeFormGeom(frame.kind);
+  if (ff) {
+    return {
+      minCol: frame.cell.col,
+      minRow: frame.cell.row,
+      maxCol: frame.cell.col + (ff.w - 1),
+      maxRow: frame.cell.row + (ff.h - 1),
+    };
+  }
   const pkg = framePackage(frame.kind);
   if (!pkg) return undefined;
   const { w, h } = dieLayout(pkg.archetype, pkg.pinCount);
