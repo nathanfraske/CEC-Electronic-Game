@@ -46,8 +46,87 @@ export interface UserIc {
   pinNames?: string[];
 }
 
-/** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library). */
+/** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
+ * For a multi-variant family this holds the FAMILY tag (pointing at variant 0, so any variant-unaware
+ * path still resolves a valid inner circuit) AND each derived child tag `"<family>#i"`. */
 const REGISTRY = new Map<string, UserIc>();
+
+/**
+ * A VARIANT FAMILY: several sealed dies grouped under ONE placeable tag, picked per-instance via the
+ * existing {@link Component.variant} axis (the same field diode families / LED colours use). A user IC
+ * has no sim param block of its own — it flattens to discrete parts — so the variation IS the inner
+ * graph: each variant carries its own `graph`, `frameId`, `package`, `pinNames`. v1 constrains every
+ * variant in a family to share `package.archetype` + `package.pinCount` (footprint-stable switching).
+ */
+export interface UserIcFamily {
+  /** the placeable kind tag (e.g. "INV") — registered in `PART_KINDS` + `REGISTRY` (-> variants[0]). */
+  family: string;
+  /** display name (the bin tile / inspector header). */
+  name: string;
+  /** ordered variant defs; variant INDEX = position; `variants[0]` is the default a fresh place gets.
+   * Append-only in v1 (a new variant gets the highest index) so a saved board's integer `variant`
+   * stays a durable reference — reordering would silently re-point every placed instance. */
+  variants: UserIc[];
+}
+
+/** family tag -> family. A single-variant IC has NO row here (tag === family, resolves via REGISTRY),
+ * keeping today's universal case byte-identical. */
+const FAMILIES = new Map<string, UserIcFamily>();
+
+/** Separator between a family tag and a variant index in the derived child tag (`"INV#0"`). Reserved:
+ * a free-form seal name carrying it is rejected at capture time so it can't forge a child tag. */
+const VARIANT_SEP = "#";
+
+/** The derived child tag for variant `i` of `family` (e.g. ("INV", 1) -> "INV#1"). */
+function variantChildTag(family: string, i: number): string {
+  return family + VARIANT_SEP + i;
+}
+
+/** The next free variant child tag for a family: index = current variant count (append-only). */
+export function nextVariantTag(family: string): string {
+  const fam = FAMILIES.get(family);
+  return variantChildTag(family, fam ? fam.variants.length : 1);
+}
+
+/** The variants of a multi-variant family, in order, or `null` for a plain (single) IC / unknown tag. */
+export function userIcVariants(family: string): UserIc[] | null {
+  return FAMILIES.get(family)?.variants ?? null;
+}
+
+/** Whether a tag is a multi-variant family (the inspector / arm-time variant picker gate). A
+ * single-variant IC has just one entry and reports false, so it shows no picker. */
+export function hasUserIcVariants(tag: string): boolean {
+  return (FAMILIES.get(tag)?.variants.length ?? 0) > 1;
+}
+
+/** Every placeable user-IC tag that a NEW seal could become a variant of: the existing multi-variant
+ * families AND every single IC (which a second "seal into" promotes to a family). For the seal panel's
+ * "Variant of …" dropdown — `{ tag, name }` pairs, child tags excluded. */
+export function userIcFamilyTargets(): { tag: string; name: string }[] {
+  return userIcTags().map((tag) => ({
+    tag,
+    name: FAMILIES.get(tag)?.name ?? REGISTRY.get(tag)?.name ?? tag,
+  }));
+}
+
+/**
+ * Resolve a placed `(tag, variant)` to the concrete sealed def. For a family the index is CLAMPED to
+ * the variant range (like {@link diodeVariant}) so a save referencing a variant a since-shrunk family
+ * no longer has still resolves deterministically (to the last) rather than crashing. For a plain IC
+ * the variant is ignored and the flat REGISTRY entry is returned — identical to the old
+ * `REGISTRY.get(tag)`, so single-variant ICs stay byte-identical.
+ */
+export function resolveUserIc(tag: string, variant = 0): UserIc | undefined {
+  const fam = FAMILIES.get(tag);
+  if (fam) {
+    const i = Math.max(
+      0,
+      Math.min(fam.variants.length - 1, Math.round(variant)),
+    );
+    return fam.variants[i];
+  }
+  return REGISTRY.get(tag);
+}
 
 /** The house auto-id counter for unnamed seals: the next number in the `CEC9xxx` series
  * (ADR 0006 / docs/ui/ic-maker-guide.md §6). Starts at 9001 and increments per auto-named
@@ -66,6 +145,31 @@ function nextAutoTag(): string {
   return tag;
 }
 
+/** The built-in part-kind tags, snapshotted at module load BEFORE any user IC registers — so the
+ * reserved-tag guard can tell a real device kind (`R`, `V`, a frame like `SOT23_6`) from a player
+ * seal name. `userIc.ts` imports `PART_KINDS` from `graph.ts`, which is fully populated at its own
+ * module init (frames included), and no user IC is registered until a seal/load runs — so this set is
+ * exactly the built-ins. */
+const BUILTIN_TAGS: ReadonlySet<string> = new Set(Object.keys(PART_KINDS));
+
+/** Whether `tag` would CLOBBER a built-in kind if registered: a built-in part kind (e.g. `R`) or an
+ * internal die-frame tag. Used to guard {@link registerUserIcs} (loading embedded defs) — which MUST
+ * still accept a legitimate `"<family>#i"` CHILD def, so it does NOT reject the `#` separator. */
+function collidesWithBuiltin(tag: string): boolean {
+  return BUILTIN_TAGS.has(tag) || tag.startsWith("__DIE_");
+}
+
+/**
+ * Whether `tag` is RESERVED as a free-form seal / family NAME: it would clobber a built-in (see
+ * {@link collidesWithBuiltin}) OR it carries the variant separator `#` (which would forge a family
+ * child tag). The seal UI and import-name path refuse these (gap #8) so a player name can never
+ * overwrite a built-in at startup or impersonate a variant child tag. (Distinct from the registration
+ * guard, which DOES accept a real `#` child def.)
+ */
+export function isReservedTag(tag: string): boolean {
+  return collidesWithBuiltin(tag) || tag.includes(VARIANT_SEP);
+}
+
 /** Whether a kind tag is a sealed user IC (a flatten-on-build composite, no sim element of its own). */
 export function isUserIc(tag: string): boolean {
   return REGISTRY.has(tag);
@@ -76,9 +180,11 @@ export function getUserIc(tag: string): UserIc | undefined {
   return REGISTRY.get(tag);
 }
 
-/** All registered sealed IC tags (for the part bin / persistence). */
+/** All PLACEABLE sealed-IC tags (for the part bin / persistence): every plain single-variant tag plus
+ * each multi-variant FAMILY tag, but NOT the internal `"<family>#i"` child tags (those are an
+ * implementation detail of the family — the player places the family tile and picks a variant). */
 export function userIcTags(): string[] {
-  return [...REGISTRY.keys()];
+  return [...REGISTRY.keys()].filter((t) => !t.includes(VARIANT_SEP));
 }
 
 /** Cells each lead tip is pushed OUT past the body, so the package body sits INSIDE the ring of leads
@@ -149,8 +255,17 @@ export function registerUserIc(ic: UserIc): void {
   PART_KINDS[ic.tag] = userIcPartKind(ic);
 }
 
-/** Forget a sealed IC (and unregister its kind). */
+/** Forget a sealed IC (and unregister its kind). When `tag` is a multi-variant FAMILY, this cascades:
+ * the family tag's own REGISTRY/PART_KINDS entry, every child `"<family>#i"` REGISTRY entry, and the
+ * FAMILIES row are all dropped (else the child defs would linger as orphans). A plain IC just drops
+ * its single entry. */
 export function unregisterUserIc(tag: string): void {
+  const fam = FAMILIES.get(tag);
+  if (fam) {
+    for (let i = 0; i < fam.variants.length; i++)
+      REGISTRY.delete(variantChildTag(tag, i));
+    FAMILIES.delete(tag);
+  }
   REGISTRY.delete(tag);
   delete PART_KINDS[tag];
 }
@@ -198,17 +313,67 @@ export function userIcsForGraph(graph: GraphSnapshot): UserIc[] {
   // board places only its top-level ICs (a nested INNER lives solely inside OUTER's graph, never as a
   // board component). Without the descent, a save embedding OUTER but not INNER couldn't be flattened
   // after a fresh-session reload (INNER unregistered -> its hub never expands -> the inner parts vanish).
-  // `seen` (by tag) dedups and bounds a reseal cycle (A in B in A: the second A is already seen). A board
-  // with no IC returns []; one with only single-level ICs returns exactly the placed defs (their dies
-  // hold no further ICs), so existing saves are unchanged.
+  //
+  // For a FAMILY, emit ALL its variants (the player may switch variants offline after reload, so every
+  // variant's discrete parts must travel) and recurse into EACH variant's die. Dedup is keyed on the
+  // RESOLVED child tag of every variant we push (gap #3) — NOT the family tag — so descending into
+  // variant 1..n isn't skipped after variant 0. The flat single-IC case dedups by the plain tag.
+  // `seen` also bounds a reseal cycle (A in B in A: the second A's tag is already seen). A board with
+  // no IC returns []; one with only single-level single-variant ICs returns exactly the placed defs,
+  // so existing saves are byte-identical.
+  const pushDef = (key: string, def: UserIc): void => {
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(def);
+    scan(def.graph.components); // descend into this def's die for deeper nested ICs
+  };
   const scan = (comps: { kind: string }[]): void => {
     for (const c of comps) {
-      if (seen.has(c.kind)) continue;
+      const fam = FAMILIES.get(c.kind);
+      if (fam) {
+        fam.variants.forEach((v, i) => pushDef(variantChildTag(c.kind, i), v));
+        continue;
+      }
       const def = REGISTRY.get(c.kind);
-      if (!def) continue;
+      if (def) pushDef(c.kind, def);
+    }
+  };
+  scan(graph.components);
+  return out;
+}
+
+/**
+ * The OPTIONAL family sidecar for a saved board: for every PLACED multi-variant family, its display
+ * `name` and the ORDERED `variantTags` array — the durable source of truth for variant order. A
+ * placed instance persists `variant` as an INTEGER INDEX, so `variantTags[index]` is the def it
+ * resolves to; {@link registerUserIcFamilies} rebuilds `variants[]` in exactly this order on load
+ * (gap #4). Single-variant boards get `[]` (the caller omits the sidecar), keeping existing saves and
+ * the golden byte-identical. Scans transitively (a nested family inside a placed die also rounds-trips).
+ */
+export interface UserIcFamilySidecar {
+  family: string;
+  name: string;
+  /** the child tags `"<family>#0"`, `"<family>#1"`, … IN ORDER (index = variant index). */
+  variantTags: string[];
+}
+
+export function userIcFamiliesForGraph(
+  graph: GraphSnapshot,
+): UserIcFamilySidecar[] {
+  const out: UserIcFamilySidecar[] = [];
+  const seen = new Set<string>();
+  const scan = (comps: { kind: string }[]): void => {
+    for (const c of comps) {
+      const fam = FAMILIES.get(c.kind);
+      if (!fam || seen.has(c.kind)) continue;
       seen.add(c.kind);
-      out.push(def);
-      scan(def.graph.components); // descend into the IC's die for deeper nested ICs
+      out.push({
+        family: fam.family,
+        name: fam.name,
+        variantTags: fam.variants.map((_, i) => variantChildTag(c.kind, i)),
+      });
+      // Recurse into each variant's die so a nested family inside this family also round-trips.
+      for (const v of fam.variants) scan(v.graph.components);
     }
   };
   scan(graph.components);
@@ -217,9 +382,130 @@ export function userIcsForGraph(graph: GraphSnapshot): UserIc[] {
 
 /** Register a batch of sealed-IC definitions (from a save's embedded library). Idempotent — each
  * just calls {@link registerUserIc}, so re-loading a board re-installs its ICs (overwriting any
- * same-tag entry with the saved one). A no-op on an empty/absent list. */
+ * same-tag user-IC entry with the saved one — the intended reseal-on-reload path). A def whose tag is
+ * RESERVED (a built-in kind, a die-frame, a `#` child tag) is SKIPPED rather than allowed to clobber a
+ * built-in `PART_KINDS` entry (gap #6/#8 clobber-safety); the full import re-tag prompt is deferred.
+ * A no-op on an empty/absent list. */
 export function registerUserIcs(defs: UserIc[]): void {
-  for (const ic of defs) registerUserIc(ic);
+  for (const ic of defs) {
+    // A `"<family>#i"` child def IS legitimate here (it's a family variant being restored from the
+    // embed) — only refuse a def that would clobber a BUILT-IN kind (gap #6/#8 clobber-safety). The
+    // full import re-tag prompt is deferred.
+    if (collidesWithBuiltin(ic.tag)) {
+      console.warn(
+        `registerUserIcs: skipped IC with reserved tag "${ic.tag}" (collides with a built-in kind); placed instances of it won't expand. Re-tag the IC before saving.`,
+      );
+      continue;
+    }
+    registerUserIc(ic);
+  }
+}
+
+/**
+ * Append a new variant to a family, PROMOTING a single IC into a multi-variant family on the first
+ * append (gap #5 — append-only: the new variant always gets the HIGHEST index; `variants[0]` stays the
+ * default). On the FIRST append, the existing single IC registered under `family` becomes `variants[0]`
+ * (its def re-registered under the child tag `"<family>#0"`), the new def becomes `"<family>#1"`, the
+ * family tag is registered in `PART_KINDS` (one bin tile) and in `REGISTRY` -> `variants[0]` (so any
+ * variant-unaware path still resolves a valid inner circuit), and a `FAMILIES` row is created. On a
+ * later append the new def just gets the next child index.
+ *
+ * v1 constraint (footprint-stable switching): the new variant MUST share the family's
+ * `package.archetype` + `package.pinCount`; a mismatch is REFUSED (returns `false`, registers nothing)
+ * so the placed instance's footprint never has to re-derive on a variant switch. Returns `true` on a
+ * successful append. Returns `false` (no-op) if `family` is unknown.
+ */
+export function appendUserIcVariant(family: string, variant: UserIc): boolean {
+  let fam = FAMILIES.get(family);
+  // First append: bootstrap the family from the existing single IC under `family`. The base def's own
+  // tag is the FAMILY tag; re-home it as variant 0 under the child tag "<family>#0" (tag rewritten),
+  // so EVERY variant def carries its child tag — `userIcsForGraph` then embeds child-tagged defs and
+  // the family round-trips (registerUserIcFamilies finds "<family>#0" in REGISTRY on reload).
+  if (!fam) {
+    const base = REGISTRY.get(family);
+    if (!base) return false;
+    if (
+      variant.package.archetype !== base.package.archetype ||
+      variant.package.pinCount !== base.package.pinCount
+    )
+      return false;
+    const child0: UserIc = { ...base, tag: variantChildTag(family, 0) };
+    fam = { family, name: base.name, variants: [child0] };
+    FAMILIES.set(family, fam);
+    REGISTRY.set(child0.tag, child0);
+  } else {
+    const ref = fam.variants[0];
+    if (
+      variant.package.archetype !== ref.package.archetype ||
+      variant.package.pinCount !== ref.package.pinCount
+    )
+      return false;
+  }
+  const childTag = variantChildTag(family, fam.variants.length);
+  const child: UserIc = { ...variant, tag: childTag };
+  fam.variants.push(child);
+  REGISTRY.set(childTag, child);
+  // Register the family tag's tile + variants[0] resolution (so a variant-unaware path resolves a valid
+  // inner circuit). variants[0] now carries its child tag, so re-tag it back to the family tag for the
+  // family-tag REGISTRY entry's display/footprint derivation.
+  PART_KINDS[family] = userIcPartKind({ ...fam.variants[0], tag: family });
+  REGISTRY.set(family, fam.variants[0]);
+  return true;
+}
+
+/**
+ * Regroup a board's embedded variant defs into `FAMILIES` from the save sidecar (companion to
+ * {@link registerUserIcs}, which already registered the flat defs incl. the child tags). For each
+ * sidecar entry it rebuilds `variants[]` in EXACTLY the sidecar's `variantTags` ORDER (the durable
+ * source of truth — index = variant index, gap #4), registers the family tag's `PART_KINDS` tile +
+ * `REGISTRY` -> `variants[0]`, and creates the `FAMILIES` row. A sidecar entry whose family tag is
+ * reserved, or any of whose variant child defs are missing from `REGISTRY`, is skipped (it can't be
+ * grouped). A no-op on an empty/absent sidecar — so single-variant boards and the golden are
+ * unaffected.
+ */
+export function registerUserIcFamilies(sidecar?: UserIcFamilySidecar[]): void {
+  if (!sidecar) return;
+  for (const s of sidecar) {
+    if (isReservedTag(s.family)) continue;
+    const variants: UserIc[] = [];
+    let ok = true;
+    for (const childTag of s.variantTags) {
+      const def = REGISTRY.get(childTag);
+      if (!def) {
+        ok = false;
+        break;
+      }
+      variants.push(def);
+    }
+    if (!ok || variants.length === 0) continue;
+    FAMILIES.set(s.family, { family: s.family, name: s.name, variants });
+    PART_KINDS[s.family] = userIcPartKind({ ...variants[0], tag: s.family });
+    REGISTRY.set(s.family, variants[0]);
+  }
+}
+
+/**
+ * Register a multi-variant family ATOMICALLY from its ordered variant defs — for the persistent
+ * library, which carries a family's variant defs together (rather than as a sidecar over a flat embed).
+ * Re-tags each variant under its child tag `"<family>#i"` (so the ORDER is the durable source of truth,
+ * gap #4), installs each child in `REGISTRY`, registers the family `PART_KINDS` tile + `REGISTRY` ->
+ * variants[0], and creates the `FAMILIES` row. Refuses a reserved family tag or an empty variant list
+ * (no-op). The variant defs' own `tag` fields are ignored (overwritten with the child tags).
+ */
+export function registerUserIcFamily(
+  family: string,
+  name: string,
+  variants: UserIc[],
+): void {
+  if (isReservedTag(family) || variants.length === 0) return;
+  const children = variants.map((v, i) => ({
+    ...v,
+    tag: variantChildTag(family, i),
+  }));
+  for (const child of children) REGISTRY.set(child.tag, child);
+  FAMILIES.set(family, { family, name, variants: children });
+  PART_KINDS[family] = userIcPartKind({ ...children[0], tag: family });
+  REGISTRY.set(family, children[0]);
 }
 
 /** One flatten record: the placed instance id, the id offset its inner parts were inlined at, and
@@ -256,7 +542,10 @@ export function flattenUserIcs(
 ): BoardGraph {
   let any = false;
   for (const c of graph.components.values()) {
-    if (REGISTRY.has(c.kind)) {
+    // Membership widened to families (gap): a placed FAMILY tag is also a flattenable user IC. Both
+    // REGISTRY and FAMILIES are EMPTY for the golden (it places no user IC), so the early no-op return
+    // below still fires and the input graph is returned byte-identical.
+    if (REGISTRY.has(c.kind) || FAMILIES.has(c.kind)) {
       any = true;
       break;
     }
@@ -294,21 +583,33 @@ export function flattenUserIcs(
   const MAX_INSTANCES = 4096;
   for (let depth = 0; depth < MAX_DEPTH; depth++) {
     const pending = comps
-      .filter((c) => REGISTRY.has(c.kind) && !flattened.has(c.id))
+      .filter(
+        (c) =>
+          (REGISTRY.has(c.kind) || FAMILIES.has(c.kind)) &&
+          !flattened.has(c.id),
+      )
       .sort((a, b) => a.id - b.id);
     if (pending.length === 0) break;
     for (const inst of pending) {
       if (flattened.size >= MAX_INSTANCES) break;
       flattened.add(inst.id);
-      const def = REGISTRY.get(inst.kind)!;
+      // Resolve the placed (familyTag, variant) to the concrete sealed def — a pure graph->graph choice
+      // BEFORE buildNetlist. For a plain single-variant IC `resolveUserIc` returns the same def the old
+      // `REGISTRY.get(inst.kind)` did (so byte-identical); for a family it picks (and clamps) the
+      // variant. The instance carries `variant` as a persisted integer index (default 0).
+      const inst2 = inst as { variant?: number };
+      const def = resolveUserIc(inst.kind, inst2.variant ?? 0);
+      if (!def) continue;
       const inner = def.graph;
       const o = off;
       off += STRIDE;
       // Expose this instance's id offset to a render-only caller (the zoom-to-open mini-board); for a
       // nested instance `inst.id` is its already-inlined (offset) id. Pushing here does NOT touch the
       // element arrays the flatten compiles to — only the render-side mapping — so the netlist crossing
-      // the wasm boundary (and the golden) is unchanged.
-      sink?.push({ instanceId: inst.id, offset: o, tag: inst.kind });
+      // the wasm boundary (and the golden) is unchanged. The tag is the RESOLVED tag (a family's child
+      // tag `"INV#i"`, else the plain tag) so the render-side `getUserIc(rec.tag)` resolves THIS
+      // variant's authored sub-graph, not variant 0's.
+      sink?.push({ instanceId: inst.id, offset: o, tag: def.tag });
       // An inner endpoint -> outer: the frame's pins become the (already-placed) instance's pins (same
       // index); every other inner component/junction is offset into this instance's private id range.
       // For a NESTED instance, `inst.id` is its inlined hub id, so the child's frame pins fuse onto that
@@ -356,7 +657,12 @@ export function flattenUserIcs(
   // If user-IC instances remain unflattened, a bound was hit (an over-deep / over-wide hierarchy or a
   // reseal cycle): the deepest cells are no-element hubs, so their inner parts are absent from this
   // netlist. Surface it rather than emit a silently-wrong circuit.
-  if (comps.some((c) => REGISTRY.has(c.kind) && !flattened.has(c.id))) {
+  if (
+    comps.some(
+      (c) =>
+        (REGISTRY.has(c.kind) || FAMILIES.has(c.kind)) && !flattened.has(c.id),
+    )
+  ) {
     console.warn(
       `flattenUserIcs: IC nesting exceeded the flatten budget (MAX_DEPTH=${MAX_DEPTH}, MAX_INSTANCES=${MAX_INSTANCES}); deepest cells were left unexpanded (their inner parts are absent from this netlist). Check for a reseal cycle or an excessively deep/wide nesting.`,
     );
@@ -404,7 +710,15 @@ export interface SealCapture {
  * instance placement so the whole thing is one undo step).
  *
  * `name` is the free-form part name; omitted, it auto-assigns the next house `CEC9xxx` id (and the
- * tag matches). Returns undefined only if `frameId` isn't a live frame component.
+ * tag matches). A free-form `name` that collides with a RESERVED tag (a built-in kind like `R`, a
+ * die-frame, or one carrying `#`) is REFUSED (returns undefined) so a seal can never clobber a
+ * built-in at startup (gap #8). Returns undefined if `frameId` isn't a live frame component.
+ *
+ * `intoFamily` (optional): append the captured def as a NEW VARIANT of an existing family instead of
+ * registering a fresh top-level tag (the seal-as-variant-of flow, §4.3). The captured package must
+ * match the family's (v1 same-package constraint) or the append is REFUSED (returns undefined); on
+ * success the {@link SealCapture} carries the FAMILY tag (the placeable kind), so the board collapses
+ * the frame to the family tile (variant 0 default; the author can switch in the inspector).
  *
  * NB: connectivity here is the physical wire graph (the v1 authoring model — ICs are built
  * standalone). A net-label GLOBAL alias (two same-named labels with no wire between them) is not a
@@ -416,6 +730,7 @@ export function captureSeal(
   graph: BoardGraph,
   frameId: number,
   name?: string,
+  intoFamily?: string,
 ): SealCapture | undefined {
   const frame = graph.components.get(frameId);
   if (!frame) return undefined;
@@ -539,16 +854,44 @@ export function captureSeal(
   // The player's per-pin names live on the frame component (the die editor's named port pads);
   // carry them onto the sealed IC so its placed instance shows them as pin labels.
   const framePinNames = frame.pinNames;
-  const tag = name && name.trim() ? name.trim() : nextAutoTag();
+  const trimmed = name && name.trim() ? name.trim() : "";
+  // Reserved-tag guard (gap #8): a free-form name colliding with a built-in / die-frame / `#` tag is
+  // refused so registerLibrary() can never clobber a built-in kind at startup.
+  if (trimmed && isReservedTag(trimmed)) return undefined;
+  const pinNamesField =
+    framePinNames && framePinNames.some((n) => n && n.trim())
+      ? { pinNames: [...framePinNames] }
+      : {};
+
+  // Seal-as-variant-of: append to an existing family (same-package-constrained) instead of a fresh
+  // top-level tag. On success the placed instance is the FAMILY tag (variant 0 default).
+  if (intoFamily) {
+    const ok = appendUserIcVariant(intoFamily, {
+      tag: trimmed || intoFamily, // overwritten with the child tag inside appendUserIcVariant
+      name: trimmed || intoFamily,
+      package: pkg,
+      frameId,
+      graph: snapshot,
+      ...pinNamesField,
+    });
+    if (!ok) return undefined; // unknown family or a package mismatch (v1 same-package constraint)
+    return {
+      tag: intoFamily,
+      capturedComponentIds: [...comps],
+      capturedWireIds: [...wireIds],
+      capturedJunctionIds: [...juncs],
+      frameCell: { col: frame.cell.col, row: frame.cell.row },
+    };
+  }
+
+  const tag = trimmed || nextAutoTag();
   registerUserIc({
     tag,
-    name: name && name.trim() ? name.trim() : tag,
+    name: trimmed || tag,
     package: pkg,
     frameId,
     graph: snapshot,
-    ...(framePinNames && framePinNames.some((n) => n && n.trim())
-      ? { pinNames: [...framePinNames] }
-      : {}),
+    ...pinNamesField,
   });
 
   return {

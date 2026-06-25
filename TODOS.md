@@ -6,6 +6,62 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (130) — DESIGN PANELS: the Probe teaching arc + all-ages beginner onboarding
+
+- ~~**Probe failure-first teaching-arc panel**~~ — DONE. `docs/ui/probe-teaching-arc.md`: the 4-act hook
+  (proud broken LED → blameless blow-up → resistor → divider → build-from-scratch w/ per-session **changed
+  numbers**), the **Probe persona**, and two golden-safe web-side mechanics (magic-smoke over the **unhashed**
+  FAIL mask; a **seeded parametric anti-copy generator + a `specMet` grader** gated *after* topology, so a copied
+  layout closes the loop but misses the spec). Multi-lens workflow + 2 critics (SHIP-WITH-FIXES → fixed vs live code).
+- ~~**All-ages beginner-onboarding panel**~~ — DONE. `docs/ui/beginner-onboarding-all-ages.md`: curriculum
+  ramp, durable coaching system, all-ages-**by-pull** (no levels), accessibility/reach spec, no-dark-patterns
+  retention, 5 persona journey maps. Cross-refs added to `onboarding-first-run.md` §11 + `game-progression.md` §1.3.
+- [ ] **OWNER CALLS (open questions in both panels):** cold-open auto-run vs fire-on-Run (+ stated fallback);
+  exam-placement feedback → `game-progression §7 #2`; the solo-pre-reader MVP caveat; grader tolerance band;
+  seed & resistor value model (continuous vs E-series); Probe voice (TTS vs VO); the by-feel target tolerance
+  for pre-readers.
+- [ ] **IMPLEMENT (when greenlit) — smallest new surface (see each panel's reuse-vs-new table):** the Probe
+  persona layer (over the coach-mark/anchor plumbing); the magic-smoke presentation (edge-detect on `failedMask`,
+  wall-clock particles, charred tint); the shared grader/sampler + seeded parametric generator (web-side; reads
+  the existing `electricalMap` + `state` Float64Array; never touches sim-core/golden). Reduced-motion + voiced
+  Probe + the by-feel target renderer are the highest-leverage a11y/all-ages items.
+
+---
+
+## 2026-06-25 (129) — Owner: drill-in walls ≠ sealed body (WYSIWYG break → overhang)
+
+- [ ] **Die-editor walls must match the sealed package body** (#20) — owner: "the dimensions do not match anymore,
+  the drill in is wider than the real thing, which makes it so you can have overhanging wires/components." ROOT
+  CAUSE: two regions use different margin conventions —
+  - `dieBounds` (drill-in walls, `dieEditor.ts:122`): array axis `+DIE_END_MARGIN = 4 cells (104px)` each side;
+    stick axis sits ON the lead line (0 inset).
+  - `userIcBodyBox` (sealed body / opened-replica fit target, `glyphs.ts:1976`): array axis `+IC_BODY_PAD = 10px`
+    each side; stick axis `−IC_LEAD_LEN = 16px` INSET each side.
+  ⇒ the drill-in authoring surface is ~188px wider + 32px taller than the sealed body, so parts/wires placed in
+  that extra margin fall outside the "real" package when sealed/opened. FIX (WYSIWYG): make the die-editor
+  **buildable surface + soft containment** (`drawDieWalls` `board.ts:2042`, `containInDie`) track the SAME region
+  the seal uses — derive the walls from `userIcBodyBox` geometry (in cells) rather than the raw `dieLayout`
+  footprint + `DIE_END_MARGIN`. Keep the frame leads rendering OUT past the body (real-package look); only the
+  buildable body region should shrink to the sealed body. Verify the opened replica then fills the body with no
+  overhang and the existing examples/goldens are render-only-unaffected. **Queued behind the in-flight Phase 3 +
+  IC-library workflows** (both touch `board.ts`/`userIcInternalsView.ts`); land after to avoid 3-way conflicts.
+
+
+## 2026-06-25 (131) — IC library + user-selected variants (v1) IMPLEMENTED
+
+- ~~**IC library + variants v1**~~ — DONE (branch `claude/ic-library-variants`). The LUT-enabler: persistent
+  `localStorage` library (`userLibrary.ts`, key `cec.library.v1`) + "My ICs" bin category (places via the
+  existing arm/drag path, package pin-ring glyph), auto-add on seal/reseal, `FAMILIES` registry in `userIc.ts`
+  (`resolveUserIc`/`userIcVariants`/`hasUserIcVariants`/`appendUserIcVariant`/`registerUserIcFamilies`/
+  `registerUserIcFamily`), flatten membership widened to `REGISTRY.has || FAMILIES.has` (golden-safe no-op
+  intact), variant selection a pure graph→graph choice before `buildNetlist`, inspector + arm-time variant
+  picker (reuses `selVariant`/`setVariant`), seal-panel "Variant of …" dropdown, `userIcFamilies` save sidecar
+  (board blob + download envelope + load registration). Golden `0xeaac…fa24` unmoved. Gate green (web check 0,
+  lint, build, test 94 — +9 `userIc.variants.test.ts`).
+- All 8 cross-check gaps handled (see HANDOFFS 129). **Deferred:** `cec-iclib` export/import envelope,
+  board-load "add to library" banner, per-row rename/delete chrome, cross-package variants (CRUD primitives
+  kept exported + callable).
+
 ## 2026-06-24 (123) — Owner queue: opened-IC polish, bridges-over, mesh; reality-lens panel
 
 - ~~**Opened-IC fit + part orientation**~~ — DONE (PR #189). Fit to the body rectangle; orient parts like the

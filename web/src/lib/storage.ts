@@ -7,7 +7,14 @@
 // saved state" rather than throwing.
 
 import type { GraphSnapshot, HotSlot } from "./graph";
-import { userIcsForGraph, registerUserIcs, type UserIc } from "./userIc";
+import {
+  userIcsForGraph,
+  userIcFamiliesForGraph,
+  registerUserIcs,
+  registerUserIcFamilies,
+  type UserIc,
+  type UserIcFamilySidecar,
+} from "./userIc";
 import { restoreInnerDies, type InnerDie } from "./dieEditor";
 
 const BOARD_KEY = "cec.board.v1";
@@ -62,6 +69,11 @@ function available(): boolean {
 interface BoardBlob {
   graph: GraphSnapshot;
   userIcs?: UserIc[];
+  /** the OPTIONAL variant-family sidecar (`docs/ic-library-and-variants.md` §2.3): per placed
+   * multi-variant family, its name + ORDERED variant child tags, so the embedded defs regroup into
+   * `FAMILIES` (and the family tile re-registers) on restore. Absent for single-variant boards, so a
+   * normal board's blob — and the golden — is unchanged. */
+  userIcFamilies?: UserIcFamilySidecar[];
   /** the work-in-progress dies of placed-but-unsealed frames, so re-drilling a frame after a refresh
    * resumes its half-built circuit. Built by the caller (App.svelte) from its `innerGraphs` map; see
    * {@link restoreInnerDies}. Absent when no placed frame has a stashed die. */
@@ -81,8 +93,10 @@ export function saveBoard(
   if (!available()) return;
   try {
     const defs = userIcsForGraph(snapshot);
+    const families = userIcFamiliesForGraph(snapshot);
     const blob: BoardBlob = { graph: snapshot };
     if (defs.length > 0) blob.userIcs = defs;
+    if (families.length > 0) blob.userIcFamilies = families;
     if (innerDies && innerDies.length > 0) blob.innerDies = innerDies;
     localStorage.setItem(BOARD_KEY, JSON.stringify(blob));
   } catch {
@@ -115,6 +129,12 @@ export function loadBoard(
     }
     if (parsed && typeof parsed === "object" && "userIcs" in parsed) {
       registerUserIcs((parsed as BoardBlob).userIcs ?? []);
+    }
+    // Regroup any embedded variant families from the sidecar AFTER the flat defs (which include the
+    // child tags) are registered, so a restored board's placed family tags resolve + show their
+    // variant picker on cold start. Absent for single-variant boards (a no-op).
+    if (parsed && typeof parsed === "object" && "userIcFamilies" in parsed) {
+      registerUserIcFamilies((parsed as BoardBlob).userIcFamilies);
     }
     // Restore the in-progress dies into the live map (cleared first), so re-drilling a placed frame
     // finds its saved WIP. Only when the caller hands us the map; an absent field clears it to empty.

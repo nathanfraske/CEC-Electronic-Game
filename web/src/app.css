@@ -525,6 +525,19 @@ body {
   border-radius: 2px;
 }
 
+/* A "My ICs" row glyph holds a tiny package pin-ring SVG (instead of tag text); the SVG inherits the
+   accent --c via currentColor. The .part-glyph grid already centres it. */
+.part-glyph-ic svg {
+  display: block;
+  color: var(--c);
+}
+
+/* The die-editor "Variant of …" dropdown sits beside the seal-name field; keep it terse + on-brand. */
+.die-seal-variant {
+  max-width: 150px;
+  cursor: pointer;
+}
+
 /* Board ------------------------------------------------------------------- */
 
 .board {

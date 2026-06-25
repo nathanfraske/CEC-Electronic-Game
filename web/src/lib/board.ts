@@ -1125,6 +1125,9 @@ export class Board {
             wiper: this.armedConfig.wiper,
             temp: this.armedConfig.temp,
             anchors,
+            // Same on-screen magnification the placed part passes, so the ghost previews the
+            // same tier (device → silicon) the drop will show. ZERO_ELECTRICAL keeps it idle.
+            absScale: this.world.scale.x,
           };
           tg.position.set(wPx / 2, hPx / 2);
           setStudsVisible(false);
@@ -2867,15 +2870,21 @@ export class Board {
    * it. No-op (returns null) on any id that isn't a live frame. `name` is the free-form part name;
    * omit it for the next auto `CEC9xxx`. Returns the registered tag.
    */
-  sealFrame(frameId: number, name?: string): string | null {
+  sealFrame(
+    frameId: number,
+    name?: string,
+    intoFamily?: string,
+  ): string | null {
     const frame = this.graph.components.get(frameId);
     if (!frame || !isFrame(frame.kind)) return null;
 
     const before = this.graph.serialize();
 
     // Capture the connected sub-graph + register the kind FIRST (read-only; the graph is untouched
-    // so the external-wire scan below still sees the original wiring).
-    const cap = captureSeal(this.graph, frameId, name);
+    // so the external-wire scan below still sees the original wiring). `intoFamily` (when set) appends
+    // the captured die as a new VARIANT of an existing family instead of a fresh tag (cap.tag is then
+    // the family tag); a package mismatch / unknown family makes captureSeal refuse (null).
+    const cap = captureSeal(this.graph, frameId, name, intoFamily);
     if (!cap) return null;
     const captured = new Set(cap.capturedComponentIds);
     const capturedJ = new Set(cap.capturedJunctionIds);
@@ -6711,6 +6720,10 @@ class ComponentNode {
         wiper: this.component.wiper,
         temp: this.component.temp,
         anchors,
+        // On-screen magnification (px-per-world-px) so a detail drawer can hand off to its
+        // silicon leaf when the part grows big enough (Phase 3). At the board level the world
+        // scale IS that magnification; `zoom` is already `this.world.scale.x`.
+        absScale: zoom,
       };
       // Hide the illustration's own decorative studs on the board — the real pin
       // dots below mark the connections (and avoid the doubled-terminal clutter).

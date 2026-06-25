@@ -123,6 +123,14 @@ holding the thread.
 responds to you, and there is always a bigger machine* — and you were never made to
 read a manual to get there.
 
+> **First-beats update (2026-06-25).** The literal opening seconds are now owned by the
+> Probe arc — see **[ui/probe-teaching-arc.md]** (the mascot's resistor-less LED **blows up**
+> when the player presses Run, then resistor → *this §1.3 divider* → build-from-scratch with
+> per-session changed numbers) and **[ui/beginner-onboarding-all-ages.md]** (the ramp &
+> coaching system around it). The first contract here (**3.3 V from a 5 V rail**) **is** the
+> divider those panels land on — one continuous board, no mode switch, still an OFFER not a
+> gate.
+
 ---
 
 ## 2. The tech tree — a concrete unlock graph, grounded in the sim primitives

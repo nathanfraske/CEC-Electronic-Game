@@ -66,9 +66,21 @@
     isUserIc,
     resealUserIc,
     registerUserIcs,
+    registerUserIcFamilies,
     userIcsForGraph,
+    userIcFamiliesForGraph,
+    userIcVariants,
+    hasUserIcVariants,
+    userIcFamilyTargets,
     type UserIc,
+    type UserIcFamilySidecar,
   } from "./lib/userIc";
+  import {
+    registerLibrary,
+    addToLibrary,
+    libraryEntries,
+    type LibraryEntry,
+  } from "./lib/userLibrary";
   import {
     hasValue,
     isESeries,
@@ -1551,7 +1563,76 @@
       ? "var(--dim)"
       : (CHANNEL_COLORS[(i - 1) % CHANNEL_COLORS.length] ?? "var(--accent)");
   const partName = (tag: string): string =>
-    PARTS.find((p) => p.tag === tag)?.name ?? tag;
+    PARTS.find((p) => p.tag === tag)?.name ?? PART_KINDS[tag]?.name ?? tag;
+
+  // --- Personal IC library ("My ICs" bin category) ------------------------------------------------
+  // REGISTRY / PART_KINDS / FAMILIES (userIc.ts) are plain module globals, so the bin won't react to a
+  // registry mutation on its own. `libRev` is a $state counter bumped on every library mutation (seal,
+  // reseal, delete, rename); the "My ICs" rows derive from it. The library itself is persisted in
+  // localStorage (userLibrary.ts) — this is a per-board-reset-proof personal store.
+  let libRev = $state(0);
+  /** Sync a placeable tag into the library and re-derive the bin rows (post-seal / reseal). */
+  function syncLibrary(tag: string, source: "sealed" | "imported"): void {
+    addToLibrary(tag, source);
+    libRev++;
+  }
+  /** The "My ICs" rows, derived from the library (most-recent first). Each row is shaped like a PARTS
+   * row (so `partRow` renders it) plus a `glyphKind` (the package tag) for the pin-ring thumbnail. */
+  const savedIcParts = $derived.by(() => {
+    void libRev; // reactivity dependency: re-run when the library mutates
+    return libraryEntries().map((e: LibraryEntry) => {
+      const tag = e.variants ? familyTagOf(e) : e.ic.tag;
+      const n = e.variants ? e.variants.length : 0;
+      return {
+        tag,
+        name: e.name ?? e.ic.name,
+        desc:
+          `${e.ic.package.archetype} · ${e.ic.package.pinCount}-pin` +
+          (n > 1 ? ` · ${n} variants` : ""),
+        tier: "★",
+        color: "var(--accent)",
+        glyphKind: tag,
+      };
+    });
+  });
+  /** A family library row's family tag (strip the `#i` suffix off its variant-0 child tag). */
+  function familyTagOf(e: LibraryEntry): string {
+    const child = e.variants?.[0]?.tag ?? e.ic.tag;
+    const h = child.indexOf("#");
+    return h >= 0 ? child.slice(0, h) : child;
+  }
+  /** A tiny pin-ring thumbnail (inline SVG) of a kind's footprint, for a "My ICs" row glyph: the
+   * package body as a rounded rect with a dot per lead, normalised into a 30×30 box. Render-only. */
+  const GLYPH_BOX = 30; // the .part-glyph is 30px tall (app.css)
+  function packageGlyphPins(tag: string): { cx: number; cy: number }[] | null {
+    const k = PART_KINDS[tag];
+    if (!k || k.pins.length === 0) return null;
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const p of k.pins) {
+      minX = Math.min(minX, p.dx);
+      maxX = Math.max(maxX, p.dx);
+      minY = Math.min(minY, p.dy);
+      maxY = Math.max(maxY, p.dy);
+    }
+    const w = Math.max(1, maxX - minX);
+    const h = Math.max(1, maxY - minY);
+    const inner = GLYPH_BOX - 8; // 4px margin each side
+    const s = inner / Math.max(w, h);
+    // Centre the scaled footprint in the box.
+    const ox = (GLYPH_BOX - w * s) / 2;
+    const oy = (GLYPH_BOX - h * s) / 2;
+    return k.pins.map((p) => ({
+      cx: ox + (p.dx - minX) * s,
+      cy: oy + (p.dy - minY) * s,
+    }));
+  }
+  // NOTE: per-row rename/delete management chrome is DEFERRED (docs/ic-library-and-variants.md §7). The
+  // library CRUD primitives (`removeFromLibrary` / `renameLibraryIc`) stay exported + callable from
+  // userLibrary.ts for the follow-up that wires the chrome; gap #7 (delete-while-placed) is honoured by
+  // those primitives NOT unregistering the kind, so a placed copy never blinks to an unknown kind.
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
   // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
   const partColor = (tag: string): string =>
@@ -2101,6 +2182,13 @@
           ? settings.hotbar
           : Array(9).fill(null);
 
+      // Register the personal IC library into PART_KINDS / REGISTRY / FAMILIES BEFORE loadBoard /
+      // example restore, so a restored board's placed library ICs resolve even if its embedded
+      // `userIcs` were trimmed (loadBoard's own registerUserIcs then harmlessly upserts the board's
+      // embedded copies on top). Purely additive; an empty library registers nothing (golden-safe).
+      registerLibrary();
+      libRev++; // surface any library ICs in the "My ICs" bin on first paint
+
       // Pass the live `innerGraphs` so any persisted in-progress (unsealed) dies are restored into it
       // (cleared first) before the outer board loads — re-drilling a frame then resumes its WIP.
       const saved = loadBoard(innerGraphs);
@@ -2189,13 +2277,22 @@
   // seal (and whenever the selection changes, below) so the next frame starts blank and falls back
   // to the auto CEC9xxx id.
   let sealName = $state("");
+  // IC-maker variant families: the family tag the next seal becomes a VARIANT of (the seal panel's
+  // "Variant of …" dropdown; "" = a fresh "New IC"). Reset after each seal + when leaving the die.
+  let sealVariantOf = $state("");
+  /** Whether `tag` is currently a placeable user-IC seal-into target (a family or a single IC that a
+   * second seal would promote). Guards the dropdown value against a since-removed target. */
+  function hasFamilyTarget(tag: string): boolean {
+    return userIcFamilyTargets().some((t) => t.tag === tag);
+  }
   // Seal the selected frame + its wired circuit into a placeable sealed IC. The board does the
   // capture + collapse (drops the frame and internals, places the new chip where the frame sat);
   // an empty name lets userIc auto-assign the next CEC9xxx. The board reselects the new instance.
   function sealSelected(): void {
     if (!selPart || !board || !isFrame(selPart.kind)) return;
-    board.sealFrame(selPart.id, sealName.trim() || undefined);
+    const tag = board.sealFrame(selPart.id, sealName.trim() || undefined);
     sealName = "";
+    if (tag) syncLibrary(tag, "sealed"); // mirror the sealed kind into the personal library
   }
 
   // ---------------------------------------------------------------------------
@@ -2425,6 +2522,7 @@
     if (!drill || !board) return;
     const ctx = drill;
     const outer = mutate ? mutate(ctx.outerSnapshot) : ctx.outerSnapshot;
+    sealVariantOf = ""; // reset the "Variant of …" choice when leaving the die editor
     // Close any open port-pad name editor so it doesn't linger over the outer board.
     if (pinNameEdit) cancelPinNameEdit();
     // Leave die mode BEFORE the swap, so swapGraph's onChange sees the outer board with `drill`
@@ -2482,19 +2580,36 @@
       const frame = snap.components.find((c) => c.id === ctx.innerFrameId);
       resealUserIc(ctx.editingTag, snap, ctx.innerFrameId, frame?.pinNames);
       sealName = "";
+      // Keep the personal library in sync with the re-sealed circuit (upsert by tag).
+      syncLibrary(ctx.editingTag, "sealed");
       // Just leave the die — the outer board is restored verbatim (instances already carry the tag,
       // and re-deriving PART_KINDS[tag] in resealUserIc refreshed their footprint/pin labels).
       exitDie();
       return;
     }
 
+    // "Variant of …": when a family is chosen, append this die as a new variant of it (cap.tag is the
+    // FAMILY tag); else a fresh top-level seal. A package mismatch makes captureSeal refuse (null).
+    const intoFamily =
+      sealVariantOf && hasFamilyTarget(sealVariantOf)
+        ? sealVariantOf
+        : undefined;
     const cap = captureSeal(
       live,
       ctx.innerFrameId,
       sealName.trim() || undefined,
+      intoFamily,
     );
-    if (!cap) return;
+    if (!cap) {
+      circuitWarning = intoFamily
+        ? "Couldn't add as a variant: a variant must use the SAME package (archetype + pin count) as the family. Seal it as a new IC, or match the package."
+        : "Couldn't seal this die. Pick a different name (it may collide with a built-in part).";
+      return;
+    }
     sealName = "";
+    sealVariantOf = "";
+    // Mirror the just-sealed kind into the personal library so it's placeable from any board, forever.
+    syncLibrary(cap.tag, "sealed");
     // The die is now a sealed IC: drop its in-progress inner graph (the registered UserIc carries
     // the authored circuit from here on) and restore the outer board with the placeholder re-kinded
     // to the sealed chip where it sat.
@@ -2754,6 +2869,7 @@
       hasTiers(kind) ||
       hasDiodeTypes(kind) ||
       hasLedColors(kind) ||
+      hasUserIcVariants(kind) ||
       isDigitalPart(kind) ||
       isBehavioralPart(kind) ||
       kind === "PULSE" ||
@@ -3011,6 +3127,7 @@
     // byte-for-byte as before (and the fields are additive — older builds ignore them). version 2
     // marked the userIcs-aware shape; version 3 adds innerDies.
     const userIcs = userIcsForGraph(graph);
+    const userIcFamilies = userIcFamiliesForGraph(graph);
     const innerDies = innerDiesForSaveOf(graph);
     const payload = {
       format: "cec-circuit",
@@ -3018,6 +3135,7 @@
       savedAt: new Date().toISOString(),
       graph,
       ...(userIcs.length > 0 ? { userIcs } : {}),
+      ...(userIcFamilies.length > 0 ? { userIcFamilies } : {}),
       ...(innerDies.length > 0 ? { innerDies } : {}),
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
@@ -3051,6 +3169,7 @@
           format?: string;
           graph?: unknown;
           userIcs?: UserIc[];
+          userIcFamilies?: UserIcFamilySidecar[];
           innerDies?: InnerDie[];
         };
         const graph =
@@ -3060,9 +3179,14 @@
         }
         resetDieState(); // abandon any open die — the outer board is being replaced
         // Re-register any embedded sealed-IC defs BEFORE loading, so the placed CEC9xxx kinds resolve
-        // (an older save with no userIcs registers nothing — it loads exactly as before).
+        // (an older save with no userIcs registers nothing — it loads exactly as before). Then regroup
+        // any variant families from the sidecar (after the flat defs, which include the child tags) so a
+        // placed family tag resolves + shows its variant picker. Bump libRev so any newly-registered
+        // single ICs surface in "My ICs" (families show after a placement embeds + the user saves).
         if (parsed && parsed.format === "cec-circuit") {
           registerUserIcs(parsed.userIcs ?? []);
+          registerUserIcFamilies(parsed.userIcFamilies);
+          libRev++;
         }
         const snap = graph as GraphSnapshot;
         // A RAW die snapshot saved in isolation (a `__DIE_*` graph — the owner's existing die files):
@@ -3395,7 +3519,16 @@
       >
     </div>
     {#if leftTab === "parts"}
-      {#snippet partRow(part: (typeof PARTS)[number])}
+      {#snippet partRow(part: {
+        tag: string;
+        name: string;
+        desc: string;
+        tier: string;
+        color: string;
+        // When set (a "My ICs" row), draw a package pin-ring thumbnail of this kind instead of the tag
+        // text — a built-in PARTS row leaves it undefined and keeps its terse tag glyph.
+        glyphKind?: string;
+      })}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <li
@@ -3406,7 +3539,38 @@
           onclick={() => toggleArm(part.tag)}
           title="Click to arm for placement, or drag onto the board"
         >
-          <span class="part-glyph">{part.tag}</span>
+          {#if part.glyphKind}
+            {@const pins = packageGlyphPins(part.glyphKind)}
+            <span class="part-glyph part-glyph-ic">
+              {#if pins}
+                <svg
+                  viewBox="0 0 {GLYPH_BOX} {GLYPH_BOX}"
+                  width="30"
+                  height="30"
+                  aria-hidden="true"
+                >
+                  <rect
+                    x="7"
+                    y="7"
+                    width={GLYPH_BOX - 14}
+                    height={GLYPH_BOX - 14}
+                    rx="2"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1"
+                    opacity="0.55"
+                  />
+                  {#each pins as p (p.cx + "," + p.cy)}
+                    <circle cx={p.cx} cy={p.cy} r="1.6" fill="currentColor" />
+                  {/each}
+                </svg>
+              {:else}
+                IC
+              {/if}
+            </span>
+          {:else}
+            <span class="part-glyph">{part.tag}</span>
+          {/if}
           <span class="part-body">
             <span class="part-name">{part.name}</span>
             <span class="part-desc">{part.desc}</span>
@@ -3479,6 +3643,10 @@
       />
       {#if partSearch.trim()}
         {@const q = partSearch.trim().toLowerCase()}
+        {@const icHits = savedIcParts.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) || p.tag.toLowerCase().includes(q),
+        )}
         {@const hits = PARTS.filter(
           (p) =>
             p.name.toLowerCase().includes(q) ||
@@ -3486,8 +3654,11 @@
             p.desc.toLowerCase().includes(q) ||
             (PART_SYNONYMS[p.tag] ?? []).some((s) => s.includes(q)),
         )}
-        {#if hits.length > 0}
+        {#if hits.length > 0 || icHits.length > 0}
           <ul class="part-list scroll">
+            {#each icHits as part (part.tag)}
+              {@render partRow(part)}
+            {/each}
             {#each hits as part (part.name)}
               {@render partRow(part)}
             {/each}
@@ -3497,6 +3668,22 @@
         {/if}
       {:else}
         <div class="part-cats scroll">
+          <!-- "My ICs" — the personal IC library (docs/ic-library-and-variants.md). Rendered FIRST, and
+               only when non-empty, so a fresh player never sees an empty category. Each row places via
+               the SAME arm/drag path as a built-in (registerLibrary populated PART_KINDS[tag]). -->
+          {#if savedIcParts.length > 0}
+            <details class="part-cat" open>
+              <summary class="part-cat-head">
+                <span class="part-cat-name">My ICs</span>
+                <span class="part-cat-count">{savedIcParts.length}</span>
+              </summary>
+              <ul class="part-list">
+                {#each savedIcParts as part (part.tag)}
+                  {@render partRow(part)}
+                {/each}
+              </ul>
+            </details>
+          {/if}
           {#each PART_CATEGORIES as cat (cat)}
             {@const groups = familyGroups(cat)}
             {#if groups.length > 0}
@@ -3644,6 +3831,22 @@
           <button
             class="chip-val {selVariant() === i ? 'is-active' : ''}"
             onclick={() => setVariant(i)}>{col.label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if hasUserIcVariants(kind)}
+      {@const variants = userIcVariants(kind) ?? []}
+      <!-- USER-IC VARIANT (a player-made family): pick which sealed inner circuit this placed instance
+           is. Reuses the same selVariant/setVariant dual-target path as diode/LED variants — it
+           read/writes Component.variant (an integer index), and flatten resolves it to that variant's
+           authored die BEFORE buildNetlist (a pure graph→graph choice; golden-safe). -->
+      <div class="insp-sub">variant</div>
+      <div class="insp-chips wrap">
+        {#each variants as v, i (v.tag)}
+          <button
+            class="chip-val {selVariant() === i ? 'is-active' : ''}"
+            onclick={() => setVariant(i)}>{v.name}</button
           >
         {/each}
       </div>
@@ -4147,6 +4350,22 @@
                 if (e.key === "Enter") dieSeal();
               }}
             />
+            <!-- "Variant of …": seal this die as a new VARIANT of an existing IC (grouping several
+                 sealed inner circuits under one placeable family, picked per-instance in the inspector).
+                 Default "New IC" = a fresh top-level seal. A variant must share the family's package. -->
+            {#if userIcFamilyTargets().length > 0}
+              <select
+                class="insp-name mono die-seal-variant"
+                bind:value={sealVariantOf}
+                aria-label="Seal as a variant of an existing IC"
+                title="Seal as a new variant of an existing IC (same package), or as a new IC"
+              >
+                <option value="">New IC</option>
+                {#each userIcFamilyTargets() as t (t.tag)}
+                  <option value={t.tag}>Variant of {t.name}</option>
+                {/each}
+              </select>
+            {/if}
           {/if}
           <div class="die-actions">
             <button

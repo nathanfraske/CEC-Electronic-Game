@@ -43,6 +43,43 @@ export interface TierOpts {
    * ⇒ the drawer uses its own default edge placement (see {@link anchorPt}).
    */
   anchors?: TierAnchor[];
+  /**
+   * The part's current **on-screen magnification** — px-per-world-px (the camera's
+   * world scale at the board level; `s · cumulativeScale · cameraZoom` inside an opened
+   * IC). The recursive-LoD leaf (Phase 3) reads it so a drawer can hand off from its
+   * device illustration to a DEEPER tier once the part is big enough on screen (the
+   * MOSFET silicon cross-section past {@link SILICON_ZOOM}). Absent ⇒ no deep-tier
+   * handoff fires — the info panel / codex (which paint a fixed-size illustration with
+   * no camera) pass nothing, so they always show the device tier unchanged.
+   */
+  absScale?: number;
+}
+
+/**
+ * On-screen magnification (px-per-world-px) at which a device-detail drawer hands off
+ * to its **silicon cross-section** leaf (Phase 3, the five-tier glyph's tier 5). Chosen
+ * well DEEPER than {@link TierOpts.absScale}'s device-tier entry bar (the board's
+ * `TIER_ZOOM = 2.2`), so the device illustration is already read clearly before the
+ * silicon takes over; the recursive dive's `MAX_SCALE = 1000` leaves ample headroom
+ * above it. The handoff cross-fades over {@link SILICON_ZOOM}..{@link SILICON_ZOOM_FULL}.
+ */
+export const SILICON_ZOOM = 9;
+/** Upper end of the device→silicon cross-fade: at/above this the silicon is fully opaque
+ * and the device illustration has faded out (a smooth swap, not a hard cut). */
+export const SILICON_ZOOM_FULL = 15;
+
+/**
+ * The device→silicon cross-fade weight in [0,1] for an on-screen magnification `absScale`
+ * (px-per-world-px): `0` below {@link SILICON_ZOOM} (pure device tier), ramping with a
+ * smoothstep to `1` at/above {@link SILICON_ZOOM_FULL} (pure silicon). `undefined`
+ * `absScale` (info panel / codex — no camera) ⇒ `0`, so they never leave the device tier.
+ */
+export function siliconBlend(absScale: number | undefined): number {
+  if (absScale === undefined) return 0;
+  const t = clamp01(
+    (absScale - SILICON_ZOOM) / (SILICON_ZOOM_FULL - SILICON_ZOOM),
+  );
+  return t * t * (3 - 2 * t);
 }
 
 /** One terminal's anchor: where a named pin lands inside the illustration's box. */
