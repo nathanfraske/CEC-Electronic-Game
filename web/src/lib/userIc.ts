@@ -18,10 +18,13 @@ import {
   isJunctionRef,
   isPinRef,
   framePackage,
+  isFrame,
   type GraphSnapshot,
   type Endpoint,
   type PartKind,
   type Pin,
+  type PinRole,
+  type PinTest,
   type Wire,
   type Junction,
   type NetLabel,
@@ -53,6 +56,14 @@ export interface UserIc {
    * existing save is byte-identical and the netlist is never affected.
    */
   role?: "ic" | "subassembly";
+  /**
+   * Optional SEMANTIC pin roles by pin index ({@link PinRole}: in / out / vcc / gnd / clk) — what each
+   * pin *is*, read by Tape-out (net→pad mapping) and the characterization sweep (drive vs observe).
+   * Sparse/absent ⇒ unknown (callers fall back to name/stimulus heuristics). Derived at capture from the
+   * frame's authoring stimuli + pin names ({@link derivePinRoles}); pure metadata, never affects the
+   * netlist (the `pinNames` pattern).
+   */
+  pinRoles?: PinRole[];
 }
 
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
@@ -693,6 +704,93 @@ export function flattenUserIcs(
 /** What {@link captureSeal} sealed: the new IC's `tag` plus the LIVE-graph ids it consumed,
  * so the caller (board.ts) can collapse the frame + its circuit — delete those, drop a placed
  * instance of `tag` where the frame sat, and re-point any external wires onto the instance. */
+/** Best-effort {@link PinRole} for a pin from its authoring stimulus + name (§2.9). The stimulus
+ * (`pinTests`) authoritatively tags the rails/inputs the player wired; the name fills in the rest
+ * (notably the OUTPUT, which carries no stimulus). Returns a sparse array (unknown pins left unset). */
+export function derivePinRoles(
+  pinNames: (string | undefined)[] | undefined,
+  pinTests: (PinTest | null)[] | undefined,
+  pinCount: number,
+): PinRole[] {
+  const roles: PinRole[] = [];
+  for (let i = 0; i < pinCount; i++) {
+    const t = pinTests?.[i];
+    if (t?.role === "gnd" || t?.role === "vcc" || t?.role === "in") {
+      roles[i] = t.role;
+      continue;
+    }
+    const byName = roleFromName((pinNames?.[i] ?? "").trim().toUpperCase());
+    if (byName) roles[i] = byName;
+  }
+  return roles;
+}
+
+function roleFromName(n: string): PinRole | undefined {
+  switch (n) {
+    case "VCC":
+    case "VDD":
+    case "VS":
+      return "vcc";
+    case "GND":
+    case "VSS":
+    case "GROUND":
+      return "gnd";
+    case "CLK":
+    case "CLOCK":
+    case "CK":
+      return "clk";
+    case "Y":
+    case "Q":
+    case "OUT":
+    case "O":
+    case "F":
+      return "out";
+    case "A":
+    case "B":
+    case "C":
+    case "D":
+    case "IN":
+    case "I":
+      return "in";
+    default:
+      return undefined;
+  }
+}
+
+/** The integration-scale bands (real VLSI ladder), a derived display/sort label. */
+export type IntegrationTier = "SSI" | "MSI" | "LSI" | "VLSI" | "ULSI";
+
+/** Count the active devices in a cell's FULL expansion — every placed non-frame component is one
+ * device; a placed user-IC instance recurses into its def. A path-set guards self-reference (the same
+ * cycle safety as `flattenUserIcs`' MAX_DEPTH). */
+function countDevices(def: UserIc, path: Set<string>): number {
+  if (path.has(def.tag)) return 0;
+  path.add(def.tag);
+  let n = 0;
+  for (const c of def.graph.components) {
+    if (isFrame(c.kind)) continue; // the die frame is structure, not a device
+    const nested = getUserIc(c.kind);
+    n += nested ? countDevices(nested, path) : 1;
+  }
+  path.delete(def.tag);
+  return n;
+}
+
+/**
+ * The integration-tier band (SSI → ULSI) of a sealed cell, from a game-scaled device count over its
+ * full recursive expansion. A pure DERIVED label — never hashed, never crosses the wasm boundary; the
+ * bin uses it as a sort/group key + badge. (Thresholds are tunable; game-scaled to player builds, not
+ * the literal textbook transistor decades.)
+ */
+export function integrationTier(def: UserIc): IntegrationTier {
+  const n = countDevices(def, new Set());
+  if (n < 12) return "SSI";
+  if (n < 100) return "MSI";
+  if (n < 1000) return "LSI";
+  if (n < 100000) return "VLSI";
+  return "ULSI";
+}
+
 export interface SealCapture {
   /** the placeable kind tag the seal registered (the auto `CEC9xxx`, or the chosen name). */
   tag: string;
@@ -894,6 +992,18 @@ export function captureSeal(
     };
   }
 
+  // Derive the semantic pin roles (§2.9) from the player's authoring stimuli + pin names, so Tape-out
+  // and the characterization sweep know which pins drive / observe / power. Sparse — absent if nothing
+  // resolved (then callers fall back to heuristics). Pure metadata; never affects the netlist.
+  const derivedRoles = derivePinRoles(
+    framePinNames,
+    frame.pinTests,
+    pkg.pinCount,
+  );
+  const pinRolesField = derivedRoles.some((r) => r)
+    ? { pinRoles: derivedRoles }
+    : {};
+
   const tag = trimmed || nextAutoTag();
   registerUserIc({
     tag,
@@ -902,6 +1012,7 @@ export function captureSeal(
     frameId,
     graph: snapshot,
     ...pinNamesField,
+    ...pinRolesField,
     // role defaults to 'ic' (absent) so every existing seal/save is byte-identical; only a free-form
     // box-capture (P4) passes 'subassembly'. A package-authored seal stays board-placeable directly.
     ...(role && role !== "ic" ? { role } : {}),

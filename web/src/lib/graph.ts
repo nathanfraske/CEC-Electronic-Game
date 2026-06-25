@@ -214,6 +214,15 @@ export interface PinTest {
   value: number;
 }
 
+/**
+ * A sealed cell's SEMANTIC pin role (cell-characterization arc, §2.9) — what a pin *is*, persisted on
+ * the sealed {@link UserIc} (its `pinRoles`), distinct from the throwaway authoring-only
+ * {@link PinTestRole} stimulus. `in`/`clk` are driven inputs, `out` is observed, `vcc`/`gnd` are the
+ * rails. Read by Tape-out (which pin maps to which package pad) and the characterization sweep (which
+ * pins to drive vs observe). Absent ⇒ unknown (callers fall back to name/stimulus heuristics).
+ */
+export type PinRole = "in" | "out" | "vcc" | "gnd" | "clk";
+
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
  * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */
 export const AC_DEFAULT_AMP = 5;

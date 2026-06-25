@@ -72,6 +72,7 @@
     userIcVariants,
     hasUserIcVariants,
     userIcFamilyTargets,
+    integrationTier,
     type UserIc,
     type UserIcFamilySidecar,
   } from "./lib/userIc";
@@ -1604,7 +1605,9 @@
       desc:
         `${e.ic.package.archetype} · ${e.ic.package.pinCount}-pin` +
         (n > 1 ? ` · ${n} variants` : ""),
-      tier: "★",
+      // The derived SSI→ULSI integration-tier badge (device count over the cell's full expansion),
+      // shown in the row's tier slot so the bin reads at a glance how big a part is.
+      tier: integrationTier(e.ic),
       color: "var(--accent)",
       glyphKind: tag,
     };

@@ -22,6 +22,8 @@ import {
   getUserIc,
   captureSeal,
   isReservedTag,
+  derivePinRoles,
+  integrationTier,
   type UserIc,
 } from "./userIc";
 
@@ -413,6 +415,28 @@ describe("IC variants — determinism contract", () => {
     } finally {
       unregisterUserIc("RoleSub");
     }
+  });
+
+  it("pin roles + integration tier (P3): derivePinRoles tags from stimulus+name; integrationTier counts devices", () => {
+    // Stimulus authoritatively tags rails/inputs; the name fills in the output (which carries no test).
+    const roles = derivePinRoles(
+      ["Y", "A", "VCC", "GND"],
+      [
+        null,
+        { role: "in", value: 0 },
+        { role: "vcc", value: 5 },
+        { role: "gnd", value: 0 },
+      ],
+      4,
+    );
+    expect(roles[0]).toBe("out"); // Y, by name (no stimulus on the output)
+    expect(roles[1]).toBe("in"); // A, by stimulus
+    expect(roles[2]).toBe("vcc");
+    expect(roles[3]).toBe("gnd");
+
+    // integrationTier counts active devices over the expansion (the die frame is skipped): a 1-part
+    // cell is SSI.
+    expect(integrationTier(rPackageDef("TierR", 1000))).toBe("SSI");
   });
 
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {
