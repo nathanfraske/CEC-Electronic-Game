@@ -4910,11 +4910,11 @@
           {#if isFreeFormFrame(drill.frameTag) && freeFormBox}
             <!-- Free-form (box-captured) subassembly (§4.10): resize the BOX — "expand and contract the
                  size of the block". The pin COUNT is fixed by the capture (each lead is a real crossing);
-                 a pin that sat on a shrunk wall re-pins onto the new edge. Move pins by dragging them on
-                 the wall (the pin-drag is a follow-up). -->
+                 a pin that sat on a shrunk wall re-pins onto the new edge. To MOVE a pin along the edge,
+                 Alt-drag it (a plain drag starts a wire from the pad). -->
             <div
               class="die-pins"
-              title="Resize this subassembly's box — drag a wall pin to move it"
+              title="Resize this subassembly's box (Alt-drag a wall pin to move it along the edge)"
             >
               <span class="die-pins-label">Box</span>
               <button

@@ -5,6 +5,41 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (158) — FEATURE (owner): move free-form frame pins along the box edge (Alt-drag)
+
+**State:** 🟢 PR #227 open; **adversarial review done** (1 real bug found + FIXED, see below). Web/interaction
+only, golden untouched, **126 web tests** (+4), full gate green.
+
+**Audit (review workflow, 3 dims → verify):** found **1 real bug** — a pending wire pre-empted the Alt-drag.
+A single click on a pad leaves a wire PENDING (KiCad click-to-continue), and the pending-wire branch at the
+TOP of `onPointerDown` ran before the (lower) Alt-pin branch and didn't check `altKey`, so an Alt-press on a
+2nd pad got consumed by `continueOrFinishWiring` → wired the two pads together instead of moving the pin.
+**Fixed:** the Alt+free-form-frame-pin check now runs FIRST in `onPointerDown` (before the pending-wire
+branch) and `cancelWiring()`s any pending wire. The 2nd finding (Ctrl-Z doesn't restore a moved pin) is the
+SAME pre-existing geom-undo gap as box-resize (geom lives in the global registry, not the graph) — out of
+scope, documented backlog.
+
+**Feature:** inside a free-form subassembly die, **Alt-drag a frame pin** → it slides to the nearest box
+edge (snapping around corners); incident wires follow live. A plain drag still starts a wire from the pad
+(unchanged) — Alt disambiguates the wire-from-pin conflict the backlog flagged.
+
+**Implementation (board.ts):** new `pinDrag {pinIndex, moved}` drag state. onPointerDown: an Alt+press on a
+free-form die-frame pin arms `pinDrag` + `pendingUndo` and returns before the wire-start branch.
+onPointerMove → `movePinDrag(wp)`: `snapToBoxEdge(cursorCell − frame.cell, w, h)` → if the cell changed,
+rewrite that one pin's `dx/dy`, `registerFreeFormFrame` in place, rebuild the frame node + redrawWires/
+Selection (the same mechanism `resizeFreeFormBox` uses, for one pin). onPointerUp: commit (commitUndo +
+onChange + onPersist) iff `moved`. Branch sits before junctionDrag in move/up; no other gesture is armed
+during a pinDrag. `pointerupoutside` also clears it.
+- **`snapToBoxEdge(relCol,relRow,w,h)→{dx,dy}`** (boardRender.ts, pure, headless-tested): clamp inside the
+  box, snap to the nearest of 4 edges (ties top→bottom→left→right), keep the along-edge coord.
+- **Golden/netlist-safe:** connectivity is wire/junction/label-driven (netlist.ts:925), NOT cell-coincidence
+  — moving a pin's CELL changes only geometry/routing, never the node mapping (pin INDEX is stable).
+- **Persistence:** mirrors box-resize; reseal reads the live geom via `freeFormGeom` (userIc.ts). Shares
+  box-resize's known limit: geom lives in the global registry, so in-die Ctrl+Z doesn't restore it (backlog).
+- UI: the die-bar tooltip now reads "…Alt-drag a wall pin to move it along the edge".
+
+---
+
 ## 2026-06-25 (157) — FIX (owner): floor free-form frame-pin leg width
 
 **State:** 🟢 **about to PR**. Web/render only, golden untouched, 122 web tests, full gate green. Owner

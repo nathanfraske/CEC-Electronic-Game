@@ -849,3 +849,30 @@ export function routeForWire(
   }
   return out;
 }
+
+/**
+ * Project a box-relative cell `(relCol, relRow)` onto the NEAREST perimeter cell of a `w×h` free-form
+ * subassembly box: clamp it inside the box, then snap whichever of the four edges is closest (the
+ * along-edge coordinate is kept, clamped to `[0, size-1]`). So an Alt-dragged frame pin always lands ON an
+ * edge, sliding around corners as the cursor crosses them. Ties resolve top → bottom → left → right. Pure
+ * geometry (no Pixi) — matches the box-edge convention `clampPinToBox` keeps; returned as `{dx, dy}` for a
+ * {@link FreeFormGeom} pin.
+ */
+export function snapToBoxEdge(
+  relCol: number,
+  relRow: number,
+  w: number,
+  h: number,
+): { dx: number; dy: number } {
+  const cx = Math.max(0, Math.min(w - 1, relCol));
+  const cy = Math.max(0, Math.min(h - 1, relRow));
+  const dLeft = cx; // distance to dx=0
+  const dRight = w - 1 - cx; // distance to dx=w-1
+  const dTop = cy; // distance to dy=0
+  const dBottom = h - 1 - cy; // distance to dy=h-1
+  const m = Math.min(dLeft, dRight, dTop, dBottom);
+  if (m === dTop) return { dx: cx, dy: 0 };
+  if (m === dBottom) return { dx: cx, dy: h - 1 };
+  if (m === dLeft) return { dx: 0, dy: cy };
+  return { dx: w - 1, dy: cy };
+}
