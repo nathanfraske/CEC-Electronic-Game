@@ -17,6 +17,7 @@ import {
   PART_KINDS,
   isJunctionRef,
   isPinRef,
+  endpointKey,
   framePackage,
   frameTag,
   dieFrameTag,
@@ -31,7 +32,7 @@ import {
   type Junction,
   type NetLabel,
 } from "./graph";
-import { packageLayout } from "./packages";
+import { packageLayout, packageOptions } from "./packages";
 
 /** A sealed, user-authored IC. */
 export interface UserIc {
@@ -1071,4 +1072,254 @@ export function captureSeal(
     capturedJunctionIds: [...juncs],
     frameCell: { col: frame.cell.col, row: frame.cell.row },
   };
+}
+
+/** Where the synthesized frame is anchored inside a captured region's graph (mirrors the die editor's
+ * origin; the exact cell is presentation-only — connectivity is what the netlist reads). */
+const REGION_FRAME_ORIGIN = { col: 8, row: 8 };
+
+/** Pick the smallest stock package whose pin count covers `pins` (SOT-23-3/5/6 → VSSOP-8 → DIP-8/14/16),
+ * or undefined if more pins are needed than the largest package offers. */
+function pickPackageForPins(
+  pins: number,
+): { archetype: string; pinCount: number } | undefined {
+  return packageOptions()
+    .slice()
+    .sort((a, b) => a.pinCount - b.pinCount)
+    .find((o) => o.pinCount >= pins);
+}
+
+/** The result of a region capture: the registered subassembly tag + its inferred pin count. */
+export interface RegionCapture {
+  tag: string;
+  pinCount: number;
+}
+
+/**
+ * OVERWORLD CAPTURE (§4.9) — turn a box-selected region of the board into a bare `role='subassembly'`
+ * cell, inferring the pinout from the nets that cross the selection boundary. NON-DESTRUCTIVE: it reads
+ * the board and registers a new subassembly (which appears in "My Subassemblies"); it does NOT modify
+ * the player's board.
+ *
+ * The boundary rule: union-find the wire graph into nets; a net with at least one endpoint INSIDE the
+ * region (a pin on a selected part) AND at least one OUTSIDE (a pin on a non-selected part — including a
+ * board VCC/GND/source) is a **pin** of the cell. INTERNAL nets (entirely inside) keep their wiring
+ * verbatim; for each BOUNDARY net every inside pin is fanned to the synthesized frame's lead, so the
+ * region-side stays one node and the outside connection becomes the package pin. A region with no
+ * boundary net (nothing leaves the selection) or more boundary nets than the largest package holds is
+ * refused (returns undefined). Power pins are auto-named from the outside source kind (GND / VCC).
+ *
+ * Web-only graph→graph: nothing runs in sim-core or crosses the hashed boundary, and the golden places
+ * no user IC. A captured subassembly reaches the board via Tape out ({@link tapeOut}).
+ */
+export function captureRegion(
+  graph: BoardGraph,
+  regionIds: number[],
+  name?: string,
+): RegionCapture | undefined {
+  const region = new Set(regionIds.filter((id) => graph.components.has(id)));
+  if (region.size === 0) return undefined;
+  const trimmed = name && name.trim() ? name.trim() : "";
+  if (trimmed && isReservedTag(trimmed)) return undefined;
+
+  const full = graph.serialize();
+
+  // Union-find over wire endpoints (pins + junctions), keyed by endpointKey — the same net model
+  // buildNetlist uses. (Net-label global aliases are out of scope here, as in captureSeal.)
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    let root = k;
+    for (;;) {
+      const p = parent.get(root);
+      if (p === undefined) {
+        parent.set(root, root);
+        break;
+      }
+      if (p === root) break;
+      root = p;
+    }
+    // Path-compress every node on the way to the root.
+    let cur = k;
+    while (cur !== root) {
+      const next = parent.get(cur) as string;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  const union = (a: string, b: string): void => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const w of full.wires) union(endpointKey(w.from), endpointKey(w.to));
+
+  // Classify each net by walking every wire endpoint: collect the inside pins (deduped) on region
+  // parts, whether it touches an outside part, and the kinds of those outside parts (for power-pin
+  // naming).
+  const insidePins = new Map<string, Map<string, Endpoint>>(); // root -> (pinKey -> PinRef)
+  const hasOutside = new Set<string>();
+  const outsideKinds = new Map<string, Set<string>>();
+  const noteEndpoint = (e: Endpoint): void => {
+    if (!isPinRef(e)) return;
+    const root = find(endpointKey(e));
+    if (region.has(e.componentId)) {
+      let m = insidePins.get(root);
+      if (!m) insidePins.set(root, (m = new Map()));
+      m.set(endpointKey(e), e);
+    } else {
+      hasOutside.add(root);
+      const kind = full.components.find((c) => c.id === e.componentId)?.kind;
+      if (kind) {
+        let s = outsideKinds.get(root);
+        if (!s) outsideKinds.set(root, (s = new Set()));
+        s.add(kind);
+      }
+    }
+  };
+  for (const w of full.wires) {
+    noteEndpoint(w.from);
+    noteEndpoint(w.to);
+  }
+
+  // Boundary roots become pins (deterministic order: by the net's smallest inside-pin key). Internal
+  // roots keep their wiring.
+  const boundaryRoots = [...insidePins.keys()]
+    .filter((r) => hasOutside.has(r))
+    .sort((a, b) => {
+      const ka = [...insidePins.get(a)!.keys()].sort()[0];
+      const kb = [...insidePins.get(b)!.keys()].sort()[0];
+      return ka < kb ? -1 : ka > kb ? 1 : 0;
+    });
+  const internalRoots = new Set(
+    [...insidePins.keys()].filter((r) => !hasOutside.has(r)),
+  );
+  if (boundaryRoots.length === 0) return undefined; // nothing leaves the selection — no pins
+  const pkg = pickPackageForPins(boundaryRoots.length);
+  if (!pkg) return undefined; // more boundary nets than the largest package holds
+
+  // Clone the region's components (preserve ids). The synthesized frame takes a fresh id above all of
+  // them, so no re-id pass is needed.
+  const capComps = full.components
+    .filter((c) => region.has(c.id))
+    .map((c) => ({
+      ...c,
+      cell: { ...c.cell },
+      ...(c.pinNames ? { pinNames: [...c.pinNames] } : {}),
+      ...(c.pinTests
+        ? { pinTests: c.pinTests.map((t) => (t ? { ...t } : null)) }
+        : {}),
+    }));
+  // Copy only INTERNAL-net wires (a boundary net's region wiring is replaced by the frame-pin fan).
+  const capWires: Wire[] = full.wires
+    .filter((w) => internalRoots.has(find(endpointKey(w.from))))
+    .map((w) => ({
+      id: w.id,
+      from: { ...w.from },
+      to: { ...w.to },
+      ...(w.waypoints && w.waypoints.length > 0
+        ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
+        : {}),
+    }));
+  // Junctions referenced by a copied internal wire.
+  const usedJ = new Set<number>();
+  for (const w of capWires) {
+    if (isJunctionRef(w.from)) usedJ.add(w.from.junctionId);
+    if (isJunctionRef(w.to)) usedJ.add(w.to.junctionId);
+  }
+  const capJuncs: Junction[] = (full.junctions ?? [])
+    .filter((j) => usedJ.has(j.id))
+    .map((j) => ({
+      id: j.id,
+      cell: { ...j.cell },
+      ...(j.free ? { free: true } : {}),
+    }));
+
+  // The synthesized die frame: a fresh id above every captured id; pins named/role-tagged from the
+  // outside source kind where it's a rail (GND / a V source), else generic.
+  const maxId = (ids: number[]): number =>
+    ids.reduce((m, i) => Math.max(m, i), 0);
+  const frameId =
+    maxId([
+      ...capComps.map((c) => c.id),
+      ...capWires.map((w) => w.id),
+      ...capJuncs.map((j) => j.id),
+      ...(full.netLabels ?? []).map((l) => l.id),
+    ]) + 1;
+  const pinNames: string[] = [];
+  const pinRoles: PinRole[] = [];
+  boundaryRoots.forEach((root, i) => {
+    const kinds = outsideKinds.get(root) ?? new Set<string>();
+    if (kinds.has("GND")) {
+      pinNames[i] = "GND";
+      pinRoles[i] = "gnd";
+    } else if (kinds.has("V") || kinds.has("VAC") || kinds.has("PULSE")) {
+      pinNames[i] = "VCC";
+      pinRoles[i] = "vcc";
+    } else {
+      pinNames[i] = "P" + (i + 1);
+    }
+  });
+
+  const frameKind = dieFrameTag(frameTag(pkg.archetype, pkg.pinCount));
+  capComps.push({
+    id: frameId,
+    kind: frameKind,
+    cell: { ...REGION_FRAME_ORIGIN },
+    value: 0,
+    rot: 0,
+    pinNames: [...pinNames],
+  } as (typeof capComps)[number]);
+
+  // Boundary wires: fan every inside pin of boundary net i to frame pin i (so the region-side stays
+  // one node and the outside link becomes the package lead).
+  let nextW = maxId(capWires.map((w) => w.id)) + 1;
+  boundaryRoots.forEach((root, i) => {
+    for (const p of insidePins.get(root)!.values()) {
+      capWires.push({
+        id: nextW++,
+        from: { componentId: frameId, pinIndex: i },
+        to: { ...p },
+      });
+    }
+  });
+
+  // Carry net labels anchored on a captured internal endpoint (boundary nets are named by their pins).
+  const capLabels: NetLabel[] = (full.netLabels ?? [])
+    .filter((l) => {
+      if (isJunctionRef(l.at)) return usedJ.has(l.at.junctionId);
+      return isPinRef(l.at) && region.has(l.at.componentId);
+    })
+    .map((l) => ({
+      id: l.id,
+      name: l.name,
+      at: { ...l.at },
+      ...(l.pos ? { pos: { ...l.pos } } : {}),
+      ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
+      ...(l.color !== undefined ? { color: l.color } : {}),
+    }));
+
+  const snapshot: GraphSnapshot = {
+    components: capComps,
+    wires: capWires,
+    junctions: capJuncs,
+    netLabels: capLabels,
+    nextComponentId: maxId(capComps.map((c) => c.id)) + 1,
+    nextWireId: maxId(capWires.map((w) => w.id)) + 1,
+    nextJunctionId: maxId(capJuncs.map((j) => j.id)) + 1,
+    nextNetLabelId: maxId(capLabels.map((l) => l.id)) + 1,
+  };
+
+  const tag = trimmed || nextAutoTag();
+  registerUserIc({
+    tag,
+    name: trimmed || tag,
+    package: { archetype: pkg.archetype, pinCount: pkg.pinCount },
+    frameId,
+    graph: snapshot,
+    pinNames: [...pinNames],
+    ...(pinRoles.some((r) => r) ? { pinRoles: [...pinRoles] } : {}),
+    role: "subassembly",
+  });
+  return { tag, pinCount: boundaryRoots.length };
 }
