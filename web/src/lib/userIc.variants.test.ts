@@ -720,6 +720,45 @@ describe("IC variants — determinism contract", () => {
     }
   });
 
+  it("capture drops a crossing wire's OUTSIDE waypoints (the retargeted lead doesn't overshoot)", () => {
+    // A crossing wire with a bend OUTSIDE the box used to keep that outside waypoint after retargeting to
+    // the frame pin → the lead overshot past the pin (the owner's stray VCC stub). The outside routing
+    // must be dropped; only the inside part survives.
+    const b = new BoardGraph();
+    const v = place(b, "V", 0, 5, 5);
+    const r = place(b, "R", 12, 5, 1000);
+    const gnd = place(b, "GND", 30, 5);
+    const w = b.connect(
+      { componentId: v.id, pinIndex: 0 },
+      { componentId: r.id, pinIndex: 0 },
+    );
+    if (w) w.waypoints = [{ col: 3, row: 5 }]; // a bend OUTSIDE the box (between V and the left edge)
+    b.connect(
+      { componentId: r.id, pinIndex: 1 },
+      { componentId: gnd.id, pinIndex: 0 },
+    );
+    const cap = captureRegion(b, [r.id], "Over", {
+      minCol: 9,
+      minRow: 2,
+      maxCol: 18,
+      maxRow: 8,
+    });
+    expect(cap).not.toBeUndefined();
+    try {
+      const def = getUserIc("Over")!;
+      const lead = def.graph.wires.find(
+        (wr) =>
+          ("componentId" in wr.from && wr.from.componentId === def.frameId) ||
+          ("componentId" in wr.to && wr.to.componentId === def.frameId),
+      );
+      expect(lead).toBeDefined();
+      // The lone waypoint was outside the box → dropped, so the lead terminates cleanly at the frame pin.
+      expect((lead!.waypoints ?? []).length).toBe(0);
+    } finally {
+      unregisterUserIc("Over");
+    }
+  });
+
   it("capture characterizes pins (VCC / output) + auto-sets the die's stimulus", () => {
     // V → R (inside) → an outside passive load. The V-side net is the SUPPLY (VCC, driven); the load-side
     // net has no outside driver → an OUTPUT (observed, named Y — not a bare "P1"). The frame's per-pin

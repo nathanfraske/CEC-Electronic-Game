@@ -6,6 +6,16 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (150) — FIX (owner round 3): lead overshoot + non-interactable frame-pin wires
+
+Web only, golden untouched, 117 web tests.
+- ~~**Overshoot**~~ — a crossing wire's OUTSIDE waypoints are now dropped (filtered to `inBox`), so the
+  retargeted lead terminates cleanly at the frame pin instead of overshooting. Internal wires keep all
+  waypoints 1:1. `analyzeRegion` returns `inBox`. Tested.
+- ~~**Non-interactable frame-pin wires**~~ — a regression from PR #218: drawing frame-pin leads schematic
+  skipped `conduitDrawRoutes`, and conduit-mode `wireHitTest` only checks that map → un-clickable. Now the
+  schematic branch registers the route when conduit is active, so the leads are selectable again.
+
 ## 2026-06-25 (148) — FIX (owner round 2): capture junctions 1:1 + characterize + auto-stimulus
 
 Web/registry only, golden untouched, 116 web tests.
