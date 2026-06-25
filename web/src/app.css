@@ -172,8 +172,38 @@ body {
 
 .workspace {
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr) 300px;
+  grid-template-columns: var(--bin-w, 264px) minmax(0, 1fr) 300px;
   min-height: 0;
+  position: relative;
+}
+/* Drag handle riding the parts-bin / canvas column seam — widen the bin to fit a row's full controls. */
+.bin-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--bin-w, 264px);
+  width: 9px;
+  transform: translateX(-4px);
+  cursor: ew-resize;
+  z-index: 6;
+  touch-action: none;
+}
+.bin-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 0 0 4px;
+  width: 1px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.bin-resizer:hover::after,
+.bin-resizing .bin-resizer::after {
+  background: var(--accent);
+  box-shadow: 0 0 8px -2px var(--accent);
+}
+.bin-resizing {
+  cursor: ew-resize;
+  user-select: none;
 }
 
 /* Header ------------------------------------------------------------------ */
@@ -1296,6 +1326,10 @@ body {
   .workspace {
     grid-template-columns: 1fr;
     grid-auto-rows: minmax(160px, auto);
+  }
+  /* The single-column stack ignores --bin-w, so the column-seam handle has no seam to ride. */
+  .bin-resizer {
+    display: none;
   }
 
   .panel + .panel {

@@ -1054,6 +1054,43 @@
   let dragKind = "V";
   let leftTab = $state<"parts" | "examples">("parts");
   let partSearch = $state("");
+  // Resizable parts-bin column: width in px, drag the handle on its right edge. Persisted so the player's
+  // choice sticks (the default 264px clips a subassembly row's full control set — Edit/Characterize/Tape
+  // out/rename/remove — so widening reveals rename + remove). Clamped to a sane range.
+  const BIN_W_MIN = 220;
+  const BIN_W_MAX = 560;
+  let workspaceEl = $state<HTMLDivElement | null>(null);
+  let binW = $state(
+    (() => {
+      try {
+        const v = Number(localStorage.getItem("cec-bin-w"));
+        return v >= BIN_W_MIN && v <= BIN_W_MAX ? v : 264;
+      } catch {
+        return 264;
+      }
+    })(),
+  );
+  let binResizing = $state(false);
+  function startBinResize(e: PointerEvent): void {
+    binResizing = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    e.preventDefault();
+  }
+  function onBinResize(e: PointerEvent): void {
+    if (!binResizing || !workspaceEl) return;
+    const left = workspaceEl.getBoundingClientRect().left;
+    binW = Math.max(BIN_W_MIN, Math.min(BIN_W_MAX, e.clientX - left));
+  }
+  function endBinResize(e: PointerEvent): void {
+    if (!binResizing) return;
+    binResizing = false;
+    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    try {
+      localStorage.setItem("cec-bin-w", String(Math.round(binW)));
+    } catch {
+      /* ignore quota / disabled storage */
+    }
+  }
   // Save / load: a transient status line + the hidden file picker for Load.
   let ioMsg = $state<string | null>(null);
   let fileInput = $state<HTMLInputElement>();
@@ -3869,7 +3906,12 @@
   </div>
 </div>
 
-<div class="workspace">
+<div
+  class="workspace"
+  bind:this={workspaceEl}
+  style="--bin-w: {binW}px"
+  class:bin-resizing={binResizing}
+>
   <aside class="panel bin">
     <div class="bin-tabs">
       <button
@@ -4275,6 +4317,28 @@
       </div>
     {/if}
   </aside>
+
+  <!-- Drag handle on the parts-bin's right edge: widen the bin (e.g. to reveal a subassembly row's
+       rename/remove controls past Edit/Characterize/Tape out). Sits on the column seam; pointer-captured
+       so the drag tracks even over the canvas. Double-click resets to the default width. -->
+  <div
+    class="bin-resizer"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label="Resize parts panel"
+    title="Drag to resize the parts panel (double-click to reset)"
+    onpointerdown={startBinResize}
+    onpointermove={onBinResize}
+    onpointerup={endBinResize}
+    ondblclick={() => {
+      binW = 264;
+      try {
+        localStorage.setItem("cec-bin-w", "264");
+      } catch {
+        /* ignore */
+      }
+    }}
+  ></div>
 
   <!-- The shared part-CONFIGURATOR rows: the device's identity/quality axes (variant /
        tier / family / open-drain / load mode + step / PULSE waveform) that today only

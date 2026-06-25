@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (159) — FEATURE (owner): resizable parts bin + pin bug investigation
+
+**State:** 🟢 resizable bin **about to PR** (web/UI only, golden untouched, 126 web tests, gate green). Two
+other owner threads still open — see below.
+
+**Resizable parts bin (done):** the bin was a fixed 264px column, which CLIPS a subassembly row's full
+control set (Edit / ⊨ Characterize / ⬡ Tape out / ✎ rename / × remove) — so the owner couldn't reach
+rename/remove. Now a **drag handle on the bin↔canvas seam** resizes it: `--bin-w` CSS var on `.workspace`
+(`grid-template-columns: var(--bin-w,264px) …`), `binW` state clamped [220,560]px, persisted to
+`localStorage["cec-bin-w"]`, double-click resets to 264. Hidden under the 920px single-column media query.
+`.bin-resizer` rides the seam (pointer-captured so the drag tracks over the canvas). App.svelte + app.css.
+
+**OPEN — IN/OUT visual-relocation bug (owner report):** "IN/OUT visual pins relocated to the bottom, logical
+correct." **Could NOT reproduce from code.** Verified every path: (1) headless repro — moving VCC/GND via the
+exact `snapToBoxEdge`+`registerFreeFormFrame` logic PRESERVES IN/OUT (`{dx,dy}` unchanged); (2) `freeFormGeom`
+round-trips the stored geom faithfully; (3) `ComponentNode` reads pin dots from `kind.pins[i].dx/dy`
+(board.ts:6925) — the SAME source as wiring (`pinCell`, graph.ts) — so dots & wires can't desync; (4)
+`addNode` re-parents (`componentLayer.addChild`); (5) `kind()` recomputes footprint w/h from pins
+(graph.ts:1555) but does NOT move pins. The attached screenshots actually show IN/OUT at the SIDES (correct).
+**Need a screenshot SHOWING the bug + where (die editor vs placed IC).** Leading guess: the owner dragged
+IN/OUT and `snapToBoxEdge` snapped them to the bottom edge (a feel issue, not a desync) — ties resolve
+top→bottom→left→right and nearest-edge wins, which can surprise.
+
+**OPEN — pin-move feel:** owner: Alt-drag "feels a bit odd … requires a click + alt click." Plan (latitude
+given; AskUserQuestion tool kept erroring): an **"Edit pins" toggle** in the die-bar → plain-drag a pad to
+move it (no Alt) while the toggle is on; off → pads wire normally. Avoids the wire-from-pad collision that
+forced the Alt modifier. (Keep Alt-drag as a shortcut.)
+
+---
+
 ## 2026-06-25 (158) — FEATURE (owner): move free-form frame pins along the box edge (Alt-drag)
 
 **State:** 🟢 PR #227 open; **adversarial review done** (1 real bug found + FIXED, see below). Web/interaction
