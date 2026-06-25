@@ -658,3 +658,27 @@ Lab Notebook (already a planned progression reward) carries the "concepts as you
 record, so §10.1 and the codex are one build. Everyone shares one sandbox; the only
 difference between a novice and an EE is how much of the always-present explanation
 layer they choose to pull.
+
+---
+
+## 11. Successor panels (2026-06-25) — the Probe arc + the all-ages journey
+
+This brief is carried forward into two flagship design panels that **supersede the
+working-primer cold open with a failure-first, mascot-led arc** and build the full beginner
+journey around it. Both honour §10 (no levels; pull-not-pick) to the letter:
+
+- **[probe-teaching-arc.md]** — the scripted opening hook: the **Probe** (CEC's bench-bot
+  mascot) shows off a resistor-less LED that **blows up** when the player presses Run
+  (blameless *productive failure* — his board, not theirs) → add the current-limiting
+  resistor → the voltage divider → **build-from-scratch with per-session changed numbers** so
+  copying the layout provably fails. Two new web-side, golden-safe surfaces: the
+  magic-smoke-over-FAIL presentation and the seeded parametric anti-copy generator + a
+  value-aware grader (the loop still closes on topology; only the *contract* gates on the
+  measured spec).
+- **[beginner-onboarding-all-ages.md]** — the *system & journey* around the hook: the
+  curriculum ramp it seeds, the durable coaching layer (the Probe as one teacher across the
+  whole game — this §10 machinery personified), all-ages adaptation by pull, a first-class
+  accessibility/reach spec, and a no-dark-patterns retention loop. Five persona journey maps
+  span a pre-reader child + caregiver through an expert EE.
+
+The Probe is the **persona of this §10 coaching layer** — pulled, mutable, never a wall.

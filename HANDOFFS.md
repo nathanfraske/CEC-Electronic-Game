@@ -5,6 +5,51 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (130) — DESIGN: the Probe failure-first teaching arc + the all-ages beginner journey (two panels)
+
+**State:** 🟢 **docs-only** — no code, no `sim-core`, no `loop.ts`; golden `0xeaac…fa24` untouched by
+construction (these are design panels). Branch `claude/kind-turing-hdelb3`, **fast-forwarded onto the other
+active agent's work (`6911430`) before writing**, then doc edits on top. No verification gate (Markdown only).
+
+**Owner brief (verbatim spine):** open with **the Probe** (CEC's bench-bot mascot from criticalerrorcomputing.com)
+as the teaching persona — he proudly shows a **resistor-less LED across a source**, you press Run, it **blows
+up** → lesson 1 "you need a resistor" → a **voltage divider** (where the final resistor goes) →
+**build-from-scratch with the example always visible but the numbers changed** so copying fails and you must
+learn the *why*. Explicit focus: **all ages, all skill levels.**
+
+**Landed — two new flagship panels + cross-refs:**
+- **`docs/ui/probe-teaching-arc.md`** (NEW) — the scripted **4-act hook**, the **Probe persona** (the voice of
+  the §10 pull-not-pick coaching layer — pulled, mutable, never a wall), and **two new web-side golden-safe
+  mechanics**: (1) **magic-smoke over the unhashed FAIL mask** — verified `failed_elements` is NOT in
+  `snapshot_hash` and the rated-current check only *flags*, never alters the solve (sim-core `flag_and_clamp_fails`);
+  a wall-clock one-shot on the rising edge of `failedMask[led]`, animating across the freeze; (2) a **seeded
+  parametric anti-copy generator + a value-aware grader** — the loop still closes on topology (`graphShape ===
+  buildTarget`, so the board lights with *copied* values: "a circuit, not the *right* one"), and a NEW separate
+  **`specMet`** gate ships the *contract* on the measured `Vout` vs a per-session target.
+- **`docs/ui/beginner-onboarding-all-ages.md`** (NEW; overwrote an interim agent-written draft) — the **system
+  & journey** around the hook: the curriculum **ramp**, the **durable coaching system** (Probe as one teacher,
+  the Lab Notebook codex), **all-ages adaptation by pull (no levels)**, a first-class **accessibility/reach**
+  spec, **retention** (no-dark-patterns), + **five persona journey maps** (pre-reader child + caregiver → EE).
+- **Cross-refs:** `onboarding-first-run.md` **§11** (successor panels) + `game-progression.md` **§1.3** (first-beats
+  pointer). The panels reciprocally cross-link each other.
+
+**Method:** two parallel multi-lens **design-panel workflows** (readers → independent pedagogical/feasibility
+lenses → synthesis → 2 adversarial critics each; ~31 agents total). Both critics returned **SHIP-WITH-FIXES**;
+every BLOCKER/MAJOR + key MINOR was applied against the **live codebase** — corrected invented APIs:
+`firstRun`→`showIntro`/`seenIntro`; `showSolution` is **destructive** → the pinned example is a new
+non-destructive render; the grader is a **separate `specMet` gate**, not an AND on `complete`; the seed is a
+web-side `mulberry32`, never the sim's `SEED=1337`; tech-tree `PARTS.tier` vs quality-grade `Component.tier`;
+`FLOW_HZ` is a private const; `explainAsYouGo`/`seenConcepts` already persist; examples count is 51.
+
+**Next / owner eye:** the panels' **open questions** need owner calls — esp. **cold-open auto-run vs
+fire-on-Run** (Probe §9 #1, with a stated fallback), the **exam-placement** feedback to `game-progression §7 #2`,
+and the **solo-pre-reader MVP caveat**. Then implement from the **reuse-vs-new-surface** tables (smallest new
+surface: the Probe persona layer, the magic-smoke presentation, the shared grader/sampler + parametric
+generator). **Heads-up:** another agent is active on this branch (die-editor/zoom-meter) — these changes are
+docs-only and were rebased onto their latest before push.
+
+---
+
 ## 2026-06-25 (128) — Zoom meter → metric (no "cells"); MAX_SCALE 20 → 1000 (deep recursive dive)
 
 **State:** 🟢 branch `claude/kind-turing-hdelb3`. Two owner-feedback tweaks on the just-landed zoom meter.

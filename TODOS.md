@@ -6,6 +6,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (130) — DESIGN PANELS: the Probe teaching arc + all-ages beginner onboarding
+
+- ~~**Probe failure-first teaching-arc panel**~~ — DONE. `docs/ui/probe-teaching-arc.md`: the 4-act hook
+  (proud broken LED → blameless blow-up → resistor → divider → build-from-scratch w/ per-session **changed
+  numbers**), the **Probe persona**, and two golden-safe web-side mechanics (magic-smoke over the **unhashed**
+  FAIL mask; a **seeded parametric anti-copy generator + a `specMet` grader** gated *after* topology, so a copied
+  layout closes the loop but misses the spec). Multi-lens workflow + 2 critics (SHIP-WITH-FIXES → fixed vs live code).
+- ~~**All-ages beginner-onboarding panel**~~ — DONE. `docs/ui/beginner-onboarding-all-ages.md`: curriculum
+  ramp, durable coaching system, all-ages-**by-pull** (no levels), accessibility/reach spec, no-dark-patterns
+  retention, 5 persona journey maps. Cross-refs added to `onboarding-first-run.md` §11 + `game-progression.md` §1.3.
+- [ ] **OWNER CALLS (open questions in both panels):** cold-open auto-run vs fire-on-Run (+ stated fallback);
+  exam-placement feedback → `game-progression §7 #2`; the solo-pre-reader MVP caveat; grader tolerance band;
+  seed & resistor value model (continuous vs E-series); Probe voice (TTS vs VO); the by-feel target tolerance
+  for pre-readers.
+- [ ] **IMPLEMENT (when greenlit) — smallest new surface (see each panel's reuse-vs-new table):** the Probe
+  persona layer (over the coach-mark/anchor plumbing); the magic-smoke presentation (edge-detect on `failedMask`,
+  wall-clock particles, charred tint); the shared grader/sampler + seeded parametric generator (web-side; reads
+  the existing `electricalMap` + `state` Float64Array; never touches sim-core/golden). Reduced-motion + voiced
+  Probe + the by-feel target renderer are the highest-leverage a11y/all-ages items.
+
+---
+
 ## 2026-06-25 (129) — Owner: drill-in walls ≠ sealed body (WYSIWYG break → overhang)
 
 - [ ] **Die-editor walls must match the sealed package body** (#20) — owner: "the dimensions do not match anymore,
