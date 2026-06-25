@@ -79,6 +79,8 @@
     registerLibrary,
     addToLibrary,
     libraryEntries,
+    renameLibraryIc,
+    removeFromLibrary,
     type LibraryEntry,
   } from "./lib/userLibrary";
   import {
@@ -1637,10 +1639,38 @@
       cy: oy + (p.dy - minY) * s,
     }));
   }
-  // NOTE: per-row rename/delete management chrome is DEFERRED (docs/ic-library-and-variants.md §7). The
-  // library CRUD primitives (`removeFromLibrary` / `renameLibraryIc`) stay exported + callable from
-  // userLibrary.ts for the follow-up that wires the chrome; gap #7 (delete-while-placed) is honoured by
-  // those primitives NOT unregistering the kind, so a placed copy never blinks to an unknown kind.
+  // --- "My ICs" per-row management: rename + remove. `renamingTag` is the row being inline-renamed
+  // (null = none); committing writes `renameLibraryIc` (display name only — the tag, and so every placed
+  // instance, is stable) and bumps `libRev` to re-derive the bin. Remove drops the library row but
+  // NEVER unregisters the kind (gap #7), so placed copies keep working + re-appear if you reload a board
+  // that embeds the def. ---
+  let renamingTag = $state<string | null>(null);
+  let renameValue = $state("");
+  function startRenameIc(tag: string, name: string): void {
+    renamingTag = tag;
+    renameValue = name;
+  }
+  function commitRenameIc(): void {
+    const tag = renamingTag;
+    renamingTag = null;
+    if (!tag) return;
+    const nm = renameValue.trim();
+    if (nm) {
+      renameLibraryIc(tag, nm);
+      libRev++;
+    }
+  }
+  function removeIc(tag: string, name: string): void {
+    if (
+      !confirm(
+        `Remove “${name}” from My ICs?\n\nAny copies already placed keep working and re-appear if you reload a board that uses it.`,
+      )
+    )
+      return;
+    if (renamingTag === tag) renamingTag = null;
+    removeFromLibrary(tag);
+    libRev++;
+  }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
   // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
   const partColor = (tag: string): string =>
@@ -3580,10 +3610,58 @@
             <span class="part-glyph">{part.tag}</span>
           {/if}
           <span class="part-body">
-            <span class="part-name">{part.name}</span>
-            <span class="part-desc">{part.desc}</span>
+            {#if part.glyphKind && renamingTag === part.tag}
+              <!-- svelte-ignore a11y_autofocus -->
+              <input
+                class="ic-rename mono"
+                bind:value={renameValue}
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => {
+                  if (e.key === "Enter") commitRenameIc();
+                  else if (e.key === "Escape") renamingTag = null;
+                }}
+                onblur={commitRenameIc}
+                autofocus
+              />
+            {:else}
+              <span class="part-name">{part.name}</span>
+              <span class="part-desc">{part.desc}</span>
+            {/if}
           </span>
-          <span class="part-tier">{part.tier}</span>
+          {#if part.glyphKind}
+            <!-- "My ICs" row controls: a variant badge (family) + rename + remove. stopPropagation so a
+                 control click never arms/places the part. -->
+            <span class="ic-row-ctl">
+              {#if hasUserIcVariants(part.tag)}
+                <span
+                  class="ic-variant-badge"
+                  title="{userIcVariants(part.tag)?.length ??
+                    0} variants — pick one in the inspector when placed"
+                  >⎇{userIcVariants(part.tag)?.length ?? 0}</span
+                >
+              {/if}
+              <button
+                class="ic-row-btn"
+                title="Rename"
+                aria-label="Rename {part.name}"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  startRenameIc(part.tag, part.name);
+                }}>✎</button
+              >
+              <button
+                class="ic-row-btn ic-row-del"
+                title="Remove from My ICs"
+                aria-label="Remove {part.name}"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  removeIc(part.tag, part.name);
+                }}>×</button
+              >
+            </span>
+          {:else}
+            <span class="part-tier">{part.tier}</span>
+          {/if}
         </li>
       {/snippet}
       {#snippet familyRow(group: {
