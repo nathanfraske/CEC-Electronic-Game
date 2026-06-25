@@ -5,6 +5,66 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (133) — DESIGN: product-simulation + economy/progression IMPLEMENTATION panels
+
+**State:** 🟢 docs-only, golden-safe by construction; branch `claude/kind-turing-hdelb3`, rebased onto the
+other agent (132). Owner is driving a deep design pass; another agent works code on this branch in parallel.
+
+- **`docs/game-product-simulation.md`** (pushed `5e6c0a4`) — the buildable expansion of
+  `product-run-reliability-ideation.md` (which now §8-points to it): FCC/CISPR EMI + UL cert gates
+  (`margin = limit − measured` + ranked fix-it report), the reliability model (stress-ratio → derating →
+  Arrhenius wear-out → fleet FIT → RMA trickle / recall trigger), the RMA/recall/**reputation** economy
+  (reputation = a stake, not a currency), the **all-ages teaching bridge** (fidelity ladder
+  bench→ship-a-run→it-came-back; the Probe narrating a recall; the by-feel **fleet-grid**), determinism
+  (hash-seeded sample over unhashed margins, **canonical draw order**, zero sim-core change). Phase-1 report
+  card ships on heat + ratings alone.
+- **`docs/game-economy-progression-implementation.md`** (this commit) — HOW to build the spine: the `TechNode`
+  DAG + era-by-era unlock table (reconciled to the LIVE part tags — `relay`/`LDR`/`photodiode` = future
+  parts; tolerance is a **fidelity MODE**, not a tag), Credits/Lux/standing earning+spending+**sink table** +
+  the anti-grind firewall, the contract loop (template/grader/FSM; **satisfiability runs on a separate
+  offscreen scratch `Simulation`**, not the player's history ring), the Reveal-Engine pacing (pull-not-pick),
+  the versioned `cec.game.v1` persistence, an MVP/phased path, reuse-vs-new + golden-safety.
+
+**Method:** both via multi-lens workflows + 2 adversarial critics each (all SHIP-WITH-FIXES → every
+BLOCKER/MAJOR + key MINOR applied vs the live code). Key economy fixes: scratch-sim for satisfiability,
+part-tag reconciliation, tolerance-as-mode, the credit-sink/anti-grind balance, grader handles the OPTIONAL
+snapshot fields, the grader/generator framed as NEW code implementing the (not-yet-built) teaching-panel design.
+
+**In flight:** a focused brainstorm on the **fundamentals scaffold arc** (owner ask) — show-don't-tell teaching
+of place / wire / ground-loop / carriers / colours / voltage / current; an optional, non-hand-holdy scaffold
+that **opens up after ideal components**, landing the player in the contract/experimentation loop.
+
+**Next / owner eye:** the panels' open-questions need owner calls (esp. the economy **balance pass**); the
+cheapest first builds are the **product-sim Phase-1 report card** (heat+ratings) and the **MVP economy loop**.
+## 2026-06-25 (134) — Phase 4 Design 1: the INV (CMOS inverter) element landed
+
+**State:** 🟢 branch `claude/kind-turing-hdelb3`. The first-class **Inverter element** (`INV`), per
+`docs/phase4-lut-and-inverter-element.md` §Design 1 (Option B2). **Golden-safe — NO sim-core change** (a
+`buildNetlist` composite over existing `ELEM_PMOS`/`ELEM_NMOS`). Gate green (check 0-err, lint, build, **web
+test 99** — +1 INV topology test; golden `0xeaac…fa24` ok). Owner confirmed silicon works + asked to build the
+element; recursive ICs already work (Phase 1 flatten + Phase 2 zoom + IC library placement, no placement guard).
+
+**INV — the real CMOS inverter:**
+- `graph.ts` `PART_KINDS.INV` — 4 pins `[Y(0), A(1), VCC(2), GND(3)]` (4-pin package, no vestigial NC), "ok"
+  logic tint. Hand-placed pins (built-in, like `NOT`); no new package archetype needed.
+- `netlist.ts` `CEC_COMP.INV` — `internal:0, vccPin:2, gndPin:3, voutPin:0`, no gates, two `extra` FET steps:
+  PMOS(12) `a=Y,b=VCC,c=A`, NMOS(11) `a=Y,b=GND,c=A` (a=drain,b=source,c=gate — verified vs the core
+  convention). Shared drain Y = push-pull output. `compositeInternals` records the two FETs ⇒ zoom-to-open
+  draws the real transistors (+ Phase 3 silicon).
+- `App.svelte` — bin entry ("Inverter (CMOS)") + `INV: "Logic & ICs"` category.
+- `netlist.test.ts` — asserts INV expands to exactly one PMOS + one NMOS, shared drain, tied gates, split
+  sources (NMOS@GND=node0, PMOS@VCC). Golden-safe by construction (INV places nothing in the golden circuit).
+
+**Deferred (noted):** (a) quality TIERS — INV's FETs use the mid/default `Kp`; mapping its tier onto both FETs'
+`Kp` (Real-mode, via `tierParams("PM"/"NM")` at the two sub-element indices) is a small follow-up (`hasTiers`
+is false for now). (b) the `inv-ic.html` 4-lead refsheet (docs polish). (c) **Phase 4 Design 2 — the 4-LUT
+teardown** (SRAM bit `CEC_SRBIT` → `CEC_LUT4SLICE` → `CEC_LUT16` + the `examples.ts` worked example) is the
+remaining big piece (task #11); it builds on this INV.
+
+**Next:** the 4-LUT worked example (Design 2), or INV tiers, or the `NOT`→legacy / glyph refsheet.
+
+---
+
 ## 2026-06-25 (132) — Owner fixes: silicon zoom reachable + #20 drill-in walls = sealed body
 
 **State:** 🟢 branch `claude/kind-turing-hdelb3` (synced to main `6280493` — IC library + Phase 3 already landed

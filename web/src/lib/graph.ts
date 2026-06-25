@@ -758,6 +758,19 @@ export const PART_KINDS: Record<string, PartKind> = {
     "V",
     true,
   ),
+  // Inverter (INV / CEC9002): the REAL CMOS inverter — a complementary PMOS+NMOS push-pull pair on a
+  // 4-pin Y/A/VCC/GND package (no vestigial NC). Expands in buildNetlist to ELEM_PMOS+ELEM_NMOS
+  // (CEC_COMP.INV), so it opens to its two real transistors in zoom-to-open and is the leaf of the LUT
+  // teardown. Distinct from the behavioral NOT gate (which stays the 5-pin powered-gate sibling).
+  INV: kind(
+    "INV",
+    "Inverter",
+    "ok",
+    [pin("Y", 2, 1), pin("A", 0, 1), pin("VCC", 1, 0), pin("GND", 1, 2)],
+    5,
+    "V",
+    true,
+  ),
   // The buffer (BUF): single input, non-inverting — the output follows the input.
   // Same 5-pin shape as NOT without the inversion bubble (aux = 7 in GATE_AUX); a
   // line driver / one-tick delay element.

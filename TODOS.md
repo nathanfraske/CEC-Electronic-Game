@@ -6,7 +6,36 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-25 (133) — DESIGN: product-sim + economy/progression implementation panels
+
+- ~~**Product-simulation expansion**~~ — DONE (`docs/game-product-simulation.md`, pushed). EMI/UL cert gates,
+  reliability model (FIT/RMA/recall), reputation, the all-ages teaching bridge (fleet-grid + Probe recall
+  narration), golden-safe hash-seeded outcome. Canonical doc §8 points to it. Workflow + 2 critics → fixes applied.
+- ~~**Economy/progression IMPLEMENTATION brainstorm**~~ — DONE (`docs/game-economy-progression-implementation.md`).
+  Tree DAG + unlock table, Credits/Lux/standing earning+spending+sinks, contract loop (scratch-sim
+  satisfiability), Reveal-Engine pacing, `cec.game.v1` persistence, MVP path. Workflow + 2 critics → MAJORs
+  fixed (scratch-sim, part-tag reconciliation, tolerance-as-mode, credit-sink/anti-grind balance).
+- [ ] **Fundamentals scaffold arc** (owner ask, IN FLIGHT) — show-don't-tell intro: place/wire/ground-loop/
+  carriers/colours/voltage/current; optional, non-hand-holdy, opens up after ideal components; lands in the loop.
+- [ ] **OWNER CALLS / balance pass:** economy numbers (payouts/costs/time-to-milestone), the unlock DAG order,
+  product-sim tolerances; plus the panels' standing open-questions.
+- [ ] **IMPLEMENT (cheapest first):** product-sim Phase-1 report card (heat+ratings); the MVP economy loop
+  (ship divider → Credits → unlock a shelf). See each panel's reuse-vs-new + phased path.
+
 ## 2026-06-25 (130) — DESIGN PANELS: the Probe teaching arc + all-ages beginner onboarding
+## 2026-06-25 (134) — Phase 4 Design 1: the INV (CMOS inverter) element
+
+- ~~**INV element (Phase 4 Design 1)**~~ — DONE. First-class Inverter: 4-pin `[Y,A,VCC,GND]` (`PART_KINDS.INV`),
+  expands via `CEC_COMP.INV` to a real PMOS(12)+NMOS(11) push-pull pair (golden-safe, no sim-core change); opens
+  to its two FETs in zoom-to-open. Bin entry + "Logic & ICs" category; topology test in `netlist.test.ts`.
+- [ ] **INV quality tiers** — map `INV.tier` onto both FETs' `Kp` (Real-mode, `tierParams("PM"/"NM")` at the two
+  sub-element indices in the params loop); set `hasTiers` true. Mid = default ⇒ golden-safe. Small follow-up.
+- [ ] **Phase 4 Design 2 — the 4-LUT teardown** (#11): `CEC_SRBIT` (2× INV cross-coupled + access switch, with a
+  "Stored bit" inspector toggle) → `CEC_LUT4SLICE` → `CEC_LUT16` + the `examples.ts` "Inside a LUT" worked
+  example. 21 user-IC instances ≪ MAX_INSTANCES; builds on the INV element just landed.
+- [ ] **`inv-ic.html` 4-lead refsheet** — re-pin the canonical inverter glyph to 4 leads (docs polish).
+
+
 
 - ~~**Probe failure-first teaching-arc panel**~~ — DONE. `docs/ui/probe-teaching-arc.md`: the 4-act hook
   (proud broken LED → blameless blow-up → resistor → divider → build-from-scratch w/ per-session **changed

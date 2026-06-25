@@ -975,3 +975,38 @@ describe("graph — dissolveJunction (remove a junction, keep the wire)", () => 
     expect(g.serialize().junctions?.length ?? 0).toBe(0); // still removed
   });
 });
+
+describe("INV — CMOS inverter element (Phase 4 Design 1)", () => {
+  it("expands to a real shared-drain PMOS(12)+NMOS(11) pair: tied gates, split sources", () => {
+    // Y(0) A(1) VCC(2) GND(3). Wire a rail + give A and Y their own nets via resistors.
+    const g = new BoardGraph();
+    const vcc = place(g, "V", 0, 0, 5);
+    const gnd = place(g, "GND", 0, 6);
+    const inv = place(g, "INV", 4, 0);
+    const rin = place(g, "R", 9, 0, 1000); // A gets its own net
+    const rout = place(g, "R", 9, 4, 1000); // Y gets its own net
+    connect(g, vcc, 1, gnd, 0); // V− → GND
+    connect(g, inv, 2, vcc, 0); // INV.VCC → V+
+    connect(g, inv, 3, gnd, 0); // INV.GND → GND
+    connect(g, inv, 1, rin, 0); // INV.A → R (input net)
+    connect(g, rin, 1, gnd, 0);
+    connect(g, inv, 0, rout, 0); // INV.Y → R (output net)
+    connect(g, rout, 1, gnd, 0);
+    const nl = buildNetlist(g, false);
+    expect(nl).not.toBeNull();
+    const types = [...nl!.types];
+    // Exactly one PMOS (12) and one NMOS (11) — the inverter's two FETs, no new sim element.
+    expect(types.filter((t) => t === 12).length).toBe(1);
+    expect(types.filter((t) => t === 11).length).toBe(1);
+    const pm = types.indexOf(12);
+    const nm = types.indexOf(11);
+    // Shared DRAIN (terminal a) = the push-pull output Y.
+    expect(nl!.a[pm]).toBe(nl!.a[nm]);
+    // GATES (terminal c) both tied to the input A.
+    expect(nl!.c[pm]).toBe(nl!.c[nm]);
+    // SOURCES (terminal b) split: NMOS at GND (node 0), PMOS at the VCC rail (≠ 0), distinct.
+    expect(nl!.b[nm]).toBe(0);
+    expect(nl!.b[pm]).not.toBe(0);
+    expect(nl!.b[pm]).not.toBe(nl!.b[nm]);
+  });
+});

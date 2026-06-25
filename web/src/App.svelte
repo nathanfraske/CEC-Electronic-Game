@@ -451,6 +451,13 @@
       color: "var(--ok)",
     },
     {
+      tag: "INV",
+      name: "Inverter (CMOS)",
+      desc: "Real PMOS+NMOS push-pull · the CEC9002",
+      tier: "II",
+      color: "var(--ok)",
+    },
+    {
       tag: "BUF",
       name: "Buffer",
       desc: "Non-inverting line driver",
@@ -732,6 +739,7 @@
     IMPLY: "Logic & ICs",
     NIMPLY: "Logic & ICs",
     NOT: "Logic & ICs",
+    INV: "Logic & ICs",
     BUF: "Logic & ICs",
     FF: "Logic & ICs",
     HADD: "Logic & ICs",
