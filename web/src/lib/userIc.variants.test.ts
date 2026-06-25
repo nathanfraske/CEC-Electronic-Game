@@ -27,6 +27,7 @@ import {
   captureSeal,
   captureRegion,
   previewRegion,
+  cellBehaviorSig,
   resealUserIc,
   tapeOut,
   isReservedTag,
@@ -879,6 +880,35 @@ describe("IC variants — determinism contract", () => {
     } finally {
       unregisterUserIc("EditBox");
     }
+  });
+
+  it("characterization: cellBehaviorSig is deterministic + content-sensitive (logic, not the frame)", () => {
+    // A tiny inner graph: a die frame + R(1k) wired to the frame pins.
+    const g = new BoardGraph();
+    const frame = place(g, "SOT23_3", 0, 0);
+    const r = place(g, "R", 4, 0, 1000);
+    connect(g, frame, 0, r, 0);
+    connect(g, r, 1, frame, 1);
+    const sig1 = cellBehaviorSig(g.serialize());
+    expect(sig1).toBeGreaterThan(0);
+    // Deterministic — the SAME graph hashes the same every time (not JS key order).
+    expect(cellBehaviorSig(g.serialize())).toBe(sig1);
+    // Content-sensitive — a different resistor value (the logic changed) hashes differently, so a reseal
+    // would drop a stale swept word.
+    const g2 = new BoardGraph();
+    const f2 = place(g2, "SOT23_3", 0, 0);
+    const r2 = place(g2, "R", 4, 0, 2200);
+    connect(g2, f2, 0, r2, 0);
+    connect(g2, r2, 1, f2, 1);
+    expect(cellBehaviorSig(g2.serialize())).not.toBe(sig1);
+    // A different topology (an extra part) also changes the sig.
+    const g3 = new BoardGraph();
+    const f3 = place(g3, "SOT23_3", 0, 0);
+    const r3 = place(g3, "R", 4, 0, 1000);
+    place(g3, "R", 8, 0, 1000); // an extra resistor (unwired, but present)
+    connect(g3, f3, 0, r3, 0);
+    connect(g3, r3, 1, f3, 1);
+    expect(cellBehaviorSig(g3.serialize())).not.toBe(sig1);
   });
 
   it("registerUserIcs skips a def whose tag collides with a built-in (clobber-safety, gap #6)", () => {

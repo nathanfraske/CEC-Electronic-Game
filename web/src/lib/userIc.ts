@@ -81,6 +81,65 @@ export interface UserIc {
    * be re-registered on load; `package` is kept too (archetype BLOCK) for the bin label + the tint.
    */
   freeForm?: FreeFormGeom;
+  /**
+   * Optional CHARACTERIZED BEHAVIOR (§2.3, the characterization engine): once a small combinational/
+   * registered cell has been SWEPT into a truth-table word, this stores the cheap face it can collapse to
+   * — a prog-4 LUT. Absent ⇒ the cell always flattens to its real discrete parts (today's behavior). When
+   * present AND a placed instance opts into the behavioral fidelity, `flattenUserIcs` emits ONE
+   * `ELEM_BEHAVIORAL` LUT (the word in `aux`) instead of inlining the FETs. `sig` content-addresses the
+   * inner graph the word was extracted from, so a reseal that changes the logic drops the stale word.
+   * Golden-safe: the golden places no user IC, and a combinational LUT folds an all-zero state block.
+   */
+  behavior?: CellBehavior;
+}
+
+/**
+ * The characterized cheap face of a cell (§2.3) — what a swept gate collapses to. `prog` is the behavioral
+ * program id (4 = LUT today, the only one the sweep emits); `word` is the ≤4-input truth table (16 bits,
+ * `out = (word >> (i0 | i1<<1 | i2<<2 | i3<<3)) & 1`); `mode` is 0 = combinational, ≥1 = registered (latches
+ * on CLK). `sig` is a deterministic FNV-1a over the inner graph the word was extracted from — see
+ * {@link cellBehaviorSig} — so the behavior can be invalidated when the logic changes. Pure data; never
+ * hashed by sim-core (params/aux aren't folded), so storing it is golden-safe.
+ */
+export interface CellBehavior {
+  prog: number;
+  word: number;
+  mode: number;
+  sig: number;
+}
+
+/**
+ * A deterministic content hash of a cell's inner LOGIC (§2.3) — FNV-1a over a CANONICAL-ORDERED
+ * serialization (sorted by id, fixed field order — NOT JS object-key order; CLAUDE.md golden rule #1
+ * forbids the std default hasher for a reproducible value). Used as {@link CellBehavior.sig}: a swept word
+ * is bound to the graph it came from, so on reseal a changed inner graph yields a new sig and the stale
+ * behavior is dropped (re-sweep). The die FRAME is excluded (its box geometry is not logic), so a pure
+ * box-resize does not invalidate the sweep — but wires TO the frame pins are kept (they define the
+ * pinout). Render/registry only; never crosses the wasm boundary, never hashed by sim-core.
+ */
+export function cellBehaviorSig(graph: GraphSnapshot): number {
+  const parts: string[] = [];
+  for (const c of graph.components
+    .filter((c) => !isFrame(c.kind))
+    .slice()
+    .sort((a, b) => a.id - b.id)) {
+    parts.push(
+      `C${c.id}|${c.kind}|${c.cell.col},${c.cell.row}|${c.value ?? 0}|${c.rot ?? 0}|${c.mirror ? 1 : 0}|${c.variant ?? 0}`,
+    );
+  }
+  for (const w of graph.wires.slice().sort((a, b) => a.id - b.id)) {
+    parts.push(`W${w.id}|${endpointKey(w.from)}>${endpointKey(w.to)}`);
+  }
+  for (const j of (graph.junctions ?? []).slice().sort((a, b) => a.id - b.id)) {
+    parts.push(`J${j.id}|${j.cell.col},${j.cell.row}`);
+  }
+  let h = 0x811c9dc5; // FNV-1a 32-bit
+  const s = parts.join("\n");
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
 /** tag -> sealed IC definition. Populated by `registerUserIc` (sealing / loading a saved library).
