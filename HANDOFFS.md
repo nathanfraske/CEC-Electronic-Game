@@ -5,6 +5,74 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-25 (126) — Phase 2 Part A cross-checked + landed; A.4 VIEW cull added
+
+**State:** 🟢 PR #197 (`claude/kind-turing-hdelb3` → main) — Phase 2 Part A (cherry-picked from
+`claude/phase2-part-a`) + the IC-library design doc. Render-only; golden `0xeaac…fa24` untouched. Full gate
+green (build:wasm, web check 0-err / lint / build / test 77, `golden_snapshot_hash_is_stable` ok).
+
+**Cross-check verdict (4-agent workflow, 3 lenses): FIX-REQUIRED → resolved.**
+- **golden-determinism: PASS** — proven render-only (no `.rs`, no `loop.ts`; `flatId` is the already-computed
+  flatten id `comp.id+o`, spread into the unhashed `userIcInternals` map only; `sig` never references it).
+- **correctness + perf: FIX-REQUIRED**, two issues, both now fixed:
+  - **A.4 VIEW cull (was MAJOR, deferred by the implementer): now IMPLEMENTED.** The size-cull bounds recursion
+    *depth* but not *breadth* — zoom deep into one nested cell and every off-screen sibling subtree across the
+    whole opened IC still rebuilt every frame. Added `holderNearViewport(child, radLocal, absScale, viewport)`:
+    the holder's local origin maps to screen as its `worldTransform.(tx,ty)`, footprint radius `radLocal·absScale`;
+    keep when the disc reaches within ONE viewport dimension of the screen rect (generous margin ⇒ a one-frame-stale
+    transform / fast pan can never blink a real part out; distant siblings still cull). On cull: free the nested
+    subtree (`destroy({children:true})`) + `child.visible=false`. `viewport={w,h}` threaded board → `ComponentNode.update`
+    → opts, and down each recursion level. Absent ⇒ no cull (static fallback / headless tests draw all).
+  - **`s<1` termination claim (was MINOR): comment corrected.** `s=min(fitW/domW,fitH/domH)` is NOT clamped, so a
+    body larger than its inner bbox gives `s>1`. The real termination GUARANTEE is `RECURSE_MAX_DEPTH=24` (depth)
+    + the new view cull (breadth); the size-cull is the typical economy, not a proof. Comments now say so.
+
+**View cull is render-time (Pixi `worldTransform`), not headless-testable** without pulling pixi runtime into the
+node suite; it's conservative/fail-safe by construction (origin-in-rect default keeps a part).
+
+**Next / owner eye:** confirm the nested open *feels* right at real zoom on a 2-level example; then Phase 3
+(transistor silicon leaf) / Phase 4 (LUT + inverter element), or implement the now-designed IC library + variants.
+
+---
+
+## 2026-06-24 (125) — Phase 2 Part A IMPLEMENTED: recursive nested zoom-to-open
+
+**State:** 🟢 branch `claude/phase2-part-a` (off latest main, which already had the Phase 2 base case —
+per-part tier detail + schematic + clip — merged). Render-only; golden `0xeaac…fa24` untouched. All gates
+green (build:wasm, web check/format/lint/build/test 77 passed, `golden_snapshot_hash_is_stable` ok).
+
+**What landed (Part A of `docs/phase2-recursive-zoom-and-divergences.md`):**
+- **A.2 `flatId`** — added `flatId?: number` to `UserIcInnerPart` (`netlist.ts`); the LIVE builder sets it to
+  `comp.id + o` for an inner part that `isUserIc`, leaving it absent in `userIcGeometry` (static fallback). It
+  equals the nested instance's own `FlattenRecord.instanceId`, so `userIcInternals.get(flatId)` resolves. New
+  headless vitest asserts a nested IC's inner-part `flatId` → the placed instance's flattened internals (real R).
+- **A.1 threading** — `UserIcInternalsOpts` gains `internalsZoom`, `allInternals`, `depth`, `cumulativeScale`.
+  Board passes `INTERNALS_ZOOM` + the full `userIcInternals` map (threaded through `ComponentNode.update`'s new
+  `allUserIcInternals` arg); top call defaults `depth 0` / `cumulativeScale 1`.
+- **A.3 recurse** — per inner part, when `isUserIc` AND `flatId` resolves AND `cumulativeScale·s·cameraZoom ≥
+  internalsZoom`, recurse `drawUserIcInternals` into a pooled per-part holder subtree (`frameG` package frame +
+  `nestedLayer` scaled inner partLayer), passing the nested package frame/pins, `depth+1`, `cumulativeScale·s`,
+  same `allInternals`/`nodeV`/`lens`. Below threshold → existing detail/glyph base case.
+- **A.4 depth-guard + cull** — `RECURSE_MAX_DEPTH = 24` hard stop; the geometric size-cull is the real economy
+  (each level's `s < 1` shrinks the child, so only finitely many levels open at a fixed zoom). On stop-recursing
+  the nested subtree is `destroy({ children: true })`-ed (no leak); a `WeakMap<Graphics, SlotRecord>` holds the
+  per-slot `dg`/`frameG`/`nestedLayer` so pool index shifts never mis-key, and the trailing innerG slot's record
+  is dropped each frame.
+- **A.5 live signals** — free: each nested `UserIcInternals.nodeOfInner` resolves into the same flattened
+  `nodeV`, passed down unchanged.
+
+**Threshold choice:** open at `cumulativeScale·s·cameraZoom ≥ INTERNALS_ZOOM` — the faithful per-part mirror of
+the top level's `zoom ≥ INTERNALS_ZOOM` (both compare a magnification, not a px count); tier-detail base case
+keeps its `absScale ≥ TIER_ZOOM` gate (`absScale` now includes `cumulativeScale`).
+
+**Not done (deliberately, task = Part A only):** Parts B/C divergences were already landed in the base case;
+none were re-touched. No extra gauges/flow-dots inside nested levels beyond what the base case already draws.
+
+**Next / owner eye:** confirm the nested open *feels* right at real zoom (the cull threshold) on a 2-level
+example; then Phase 3 (transistor silicon leaf) / Phase 4 (LUT + inverter element).
+
+---
+
 ## 2026-06-24 (124) — Opened-IC polish landed; reality-lens first cut landed; Phase 2 + Phase 4 DESIGNED (docs)
 
 **State:** 🟢 all merged to main; branch `claude/kind-turing-hdelb3` at `4b66ea1` + 2 doc commits (phase2/phase4)

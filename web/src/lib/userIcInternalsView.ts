@@ -18,6 +18,7 @@
 // (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics, Point } from "pixi.js";
 import { PALETTE, PART_KINDS, isJunctionRef } from "./graph";
+import { isUserIc } from "./userIc";
 import {
   drawGlyphIn,
   drawUserIcPackageBody,
@@ -81,6 +82,29 @@ export interface UserIcInternalsOpts {
   /** The board's TIER_ZOOM threshold — the world scale past which the die editor swaps a part to its
    * tier-detail illustration. The replica fires the same swap when `s · cameraZoom ≥ tierZoom`. */
   tierZoom: number;
+  /** The board's INTERNALS_ZOOM threshold — the world scale past which a top-level sealed IC opens to
+   * its inner circuit. The replica RECURSES into a nested sealed-IC inner part when that part's own
+   * cumulative on-screen magnification (`cumulativeScale · s · cameraZoom`) crosses this same bar
+   * (mirroring the top-level `zoom ≥ INTERNALS_ZOOM` test, per part, in absolute on-screen scale). */
+  internalsZoom: number;
+  /** The whole netlist map of inlined-instance → its inner circuit, keyed by FLATTENED hub id
+   * (board.ts `this.userIcInternals`). Threaded so a nested sealed-IC inner part (carrying a
+   * {@link UserIcInnerPart.flatId}) can look up ITS internals and recurse. Absent in the static
+   * (unpowered) fallback — recursion then simply doesn't fire and a nested IC stays a labelled box. */
+  allInternals?: Map<number, UserIcInternals>;
+  /** Recursion depth (0 at the top opened IC). A hard guard against a pathological hierarchy or a
+   * reseal cycle that slipped past flatten's MAX_DEPTH; capped at {@link RECURSE_MAX_DEPTH}. */
+  depth?: number;
+  /** The cumulative fit-scale of every ENCLOSING container (∏ of the parents' `s`), so a nested level
+   * can compute its own absolute on-screen scale without walking the Pixi tree:
+   * `childAbsScale = cumulativeScale · thisLevel.s`. Defaults to 1 at the top. */
+  cumulativeScale?: number;
+  /** The screen (renderer) rect in CSS px — `{ w: app.screen.width, h: app.screen.height }`. Enables the
+   * A.4 VIEW cull: an inner part whose body, mapped to screen space, lies a full viewport beyond the edge
+   * is skipped (no recurse, no detail/glyph draw, nested subtree freed) — so zooming deep into ONE nested
+   * cell doesn't redraw every off-screen sibling's whole subtree each frame (the size-cull bounds depth,
+   * this bounds breadth). Absent ⇒ no view cull (the static fallback / headless tests draw everything). */
+  viewport?: { w: number; h: number };
   /**
    * A persistent container (added under the instance's rotated glyph holder) that becomes the SCALED
    * inner-view: child[0] is a pooled {@link Graphics} for the wires + junctions (cleared every frame),
@@ -98,6 +122,63 @@ export interface UserIcInternalsOpts {
  * inner parts' glyphs — goes into `opts.partLayer` at full world scale; the container's own transform
  * does the shrink. Returns nothing.
  */
+/** Hard recursion guard (Part A.4): the deepest the zoom-to-open replica will open a nested sealed IC.
+ * Mirrors `flattenUserIcs`'s MAX_DEPTH so the two bounds agree. This DEPTH cap is the termination
+ * GUARANTEE: a real IC's body is far smaller than the circuit it abstracts, so each level's fit-scale
+ * `s` is well below 1 and the on-screen-size cull (`absScale ≥ internalsZoom`) usually halts recursion
+ * far sooner — but `s = min(fitW/domW, fitH/domH)` is NOT clamped, so a contrived cell whose body is
+ * larger than its inner bbox could have `s > 1`; the depth cap (with flatten's own MAX_DEPTH) bounds
+ * that case regardless. The {@link UserIcInternalsOpts.viewport} cull bounds BREADTH the same way. */
+const RECURSE_MAX_DEPTH = 24;
+
+/** A.4 VIEW cull: is this inner-part holder near enough the screen to be worth drawing? The holder's
+ * local origin maps to screen as exactly its world transform's `(tx, ty)` (a matrix applied to `(0,0)`),
+ * and the local→screen scale magnitude is `absScale`, so the holder's screen footprint is a disc of
+ * radius `radLocal · absScale` about `(tx, ty)`. We keep it when that disc reaches within ONE viewport
+ * dimension of the screen rect — a deliberately generous margin so a one-frame-stale transform (the
+ * cull reads last render's matrix) or a fast pan can never blink a real part out; the genuinely distant
+ * siblings at deep zoom are many viewports away and still cull. A brand-new holder (identity transform →
+ * origin (0,0), inside the rect) is kept, so a level never culls itself on its first frame. */
+function holderNearViewport(
+  child: Container,
+  radLocal: number,
+  absScale: number,
+  vp: { w: number; h: number },
+): boolean {
+  const wt = child.worldTransform;
+  const sx = wt.tx;
+  const sy = wt.ty;
+  const rad = radLocal * absScale;
+  const m = Math.max(vp.w, vp.h); // one-viewport slack on every side
+  return (
+    sx + rad >= -m &&
+    sx - rad <= vp.w + m &&
+    sy + rad >= -m &&
+    sy - rad <= vp.h + m
+  );
+}
+
+/** The pooled sub-objects a single inner-part holder (a {@link Graphics} in `partLayer`) may own across
+ * frames, indexed off the holder via {@link slotOf}. `dg` is the Part-B tier-detail Graphics; `frameG`
+ * + `nestedLayer` are the Part-A nested-IC recursion subtree (the nested package frame + its scaled
+ * inner partLayer). Kept in a WeakMap (not positional `children[i]`) so adding/removing one never
+ * shifts the others' indices, and so the whole record is GC'd when the holder is destroyed (pool
+ * shrink does `destroy({ children: true })`, which frees these children's GPU buffers). */
+interface SlotRecord {
+  dg?: Graphics;
+  frameG?: Graphics;
+  nestedLayer?: Container;
+}
+const slotRecords = new WeakMap<Graphics, SlotRecord>();
+function slotOf(holder: Graphics): SlotRecord {
+  let r = slotRecords.get(holder);
+  if (!r) {
+    r = {};
+    slotRecords.set(holder, r);
+  }
+  return r;
+}
+
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const {
     internals,
@@ -107,11 +188,17 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     hPx,
     color,
     phase,
+    accent,
     style,
     lens,
     partLayer,
     cameraZoom,
     tierZoom,
+    internalsZoom,
+    allInternals,
+    depth = 0,
+    cumulativeScale = 1,
+    viewport,
   } = o;
   const { parts, wires, innerGraph, nodeOfInner, frameId } = internals;
   // The schematic lens (C-2) draws plain orthogonal polyline traces + plain junction dots instead of
@@ -151,6 +238,10 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   for (let i = innerG.children.length - 1; i >= 0; i--) {
     innerG.removeChildAt(i).destroy({ children: true });
   }
+  // Drop any pooled slot record for the trailing holder now serving as innerG: its `dg`/`frameG`/
+  // `nestedLayer` were just destroyed above, so a stale record would hand `slotOf` (if this holder is
+  // reused as a PART when parts.length grows) references to dead Graphics. Clearing it forces a rebuild.
+  slotRecords.delete(innerG);
   if (parts.length === 0 && wires.length === 0) {
     partLayer.visible = false;
     return;
@@ -433,29 +524,127 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
     const partColor = PALETTE[kind.colorKey];
 
+    // Per-slot sub-objects (pooled across frames on this holder): `dg` = the tier-DETAIL Graphics
+    // (Part B); `frameG` + `nestedLayer` = the nested-IC RECURSION subtree (a package-frame Graphics +
+    // a scaled inner partLayer Container, Part A). All three states (small glyph / detail / nested
+    // replica) are mutually exclusive per frame — the unused ones are hidden so nothing stale shows
+    // through, and destroyed when a part stops recursing (below) so a pool reuse can't leak or mis-render.
+    const slot = slotOf(child);
+    const absScale = s * cumulativeScale * cameraZoom; // on-screen px per world px at this depth
+
+    // --- A.4 VIEW cull: skip a part whose body lies a full viewport beyond the screen edge — no recurse,
+    // no detail/glyph draw, and free any nested subtree so memory tracks what's visible. The size-cull
+    // (below) bounds recursion DEPTH; this bounds BREADTH, so zooming deep into ONE nested cell doesn't
+    // rebuild every off-screen sibling's whole subtree every frame. radLocal = the part footprint's
+    // diagonal (+PITCH overhang) from the holder origin, a conservative bound for any rotation. Only when
+    // a viewport was supplied (the static fallback / headless tests pass none and draw everything). ---
+    if (viewport) {
+      const radLocal =
+        Math.hypot((kind.w - 1) * PITCH, (kind.h - 1) * PITCH) + PITCH;
+      if (!holderNearViewport(child, radLocal, absScale, viewport)) {
+        if (slot.frameG || slot.nestedLayer) {
+          slot.frameG?.destroy({ children: true });
+          slot.nestedLayer?.destroy({ children: true });
+          slot.frameG = undefined;
+          slot.nestedLayer = undefined;
+        }
+        child.visible = false; // hides the holder + any pooled detail `dg`, so nothing stale draws
+        continue;
+      }
+    }
+
+    // --- A.3 RECURSE: when this inner part is ITSELF a sealed user IC whose internals resolve in the
+    // map, AND its absolute on-screen footprint has grown past the SAME open bar the top level uses
+    // (`cumulativeScale · s · cameraZoom ≥ internalsZoom`), AND we are within the depth guard, draw its
+    // OWN inner circuit into a nested replica — a chip-within-a-chip. Otherwise fall through to the
+    // detail/glyph base case (and tear down any nested subtree so it stops drawing + frees its GPU
+    // objects — the auto-cull that keeps infinite zoom cheap). ---
+    const nested =
+      isUserIc(part.kind) && part.flatId !== undefined
+        ? allInternals?.get(part.flatId)
+        : undefined;
+    const wantRecurse =
+      nested !== undefined &&
+      depth < RECURSE_MAX_DEPTH &&
+      absScale >= internalsZoom;
+    if (wantRecurse && nested) {
+      // Hide the base-case visuals on this holder (and clear the glyph drawn into `child` above).
+      if (slot.dg) slot.dg.visible = false;
+      // Build/reuse the nested subtree: a frame Graphics (the nested package, glyph-local, UNSCALED)
+      // and a partLayer Container (the nested inner circuit, scaled by the nested level's own `s`).
+      if (!slot.frameG) {
+        slot.frameG = new Graphics();
+        child.addChild(slot.frameG);
+      }
+      if (!slot.nestedLayer) {
+        slot.nestedLayer = new Container();
+        child.addChild(slot.nestedLayer);
+      }
+      slot.frameG.visible = true;
+      slot.frameG.clear();
+      slot.nestedLayer.visible = true;
+      // The nested package's glyph-local geometry: its pins (kind.pins · PITCH) + footprint px. The
+      // nested call draws its frame into `frameG` glyph-local and fills its body with the next level
+      // down — both inside this holder, which already carries the part's position/rotation/mirror.
+      const nestedPins = kind.pins.map((pin) => ({
+        x: pin.dx * PITCH,
+        y: pin.dy * PITCH,
+      }));
+      drawUserIcInternals(slot.frameG, {
+        internals: nested,
+        nodeV, // SAME snapshot — live at every depth (A.5; each level's own nodeOfInner resolves it)
+        pins: nestedPins,
+        wPx: (kind.w - 1) * PITCH,
+        hPx: (kind.h - 1) * PITCH,
+        color: PALETTE.accent, // a sealed user IC is accent-tinted
+        phase,
+        accent,
+        style,
+        lens,
+        partLayer: slot.nestedLayer,
+        cameraZoom,
+        tierZoom,
+        internalsZoom,
+        allInternals,
+        depth: depth + 1,
+        cumulativeScale: s * cumulativeScale, // accumulate THIS level's fit-scale for the child
+        viewport, // nested levels cull off-screen sub-cells against the same screen rect
+      });
+      continue;
+    }
+    // Not recursing this frame: tear down any nested subtree (a part that zoomed back out / scrolled
+    // away / flipped kind) so it stops drawing and frees its GPU buffers — `destroy({ children: true })`
+    // (the base case's leak lesson) frees the whole nested replica, not just the frame Graphics.
+    if (slot.frameG || slot.nestedLayer) {
+      slot.frameG?.destroy({ children: true });
+      slot.nestedLayer?.destroy({ children: true });
+      slot.frameG = undefined;
+      slot.nestedLayer = undefined;
+    }
+
     // C-1 (Part B) — TIER-DETAIL gate. The die editor swaps a part to its full tier illustration
     // (`drawDetail`/`drawAnalogy`) once the WORLD scale passes TIER_ZOOM (board.ts:6634). Inside the
-    // opened IC a part's effective magnification is the container fit-scale `s` × cameraZoom, so the
-    // faithful translation is `s · cameraZoom ≥ tierZoom`. The tier follows the lens (the replica
-    // already receives it); schematic never has a detail (hasDetail/hasAnalogy false ⇒ never fires).
+    // opened IC a part's effective magnification is the cumulative fit-scale × cameraZoom, so the
+    // faithful translation is `s · cumulativeScale · cameraZoom ≥ tierZoom`. The tier follows the lens
+    // (the replica already receives it); schematic never has a detail (hasDetail/hasAnalogy false).
     const partTier =
       lens === "reality" && hasDetail(part.kind)
         ? "reality"
         : lens === "analogy" && hasAnalogy(part.kind)
           ? "analogy"
           : null;
-    const absScale = s * cameraZoom; // on-screen px per world px for this opened IC's interior
     // The detail is drawn into a NESTED Graphics `dg` inside the rot+mirror holder `child`, so it
     // inherits the part's orientation while carrying its OWN REF→footprint scale (mirroring board.ts'
-    // separate tierGlyph at `wPx/2, hPx/2`). `dg` is pooled as child.children[0]; the small glyph and
-    // the detail are mutually exclusive per frame (one is cleared/hidden while the other draws).
-    let dg = child.children[0] as Graphics | undefined;
+    // separate tierGlyph at `wPx/2, hPx/2`). The small glyph and the detail are mutually exclusive per
+    // frame (one is cleared/hidden while the other draws).
+    let dg = slot.dg;
     if (partTier !== null && absScale >= tierZoom) {
       // REF-then-scale, EXACTLY board.ts:6642-6673 — render big so the drawers' fixed-px details
       // (studs, throats, spring/piston clamps like `anchorX − 40`) don't distort at the tiny footprint.
       if (!dg) {
         dg = new Graphics();
         child.addChild(dg);
+        slot.dg = dg;
       }
       dg.clear();
       dg.visible = true;
