@@ -20,11 +20,13 @@ assembler (#44) to the sim and supersedes the bare #47.
 - [ ] **Owner decisions (doc §9):** serial-first vs parallel-first; bus-port vs widen-terminals; size caps;
   GREENLIGHT the sim-core change (id 26 + mem_data + hash fold + load_memory).
 - [ ] Phases: P1 memory infra + serial EEPROM · P2 assembly pipeline/UI · P3 parallel bus-port · P4 CPU templates.
-- ~~**Convenience-primitive refinement list + convention**~~ — owner wants every convenience primitive
-  (behavioral block / pseudo-part / the planned memory parts) remade by hand in the IC editor as a proper
-  reference-design chip (not a janky auto-box). New `docs/convenience-primitives-to-refine.md` (running
-  checklist: memory/EEPROM planned + existing LUT/SPIM/SPIS/UART/SAR/CTR/SDM/PULSE/SHUNT marked
-  `needs-chip`); convention added to CLAUDE.md (add an entry whenever a convenience primitive is added).
+- ~~**IC reference-library tracker + convention**~~ — owner is producing a full **reference library**:
+  remake EVERY IC-class part by hand in the IC editor as a polished reference-design chip (not a janky
+  auto-box). `docs/ic-reference-library.md` is the master checklist — gates (INV/BUF/AND/NAND/OR/NOR/XOR/
+  XNOR), analog ICs (OA/CMP/ASW), composite ICs (CEC2024/2018/9002/2031/2032/3007/3014/2046/3076/2057/
+  1083/1080), behavioral (LUT/SPIM/SPIS/UART/SAR/CTR/SDM) + pseudo-parts (PULSE/SHUNT), and the planned
+  memory parts — each marked `needs-chip`/`refined`/`planned`. Convention in CLAUDE.md: agents add any new
+  convenience primitive to this list. (Started as convenience-primitives-to-refine.md; broadened + renamed.)
 
 ---
 

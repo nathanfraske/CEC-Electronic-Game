@@ -107,8 +107,9 @@ pinout, clean glyph) in the IC editor; the re-skin is a visual/package wrapper t
 layout to the element's terminal order (`BEH_SPEC.term`) and **does not change the `ELEM_*`**.
 
 **Rule:** whenever you add a convenience primitive, ship a working default representation AND add an entry
-to **`docs/convenience-primitives-to-refine.md`** marked `needs-chip`. That file is the owner's running
-checklist (don't delete entries — flip them to `refined` when the hand-built chip lands).
+to **`docs/ic-reference-library.md`** marked `needs-chip`. That file is the owner's master checklist for the
+whole **IC reference library** (every IC-class part rebuilt by hand as a reference-design chip) — don't
+delete entries, flip them to `refined` when the hand-built chip lands.
 
 ## Component grades (tiers)
 
