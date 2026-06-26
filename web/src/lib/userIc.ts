@@ -656,6 +656,20 @@ export function userIcsForGraph(graph: GraphSnapshot): UserIc[] {
 }
 
 /**
+ * Union {@link userIcsForGraph} over SEVERAL graphs — the outer board PLUS every in-progress (unsealed)
+ * die graph — deduped by tag. A user IC placed ONLY inside a half-built die lives solely in that die's
+ * graph (never as a board component), so the outer-only scan misses it and the save can't embed its def;
+ * on reload its placed instance is an unknown kind. Scanning the inner dies too fixes that (audit).
+ */
+export function userIcsForGraphs(graphs: GraphSnapshot[]): UserIc[] {
+  const byTag = new Map<string, UserIc>();
+  for (const g of graphs)
+    for (const def of userIcsForGraph(g))
+      if (!byTag.has(def.tag)) byTag.set(def.tag, def);
+  return [...byTag.values()];
+}
+
+/**
  * The OPTIONAL family sidecar for a saved board: for every PLACED multi-variant family, its display
  * `name` and the ORDERED `variantTags` array — the durable source of truth for variant order. A
  * placed instance persists `variant` as an INTEGER INDEX, so `variantTags[index]` is the def it
@@ -691,6 +705,18 @@ export function userIcFamiliesForGraph(
   };
   scan(graph.components);
   return out;
+}
+
+/** Union {@link userIcFamiliesForGraph} over several graphs (the outer board + every in-progress unsealed
+ * die), deduped by family tag — the family-sidecar counterpart of {@link userIcsForGraphs}. */
+export function userIcFamiliesForGraphs(
+  graphs: GraphSnapshot[],
+): UserIcFamilySidecar[] {
+  const byFamily = new Map<string, UserIcFamilySidecar>();
+  for (const g of graphs)
+    for (const fam of userIcFamiliesForGraph(g))
+      if (!byFamily.has(fam.family)) byFamily.set(fam.family, fam);
+  return [...byFamily.values()];
 }
 
 /** Register a batch of sealed-IC definitions (from a save's embedded library). Idempotent — each

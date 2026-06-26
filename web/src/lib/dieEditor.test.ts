@@ -42,6 +42,8 @@ import {
   TIER_FOOTPRINT_SCALE,
   countGraphDevices,
   registerUserIc,
+  userIcsForGraph,
+  userIcsForGraphs,
 } from "./userIc";
 
 function place(
@@ -886,6 +888,38 @@ describe("countDevices memoization — a reused nested cell counts right (no exp
       expect(countGraphDevices(g.serialize())).toBe(6);
     } finally {
       unregisterUserIc("T_LEAF");
+    }
+  });
+});
+
+describe("userIcsForGraphs — embeds a def placed ONLY inside an in-progress die (audit #5)", () => {
+  it("the union scan finds a user IC referenced only by an inner die graph, which the outer-only scan misses", () => {
+    const lg = new BoardGraph();
+    const ld = freshDieGraph("SOT23_3")!;
+    lg.restore(ld.snapshot);
+    place(lg, "R", 20, 20, 1);
+    registerUserIc({
+      tag: "T_INNER",
+      name: "Inner",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: ld.frameId,
+      graph: lg.serialize(),
+    });
+    try {
+      const outer = new BoardGraph(); // outer board places NOTHING
+      const inner = new BoardGraph();
+      place(inner, "T_INNER", 0, 0); // ...but a half-built (unsealed) die uses it
+      // Outer-only scan misses it (the bug); the union over [outer, inner die] embeds it (the fix).
+      expect(
+        userIcsForGraph(outer.serialize()).some((d) => d.tag === "T_INNER"),
+      ).toBe(false);
+      expect(
+        userIcsForGraphs([outer.serialize(), inner.serialize()]).some(
+          (d) => d.tag === "T_INNER",
+        ),
+      ).toBe(true);
+    } finally {
+      unregisterUserIc("T_INNER");
     }
   });
 });
