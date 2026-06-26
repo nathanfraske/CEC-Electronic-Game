@@ -2218,6 +2218,135 @@ export function drawGateBodySymbol(
   if (inverted) g.circle(fx + rb, cy, rb).stroke(stroke);
 }
 
+/** The schematic-symbol ids a characterized/built cell can wear, beyond the basic gate faces: the
+ * higher-level building blocks a player assembles (sequential, arithmetic, routing, storage). Stroke-only
+ * pure-geometry glyphs (no text), so they compose into the same Graphics the gate symbols use and the
+ * caller fades them by container alpha. */
+export type CellSymbolId =
+  | "DFF" // edge-triggered D flip-flop (box + clock ▷)
+  | "DLATCH" // level-sensitive D latch (box + enable bar)
+  | "REG" // register / memory word (stacked box + clock ▷)
+  | "HADD" // half adder (box + "+")
+  | "FADD" // full adder (box + "+" + carry-in tick)
+  | "MUX" // multiplexer (trapezoid, wide in → narrow out)
+  | "TRI" // tri-state / output-enable buffer (triangle + enable lead)
+  | "ARRAY"; // logic / memory array (box + crosshatch)
+
+/**
+ * Draw a cell SCHEMATIC SYMBOL centred at (cx, cy) within half-extents (hw, hh). Dispatches the basic gate
+ * faces to {@link drawGateBodySymbol}; draws the higher-level building blocks ({@link CellSymbolId}) here
+ * as distinctive ANSI-ish shapes. Stroke-only (the body card shows through); the caller fades it by
+ * container alpha alongside the name label. Pure geometry — no text — so it works in a Graphics at any
+ * depth of the zoom-to-open recursion.
+ */
+export function drawCellSymbol(
+  g: Graphics,
+  id: string,
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  color: number,
+): void {
+  // Basic gate faces keep their dedicated drawer (AND/OR/XOR/NOT/BUFFER families).
+  if (
+    ["AND", "NAND", "OR", "NOR", "XOR", "XNOR", "NOT", "BUFFER"].includes(id)
+  ) {
+    drawGateBodySymbol(g, id, cx, cy, hw, hh, color);
+    return;
+  }
+  const stroke = { width: Math.max(1.5, hh * 0.12), color, alpha: 0.92 };
+  const faint = { ...stroke, alpha: 0.5 };
+  const L = cx - hw;
+  const R = cx + hw;
+  const T = cy - hh;
+  const B = cy + hh;
+  const box = (
+    x = L,
+    y = T,
+    w = 2 * hw,
+    h = 2 * hh,
+    s: typeof stroke = stroke,
+  ) => g.rect(x, y, w, h).stroke(s);
+  // A clock ▷ (dynamic / edge-trigger mark) jutting in from the left edge at mid-height.
+  const clockTri = () => {
+    const th = hh * 0.3;
+    g.moveTo(L, cy - th)
+      .lineTo(L + hw * 0.32, cy)
+      .lineTo(L, cy + th)
+      .stroke(stroke);
+  };
+  // A "+" sign centred in the body (the adder's operation mark).
+  const plus = () => {
+    g.moveTo(cx - hw * 0.42, cy)
+      .lineTo(cx + hw * 0.42, cy)
+      .moveTo(cx, cy - hh * 0.42)
+      .lineTo(cx, cy + hh * 0.42)
+      .stroke(stroke);
+  };
+  switch (id) {
+    case "DFF":
+      box();
+      clockTri();
+      break;
+    case "DLATCH":
+      box();
+      // level-enable: a short horizontal lead into the left edge (no edge triangle).
+      g.moveTo(L, cy)
+        .lineTo(L + hw * 0.32, cy)
+        .stroke(stroke);
+      break;
+    case "REG": {
+      // stacked words (multi-bit) behind the face box, + a clock ▷.
+      const o = Math.min(hw, hh) * 0.28;
+      box(L + o, T - o, 2 * hw, 2 * hh, faint);
+      box();
+      clockTri();
+      break;
+    }
+    case "HADD":
+      box();
+      plus();
+      break;
+    case "FADD":
+      box();
+      plus();
+      // carry-in tick at the bottom-left corner (the extra input that makes it a FULL adder).
+      g.moveTo(L, B - hh * 0.42)
+        .lineTo(L + hw * 0.32, B)
+        .stroke(stroke);
+      break;
+    case "MUX":
+      // trapezoid: wide left (data + select inputs) narrowing to a single right output.
+      g.moveTo(L, T)
+        .lineTo(R, cy - hh * 0.45)
+        .lineTo(R, cy + hh * 0.45)
+        .lineTo(L, B)
+        .lineTo(L, T)
+        .stroke(stroke);
+      break;
+    case "TRI":
+      // a buffer triangle with the output-ENABLE lead dropping into its top.
+      g.moveTo(L, T).lineTo(R, cy).lineTo(L, B).lineTo(L, T).stroke(stroke);
+      g.moveTo(cx - hw * 0.1, T - hh * 0.4)
+        .lineTo(cx - hw * 0.1, cy - hh * 0.32)
+        .stroke(stroke);
+      break;
+    case "ARRAY": {
+      // a crosshatched box: an array of storage/logic cells (PLA / ROM / RAM word-plane).
+      box();
+      for (let i = 1; i < 3; i++) {
+        const x = L + (2 * hw * i) / 3;
+        g.moveTo(x, T).lineTo(x, B);
+        const y = T + (2 * hh * i) / 3;
+        g.moveTo(L, y).lineTo(R, y);
+      }
+      g.stroke(faint);
+      break;
+    }
+  }
+}
+
 function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
   // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip; its body
   // is the AUTHORED box (freeForm), not the pin bbox, so pass the free-form flag through.
