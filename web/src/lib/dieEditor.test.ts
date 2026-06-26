@@ -12,6 +12,8 @@ import {
   isDieFrame,
   isFreeFormFrame,
   freeFormGeom,
+  registerFreeFormFrame,
+  FREE_FORM_DIE_PREFIX,
   dieFrameTag,
   PART_KINDS,
 } from "./graph";
@@ -704,6 +706,68 @@ describe("New ▸ Subassembly — blank FREE-FORM die + free-form-preserving sea
       expect(ic.package).toEqual({ archetype: "BLOCK", pinCount: 4 });
     } finally {
       unregisterUserIc("TGATE");
+    }
+  });
+});
+
+describe("New ▸ Subassembly — a sealed blank is self-contained (no sibling geometry bleed)", () => {
+  it("re-tags the captured frame to its own die kind, so a later sibling can't overwrite its box/pins", () => {
+    // Blank A (default 4-pin geom): build a fragment, seal as "SubA".
+    const a = createBlankFreeFormSubassembly();
+    const ga = new BoardGraph();
+    ga.restore(a.dieGraph);
+    const fa = ga.components.get(a.frameId)!;
+    const ra = place(ga, "R", 30, 30, 1000);
+    connect(ga, fa, 0, ra, 0);
+    connect(ga, fa, 1, ra, 1);
+    expect(
+      captureSeal(ga, a.frameId, "SubA", undefined, "subassembly"),
+    ).not.toBeUndefined();
+    try {
+      const icA = getUserIc("SubA")!;
+      const frameA = icA.graph.components.find((c) => c.id === icA.frameId)!;
+      // The sealed graph's frame is SubA's OWN free-form die kind, not the shared provisional blank tag.
+      expect(frameA.kind).toBe(FREE_FORM_DIE_PREFIX + "SubA");
+      const pinsA = freeFormGeom(frameA.kind)!.pins.length;
+      expect(pinsA).toBe(4);
+
+      // Blank B reuses the provisional tag; "shape" it BIGGER (6 pins) and seal as "SubB".
+      const b = createBlankFreeFormSubassembly();
+      registerFreeFormFrame(b.dieKind.slice(FREE_FORM_DIE_PREFIX.length), {
+        w: 15,
+        h: 11,
+        pins: [
+          { dx: 0, dy: 2 },
+          { dx: 0, dy: 8 },
+          { dx: 14, dy: 2 },
+          { dx: 14, dy: 8 },
+          { dx: 7, dy: 0 },
+          { dx: 7, dy: 10 },
+        ],
+      });
+      const gb = new BoardGraph();
+      gb.restore(b.dieGraph);
+      const fb = gb.components.get(b.frameId)!;
+      const rb = place(gb, "R", 40, 40, 1000);
+      connect(gb, fb, 0, rb, 0);
+      connect(gb, fb, 1, rb, 1);
+      expect(
+        captureSeal(gb, b.frameId, "SubB", undefined, "subassembly"),
+      ).not.toBeUndefined();
+      try {
+        // SubA's geometry is UNTOUCHED by sealing SubB — the bleed is gone (without the re-tag this read
+        // SubB's 6 pins, because both graphs shared the one provisional frame kind).
+        expect(freeFormGeom(frameA.kind)!.pins.length).toBe(pinsA);
+        const icB = getUserIc("SubB")!;
+        const frameB = icB.graph.components.find((c) => c.id === icB.frameId)!;
+        expect(frameB.kind).toBe(FREE_FORM_DIE_PREFIX + "SubB");
+        expect(frameB.kind).not.toBe(frameA.kind);
+        expect(freeFormGeom(frameB.kind)!.pins.length).toBe(6);
+      } finally {
+        unregisterUserIc("SubB");
+      }
+    } finally {
+      unregisterUserIc("SubA");
     }
   });
 });

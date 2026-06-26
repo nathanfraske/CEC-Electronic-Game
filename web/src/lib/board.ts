@@ -158,12 +158,12 @@ interface GaugeAnchor {
 }
 
 const PIN_R = 4.5;
-/** Chip Bench bloom: half-size (SCREEN px, ÷ zoom at draw/hit) of the open free-form die's box-resize
- * handle — drawn on the right/bottom walls + SE corner inside the drill. */
-const BLOOM_HANDLE_R = 7;
-/** How far OUTSIDE the die walls (SCREEN px, ÷ zoom) the resize handles float, so they clear the edge pins
- * that sit ON the walls (a free-form die's leads ride its box perimeter). */
-const DIE_HANDLE_FLOAT_PX = 16;
+/** Chip Bench builder (the Chip-Bench design brief, §8.1): grab radius (SCREEN px, ÷ zoom at draw/hit) of a
+ * free-form die's fat pin BEAD — ≥44px diameter so it's a finger-big SHAPE/WIRE target at any zoom. */
+const BEAD_HIT_PX = 22;
+/** Grab tolerance (SCREEN px, ÷ zoom) for the resize GRAB-RAIL — the right/bottom die walls themselves are
+ * the resize handle (§11A "grab the wall/corner"), so the grab zone sits ON the boundary, not floating. */
+const RESIZE_GRIP_PX = 12;
 // `BoardLens` (the board's detail lens: schematic / analogy / reality — mirrors the info
 // panel's `DiagramMode`) is defined in `./boardRender` and imported + re-exported above.
 /** World zoom at/above which analogy/reality parts swap to the full illustration. */
@@ -797,11 +797,15 @@ export class Board {
   private junctionDrag: { id: number; moved: boolean } | null = null;
   // Dragging a net label's tag pill (it follows the cursor; the anchor stays put).
   private labelDrag: { id: number; moved: boolean } | null = null;
-  // Dragging a FREE-FORM die-frame PIN along the box edge (Alt+drag, die editor only): rewrites the
-  // frame's stored geom so the pin slides to the nearest perimeter cell; incident wires follow because
+  // Dragging a FREE-FORM die-frame PIN bead along the box edge (Chip Bench builder, SHAPE mode): rewrites
+  // the frame's stored geom so the pin slides to the nearest perimeter cell; incident wires follow because
   // they reference it by index (connectivity/the netlist is untouched). `moved` gates the undo/persist.
   private pinDrag: { pinIndex: number; moved: boolean } | null = null;
-  // Dragging the open FREE-FORM die's box-resize HANDLE in the drill (Chip Bench bloom): `axis` is which
+  /** Chip Bench builder mode bit (the design brief §2): in a FREE-FORM die a pin-bead drag means SHAPE
+   * (move the pin) when true — the geometry-first default — or WIRE (start a wire) when false. Replaces the
+   * cut Alt-drag; flipped by the die-bar toggle. Irrelevant outside a free-form die. */
+  private shapeMode = true;
+  // Dragging the open FREE-FORM die's resize GRAB-RAIL (§11A "grab the wall/corner"): `axis` is which
   // wall/corner ('e' right → width, 's' bottom → height, 'se' corner → both); `moved` gates the one undo.
   // The target is always the open die frame (`dieFrameId`), so no id is stored.
   private boxHandleDrag: {
@@ -2181,10 +2185,11 @@ export class Board {
     // A persisted region rectangle belongs to the OUTER board; drilling into a die (or the graph swap that
     // comes with it) would leave a stale overlay over the inner canvas — drop it on entry.
     if (frameId !== null) this.clearPendingRegion();
+    if (frameId !== null) this.shapeMode = true; // §2: geometry-first — every drill-in starts in SHAPE
     this.dieFrameId = frameId;
     this.drawDieWalls();
-    // Draw (or clear) the Chip Bench resize-handle bloom — it keys off `dieFrameId`, not selection, so a
-    // free-form die shows its handles the moment you drill in and drops them on the way out.
+    // Draw (or clear) the Chip Bench builder overlay — it keys off `dieFrameId`, not selection, so a
+    // free-form die shows its grab-rails + beads the moment you drill in and drops them on the way out.
     this.redrawSelection();
   }
 
@@ -3618,88 +3623,137 @@ export class Board {
     this.drawBloom(g);
   }
 
-  /** The open free-form die's three box-resize handles' world centers — E (right wall → width), S (bottom
-   * wall → height), SE (corner → both) — each floated a constant SCREEN distance OUTSIDE the walls so it
-   * clears the edge pins (a free-form die's leads sit ON the box perimeter). Null unless a free-form die is
-   * open. Shared by {@link drawBloom} + {@link bloomHandleHit} so the drawn handle and its grab box never
-   * drift apart. */
-  private dieResizeHandles(): { e: Point; s: Point; se: Point } | null {
+  /** The open FREE-FORM die's wall rectangle in WORLD coordinates (the box the player sees + grabs), or null
+   * outside a free-form die. The resize grab-rails + the pin beads hang off this. */
+  private dieWallRect(): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null {
     if (this.dieFrameId === null) return null;
     const frame = this.graph.components.get(this.dieFrameId);
     if (!frame || !isFreeFormFrame(frame.kind)) return null;
-    const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
-    if (!bounds) return null;
-    const off = DIE_HANDLE_FLOAT_PX / (this.world.scale.x || 1);
-    const left = bounds.minCol * PITCH;
-    const top = bounds.minRow * PITCH;
-    const right = bounds.maxCol * PITCH;
-    const bottom = bounds.maxRow * PITCH;
-    const midX = (left + right) / 2;
-    const midY = (top + bottom) / 2;
+    const b = dieBounds(this.graph.serialize(), this.dieFrameId);
+    if (!b) return null;
     return {
-      e: new Point(right + off, midY),
-      s: new Point(midX, bottom + off),
-      se: new Point(right + off, bottom + off),
+      left: b.minCol * PITCH,
+      top: b.minRow * PITCH,
+      right: b.maxCol * PITCH,
+      bottom: b.maxRow * PITCH,
     };
   }
 
-  /** Draw the Chip Bench BLOOM inside the drill: box-resize HANDLES floated just OUTSIDE the open free-form
-   * die's walls — right wall (→ width), bottom wall (→ height), SE corner (→ both). Drag one to grow/shrink
-   * the box right where the device internals are visible. Handles + their stand-off are sized in SCREEN px
-   * (÷ zoom) so they stay grabbable and clear of the edge pins at any zoom. No-op unless a free-form die is
-   * open. (The pins themselves are moved by the editor's Alt-drag — see `pinDrag`.) */
+  /** Draw the Chip Bench BUILDER overlay inside a free-form drill (the design brief §1/§11A): the RIGHT and
+   * BOTTOM walls become a brighter "grab-rail" (the wall IS the resize handle — grab it to stretch the box;
+   * the SE corner resizes both), and every frame pin wears a fat ≥44px BEAD as the SHAPE/WIRE grab target
+   * (brighter in SHAPE, where a bead-drag moves the pin). Co-located with the box the player sees — no
+   * cryptic floating squares, nothing shadowing the pins. No-op outside a free-form die. */
   private drawBloom(g: Graphics): void {
-    const handles = this.dieResizeHandles();
-    if (!handles) return;
+    const r = this.dieWallRect();
+    if (r === null || this.dieFrameId === null) return;
+    const frame = this.graph.components.get(this.dieFrameId);
+    const kind = frame ? this.graph.kindOf(frame) : undefined;
+    if (!frame || !kind) return;
     const s = this.world.scale.x || 1;
-    const r = BLOOM_HANDLE_R / s;
-    for (const h of [handles.e, handles.s, handles.se]) {
-      g.roundRect(h.x - r, h.y - r, r * 2, r * 2, 2 / s);
-      g.fill({ color: 0x1a1730, alpha: 0.96 }); // dark grip interior (matches the die-wall fill)
-      g.roundRect(h.x - r, h.y - r, r * 2, r * 2, 2 / s);
-      g.stroke({ width: 2 / s, color: PALETTE.accent, alpha: 0.95 });
+    // Grab-rails: the right + bottom walls, drawn as a thicker accent rail = "grab the wall to resize".
+    g.moveTo(r.right, r.top).lineTo(r.right, r.bottom);
+    g.moveTo(r.left, r.bottom).lineTo(r.right, r.bottom);
+    g.stroke({ width: 3 / s, color: PALETTE.accent, alpha: 0.5 });
+    // An SE corner bracket — grab → resize both axes.
+    const br = 14 / s;
+    g.moveTo(r.right - br, r.bottom)
+      .lineTo(r.right, r.bottom)
+      .lineTo(r.right, r.bottom - br);
+    g.stroke({ width: 3 / s, color: PALETTE.accent, alpha: 0.9 });
+    // Fat draggable bead on each frame pin (the ≥44px SHAPE/WIRE target). Brighter in SHAPE (drag = move).
+    const beadR = BEAD_HIT_PX / s;
+    const beadAlpha = this.shapeMode ? 0.5 : 0.22;
+    for (const p of kind.pins) {
+      const w = this.cellToWorld(this.graph.pinCell(frame, p));
+      g.circle(w.x, w.y, beadR);
+      g.stroke({ width: 2 / s, color: PALETTE.accent, alpha: beadAlpha });
     }
   }
 
-  /** Which die box-resize handle (if any) world-point `wp` grabs: 'se' corner (tested first — it overlaps
-   * the edges), else 'e' right wall, 's' bottom wall. The grab box is the larger of the handle size and a
-   * ~26px on-screen square (catchable at any zoom). Null when no free-form die is open or the point misses
-   * every handle. */
-  private bloomHandleHit(wp: Point): "e" | "s" | "se" | null {
-    const handles = this.dieResizeHandles();
-    if (!handles) return null;
-    const tol = Math.max(BLOOM_HANDLE_R + 4, 13 / (this.world.scale.x || 1));
-    const near = (h: Point): boolean =>
-      Math.abs(wp.x - h.x) <= tol && Math.abs(wp.y - h.y) <= tol;
-    if (near(handles.se)) return "se";
-    if (near(handles.e)) return "e";
-    if (near(handles.s)) return "s";
+  /** The frame-pin index (if any) whose fat BEAD world-point `wp` grabs — nearest frame pin within the
+   * ≥44px bead radius. Tested BEFORE the resize rails so a bead is always grabbable (a pin sitting on a wall
+   * isn't swallowed by edge-resize). Null outside a free-form die or off every bead. */
+  private pinBeadHit(wp: Point): number | null {
+    if (this.dieFrameId === null) return null;
+    const frame = this.graph.components.get(this.dieFrameId);
+    const kind = frame ? this.graph.kindOf(frame) : undefined;
+    if (!frame || !kind || !isFreeFormFrame(frame.kind)) return null;
+    const tol = BEAD_HIT_PX / (this.world.scale.x || 1);
+    let best = -1;
+    let bestD = tol * tol;
+    for (const p of kind.pins) {
+      const w = this.cellToWorld(this.graph.pinCell(frame, p));
+      const d2 = (wp.x - w.x) ** 2 + (wp.y - w.y) ** 2;
+      if (d2 <= bestD) {
+        bestD = d2;
+        best = p.index;
+      }
+    }
+    return best >= 0 ? best : null;
+  }
+
+  /** Which resize axis (if any) world-point `wp` grabs on the open free-form die's grab-rails: 'se' the SE
+   * corner (both), else 'e' the right wall (width), 's' the bottom wall (height). Tolerance is a constant
+   * SCREEN distance off the wall, so the rail stays catchable at any zoom. Caller tests {@link pinBeadHit}
+   * first, so a bead on a wall wins. Null outside a free-form die or off the rails. */
+  private wallResizeHit(wp: Point): "e" | "s" | "se" | null {
+    const r = this.dieWallRect();
+    if (r === null) return null;
+    const tol = RESIZE_GRIP_PX / (this.world.scale.x || 1);
+    const nearRight =
+      Math.abs(wp.x - r.right) <= tol &&
+      wp.y >= r.top - tol &&
+      wp.y <= r.bottom + tol;
+    const nearBottom =
+      Math.abs(wp.y - r.bottom) <= tol &&
+      wp.x >= r.left - tol &&
+      wp.x <= r.right + tol;
+    if (nearRight && nearBottom) return "se";
+    if (nearRight) return "e";
+    if (nearBottom) return "s";
     return null;
   }
 
-  /** Live step of an in-die box-resize drag: set the die box so the dragged wall/corner tracks the cursor
-   * cell (anchor = the die frame's top-left). The handle floats `DIE_HANDLE_FLOAT_PX` outside the wall, so
-   * we subtract that stand-off before snapping → grabbing a handle doesn't jump the box. Commits the single
-   * drag undo on the first cell that actually resizes; `setDieFrameBox(false)` re-pins + redraws each step. */
+  /** Live step of an in-die resize drag: set the die box so the grabbed wall/corner tracks the cursor cell
+   * (anchor = the die frame's top-left). The grab is ON the wall now, so the snapped cursor cell IS the new
+   * wall position (no stand-off). Commits the single drag undo on the first cell that actually resizes;
+   * `setDieFrameBox(false)` re-pins + redraws each step. */
   private moveBoxHandleDrag(wp: Point): void {
     const d = this.boxHandleDrag;
     if (d === null || this.dieFrameId === null) return;
     const frame = this.graph.components.get(this.dieFrameId);
     const geom = frame ? freeFormGeom(frame.kind) : undefined;
     if (!frame || !geom) return;
-    const off = DIE_HANDLE_FLOAT_PX / (this.world.scale.x || 1);
     let w = geom.w;
     let h = geom.h;
     if (d.axis === "e" || d.axis === "se")
-      w = snap(wp.x - off, PITCH) - frame.cell.col + 1;
+      w = snap(wp.x, PITCH) - frame.cell.col + 1;
     if (d.axis === "s" || d.axis === "se")
-      h = snap(wp.y - off, PITCH) - frame.cell.row + 1;
+      h = snap(wp.y, PITCH) - frame.cell.row + 1;
     if (this.setDieFrameBox(w, h, false)) {
       if (!d.moved && this.pendingUndo) {
         this.commitUndo(this.pendingUndo);
         d.moved = true;
       }
     }
+  }
+
+  /** Chip Bench builder mode (§2): SHAPE (true) = a free-form pin-bead drag moves the pin; WIRE (false) = it
+   * starts a wire. The die-bar toggle calls this; entering a die resets to SHAPE (geometry-first). */
+  setShapeMode(on: boolean): void {
+    this.shapeMode = on;
+    this.redrawSelection(); // beads re-tint for the active mode
+  }
+
+  /** The current builder mode bit (for the die-bar toggle's pressed state). */
+  isShapeMode(): boolean {
+    return this.shapeMode;
   }
 
   // --- probe (measure mode) -----------------------------------------------
@@ -4011,25 +4065,44 @@ export class Board {
       return;
     }
 
-    // Alt+press on a FREE-FORM die-frame pin MOVES that pin along the box edge. This is tested FIRST —
-    // before the pending-wire branch below — because a single click on a pad leaves a wire pending
-    // (KiCad click-to-continue), and that branch would otherwise consume the Alt-press and wire two
-    // pads together instead of moving the pin. Any pending wire is cancelled. (Stock-package dies have
-    // a fixed pinout, so this only arms for free-form frames; everything else falls through unchanged.)
-    if (e.button === 0 && e.altKey && this.dieFrameId !== null) {
-      const pinHit = this.pinHitTest(wp.x, wp.y);
-      if (
-        pinHit &&
-        pinHit.componentId === this.dieFrameId &&
-        (this.mode === "wire" || this.mode === "select")
-      ) {
-        const frame = this.graph.components.get(this.dieFrameId);
-        if (frame && isFreeFormFrame(frame.kind) && freeFormGeom(frame.kind)) {
-          if (this.wiring) this.cancelWiring();
-          this.pinDrag = { pinIndex: pinHit.pinIndex, moved: false };
+    // Chip Bench builder (the design brief §2/§11A), FREE-FORM die only: in SHAPE mode a press on a fat pin
+    // BEAD MOVES that pin along the rim (the geometry-first default, replacing the cut Alt-drag); a
+    // double-tap on a bead opens its name pad. A press on the resize GRAB-RAIL (right/bottom wall, SE
+    // corner) stretches the box — in either mode, since it's geometry. Tested FIRST (before the pending-wire
+    // + generic pin/body branches) so the fat ≥44px targets win and a bead/rail is never shadowed; gated to
+    // `!this.wiring` so a wire mid-route still completes normally. WIRE-mode frame pins fall through to the
+    // ordinary wiring flow. `pinBeadHit`/`wallResizeHit` are null outside a free-form die, so nothing else
+    // is affected.
+    if (
+      e.button === 0 &&
+      !this.wiring &&
+      (this.mode === "wire" || this.mode === "select")
+    ) {
+      if (this.shapeMode) {
+        const bead = this.pinBeadHit(wp);
+        if (bead !== null && this.dieFrameId !== null) {
+          const now = performance.now();
+          const dbl =
+            this.lastPinTap !== null &&
+            this.lastPinTap.id === this.dieFrameId &&
+            this.lastPinTap.pin === bead &&
+            now - this.lastPinTap.t < DOUBLE_CLICK_MS;
+          if (dbl) {
+            this.lastPinTap = null;
+            this.beginPinNameEdit(this.dieFrameId, bead);
+            return;
+          }
+          this.lastPinTap = { id: this.dieFrameId, pin: bead, t: now };
+          this.pinDrag = { pinIndex: bead, moved: false };
           this.pendingUndo = this.snapshotEntry();
           return;
         }
+      }
+      const axis = this.wallResizeHit(wp);
+      if (axis) {
+        this.boxHandleDrag = { axis, moved: false };
+        this.pendingUndo = this.snapshotEntry();
+        return;
       }
     }
 
@@ -4188,22 +4261,8 @@ export class Board {
       }
     }
 
-    // Chip Bench bloom (in the drill): a press on a die-resize HANDLE grabs it to drag the wall and resize
-    // the box right where the device internals are visible. The handles float just OUTSIDE the walls, so
-    // this never shadows the edge pins (still wired / named / Alt-moved as usual). `bloomHandleHit` returns
-    // null unless a free-form die is open, so the outer board is unaffected. Allowed in wire mode too (a
-    // pending wire already took precedence above), since the die is usually authored in wire mode.
-    if (e.button === 0 && (this.mode === "select" || this.mode === "wire")) {
-      const handle = this.bloomHandleHit(wp);
-      if (handle) {
-        this.boxHandleDrag = { axis: handle, moved: false };
-        this.pendingUndo = this.snapshotEntry();
-        return;
-      }
-    }
-
-    // (Alt+press on a free-form frame pin is handled at the TOP of this method — before the pending-wire
-    // branch — so it can't be pre-empted by a pending wire.)
+    // (The Chip Bench builder gestures — SHAPE pin-bead move, resize grab-rail — are handled at the TOP of
+    // this method, before the pending-wire branch, so they can't be pre-empted by a pending wire.)
     const pin = this.pinHitTest(wp.x, wp.y);
     if (pin && (this.mode === "wire" || this.mode === "select")) {
       // Inside a die: remember this press on the die frame's perimeter pin so a SECOND press on it
