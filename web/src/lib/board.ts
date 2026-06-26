@@ -82,7 +82,7 @@ import { drawUserIcInternals } from "./userIcInternalsView";
 import {
   type CompositeInternals,
   type UserIcInternals,
-  userIcGeometry,
+  userIcGeometryDeep,
 } from "./netlist";
 // The shared, `this`-free board render engine (geometry / carriers / conduit skins),
 // extracted so the sealed-IC opened view can run the SAME wire pipeline. board.ts keeps
@@ -2769,8 +2769,22 @@ export class Board {
       let miny = 0;
       let maxx = 0;
       let maxy = 0;
-      for (const p of kind?.pins ?? []) {
-        const r = rotateOffset(p.dx, p.dy, c.rot, c.mirror);
+      // The grab/selection box spans the part's FOOTPRINT. For a USER IC use its kind.w/h box corners (the
+      // authored box) — a free-form subassembly's pins needn't reach the box edges (e.g. a latch with pins
+      // only in a middle band), so a pin bbox would be too short and miss the box's top/bottom. For stock
+      // parts the pins ARE the footprint extremes, so iterate them. (For a stock-package user IC, kind.w/h
+      // equals the pin bbox, so this is a no-op there.)
+      const corners: ReadonlyArray<readonly [number, number]> =
+        kind && isUserIc(c.kind)
+          ? [
+              [0, 0],
+              [kind.w - 1, 0],
+              [0, kind.h - 1],
+              [kind.w - 1, kind.h - 1],
+            ]
+          : (kind?.pins ?? []).map((p) => [p.dx, p.dy] as const);
+      for (const [dx, dy] of corners) {
+        const r = rotateOffset(dx, dy, c.rot, c.mirror);
         minx = Math.min(minx, r.col);
         miny = Math.min(miny, r.row);
         maxx = Math.max(maxx, r.col);
@@ -7232,6 +7246,9 @@ class ComponentNode {
    * object, so a reference compare catches it. */
   private staticUserIc?: UserIcInternals;
   private staticUserIcDef?: UserIc;
+  /** The static (unpowered) recursion map: nested sub-ICs' static geometry by flatId, so a placed
+   * subassembly opens chip-within-chip even when the board doesn't solve (built beside staticUserIc). */
+  private staticUserIcAll?: Map<number, UserIcInternals>;
   /** Which way pin LABELS push to sit OUTSIDE the body (datasheet edge-mount): `true` = up/down (pins
    * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
    * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
@@ -7507,7 +7524,11 @@ class ComponentNode {
       const def = getUserIc(this.kindTag);
       if (def) {
         if (def !== this.staticUserIcDef) {
-          this.staticUserIc = userIcGeometry(def);
+          // Build the static geometry RECURSIVELY (def + every nested sub-IC by flatId), so the
+          // unpowered replica can open chip-within-chip exactly as the live (solved) path does.
+          const deep = userIcGeometryDeep(def);
+          this.staticUserIc = deep.internals;
+          this.staticUserIcAll = deep.all;
           this.staticUserIcDef = def;
         }
         effUserIc = this.staticUserIc;
@@ -7565,7 +7586,9 @@ class ComponentNode {
         // sealed-IC inner part (carrying `flatId`) can look up ITS internals and open in turn once it
         // grows large enough on screen. Top level is depth 0, cumulativeScale 1 (the opts defaults).
         internalsZoom: INTERNALS_ZOOM,
-        allInternals: allUserIcInternals,
+        // Live map when the board solved; else the static recursion map so an unpowered placed
+        // subassembly still opens its nested sub-ICs (chip-within-chip) down to the leaf devices.
+        allInternals: allUserIcInternals ?? this.staticUserIcAll,
         // The screen rect for the A.4 view cull (skip off-screen inner parts so deep zoom into one
         // nested cell doesn't redraw every off-screen sibling's subtree each frame).
         viewport,

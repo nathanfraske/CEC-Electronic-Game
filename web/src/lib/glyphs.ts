@@ -1982,6 +1982,7 @@ export function userIcBodyBox(
   pins: { x: number; y: number }[],
   wPx: number,
   hPx: number,
+  freeForm = false,
 ): {
   x: number;
   y: number;
@@ -1990,6 +1991,23 @@ export function userIcBodyBox(
   alongX: boolean;
   lead: number;
 } {
+  // A FREE-FORM (box-captured) subassembly's body IS its AUTHORED box — the same walls the die editor
+  // draws (freeFormGeom) — with its pins as nubs ON the edges. NOT the pin bounding box: a box whose pins
+  // sit only in a middle band (e.g. an SR-latch with VCC/Q left, Qb/GND right but nothing top/bottom)
+  // would otherwise collapse to a short, wide blob instead of the tall box the player drew. Pins are
+  // top-left-origin (dx*PITCH from the anchor) and wPx/hPx = (w-1)/(h-1)·PITCH, so the box is exactly
+  // [0,0,wPx,hPx]. (Stock DIP/SOT parts keep the pin-bbox+lead-inset path below — their pins ARE the box
+  // extremes, pushed out as leads, so that path is correct for them.)
+  if (freeForm) {
+    return {
+      x: 0,
+      y: 0,
+      w: Math.max(1, wPx),
+      h: Math.max(1, hPx),
+      alongX: wPx >= hPx,
+      lead: 0,
+    };
+  }
   let minX = Infinity;
   let maxX = -Infinity;
   let minY = Infinity;
@@ -2060,6 +2078,7 @@ export function pinLeadRoot(
 
 const LEAD_W = 12; // px width of a rectangular solder lead (the flat metal tab, as on a real chip)
 const LEAD_TUCK = 2; // px the lead tucks UNDER the body rim at its root so there's no seam
+const FF_NUB_LEN = 10; // px length of a free-form subassembly pin nub, straddling its body edge
 
 /**
  * Draw a user IC's PACKAGE: the full-size body card (the {@link userIcBodyBox}, sitting INSIDE the lead
@@ -2074,12 +2093,29 @@ export function drawUserIcPackageBody(
   wPx: number,
   hPx: number,
   color: number,
+  freeForm = false,
 ): void {
-  const b = userIcBodyBox(pins, wPx, hPx);
+  const b = userIcBodyBox(pins, wPx, hPx, freeForm);
   // Leads first (under the body rim): a flat rectangular tab from each pin (the outer lead TIP) IN to the
   // body edge nearest it, tucked LEAD_TUCK px under the rim so the body (drawn on top) covers the root —
   // leaving the tab proud of the package like a real solder lead, with its tip the connection point.
   for (const p of pins) {
+    // A free-form box carries pins on ANY of its four edges (not just two stick edges), so place a short
+    // NUB straddling the body edge nearest THIS pin (pinLeadRoot), rather than a package-wide stick axis.
+    if (freeForm) {
+      const root = pinLeadRoot(p, b);
+      const rx = root.vertical ? p.x - LEAD_W / 2 : root.x - FF_NUB_LEN / 2;
+      const ry = root.vertical ? root.y - FF_NUB_LEN / 2 : p.y - LEAD_W / 2;
+      const rw = root.vertical ? LEAD_W : FF_NUB_LEN;
+      const rh = root.vertical ? FF_NUB_LEN : LEAD_W;
+      g.rect(rx, ry, rw, rh).fill({ color: 0x9a93b3, alpha: 0.95 });
+      g.rect(rx, ry, rw, rh).stroke({
+        width: 0.6,
+        color: 0x6f6a8a,
+        alpha: 0.8,
+      });
+      continue;
+    }
     let rx: number;
     let ry: number;
     let rw: number;
@@ -2116,14 +2152,18 @@ export function drawUserIcPackageBody(
 }
 
 function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
-  // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip.
-  const isBlock = getUserIc(o.kind)?.package.archetype === BLOCK_ARCHETYPE;
+  // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip; its body
+  // is the AUTHORED box (freeForm), not the pin bbox, so pass the free-form flag through.
+  const def = getUserIc(o.kind);
+  const freeForm = !!def?.freeForm;
+  const isBlock = def?.package.archetype === BLOCK_ARCHETYPE;
   drawUserIcPackageBody(
     g,
     o.pins,
     o.wPx,
     o.hPx,
     isBlock ? BLOCK_BODY_COLOR : o.color,
+    freeForm,
   );
 }
 

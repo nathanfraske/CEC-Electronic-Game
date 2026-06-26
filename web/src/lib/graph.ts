@@ -1478,15 +1478,14 @@ export function registerFreeFormFrame(
   const kindPins = geom.pins.map((p, i) =>
     pin(p.name?.trim() ? p.name.trim() : String(i + 1), p.dx, p.dy),
   );
-  PART_KINDS[dieTag] = kind(
-    dieTag,
-    "Subassembly",
-    "border",
-    kindPins,
-    0,
-    "",
-    true,
-  );
+  PART_KINDS[dieTag] = {
+    ...kind(dieTag, "Subassembly", "border", kindPins, 0, "", true),
+    // The die-frame footprint is the AUTHORED box, NOT the pin bounding box: `kind()` derives w/h from the
+    // furthest pin, so a box whose pins sit only in a middle band would report a short/narrow footprint and
+    // every consumer of `kind.w/h` (the body fit, pin facings) would mis-size it. Mirror freeFormGeom.
+    w: geom.w,
+    h: geom.h,
+  };
   return dieTag;
 }
 

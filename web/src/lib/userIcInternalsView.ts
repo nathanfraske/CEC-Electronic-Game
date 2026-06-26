@@ -17,7 +17,7 @@
 // `g` (unscaled). No new simulation, no hashing — the seal is purely a drawing over the same netlist
 // (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics, Point } from "pixi.js";
-import { PALETTE, PART_KINDS, isJunctionRef } from "./graph";
+import { PALETTE, PART_KINDS, isJunctionRef, isFreeFormFrame } from "./graph";
 import { isUserIc } from "./userIc";
 import {
   drawGlyphIn,
@@ -214,6 +214,12 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     viewProbe,
   } = o;
   const { parts, wires, innerGraph, nodeOfInner, frameId } = internals;
+  // A free-form (box-captured) subassembly's package body is its AUTHORED box (freeForm w×h), not the pin
+  // bounding box — so the opened replica + the inner-circuit FIT use the same portrait/landscape box the
+  // die editor and the placed footprint do (a box with middle-band pins must not open as a short, wide
+  // blob). Detected from the inner die-frame kind (`__DIE_FF_*`).
+  const frameKind = innerGraph.components.get(frameId)?.kind;
+  const freeForm = !!frameKind && isFreeFormFrame(frameKind);
   // The schematic lens (C-2) draws plain orthogonal polyline traces + plain junction dots instead of
   // the conduit pipe/grommet skin — mirroring the die editor's non-conduit (`else`) branch in
   // `redrawWires`/`drawJunctions`. `conduitLens` is null in schematic so the shared route family still
@@ -223,7 +229,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   // Draw the PACKAGE first, glyph-local (NOT scaled): the leads out to the solder pins + the dark
   // body. The scaled inner circuit then fills the body interior, so it reads as the real chip opened
   // up (leads on the outside).
-  drawUserIcPackageBody(g, pins, wPx, hPx, color);
+  drawUserIcPackageBody(g, pins, wPx, hPx, color, freeForm);
 
   // Pool layout (C-5 — wires LAST so they paint OVER the part bodies, never under): child[0..N-1] =
   // the inner part glyphs/details, child[N] = innerG (all wires + junctions, cleared each frame), drawn
@@ -276,7 +282,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const domMaxY = internals.bbox.maxRow * PITCH;
   const domW = domMaxX - domMinX;
   const domH = domMaxY - domMinY;
-  const bodyB = userIcBodyBox(pins, wPx, hPx);
+  const bodyB = userIcBodyBox(pins, wPx, hPx, freeForm);
   const centreX = bodyB.x + bodyB.w / 2;
   const centreY = bodyB.y + bodyB.h / 2;
   // Fit to the body rectangle (aspect-preserving), inset a hair for a rim margin; floor each side at
