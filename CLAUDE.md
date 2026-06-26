@@ -97,6 +97,20 @@ existing per-part tier studies. When asked to build/extend an IC glyph, start fr
 the nearest existing refsheet — do not recall pinouts from memory (the spec requires datasheet
 verification), and run the spec's validation gates (§10) before handing back.
 
+## Convenience primitives → track for owner chip-art refinement
+
+A **convenience primitive** is an engine/web shortcut — a behavioral element (`ELEM_BEHAVIORAL` programs:
+LUT/SPI/UART/SAR/CTR/SDM; the planned `ELEM_MEMORY` ROM/RAM/EEPROM) or a pseudo-part (`PULSE`, `SHUNT`) —
+that does the work of a whole circuit and ships with a **default auto-generated package + glyph** so it's
+usable immediately. The **owner re-authors each as a proper reference-design chip** (real package, datasheet
+pinout, clean glyph) in the IC editor; the re-skin is a visual/package wrapper that maps the owner's pin
+layout to the element's terminal order (`BEH_SPEC.term`) and **does not change the `ELEM_*`**.
+
+**Rule:** whenever you add a convenience primitive, ship a working default representation AND add an entry
+to **`docs/ic-reference-library.md`** marked `needs-chip`. That file is the owner's master checklist for the
+whole **IC reference library** (every IC-class part rebuilt by hand as a reference-design chip) — don't
+delete entries, flip them to `refined` when the hand-built chip lands.
+
 ## Component grades (tiers)
 
 Components with real quality grades carry a `tier` (budget / mid-range / high-end /
