@@ -22,6 +22,7 @@ import {
   frameTag,
   dieFrameTag,
   registerFreeFormFrame,
+  unregisterFreeFormFrame,
   freeFormGeom,
   isFreeFormFrame,
   isFrame,
@@ -486,10 +487,15 @@ export function createBlankFreeFormSubassembly(): {
 export function unregisterUserIc(tag: string): void {
   const fam = FAMILIES.get(tag);
   if (fam) {
-    for (let i = 0; i < fam.variants.length; i++)
-      REGISTRY.delete(variantChildTag(tag, i));
+    for (let i = 0; i < fam.variants.length; i++) {
+      const childTag = variantChildTag(tag, i);
+      // Clean the paired free-form die-frame kind too, else it orphans in the global registry (audit #12).
+      if (REGISTRY.get(childTag)?.freeForm) unregisterFreeFormFrame(childTag);
+      REGISTRY.delete(childTag);
+    }
     FAMILIES.delete(tag);
   }
+  if (REGISTRY.get(tag)?.freeForm) unregisterFreeFormFrame(tag);
   REGISTRY.delete(tag);
   delete PART_KINDS[tag];
 }
@@ -780,7 +786,13 @@ export function appendUserIcVariant(family: string, variant: UserIc): boolean {
       variant.package.pinCount !== base.package.pinCount
     )
       return false;
-    const child0: UserIc = { ...base, tag: variantChildTag(family, 0) };
+    // Deep-clone the re-homed base (audit): a shallow `{...base}` shares its `graph`/`freeForm` object refs
+    // with the original def, so a later edit to either would alias the other — the clone discipline
+    // flattenUserIcs relies on. structuredClone is safe (a UserIc is plain JSON).
+    const child0: UserIc = structuredClone({
+      ...base,
+      tag: variantChildTag(family, 0),
+    });
     fam = { family, name: base.name, variants: [child0] };
     FAMILIES.set(family, fam);
     REGISTRY.set(child0.tag, child0);
@@ -793,7 +805,8 @@ export function appendUserIcVariant(family: string, variant: UserIc): boolean {
       return false;
   }
   const childTag = variantChildTag(family, fam.variants.length);
-  const child: UserIc = { ...variant, tag: childTag };
+  // Deep-clone too (audit): don't share `graph`/`freeForm` refs with the caller's `variant` object.
+  const child: UserIc = structuredClone({ ...variant, tag: childTag });
   fam.variants.push(child);
   REGISTRY.set(childTag, child);
   // Register the family tag's tile + variants[0] resolution (so a variant-unaware path resolves a valid

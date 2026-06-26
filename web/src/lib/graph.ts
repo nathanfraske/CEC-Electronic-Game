@@ -1496,6 +1496,16 @@ export function freeFormGeom(kind: string): FreeFormGeom | undefined {
   return FREE_FORM_GEOM.get(kind);
 }
 
+/** Drop a free-form die-frame kind — the inverse of {@link registerFreeFormFrame}. Clears its PART_KINDS,
+ * FRAME_PACKAGES, and FREE_FORM_GEOM entries so forgetting a subassembly leaves no orphaned `__DIE_FF_*`
+ * kind behind (audit). `subTag` is the subassembly tag (NOT the `__DIE_FF_` die-frame tag). */
+export function unregisterFreeFormFrame(subTag: string): void {
+  const dieTag = FREE_FORM_DIE_PREFIX + subTag;
+  delete PART_KINDS[dieTag];
+  FRAME_PACKAGES.delete(dieTag);
+  FREE_FORM_GEOM.delete(dieTag);
+}
+
 /** Whether a tag is a free-form die-frame ({@link registerFreeFormFrame}). */
 export function isFreeFormFrame(tag: string): boolean {
   return tag.startsWith(FREE_FORM_DIE_PREFIX);
