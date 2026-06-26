@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (172) — Agent render-verification tooling + Report-bug/Feedback (the panel's plan)
+
+**State:** PR #250 (web/UI/tooling only, golden untouched, 178 web tests). After a brainstorm panel on
+"how can the agent SEE renders + test better," shipped the foundation — and it immediately PAID OFF
+(found + fixed two placement bugs by screenshotting). **The agent can now see its own renders.**
+
+- **`renderProbe.ts`** (#59) — headless geometry assertions: a Pixi v8 `Graphics` records draw ops in
+  `context.instructions` + `getLocalBounds()` in plain node, so vitest asserts on the REAL drawers
+  (`drawGateBodySymbol`, `drawUserIcPackageBody`) — regression-locks this session's authored-box fix.
+  Zero deps, rides the gate.
+- **`web/scripts/shoot.mjs`** (#60) — `pnpm -C web shoot --out x.png [--fixture cec.json]`: boots vite,
+  drives the pre-installed headless Chromium (forces WebGL2/SwiftShader, kills `navigator.gpu`),
+  screenshots the canvas to a PNG the agent READS. **Validated** — saw the HUD + the Inv Latch render as
+  its authored box (confirming the earlier fix). `App.svelte` honours `window.__CEC_FIXTURE` before
+  onboarding; `board.fitView()` (the long-reserved "0" key) frames it.
+- **Report-bug + Give-feedback buttons** (#61) — toolbar buttons → note modal → a `.json` bundle
+  {cec-circuit board (agent re-renders via shoot --fixture) + action journal (the route) + console
+  errors + note}. `lib/feedback.ts`; `logAction` at tool/key sites; `installFeedbackCapture()` on mount.
+
+**Follow-ups:** automated `replay(journal)` to re-drive a reported route headlessly (#62, journal already
+in the bundle); determinism knobs (pause at fixed tick) + golden pixel-diff CI lane; MCP-wrap of
+shoot/replay; the gate-symbol→pins wiring (#58).
+
+---
+
 ## 2026-06-26 (171) — Free-form subassembly render fixes + gate symbol + builder QoL
 
 **State:** 🟢 `main` advancing through PRs #247–#249 (web/UI/data-model only, **golden untouched**, 172
