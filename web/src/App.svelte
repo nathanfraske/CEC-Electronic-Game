@@ -7621,7 +7621,17 @@
     transform: translateX(-50%);
     display: flex;
     align-items: center;
+    /* When the bar is crowded (e.g. the New▸Subassembly builder: toggle + Box + Pins + status + seal
+       panel), WRAP to a second row instead of crushing a control. Without this the `.die-mode` toggle —
+       the only flex item with `overflow:hidden`, so its automatic min-size is 0 — collapsed to its 2px
+       borders and became an unusable square. */
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 12px;
+    /* As wide as the content wants on one line, capped at the viewport. Without an explicit width an
+       absolutely-positioned wrap container collapses to ~its widest item (a narrow, tall stack); this keeps
+       it wide so it stays single-row normally and wraps to just a second row only when truly over-full. */
+    width: max-content;
     max-width: calc(100% - 24px);
     padding: 6px 8px 6px 14px;
     background: oklch(0.135 0.022 285 / 0.84);
@@ -7663,6 +7673,7 @@
   }
   .die-pins {
     display: inline-flex;
+    flex-shrink: 0; /* keep the Box/Pins steppers intact when the bar wraps */
     align-items: center;
     gap: 4px;
     margin-left: 10px;
@@ -7703,6 +7714,7 @@
   /* SHAPE/WIRE segmented toggle (the design brief §2 "one loud mode bit", default SHAPE). */
   .die-mode {
     display: inline-flex;
+    flex-shrink: 0; /* never crush the SHAPE/WIRE paddle — its overflow:hidden would otherwise let it collapse to its borders */
     margin-left: 10px;
     border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
     border-radius: 3px;
