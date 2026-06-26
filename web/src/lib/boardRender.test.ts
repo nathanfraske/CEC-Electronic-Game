@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 // Headless tests for the bridge over/under draw order (pure id-ordering, no PixiJS render needed).
 import { describe, it, expect } from "vitest";
-import { wireDrawOrder, snapToBoxEdge } from "./boardRender";
+import {
+  wireDrawOrder,
+  snapToBoxEdge,
+  firstFreePerimeterCell,
+} from "./boardRender";
 
 describe("wireDrawOrder — bridges draw OVER the traces they hop", () => {
   it("no crossings → original order, unchanged", () => {
@@ -107,5 +111,47 @@ describe("snapToBoxEdge — Alt-drag a free-form pin to the nearest box edge", (
   it("resolves edge ties top → bottom → left → right", () => {
     expect(snapToBoxEdge(0, 0, 6, 8)).toEqual({ dx: 0, dy: 0 }); // top-left corner → top
     expect(snapToBoxEdge(2, 2, 6, 6)).toEqual({ dx: 2, dy: 0 }); // equidistant → top
+  });
+});
+
+describe("firstFreePerimeterCell — where a newly-added free-form pin lands", () => {
+  // Box 5 wide × 4 tall: cols 0..4, rows 0..3.
+  it("fills the TOP edge left→right first", () => {
+    expect(firstFreePerimeterCell([], 5, 4)).toEqual({ dx: 0, dy: 0 });
+    expect(firstFreePerimeterCell([{ dx: 0, dy: 0 }], 5, 4)).toEqual({
+      dx: 1,
+      dy: 0,
+    });
+  });
+  it("flows onto the RIGHT, then BOTTOM, then LEFT edges as the top fills", () => {
+    const top = [0, 1, 2, 3, 4].map((dx) => ({ dx, dy: 0 }));
+    expect(firstFreePerimeterCell(top, 5, 4)).toEqual({ dx: 4, dy: 1 }); // right edge
+    const topRight = [
+      ...top,
+      { dx: 4, dy: 1 },
+      { dx: 4, dy: 2 },
+      { dx: 4, dy: 3 },
+    ];
+    expect(firstFreePerimeterCell(topRight, 5, 4)).toEqual({ dx: 3, dy: 3 }); // bottom edge R→L
+  });
+  it("skips occupied cells and never returns an interior cell", () => {
+    const cell = firstFreePerimeterCell(
+      [
+        { dx: 0, dy: 0 },
+        { dx: 1, dy: 0 },
+      ],
+      5,
+      4,
+    );
+    expect(cell).toEqual({ dx: 2, dy: 0 });
+    const onEdge = (c: { dx: number; dy: number }): boolean =>
+      c.dx === 0 || c.dx === 4 || c.dy === 0 || c.dy === 3;
+    expect(onEdge(cell)).toBe(true);
+  });
+  it("falls back to the top-left corner when the whole perimeter is taken", () => {
+    const all: { dx: number; dy: number }[] = [];
+    for (let dx = 0; dx < 5; dx++)
+      for (let dy = 0; dy < 4; dy++) all.push({ dx, dy });
+    expect(firstFreePerimeterCell(all, 5, 4)).toEqual({ dx: 0, dy: 0 });
   });
 });
