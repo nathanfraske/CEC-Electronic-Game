@@ -32,6 +32,7 @@
     logAction,
     buildFeedbackBundle,
     downloadFeedbackBundle,
+    routePreview,
   } from "./lib/feedback";
   import {
     Board,
@@ -3883,9 +3884,13 @@
   // hands the agent. "bug" vs "feedback" is the same bundle, differently tagged. (lib/feedback.ts.) ---
   let feedbackKind = $state<null | "bug" | "feedback">(null);
   let feedbackNote = $state("");
+  // The captured route shown in the modal so the owner SEES what's attached before downloading (snapshot
+  // at open time — the route doesn't change while the modal is up).
+  let feedbackRoute = $state("");
   function openFeedback(kind: "bug" | "feedback"): void {
     feedbackKind = kind;
     feedbackNote = "";
+    feedbackRoute = routePreview();
   }
   function submitFeedback(): void {
     if (!feedbackKind) return;
@@ -7075,6 +7080,12 @@
           ? "What went wrong? (your board + recent actions are attached)"
           : "What could be better?"}
       ></textarea>
+      <details class="feedback-route">
+        <summary class="mono"
+          >Recent route attached (the steps you just took)</summary
+        >
+        <pre class="feedback-route-pre mono">{feedbackRoute}</pre>
+      </details>
       <div class="feedback-actions">
         <button class="btn btn-ghost" onclick={() => (feedbackKind = null)}
           >Cancel</button
@@ -9446,7 +9457,7 @@
     background: rgba(0, 0, 0, 0.45);
   }
   .feedback-panel {
-    width: 248px;
+    width: 320px;
     background: var(--surface-2, #1a1530);
     border: 1px solid var(--accent, #f0408a);
     border-radius: 6px;
@@ -9476,5 +9487,25 @@
     display: flex;
     justify-content: flex-end;
     gap: 6px;
+  }
+  .feedback-route > summary {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dim, #9a90c0);
+    cursor: pointer;
+  }
+  .feedback-route-pre {
+    margin: 6px 0 0;
+    max-height: 140px;
+    overflow: auto;
+    background: var(--bg, #0e0a1c);
+    border: 1px solid var(--line, #322a52);
+    border-radius: 4px;
+    padding: 6px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: var(--dim, #9a90c0);
+    white-space: pre;
   }
 </style>

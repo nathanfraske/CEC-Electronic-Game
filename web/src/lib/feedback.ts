@@ -69,6 +69,13 @@ export function logAction(
   ring(journal, { t: Date.now(), action, detail, ...(data ? { data } : {}) });
 }
 
+/** The current captured route as a legible timeline (journal + errors) — for the in-app feedback modal's
+ * "recent route" preview, so the owner SEES what's attached before downloading. Mirrors what the bundle
+ * carries. */
+export function routePreview(): string {
+  return formatJournal(journal, errors);
+}
+
 /** Render a journal (oldest→newest) as a compact human-readable timeline — the "route" the agent reads
  * when handed a bug bundle. Relative timestamps (`+1.2s` from the first entry), the verb, its detail,
  * and any structured `data`. Pure; safe in node + the browser. `errs` (optional) are appended as a tail
