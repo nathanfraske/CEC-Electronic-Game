@@ -2464,6 +2464,12 @@
         const primer = EXAMPLES.find((e) => e.id === "primer");
         if (primer) loadExample(primer);
       }
+      // Determinism signal for the screenshot harness (web/scripts/shoot.mjs): the board is loaded and a
+      // frame has painted, so a capture is safe to take. Lets the harness wait on a real ready flag rather
+      // than a fixed sleep. Render/test only.
+      requestAnimationFrame(() => {
+        (window as unknown as { __cecReady?: boolean }).__cecReady = true;
+      });
     })();
 
     return () => {
@@ -3516,6 +3522,7 @@
   // Arm / disarm a part for placement. Arming while in a non-placing tool
   // (Measure / Junction) drops you back into Build so the click actually places.
   function arm(tag: string | null): void {
+    if (tag) logAction("arm", tag); // journal which part is being placed (the route to a bug)
     armedPart = tag;
     // Seed the configurator from this kind's last-used choices (empty for a kind never
     // configured → its per-kind defaults). Copied so editing the armed config doesn't

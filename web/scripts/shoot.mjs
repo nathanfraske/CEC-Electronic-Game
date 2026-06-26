@@ -118,7 +118,12 @@ try {
 
   await page.goto(base, { waitUntil: "load", timeout: 30000 });
   await page.waitForSelector("canvas", { timeout: 15000 });
-  await page.waitForTimeout(settle); // let the render loop + fonts settle
+  // Wait for the app's ready signal (board loaded + a frame painted) rather than guessing, then a short
+  // settle for fonts + the render loop. Falls back to the fixed settle on an older build with no flag.
+  await page
+    .waitForFunction(() => window.__cecReady === true, { timeout: 8000 })
+    .catch(() => {});
+  await page.waitForTimeout(settle);
   await page.screenshot({ path: out, scale: "css" });
   console.log(`✓ shot → ${out} (${width}x${height})`);
   if (errors.length)
