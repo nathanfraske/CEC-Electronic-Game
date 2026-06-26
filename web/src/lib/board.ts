@@ -2769,8 +2769,22 @@ export class Board {
       let miny = 0;
       let maxx = 0;
       let maxy = 0;
-      for (const p of kind?.pins ?? []) {
-        const r = rotateOffset(p.dx, p.dy, c.rot, c.mirror);
+      // The grab/selection box spans the part's FOOTPRINT. For a USER IC use its kind.w/h box corners (the
+      // authored box) — a free-form subassembly's pins needn't reach the box edges (e.g. a latch with pins
+      // only in a middle band), so a pin bbox would be too short and miss the box's top/bottom. For stock
+      // parts the pins ARE the footprint extremes, so iterate them. (For a stock-package user IC, kind.w/h
+      // equals the pin bbox, so this is a no-op there.)
+      const corners: ReadonlyArray<readonly [number, number]> =
+        kind && isUserIc(c.kind)
+          ? [
+              [0, 0],
+              [kind.w - 1, 0],
+              [0, kind.h - 1],
+              [kind.w - 1, kind.h - 1],
+            ]
+          : (kind?.pins ?? []).map((p) => [p.dx, p.dy] as const);
+      for (const [dx, dy] of corners) {
+        const r = rotateOffset(dx, dy, c.rot, c.mirror);
         minx = Math.min(minx, r.col);
         miny = Math.min(miny, r.row);
         maxx = Math.max(maxx, r.col);
