@@ -568,15 +568,24 @@ export function resealUserIc(
         pins: geom.pins.map((p) => ({ ...p })),
       };
   }
+  // Drop a STALE characterization (audit): if the cell was swept to a LUT and then its inner logic was
+  // edited, the stored truth-table no longer matches — keep `behavior` only while its `sig` still equals
+  // the resealed graph's signature, else clear it so a behavioral-fidelity instance can't collapse to a
+  // wrong LUT (it falls back to the genuine flattened circuit until re-characterized).
+  const behavior =
+    prev.behavior && prev.behavior.sig === cellBehaviorSig(graph)
+      ? prev.behavior
+      : undefined;
   // Spread the prior def so EVERY field rides through — notably `role` and `pinRoles` (audit blocker:
   // re-editing + resealing a captured subassembly otherwise flipped it back to a board IC). The edited
-  // inner graph / frame id / pin names / free-form geometry are overridden.
+  // inner graph / frame id / pin names / free-form geometry / stale behavior are overridden.
   registerUserIc({
     ...prev,
     frameId,
     graph,
     freeForm,
     pinNames: keep ? [...pinNames] : prev.pinNames,
+    behavior,
   });
 }
 
@@ -1301,6 +1310,16 @@ export function captureSeal(
   // Reserved-tag guard (gap #8): a free-form name colliding with a built-in / die-frame / `#` tag is
   // refused so registerLibrary() can never clobber a built-in kind at startup.
   if (trimmed && isReservedTag(trimmed)) return undefined;
+  // Duplicate-name guard (audit): a FRESH seal whose chosen name already names a user IC / family would
+  // silently OVERWRITE that def (and, for free-form, its global geometry) under every already-placed
+  // instance — silent data loss. Refuse. Exempt: an explicit append to that family (`intoFamily`); an
+  // in-place reseal never reaches here (it goes through `resealUserIc` via `editingTag`).
+  if (
+    trimmed &&
+    !intoFamily &&
+    (REGISTRY.has(trimmed) || FAMILIES.has(trimmed))
+  )
+    return undefined;
   const pinNamesField =
     framePinNames && framePinNames.some((n) => n && n.trim())
       ? { pinNames: [...framePinNames] }
@@ -1793,6 +1812,10 @@ export function captureRegion(
   if (region.size === 0) return undefined;
   const trimmed = name && name.trim() ? name.trim() : "";
   if (trimmed && isReservedTag(trimmed)) return undefined;
+  // Duplicate-name guard (audit): refuse a region capture whose name already names a user IC / family —
+  // else it silently overwrites that def + its global geometry under every placed instance.
+  if (trimmed && (REGISTRY.has(trimmed) || FAMILIES.has(trimmed)))
+    return undefined;
 
   // The pins-at-crossings + box geometry (the pure analysis shared with the live overlay preview).
   const a = analyzeRegion(graph, region, box);

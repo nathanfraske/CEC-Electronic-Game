@@ -2073,6 +2073,13 @@ export class Board {
     this.endLabelEdit();
     // Close any open die port-pad name editor too, so it doesn't linger across the boundary.
     this.cb.onPinNameEdit?.(null);
+    // Nothing transient may cross the die boundary (audit): a pending wire, an in-flight drag, or stale
+    // double-tap history from the OLD canvas would otherwise act on the NEW graph's ids.
+    this.cancelWiring();
+    this.pinDrag = null;
+    this.boxHandleDrag = null;
+    this.lastPinTap = null;
+    this.lastJunctionTap = null;
     this.graph.restore(snapshot);
     this.rebuildNodes();
     this.clearSelection();
@@ -4098,8 +4105,12 @@ export class Board {
           return;
         }
       }
+      // The resize grab-rail yields to a pin BEAD that shares the wall: in SHAPE the bead branch above
+      // already grabbed it; in WIRE the bead branch is skipped, so suppressing resize here lets the press
+      // fall through to the normal wiring flow — otherwise a frame pin on the right/bottom wall could never
+      // be wired (the rail stole it). Resize only fires on a bare wall gap / corner.
       const axis = this.wallResizeHit(wp);
-      if (axis) {
+      if (axis && this.pinBeadHit(wp) === null) {
         this.boxHandleDrag = { axis, moved: false };
         this.pendingUndo = this.snapshotEntry();
         return;
