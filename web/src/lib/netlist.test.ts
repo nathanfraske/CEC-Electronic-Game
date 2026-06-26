@@ -11,7 +11,7 @@ import {
   flipInPlaceShift,
 } from "./graph";
 import type { Component } from "./graph";
-import { buildNetlist, userIcGeometry } from "./netlist";
+import { buildNetlist, userIcGeometry, userIcGeometryDeep } from "./netlist";
 import {
   registerUserIc,
   unregisterUserIc,
@@ -391,6 +391,52 @@ describe("IC maker — seal-as-same-netlist", () => {
     } finally {
       unregisterUserIc("OUTERPKG");
       unregisterUserIc("INNERPKG");
+    }
+  });
+
+  it("userIcGeometryDeep: STATIC recursion assigns flatIds + an allInternals map (unpowered zoom-to-open)", () => {
+    // Inner: a 1 kOhm R in SOT-23-3.
+    const innerDie = new BoardGraph();
+    const innerFrame = place(innerDie, "SOT23_3", 0, 0);
+    const r = place(innerDie, "R", 4, 0, 1000);
+    connect(innerDie, innerFrame, 0, r, 0);
+    connect(innerDie, r, 1, innerFrame, 1);
+    registerUserIc({
+      tag: "DEEPINNER",
+      name: "Deep Inner",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: innerFrame.id,
+      graph: innerDie.serialize(),
+    });
+    // Outer: TWO instances of DEEPINNER (so the shared-by-tag flatId is exercised).
+    const outerDie = new BoardGraph();
+    const outerFrame = place(outerDie, "SOT23_3", 0, 0);
+    const i1 = place(outerDie, "DEEPINNER", 6, 0);
+    const i2 = place(outerDie, "DEEPINNER", 18, 0);
+    connect(outerDie, outerFrame, 0, i1, 0);
+    connect(outerDie, i1, 1, i2, 0);
+    connect(outerDie, i2, 1, outerFrame, 1);
+    registerUserIc({
+      tag: "DEEPOUTER",
+      name: "Deep Outer",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: outerFrame.id,
+      graph: outerDie.serialize(),
+    });
+    try {
+      const { internals, all } = userIcGeometryDeep(getUserIc("DEEPOUTER")!);
+      // Both nested instances are user-IC parts → each carries a flatId, SHARED by tag (built once).
+      const innerParts = internals.parts.filter((p) => p.kind === "DEEPINNER");
+      expect(innerParts.length).toBe(2);
+      expect(innerParts.every((p) => p.flatId !== undefined)).toBe(true);
+      expect(innerParts[0].flatId).toBe(innerParts[1].flatId); // same def → one shared inner geometry
+      // The shared flatId resolves in `all` to the inner geometry, which contains the real R leaf.
+      const inner = all.get(innerParts[0].flatId!);
+      expect(inner).toBeDefined();
+      expect(inner!.parts.some((p) => p.kind === "R")).toBe(true);
+    } finally {
+      unregisterUserIc("DEEPOUTER");
+      unregisterUserIc("DEEPINNER");
     }
   });
 

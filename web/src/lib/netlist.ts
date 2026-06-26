@@ -771,6 +771,44 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
   };
 }
 
+/**
+ * Recursive STATIC geometry: {@link userIcGeometry} for `def` PLUS a `flatId`-keyed map of every nested
+ * sealed sub-IC's static geometry, so the zoom-to-open replica can RECURSE into nested subassemblies even
+ * when the board is UNPOWERED. The live flatten that assigns `flatId`s and builds the `allInternals` map
+ * only runs when the board solves; this mints the same structure node-free, so a placed (or floating)
+ * subassembly still opens chip-within-chip down to its leaf devices. Each DISTINCT nested def is built
+ * ONCE (memoised by tag) and shares one `flatId` across its instances, bounding the work to O(distinct
+ * defs); the per-part `flatId` points every instance at that shared inner geometry. Depth-capped to match
+ * the renderer's `RECURSE_MAX_DEPTH`. Render-only — no nodes, never hashed.
+ */
+export function userIcGeometryDeep(def: UserIc): {
+  internals: UserIcInternals;
+  all: Map<number, UserIcInternals>;
+} {
+  const all = new Map<number, UserIcInternals>();
+  const flatOfTag = new Map<string, number>();
+  let nextFlatId = 1;
+  const MAX_DEPTH = 24; // mirrors RECURSE_MAX_DEPTH in userIcInternalsView.ts
+  const build = (d: UserIc, depth: number): UserIcInternals => {
+    const internals = userIcGeometry(d);
+    if (depth >= MAX_DEPTH) return internals;
+    for (const part of internals.parts) {
+      const nestedDef = getUserIc(part.kind);
+      if (!nestedDef) continue; // a leaf device (FET, gate, …), not a nested sub-IC
+      let flatId = flatOfTag.get(part.kind);
+      if (flatId === undefined) {
+        flatId = nextFlatId++;
+        flatOfTag.set(part.kind, flatId); // set BEFORE building so a (defensive) self-reference can't loop
+        all.set(flatId, build(nestedDef, depth + 1));
+      }
+      part.flatId = flatId; // every instance of this tag opens the same shared inner geometry
+    }
+    return internals;
+  };
+  const internals = build(def, 0);
+  return { internals, all };
+}
+
 export interface BuiltNetlist {
   nodeCount: number;
   types: Uint8Array;
