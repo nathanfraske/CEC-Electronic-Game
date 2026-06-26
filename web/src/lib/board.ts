@@ -802,6 +802,13 @@ export class Board {
   // frame's stored geom so the pin slides to the nearest perimeter cell; incident wires follow because
   // they reference it by index (connectivity/the netlist is untouched). `moved` gates the undo/persist.
   private pinDrag: { pinIndex: number; moved: boolean } | null = null;
+  // Dragging a placed device's box-resize HANDLE in the overworld (Chip Bench bloom): `axis` is which
+  // wall/corner ('e' right → width, 's' bottom → height, 'se' corner → both); `moved` gates the one undo.
+  private boxHandleDrag: {
+    componentId: number;
+    axis: "e" | "s" | "se";
+    moved: boolean;
+  } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
@@ -2300,6 +2307,27 @@ export class Board {
    * that isn't a free-form subassembly, or at the size clamp. Geometry only — connectivity is by pin INDEX.
    */
   resizeUserIcBox(componentId: number, dw: number, dh: number): boolean {
+    const def = getUserIc(this.graph.components.get(componentId)?.kind ?? "");
+    if (!def?.freeForm) return false;
+    return this.setDeviceBox(
+      componentId,
+      def.freeForm.w + dw,
+      def.freeForm.h + dh,
+      true,
+    );
+  }
+
+  /** Set a placed device's box to ABSOLUTE `w×h` (the shared core of {@link resizeUserIcBox} and the bloom
+   * handle-drag). Clamps the size, re-pins leads onto the new perimeter, propagates the def to every
+   * instance, and redraws (incl. the bloom). `recordUndo` pushes a one-step undo BEFORE the edit — the
+   * stepper path passes true; the drag passes false and commits ONE `pendingUndo` itself on the first move.
+   * No-op (false) for a non-free-form part or at the clamp. Geometry only — connectivity is by pin INDEX. */
+  private setDeviceBox(
+    componentId: number,
+    w: number,
+    h: number,
+    recordUndo: boolean,
+  ): boolean {
     const comp = this.graph.components.get(componentId);
     if (!comp) return false;
     const def = getUserIc(comp.kind);
@@ -2307,15 +2335,16 @@ export class Board {
     const ff = def.freeForm;
     const MIN = 2;
     const MAX = BLOCK_MAX_PINS + 6;
-    const w = Math.max(MIN, Math.min(MAX, ff.w + dw));
-    const h = Math.max(MIN, Math.min(MAX, ff.h + dh));
-    if (w === ff.w && h === ff.h) return false; // already at the clamp / no change
-    this.pushUndo(this.graph.serialize()); // captures the pre-resize def geom (undo)
-    const pins = ff.pins.map((p) => clampPinToBox(p, ff.w, ff.h, w, h));
-    if (!setUserIcFreeForm(comp.kind, { w, h, pins })) return false;
-    // Every placed instance of this kind picks up the new footprint; redraw them all.
+    const nw = Math.max(MIN, Math.min(MAX, Math.round(w)));
+    const nh = Math.max(MIN, Math.min(MAX, Math.round(h)));
+    if (nw === ff.w && nh === ff.h) return false; // already at this size / the clamp
+    if (recordUndo) this.pushUndo(this.graph.serialize());
+    const pins = ff.pins.map((p) => clampPinToBox(p, ff.w, ff.h, nw, nh));
+    if (!setUserIcFreeForm(comp.kind, { w: nw, h: nh, pins })) return false;
+    // Every placed instance of this kind picks up the new footprint; redraw them all (+ the bloom handles).
     this.rebuildNodes();
     this.redrawWires();
+    this.redrawSelection();
     this.cb.onChange?.(this.graph);
     this.cb.onPersist?.(this.graph);
     this.emitSelect();
@@ -3599,6 +3628,46 @@ export class Board {
     }
   }
 
+  /** Which bloom resize handle (if any) world-point `wp` grabs on the currently bloomed device: 'se' corner
+   * (tested first — it overlaps the edges), else 'e' right edge, 's' bottom edge. The grab box is the
+   * larger of the handle size and a ~26px on-screen square (so it stays catchable at any zoom). Null when
+   * no device is bloomed or the point misses every handle. */
+  private bloomHandleHit(wp: Point): "e" | "s" | "se" | null {
+    const c = this.bloomTarget();
+    if (!c) return null;
+    const box = this.componentBox(c);
+    const tol = Math.max(BLOOM_HANDLE_R + 4, 13 / (this.world.scale.x || 1));
+    const near = (hx: number, hy: number): boolean =>
+      Math.abs(wp.x - hx) <= tol && Math.abs(wp.y - hy) <= tol;
+    if (near(box.x + box.width, box.y + box.height)) return "se";
+    if (near(box.x + box.width, box.y + box.height / 2)) return "e";
+    if (near(box.x + box.width / 2, box.y + box.height)) return "s";
+    return null;
+  }
+
+  /** Live step of a bloom box-resize drag: set the device box so the dragged wall/corner tracks the cursor
+   * cell (anchor = the chip's top-left). Commits the single drag undo on the first cell that actually
+   * resizes; `setDeviceBox(false)` does the propagation + redraw each step. */
+  private moveBoxHandleDrag(wp: Point): void {
+    const d = this.boxHandleDrag;
+    if (!d) return;
+    const comp = this.graph.components.get(d.componentId);
+    const def = comp ? getUserIc(comp.kind) : undefined;
+    if (!comp || !def?.freeForm) return;
+    let w = def.freeForm.w;
+    let h = def.freeForm.h;
+    if (d.axis === "e" || d.axis === "se")
+      w = snap(wp.x, PITCH) - comp.cell.col + 1;
+    if (d.axis === "s" || d.axis === "se")
+      h = snap(wp.y, PITCH) - comp.cell.row + 1;
+    if (this.setDeviceBox(d.componentId, w, h, false)) {
+      if (!d.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        d.moved = true;
+      }
+    }
+  }
+
   // --- probe (measure mode) -----------------------------------------------
 
   /** Press in measure mode: grab a nearby lead to drag, or drop the next lead. */
@@ -4081,6 +4150,23 @@ export class Board {
           this.labelDrag = { id: hitLabel, moved: false };
           this.pendingUndo = this.snapshotEntry();
         }
+        return;
+      }
+    }
+
+    // Chip Bench bloom: a press on the selected device's box-resize HANDLE grabs it to drag the wall
+    // (expand the borders in place). Tested before pins/body since the handle sits on the box edge, over
+    // them. Selection-scoped (only the bloomed chip has handles), so normal parts are unaffected.
+    if (e.button === 0 && this.mode === "select") {
+      const handle = this.bloomHandleHit(wp);
+      const chip = handle ? this.bloomTarget() : null;
+      if (handle && chip) {
+        this.boxHandleDrag = {
+          componentId: chip.id,
+          axis: handle,
+          moved: false,
+        };
+        this.pendingUndo = this.snapshotEntry();
         return;
       }
     }
@@ -4778,6 +4864,11 @@ export class Board {
       return;
     }
 
+    if (this.boxHandleDrag) {
+      this.moveBoxHandleDrag(wp);
+      return;
+    }
+
     if (this.pinDrag) {
       this.movePinDrag(wp);
       return;
@@ -4898,6 +4989,13 @@ export class Board {
         this.cb.onChange?.(this.graph);
       }
       this.wireDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.boxHandleDrag) {
+      // The single drag undo was already committed on the first resizing move (moveBoxHandleDrag); a bare
+      // click on a handle resized nothing, so there's nothing to commit here. Just end the gesture.
+      this.boxHandleDrag = null;
       this.pendingUndo = null;
       return;
     }
