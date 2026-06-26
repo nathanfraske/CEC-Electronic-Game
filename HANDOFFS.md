@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (181) — Decoupled pin-RING footprint (free-form chips), tier→density badge
+
+**State:** 🟢 on branch `claude/kind-turing-hdelb3` (2 commits ahead of `main`, **NOT yet merged** —
+awaiting owner merge go-ahead). **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 194 web tests.** Full
+gate green (fmt/clippy/sim-core+protocol/web check/lint/test/build).
+
+A free-form sealed cell's PLACED footprint is now a compact pin **RING** sized by pin COUNT
+(`packFreeFormFootprint`, `userIc.ts`), DECOUPLED from the build canvas — a 5-pin DFF on a 51×45 canvas was
+a ~31×27 (~75 mm) slab, now **4×3**. Pins keep their wall + along-edge order; connectivity by INDEX so the
+netlist/flatten/golden are untouched; `ic.freeForm` still drives the die editor / walls / zoom-to-open (the
+whole canvas still reveals, just smaller — more camera zoom). This matches how packaged ICs already work
+(`packageLayout` lays leads from pin count; `tapeOut` drops `freeForm`) — the uniform-scaled replica was the
+outlier. Integration **tier is now a density BADGE only** (the σ ladder `compactFreeFormGeom` /
+`TIER_FOOTPRINT_SCALE` is kept for the badge/tests). The opened-view fit insets a free-form cell to 0.80 so
+the inner→outer pin connector leads aren't crammed against the wall.
+
+Vetted by a 4-seat panel (renderer / wiring / real-IC-precedent / design-intent — all SAFE) and validated
+with before/after renders of the owner's 5 placed modules (DFF/latch/MUX/gate/inv) + zoom-to-open. Doc
+`integration-tier-scaling.md` §5 carries a dated **SUPERSEDED** banner (original text tombstoned, not
+deleted).
+
+**Next:** owner to confirm **merge → main** (or open a PR). Optional follow-ups flagged: pin-pitch gaps /
+square-ize / extra body padding knobs if any chip later feels off — nothing blocking.
+
+---
+
 ## 2026-06-26 (178) — Variant-aware zoom (#21) + backlog boundary reached
 
 **State:** 🟢 `main` through PR #261. **Web-only, golden untouched, 189 web tests.** Four refinement PRs
