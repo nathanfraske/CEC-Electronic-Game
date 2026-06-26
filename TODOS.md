@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (174) — SHAPE/WIRE paddle fix + replay --drive re-driver
+
+Web-only, golden untouched, 183 web tests.
+- ~~**SHAPE/WIRE paddle fix**~~ (#253) — `.die-mode` (overflow:hidden → flex min-size 0) crushed to a 2px
+  square in the crowded New▸Subassembly bar. `flex-shrink:0` on the controls; `.die-bar` wraps
+  (`flex-wrap` + `width:max-content`). Verified headlessly (2px → 100px).
+- ~~**replay --drive**~~ — re-walk a bundle's route from a CLEAN boot via `window.__cecReplay` (the app's
+  own functions), screenshot the end state (`--filmstrip` = per-step). `board.replayPlace`/`replayWire`
+  (wire resolves BY CELL via `pinAtCell`; capture now stores endpoint cells). Validated: nav → die builder,
+  place → V/R/LED/GND from empty (5/5 ok).
+- [ ] **Initial-snapshot / keyframe capture** — to faithfully replay routes that began MID-session (the
+  ring dropped the start). Today drive starts from empty + reports `skip` for non-fresh drill-in / load /
+  characterize-of-session-tag. The keyframe system is the next increment if mid-session routes turn up.
+- [ ] **Route preview in the feedback modal** — show `formatJournal(journal)` before download (carried from (173)).
+
+---
+
 ## 2026-06-26 (173) — Semantic route capture + replay.mjs bundle inspector
 
 Web-only, golden untouched, 183 web tests. Continues the render-verification queue.

@@ -54,6 +54,8 @@
     type HotSlot,
     type PinTest,
     type PinTestRole,
+    type Cell,
+    type Endpoint,
   } from "./lib/graph";
   import {
     freshDieGraph,
@@ -2476,6 +2478,81 @@
       requestAnimationFrame(() => {
         (window as unknown as { __cecReady?: boolean }).__cecReady = true;
       });
+      // Headless route RE-DRIVER hook (scripts/replay.mjs --drive): apply ONE captured journal entry by
+      // calling the SAME functions the UI does, so a reported route can be re-walked from a clean boot and
+      // screenshotted step by step. Returns "ok" (applied), "skip" (no faithful replay from empty — a file
+      // load, or a target that only exists mid-session), or "fail". Dev/test only; drives existing actions.
+      (
+        window as unknown as {
+          __cecReplay?: (e: {
+            action?: string;
+            detail?: string;
+            data?: Record<string, unknown>;
+          }) => string;
+        }
+      ).__cecReplay = (e) => {
+        const d = e?.data ?? {};
+        try {
+          switch (e?.action) {
+            case "tool":
+              setMode(e.detail as Mode);
+              return "ok";
+            case "arm":
+              arm(e.detail ?? null);
+              return "ok";
+            case "key":
+              window.dispatchEvent(
+                new KeyboardEvent("keydown", {
+                  key: e.detail ?? "",
+                  bubbles: true,
+                }),
+              );
+              return "ok";
+            case "place":
+              return e.detail &&
+                d.cell &&
+                board?.replayPlace(e.detail, d.cell as Cell)
+                ? "ok"
+                : "fail";
+            case "wire":
+              return d.from &&
+                d.to &&
+                board?.replayWire(
+                  d.from as Endpoint,
+                  d.to as Endpoint,
+                  d.fromCell as Cell | undefined,
+                  d.toCell as Cell | undefined,
+                )
+                ? "ok"
+                : "skip";
+            case "delete":
+              board?.deleteSelection();
+              return "ok";
+            case "drill-in":
+              // Fresh blank → mint the same kind of die (free-form subassembly vs IC, told apart by the
+              // captured tag). Build/edit an existing frame needs a mid-session target → not re-drivable.
+              if (d.fresh) {
+                newBlankDie(
+                  isFreeFormFrame(String(d.tag ?? "")) ? "subassembly" : "ic",
+                );
+                return "ok";
+              }
+              return "skip";
+            case "drill-out":
+              dieBack();
+              return "ok";
+            case "seal":
+              dieSeal();
+              return "ok";
+            default:
+              // save / load / characterize: no faithful clean-boot replay (file I/O, or a session tag).
+              return "skip";
+          }
+        } catch (err) {
+          console.error("replay failed for", e?.action, err);
+          return "fail";
+        }
+      };
     })();
 
     return () => {
