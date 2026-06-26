@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (161) — CHIP BENCH Phase 0: geometry undo gate
+
+**State:** 🟢 **about to PR**. Web only, golden untouched, **130 web tests** (+2), full gate green. First
+phase of the all-ages device-editing build (`docs/ui/device-editing-all-ages-panel.md`). Owner: "implement
+it in phases, don't stop unless you need me." This is the hard prerequisite — Undo must cover geometry
+before any bloom UI ships.
+
+**What/why:** box-resize + pin-move edit the free-form box/pin geometry, which lives in the GLOBAL
+`FREE_FORM_GEOM` registry, NOT the `BoardGraph` — so `pushUndo(graph.serialize())` stored identical graphs
+and Undo was a silent no-op for them (a dead Undo "teaches the app lies").
+
+**Fix:** an undo step is now an `UndoEntry { graph, geoms:[kind,FreeFormGeom][] }`. New pure helpers in
+graph.ts — **`captureFreeFormGeoms(snapshot)`** (deep-clones the live geom of each free-form frame kind in
+the graph) + **`restoreFreeFormGeoms(geoms)`** (re-registers them). `snapshotEntry()` bundles graph+geoms at
+one instant; `pushUndo` (immediate, pre-mutation) and the `pendingUndo` drag sites (captured at pointer-down)
+both use it; `undo()` calls `restoreFreeFormGeoms` BEFORE `graph.restore` + rebuild + `drawDieWalls()`. So a
+resize / pin-move now flips `canUndo()` true and reverts on Undo. `pushUndo`'s signature is unchanged, so the
+~35 existing call sites are untouched. Headless round-trip test (`graphGeomUndo.test.ts`): capture → mutate →
+deep-clone-unaffected → restore. Golden-safe (web/registry only).
+
+**Known scope:** "Revert chip" (snap to session-open) + the DONE button ride with the bloom (Phase 1).
+
+**NEXT — Phase 1 (the bloom spine):** select a placed chip in the overworld → fat bead handles; drag wall =
+resize, drag bead = move pin (SHAPE default), WIRE/SHAPE toggle (retires Alt-drag), role badge vs voltage
+fill, fixed-vs-expandable physics, 44px targets + keyboard parity, first-ripple scope stop. Build in slices.
+
+---
+
 ## 2026-06-25 (160) — FIX (owner): opened-IC lead connectors drop IN/OUT to the bottom
 
 **State:** 🟢 **about to PR**. Web/render only, golden untouched, **128 web tests** (+2), full gate green.

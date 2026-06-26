@@ -1502,6 +1502,38 @@ export function isFreeFormFrame(tag: string): boolean {
 }
 
 /**
+ * Snapshot the live free-form box geometry of every DISTINCT free-form frame kind placed in `snapshot`, as
+ * `[kindTag, geomClone]` pairs. The geometry lives in the GLOBAL {@link FREE_FORM_GEOM} registry, NOT in the
+ * graph, so a `graph.serialize()` undo snapshot can't see a box-resize / pin-move; pairing this capture with
+ * the graph snapshot (and {@link restoreFreeFormGeoms} on undo) is what makes those edits undoable. Deep-
+ * cloned so a later edit can't mutate the captured entry. Empty for a board with no free-form chips.
+ */
+export function captureFreeFormGeoms(
+  snapshot: GraphSnapshot,
+): [string, FreeFormGeom][] {
+  const out: [string, FreeFormGeom][] = [];
+  const seen = new Set<string>();
+  for (const c of snapshot.components) {
+    if (seen.has(c.kind) || !isFreeFormFrame(c.kind)) continue;
+    seen.add(c.kind);
+    const geom = freeFormGeom(c.kind);
+    if (geom) out.push([c.kind, structuredClone(geom)]);
+  }
+  return out;
+}
+
+/** Re-register the geometry captured by {@link captureFreeFormGeoms} — the undo-time inverse, restoring the
+ * registry (and thus the rendered box/pins + the die walls) to the captured state. Non-free-form tags are
+ * skipped defensively. */
+export function restoreFreeFormGeoms(geoms: [string, FreeFormGeom][]): void {
+  for (const [kind, geom] of geoms) {
+    if (isFreeFormFrame(kind)) {
+      registerFreeFormFrame(kind.slice(FREE_FORM_DIE_PREFIX.length), geom);
+    }
+  }
+}
+
+/**
  * The package an IC-maker FRAME kind was generated from, or undefined for any non-frame tag.
  * The inverse of `frameTag` (resolved by table, not by re-parsing the tag): hands back the
  * canonical archetype + pin count so a sealed {@link UserIc} can carry its package and the
