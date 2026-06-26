@@ -5,6 +5,26 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (164) — CHIP BENCH Phase 1c: bloom box-resize DRAG (functional)
+
+**State:** 🟢 **about to PR**. Web/interaction only, golden untouched, 132 web tests, full gate green. The
+bloom handles from (163) now WORK: in **select mode**, drag a placed device's right/bottom/SE handle to
+resize its box in the overworld; every placed copy + the bin glyph follow live; one undo per drag.
+
+**Implementation (board.ts):** refactored `resizeUserIcBox`→ shared **`setDeviceBox(id, w, h, recordUndo)`**
+(absolute size; clamp; `clampPinToBox`; `setUserIcFreeForm`; rebuild all instances + the bloom). New
+`boxHandleDrag {componentId, axis:'e'|'s'|'se', moved}` state; **`bloomHandleHit(wp)`** (SE first; grab box
+= max(handle, ~26px screen)); **`moveBoxHandleDrag`** sets the box so the dragged wall tracks the cursor
+cell (anchor = chip top-left). onPointerDown: a select-mode press on a handle arms the drag + `pendingUndo`
+(captured pre-drag) and returns before the pin/body tests; the move commits the ONE undo on the first
+resizing cell; up clears. Handle drag is **select-mode-only**, so wire mode still wires from edge pins.
+Reuses Phase 0/1a undo (`icGeoms`) — golden-safe (pin INDEX unchanged).
+
+**NEXT:** pin beads + pin-drag-to-move on the placed chip (SHAPE mode, the wire/move disambiguation), then
+role badges, left/top resize (anchor move), 44px screen-space handles + keyboard parity.
+
+---
+
 ## 2026-06-26 (163) — CHIP BENCH Phase 1b: bloom RENDER (resize handles)
 
 **State:** 🟢 **about to PR**. Web/render only, golden untouched, 132 web tests, full gate green. Owner:
