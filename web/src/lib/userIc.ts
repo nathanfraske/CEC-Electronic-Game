@@ -334,10 +334,19 @@ const LEAD_GAP = 1;
  * Each pin's LABEL is the player's name for that lead ({@link UserIc.pinNames} by index) when set,
  * else the package pin number — so a sealed chip shows the names the author gave its pads. */
 function userIcPartKind(ic: UserIc): PartKind {
-  // Free-form (box-captured) subassembly: pins sit at their captured box-relative cells (on the box
-  // edge, where wires crossed) and the footprint IS the box — no package layout, no lead-push.
+  // Free-form (box-captured) subassembly: the PLACED footprint is a LITERAL uniform-scaled replica of the
+  // authored box (docs/ui/integration-tier-scaling.md). The scale is the cell's INTEGRATION TIER (its full
+  // device count): SSI = full size, denser cells (MSI…ULSI) compact, so placing more inside a cell and
+  // resealing steps it up a tier and shrinks it (un-ballooning a CPU). The internal geometry (`ic.freeForm`,
+  // used by the die editor / walls / zoom-to-open replica) is UNCHANGED — only this placeable footprint
+  // compacts. `compactFreeFormGeom` is ONE uniform factor floored so pins stay on distinct grid cells (no
+  // relayout); connectivity is by pin INDEX, so the netlist/flatten are untouched (render/registry only).
   if (ic.freeForm) {
-    const pins: Pin[] = ic.freeForm.pins.map((p, i) => ({
+    const compact = compactFreeFormGeom(
+      ic.freeForm,
+      TIER_FOOTPRINT_SCALE[integrationTier(ic)],
+    );
+    const pins: Pin[] = compact.pins.map((p, i) => ({
       index: i,
       label: ic.pinNames?.[i]?.trim()
         ? ic.pinNames[i]!.trim()
@@ -352,8 +361,8 @@ function userIcPartKind(ic: UserIc): PartKind {
       name: ic.name,
       colorKey: "accent",
       pins,
-      w: ic.freeForm.w,
-      h: ic.freeForm.h,
+      w: compact.w,
+      h: compact.h,
       defaultValue: 0,
       unit: "",
       ideal: true,
@@ -1133,6 +1142,51 @@ export function integrationTier(def: UserIc): IntegrationTier {
   if (n < 1000) return "LSI";
   if (n < 100000) return "VLSI";
   return "ULSI";
+}
+
+/**
+ * Resting FOOTPRINT scale per integration tier (docs/ui/integration-tier-scaling.md §2): the more devices
+ * folded into a cell, the smaller its placed package — Moore's Law in the hand. A perceptual/log curve
+ * (~×0.6 per rung), NOT the literal ~10⁶:1 device ratio, so a CPU stays a manageable size and ULSI is
+ * compact-but-pokeable. SSI = 1.0 (a lone gate is full size, the ladder's anchor). The honesty lives in the
+ * tier BADGE/label, never the pixel ratio. Tunable.
+ */
+export const TIER_FOOTPRINT_SCALE: Record<IntegrationTier, number> = {
+  SSI: 1.0,
+  MSI: 0.6,
+  LSI: 0.4,
+  VLSI: 0.25,
+  ULSI: 0.15,
+};
+
+/**
+ * Compact a free-form subassembly's box+pins into its placed footprint: ONE uniform scale (a true smaller
+ * replica — every relative position, side, and index preserved; never a re-layout), FLOORED so the rounded
+ * pins stay on DISTINCT integer grid cells (so wiring stays grid-clean and no de-collide ever moves a pin
+ * relative to its neighbours — the §5 rule). Walks the scale UP from the tier target until the rounded pins
+ * are all distinct (at worst σ=1 → the original, always distinct), so a sparse pinout compacts to the tier
+ * scale while a pad-dense one bottoms out where its pins need the room. Pure geometry — never the netlist.
+ */
+export function compactFreeFormGeom(
+  ff: FreeFormGeom,
+  scale: number,
+): FreeFormGeom {
+  // Search on a 1/20 grid from the (clamped) target up to 1.0, returning the smallest distinct scale.
+  const start = Math.max(1, Math.min(20, Math.round(scale * 20)));
+  for (let i = start; i <= 20; i++) {
+    const s = i / 20;
+    const w = Math.max(2, Math.round((ff.w - 1) * s) + 1);
+    const h = Math.max(2, Math.round((ff.h - 1) * s) + 1);
+    const pins = ff.pins.map((p) => ({
+      ...p,
+      dx: Math.min(w - 1, Math.max(0, Math.round(p.dx * s))),
+      dy: Math.min(h - 1, Math.max(0, Math.round(p.dy * s))),
+    }));
+    const distinct = new Set(pins.map((p) => `${p.dx},${p.dy}`)).size;
+    if (distinct === pins.length) return { w, h, pins };
+  }
+  // Fallback (σ=1): the original geometry verbatim (already distinct, unless it shipped with stacked pins).
+  return { w: ff.w, h: ff.h, pins: ff.pins.map((p) => ({ ...p })) };
 }
 
 export interface SealCapture {
