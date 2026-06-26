@@ -809,6 +809,13 @@ export class Board {
     axis: "e" | "s" | "se";
     moved: boolean;
   } | null = null;
+  // Dragging a placed device's PIN bead along its box edge in the overworld (Chip Bench bloom): edits the
+  // def's free-form pin; every placed copy follows. `moved` gates the one undo.
+  private devicePinDrag: {
+    componentId: number;
+    pinIndex: number;
+    moved: boolean;
+  } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
   // press on the same junction within DOUBLE_CLICK_MS grabs it for dragging).
   private lastJunctionTap: { id: number; t: number } | null = null;
@@ -2340,8 +2347,15 @@ export class Board {
     if (nw === ff.w && nh === ff.h) return false; // already at this size / the clamp
     if (recordUndo) this.pushUndo(this.graph.serialize());
     const pins = ff.pins.map((p) => clampPinToBox(p, ff.w, ff.h, nw, nh));
-    if (!setUserIcFreeForm(comp.kind, { w: nw, h: nh, pins })) return false;
-    // Every placed instance of this kind picks up the new footprint; redraw them all (+ the bloom handles).
+    return this.applyDeviceFreeForm(comp.kind, { w: nw, h: nh, pins });
+  }
+
+  /** Commit a device DEF's new free-form geometry and refresh the board: `setUserIcFreeForm` propagates to
+   * every placed instance + the bin glyph, then rebuild the nodes, re-route wires, redraw the bloom, and
+   * fire change/persist + the inspector refresh. Shared by box-resize and pin-move. Returns false for a
+   * non-free-form / unknown kind. */
+  private applyDeviceFreeForm(kind: string, freeForm: FreeFormGeom): boolean {
+    if (!setUserIcFreeForm(kind, freeForm)) return false;
     this.rebuildNodes();
     this.redrawWires();
     this.redrawSelection();
@@ -3626,6 +3640,18 @@ export class Board {
       g.roundRect(hx - r, hy - r, r * 2, r * 2, 2);
       g.stroke({ width: 2, color: PALETTE.accent, alpha: 0.95 });
     }
+    // Pin BEADS: fatten each package pin into an accent-ringed bead so it reads as a draggable handle (the
+    // drag-a-bead-to-move-the-pin interaction lands in a later slice; this is the affordance).
+    const kind = this.graph.kindOf(c);
+    for (const p of kind?.pins ?? []) {
+      const w = this.cellToWorld(this.graph.pinCell(c, p));
+      g.circle(w.x, w.y, PIN_R + 3).fill({ color: 0x1a1730, alpha: 0.9 });
+      g.circle(w.x, w.y, PIN_R + 3).stroke({
+        width: 2,
+        color: PALETTE.accent,
+        alpha: 0.95,
+      });
+    }
   }
 
   /** Which bloom resize handle (if any) world-point `wp` grabs on the currently bloomed device: 'se' corner
@@ -3661,6 +3687,57 @@ export class Board {
     if (d.axis === "s" || d.axis === "se")
       h = snap(wp.y, PITCH) - comp.cell.row + 1;
     if (this.setDeviceBox(d.componentId, w, h, false)) {
+      if (!d.moved && this.pendingUndo) {
+        this.commitUndo(this.pendingUndo);
+        d.moved = true;
+      }
+    }
+  }
+
+  /** The package-pin index (if any) of the bloomed device that world-point `wp` grabs — nearest pin bead
+   * within a ~26px on-screen radius. Null when nothing's bloomed or the point misses every bead. */
+  private bloomPinHit(wp: Point): number | null {
+    const c = this.bloomTarget();
+    const kind = c ? this.graph.kindOf(c) : undefined;
+    if (!c || !kind) return null;
+    const tol = Math.max(PIN_R + 6, 13 / (this.world.scale.x || 1));
+    let best = -1;
+    let bestD = tol * tol;
+    for (const p of kind.pins) {
+      const w = this.cellToWorld(this.graph.pinCell(c, p));
+      const d2 = (wp.x - w.x) ** 2 + (wp.y - w.y) ** 2;
+      if (d2 <= bestD) {
+        bestD = d2;
+        best = p.index;
+      }
+    }
+    return best >= 0 ? best : null;
+  }
+
+  /** Live step of a bloom PIN drag: slide pin `devicePinDrag.pinIndex` to the nearest box-edge cell under
+   * the cursor (`snapToBoxEdge`, anchor = the chip's top-left), rewrite the def's free-form pin, and
+   * propagate. The pin INDEX is unchanged, so every wire to it follows + the netlist is stable. Commits the
+   * single drag undo on the first cell that actually moves. */
+  private moveDevicePinDrag(wp: Point): void {
+    const d = this.devicePinDrag;
+    if (!d) return;
+    const comp = this.graph.components.get(d.componentId);
+    const def = comp ? getUserIc(comp.kind) : undefined;
+    if (!comp || !def?.freeForm) return;
+    const ff = def.freeForm;
+    const cur = ff.pins[d.pinIndex];
+    if (!cur) return;
+    const { dx, dy } = snapToBoxEdge(
+      snap(wp.x, PITCH) - comp.cell.col,
+      snap(wp.y, PITCH) - comp.cell.row,
+      ff.w,
+      ff.h,
+    );
+    if (dx === cur.dx && dy === cur.dy) return; // still on the same cell
+    const pins = ff.pins.map((p, i) =>
+      i === d.pinIndex ? { ...p, dx, dy } : p,
+    );
+    if (this.applyDeviceFreeForm(comp.kind, { w: ff.w, h: ff.h, pins })) {
       if (!d.moved && this.pendingUndo) {
         this.commitUndo(this.pendingUndo);
         d.moved = true;
@@ -4158,16 +4235,30 @@ export class Board {
     // (expand the borders in place). Tested before pins/body since the handle sits on the box edge, over
     // them. Selection-scoped (only the bloomed chip has handles), so normal parts are unaffected.
     if (e.button === 0 && this.mode === "select") {
-      const handle = this.bloomHandleHit(wp);
-      const chip = handle ? this.bloomTarget() : null;
-      if (handle && chip) {
-        this.boxHandleDrag = {
-          componentId: chip.id,
-          axis: handle,
-          moved: false,
-        };
-        this.pendingUndo = this.snapshotEntry();
-        return;
+      const chip = this.bloomTarget();
+      if (chip) {
+        const handle = this.bloomHandleHit(wp);
+        if (handle) {
+          this.boxHandleDrag = {
+            componentId: chip.id,
+            axis: handle,
+            moved: false,
+          };
+          this.pendingUndo = this.snapshotEntry();
+          return;
+        }
+        // A press on a pin bead → move that pin along the edge (vs the default press, which starts a
+        // wire). So wiring a bloomed chip means dragging FROM the other end, or deselecting it first.
+        const pinIdx = this.bloomPinHit(wp);
+        if (pinIdx !== null) {
+          this.devicePinDrag = {
+            componentId: chip.id,
+            pinIndex: pinIdx,
+            moved: false,
+          };
+          this.pendingUndo = this.snapshotEntry();
+          return;
+        }
       }
     }
 
@@ -4869,6 +4960,11 @@ export class Board {
       return;
     }
 
+    if (this.devicePinDrag) {
+      this.moveDevicePinDrag(wp);
+      return;
+    }
+
     if (this.pinDrag) {
       this.movePinDrag(wp);
       return;
@@ -4996,6 +5092,12 @@ export class Board {
       // The single drag undo was already committed on the first resizing move (moveBoxHandleDrag); a bare
       // click on a handle resized nothing, so there's nothing to commit here. Just end the gesture.
       this.boxHandleDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.devicePinDrag) {
+      // The one undo was committed on the first moving step; a bare click moved nothing. End the gesture.
+      this.devicePinDrag = null;
       this.pendingUndo = null;
       return;
     }
