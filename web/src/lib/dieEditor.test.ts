@@ -923,3 +923,22 @@ describe("userIcsForGraphs — embeds a def placed ONLY inside an in-progress di
     }
   });
 });
+
+describe("compactFreeFormGeom — edge preservation (no side-flip on a narrow box)", () => {
+  it("keeps a right-wall pin on the right wall (never flips it to the left) when the box shrinks narrow", () => {
+    const narrow = {
+      w: 3,
+      h: 9,
+      pins: [
+        { dx: 0, dy: 4, name: "L" },
+        { dx: 2, dy: 4, name: "R" }, // right wall (dx === w-1)
+      ],
+    };
+    const out = compactFreeFormGeom(narrow, 0.15);
+    const L = out.pins[0]!;
+    const R = out.pins[1]!;
+    expect(L.dx).toBe(0); // left pin stays on the left wall
+    expect(R.dx).toBe(out.w - 1); // right pin stays on the RIGHT wall (the bug flipped it to 0)
+    expect(`${L.dx},${L.dy}`).not.toBe(`${R.dx},${R.dy}`); // still distinct
+  });
+});
