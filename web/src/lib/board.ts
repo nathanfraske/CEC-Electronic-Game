@@ -2151,6 +2151,56 @@ export class Board {
   }
 
   /**
+   * Frame the view on ALL placed components (the long-reserved "0" fit-to-content + a deterministic seam
+   * for the screenshot harness). Centres the content in the canvas at a comfortable zoom over every
+   * component's pin cells; best-effort — a no-op for an empty board. Render-only (camera pan/zoom).
+   */
+  fitView(): void {
+    const comps = [...this.graph.components.values()];
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const c of comps) {
+      const kind = this.graph.kindOf(c);
+      const cells = kind
+        ? kind.pins.map((p) => this.graph.pinCell(c, p))
+        : [c.cell];
+      for (const cell of cells) {
+        const p = this.cellToWorld(cell);
+        minX = Math.min(minX, p.x);
+        minY = Math.min(minY, p.y);
+        maxX = Math.max(maxX, p.x);
+        maxY = Math.max(maxY, p.y);
+      }
+    }
+    if (!Number.isFinite(minX)) return; // nothing placed
+    const pad = DIE_INTERIOR_MARGIN * PITCH * 1.5;
+    minX -= pad;
+    minY -= pad;
+    maxX += pad;
+    maxY += pad;
+    const bw = Math.max(1, maxX - minX);
+    const bh = Math.max(1, maxY - minY);
+    const scale = Math.max(
+      MIN_SCALE,
+      Math.min(
+        MAX_SCALE,
+        Math.min(this.app.screen.width / bw, this.app.screen.height / bh),
+      ),
+    );
+    const cx = (minX + maxX) / 2;
+    const cy = (minY + maxY) / 2;
+    this.world.scale.set(scale);
+    this.world.position.set(
+      this.app.screen.width / 2 - cx * scale,
+      this.app.screen.height / 2 - cy * scale,
+    );
+    this.viewportDirty = true;
+    this.applyTextRes();
+  }
+
+  /**
    * The live board graph (read-only use by the HUD): lets the die editor capture the in-place inner
    * circuit with {@link captureSeal} while it is the active graph, without a serialize round-trip.
    * Callers must not mutate it directly — go through the Board's edit methods so undo/redraw stay

@@ -2003,6 +2003,9 @@
       } else if (e.key === "." || e.key === ">") {
         stepFwd(); // . / > = step one tick forward
         e.preventDefault();
+      } else if (!e.ctrlKey && !e.metaKey && e.code === "Digit0") {
+        board?.fitView(); // 0 = fit the view to all placed parts (the long-reserved fit-view)
+        e.preventDefault();
       } else if (!e.ctrlKey && !e.metaKey && /^Digit[1-9]$/.test(e.code)) {
         // Hotbar 1–9: Shift+N stores the armed part into slot N, plain N recalls it.
         // Keyed off e.code so Shift+digit (which produces "!"/"@"/… in e.key on many
@@ -2408,12 +2411,45 @@
 
       // Pass the live `innerGraphs` so any persisted in-progress (unsealed) dies are restored into it
       // (cleared first) before the outer board loads — re-drilling a frame then resumes its WIP.
-      const saved = loadBoard(innerGraphs);
+      // Test/harness fixture hook: a board injected via `window.__CEC_FIXTURE` (a cec-circuit JSON string,
+      // what the screenshot harness sets before boot) loads BEFORE the saved-board / onboarding-primer
+      // fallback, so a screenshot can render an EXACT circuit deterministically. Render/test only.
+      let fixtureLoaded = false;
+      const fixtureRaw = (window as unknown as { __CEC_FIXTURE?: string })
+        .__CEC_FIXTURE;
+      if (fixtureRaw) {
+        try {
+          const parsed = JSON.parse(fixtureRaw) as {
+            format?: string;
+            graph?: GraphSnapshot;
+            userIcs?: UserIc[];
+            userIcFamilies?: UserIcFamilySidecar[];
+          };
+          const fg =
+            parsed.format === "cec-circuit"
+              ? parsed.graph
+              : (parsed as unknown as GraphSnapshot);
+          if (fg && Array.isArray((fg as GraphSnapshot).components)) {
+            registerUserIcs(parsed.userIcs ?? []);
+            registerUserIcFamilies(parsed.userIcFamilies);
+            libRev++;
+            board.loadGraph(fg as GraphSnapshot);
+            board.fitView(); // frame the injected circuit (it may be placed far off-origin)
+            controls?.pause();
+            syncRunning();
+            showIntro = false;
+            fixtureLoaded = true;
+          }
+        } catch {
+          /* a bad fixture falls through to the normal boot */
+        }
+      }
+      const saved = fixtureLoaded ? null : loadBoard(innerGraphs);
       if (saved) {
         board.loadGraph(saved);
         controls?.pause();
         syncRunning();
-      } else {
+      } else if (!fixtureLoaded) {
         // Open with the primer so the very first thing you see is current flowing
         // through a voltage-coloured wire — a demonstration of the two primitives.
         const primer = EXAMPLES.find((e) => e.id === "primer");

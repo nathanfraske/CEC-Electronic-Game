@@ -10,7 +10,8 @@
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
     "lint": "prettier --check . && eslint .",
     "format": "prettier --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "shoot": "node scripts/shoot.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
