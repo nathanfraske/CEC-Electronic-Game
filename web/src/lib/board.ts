@@ -57,9 +57,6 @@ import {
   previewRegion,
   isUserIc,
   getUserIc,
-  setUserIcFreeForm,
-  captureUserIcGeoms,
-  restoreUserIcGeoms,
   type UserIc,
   type RegionCapture,
   type RegionBox,
@@ -160,9 +157,12 @@ interface GaugeAnchor {
 }
 
 const PIN_R = 4.5;
-/** Chip Bench bloom (Phase 1): half-size (world px, like the selection ring) of a placed device's
- * box-resize handle — drawn on the right/bottom edges + SE corner of a selected free-form subassembly. */
+/** Chip Bench bloom: half-size (SCREEN px, ÷ zoom at draw/hit) of the open free-form die's box-resize
+ * handle — drawn on the right/bottom walls + SE corner inside the drill. */
 const BLOOM_HANDLE_R = 7;
+/** How far OUTSIDE the die walls (SCREEN px, ÷ zoom) the resize handles float, so they clear the edge pins
+ * that sit ON the walls (a free-form die's leads ride its box perimeter). */
+const DIE_HANDLE_FLOAT_PX = 16;
 // `BoardLens` (the board's detail lens: schematic / analogy / reality — mirrors the info
 // panel's `DiagramMode`) is defined in `./boardRender` and imported + re-exported above.
 /** World zoom at/above which analogy/reality parts swap to the full illustration. */
@@ -204,8 +204,6 @@ interface UndoEntry {
   graph: GraphSnapshot;
   /** free-form DIE-FRAME geoms (die-editor box/pin edits) — keyed by `__DIE_FF_*` tag. */
   geoms: [string, FreeFormGeom][];
-  /** placed user-IC DEF geoms (overworld chip box/pin edits) — keyed by the user-IC tag. */
-  icGeoms: [string, FreeFormGeom][];
 }
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
@@ -802,18 +800,11 @@ export class Board {
   // frame's stored geom so the pin slides to the nearest perimeter cell; incident wires follow because
   // they reference it by index (connectivity/the netlist is untouched). `moved` gates the undo/persist.
   private pinDrag: { pinIndex: number; moved: boolean } | null = null;
-  // Dragging a placed device's box-resize HANDLE in the overworld (Chip Bench bloom): `axis` is which
+  // Dragging the open FREE-FORM die's box-resize HANDLE in the drill (Chip Bench bloom): `axis` is which
   // wall/corner ('e' right → width, 's' bottom → height, 'se' corner → both); `moved` gates the one undo.
+  // The target is always the open die frame (`dieFrameId`), so no id is stored.
   private boxHandleDrag: {
-    componentId: number;
     axis: "e" | "s" | "se";
-    moved: boolean;
-  } | null = null;
-  // Dragging a placed device's PIN bead along its box edge in the overworld (Chip Bench bloom): edits the
-  // def's free-form pin; every placed copy follows. `moved` gates the one undo.
-  private devicePinDrag: {
-    componentId: number;
-    pinIndex: number;
     moved: boolean;
   } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
@@ -2031,7 +2022,6 @@ export class Board {
     // so the re-registered frame kinds are in place before the graph + nodes rebuild against them — this is
     // what makes a box-resize / pin-move undoable (Chip Bench Phase 0).
     restoreFreeFormGeoms(entry.geoms);
-    restoreUserIcGeoms(entry.icGeoms); // overworld placed-chip box/pin edits (def geometry)
     this.graph.restore(entry.graph);
     this.rebuildNodes();
     this.clearSelection();
@@ -2192,6 +2182,9 @@ export class Board {
     if (frameId !== null) this.clearPendingRegion();
     this.dieFrameId = frameId;
     this.drawDieWalls();
+    // Draw (or clear) the Chip Bench resize-handle bloom — it keys off `dieFrameId`, not selection, so a
+    // free-form die shows its handles the moment you drill in and drops them on the way out.
+    this.redrawSelection();
   }
 
   /**
@@ -2274,6 +2267,25 @@ export class Board {
    */
   resizeFreeFormBox(dw: number, dh: number): boolean {
     if (this.dieFrameId === null) return false;
+    const frame = this.graph.components.get(this.dieFrameId);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom) return false;
+    return this.setDieFrameBox(geom.w + dw, geom.h + dh, true);
+  }
+
+  /**
+   * Set the open FREE-FORM die's box to an ABSOLUTE `w×h` in cells — the shared core of the die-bar
+   * steppers ({@link resizeFreeFormBox}) and the in-die resize-handle DRAG (Chip Bench bloom). Clamps the
+   * size, re-pins each lead onto the new perimeter ({@link clampPinToBox}), and re-registers the die-frame
+   * geom IN PLACE (pin COUNT/indices unchanged → the kind tag and every inner wire's frame-pin index are
+   * untouched), then rebuilds the frame node and redraws walls + wires + the bloom. `recordUndo` pushes a
+   * one-step undo BEFORE the edit (the stepper passes true; the drag passes false and commits its single
+   * `pendingUndo` itself on the first move). No-op (false) outside a free-form die or at the clamp / no
+   * change. Render + registry only — never the solve or the hash; reseal reads the new geom off the frame.
+   */
+  private setDieFrameBox(w: number, h: number, recordUndo: boolean): boolean {
+    if (this.dieFrameId === null) return false;
     const fid = this.dieFrameId;
     const frame = this.graph.components.get(fid);
     if (!frame || !isFreeFormFrame(frame.kind)) return false;
@@ -2281,15 +2293,18 @@ export class Board {
     if (!geom) return false;
     const MIN = 2;
     const MAX = BLOCK_MAX_PINS + 6; // a generous ceiling; the box is presentation, not a pin budget
-    const w = Math.max(MIN, Math.min(MAX, geom.w + dw));
-    const h = Math.max(MIN, Math.min(MAX, geom.h + dh));
-    if (w === geom.w && h === geom.h) return false; // already at the clamp / no change
-    this.pushUndo(this.graph.serialize());
+    const nw = Math.max(MIN, Math.min(MAX, Math.round(w)));
+    const nh = Math.max(MIN, Math.min(MAX, Math.round(h)));
+    if (nw === geom.w && nh === geom.h) return false; // already at the clamp / no change
+    if (recordUndo) this.pushUndo(this.graph.serialize());
     // Re-pin each lead onto the NEW perimeter: keep the side it was on, clamp the along-edge coordinate.
-    const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, w, h));
-    const subTag = frame.kind.slice(FREE_FORM_DIE_PREFIX.length);
-    registerFreeFormFrame(subTag, { w, h, pins });
-    // Rebuild the frame node so its pins reflect the new box; redraw walls + wires + selection.
+    const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, nw, nh));
+    registerFreeFormFrame(frame.kind.slice(FREE_FORM_DIE_PREFIX.length), {
+      w: nw,
+      h: nh,
+      pins,
+    });
+    // Rebuild the frame node so its pins reflect the new box; redraw walls + wires + selection (the bloom).
     const node = this.nodes.get(fid);
     if (node) {
       node.destroy();
@@ -2297,66 +2312,6 @@ export class Board {
       this.addNode(frame);
     }
     this.drawDieWalls();
-    this.redrawWires();
-    this.redrawSelection();
-    this.cb.onChange?.(this.graph);
-    this.cb.onPersist?.(this.graph);
-    this.emitSelect();
-    return true;
-  }
-
-  /**
-   * Resize a PLACED free-form subassembly chip's box from the OVERWORLD (Chip Bench Phase 1, §11) — no
-   * drill-in. Grows/shrinks the DEVICE DEFINITION's box by `(dw, dh)`, re-pinning leads onto the new
-   * perimeter ({@link clampPinToBox}), so every placed copy + the parts-bin glyph follow ({@link
-   * setUserIcFreeForm} re-registers footprint + die-frame). Undoable — `pushUndo` runs before the edit, so
-   * the entry captures the pre-resize def geometry ({@link captureUserIcGeoms}). No-op (false) for a part
-   * that isn't a free-form subassembly, or at the size clamp. Geometry only — connectivity is by pin INDEX.
-   */
-  resizeUserIcBox(componentId: number, dw: number, dh: number): boolean {
-    const def = getUserIc(this.graph.components.get(componentId)?.kind ?? "");
-    if (!def?.freeForm) return false;
-    return this.setDeviceBox(
-      componentId,
-      def.freeForm.w + dw,
-      def.freeForm.h + dh,
-      true,
-    );
-  }
-
-  /** Set a placed device's box to ABSOLUTE `w×h` (the shared core of {@link resizeUserIcBox} and the bloom
-   * handle-drag). Clamps the size, re-pins leads onto the new perimeter, propagates the def to every
-   * instance, and redraws (incl. the bloom). `recordUndo` pushes a one-step undo BEFORE the edit — the
-   * stepper path passes true; the drag passes false and commits ONE `pendingUndo` itself on the first move.
-   * No-op (false) for a non-free-form part or at the clamp. Geometry only — connectivity is by pin INDEX. */
-  private setDeviceBox(
-    componentId: number,
-    w: number,
-    h: number,
-    recordUndo: boolean,
-  ): boolean {
-    const comp = this.graph.components.get(componentId);
-    if (!comp) return false;
-    const def = getUserIc(comp.kind);
-    if (!def?.freeForm) return false;
-    const ff = def.freeForm;
-    const MIN = 2;
-    const MAX = BLOCK_MAX_PINS + 6;
-    const nw = Math.max(MIN, Math.min(MAX, Math.round(w)));
-    const nh = Math.max(MIN, Math.min(MAX, Math.round(h)));
-    if (nw === ff.w && nh === ff.h) return false; // already at this size / the clamp
-    if (recordUndo) this.pushUndo(this.graph.serialize());
-    const pins = ff.pins.map((p) => clampPinToBox(p, ff.w, ff.h, nw, nh));
-    return this.applyDeviceFreeForm(comp.kind, { w: nw, h: nh, pins });
-  }
-
-  /** Commit a device DEF's new free-form geometry and refresh the board: `setUserIcFreeForm` propagates to
-   * every placed instance + the bin glyph, then rebuild the nodes, re-route wires, redraw the bloom, and
-   * fire change/persist + the inspector refresh. Shared by box-resize and pin-move. Returns false for a
-   * non-free-form / unknown kind. */
-  private applyDeviceFreeForm(kind: string, freeForm: FreeFormGeom): boolean {
-    if (!setUserIcFreeForm(kind, freeForm)) return false;
-    this.rebuildNodes();
     this.redrawWires();
     this.redrawSelection();
     this.cb.onChange?.(this.graph);
@@ -3605,139 +3560,83 @@ export class Board {
     this.drawBloom(g);
   }
 
-  /** The placed FREE-FORM subassembly chip currently "bloomed" for in-place editing in the overworld: the
-   * LONE selected component (not drilled into a die) whose kind is a free-form user IC. Null otherwise
-   * (multi-select, inside a die, a stock part, a non-free-form IC). The bloom hangs its edit handles off it. */
-  private bloomTarget(): Component | null {
-    if (this.dieFrameId !== null || this.selected.size !== 1) return null;
-    const id = [...this.selected][0];
-    const c = id === undefined ? undefined : this.graph.components.get(id);
-    if (!c || !getUserIc(c.kind)?.freeForm) return null;
-    return c;
+  /** The open free-form die's three box-resize handles' world centers — E (right wall → width), S (bottom
+   * wall → height), SE (corner → both) — each floated a constant SCREEN distance OUTSIDE the walls so it
+   * clears the edge pins (a free-form die's leads sit ON the box perimeter). Null unless a free-form die is
+   * open. Shared by {@link drawBloom} + {@link bloomHandleHit} so the drawn handle and its grab box never
+   * drift apart. */
+  private dieResizeHandles(): { e: Point; s: Point; se: Point } | null {
+    if (this.dieFrameId === null) return null;
+    const frame = this.graph.components.get(this.dieFrameId);
+    if (!frame || !isFreeFormFrame(frame.kind)) return null;
+    const bounds = dieBounds(this.graph.serialize(), this.dieFrameId);
+    if (!bounds) return null;
+    const off = DIE_HANDLE_FLOAT_PX / (this.world.scale.x || 1);
+    const left = bounds.minCol * PITCH;
+    const top = bounds.minRow * PITCH;
+    const right = bounds.maxCol * PITCH;
+    const bottom = bounds.maxRow * PITCH;
+    const midX = (left + right) / 2;
+    const midY = (top + bottom) / 2;
+    return {
+      e: new Point(right + off, midY),
+      s: new Point(midX, bottom + off),
+      se: new Point(right + off, bottom + off),
+    };
   }
 
-  /** Draw the Chip Bench BLOOM over the selected placed device (Phase 1, render slice): a brighter frame +
-   * box-resize HANDLES on the right edge, bottom edge, and SE corner (drag to expand the borders right in
-   * the overworld; the drag wiring lands in the next slice). Handles are sized in SCREEN px (÷ zoom) so they
-   * stay grabbable at any zoom. No-op unless a single free-form subassembly is selected on the board. */
+  /** Draw the Chip Bench BLOOM inside the drill: box-resize HANDLES floated just OUTSIDE the open free-form
+   * die's walls — right wall (→ width), bottom wall (→ height), SE corner (→ both). Drag one to grow/shrink
+   * the box right where the device internals are visible. Handles + their stand-off are sized in SCREEN px
+   * (÷ zoom) so they stay grabbable and clear of the edge pins at any zoom. No-op unless a free-form die is
+   * open. (The pins themselves are moved by the editor's Alt-drag — see `pinDrag`.) */
   private drawBloom(g: Graphics): void {
-    const c = this.bloomTarget();
-    if (!c) return;
-    const box = this.componentBox(c);
-    const r = BLOOM_HANDLE_R;
-    // A brighter bloom frame just outside the plain selection ring, so the chip reads as "open for editing".
-    g.roundRect(box.x - 3, box.y - 3, box.width + 6, box.height + 6, 6);
-    g.stroke({ width: 2, color: PALETTE.accent, alpha: 0.55 });
-    // Resize handles: drag the right edge → width, bottom edge → height, SE corner → both (next slice).
-    const handles: [number, number][] = [
-      [box.x + box.width, box.y + box.height / 2],
-      [box.x + box.width / 2, box.y + box.height],
-      [box.x + box.width, box.y + box.height],
-    ];
-    for (const [hx, hy] of handles) {
-      g.roundRect(hx - r, hy - r, r * 2, r * 2, 2);
+    const handles = this.dieResizeHandles();
+    if (!handles) return;
+    const s = this.world.scale.x || 1;
+    const r = BLOOM_HANDLE_R / s;
+    for (const h of [handles.e, handles.s, handles.se]) {
+      g.roundRect(h.x - r, h.y - r, r * 2, r * 2, 2 / s);
       g.fill({ color: 0x1a1730, alpha: 0.96 }); // dark grip interior (matches the die-wall fill)
-      g.roundRect(hx - r, hy - r, r * 2, r * 2, 2);
-      g.stroke({ width: 2, color: PALETTE.accent, alpha: 0.95 });
-    }
-    // Pin BEADS: fatten each package pin into an accent-ringed bead so it reads as a draggable handle (the
-    // drag-a-bead-to-move-the-pin interaction lands in a later slice; this is the affordance).
-    const kind = this.graph.kindOf(c);
-    for (const p of kind?.pins ?? []) {
-      const w = this.cellToWorld(this.graph.pinCell(c, p));
-      g.circle(w.x, w.y, PIN_R + 3).fill({ color: 0x1a1730, alpha: 0.9 });
-      g.circle(w.x, w.y, PIN_R + 3).stroke({
-        width: 2,
-        color: PALETTE.accent,
-        alpha: 0.95,
-      });
+      g.roundRect(h.x - r, h.y - r, r * 2, r * 2, 2 / s);
+      g.stroke({ width: 2 / s, color: PALETTE.accent, alpha: 0.95 });
     }
   }
 
-  /** Which bloom resize handle (if any) world-point `wp` grabs on the currently bloomed device: 'se' corner
-   * (tested first — it overlaps the edges), else 'e' right edge, 's' bottom edge. The grab box is the
-   * larger of the handle size and a ~26px on-screen square (so it stays catchable at any zoom). Null when
-   * no device is bloomed or the point misses every handle. */
+  /** Which die box-resize handle (if any) world-point `wp` grabs: 'se' corner (tested first — it overlaps
+   * the edges), else 'e' right wall, 's' bottom wall. The grab box is the larger of the handle size and a
+   * ~26px on-screen square (catchable at any zoom). Null when no free-form die is open or the point misses
+   * every handle. */
   private bloomHandleHit(wp: Point): "e" | "s" | "se" | null {
-    const c = this.bloomTarget();
-    if (!c) return null;
-    const box = this.componentBox(c);
+    const handles = this.dieResizeHandles();
+    if (!handles) return null;
     const tol = Math.max(BLOOM_HANDLE_R + 4, 13 / (this.world.scale.x || 1));
-    const near = (hx: number, hy: number): boolean =>
-      Math.abs(wp.x - hx) <= tol && Math.abs(wp.y - hy) <= tol;
-    if (near(box.x + box.width, box.y + box.height)) return "se";
-    if (near(box.x + box.width, box.y + box.height / 2)) return "e";
-    if (near(box.x + box.width / 2, box.y + box.height)) return "s";
+    const near = (h: Point): boolean =>
+      Math.abs(wp.x - h.x) <= tol && Math.abs(wp.y - h.y) <= tol;
+    if (near(handles.se)) return "se";
+    if (near(handles.e)) return "e";
+    if (near(handles.s)) return "s";
     return null;
   }
 
-  /** Live step of a bloom box-resize drag: set the device box so the dragged wall/corner tracks the cursor
-   * cell (anchor = the chip's top-left). Commits the single drag undo on the first cell that actually
-   * resizes; `setDeviceBox(false)` does the propagation + redraw each step. */
+  /** Live step of an in-die box-resize drag: set the die box so the dragged wall/corner tracks the cursor
+   * cell (anchor = the die frame's top-left). The handle floats `DIE_HANDLE_FLOAT_PX` outside the wall, so
+   * we subtract that stand-off before snapping → grabbing a handle doesn't jump the box. Commits the single
+   * drag undo on the first cell that actually resizes; `setDieFrameBox(false)` re-pins + redraws each step. */
   private moveBoxHandleDrag(wp: Point): void {
     const d = this.boxHandleDrag;
-    if (!d) return;
-    const comp = this.graph.components.get(d.componentId);
-    const def = comp ? getUserIc(comp.kind) : undefined;
-    if (!comp || !def?.freeForm) return;
-    let w = def.freeForm.w;
-    let h = def.freeForm.h;
+    if (d === null || this.dieFrameId === null) return;
+    const frame = this.graph.components.get(this.dieFrameId);
+    const geom = frame ? freeFormGeom(frame.kind) : undefined;
+    if (!frame || !geom) return;
+    const off = DIE_HANDLE_FLOAT_PX / (this.world.scale.x || 1);
+    let w = geom.w;
+    let h = geom.h;
     if (d.axis === "e" || d.axis === "se")
-      w = snap(wp.x, PITCH) - comp.cell.col + 1;
+      w = snap(wp.x - off, PITCH) - frame.cell.col + 1;
     if (d.axis === "s" || d.axis === "se")
-      h = snap(wp.y, PITCH) - comp.cell.row + 1;
-    if (this.setDeviceBox(d.componentId, w, h, false)) {
-      if (!d.moved && this.pendingUndo) {
-        this.commitUndo(this.pendingUndo);
-        d.moved = true;
-      }
-    }
-  }
-
-  /** The package-pin index (if any) of the bloomed device that world-point `wp` grabs — nearest pin bead
-   * within a ~26px on-screen radius. Null when nothing's bloomed or the point misses every bead. */
-  private bloomPinHit(wp: Point): number | null {
-    const c = this.bloomTarget();
-    const kind = c ? this.graph.kindOf(c) : undefined;
-    if (!c || !kind) return null;
-    const tol = Math.max(PIN_R + 6, 13 / (this.world.scale.x || 1));
-    let best = -1;
-    let bestD = tol * tol;
-    for (const p of kind.pins) {
-      const w = this.cellToWorld(this.graph.pinCell(c, p));
-      const d2 = (wp.x - w.x) ** 2 + (wp.y - w.y) ** 2;
-      if (d2 <= bestD) {
-        bestD = d2;
-        best = p.index;
-      }
-    }
-    return best >= 0 ? best : null;
-  }
-
-  /** Live step of a bloom PIN drag: slide pin `devicePinDrag.pinIndex` to the nearest box-edge cell under
-   * the cursor (`snapToBoxEdge`, anchor = the chip's top-left), rewrite the def's free-form pin, and
-   * propagate. The pin INDEX is unchanged, so every wire to it follows + the netlist is stable. Commits the
-   * single drag undo on the first cell that actually moves. */
-  private moveDevicePinDrag(wp: Point): void {
-    const d = this.devicePinDrag;
-    if (!d) return;
-    const comp = this.graph.components.get(d.componentId);
-    const def = comp ? getUserIc(comp.kind) : undefined;
-    if (!comp || !def?.freeForm) return;
-    const ff = def.freeForm;
-    const cur = ff.pins[d.pinIndex];
-    if (!cur) return;
-    const { dx, dy } = snapToBoxEdge(
-      snap(wp.x, PITCH) - comp.cell.col,
-      snap(wp.y, PITCH) - comp.cell.row,
-      ff.w,
-      ff.h,
-    );
-    if (dx === cur.dx && dy === cur.dy) return; // still on the same cell
-    const pins = ff.pins.map((p, i) =>
-      i === d.pinIndex ? { ...p, dx, dy } : p,
-    );
-    if (this.applyDeviceFreeForm(comp.kind, { w: ff.w, h: ff.h, pins })) {
+      h = snap(wp.y - off, PITCH) - frame.cell.row + 1;
+    if (this.setDieFrameBox(w, h, false)) {
       if (!d.moved && this.pendingUndo) {
         this.commitUndo(this.pendingUndo);
         d.moved = true;
@@ -4231,34 +4130,17 @@ export class Board {
       }
     }
 
-    // Chip Bench bloom: a press on the selected device's box-resize HANDLE grabs it to drag the wall
-    // (expand the borders in place). Tested before pins/body since the handle sits on the box edge, over
-    // them. Selection-scoped (only the bloomed chip has handles), so normal parts are unaffected.
-    if (e.button === 0 && this.mode === "select") {
-      const chip = this.bloomTarget();
-      if (chip) {
-        const handle = this.bloomHandleHit(wp);
-        if (handle) {
-          this.boxHandleDrag = {
-            componentId: chip.id,
-            axis: handle,
-            moved: false,
-          };
-          this.pendingUndo = this.snapshotEntry();
-          return;
-        }
-        // A press on a pin bead → move that pin along the edge (vs the default press, which starts a
-        // wire). So wiring a bloomed chip means dragging FROM the other end, or deselecting it first.
-        const pinIdx = this.bloomPinHit(wp);
-        if (pinIdx !== null) {
-          this.devicePinDrag = {
-            componentId: chip.id,
-            pinIndex: pinIdx,
-            moved: false,
-          };
-          this.pendingUndo = this.snapshotEntry();
-          return;
-        }
+    // Chip Bench bloom (in the drill): a press on a die-resize HANDLE grabs it to drag the wall and resize
+    // the box right where the device internals are visible. The handles float just OUTSIDE the walls, so
+    // this never shadows the edge pins (still wired / named / Alt-moved as usual). `bloomHandleHit` returns
+    // null unless a free-form die is open, so the outer board is unaffected. Allowed in wire mode too (a
+    // pending wire already took precedence above), since the die is usually authored in wire mode.
+    if (e.button === 0 && (this.mode === "select" || this.mode === "wire")) {
+      const handle = this.bloomHandleHit(wp);
+      if (handle) {
+        this.boxHandleDrag = { axis: handle, moved: false };
+        this.pendingUndo = this.snapshotEntry();
+        return;
       }
     }
 
@@ -4960,11 +4842,6 @@ export class Board {
       return;
     }
 
-    if (this.devicePinDrag) {
-      this.moveDevicePinDrag(wp);
-      return;
-    }
-
     if (this.pinDrag) {
       this.movePinDrag(wp);
       return;
@@ -5092,12 +4969,6 @@ export class Board {
       // The single drag undo was already committed on the first resizing move (moveBoxHandleDrag); a bare
       // click on a handle resized nothing, so there's nothing to commit here. Just end the gesture.
       this.boxHandleDrag = null;
-      this.pendingUndo = null;
-      return;
-    }
-    if (this.devicePinDrag) {
-      // The one undo was committed on the first moving step; a bare click moved nothing. End the gesture.
-      this.devicePinDrag = null;
       this.pendingUndo = null;
       return;
     }
@@ -5401,7 +5272,6 @@ export class Board {
     return {
       graph: g,
       geoms: captureFreeFormGeoms(g),
-      icGeoms: captureUserIcGeoms(g),
     };
   }
 

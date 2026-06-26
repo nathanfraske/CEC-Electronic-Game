@@ -6,6 +6,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (166) — CHIP BENCH course-correct: strip overworld editing, move bloom into the drill
+
+Owner: *"Strip the overworld and move the bloom and everything into the drill."* The overworld
+(placed-chip) device editing of Phase 1a–1d caused edits-hit-all-copies, odd wire routing, pins moving on
+resize, and "can't see what's changing inside the device". Web/registry only, golden untouched, 130 web
+tests, full web gate green.
+- ~~**Strip overworld editing**~~ — removed the App.svelte inspector Box stepper (`placedDeviceBox` /
+  `changeDeviceBox`); removed board.ts placed-chip bloom (`bloomTarget`, pin beads, `bloomPinHit`,
+  `devicePinDrag`/`moveDevicePinDrag`, `resizeUserIcBox`/`setDeviceBox`/`applyDeviceFreeForm`); removed the
+  userIc.ts live def-propagate layer (`setUserIcFreeForm`/`captureUserIcGeoms`/`restoreUserIcGeoms`) and
+  `UndoEntry.icGeoms`. Phase 0 die-frame geom undo kept. Deleted `userIc.deviceEdit.test.ts`.
+- ~~**Move the bloom into the drill**~~ — resize handles float just OUTSIDE the open free-form die's walls
+  (`dieResizeHandles` shared by `drawBloom`/`bloomHandleHit`); drag → `setDieFrameBox` (absolute-size core
+  refactored out of `resizeFreeFormBox`); select+wire mode; one undo per drag; `setDieFrame` redraws the
+  bloom on drill in/out. Pin moves stay on the existing in-die Alt-drag. Copies follow on reseal.
+- [ ] **Eyeball pass (owner):** handle placement/feel inside the drill.
+- [ ] Optional polish: in-drill pin bead (vs Alt), left/top handles (anchor move), keyboard/44px parity,
+  role badges, reduced-motion. Then Chip Bench Phase 2/3.
+
+---
+
 ## 2026-06-25 (152) — START: characterization engine ("1") — foundation
 
 Following docs/cell-characterization-build-plan.md (engine = P5–P9). Web/registry only, golden untouched,

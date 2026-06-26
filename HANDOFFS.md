@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (166) — CHIP BENCH course-correct: STRIP overworld editing → move the bloom INTO the drill
+
+**State:** 🟢 **about to PR**. Web/interaction only, **golden untouched** (no Rust/sim-core touched), 130
+web tests (was 132 — removed the 2-test `userIc.deviceEdit.test.ts`), full web gate green
+(check/lint/build/test). Owner course-correct: *"Strip the overworld and move the bloom and everything into
+the drill, no sense in getting rid of the whole idea."* (Overworld device-editing caused: edits hit all
+copies live, wires routed oddly, pins moved on resize, *can't see what's changing inside the device*.)
+
+**Stripped (overworld, Phase 1a–1d):**
+- App.svelte: removed the inspector **Box W/H stepper** for a placed chip (`placedDeviceBox` derived +
+  `changeDeviceBox`). The **Edit ▸** button (re-open the die) stays — that IS the drill where resize lives.
+- board.ts: removed the placed-chip bloom — `bloomTarget`, the pin **beads**, `bloomPinHit`,
+  `devicePinDrag` + `moveDevicePinDrag`, and the def-edit helpers `resizeUserIcBox` / `setDeviceBox` /
+  `applyDeviceFreeForm`.
+- userIc.ts: removed `setUserIcFreeForm` / `captureUserIcGeoms` / `restoreUserIcGeoms` — the **live def
+  propagate** layer that was the "edits hit all copies" footgun. Dropped `UndoEntry.icGeoms` +
+  its capture/restore from `snapshotEntry`/`undo`. **Phase 0 die-frame geom undo (`geoms`) stays.**
+
+**Moved into the drill (die editor):** the bloom now hangs off the **open die frame** (`dieFrameId`), not a
+placed chip. `dieResizeHandles()` floats 3 resize handles a constant SCREEN distance **outside the die
+walls** (so they clear the edge pins, which sit ON the box perimeter) — E=width, S=height, SE=both.
+`drawBloom`/`bloomHandleHit` share it (draw == grab box). `moveBoxHandleDrag` → new **`setDieFrameBox(w,h,
+recordUndo)`** (the absolute-size core refactored out of `resizeFreeFormBox`, which now delegates) — clamps,
+`clampPinToBox` re-pins onto the new perimeter, re-registers the die-frame geom IN PLACE (pin INDEX
+unchanged → inner wires follow, kind tag stable), rebuilds the frame node, redraws walls+wires+bloom. The
+handle floats `DIE_HANDLE_FLOAT_PX` out, so the drag subtracts that stand-off before snapping (no grab-jump).
+Armed in **select OR wire** mode (a pending wire still takes precedence). `setDieFrame` now `redrawSelection`s
+so handles draw/clear on drill in/out. **Pin moves** keep the existing **Alt-drag** (`pinDrag`) — already in
+the drill. One undo per drag (Phase 0 `geoms`). Copies update on **reseal** (not live) — the expected path.
+
+**Why golden-safe:** zero sim-core/protocol changes; all edits are render/registry; connectivity is by pin
+INDEX; `failed_elements`/geometry never enter `snapshot_hash`.
+
+**NEXT (eyeball + polish):** owner reviews the handle placement/feel in the drill. Then optional: nicer pin
+affordance in-drill (bead vs Alt), left/top handles (anchor move), 44px keyboard parity, role badges,
+reduced-motion. Then Phase 2 (precise companion) / Phase 3 (inner circuit) per the Chip Bench doc.
+
+---
+
 ## 2026-06-26 (165) — CHIP BENCH Phase 1d: bloom PIN beads + drag-to-move (functional)
 
 **State:** 🟢 **about to PR**. Web/interaction only, golden untouched, 132 web tests, full gate green. The
