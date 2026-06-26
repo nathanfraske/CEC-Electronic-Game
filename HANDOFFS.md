@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (174) — SHAPE/WIRE paddle fix + `replay --drive` route re-driver
+
+**State:** 🟢 `main` at PR #253 merged (toggle fix); the re-driver is the next PR. **Web-only, golden
+untouched, 183 web tests** (full gate green).
+
+- **Fixed the SHAPE/WIRE paddle collapsing to an unusable 2px square** (#253) — owner bug. In the
+  free-form die builder `.die-mode` was the only `.die-bar` flex item with `overflow:hidden` → its
+  flex auto min-size is 0 → it was the one item that could (and did) crush when the New▸Subassembly bar
+  ran over-full. Fix (CSS-only): `flex-shrink:0` on `.die-mode`/`.die-pins`; `.die-bar` gets
+  `flex-wrap:wrap` + `width:max-content` (capped) so a crowded bar wraps to a 2nd full-width row instead
+  of crushing/spilling, and an uncrowded bar stays single-row. Verified headlessly (drove into
+  New▸Subassembly: `.die-mode` 2px → 100px).
+- **`replay --drive`** (the owner-greenlit faithful re-driver) — re-walks a bundle's route from a CLEAN
+  boot through a new `window.__cecReplay(entry)` hook that calls the SAME app functions the UI does
+  (`setMode`/`arm`/synth-key/`newBlankDie`/`dieBack`/`dieSeal`, + `board.replayPlace`/`replayWire`), then
+  screenshots the end state (`--filmstrip` = a PNG per step). Each step logs ok/skip/fail. Spatial ops
+  resolve BY CELL (camera/id-independent): `place` by cell, `wire` resolves the pin via `pinAtCell` (so
+  wiring replays from empty even though ids differ — wire capture now stores `from/to` + `fromCell/toCell`).
+  **Validated live:** a nav route re-walked into the New▸Subassembly builder (saw the fixed paddle); a
+  place route dropped V/R/LED/GND from empty (5/5 ok, filmstrip).
+
+**Re-driver scope (honest):** drives from EMPTY, so it faithfully reproduces routes that begin at a
+natural start (most reported state/nav/build bugs — incl. this session's class). Steps with no clean-boot
+replay report **skip**: a file `load`, `save`, `characterize` of a session-minted tag, or a non-fresh
+`drill-in` (Build/edit an existing frame needs a mid-session target). The static final-board render
+(default `replay`, no `--drive`) stays the always-works fallback. A keyframe/initial-snapshot system
+(to replay mid-session routes) is the next step if those turn up.
+
+---
+
 ## 2026-06-26 (173) — Semantic route capture + `replay.mjs` bundle inspector (queue #62)
 
 **State:** 🟢 `main` advancing; PR #251 merged (gate-symbol→pins #58 + `__cecReady` + journal-arm). This

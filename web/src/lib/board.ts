@@ -1669,6 +1669,39 @@ export class Board {
     return this.placeCell(kind, this.screenToCell(screenX, screenY));
   }
 
+  /** Re-drive a captured `place` action (route replay): drop `kind` at an exact grid `cell` through the
+   * real placement path. Cell-based, so it's camera-independent — see scripts/replay.mjs / lib/feedback.ts. */
+  replayPlace(kind: string, cell: Cell): Component | undefined {
+    return this.placeCell(kind, cell);
+  }
+
+  /** Re-drive a captured `wire` action: re-issue the same connection. Tries the raw endpoint ref first
+   * (ids align when the whole route replays from empty); else resolves the pin BY its captured absolute
+   * CELL (`pinAtCell`), so wiring replays even when ids differ. Returns false if an end can't be resolved. */
+  replayWire(
+    from: Endpoint,
+    to: Endpoint,
+    fromCell?: Cell,
+    toCell?: Cell,
+  ): boolean {
+    const resolve = (ep: Endpoint, cell?: Cell): Endpoint | undefined => {
+      if (this.graph.endpointCell(ep)) return ep; // ref still valid
+      const pin = cell ? this.graph.pinAtCell(cell) : undefined;
+      return pin ?? undefined;
+    };
+    const f = resolve(from, fromCell);
+    const t = resolve(to, toCell);
+    if (!f || !t) return false;
+    const before = this.graph.serialize();
+    const wire = this.graph.connect(f, t);
+    if (!wire) return false;
+    this.pushUndo(before);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.cb.onChange?.(this.graph);
+    return true;
+  }
+
   /**
    * Place a part at a grid cell, recording undo and refreshing the view. `rot`
    * (90° CW steps) sets the dropped orientation — the armed placement rotation, so
@@ -5413,12 +5446,21 @@ export class Board {
       // Ignore a release/click back on the start endpoint itself (keep routing).
       if (endpointKey(target) === fromKey) return;
       const before = this.graph.serialize();
-      const wire = this.graph.connect(this.wiring.from, target);
+      const from = this.wiring.from;
+      const wire = this.graph.connect(from, target);
       if (wire) {
         this.pushUndo(before);
         this.redrawWires();
         this.cb.onChange?.(this.graph);
-        logAction("wire");
+        // Capture the endpoints AND their absolute cells so the route is faithfully re-drivable: on a
+        // clean-boot replay element ids differ, so replayWire resolves the pin BY CELL. See replayWire /
+        // scripts/replay.mjs.
+        logAction("wire", undefined, {
+          from,
+          to: target,
+          fromCell: this.graph.endpointCell(from) ?? undefined,
+          toCell: this.graph.endpointCell(target) ?? undefined,
+        });
       }
       this.cancelWiring(); // a pin/existing junction is a definite end → finish
       return;

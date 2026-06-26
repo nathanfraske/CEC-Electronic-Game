@@ -1,19 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
 // replay.mjs — hand the agent a bug/feedback bundle (downloaded from the in-app "Report bug" / "Give
-// feedback" buttons) and this REPLAYS it for inspection: it prints the player's recent ROUTE (the action
-// journal — the owner's "see exactly how I made the bug"), lists the captured console errors, then boots
-// the app and renders the EXACT board the bundle carries to a PNG the agent Reads. One command turns a
-// reported moment back into (a) a legible timeline and (b) a faithful screenshot.
+// feedback" buttons) and this REPLAYS it for inspection. It prints the player's recent ROUTE (the action
+// journal — the owner's "see exactly how I made the bug") + the captured errors, then either:
+//   · default: renders the EXACT final board the bundle carries to a PNG; or
+//   · --drive: RE-WALKS the route from a clean boot through the app's `__cecReplay` hook (the same
+//     functions the UI calls), screenshotting the end state — so a SEQUENCE/STATE bug the final board
+//     can't show (e.g. a builder-UI glitch) is reproduced and seen.
 //
-//   pnpm -C web replay --bundle ../path/to/cec-bug-2026-….json
-//   pnpm -C web replay --bundle x.json --out /tmp/replay.png
+//   pnpm -C web replay --bundle ../path/to/cec-bug-2026-….json            # static final-board render
+//   pnpm -C web replay --bundle x.json --drive --out /tmp/replay.png      # re-walk the route
+//   pnpm -C web replay --bundle x.json --drive --filmstrip                # + a PNG per step
 //
-// Flags: --bundle <json> (a cec-feedback bundle OR a plain cec-circuit save) · --out <png>
-// (default /tmp/cec-replay.png) · --port <n> (5191) · --wait <ms> settle (1500) · --width/--height.
-// NOTE: replay re-renders the FINAL board state + reports the route; it does not re-drive pointer input
-// (the bundle has no initial-state snapshot — a faithful event-sourced re-driver is a separate, larger
-// telemetry feature). For most reported bugs the final board + the route are exactly what's needed.
-// NEVER run `playwright install` — Chromium is pre-provisioned at /opt/pw-browsers.
+// Flags: --bundle <json> (a cec-feedback bundle OR a plain cec-circuit save) · --drive (re-walk) ·
+// --filmstrip (PNG per step, with --drive) · --out <png> (/tmp/cec-replay.png) · --port <n> (5191) ·
+// --wait <ms> settle (1500) · --step-wait <ms> per drive step (140) · --width/--height.
+// Drive replays from EMPTY, so spatial ops resolve by captured CELL (camera/id-independent); steps with
+// no faithful clean-boot replay (a file load, or a mid-session target) report "skip". NEVER run
+// `playwright install` — Chromium is pre-provisioned at /opt/pw-browsers.
 import { readFileSync } from "node:fs";
 import { openApp } from "./lib/harness.mjs";
 
@@ -28,6 +31,12 @@ const port = Number(arg("port", "5191"));
 const settle = Number(arg("wait", "1500"));
 const width = Number(arg("width", "1280"));
 const height = Number(arg("height", "900"));
+// --drive: actually RE-WALK the route from a clean (empty) boot via the app's `__cecReplay` hook,
+// screenshotting the end state (and each step with --filmstrip). Default (no --drive) just renders the
+// bundle's final board statically.
+const drive = argv.includes("--drive");
+const filmstrip = argv.includes("--filmstrip");
+const stepWait = Number(arg("step-wait", "140"));
 
 if (!bundlePath) {
   console.error(
@@ -96,30 +105,102 @@ console.log("ROUTE (oldest → newest):");
 console.log(formatJournal(journal, errors));
 console.log(hr);
 
-if (!board || typeof board !== "object") {
-  console.error("✗ bundle has no renderable board — printed the route only.");
-  process.exit(journal.length ? 0 : 1);
-}
-
-// --- render the exact board the bundle carries ------------------------------------------------------
-const {
-  page,
-  errors: pageErrors,
-  cleanup,
-} = await openApp({
-  fixture: JSON.stringify(board),
-  port,
-  width,
-  height,
-  settleMs: settle,
-});
-try {
-  await page.screenshot({ path: out, scale: "css" });
-  console.log(`✓ rendered the bundle's board → ${out} (${width}x${height})`);
-  if (pageErrors.length)
+if (drive) {
+  // --- RE-WALK the route from a clean (empty) boot via the app's __cecReplay hook -------------------
+  const EMPTY = JSON.stringify({
+    format: "cec-circuit",
+    version: 3,
+    graph: { components: [], wires: [] },
+  });
+  const {
+    page,
+    errors: pageErrors,
+    cleanup,
+  } = await openApp({
+    fixture: EMPTY,
+    port,
+    width,
+    height,
+    settleMs: settle,
+  });
+  try {
+    const hasHook = await page
+      .waitForFunction(() => typeof window.__cecReplay === "function", {
+        timeout: 8000,
+      })
+      .then(() => true)
+      .catch(() => false);
+    if (!hasHook)
+      console.log(
+        "  ⚠ no __cecReplay hook in this build — driving will skip everything.",
+      );
+    const dir = out.replace(/\.png$/, "");
+    const counts = { ok: 0, skip: 0, fail: 0 };
+    console.log("DRIVE (clean boot → re-walk the route):");
+    for (let i = 0; i < journal.length; i++) {
+      const e = journal[i];
+      const before = pageErrors.length;
+      let status = "skip";
+      try {
+        status =
+          (await page.evaluate((entry) => window.__cecReplay(entry), e)) ??
+          "skip";
+      } catch {
+        status = "fail";
+      }
+      counts[status] = (counts[status] ?? 0) + 1;
+      await page.waitForTimeout(stepWait);
+      const newErr =
+        pageErrors.length > before
+          ? `  ⚠ ${pageErrors[pageErrors.length - 1]}`
+          : "";
+      console.log(
+        `${String(i + 1).padStart(3)} ${status.toUpperCase().padEnd(4)} ${e.action}${e.detail ? " " + e.detail : ""}${newErr}`,
+      );
+      if (filmstrip)
+        await page.screenshot({
+          path: `${dir}-step${String(i + 1).padStart(2, "0")}.png`,
+          scale: "css",
+        });
+    }
+    await page.screenshot({ path: out, scale: "css" });
     console.log(
-      `  ⚠ ${pageErrors.length} page error(s) DURING re-render:\n   ${pageErrors.slice(0, 5).join("\n   ")}`,
+      `✓ drove ${journal.length} step(s) [ok ${counts.ok}, skip ${counts.skip}, fail ${counts.fail}] → ${out} (${width}x${height})`,
     );
-} finally {
-  await cleanup();
+    if (pageErrors.length)
+      console.log(
+        `  ⚠ ${pageErrors.length} total page error(s):\n   ${pageErrors.slice(0, 5).join("\n   ")}`,
+      );
+  } finally {
+    await cleanup();
+  }
+} else {
+  if (!board || typeof board !== "object") {
+    console.error(
+      "✗ bundle has no renderable board — printed the route only. (Try --drive.)",
+    );
+    process.exit(journal.length ? 0 : 1);
+  }
+  // --- render the exact board the bundle carries (static) ------------------------------------------
+  const {
+    page,
+    errors: pageErrors,
+    cleanup,
+  } = await openApp({
+    fixture: JSON.stringify(board),
+    port,
+    width,
+    height,
+    settleMs: settle,
+  });
+  try {
+    await page.screenshot({ path: out, scale: "css" });
+    console.log(`✓ rendered the bundle's board → ${out} (${width}x${height})`);
+    if (pageErrors.length)
+      console.log(
+        `  ⚠ ${pageErrors.length} page error(s) DURING re-render:\n   ${pageErrors.slice(0, 5).join("\n   ")}`,
+      );
+  } finally {
+    await cleanup();
+  }
 }
