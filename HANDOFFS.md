@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (182) — Zoom-to-open LOD refinements + onboarding off
+
+**State:** 🟢 merging to `main`. **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 194 web tests.** Full
+gate green.
+
+Owner refinements to the recursive zoom-to-open dive + an onboarding toggle (all render-only):
+- **Open later** — a sealed IC stays its black-box SYMBOL across normal working zoom and only SPLITS to its
+  internals once comfortably screen-filling (`INTERNALS_ZOOM` world-scale 2.5→8; the zoom METER reads ~×50
+  there because ×M = zoom/viewScale and viewScale drops ~5× once inside the opened body). `MAX_SCALE`
+  1000→3000 so the deeper bar still reaches ~3 nested levels. The symbol fade holds full, then fades into
+  the split.
+- **Alternating layer backgrounds** — each opened level tints its interior by depth parity (dark overworld
+  → lighter → darker → …) so the dive reads as discrete strata. Subtle; tunable alpha in
+  `userIcInternalsView`.
+- **Recursive sub-cell symbols** — each non-recursing nested user-IC cell wears its OWN gate symbol
+  (`recognizeGate` + `drawGateBodySymbol`, pooled `SlotRecord.symG`), fading toward its own open. An opened
+  DFF shows its master/slave latches (buffer) + clock inverter (NOT), each fading as you dive in.
+- **Onboarding OFF** — the cold-open "This is electricity / voltage" intro banner + the as-you-go concept
+  tip cards are forced off at mount (owner: not needed now); re-enable per session from **? Help**. Revert
+  the two `App.svelte` mount-restore lines to bring them back by default.
+
+Validated with a zoom-ladder of renders (symbol at ×4 → split ~×8 → opened DFF + sub-cell symbols at ×12 →
+diving at ×26). **Next/optional:** layer-tint strength; a dedicated flip-flop glyph (the FF currently reads
+as a buffer triangle via `recognizeGate`). Nothing blocking.
+
+---
+
 ## 2026-06-26 (181) — Decoupled pin-RING footprint (free-form chips), tier→density badge
 
 **State:** 🟢 on branch `claude/kind-turing-hdelb3` (2 commits ahead of `main`, **NOT yet merged** —

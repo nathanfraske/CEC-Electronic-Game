@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (182) — Zoom-to-open LOD refinements + onboarding off
+
+Merging to `main`. Web-only, golden untouched, 194 web tests.
+- ~~**Open later (symbol persists)**~~ — `INTERNALS_ZOOM` 2.5→8 world-scale: a chip stays a SYMBOL across
+  normal zoom, splits only when comfortably screen-filling (~×50 on the meter); `MAX_SCALE` 1000→3000.
+- ~~**Alternating layer backgrounds**~~ — opened levels tint by depth parity (dark→light→dark→…).
+- ~~**Recursive sub-cell symbols**~~ — nested cells wear their own gate symbol (pooled `symG`), fading
+  toward their own open; an opened DFF shows latch (buffer) + inverter (NOT) symbols.
+- ~~**Onboarding off**~~ — cold-open intro banner + as-you-go concept tips forced off at mount (re-enable
+  via ? Help; revert two App.svelte lines to restore).
+- [ ] (optional) tune layer-tint strength; a dedicated flip-flop glyph (FF currently reads as a buffer
+  triangle).
+
+---
+
 ## 2026-06-26 (181) — Decoupled pin-RING placed footprint (free-form chips)
 
 On branch `claude/kind-turing-hdelb3` (awaiting owner merge). Web-only, golden untouched, 194 web tests.
