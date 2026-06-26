@@ -20,8 +20,8 @@ Web-only, golden untouched, 189 web tests.
 - [ ] **Determinism guard** — for a raw-FET / unnamed latch with NO loop-detectable structure: refuse a
   combinational LUT when the output is history-dependent. The current sweep rebuilds the netlist per vector
   (no state carry), so a 2-init/order probe needs a state-carrying sweep — deferred.
-- [ ] **"Registered D" label** — `recognizeGate` reports "BUFFER" for a registered `word:2` (cosmetic; the
-  panel could read "registered D-latch" when `mode:1`).
+- ~~**"Registered D" label**~~ — the char-panel now shows a "REGISTERED" pill + a "D-TYPE" label (not
+  "BUFFER") + a "Q⁺" next-state column for a `mode:1` cell. Validated live on the latch.
 - [ ] **Level-latch vs edge-flop** — both map to the registered LUT today (fine for teaching); a true
   level-sensitive transparent model is a later fidelity step.
 
