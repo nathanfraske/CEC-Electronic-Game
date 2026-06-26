@@ -44,6 +44,7 @@ import {
   registerUserIc,
   userIcsForGraph,
   userIcsForGraphs,
+  appendUserIcVariant,
 } from "./userIc";
 
 function place(
@@ -940,5 +941,60 @@ describe("compactFreeFormGeom — edge preservation (no side-flip on a narrow bo
     expect(L.dx).toBe(0); // left pin stays on the left wall
     expect(R.dx).toBe(out.w - 1); // right pin stays on the RIGHT wall (the bug flipped it to 0)
     expect(`${L.dx},${L.dy}`).not.toBe(`${R.dx},${R.dy}`); // still distinct
+  });
+});
+
+describe("registry hygiene (audit lows #12/#13)", () => {
+  it("unregisterUserIc cleans the paired free-form die-frame kind (no orphan)", () => {
+    const g = new BoardGraph();
+    registerUserIc({
+      tag: "T_ORPHAN",
+      name: "Orphan",
+      package: { archetype: "BLOCK", pinCount: 2 },
+      frameId: 1,
+      graph: g.serialize(),
+      freeForm: {
+        w: 5,
+        h: 5,
+        pins: [
+          { dx: 0, dy: 2 },
+          { dx: 4, dy: 2 },
+        ],
+      },
+    });
+    const dieKind = FREE_FORM_DIE_PREFIX + "T_ORPHAN";
+    expect(freeFormGeom(dieKind)).toBeDefined(); // registered
+    unregisterUserIc("T_ORPHAN");
+    expect(freeFormGeom(dieKind)).toBeUndefined(); // and cleaned, not orphaned
+  });
+
+  it("appendUserIcVariant deep-clones re-homed defs (no shared graph/freeForm refs)", () => {
+    const baseDie = freshDieGraph("SOT23_3")!;
+    const baseGraph = baseDie.snapshot;
+    registerUserIc({
+      tag: "T_FAM",
+      name: "Fam",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: baseDie.frameId,
+      graph: baseGraph,
+    });
+    try {
+      const variantDie = freshDieGraph("SOT23_3")!;
+      const variantGraph = variantDie.snapshot;
+      expect(
+        appendUserIcVariant("T_FAM", {
+          tag: "ignored",
+          name: "v2",
+          package: { archetype: "SOT-23", pinCount: 3 },
+          frameId: variantDie.frameId,
+          graph: variantGraph,
+        }),
+      ).toBe(true);
+      // The re-homed variant defs own their graph — not aliased to the base def / the caller's variant.
+      expect(getUserIc("T_FAM#0")!.graph).not.toBe(baseGraph);
+      expect(getUserIc("T_FAM#1")!.graph).not.toBe(variantGraph);
+    } finally {
+      unregisterUserIc("T_FAM");
+    }
   });
 });
