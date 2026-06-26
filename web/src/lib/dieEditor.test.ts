@@ -38,6 +38,8 @@ import {
   unregisterUserIc,
   captureSeal,
   createBlankFreeFormSubassembly,
+  compactFreeFormGeom,
+  TIER_FOOTPRINT_SCALE,
 } from "./userIc";
 
 function place(
@@ -799,5 +801,60 @@ describe("captureSeal — duplicate-name guard (audit: no silent overwrite)", ()
     } finally {
       unregisterUserIc("DUPNAME");
     }
+  });
+});
+
+describe("compactFreeFormGeom — tier-scaled LITERAL replica footprint", () => {
+  const tg = {
+    w: 9,
+    h: 7,
+    pins: [
+      { dx: 0, dy: 3, name: "IN" },
+      { dx: 8, dy: 3, name: "OUT" },
+      { dx: 4, dy: 0, name: "SEL" },
+      { dx: 4, dy: 6, name: "SELB" },
+    ],
+  };
+
+  it("SSI scale (1.0) leaves a cell full-size (the ladder anchor)", () => {
+    expect(TIER_FOOTPRINT_SCALE.SSI).toBe(1.0);
+    const out = compactFreeFormGeom(tg, TIER_FOOTPRINT_SCALE.SSI);
+    expect(out.w).toBe(9);
+    expect(out.h).toBe(7);
+    expect(out.pins).toEqual(tg.pins);
+  });
+
+  it("a denser tier shrinks the box uniformly, keeps pin count/names/order, all on distinct cells", () => {
+    const out = compactFreeFormGeom(tg, 0.4); // LSI-ish
+    expect(out.w).toBeLessThan(tg.w);
+    expect(out.h).toBeLessThan(tg.h);
+    expect(out.pins).toHaveLength(4);
+    expect(out.pins.map((p) => p.name)).toEqual(["IN", "OUT", "SEL", "SELB"]); // index order preserved
+    const distinct = new Set(out.pins.map((p) => `${p.dx},${p.dy}`)).size;
+    expect(distinct).toBe(4); // no pin collisions
+    // Edge pins stay ON the (scaled) edges — a true replica, not a relayout.
+    expect(out.pins[0]!.dx).toBe(0); // IN still on the left wall
+    expect(out.pins[1]!.dx).toBe(out.w - 1); // OUT still on the right wall
+    expect(out.pins[2]!.dy).toBe(0); // SEL still on the top wall
+    expect(out.pins[3]!.dy).toBe(out.h - 1); // SELB still on the bottom wall
+  });
+
+  it("the distinct-cell FLOOR prevents collapsing tightly-packed pins (no de-collide relayout)", () => {
+    // Four pins on ADJACENT top-edge cells: a tiny target scale would round them together, so the helper
+    // floors the scale up until they stay distinct (worst case σ=1, the original).
+    const dense = {
+      w: 5,
+      h: 3,
+      pins: [
+        { dx: 0, dy: 0 },
+        { dx: 1, dy: 0 },
+        { dx: 2, dy: 0 },
+        { dx: 3, dy: 0 },
+      ],
+    };
+    const out = compactFreeFormGeom(dense, 0.15);
+    const distinct = new Set(out.pins.map((p) => `${p.dx},${p.dy}`)).size;
+    expect(distinct).toBe(4);
+    expect(out.pins).toHaveLength(4);
   });
 });
