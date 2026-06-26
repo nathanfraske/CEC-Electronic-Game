@@ -160,6 +160,9 @@ interface GaugeAnchor {
 }
 
 const PIN_R = 4.5;
+/** Chip Bench bloom (Phase 1): half-size (world px, like the selection ring) of a placed device's
+ * box-resize handle — drawn on the right/bottom edges + SE corner of a selected free-form subassembly. */
+const BLOOM_HANDLE_R = 7;
 // `BoardLens` (the board's detail lens: schematic / analogy / reality — mirrors the info
 // panel's `DiagramMode`) is defined in `./boardRender` and imported + re-exported above.
 /** World zoom at/above which analogy/reality parts swap to the full illustration. */
@@ -3555,6 +3558,44 @@ export class Board {
         const m = this.cellToWorld(wp);
         g.circle(m.x, m.y, 4).fill({ color: PALETTE.accent, alpha: 0.9 });
       }
+    }
+    this.drawBloom(g);
+  }
+
+  /** The placed FREE-FORM subassembly chip currently "bloomed" for in-place editing in the overworld: the
+   * LONE selected component (not drilled into a die) whose kind is a free-form user IC. Null otherwise
+   * (multi-select, inside a die, a stock part, a non-free-form IC). The bloom hangs its edit handles off it. */
+  private bloomTarget(): Component | null {
+    if (this.dieFrameId !== null || this.selected.size !== 1) return null;
+    const id = [...this.selected][0];
+    const c = id === undefined ? undefined : this.graph.components.get(id);
+    if (!c || !getUserIc(c.kind)?.freeForm) return null;
+    return c;
+  }
+
+  /** Draw the Chip Bench BLOOM over the selected placed device (Phase 1, render slice): a brighter frame +
+   * box-resize HANDLES on the right edge, bottom edge, and SE corner (drag to expand the borders right in
+   * the overworld; the drag wiring lands in the next slice). Handles are sized in SCREEN px (÷ zoom) so they
+   * stay grabbable at any zoom. No-op unless a single free-form subassembly is selected on the board. */
+  private drawBloom(g: Graphics): void {
+    const c = this.bloomTarget();
+    if (!c) return;
+    const box = this.componentBox(c);
+    const r = BLOOM_HANDLE_R;
+    // A brighter bloom frame just outside the plain selection ring, so the chip reads as "open for editing".
+    g.roundRect(box.x - 3, box.y - 3, box.width + 6, box.height + 6, 6);
+    g.stroke({ width: 2, color: PALETTE.accent, alpha: 0.55 });
+    // Resize handles: drag the right edge → width, bottom edge → height, SE corner → both (next slice).
+    const handles: [number, number][] = [
+      [box.x + box.width, box.y + box.height / 2],
+      [box.x + box.width / 2, box.y + box.height],
+      [box.x + box.width, box.y + box.height],
+    ];
+    for (const [hx, hy] of handles) {
+      g.roundRect(hx - r, hy - r, r * 2, r * 2, 2);
+      g.fill({ color: 0x1a1730, alpha: 0.96 }); // dark grip interior (matches the die-wall fill)
+      g.roundRect(hx - r, hy - r, r * 2, r * 2, 2);
+      g.stroke({ width: 2, color: PALETTE.accent, alpha: 0.95 });
     }
   }
 
