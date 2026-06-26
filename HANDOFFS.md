@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (176) — Sequential-cell auto-detection (latch no longer characterizes to a buffer)
+
+**State:** 🟢 `main` through PR #256. This is the next PR. **Web-only, golden untouched, 189 web tests.**
+Fixes the owner's bug: a transmission-gate D-LATCH characterized to a *buffer* (combinational, `mode:0`).
+
+- **`cellAnalysis.ts`** (NEW, headless, 6 tests) — `analyzeCell(...)`: (1) SEQUENTIAL DETECTION — builds the
+  cell's signal-net graph (a characterized sub-cell / logic gate = a DIRECTED gain edge; a transmission
+  gate / un-characterized pass cell = BIDIRECTIONAL; rails dropped) and flags memory when a **gain edge
+  sits on a cycle** (the TG latch's two-inverter storage loop). (2) PIN CLASSIFICATION by name+role — data
+  inputs, the **clock/enable + its complement** (EN/ENB recognised as a pair even UNTAGGED, by name), and
+  **Q (+ Q̄ if present)**.
+- **`characterize.ts`** — `characterizeCell` now takes `{pinNames, resolveCell}`, runs `analyzeCell`, and
+  routes to the sequential sweep when a **loop** (not just a hand-tagged `clk`) is found; refuses with a
+  clear reason if sequential-but-no-clock. The App passes `ic.pinNames` + `getUserIc`.
+- **`sweepNetlist.ts`** — `SweepPins.clkComplementPin`; `sequentialSweepNetlist` injects a **powered NOT
+  gate** clk→complement so a complementary clock PAIR (EN/EN̄) is driven oppositely.
+- **VALIDATED LIVE** (the real uploaded `dlatch.json` via a new `window.__cecCharacterize` harness hook):
+  the latch now characterizes `{mode:1 (registered), word:2 (Q+=D)}` with no refusal — i.e. a REGISTERED
+  D-latch, not a buffer. (Before: `mode:0`.)
+
+**Follow-ups / honest scope:** the detector is solid for **sub-cell-built** latches (the owner's case) +
+gate-built ones; a **raw-FET** latch with no names relies on a future **determinism guard** (the current
+sweep rebuilds the netlist per vector, so a 2-init/order history probe needs state to carry across vectors
+— deferred). The recognised-gate label still reads "BUFFER" for a registered `word:2` (cosmetic — `mode:1`
+is stored correctly; a "registered D" label is a nice follow-up). A level-latch vs edge-flop timing
+distinction is glossed (both map to the registered LUT — fine for the teaching model).
+
+---
+
 ## 2026-06-26 (175) — Free-form box: bigger cap + resize from ANY side/corner + drag affordance
 
 **State:** 🟢 `main` at PR #255 merged (box size cap 30→96). The any-side resize + affordance is the next

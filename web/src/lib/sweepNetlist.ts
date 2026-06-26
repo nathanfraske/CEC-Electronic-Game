@@ -26,6 +26,10 @@ export interface SweepPins {
   /** the clock pin for a SEQUENTIAL sweep (driven by a square clock source), or -1/absent for a
    * combinational cell. See {@link sequentialSweepNetlist} and Option A1. */
   clkPin?: number;
+  /** the clock's COMPLEMENT pin (e.g. EN̄/CLK̄): driven as NOT(clk) by an injected powered inverter, so a
+   * cell that takes a complementary clock PAIR (a transmission-gate latch's EN/ENB) is exercised correctly.
+   * -1/absent when the cell has no separate complement pin (the clock stands alone). */
+  clkComplementPin?: number;
 }
 
 /** A square clock for a sequential sweep: amplitude = {@link SWEEP_VCC}, 50% duty, referenced to the
@@ -170,7 +174,24 @@ export function sequentialSweepNetlist(
     variant: 0,
     rot: 0,
   } as (typeof snap.components)[number]);
-  snap.nextComponentId = clkId + 1;
+  // Complementary clock: if the cell takes a separate EN̄/CLK̄ pin, drive it as NOT(clk) with an injected
+  // POWERED inverter (kind "NOT": web pins [Y, A, B(NC), VCC, GND]) — A reads the clk pin, Y drives the
+  // complement pin, rails from VCC/GND. So a transmission-gate latch's pass gates see a clean EN/EN̄ pair.
+  const cmpPin = pins.clkComplementPin ?? -1;
+  let notId = -1;
+  if (cmpPin >= 0 && pins.vccPin >= 0) {
+    notId = clkId + 1;
+    snap.components.push({
+      id: notId,
+      kind: "NOT",
+      cell: { col: -18, row: -16 },
+      value: 0,
+      rot: 0,
+    } as (typeof snap.components)[number]);
+    snap.nextComponentId = notId + 1;
+  } else {
+    snap.nextComponentId = clkId + 1;
+  }
 
   const wId = (snap.nextWireId ?? 1_000_000) + 1;
   snap.wires.push({
@@ -193,7 +214,32 @@ export function sequentialSweepNetlist(
     from: { componentId: clkId, pinIndex: 1 },
     to: { componentId: frameId, pinIndex: pins.gndPin },
   });
-  snap.nextWireId = wId + 4;
+  let nextW = wId + 4;
+  if (notId >= 0) {
+    // NOT.A (pin 1) ← clk pin; NOT.Y (pin 0) → complement pin; rails on pins 3 (VCC) / 4 (GND).
+    snap.wires.push({
+      id: nextW,
+      from: { componentId: notId, pinIndex: 1 },
+      to: { componentId: frameId, pinIndex: clkPin },
+    });
+    snap.wires.push({
+      id: nextW + 1,
+      from: { componentId: notId, pinIndex: 0 },
+      to: { componentId: frameId, pinIndex: cmpPin },
+    });
+    snap.wires.push({
+      id: nextW + 2,
+      from: { componentId: notId, pinIndex: 3 },
+      to: { componentId: frameId, pinIndex: pins.vccPin },
+    });
+    snap.wires.push({
+      id: nextW + 3,
+      from: { componentId: notId, pinIndex: 4 },
+      to: { componentId: frameId, pinIndex: pins.gndPin },
+    });
+    nextW += 4;
+  }
+  snap.nextWireId = nextW;
 
   const bg = new BoardGraph();
   bg.restore(dieTestGraph(snap, frameId));

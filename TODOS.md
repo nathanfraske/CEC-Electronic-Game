@@ -6,6 +6,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (176) — Sequential-cell auto-detection (latch → registered, not buffer)
+
+Web-only, golden untouched, 189 web tests.
+- ~~**cellAnalysis.ts**~~ (NEW, 6 headless tests) — `analyzeCell`: feedback-loop detection (gain edge on a
+  cycle) + name/role pin classification (data / clock+complement EN-ENB / Q+Q̄). The owner's TG D-latch is
+  detected sequential, EN/ENB recognised as a complementary pair (even untagged), Q picked.
+- ~~**characterize.ts**~~ — routes to the sequential sweep on a detected LOOP (not just a hand-tagged clk);
+  takes `{pinNames, resolveCell}`; refuses sequential-but-no-clock with a reason.
+- ~~**sweepNetlist.ts**~~ — `clkComplementPin`; injects a powered NOT gate clk→complement (drives EN/EN̄).
+- ~~**Validated live**~~ — the real uploaded D-latch now characterizes `{mode:1, word:2}` (registered D),
+  no refusal (was `mode:0` buffer). New `window.__cecCharacterize` harness hook.
+- [ ] **Determinism guard** — for a raw-FET / unnamed latch with NO loop-detectable structure: refuse a
+  combinational LUT when the output is history-dependent. The current sweep rebuilds the netlist per vector
+  (no state carry), so a 2-init/order probe needs a state-carrying sweep — deferred.
+- [ ] **"Registered D" label** — `recognizeGate` reports "BUFFER" for a registered `word:2` (cosmetic; the
+  panel could read "registered D-latch" when `mode:1`).
+- [ ] **Level-latch vs edge-flop** — both map to the registered LUT today (fine for teaching); a true
+  level-sensitive transparent model is a later fidelity step.
+
+---
+
 ## 2026-06-26 (175) — Free-form box: bigger cap + any-side resize + drag affordance
 
 Web-only, golden untouched, 183 web tests.
