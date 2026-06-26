@@ -28,6 +28,12 @@
   import { drawBode, logFreqs } from "./lib/bode";
   import { drawPhaseScope } from "./lib/phaseScope";
   import {
+    installFeedbackCapture,
+    logAction,
+    buildFeedbackBundle,
+    downloadFeedbackBundle,
+  } from "./lib/feedback";
+  import {
     Board,
     type Mode,
     type SelectedPart,
@@ -1886,9 +1892,12 @@
     let app: Application | undefined;
     let disposed = false;
 
+    installFeedbackCapture(); // start the error + action-route ring buffers for the bug/feedback bundle
+
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      logAction("key", e.key); // journal the route (a key is the cheapest high-signal action)
       // Free-form die builder: S → SHAPE (drag a pin to move it), W → WIRE (drag a pin to start a wire)
       // — a quick swap of the design-brief mode bit while building. Overrides the global Wire-tool "w"
       // ONLY inside a free-form die (where the board's wire tool isn't the active gesture anyway).
@@ -3500,6 +3509,7 @@
     setVal(nearestStandard(selPart.kind, sig * d));
   }
   function setMode(m: Mode): void {
+    if (m !== mode) logAction("tool", m); // journal the route for a bug bundle
     mode = m;
     board?.setMode(m);
   }
@@ -3672,22 +3682,20 @@
   // Save the board to a downloaded JSON file. Wrapped in a small versioned
   // envelope so a future format change can migrate old saves (the graph snapshot
   // itself already tolerates legacy shapes on restore). Nothing is sent anywhere.
-  function saveCircuit(): void {
+  /** The current board as a `cec-circuit` envelope (graph + embedded sealed-IC defs / families /
+   * in-progress dies), or null if there's no board. Shared by Save and the feedback/bug bundle so both
+   * carry a self-contained, reloadable circuit. Each embedded field is omitted when empty (a plain
+   * circuit is byte-for-byte as before; the fields are additive — older builds ignore them). */
+  function currentCircuitEnvelope(): Record<string, unknown> | null {
     const graph = board?.serialize();
-    if (!graph) return;
-    // Embed the sealed-IC definitions this board places (via userIcsForGraph), so a downloaded save
-    // is self-contained — a placed CEC9xxx resolves on Load even in a fresh session — plus the
-    // in-progress (unsealed) dies of any placed frame, so saving mid-build and reloading lets you
-    // re-drill a frame and resume. Each field is omitted when empty, so a plain circuit's save is
-    // byte-for-byte as before (and the fields are additive — older builds ignore them). version 2
-    // marked the userIcs-aware shape; version 3 adds innerDies.
+    if (!graph) return null;
     const innerDies = innerDiesForSaveOf(graph);
     // Scan the outer board AND every in-progress die graph, so a user IC placed ONLY inside a half-built
     // die is embedded too (else it reloads as an unknown kind — audit).
     const scanGraphs = [graph, ...innerDies.map((d) => d.graph)];
     const userIcs = userIcsForGraphs(scanGraphs);
     const userIcFamilies = userIcFamiliesForGraphs(scanGraphs);
-    const payload = {
+    return {
       format: "cec-circuit",
       version: 3,
       savedAt: new Date().toISOString(),
@@ -3696,6 +3704,11 @@
       ...(userIcFamilies.length > 0 ? { userIcFamilies } : {}),
       ...(innerDies.length > 0 ? { innerDies } : {}),
     };
+  }
+
+  function saveCircuit(): void {
+    const payload = currentCircuitEnvelope();
+    if (!payload) return;
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
     });
@@ -3710,6 +3723,38 @@
     URL.revokeObjectURL(url);
     flashIo("Circuit downloaded.");
   }
+
+  // --- Report a bug / Give feedback: one click bundles the EXACT board (a cec-circuit envelope the agent
+  // re-renders), the recent action route, captured errors, and a note into a downloadable JSON the owner
+  // hands the agent. "bug" vs "feedback" is the same bundle, differently tagged. (lib/feedback.ts.) ---
+  let feedbackKind = $state<null | "bug" | "feedback">(null);
+  let feedbackNote = $state("");
+  function openFeedback(kind: "bug" | "feedback"): void {
+    feedbackKind = kind;
+    feedbackNote = "";
+  }
+  function submitFeedback(): void {
+    if (!feedbackKind) return;
+    const bundle = buildFeedbackBundle(
+      feedbackKind,
+      feedbackNote,
+      currentCircuitEnvelope() ?? { empty: true },
+      {
+        tool: mode,
+        drill: drill ? `${drill.frameTag} (${drill.name})` : null,
+        camera: board?.getCamera() ?? null,
+        running,
+      },
+    );
+    downloadFeedbackBundle(bundle);
+    flashIo(
+      feedbackKind === "bug"
+        ? "Bug report downloaded — attach the .json in chat."
+        : "Feedback downloaded — attach the .json in chat.",
+    );
+    feedbackKind = null;
+  }
+
   function triggerLoad(): void {
     fileInput?.click();
   }
@@ -5051,6 +5096,20 @@
         title="Load a circuit from a .json file"
       >
         Load
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={() => openFeedback("bug")}
+        title="Report a bug — bundles the board + your recent actions for the agent"
+      >
+        🐞 Bug
+      </button>
+      <button
+        class="btn btn-ghost"
+        onclick={() => openFeedback("feedback")}
+        title="Give feedback / an improvement idea"
+      >
+        💬 Feedback
       </button>
       <input
         bind:this={fileInput}
@@ -6815,6 +6874,39 @@
             <p class="info-empty">Select a component from the list to begin.</p>
           {/if}
         </section>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- Report a bug / give feedback (triggered from the toolbar): one click bundles the EXACT board (a
+     cec-circuit envelope the agent re-renders) + the recent action route + captured errors + a note
+     into a downloadable .json. -->
+{#if feedbackKind}
+  <div
+    class="feedback-modal"
+    role="presentation"
+    onclick={(e) => {
+      if (e.target === e.currentTarget) feedbackKind = null;
+    }}
+  >
+    <div class="feedback-panel">
+      <div class="feedback-head mono">
+        {feedbackKind === "bug" ? "Report a bug" : "Give feedback"}
+      </div>
+      <textarea
+        class="feedback-note mono"
+        bind:value={feedbackNote}
+        rows="3"
+        placeholder={feedbackKind === "bug"
+          ? "What went wrong? (your board + recent actions are attached)"
+          : "What could be better?"}
+      ></textarea>
+      <div class="feedback-actions">
+        <button class="btn btn-ghost" onclick={() => (feedbackKind = null)}
+          >Cancel</button
+        >
+        <button class="btn" onclick={submitFeedback}>Download bundle</button>
       </div>
     </div>
   </div>
@@ -9144,5 +9236,48 @@
       border-right: none;
       border-bottom: 1px solid var(--border);
     }
+  }
+  /* Report-bug / feedback note panel — a small centred modal over a dim scrim (triggered from the
+     toolbar Bug/Feedback buttons), so it never collides with the parts bin / telemetry / overlays. */
+  .feedback-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.45);
+  }
+  .feedback-panel {
+    width: 248px;
+    background: var(--surface-2, #1a1530);
+    border: 1px solid var(--accent, #f0408a);
+    border-radius: 6px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  }
+  .feedback-head {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--accent, #f0408a);
+  }
+  .feedback-note {
+    width: 100%;
+    resize: vertical;
+    background: var(--bg, #0e0a1c);
+    color: var(--text, #eee);
+    border: 1px solid var(--line, #322a52);
+    border-radius: 4px;
+    padding: 6px;
+    font-size: 12px;
+  }
+  .feedback-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
   }
 </style>
