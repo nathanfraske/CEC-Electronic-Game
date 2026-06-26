@@ -7656,15 +7656,34 @@ class ComponentNode {
         this.symbolGlyph.visible = true;
         this.symbolGlyph.alpha = fadeAlpha;
         const s = Math.min(this.wPx, this.hPx);
-        drawGateBodySymbol(
-          this.symbolGlyph,
-          gname,
-          this.wPx / 2,
-          this.hPx / 2,
-          s * 0.34,
-          s * 0.27,
-          this.color,
-        );
+        const cx = this.wPx / 2;
+        const cy = this.hPx / 2;
+        const hw = s * 0.34;
+        const hh = s * 0.27;
+        // Simple straight LEADS from the gate's I/O to the cell's actual pins (by role), drawn FIRST so
+        // the symbol body covers their roots — so the gate reads as wired even zoomed out (owner
+        // refinement). Inputs tie to the symbol's back edge (stacked); the output(s) to its front tip.
+        const roles = gdef?.pinRoles ?? [];
+        const inPins = this.pinPositions.filter((_, i) => roles[i] === "in");
+        const outPins = this.pinPositions.filter((_, i) => roles[i] === "out");
+        const lead = { width: 1.5, color: this.color, alpha: 0.55 };
+        inPins.forEach((pin, k) => {
+          const ay =
+            inPins.length > 1
+              ? cy - hh * 0.5 + (hh * k) / (inPins.length - 1)
+              : cy;
+          this.symbolGlyph
+            .moveTo(pin.x, pin.y)
+            .lineTo(cx - hw, ay)
+            .stroke(lead);
+        });
+        for (const pin of outPins) {
+          this.symbolGlyph
+            .moveTo(cx + hw, cy)
+            .lineTo(pin.x, pin.y)
+            .stroke(lead);
+        }
+        drawGateBodySymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
       } else {
         this.label.alpha = fadeAlpha;
