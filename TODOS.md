@@ -6,6 +6,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (178) — Variant-aware zoom-to-open (#21 fix)
+
+Web-only, golden untouched, 189 web tests.
+- ~~**#21 variant static-zoom fallback**~~ — the unpowered zoom-to-open + the body gate-symbol resolved the
+  FAMILY default (`getUserIc(tag)`), ignoring the placed instance's selected variant. Now both use
+  `resolveUserIc(tag, component.variant)` so a family member opens to ITS authored circuit + shows ITS
+  gate symbol. Covered transitively by the existing `resolveUserIc` variant tests + type-check.
+- [ ] **Render trio remainder:** #22 (composite zoom FETs as boxes — root cause is buried in the tier/
+  recursion handoff, not a clean drawer swap; needs deeper investigation), nested-replica name labels.
+
+---
+
 ## 2026-06-26 (177) — Backlog refinements: registered-cell label + feedback route preview
 
 Web-only, golden untouched, 189 web tests. Working through the backlog of small refinements.
