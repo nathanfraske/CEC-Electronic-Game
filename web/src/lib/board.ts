@@ -39,6 +39,8 @@ import {
   freeFormGeom,
   isFreeFormFrame,
   FREE_FORM_DIE_PREFIX,
+  captureFreeFormGeoms,
+  restoreFreeFormGeoms,
   type Component,
   type PinRef,
   type Endpoint,
@@ -46,6 +48,7 @@ import {
   type Wire,
   type GraphSnapshot,
   type PinTest,
+  type FreeFormGeom,
 } from "./graph";
 import { BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
 import {
@@ -189,6 +192,12 @@ const MIN_SCALE = 0.35;
 // far below this. (The wheel zoom is exponential, so a bigger ceiling is just more notches, same feel.)
 const MAX_SCALE = 1000;
 const UNDO_LIMIT = 60;
+/** One undo step: the graph snapshot + the free-form box/pin geometry registered at the same instant (the
+ * geometry isn't in the graph), so a box-resize / pin-move can be reverted (Chip Bench Phase 0). */
+interface UndoEntry {
+  graph: GraphSnapshot;
+  geoms: [string, FreeFormGeom][];
+}
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
 /** Alpha the armed-part placement ghost is drawn at (a faint translucent preview). */
@@ -839,9 +848,12 @@ export class Board {
     refRow: number;
     rot: number;
   } | null = null;
-  private pendingUndo: GraphSnapshot | null = null;
+  // An undo entry pairs the graph snapshot with the free-form box/pin GEOMETRY captured at the same instant
+  // (that geometry lives in the global registry, not the graph, so a box-resize / pin-move is invisible to a
+  // plain `graph.serialize()` — see Chip Bench Phase 0). `geoms` is empty for boards with no free-form chips.
+  private pendingUndo: UndoEntry | null = null;
   private pointer = new Point(0, 0);
-  private readonly undoStack: GraphSnapshot[] = [];
+  private readonly undoStack: UndoEntry[] = [];
   // IC-maker die editor (ADR 0006 / dieEditor.ts): when the active graph is a frame's inner canvas,
   // this is the die frame's id (its pins are the package leads); null on the normal outer board.
   // Drives the wall rendering + the soft containment check. App.svelte owns the drill-in/out
@@ -1989,13 +2001,18 @@ export class Board {
 
   /** Undo the last mutating action. */
   undo(): void {
-    const snapshot = this.undoStack.pop();
-    if (!snapshot) return;
+    const entry = this.undoStack.pop();
+    if (!entry) return;
     this.endLabelEdit();
-    this.graph.restore(snapshot);
+    // Restore captured free-form box/pin GEOMETRY first (it lives in the global registry, not the graph),
+    // so the re-registered frame kinds are in place before the graph + nodes rebuild against them — this is
+    // what makes a box-resize / pin-move undoable (Chip Bench Phase 0).
+    restoreFreeFormGeoms(entry.geoms);
+    this.graph.restore(entry.graph);
     this.rebuildNodes();
     this.clearSelection();
     this.redrawWires();
+    this.drawDieWalls(); // a box-resize undo changes the wall rectangle; no-op outside die mode
     this.cb.onChange?.(this.graph);
   }
 
@@ -3828,7 +3845,7 @@ export class Board {
         if (frame && isFreeFormFrame(frame.kind) && freeFormGeom(frame.kind)) {
           if (this.wiring) this.cancelWiring();
           this.pinDrag = { pinIndex: pinHit.pinIndex, moved: false };
-          this.pendingUndo = this.graph.serialize();
+          this.pendingUndo = this.snapshotEntry();
           return;
         }
       }
@@ -3856,7 +3873,7 @@ export class Board {
           this.lastJunctionTap = null;
           this.cancelWiring();
           this.junctionDrag = { id: jid, moved: false };
-          this.pendingUndo = this.graph.serialize();
+          this.pendingUndo = this.snapshotEntry();
           return;
         }
       }
@@ -3983,7 +4000,7 @@ export class Board {
         // Shift/ctrl just (de)selects.
         if (!additive) {
           this.labelDrag = { id: hitLabel, moved: false };
-          this.pendingUndo = this.graph.serialize();
+          this.pendingUndo = this.snapshotEntry();
         }
         return;
       }
@@ -4028,7 +4045,7 @@ export class Board {
         // Branch-wiring out of a junction is the Wire tool's job.
         if (!this.selectedJunctions.has(jid)) this.selectJunction(jid, false);
         this.junctionDrag = { id: jid, moved: false };
-        this.pendingUndo = this.graph.serialize();
+        this.pendingUndo = this.snapshotEntry();
         return;
       }
       if (this.mode === "wire") {
@@ -4043,7 +4060,7 @@ export class Board {
           this.lastJunctionTap = null;
           this.cancelWiring();
           this.junctionDrag = { id: jid, moved: false };
-          this.pendingUndo = this.graph.serialize();
+          this.pendingUndo = this.snapshotEntry();
           return;
         }
         this.lastJunctionTap = { id: jid, t: now };
@@ -4125,7 +4142,7 @@ export class Board {
             axis: begun.axis,
             moved: false,
           };
-          this.pendingUndo = this.graph.serialize();
+          this.pendingUndo = this.snapshotEntry();
         }
       }
       return;
@@ -4157,7 +4174,7 @@ export class Board {
       origins,
       moved: false,
     };
-    this.pendingUndo = this.graph.serialize();
+    this.pendingUndo = this.snapshotEntry();
   }
 
   // --- marquee selection --------------------------------------------------
@@ -5097,13 +5114,23 @@ export class Board {
 
   // --- undo ---------------------------------------------------------------
 
-  private pushUndo(before: GraphSnapshot): void {
-    this.undoStack.push(before);
-    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
+  /** Bundle a graph snapshot with the free-form geometry registered RIGHT NOW into one undo step. Pass the
+   * graph snapshot for the immediate `pushUndo` path (taken before the mutation); omit it for a deferred
+   * drag (captured at pointer-down, before the geometry moves). */
+  private snapshotEntry(graph?: GraphSnapshot): UndoEntry {
+    const g = graph ?? this.graph.serialize();
+    return { graph: g, geoms: captureFreeFormGeoms(g) };
   }
 
-  private commitUndo(before: GraphSnapshot): void {
-    this.pushUndo(before);
+  private pushUndo(before: GraphSnapshot): void {
+    // `before` was serialized before this op mutated anything, so its geoms (read live here) are the
+    // pre-op geometry — correct for box-resize, which pushes BEFORE re-registering the new geom.
+    this.commitUndo(this.snapshotEntry(before));
+  }
+
+  private commitUndo(entry: UndoEntry): void {
+    this.undoStack.push(entry);
+    if (this.undoStack.length > UNDO_LIMIT) this.undoStack.shift();
   }
 
   // --- drawing ------------------------------------------------------------
