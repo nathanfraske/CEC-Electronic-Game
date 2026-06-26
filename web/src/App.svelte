@@ -2728,6 +2728,20 @@
     else board.removeFreeFormPin();
   }
 
+  /** Chip Bench builder mode bit (the design brief §2): true = SHAPE (drag a pin bead to MOVE it), false =
+   * WIRE (drag a bead to start a wire). Mirrors the board's `shapeMode`; synced to SHAPE on each drill-in
+   * (the board resets it) via the effect below, and flipped by the die-bar toggle. */
+  let dieShapeMode = $state(true);
+  $effect(() => {
+    // Re-sync whenever we enter/leave a die (the board resets to SHAPE on drill-in).
+    if (drill) dieShapeMode = board?.isShapeMode() ?? true;
+  });
+  function setDieShapeMode(on: boolean): void {
+    if (!board) return;
+    dieShapeMode = on;
+    board.setShapeMode(on);
+  }
+
   /** The free-form die's live box size, refreshed whenever the board changes (boardRev), so the editor's
    * "Box W×H" readout tracks resizes. Null unless we're editing a free-form (box-captured) subassembly. */
   let freeFormBox = $derived.by(() => {
@@ -5033,13 +5047,32 @@
             </span>
           </div>
           {#if isFreeFormFrame(drill.frameTag) && freeFormBox}
-            <!-- Free-form (box-captured) subassembly (§4.10): shape it by hand. Resize the BOX (expand /
-                 contract the block) and add / remove PINS. Drag a wall handle to resize, or Alt-drag a wall
-                 pin to slide it along the edge (a plain drag starts a wire from the pad); double-click a pin
-                 to name it. A pin on a shrunk wall re-pins onto the new edge. -->
+            <!-- Free-form (box-captured) subassembly (§4.10): shape it by hand. SHAPE mode → drag a pin bead
+                 to MOVE it along the rim; WIRE mode → drag a bead to start a wire (the design brief §2 bit,
+                 default SHAPE). Grab the right/bottom WALL or SE corner in the canvas to resize, or use the
+                 Box ± / Pins ± steppers here; double-click a bead to name it. -->
+            <div
+              class="die-mode"
+              role="group"
+              aria-label="Pin drag mode"
+              title="SHAPE: drag a pin to move it · WIRE: drag a pin to start a wire"
+            >
+              <button
+                class="die-mode-btn"
+                class:is-on={dieShapeMode}
+                aria-pressed={dieShapeMode}
+                onclick={() => setDieShapeMode(true)}>Shape</button
+              >
+              <button
+                class="die-mode-btn"
+                class:is-on={!dieShapeMode}
+                aria-pressed={!dieShapeMode}
+                onclick={() => setDieShapeMode(false)}>Wire</button
+              >
+            </div>
             <div
               class="die-pins"
-              title="Resize this subassembly's box (or drag a wall handle in the canvas)"
+              title="Resize this subassembly's box (or grab the wall/corner in the canvas)"
             >
               <span class="die-pins-label">Box</span>
               <button
@@ -7405,6 +7438,35 @@
     text-align: center;
     font-size: 11px;
     color: var(--text);
+  }
+  /* SHAPE/WIRE segmented toggle (the design brief §2 "one loud mode bit", default SHAPE). */
+  .die-mode {
+    display: inline-flex;
+    margin-left: 10px;
+    border: 1px solid color-mix(in oklch, var(--accent) 40%, transparent);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .die-mode-btn {
+    font-family: var(--font-condensed, var(--font-mono));
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 3px 9px;
+    color: var(--dim);
+    background: transparent;
+    border: 0;
+    cursor: pointer;
+  }
+  .die-mode-btn + .die-mode-btn {
+    border-left: 1px solid color-mix(in oklch, var(--accent) 30%, transparent);
+  }
+  .die-mode-btn:hover {
+    color: var(--accent);
+  }
+  .die-mode-btn.is-on {
+    color: var(--bg);
+    background: var(--accent);
   }
   .die-status {
     font-size: 10px;
