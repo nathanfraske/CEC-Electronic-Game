@@ -8,8 +8,8 @@
 
 import type { GraphSnapshot, HotSlot } from "./graph";
 import {
-  userIcsForGraph,
-  userIcFamiliesForGraph,
+  userIcsForGraphs,
+  userIcFamiliesForGraphs,
   registerUserIcs,
   registerUserIcFamilies,
   type UserIc,
@@ -92,8 +92,11 @@ export function saveBoard(
 ): void {
   if (!available()) return;
   try {
-    const defs = userIcsForGraph(snapshot);
-    const families = userIcFamiliesForGraph(snapshot);
+    // Embed the defs/families this board needs — scanning the outer snapshot AND every in-progress
+    // (unsealed) die graph, so a user IC placed ONLY inside a half-built die still round-trips (audit).
+    const graphs = [snapshot, ...(innerDies ?? []).map((d) => d.graph)];
+    const defs = userIcsForGraphs(graphs);
+    const families = userIcFamiliesForGraphs(graphs);
     const blob: BoardBlob = { graph: snapshot };
     if (defs.length > 0) blob.userIcs = defs;
     if (families.length > 0) blob.userIcFamilies = families;

@@ -72,8 +72,8 @@
     createBlankFreeFormSubassembly,
     registerUserIcs,
     registerUserIcFamilies,
-    userIcsForGraph,
-    userIcFamiliesForGraph,
+    userIcsForGraphs,
+    userIcFamiliesForGraphs,
     userIcVariants,
     hasUserIcVariants,
     userIcFamilyTargets,
@@ -3624,9 +3624,12 @@
     // re-drill a frame and resume. Each field is omitted when empty, so a plain circuit's save is
     // byte-for-byte as before (and the fields are additive — older builds ignore them). version 2
     // marked the userIcs-aware shape; version 3 adds innerDies.
-    const userIcs = userIcsForGraph(graph);
-    const userIcFamilies = userIcFamiliesForGraph(graph);
     const innerDies = innerDiesForSaveOf(graph);
+    // Scan the outer board AND every in-progress die graph, so a user IC placed ONLY inside a half-built
+    // die is embedded too (else it reloads as an unknown kind — audit).
+    const scanGraphs = [graph, ...innerDies.map((d) => d.graph)];
+    const userIcs = userIcsForGraphs(scanGraphs);
+    const userIcFamilies = userIcFamiliesForGraphs(scanGraphs);
     const payload = {
       format: "cec-circuit",
       version: 3,
