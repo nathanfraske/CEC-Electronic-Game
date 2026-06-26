@@ -232,10 +232,13 @@ export interface PinTest {
  * A sealed cell's SEMANTIC pin role (cell-characterization arc, §2.9) — what a pin *is*, persisted on
  * the sealed {@link UserIc} (its `pinRoles`), distinct from the throwaway authoring-only
  * {@link PinTestRole} stimulus. `in`/`clk` are driven inputs, `out` is observed, `vcc`/`gnd` are the
- * rails. Read by Tape-out (which pin maps to which package pad) and the characterization sweep (which
- * pins to drive vs observe). Absent ⇒ unknown (callers fall back to name/stimulus heuristics).
+ * rails, `inout` is BIDIRECTIONAL (both driven and read — e.g. an SR latch's Q/Qb, a shared bus pin; no
+ * extra sim part, just a net both sides tap). Read by Tape-out (which pin maps to which package pad) and
+ * the characterization sweep (which pins to drive vs observe; an `inout` pin is neither a clean input nor
+ * output, so the sweep refuses the cell — it stays full-fidelity discrete, which is correct for a
+ * feedback latch). Absent ⇒ unknown (callers fall back to name/stimulus heuristics).
  */
-export type PinRole = "in" | "out" | "vcc" | "gnd" | "clk";
+export type PinRole = "in" | "out" | "vcc" | "gnd" | "clk" | "inout";
 
 /** Default peak amplitude (volts) of a freshly placed AC source — mirrors the
  * core's `AC_AMPLITUDE`, so an AC source left untouched swings +/- 5 V. */

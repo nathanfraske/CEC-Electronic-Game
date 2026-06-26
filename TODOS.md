@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (171) — Free-form render fixes + gate symbol + builder QoL
+
+Web/UI/data-model only, golden untouched, 172 web tests. PRs #247–#249.
+- ~~**Free-form body geometry**~~ — placed body / opened replica / fit + componentBox use the AUTHORED
+  `freeForm` w×h, not the pin bbox (a middle-band-pin box was a landscape blob). `userIcBodyBox(freeForm)`,
+  `registerFreeFormFrame` kind w/h, per-pin edge nubs. (#247)
+- ~~**Nested zoom-to-open unpowered**~~ — `userIcGeometryDeep` (static recursion map) so a placed
+  subassembly opens chip-within-chip to its FETs even unsolved. (#247)
+- ~~**Gate symbol on body**~~ — `drawGateBodySymbol` for a characterized recognised gate, fades like the
+  label. (#248)
+- ~~**Builder QoL ×5**~~ — SHAPE/WIRE toggle in New▸Subassembly + S/W hotkeys; delete one pin
+  (`removeFreeFormPinAt`); auto-stimulus from name; `inout` PinRole (bidirectional, no extra part). (#249)
+- [ ] **Gate symbol wired to its pins** (owner "later refinement") — simple straight lines symbol→pads.
+- [ ] **Explicit "Bidir" popover button** — mark Q/Qb inout without renaming them IO/BIDIR.
+- [ ] **Nested-replica name labels** — label nested sub-ICs in the opened replica.
+
+---
+
 ## 2026-06-26 (170) — CPU build kit (programmer + doc) + Option A1
 
 Full gate green (189 sim-core tests incl. golden; 171 web tests). No Rust → golden untouched.

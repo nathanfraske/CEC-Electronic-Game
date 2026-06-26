@@ -75,6 +75,12 @@ export function characterizeCell(
   // Characterization captures a COMBINATIONAL, single-output, powered, ≤4-input truth table. Refuse the
   // cases that would otherwise sweep into a wrong/garbage LUT, with a message that says WHY (audit fixes):
   const outCount = pinRoles.filter((r) => r === "out").length;
+  if (pinRoles.some((r) => r === "inout"))
+    return {
+      ok: false,
+      reason:
+        "this cell has a BIDIRECTIONAL (inout) pin — it both drives and reads, so it can't be swept as a clean input or output. A latch / shared-bus cell stays full-fidelity discrete (correct, and cheap for a handful of FETs).",
+    };
   if (pins.outPin < 0)
     return { ok: false, reason: "tag one pin OUT (no output to read)" };
   if (outCount > 1)
