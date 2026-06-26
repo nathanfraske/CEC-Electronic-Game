@@ -1357,6 +1357,18 @@ export function captureSeal(
     : {};
 
   const tag = trimmed || nextAutoTag();
+  // RE-TAG the captured FREE-FORM frame to THIS seal's own die kind. The "New ▸ Subassembly" builder reuses
+  // one PROVISIONAL die-frame tag for every blank, so without this two sibling subassemblies' captured
+  // graphs would both reference that shared tag and resolve to whichever geometry the LATEST blank left in
+  // the global registry — a sub-assembly placed inside another would "adopt" the other's box + pins. Giving
+  // each sealed graph its OWN `__DIE_FF_<tag>` frame (registered with this capture's geometry) makes it
+  // self-contained. Wires reference the frame by id, and the new kind has the SAME pins, so this is purely a
+  // rename — connectivity and the netlist are untouched. (Region captures already mint a unique tag.)
+  if (freeFormField.freeForm) {
+    const ffDieKind = registerFreeFormFrame(tag, freeFormField.freeForm);
+    const capFrame = snapshot.components.find((c) => c.id === frameId);
+    if (capFrame) capFrame.kind = ffDieKind;
+  }
   registerUserIc({
     tag,
     name: trimmed || tag,
