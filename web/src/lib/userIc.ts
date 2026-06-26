@@ -422,6 +422,54 @@ export function registerUserIc(ic: UserIc): void {
   if (ic.freeForm) registerFreeFormFrame(ic.tag, ic.freeForm);
 }
 
+/**
+ * Edit a placed free-form subassembly's box+pin geometry IN THE OVERWORLD (Chip Bench, §5/§11): set its
+ * definition's {@link UserIc.freeForm} and re-register, which rebuilds BOTH the placeable footprint
+ * (`userIcPartKind` → `PART_KINDS[tag]`) and the die-frame geometry (`registerFreeFormFrame`), so every
+ * placed copy + the parts-bin glyph follow at once (the device's shape is its identity). No-op (returns
+ * false) for an unknown tag or a non-free-form (stock-package) IC, whose pinout isn't player-movable.
+ * Geometry/registry only — never the netlist or the golden (connectivity is by pin INDEX, unchanged).
+ */
+export function setUserIcFreeForm(
+  tag: string,
+  freeForm: FreeFormGeom,
+): boolean {
+  const prev = REGISTRY.get(tag);
+  if (!prev || !prev.freeForm) return false;
+  registerUserIc({ ...prev, freeForm });
+  return true;
+}
+
+/**
+ * Snapshot the live free-form geometry of every DISTINCT placed user-IC def in `snapshot`, as `[tag,
+ * geomClone]` pairs — the placed-chip counterpart of {@link captureFreeFormGeoms} (a placed chip's kind is
+ * the user-IC tag, NOT a `__DIE_FF_` frame tag, so that one misses it). Paired with {@link
+ * restoreUserIcGeoms} this makes an overworld box-resize / pin-move undoable. Deep-cloned. Empty when the
+ * board places no free-form subassembly.
+ */
+export function captureUserIcGeoms(
+  snapshot: GraphSnapshot,
+): [string, FreeFormGeom][] {
+  const out: [string, FreeFormGeom][] = [];
+  const seen = new Set<string>();
+  for (const c of snapshot.components) {
+    if (seen.has(c.kind)) continue;
+    seen.add(c.kind);
+    const def = REGISTRY.get(c.kind);
+    if (def?.freeForm) out.push([c.kind, structuredClone(def.freeForm)]);
+  }
+  return out;
+}
+
+/** Re-apply the def geometry captured by {@link captureUserIcGeoms} — the undo-time inverse, re-registering
+ * each def's {@link UserIc.freeForm} so the placed footprint + die-frame + bin glyph snap back. */
+export function restoreUserIcGeoms(geoms: [string, FreeFormGeom][]): void {
+  for (const [tag, freeForm] of geoms) {
+    const prev = REGISTRY.get(tag);
+    if (prev) registerUserIc({ ...prev, freeForm });
+  }
+}
+
 /** Forget a sealed IC (and unregister its kind). When `tag` is a multi-variant FAMILY, this cascades:
  * the family tag's own REGISTRY/PART_KINDS entry, every child `"<family>#i"` REGISTRY entry, and the
  * FAMILIES row are all dropped (else the child defs would linger as orphans). A plain IC just drops

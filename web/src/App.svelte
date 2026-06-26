@@ -2692,6 +2692,23 @@
     board.resizeFreeFormBox(dw, dh);
   }
 
+  /** Chip Bench Phase 1: the box size of the SELECTED placed FREE-FORM subassembly chip, so the inspector
+   * can resize its borders right in the overworld (no drill-in). Null unless a single free-form subassembly
+   * is selected on the board. `boardRev` is touched so the readout follows a resize's onChange. */
+  let placedDeviceBox = $derived.by(() => {
+    const rev = boardRev;
+    if (!selPart || drill || rev < 0 || !isUserIc(selPart.kind)) return null;
+    const ff = getUserIc(selPart.kind)?.freeForm;
+    return ff ? { w: ff.w, h: ff.h } : null;
+  });
+
+  /** Resize the SELECTED placed device's box by (dw, dh) — edits the device definition, so every placed
+   * copy + the parts-bin glyph follow (undoable). The bin glyph is refreshed via libRev. */
+  function changeDeviceBox(dw: number, dh: number): void {
+    if (!selPart || !board || drill) return;
+    if (board.resizeUserIcBox(selPart.id, dw, dh)) libRev++;
+  }
+
   /** Overworld "Make subassembly" (§4.9): box-select a region of the board, infer the pinout from the
    * nets that cross the selection boundary, and register it as a bare subassembly (→ "My
    * Subassemblies"; reach the board via Tape out). Non-destructive — the board is untouched. */
@@ -5594,6 +5611,43 @@
                 Edit ▸
               </button>
             </div>
+            {#if placedDeviceBox}
+              <!-- Chip Bench Phase 1: resize a free-form subassembly's box right here in the overworld —
+                   no drill-in. Every placed copy + the bin glyph follow (the device's shape is its
+                   identity); undoable. Spatial drag-handles land in a later slice; these steppers are the
+                   always-available accessible path the design panel requires. -->
+              <div
+                class="die-pins"
+                title="Resize this device's box — every placed copy follows (undoable)"
+              >
+                <span class="die-pins-label">Box</span>
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeDeviceBox(-1, 0)}
+                  disabled={placedDeviceBox.w <= 2}
+                  aria-label="Narrower">W−</button
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeDeviceBox(1, 0)}
+                  aria-label="Wider">W+</button
+                >
+                <span class="die-pins-n mono"
+                  >{placedDeviceBox.w}×{placedDeviceBox.h}</span
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeDeviceBox(0, -1)}
+                  disabled={placedDeviceBox.h <= 2}
+                  aria-label="Shorter">H−</button
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeDeviceBox(0, 1)}
+                  aria-label="Taller">H+</button
+                >
+              </div>
+            {/if}
           {/if}
           {#if hasValue(kind)}
             {@const cd = valueDecade(kind, selPart.value)}

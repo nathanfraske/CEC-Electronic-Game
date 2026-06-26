@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (162) — CHIP BENCH Phase 1a: edit a placed device's box in the overworld
+
+**State:** 🟢 **about to PR**. Web only, golden untouched, **132 web tests** (+2), full gate green. First
+slice of the bloom (Phase 1) — the accessible STEPPER path (the design panel requires drag AND steppers; the
+spatial drag-handles are the next slice). Delivers the owner's "expand the borders in the overworld."
+
+**Def-geometry editing API (`userIc.ts`):**
+- **`setUserIcFreeForm(tag, freeForm)`** — set a subassembly DEF's `freeForm` + `registerUserIc`, which
+  rebuilds BOTH the placeable footprint (`userIcPartKind`→`PART_KINDS[tag]`) and the die-frame
+  (`registerFreeFormFrame`), so every placed copy + the bin glyph follow. No-op for unknown / non-free-form.
+- **`captureUserIcGeoms` / `restoreUserIcGeoms`** — the placed-chip undo counterpart of Phase 0's
+  `captureFreeFormGeoms` (a placed chip's kind is the USER-IC tag, not a `__DIE_FF_` tag, so Phase 0 missed
+  it). `board.ts` `UndoEntry` now carries `icGeoms`; `snapshotEntry` captures both; `undo()` restores both.
+
+**Board + UI:**
+- `board.resizeUserIcBox(componentId, dw, dh)` — overworld box-resize of the selected device: clamp w/h,
+  re-pin leads (`clampPinToBox`), `pushUndo` (captures pre-edit def geom) → `setUserIcFreeForm` → rebuild all
+  instances. Geometry only — connectivity is by pin INDEX (golden-safe).
+- App.svelte: a **Box W±/H±** stepper row in the inspector when a single placed free-form subassembly is
+  selected (`placedDeviceBox` derived; `changeDeviceBox`). Reuses the die-bar `.die-pins` styling.
+
+**NEXT slices:** overworld PIN-move (drag a pin along the edge on the placed chip) reusing the same def API;
+then the spatial BLOOM (fat bead handles, drag-wall resize, WIRE/SHAPE, role badges, 44px, keyboard parity).
+
+---
+
 ## 2026-06-26 (161) — CHIP BENCH Phase 0: geometry undo gate
 
 **State:** 🟢 **about to PR**. Web only, golden untouched, **130 web tests** (+2), full gate green. First
