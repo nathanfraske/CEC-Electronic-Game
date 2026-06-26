@@ -57,6 +57,9 @@ import {
   previewRegion,
   isUserIc,
   getUserIc,
+  setUserIcFreeForm,
+  captureUserIcGeoms,
+  restoreUserIcGeoms,
   type UserIc,
   type RegionCapture,
   type RegionBox,
@@ -196,7 +199,10 @@ const UNDO_LIMIT = 60;
  * geometry isn't in the graph), so a box-resize / pin-move can be reverted (Chip Bench Phase 0). */
 interface UndoEntry {
   graph: GraphSnapshot;
+  /** free-form DIE-FRAME geoms (die-editor box/pin edits) — keyed by `__DIE_FF_*` tag. */
   geoms: [string, FreeFormGeom][];
+  /** placed user-IC DEF geoms (overworld chip box/pin edits) — keyed by the user-IC tag. */
+  icGeoms: [string, FreeFormGeom][];
 }
 /** Max gap (ms) between two presses on a junction to count as a double-click. */
 const DOUBLE_CLICK_MS = 350;
@@ -2008,6 +2014,7 @@ export class Board {
     // so the re-registered frame kinds are in place before the graph + nodes rebuild against them — this is
     // what makes a box-resize / pin-move undoable (Chip Bench Phase 0).
     restoreFreeFormGeoms(entry.geoms);
+    restoreUserIcGeoms(entry.icGeoms); // overworld placed-chip box/pin edits (def geometry)
     this.graph.restore(entry.graph);
     this.rebuildNodes();
     this.clearSelection();
@@ -2275,6 +2282,37 @@ export class Board {
     this.drawDieWalls();
     this.redrawWires();
     this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    this.cb.onPersist?.(this.graph);
+    this.emitSelect();
+    return true;
+  }
+
+  /**
+   * Resize a PLACED free-form subassembly chip's box from the OVERWORLD (Chip Bench Phase 1, §11) — no
+   * drill-in. Grows/shrinks the DEVICE DEFINITION's box by `(dw, dh)`, re-pinning leads onto the new
+   * perimeter ({@link clampPinToBox}), so every placed copy + the parts-bin glyph follow ({@link
+   * setUserIcFreeForm} re-registers footprint + die-frame). Undoable — `pushUndo` runs before the edit, so
+   * the entry captures the pre-resize def geometry ({@link captureUserIcGeoms}). No-op (false) for a part
+   * that isn't a free-form subassembly, or at the size clamp. Geometry only — connectivity is by pin INDEX.
+   */
+  resizeUserIcBox(componentId: number, dw: number, dh: number): boolean {
+    const comp = this.graph.components.get(componentId);
+    if (!comp) return false;
+    const def = getUserIc(comp.kind);
+    if (!def?.freeForm) return false;
+    const ff = def.freeForm;
+    const MIN = 2;
+    const MAX = BLOCK_MAX_PINS + 6;
+    const w = Math.max(MIN, Math.min(MAX, ff.w + dw));
+    const h = Math.max(MIN, Math.min(MAX, ff.h + dh));
+    if (w === ff.w && h === ff.h) return false; // already at the clamp / no change
+    this.pushUndo(this.graph.serialize()); // captures the pre-resize def geom (undo)
+    const pins = ff.pins.map((p) => clampPinToBox(p, ff.w, ff.h, w, h));
+    if (!setUserIcFreeForm(comp.kind, { w, h, pins })) return false;
+    // Every placed instance of this kind picks up the new footprint; redraw them all.
+    this.rebuildNodes();
+    this.redrawWires();
     this.cb.onChange?.(this.graph);
     this.cb.onPersist?.(this.graph);
     this.emitSelect();
@@ -5119,7 +5157,11 @@ export class Board {
    * drag (captured at pointer-down, before the geometry moves). */
   private snapshotEntry(graph?: GraphSnapshot): UndoEntry {
     const g = graph ?? this.graph.serialize();
-    return { graph: g, geoms: captureFreeFormGeoms(g) };
+    return {
+      graph: g,
+      geoms: captureFreeFormGeoms(g),
+      icGeoms: captureUserIcGeoms(g),
+    };
   }
 
   private pushUndo(before: GraphSnapshot): void {
