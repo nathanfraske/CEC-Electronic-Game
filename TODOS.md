@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (172) — Agent render-verification tooling + Report-bug/Feedback
+
+Web/UI/tooling only, golden untouched, 178 web tests. PR #250. (Brainstorm panel → plan → built it.)
+- ~~**renderProbe.ts**~~ — headless geometry assertions on the real PixiJS drawers (Pixi v8 records
+  context.instructions + getLocalBounds in node). Regression-locks the authored-box fix.
+- ~~**shoot.mjs**~~ — `pnpm -C web shoot [--fixture cec.json]`: headless Chromium screenshot the agent
+  reads. `window.__CEC_FIXTURE` hook + `board.fitView()` (the "0" key).
+- ~~**Report-bug + Give-feedback buttons**~~ — toolbar → note modal → .json bundle {board + action
+  journal + errors + note}. lib/feedback.ts.
+- [ ] **replay(journal)** — re-drive a reported route headlessly (journal's already in the bundle).
+- [ ] **Determinism knobs + golden pixel-diff CI lane** (pause at fixed tick, self-host fonts).
+- [ ] **MCP-wrap** shoot/replay as agent tools (after the scripts settle).
+- [ ] **Gate symbol → pins** wiring (#58, owner "later refinement").
+
+---
+
 ## 2026-06-26 (171) — Free-form render fixes + gate symbol + builder QoL
 
 Web/UI/data-model only, golden untouched, 172 web tests. PRs #247–#249.
