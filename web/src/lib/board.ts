@@ -201,6 +201,11 @@ const MIN_SCALE = 0.35;
 // (world.position stays well under ~1e6 px). The LOD swaps still gate on TIER_ZOOM / INTERNALS_ZOOM,
 // far below this. (The wheel zoom is exponential, so a bigger ceiling is just more notches, same feel.)
 const MAX_SCALE = 1000;
+/** Max free-form subassembly box dimension (cells, per axis). A PRESENTATION ceiling — the box is canvas
+ * room for the inner circuit, not a pin budget — so it's deliberately large: a multi-gate cell (D-latch,
+ * register, a CPU block) needs space to lay out its sub-cells + wiring. (Old cap was BLOCK_MAX_PINS+6 = 30,
+ * which a player hit building a latch.) */
+const FREE_FORM_MAX_BOX = 96;
 const UNDO_LIMIT = 60;
 /** One undo step: the graph snapshot + the free-form box/pin geometry registered at the same instant (the
  * geometry isn't in the graph), so a box-resize / pin-move can be reverted (Chip Bench Phase 0). */
@@ -2402,7 +2407,8 @@ export class Board {
     const geom = freeFormGeom(frame.kind);
     if (!geom) return false;
     const MIN = 2;
-    const MAX = BLOCK_MAX_PINS + 6; // a generous ceiling; the box is presentation, not a pin budget
+    const MAX = FREE_FORM_MAX_BOX; // a generous PRESENTATION ceiling — the box is canvas room for the inner
+    // circuit, NOT a pin budget, so it's deliberately large (a D-latch / CPU block needs space to build in).
     const nw = Math.max(MIN, Math.min(MAX, Math.round(w)));
     const nh = Math.max(MIN, Math.min(MAX, Math.round(h)));
     if (nw === geom.w && nh === geom.h) return false; // already at the clamp / no change
