@@ -1113,28 +1113,32 @@ function roleFromName(n: string): PinRole | undefined {
 /** The integration-scale bands (real VLSI ladder), a derived display/sort label. */
 export type IntegrationTier = "SSI" | "MSI" | "LSI" | "VLSI" | "ULSI";
 
-/** Count the active devices in a cell's FULL expansion — every placed non-frame component is one
- * device; a placed user-IC instance recurses into its def. A path-set guards self-reference (the same
- * cycle safety as `flattenUserIcs`' MAX_DEPTH). */
-function countDevices(def: UserIc, path: Set<string>): number {
-  if (path.has(def.tag)) return 0;
+/** Count the active devices in a cell's FULL expansion — every placed non-frame component is one device;
+ * a placed user-IC instance recurses into its def. `path` guards self-reference (sealed defs are acyclic —
+ * a def references only previously-sealed cells — so this is defensive); `memo` caches each def's resolved
+ * count so a cell referenced on many paths (a diamond/doubling hierarchy — e.g. an ALU reusing one adder
+ * cell, or nibble→byte→word) is counted ONCE per top-level call. Keeps this O(distinct defs), not
+ * exponential — the registration hot path (userIcPartKind → integrationTier) can't freeze on a deep reuse. */
+function countDevices(
+  def: UserIc,
+  path: Set<string>,
+  memo: Map<string, number>,
+): number {
+  if (path.has(def.tag)) return 0; // cycle guard (defensive — sealed defs can't actually cycle)
+  const cached = memo.get(def.tag);
+  if (cached !== undefined) return cached;
   path.add(def.tag);
   let n = 0;
   for (const c of def.graph.components) {
     if (isFrame(c.kind)) continue; // the die frame is structure, not a device
     const nested = getUserIc(c.kind);
-    n += nested ? countDevices(nested, path) : 1;
+    n += nested ? countDevices(nested, path, memo) : 1;
   }
   path.delete(def.tag);
+  memo.set(def.tag, n);
   return n;
 }
 
-/**
- * The integration-tier band (SSI → ULSI) of a sealed cell, from a game-scaled device count over its
- * full recursive expansion. A pure DERIVED label — never hashed, never crosses the wasm boundary; the
- * bin uses it as a sort/group key + badge. (Thresholds are tunable; game-scaled to player builds, not
- * the literal textbook transistor decades.)
- */
 /** Device count → integration-tier band (the thresholds, in ONE place). */
 export function tierForDeviceCount(n: number): IntegrationTier {
   if (n < 12) return "SSI";
@@ -1151,19 +1155,23 @@ export const INTEGRATION_TIER_MIN: Record<
   number
 > = { MSI: 12, LSI: 100, VLSI: 1000, ULSI: 100000 };
 
+/** The integration-tier band (SSI → ULSI) of a sealed cell, from its game-scaled device count over the full
+ * recursive expansion. A pure DERIVED label — never hashed, never crosses the wasm boundary; it drives the
+ * bin badge AND the placed footprint scale, so the two always agree. */
 export function integrationTier(def: UserIc): IntegrationTier {
-  return tierForDeviceCount(countDevices(def, new Set()));
+  return tierForDeviceCount(countDevices(def, new Set(), new Map()));
 }
 
 /** The active-device count of a LIVE die/board graph (the in-progress cell being built): every non-frame
  * component is one device; a placed user-IC recurses into its def. Lets the die editor surface the live
  * tier + count so the tier-gated footprint scaling is legible WHILE building (not a surprise at seal). */
 export function countGraphDevices(graph: GraphSnapshot): number {
+  const memo = new Map<string, number>(); // one shared cache so a reused cell is counted once
   let n = 0;
   for (const c of graph.components) {
     if (isFrame(c.kind)) continue;
     const nested = getUserIc(c.kind);
-    n += nested ? countDevices(nested, new Set()) : 1;
+    n += nested ? countDevices(nested, new Set(), memo) : 1;
   }
   return n;
 }

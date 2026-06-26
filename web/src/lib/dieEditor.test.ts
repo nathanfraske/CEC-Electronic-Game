@@ -40,6 +40,8 @@ import {
   createBlankFreeFormSubassembly,
   compactFreeFormGeom,
   TIER_FOOTPRINT_SCALE,
+  countGraphDevices,
+  registerUserIc,
 } from "./userIc";
 
 function place(
@@ -856,5 +858,34 @@ describe("compactFreeFormGeom — tier-scaled LITERAL replica footprint", () => 
     const distinct = new Set(out.pins.map((p) => `${p.dx},${p.dy}`)).size;
     expect(distinct).toBe(4);
     expect(out.pins).toHaveLength(4);
+  });
+});
+
+describe("countDevices memoization — a reused nested cell counts right (no exponential blowup)", () => {
+  it("a placed cell expands fully and a memoized re-count gives the same total", () => {
+    // Leaf def with 3 devices (3 resistors hung in a die).
+    const lg = new BoardGraph();
+    const ld = freshDieGraph("SOT23_3")!;
+    lg.restore(ld.snapshot);
+    place(lg, "R", 20, 20, 1);
+    place(lg, "R", 22, 20, 1);
+    place(lg, "R", 24, 20, 1);
+    registerUserIc({
+      tag: "T_LEAF",
+      name: "Leaf",
+      package: { archetype: "SOT-23", pinCount: 3 },
+      frameId: ld.frameId,
+      graph: lg.serialize(),
+    });
+    try {
+      // A board placing the leaf TWICE → 6 devices (each instance fully expands; the memo caches the leaf's
+      // count once and reuses it for the second placement — same total, just not recomputed).
+      const g = new BoardGraph();
+      place(g, "T_LEAF", 0, 0);
+      place(g, "T_LEAF", 10, 0);
+      expect(countGraphDevices(g.serialize())).toBe(6);
+    } finally {
+      unregisterUserIc("T_LEAF");
+    }
   });
 });

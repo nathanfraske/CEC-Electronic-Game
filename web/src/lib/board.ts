@@ -2758,28 +2758,45 @@ export class Board {
   private componentBox(c: Component): Rectangle {
     const kind = this.graph.kindOf(c);
     const o = this.cellToWorld(c.cell);
+    let rect: Rectangle;
     // Single-pin parts (e.g. GND) draw their symbol around/below the lone pin and
     // are otherwise a tiny, fiddly target — give them a generous square grab box.
     if ((kind?.pins.length ?? 0) <= 1) {
-      return new Rectangle(o.x - 18, o.y - 18, 36, 48);
+      rect = new Rectangle(o.x - 18, o.y - 18, 36, 48);
+    } else {
+      let minx = 0;
+      let miny = 0;
+      let maxx = 0;
+      let maxy = 0;
+      for (const p of kind?.pins ?? []) {
+        const r = rotateOffset(p.dx, p.dy, c.rot, c.mirror);
+        minx = Math.min(minx, r.col);
+        miny = Math.min(miny, r.row);
+        maxx = Math.max(maxx, r.col);
+        maxy = Math.max(maxy, r.row);
+      }
+      rect = new Rectangle(
+        o.x + minx * PITCH - 14,
+        o.y + miny * PITCH - 16,
+        (maxx - minx) * PITCH + 28,
+        (maxy - miny) * PITCH + 32,
+      );
     }
-    let minx = 0;
-    let miny = 0;
-    let maxx = 0;
-    let maxy = 0;
-    for (const p of kind?.pins ?? []) {
-      const r = rotateOffset(p.dx, p.dy, c.rot, c.mirror);
-      minx = Math.min(minx, r.col);
-      miny = Math.min(miny, r.row);
-      maxx = Math.max(maxx, r.col);
-      maxy = Math.max(maxy, r.row);
+    // Hit-target floor (the design brief §7.1/§8.1) for USER-IC subassemblies: their footprint compacts with
+    // their integration tier (a ULSI tile is ~0.15×), so floor the grab box to a constant ≥44px ON-SCREEN
+    // size (2×BEAD_HIT_PX ÷ zoom), centred, so even a tiny compacted tile stays selectable/movable at any
+    // zoom. Pure enlargement (never shrinks a box); scoped to user ICs so stock parts are unchanged.
+    if (isUserIc(c.kind)) {
+      const minWorld = (BEAD_HIT_PX * 2) / (this.world.scale.x || 1);
+      if (rect.width < minWorld || rect.height < minWorld) {
+        const cx = rect.x + rect.width / 2;
+        const cy = rect.y + rect.height / 2;
+        const w = Math.max(rect.width, minWorld);
+        const h = Math.max(rect.height, minWorld);
+        rect = new Rectangle(cx - w / 2, cy - h / 2, w, h);
+      }
     }
-    return new Rectangle(
-      o.x + minx * PITCH - 14,
-      o.y + miny * PITCH - 16,
-      (maxx - minx) * PITCH + 28,
-      (maxy - miny) * PITCH + 32,
-    );
+    return rect;
   }
 
   private pinHitTest(wx: number, wy: number): PinRef | null {
