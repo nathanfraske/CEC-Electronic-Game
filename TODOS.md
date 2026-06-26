@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (173) — Semantic route capture + replay.mjs bundle inspector
+
+Web-only, golden untouched, 183 web tests. Continues the render-verification queue.
+- ~~**Semantic action journal**~~ — `logAction(action, detail?, data?)`; capture wired at the real
+  mutation sites: place(kind+cell)/delete/wire in board.ts; drill-in/out (one `$effect` on `drill`)/seal/
+  characterize/save/load in App.svelte. Cell-based → legible + camera-independent. (#62)
+- ~~**formatJournal()**~~ — canonical timeline renderer (lib/feedback.ts), 5 new tests in feedback.test.ts.
+- ~~**replay.mjs**~~ — `pnpm -C web replay --bundle x.json`: prints the ROUTE + errors, renders the bundle's
+  EXACT board to a PNG. Validated on a synthetic pot-dimmer bug bundle. (#62)
+- ~~**harness.mjs**~~ — extracted the shared headless boot; shoot.mjs rewritten over it (re-verified).
+- [ ] **Faithful event-sourced re-driver** (re-simulate pointer input) — needs initial-state snapshot +
+  full event stream in the bundle. Separate, greenlight-gated telemetry feature; #62 ships route-report +
+  exact-board-render instead (covers most reported bugs).
+- [ ] _Deferred:_ golden **pixel-diff CI** — superseded by the deterministic `renderProbe` geometry tests
+  (SwiftShader isn't bit-deterministic → flaky). **MCP-wrap** of shoot/replay — CLI works, premature.
+- [ ] **Route preview in the feedback modal** — show `formatJournal(journal)` in a `<pre>` so the owner
+  sees the captured route before downloading (easy follow-up; helper + tests already in place).
+
+---
+
 ## 2026-06-26 (172) — Agent render-verification tooling + Report-bug/Feedback
 
 Web/UI/tooling only, golden untouched, 178 web tests. PR #250. (Brainstorm panel → plan → built it.)
@@ -15,10 +35,12 @@ Web/UI/tooling only, golden untouched, 178 web tests. PR #250. (Brainstorm panel
   reads. `window.__CEC_FIXTURE` hook + `board.fitView()` (the "0" key).
 - ~~**Report-bug + Give-feedback buttons**~~ — toolbar → note modal → .json bundle {board + action
   journal + errors + note}. lib/feedback.ts.
-- [ ] **replay(journal)** — re-drive a reported route headlessly (journal's already in the bundle).
-- [ ] **Determinism knobs + golden pixel-diff CI lane** (pause at fixed tick, self-host fonts).
+- ~~**replay(journal)**~~ — shipped as route-report + exact-board-render (`replay.mjs`, entry (173)); a
+  faithful pointer re-driver is a separate greenlight-gated feature.
+- [ ] **Determinism knobs + golden pixel-diff CI lane** — `__cecReady` signal shipped (#251); pixel-diff
+  deferred (superseded by `renderProbe` geometry tests — see (173)).
 - [ ] **MCP-wrap** shoot/replay as agent tools (after the scripts settle).
-- [ ] **Gate symbol → pins** wiring (#58, owner "later refinement").
+- ~~**Gate symbol → pins** wiring~~ — #58, shipped in PR #251.
 
 ---
 
