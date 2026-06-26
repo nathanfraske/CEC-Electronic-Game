@@ -18,6 +18,7 @@ import {
   type SweepPins,
 } from "./sweepNetlist";
 import { cellBehaviorSig, type CellBehavior } from "./userIc";
+import { analyzeCell, type ResolvedCell } from "./cellAnalysis";
 
 /** Ticks (DT = 2µs each) run per input vector to settle a combinational gate before reading the output. */
 const SETTLE_STEPS = 64;
@@ -70,10 +71,16 @@ export function characterizeCell(
   graph: GraphSnapshot,
   frameId: number,
   pinRoles: (PinRole | undefined)[],
+  opts?: {
+    /** the per-frame-pin names (D/EN/ENB/Q/Q̄…) — lets the analyzer find an UNTAGGED clock/enable + its
+     * complement by name, the common case for a hand-built latch. */
+    pinNames?: (string | undefined)[];
+    /** resolve a placed sub-cell tag to its roles + behavior (the app passes `getUserIc`) — so the
+     * feedback-loop detector knows which sub-cells are gain stages vs pass gates. */
+    resolveCell?: (tag: string) => ResolvedCell | undefined;
+  },
 ): CharacterizeResult {
   const pins = parsePins(pinRoles);
-  // Characterization captures a COMBINATIONAL, single-output, powered, ≤4-input truth table. Refuse the
-  // cases that would otherwise sweep into a wrong/garbage LUT, with a message that says WHY (audit fixes):
   const outCount = pinRoles.filter((r) => r === "out").length;
   if (pinRoles.some((r) => r === "inout"))
     return {
@@ -83,16 +90,52 @@ export function characterizeCell(
     };
   if (pins.outPin < 0)
     return { ok: false, reason: "tag one pin OUT (no output to read)" };
-  if (outCount > 1)
-    return {
-      ok: false,
-      reason: `${outCount} outputs — characterize captures ONE output. Build a multi-output cell (adder, decoder, register) from single-output LUT cells.`,
-    };
   if (pins.gndPin < 0)
     return {
       ok: false,
       reason:
         "no GND pin — characterize needs a powered cell with a ground reference and a driven output. A pass gate / transmission gate (no VCC/GND, just passes a signal) has no logic output to sweep.",
+    };
+
+  // Combinational vs SEQUENTIAL is decided by ANALYSING the cell — a feedback loop through a gain stage
+  // (a TG latch's two-inverter storage loop) OR a clock/enable pin ⇒ memory, so it must NOT be swept as a
+  // combinational truth table (the bug that turned a D-latch into a buffer). The analyzer also names the
+  // clock + its complement (EN/ENB, driven oppositely) and the output Q. See lib/cellAnalysis.ts.
+  const analysis = analyzeCell({
+    graph,
+    frameId,
+    pinRoles,
+    pinNames: opts?.pinNames,
+    resolveCell: opts?.resolveCell,
+  });
+  const handTaggedClk = pins.clkPin !== undefined && pins.clkPin >= 0;
+  if (analysis.sequential || handTaggedClk) {
+    // SEQUENTIAL (Option A1): collapse to a REGISTERED LUT — but ONLY a pure D-type next-state
+    // (Q+ = f(inputs)); characterizeSequential FAILS SAFE on anything self-dependent (toggle/counter).
+    const clkPin =
+      analysis.clockPin >= 0 ? analysis.clockPin : (pins.clkPin ?? -1);
+    if (clkPin < 0) return { ok: false, reason: analysis.reason };
+    const seqPins: SweepPins = {
+      inPins: analysis.dataInputs,
+      outPin: analysis.outPin >= 0 ? analysis.outPin : pins.outPin,
+      gndPin: analysis.gndPin >= 0 ? analysis.gndPin : pins.gndPin,
+      vccPin: analysis.vccPin >= 0 ? analysis.vccPin : pins.vccPin,
+      clkPin,
+      clkComplementPin: analysis.clockComplementPin,
+    };
+    if (seqPins.inPins.length > 4)
+      return {
+        ok: false,
+        reason: `${seqPins.inPins.length} data inputs — only ≤4 collapse to one registered LUT. Split it.`,
+      };
+    return characterizeSequential(graph, frameId, seqPins);
+  }
+
+  // COMBINATIONAL: a single-output, powered, ≤4-input truth table.
+  if (outCount > 1)
+    return {
+      ok: false,
+      reason: `${outCount} outputs — characterize captures ONE output. Build a multi-output cell (adder, decoder, register) from single-output LUT cells.`,
     };
   if (pins.inPins.length === 0)
     return { ok: false, reason: "no input pins to sweep" };
@@ -101,12 +144,6 @@ export function characterizeCell(
       ok: false,
       reason: `${pins.inPins.length} inputs — only ≤4-input gates collapse to one LUT. Split it into chained ≤4-input cells.`,
     };
-
-  // SEQUENTIAL (Option A1): a clocked cell collapses to a REGISTERED LUT — but ONLY if it is a pure
-  // D-type next-state (Q+ = f(inputs), no self-dependence). characterizeSequential FAILS SAFE: any
-  // cell it can't prove is a pure D-type is refused (stays discrete), never mischaracterized.
-  if (pins.clkPin !== undefined && pins.clkPin >= 0)
-    return characterizeSequential(graph, frameId, pins);
 
   const k = pins.inPins.length;
   let word = 0;

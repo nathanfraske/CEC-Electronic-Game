@@ -1800,7 +1800,13 @@
     if (!ic) return;
     let res: ReturnType<typeof characterizeCell>;
     try {
-      res = characterizeCell(ic.graph, ic.frameId, ic.pinRoles ?? []);
+      // Pass the pin NAMES + a sub-cell resolver so the analyzer can detect a feedback loop and find an
+      // UNTAGGED clock/enable + its complement (EN/ENB) by name — so a hand-built latch routes to the
+      // sequential sweep instead of mischaracterizing as a buffer (lib/cellAnalysis.ts).
+      res = characterizeCell(ic.graph, ic.frameId, ic.pinRoles ?? [], {
+        pinNames: ic.pinNames,
+        resolveCell: getUserIc,
+      });
     } catch (err) {
       circuitWarning = `Couldn't characterize “${ic.name || partName(tag)}”: ${
         err instanceof Error ? err.message : String(err)
@@ -2563,6 +2569,21 @@
               size: board.freeFormBoxSize(),
             }
           : null;
+      // Drive a characterization for the harness: run characterizeIc(tag) and report the resulting
+      // behavior (notably `mode`: 0 = combinational, 1 = registered/sequential), the recognised gate, and
+      // any refusal — so a test can confirm e.g. a D-latch now characterizes as REGISTERED, not a buffer.
+      (
+        window as unknown as { __cecCharacterize?: (tag: string) => unknown }
+      ).__cecCharacterize = (tag: string) => {
+        characterizeIc(tag);
+        const ic = getUserIc(tag);
+        return {
+          mode: ic?.behavior?.mode ?? null,
+          word: ic?.behavior?.word ?? null,
+          gate: charResult?.gate ?? null,
+          warning: circuitWarning,
+        };
+      };
     })();
 
     return () => {
