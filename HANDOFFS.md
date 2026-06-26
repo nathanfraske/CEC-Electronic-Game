@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (175) — Free-form box: bigger cap + resize from ANY side/corner + drag affordance
+
+**State:** 🟢 `main` at PR #255 merged (box size cap 30→96). The any-side resize + affordance is the next
+PR. **Web-only, golden untouched, 183 web tests.** Owner is building a D-latch subassembly and hit the box
+limits.
+
+- **Box size cap 30 → 96** (#255, merged) — the free-form box was clamped to `BLOCK_MAX_PINS+6 = 30`; it's a
+  PRESENTATION ceiling (canvas room), not a pin budget, so it's now a dedicated `FREE_FORM_MAX_BOX = 96`.
+- **Resize from ANY side/corner** (was SE corner + E/S walls only) — `wallResizeHit` returns all 8 axes
+  (`n/s/e/w/ne/nw/se/sw`); `moveBoxHandleDrag` tracks the grabbed edge(s) while the OPPOSITE edge anchors
+  (so W/N drags MOVE the box origin); new `setDieFrameBoxAbs(left,top,w,h)` moves `frame.cell` + re-pins
+  (`setDieFrameBox` now delegates to it, origin-fixed, for the steppers/E/S — no behaviour change).
+  **Validated:** drove a real NW-corner drag → box 9×7→11×9 AND origin moved up-left (208→156).
+- **Drag affordance** — `drawBloom` now draws all 4 wall rails + a solid bright handle on every corner +
+  wall midpoint (was faint right/bottom rails only), and hovering a handle sets a directional resize cursor
+  (`ew/ns/nesw/nwse-resize`). Screenshot-confirmed.
+- **Harness:** added `board.freeFormBoxWorldRect()` (public, companion to `freeFormBoxSize`) + a dev-only
+  `window.__cecBox` query (rect+camera+size) so the render harness can compute on-screen handle positions
+  and drive resize drags (how the NW-drag was verified).
+
+**Still open (the BIG one, mid-build):** the **sequential-characterizer auto-detection** (#66) — owner's
+D-latch characterized to a *buffer* because (a) its EN/ENB pins were untagged so only D was swept, and (b)
+the combinational sweep can't see memory, and (c) routing to the sequential path only triggers on a
+hand-tagged `clk`. Plan (greenlit): a `cellAnalysis.ts` that detects feedback loops + classifies
+control/data/complementary-pair (EN/ENB) + Q/Qbar, a determinism guard (refuse a combinational LUT when the
+output is history-dependent), and drive the complementary pair in the sequential sweep. Research done
+(see `characterize.ts` / `sweepNetlist.ts`); not yet coded.
+
+---
+
 ## 2026-06-26 (174) — SHAPE/WIRE paddle fix + `replay --drive` route re-driver
 
 **State:** 🟢 `main` at PR #253 merged (toggle fix); the re-driver is the next PR. **Web-only, golden

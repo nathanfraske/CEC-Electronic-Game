@@ -206,6 +206,21 @@ const MAX_SCALE = 1000;
  * register, a CPU block) needs space to lay out its sub-cells + wiring. (Old cap was BLOCK_MAX_PINS+6 = 30,
  * which a player hit building a latch.) */
 const FREE_FORM_MAX_BOX = 96;
+/** Which wall/corner of the free-form box a resize grab targets. A vertical part ('n'/'s') optionally
+ * prefixes a horizontal one ('e'/'w') for the four corners ('ne','nw','se','sw'). The dragged edge(s)
+ * track the cursor; the OPPOSITE edge is anchored. */
+type BoxAxis = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
+/** CSS resize cursor per grab axis (the hover affordance — the box reads as draggable from any side). */
+const RESIZE_CURSORS: Record<BoxAxis, string> = {
+  n: "ns-resize",
+  s: "ns-resize",
+  e: "ew-resize",
+  w: "ew-resize",
+  ne: "nesw-resize",
+  sw: "nesw-resize",
+  nw: "nwse-resize",
+  se: "nwse-resize",
+};
 const UNDO_LIMIT = 60;
 /** One undo step: the graph snapshot + the free-form box/pin geometry registered at the same instant (the
  * geometry isn't in the graph), so a box-resize / pin-move can be reverted (Chip Bench Phase 0). */
@@ -813,11 +828,11 @@ export class Board {
    * (move the pin) when true — the geometry-first default — or WIRE (start a wire) when false. Replaces the
    * cut Alt-drag; flipped by the die-bar toggle. Irrelevant outside a free-form die. */
   private shapeMode = true;
-  // Dragging the open FREE-FORM die's resize GRAB-RAIL (§11A "grab the wall/corner"): `axis` is which
-  // wall/corner ('e' right → width, 's' bottom → height, 'se' corner → both); `moved` gates the one undo.
-  // The target is always the open die frame (`dieFrameId`), so no id is stored.
+  // Dragging the open FREE-FORM die's resize GRAB-RAIL (§11A "grab the wall/corner"): `axis` is which of
+  // the 8 walls/corners is grabbed (the dragged edge tracks the cursor, the opposite edge anchors);
+  // `moved` gates the one undo. The target is always the open die frame (`dieFrameId`), so no id is stored.
   private boxHandleDrag: {
-    axis: "e" | "s" | "se";
+    axis: BoxAxis;
     moved: boolean;
   } | null = null;
   // Timestamp + id of the last junction press, to detect a double-click (a second
@@ -2371,6 +2386,18 @@ export class Board {
     return geom ? { w: geom.w, h: geom.h, pins: geom.pins.length } : null;
   }
 
+  /** The open free-form die's box in WORLD coordinates (left/top/right/bottom px) — the rect whose walls +
+   * corner/edge handles resize it. Public companion to {@link freeFormBoxSize} for an overlay/tooling layer
+   * (compose with {@link getCamera} for screen coords). Null outside a free-form die. */
+  freeFormBoxWorldRect(): {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  } | null {
+    return this.dieWallRect();
+  }
+
   /**
    * Resize a FREE-FORM die frame's box by (dw, dh) cells — the "expand and contract the size of the
    * block" of pin/box editing (§4.10). Re-registers the free-form frame IN PLACE: the pin COUNT is
@@ -2401,20 +2428,57 @@ export class Board {
    */
   private setDieFrameBox(w: number, h: number, recordUndo: boolean): boolean {
     if (this.dieFrameId === null) return false;
+    const frame = this.graph.components.get(this.dieFrameId);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    // Grow/shrink with the TOP-LEFT origin fixed (the die-bar W±/H± steppers + the E/S handles).
+    return this.setDieFrameBoxAbs(
+      frame.cell.col,
+      frame.cell.row,
+      w,
+      h,
+      recordUndo,
+    );
+  }
+
+  /**
+   * Set the open FREE-FORM die's box to an ABSOLUTE rectangle — top-left at (`leftCol`,`topRow`) cells,
+   * `w×h` in cells. Generalises {@link setDieFrameBox} so a resize can move the ORIGIN (a W/N/corner drag
+   * grows/shrinks from the left/top), not just the far walls. Clamps the size (presentation ceiling, not a
+   * pin budget), re-pins each lead onto the new perimeter ({@link clampPinToBox} — side preserved, so a
+   * left-wall pin rides the moving left wall while a right-wall pin keeps its absolute spot), moves
+   * `frame.cell`, and re-registers the geom IN PLACE (pin COUNT/indices unchanged → kind tag + inner-wire
+   * frame-pin indices untouched). No-op (false) outside a free-form die or at no change. Render + registry
+   * only — never the solve or the hash.
+   */
+  private setDieFrameBoxAbs(
+    leftCol: number,
+    topRow: number,
+    w: number,
+    h: number,
+    recordUndo: boolean,
+  ): boolean {
+    if (this.dieFrameId === null) return false;
     const fid = this.dieFrameId;
     const frame = this.graph.components.get(fid);
     if (!frame || !isFreeFormFrame(frame.kind)) return false;
     const geom = freeFormGeom(frame.kind);
     if (!geom) return false;
     const MIN = 2;
-    const MAX = FREE_FORM_MAX_BOX; // a generous PRESENTATION ceiling — the box is canvas room for the inner
-    // circuit, NOT a pin budget, so it's deliberately large (a D-latch / CPU block needs space to build in).
+    const MAX = FREE_FORM_MAX_BOX; // a generous PRESENTATION ceiling — canvas room, not a pin budget.
     const nw = Math.max(MIN, Math.min(MAX, Math.round(w)));
     const nh = Math.max(MIN, Math.min(MAX, Math.round(h)));
-    if (nw === geom.w && nh === geom.h) return false; // already at the clamp / no change
+    const nLeft = Math.round(leftCol);
+    const nTop = Math.round(topRow);
+    if (
+      nw === geom.w &&
+      nh === geom.h &&
+      nLeft === frame.cell.col &&
+      nTop === frame.cell.row
+    )
+      return false; // no change
     if (recordUndo) this.pushUndo(this.graph.serialize());
-    // Re-pin each lead onto the NEW perimeter: keep the side it was on, clamp the along-edge coordinate.
     const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, nw, nh));
+    frame.cell = { col: nLeft, row: nTop };
     this.reregisterFreeForm(frame, fid, { w: nw, h: nh, pins });
     return true;
   }
@@ -3827,11 +3891,11 @@ export class Board {
     };
   }
 
-  /** Draw the Chip Bench BUILDER overlay inside a free-form drill (the design brief §1/§11A): the RIGHT and
-   * BOTTOM walls become a brighter "grab-rail" (the wall IS the resize handle — grab it to stretch the box;
-   * the SE corner resizes both), and every frame pin wears a fat ≥44px BEAD as the SHAPE/WIRE grab target
-   * (brighter in SHAPE, where a bead-drag moves the pin). Co-located with the box the player sees — no
-   * cryptic floating squares, nothing shadowing the pins. No-op outside a free-form die. */
+  /** Draw the Chip Bench BUILDER overlay inside a free-form drill (the design brief §1/§11A): ALL FOUR
+   * walls become a "grab-rail" with a solid handle on every corner (resize both axes) and wall midpoint
+   * (resize that axis) — so the box reads as draggable from ANY side/corner — and every frame pin wears a
+   * fat ≥44px BEAD as the SHAPE/WIRE grab target (brighter in SHAPE, where a bead-drag moves the pin).
+   * Co-located with the box the player sees — nothing shadowing the pins. No-op outside a free-form die. */
   private drawBloom(g: Graphics): void {
     const r = this.dieWallRect();
     if (r === null || this.dieFrameId === null) return;
@@ -3839,16 +3903,34 @@ export class Board {
     const kind = frame ? this.graph.kindOf(frame) : undefined;
     if (!frame || !kind) return;
     const s = this.world.scale.x || 1;
-    // Grab-rails: the right + bottom walls, drawn as a thicker accent rail = "grab the wall to resize".
-    g.moveTo(r.right, r.top).lineTo(r.right, r.bottom);
+    // Grab-rails: ALL FOUR walls drawn as an accent rail = "grab any wall to resize" (was right+bottom only).
+    g.moveTo(r.left, r.top).lineTo(r.right, r.top);
     g.moveTo(r.left, r.bottom).lineTo(r.right, r.bottom);
-    g.stroke({ width: 3 / s, color: PALETTE.accent, alpha: 0.5 });
-    // An SE corner bracket — grab → resize both axes.
-    const br = 14 / s;
-    g.moveTo(r.right - br, r.bottom)
-      .lineTo(r.right, r.bottom)
-      .lineTo(r.right, r.bottom - br);
-    g.stroke({ width: 3 / s, color: PALETTE.accent, alpha: 0.9 });
+    g.moveTo(r.left, r.top).lineTo(r.left, r.bottom);
+    g.moveTo(r.right, r.top).lineTo(r.right, r.bottom);
+    g.stroke({ width: 2.5 / s, color: PALETTE.accent, alpha: 0.45 });
+    // Solid HANDLES so the box reads as draggable at a glance: a bright filled square on each corner
+    // (resize both axes) and a smaller one at each wall midpoint (resize that axis) — pull from any side.
+    const midX = (r.left + r.right) / 2;
+    const midY = (r.top + r.bottom) / 2;
+    const corner = 7 / s;
+    for (const [hx, hy] of [
+      [r.left, r.top],
+      [r.right, r.top],
+      [r.left, r.bottom],
+      [r.right, r.bottom],
+    ])
+      g.rect(hx - corner, hy - corner, corner * 2, corner * 2);
+    g.fill({ color: PALETTE.accent, alpha: 0.95 });
+    const edge = 5 / s;
+    for (const [hx, hy] of [
+      [midX, r.top],
+      [midX, r.bottom],
+      [r.left, midY],
+      [r.right, midY],
+    ])
+      g.rect(hx - edge, hy - edge, edge * 2, edge * 2);
+    g.fill({ color: PALETTE.accent, alpha: 0.7 });
     // Fat draggable bead on each frame pin (the ≥44px SHAPE/WIRE target). Brighter in SHAPE (drag = move).
     const beadR = BEAD_HIT_PX / s;
     const beadAlpha = this.shapeMode ? 0.5 : 0.22;
@@ -3881,45 +3963,64 @@ export class Board {
     return best >= 0 ? best : null;
   }
 
-  /** Which resize axis (if any) world-point `wp` grabs on the open free-form die's grab-rails: 'se' the SE
-   * corner (both), else 'e' the right wall (width), 's' the bottom wall (height). Tolerance is a constant
-   * SCREEN distance off the wall, so the rail stays catchable at any zoom. Caller tests {@link pinBeadHit}
-   * first, so a bead on a wall wins. Null outside a free-form die or off the rails. */
-  private wallResizeHit(wp: Point): "e" | "s" | "se" | null {
+  /** Which resize axis (if any) world-point `wp` grabs on the open free-form die's grab-rails: any of the 8
+   * walls/corners ('n'/'s'/'e'/'w' + 'ne'/'nw'/'se'/'sw'), or null. Tolerance is a constant SCREEN distance
+   * off the wall, so the rail stays catchable at any zoom. Caller tests {@link pinBeadHit} first, so a bead
+   * on a wall wins. Null outside a free-form die or off the rails. */
+  private wallResizeHit(wp: Point): BoxAxis | null {
     const r = this.dieWallRect();
     if (r === null) return null;
     const tol = RESIZE_GRIP_PX / (this.world.scale.x || 1);
-    const nearRight =
-      Math.abs(wp.x - r.right) <= tol &&
-      wp.y >= r.top - tol &&
-      wp.y <= r.bottom + tol;
-    const nearBottom =
-      Math.abs(wp.y - r.bottom) <= tol &&
-      wp.x >= r.left - tol &&
-      wp.x <= r.right + tol;
-    if (nearRight && nearBottom) return "se";
-    if (nearRight) return "e";
-    if (nearBottom) return "s";
-    return null;
+    const inY = wp.y >= r.top - tol && wp.y <= r.bottom + tol;
+    const inX = wp.x >= r.left - tol && wp.x <= r.right + tol;
+    const nearLeft = Math.abs(wp.x - r.left) <= tol && inY;
+    const nearRight = Math.abs(wp.x - r.right) <= tol && inY;
+    const nearTop = Math.abs(wp.y - r.top) <= tol && inX;
+    const nearBottom = Math.abs(wp.y - r.bottom) <= tol && inX;
+    const vert = nearTop ? "n" : nearBottom ? "s" : "";
+    const horiz = nearLeft ? "w" : nearRight ? "e" : "";
+    const axis = `${vert}${horiz}`;
+    return axis === "" ? null : (axis as BoxAxis);
   }
 
-  /** Live step of an in-die resize drag: set the die box so the grabbed wall/corner tracks the cursor cell
-   * (anchor = the die frame's top-left). The grab is ON the wall now, so the snapped cursor cell IS the new
-   * wall position (no stand-off). Commits the single drag undo on the first cell that actually resizes;
-   * `setDieFrameBox(false)` re-pins + redraws each step. */
+  /** Live step of an in-die resize drag: the grabbed wall/corner edge(s) track the snapped cursor cell
+   * while the OPPOSITE edge anchors — so an E/S drag grows from the top-left, a W/N drag moves the origin,
+   * and a corner moves two edges. Clamped to [MIN, MAX] against the anchored edge. Commits the single drag
+   * undo on the first cell that actually resizes; `setDieFrameBoxAbs(false)` re-pins + redraws each step. */
   private moveBoxHandleDrag(wp: Point): void {
     const d = this.boxHandleDrag;
     if (d === null || this.dieFrameId === null) return;
     const frame = this.graph.components.get(this.dieFrameId);
     const geom = frame ? freeFormGeom(frame.kind) : undefined;
     if (!frame || !geom) return;
-    let w = geom.w;
-    let h = geom.h;
-    if (d.axis === "e" || d.axis === "se")
-      w = snap(wp.x, PITCH) - frame.cell.col + 1;
-    if (d.axis === "s" || d.axis === "se")
-      h = snap(wp.y, PITCH) - frame.cell.row + 1;
-    if (this.setDieFrameBox(w, h, false)) {
+    const MIN = 2;
+    const MAX = FREE_FORM_MAX_BOX;
+    // The four current edges (absolute cells). The grabbed edge(s) track the snapped cursor cell; the
+    // OPPOSITE edge anchors. Clamp the dragged edge so width/height stay within [MIN, MAX] without moving
+    // the anchor (so dragging the left wall right past the min just stops, it doesn't shove the right wall).
+    let left = frame.cell.col;
+    let top = frame.cell.row;
+    let right = left + geom.w - 1;
+    let bottom = top + geom.h - 1;
+    const cx = snap(wp.x, PITCH);
+    const cy = snap(wp.y, PITCH);
+    if (d.axis.includes("e"))
+      right = Math.max(left + MIN - 1, Math.min(left + MAX - 1, cx));
+    if (d.axis.includes("w"))
+      left = Math.min(right - MIN + 1, Math.max(right - MAX + 1, cx));
+    if (d.axis.includes("s"))
+      bottom = Math.max(top + MIN - 1, Math.min(top + MAX - 1, cy));
+    if (d.axis.includes("n"))
+      top = Math.min(bottom - MIN + 1, Math.max(bottom - MAX + 1, cy));
+    if (
+      this.setDieFrameBoxAbs(
+        left,
+        top,
+        right - left + 1,
+        bottom - top + 1,
+        false,
+      )
+    ) {
       if (!d.moved && this.pendingUndo) {
         this.commitUndo(this.pendingUndo);
         d.moved = true;
@@ -5222,6 +5323,14 @@ export class Board {
         this.wiringMoved = true;
       }
       this.drawPendingWire();
+    }
+    // Free-form box resize-handle hover: show a directional resize cursor (ew/ns/nesw/nwse) so the box
+    // reads as draggable from any side or corner. A pin bead wins (it's the SHAPE/WIRE target); off the
+    // handles, restore the mode's normal cursor.
+    if (this.dieFrameId !== null && !this.wiring) {
+      const ax = this.pinBeadHit(wp) === null ? this.wallResizeHit(wp) : null;
+      if (ax) this.app.stage.cursor = RESIZE_CURSORS[ax];
+      else this.updateCursor();
     }
     // Idle hover: keep the placement / junction / label ghost glued to the cursor
     // (snapped to the cell or the endpoint a click would attach to). Every tool

@@ -6,6 +6,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (175) — Free-form box: bigger cap + any-side resize + drag affordance
+
+Web-only, golden untouched, 183 web tests.
+- ~~**Box size cap 30 → 96**~~ (#255) — `FREE_FORM_MAX_BOX`, decoupled from the pin cap. (Owner hit 30 on a D-latch.)
+- ~~**Resize from any side/corner**~~ — `wallResizeHit` → 8 axes; `moveBoxHandleDrag` anchors the opposite
+  edge (W/N move the origin); `setDieFrameBoxAbs` moves `frame.cell` + re-pins. Verified via NW-corner drag.
+- ~~**Drag affordance**~~ — `drawBloom` 4 rails + solid corner/edge handles; directional resize cursors on hover.
+- ~~**Harness**~~ — `board.freeFormBoxWorldRect()` + `window.__cecBox` dev query (rect/cam/size) for resize-drag tests.
+- [ ] **Sequential-characterizer auto-detection (#66, IN PROGRESS)** — stop turning latches into buffers:
+  `cellAnalysis.ts` (feedback-loop detect + control/data/complementary-pair + Q/Qbar) + a determinism guard
+  + drive the complementary pair in the sequential sweep. Greenlit; researched; not yet coded.
+
+---
+
 ## 2026-06-26 (174) — SHAPE/WIRE paddle fix + replay --drive re-driver
 
 Web-only, golden untouched, 183 web tests.

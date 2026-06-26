@@ -2553,6 +2553,16 @@
           return "fail";
         }
       };
+      // Read-only board-state query for the render harness (scripts/*.mjs): the open free-form box in WORLD
+      // coords + the camera, so a test can compute on-screen handle positions and drive a real resize drag.
+      (window as unknown as { __cecBox?: () => unknown }).__cecBox = () =>
+        board
+          ? {
+              rect: board.freeFormBoxWorldRect(),
+              cam: board.getCamera(),
+              size: board.freeFormBoxSize(),
+            }
+          : null;
     })();
 
     return () => {
