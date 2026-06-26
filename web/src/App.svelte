@@ -68,6 +68,7 @@
     resealUserIc,
     setUserIcBehavior,
     recognizeGate,
+    roleFromName,
     registerUserIc,
     createBlankFreeFormSubassembly,
     registerUserIcs,
@@ -1888,6 +1889,26 @@
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement | null;
       if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      // Free-form die builder: S → SHAPE (drag a pin to move it), W → WIRE (drag a pin to start a wire)
+      // — a quick swap of the design-brief mode bit while building. Overrides the global Wire-tool "w"
+      // ONLY inside a free-form die (where the board's wire tool isn't the active gesture anyway).
+      if (
+        drill &&
+        isFreeFormFrame(drill.frameTag) &&
+        !e.ctrlKey &&
+        !e.metaKey
+      ) {
+        if (e.key === "s" || e.key === "S") {
+          setDieShapeMode(true);
+          e.preventDefault();
+          return;
+        }
+        if (e.key === "w" || e.key === "W") {
+          setDieShapeMode(false);
+          e.preventDefault();
+          return;
+        }
+      }
       if (e.key === "Delete" || e.key === "Backspace") {
         board?.deleteSelection();
         e.preventDefault();
@@ -3781,6 +3802,21 @@
       pinNameEdit.pinIndex,
       pinNameValue,
     );
+    // Auto-stimulus from the name (owner QoL): naming a pad GND/VCC/IN (or a synonym) sets that LIVE test
+    // stimulus when none is set yet, so a named power/input pin drives the die solve in one step. (out /
+    // clk / inout take their SEALED role from the name via derivePinRoles — only gnd/vcc/in are live
+    // drives.) `setPinTestRole` reads the still-open `pinNameEdit`, so do it before clearing it.
+    const r = roleFromName(pinNameValue.trim().toUpperCase());
+    if (pinTestRole === "none" && (r === "gnd" || r === "vcc" || r === "in")) {
+      setPinTestRole(r);
+    }
+    pinNameEdit = null;
+  }
+  /** Delete THIS pin (the §4.10 "pick a pin and delete it" affordance) — drops the pad + any wire on it,
+   * shifting the survivors. Free-form dies only; closes the popover. */
+  function deleteEditingPin(): void {
+    if (!pinNameEdit) return;
+    board?.removeFreeFormPinAt(pinNameEdit.pinIndex);
     pinNameEdit = null;
   }
   function cancelPinNameEdit(): void {
@@ -5072,16 +5108,18 @@
               {/if}
             </span>
           </div>
-          {#if isFreeFormFrame(drill.frameTag) && freeFormBox}
+          {#if isFreeFormFrame(drill.frameTag)}
             <!-- Free-form (box-captured) subassembly (§4.10): shape it by hand. SHAPE mode → drag a pin bead
                  to MOVE it along the rim; WIRE mode → drag a bead to start a wire (the design brief §2 bit,
-                 default SHAPE). Grab the right/bottom WALL or SE corner in the canvas to resize, or use the
-                 Box ± / Pins ± steppers here; double-click a bead to name it. -->
+                 default SHAPE; hotkeys S / W). Grab the right/bottom WALL or SE corner in the canvas to
+                 resize, or use the Box ± / Pins ± steppers here; double-click a bead to name it. The toggle
+                 shows for ANY free-form die (it doesn't wait on the Box readout, so the New▸Subassembly
+                 builder gets it too). -->
             <div
               class="die-mode"
               role="group"
               aria-label="Pin drag mode"
-              title="SHAPE: drag a pin to move it · WIRE: drag a pin to start a wire"
+              title="SHAPE (S): drag a pin to move it · WIRE (W): drag a pin to start a wire"
             >
               <button
                 class="die-mode-btn"
@@ -5096,55 +5134,57 @@
                 onclick={() => setDieShapeMode(false)}>Wire</button
               >
             </div>
-            <div
-              class="die-pins"
-              title="Resize this subassembly's box (or grab the wall/corner in the canvas)"
-            >
-              <span class="die-pins-label">Box</span>
-              <button
-                class="die-pins-btn"
-                onclick={() => changeBox(-1, 0)}
-                disabled={freeFormBox.w <= 2}
-                aria-label="Narrower">W−</button
+            {#if freeFormBox}
+              <div
+                class="die-pins"
+                title="Resize this subassembly's box (or grab the wall/corner in the canvas)"
               >
-              <button
-                class="die-pins-btn"
-                onclick={() => changeBox(1, 0)}
-                aria-label="Wider">W+</button
+                <span class="die-pins-label">Box</span>
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeBox(-1, 0)}
+                  disabled={freeFormBox.w <= 2}
+                  aria-label="Narrower">W−</button
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeBox(1, 0)}
+                  aria-label="Wider">W+</button
+                >
+                <span class="die-pins-n mono"
+                  >{freeFormBox.w}×{freeFormBox.h}</span
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeBox(0, -1)}
+                  disabled={freeFormBox.h <= 2}
+                  aria-label="Shorter">H−</button
+                >
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeBox(0, 1)}
+                  aria-label="Taller">H+</button
+                >
+              </div>
+              <div
+                class="die-pins"
+                title="Add or remove a pin (a new pin lands on a free edge; double-click it to name it)"
               >
-              <span class="die-pins-n mono"
-                >{freeFormBox.w}×{freeFormBox.h}</span
-              >
-              <button
-                class="die-pins-btn"
-                onclick={() => changeBox(0, -1)}
-                disabled={freeFormBox.h <= 2}
-                aria-label="Shorter">H−</button
-              >
-              <button
-                class="die-pins-btn"
-                onclick={() => changeBox(0, 1)}
-                aria-label="Taller">H+</button
-              >
-            </div>
-            <div
-              class="die-pins"
-              title="Add or remove a pin (a new pin lands on a free edge; double-click it to name it)"
-            >
-              <span class="die-pins-label">Pins</span>
-              <button
-                class="die-pins-btn"
-                onclick={() => changeFreeFormPins(-1)}
-                disabled={freeFormBox.pins <= 1}
-                aria-label="Remove a pin">−</button
-              >
-              <span class="die-pins-n mono">{freeFormBox.pins}</span>
-              <button
-                class="die-pins-btn"
-                onclick={() => changeFreeFormPins(1)}
-                aria-label="Add a pin">+</button
-              >
-            </div>
+                <span class="die-pins-label">Pins</span>
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeFreeFormPins(-1)}
+                  disabled={freeFormBox.pins <= 1}
+                  aria-label="Remove a pin">−</button
+                >
+                <span class="die-pins-n mono">{freeFormBox.pins}</span>
+                <button
+                  class="die-pins-btn"
+                  onclick={() => changeFreeFormPins(1)}
+                  aria-label="Add a pin">+</button
+                >
+              </div>
+            {/if}
           {:else if pkg && pkg.archetype === "BLOCK"}
             <!-- Generic blank subassembly: expandable pin count (§4.10) — grow/shrink the BLOCK's pins
                  while building. The new pin is unconnected until you wire it. -->
@@ -5535,6 +5575,20 @@
               />
               <span class="pin-test-unit mono">V</span>
             </div>
+          {/if}
+          {#if drill && isFreeFormFrame(drill.frameTag)}
+            <!-- Delete THIS specific pin (free-form subassembly): drops the pad + any wire on it. -->
+            <button
+              type="button"
+              class="pin-test-role mono"
+              onmousedown={(e) => {
+                e.preventDefault();
+                deleteEditingPin();
+              }}
+              title="Delete this pin (and any wire on it)"
+            >
+              Delete pin
+            </button>
           {/if}
         </div>
       {/if}

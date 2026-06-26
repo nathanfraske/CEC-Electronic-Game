@@ -2393,6 +2393,47 @@ export class Board {
   }
 
   /**
+   * Delete ONE specific free-form pin (the §4.10 "pick a pin and delete it" affordance), not just the
+   * last: drops any wire incident on that pad, shifts every higher pin index down by one (so wires on the
+   * survivors still point at the right pad), and splices the pad out of the geom / pinNames / pinTests.
+   * No-op (false) unless the die is free-form, the index is valid, and >1 pin remains. Render/registry +
+   * undo only — never the solve or hash.
+   */
+  removeFreeFormPinAt(pinIndex: number): boolean {
+    if (this.dieFrameId === null) return false;
+    const fid = this.dieFrameId;
+    const frame = this.graph.components.get(fid);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom || geom.pins.length <= 1) return false;
+    if (pinIndex < 0 || pinIndex >= geom.pins.length) return false;
+    this.pushUndo(this.graph.serialize());
+    const framePin = (e: Endpoint): e is PinRef & { componentId: number } =>
+      isPinRef(e) && e.componentId === fid;
+    for (const w of [...this.graph.wires.values()]) {
+      if (
+        (framePin(w.from) && w.from.pinIndex === pinIndex) ||
+        (framePin(w.to) && w.to.pinIndex === pinIndex)
+      ) {
+        this.graph.removeWire(w.id); // a wire on the removed pad goes with it
+        continue;
+      }
+      // Survivors above the gap shift down one index so they keep pointing at the right pad.
+      if (framePin(w.from) && w.from.pinIndex > pinIndex) w.from.pinIndex -= 1;
+      if (framePin(w.to) && w.to.pinIndex > pinIndex) w.to.pinIndex -= 1;
+    }
+    if (frame.pinNames)
+      frame.pinNames = frame.pinNames.filter((_, i) => i !== pinIndex);
+    if (frame.pinTests)
+      frame.pinTests = frame.pinTests.filter((_, i) => i !== pinIndex);
+    const pins = geom.pins
+      .filter((_, i) => i !== pinIndex)
+      .map((p) => ({ ...p }));
+    this.reregisterFreeForm(frame, fid, { w: geom.w, h: geom.h, pins });
+    return true;
+  }
+
+  /**
    * Live step of an Alt-drag of a free-form frame pin (see `pinDrag`): slide pin `pinDrag.pinIndex` to the
    * nearest perimeter cell under the cursor, rewrite the frame's geom, and redraw. Re-registers the
    * free-form frame kind in place — the pin INDEX is unchanged, so incident wires / pinTests / pinNames

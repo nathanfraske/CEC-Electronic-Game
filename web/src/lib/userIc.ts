@@ -1129,7 +1129,10 @@ export function derivePinRoles(
   return roles;
 }
 
-function roleFromName(n: string): PinRole | undefined {
+/** Map a pin NAME (upper-cased) to the SEMANTIC role it implies, or undefined. Common synonyms:
+ * VCC/VDD/VS → vcc; GND/VSS/GROUND → gnd; CLK/CLOCK/CK → clk; Y/Q/OUT/O/F → out; A/B/C/D/IN/I → in;
+ * IO/INOUT/BIDIR/BUS → inout. Used by {@link derivePinRoles} and the builder's auto-role-from-name. */
+export function roleFromName(n: string): PinRole | undefined {
   switch (n) {
     case "VCC":
     case "VDD":
@@ -1156,6 +1159,11 @@ function roleFromName(n: string): PinRole | undefined {
     case "IN":
     case "I":
       return "in";
+    case "IO":
+    case "INOUT":
+    case "BIDIR":
+    case "BUS":
+      return "inout";
     default:
       return undefined;
   }
