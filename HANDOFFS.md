@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (178) — Variant-aware zoom (#21) + backlog boundary reached
+
+**State:** 🟢 `main` through PR #261. **Web-only, golden untouched, 189 web tests.** Four refinement PRs
+landed this run (#258 registered-cell label · #259 feedback route preview · #260 zoom-to-part groundwork ·
+#261 variant-aware zoom-to-open). The remaining backlog has no more "clean drop-in refinement" — each open
+item now needs a design decision or deeper investigation:
+
+- **#22 (composite zoom FETs as boxes)** — NOT a clean drawer swap: both live + static internals paths go
+  through `drawUserIcInternals`/`drawGlyphIn`, so the box must come from a tier/recursion handoff gap.
+  Needs deep investigation + finicky deep-zoom screenshot validation (`__cecZoomTo` helps but landing on a
+  leaf FET is fiddly).
+- **Nested-replica name labels** — additive but needs a POOLED per-slot `Text` (resolution-at-scale +
+  cull/cleanup in the recursion), and finicky deep-zoom validation.
+- **Bidir pin button** — a per-pin-ROLE override feature (`PinTestRole` is gnd/vcc/in only); needs a
+  data-model decision. Workaround: name a pin IO/BIDIR/BUS.
+- **#45 (CPU starter templates)** — DESIGN question: a MUX/register template can't reference the player's
+  own sealed gates (they vary), and a pure-FET block is huge. What abstraction + delivery?
+- **#35 (steppable char panel)** / **#11 (Phase 4)** / **#16 (replica follow-ups)** / **#17 (reality-lens)**
+  — UI/realism features needing design. **#47 (RAM/ROM)** — sim-core, NEEDS GREENLIGHT. **#48 (A2 fabric)**
+  — large. **#41 (curriculum)** — design.
+
+Recommend the next step be owner-chosen (highest CPU-goal value: #45 templates or #35 steppable verify,
+both needing a quick design call; or greenlight #47).
+
+---
+
 ## 2026-06-26 (177) — Backlog refinements: registered-cell label + feedback route preview
 
 **State:** 🟢 `main` through PR #259. **Web-only, golden untouched, 189 web tests.** Two backlog
