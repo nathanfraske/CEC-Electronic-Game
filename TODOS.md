@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (179) — Design: memory + assembly integration plan (docs/memory-and-assembly-plan.md)
+
+Planning only (no code; owner-greenlight gated — touches sim-core). Connects the built-but-disconnected
+assembler (#44) to the sim and supersedes the bare #47.
+- ~~**Design doc**~~ `docs/memory-and-assembly-plan.md` — one `ELEM_MEMORY` primitive (id 26, append-only),
+  three modes (ROM/RAM/EEPROM), contents in a new per-element `mem_data` folded into the golden hash
+  append-only (zero-delta for existing circuits), image loaded via a NEW `load_memory` wasm side-call
+  (`set_netlist*` untouched). Interface fork: **serial EEPROM (SPI/I²C, fits 8 terminals) first**, then
+  **parallel bus-port** (address/data buses as param-encoded contiguous node ranges) for the CPU fetch +
+  512×22 control store. Plus the assembly pipeline (Program panel: assemble → listing → load into a memory
+  part) and EEPROM persistence (memImage saved with the circuit).
+- [ ] **Owner decisions (doc §9):** serial-first vs parallel-first; bus-port vs widen-terminals; size caps;
+  GREENLIGHT the sim-core change (id 26 + mem_data + hash fold + load_memory).
+- [ ] Phases: P1 memory infra + serial EEPROM · P2 assembly pipeline/UI · P3 parallel bus-port · P4 CPU templates.
+
+---
+
 ## 2026-06-26 (178) — Variant-aware zoom-to-open (#21 fix)
 
 Web-only, golden untouched, 189 web tests.
