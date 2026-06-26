@@ -152,3 +152,57 @@ describe("analyzeCell — combinational + Q/Q̄", () => {
     expect(a.qbarPin).toBe(5); // Q̄
   });
 });
+
+describe("analyzeCell — embedded state (DFF from registered latches)", () => {
+  // A flip-flop shaped cell: frame + a REGISTERED latch sub-cell (behavior mode 1), wired straight
+  // through — NO feedback loop at this level (the loop is sealed inside the latch). The clock pin is
+  // named "IN" (deliberately not a recognized clock name). Before the fix this read as combinational and
+  // a sweep mischaracterized it as an AND of data·clock; now the registered sub-cell ⇒ sequential.
+  const resolveReg = (tag: string): ResolvedCell | undefined =>
+    tag === "DLATCH"
+      ? {
+          pinRoles: ["in", "gnd", "vcc", "out"],
+          behavior: { word: 2, mode: 1 },
+        }
+      : undefined;
+  const graph = {
+    components: [
+      {
+        id: 1,
+        kind: "__DIE_FF_DFF",
+        cell: { col: 0, row: 0 },
+        value: 0,
+        rot: 0,
+      },
+      { id: 2, kind: "DLATCH", cell: { col: 0, row: 0 }, value: 0, rot: 0 },
+    ],
+    wires: [
+      {
+        id: 1,
+        from: { componentId: 1, pinIndex: 0 },
+        to: { componentId: 2, pinIndex: 0 },
+      }, // D → latch.D
+      {
+        id: 2,
+        from: { componentId: 2, pinIndex: 3 },
+        to: { componentId: 1, pinIndex: 1 },
+      }, // latch.Q → Q
+    ],
+    junctions: [],
+    netLabels: [],
+  } as unknown as GraphSnapshot;
+
+  it("a cell containing a registered sub-cell is sequential, even with no visible loop", () => {
+    const a = analyzeCell({
+      graph,
+      frameId: 1,
+      pinRoles: ["in", "out", "vcc", "in", "gnd"],
+      pinNames: ["D", "Q", "VCC", "IN", "GND"], // clock named "IN" — not a recognized clock name
+      resolveCell: resolveReg,
+    });
+    expect(a.sequential).toBe(true);
+    expect(a.reason).toMatch(/embedded state|registered sub-cell/i);
+    // "IN" isn't a recognized clock ⇒ no clock identified ⇒ the characterizer refuses (won't emit an AND).
+    expect(a.clockPin).toBe(-1);
+  });
+});

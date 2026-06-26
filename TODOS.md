@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (180) — Sequential detector: embedded-state (DFF-from-registered-latches) fix
+
+Web-only, golden untouched, 190 web tests.
+- ~~**Embedded-state detection**~~ — `cellAnalysis` now flags a cell SEQUENTIAL when it CONTAINS a
+  registered sub-cell (a characterized latch/flop, `behavior.mode ≥ 1`), even with no visible parent-level
+  loop (the loop is sealed inside the sub-cell). Found via the owner's DFF (two registered D-latches): it
+  read as combinational and the sweep mischaracterized it as an **AND gate** (clock "IN" swept as data ×
+  transparent latches ⇒ Q = D·clk). Now → sequential → routes to the sequential sweep, or refuses with a
+  clear reason ("name the clock CLK") instead of a wrong AND. New test in cellAnalysis.test.ts.
+- [ ] **Auto clock-find for embedded-state cells** — when a registered sub-cell is present, identify the
+  parent clock = the frame pin feeding the sub-cell's clock terminal (so a clock named "IN" still works
+  without renaming). Today it refuses-with-guidance unless the clock pin is named CLK/EN (or role-tagged).
+
+---
+
 ## 2026-06-26 (179) — Design: memory + assembly integration plan (docs/memory-and-assembly-plan.md)
 
 Planning only (no code; owner-greenlight gated — touches sim-core). Connects the built-but-disconnected
