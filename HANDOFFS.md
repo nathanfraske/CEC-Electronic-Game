@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (177) — Backlog refinements: registered-cell label + feedback route preview
+
+**State:** 🟢 `main` through PR #259. **Web-only, golden untouched, 189 web tests.** Two backlog
+refinements landed; the rest of the backlog triaged below.
+
+- **Registered-cell char-panel label** (#258) — a `mode:1` cell now shows a rose **REGISTERED** pill + a
+  **D-TYPE** label (not "BUFFER") + a **Q⁺** next-state column + registered footer. Validated live on the
+  latch (`charResult.registered` from `behavior.mode`; cosmetic only).
+- **Feedback route preview** (#259) — the Bug/Feedback modal shows a "Recent route attached" `<pre>`
+  (`feedback.routePreview()` = `formatJournal`) so the owner sees the captured steps before downloading.
+  Validated live.
+
+**Backlog triage (what's left + honest size):**
+- **Render deep-zoom trio** — #21 (variant static-zoom fallback ignores the selected variant — a
+  correctness bug), #22 (composite zoom draws FETs as boxes, not the at-rest transistor glyph), and
+  **nested-replica name labels**. All live in the intricate `userIcInternalsView` / `userIcGeometryDeep`
+  recursive zoom and need **deep-zoom screenshot validation** (a `__cecZoomTo(id,scale)` harness hook would
+  unblock validating these — not yet built).
+- **Bidir pin button** — DEFERRED: marking a pin `inout` without renaming needs a per-pin ROLE override
+  (`PinTestRole` is gnd/vcc/in only; `derivePinRoles` is name+stimulus-driven). A small FEATURE, not a
+  cosmetic. Workaround today: name a pin IO/BIDIR/BUS.
+- **Bigger / design-needing:** #35 (fidelity toggle + steppable char panel), #11 (Phase 4 realism + 4-LUT
+  example), #16 (opened-IC replica follow-ups), #41 (curriculum — design), #45 (CPU starter templates —
+  data), #47 (RAM/ROM primitive — NEEDS GREENLIGHT, sim-core), #48 (A2 fabric), #17 (reality-lens redesign).
+
+---
+
 ## 2026-06-26 (176) — Sequential-cell auto-detection (latch no longer characterizes to a buffer)
 
 **State:** 🟢 `main` through PR #256. This is the next PR. **Web-only, golden untouched, 189 web tests.**

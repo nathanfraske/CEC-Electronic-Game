@@ -2738,6 +2738,26 @@ export class Board {
     this.applyTextRes();
   }
 
+  /** Center the camera on a placed component at an absolute `scale` (px per world px) — a "zoom to this
+   * part" primitive (also how the render harness drives a deep zoom-to-open for validation). Returns false
+   * if the id isn't placed. Clamped to the valid zoom range. */
+  focusComponent(id: number, scale: number): boolean {
+    const c = this.graph.components.get(id);
+    if (!c) return false;
+    const box = this.componentBox(c);
+    const cx = box.x + box.width / 2;
+    const cy = box.y + box.height / 2;
+    const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+    this.world.scale.set(s);
+    this.world.position.set(
+      this.app.screen.width / 2 - cx * s,
+      this.app.screen.height / 2 - cy * s,
+    );
+    this.viewportDirty = true;
+    this.applyTextRes();
+    return true;
+  }
+
   /**
    * Once-per-frame snapshot read. Generalized to a variable-length state. The
    * optional `electrical` map carries per-component current/voltage from the
