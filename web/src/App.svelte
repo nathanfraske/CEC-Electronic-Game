@@ -2596,6 +2596,14 @@
           warning: circuitWarning,
         };
       };
+      // Center the camera on a placed component at an absolute zoom — lets the render harness drive a deep
+      // zoom-to-open (the recursive internals view) for screenshot validation.
+      (
+        window as unknown as {
+          __cecZoomTo?: (id: number, scale: number) => boolean;
+        }
+      ).__cecZoomTo = (id: number, scale: number) =>
+        board?.focusComponent(id, scale) ?? false;
     })();
 
     return () => {
