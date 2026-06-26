@@ -59,6 +59,12 @@ quantize the address pins → index → drive the data pins from `mem_data[idx]`
 This single primitive is the instruction store, the control-store ROM, the scratch RAM, **and** the EEPROM
 — the mode + the loaded image are the only differences.
 
+**Chip art is owner-authored.** Each memory part (ROM/RAM/EEPROM/control-store) ships with a *default*
+package + glyph so it works immediately, and is logged in `docs/convenience-primitives-to-refine.md` as
+`needs-chip`. The owner re-builds each as a proper **reference-design chip** (real package + datasheet
+pinout, e.g. a 25xx-style serial EEPROM, a 27Cxx-style ROM) in the IC editor — a visual wrapper over the
+same `ELEM_MEMORY`, so the re-skin never touches the engine or the golden. (Convention in `CLAUDE.md`.)
+
 ---
 
 ## 3. The interface fork (the real architectural decision)
