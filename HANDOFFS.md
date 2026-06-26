@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (170) — CPU build kit (programmer + doc) + Option A1 (sequential characterization)
+
+**State:** 🟢 full gate green — cargo (189 sim-core tests, `golden_snapshot_hash_is_stable` ✓), web
+check/lint/build, 171 web tests. **No Rust touched → golden untouched.** Owner is building this CPU by
+hand in the builder tomorrow; tonight = the enabling infra (owner: "implement all of that overnight"
++ "implement the Option A plan overnight as well").
+
+**The target** (owner's 2 screenshots): a 4-bit SAP-style core — PC/MAR/RAM/IR/A/B/ALU(ADD,NOR,C,Z)/
+OUT on one shared bus, microcoded control unit, ISA LDA/STA/ADD/NOR/JCC/HLT. **Inventory finding: nearly
+every block already exists as a placeable part** — `FF` (reg bit), `TRI` (bus driver, high-Z), `FADD`/
+`HADD` (ALU), `LUT` (decode/ROM cell), gates, `CTR` (3-bit counter). **The one real gap is RAM** (+ the
+wide microcode ROM, buildable from LUTs but painful).
+
+**Landed:**
+- **CPU programmer** `web/src/lib/cpu/` (headless, no sim/wasm, 20 tests): `isa.ts` (ISA + two-pass
+  assembler → 16-word RAM image + disassemble), `controlWord.ts` (lever bitfield + control-store
+  {opcode,step,flags} address), `microcode.ts` (the table verbatim from the screenshot +
+  `buildControlStore()` → the control-store ROM image). **This is "a way to program it"** — assembler
+  programs RAM, `buildControlStore` programs the control unit.
+- **`docs/cpu-build-kit.md`** — the build companion: every block → existing part, bus discipline, ISA/
+  microcode/control-word formats, build order, and the RAM-primitive recommendation (for greenlight).
+- **Option A1** (`characterize.ts` + `sweepNetlist.ts`): a clocked cell now sweeps sequentially
+  (`sequentialSweepNetlist` drives a square clock; `classifySequentialSamples` requires Q to converge)
+  and collapses a **pure D-type** to a **registered LUT** (`mode:1`). **FAIL-SAFE**: a self-dependent
+  toggle/counter is refused → stays discrete, never mischaracterized. Wiring + classifier headless-
+  tested; the live wasm sweep is **app-verified** (same convention as the combinational characterizer).
+
+**Pending / next:**
+- **RAM/ROM behavioral primitive** — the recommended next engine step (golden-safe by append-and-
+  default-off; 16×8 RAM fits BEH_STATE_WORDS=16). NEEDS OWNER GREENLIGHT (sim-core change). See
+  cpu-build-kit.md §6.
+- **Option A2** — the LUT+FF fabric for self-dependent/multi-bit cells (register-with-load, counters).
+  Future; for the CPU, stock `FF`/`CTR` registers are cheap today so A2 isn't a blocker.
+- **Starter CPU-block templates** (register etc.) — deferred (owner wants to test the builder by hand).
+
+---
+
 ## 2026-06-26 (169) — Registry-hygiene lows merged + the sequential-characterization (Option A) plan
 
 **State:** 🟢 `main` at `9c2a48f`. Web/registry + docs only, **golden untouched** (no Rust), 146 web

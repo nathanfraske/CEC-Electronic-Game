@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (170) — CPU build kit (programmer + doc) + Option A1
+
+Full gate green (189 sim-core tests incl. golden; 171 web tests). No Rust → golden untouched.
+- ~~**CPU programmer**~~ — `web/src/lib/cpu/` (isa+assembler, controlWord, microcode+buildControlStore);
+  "a way to program it." 20 headless tests.
+- ~~**CPU build-kit doc**~~ — `docs/cpu-build-kit.md`: blocks→existing parts (FF/TRI/FADD/LUT/gates/CTR),
+  bus discipline, ISA/microcode/control-word, build order, RAM-gap analysis.
+- ~~**Option A1**~~ — sequential characterization → registered LUT for pure D-type cells (fail-safe:
+  self-dependent toggles/counters refused → discrete). `characterize.ts`+`sweepNetlist.ts`; wiring +
+  classifier headless-tested, live sweep app-verified.
+- [ ] **RAM/ROM behavioral primitive** — the one real engine gap for a runnable CPU (cpu-build-kit.md
+  §6). Golden-safe by append-and-default-off; 16×8 RAM fits BEH_STATE_WORDS=16. NEEDS OWNER GREENLIGHT
+  (sim-core change).
+- [ ] **Option A2** — LUT+FF fabric for self-dependent/multi-bit cells (register-with-load, counters,
+  shift regs). Not a CPU blocker (stock FF/CTR cheap today).
+- [ ] **Starter CPU-block templates** (register/ALU-slice) — deferred; owner is testing the builder by
+  hand. Add à la gateTemplates.ts if wanted.
+
+---
+
 ## 2026-06-26 (169) — Registry-hygiene lows + sequential-characterization (Option A) plan
 
 Web/registry + docs only, golden untouched, 146 web tests, full gate green. PR #244 merged.
