@@ -422,6 +422,54 @@ export function registerUserIc(ic: UserIc): void {
   if (ic.freeForm) registerFreeFormFrame(ic.tag, ic.freeForm);
 }
 
+/** A brand-new BLANK free-form subassembly's default geometry: a roomy box with four edge-centred,
+ * unnamed pins (one per side — a friendly starting pinout the player renames / moves / adds to / removes).
+ * The box and pins are reshaped entirely by hand in the die editor (resize handles + Alt-drag + the
+ * pin-count stepper). Presentation only. */
+const BLANK_SUBASSEMBLY_GEOM: FreeFormGeom = {
+  w: 9,
+  h: 7,
+  pins: [
+    { dx: 0, dy: 3 }, // left
+    { dx: 8, dy: 3 }, // right
+    { dx: 4, dy: 0 }, // top
+    { dx: 4, dy: 6 }, // bottom
+  ],
+};
+
+/** Provisional die-frame subtag for an unsealed BLANK subassembly. Fixed (only one die is open at a time)
+ * so a New ▸ Subassembly never burns a real CEC auto-tag — the FINAL tag is minted at Seal ({@link
+ * captureSeal} reads this frame's free-form geom onto the new def). Re-registered (overwritten) on each New;
+ * a never-sealed one is an inert orphan frame kind (no def, not in the bin, gone on reload). */
+const BLANK_SUB_DIE_TAG = "__BLANK_SUB";
+
+/**
+ * Set up a BLANK FREE-FORM subassembly die for the "New ▸ Subassembly" builder (§4.10): register a
+ * provisional free-form die frame ({@link BLANK_SUBASSEMBLY_GEOM}) and build a die graph holding just that
+ * frame (empty interior). Returns the die graph + frame id + die-frame kind to drill into. NO def is
+ * registered yet — the box, pins, and circuit are shaped by hand, then `Seal` ({@link captureSeal}, free-
+ * form-aware) mints the real tag and banks the fragment with its geometry. A power-less fragment (e.g. a
+ * transmission gate — no VCC/GND) seals because a subassembly need not solve standalone. Registry only —
+ * never the netlist or the golden.
+ */
+export function createBlankFreeFormSubassembly(): {
+  dieGraph: GraphSnapshot;
+  frameId: number;
+  dieKind: string;
+} {
+  const geom: FreeFormGeom = {
+    w: BLANK_SUBASSEMBLY_GEOM.w,
+    h: BLANK_SUBASSEMBLY_GEOM.h,
+    pins: BLANK_SUBASSEMBLY_GEOM.pins.map((p) => ({ ...p })),
+  };
+  const dieKind = registerFreeFormFrame(BLANK_SUB_DIE_TAG, geom);
+  const g = new BoardGraph();
+  // Anchor the die frame where the die editor frames it (mirrors the region capture's origin).
+  const frame = g.place(dieKind, { col: 8, row: 8 });
+  if (!frame) throw new Error("createBlankFreeFormSubassembly: place failed");
+  return { dieGraph: g.serialize(), frameId: frame.id, dieKind };
+}
+
 /** Forget a sealed IC (and unregister its kind). When `tag` is a multi-variant FAMILY, this cascades:
  * the family tag's own REGISTRY/PART_KINDS entry, every child `"<family>#i"` REGISTRY entry, and the
  * FAMILIES row are all dropped (else the child defs would linger as orphans). A plain IC just drops
@@ -1291,6 +1339,23 @@ export function captureSeal(
     ? { pinRoles: derivedRoles }
     : {};
 
+  // A FREE-FORM die frame (a hand-built "New ▸ Subassembly" block) carries its own box + pin geometry in
+  // the registry — attach it so the sealed def keeps that exact layout (else `userIcPartKind` would lay the
+  // footprint out from the BLOCK package and lose the hand-placed pins). Mirrors `resealUserIc`. Absent for
+  // a normal package-authored seal, so every existing seal/save stays byte-identical.
+  const ffGeom = isFreeFormFrame(frame.kind)
+    ? freeFormGeom(frame.kind)
+    : undefined;
+  const freeFormField = ffGeom
+    ? {
+        freeForm: {
+          w: ffGeom.w,
+          h: ffGeom.h,
+          pins: ffGeom.pins.map((p) => ({ ...p })),
+        },
+      }
+    : {};
+
   const tag = trimmed || nextAutoTag();
   registerUserIc({
     tag,
@@ -1300,6 +1365,7 @@ export function captureSeal(
     graph: snapshot,
     ...pinNamesField,
     ...pinRolesField,
+    ...freeFormField,
     // role defaults to 'ic' (absent) so every existing seal/save is byte-identical; only a free-form
     // box-capture (P4) passes 'subassembly'. A package-authored seal stays board-placeable directly.
     ...(role && role !== "ic" ? { role } : {}),

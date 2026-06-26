@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (167) — New ▸ Subassembly = the FREE-FORM builder (hand-built pinout)
+
+Owner building a transmission gate (4 pins, no VCC/GND): the region box refused (no crossings) and New ▸
+Subassembly opened the stale generic-BLOCK builder, not the free-form one. Unified. Web/registry only,
+golden untouched, 136 web tests, full gate green.
+- ~~**New ▸ Subassembly births a FREE-FORM block**~~ — `createBlankFreeFormSubassembly()` (default box +
+  4 edge pins, no def yet) + drill via the fresh-seal path (`frameId:-1`, no editingTag, `freshBlank`); the
+  box/pin controls + resize bloom light up. Replaces `ensureFrameKind("BLOCK",8)`.
+- ~~**Add/remove pins in the free-form builder**~~ — `addFreeFormPin`/`removeFreeFormPin` (board.ts) +
+  `firstFreePerimeterCell` (boardRender.ts, tested) + die-bar "Pins" −/+ for free-form.
+- ~~**captureSeal preserves free-form geometry**~~ — attaches `freeForm` to the sealed def (mirrors
+  resealUserIc); else a fresh free-form seal lost the box/pins. Tested.
+- ~~**Fresh subassembly seal bypasses the solvability gate**~~ — a power-less fragment (TG) banks; pill +
+  gate in lock-step.
+- [ ] **Eyeball (owner):** the in-drill builder feel; default box/pin layout; the bin-only result.
+- [ ] Follow-ups: seal-time pin-role hints; Save-resume for a fresh blank (needs a placeholder); maybe a
+  "place subassembly on the board directly" affordance vs Tape out.
+
+---
+
 ## 2026-06-26 (166) — CHIP BENCH course-correct: strip overworld editing, move bloom into the drill
 
 Owner: *"Strip the overworld and move the bloom and everything into the drill."* The overworld

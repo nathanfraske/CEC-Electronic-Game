@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (167) — New ▸ Subassembly = the FREE-FORM builder (hand-built pinout, fragment seals)
+
+**State:** 🟢 **about to PR**. Web/registry only, **golden untouched** (no Rust), 136 web tests (+6), full web
+gate green. Owner hit a wall building a transmission gate (4 pins SEL_BAR/OUT/IN/SEL, no VCC/GND): the
+region box refused ("no wires cross") and **New ▸ Subassembly opened the wrong builder** — the stale generic
+**BLOCK "Pins"** die (fixed pin layout), NOT the **free-form "Box"** die (hand-placed/named pins + the resize
+bloom). Two different tools. Now unified.
+
+**Root cause:** `newBlankDie("subassembly")` did `ensureFrameKind("BLOCK", 8)` → a stock `__DIE_BLOCK8`
+package frame (`isFreeFormFrame` false → no box/pin editing, no bloom), despite its comment claiming
+"FREE-FORM block." It predated the region-capture free-form model and never got updated.
+
+**Fix (the unify):**
+- **`newBlankDie("subassembly")` → `newBlankSubassembly()`** (App.svelte): births a blank FREE-FORM block via
+  new **`createBlankFreeFormSubassembly()`** (userIc.ts) — registers a provisional `__DIE_FF___BLANK_SUB`
+  frame (default box 9×7, 4 edge-centred pins) + a die graph (frame only), **no def yet**. Drills in with
+  `drill.frameTag = __DIE_FF_*`, `frameId:-1`, **no `editingTag`** (so the seal bar shows the NAME field +
+  "Seal", and captureSeal mints the tag), `freshBlank:true`. → the free-form Box/Pins controls + the resize
+  bloom all light up. IC path unchanged (DIP-8).
+- **Add/remove pins in the free-form builder** (board.ts): `addFreeFormPin` (append at the first free
+  perimeter cell — new pure `firstFreePerimeterCell` in boardRender.ts, tested) / `removeFreeFormPin` (drop
+  the top index + its wires/names, mirrors `setDieFramePins`). Shared `reregisterFreeForm` helper (extracted
+  from `setDieFrameBox`). Wired to a new die-bar **"Pins" −/+** for free-form (alongside the **Box** W/H);
+  `freeFormBoxSize()` now also returns the pin count. Undoable (Phase 0 geom undo).
+- **`captureSeal` is now FREE-FORM-AWARE** (userIc.ts): attaches the frame's `freeForm` geom to the sealed
+  def (mirrors `resealUserIc`) — else a fresh free-form seal fell back to a stock BLOCK footprint and lost
+  the hand-built box/pins. Absent for normal package seals → existing seals/saves byte-identical. Tested.
+- **Fragment seal gate** (App.svelte `dieSeal` + the `dieStatus` pill, kept in lock-step): a **fresh**
+  subassembly seal (`sealAsSubassembly`) now bypasses the solvability gate too, not just a reseal — so a
+  power-less TG (can't solve standalone) banks. captureSeal still reads the RAW parts (golden-safe).
+- **`freshBlank`**: Back/Cancel discards the provisional (no orphan def — none was registered; the inert
+  frame kind is overwritten next New). **Save is hidden** for a fresh blank (no placeholder to resume) — Seal
+  is the only way to keep it; the Back tooltip says so.
+
+**Result:** New ▸ Subassembly → resize the box (drag handles or W/H), add/name/move/remove pins by hand
+(Pins ± / dbl-click / Alt-drag), build the circuit, name it, **Seal** → lands in My Subassemblies (reached via
+the place flow / Tape out). A standalone, power-less, custom-pinout part with NO region crossings.
+
+**Known v1 limits (eyeball):** the sealed subassembly is bin-only (nested-only — place via Tape out, as
+before); a fresh blank can't be Save-resumed (Seal to keep). Owner reviews the in-drill feel.
+
+---
+
 ## 2026-06-26 (166) — CHIP BENCH course-correct: STRIP overworld editing → move the bloom INTO the drill
 
 **State:** 🟢 **about to PR**. Web/interaction only, **golden untouched** (no Rust/sim-core touched), 130

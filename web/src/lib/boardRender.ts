@@ -876,3 +876,26 @@ export function snapToBoxEdge(
   if (m === dLeft) return { dx: 0, dy: cy };
   return { dx: w - 1, dy: cy };
 }
+
+/**
+ * The first UNOCCUPIED perimeter cell of a `w×h` free-form box, scanning the edges in order — top
+ * (left→right), right (top→bottom), bottom (right→left), left (bottom→top) — skipping any cell already
+ * carrying a pin. Where a newly-added free-form lead lands so it doesn't stack on an existing one. Falls
+ * back to the top-left corner if the whole perimeter is taken (a hard-packed tiny box — a rare visual nit,
+ * never a netlist one: leads stay distinct by INDEX). Pure geometry (no Pixi), matching the box-edge
+ * convention {@link snapToBoxEdge} / `clampPinToBox` keep; returned as `{dx, dy}` for a `FreeFormGeom` pin.
+ */
+export function firstFreePerimeterCell(
+  pins: { dx: number; dy: number }[],
+  w: number,
+  h: number,
+): { dx: number; dy: number } {
+  const taken = new Set(pins.map((p) => `${p.dx},${p.dy}`));
+  const free = (dx: number, dy: number): boolean => !taken.has(`${dx},${dy}`);
+  for (let dx = 0; dx < w; dx++) if (free(dx, 0)) return { dx, dy: 0 }; // top
+  for (let dy = 1; dy < h; dy++) if (free(w - 1, dy)) return { dx: w - 1, dy }; // right
+  for (let dx = w - 2; dx >= 0; dx--)
+    if (free(dx, h - 1)) return { dx, dy: h - 1 }; // bottom
+  for (let dy = h - 2; dy >= 1; dy--) if (free(0, dy)) return { dx: 0, dy }; // left
+  return { dx: 0, dy: 0 };
+}

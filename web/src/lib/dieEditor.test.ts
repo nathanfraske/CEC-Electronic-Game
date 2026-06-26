@@ -10,6 +10,8 @@ import {
   framePackage,
   isFrame,
   isDieFrame,
+  isFreeFormFrame,
+  freeFormGeom,
   dieFrameTag,
   PART_KINDS,
 } from "./graph";
@@ -29,7 +31,12 @@ import {
   placeableFrameTag,
   type InnerDie,
 } from "./dieEditor";
-import { getUserIc, unregisterUserIc, captureSeal } from "./userIc";
+import {
+  getUserIc,
+  unregisterUserIc,
+  captureSeal,
+  createBlankFreeFormSubassembly,
+} from "./userIc";
 
 function place(
   g: BoardGraph,
@@ -647,5 +654,56 @@ describe("die editor — recognising a raw saved DIE graph", () => {
     place(g, "SOT23_5", 2, 2);
     place(g, "V", 0, 0, 5);
     expect(isStandaloneDieGraph(g.serialize())).toBe(false);
+  });
+});
+
+describe("New ▸ Subassembly — blank FREE-FORM die + free-form-preserving seal", () => {
+  it("births a blank free-form die (default box + 4 pins) with NO def yet", () => {
+    const { dieGraph, frameId, dieKind } = createBlankFreeFormSubassembly();
+    try {
+      // The die frame is a FREE-FORM frame (so the editor shows the box/pin builder + the bloom).
+      expect(isFreeFormFrame(dieKind)).toBe(true);
+      const frame = dieGraph.components.find((c) => c.id === frameId)!;
+      expect(frame.kind).toBe(dieKind);
+      // Default geometry: a roomy box with four edge-centred pins, empty interior.
+      const geom = freeFormGeom(dieKind)!;
+      expect(geom.pins.length).toBe(4);
+      expect(dieGraph.components.length).toBe(1); // just the frame — nothing wired yet
+      // It registers NO UserIc def — the tag is minted only at Seal (so Back leaves no orphan in the bin).
+      expect(getUserIc(dieKind)).toBeUndefined();
+    } finally {
+      // No def to clean up; the provisional frame kind is inert (overwritten on the next New).
+    }
+  });
+
+  it("seals a power-less FRAGMENT as a subassembly, keeping its free-form box + hand-named pins", () => {
+    // Build a transmission-gate-shaped fragment in the blank die: IN (pin 0) → R → OUT (pin 1), no VCC/GND
+    // (it can't solve standalone — exactly the case the subassembly seal must allow). Then NAME the pads.
+    const { dieGraph, frameId } = createBlankFreeFormSubassembly();
+    const g = new BoardGraph();
+    g.restore(dieGraph);
+    const frame = g.components.get(frameId)!;
+    const r = place(g, "R", 30, 30, 1000);
+    connect(g, frame, 0, r, 0); // pin 0 (IN) → R.A
+    connect(g, frame, 1, r, 1); // pin 1 (OUT) → R.B
+    frame.pinNames = ["IN", "OUT", "SEL", "SEL_BAR"];
+
+    // captureSeal itself never checks solvability (the App's gate does) — it just banks the parts.
+    const cap = captureSeal(g, frameId, "TGATE", undefined, "subassembly");
+    expect(cap).not.toBeUndefined();
+    try {
+      const ic = getUserIc("TGATE")!;
+      // role rode through as a nested-only subassembly...
+      expect(ic.role).toBe("subassembly");
+      // ...the hand-named pads rode through...
+      expect(ic.pinNames).toEqual(["IN", "OUT", "SEL", "SEL_BAR"]);
+      // ...and the FREE-FORM geometry was preserved (the fix — else the footprint would fall back to a
+      // stock BLOCK layout and lose the hand-built box/pins).
+      expect(ic.freeForm).toBeDefined();
+      expect(ic.freeForm!.pins.length).toBe(4);
+      expect(ic.package).toEqual({ archetype: "BLOCK", pinCount: 4 });
+    } finally {
+      unregisterUserIc("TGATE");
+    }
   });
 });

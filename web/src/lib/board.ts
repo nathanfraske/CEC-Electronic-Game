@@ -116,6 +116,7 @@ import {
   frameLeadRoute,
   routeForWire,
   snapToBoxEdge,
+  firstFreePerimeterCell,
   voltageColor,
   type Dir,
   type BoardLens,
@@ -2246,14 +2247,14 @@ export class Board {
     return !!frame && isFreeFormFrame(frame.kind);
   }
 
-  /** The free-form die's current box size in cells (for the editor's "Box W×H" readout), or null when the
-   * die isn't free-form. */
-  freeFormBoxSize(): { w: number; h: number } | null {
+  /** The free-form die's current box size in cells + pin count (for the editor's "Box W×H" / "Pins"
+   * readouts), or null when the die isn't free-form. */
+  freeFormBoxSize(): { w: number; h: number; pins: number } | null {
     if (this.dieFrameId === null) return null;
     const frame = this.graph.components.get(this.dieFrameId);
     if (!frame || !isFreeFormFrame(frame.kind)) return null;
     const geom = freeFormGeom(frame.kind);
-    return geom ? { w: geom.w, h: geom.h } : null;
+    return geom ? { w: geom.w, h: geom.h, pins: geom.pins.length } : null;
   }
 
   /**
@@ -2299,12 +2300,21 @@ export class Board {
     if (recordUndo) this.pushUndo(this.graph.serialize());
     // Re-pin each lead onto the NEW perimeter: keep the side it was on, clamp the along-edge coordinate.
     const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, nw, nh));
-    registerFreeFormFrame(frame.kind.slice(FREE_FORM_DIE_PREFIX.length), {
-      w: nw,
-      h: nh,
-      pins,
-    });
-    // Rebuild the frame node so its pins reflect the new box; redraw walls + wires + selection (the bloom).
+    this.reregisterFreeForm(frame, fid, { w: nw, h: nh, pins });
+    return true;
+  }
+
+  /** Re-register the open free-form die frame with new geometry and refresh everything: rebuild the frame
+   * node (so its pins reflect the new box/count), redraw walls + wires + the bloom, and fire change /
+   * persist / inspector. Shared by {@link setDieFrameBox} (box) and {@link addFreeFormPin} /
+   * {@link removeFreeFormPin} (pin count). Render + registry only — the pin INDEX order is preserved, so
+   * inner wires follow and the kind tag is stable; never the solve or the hash. */
+  private reregisterFreeForm(
+    frame: Component,
+    fid: number,
+    geom: FreeFormGeom,
+  ): void {
+    registerFreeFormFrame(frame.kind.slice(FREE_FORM_DIE_PREFIX.length), geom);
     const node = this.nodes.get(fid);
     if (node) {
       node.destroy();
@@ -2317,6 +2327,54 @@ export class Board {
     this.cb.onChange?.(this.graph);
     this.cb.onPersist?.(this.graph);
     this.emitSelect();
+  }
+
+  /**
+   * Add a pin to the open FREE-FORM die (the §4.10 builder's "add a pin"): append a lead at the first free
+   * perimeter cell ({@link firstFreePerimeterCell}, so it doesn't stack on an existing one), re-register the
+   * frame geom in place, and refresh. The new pin is the HIGHEST index (unconnected / NC), so every existing
+   * wire's frame-pin index is untouched and the netlist is unchanged until the player wires it. No-op
+   * (false) outside a free-form die or at {@link BLOCK_MAX_PINS}. Undoable; render + registry only.
+   */
+  addFreeFormPin(): boolean {
+    if (this.dieFrameId === null) return false;
+    const fid = this.dieFrameId;
+    const frame = this.graph.components.get(fid);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom || geom.pins.length >= BLOCK_MAX_PINS) return false;
+    this.pushUndo(this.graph.serialize());
+    const cell = firstFreePerimeterCell(geom.pins, geom.w, geom.h);
+    const pins = [...geom.pins.map((p) => ({ ...p })), { ...cell }];
+    this.reregisterFreeForm(frame, fid, { w: geom.w, h: geom.h, pins });
+    return true;
+  }
+
+  /**
+   * Remove the HIGHEST-index pin from the open FREE-FORM die (the §4.10 builder's "remove a pin"): drop any
+   * wire landing on it and truncate the frame's pin names/tests (mirrors {@link setDieFramePins}'s shrink),
+   * pop the geom pin, re-register, and refresh. Removing the TOP index leaves every lower pin's index — and
+   * thus every other incident wire — untouched. No-op (false) outside a free-form die or at one pin (a chip
+   * needs a lead). Undoable; render + registry only.
+   */
+  removeFreeFormPin(): boolean {
+    if (this.dieFrameId === null) return false;
+    const fid = this.dieFrameId;
+    const frame = this.graph.components.get(fid);
+    if (!frame || !isFreeFormFrame(frame.kind)) return false;
+    const geom = freeFormGeom(frame.kind);
+    if (!geom || geom.pins.length <= 1) return false;
+    this.pushUndo(this.graph.serialize());
+    const last = geom.pins.length - 1;
+    const onRemoved = (e: Endpoint): boolean =>
+      isPinRef(e) && e.componentId === fid && e.pinIndex === last;
+    for (const w of [...this.graph.wires.values()]) {
+      if (onRemoved(w.from) || onRemoved(w.to)) this.graph.removeWire(w.id);
+    }
+    if (frame.pinNames) frame.pinNames = frame.pinNames.slice(0, last);
+    if (frame.pinTests) frame.pinTests = frame.pinTests.slice(0, last);
+    const pins = geom.pins.slice(0, last).map((p) => ({ ...p }));
+    this.reregisterFreeForm(frame, fid, { w: geom.w, h: geom.h, pins });
     return true;
   }
 
