@@ -6,6 +6,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (168) — Integration-tier SCALING + two audits' HIGH fixes (all merged)
+
+Web/registry only, golden untouched, 143 web tests, full gate green. PRs #238–#242.
+- ~~**Scaling Phase 1**~~ — tier-driven compact footprint (`compactFreeFormGeom` uniform replica floored to
+  distinct grid cells; `TIER_FOOTPRINT_SCALE`; driven by `integrationTier`/`countGraphDevices`) + die-bar
+  tier readout. Per `docs/ui/integration-tier-scaling.md` (§5 owner-overridden to a literal replica). (#239,#240)
+- ~~**Audit A HIGHs**~~ — name-collision seal guard; characterization refuses multi-output/clocked/no-GND/
+  >4-input with a reason; reseal drops stale behavior; WIRE-mode pin reachability; swapGraph cross-boundary
+  cleanup. (#238)
+- ~~**Audit B (scaling) HIGHs**~~ — memoized `countDevices` (was exponential); ≥44px hit-floor on compacted
+  tiles. (#241)
+- ~~**Audit A round-2 HIGH (#5)**~~ — save scans in-progress die graphs too (`userIcsForGraphs`/
+  `userIcFamiliesForGraphs`), so a sub placed only inside an unsealed die round-trips. (#242)
+- [ ] Scaling LOW: edge-pin side-flip on narrow/tall clamp; pre-stacked dup pins; zoom-to-open gate on
+  on-screen size; wire-waypoint re-anchor on rescale.
+- [ ] Scaling later phases: die-shrink/promotion animations, band-edge hysteresis, tier badge tie-in.
+- [ ] Audit A round-2 (med/low): tri-state characterization detect; reseal re-derive pinRoles; feedback
+  (no-CLK) latch still slips the characterize gate; clk PinTest stimulus; >4-input tiling; unregister
+  free-form orphan; variant-0 clone; non-stock BLOCK die-frame reload; lastPinTap-after-drag.
+- [ ] CPU memory primitive (RAM/ROM/non-volatile) — the one real engine gap for a programmable CPU.
+
+---
+
 ## 2026-06-26 (167) — New ▸ Subassembly = the FREE-FORM builder (hand-built pinout)
 
 Owner building a transmission gate (4 pins, no VCC/GND): the region box refused (no crossings) and New ▸

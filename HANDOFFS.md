@@ -5,6 +5,58 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (168) — Integration-tier SCALING (Phase 1) + two audits' fixes — all live on main
+
+**State:** 🟢 all merged to `main` (`ffbaba8`). Web/registry only, **golden untouched** (no Rust this whole
+run), 143 web tests, full gate green. Big run: shipped the subassembly scaling + ran two adversarial audits
+and fixed every HIGH. PRs #235–#242.
+
+**Scaling (per `docs/ui/integration-tier-scaling.md`, panel-authored, §5 owner-overridden to a literal
+uniform-scaled replica):**
+- A placed FREE-FORM subassembly's footprint is now a **literal uniform-scaled replica** sized by its
+  **integration tier** (recursive device count → `TIER_FOOTPRINT_SCALE`: SSI 1.0 / MSI .6 / LSI .4 /
+  VLSI .25 / ULSI .15). The choke point is `userIcPartKind`'s free-form branch → `compactFreeFormGeom`
+  (ONE uniform factor, floored so rounded pins stay on DISTINCT integer cells — never a de-collide
+  relayout; `ic.freeForm` itself unchanged = die editor/walls/zoom-to-open keep the full geom). Nesting
+  compounds for free via the existing zoom-to-open `cumulativeScale`. So building more into a cell + reseal
+  steps it up a tier and shrinks it. (#239)
+- Die-bar **tier readout** "SSI · 5 dev · shrinks at MSI (12)" so the tier-gating is legible while building
+  (`countGraphDevices` + `tierForDeviceCount` + `INTEGRATION_TIER_MIN`). (#240)
+
+**Audit A (chip-bench, registry/characterization/nesting/determinism/builder) — HIGH fixes (#238):**
+name-collision guard (a fresh seal/region with an existing name is refused, not a silent overwrite);
+characterization REFUSES unsupported cells with a reason (multi-output, clocked/CLK-pin, no-GND pass gate,
+>4-input) instead of garbage; `resealUserIc` drops a stale `behavior`; WIRE-mode frame-pin reachability (my
+re-align regression); `swapGraph` cancels pending wire / clears drag + tap state.
+
+**Audit B (scaling completion) — HIGH fixes (#241):** `countDevices` MEMOIZED (was exponential on a
+diamond/reuse hierarchy — froze on register/load); `componentBox` ≥44px on-screen hit-floor for user-ICs
+(a compacted VLSI/ULSI tile was an unselectable speck — a Phase-1 deliverable I'd missed).
+
+**Audit A round-2 HIGH (#242):** save now scans the outer board AND every in-progress (unsealed) die graph
+(`userIcsForGraphs`/`userIcFamiliesForGraphs`) — a sub placed only inside a half-built die is embedded, so
+it's not an unknown kind on reload. **All HIGHs from both audits now done.**
+
+**Earlier in the session (#235–#237):** stripped the overworld device editing + moved the bloom into the
+drill; New ▸ Subassembly = the free-form builder (blank free-form def, fragment seals, captureSeal re-tags
+the frame to its own die kind = no sibling geometry bleed); the builder re-align (grab-the-wall resize +
+SHAPE/WIRE toggle replacing Alt-drag + fat beads, per the device-editing panel).
+
+**BACKLOG (all LOW/medium polish — no HIGHs left):**
+- Scaling LOW (audit B): edge-pin side-flip on a narrow/tall box clamp; σ=1 fallback can't separate
+  PRE-stacked dup pins; zoom-to-open trigger should gate on ON-SCREEN body size (a tiny IC opens internals
+  while a speck, §6.2a); wire waypoints not re-anchored on a reseal rescale (kink, never detach).
+- Scaling later PHASES (per the doc): die-shrink/promotion **animations**, band-edge **hysteresis**, tier
+  **badge** tie-in.
+- Audit A round-2 mediums/lows: tri-state characterization detection (#8); reseal re-derive `pinRoles` (#9);
+  feedback-latch (no-CLK SR) characterization still slips the gate; `clk` PinTest stimulus; >4-input
+  tiling; unregister free-form orphan cleanup; variant-0 shared-ref clone; non-stock BLOCK die-frame
+  re-register on load; `lastPinTap`-after-drag.
+- **CPU memory primitive** (RAM/ROM/non-volatile) if the owner wants programmable memory (see the earlier
+  CPU-readiness analysis) — the one real engine gap for a full CPU.
+
+---
+
 ## 2026-06-26 (167) — New ▸ Subassembly = the FREE-FORM builder (hand-built pinout, fragment seals)
 
 **State:** 🟢 **about to PR**. Web/registry only, **golden untouched** (no Rust), 136 web tests (+6), full web
