@@ -2414,6 +2414,7 @@ export class Board {
     );
     if (dx === cur.dx && dy === cur.dy) return; // still on the same cell — nothing to redraw
     this.pinDrag.moved = true;
+    this.lastPinTap = null; // a real drag isn't a tap — don't let a quick follow-up tap read as a double-tap
     const pins = geom.pins.map((p, k) => (k === i ? { ...p, dx, dy } : p));
     registerFreeFormFrame(frame.kind.slice(FREE_FORM_DIE_PREFIX.length), {
       w: geom.w,

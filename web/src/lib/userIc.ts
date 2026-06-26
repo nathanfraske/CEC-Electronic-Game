@@ -585,9 +585,20 @@ export function resealUserIc(
     prev.behavior && prev.behavior.sig === cellBehaviorSig(graph)
       ? prev.behavior
       : undefined;
-  // Spread the prior def so EVERY field rides through — notably `role` and `pinRoles` (audit blocker:
-  // re-editing + resealing a captured subassembly otherwise flipped it back to a board IC). The edited
-  // inner graph / frame id / pin names / free-form geometry / stale behavior are overridden.
+  // Re-derive semantic pin ROLES from the resealed frame's stimuli + names (audit): editing a sub's pins /
+  // stimuli must update its roles, not keep the stale capture-time ones (Tape-out + the characterize sweep
+  // read them). Fall back to prev.pinRoles when nothing resolves, so a reseal that sets no stimuli doesn't
+  // wipe good roles.
+  const effectiveNames = keep ? pinNames : prev.pinNames;
+  const rederived = derivePinRoles(
+    effectiveNames,
+    frame?.pinTests,
+    prev.package.pinCount,
+  );
+  const pinRoles = rederived.some((r) => r) ? rederived : prev.pinRoles;
+  // Spread the prior def so EVERY field rides through — notably `role` (audit blocker: re-editing +
+  // resealing a captured subassembly otherwise flipped it back to a board IC). The edited inner graph /
+  // frame id / pin names / free-form geometry / stale behavior / re-derived roles are overridden.
   registerUserIc({
     ...prev,
     frameId,
@@ -595,6 +606,7 @@ export function resealUserIc(
     freeForm,
     pinNames: keep ? [...pinNames] : prev.pinNames,
     behavior,
+    pinRoles,
   });
 }
 
@@ -1235,10 +1247,23 @@ export function compactFreeFormGeom(
     const s = i / 20;
     const w = Math.max(2, Math.round((ff.w - 1) * s) + 1);
     const h = Math.max(2, Math.round((ff.h - 1) * s) + 1);
+    // Preserve which EDGE each pin sits on — a true replica must never flip a right-wall pin to the left
+    // (which the bare round+clamp does on a narrow box at a small scale). A pin on an original edge maps to
+    // the SAME edge of the scaled box; an along-edge coordinate scales proportionally.
     const pins = ff.pins.map((p) => ({
       ...p,
-      dx: Math.min(w - 1, Math.max(0, Math.round(p.dx * s))),
-      dy: Math.min(h - 1, Math.max(0, Math.round(p.dy * s))),
+      dx:
+        p.dx === 0
+          ? 0
+          : p.dx === ff.w - 1
+            ? w - 1
+            : Math.min(w - 1, Math.max(0, Math.round(p.dx * s))),
+      dy:
+        p.dy === 0
+          ? 0
+          : p.dy === ff.h - 1
+            ? h - 1
+            : Math.min(h - 1, Math.max(0, Math.round(p.dy * s))),
     }));
     const distinct = new Set(pins.map((p) => `${p.dx},${p.dy}`)).size;
     if (distinct === pins.length) return { w, h, pins };
