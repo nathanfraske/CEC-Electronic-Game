@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (163) — CHIP BENCH Phase 1b: bloom RENDER (resize handles)
+
+**State:** 🟢 **about to PR**. Web/render only, golden untouched, 132 web tests, full gate green. Owner:
+"keep on, I'll review as you go." Building the spatial bloom in eyeball-able slices — **render first** (this),
+**drag wiring next** — since I can't run the app and the owner catches the visual issues.
+
+**This slice (render only):** a single placed FREE-FORM subassembly selected on the overworld now "blooms"
+— `drawBloom(g)` (called from `redrawSelection`) draws a brighter accent frame + three box-resize HANDLES
+(right edge, bottom edge, SE corner) on its `componentBox`. `bloomTarget()` = the lone selected free-form
+user-IC component when not drilled. `BLOOM_HANDLE_R=7` world px (scales with zoom, like the selection ring).
+**Handles are VISUAL ONLY this slice** — the drag interaction (hit-test → per-step `setDeviceBox` with one
+undo) is the next slice; resize today is still the inspector W±/H± steppers (1a).
+
+**NEXT:** wire the handle drag (refactor `resizeUserIcBox`→`setDeviceBox(id,w,h,recordUndo)`; `boxHandleDrag`
+state; hit-test in onPointerDown before the pin/body tests; pendingUndo→commit-on-first-move). Then pin beads
++ pin-drag (SHAPE mode), role badges, etc.
+
+---
+
 ## 2026-06-26 (162) — CHIP BENCH Phase 1a: edit a placed device's box in the overworld
 
 **State:** 🟢 **about to PR**. Web only, golden untouched, **132 web tests** (+2), full gate green. First
