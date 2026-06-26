@@ -57,6 +57,7 @@ import {
   previewRegion,
   isUserIc,
   getUserIc,
+  recognizeGate,
   type UserIc,
   type RegionCapture,
   type RegionBox,
@@ -64,6 +65,7 @@ import {
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
+  drawGateBodySymbol,
   flowStabilized,
   isSymbol,
   setGlyphStyle,
@@ -7222,6 +7224,9 @@ class ComponentNode {
   // The full-panel analogy/reality illustration, centred on the part and shown only
   // when the lens + zoom call for it (below the schematic glyph so pin dots sit on top).
   private readonly tierGlyph = new Graphics();
+  // The optional GATE SYMBOL for a CHARACTERIZED cell recognised as a gate (NAND/XOR/…), drawn centred
+  // on the body and faded with the name label as you zoom toward the open replica.
+  private readonly symbolGlyph = new Graphics();
   // The zoom-to-open mini-board's inner-part glyphs (a pool of scaled child Graphics, one per inner
   // part). Lives under the rotated glyph holder so the miniature inherits the instance's rotation;
   // populated by `drawUserIcInternals` only for a sealed USER IC zoomed in (hidden otherwise).
@@ -7294,6 +7299,7 @@ class ComponentNode {
     this.glyphHolder.addChild(this.connectorGlyph);
     this.glyphHolder.addChild(this.tierGlyph);
     this.glyphHolder.addChild(this.glyph);
+    this.glyphHolder.addChild(this.symbolGlyph); // the gate face sits ON the package body
     // The mini-board's inner-part glyphs sit ABOVE the wires drawn into `glyph` (symbols on top of
     // their traces, like internalsView) but start hidden — only a zoomed-in sealed USER IC shows them.
     this.userIcGlyphs.visible = false;
@@ -7538,12 +7544,40 @@ class ComponentNode {
     // A sealed USER IC's package designator (parked at the body centre) fades out as you zoom in toward
     // the open replica, so the inner circuit isn't covered by the part name (owner: "when you zoom in
     // the text on the package should become transparent"). Non-ICs keep their label fully opaque.
+    this.symbolGlyph.clear();
+    this.symbolGlyph.visible = false;
     if (isUserIc(this.kindTag)) {
       const fadeStart = INTERNALS_ZOOM - 1; // begin fading ~one zoom-step before the replica opens
-      this.label.alpha = Math.max(
+      const fadeAlpha = Math.max(
         0,
         Math.min(1, 1 - (zoom - fadeStart) / (INTERNALS_ZOOM - fadeStart)),
       );
+      // A characterized cell recognised as a gate wears that gate's schematic symbol on its body (like a
+      // real logic chip), in place of the name designator, fading with the SAME rule as the label.
+      const gdef = getUserIc(this.kindTag);
+      const gname = gdef?.behavior
+        ? recognizeGate(
+            gdef.behavior.word,
+            gdef.pinRoles?.filter((r) => r === "in").length ?? 0,
+          )
+        : null;
+      if (gname) {
+        this.symbolGlyph.visible = true;
+        this.symbolGlyph.alpha = fadeAlpha;
+        const s = Math.min(this.wPx, this.hPx);
+        drawGateBodySymbol(
+          this.symbolGlyph,
+          gname,
+          this.wPx / 2,
+          this.hPx / 2,
+          s * 0.34,
+          s * 0.27,
+          this.color,
+        );
+        this.label.alpha = 0; // the symbol is the body identity; hide the name
+      } else {
+        this.label.alpha = fadeAlpha;
+      }
     } else {
       this.label.alpha = 1;
     }
