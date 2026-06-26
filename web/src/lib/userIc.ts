@@ -1135,13 +1135,37 @@ function countDevices(def: UserIc, path: Set<string>): number {
  * bin uses it as a sort/group key + badge. (Thresholds are tunable; game-scaled to player builds, not
  * the literal textbook transistor decades.)
  */
-export function integrationTier(def: UserIc): IntegrationTier {
-  const n = countDevices(def, new Set());
+/** Device count → integration-tier band (the thresholds, in ONE place). */
+export function tierForDeviceCount(n: number): IntegrationTier {
   if (n < 12) return "SSI";
   if (n < 100) return "MSI";
   if (n < 1000) return "LSI";
   if (n < 100000) return "VLSI";
   return "ULSI";
+}
+
+/** The device count at which each tier ABOVE SSI begins — so the die editor can show "shrinks at MSI (12)"
+ * and the player grasps that scaling is tier-GATED (a small cell stays full size until it crosses a band). */
+export const INTEGRATION_TIER_MIN: Record<
+  Exclude<IntegrationTier, "SSI">,
+  number
+> = { MSI: 12, LSI: 100, VLSI: 1000, ULSI: 100000 };
+
+export function integrationTier(def: UserIc): IntegrationTier {
+  return tierForDeviceCount(countDevices(def, new Set()));
+}
+
+/** The active-device count of a LIVE die/board graph (the in-progress cell being built): every non-frame
+ * component is one device; a placed user-IC recurses into its def. Lets the die editor surface the live
+ * tier + count so the tier-gated footprint scaling is legible WHILE building (not a surprise at seal). */
+export function countGraphDevices(graph: GraphSnapshot): number {
+  let n = 0;
+  for (const c of graph.components) {
+    if (isFrame(c.kind)) continue;
+    const nested = getUserIc(c.kind);
+    n += nested ? countDevices(nested, new Set()) : 1;
+  }
+  return n;
 }
 
 /**

@@ -78,6 +78,9 @@
     hasUserIcVariants,
     userIcFamilyTargets,
     integrationTier,
+    tierForDeviceCount,
+    countGraphDevices,
+    INTEGRATION_TIER_MIN,
     tapeOut,
     type UserIc,
     type UserIcFamilySidecar,
@@ -2751,6 +2754,26 @@
     return drill && rev >= 0 ? (board?.freeFormBoxSize() ?? null) : null;
   });
 
+  /** Live INTEGRATION-TIER readout for the die being built: its recursive device count, the tier that count
+   * lands in, and (if any) the next tier + the count that reaches it. Surfaced in the die bar so the
+   * tier-GATED footprint scaling is legible — the player sees their cell is e.g. "SSI · 5 dev" and that it
+   * won't shrink until "MSI (12)", instead of being surprised when a small sealed cell stays full size. */
+  let dieIntegration = $derived.by(() => {
+    const rev = boardRev;
+    if (!drill || !board || rev < 0) return null;
+    const count = countGraphDevices(board.serialize());
+    const tier = tierForDeviceCount(count);
+    const next = (["MSI", "LSI", "VLSI", "ULSI"] as const).find(
+      (t) => count < INTEGRATION_TIER_MIN[t],
+    );
+    return {
+      count,
+      tier,
+      nextTier: next ?? null,
+      nextAt: next ? INTEGRATION_TIER_MIN[next] : null,
+    };
+  });
+
   /** Resize the free-form die's box (pin/box editing, §4.10) by (dw, dh) cells. The kind tag is unchanged
    * (the pin count doesn't move), so `drill.frameTag` stays valid; the readout follows via freeFormBox. */
   function changeBox(dw: number, dh: number): void {
@@ -5152,6 +5175,22 @@
               {dieStatus.used}/{dieStatus.total} pins
             </div>
           {/if}
+          {#if dieIntegration}
+            <!-- Integration tier + device count (the footprint-scaling driver): makes the tier-GATED
+                 compaction legible while building — you see the count climb toward the next, smaller tier,
+                 so a small cell staying full size is understood, not surprising. -->
+            <div
+              class="die-tier mono"
+              title={dieIntegration.nextTier
+                ? `${dieIntegration.count} device${dieIntegration.count === 1 ? "" : "s"} → ${dieIntegration.tier}. Placed cells shrink one tier at ${dieIntegration.nextTier} (${dieIntegration.nextAt} devices).`
+                : `${dieIntegration.count} devices → ${dieIntegration.tier} (smallest footprint tier).`}
+            >
+              {dieIntegration.tier} · {dieIntegration.count} dev{#if dieIntegration.nextTier}
+                <span class="die-tier-next"
+                  >· shrinks at {dieIntegration.nextTier} ({dieIntegration.nextAt})</span
+                >{/if}
+            </div>
+          {/if}
           <span
             class="die-hint mono"
             title="Double-click a wall pin to name it"
@@ -7484,6 +7523,19 @@
   .die-status.is-bad {
     color: var(--warn);
     border-color: color-mix(in oklch, var(--warn) 42%, transparent);
+  }
+  .die-tier {
+    font-size: 10px;
+    letter-spacing: 0.06em;
+    white-space: nowrap;
+    padding: 3px 8px;
+    border: 1px solid color-mix(in oklch, var(--accent) 42%, transparent);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--accent);
+  }
+  .die-tier-next {
+    color: var(--dim);
   }
   .die-seal-name {
     width: 150px;
