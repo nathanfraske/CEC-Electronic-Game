@@ -283,6 +283,18 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const domW = domMaxX - domMinX;
   const domH = domMaxY - domMinY;
   const bodyB = userIcBodyBox(pins, wPx, hPx, freeForm);
+  // LAYER BACKGROUND (depth-alternating, owner refinement): each opened level tints its interior a step
+  // off its parent so the dive reads as discrete strata — the dark overworld → a lighter first layer → a
+  // darker next → lighter again. Even depths lighten, odd depths darken; drawn into `g` (glyph-local) over
+  // the package body and UNDER the scaled inner circuit (partLayer), so the traces still read on top.
+  {
+    const lighten = depth % 2 === 0;
+    const r = Math.min(bodyB.w, bodyB.h) * 0.06;
+    g.roundRect(bodyB.x, bodyB.y, bodyB.w, bodyB.h, r).fill({
+      color: lighten ? 0xffffff : 0x000000,
+      alpha: lighten ? 0.07 : 0.14,
+    });
+  }
   const centreX = bodyB.x + bodyB.w / 2;
   const centreY = bodyB.y + bodyB.h / 2;
   // Fit to the body rectangle (aspect-preserving), inset for a rim margin; floor each side at PITCH so a
