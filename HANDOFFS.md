@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (169) — Registry-hygiene lows merged + the sequential-characterization (Option A) plan
+
+**State:** 🟢 `main` at `9c2a48f`. Web/registry + docs only, **golden untouched** (no Rust), 146 web
+tests, full gate green.
+
+**Landed (PR #244, merged):** the two registry-hygiene audit lows — **#12** `unregisterUserIc` now
+`unregisterFreeFormFrame`s any def/variant with `freeForm` (no orphaned `__DIE_FF_*` kind left behind);
+**#13** `appendUserIcVariant` `structuredClone`s the re-homed base + caller variant (no shared
+`graph`/`freeForm` refs — same class as the geometry-bleed bugs). 2 new tests.
+
+**Owner direction — "build everything above the primitives."** The player builds the whole digital
+library bottom-up (gates from transistors → … → CPU). This is already the documented north star
+(`gateTemplates.ts` = "build all the gates as subassemblies"; `cmos-*` examples; the
+subassembly+tier+characterization arc is the machinery). The one convenience primitive is `ELEM_GATE` —
+**keep it as optional stock / a reference oracle, don't remove it** (golden + onboarding). The real new
+work is a curriculum ladder (TODO/panel, task #41).
+
+**Owner direction — sequential perf wall: "eat the cost now, plan the fix with A."** Wrote
+**`docs/sequential-cell-characterization-plan.md`** — the focused, as-built plan to let a player-built
+flop/register/counter collapse to the cheap behavioral face. Key finding: **the registered-LUT runtime
+already exists end-to-end** (`beh_lut_step` lib.rs:1554; `mode` slot; the `clk` PinRole; the flatten
+collapse maps `clk`→LUT pin 5, userIc.ts:991) — **only `characterizeCell` refuses clocked cells**
+(characterize.ts:77). So Option A is a **web-side** extension of the characterizer (no sim-core change,
+golden-safe). A1 = single registered LUT (D-type; needs a declared reset + the sequential sweep
+protocol); A2 = fabric of LUT+FF for state-dependent/multi-bit (`Q+ = LUT(inputs)` excludes Q, so
+toggle/JK/counter need Q fed back as an interconnect net). Maps to the existing build-plan P8/P9.
+**Deferred** — `characterize.ts` still refuses clocked cells on purpose; pick up when a sequential array
+makes the per-tick solve stall.
+
+---
+
 ## 2026-06-26 (168) — Integration-tier SCALING (Phase 1) + two audits' fixes — all live on main
 
 **State:** 🟢 all merged to `main` (`ffbaba8`). Web/registry only, **golden untouched** (no Rust this whole

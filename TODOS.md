@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (169) — Registry-hygiene lows + sequential-characterization (Option A) plan
+
+Web/registry + docs only, golden untouched, 146 web tests, full gate green. PR #244 merged.
+- ~~**Registry hygiene #12**~~ — `unregisterUserIc` cleans the paired free-form die-frame kind
+  (`unregisterFreeFormFrame`) for any def/variant with `freeForm` — no orphaned `__DIE_FF_*` kind.
+- ~~**Registry hygiene #13**~~ — `appendUserIcVariant` `structuredClone`s the re-homed base + caller
+  variant so child defs own their `graph`/`freeForm` (no shared refs — the geometry-bleed class).
+- ~~**Sequential-characterization (Option A) plan**~~ — `docs/sequential-cell-characterization-plan.md`:
+  as-built plan to collapse player-built flops/registers to the cheap face. Decision: **eat the cost
+  now** (`characterize.ts` keeps refusing clocked cells); plan is A1 (single registered LUT, D-type) +
+  A2 (LUT+FF fabric for state-dependent/multi-bit), web-side only, golden-safe. Maps to build-plan P8/P9.
+- [ ] **Player-built library / "sand to CPU" curriculum** — panel + design doc (task #41). Ship only the
+  irreducible primitives; curriculum ladder of sealing examples (inverter→NAND→…→CPU); keep `ELEM_GATE`
+  as optional stock/oracle.
+- [ ] **Implement Option A** (deferred) — A1 then A2 per the new doc, when a sequential array stalls the
+  per-tick solve. A1: extend `SweepPins` with clk/reset, sequential sweep protocol, `mode:1`, guard.
+
+---
+
 ## 2026-06-26 (168) — Integration-tier SCALING + two audits' HIGH fixes (all merged)
 
 Web/registry only, golden untouched, 143 web tests, full gate green. PRs #238–#242.
