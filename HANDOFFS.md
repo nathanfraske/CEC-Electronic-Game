@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (171) — Free-form subassembly render fixes + gate symbol + builder QoL
+
+**State:** 🟢 `main` advancing through PRs #247–#249 (web/UI/data-model only, **golden untouched**, 172
+web tests, full gate green each). Owner is building an SR/inverter latch + a CPU from subassemblies and
+rapid-fired bugs + QoL; all addressed.
+
+**PR #247 — free-form render fixes (the latch looked wrong):** the placed/sealed body, the opened-replica
+package, and the inner-circuit FIT all derived geometry from the PIN BBOX → a box whose pins don't reach
+all four edges (latch: VCC/Q left, Qb/GND right) rendered as a short, wide blob. Now a free-form part uses
+its AUTHORED `freeForm` w×h everywhere (`userIcBodyBox(...,freeForm)` → `[0,0,wPx,hPx]` + per-pin edge
+nubs; `userIcInternalsView` passes the flag from the `__DIE_FF_` frame; `registerFreeFormFrame` sets the
+die-frame kind's w/h to the box; `componentBox` uses kind.w/h corners). Also fixed the placed-vs-in-drill
+inverter size. **Nested zoom-to-open** now works UNPOWERED via `userIcGeometryDeep` (static recursion map
+of flatIds), so a placed subassembly opens chip-within-chip to its FETs.
+
+**PR #248 — gate symbol on body:** a characterized cell recognised as a gate (`recognizeGate`) wears that
+gate's ANSI symbol (`drawGateBodySymbol`) in place of the name, fading with the label.
+
+**PR #249 — builder QoL (5):** SHAPE/WIRE toggle decoupled from the Box readout (shows in New▸Subassembly);
+**S/W hotkeys** in a free-form die; **delete one pin** (`removeFreeFormPinAt` + "Delete pin" popover
+button); **auto-stimulus from name** (GND/VCC/IN → live stimulus on commit, `roleFromName` exported);
+**bidirectional `inout` PinRole** (a net is inherently bidir → no extra part; `roleFromName` maps
+IO/INOUT/BIDIR/BUS; `characterizeCell` refuses an inout cell).
+
+**Follow-ups queued:** gate-symbol wired to its pins (owner "later refinement"); an explicit "Bidir"
+button in the pad popover (to mark Q/Qb inout without renaming); nested-replica name labels.
+
+---
+
 ## 2026-06-26 (170) — CPU build kit (programmer + doc) + Option A1 (sequential characterization)
 
 **State:** 🟢 full gate green — cargo (189 sim-core tests, `golden_snapshot_hash_is_stable` ✓), web
