@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (181) — Decoupled pin-RING placed footprint (free-form chips)
+
+On branch `claude/kind-turing-hdelb3` (awaiting owner merge). Web-only, golden untouched, 194 web tests.
+- ~~**Pin-ring footprint repack**~~ — `packFreeFormFootprint` (`userIc.ts`): a free-form cell's placed
+  footprint is a compact pin RING sized by pin count, DECOUPLED from the build canvas (DFF 51×45→4×3); pins
+  keep wall + along-edge order, distinct by construction, INDEX connectivity → golden-safe. Replaces the
+  uniform-scaled replica (`compactFreeFormGeom × TIER_FOOTPRINT_SCALE`, kept for the badge/tests).
+- ~~**Tier → density badge**~~ — the integration tier no longer scales the footprint; die-editor readout
+  reworded (dropped "shrinks at MSI").
+- ~~**Connector-lead padding**~~ — opened-view fit insets a free-form cell to 0.80 so inner→outer pin leads
+  aren't crammed against the wall (owner feedback).
+- ~~**Doc §5 supersession**~~ — `integration-tier-scaling.md` §5 dated SUPERSEDED banner (original
+  tombstoned, not deleted).
+- [ ] **Merge to `main`** — awaiting owner go-ahead (held per "show me before you merge it up").
+- [ ] (optional) pin-pitch gaps / square-ize / extra body-padding footprint knobs, if a chip later feels off.
+
+---
+
 ## 2026-06-26 (180) — Sequential detector: embedded-state (DFF-from-registered-latches) fix
 
 Web-only, golden untouched, 190 web tests.
