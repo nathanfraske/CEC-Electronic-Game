@@ -5,6 +5,29 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (165) — CHIP BENCH Phase 1d: bloom PIN beads + drag-to-move (functional)
+
+**State:** 🟢 **about to PR**. Web/interaction only, golden untouched, 132 web tests, full gate green. The
+bloom now edits PINS too — both owner asks ("expand borders" + "edit pin placement") are live in the
+overworld. The bloom's core (box + pin editing on a placed chip) is functional.
+
+**Render:** `drawBloom` now fattens each package pin into an accent-ringed BEAD (the draggable affordance).
+
+**Drag (board.ts):** new `devicePinDrag {componentId, pinIndex, moved}` + `bloomPinHit(wp)` (nearest bead,
+~26px screen grab) + `moveDevicePinDrag` (snapToBoxEdge from the chip anchor → rewrite the def pin →
+`applyDeviceFreeForm`, the shared propagate+rebuild helper extracted from `setDeviceBox`). In **select mode**,
+a press on a bloomed chip's bead arms the pin drag (before the normal pin→wire hit-test), so dragging the
+bead MOVES the pin; wiring a bloomed chip means dragging from the other end or deselecting first (the
+explicit WIRE/SHAPE toggle is a later slice). One undo per drag (reuses `icGeoms`); pin INDEX unchanged →
+wires follow, netlist stable, golden-safe.
+
+**Bloom core done. NEXT (polish/completeness):** WIRE/SHAPE toggle (explicit wire-from-bloomed-pin), role
+badges (icon ≠ voltage fill), left/top resize (anchor move), 44px screen-space handles + keyboard parity,
+reduced-motion, the "this touches N copies" scope stop, then Phase 2 (precise companion) / Phase 3 (inner
+circuit).
+
+---
+
 ## 2026-06-26 (164) — CHIP BENCH Phase 1c: bloom box-resize DRAG (functional)
 
 **State:** 🟢 **about to PR**. Web/interaction only, golden untouched, 132 web tests, full gate green. The
