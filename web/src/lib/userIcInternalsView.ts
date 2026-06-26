@@ -18,9 +18,10 @@
 // (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics, Point } from "pixi.js";
 import { PALETTE, PART_KINDS, isJunctionRef, isFreeFormFrame } from "./graph";
-import { isUserIc } from "./userIc";
+import { isUserIc, getUserIc, recognizeGate } from "./userIc";
 import {
   drawGlyphIn,
+  drawGateBodySymbol,
   drawUserIcPackageBody,
   userIcBodyBox,
   pinLeadRoot,
@@ -179,6 +180,8 @@ interface SlotRecord {
   dg?: Graphics;
   frameG?: Graphics;
   nestedLayer?: Container;
+  /** the cell's gate SYMBOL overlay (a non-recursing nested user IC wears its own symbol until it opens). */
+  symG?: Graphics;
 }
 const slotRecords = new WeakMap<Graphics, SlotRecord>();
 function slotOf(holder: Graphics): SlotRecord {
@@ -283,6 +286,18 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const domW = domMaxX - domMinX;
   const domH = domMaxY - domMinY;
   const bodyB = userIcBodyBox(pins, wPx, hPx, freeForm);
+  // LAYER BACKGROUND (depth-alternating, owner refinement): each opened level tints its interior a step
+  // off its parent so the dive reads as discrete strata — the dark overworld → a lighter first layer → a
+  // darker next → lighter again. Even depths lighten, odd depths darken; drawn into `g` (glyph-local) over
+  // the package body and UNDER the scaled inner circuit (partLayer), so the traces still read on top.
+  {
+    const lighten = depth % 2 === 0;
+    const r = Math.min(bodyB.w, bodyB.h) * 0.06;
+    g.roundRect(bodyB.x, bodyB.y, bodyB.w, bodyB.h, r).fill({
+      color: lighten ? 0xffffff : 0x000000,
+      alpha: lighten ? 0.07 : 0.14,
+    });
+  }
   const centreX = bodyB.x + bodyB.w / 2;
   const centreY = bodyB.y + bodyB.h / 2;
   // Fit to the body rectangle (aspect-preserving), inset for a rim margin; floor each side at PITCH so a
@@ -631,6 +646,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     if (wantRecurse && nested) {
       // Hide the base-case visuals on this holder (and clear the glyph drawn into `child` above).
       if (slot.dg) slot.dg.visible = false;
+      if (slot.symG) slot.symG.visible = false; // the cell is opening — drop its symbol overlay
       // Build/reuse the nested subtree: a frame Graphics (the nested package, glyph-local, UNSCALED)
       // and a partLayer Container (the nested inner circuit, scaled by the nested level's own `s`).
       if (!slot.frameG) {
@@ -769,6 +785,48 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
         },
         style,
       );
+    }
+
+    // SUB-CELL SYMBOL (owner refinement): a non-recursing nested user IC wears its OWN gate symbol on its
+    // body — exactly like the top level (board.ts) — so each sub-system reads as what it IS until you dive
+    // into it. It fades across the run-up to the cell's own open bar (absScale → internalsZoom), where the
+    // recursion takes over. Reuses `recognizeGate` + `drawGateBodySymbol` (pure Graphics, no text), pooled
+    // per slot in `symG` and torn down with the holder on pool shrink.
+    const subDef = isUserIc(part.kind) ? getUserIc(part.kind) : undefined;
+    const subGate = subDef?.behavior
+      ? recognizeGate(
+          subDef.behavior.word,
+          subDef.pinRoles?.filter((r) => r === "in").length ?? 0,
+        )
+      : null;
+    if (subGate) {
+      let symG = slot.symG;
+      if (!symG) {
+        symG = new Graphics();
+        child.addChild(symG);
+        slot.symG = symG;
+      }
+      symG.visible = true;
+      symG.clear();
+      const fadeStart = internalsZoom * 0.55; // hold the symbol, then fade across the run-up to the open
+      symG.alpha = Math.max(
+        0,
+        Math.min(1, 1 - (absScale - fadeStart) / (internalsZoom - fadeStart)),
+      );
+      const subWPx = (kind.w - 1) * PITCH;
+      const subHPx = (kind.h - 1) * PITCH;
+      const ss = Math.min(subWPx, subHPx);
+      drawGateBodySymbol(
+        symG,
+        subGate,
+        subWPx / 2,
+        subHPx / 2,
+        ss * 0.34,
+        ss * 0.27,
+        partColor,
+      );
+    } else if (slot.symG) {
+      slot.symG.visible = false;
     }
   }
 }

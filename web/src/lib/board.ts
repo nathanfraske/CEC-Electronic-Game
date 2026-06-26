@@ -174,9 +174,14 @@ const TIER_ZOOM = 2.2;
 /** Deeper still: the tier illustration also gets its simple pinout labels (the
  * "full detail" LOD). Below this you get the cleaner label-free illustration. */
 const DETAIL_ZOOM = 4.5;
-/** Zoom past which a sealed composite IC, under the REALITY lens, opens to its live internal
- * sub-circuit (the "zoom-to-open" mini-mode, ADR 0005) instead of the black-box symbol. */
-const INTERNALS_ZOOM = 2.5;
+/** WORLD-SCALE threshold past which a sealed IC opens to its live internal sub-circuit (zoom-to-open,
+ * ADR 0005) instead of staying its black-box SYMBOL. Set so a chip opens only once it's a COMFORTABLY
+ * LARGE on-screen size (body roughly screen-filling), not the old ×2.5 that split while the chip was
+ * still small. NB this is world.scale; the zoom METER reads ×M = world.scale / viewScale, and once you're
+ * inside the opened body viewScale drops to its fit-scale (~0.2), so the meter shows ~×50 there — what the
+ * owner called "split at ~50×." Each nested level opens the same way (its on-screen `absScale` crossing
+ * this same bar), so the dive reads as discrete layers. */
+const INTERNALS_ZOOM = 8;
 /** Radius of the filled wire-to-wire junction dot (KiCad-style). */
 const JUNCTION_R = 4;
 const MAX_SAMPLES = 240;
@@ -194,13 +199,14 @@ const AUTO_CYCLES = 3;
 const AUTO_SPAN_MIN = 120;
 const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
-// Zoom deep enough to DIVE the recursive IC zoom (Phase 2): each nested level opens only once its
-// on-screen size crosses INTERNALS_ZOOM, and each level is shrunk by its fit-scale (~0.05–0.15), so
-// reaching depth N needs camera zoom ≈ INTERNALS_ZOOM / fitScale^N — i.e. roughly a decade per level.
-// 1000× reaches ~2–3 nested levels; it's also float-safe for the pan transform at board coordinates
-// (world.position stays well under ~1e6 px). The LOD swaps still gate on TIER_ZOOM / INTERNALS_ZOOM,
-// far below this. (The wheel zoom is exponential, so a bigger ceiling is just more notches, same feel.)
-const MAX_SCALE = 1000;
+// Zoom deep enough to DIVE the recursive IC zoom (Phase 2): each nested level opens once its on-screen
+// size crosses INTERNALS_ZOOM (now world-scale 8), and each level is shrunk by its fit-scale (~0.1–0.2),
+// so reaching depth N needs camera zoom ≈ INTERNALS_ZOOM / fitScale^N — a chip opens at ~×8, its sub-cells
+// at ~×40, theirs at ~×200, the silicon at ~×1000. The ceiling is raised to 3000 to keep ~3 nested levels
+// reachable with headroom. Float-safe for the pan transform (world.position stays under ~3e6 px at board
+// coordinates). The LOD swaps gate on TIER_ZOOM / INTERNALS_ZOOM, far below this. (The wheel zoom is
+// exponential, so a bigger ceiling is just more notches, same feel.)
+const MAX_SCALE = 3000;
 /** Max free-form subassembly box dimension (cells, per axis). A PRESENTATION ceiling — the box is canvas
  * room for the inner circuit, not a pin budget — so it's deliberately large: a multi-gate cell (D-latch,
  * register, a CPU block) needs space to lay out its sub-cells + wiring. (Old cap was BLOCK_MAX_PINS+6 = 30,
@@ -7831,7 +7837,7 @@ class ComponentNode {
     this.symbolGlyph.clear();
     this.symbolGlyph.visible = false;
     if (isUserIc(this.kindTag)) {
-      const fadeStart = INTERNALS_ZOOM - 1; // begin fading ~one zoom-step before the replica opens
+      const fadeStart = INTERNALS_ZOOM * 0.8; // hold the symbol full until ~80% of the open zoom, then fade
       const fadeAlpha = Math.max(
         0,
         Math.min(1, 1 - (zoom - fadeStart) / (INTERNALS_ZOOM - fadeStart)),

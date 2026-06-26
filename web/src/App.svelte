@@ -1114,12 +1114,12 @@
   let demo = $state<{ label: string; on: string; off: string } | null>(null);
   let demoOn = $state(true);
   let demoExRef: ExampleSpec | null = null;
-  let showIntro = $state(true);
+  let showIntro = $state(false); // owner: cold-open intro banner off for now (re-show via ? Help)
   // --- Onboarding: pull-based, no levels (docs/ui/onboarding-first-run.md §10). The
   // single preference is `explainAsYouGo` (a mute, not a level); `seenConcepts` records
   // which first-encounter cards have fired so each shows once. Loaded from settings on
   // mount; the help handle can replay them. `concept` is the card on screen now.
-  let explainAsYouGo = $state(true);
+  let explainAsYouGo = $state(false); // owner: as-you-go concept tips off for now (re-enable via ? Help)
   const seenConcepts = new SvelteSet<string>();
   let concept = $state<ConceptCard | null>(null);
   let conceptQueue = $state<string[]>([]);
@@ -2419,10 +2419,13 @@
       // cards have already fired (so each shows once across refreshes), plus whether
       // the cold-open intro has been seen.
       const settings = loadSettings();
-      explainAsYouGo = settings.explainAsYouGo ?? true;
+      // Onboarding (intro banner + as-you-go concept tips) is OFF for now per owner — force both off at
+      // mount regardless of the persisted preference; re-enable per session from the ? Help handle. Revert
+      // these two lines (back to `settings.explainAsYouGo ?? true` / `!settings.seenIntro`) to restore.
+      explainAsYouGo = false;
       seenConcepts.clear();
       for (const id of settings.seenConcepts ?? []) seenConcepts.add(id);
-      showIntro = !settings.seenIntro;
+      showIntro = false;
       // Restore the tier lens, the LOD toggle, and the camera (pan + zoom) so the
       // view and the toggles survive a refresh.
       boardLens = settings.boardLens ?? "schematic";
