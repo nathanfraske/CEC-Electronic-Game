@@ -2151,6 +2151,73 @@ export function drawUserIcPackageBody(
   g.roundRect(b.x, b.y, b.w, b.h, 4).stroke({ width: 1.6, color, alpha: 0.9 });
 }
 
+/**
+ * Draw a logic-gate SCHEMATIC SYMBOL centred at (cx, cy) — the optional gate face for a CHARACTERIZED
+ * cell recognised as a gate (see `recognizeGate`). `name` is that gate name (AND/NAND/OR/NOR/XOR/XNOR/
+ * NOT/BUFFER); anything else (LOW/HIGH/null) draws nothing. `hw`/`hh` are the symbol half-extents. The
+ * distinctive ANSI bodies: AND a flat-backed "D", OR/XOR a curved shield, NOT/BUFFER a triangle — with
+ * an inversion bubble on the output for the N* gates and the extra back-arc for XOR/XNOR. Stroke-only so
+ * the body card shows through; the caller fades it (container alpha) with the name label.
+ */
+export function drawGateBodySymbol(
+  g: Graphics,
+  name: string,
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  color: number,
+): void {
+  const fam =
+    name === "AND" || name === "NAND"
+      ? "and"
+      : name === "OR" || name === "NOR"
+        ? "or"
+        : name === "XOR" || name === "XNOR"
+          ? "xor"
+          : name === "NOT" || name === "BUFFER"
+            ? "buf"
+            : null;
+  if (!fam) return;
+  const inverted =
+    name === "NAND" || name === "NOR" || name === "XNOR" || name === "NOT";
+  const rb = hh * 0.22; // inversion-bubble radius
+  const bx = cx - hw; // back (input) edge
+  const fx = cx + hw - (inverted ? 2 * rb : 0); // front (output) tip, leaving room for the bubble
+  const top = cy - hh;
+  const bot = cy + hh;
+  const stroke = { width: Math.max(1.5, hh * 0.12), color, alpha: 0.92 };
+  if (fam === "and") {
+    g.moveTo(bx, bot)
+      .lineTo(bx, top)
+      .lineTo(cx, top)
+      .quadraticCurveTo(fx, top, fx, cy)
+      .quadraticCurveTo(fx, bot, cx, bot)
+      .lineTo(bx, bot)
+      .stroke(stroke);
+  } else if (fam === "buf") {
+    g.moveTo(bx, top)
+      .lineTo(fx, cy)
+      .lineTo(bx, bot)
+      .lineTo(bx, top)
+      .stroke(stroke);
+  } else {
+    // OR / XOR shield: a concave back, two wings sweeping to a front point.
+    g.moveTo(bx, top)
+      .quadraticCurveTo(bx + hw * 0.45, cy, bx, bot)
+      .quadraticCurveTo(cx + hw * 0.35, bot, fx, cy)
+      .quadraticCurveTo(cx + hw * 0.35, top, bx, top)
+      .stroke(stroke);
+    if (fam === "xor") {
+      const ox = bx - hw * 0.2; // the extra back arc just outside the shield's concave back
+      g.moveTo(ox, top)
+        .quadraticCurveTo(ox + hw * 0.45, cy, ox, bot)
+        .stroke(stroke);
+    }
+  }
+  if (inverted) g.circle(fx + rb, cy, rb).stroke(stroke);
+}
+
 function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
   // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip; its body
   // is the AUTHORED box (freeForm), not the pin bbox, so pass the free-form flag through.
