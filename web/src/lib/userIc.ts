@@ -335,18 +335,21 @@ const LEAD_GAP = 1;
  * Each pin's LABEL is the player's name for that lead ({@link UserIc.pinNames} by index) when set,
  * else the package pin number — so a sealed chip shows the names the author gave its pads. */
 function userIcPartKind(ic: UserIc): PartKind {
-  // Free-form (box-captured) subassembly: the PLACED footprint is a LITERAL uniform-scaled replica of the
-  // authored box (docs/ui/integration-tier-scaling.md). The scale is the cell's INTEGRATION TIER (its full
-  // device count): SSI = full size, denser cells (MSI…ULSI) compact, so placing more inside a cell and
-  // resealing steps it up a tier and shrinks it (un-ballooning a CPU). The internal geometry (`ic.freeForm`,
-  // used by the die editor / walls / zoom-to-open replica) is UNCHANGED — only this placeable footprint
-  // compacts. `compactFreeFormGeom` is ONE uniform factor floored so pins stay on distinct grid cells (no
-  // relayout); connectivity is by pin INDEX, so the netlist/flatten are untouched (render/registry only).
+  // Free-form (box-captured) subassembly: the PLACED footprint is a COMPACT CHIP PACKAGE — a pin RING
+  // packed tight (`packFreeFormFootprint`), DECOUPLED from the (large) build canvas. A sealed cell is a
+  // chip, so its placed size tracks its PINS, not the sprawling canvas it was drawn on (a 5-pin DFF
+  // authored on a 51×45 canvas is a 5-pin chip, not a 60-cell slab). This is exactly how a PACKAGED IC
+  // already works here (`packageLayout` lays leads out from the pin COUNT; `tapeOut` drops `freeForm`);
+  // the uniform-scaled replica was the outlier. Each pin keeps the EDGE and along-edge ORDER it was
+  // authored on, so the pinout reads as drawn (D left, Q right, power top/bottom); only the empty interior
+  // is squeezed out. The internal geometry (`ic.freeForm`, used by the die editor / walls / zoom-to-open
+  // replica) is UNCHANGED, so you still dive into the WHOLE canvas — just smaller (more camera zoom).
+  // Connectivity is by pin INDEX, so the netlist/flatten are untouched (render/registry only). The
+  // integration TIER is now a density BADGE only (owner decision 2026-06-26), not a footprint scaler; the
+  // σ ladder (`compactFreeFormGeom × TIER_FOOTPRINT_SCALE`) is retained for the badge/tests but superseded
+  // here for sizing — see docs/ui/integration-tier-scaling.md §5 (2026-06-26 "decoupled pin-ring" revision).
   if (ic.freeForm) {
-    const compact = compactFreeFormGeom(
-      ic.freeForm,
-      TIER_FOOTPRINT_SCALE[integrationTier(ic)],
-    );
+    const compact = packFreeFormFootprint(ic.freeForm);
     const pins: Pin[] = compact.pins.map((p, i) => ({
       index: i,
       label: ic.pinNames?.[i]?.trim()
@@ -1291,6 +1294,81 @@ export function compactFreeFormGeom(
   }
   // Fallback (σ=1): the original geometry verbatim (already distinct, unless it shipped with stacked pins).
   return { w: ff.w, h: ff.h, pins: ff.pins.map((p) => ({ ...p })) };
+}
+
+/**
+ * Pack a free-form subassembly's pins into a COMPACT chip-package footprint — the placed package, DECOUPLED
+ * from the (large) build canvas. A sealed cell is a chip: its placed size tracks its PIN RING (like a real
+ * package — exactly how `packageLayout` lays a DIP/SOT out from the pin COUNT), not the sprawling editing
+ * canvas it was drawn on (a 5-pin DFF authored on a 51×45 canvas is a 5-pin chip ≈ 4×3, not a 60-cell slab).
+ * Each pin keeps the WALL it was authored nearest (left/right/top/bottom) and the along-edge ORDER, so the
+ * pinout still reads as drawn (D left, Q right, power top/bottom) — only the empty interior is squeezed out.
+ * Pins land on DISTINCT integer cells BY CONSTRUCTION: opposite walls on opposite sides (x=0 vs x=w-1, y=0
+ * vs y=h-1), each wall's pins on consecutive INTERIOR cells (corners reserved), so wiring stays grid-clean
+ * and connectivity (by pin INDEX) is untouched — the netlist/flatten never change (render/registry only).
+ * Returns pins in the SAME index order as the input (so `pinNames[i]` still names pin i). The placed
+ * footprint is now DECOUPLED from the build canvas + the integration tier (tier is a density BADGE only,
+ * owner decision 2026-06-26); `ic.freeForm` still drives the die editor / walls / zoom-to-open. Pure
+ * geometry, never the netlist.
+ */
+export function packFreeFormFootprint(ff: FreeFormGeom): FreeFormGeom {
+  const MIN = 3; // a chip body is ≥3×3 so the name/symbol stays legible and pins aren't corner-jammed
+  const w = Math.max(1, ff.w);
+  const h = Math.max(1, ff.h);
+  // Classify each pin by its NEAREST wall (an edge pin's distance to its wall is 0). Ties resolve
+  // left→right→top→bottom, so a corner pin lands on a vertical wall — deterministic, no Math.random.
+  type Wall = "L" | "R" | "T" | "B";
+  const wallOf = (dx: number, dy: number): Wall => {
+    const dl = dx;
+    const dr = w - 1 - dx;
+    const dt = dy;
+    const db = h - 1 - dy;
+    const m = Math.min(dl, dr, dt, db);
+    if (m === dl) return "L";
+    if (m === dr) return "R";
+    if (m === dt) return "T";
+    return "B";
+  };
+  const tagged = ff.pins.map((p, i) => ({ i, p, wall: wallOf(p.dx, p.dy) }));
+  // Each wall's pins, kept in their authored along-edge order (L/R by dy, T/B by dx).
+  const L = tagged
+    .filter((t) => t.wall === "L")
+    .sort((a, b) => a.p.dy - b.p.dy);
+  const R = tagged
+    .filter((t) => t.wall === "R")
+    .sort((a, b) => a.p.dy - b.p.dy);
+  const T = tagged
+    .filter((t) => t.wall === "T")
+    .sort((a, b) => a.p.dx - b.p.dx);
+  const B = tagged
+    .filter((t) => t.wall === "B")
+    .sort((a, b) => a.p.dx - b.p.dx);
+  // Body: wide enough for the busier of top/bottom (+2 reserved corners), tall enough for the busier of
+  // left/right (+2), floored at MIN so the smallest chip still has a readable body.
+  const bw = Math.max(MIN, Math.max(T.length, B.length) + 2);
+  const bh = Math.max(MIN, Math.max(L.length, R.length) + 2);
+  // Centre a wall's run of `count` pins within the interior span [1, dim-2] (corners reserved), so a sparse
+  // wall sits middled (and a lone pin aligns with a lone pin opposite), not corner-jammed.
+  const along = (count: number, dim: number): number[] => {
+    const slots = dim - 2; // interior cells
+    const start = 1 + Math.max(0, Math.floor((slots - count) / 2));
+    return Array.from({ length: count }, (_, k) => start + k);
+  };
+  const pos = new Array<{ dx: number; dy: number }>(ff.pins.length);
+  along(L.length, bh).forEach((y, k) => (pos[L[k]!.i] = { dx: 0, dy: y }));
+  along(R.length, bh).forEach((y, k) => (pos[R[k]!.i] = { dx: bw - 1, dy: y }));
+  along(T.length, bw).forEach((x, k) => (pos[T[k]!.i] = { dx: x, dy: 0 }));
+  along(B.length, bw).forEach((x, k) => (pos[B[k]!.i] = { dx: x, dy: bh - 1 }));
+  const pins = ff.pins.map((p, i) => ({
+    ...p,
+    dx: pos[i]!.dx,
+    dy: pos[i]!.dy,
+  }));
+  // Distinct by construction; guard defensively (a pathological input) by falling back to the uniform-scale
+  // replica, which is itself floored to distinct cells.
+  const distinct = new Set(pins.map((p) => `${p.dx},${p.dy}`)).size;
+  if (distinct !== pins.length) return compactFreeFormGeom(ff, 1);
+  return { w: bw, h: bh, pins };
 }
 
 export interface SealCapture {
