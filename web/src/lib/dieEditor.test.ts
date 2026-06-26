@@ -771,3 +771,33 @@ describe("New ▸ Subassembly — a sealed blank is self-contained (no sibling g
     }
   });
 });
+
+describe("captureSeal — duplicate-name guard (audit: no silent overwrite)", () => {
+  it("refuses a FRESH seal whose name already names a user IC, leaving the original intact", () => {
+    const mk = () => {
+      const g = new BoardGraph();
+      const d = freshDieGraph("SOT23_3")!;
+      g.restore(d.snapshot);
+      const f = g.components.get(d.frameId)!;
+      const v = place(g, "V", 30, 8, 5);
+      const r = place(g, "R", 30, 12, 1000);
+      const gnd = place(g, "GND", 30, 16);
+      connect(g, v, 0, f, 0);
+      connect(g, v, 1, gnd, 0);
+      connect(g, f, 1, r, 0);
+      connect(g, r, 1, gnd, 0);
+      return { g, frameId: d.frameId };
+    };
+    const a = mk();
+    expect(captureSeal(a.g, a.frameId, "DUPNAME")).not.toBeUndefined();
+    try {
+      const b = mk();
+      // A second FRESH seal with the same name is refused (it would overwrite the first under every
+      // already-placed instance) — and the original def is untouched.
+      expect(captureSeal(b.g, b.frameId, "DUPNAME")).toBeUndefined();
+      expect(getUserIc("DUPNAME")).not.toBeUndefined();
+    } finally {
+      unregisterUserIc("DUPNAME");
+    }
+  });
+});

@@ -63,16 +63,35 @@ export function characterizeCell(
   pinRoles: (PinRole | undefined)[],
 ): CharacterizeResult {
   const pins = parsePins(pinRoles);
+  // Characterization captures a COMBINATIONAL, single-output, powered, ≤4-input truth table. Refuse the
+  // cases that would otherwise sweep into a wrong/garbage LUT, with a message that says WHY (audit fixes):
+  const outCount = pinRoles.filter((r) => r === "out").length;
+  const hasClk = pinRoles.some((r) => r === "clk");
   if (pins.outPin < 0)
     return { ok: false, reason: "tag one pin OUT (no output to read)" };
+  if (outCount > 1)
+    return {
+      ok: false,
+      reason: `${outCount} outputs — characterize captures ONE output. Build a multi-output cell (adder, decoder, register) from single-output LUT cells.`,
+    };
+  if (hasClk)
+    return {
+      ok: false,
+      reason:
+        "this cell has a CLOCK pin — characterize captures COMBINATIONAL logic only. A clocked/sequential cell (flip-flop, register, counter) holds state and can't collapse to a truth table.",
+    };
   if (pins.gndPin < 0)
-    return { ok: false, reason: "tag one pin GND (no reference)" };
+    return {
+      ok: false,
+      reason:
+        "no GND pin — characterize needs a powered cell with a ground reference and a driven output. A pass gate / transmission gate (no VCC/GND, just passes a signal) has no logic output to sweep.",
+    };
   if (pins.inPins.length === 0)
     return { ok: false, reason: "no input pins to sweep" };
   if (pins.inPins.length > 4)
     return {
       ok: false,
-      reason: `${pins.inPins.length} inputs — only ≤4-input gates collapse to one LUT`,
+      reason: `${pins.inPins.length} inputs — only ≤4-input gates collapse to one LUT. Split it into chained ≤4-input cells.`,
     };
 
   const k = pins.inPins.length;
