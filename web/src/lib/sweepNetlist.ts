@@ -23,7 +23,19 @@ export interface SweepPins {
   gndPin: number;
   /** the VCC pin, or -1 if the cell self-powers / needs none. */
   vccPin: number;
+  /** the clock pin for a SEQUENTIAL sweep (driven by a square clock source), or -1/absent for a
+   * combinational cell. See {@link sequentialSweepNetlist} and Option A1. */
+  clkPin?: number;
 }
+
+/** A square clock for a sequential sweep: amplitude = {@link SWEEP_VCC}, 50% duty, referenced to the
+ * cell's GND pin. The frequency is set so each half-period is a fixed number of fixed-step ticks (the
+ * caller settles within a half-period before sampling Q). */
+export const SWEEP_CLK_HALF_STEPS = 64;
+/** Sim fixed step (s), mirrored from sim-core `DT` (2 µs) — to convert the half-period in ticks to Hz. */
+const SWEEP_DT = 2e-6;
+/** The square-clock frequency (Hz) for {@link SWEEP_CLK_HALF_STEPS} ticks per half-period. */
+export const SWEEP_CLK_FREQ = 1 / (2 * SWEEP_CLK_HALF_STEPS * SWEEP_DT);
 
 /** A compiled sweep vector: the netlist to install + the node whose voltage is the gate output. */
 export interface SweepBuild {
@@ -100,4 +112,122 @@ export function sweepNetlist(
   if (!nl) return null;
   const outNode = nl.nodesOfComponent.get(senseId)?.[0] ?? 0;
   return { nl, outNode, senseId };
+}
+
+/**
+ * Build the scratch netlist for ONE input combination of a SEQUENTIAL cell (Option A1): exactly like
+ * {@link sweepNetlist} — rails + this combo's inputs driven, a high-Z sense resistor on OUT (= Q) —
+ * but ALSO drives a square clock source onto `pins.clkPin` (referenced to the GND pin) so STEPPING the
+ * scratch sim produces rising clock edges. The caller installs this once, steps across several clock
+ * periods, and samples Q after edges; a stable Q (independent of how many edges) means a pure D-type
+ * next-state, the only sequential class A1 collapses to a single registered LUT (a self-dependent
+ * toggle/counter never settles → the caller refuses it). The clock pin is NOT a swept data input
+ * (`combo` covers only `pins.inPins`). Returns null if the frame is missing, the cell doesn't compile,
+ * or no clock pin is declared.
+ */
+export function sequentialSweepNetlist(
+  graph: GraphSnapshot,
+  frameId: number,
+  pins: SweepPins,
+  combo: number,
+): SweepBuild | null {
+  const clkPin = pins.clkPin ?? -1;
+  if (clkPin < 0) return null; // not a sequential sweep
+  const snap = structuredClone(graph);
+  const frame = snap.components.find((c) => c.id === frameId);
+  if (!frame) return null;
+
+  // Drive rails + this combination's inputs as virtual DC sources (dieTestGraph reads pinTests). OUT
+  // (= Q) is left un-driven so the sense resistor reads it; the clock pin is driven by the PULSE below.
+  const tests: (PinTest | null)[] = (frame.pinTests ?? []).slice();
+  tests[pins.gndPin] = { role: "gnd", value: 0 };
+  if (pins.vccPin >= 0) tests[pins.vccPin] = { role: "vcc", value: SWEEP_VCC };
+  pins.inPins.forEach((p, idx) => {
+    tests[p] = { role: "in", value: (combo >> idx) & 1 ? SWEEP_VCC : 0 };
+  });
+  frame.pinTests = tests;
+
+  // High-Z sense resistor OUT(Q)→GND (same id/wire-counter discipline as sweepNetlist, so dieTestGraph's
+  // injected sources can't alias it).
+  const senseId = (snap.nextComponentId ?? 1_000_000) + 1;
+  snap.components.push({
+    id: senseId,
+    kind: "R",
+    cell: { col: -16, row: -16 },
+    value: 1e9,
+    rot: 0,
+  } as (typeof snap.components)[number]);
+  // The square clock: a PULSE source (variant 0 ⇒ square in buildNetlist), amp = SWEEP_VCC, + onto the
+  // clk pin and − onto the GND pin (the cell's ground reference). Stepping the sim oscillates it.
+  const clkId = senseId + 1;
+  snap.components.push({
+    id: clkId,
+    kind: "PULSE",
+    cell: { col: -16, row: -18 },
+    value: SWEEP_CLK_FREQ,
+    amp: SWEEP_VCC,
+    duty: 0.5,
+    variant: 0,
+    rot: 0,
+  } as (typeof snap.components)[number]);
+  snap.nextComponentId = clkId + 1;
+
+  const wId = (snap.nextWireId ?? 1_000_000) + 1;
+  snap.wires.push({
+    id: wId,
+    from: { componentId: senseId, pinIndex: 0 },
+    to: { componentId: frameId, pinIndex: pins.outPin },
+  });
+  snap.wires.push({
+    id: wId + 1,
+    from: { componentId: senseId, pinIndex: 1 },
+    to: { componentId: frameId, pinIndex: pins.gndPin },
+  });
+  snap.wires.push({
+    id: wId + 2,
+    from: { componentId: clkId, pinIndex: 0 },
+    to: { componentId: frameId, pinIndex: clkPin },
+  });
+  snap.wires.push({
+    id: wId + 3,
+    from: { componentId: clkId, pinIndex: 1 },
+    to: { componentId: frameId, pinIndex: pins.gndPin },
+  });
+  snap.nextWireId = wId + 4;
+
+  const bg = new BoardGraph();
+  bg.restore(dieTestGraph(snap, frameId));
+  const nl = buildNetlist(bg, false);
+  if (!nl) return null;
+  const outNode = nl.nodesOfComponent.get(senseId)?.[0] ?? 0;
+  return { nl, outNode, senseId };
+}
+
+/**
+ * Classify the Q samples taken across successive clock edges for ONE input combination (Option A1, a
+ * PURE helper so it is headless-testable). `samples` are the quantized Q levels (0/1) read after each
+ * sampled rising edge, in order. A pure D-type next-state settles to a single value and stays there;
+ * a self-dependent cell (toggle/JK/counter) keeps changing. Returns the settled bit, or a refusal
+ * reason — the fail-safe contract: anything not provably stable is refused (the cell stays discrete).
+ */
+export function classifySequentialSamples(
+  samples: number[],
+): { ok: true; bit: number } | { ok: false; reason: string } {
+  if (samples.length < 2)
+    return {
+      ok: false,
+      reason: "too few clock samples to confirm a stable next-state",
+    };
+  const last = samples[samples.length - 1];
+  // Require the final stretch of samples to agree — a settled, edge-count-independent Q.
+  const tail = samples.slice(-Math.min(3, samples.length));
+  if (tail.some((s) => s !== last))
+    return {
+      ok: false,
+      reason:
+        "Q changes across clock edges for fixed inputs — a self-dependent/oscillating cell (toggle, counter, latch). A1 collapses only pure D-type next-state; build it as a fabric (A2) or keep it discrete.",
+    };
+  if (last !== 0 && last !== 1)
+    return { ok: false, reason: "Q did not settle to a clean logic level" };
+  return { ok: true, bit: last };
 }

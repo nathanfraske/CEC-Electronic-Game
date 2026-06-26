@@ -1,8 +1,17 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Sequential Cell Characterization — the "Option A" plan (DEFERRED — eat the cost now)
+# Sequential Cell Characterization — the "Option A" plan
 
-**Status:** deferred plan, owner-directed 2026-06-26 ("eat the cost now, but plan out how we would
-fix it with A"). This is the focused, **as-built** plan for letting a *player-built sequential cell*
+> **As-built update (2026-06-26): A1 is IMPLEMENTED.** `characterizeCell` no longer refuses clocked
+> cells — it runs a sequential sweep (`sequentialSweepNetlist` drives a square clock on the CLK pin;
+> the loop steps across clock periods and `classifySequentialSamples` decides the settled next-state)
+> and emits a **registered** LUT (`mode:1`) for a pure D-type cell. It **fails safe**: any cell it
+> can't prove is a pure D-type (a toggle/counter/oscillator — Q keeps changing across edges) is
+> **refused → stays discrete**, never mischaracterized. The wasm-free wiring + the classifier are
+> headless-tested (`sweepNetlist.test.ts`); the live wasm sweep is **app-verified** (same convention as
+> the combinational characterizer). **A2 (the multi-bit / self-dependent fabric) remains future work.**
+
+**Status:** A1 implemented; A2 planned. Owner-directed 2026-06-26 (first "eat the cost now, but plan
+the fix with A"; then "implement that overnight as well"). This is the focused, **as-built** plan for letting a *player-built sequential cell*
 (a flip-flop / register / counter built from transistors or gates) collapse to the cheap behavioral
 face — the way a combinational gate already does. It is the sequential thread of
 `docs/cell-characterization-and-integration-hierarchy.md` (§2.2/§2.5/§2.7/§2.8 Phase B, §2.9) and
@@ -232,8 +241,15 @@ never touch the contract.
 
 | Phase | Scope | Risk | `sim-core`? |
 | --- | --- | --- | --- |
-| **A1** | single registered LUT, D-type family (decl. reset, sequential sweep, guard, `mode:1`) | medium | none |
+| **A1 ✅ landed** | single registered LUT, D-type family (sequential sweep, fail-safe guard, `mode:1`) | medium | none |
 | **A2** | fabric of LUT+FF for state-dependent / multi-bit (structural lowering, `Q` feedback, state detection, global digital-keep) | high | none (route a1) |
+
+**A1 as built (2026-06-26).** No reset pin is required after all: instead of forcing Q via reset, the
+sweep clocks several edges and requires Q to **converge** (a pure D-type settles to `f(inputs)`
+regardless of start state; a self-dependent toggle/counter keeps changing → refused). This is simpler
+and strictly fail-safe. `classifySequentialSamples` is the pure decision (headless-tested);
+`sequentialSweepNetlist` is the tested wiring; `characterizeSequential` drives the live wasm sweep
+(app-verified). A2 is the remaining frontier (self-dependent register-with-load, counters, multi-bit).
 
 Both are golden-safe by construction. A1 is a contained extension of `characterize.ts` +
 `sweepNetlist.ts` and the natural next slice after P7. A2 is the substantial compiler-ish work and the

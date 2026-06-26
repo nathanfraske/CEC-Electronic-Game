@@ -9,7 +9,14 @@
 // pick) lives in `sweepNetlist.ts`, which is wasm-free and headless-tested; here we only drive the sim.
 import { Simulation } from "../wasm/sim_wasm.js";
 import type { GraphSnapshot, PinRole } from "./graph";
-import { sweepNetlist, SWEEP_VCC, type SweepPins } from "./sweepNetlist";
+import {
+  sweepNetlist,
+  sequentialSweepNetlist,
+  classifySequentialSamples,
+  SWEEP_VCC,
+  SWEEP_CLK_HALF_STEPS,
+  type SweepPins,
+} from "./sweepNetlist";
 import { cellBehaviorSig, type CellBehavior } from "./userIc";
 
 /** Ticks (DT = 2µs each) run per input vector to settle a combinational gate before reading the output. */
@@ -40,14 +47,16 @@ function parsePins(pinRoles: (PinRole | undefined)[]): SweepPins {
   let outPin = -1;
   let gndPin = -1;
   let vccPin = -1;
+  let clkPin = -1;
   for (let i = 0; i < pinRoles.length; i++) {
     const r = pinRoles[i];
     if (r === "in") inPins.push(i);
     else if (r === "out" && outPin < 0) outPin = i;
     else if (r === "gnd" && gndPin < 0) gndPin = i;
     else if (r === "vcc" && vccPin < 0) vccPin = i;
+    else if (r === "clk" && clkPin < 0) clkPin = i;
   }
-  return { inPins, outPin, gndPin, vccPin };
+  return { inPins, outPin, gndPin, vccPin, clkPin };
 }
 
 /**
@@ -66,19 +75,12 @@ export function characterizeCell(
   // Characterization captures a COMBINATIONAL, single-output, powered, ≤4-input truth table. Refuse the
   // cases that would otherwise sweep into a wrong/garbage LUT, with a message that says WHY (audit fixes):
   const outCount = pinRoles.filter((r) => r === "out").length;
-  const hasClk = pinRoles.some((r) => r === "clk");
   if (pins.outPin < 0)
     return { ok: false, reason: "tag one pin OUT (no output to read)" };
   if (outCount > 1)
     return {
       ok: false,
       reason: `${outCount} outputs — characterize captures ONE output. Build a multi-output cell (adder, decoder, register) from single-output LUT cells.`,
-    };
-  if (hasClk)
-    return {
-      ok: false,
-      reason:
-        "this cell has a CLOCK pin — characterize captures COMBINATIONAL logic only. A clocked/sequential cell (flip-flop, register, counter) holds state and can't collapse to a truth table.",
     };
   if (pins.gndPin < 0)
     return {
@@ -93,6 +95,12 @@ export function characterizeCell(
       ok: false,
       reason: `${pins.inPins.length} inputs — only ≤4-input gates collapse to one LUT. Split it into chained ≤4-input cells.`,
     };
+
+  // SEQUENTIAL (Option A1): a clocked cell collapses to a REGISTERED LUT — but ONLY if it is a pure
+  // D-type next-state (Q+ = f(inputs), no self-dependence). characterizeSequential FAILS SAFE: any
+  // cell it can't prove is a pure D-type is refused (stays discrete), never mischaracterized.
+  if (pins.clkPin !== undefined && pins.clkPin >= 0)
+    return characterizeSequential(graph, frameId, pins);
 
   const k = pins.inPins.length;
   let word = 0;
@@ -142,6 +150,91 @@ export function characterizeCell(
   return {
     ok: true,
     behavior: { prog: 4, word, mode: 0, sig: cellBehaviorSig(graph) },
+    inputs: k,
+    vectors,
+  };
+}
+
+/** Clock periods (= 2× {@link SWEEP_CLK_HALF_STEPS} ticks) sampled per input vector. Q is read once
+ * per half-period; {@link classifySequentialSamples} requires the tail to be settled, so a few extra
+ * periods give the flop time to latch and expose any toggling. */
+const SEQ_SAMPLES = 8;
+
+/**
+ * Sweep a clocked cell's NEXT-STATE into a REGISTERED prog-4 LUT (Option A1, APP-ONLY — spins up a
+ * scratch {@link Simulation} with a running clock, so it can't run headless). For each input
+ * combination it installs {@link sequentialSweepNetlist} (rails + inputs driven, a square clock on the
+ * CLK pin), steps across {@link SEQ_SAMPLES} clock half-periods sampling Q, and {@link
+ * classifySequentialSamples} decides the settled next-state bit — or REFUSES (a self-dependent
+ * toggle/counter never settles). Emits `mode:1` (registered) so {@link flattenUserIcs} drives the LUT's
+ * Q from the held bit and latches on the cell's CLK pin. Fail-safe: any uncertainty ⇒ ok:false ⇒ the
+ * cell stays discrete (correct, just not cheap).
+ */
+function characterizeSequential(
+  graph: GraphSnapshot,
+  frameId: number,
+  pins: SweepPins,
+): CharacterizeResult {
+  const k = pins.inPins.length;
+  let word = 0;
+  const vectors: SweepVector[] = [];
+
+  for (let combo = 0; combo < 1 << k; combo++) {
+    const built = sequentialSweepNetlist(graph, frameId, pins, combo);
+    if (!built)
+      return {
+        ok: false,
+        reason: `the cell doesn't solve at input ${combo} — wire it up so it has a complete path`,
+      };
+    const { nl, outNode } = built;
+
+    const sim = new Simulation(0);
+    try {
+      const ok = sim.set_netlist_pefgh(
+        nl.nodeCount,
+        nl.types,
+        nl.a,
+        nl.b,
+        nl.c,
+        nl.d,
+        nl.e,
+        nl.f,
+        nl.g,
+        nl.h,
+        nl.values,
+        nl.aux,
+        nl.params,
+      );
+      if (!ok)
+        return {
+          ok: false,
+          reason: "couldn't install the sequential sweep netlist",
+        };
+      // Step half a clock period at a time, sampling Q after each — the running clock latches the flop
+      // on its rising edges; a pure D-type settles, a toggle/counter keeps flipping.
+      const samples: number[] = [];
+      for (let s = 0; s < SEQ_SAMPLES; s++) {
+        for (let t = 0; t < SWEEP_CLK_HALF_STEPS; t++) sim.step();
+        const v = sim.state()[outNode] ?? 0;
+        samples.push(v >= SWEEP_VCC / 2 ? 1 : 0);
+      }
+      const cls = classifySequentialSamples(samples);
+      if (!cls.ok)
+        return { ok: false, reason: `input ${combo}: ${cls.reason}` };
+      if (cls.bit) word |= 1 << combo;
+      vectors.push({
+        in: pins.inPins.map((_, idx) => (combo >> idx) & 1),
+        out: cls.bit,
+      });
+    } finally {
+      sim.free();
+    }
+  }
+
+  // mode:1 ⇒ a REGISTERED LUT (latch-on-CLK), the canonical FPGA logic element.
+  return {
+    ok: true,
+    behavior: { prog: 4, word, mode: 1, sig: cellBehaviorSig(graph) },
     inputs: k,
     vectors,
   };
