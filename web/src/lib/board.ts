@@ -56,7 +56,7 @@ import {
   captureRegion,
   previewRegion,
   isUserIc,
-  getUserIc,
+  resolveUserIc,
   recognizeGate,
   type UserIc,
   type RegionCapture,
@@ -7809,7 +7809,9 @@ class ComponentNode {
     // view draws it at level 0 when `nodeV` is absent).
     let effUserIc = userIc;
     if (wantUserIc && !effUserIc) {
-      const def = getUserIc(this.kindTag);
+      // Resolve the SELECTED variant (a multi-variant family member opens to ITS authored circuit, not the
+      // family default) — the static zoom-to-open was variant-blind (it used the family tag's default).
+      const def = resolveUserIc(this.kindTag, this.component.variant ?? 0);
       if (def) {
         if (def !== this.staticUserIcDef) {
           // Build the static geometry RECURSIVELY (def + every nested sub-IC by flatId), so the
@@ -7835,8 +7837,9 @@ class ComponentNode {
         Math.min(1, 1 - (zoom - fadeStart) / (INTERNALS_ZOOM - fadeStart)),
       );
       // A characterized cell recognised as a gate wears that gate's schematic symbol on its body (like a
-      // real logic chip), in place of the name designator, fading with the SAME rule as the label.
-      const gdef = getUserIc(this.kindTag);
+      // real logic chip), in place of the name designator, fading with the SAME rule as the label. Resolve
+      // the SELECTED variant so a family member shows ITS own characterized gate symbol, not the default's.
+      const gdef = resolveUserIc(this.kindTag, this.component.variant ?? 0);
       const gname = gdef?.behavior
         ? recognizeGate(
             gdef.behavior.word,
