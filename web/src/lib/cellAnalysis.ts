@@ -216,22 +216,43 @@ export function analyzeCell(opts: {
     }
   }
 
-  // --- 3. SEQUENTIAL DETECTION: a gain edge that lies on a feedback cycle -------------------------------
-  const { sequential, loopReason } = detectFeedbackLoop(
+  // --- 3. SEQUENTIAL DETECTION ------------------------------------------------------------------------
+  // (a) a gain edge that lies on a feedback cycle (a TG latch's two-inverter storage loop), AND
+  // (b) EMBEDDED STATE — the cell CONTAINS a registered sub-cell (a characterized latch/flop, behavior
+  //     mode ≥ 1). Such a cell is sequential even with NO visible loop at this level, because the loop is
+  //     sealed inside the sub-cell. Without (b), a flip-flop built from registered latches reads as
+  //     combinational and the sweep mischaracterizes it (a DFF whose clock is swept as data → Q = D·clk,
+  //     i.e. an "AND gate").
+  const { sequential: loopSequential, loopReason } = detectFeedbackLoop(
     graph,
     frameId,
     resolveCell,
   );
+  let registeredSubCell: string | undefined;
+  for (const comp of graph.components) {
+    if (comp.id === frameId) continue;
+    const mode =
+      (resolveCell?.(comp.kind)?.behavior as { mode?: number } | undefined)
+        ?.mode ?? 0;
+    if (mode >= 1) {
+      registeredSubCell = comp.kind;
+      break;
+    }
+  }
+  const sequential = loopSequential || registeredSubCell !== undefined;
+  const why = loopSequential
+    ? loopReason
+    : `contains a registered sub-cell (${registeredSubCell}) — it has embedded state`;
 
   // --- 4. compose ---------------------------------------------------------------------------------------
   let reason: string;
   if (sequential) {
     reason =
       clockPin >= 0
-        ? `sequential: ${loopReason}. Driving ${nameOf(clockPin) || `pin ${clockPin}`}${clockComplementPin >= 0 ? ` / ${nameOf(clockComplementPin)} (complement)` : ""} as the clock, observing ${nameOf(outPin) || `pin ${outPin}`}.`
-        : `sequential: ${loopReason}, but no clock/enable pin is identifiable (name one CLK/EN, or tag its role).`;
+        ? `sequential: ${why}. Driving ${nameOf(clockPin) || `pin ${clockPin}`}${clockComplementPin >= 0 ? ` / ${nameOf(clockComplementPin)} (complement)` : ""} as the clock, observing ${nameOf(outPin) || `pin ${outPin}`}.`
+        : `sequential: ${why}, but no clock/enable pin is identifiable (name the clock pin CLK/EN, or tag its role — don't call it IN/data).`;
   } else {
-    reason = "combinational: no feedback loop through a gain stage.";
+    reason = "combinational: no feedback loop or embedded state.";
   }
 
   return {
