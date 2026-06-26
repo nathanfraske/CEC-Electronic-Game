@@ -81,6 +81,7 @@ import { DEFAULT_TIER } from "./tiers";
 import { ledTint } from "./diodes";
 import { drawCompositeInternals } from "./internalsView";
 import { drawUserIcInternals } from "./userIcInternalsView";
+import { logAction } from "./feedback";
 import {
   type CompositeInternals,
   type UserIcInternals,
@@ -1702,6 +1703,9 @@ export class Board {
       this.addNode(c);
       this.redrawWires();
       this.cb.onChange?.(this.graph);
+      // Journal the semantic op (kind + grid cell) for the bug-bundle route — cell-based, so it reads
+      // cleanly and is camera-independent (cf. lib/feedback.ts).
+      logAction("place", kind, { cell: { col: cell.col, row: cell.row } });
     }
     return c;
   }
@@ -1915,9 +1919,16 @@ export class Board {
         this.clearSelection();
         this.redrawWires();
         this.cb.onChange?.(this.graph);
+        logAction("delete", "wire-segment");
         return;
       }
     }
+    const counts = {
+      parts: this.selected.size,
+      wires: this.selectedWires.size,
+      junctions: this.selectedJunctions.size,
+      labels: this.selectedLabels.size,
+    };
     this.pushUndo(this.graph.serialize());
     for (const id of this.selectedLabels) this.graph.removeNetLabel(id);
     for (const id of this.selected) this.graph.removeComponent(id);
@@ -1927,6 +1938,7 @@ export class Board {
     this.clearSelection();
     this.redrawWires();
     this.cb.onChange?.(this.graph);
+    logAction("delete", undefined, counts);
   }
 
   /**
@@ -5406,6 +5418,7 @@ export class Board {
         this.pushUndo(before);
         this.redrawWires();
         this.cb.onChange?.(this.graph);
+        logAction("wire");
       }
       this.cancelWiring(); // a pin/existing junction is a definite end → finish
       return;
@@ -5448,6 +5461,7 @@ export class Board {
     this.wiringMoved = false;
     this.redrawWires();
     this.cb.onChange?.(this.graph);
+    logAction("wire", "dangling", { cell: { col: cell.col, row: cell.row } });
     this.drawPendingWire();
   }
 

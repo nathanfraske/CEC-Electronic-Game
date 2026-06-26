@@ -1814,13 +1814,19 @@
     circuitWarning = null;
     setUserIcBehavior(tag, res.behavior); // bind the swept word to the def (collapse can now fire)
     libRev++;
+    const gate = recognizeGate(res.behavior.word, res.inputs);
+    logAction("characterize", ic.name || partName(tag), {
+      tag,
+      inputs: res.inputs,
+      gate: gate ?? "",
+    });
     charResult = {
       tag,
       name: ic.name || partName(tag),
       cols: [...Array(res.inputs).keys()],
       vectors: res.vectors,
       word: res.behavior.word,
-      gate: recognizeGate(res.behavior.word, res.inputs),
+      gate,
     };
   }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
@@ -2561,9 +2567,13 @@
   // an empty name lets userIc auto-assign the next CEC9xxx. The board reselects the new instance.
   function sealSelected(): void {
     if (!selPart || !board || !isFrame(selPart.kind)) return;
-    const tag = board.sealFrame(selPart.id, sealName.trim() || undefined);
+    const named = sealName.trim();
+    const tag = board.sealFrame(selPart.id, named || undefined);
     sealName = "";
-    if (tag) syncLibrary(tag, "sealed"); // mirror the sealed kind into the personal library
+    if (tag) {
+      logAction("seal", named || tag, { tag });
+      syncLibrary(tag, "sealed"); // mirror the sealed kind into the personal library
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -2640,6 +2650,23 @@
      */
     freshBlank?: boolean;
   } | null>(null);
+
+  // Journal every drill IN/OUT transition for the bug-bundle route (lib/feedback.ts). One effect covers
+  // ALL ~5 entry paths (Build a frame, edit a sealed IC, New▸Subassembly, open a die) — they each set
+  // this single `drill` state, so the navigation event is captured here once rather than at every site.
+  let lastDrillKey: string | null = null;
+  $effect(() => {
+    const key = drill ? `${drill.frameTag}#${drill.frameId}` : null;
+    if (key === lastDrillKey) return;
+    if (drill)
+      logAction("drill-in", drill.name || drill.frameTag, {
+        tag: drill.frameTag,
+        fresh: !!drill.freshBlank,
+        editing: !!drill.editingTag,
+      });
+    else logAction("drill-out");
+    lastDrillKey = key;
+  });
 
   // Live seal advisory while inside a die: whether it currently compiles (the hard gate) and how
   // many package leads are still unwired (a soft warning). Recomputed from the board's live inner
@@ -3728,6 +3755,7 @@
       ".json";
     a.click();
     URL.revokeObjectURL(url);
+    logAction("save");
     flashIo("Circuit downloaded.");
   }
 
@@ -3805,6 +3833,7 @@
         if (isStandaloneDieGraph(snap) && openDieGraphInBuilder(snap)) {
           demo = null;
           showIntro = false;
+          logAction("load", "die", { file: file.name });
           flashIo("Die loaded — opened in the IC builder. Seal when ready.");
           return;
         }
@@ -3815,6 +3844,7 @@
         board?.loadGraph(snap);
         demo = null;
         showIntro = false;
+        logAction("load", "circuit", { file: file.name });
         flashIo("Circuit loaded.");
       } catch {
         flashIo("Couldn't load that file — it isn't a valid circuit save.");

@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (173) — Semantic route capture + `replay.mjs` bundle inspector (queue #62)
+
+**State:** 🟢 `main` advancing; PR #251 merged (gate-symbol→pins #58 + `__cecReady` + journal-arm). This
+entry is the next PR: **web-only, golden untouched, 183 web tests** (full gate green). Continues the
+render-verification queue — turning a downloaded bug/feedback bundle back into a legible route + a faithful
+render.
+
+- **Semantic action journal** — `logAction` now takes optional structured `data`; capture is wired at the
+  REAL mutation sites so the "route" is complete + replayable, not just keys/tools: **place** (kind+cell),
+  **delete** (counts / wire-segment), **wire** (+ dangling cell) in `board.ts`; **drill-in/out** (one
+  `$effect` on the `drill` state covers all ~5 entry paths), **seal**, **characterize**, **save**, **load**
+  in `App.svelte`. Cell-based, so it reads cleanly + is camera-independent.
+- **`formatJournal()`** (`lib/feedback.ts`) — canonical timeline renderer (relative stamps, verb, detail,
+  data, + a captured-error tail). Tested in `feedback.test.ts` (5 new tests).
+- **`web/scripts/replay.mjs`** (#62) — `pnpm -C web replay --bundle x.json [--out png]`: prints the ROUTE
+  (the owner's "see exactly how I made the bug") + errors, then renders the bundle's EXACT board to a PNG.
+  **Validated** — ran it on a synthetic pot-dimmer bug bundle: printed the 8-step route + the warning, and
+  rendered the circuit (Read the PNG to confirm).
+- **`web/scripts/lib/harness.mjs`** — extracted the shared headless boot (vite + Chromium/SwiftShader +
+  fixture seed + `__cecReady` wait) so `shoot.mjs` (rewritten over it, re-verified) and `replay.mjs` share
+  one path.
+
+**Scoping note (delivered to owner):** a *faithful event-sourced re-driver* (re-simulate pointer input)
+isn't well-supported by the current bundle — it has the FINAL board + recent route but no initial-state
+snapshot or full event stream. So #62 ships as **route-report + exact-board-render**, which covers most
+reported bugs. The fuller re-driver is a separate, greenlight-gated telemetry feature.
+**Deferred with reasons:** golden **pixel-diff CI** — superseded by the deterministic `renderProbe`
+geometry tests (SwiftShader isn't bit-deterministic → flaky); **MCP-wrap** of shoot/replay — the CLI works,
+premature. Both await an explicit ask.
+
+---
+
 ## 2026-06-26 (172) — Agent render-verification tooling + Report-bug/Feedback (the panel's plan)
 
 **State:** PR #250 (web/UI/tooling only, golden untouched, 178 web tests). After a brainstorm panel on
