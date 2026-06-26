@@ -2981,10 +2981,11 @@
     return drill && rev >= 0 ? (board?.freeFormBoxSize() ?? null) : null;
   });
 
-  /** Live INTEGRATION-TIER readout for the die being built: its recursive device count, the tier that count
-   * lands in, and (if any) the next tier + the count that reaches it. Surfaced in the die bar so the
-   * tier-GATED footprint scaling is legible — the player sees their cell is e.g. "SSI · 5 dev" and that it
-   * won't shrink until "MSI (12)", instead of being surprised when a small sealed cell stays full size. */
+  /** Live INTEGRATION-TIER readout (a density BADGE) for the die being built: its recursive device count,
+   * the SSI→ULSI tier that count lands in, and (if any) the next tier + the count that reaches it. The tier
+   * NO LONGER scales the placed footprint (that's a pin RING now, packaged by pin count — see
+   * packFreeFormFootprint); this is purely the Moore's-law density label, so the player sees e.g.
+   * "SSI · 5 dev" and how many devices reach the next band. */
   let dieIntegration = $derived.by(() => {
     const rev = boardRev;
     if (!drill || !board || rev < 0) return null;
@@ -5489,12 +5490,12 @@
             <div
               class="die-tier mono"
               title={dieIntegration.nextTier
-                ? `${dieIntegration.count} device${dieIntegration.count === 1 ? "" : "s"} → ${dieIntegration.tier}. Placed cells shrink one tier at ${dieIntegration.nextTier} (${dieIntegration.nextAt} devices).`
-                : `${dieIntegration.count} devices → ${dieIntegration.tier} (smallest footprint tier).`}
+                ? `${dieIntegration.count} device${dieIntegration.count === 1 ? "" : "s"} → ${dieIntegration.tier} integration tier (a density badge — the placed chip is packaged by its pins, not scaled by tier). Reaches ${dieIntegration.nextTier} at ${dieIntegration.nextAt} devices.`
+                : `${dieIntegration.count} devices → ${dieIntegration.tier} (densest tier). Integration tier is a density badge; the placed chip is packaged by its pins.`}
             >
               {dieIntegration.tier} · {dieIntegration.count} dev{#if dieIntegration.nextTier}
                 <span class="die-tier-next"
-                  >· shrinks at {dieIntegration.nextTier} ({dieIntegration.nextAt})</span
+                  >· {dieIntegration.nextTier} at {dieIntegration.nextAt}</span
                 >{/if}
             </div>
           {/if}

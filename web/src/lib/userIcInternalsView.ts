@@ -285,10 +285,14 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const bodyB = userIcBodyBox(pins, wPx, hPx, freeForm);
   const centreX = bodyB.x + bodyB.w / 2;
   const centreY = bodyB.y + bodyB.h / 2;
-  // Fit to the body rectangle (aspect-preserving), inset a hair for a rim margin; floor each side at
-  // PITCH so a sliver body can't collapse `s`. Guard a degenerate/empty bbox (single cell, no parts):
-  // fall back to centre + unit scale. The `|| PITCH` on the domain handles a single-axis-flat bbox.
-  const INSET = 0.92;
+  // Fit to the body rectangle (aspect-preserving), inset for a rim margin; floor each side at PITCH so a
+  // sliver body can't collapse `s`. Guard a degenerate/empty bbox (single cell, no parts): fall back to
+  // centre + unit scale. The `|| PITCH` on the domain handles a single-axis-flat bbox. A FREE-FORM
+  // (box-captured) cell's body spans pin-to-pin with no lead standoff (a stock package's body is already
+  // inset from its lead tips by IC_LEAD_LEN), so it needs a DEEPER inset — else the inner→outer pin
+  // connector leads are crammed against the wall (owner: "a tad more padding from the circuit edges to the
+  // pins"). A stock package keeps the original tight fit.
+  const INSET = freeForm ? 0.8 : 0.92;
   const fitW = Math.max(bodyB.w * INSET, PITCH);
   const fitH = Math.max(bodyB.h * INSET, PITCH);
   const degenerate = !(domW > 0) && !(domH > 0);

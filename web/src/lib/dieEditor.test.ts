@@ -39,6 +39,7 @@ import {
   captureSeal,
   createBlankFreeFormSubassembly,
   compactFreeFormGeom,
+  packFreeFormFootprint,
   TIER_FOOTPRINT_SCALE,
   countGraphDevices,
   registerUserIc,
@@ -941,6 +942,97 @@ describe("compactFreeFormGeom — edge preservation (no side-flip on a narrow bo
     expect(L.dx).toBe(0); // left pin stays on the left wall
     expect(R.dx).toBe(out.w - 1); // right pin stays on the RIGHT wall (the bug flipped it to 0)
     expect(`${L.dx},${L.dy}`).not.toBe(`${R.dx},${R.dy}`); // still distinct
+  });
+});
+
+describe("packFreeFormFootprint — decoupled pin-RING placed footprint (owner decision 2026-06-26)", () => {
+  // The placed footprint is now a compact pin RING sized by pin COUNT (not the build canvas): each pin keeps
+  // the WALL it was authored nearest + its along-edge order, on distinct cells, in the SAME index order.
+  it("the D-FLIPFLOP (5 pins on a 51×45 canvas) packs to a 4×3 chip, pins on their walls, index order kept", () => {
+    const dff = {
+      w: 51,
+      h: 45,
+      pins: [
+        { dx: 0, dy: 10, name: "D" }, // left
+        { dx: 50, dy: 10, name: "Q" }, // right
+        { dx: 27, dy: 0, name: "VCC" }, // top
+        { dx: 15, dy: 44, name: "CLK" }, // bottom
+        { dx: 31, dy: 44, name: "GND" }, // bottom
+      ],
+    };
+    const out = packFreeFormFootprint(dff);
+    expect([out.w, out.h]).toEqual([4, 3]); // a chip, not a ~31×27 slab
+    expect(out.pins.map((p) => p.name)).toEqual([
+      "D",
+      "Q",
+      "VCC",
+      "CLK",
+      "GND",
+    ]); // index order preserved
+    expect(out.pins[0]!.dx).toBe(0); // D → left wall
+    expect(out.pins[1]!.dx).toBe(out.w - 1); // Q → right wall
+    expect(out.pins[2]!.dy).toBe(0); // VCC → top wall
+    expect(out.pins[3]!.dy).toBe(out.h - 1); // CLK → bottom wall
+    expect(out.pins[4]!.dy).toBe(out.h - 1); // GND → bottom wall
+    expect(new Set(out.pins.map((p) => `${p.dx},${p.dy}`)).size).toBe(5); // all distinct
+  });
+
+  it("is DECOUPLED from canvas size: a sprawling and a tight cell with the same pinout pack identically", () => {
+    const pinout = (w: number, h: number) => ({
+      w,
+      h,
+      pins: [
+        { dx: 0, dy: (h / 2) | 0 }, // left
+        { dx: w - 1, dy: (h / 2) | 0 }, // right
+        { dx: (w / 2) | 0, dy: 0 }, // top
+        { dx: (w / 3) | 0 || 1, dy: h - 1 }, // bottom
+        { dx: ((2 * w) / 3) | 0, dy: h - 1 }, // bottom
+      ],
+    });
+    const tight = packFreeFormFootprint(pinout(6, 6));
+    const sprawl = packFreeFormFootprint(pinout(80, 60));
+    expect([tight.w, tight.h]).toEqual([sprawl.w, sprawl.h]); // size tracks PIN COUNT, not canvas extent
+    expect([sprawl.w, sprawl.h]).toEqual([4, 3]);
+  });
+
+  it("stacks several pins on one wall into a vertical chip (the 2:1 MUX shape), distinct + ordered", () => {
+    const mux = {
+      w: 17,
+      h: 23,
+      pins: [
+        { dx: 0, dy: 6, name: "IN1" }, // left
+        { dx: 5, dy: 22, name: "GND" }, // bottom
+        { dx: 5, dy: 0, name: "VCC" }, // top
+        { dx: 0, dy: 16, name: "SEL" }, // left
+        { dx: 0, dy: 10, name: "IN2" }, // left
+        { dx: 16, dy: 11, name: "OUT" }, // right
+      ],
+    };
+    const out = packFreeFormFootprint(mux);
+    expect([out.w, out.h]).toEqual([3, 5]); // 3 pins on the left wall → a tall, narrow chip
+    // IN1 (idx0), IN2 (idx4), SEL (idx3) all on the left column, consecutive cells, top→bottom order kept.
+    expect([out.pins[0]!.dx, out.pins[4]!.dx, out.pins[3]!.dx]).toEqual([
+      0, 0, 0,
+    ]);
+    expect(out.pins[0]!.dy).toBeLessThan(out.pins[4]!.dy); // IN1 above IN2
+    expect(out.pins[4]!.dy).toBeLessThan(out.pins[3]!.dy); // IN2 above SEL
+    expect(out.pins[5]!.dx).toBe(out.w - 1); // OUT on the right wall
+    expect(new Set(out.pins.map((p) => `${p.dx},${p.dy}`)).size).toBe(6); // all distinct
+  });
+
+  it("floors a tiny cell to a 3×3 body (legible, pins not corner-jammed)", () => {
+    const out = packFreeFormFootprint({
+      w: 5,
+      h: 5,
+      pins: [
+        { dx: 0, dy: 2 },
+        { dx: 4, dy: 2 },
+      ],
+    });
+    expect(out.w).toBeGreaterThanOrEqual(3);
+    expect(out.h).toBeGreaterThanOrEqual(3);
+    expect(out.pins[0]!.dx).toBe(0);
+    expect(out.pins[1]!.dx).toBe(out.w - 1);
   });
 });
 

@@ -167,7 +167,24 @@ once promoted, a cell only demotes after dropping a few devices **below** the up
 Pre-readers get a redundant cue (the dot count, §8) so the size jump always has a visible
 cause.
 
-## 5. A literal uniform-scaled replica, floored to the grid (board-correctness, non-negotiable)
+## 5. ~~A literal uniform-scaled replica, floored to the grid (board-correctness, non-negotiable)~~ — SUPERSEDED 2026-06-26
+
+> **🛑 SUPERSEDED 2026-06-26 (owner) — the placed footprint is now a DECOUPLED PIN-RING repack, not a
+> uniform replica.** The literal-replica rule below faithfully scaled the *whole build canvas*, so a sparse
+> cell stayed sparse: a 5-pin D-flip-flop drawn on a 51×45 canvas placed as a ~31×27 slab (~75 mm) — the
+> owner's "still 60mm wide, which is HUGE for what should be a small chip." That re-imported the very §3
+> confound it was meant to avoid (footprint tracked layout **extent**, not device **count**). The placed
+> footprint is now `packFreeFormFootprint` (`web/src/lib/userIc.ts`): an edge-preserving compact pin **RING**
+> sized by pin count (DFF → 4×3), DECOUPLED from the build canvas — exactly how a packaged IC already works
+> here (`packageLayout` lays leads out from the pin count; `tapeOut` drops `freeForm`). Each pin keeps its
+> wall + along-edge order; connectivity stays by pin **INDEX**, so the netlist/flatten and the golden are
+> untouched; `ic.freeForm` still drives the die editor / walls / zoom-to-open (the whole canvas still
+> reveals, just smaller — more camera zoom). The **integration tier is now a density BADGE only** (the §2
+> ladder + `integrationTier` are retained for the badge/tests), no longer a footprint scaler — so §1's "two
+> orthogonal scale systems" reduce to: FOOTPRINT = the pin ring; DRILL = `cumulativeScale`. The opened
+> replica fits the inner circuit to a deeper inset for a free-form cell (`userIcInternalsView.ts`) so the
+> inner→outer pin connector leads aren't crammed against the wall. The original override is kept below for
+> the record.
 
 > **OWNER OVERRIDE of the panel's first cut.** The panel originally proposed "keep pins at full
 > grid extent, shrink only the drawn body inside a *fixed* pin-cage." That is wire-safe but it
