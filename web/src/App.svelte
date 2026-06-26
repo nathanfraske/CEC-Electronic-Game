@@ -1781,8 +1781,12 @@
     vectors: SweepVector[];
     /** the assembled prog-4 LUT word (shown in hex). */
     word: number;
-    /** the recognized Boolean function ("NAND") or null for an unnamed/≥3-input table. */
+    /** the recognized Boolean function ("NAND") or null for an unnamed/≥3-input table. For a REGISTERED
+     * cell this names the NEXT-STATE Q⁺ (e.g. "D-TYPE" for Q⁺ = D — a latch/flop, not a transparent buffer). */
     gate: string | null;
+    /** true for a sequential cell swept into a REGISTERED LUT (mode ≥ 1) — the table is the next-state Q⁺,
+     * latched on the cell's clock/enable, not a combinational truth table. */
+    registered: boolean;
   }
   let charResult = $state<CharPanel | null>(null);
 
@@ -1823,10 +1827,16 @@
     setUserIcBehavior(tag, res.behavior); // bind the swept word to the def (collapse can now fire)
     libRev++;
     const gate = recognizeGate(res.behavior.word, res.inputs);
+    const registered = (res.behavior.mode ?? 0) >= 1;
+    // A REGISTERED next-state of "BUFFER" (Q⁺ = D) is a D-type latch/flop, not a transparent buffer — show
+    // the friendlier label so the panel doesn't read "BUFFER" for a latch (the rest of the gate names carry
+    // over as the registered next-state, e.g. a registered NAND).
+    const gateLabel = registered && gate === "BUFFER" ? "D-TYPE" : gate;
     logAction("characterize", ic.name || partName(tag), {
       tag,
       inputs: res.inputs,
       gate: gate ?? "",
+      registered,
     });
     charResult = {
       tag,
@@ -1834,7 +1844,8 @@
       cols: [...Array(res.inputs).keys()],
       vectors: res.vectors,
       word: res.behavior.word,
-      gate,
+      gate: gateLabel,
+      registered,
     };
   }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
@@ -5653,9 +5664,19 @@
         >
           <div class="char-head">
             <span class="char-title">{charResult.name}</span>
+            {#if charResult.registered}
+              <span
+                class="char-reg"
+                title="Sequential cell — swept into a REGISTERED LUT (the table is the next-state Q⁺, latched on the clock/enable), not a transparent combinational gate"
+                >REGISTERED</span
+              >
+            {/if}
             {#if charResult.gate}
-              <span class="char-gate" title="Recognized Boolean function"
-                >{charResult.gate}</span
+              <span
+                class="char-gate"
+                title={charResult.registered
+                  ? "Recognized next-state function (Q⁺)"
+                  : "Recognized Boolean function"}>{charResult.gate}</span
               >
             {/if}
             <span class="char-word mono" title="Collapsed prog-4 LUT word"
@@ -5674,7 +5695,12 @@
                 {#each charResult.cols as i (i)}
                   <th>I{i}</th>
                 {/each}
-                <th class="char-out">Y</th>
+                <th
+                  class="char-out"
+                  title={charResult.registered
+                    ? "Next state Q⁺ (latched on the clock/enable)"
+                    : "Output Y"}>{charResult.registered ? "Q⁺" : "Y"}</th
+                >
               </tr>
             </thead>
             <tbody>
@@ -5689,7 +5715,9 @@
             </tbody>
           </table>
           <div class="char-foot">
-            Swept into a LUT — a behavioral copy simulates as one cheap cell.
+            {charResult.registered
+              ? "Swept into a REGISTERED LUT — a behavioral copy latches its next-state on the clock/enable, as one cheap cell."
+              : "Swept into a LUT — a behavioral copy simulates as one cheap cell."}
           </div>
         </div>
       {/if}
@@ -8936,6 +8964,18 @@
     border: 1px solid color-mix(in oklch, var(--cyan) 45%, transparent);
     border-radius: 2px;
     background: color-mix(in oklch, var(--cyan) 12%, transparent);
+  }
+  /* The "REGISTERED" pill: accent (rose) so a sequential cell reads distinctly from the cyan gate badge. */
+  .char-reg {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--accent);
+    padding: 1px 6px;
+    border: 1px solid color-mix(in oklch, var(--accent) 55%, transparent);
+    border-radius: 2px;
+    background: color-mix(in oklch, var(--accent) 14%, transparent);
   }
   .char-word {
     font-size: 11px;
