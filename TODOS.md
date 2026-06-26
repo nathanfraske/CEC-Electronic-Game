@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (177) — Backlog refinements: registered-cell label + feedback route preview
+
+Web-only, golden untouched, 189 web tests. Working through the backlog of small refinements.
+- ~~**Registered-cell char-panel label**~~ (#258) — REGISTERED pill + "D-TYPE"/"Q⁺" instead of "BUFFER"/"Y".
+- ~~**Feedback route preview**~~ — the Bug/Feedback modal shows the captured steps (`routePreview()`) before
+  download. Validated live.
+- [ ] _Deferred:_ **explicit "Bidir" pin button** — marking a pin `inout` without renaming needs a per-pin
+  ROLE override (PinTestRole is gnd/vcc/in only; derivePinRoles is name+stimulus-driven). It's a small
+  FEATURE, not a cosmetic — do it as its own change (add a freeForm-pin `role?` override honored by
+  derivePinRoles, or extend the role model). Today: name a pin IO/BIDIR/BUS to get inout.
+- [ ] **Render refinements still open:** #22 (INV composite zoom-to-open draws FETs as boxes, not animated
+  transistors), #21 (variant static zoom-to-open fallback ignores selected variant), nested-replica name
+  labels (label nested sub-ICs in the opened replica).
+
+---
+
 ## 2026-06-26 (176) — Sequential-cell auto-detection (latch → registered, not buffer)
 
 Web-only, golden untouched, 189 web tests.
@@ -54,7 +70,8 @@ Web-only, golden untouched, 183 web tests.
 - [ ] **Initial-snapshot / keyframe capture** — to faithfully replay routes that began MID-session (the
   ring dropped the start). Today drive starts from empty + reports `skip` for non-fresh drill-in / load /
   characterize-of-session-tag. The keyframe system is the next increment if mid-session routes turn up.
-- [ ] **Route preview in the feedback modal** — show `formatJournal(journal)` before download (carried from (173)).
+- ~~**Route preview in the feedback modal**~~ — the Bug/Feedback modal now shows a "Recent route attached"
+  `<pre>` (`feedback.routePreview()`) so the owner sees the captured steps before downloading. Validated live.
 
 ---
 
@@ -73,8 +90,7 @@ Web-only, golden untouched, 183 web tests. Continues the render-verification que
   exact-board-render instead (covers most reported bugs).
 - [ ] _Deferred:_ golden **pixel-diff CI** — superseded by the deterministic `renderProbe` geometry tests
   (SwiftShader isn't bit-deterministic → flaky). **MCP-wrap** of shoot/replay — CLI works, premature.
-- [ ] **Route preview in the feedback modal** — show `formatJournal(journal)` in a `<pre>` so the owner
-  sees the captured route before downloading (easy follow-up; helper + tests already in place).
+- ~~**Route preview in the feedback modal**~~ — shipped (see (177)): a "Recent route attached" `<pre>`.
 
 ---
 
