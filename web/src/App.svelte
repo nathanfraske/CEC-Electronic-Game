@@ -1809,6 +1809,10 @@
     registered: boolean;
   }
   let charResult = $state<CharPanel | null>(null);
+  /** The Behavior characterization runs a scratch sim per input combination, so a wide cell (a 4-bit
+   * register = 64 combos) blocks the main thread for a moment. This flag drives a "Computing…" placard so
+   * the click registers as working rather than freezing silently. */
+  let charComputing = $state(false);
   let datasheet = $state<DatasheetModel | null>(null);
 
   /**
@@ -1910,6 +1914,24 @@
     circuitWarning = null;
     datasheet = null; // the two reference panels share the top-centre slot — show one at a time
     charResult = panel;
+  }
+
+  /** Front the Behavior compute with a "Computing…" placard. The characterization is synchronous and
+   * blocks for a moment on a wide cell, so paint the placard FIRST (two rAFs flush the DOM + a frame),
+   * then run it — the click reads as working instead of a silent freeze. */
+  async function runBehavior(tag: string): Promise<void> {
+    datasheet = null;
+    charResult = null;
+    circuitWarning = null;
+    charComputing = true;
+    await new Promise((r) =>
+      requestAnimationFrame(() => requestAnimationFrame(r)),
+    );
+    try {
+      showBehavior(tag);
+    } finally {
+      charComputing = false;
+    }
   }
 
   /** Collapse the panel's cell to its fast model (the explained "Use fast model ⚡" action) — binds the
@@ -4635,7 +4657,7 @@
                   aria-label="Behavior of {part.name}"
                   onclick={(e) => {
                     e.stopPropagation();
-                    showBehavior(part.tag);
+                    runBehavior(part.tag);
                   }}>◧ Behavior</button
                 >
                 <button
@@ -5909,7 +5931,14 @@
         <div class="circuit-warn">⚠ {circuitWarning}</div>
       {/if}
 
-      {#if charResult}
+      {#if charComputing}
+        <!-- "Computing…" placard while the characterization sweeps every input combination (a wide cell
+             blocks the main thread for a moment — this tells you the click registered). -->
+        <div class="char-panel char-computing" role="status">
+          <span class="char-spinner" aria-hidden="true"></span>
+          <span>Computing behavior…</span>
+        </div>
+      {:else if charResult}
         <!-- BEHAVIOR panel: the cell's truth / next-state table (with the player's real pin names) and, for
              a clocked cell, a per-row Q WAVEFORM beside it — plus the optional "use fast model" collapse. -->
         <div
@@ -9331,6 +9360,11 @@
     left: 50%;
     transform: translateX(-50%);
     min-width: 200px;
+    /* A wide cell's table (a 4-bit register = 64 rows) used to run off the bottom of the screen with no
+       way to reach the lower rows. Cap the height to the board frame (the positioned ancestor — NOT the
+       viewport: the panel sits ~44px down inside it, so `100vh` would overflow the bottom) and scroll. */
+    max-height: calc(100% - 60px);
+    overflow-y: auto;
     padding: 10px 12px 11px;
     background: oklch(0.165 0.028 285 / 0.96);
     border: 1px solid var(--cyan);
@@ -9338,6 +9372,28 @@
     box-shadow: 0 0 22px -9px var(--cyan);
     backdrop-filter: blur(3px);
     z-index: 5;
+  }
+  /* "Computing…" placard while the characterization runs. */
+  .char-computing {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text);
+  }
+  .char-spinner {
+    width: 13px;
+    height: 13px;
+    border: 2px solid color-mix(in oklch, var(--cyan) 30%, transparent);
+    border-top-color: var(--cyan);
+    border-radius: 50%;
+    animation: char-spin 0.7s linear infinite;
+  }
+  @keyframes char-spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .char-head {
     display: flex;
@@ -9423,6 +9479,15 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-2, var(--dim));
+    /* Keep the column names in view while scrolling a tall (64-row) table. */
+    position: sticky;
+    top: 0;
+    background: oklch(0.185 0.03 285);
+    z-index: 1;
+  }
+  /* Zebra striping so a wide binary table stays scannable row-to-row. */
+  .char-tt tbody tr:nth-child(even) td {
+    background: color-mix(in oklch, var(--cyan) 6%, transparent);
   }
   .char-tt td.hi {
     color: var(--cyan);
