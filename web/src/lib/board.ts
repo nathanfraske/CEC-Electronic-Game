@@ -121,6 +121,11 @@ import {
   routeForWire,
   cleanRouteWaypoints,
   planSegmentDrag,
+  emptyLazyRoute,
+  extendLazyTrail,
+  lazyWaypoints,
+  chainOrthoRoute,
+  type LazyRoute,
   snapToBoxEdge,
   firstFreePerimeterCell,
   voltageColor,
@@ -818,6 +823,11 @@ export class Board {
   // movement. Both are reset each time a wiring press begins/continues.
   private wiringMoved = false;
   private wiringDownCell: Cell | null = null;
+  // KiCad-style "lazy-follow" routing: while a wire is pending, the pointer's path is accumulated into a
+  // heading-locked orthogonal staircase (`extendLazyTrail`) so a freehand drag sketches clean bends. On
+  // finish the trail is baked as the segment's WAYPOINTS (not junctions). Reset at the start of each
+  // pending segment; empty ⇒ the wire falls back to its plain auto L/Z route.
+  private lazyRoute: LazyRoute = emptyLazyRoute();
   // The wire + world point the last press landed on, so Delete can drop *only that
   // segment* of a multi-bend run rather than the whole pin-to-pin wire. The leg is
   // resolved from this point against the wire's *current* geometry at delete time
@@ -5403,6 +5413,15 @@ export class Board {
       ) {
         this.wiringMoved = true;
       }
+      // Lazy-follow: feed the snapped cursor into the staircase so the pending wire sketches the bends
+      // the pointer traces (baked as waypoints on finish — no per-corner junctions).
+      const startCell = this.graph.endpointCell(this.wiring.from);
+      if (startCell) {
+        this.lazyRoute = extendLazyTrail(startCell, this.lazyRoute, {
+          col: snap(wp.x, PITCH),
+          row: snap(wp.y, PITCH),
+        });
+      }
       this.drawPendingWire();
     }
     // Free-form box resize-handle hover: show a directional resize cursor (ew/ns/nesw/nwse) so the box
@@ -5605,6 +5624,7 @@ export class Board {
     this.wiring = { from };
     this.wiringDownCell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
     this.wiringMoved = false;
+    this.lazyRoute = emptyLazyRoute();
     this.drawPendingWire();
   }
 
@@ -5658,6 +5678,8 @@ export class Board {
       const from = this.wiring.from;
       const wire = this.graph.connect(from, target);
       if (wire) {
+        // Keep the lazy-follow sketch: bake the trail as this wire's bend waypoints before redraw.
+        this.bakeLazyIntoWire(from, target);
         this.pushUndo(before);
         this.redrawWires();
         this.cb.onChange?.(this.graph);
@@ -5677,12 +5699,17 @@ export class Board {
     // Bare trace: T in with an auto-junction and continue routing from it. The new
     // junction becomes the start, so re-anchor the down-cell to it (a drag-release
     // continue leaves the pointer up; the next press re-arms anyway).
+    const tFrom = this.wiring.from;
     const newJ = this.finishWireOnWire(wx, wy);
     if (newJ !== null) {
+      // Bake the sketched bends into the segment that just teed in (then the trail resets for the
+      // next leg, which starts fresh at the new junction).
+      this.bakeLazyIntoWire(tFrom, { junctionId: newJ });
       this.wiring = { from: { junctionId: newJ } };
       const jc = this.graph.endpointCell(this.wiring.from);
       if (jc) this.wiringDownCell = { ...jc };
       this.wiringMoved = false;
+      this.redrawWires();
       this.drawPendingWire();
       return;
     }
@@ -5700,12 +5727,15 @@ export class Board {
       return; // dropping on the start cell is a no-op — keep routing
     }
     const before = this.graph.serialize();
+    const dFrom = this.wiring.from;
     const j = this.graph.addJunction(cell, true);
-    const wire = this.graph.connect(this.wiring.from, { junctionId: j.id });
+    const wire = this.graph.connect(dFrom, { junctionId: j.id });
     if (!wire) {
       this.graph.removeJunction(j.id);
       return;
     }
+    // Bake the sketched bends into this leg before continuing from the new dangling junction.
+    this.bakeLazyIntoWire(dFrom, { junctionId: j.id });
     this.pushUndo(before);
     this.wiring = { from: { junctionId: j.id } };
     this.wiringDownCell = { ...cell };
@@ -5777,7 +5807,37 @@ export class Board {
     this.wiring = null;
     this.wiringDownCell = null;
     this.wiringMoved = false;
+    this.lazyRoute = emptyLazyRoute();
     this.pendingWire.clear();
+  }
+
+  /**
+   * Bake the current lazy-follow trail into the just-committed wire between `from` and `to` as its bend
+   * waypoints (so the sketched route is kept — no per-corner junctions), then reset the trail for the
+   * next segment. The waypoint list is ordered from→to; if the stored wire runs to→from it is reversed.
+   * A no-op (beyond the reset) when the trail is straight or the wire can't be found.
+   */
+  private bakeLazyIntoWire(from: Endpoint, to: Endpoint): void {
+    const sc = this.graph.endpointCell(from);
+    const tc = this.graph.endpointCell(to);
+    if (sc && tc) {
+      const wps = lazyWaypoints(sc, this.lazyRoute, tc);
+      if (wps.length > 0) {
+        const fk = endpointKey(from);
+        const tk = endpointKey(to);
+        const wire = [...this.graph.wires.values()].find((w) => {
+          const a = endpointKey(w.from);
+          const b = endpointKey(w.to);
+          return (a === fk && b === tk) || (a === tk && b === fk);
+        });
+        if (wire) {
+          const ordered =
+            endpointKey(wire.from) === fk ? wps : [...wps].reverse();
+          this.graph.setWireWaypoints(wire.id, ordered);
+        }
+      }
+    }
+    this.lazyRoute = emptyLazyRoute();
   }
 
   // --- undo ---------------------------------------------------------------
@@ -7145,6 +7205,7 @@ export class Board {
     // Preview a wire-to-wire junction: when releasing over a wire (not a pin),
     // snap the end to the nearest grid point on that wire's route and show a dot.
     let junctionPt: Point | null = null;
+    let junctionCell: Cell | null = null;
     if (!snapTo) {
       const wid = this.wireHitTest(this.pointer.x, this.pointer.y);
       const w = wid !== null ? this.graph.wires.get(wid) : undefined;
@@ -7157,22 +7218,35 @@ export class Board {
         const route = this.routeForWire(w);
         if (route.length >= 2) {
           const cp = closestOnPolyline(route, this.pointer.x, this.pointer.y);
-          const cell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
-          junctionPt = this.cellToWorld(cell);
+          junctionCell = { col: snap(cp.x, PITCH), row: snap(cp.y, PITCH) };
+          junctionPt = this.cellToWorld(junctionCell);
         }
       }
     }
     const end = snapTo
       ? this.cellToWorld(this.graph.pinRefCell(snapTo) ?? start)
       : (junctionPt ?? this.pointer);
-    // Preview the same down-bend a committed wire would get when it starts on (or snaps to) a die-frame
-    // pad — so the builder shows the perpendicular exit live as you drag, not a Z that snaps on release.
+    // The grid cell the wire would END at — a snapped pin, the previewed junction, or the snapped cursor.
+    const endCell: Cell = snapTo
+      ? (this.graph.pinRefCell(snapTo) ?? start)
+      : (junctionCell ?? {
+          col: snap(this.pointer.x, PITCH),
+          row: snap(this.pointer.y, PITCH),
+        });
+    // Lazy-follow: once the pointer has sketched any bends, preview the route through those baked
+    // waypoints (orthogonal chain). With no bends yet, keep the plain auto route — including the
+    // die-frame pad's perpendicular down-bend exit, shown live so the builder reads the exit as you drag.
+    const lazyWps = lazyWaypoints(start, this.lazyRoute, endCell);
     const exitFrom = this.dieFramePinExit(this.wiring.from);
     const exitTo = snapTo ? this.dieFramePinExit(snapTo) : null;
     const route =
-      exitFrom || exitTo
-        ? this.frameLeadRoute(ps, end, exitFrom, exitTo)
-        : this.wireRoute(ps, end);
+      lazyWps.length > 0
+        ? chainOrthoRoute(
+            [start, ...lazyWps, endCell].map((c) => this.cellToWorld(c)),
+          )
+        : exitFrom || exitTo
+          ? this.frameLeadRoute(ps, end, exitFrom, exitTo)
+          : this.wireRoute(ps, end);
     polyline(g, route);
     g.stroke({ width: 6, color: PALETTE.accent, alpha: 0.16 });
     polyline(g, route);

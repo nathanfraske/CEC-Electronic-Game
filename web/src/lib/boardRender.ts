@@ -992,8 +992,13 @@ export function routeForWire(
       ? frameLeadRoute(anchors[0]!, anchors[1]!, exitFrom, exitTo)
       : wireRoute(anchors[0]!, anchors[1]!);
   }
-  // Chain an orthogonal leg through each consecutive anchor pair, dropping the
-  // duplicated joint between legs so the polyline is continuous.
+  return chainOrthoRoute(anchors);
+}
+
+/** Chain an orthogonal {@link wireRoute} leg through each consecutive anchor pair, dropping the
+ * duplicated joint between legs so the polyline is continuous. Shared by {@link routeForWire} and the
+ * pending-wire preview (a lazy-follow route through its baked waypoints). */
+export function chainOrthoRoute(anchors: Point[]): Point[] {
   const out: Point[] = [];
   for (let i = 0; i + 1 < anchors.length; i++) {
     const leg = wireRoute(anchors[i]!, anchors[i + 1]!);
@@ -1120,6 +1125,76 @@ export function planSegmentDrag(
     }
   }
   return { pts, bi, axis, moveEnds };
+}
+
+/** Running state of a KiCad-style "lazy-follow" wire route: the committed orthogonal corners so far
+ * (`trail`, between the start and the live cursor) plus the axis the open last segment runs along. */
+export interface LazyRoute {
+  trail: Cell[];
+  heading: "h" | "v" | null;
+}
+
+/** A fresh lazy route (no corners, no locked heading) — call at the start of each pending wire/segment. */
+export function emptyLazyRoute(): LazyRoute {
+  return { trail: [], heading: null };
+}
+
+/**
+ * Extend a "lazy-follow" wire route toward `cursor` (a snapped grid cell). The route is a heading-locked
+ * orthogonal staircase: it runs along the current axis and only turns a corner once the cursor strays
+ * `turn` cells off that run (with ≥1 cell of along-axis progress), so a freehand mouse drag sketches
+ * clean bends WITHOUT a click (and a junction) per corner. `start` is the wire's origin; thread the
+ * returned {@link LazyRoute} back in on each move. Pure — never mutates the input; the caller bakes the
+ * trail as the wire's waypoints on finish. The first move locks the heading to the dominant axis.
+ */
+export function extendLazyTrail(
+  start: Cell,
+  prev: LazyRoute,
+  cursor: Cell,
+  turn = 2,
+): LazyRoute {
+  const trail = prev.trail.map((c) => ({ ...c }));
+  let heading = prev.heading;
+  const anchor = trail.length > 0 ? trail[trail.length - 1]! : start;
+  const dCol = cursor.col - anchor.col;
+  const dRow = cursor.row - anchor.row;
+  if (dCol === 0 && dRow === 0) return { trail, heading };
+  if (heading === null) heading = Math.abs(dCol) >= Math.abs(dRow) ? "h" : "v";
+  // Turn: the cursor has strayed `turn` cells off the current run (and made along-axis progress) ⇒ commit
+  // a corner where the wire leaves the run, then pivot to the perpendicular axis.
+  if (heading === "h" && Math.abs(dRow) >= turn && Math.abs(dCol) >= 1) {
+    trail.push({ col: cursor.col, row: anchor.row });
+    heading = "v";
+  } else if (heading === "v" && Math.abs(dCol) >= turn && Math.abs(dRow) >= 1) {
+    trail.push({ col: anchor.col, row: cursor.row });
+    heading = "h";
+  }
+  return { trail, heading };
+}
+
+/**
+ * The full interior-waypoint list for a lazy-follow wire ending at `end` (the live cursor for the
+ * preview, or the landed target on commit): the committed `trail` plus the open segment's elbow (so the
+ * last run stays orthogonal as it reaches `end`), minimised by {@link cleanRouteWaypoints}. Pure; no
+ * junctions — these become the wire's bend waypoints.
+ */
+export function lazyWaypoints(
+  start: Cell,
+  route: LazyRoute,
+  end: Cell,
+): Cell[] {
+  const anchor =
+    route.trail.length > 0 ? route.trail[route.trail.length - 1]! : start;
+  const wps = route.trail.map((c) => ({ ...c }));
+  if (route.heading === "h" && end.row !== anchor.row && end.col !== anchor.col)
+    wps.push({ col: end.col, row: anchor.row });
+  else if (
+    route.heading === "v" &&
+    end.col !== anchor.col &&
+    end.row !== anchor.row
+  )
+    wps.push({ col: anchor.col, row: end.row });
+  return cleanRouteWaypoints(start, wps, end);
 }
 
 /**
