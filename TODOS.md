@@ -37,12 +37,21 @@ focus + highlight the SAME electrical net like KiCad (ground / +5V), **by real n
   node loop dims OFF-net parts via `node.view.alpha` (`NET_DIM_ALPHA` 0.45, composes with the per-child
   fades; die frame never dims). Render-verified on the reg bench: hovering the V net lit it amber, ringed
   its pins, and faded the PULSE + resistor. Wiring gets the same treatment (a superset of Phase 1).
-- [ ] **Phase 3 — label declutter (1+2)** — collision-resolve pass (nudge/hide by priority out>in>chip) +
-  zoom/focus reveal, so a dense part's pin labels + the value chip stop overlapping when NOT wiring.
-- [ ] **Polish** — off-net WIRE dimming (only the component BODIES dim today; the wire loop's per-stroke
-  alphas were left untouched as too invasive — the amber halo already differentiates on-net traces);
-  highlight colour/width tune; per-frame on-net set could be cached if boards get large; the value-chip
-  lands among pin labels on short parts until Phase 3 re-lays them.
+- ~~**Phase 3a — focus/zoom label reveal + value chip in-body & crisp**~~ (PR, CI). Option 1 (focus reveal):
+  an AMBIENT part shows only its symbol + pin dots (+ a cell's LED bit); its full pin labels + value chip
+  fade in only when it's HOVERED/SELECTED (`hoverComponentId` via body/pin hit-test → `focused`) or zoomed
+  in past `AMBIENT_LABEL_ZOOM` (7) — focused parts still reveal from `DETAIL_ZOOM` (4.5). Owner live asks:
+  the **value chip now parks INSIDE the body**, in a region clear of the symbol (centre the lower card on a
+  tall part; tuck BESIDE the symbol on the wide/short register; inner bottom edge as a last resort) — it no
+  longer drops out among the bottom pin labels; and it now **counter-scales + sets `resolution = DPR·eff`**
+  exactly like the pin labels, so it stops blurring/ballooning at zoom. Render-verified (reg + NAND).
+- [ ] **Phase 3b — collision-resolve (option 2)** — the always-on nudge/hide pass between OVERLAPPING label
+  boxes (priority output > input > value chip), for the residual case where two focused/near parts' labels
+  still cross. (Focus reveal already removes most cross-part collisions by showing far fewer at once.)
+- [ ] **Polish** — `AMBIENT_LABEL_ZOOM` is the key tunable if the ambient-hide feels too aggressive; off-net
+  WIRE dimming (only component BODIES dim today; the wire loop's per-stroke alphas were left untouched as
+  too invasive — the amber halo already differentiates on-net traces); highlight colour/width tune;
+  per-frame on-net set could be cached if boards get large.
 
 ---
 

@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (194) — Wiring Phase 3a: focus/zoom label reveal + value chip in-body & crisp
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
+The label-declutter the owner approved as "options 1 + 2" — this lands option 1 (focus/zoom reveal) plus the
+owner's live refinements to the value chip. All in `board.ts`:
+
+- **Focus/zoom reveal (option 1).** A new `hoverComponentId` (set in `onPointerMove` via pin/body hit-test,
+  cleared on leave) → a per-part `focused = selected || hovered`, threaded into `node.update`. An AMBIENT
+  part now auto-labels its pins only past `AMBIENT_LABEL_ZOOM` (7); a FOCUSED part still reveals from
+  `DETAIL_ZOOM` (4.5). So an overview of a dense board isn't a wall of overlapping pin names — hover/select
+  a part (or zoom in) to read its pinout. Wire mode / the open replica / the die frame are unchanged.
+- **Value chip IN the body (owner live ask).** The "Q=…" chip parks INSIDE the body in a region clear of the
+  symbol — centred in the lower card on a tall part, tucked BESIDE the symbol on the wide/short register,
+  inner bottom edge as a last resort — instead of dropping out among the bottom pin labels.
+- **Value chip crisp (owner live ask).** It now counter-scales by `cs` and sets `resolution = DPR·eff`
+  exactly like the pin labels, so it stops blurring + ballooning at zoom (it tracked neither before).
+- **Verified** headlessly: the register at ambient zoom shows no labels/chip; hovering reveals the pins +
+  "Q=0" tucked inside the body (right of the symbol); crisp at zoom 6.5; the NAND reveals A/B/OUT on hover.
+
+**Next:** **Phase 3b** — option 2's always-on collision-resolve nudge/hide (output > input > value chip) for
+residual overlaps. `AMBIENT_LABEL_ZOOM` (7) is the tunable if the ambient-hide reads too aggressive.
+
+---
+
 ## 2026-06-27 (193) — Wiring Phase 2: KiCad net highlight on hover + pin rings + dim off-net
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**

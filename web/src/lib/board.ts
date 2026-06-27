@@ -188,8 +188,17 @@ const RESIZE_GRIP_PX = 12;
 /** World zoom at/above which analogy/reality parts swap to the full illustration. */
 const TIER_ZOOM = 2.2;
 /** Deeper still: the tier illustration also gets its simple pinout labels (the
- * "full detail" LOD). Below this you get the cleaner label-free illustration. */
+ * "full detail" LOD). Below this you get the cleaner label-free illustration. A FOCUSED part (hovered /
+ * selected / being wired) reveals its labels from here; an AMBIENT part waits for {@link AMBIENT_LABEL_ZOOM}
+ * so an overview of a dense board stays uncluttered (the owner's "labels aren't aware of their neighbours"
+ * — Phase 3 / option 1: ambient parts show only essentials, full labels fade in on focus or deep zoom). */
 const DETAIL_ZOOM = 4.5;
+/** An AMBIENT (un-focused) part only auto-labels its pins once it's zoomed in this close — by which point
+ * it's a large, near-isolated thing on screen, so its labels don't collide with neighbours. Below this an
+ * ambient part shows just its symbol + pin dots (+ a sequential cell's LED bit); hover/select it to read
+ * the pinout sooner. Sits between {@link LABEL_CAP_ZOOM} and {@link INTERNALS_ZOOM} (the open-replica bar,
+ * which labels its own edge pins). */
+const AMBIENT_LABEL_ZOOM = 7;
 /** WORLD-SCALE threshold past which a sealed IC opens to its live internal sub-circuit (zoom-to-open,
  * ADR 0005) instead of staying its black-box SYMBOL. Set so a chip opens only once it's a COMFORTABLY
  * LARGE on-screen size (body roughly screen-filling), not the old ×2.5 that split while the chip was
@@ -834,6 +843,10 @@ export class Board {
   // KiCad-style net highlight when NOT actively routing. Recomputed on each idle pointer move; consumed by
   // `highlightNet`. Null when the cursor is off the copper or a gesture is in progress.
   private hoverNet: number | null = null;
+  // The component under an idle hover (its body or one of its pins) — so a FOCUSED part reveals its full
+  // pin labels + value chip while ambient parts stay decluttered (Phase 3 label reveal). Recomputed each
+  // idle move alongside `hoverNet`; null off any part.
+  private hoverComponentId: number | null = null;
   // KiCad-style click-to-continue wiring tracks, per press, whether the pointer left
   // the cell it went down in. A press+release IN PLACE (a click) leaves the wire
   // *pending* so the next click extends it (drop corners, T into a trace, finish on a
@@ -1259,6 +1272,7 @@ export class Board {
   private readonly onPointerLeave = (): void => {
     this.pointerInside = false;
     this.hoverNet = null; // drop the net highlight when the cursor leaves the canvas
+    this.hoverComponentId = null; // …and the label-reveal focus
     this.updateGhost();
     this.updatePasteGhost();
   };
@@ -3010,6 +3024,9 @@ export class Board {
         // see where you're routing), regardless of the current tool.
         this.mode === "wire" || this.wiring !== null,
         this.cellLiveState(id),
+        // FOCUSED: hovered or selected → reveal this part's full pin labels + value chip even at mid zoom
+        // (ambient parts wait for AMBIENT_LABEL_ZOOM, so a dense board's overview stays uncluttered).
+        this.selected.has(id) || this.hoverComponentId === id,
       );
       // Off-net parts recede under the net highlight (the node's own per-child fades compose with this
       // container alpha). On-net parts, the die frame, and the no-highlight case stay fully opaque.
@@ -5608,6 +5625,14 @@ export class Board {
       !this.wiring && (this.mode === "select" || this.mode === "wire")
         ? (this.snapProbe(wp.x, wp.y)?.node ?? null)
         : null;
+    // The part under the cursor (its body, or one of its pins just outside it) gets its full pin labels +
+    // value chip revealed (Phase 3) — ambient parts stay decluttered. Same idle-only gate as the net hover.
+    this.hoverComponentId =
+      this.mode === "select" || this.mode === "wire"
+        ? (this.pinHitTest(wp.x, wp.y)?.componentId ??
+          this.bodyHitTest(wp.x, wp.y)?.id ??
+          null)
+        : null;
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
@@ -7996,6 +8021,7 @@ class ComponentNode {
     elemCurrents?: Float64Array,
     wireMode = false,
     liveState?: StoredState,
+    focused = false,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -8124,28 +8150,55 @@ class ComponentNode {
             liveState.bits,
             fadeAlpha,
           );
-          const textIn = Math.max(0, Math.min(1, (zoom - 3.5) / 2)); // fades in over zoom 3.5 → 5.5
+          // The value chip is the LOWEST-priority body label (output > input pins > value chip — Phase 3 /
+          // option 2), so it only reveals when the cell is FOCUSED (hovered / selected) or zoomed in close
+          // (AMBIENT_LABEL_ZOOM); ambient cells keep just the LED bit. This is exactly the owner's "Q=1
+          // landing among the pin labels" — it no longer floats there on an overview, only when you focus.
+          const revealChip = focused || zoom >= AMBIENT_LABEL_ZOOM;
+          const textIn = revealChip
+            ? Math.max(0, Math.min(1, (zoom - 3.5) / 2)) // fades in over zoom 3.5 → 5.5
+            : 0;
           const ta = textIn * fadeAlpha;
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            // The value chip wants clear air. Where there's room between the symbol box and the body's
-            // bottom edge (a tall body, e.g. a gate) it CENTRES in that lower card — max clearance from
-            // both. Where the box nearly fills the body (a short/wide register), there's no clean gap, so
-            // it drops just BELOW the body edge instead of clipping the box. The drop-shadow keeps it legible.
-            const gap = this.hPx / 2 - hh; // symbol-box bottom (cy+hh) → body bottom edge (cy+hPx/2)
-            const localY =
-              gap >= 16 ? cy + hh + gap / 2 : cy + this.hPx / 2 + 9;
+            // Park the chip INSIDE the body, in a region clear of the symbol box (owner: "in the body if
+            // possible, aware and not overlapping anything smartly"). A tall body has room BELOW the symbol
+            // (centre it in that lower card); a short but WIDE body — the register — has none there, so the
+            // chip tucks BESIDE the symbol instead of dropping out among the pin labels; a tiny body falls
+            // back to the inner bottom edge. The LED bits carry the state inside the box, so they never clash.
+            const chipW = this.stateLabel.text.length * 6; // ~mono advance at the 9px base font (local px)
+            const chipH = 11;
+            const vRoom = this.hPx / 2 - hh; // below the symbol box, still inside the body
+            const hRoom = this.wPx / 2 - hw; // beside the symbol box, still inside the body
+            let localX = cx;
+            let localY: number;
+            if (vRoom >= chipH + 4) {
+              localY = cy + hh + vRoom / 2; // centred in the lower card (tall body)
+            } else if (hRoom >= chipW + 4) {
+              localX = cx + (hw + this.wPx / 2) / 2; // tucked beside the symbol (wide, short body)
+              localY = cy;
+            } else {
+              localY = cy + this.hPx / 2 - chipH / 2 - 2; // inner bottom edge (last resort, tiny body)
+            }
+            // Crispness + a fixed on-screen size, exactly the way the pin labels do it (counter-scale by
+            // `cs`, resolution tracks the capped on-screen scale) — so the chip stops blurring and ballooning
+            // as you zoom (owner: "its resolution does not scale properly like the pin text does").
+            const capHi = Math.min(zoom, LABEL_CAP_ZOOM);
+            const effChip = Math.max(1, capHi);
+            const csChip = effChip / Math.max(1, zoom);
             // The chip lives in the UN-rotated `view`, so run its body-local spot through the part's
             // rotate+mirror (the same `rotPx` the pins/symbol use) and keep the text itself upright — so a
             // rotated/flipped part still parks its readout in the right place.
             const rp = rotPx(
-              cx,
+              localX,
               localY,
               this.component.rot,
               this.component.mirror,
             );
             this.stateLabel.position.set(rp.x, rp.y);
+            this.stateLabel.scale.set(csChip);
+            this.stateLabel.resolution = DPR * effChip;
             this.stateLabel.alpha = ta;
             this.stateLabel.visible = true;
           }
@@ -8353,13 +8406,18 @@ class ComponentNode {
     // show all pin labels regardless of zoom level, but only those of the current layer") — these placed
     // nodes ARE the current layer; the recursive zoom-to-open sub-cell labels (userIcInternalsView) are a
     // deeper layer and stay zoom-gated, so they're not forced here.
+    // Phase 3 label reveal: a FOCUSED part (hovered / selected) reveals its labels from DETAIL_ZOOM as
+    // before; an AMBIENT part holds off until AMBIENT_LABEL_ZOOM so a dense board's overview isn't a wall of
+    // overlapping pin names ("the labels aren't aware of their neighbours"). Wire mode + the open replica +
+    // the die frame are unchanged (wiring needs every pin; the replica/ die frame label their own pads).
+    const labelZoom = focused ? DETAIL_ZOOM : AMBIENT_LABEL_ZOOM;
     const showPins =
       wireMode ||
       (isDieFrame(this.kindTag)
         ? zoom >= TIER_ZOOM
         : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
           ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
-            zoom >= DETAIL_ZOOM));
+            zoom >= labelZoom));
     const lcx = this.wPx / 2;
     const lcy = this.hPx / 2;
     const LABEL_MARGIN = 14; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
