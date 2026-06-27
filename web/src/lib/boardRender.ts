@@ -45,9 +45,15 @@ export const MAX_FLOW_PX_PER_FRAME = 14;
 export const MAX_BELT_DOTS = 64;
 
 const NUDGE_SPACING = 13; // px between conduits sharing a channel (clears the pipe body + dark moat)
-const BUMP_W = 15; // hop half-width (wider so the dome ramps gently, not an acute peak)
-const BUMP_H = 16; // hop crest height (clears the under-pipe's full width + moat)
+const BUMP_W = 12; // hop half-width (a touch smaller dome — owner's quick tune)
+const BUMP_H = 13; // hop crest height (still clears the under-pipe's full width + moat, just lower)
 const BUMP_FLAT = 0.42; // crest plateau as a fraction of BUMP_W (a flat top rounds into a smooth dome)
+// Clustered-hop handling (a horizontal pipe crossing a bus): hops closer than ARCH_MERGE_GAP fold into
+// ONE flat-topped arch spanning them (instead of stacking funky overlapping domes); a cluster of
+// ARCH_DENSE+ is too tight to arch cleanly, so the hopper stays FLAT and just draws OVER — its opaque
+// casing knocks out each under-wire at the crossing (the schematic "break the under-wire" notch).
+const ARCH_MERGE_GAP = 2.2 * BUMP_W;
+const ARCH_DENSE = 4;
 
 // --- net colour (rail identity) ----------------------------------------------
 
@@ -368,15 +374,29 @@ export function applyCrossings(
       if (xs && xs.length) {
         const dir = Math.sign(b.x - a.x) || 1;
         const hy = a.y;
+        // Cluster the hop x's (ascending) by proximity so a run of close crossings becomes ONE hump
+        // instead of stacked overlapping domes.
+        const sorted = [...xs].sort((p, q) => p - q);
+        const clusters: number[][] = [];
+        for (const x of sorted) {
+          const last = clusters[clusters.length - 1];
+          if (last && x - last[last.length - 1]! <= ARCH_MERGE_GAP)
+            last.push(x);
+          else clusters.push([x]);
+        }
         const inter: Point[] = [];
-        for (const bx of xs) {
-          // A flat-topped trapezoid, not a sharp triangle peak: the two crest corners round into a smooth
-          // gentle DOME (owner traced a smoother hump), while the BUMP_H crest plateau still clears the
-          // under-trace's full width. The wider BUMP_W ramps in/out gradually instead of an acute apex.
-          inter.push(new Point(bx - BUMP_W, hy));
-          inter.push(new Point(bx - BUMP_W * BUMP_FLAT, hy - BUMP_H));
-          inter.push(new Point(bx + BUMP_W * BUMP_FLAT, hy - BUMP_H));
-          inter.push(new Point(bx + BUMP_W, hy));
+        for (const cl of clusters) {
+          // Dense cluster ⇒ no hump: the flat hopper draws OVER and knocks out each under-wire (notch).
+          if (cl.length >= ARCH_DENSE) continue;
+          // One flat-topped trapezoid spanning the cluster: a lone hop (xmin==xmax) is the smooth DOME;
+          // a few close hops merge into a single wider ARCH over them all. The crest plateau clears the
+          // under-trace's full width; the BUMP_W ramps in/out gradually instead of an acute apex.
+          const xmin = cl[0]!;
+          const xmax = cl[cl.length - 1]!;
+          inter.push(new Point(xmin - BUMP_W, hy));
+          inter.push(new Point(xmin - BUMP_W * BUMP_FLAT, hy - BUMP_H));
+          inter.push(new Point(xmax + BUMP_W * BUMP_FLAT, hy - BUMP_H));
+          inter.push(new Point(xmax + BUMP_W, hy));
         }
         inter.sort((p, q) => dir * (p.x - q.x));
         for (const p of inter) out.push(p);
