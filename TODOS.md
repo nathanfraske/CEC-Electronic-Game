@@ -45,6 +45,12 @@ focus + highlight the SAME electrical net like KiCad (ground / +5V), **by real n
   tall part; tuck BESIDE the symbol on the wide/short register; inner bottom edge as a last resort) — it no
   longer drops out among the bottom pin labels; and it now **counter-scales + sets `resolution = DPR·eff`**
   exactly like the pin labels, so it stops blurring/ballooning at zoom. Render-verified (reg + NAND).
+- ~~**Phase 3a.1 — refine the symbol→pin leads + chip dodges them**~~ (PR, CI). Owner: the chip must be
+  "aware of the traces it auto-generates," and "refine those traces as well." The cell symbol's I/O→pin
+  leads are now clean ORTHOGONAL routes (stub past the edge → along it → short stub in) instead of diagonal
+  spokes; every lead segment goes into `leadSegs`, and the chip placement became a 5×5 candidate-grid search
+  scored by nearest obstacle (symbol box + pin dots + leads), taking the roomiest in-body gap off the
+  symbol. Verified: NAND leads tidy; the register chip relocated off the output lead.
 - [ ] **Phase 3b — collision-resolve (option 2)** — the always-on nudge/hide pass between OVERLAPPING label
   boxes (priority output > input > value chip), for the residual case where two focused/near parts' labels
   still cross. (Focus reveal already removes most cross-part collisions by showing far fewer at once.)

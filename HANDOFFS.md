@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (195) — Symbol→pin leads refined (orthogonal) + value chip dodges them
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
+Owner follow-ups to (194): "[the chip] also needs to be aware of the traces it auto-generates to connect the
+symbol to the ins and outs" + "we should refine those traces as well." Both in `board.ts` (the user-IC
+symbol branch):
+
+- **Refined leads.** The cell symbol's I/O→pin leads were straight diagonal spokes; now they're clean
+  ORTHOGONAL routes — each runs out to a stub line just past the symbol's back (inputs) / front (outputs)
+  edge, along it to the I/O attach height, then a short stub INTO the edge (a gate-style entry). Verified on
+  the NAND: tidy right-angle leads from the two left pads into the back edge + the bubble tip to the right
+  pad, no more spokes.
+- **Chip dodges the leads.** Every lead segment is collected into `leadSegs`; the value-chip placement is now
+  a small 5×5 candidate-grid search scored by NEAREST obstacle — the symbol box, every pin dot, AND every
+  lead — taking the roomiest gap that keeps the chip inside the body + off the symbol (tiny centre-x tie
+  pull; inner bottom edge as fallback). Verified: on the register the chip relocated off the output lead
+  into a clear gap.
+- The search runs only for a focused/zoomed cell that has a live readout (one at a time), so the per-frame
+  cost is negligible.
+
+**Next:** **Phase 3b** — option 2's always-on collision-resolve between OVERLAPPING pin-label boxes
+(output > input > chip). `AMBIENT_LABEL_ZOOM` (7) still the reveal-threshold tunable.
+
+---
+
 ## 2026-06-27 (194) — Wiring Phase 3a: focus/zoom label reveal + value chip in-body & crisp
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
