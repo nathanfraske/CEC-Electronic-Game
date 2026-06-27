@@ -6,6 +6,32 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (189) — Greenlit wire/bridge polish + the Datasheet feature (overnight)
+
+PRs #278 #279 #280 (merged) + #281 (datasheet, CI). Render/web only, golden `0xeaac_3764_99e4_fa24`
+untouched. 249 web tests (+33 over 216). Owner: "finish all the greenlit work, checking as you go,
+then work the backlog autonomously overnight."
+
+- ~~**Wire-drag 3A + 3C** (#278)~~ — dragging a segment whose end sits on a JUNCTION now SLIDES the
+  junction (incident wires follow) instead of folding a stub over the tapped wire ("over-lappy" bug). Pin
+  ends still fold a clean staple. Pure `planSegmentDrag` + `cleanRouteWaypoints` (drops zero-length steps,
+  U-turn spikes, colinear bends). +11 tests.
+- ~~**Lazy-follow base router** (#279)~~ — starting a wire loosely follows the pointer (heading-locked
+  orthogonal staircase, `extendLazyTrail` w/ a 2-cell turn threshold); bends bake as WAYPOINTS on finish,
+  never junctions. Preview == committed via `bakeLazyIntoWire`. +8 tests. Tunable: the turn threshold.
+- ~~**Bridges 4A + 4C + 4B** (#280)~~ — clustered hops fold into ONE arch; a DENSE cluster (≥4) drops the
+  hump and the flat hopper's opaque casing notches each under-wire ("break the under-wire"); dome a touch
+  smaller (`BUMP_W` 15→12, `BUMP_H` 16→13). +5 `applyCrossings` tests. Tunable: dome size / merge gap / dense.
+- ~~**Datasheet for every part** (#70, #281)~~ — a part's static reference card beside Behavior: pinout
+  (every lead's real NAME + direction, roles inferred from the name when unset — Q0..Q3 read OUT even on an
+  old save), package, and the logic truth/next-state FUNCTION table. Pure `buildDatasheet` (datasheet.ts),
+  rendered as a top-centre panel (bronze, shares the slot with Behavior). `📄 Datasheet` button on each
+  subassembly row; `__cecDatasheet` hook. +9 tests. Render-verified (4-BIT REG → free-form (14-pin), 64-row
+  next-state table). **Follow-up:** roll the button out to taped-out ICs + stock parts (currently
+  subassembly rows only); ratings row from tier/variant.
+
+---
+
 ## 2026-06-27 (188) — Die-builder fixes + per-cell scale re-anchor
 
 PRs #276 (merged) + #277. Render/registry only, golden untouched, 216 web tests.
@@ -16,12 +42,9 @@ PRs #276 (merged) + #277. Render/registry only, golden untouched, 216 web tests.
 - ~~**Per-cell scale re-anchor** (#71)~~ — viewProbe records the opened cell's package WIDTH on screen
   (`anchorPx`); `scaleBar` anchors it to `CHIP_MM` (~5mm) ⇒ each baked chip is its own scale universe
   (package mm → gates µm → transistors nm), depth-independent. Node floor (#275) is the backstop. ×M global.
-- [ ] **Wire-drag 3A + 3C** (greenlit) — A: dragging the segment touching a junction MOVES the junction
-  (degree-gated) instead of folding a bracket. C: smarter waypoints (clean Z, no fold).
-- [ ] **KiCad "lazy-follow" base router** (greenlit) — starting a wire loosely follows the mouse to sketch
-  the route without dropping junctions you'll delete.
-- [ ] **Bridges 4A + 4C + 4B** (greenlit) — A: merge clustered hops into one wider arch over a bus.
-  C: gap/notch crossing at density (break the under-wire). B: smaller dome quick-tune (`BUMP_*`).
+- ~~**Wire-drag 3A + 3C**~~ — DONE in 189 (#278).
+- ~~**KiCad "lazy-follow" base router**~~ — DONE in 189 (#279).
+- ~~**Bridges 4A + 4C + 4B**~~ — DONE in 189 (#280).
 
 ---
 
