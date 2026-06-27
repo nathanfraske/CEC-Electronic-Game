@@ -5581,13 +5581,26 @@ export class Board {
   ): void {
     if (!this.wiring) return;
     const fromKey = endpointKey(this.wiring.from);
-    const pin = this.pinHitTest(wx, wy);
-    const target: Endpoint | null = pin
-      ? pin
-      : (() => {
-          const jid = this.junctionHitTest(wx, wy);
-          return jid !== null ? { junctionId: jid } : null;
-        })();
+    // Land on whichever is actually NEAREST the cursor — NOT pin-always-first. A dense sub-assembly packs
+    // pins and junctions close together, so pin-first made junctions unreachable there ("wire to junctions,
+    // only the pins" bug); nearest-wins lets you land on the junction you're aiming at (ties → junction, so
+    // a junction sitting on a pin's cell still tees in). Empty ⇒ null (falls through to T / dangling below).
+    const pinHit = this.pinHitTest(wx, wy);
+    const jidHit = this.junctionHitTest(wx, wy);
+    let target: Endpoint | null = null;
+    if (pinHit || jidHit !== null) {
+      const d2 = (
+        c: { col: number; row: number } | null | undefined,
+      ): number => {
+        if (!c) return Infinity;
+        const p = this.cellToWorld(c);
+        return (p.x - wx) ** 2 + (p.y - wy) ** 2;
+      };
+      const pd = pinHit ? d2(this.graph.pinRefCell(pinHit)) : Infinity;
+      const jd =
+        jidHit !== null ? d2(this.graph.junctions.get(jidHit)?.cell) : Infinity;
+      target = jd <= pd ? { junctionId: jidHit! } : pinHit;
+    }
     if (target) {
       // Ignore a release/click back on the start endpoint itself (keep routing).
       if (endpointKey(target) === fromKey) return;
