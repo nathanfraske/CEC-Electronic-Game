@@ -2789,6 +2789,14 @@ export class Board {
     };
   }
 
+  /** Harness accessor (render/test tools): begin a wire from a pin (leaving it mid-drag) so a headless
+   * bench can capture the net highlight + the wiring pin-focus. */
+  startWireFromPin(componentId: number, pinIndex: number): void {
+    const from = { componentId, pinIndex };
+    const cell = this.graph.pinRefCell(from);
+    if (cell) this.startWiring(from, this.cellToWorld(cell));
+  }
+
   /** Harness accessor (render/test tools): the live voltage at every pin of a placed cell, keyed by the
    * cell's pin NAME — so a headless bench can assert a clocked register actually loaded its bit. */
   cellPinVoltages(id: number): Record<string, number | null> | null {
@@ -2977,7 +2985,9 @@ export class Board {
         viewport,
         viewProbe,
         snap.elementCurrents,
-        this.mode === "wire",
+        // Bring every pin's label into focus in WIRE mode OR while actively dragging a wire (so you can
+        // see where you're routing), regardless of the current tool.
+        this.mode === "wire" || this.wiring !== null,
         this.cellLiveState(id),
       );
     }
@@ -4293,6 +4303,14 @@ export class Board {
   private pinVoltage(e: Endpoint): number | null {
     const node = this.endpointNode(e);
     return node === null ? null : this.nodeVoltage(node);
+  }
+
+  /** The electrical NET (node) currently being routed — the net of the in-progress wire's source pin — so
+   * the wire layer can highlight every trace on that SAME net, KiCad-style. By real connectivity (the
+   * node), NOT by name: two separate "GND" nets that aren't actually joined stay distinct. Null when not
+   * wiring or the source net touches no element pin. */
+  private activeNetNode(): number | null {
+    return this.wiring ? this.endpointNode(this.wiring.from) : null;
   }
 
   /**
@@ -5682,6 +5700,7 @@ export class Board {
     this.wiringDownCell = { col: snap(wp.x, PITCH), row: snap(wp.y, PITCH) };
     this.wiringMoved = false;
     this.lazyRoute = emptyLazyRoute();
+    this.redrawWires(); // light up the source pin's net (KiCad-style highlight)
     this.drawPendingWire();
   }
 
@@ -5866,6 +5885,7 @@ export class Board {
     this.wiringMoved = false;
     this.lazyRoute = emptyLazyRoute();
     this.pendingWire.clear();
+    this.redrawWires(); // clear the net highlight
   }
 
   /**
@@ -6113,6 +6133,19 @@ export class Board {
       );
       conduitCrossDots = cross.dots;
       wireOrder = wireDrawOrder([...this.graph.wires.keys()], cross.overpasses);
+    }
+    // KiCad-style NET HIGHLIGHT: while routing a wire, lay a bright halo UNDER every trace on the SAME
+    // electrical net as the source pin (resolved by node, not name), so you can see the whole net you're
+    // wiring into. Drawn first so the real traces paint on top of the glow.
+    const activeNode = this.activeNetNode();
+    if (activeNode !== null) {
+      for (const w of this.graph.wires.values()) {
+        if (this.endpointNode(w.from) !== activeNode) continue;
+        const route = this.routeForWire(w);
+        if (route.length < 2) continue;
+        polyline(g, route);
+        g.stroke({ width: 10, color: PALETTE.warn, alpha: 0.5 });
+      }
     }
     for (const id of wireOrder) {
       const w = this.graph.wires.get(id);
