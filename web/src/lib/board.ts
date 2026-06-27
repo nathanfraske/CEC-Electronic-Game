@@ -270,6 +270,11 @@ const FLOW_HZ = 0.6;
 const DPR = Math.min(3, Math.max(2, window.devicePixelRatio || 1));
 /** Cap on Text resolution once multiplied by zoom, to bound texture size. */
 const MAX_TEXT_RES = 4;
+/** Past this world zoom a PIN LABEL stops riding the camera: it counter-scales BOTH its size and its
+ * pin offset to a constant on-screen size + distance (anchored at its pin), and rasterizes at that scale,
+ * so it stays crisp + readable near the pin instead of ballooning blurry as you dive deep into a chip
+ * (owner: "text should scale and move after about ×7, but stay near the pin"). */
+const LABEL_CAP_ZOOM = 7;
 
 // Multimeter lead colours: red "+" and steel "−", like a real DMM.
 const PROBE_PLUS = 0xe0533a;
@@ -7736,7 +7741,9 @@ class ComponentNode {
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
     this.failText.resolution = r;
-    for (const t of this.pinTexts) t.resolution = r;
+    // Pin labels manage their OWN resolution + counter-scale in the layout loop (LABEL_CAP_ZOOM), so they
+    // stay crisp + constant-size near the pin past the zoom where this shared, MAX_TEXT_RES-capped value
+    // would blur and balloon them.
   }
 
   /** Refresh the on-board value label after an inspector edit. */
@@ -8121,13 +8128,22 @@ class ComponentNode {
           oy = dy >= 0 ? LABEL_MARGIN : -LABEL_MARGIN;
           ox = (dx >= 0 ? 1 : -1) * LEAD_CLEAR;
         }
+        // CONSTANT on-screen size + distance past LABEL_CAP_ZOOM (owner: "scale and move after ~×7, stay
+        // near the pin"): below it the label rides the camera (natural growth); above, counter-scale BOTH
+        // its glyph size AND its pin offset by `cs` so it holds a fixed on-screen size and stays the same
+        // small distance from the pin instead of ballooning away. Resolution tracks the capped on-screen
+        // scale so the texture stays crisp at any depth (the shared MAX_TEXT_RES cap blurred it past ~×7).
+        const eff = Math.max(1, Math.min(zoom, LABEL_CAP_ZOOM));
+        const cs = eff / Math.max(1, zoom);
         const r = rotPx(
-          p.x + ox,
-          p.y + oy,
+          p.x + ox * cs,
+          p.y + oy * cs,
           this.component.rot,
           this.component.mirror,
         );
         t.position.set(r.x, r.y);
+        t.scale.set(cs);
+        t.resolution = DPR * eff;
         // A vertical-lead label runs alongside the lead (−90°, reading bottom-up); an edge label stays
         // flat. (Orientation from the un-rotated edge — correct for an upright chip; a rotated user-IC
         // chip keeps correct PLACEMENT, an accepted edge case for the glyph orientation.)
