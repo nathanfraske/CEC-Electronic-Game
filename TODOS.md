@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (184) — Wire-mode pin labels + power carriers in the opened sub-assembly
+
+Merged to `main` (PR #270, #271). Web-only, golden untouched, 204 web tests (+4).
+- ~~**Wire-mode pin labels**~~ — WIRE mode forces every CURRENT-layer pin label visible at any zoom
+  (`wireMode` → `showPins`); revealed-zoomed-out labels floor at `WIRE_LABEL_MIN = 2.5`. Deeper zoom-to-open
+  sub-cell labels stay zoom-gated (only the current layer). [PR #270]
+- ~~**Power carriers in the sub-assembly**~~ — extracted the board's per-wire KCL flow into pure
+  `solveWireFlow` (boardRender; +4 unit tests); `userIcInternalsView` drives belt chevrons/drift dots along
+  inner wires from each part's real current + shared `phase`, recursive at every depth. +`UserIcInnerPart.id`.
+  [PR #271]
+- [ ] **Per-net voltage gauges/standpipes** in the opened view — the OTHER half of the old flow-dots TODO
+  (`drawNetBars`/`drawNetStandpipes`); additive, render-only.
+- [ ] **Face TEXT labels** (D/CLK/Q, Σ) and **symbol PICKER** dropdown — carried from (183), still offered.
+
+---
+
 ## 2026-06-26 (183) — Cell schematic symbols (library + auto-recognition + pin labels)
 
 Merging to `main`. Web-only, golden untouched, 200 web tests.
