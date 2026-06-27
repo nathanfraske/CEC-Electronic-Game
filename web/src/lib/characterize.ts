@@ -39,6 +39,11 @@ export type CharacterizeResult =
       inputs: number;
       /** every input combination + its output, in index order (for the live truth-table). */
       vectors: SweepVector[];
+      /** the swept INPUT pins' real names (D/CLR/LD…), in `vectors[].in` bit order — so the table shows
+       * the player's pin names instead of generic I0/I1. */
+      inputNames: string[];
+      /** the observed OUTPUT pin's real name (Q/OUT…). */
+      outName: string;
     }
   | { ok: false; reason: string };
 
@@ -81,6 +86,9 @@ export function characterizeCell(
   },
 ): CharacterizeResult {
   const pins = parsePins(pinRoles);
+  // The player's real pin NAMES (D/CLR/LD/Q…) for the truth-table columns — far more legible than I0/I1.
+  const pinName = (i: number): string =>
+    opts?.pinNames?.[i]?.trim() || `pin ${i}`;
   const outCount = pinRoles.filter((r) => r === "out").length;
   if (pinRoles.some((r) => r === "inout"))
     return {
@@ -128,7 +136,7 @@ export function characterizeCell(
         ok: false,
         reason: `${seqPins.inPins.length} data inputs — only ≤4 collapse to one registered LUT. Split it.`,
       };
-    return characterizeSequential(graph, frameId, seqPins);
+    return characterizeSequential(graph, frameId, seqPins, pinName);
   }
 
   // COMBINATIONAL: a single-output, powered, ≤4-input truth table.
@@ -195,6 +203,8 @@ export function characterizeCell(
     behavior: { prog: 4, word, mode: 0, sig: cellBehaviorSig(graph) },
     inputs: k,
     vectors,
+    inputNames: pins.inPins.map(pinName),
+    outName: pinName(pins.outPin),
   };
 }
 
@@ -217,6 +227,7 @@ function characterizeSequential(
   graph: GraphSnapshot,
   frameId: number,
   pins: SweepPins,
+  pinName: (i: number) => string,
 ): CharacterizeResult {
   const k = pins.inPins.length;
   let word = 0;
@@ -280,5 +291,7 @@ function characterizeSequential(
     behavior: { prog: 4, word, mode: 1, sig: cellBehaviorSig(graph) },
     inputs: k,
     vectors,
+    inputNames: pins.inPins.map(pinName),
+    outName: pinName(pins.outPin),
   };
 }
