@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (192) — Behavior panel: "Computing…" feedback + scroll + readable table
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
+Owner (re: the 4-bit register in the library): "when I click Behavior it freezes everything up while it
+computes, and the list extends off the screen with no scroll. So we need some way to tell it is currently
+working, and this chart isn't super readable for most people." All three fixed in `App.svelte`:
+
+- **Working indicator.** Behavior click now goes through `runBehavior(tag)`: set `charComputing=true`,
+  yield two rAFs so the placard PAINTS, then run the (synchronous, main-thread-blocking) characterization,
+  clearing the flag in `finally`. A "⟳ Computing behavior…" spinner placard shows for the blocking moment
+  instead of a silent freeze. (The `__cecBehavior` test hook still calls `showBehavior` directly.)
+- **Scroll.** `.char-panel` was `max-height: calc(100vh - 96px)` but it's `position:absolute; top:44px`
+  inside `.board-frame` (the positioned ancestor, ~256px down the viewport), so a 64-row table ran off the
+  bottom. Fixed to `max-height: calc(100% - 60px)` — `.board-frame` has a definite height, so the % caps
+  the panel to the board area and it stays on-screen + scrolls internally.
+- **Readability.** Sticky `.char-tt th` header (column names stay while scrolling a tall table) + zebra
+  striping on even rows (`nth-child(even) td`, faint cyan tint).
+- **Verified** headlessly on the owner's `d4bafd96` fixture (4-BIT REG, 64 rows, inputs D0–D3/CLR/OE):
+  panel bottom 808 < 900 viewport, internally scrollable, header `position:sticky`, and the placard paints
+  (froze rAF to hold the compute off and screenshot the spinner). Next in order: **wiring Phase 2** (net
+  highlight on hover + pin rings + dim off-net).
+
+---
+
 ## 2026-06-27 (190) — Live symbol-state: a sequential cell shows its stored bit on the board
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests (+6).**

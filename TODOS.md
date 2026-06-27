@@ -6,6 +6,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (192) — Behavior panel: computing feedback + scroll + readability (owner bug)
+
+Owner: clicking **Behavior** on the 4-bit register froze the UI silently while it computed, the 64-row
+table ran off the bottom with no scroll, and the binary chart wasn't readable. All in `App.svelte`:
+- ~~**Computing indicator**~~ — `runBehavior(tag)` paints a "⟳ Computing behavior…" spinner placard
+  (`charComputing` flag, two-rAF yield) before the synchronous characterization blocks the main thread.
+- ~~**Scroll**~~ — `.char-panel` capped to its positioned ancestor (`max-height: calc(100% - 60px)`, was
+  `100vh`-based and overflowed since the panel sits ~256px down inside `.board-frame`) + `overflow-y`.
+- ~~**Readability**~~ — sticky table header (`.char-tt th`) + zebra striping (even rows).
+- Render-verified headless on the owner's `d4bafd96` fixture: panel within viewport, scrolls, sticky
+  header, placard paints.
+
+---
+
 ## 2026-06-27 (191) — Wiring UX: KiCad-style net highlight + pin focus (owner direction)
 
 Owner picked label-declutter options 1+2 AND asked: when you drag a wire from a pin, bring ALL pins into
