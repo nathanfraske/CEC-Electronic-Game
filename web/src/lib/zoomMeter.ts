@@ -17,6 +17,15 @@ import { PITCH } from "./boardRender";
  * decade. Tunable: it sets only where the unit boundaries fall, never the rendered geometry. */
 export const MM_PER_TOP_CELL = 2.5;
 
+/** The idealized SMALLEST feature the scale rule will ever claim — a process-node FLOOR (default 100 nm, a
+ * legible "classic" node; NOT cutting-edge). The recursive bake-and-nest zoom multiplies the fit-scale
+ * every level you descend, so the implied feature size would otherwise fall below a nanometre and keep
+ * going (a CPU nested ~8 deep → 0.01 nm transistors). The rule clamps here and then just WIDENS on screen
+ * as you keep zooming — the node getting bigger — instead of reporting impossible sizes. Tunable: bump it
+ * for a chunkier (older-node) feel, drop it toward 7 nm for modern silicon. Render-only; sets only the
+ * floor of the readout, never the rendered geometry or the simulation. */
+export const MIN_FEATURE_MM = 1e-4;
+
 const EPS = 1e-12;
 
 /** Physical millimetres represented by one SCREEN pixel at the current view. One world cell = PITCH
@@ -86,6 +95,10 @@ export function scaleBar(
   targetPx = 90,
 ): ScaleBar {
   const mmpp = mmPerScreenPx(zoom, viewScale);
-  const niceMm = niceLength(targetPx * mmpp) || mmpp; // guard a degenerate view
-  return { px: niceMm / mmpp, label: formatMm(niceMm) };
+  // Clamp the bar's physical length at the process-node floor (see MIN_FEATURE_MM): below it the rule
+  // stops shrinking and reads the floor (e.g. "0.1 µm") instead of "0.01 nm". Above the floor the snapped
+  // length is ≤ the target px; once floored it would widen without bound (floor / mmpp), so cap the drawn
+  // bar at 2× the target — it grows a touch (the node getting bigger) then holds, never overflowing.
+  const niceMm = Math.max(niceLength(targetPx * mmpp) || mmpp, MIN_FEATURE_MM);
+  return { px: Math.min(niceMm / mmpp, targetPx * 2), label: formatMm(niceMm) };
 }
