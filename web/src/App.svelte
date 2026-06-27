@@ -94,8 +94,10 @@
     tapeOut,
     type UserIc,
     type UserIcFamilySidecar,
+    type CellBehavior,
   } from "./lib/userIc";
-  import { characterizeCell, type SweepVector } from "./lib/characterize";
+  import { characterizeCell } from "./lib/characterize";
+  import { traceSequentialCell } from "./lib/sequentialTrace";
   import {
     registerLibrary,
     addToLibrary,
@@ -1771,22 +1773,32 @@
     libRev++;
   }
 
-  /** The truth-table panel for a freshly characterized cell (the sweep result, kept open so the player can
-   * read the table + the recognized gate). Null when no characterization is on screen. */
+  /** The BEHAVIOR panel for a cell: its truth / next-state table (with the player's real pin names) and,
+   * for a clocked cell, a per-row Q WAVEFORM beside it — plus the optional "use fast model" collapse. Kept
+   * open so the player can read it. Null when no panel is on screen. */
   interface CharPanel {
     tag: string;
     name: string;
-    /** input-column indices `[0, 1, …, k-1]` (precomputed so the header iterates a dense array). */
-    cols: number[];
-    /** every input combination + its settled output, in index order. */
-    vectors: SweepVector[];
-    /** the assembled prog-4 LUT word (shown in hex). */
-    word: number;
-    /** the recognized Boolean function ("NAND") or null for an unnamed/≥3-input table. For a REGISTERED
-     * cell this names the NEXT-STATE Q⁺ (e.g. "D-TYPE" for Q⁺ = D — a latch/flop, not a transparent buffer). */
+    /** input-column NAMES (the player's pin names: D/CLR/LD…), in the rows' bit order. */
+    inNames: string[];
+    /** the output pin name (Q/OUT…). */
+    outName: string;
+    /** one row per input combination: the input bits, the settled next-state/output (`null` ⇒ never
+     * settles — a toggle/counter), and the Q waveform samples (`null` ⇒ the cell isn't clocked). */
+    rows: { in: number[]; out: number | null; wave: number[] | null }[];
+    /** clock half-periods per waveform (0 ⇒ no waveform, i.e. a combinational cell). */
+    waveLen: number;
+    /** the STAGED fast-model behavior to apply on "Use fast model", or null when the cell can't collapse. */
+    behavior: CellBehavior | null;
+    /** why the cell can't collapse to a fast model (shown when `behavior` is null). */
+    refuseReason: string | null;
+    /** whether the fast model is CURRENTLY applied to the def (drives the ⚡ toggle state + the badge). */
+    fast: boolean;
+    /** the assembled prog-4 LUT word (hex), or null for an un-collapsible (observed-only) cell. */
+    word: number | null;
+    /** the recognized function ("NAND"), or null. For a REGISTERED cell this names the NEXT-STATE Q⁺. */
     gate: string | null;
-    /** true for a sequential cell swept into a REGISTERED LUT (mode ≥ 1) — the table is the next-state Q⁺,
-     * latched on the cell's clock/enable, not a combinational truth table. */
+    /** true for a clocked cell — the table is the next-state Q⁺, latched on the clock. */
     registered: boolean;
   }
   let charResult = $state<CharPanel | null>(null);
@@ -1800,62 +1812,134 @@
    * (hashed) sim and the golden are untouched. Refuses (via `circuitWarning`) a cell that isn't a
    * tag-able ≤4-input gate or won't solve.
    */
-  function characterizeIc(tag: string): void {
+  /**
+   * Open the BEHAVIOR panel for a cell (the accessible front door — was "Characterize"): SHOW what the cell
+   * does (its truth / next-state table with the player's real pin names, plus a per-row Q waveform for a
+   * clocked cell) WITHOUT collapsing it. The collapse to a cheap fast model is a SEPARATE, explained choice
+   * ("Use fast model ⚡", {@link applyFastModel}) so clicking here never silently mutates the cell.
+   *
+   * Two engines feed the panel: {@link characterizeCell} (can it collapse to a LUT? + the canonical table)
+   * and {@link traceSequentialCell} (the OBSERVED next-state + waveform — works even for a self-dependent
+   * register that REFUSES to collapse). A cell that can't collapse still shows its behaviour from the trace.
+   */
+  function showBehavior(tag: string): void {
     const ic = getUserIc(tag);
     if (!ic) return;
-    let res: ReturnType<typeof characterizeCell>;
+    const opts = { pinNames: ic.pinNames, resolveCell: getUserIc };
+    let cr: ReturnType<typeof characterizeCell>;
     try {
-      // Pass the pin NAMES + a sub-cell resolver so the analyzer can detect a feedback loop and find an
-      // UNTAGGED clock/enable + its complement (EN/ENB) by name — so a hand-built latch routes to the
-      // sequential sweep instead of mischaracterizing as a buffer (lib/cellAnalysis.ts).
-      res = characterizeCell(ic.graph, ic.frameId, ic.pinRoles ?? [], {
-        pinNames: ic.pinNames,
-        resolveCell: getUserIc,
-      });
+      cr = characterizeCell(ic.graph, ic.frameId, ic.pinRoles ?? [], opts);
     } catch (err) {
-      circuitWarning = `Couldn't characterize “${ic.name || partName(tag)}”: ${
+      circuitWarning = `Couldn't read “${ic.name || partName(tag)}”: ${
         err instanceof Error ? err.message : String(err)
       }`;
       charResult = null;
       return;
     }
-    if (!res.ok) {
-      circuitWarning = `Can't characterize “${ic.name || partName(tag)}”: ${res.reason}.`;
-      // Drop any STALE behavior so a cell that no longer collapses reverts to full-fidelity DISCRETE
-      // instead of keeping a wrong cached LUT. This heals a cell whose pinout changed since it was last
-      // swept — e.g. a CLR/CLK/OE pin was added, making it sequential or tri-state and thus uncollapsible
-      // (the bug: a register sat on a constant-0 `word`, so behavioral-fidelity instances output 0).
-      if (getUserIc(tag)?.behavior) {
-        setUserIcBehavior(tag, undefined);
-        libRev++;
-      }
+    // The OBSERVED trace (for the waveform + a next-state table when the cell can't collapse). Combinational
+    // cells have no clock ⇒ this refuses ⇒ no waveform, table-only (correct — they have no time dimension).
+    const tr = traceSequentialCell(
+      ic.graph,
+      ic.frameId,
+      ic.pinRoles ?? [],
+      opts,
+    );
+    // Heal a STALE fast model: if the cell can no longer collapse but a cached LUT is still installed, drop
+    // it (it can't be a faithful fast model) so the cell reverts to discrete. (The word:0 register bug.)
+    if (!cr.ok && getUserIc(tag)?.behavior) {
+      setUserIcBehavior(tag, undefined);
+      libRev++;
+    }
+    const waveByCombo = tr.ok ? tr.trace.rows.map((r) => r.q) : null;
+    let panel: CharPanel;
+    if (cr.ok) {
+      const registered = (cr.behavior.mode ?? 0) >= 1;
+      const g = recognizeGate(cr.behavior.word, cr.inputs);
+      panel = {
+        tag,
+        name: ic.name || partName(tag),
+        inNames: cr.inputNames,
+        outName: cr.outName,
+        rows: cr.vectors.map((v, i) => ({
+          in: v.in,
+          out: v.out,
+          wave: waveByCombo?.[i] ?? null,
+        })),
+        waveLen: tr.ok ? tr.trace.samples : 0,
+        behavior: cr.behavior,
+        refuseReason: null,
+        fast: !!getUserIc(tag)?.behavior,
+        word: cr.behavior.word,
+        // A REGISTERED next-state of "BUFFER" (Q⁺ = D) is a D-type flop, not a transparent buffer.
+        gate: registered && g === "BUFFER" ? "D-TYPE" : g,
+        registered,
+      };
+    } else if (tr.ok) {
+      // Can't collapse, but we can OBSERVE it — a self-dependent register: show its real behaviour.
+      panel = {
+        tag,
+        name: ic.name || partName(tag),
+        inNames: tr.trace.inputNames,
+        outName: tr.trace.outName,
+        rows: tr.trace.rows.map((r) => ({
+          in: r.in,
+          out: r.settled,
+          wave: r.q,
+        })),
+        waveLen: tr.trace.samples,
+        behavior: null,
+        refuseReason: cr.reason,
+        fast: false,
+        word: null,
+        gate: null,
+        registered: true,
+      };
+    } else {
+      circuitWarning = `Can't read “${ic.name || partName(tag)}”: ${cr.reason}.`;
       charResult = null;
       return;
     }
     circuitWarning = null;
-    setUserIcBehavior(tag, res.behavior); // bind the swept word to the def (collapse can now fire)
+    charResult = panel;
+  }
+
+  /** Collapse the panel's cell to its fast model (the explained "Use fast model ⚡" action) — binds the
+   * staged LUT to the def so a behavioral-fidelity instance simulates as ONE cheap cell. Reversible via
+   * {@link clearFastModel}. No-op when the cell can't collapse. */
+  function applyFastModel(): void {
+    if (!charResult?.behavior) return;
+    setUserIcBehavior(charResult.tag, charResult.behavior);
     libRev++;
-    const gate = recognizeGate(res.behavior.word, res.inputs);
-    const registered = (res.behavior.mode ?? 0) >= 1;
-    // A REGISTERED next-state of "BUFFER" (Q⁺ = D) is a D-type latch/flop, not a transparent buffer — show
-    // the friendlier label so the panel doesn't read "BUFFER" for a latch (the rest of the gate names carry
-    // over as the registered next-state, e.g. a registered NAND).
-    const gateLabel = registered && gate === "BUFFER" ? "D-TYPE" : gate;
-    logAction("characterize", ic.name || partName(tag), {
-      tag,
-      inputs: res.inputs,
-      gate: gate ?? "",
-      registered,
+    logAction("characterize", charResult.name, {
+      tag: charResult.tag,
+      gate: charResult.gate ?? "",
+      registered: charResult.registered,
     });
-    charResult = {
-      tag,
-      name: ic.name || partName(tag),
-      cols: [...Array(res.inputs).keys()],
-      vectors: res.vectors,
-      word: res.behavior.word,
-      gate: gateLabel,
-      registered,
-    };
+    charResult = { ...charResult, fast: true };
+  }
+
+  /** Turn the fast model back OFF — the cell reverts to its full discrete circuit (more detail, slower). */
+  function clearFastModel(): void {
+    if (!charResult) return;
+    setUserIcBehavior(charResult.tag, undefined);
+    libRev++;
+    charResult = { ...charResult, fast: false };
+  }
+
+  /** SVG path for a row's Q WAVEFORM — a step trace (high = top, low = bottom) over the sampled clock
+   * half-periods, 7px per sample, matching the `waveLen * 7` svg width. */
+  function wavePath(wave: number[]): string {
+    const STEP = 7;
+    const TOP = 2;
+    const BOT = 12;
+    let d = "";
+    for (let i = 0; i < wave.length; i++) {
+      const y = wave[i] ? TOP : BOT;
+      const x0 = i * STEP;
+      const x1 = (i + 1) * STEP;
+      d += `${i === 0 ? "M" : " L"}${x0} ${y} L${x1} ${y}`;
+    }
+    return d;
   }
   // A kind's identity colour as a CSS custom-property reference (from PART_KINDS'
   // palette key), the same idiom the codex rows use — for the hotbar glyph tint.
@@ -2595,19 +2679,35 @@
               size: board.freeFormBoxSize(),
             }
           : null;
-      // Drive a characterization for the harness: run characterizeIc(tag) and report the resulting
-      // behavior (notably `mode`: 0 = combinational, 1 = registered/sequential), the recognised gate, and
-      // any refusal — so a test can confirm e.g. a D-latch now characterizes as REGISTERED, not a buffer.
+      // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
+      // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
+      // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now
+      // characterizes as REGISTERED, not a buffer.
       (
         window as unknown as { __cecCharacterize?: (tag: string) => unknown }
       ).__cecCharacterize = (tag: string) => {
-        characterizeIc(tag);
+        showBehavior(tag);
+        if (charResult?.behavior) applyFastModel();
         const ic = getUserIc(tag);
         return {
           mode: ic?.behavior?.mode ?? null,
           word: ic?.behavior?.word ?? null,
           gate: charResult?.gate ?? null,
           warning: circuitWarning,
+        };
+      };
+      // Open the BEHAVIOR panel WITHOUT applying the fast model (render/test hook) — so a screenshot can
+      // capture the table + waveform + the not-yet-collapsed "Use fast model ⚡" state.
+      (
+        window as unknown as { __cecBehavior?: (tag: string) => unknown }
+      ).__cecBehavior = (tag: string) => {
+        showBehavior(tag);
+        return {
+          rows: charResult?.rows.length ?? 0,
+          inNames: charResult?.inNames ?? [],
+          waveLen: charResult?.waveLen ?? 0,
+          fast: charResult?.fast ?? false,
+          collapsible: !!charResult?.behavior,
         };
       };
       // Center the camera on a placed component at an absolute zoom — lets the render harness drive a deep
@@ -4428,12 +4528,12 @@
                 >
                 <button
                   class="ic-row-btn ic-row-char"
-                  title="Characterize — sweep every input and read out the truth table this gate computes"
-                  aria-label="Characterize {part.name}"
+                  title="Behavior — see what this cell does (its truth / next-state table + waveform), and optionally turn it into a cheap fast model"
+                  aria-label="Behavior of {part.name}"
                   onclick={(e) => {
                     e.stopPropagation();
-                    characterizeIc(part.tag);
-                  }}>⊨ Characterize</button
+                    showBehavior(part.tag);
+                  }}>◧ Behavior</button
                 >
                 <button
                   class="ic-row-btn ic-row-tapeout"
@@ -5696,19 +5796,19 @@
       {/if}
 
       {#if charResult}
-        <!-- Characterization result (the engine's "1"): the truth table the swept cell computes, plus the
-             recognized gate + the prog-4 LUT word it collapsed to. Stays up until the player closes it. -->
+        <!-- BEHAVIOR panel: the cell's truth / next-state table (with the player's real pin names) and, for
+             a clocked cell, a per-row Q WAVEFORM beside it — plus the optional "use fast model" collapse. -->
         <div
           class="char-panel"
           role="dialog"
-          aria-label="Truth table for {charResult.name}"
+          aria-label="Behavior of {charResult.name}"
         >
           <div class="char-head">
             <span class="char-title">{charResult.name}</span>
             {#if charResult.registered}
               <span
                 class="char-reg"
-                title="Sequential cell — swept into a REGISTERED LUT (the table is the next-state Q⁺, latched on the clock/enable), not a transparent combinational gate"
+                title="Clocked cell — the table is the NEXT state (latched on the clock), not a transparent combinational gate"
                 >REGISTERED</span
               >
             {/if}
@@ -5716,49 +5816,103 @@
               <span
                 class="char-gate"
                 title={charResult.registered
-                  ? "Recognized next-state function (Q⁺)"
+                  ? "Recognized next-state function"
                   : "Recognized Boolean function"}>{charResult.gate}</span
               >
             {/if}
-            <span class="char-word mono" title="Collapsed prog-4 LUT word"
-              >LUT 0x{charResult.word.toString(16).toUpperCase()}</span
-            >
+            {#if charResult.fast}
+              <span
+                class="char-fast"
+                title="Fast model active — this cell simulates as one cheap LUT instead of its inner gates"
+                >⚡ FAST</span
+              >
+            {/if}
             <button
               class="char-close"
               title="Close"
-              aria-label="Close truth table"
+              aria-label="Close behavior panel"
               onclick={() => (charResult = null)}>×</button
             >
           </div>
           <table class="char-tt mono">
             <thead>
               <tr>
-                {#each charResult.cols as i (i)}
-                  <th>I{i}</th>
+                {#each charResult.inNames as nm, i (i)}
+                  <th title="Input {nm}">{nm}</th>
                 {/each}
                 <th
                   class="char-out"
                   title={charResult.registered
-                    ? "Next state Q⁺ (latched on the clock/enable)"
-                    : "Output Y"}>{charResult.registered ? "Q⁺" : "Y"}</th
+                    ? "Next state (latched on the clock)"
+                    : "Output"}
+                  >{charResult.outName}{charResult.registered ? "⁺" : ""}</th
                 >
+                {#if charResult.waveLen > 0}
+                  <th
+                    class="char-wave-h"
+                    title="{charResult.outName} over {charResult.waveLen} clock half-periods (the waveform)"
+                    >{charResult.outName} ↻</th
+                  >
+                {/if}
               </tr>
             </thead>
             <tbody>
-              {#each charResult.vectors as v, vi (vi)}
+              {#each charResult.rows as r, ri (ri)}
                 <tr>
-                  {#each v.in as bit, bi (bi)}
+                  {#each r.in as bit, bi (bi)}
                     <td class:hi={bit === 1}>{bit}</td>
                   {/each}
-                  <td class="char-out" class:hi={v.out === 1}>{v.out}</td>
+                  <td class="char-out" class:hi={r.out === 1}
+                    >{r.out === null ? "—" : r.out}</td
+                  >
+                  {#if charResult.waveLen > 0}
+                    <td class="char-wave-c">
+                      {#if r.wave}
+                        <svg
+                          class="char-wave"
+                          width={charResult.waveLen * 7}
+                          height="14"
+                          aria-hidden="true"
+                        >
+                          <path d={wavePath(r.wave)} />
+                        </svg>
+                      {/if}
+                    </td>
+                  {/if}
                 </tr>
               {/each}
             </tbody>
           </table>
           <div class="char-foot">
-            {charResult.registered
-              ? "Swept into a REGISTERED LUT — a behavioral copy latches its next-state on the clock/enable, as one cheap cell."
-              : "Swept into a LUT — a behavioral copy simulates as one cheap cell."}
+            {#if charResult.behavior}
+              {#if charResult.fast}
+                <button
+                  class="char-fast-btn on"
+                  title="Revert to the full discrete circuit (more detail, slower)"
+                  onclick={clearFastModel}
+                  >⚡ Fast model ON — click for full detail</button
+                >
+              {:else}
+                <button
+                  class="char-fast-btn"
+                  title="Swap the inner gates for this table — same result, much cheaper to simulate"
+                  onclick={applyFastModel}>Use fast model ⚡</button
+                >
+                <span class="char-foot-note"
+                  >same result, much cheaper to simulate{charResult.word !==
+                  null
+                    ? ` · LUT 0x${charResult.word.toString(16).toUpperCase()}`
+                    : ""}</span
+                >
+              {/if}
+            {:else}
+              <span class="char-foot-note"
+                >Can't simplify this one{charResult.refuseReason
+                  ? ` — ${charResult.refuseReason}`
+                  : ""}. It stays full detail; this table is observed from the
+                real circuit.</span
+              >
+            {/if}
           </div>
         </div>
       {/if}
@@ -9024,9 +9178,16 @@
     border-radius: 2px;
     background: color-mix(in oklch, var(--accent) 14%, transparent);
   }
-  .char-word {
-    font-size: 11px;
-    color: var(--dim);
+  .char-fast {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: var(--warn);
+    padding: 1px 6px;
+    border: 1px solid color-mix(in oklch, var(--warn) 55%, transparent);
+    border-radius: 2px;
+    background: color-mix(in oklch, var(--warn) 14%, transparent);
   }
   .char-close {
     margin-left: auto;
@@ -9085,6 +9246,50 @@
     line-height: 1.35;
     color: var(--dim);
     text-align: center;
+  }
+  .char-fast-btn {
+    font-family: var(--font-display, var(--font-mono));
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    color: var(--bg);
+    background: var(--accent);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 4px 12px;
+    cursor: pointer;
+  }
+  .char-fast-btn:hover {
+    filter: brightness(1.12);
+  }
+  .char-fast-btn.on {
+    color: var(--warn);
+    background: color-mix(in oklch, var(--warn) 14%, transparent);
+    border-color: color-mix(in oklch, var(--warn) 55%, transparent);
+  }
+  .char-foot-note {
+    display: block;
+    margin-top: 5px;
+    font-size: 10.5px;
+    color: var(--dim);
+  }
+  .char-tt th.char-wave-h {
+    text-transform: none;
+    font-size: 10px;
+    color: var(--dim);
+  }
+  .char-tt td.char-wave-c {
+    padding: 0 6px;
+  }
+  .char-wave {
+    display: block;
+    overflow: visible;
+  }
+  .char-wave path {
+    fill: none;
+    stroke: var(--cyan);
+    stroke-width: 1.5;
+    stroke-linejoin: miter;
   }
   .hl {
     font-weight: 600;
