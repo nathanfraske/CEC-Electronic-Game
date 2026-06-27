@@ -4,6 +4,7 @@ import { PITCH } from "./boardRender";
 import {
   MM_PER_TOP_CELL,
   MIN_FEATURE_MM,
+  CHIP_MM,
   mmPerScreenPx,
   magnification,
   niceLength,
@@ -106,5 +107,19 @@ describe("zoomMeter", () => {
     const shallow = scaleBar(8, 0.05, 90);
     expect(parseFloat(shallow.label)).toBeGreaterThan(0);
     expect(shallow.px).toBeLessThanOrEqual(90);
+  });
+
+  it("scaleBar RE-ANCHORS to the opened cell's package width — depth-independent (#71)", () => {
+    // Same package width on screen ⇒ same reading no matter the global zoom/viewScale: each baked chip is
+    // its own scale universe, so a transistor reads ~the same regardless of how deep it's nested.
+    expect(CHIP_MM).toBeGreaterThan(0);
+    const shallowCell = scaleBar(2, 0.5, 90, 800);
+    const deepCell = scaleBar(3000, 1e-6, 90, 800);
+    expect(deepCell.label).toBe(shallowCell.label);
+    expect(deepCell.px).toBeCloseTo(shallowCell.px, 6);
+    // A near-full-screen package (≈800px) reads as a fraction of CHIP_MM — sane mm/µm, not nm and not metres.
+    expect(shallowCell.label).toMatch(/mm|µm/);
+    // anchorPx 0 (the open board) keeps the top-down bench anchor.
+    expect(scaleBar(1, 1, 90, 0).label).toBe(scaleBar(1, 1, 90).label);
   });
 });

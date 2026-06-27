@@ -123,7 +123,13 @@ export interface UserIcInternalsOpts {
    * cumulative fit-scale — so the meter knows "how deep am I" honestly, from the same transforms that
    * drew the view. Mutated in place (the board passes ONE object, threaded down every recursion level,
    * and reads `scale` after the frame). Absent ⇒ not metered (static fallback / headless tests). */
-  viewProbe?: { cx: number; cy: number; depth: number; scale: number };
+  viewProbe?: {
+    cx: number;
+    cy: number;
+    depth: number;
+    scale: number;
+    anchorPx: number;
+  };
   /**
    * A persistent container (added under the instance's rotated glyph holder) that becomes the SCALED
    * inner-view: child[0] is a pooled {@link Graphics} for the wires + junctions (cleared every frame),
@@ -382,6 +388,10 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     ) {
       viewProbe.depth = depth;
       viewProbe.scale = cumulativeScale * s;
+      // The opened cell's PACKAGE width on screen — the scale meter anchors this to a fixed chip size, so
+      // each baked chip is its own scale universe (package ~mm → gates µm → transistors nm) regardless of
+      // how deep it's nested, instead of the top-anchored cumulative shrink compounding toward 0.01 nm.
+      viewProbe.anchorPx = maxX - minX;
     }
   }
 

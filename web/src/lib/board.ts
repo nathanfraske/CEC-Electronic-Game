@@ -763,6 +763,10 @@ export class Board {
   // The cumulative fit-scale of the deepest OPENED IC level under the view centre (1 ⇒ the open board),
   // latched each frame by the zoom-meter probe in `update`. Read via `getViewMetrics` for the HUD.
   private viewScale = 1;
+  /** The deepest opened cell's package WIDTH on screen (px), 0 on the open board — the meter anchors it to
+   * a fixed chip size so each baked cell is its own scale universe (package ~mm → transistors ~node)
+   * regardless of nesting depth (#71). Latched per frame from the same `viewProbe` as {@link viewScale}. */
+  private viewAnchorPx = 0;
   // `phase` is the bounded visual flow clock fed to every drawer: it advances at a
   // fixed wall-clock rate (FLOW_HZ), so the flow reads at a constant calm pace no
   // matter the playback tps or the V/I magnitude. Its *direction* tracks the
@@ -2752,8 +2756,14 @@ export class Board {
    * = the cumulative fit-scale of the opened-IC level under the view centre (1 on the open board, the
    * product of the fit-scales you've descended through once inside nested ICs). Render-only; feeds
    * `lib/zoomMeter.ts`. */
-  getViewMetrics(): { zoom: number; viewScale: number } {
-    return { zoom: this.world.scale.x, viewScale: this.viewScale };
+  getViewMetrics(): { zoom: number; viewScale: number; anchorPx: number } {
+    return {
+      zoom: this.world.scale.x,
+      viewScale: this.viewScale,
+      // The opened cell's package width on screen (0 on the open board) — the meter anchors it to a fixed
+      // chip size so each baked cell reads as its own ~mm chip regardless of nesting depth.
+      anchorPx: this.viewAnchorPx,
+    };
   }
 
   /** Restore a saved camera (pan + zoom), clamped to the valid zoom range and
@@ -2898,7 +2908,13 @@ export class Board {
     const sw = this.app.screen.width;
     const sh = this.app.screen.height;
     const viewport = { w: sw, h: sh };
-    const viewProbe = { cx: sw / 2, cy: sh / 2, depth: -1, scale: 1 };
+    const viewProbe = {
+      cx: sw / 2,
+      cy: sh / 2,
+      depth: -1,
+      scale: 1,
+      anchorPx: 0,
+    };
     for (const [id, node] of this.nodes) {
       const e = electrical?.get(id) ?? ZERO_ELECTRICAL;
       // Ease the glyph's flow/heat toward its measured RMS as the part's AC outruns the
@@ -2931,6 +2947,7 @@ export class Board {
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
     // open board, when no IC body claimed the centre this frame).
     this.viewScale = viewProbe.depth >= 0 ? viewProbe.scale : 1;
+    this.viewAnchorPx = viewProbe.depth >= 0 ? viewProbe.anchorPx : 0;
 
     this.recordScope(snap, scopeBatch);
     this.drawScope();
@@ -7700,7 +7717,13 @@ class ComponentNode {
     userIc?: UserIcInternals,
     allUserIcInternals?: Map<number, UserIcInternals>,
     viewport?: { w: number; h: number },
-    viewProbe?: { cx: number; cy: number; depth: number; scale: number },
+    viewProbe?: {
+      cx: number;
+      cy: number;
+      depth: number;
+      scale: number;
+      anchorPx: number;
+    },
     elemCurrents?: Float64Array,
     wireMode = false,
   ): void {

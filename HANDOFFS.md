@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (188) — Die-builder fixes + per-cell scale re-anchor; wire/bridge brainstorms greenlit
+
+**State:** 🟢 PR #276 MERGED, #277 (CI). **Render/registry only, golden `0xeaac_3764_99e4_fa24` untouched,
+216 web tests.** Owner reported 4 refinements (2 fixed, 2 brainstormed) + greenlit the scale re-anchor.
+
+- **Resize pin-drift (PR #276).** Dragging a free-form sub-assembly's LEFT/TOP wall slid the perpendicular
+  pins (they rode the moving origin) while RIGHT/BOTTOM held them. `setDieFrameBoxAbs` now shifts a MID
+  perpendicular pin by the origin delta → holds its absolute spot from any edge (no-op for E/S drags).
+- **"w" wire mode in a die (PR #276).** `setDieShapeMode` now couples the board tool: WIRE → `mode:"wire"`
+  (junction wiring + all pin labels), SHAPE → select. Previously "w" only flipped the builder bit.
+- **Per-cell scale re-anchor (PR #277, #71).** Each OPENED chip is its own scale universe: the viewProbe
+  records the deepest opened cell's package WIDTH on screen (`anchorPx`); `scaleBar` anchors it to `CHIP_MM`
+  (~5mm) ⇒ `mm/px = CHIP_MM/anchorPx` — package mm → gates µm → transistors nm, DEPTH-INDEPENDENT, no more
+  sub-nm/0.01nm. Open board keeps the top-down anchor; the node floor (#275) is the backstop; ×M stays
+  global. Render-verified (4-bit reg: 0.2mm→0.5µm ramp at ×21.75k).
+
+**Owner-greenlit, NOT yet built (next):**
+- **Wire-drag 3A + 3C** — A: dragging the segment touching a junction MOVES the junction (degree-gated;
+  `moveJunction` exists) instead of folding a bracket over it. C: smarter waypoints (clean Z, no fold).
+- **NEW: KiCad "lazy-follow" base router** — when you start a wire, it loosely follows the mouse so you can
+  sketch the route without dropping junctions you'll delete. (In `updateWireSegmentDrag` / the wire tool.)
+- **Bridges 4A + 4C + 4B** — A: merge clustered hops into one wider arch over a bus. C: gap/notch crossing
+  at density (break the under-wire). B: a smaller dome quick-tune (`BUMP_H`/`BUMP_W` in boardRender.ts).
+- **Datasheet for every part (#70).**
+
+---
+
 ## 2026-06-27 (187) — Scale rule: floor at an idealized process node
 
 **State:** 🟢 PR #275 (CI). **Render-only, golden `0xeaac_3764_99e4_fa24` untouched, 215 web tests.** Owner:

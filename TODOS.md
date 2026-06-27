@@ -6,13 +6,31 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (188) — Die-builder fixes + per-cell scale re-anchor
+
+PRs #276 (merged) + #277. Render/registry only, golden untouched, 216 web tests.
+- ~~**Resize pin-drift**~~ — `setDieFrameBoxAbs` shifts a MID perpendicular pin by the origin delta so it
+  holds its absolute spot whether you drag the LEFT/TOP wall (origin moves) or RIGHT/BOTTOM (origin fixed).
+- ~~**"w" wire mode inside a die**~~ — `setDieShapeMode` couples the board tool: WIRE → `mode:"wire"`
+  (junction wiring + all pin labels visible), SHAPE → select. Was only flipping the builder bit.
+- ~~**Per-cell scale re-anchor** (#71)~~ — viewProbe records the opened cell's package WIDTH on screen
+  (`anchorPx`); `scaleBar` anchors it to `CHIP_MM` (~5mm) ⇒ each baked chip is its own scale universe
+  (package mm → gates µm → transistors nm), depth-independent. Node floor (#275) is the backstop. ×M global.
+- [ ] **Wire-drag 3A + 3C** (greenlit) — A: dragging the segment touching a junction MOVES the junction
+  (degree-gated) instead of folding a bracket. C: smarter waypoints (clean Z, no fold).
+- [ ] **KiCad "lazy-follow" base router** (greenlit) — starting a wire loosely follows the mouse to sketch
+  the route without dropping junctions you'll delete.
+- [ ] **Bridges 4A + 4C + 4B** (greenlit) — A: merge clustered hops into one wider arch over a bus.
+  C: gap/notch crossing at density (break the under-wire). B: smaller dome quick-tune (`BUMP_*`).
+
+---
+
 ## 2026-06-27 (187) — Scale rule node floor
 
 PR #275. Render-only, golden untouched, 215 web tests.
 - ~~**`scaleBar` node floor**~~ — clamp the physical scale rule at `MIN_FEATURE_MM` (100nm = 0.1µm; tunable)
   so deeply-nested parts stop reading sub-1nm / 0.01nm; bar widens ≤2× target then holds; ×M stays honest.
-- [ ] **Scale re-anchor per opened cell** (#71) — the smoother "happy medium": each baked chip its own scale
-  universe (package mm → transistor ~node) regardless of depth. Needs a viewProbe local-anchor restructure.
+- ~~**Scale re-anchor per opened cell**~~ (#71) — DONE in 188 below.
 
 ---
 
