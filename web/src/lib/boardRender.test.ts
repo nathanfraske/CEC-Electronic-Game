@@ -8,6 +8,9 @@ import {
   solveWireFlow,
   cleanRouteWaypoints,
   planSegmentDrag,
+  emptyLazyRoute,
+  extendLazyTrail,
+  lazyWaypoints,
 } from "./boardRender";
 import type { Wire, Endpoint, Cell } from "./graph";
 
@@ -376,5 +379,67 @@ describe("planSegmentDrag — grab a wire segment; junction ends move, pin ends 
     expect(plan.moveEnds).toEqual([]);
     expect(plan.bi).toBe(1);
     expect(plan.pts).toEqual([c(0, 0), c(0, 3), c(5, 3), c(5, 0)]);
+  });
+});
+
+describe("lazy-follow router — sketch a route with the mouse, bake bends as waypoints (no junctions)", () => {
+  const c = (col: number, row: number): Cell => ({ col, row });
+  const start = c(0, 0);
+
+  it("the first move locks the heading to the dominant axis", () => {
+    expect(extendLazyTrail(start, emptyLazyRoute(), c(5, 1)).heading).toBe("h");
+    expect(extendLazyTrail(start, emptyLazyRoute(), c(1, 5)).heading).toBe("v");
+  });
+
+  it("no movement leaves the route untouched", () => {
+    const r = extendLazyTrail(start, emptyLazyRoute(), c(0, 0));
+    expect(r.trail).toEqual([]);
+    expect(r.heading).toBe(null);
+  });
+
+  it("a straight pull adds NO waypoints (plain wire, no junctions)", () => {
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(3, 0));
+    r = extendLazyTrail(start, r, c(6, 0));
+    expect(r.trail).toEqual([]);
+    // Ends on the heading row ⇒ no elbow either.
+    expect(lazyWaypoints(start, r, c(6, 0))).toEqual([]);
+  });
+
+  it("turning past the threshold commits ONE corner (a clean L)", () => {
+    // Pull right along row 0, then stray 3 rows down (≥ turn=2) ⇒ corner where it leaves the row.
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0));
+    r = extendLazyTrail(start, r, c(5, 3));
+    expect(r.heading).toBe("v");
+    expect(r.trail).toEqual([c(5, 0)]);
+    expect(lazyWaypoints(start, r, c(5, 3))).toEqual([c(5, 0)]); // (0,0)→(5,0)→(5,3)
+  });
+
+  it("a one-cell jitter off the run does NOT turn (hysteresis)", () => {
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0));
+    r = extendLazyTrail(start, r, c(6, 1)); // only 1 row off → below the turn threshold
+    expect(r.heading).toBe("h");
+    expect(r.trail).toEqual([]);
+  });
+
+  it("right→up→right sketches a two-corner staircase", () => {
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0)); // run right
+    r = extendLazyTrail(start, r, c(5, 3)); // turn up → corner (5,0)
+    r = extendLazyTrail(start, r, c(8, 3)); // turn right → corner (5,3)
+    expect(r.trail).toEqual([c(5, 0), c(5, 3)]);
+    expect(lazyWaypoints(start, r, c(8, 3))).toEqual([c(5, 0), c(5, 3)]);
+  });
+
+  it("lazyWaypoints adds the open segment's elbow before a corner is committed", () => {
+    // Heading locked horizontal, cursor off the row but not yet past the turn threshold: the PREVIEW
+    // still routes as an L (elbow at the cursor column on the anchor row).
+    const r = { trail: [], heading: "h" as const };
+    expect(lazyWaypoints(start, r, c(5, 3))).toEqual([c(5, 0)]);
+  });
+
+  it("does not mutate the input route", () => {
+    const prev = { trail: [c(5, 0)], heading: "v" as const };
+    const r = extendLazyTrail(start, prev, c(8, 3));
+    expect(prev.trail).toEqual([c(5, 0)]); // unchanged
+    expect(r.trail).not.toBe(prev.trail);
   });
 });
