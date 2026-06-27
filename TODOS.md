@@ -6,7 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-27 (199) — Floating-power-pin guard + deeper zoom-to-open ceiling (owner)
+## 2026-06-27 (200) — Zoom-to-silicon ceiling + stable magnification gauge (owner)
+
+- ~~**Zoom ceiling 50000 → 1_000_000**~~ (ready to PR): reaches the FET silicon of a ~6-deep build. The
+  float32-forces-a-re-base worry I'd flagged does NOT hold — Pixi v8 batches Graphics into screen space
+  (float64 compose → small float32 coords), so a huge `world.position` differences away cleanly; ×50k→×5M
+  sweep showed no breakup. The per-level camera re-base is therefore NOT needed.
+- ~~**Magnification gauge = camera zoom**~~ (ready to PR): `magLabel = formatMag(viewZoom)` (was the
+  compounded `zoom/viewScale`, which spiked/dropped as the view centre crossed sub-cells/gaps). Now
+  monotonic on zoom + invariant on pan (verified). The feature-size BAR keeps the #71 per-cell re-anchor but
+  with a STICKY latch (hold across centre-gap frames; reset to mm only below INTERNALS_ZOOM).
+- [ ] **"Snap into this cell" dive affordance.** Deep zoom-to-silicon works but wants careful aim: a chip's
+  geometric centre is usually a routing gap, so zooming dead-centre dives into empty space. A click/hotkey to
+  re-centre+zoom onto the sub-cell under the cursor (or auto-nudge the camera off a gap) would make diving to
+  the transistors effortless. Pairs with the (199) per-level camera re-base note — both are about the dive UX.
+- [ ] **Placed-IC pins facing inward (bug, investigating).** Owner: some pins on a placed chip bend "as if
+  they want to be facing in." The inward lead orientation (correct when drilled INTO the die — pads point at
+  the interior circuit) is leaking onto the PLACED/sealed footprint, where leads should stick OUT.
 
 - ~~**Floating-power-pin guard**~~ (ready to PR): `floatingPowerPins` (cellAnalysis.ts, +2 tests) + a
   `showBehavior` guard warn a cell whose sub-cell VCC/GND never reaches the cell's power rail (the bit-3

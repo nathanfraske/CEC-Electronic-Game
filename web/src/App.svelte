@@ -175,7 +175,7 @@
   import { hasAnalogy } from "./lib/analogyDrawers";
   import { apparentFreq, setApparentRateScale } from "./lib/tierKit";
   import { drawPhasor2D } from "./lib/hudPhasor";
-  import { formatMag, magnification, scaleBar } from "./lib/zoomMeter";
+  import { formatMag, scaleBar } from "./lib/zoomMeter";
   import { partInfo } from "./lib/partInfo";
   import { THERMISTOR_TEMP } from "./lib/thermistor";
   import { CALCS } from "./lib/calc";
@@ -1047,13 +1047,18 @@
   let regionInfo = $state<{ pinCount: number; reason?: string } | null>(null);
   let regionName = $state("");
   // Zoom-meter readouts (Phase 5), refreshed each frame from board.getViewMetrics(): camera zoom +
-  // the cumulative fit-scale of the opened-IC level under the view centre (1 ⇒ open board). The
+  // the (sticky) cumulative fit-scale of the opened-IC level under the view centre (1 ⇒ open board). The
   // magnification ×M and the snapped scale bar derive from them via lib/zoomMeter.
   let viewZoom = $state(1);
   let viewScale = $state(1);
   // The opened cell's package width on screen (0 = open board) — re-anchors the scale rule per cell (#71).
   let viewAnchorPx = $state(0);
-  let magLabel = $derived(formatMag(magnification(viewZoom, viewScale)));
+  // Magnification ×M reads the CAMERA zoom directly, NOT zoom/viewScale. The compounded form spiked up ~10×
+  // the instant a sub-cell claimed the view centre and dropped back over a routing gap — "up and down
+  // arbitrarily" as you panned/zoomed. Camera zoom is monotonic with the wheel and independent of what sits
+  // under the centre, so the gauge only ever climbs as you zoom in. The depth/feature-size story stays on
+  // the scale BAR below (which still re-anchors per opened cell, now fed by the sticky viewScale).
+  let magLabel = $derived(formatMag(viewZoom));
   let scaleRule = $derived(scaleBar(viewZoom, viewScale, 90, viewAnchorPx));
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
   let armedPart = $state<string | null>(null);

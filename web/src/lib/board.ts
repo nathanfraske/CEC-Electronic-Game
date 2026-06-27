@@ -224,21 +224,22 @@ const AUTO_CYCLES = 3;
 const AUTO_SPAN_MIN = 120;
 const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
-// Zoom deep enough to DIVE the recursive IC zoom (Phase 2): each nested level opens once its on-screen
-// size crosses INTERNALS_ZOOM (world-scale 8), and each level is shrunk by its fit-scale (~0.1–0.16 — a
-// chip's body is far smaller than the circuit it abstracts), so reaching depth N needs camera zoom roughly
-// INTERNALS_ZOOM / fitScale^N — ≈ ×6.3 more per level (measured on the 4-bit adder: open depth-1 children at
-// ~×900, depth-2 at ~×5.6k, depth-3 at ~×35k, depth-4 at ~×220k). The old 3000 ceiling bottomed out at ~2
-// opened levels; raised to 50000 (owner ask: "increase the magnification more, it stops at only a few layers
-// down") it reaches ~4 — two more strata. It does NOT reach the FET silicon of a full ~6-deep build (that
-// needs ≈×220k, past the float limit below); diving the last couple of levels wants a per-level camera
-// RE-BASE (re-anchor the world origin to the opened cell so the scale stops compounding into world.position)
-// — see TODOS. The cap stays float-safe for the pan transform at typical placements (world.position =
-// boardCoord · scale stays under float32's exact-integer limit ~1.6e7 for a cell within ~300 px of origin);
-// a part placed very far out + zoomed to the floor may get a few px of pan granularity. LOD swaps gate on
-// TIER_ZOOM / INTERNALS_ZOOM, far below this. (Wheel zoom is exponential, so a bigger ceiling is just more
-// notches, same feel.)
-const MAX_SCALE = 50000;
+// Zoom deep enough to DIVE the recursive IC zoom all the way to the FET silicon (Phase 2): each nested level
+// opens once its on-screen size crosses INTERNALS_ZOOM (world-scale 8), and each level is shrunk by its
+// fit-scale (~0.1–0.16 — a chip's body is far smaller than the circuit it abstracts), so reaching depth N
+// needs camera zoom roughly INTERNALS_ZOOM / fitScale^N — ≈ ×6.3 more per level (measured on the 4-bit
+// adder: depth-1 children open at ~×900, depth-2 ~×5.6k, depth-3 ~×35k, depth-4 ~×220k). A full player
+// hierarchy (ALU→full-adder→half-adder→gate→sub-gate→FET, ~6 levels) reaches its transistors near ~×220k
+// and reads them comfortably by ~×1M — hence the 1e6 ceiling (was 50000, which bottomed out ~4 levels in;
+// owner ask: "increase the magnification more, it stops at only a few layers down"). Verified float-clean:
+// Pixi v8 composes worldTransforms in float64 and batches Graphics into SCREEN space (small float32 coords),
+// so a huge `world.position` (= screenCentre − boardCoord·scale) is differenced away before the float32
+// upload — no breakup/jitter was observed anywhere from ×50k to ×5M (lines stay crisp, fills clean). LOD
+// swaps gate on TIER_ZOOM / INTERNALS_ZOOM, far below this. (Wheel zoom is exponential, so a bigger ceiling
+// is just more notches, same feel.) NB the deepest dives still want careful aim — a chip's geometric centre
+// is often a routing gap between sub-cells, so zooming dead-centre can dive into empty space; aim at the
+// sub-cell you want. A future ergonomic win is a "snap into this cell" affordance (see TODOS).
+const MAX_SCALE = 1_000_000;
 /** Max free-form subassembly box dimension (cells, per axis). A PRESENTATION ceiling — the box is canvas
  * room for the inner circuit, not a pin budget — so it's deliberately large: a multi-gate cell (D-latch,
  * register, a CPU block) needs space to lay out its sub-cells + wiring. (Old cap was BLOCK_MAX_PINS+6 = 30,
@@ -3058,11 +3059,22 @@ export class Board {
           : NET_DIM_ALPHA;
     }
     this.deOverlapLabels();
-    // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
-    // open board, when no IC body claimed the centre this frame).
-    this.viewScale = viewProbe.depth >= 0 ? viewProbe.scale : 1;
-    this.viewAnchorPx = viewProbe.depth >= 0 ? viewProbe.anchorPx : 0;
-    this.viewDepth = viewProbe.depth >= 0 ? viewProbe.depth : 0;
+    // Latch the metered depth for the HUD — STICKY so the readout doesn't flap. The probe reports the
+    // deepest opened cell whose body contains the view CENTRE; a chip's centre is often a routing GAP
+    // between sub-cells, so a frame where no body claims the centre (depth −1) must NOT reset the scale to
+    // the board's mm — that's what made the gauge jump "up and down arbitrarily" as you panned/zoomed past
+    // gaps. So: update on a hit; HOLD on a gap while still zoomed in; reset to the bench scale only once
+    // fully zoomed out (nothing is open below INTERNALS_ZOOM). The magnification readout is driven off the
+    // camera zoom directly (pan-invariant) — see App.svelte; this latch feeds the per-cell feature-size bar.
+    if (viewProbe.depth >= 0) {
+      this.viewScale = viewProbe.scale;
+      this.viewAnchorPx = viewProbe.anchorPx;
+      this.viewDepth = viewProbe.depth;
+    } else if (this.world.scale.x < INTERNALS_ZOOM) {
+      this.viewScale = 1;
+      this.viewAnchorPx = 0;
+      this.viewDepth = 0;
+    }
 
     this.recordScope(snap, scopeBatch);
     this.drawScope();

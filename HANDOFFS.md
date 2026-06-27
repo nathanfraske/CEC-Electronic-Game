@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (200) — Zoom-to-silicon ceiling + a magnification gauge that stops jumping (owner)
+
+**State:** 🟢 ready to PR. **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**
+Owner follow-ups: "go ahead and do [the deeper zoom]" + "fix the magnification 'scale' measurement, cause it
+currently goes up and down arbitrarily." Two web-only changes in `board.ts` + `App.svelte`.
+
+- **Zoom ceiling `MAX_SCALE` 50000 → 1_000_000.** Reaches the FET silicon of a full ~6-deep build (depth-5
+  transistors open near ~×220k, read comfortably by ~×1M). I had flagged a per-level camera RE-BASE as
+  needed, but **investigated the float question first and it doesn't bite**: Pixi v8 composes worldTransforms
+  in float64 and batches Graphics into SCREEN space (small float32 coords), so the huge `world.position`
+  (= screenCentre − boardCoord·scale) is differenced away before the float32 upload. Headless sweep ×50k→×5M
+  showed NO breakup/jitter anywhere (crisp lines, clean fills; app stable). So the simple cap raise suffices —
+  the re-base is unnecessary complexity and is NOT done. (Caveat noted in code + TODOS: a chip's geometric
+  centre is often a routing gap, so zooming dead-centre dives into empty space — aim at the sub-cell; a
+  future "snap into this cell" affordance would make the dive ergonomic.)
+- **Magnification gauge now reads CAMERA zoom directly** (`magLabel = formatMag(viewZoom)`), not the
+  compounded `zoom / viewScale`. The compound form spiked ~10× the instant a sub-cell claimed the view
+  CENTRE and dropped back over a gap → "up and down arbitrarily" on pan/zoom. Camera zoom is monotonic with
+  the wheel and independent of what's under the centre. **Verified headless:** zoom-in is strictly monotonic
+  (×46→×161→…→×24.9k), and PANNING at a fixed zoom holds ×57.6k constant (was the jump). The feature-size
+  BAR keeps its per-cell re-anchor (#71) but its `viewScale`/`anchorPx` latch is now **sticky** (board.ts):
+  hold across centre-gap frames, reset to the bench mm only when fully zoomed out (< INTERNALS_ZOOM) — so the
+  bar no longer flickers to mm every time the centre crosses a routing gap.
+
+**Next (owner, same session):** reported pins on a PLACED IC "incorrectly bending as if they want to face in"
+— the inward-facing lead orientation (correct when drilled INTO the die) is leaking onto the placed/sealed
+chip, where leads should face OUT. Investigating next.
+
+---
+
 ## 2026-06-27 (199) — Floating-power-pin guard + deeper zoom-to-open ceiling (owner)
 
 **State:** 🟢 ready to PR. **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**
