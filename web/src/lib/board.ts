@@ -225,13 +225,20 @@ const AUTO_SPAN_MIN = 120;
 const AUTO_SPAN_MAX = 1_200_000;
 const MIN_SCALE = 0.35;
 // Zoom deep enough to DIVE the recursive IC zoom (Phase 2): each nested level opens once its on-screen
-// size crosses INTERNALS_ZOOM (now world-scale 8), and each level is shrunk by its fit-scale (~0.1–0.2),
-// so reaching depth N needs camera zoom ≈ INTERNALS_ZOOM / fitScale^N — a chip opens at ~×8, its sub-cells
-// at ~×40, theirs at ~×200, the silicon at ~×1000. The ceiling is raised to 3000 to keep ~3 nested levels
-// reachable with headroom. Float-safe for the pan transform (world.position stays under ~3e6 px at board
-// coordinates). The LOD swaps gate on TIER_ZOOM / INTERNALS_ZOOM, far below this. (The wheel zoom is
-// exponential, so a bigger ceiling is just more notches, same feel.)
-const MAX_SCALE = 3000;
+// size crosses INTERNALS_ZOOM (world-scale 8), and each level is shrunk by its fit-scale (~0.1–0.16 — a
+// chip's body is far smaller than the circuit it abstracts), so reaching depth N needs camera zoom roughly
+// INTERNALS_ZOOM / fitScale^N — ≈ ×6.3 more per level (measured on the 4-bit adder: open depth-1 children at
+// ~×900, depth-2 at ~×5.6k, depth-3 at ~×35k, depth-4 at ~×220k). The old 3000 ceiling bottomed out at ~2
+// opened levels; raised to 50000 (owner ask: "increase the magnification more, it stops at only a few layers
+// down") it reaches ~4 — two more strata. It does NOT reach the FET silicon of a full ~6-deep build (that
+// needs ≈×220k, past the float limit below); diving the last couple of levels wants a per-level camera
+// RE-BASE (re-anchor the world origin to the opened cell so the scale stops compounding into world.position)
+// — see TODOS. The cap stays float-safe for the pan transform at typical placements (world.position =
+// boardCoord · scale stays under float32's exact-integer limit ~1.6e7 for a cell within ~300 px of origin);
+// a part placed very far out + zoomed to the floor may get a few px of pan granularity. LOD swaps gate on
+// TIER_ZOOM / INTERNALS_ZOOM, far below this. (Wheel zoom is exponential, so a bigger ceiling is just more
+// notches, same feel.)
+const MAX_SCALE = 50000;
 /** Max free-form subassembly box dimension (cells, per axis). A PRESENTATION ceiling — the box is canvas
  * room for the inner circuit, not a pin budget — so it's deliberately large: a multi-gate cell (D-latch,
  * register, a CPU block) needs space to lay out its sub-cells + wiring. (Old cap was BLOCK_MAX_PINS+6 = 30,
@@ -798,6 +805,11 @@ export class Board {
    * a fixed chip size so each baked cell is its own scale universe (package ~mm → transistors ~node)
    * regardless of nesting depth (#71). Latched per frame from the same `viewProbe` as {@link viewScale}. */
   private viewAnchorPx = 0;
+  /** The deepest OPENED nesting level under the view centre this frame (0 ⇒ the open board, 1 ⇒ inside a
+   * top-level chip, 2 ⇒ inside one of its sub-cells, …). Latched from the same `viewProbe` as
+   * {@link viewScale}; render-only (never hashed). Exposed via `getViewMetrics` so the harness can assert
+   * how deep the recursive zoom-to-open actually reached at a given camera scale. */
+  private viewDepth = 0;
   // `phase` is the bounded visual flow clock fed to every drawer: it advances at a
   // fixed wall-clock rate (FLOW_HZ), so the flow reads at a constant calm pace no
   // matter the playback tps or the V/I magnitude. Its *direction* tracks the
@@ -2810,13 +2822,21 @@ export class Board {
    * = the cumulative fit-scale of the opened-IC level under the view centre (1 on the open board, the
    * product of the fit-scales you've descended through once inside nested ICs). Render-only; feeds
    * `lib/zoomMeter.ts`. */
-  getViewMetrics(): { zoom: number; viewScale: number; anchorPx: number } {
+  getViewMetrics(): {
+    zoom: number;
+    viewScale: number;
+    anchorPx: number;
+    depth: number;
+  } {
     return {
       zoom: this.world.scale.x,
       viewScale: this.viewScale,
       // The opened cell's package width on screen (0 on the open board) — the meter anchors it to a fixed
       // chip size so each baked cell reads as its own ~mm chip regardless of nesting depth.
       anchorPx: this.viewAnchorPx,
+      // The deepest opened nesting level under the view centre (0 on the open board) — render-only; lets
+      // the harness assert how far the recursive zoom-to-open reached at a given camera scale.
+      depth: this.viewDepth,
     };
   }
 
@@ -3042,6 +3062,7 @@ export class Board {
     // open board, when no IC body claimed the centre this frame).
     this.viewScale = viewProbe.depth >= 0 ? viewProbe.scale : 1;
     this.viewAnchorPx = viewProbe.depth >= 0 ? viewProbe.anchorPx : 0;
+    this.viewDepth = viewProbe.depth >= 0 ? viewProbe.depth : 0;
 
     this.recordScope(snap, scopeBatch);
     this.drawScope();

@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (199) — Floating-power-pin guard + deeper zoom-to-open ceiling (owner)
+
+- ~~**Floating-power-pin guard**~~ (ready to PR): `floatingPowerPins` (cellAnalysis.ts, +2 tests) + a
+  `showBehavior` guard warn a cell whose sub-cell VCC/GND never reaches the cell's power rail (the bit-3
+  full-adder trap — a silently-unpowered sub-cell reads 0). Names the offender, shows no table, drops any
+  stale fast model. Verified on the broken adder (warns) + clean parts (no false positive).
+- ~~**Deeper zoom-to-open**~~ (ready to PR): `MAX_SCALE` 3000→50000 (board.ts). Opens ~2 more nested levels
+  (~2→~4 on the 4-bit adder). Root-caused: the recursion's per-level `absScale` shrinks ~6.3×/level, so each
+  level costs ~6.3× more camera zoom; the data maps were never the limit. Added render-only `viewDepth` +
+  `__cecViewMetrics` harness hook.
+- [ ] **Zoom to the silicon on DEEP builds — per-level camera RE-BASE.** Reaching the FETs of a full ~6-deep
+  hierarchy needs ~×220k camera zoom, past float32's exact-int range (~1.6e7) in `world.position =
+  boardCoord · scale` → pan granularity / jitter. The fix is to re-anchor the world origin onto the opened
+  cell as you descend (the camera transform stops compounding the cumulative scale into one huge translate),
+  the camera twin of the #71 per-cell meter re-anchor. Bumping `MAX_SCALE` further alone won't do it.
+
+---
+
 ## 2026-06-27 (198) — Characterize: heal a stale fast model + verify the 4-BIT ALU (owner)
 
 - ~~**Stale-fast-model heal**~~ (PR, CI): `showBehavior` now drops a saved LUT when a fresh sweep gives a

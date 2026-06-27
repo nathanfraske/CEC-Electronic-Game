@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (199) — Floating-power-pin guard + deeper zoom-to-open ceiling (owner)
+
+**State:** 🟢 ready to PR. **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**
+Two owner-greenlit follow-ups from the 4-bit-adder debugging session, landing together.
+
+- **Floating-power-pin guard** (`floatingPowerPins` in `cellAnalysis.ts`, pure/wasm-free, +2 unit tests;
+  `showBehavior` guard in App.svelte). A sub-cell whose VCC/GND pin never reaches THIS cell's power rail is
+  silently UNPOWERED (its logic just reads 0) — the exact trap that killed the bit-3 full adder (a VCC stub
+  on an isolated junction). Union-find over the wires from the frame's `vcc`/`gnd` pins; any sub-cell power
+  pin not in that set is flagged BY NAME ("FULL ADDER·VCC isn't connected to this cell's power rail…"), the
+  cell shows no table, and any stale fast model is dropped. Verified end-to-end on the broken adder (warns)
+  and clean parts (FULL ADDER shows "2 outputs", AND-Gate characterizes — no false positive).
+
+- **Deeper zoom-to-open** (`MAX_SCALE` 3000→50000 in `board.ts`). Owner: "increase the magnification more,
+  it stops at only a few layers down." Root-caused with a headless harness probe: geometry/data were never
+  the limit (the static + live internals maps both chain all 8 cells to depth 5). The limit is arithmetic —
+  each nested level's on-screen `absScale` shrinks ~6.3×/level, so level d needs camZoom ≈ 8·6.3^d (measured
+  on the adder: d1 ~×900, d2 ~×5.6k, d3 ~×35k, d4 ~×220k). Old cap 3000 bottomed at ~2 opened levels; 50000
+  reaches ~4 (auto-descend harness: depth 2→3 conservatively). It does **not** reach the FET silicon of a
+  full ~6-deep build (needs ~×220k, past float32 in the pan transform) — that wants a per-level camera
+  RE-BASE (see TODOS). 50000 stays float-safe for a part within ~300 px of origin. Added a render-only
+  `viewDepth` (deepest opened level under the centre) to `getViewMetrics` + a `__cecViewMetrics` harness hook.
+
+---
+
 ## 2026-06-27 (198) — Characterize: heal a STALE fast model (not just an unsolvable one)
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 261 web tests.**

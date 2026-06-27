@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import {
   analyzeCell,
   untaggedSignalPins,
+  floatingPowerPins,
   type ResolvedCell,
 } from "./cellAnalysis";
 import type { GraphSnapshot, PinRole } from "./graph";
@@ -301,5 +302,75 @@ describe("untaggedSignalPins — a wired frame pin with no role is a silent-drop
       "in",
     ];
     expect(untaggedSignalPins(graph, 1, full, pinNames)).toEqual([]);
+  });
+});
+
+describe("floatingPowerPins — a sub-cell whose VCC/GND never reaches the rail", () => {
+  // Frame (id 1) roles [in, out, vcc, gnd]. Two GATE sub-cells (roles [in,out,vcc,gnd]); gate 2 is powered,
+  // gate 3's VCC sits on an isolated junction (the bit-3-full-adder trap). All GNDs reach the rail.
+  const resolve = (tag: string): ResolvedCell | undefined =>
+    tag === "GATE" ? { pinRoles: ["in", "out", "vcc", "gnd"] } : undefined;
+  const pinRoles: (PinRole | undefined)[] = ["in", "out", "vcc", "gnd"];
+  const baseWires = [
+    {
+      id: 1,
+      from: { componentId: 1, pinIndex: 2 },
+      to: { componentId: 2, pinIndex: 2 },
+    }, // frameVCC—gate2.VCC
+    {
+      id: 2,
+      from: { componentId: 1, pinIndex: 3 },
+      to: { componentId: 2, pinIndex: 3 },
+    }, // frameGND—gate2.GND
+    {
+      id: 3,
+      from: { componentId: 1, pinIndex: 3 },
+      to: { componentId: 3, pinIndex: 3 },
+    }, // frameGND—gate3.GND
+  ];
+  const graph = (extra: unknown) =>
+    ({
+      components: [
+        { id: 1, kind: "__DIE_FF" },
+        { id: 2, kind: "GATE" },
+        { id: 3, kind: "GATE" },
+      ],
+      wires: [...baseWires, extra],
+      junctions: [],
+      netLabels: [],
+    }) as unknown as GraphSnapshot;
+
+  it("flags the sub-cell whose VCC is on an isolated net", () => {
+    // gate3.VCC -> junction 9 (connected to nothing else) = floating.
+    const g = graph({
+      id: 4,
+      from: { componentId: 3, pinIndex: 2 },
+      to: { junctionId: 9 },
+    });
+    expect(
+      floatingPowerPins({
+        graph: g,
+        frameId: 1,
+        pinRoles,
+        resolveCell: resolve,
+      }),
+    ).toEqual([{ kind: "GATE", pin: "VCC" }]);
+  });
+
+  it("reports nothing once every power pin reaches the rail", () => {
+    // gate3.VCC -> frame VCC directly.
+    const g = graph({
+      id: 4,
+      from: { componentId: 3, pinIndex: 2 },
+      to: { componentId: 1, pinIndex: 2 },
+    });
+    expect(
+      floatingPowerPins({
+        graph: g,
+        frameId: 1,
+        pinRoles,
+        resolveCell: resolve,
+      }),
+    ).toEqual([]);
   });
 });

@@ -16,7 +16,12 @@
 //
 // The characterizer uses this to STOP mischaracterizing a latch as a buffer: a detected loop (or a clear
 // clock/enable) routes to the sequential sweep instead of emitting a combinational LUT.
-import { isPinRef, type GraphSnapshot, type PinRole } from "./graph";
+import {
+  isPinRef,
+  type Endpoint,
+  type GraphSnapshot,
+  type PinRole,
+} from "./graph";
 
 /**
  * Frame pins that are WIRED into the cell but carry NO semantic role (not in/out/vcc/gnd/clk). The sweep
@@ -45,6 +50,66 @@ export function untaggedSignalPins(
   const out: string[] = [];
   for (let i = 0; i < count; i++)
     if (!pinRoles[i] && wired(i)) out.push(pinNames?.[i]?.trim() || `pin ${i}`);
+  return out;
+}
+
+/**
+ * SUB-CELLS whose VCC/GND pin does NOT reach this cell's power rail. A sub-cell with a floating power pin is
+ * silently UNPOWERED — its logic just emits 0 with no error (the trap that killed the bit-3 full adder of a
+ * 4-bit adder: its VCC stub never joined the +5 V bus). This unions the internal net (wire endpoints + junctions),
+ * finds the FRAME's VCC/GND nets (the cell's power inputs), and flags any sub-cell power pin sitting on a
+ * different net. Returns `{ kind, pin }` per offender (deduped by the caller for the message). Only sub-cells
+ * with explicit vcc/gnd ROLES are checked (a leaf FET's power arrives via its source, checked one level down);
+ * a cell with no power rail of its own is skipped. Pure graph read — headless-tested.
+ */
+export function floatingPowerPins(opts: {
+  graph: GraphSnapshot;
+  frameId: number;
+  /** the FRAME's (def's) pin roles — locates the cell's VCC/GND input pins. */
+  pinRoles: (PinRole | undefined)[];
+  /** resolve a placed sub-cell's tag to its roles (the app passes `getUserIc`). */
+  resolveCell?: (tag: string) => ResolvedCell | undefined;
+}): { kind: string; pin: "VCC" | "GND" }[] {
+  const { graph, frameId, pinRoles, resolveCell } = opts;
+  const vccIdx = pinRoles.indexOf("vcc");
+  const gndIdx = pinRoles.indexOf("gnd");
+  if (vccIdx < 0 && gndIdx < 0) return []; // no power rail to check against
+
+  // Union-find over the internal net: a wire joins its two endpoints (element pins or junctions).
+  const parent = new Map<string, string>();
+  const find = (k: string): string => {
+    if (!parent.has(k)) parent.set(k, k);
+    let root = k;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    while (parent.get(k) !== root) {
+      const nxt = parent.get(k)!;
+      parent.set(k, root);
+      k = nxt;
+    }
+    return root;
+  };
+  const union = (a: string, b: string): void => {
+    parent.set(find(a), find(b));
+  };
+  const ekey = (e: Endpoint): string =>
+    isPinRef(e) ? `p${e.componentId}.${e.pinIndex}` : `j${e.junctionId}`;
+  for (const w of graph.wires) union(ekey(w.from), ekey(w.to));
+
+  const frameVcc = vccIdx >= 0 ? find(`p${frameId}.${vccIdx}`) : null;
+  const frameGnd = gndIdx >= 0 ? find(`p${frameId}.${gndIdx}`) : null;
+
+  const out: { kind: string; pin: "VCC" | "GND" }[] = [];
+  for (const c of graph.components) {
+    if (c.id === frameId) continue;
+    const roles = resolveCell?.(c.kind)?.pinRoles ?? [];
+    roles.forEach((r, i) => {
+      if (r !== "vcc" && r !== "gnd") return;
+      const target = r === "vcc" ? frameVcc : frameGnd;
+      if (target === null) return; // this cell exposes no matching rail
+      if (find(`p${c.id}.${i}`) !== target)
+        out.push({ kind: c.kind, pin: r === "vcc" ? "VCC" : "GND" });
+    });
+  }
   return out;
 }
 
