@@ -6,7 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-27 (201) — Rename backfill + pin-facing-in triage + ALU verify (owner)
+## 2026-06-27 (202) — ALU verified correct; CLK-coupling engine bug; test-bench feature (owner)
+
+- ~~**4-BIT FULL ALU verified**~~: the DESIGN is correct. With CLK=0 it computes every op correctly
+  (AND(6,2)=2, NOT-A(3)=12, ADD/SUB/XOR/OR all good). The earlier "AND/NOT-A wrong" was a **CLK=1 artifact**.
+- [ ] **ENGINE BUG — clocked register corrupts isolated combinational logic.** AND(6,2)=6 at CLK=1 vs 2 at
+  CLK=0; CLK is electrically isolated to the FLAG REGISTER (net={frame.CLK,FR.CLK}) whose Q outputs drive
+  only the Z/C FLAG pins. So toggling CLK must not affect R — yet it does → solver/flatten couples the
+  clocked seq element into the separate combinational solve. **Blocks the CPU goal.** Next: dump the
+  flattened netlist node ids → if a remap collision merges CLK/FR nodes with datapath nodes, it's a
+  golden-SAFE web (buildNetlist) fix; if the flatten is clean, it's a sim-core solver bug
+  (golden-sensitive → owner greenlight first, determinism is sacred).
+- [ ] **In-app CHIP TEST-BENCH (owner ask).** Promote the headless bench into a UI tool: pick a placed
+  chip, define input columns + expected outputs (truth/op-table), run each vector (drive pins →
+  step-until-STABLE → read → compare), show pass/fail per vector/bit. The verification tool for player-built
+  chips + the trust layer for "sand → CPU". KEY: step-until-convergence, never a fixed tick count (deep
+  cells need many ticks; a premature read is a false fail — the trap this very debug nearly fell into).
 
 - ~~**Rename backfills to placed instances**~~ (ready to PR): `Node.defaultLabel()` (board.ts) now shows a
   user IC's display `name` (resolved via its stable `tag`), not the tag — so renaming a cell in My ICs lands
