@@ -98,7 +98,7 @@
   } from "./lib/userIc";
   import { characterizeCell } from "./lib/characterize";
   import { traceSequentialCell } from "./lib/sequentialTrace";
-  import { untaggedSignalPins } from "./lib/cellAnalysis";
+  import { untaggedSignalPins, floatingPowerPins } from "./lib/cellAnalysis";
   import {
     buildDatasheet,
     type DatasheetModel,
@@ -1865,6 +1865,30 @@
       datasheet = null;
       return;
     }
+    // GUARDRAIL: a sub-cell whose VCC/GND pin doesn't reach this cell's power rail is silently UNPOWERED —
+    // its logic just emits 0 (the trap that killed the bit-3 full adder: a VCC stub that never joined the
+    // bus). Flag it by name instead of letting the cell read/run wrong.
+    const unpowered = floatingPowerPins({
+      graph: ic.graph,
+      frameId: ic.frameId,
+      pinRoles: ic.pinRoles ?? [],
+      resolveCell: getUserIc,
+    });
+    if (unpowered.length > 0) {
+      const uniq = [...new Set(unpowered.map((p) => `${p.kind}·${p.pin}`))];
+      const many = unpowered.length > 1;
+      circuitWarning =
+        `${uniq.join(", ")} ${many ? "aren't" : "isn't"} connected to this cell's power rail, so ` +
+        `${many ? "those sub-cells are" : "that sub-cell is"} unpowered (its logic just reads 0). Wire ` +
+        `${many ? "them" : "it"} to the same VCC/GND bus as the rest, then re-seal.`;
+      if (getUserIc(tag)?.behavior) {
+        setUserIcBehavior(tag, undefined);
+        libRev++;
+      }
+      charResult = null;
+      datasheet = null;
+      return;
+    }
     const opts = { pinNames: ic.pinNames, resolveCell: getUserIc };
     let cr: ReturnType<typeof characterizeCell>;
     try {
@@ -2877,6 +2901,18 @@
         }
       ).__cecZoomTo = (id: number, scale: number) =>
         board?.focusComponent(id, scale) ?? false;
+      // Read the zoom meter's latched metrics (camera zoom + the deepest opened nesting level under the
+      // view centre) so the harness can assert how far the recursive zoom-to-open reached. Render-only.
+      (
+        window as unknown as {
+          __cecViewMetrics?: () => {
+            zoom: number;
+            viewScale: number;
+            anchorPx: number;
+            depth: number;
+          } | null;
+        }
+      ).__cecViewMetrics = () => board?.getViewMetrics() ?? null;
     })();
 
     return () => {
