@@ -7,10 +7,10 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-27 (189) — Overnight: all greenlit wire/bridge polish + the Datasheet feature
 
-**State:** 🟢 PRs #277 #278 #279 #280 MERGED; #281 (Datasheet) on the branch + CI. **Render/web only,
+**State:** 🟢 PRs #277 #278 #279 #280 #281 #282 ALL MERGED (branch == main @ `02be564`). **Render/web only,
 golden `0xeaac_3764_99e4_fa24` untouched, 249 web tests (+33).** Owner: "finish all the greenlit work,
-checking as you go, then work the backlog autonomously overnight." All four greenlit items shipped, each
-its own PR, each landed green before the next.
+checking as you go, then work the backlog autonomously overnight." All four greenlit items shipped + a
+datasheet rollout, each its own PR, each landed green before the next.
 
 - **Wire-drag 3A+3C (#278).** A grabbed segment whose end sits on a JUNCTION now SLIDES the junction (its
   incident wires follow) instead of folding a stub colinear with the tapped wire (the "over-lappy" bug). Pin
@@ -31,13 +31,22 @@ its own PR, each landed green before the next.
   `traceSequentialCell`). Pure `buildDatasheet` (`datasheet.ts`, 9 tests); top-centre bronze panel sharing
   the slot with Behavior (one at a time); `📄 Datasheet` button per subassembly row; `__cecDatasheet` hook.
   **Render-verified** (4-BIT REG → "free-form (14-pin)", Q-pins OUT, 64-row next-state table — screenshot).
+- **Datasheet → taped-out ICs (#282).** The `📄 Datasheet` button moved OUT of the subassembly-only block
+  so EVERY built part gets it (a taped-out IC = a finished chip's published card). Render-verified: a
+  `role:"ic"` row shows Datasheet (+ rename/remove), no Edit/Behavior/Tape-out.
 
-**Open follow-ups (NOT greenlit / not started):**
-- Datasheet button only on **subassembly** rows so far — roll out to **taped-out ICs + stock parts**
-  ("all your parts should have a datasheet"); add a **ratings** row from tier/variant params.
+**Recommended next (needs a quick owner call) + open backlog:**
+- **Stock-part datasheets** ("all your parts…"): the data layer is easy — a `buildStockDatasheet(kind)`
+  over `PART_KINDS` (pinout from `kind.pins`; KNOWN truth tables for the logic gates AND/OR/NAND/NOR/XOR/
+  XNOR/INV/BUF). The open question is the **entry point** — primitives have no "My ICs" row, and they
+  already get the rich INFO panel (its schematic view is literally "the symbol you'll meet on a
+  datasheet"). Options: a `📄` button in the INFO-panel header, a new INFO "Datasheet" tab, or skip
+  passives and only sheet the gates. **Deliberately left for the owner to pick** (didn't want to guess UX
+  that gets reworked). Same PR could add the **ratings** row (tier/variant).
 - Lazy-follow turn-threshold + bridge dome size are eyeball-tune constants for the owner.
-- Backlog still open: #11 realism polish, #22 INV composite FETs, #35 char steppable, #41 curriculum,
-  #45 CPU templates, #47 RAM/ROM primitive (NEEDS GREENLIGHT), #48 A2 multi-bit sequential.
+- Backlog still open: #11 realism polish, #16 opened-IC follow-ups, #22 INV composite FETs (deep-zoom
+  render), #35 char steppable panel, #41 curriculum doc, #45 CPU templates, #47 RAM/ROM primitive
+  (NEEDS GREENLIGHT), #48 A2 multi-bit sequential characterization.
 
 ---
 
