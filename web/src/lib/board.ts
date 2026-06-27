@@ -8109,28 +8109,53 @@ class ComponentNode {
         const cy = this.hPx / 2;
         const hw = s * 0.34;
         const hh = s * 0.27;
-        // Simple straight LEADS from the gate's I/O to the cell's actual pins (by role), drawn FIRST so
-        // the symbol body covers their roots — so the gate reads as wired even zoomed out (owner
-        // refinement). Inputs tie to the symbol's back edge (stacked); the output(s) to its front tip.
+        // ORTHOGONAL LEADS from the symbol's I/O to the cell's real pins (by role) — refined from the old
+        // diagonal spokes to clean right-angle routes that read like a schematic: each runs out to a stub
+        // line just past the symbol's back (inputs) / front (outputs) edge, along that line to the I/O
+        // attach height, then a short stub INTO the edge (a gate-style entry). Drawn FIRST so the symbol
+        // body covers their roots; every segment is collected into `leadSegs` so the value chip can route
+        // clear of them (owner: "be aware of the traces it auto-generates").
         const roles = gdef?.pinRoles ?? [];
         const inPins = this.pinPositions.filter((_, i) => roles[i] === "in");
         const outPins = this.pinPositions.filter((_, i) => roles[i] === "out");
         const lead = { width: 1.5, color: this.color, alpha: 0.55 };
+        const STUB = Math.max(4, hw * 0.18); // how far the route stands off the symbol edge
+        const leadSegs: { ax: number; ay: number; bx: number; by: number }[] =
+          [];
+        const routeLead = (pts: { x: number; y: number }[]): void => {
+          this.symbolGlyph.moveTo(pts[0]!.x, pts[0]!.y);
+          for (let k = 1; k < pts.length; k++) {
+            this.symbolGlyph.lineTo(pts[k]!.x, pts[k]!.y);
+            leadSegs.push({
+              ax: pts[k - 1]!.x,
+              ay: pts[k - 1]!.y,
+              bx: pts[k]!.x,
+              by: pts[k]!.y,
+            });
+          }
+          this.symbolGlyph.stroke(lead);
+        };
         inPins.forEach((pin, k) => {
           const ay =
             inPins.length > 1
               ? cy - hh * 0.5 + (hh * k) / (inPins.length - 1)
               : cy;
-          this.symbolGlyph
-            .moveTo(pin.x, pin.y)
-            .lineTo(cx - hw, ay)
-            .stroke(lead);
+          const bx = cx - hw - STUB; // stub line just behind the symbol's back edge
+          routeLead([
+            pin,
+            { x: bx, y: pin.y },
+            { x: bx, y: ay },
+            { x: cx - hw, y: ay },
+          ]);
         });
         for (const pin of outPins) {
-          this.symbolGlyph
-            .moveTo(cx + hw, cy)
-            .lineTo(pin.x, pin.y)
-            .stroke(lead);
+          const fx = cx + hw + STUB; // stub line just past the symbol's front tip
+          routeLead([
+            pin,
+            { x: fx, y: pin.y },
+            { x: fx, y: cy },
+            { x: cx + hw, y: cy },
+          ]);
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
@@ -8162,24 +8187,57 @@ class ComponentNode {
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            // Park the chip INSIDE the body, in a region clear of the symbol box (owner: "in the body if
-            // possible, aware and not overlapping anything smartly"). A tall body has room BELOW the symbol
-            // (centre it in that lower card); a short but WIDE body — the register — has none there, so the
-            // chip tucks BESIDE the symbol instead of dropping out among the pin labels; a tiny body falls
-            // back to the inner bottom edge. The LED bits carry the state inside the box, so they never clash.
+            // Park the chip INSIDE the body, in the CLEAREST gap (owner: "in the body, aware and not
+            // overlapping anything smartly" + "aware of the traces it auto-generates"). Score a small grid of
+            // candidate centres by their nearest obstacle — the symbol box, every pin dot, AND every auto-
+            // routed I/O lead segment — and take the roomiest that keeps the chip inside the body and off the
+            // symbol. So it lands beside the symbol on a wide register, below it on a tall gate, always
+            // threading clear of the leads. Inner bottom edge is the fallback when nothing fits.
             const chipW = this.stateLabel.text.length * 6; // ~mono advance at the 9px base font (local px)
             const chipH = 11;
-            const vRoom = this.hPx / 2 - hh; // below the symbol box, still inside the body
-            const hRoom = this.wPx / 2 - hw; // beside the symbol box, still inside the body
+            const hcw = chipW / 2 + 2;
+            const hch = chipH / 2 + 2;
+            const xMin = cx - this.wPx / 2 + hcw;
+            const xMax = cx + this.wPx / 2 - hcw;
+            const yMin = cy - this.hPx / 2 + hch;
+            const yMax = cy + this.hPx / 2 - hch;
             let localX = cx;
-            let localY: number;
-            if (vRoom >= chipH + 4) {
-              localY = cy + hh + vRoom / 2; // centred in the lower card (tall body)
-            } else if (hRoom >= chipW + 4) {
-              localX = cx + (hw + this.wPx / 2) / 2; // tucked beside the symbol (wide, short body)
-              localY = cy;
-            } else {
-              localY = cy + this.hPx / 2 - chipH / 2 - 2; // inner bottom edge (last resort, tiny body)
+            let localY = cy + this.hPx / 2 - hch; // fallback: inner bottom edge
+            if (xMax > xMin && yMax > yMin) {
+              let bestScore = -Infinity;
+              const NX = 5;
+              const NY = 5;
+              for (let gi = 0; gi < NX; gi++) {
+                for (let gj = 0; gj < NY; gj++) {
+                  const qx = xMin + ((xMax - xMin) * gi) / (NX - 1);
+                  const qy = yMin + ((yMax - yMin) * gj) / (NY - 1);
+                  // The chip must not cover the symbol glyph / LED bits.
+                  if (
+                    Math.abs(qx - cx) < hw + hcw &&
+                    Math.abs(qy - cy) < hh + hch
+                  )
+                    continue;
+                  // Nearest obstacle: the symbol box, then every lead, then every pin dot.
+                  let d = Math.hypot(
+                    Math.max(Math.abs(qx - cx) - hw, 0),
+                    Math.max(Math.abs(qy - cy) - hh, 0),
+                  );
+                  for (const sg of leadSegs)
+                    d = Math.min(
+                      d,
+                      distToSegment(qx, qy, sg.ax, sg.ay, sg.bx, sg.by),
+                    );
+                  for (const pp of this.pinPositions)
+                    d = Math.min(d, Math.hypot(qx - pp.x, qy - pp.y));
+                  // Tiny pull toward the horizontal centre breaks ties toward a natural reading spot.
+                  const score = d - Math.abs(qx - cx) * 0.015;
+                  if (score > bestScore) {
+                    bestScore = score;
+                    localX = qx;
+                    localY = qy;
+                  }
+                }
+              }
             }
             // Crispness + a fixed on-screen size, exactly the way the pin labels do it (counter-scale by
             // `cs`, resolution tracks the capped on-screen scale) — so the chip stops blurring and ballooning
