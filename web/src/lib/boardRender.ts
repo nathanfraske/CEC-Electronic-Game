@@ -1163,7 +1163,10 @@ export function emptyLazyRoute(): LazyRoute {
  * Extend a "lazy-follow" wire route toward `cursor` (a snapped grid cell). The route is a heading-locked
  * orthogonal staircase: it runs along the current axis and only turns a corner once the cursor strays
  * `turn` cells off that run (with ≥1 cell of along-axis progress), so a freehand mouse drag sketches
- * clean bends WITHOUT a click (and a junction) per corner. `start` is the wire's origin; thread the
+ * clean bends WITHOUT a click (and a junction) per corner. Symmetrically, when the cursor comes back over
+ * the LAST locked-in segment — the open run collapses onto the previous corner's line and the cursor
+ * heads back along it — the corner is POPPED and that segment reopens, so going back over the route
+ * RETRACTS the trail instead of doubling a stub back over it. `start` is the wire's origin; thread the
  * returned {@link LazyRoute} back in on each move. Pure — never mutates the input; the caller bakes the
  * trail as the wire's waypoints on finish. The first move locks the heading to the dominant axis.
  */
@@ -1180,6 +1183,20 @@ export function extendLazyTrail(
   const dRow = cursor.row - anchor.row;
   if (dCol === 0 && dRow === 0) return { trail, heading };
   if (heading === null) heading = Math.abs(dCol) >= Math.abs(dRow) ? "h" : "v";
+  // RETRACT: the open run has collapsed back onto the corner's line (no along-axis extent) and the cursor
+  // is now travelling ALONG the previous locked-in segment — i.e. the user is going back over what they
+  // already routed (or running straight on past the corner, which made it redundant). Pop the corner and
+  // reopen that segment so the trail walks BACK instead of folding a doubled stub over it.
+  if (trail.length > 0) {
+    if (heading === "v" && dRow === 0 && Math.abs(dCol) >= 1) {
+      trail.pop();
+      return { trail, heading: "h" };
+    }
+    if (heading === "h" && dCol === 0 && Math.abs(dRow) >= 1) {
+      trail.pop();
+      return { trail, heading: "v" };
+    }
+  }
   // Turn: the cursor has strayed `turn` cells off the current run (and made along-axis progress) ⇒ commit
   // a corner where the wire leaves the run, then pivot to the perpendicular axis.
   if (heading === "h" && Math.abs(dRow) >= turn && Math.abs(dCol) >= 1) {

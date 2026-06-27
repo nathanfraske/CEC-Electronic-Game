@@ -444,6 +444,43 @@ describe("lazy-follow router — sketch a route with the mouse, bake bends as wa
     expect(prev.trail).toEqual([c(5, 0)]); // unchanged
     expect(r.trail).not.toBe(prev.trail);
   });
+
+  it("going back over a locked-in segment RETRACTS the trail (no double-back)", () => {
+    // Draw an L: run right, turn up → one corner at (5,0).
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0));
+    r = extendLazyTrail(start, r, c(5, 3));
+    expect(r.trail).toEqual([c(5, 0)]);
+    expect(r.heading).toBe("v");
+    // Come back DOWN onto the corner's row, then travel back along the locked-in run → pop the corner.
+    r = extendLazyTrail(start, r, c(5, 0)); // collapse the open run onto the corner (no pop yet)
+    expect(r.trail).toEqual([c(5, 0)]);
+    r = extendLazyTrail(start, r, c(2, 0)); // back along row 0 → corner pops, horizontal run reopens
+    expect(r.trail).toEqual([]);
+    expect(r.heading).toBe("h");
+    // The route is one clean segment back to (2,0) — not a doubled stub over (5,0)→…→(2,0).
+    expect(lazyWaypoints(start, r, c(2, 0))).toEqual([]);
+  });
+
+  it("extending the open run (not retracing) never pops a corner", () => {
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0));
+    r = extendLazyTrail(start, r, c(5, 3)); // corner (5,0), heading v
+    r = extendLazyTrail(start, r, c(5, 6)); // keep going up — extends the open run
+    expect(r.trail).toEqual([c(5, 0)]);
+    expect(r.heading).toBe("v");
+  });
+
+  it("retraction unwinds a multi-corner staircase one corner per move", () => {
+    let r = extendLazyTrail(start, emptyLazyRoute(), c(5, 0)); // right
+    r = extendLazyTrail(start, r, c(5, 3)); // corner (5,0), heading v
+    r = extendLazyTrail(start, r, c(9, 3)); // corner (5,3), heading h
+    expect(r.trail).toEqual([c(5, 0), c(5, 3)]);
+    r = extendLazyTrail(start, r, c(5, 6)); // back onto col 5 (last corner's col) → pop (5,3)
+    expect(r.trail).toEqual([c(5, 0)]);
+    expect(r.heading).toBe("v");
+    r = extendLazyTrail(start, r, c(2, 0)); // back onto row 0 (first corner's row) → pop (5,0)
+    expect(r.trail).toEqual([]);
+    expect(r.heading).toBe("h");
+  });
 });
 
 describe("applyCrossings — bridge hops cluster into arches; dense crossings notch instead (4A/4C)", () => {
