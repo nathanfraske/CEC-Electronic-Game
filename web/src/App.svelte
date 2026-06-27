@@ -4626,15 +4626,6 @@
                   }}>◧ Behavior</button
                 >
                 <button
-                  class="ic-row-btn ic-row-datasheet"
-                  title="Datasheet — the part's reference card: package, pinout (every lead's name + direction), and its logic function table"
-                  aria-label="Datasheet of {part.name}"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    showDatasheet(part.tag);
-                  }}>📄 Datasheet</button
-                >
-                <button
                   class="ic-row-btn ic-row-tapeout"
                   title="Tape out → board IC (choose a package, make it placeable)"
                   aria-label="Tape out {part.name}"
@@ -4644,6 +4635,17 @@
                   }}>⬡ Tape out</button
                 >
               {/if}
+              <!-- Datasheet is for EVERY built part — a subassembly OR a taped-out IC (a finished chip's
+                   published reference card) — so it sits OUTSIDE the subassembly-only authoring buttons. -->
+              <button
+                class="ic-row-btn ic-row-datasheet"
+                title="Datasheet — the part's reference card: package, pinout (every lead's name + direction), and its logic function table"
+                aria-label="Datasheet of {part.name}"
+                onclick={(e) => {
+                  e.stopPropagation();
+                  showDatasheet(part.tag);
+                }}>📄 Datasheet</button
+              >
               {#if hasUserIcVariants(part.tag)}
                 <span
                   class="ic-variant-badge"

@@ -27,8 +27,12 @@ then work the backlog autonomously overnight."
   old save), package, and the logic truth/next-state FUNCTION table. Pure `buildDatasheet` (datasheet.ts),
   rendered as a top-centre panel (bronze, shares the slot with Behavior). `📄 Datasheet` button on each
   subassembly row; `__cecDatasheet` hook. +9 tests. Render-verified (4-BIT REG → free-form (14-pin), 64-row
-  next-state table). **Follow-up:** roll the button out to taped-out ICs + stock parts (currently
-  subassembly rows only); ratings row from tier/variant.
+  next-state table).
+- ~~**Datasheet → taped-out ICs**~~ — the `📄 Datasheet` button moved OUT of the subassembly-only authoring
+  block so every built part (a taped-out IC = a finished chip's published card, not just a subassembly)
+  gets it. Verified: an `role:"ic"` row shows Datasheet (+ rename/remove), no Edit/Behavior/Tape-out.
+  **Follow-up:** stock parts (passive pinouts + gate truth tables) — best home is the INFO panel, an
+  owner UI call; ratings row from tier/variant.
 
 ---
 
