@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-26 (183) — Cell schematic symbols: library + auto-recognition + pin-label refine
+
+**State:** 🟢 merging to `main`. **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 200 web tests, full
+gate green.** Adversarially reviewed (one low-sev render bug found → fixed + tested).
+
+A full SCHEMATIC-SYMBOL system for sealed cells:
+- **`drawCellSymbol`** (`glyphs.ts`) — stroke-only pure-geometry faces for DFF/DLATCH/REG/HADD/FADD/MUX/TRI/
+  ARRAY (+ gate ids delegate to `drawGateBodySymbol`). No text, so it composes at any zoom-to-open depth.
+- **`cellSymbol(def)`** (`userIc.ts`) — auto-recognition, decision order: explicit `def.symbol` override
+  (validated against the drawable-id set, so a typo falls through instead of blanking the chip) → NAME
+  keyword (adder/array/tri/register/mux/dff/latch) → combinational GATE / 2:1 MUX truth-table → SEQUENTIAL
+  class from `analyzeCell` (direct feedback loop ⇒ DLATCH; built from registered stages ⇒ DFF for one data
+  bit, REG for a word — keyed by DATA WIDTH so a master/slave DFF stays a DFF). Memoized on the def identity.
+- **Wired** into `board.ts` (placed chip) + `userIcInternalsView.ts` (zoom-to-open sub-cells): a DFF wears a
+  DFF face, its latches DLATCH, its inverter NOT — recursively, at every depth.
+- **Pin labels** (`board.ts`) — calm grey + dark halo (distinct from the pink leads/symbol), placed BESIDE
+  each lead (outboard + sideways nudge, never pierced), per-pin edge classification, top/bottom turned 90°.
+- New optional **`UserIc.symbol`** field (render-only; round-trips through save/load; the `pinNames` pattern).
+
+Designed via a 4-seat investigation workflow; reviewed via a 3-dimension adversarial-verify workflow.
+
+**Deferred follow-ups (owner offered, NOT yet greenlit to build):** face TEXT labels (D/CLK/Q, Σ — a vector
+stroke-font, no Pixi text, dodges the recursion-Text risk) and the explicit symbol PICKER dropdown in the
+seal panel (the `UserIc.symbol` data field + override already work; only the UI is pending). Both fully
+spec'd in the design-pass output.
+
+---
+
 ## 2026-06-26 (182) — Zoom-to-open LOD refinements + onboarding off
 
 **State:** 🟢 merging to `main`. **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 194 web tests.** Full
