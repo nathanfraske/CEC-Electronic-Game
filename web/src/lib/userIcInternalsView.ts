@@ -16,7 +16,7 @@
 // scale math, and it sets up the recursive zoom (Phase 1+). The package frame stays glyph-local in
 // `g` (unscaled). No new simulation, no hashing — the seal is purely a drawing over the same netlist
 // (ADR 0005 "seal-as-same-netlist").
-import { Container, Graphics, Point } from "pixi.js";
+import { Container, Graphics, Point, Text } from "pixi.js";
 import { PALETTE, PART_KINDS, isJunctionRef, isFreeFormFrame } from "./graph";
 import { isUserIc, getUserIc, cellSymbol } from "./userIc";
 import {
@@ -182,6 +182,8 @@ interface SlotRecord {
   nestedLayer?: Container;
   /** the cell's gate SYMBOL overlay (a non-recursing nested user IC wears its own symbol until it opens). */
   symG?: Graphics;
+  /** the cell's pooled PIN-NAME labels (one Text per pin), shown just inside its pins until it opens. */
+  pinLabels?: Text[];
 }
 const slotRecords = new WeakMap<Graphics, SlotRecord>();
 function slotOf(holder: Graphics): SlotRecord {
@@ -192,6 +194,12 @@ function slotOf(holder: Graphics): SlotRecord {
   }
   return r;
 }
+
+/** A nested sub-cell shows its pin-name labels once its on-screen scale passes this (so tiny far-off
+ * sub-cells stay unlabeled), and counter-scales them to hold INNER_LABEL_CAP constant on-screen size —
+ * smaller than the placed chip's ×7 cap, so the inner labels read as "the pins, just smaller". */
+const INNER_LABEL_MIN_SCALE = 1.6;
+const INNER_LABEL_CAP = 5;
 
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const {
@@ -647,6 +655,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       // Hide the base-case visuals on this holder (and clear the glyph drawn into `child` above).
       if (slot.dg) slot.dg.visible = false;
       if (slot.symG) slot.symG.visible = false; // the cell is opening — drop its symbol overlay
+      if (slot.pinLabels) for (const t of slot.pinLabels) t.visible = false;
       // Build/reuse the nested subtree: a frame Graphics (the nested package, glyph-local, UNSCALED)
       // and a partLayer Container (the nested inner circuit, scaled by the nested level's own `s`).
       if (!slot.frameG) {
@@ -822,6 +831,75 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       );
     } else if (slot.symG) {
       slot.symG.visible = false;
+    }
+
+    // INNER PIN LABELS (owner: "give the pins for the internals as well, just smaller"): a non-recursing
+    // nested user-IC sub-cell, once it's a comfortable on-screen size, shows its pin NAMES just inside its
+    // pins — like the placed chip's labels but smaller. Pooled Text per slot, counter-scaled to a constant
+    // on-screen size and counter-rotated/-mirrored against the holder so they stay upright + crisp at any
+    // dive depth; faded with the cell's symbol as it opens; hidden when small / not a user IC / recursing.
+    const wantLabels =
+      subDef !== undefined &&
+      absScale >= INNER_LABEL_MIN_SCALE &&
+      kind.pins.length > 0;
+    if (wantLabels) {
+      let labels = slot.pinLabels;
+      if (!labels) {
+        labels = [];
+        slot.pinLabels = labels;
+      }
+      while (labels.length < kind.pins.length) {
+        const t = new Text({
+          text: "",
+          style: {
+            fill: PALETTE.dim,
+            fontFamily: "IBM Plex Mono, monospace",
+            fontSize: 8,
+            fontWeight: "600",
+            stroke: { color: 0x0d0b16, width: 3 },
+          },
+        });
+        t.anchor.set(0.5);
+        child.addChild(t);
+        labels.push(t);
+      }
+      for (let j = labels.length - 1; j >= kind.pins.length; j--) {
+        labels[j]!.destroy();
+        labels.pop();
+      }
+      const eff = Math.max(1, Math.min(absScale, INNER_LABEL_CAP));
+      const cs = eff / absScale; // counter-scale to a constant on-screen size
+      const mx = part.mirror ? -1 : 1; // un-mirror so the text never reads backwards
+      const fadeStart = internalsZoom * 0.55;
+      const fade = Math.max(
+        0,
+        Math.min(1, 1 - (absScale - fadeStart) / (internalsZoom - fadeStart)),
+      );
+      const pcx = ((kind.w - 1) * PITCH) / 2;
+      const pcy = ((kind.h - 1) * PITCH) / 2;
+      const NUDGE = PITCH * 0.45; // tuck the label just INSIDE its pin, off the lead
+      for (let i = 0; i < kind.pins.length; i++) {
+        const t = labels[i]!;
+        const nm = subDef?.pinNames?.[i]?.trim();
+        t.text = nm || kind.pins[i]!.label || String(i + 1);
+        const gp = glyphPins[i]!;
+        // Nudge INWARD on the pin's edge-PERPENDICULAR axis only, so labels stay spread along their edge
+        // instead of converging (and overlapping) at the corners.
+        const ddx = gp.x - pcx;
+        const ddy = gp.y - pcy;
+        const onSide = Math.abs(ddx) >= Math.abs(ddy);
+        t.position.set(
+          onSide ? gp.x - Math.sign(ddx || 1) * NUDGE : gp.x,
+          onSide ? gp.y : gp.y - Math.sign(ddy || 1) * NUDGE,
+        );
+        t.scale.set(mx * cs, cs);
+        t.rotation = -child.rotation; // hold upright against the holder's rotation
+        t.resolution = Math.min(6, Math.max(2, eff));
+        t.alpha = fade;
+        t.visible = true;
+      }
+    } else if (slot.pinLabels) {
+      for (const t of slot.pinLabels) t.visible = false;
     }
   }
 }
