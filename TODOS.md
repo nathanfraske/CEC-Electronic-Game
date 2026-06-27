@@ -51,9 +51,12 @@ focus + highlight the SAME electrical net like KiCad (ground / +5V), **by real n
   spokes; every lead segment goes into `leadSegs`, and the chip placement became a 5×5 candidate-grid search
   scored by nearest obstacle (symbol box + pin dots + leads), taking the roomiest in-body gap off the
   symbol. Verified: NAND leads tidy; the register chip relocated off the output lead.
-- [ ] **Phase 3b — collision-resolve (option 2)** — the always-on nudge/hide pass between OVERLAPPING label
-  boxes (priority output > input > value chip), for the residual case where two focused/near parts' labels
-  still cross. (Focus reveal already removes most cross-part collisions by showing far fewer at once.)
+- ~~**Phase 3b — collision-resolve (option 2)**~~ (PR, CI). Owner picked "build it anyway" (it's mostly a
+  no-op until a board is dense — natural pin pitch >> label size — but it's a safety net for the future CPU).
+  Board-level `deOverlapLabels()` after the node loop: each node pushes its visible labels with a priority
+  (`ComponentNode.collectLabels`: focused>ambient, output>input>chip); sort high→low; hide whichever
+  lower-priority label's screen box (`getBounds`) overlaps one already kept. Pin DOTS stay; only the name
+  text yields. Verified by forcing an overlap (3 NANDs 1 cell apart): 9 labels → 6, three hidden.
 - [ ] **Polish** — `AMBIENT_LABEL_ZOOM` is the key tunable if the ambient-hide feels too aggressive; off-net
   WIRE dimming (only component BODIES dim today; the wire loop's per-stroke alphas were left untouched as
   too invasive — the amber halo already differentiates on-net traces); highlight colour/width tune;

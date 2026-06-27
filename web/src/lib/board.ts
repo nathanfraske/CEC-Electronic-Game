@@ -3037,6 +3037,7 @@ export class Board {
           ? 1
           : NET_DIM_ALPHA;
     }
+    this.deOverlapLabels();
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
     // open board, when no IC body claimed the centre this frame).
     this.viewScale = viewProbe.depth >= 0 ? viewProbe.scale : 1;
@@ -3046,6 +3047,47 @@ export class Board {
     this.drawScope();
     this.drawProbe();
     this.emitAnchor();
+  }
+
+  /**
+   * Phase 3b — DE-OVERLAP the on-board labels across ALL parts. Each node has just positioned its own pin
+   * names + value chip (blind to its neighbours); this cross-part pass collects every visible one with a
+   * priority (focused part > ambient; output pin > input/other > value chip — {@link ComponentNode.collectLabels}),
+   * keeps them greedily high-to-low, and HIDES whichever lower-priority label's screen box overlaps one
+   * already kept. The pin DOTS stay (only the name text yields), and it runs before the frame paints, so the
+   * render is already de-clashed. Re-evaluated every frame (the nodes re-show their labels next frame), so it
+   * tracks zoom/pan/selection live. Mostly a no-op until a board is dense enough to crowd labels — focus
+   * reveal already shows few at once.
+   */
+  private deOverlapLabels(): void {
+    const labels: { text: Text; prio: number }[] = [];
+    for (const node of this.nodes.values()) node.collectLabels(labels);
+    if (labels.length < 2) return;
+    const items = labels.map((l) => {
+      const b = l.text.getBounds();
+      return {
+        text: l.text,
+        prio: l.prio,
+        minX: b.minX,
+        minY: b.minY,
+        maxX: b.maxX,
+        maxY: b.maxY,
+      };
+    });
+    items.sort((a, b) => b.prio - a.prio); // highest priority first
+    const PAD = 1; // a hair of breathing room counts as a clash
+    const kept: typeof items = [];
+    for (const it of items) {
+      const clash = kept.some(
+        (k) =>
+          it.minX < k.maxX + PAD &&
+          it.maxX > k.minX - PAD &&
+          it.minY < k.maxY + PAD &&
+          it.maxY > k.minY - PAD,
+      );
+      if (clash) it.text.visible = false;
+      else kept.push(it);
+    }
   }
 
   /**
@@ -7761,6 +7803,9 @@ class ComponentNode {
    * arrayed along the wide axis, on the top/bottom edges, e.g. SOT-23), `false` = left/right (pins on
    * the left/right edges, e.g. DIP). Derived once from the pin spread in the constructor. */
   private labelPushVertical = true;
+  /** Whether this part is currently FOCUSED (hovered / selected). Latched each `update` so the board's
+   * label de-overlap pass ({@link collectLabels}) can rank a focused part's labels above ambient ones. */
+  private focused = false;
 
   constructor(
     private readonly component: Component,
@@ -8000,6 +8045,27 @@ class ComponentNode {
     return this.kindTag;
   }
 
+  /** Phase 3b — push this part's currently-VISIBLE labels (pin names + the value chip) with a de-overlap
+   * PRIORITY, for the board's cross-part label de-clash pass: a FOCUSED part outranks ambient, and within a
+   * part an OUTPUT pin name beats an input/other name beats the value chip (the owner's priority order). The
+   * pass keeps labels high-to-low and hides whichever lower-priority one is cramped — the pin DOTS stay, so
+   * only the name text yields. */
+  collectLabels(out: { text: Text; prio: number }[]): void {
+    const base = this.focused ? 1000 : 0;
+    const def = isUserIc(this.kindTag)
+      ? resolveUserIc(this.kindTag, this.component.variant ?? 0)
+      : null;
+    const roles = def?.pinRoles ?? [];
+    for (let i = 0; i < this.pinTexts.length; i++) {
+      const t = this.pinTexts[i]!;
+      if (!t.visible) continue;
+      const rank = roles[i] === "out" ? 30 : 20; // output names win over input/other names
+      out.push({ text: t, prio: base + rank - i * 0.01 }); // stable tiebreak by pin index
+    }
+    if (this.stateLabel.visible && this.stateLabel.alpha > 0.05)
+      out.push({ text: this.stateLabel, prio: base + 10 }); // the value chip is lowest
+  }
+
   update(
     electrical: ElectricalState,
     phase: number,
@@ -8023,6 +8089,7 @@ class ComponentNode {
     liveState?: StoredState,
     focused = false,
   ): void {
+    this.focused = focused; // latched for the board's label de-overlap ranking
     const g = this.glyph;
     g.clear();
     // Default the mini-board glyphs hidden every frame; the zoom-to-open USER-IC branch below turns
