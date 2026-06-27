@@ -2900,6 +2900,15 @@ export class Board {
     return true;
   }
 
+  /** Re-derive every placed node's body label — called after a My-ICs RENAME changes a kind's display
+   * name, so already-placed instances pick up the new name LIVE (the tag, and the netlist, never move).
+   * A per-instance label (`component.label`) is preserved; only the kind-name fallback re-resolves. */
+  refreshLabels(): void {
+    for (const [id, node] of this.nodes) {
+      node.setLabel(this.graph.components.get(id)?.label);
+    }
+  }
+
   /**
    * Once-per-frame snapshot read. Generalized to a variable-length state. The
    * optional `electrical` map carries per-component current/voltage from the
@@ -8075,6 +8084,18 @@ class ComponentNode {
    *  die frame's label just below the bottom wall (outside the build area). */
   private defaultLabel(): string {
     if (isDieFrame(this.kindTag)) return PART_KINDS[this.kindTag]?.name ?? "";
+    // A sealed USER IC shows its DISPLAY NAME (resolved via the tag), not the raw tag — so renaming the
+    // subassembly in My ICs backfills to every placed instance. The tag stays the stable internal identity
+    // key (connectivity/netlist never move); the name is purely the editable label. Falls back to the kind
+    // name, then the tag. A stock part keeps showing its tag (`R`, `LED`), the established board shorthand.
+    if (isUserIc(this.kindTag)) {
+      const def = resolveUserIc(this.kindTag, this.component.variant ?? 0);
+      return (
+        def?.name?.trim() ||
+        PART_KINDS[this.kindTag]?.name?.trim() ||
+        this.kindTag
+      );
+    }
     return this.kindTag;
   }
 

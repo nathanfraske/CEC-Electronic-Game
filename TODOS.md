@@ -6,7 +6,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-27 (200) — Zoom-to-silicon ceiling + stable magnification gauge (owner)
+## 2026-06-27 (201) — Rename backfill + pin-facing-in triage + ALU verify (owner)
+
+- ~~**Rename backfills to placed instances**~~ (ready to PR): `Node.defaultLabel()` (board.ts) now shows a
+  user IC's display `name` (resolved via its stable `tag`), not the tag — so renaming a cell in My ICs lands
+  on every placed instance; `Board.refreshLabels()` (called from `commitRenameIc`) updates them live.
+  Verified: placing renamed `4-BIT ALU` (name `4-BIT LOGIC`) shows "4-BIT LOGIC". Tag stays the identity key.
+- [ ] **Pin "bending as if facing in" (drilled-in) — NOT reproduced.** Both shared ALU saves render the
+  package nubs + lead-connectors OUTWARD in the opened replica (screenshotted, all paths traced). Need the
+  owner to pinpoint the exact pin / interaction. Don't guess-change correct geometry.
+- [ ] **"Internal name" of a renamed cell.** The placed label now follows the name; if the TAG itself needs
+  to change (re-key the registry + every reference) that's a separate, larger refactor — confirm with owner
+  whether the name-everywhere fix suffices or the tag must actually change.
+- [ ] **Verify the 4-BIT FULL ALU functionally.** 4 outputs → can't single-characterize; needs a vector sim
+  (drive A/B/SEL, read Y + flags) like the ripple-adder bench. Next.
 
 - ~~**Zoom ceiling 50000 → 1_000_000**~~ (ready to PR): reaches the FET silicon of a ~6-deep build. The
   float32-forces-a-re-base worry I'd flagged does NOT hold — Pixi v8 batches Graphics into screen space
