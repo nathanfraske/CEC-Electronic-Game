@@ -11,7 +11,7 @@ import {
   type Component,
   type GraphSnapshot,
 } from "./graph";
-import { registerUserIcs, type UserIc } from "./userIc";
+import { importUserIcs, applyTagRemap, type UserIc } from "./userIc";
 import { restoreInnerDies, type InnerDie } from "./dieEditor";
 import potDimmer from "./circuits/pot-dimmer";
 
@@ -136,19 +136,29 @@ export function fromSaved(
   saved: SavedCircuit | GraphSnapshot,
   innerGraphs?: Map<number, GraphSnapshot>,
 ): GraphSnapshot {
-  // Re-register any embedded sealed-IC defs FIRST (idempotent), so a placed CEC9xxx resolves to its
-  // kind before the graph is used. A bare snapshot / a circuit with no userIcs registers nothing.
-  if ("userIcs" in saved && saved.userIcs) registerUserIcs(saved.userIcs);
+  // MERGE any embedded sealed-IC defs WITHOUT clobbering the player's library, so a placed CEC9xxx resolves
+  // to its kind before the graph is used — and a conflicting tag imports under a fresh tag, with `remap`
+  // rewriting this circuit onto the imported copies. A bare snapshot / no userIcs registers nothing (empty
+  // remap ⇒ applyTagRemap is a no-op).
+  let remap = new Map<string, string>();
+  if ("userIcs" in saved && saved.userIcs)
+    remap = importUserIcs(saved.userIcs).remap;
   // Restore any embedded in-progress dies into the live map (cleared first) — only when the caller
   // hands us one; an absent field clears it to empty (a plain circuit / example has no WIP dies).
   if (innerGraphs) {
     restoreInnerDies(
-      "innerDies" in saved ? saved.innerDies : undefined,
+      ("innerDies" in saved ? saved.innerDies : undefined)?.map((d) => ({
+        ...d,
+        graph: applyTagRemap(d.graph, remap),
+      })),
       innerGraphs,
     );
   }
   const graph = "graph" in saved ? saved.graph : saved;
-  return JSON.parse(JSON.stringify(graph)) as GraphSnapshot;
+  return applyTagRemap(
+    JSON.parse(JSON.stringify(graph)) as GraphSnapshot,
+    remap,
+  );
 }
 
 /** A generic two-step guided build derived from a circuit: place the parts, then wire

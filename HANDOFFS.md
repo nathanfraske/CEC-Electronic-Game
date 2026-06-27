@@ -5,6 +5,46 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (185) — Char. faithfulness fixes + load-conflict library merge (sharing-safe)
+
+**State:** 🟢 char. fixes MERGED (PR #272); load-conflict merge on the branch, gating green. **Web-only,
+golden `0xeaac_3764_99e4_fa24` untouched, 214 web tests.** Three owner bug reports + the original
+library-clobber bug, all from this session.
+
+**Characterization faithfulness (PR #272 — merged).** A flip-flop with CLR, a 1-bit register, and a 4-bit
+register all broke because the characterizer stored an UNFAITHFUL fast-model:
+- **`roleFromName`** now knows the control-pin family (CLR/CLEAR/RST/RESET/MR, PRE/PRESET/SET, EN/ENABLE/OE,
+  SEL/LD/LOAD, CE/CS/WE/RE, J/K/T/CIN), complemented "bar" names → base role, and **bus indices** (Q0..Q3 →
+  out, D0..D3/A1 → in). Previously only exact `Q`/`D` matched → an added CLR/OE or a `Qn` pin had no role →
+  the sweep skipped it.
+- **`cellAnalysis`** — a **true clock** pin (CLK/CLOCK/CK, via new `isTrueClock`) makes a cell sequential on
+  its own (its flop may be a *discrete* sub-cell the embedded-state check can't see). The register was swept
+  combinationally with the clock static → flop never latched → garbage `word:0`. Now routes to the fail-safe
+  sequential path → correctly REFUSES a self-dependent/tri-state register → stays discrete & works. CLK wins
+  over a co-present LD as the clock.
+- **`App.svelte`** — on a characterize REFUSAL, **clear stale behavior** so a cell that no longer collapses
+  reverts to discrete (re-characterizing HEALS a `word:0`/stale cell).
+- Heal an existing save by **re-characterizing** the affected cell (or run it discrete).
+
+**Load-conflict library merge (this branch — the original bug).** Loading a save that embedded an OLDER
+revision of a sub-assembly OVERWROTE the current REGISTRY def (`registerUserIcs` clobbered), then autosave
+persisted the downgrade. New **`importUserIcs(defs, families?) → {remap}`** (userIc.ts) MERGES without
+clobbering: free tag installs as-is; a structurally-IDENTICAL tag dedups (canonical-JSON key); a DIFFERENT
+same-tag def imports under a FRESH tag (`"<tag> (2)"`) with the loaded board rewritten onto it via
+`applyTagRemap`. Leaf-first (`topoOrderDefs`) so a remapped child propagates to its parent; free-form frame
+kinds + family sidecars remap too. Wired into all 4 board-load paths (storage.ts `loadBoard`, App.svelte
+open-raw-save + fixture, examples.ts `fromSaved`) — each applies the remap to the board graph + inner dies.
+Cold-start restore hits an empty registry ⇒ empty remap ⇒ byte-identical to before. Owner's intent: "doesn't
+break anything but keeps their intended design" — collisions between two authors' `CEC9001`s now import both
+faithfully. (`userLibrary.ts` left as-is — it's the canonical source, not a board merge.)
+
+**Brainstormed (owner asked, NOT built):** characterizing/ showing SEQUENTIAL cells — bit-slice recognition
+(a 4-bit reg = 4× a 1-bit slice; characterize the slice), state-aware 1-bit FSM (sweep state×inputs →
+next-state table), tri-state as an OE wrapper; show via a next-state table panel + optional mini-waveform.
+Maps to backlog #48 (A2) / #35. Recommended start: bit-slice + next-state table.
+
+---
+
 ## 2026-06-27 (184) — Wire-mode pin labels + power carriers in the opened sub-assembly
 
 **State:** 🟢 merged to `main` (PR #270, #271). **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 204 web

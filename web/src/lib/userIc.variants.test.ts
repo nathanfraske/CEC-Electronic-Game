@@ -24,6 +24,8 @@ import {
   userIcFamiliesForGraph,
   registerUserIcs,
   registerUserIcFamilies,
+  importUserIcs,
+  applyTagRemap,
   getUserIc,
   captureSeal,
   captureRegion,
@@ -509,6 +511,109 @@ describe("IC variants — determinism contract", () => {
     expect(roleFromName("FOO")).toBeUndefined();
     expect(roleFromName("BAR")).toBeUndefined();
     expect(roleFromName("0")).toBeUndefined();
+  });
+
+  describe("importUserIcs — merge a save's library WITHOUT clobbering", () => {
+    // A parent IC that PLACES a child IC inside its die (so we can test nested-reference remap). `childTag`
+    // must already be a registered kind when this is built.
+    const parentPlacing = (tag: string, childTag: string): UserIc => {
+      const inner = new BoardGraph();
+      const frame = place(inner, "SOT23_3", 0, 0);
+      const child = place(inner, childTag, 4, 0);
+      connect(inner, frame, 0, child, 0);
+      connect(inner, child, 1, frame, 1);
+      return {
+        tag,
+        name: tag,
+        package: { archetype: "SOT-23", pinCount: 3 },
+        frameId: frame.id,
+        graph: inner.serialize(),
+      };
+    };
+    const rOf = (tag: string): number | undefined =>
+      getUserIc(tag)?.graph.components.find((c) => c.kind === "R")?.value;
+
+    it("installs a NEW tag as-is (no conflict ⇒ empty remap)", () => {
+      const { remap } = importUserIcs([rPackageDef("IMP_NEW", 1000)]);
+      try {
+        expect(remap.size).toBe(0);
+        expect(rOf("IMP_NEW")).toBe(1000);
+      } finally {
+        unregisterUserIc("IMP_NEW");
+      }
+    });
+
+    it("DEDUPS a structurally-identical re-import (no copy, no remap)", () => {
+      registerUserIc(rPackageDef("IMP_DUP", 1000));
+      try {
+        const { remap } = importUserIcs([rPackageDef("IMP_DUP", 1000)]);
+        expect(remap.size).toBe(0);
+        expect(getUserIc("IMP_DUP (2)")).toBeUndefined(); // no duplicate minted
+        expect(rOf("IMP_DUP")).toBe(1000);
+      } finally {
+        unregisterUserIc("IMP_DUP");
+      }
+    });
+
+    it("a CONFLICTING tag imports under a fresh tag; the existing library version is untouched", () => {
+      registerUserIc(rPackageDef("IMP_CONF", 1000)); // current library = 1k
+      try {
+        const { remap } = importUserIcs([rPackageDef("IMP_CONF", 4700)]); // incoming = 4.7k, same tag
+        expect(remap.get("IMP_CONF")).toBe("IMP_CONF (2)");
+        expect(rOf("IMP_CONF")).toBe(1000); // existing kept
+        expect(rOf("IMP_CONF (2)")).toBe(4700); // incoming imported as a copy
+      } finally {
+        unregisterUserIc("IMP_CONF");
+        unregisterUserIc("IMP_CONF (2)");
+      }
+    });
+
+    it("rewrites a NESTED parent onto the remapped child (the whole loaded blob stays faithful)", () => {
+      registerUserIc(rPackageDef("KID", 1000)); // current KID = 1k
+      try {
+        const parent = parentPlacing("MOM", "KID"); // MOM places KID
+        // Incoming: a DIFFERENT KID (4.7k) + MOM. KID conflicts ⇒ KID (2); MOM's placed KID must follow.
+        const { remap } = importUserIcs([rPackageDef("KID", 4700), parent]);
+        try {
+          expect(remap.get("KID")).toBe("KID (2)");
+          expect(rOf("KID")).toBe(1000); // existing KID untouched
+          expect(rOf("KID (2)")).toBe(4700); // imported KID copy
+          // MOM installed, and its inner placed child now points at the imported KID (2), not the old KID.
+          const momKinds = getUserIc("MOM")?.graph.components.map(
+            (c) => c.kind,
+          );
+          expect(momKinds).toContain("KID (2)");
+          expect(momKinds).not.toContain("KID");
+        } finally {
+          unregisterUserIc("MOM");
+          unregisterUserIc("KID (2)");
+        }
+      } finally {
+        unregisterUserIc("KID");
+      }
+    });
+
+    it("applyTagRemap rewrites only the remapped component kinds (a no-op on an empty map)", () => {
+      const board = {
+        components: [
+          {
+            id: 1,
+            kind: "IMP_CONF",
+            cell: { col: 0, row: 0 },
+            value: 0,
+            rot: 0,
+          },
+          { id: 2, kind: "R", cell: { col: 4, row: 0 }, value: 1000, rot: 0 },
+        ],
+        wires: [],
+        junctions: [],
+        netLabels: [],
+      } as unknown as Parameters<typeof applyTagRemap>[0];
+      const out = applyTagRemap(board, new Map([["IMP_CONF", "IMP_CONF (2)"]]));
+      expect(out.components[0]!.kind).toBe("IMP_CONF (2)");
+      expect(out.components[1]!.kind).toBe("R"); // untouched
+      expect(applyTagRemap(board, new Map())).toBe(board); // empty remap ⇒ same object
+    });
   });
 
   it("tape out (P3b): promotes a subassembly to a board IC; re-package grows pins; no-op on an IC", () => {

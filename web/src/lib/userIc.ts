@@ -26,6 +26,7 @@ import {
   freeFormGeom,
   isFreeFormFrame,
   isFrame,
+  FREE_FORM_DIE_PREFIX,
   type GraphSnapshot,
   type Endpoint,
   type PartKind,
@@ -865,6 +866,156 @@ export function registerUserIcs(defs: UserIc[]): void {
     }
     registerUserIc(ic);
   }
+}
+
+/** Canonical (sorted-key, undefined-skipping) JSON — a STABLE structural string for a value regardless of
+ * object key ORDER or absent-vs-undefined keys, so a `JSON.parse`d save def and an in-code REGISTRY def
+ * compare equal when they're structurally the same. Used to content-address a def for import dedup. */
+function canonicalJson(v: unknown): string {
+  if (v === null || typeof v !== "object") return JSON.stringify(v) ?? "null";
+  if (Array.isArray(v)) return "[" + v.map(canonicalJson).join(",") + "]";
+  const o = v as Record<string, unknown>;
+  const keys = Object.keys(o)
+    .filter((k) => o[k] !== undefined)
+    .sort();
+  return (
+    "{" +
+    keys.map((k) => JSON.stringify(k) + ":" + canonicalJson(o[k])).join(",") +
+    "}"
+  );
+}
+
+/** A content key for an IC def that IGNORES its tag — so "the same cell under a different tag" is
+ * recognised as identical (dedup), while a genuinely different cell sharing a tag is a conflict. */
+function defContentKey(def: UserIc): string {
+  const rest: Partial<UserIc> = { ...def };
+  delete rest.tag;
+  return canonicalJson(rest);
+}
+
+/** Rewrite every component `kind` that the remap touches (placed sub-cells AND a free-form die-frame kind),
+ * returning a NEW snapshot (never mutates the input). Wires/junctions/net-labels address pins by id, never
+ * by tag, so they're untouched. A no-op (returns the same object) when the remap is empty. */
+export function applyTagRemap(
+  graph: GraphSnapshot,
+  remap: Map<string, string>,
+): GraphSnapshot {
+  if (remap.size === 0) return graph;
+  let changed = false;
+  const components = graph.components.map((c) => {
+    const to = remap.get(c.kind);
+    if (to === undefined) return c;
+    changed = true;
+    return { ...c, kind: to };
+  });
+  return changed ? { ...graph, components } : graph;
+}
+
+/** Order defs LEAF-FIRST (a nested sub-cell before the cell that places it), so an import can resolve a
+ * child's remap before rewriting its parent. DFS post-order over the `kind`-references that point at other
+ * defs IN THIS BATCH; a `visiting` guard makes a (defensive) cycle terminate instead of recursing forever. */
+function topoOrderDefs(defs: UserIc[]): UserIc[] {
+  const byTag = new Map(defs.map((d) => [d.tag, d]));
+  const order: UserIc[] = [];
+  const done = new Set<string>();
+  const visiting = new Set<string>();
+  const visit = (d: UserIc): void => {
+    if (done.has(d.tag) || visiting.has(d.tag)) return;
+    visiting.add(d.tag);
+    for (const c of d.graph.components) {
+      const child = c.kind !== d.tag ? byTag.get(c.kind) : undefined;
+      if (child) visit(child);
+    }
+    visiting.delete(d.tag);
+    done.add(d.tag);
+    order.push(d);
+  };
+  for (const d of defs) visit(d);
+  return order;
+}
+
+/** A unique tag not already taken (REGISTRY or PART_KINDS), keeping the readable base name + a numeric
+ * suffix — so an imported conflicting cell lands as e.g. "D LATCH (2)" rather than clobbering or burning a
+ * CEC auto-id. */
+function freshImportTag(base: string): string {
+  for (let i = 2; ; i++) {
+    const t = `${base} (${i})`;
+    if (!REGISTRY.has(t) && !PART_KINDS[t]) return t;
+  }
+}
+
+/**
+ * MERGE a save's embedded sealed-IC library into the REGISTRY **without ever clobbering** an existing
+ * library entry — the load-time replacement for {@link registerUserIcs}. For each embedded def, leaf-first:
+ *
+ * - the tag is FREE ⇒ install it as-is;
+ * - the tag is taken by a STRUCTURALLY-IDENTICAL def ⇒ dedup (re-opening your own circuit, or a shared
+ *   upstream cell you both have) — keep what's there, no copy;
+ * - the tag is taken by a DIFFERENT def ⇒ CONFLICT: install the incoming one under a FRESH tag and record
+ *   `oldTag → newTag` so the caller can {@link applyTagRemap} the loaded BOARD graph (+ inner dies) onto
+ *   the imported copies. The existing library version is left untouched.
+ *
+ * So loading an OLD save can no longer downgrade a sub-assembly you've since improved, and — when circuits
+ * start being SHARED — a tag collision between two authors' `CEC9001`s imports both faithfully instead of
+ * one silently overwriting the other (owner: "doesn't break anything but keeps their intended design").
+ * Returns the remap (empty when nothing conflicted). A builtin-colliding tag is skipped (clobber-safety),
+ * exactly as {@link registerUserIcs} did. Family sidecars are regrouped with the remap applied.
+ */
+export function importUserIcs(
+  defs: UserIc[] | undefined,
+  families?: UserIcFamilySidecar[],
+): { remap: Map<string, string> } {
+  const remap = new Map<string, string>();
+  for (const def of topoOrderDefs(defs ?? [])) {
+    if (collidesWithBuiltin(def.tag)) {
+      console.warn(
+        `importUserIcs: skipped IC with reserved tag "${def.tag}" (collides with a built-in kind).`,
+      );
+      continue;
+    }
+    // Resolve any child sub-cell whose tag was remapped earlier in the leaf-first pass.
+    const resolved =
+      remap.size > 0 ? { ...def, graph: applyTagRemap(def.graph, remap) } : def;
+    const existing = REGISTRY.get(def.tag);
+    if (!existing) {
+      registerUserIc(resolved); // free tag — install as authored
+    } else if (defContentKey(resolved) === defContentKey(existing)) {
+      // identical to the library entry — dedup (the loaded board's tag still resolves to it)
+    } else {
+      const newTag = freshImportTag(def.tag);
+      // The imported COPY: its own free-form die-frame kind (`__DIE_FF_<tag>`) is remapped to the new tag
+      // too, so registerUserIc's frame re-registration and the graph agree.
+      const frameMap = new Map<string, string>();
+      if (resolved.freeForm)
+        frameMap.set(
+          FREE_FORM_DIE_PREFIX + def.tag,
+          FREE_FORM_DIE_PREFIX + newTag,
+        );
+      registerUserIc({
+        ...resolved,
+        tag: newTag,
+        graph: applyTagRemap(resolved.graph, frameMap),
+      });
+      remap.set(def.tag, newTag);
+      if (resolved.freeForm)
+        remap.set(
+          FREE_FORM_DIE_PREFIX + def.tag,
+          FREE_FORM_DIE_PREFIX + newTag,
+        );
+    }
+  }
+  // Regroup variant families AFTER the flat child defs are registered, with the remap applied to the family
+  // tag + its ordered child tags (so a remapped variant still regroups under the right family).
+  if (families && families.length > 0) {
+    registerUserIcFamilies(
+      families.map((s) => ({
+        family: remap.get(s.family) ?? s.family,
+        name: s.name,
+        variantTags: s.variantTags.map((t) => remap.get(t) ?? t),
+      })),
+    );
+  }
+  return { remap };
 }
 
 /**
