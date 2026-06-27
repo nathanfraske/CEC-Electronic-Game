@@ -75,7 +75,6 @@ import {
   type GlyphStyle,
 } from "./glyphs";
 import {
-  isSequentialCellSymbol,
   storedOutputs,
   formatStoredValue,
   type StoredState,
@@ -4308,7 +4307,9 @@ export class Board {
     const comp = this.graph.components.get(id);
     if (!comp || !isUserIc(comp.kind)) return undefined;
     const def = resolveUserIc(comp.kind, comp.variant ?? 0);
-    if (!def || !isSequentialCellSymbol(cellSymbol(def))) return undefined;
+    // Any RECOGNISED cell (it wears a symbol) shows its live output: a register's stored Q, a gate's Y,
+    // an adder's sum/carry — read from the `out` pins below.
+    if (!def || !cellSymbol(def)) return undefined;
     const roles = def.pinRoles ?? [];
     const vccIdx = roles.indexOf("vcc");
     const vcc =
@@ -7687,7 +7688,9 @@ class ComponentNode {
     this.label.resolution = DPR;
     this.view.addChild(this.label);
 
-    // The live stored-value chip for a recognised sequential cell (set + faded each frame in `update`).
+    // The live value chip a recognised cell shows ("Q=…" / "Y=…"), set + faded each frame in `update`. A
+    // soft dark drop-shadow keeps it legible over the package body it sits on (it shares the crowded body
+    // region with the pinout text — the readability is the point).
     this.stateLabel = new Text({
       text: "",
       style: {
@@ -7695,6 +7698,13 @@ class ComponentNode {
         fontFamily: "IBM Plex Mono, monospace",
         fontSize: 9,
         fontWeight: "600",
+        dropShadow: {
+          color: 0x0a0814,
+          alpha: 0.85,
+          blur: 3,
+          distance: 0,
+          angle: 0,
+        },
       },
     });
     this.stateLabel.anchor.set(0.5);
@@ -7967,11 +7977,12 @@ class ComponentNode {
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
-        // Live SYMBOL-STATE: a recognised SEQUENTIAL cell shows the bit(s) it is storing. The LED bits sit
-        // inside the box and carry the state at a glance when zoomed OUT (riding the symbol fade); the
-        // mono "Q=…" value chip fades IN under the body as you zoom toward the part (the two combined
-        // across zoom levels). Both gone by the time the open replica takes over.
-        if (liveState && isSequentialCellSymbol(gname)) {
+        // Live SYMBOL-STATE: a recognised cell shows its live OUTPUT bit(s) on its body — a register's
+        // stored Q, a gate's output Y, an adder's sum/carry. The LED bits sit inside the box and carry the
+        // state at a glance when zoomed OUT (riding the symbol fade); the mono value chip ("Q=1"/"Y=0…")
+        // fades IN as you zoom toward the part (the two reads combined across zoom). Both gone by the time
+        // the open replica takes over.
+        if (liveState) {
           drawCellLiveBits(
             this.symbolGlyph,
             cx,
@@ -7987,7 +7998,23 @@ class ComponentNode {
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            this.stateLabel.position.set(cx, cy + hh + 9);
+            // The value chip wants clear air. Where there's room between the symbol box and the body's
+            // bottom edge (a tall body, e.g. a gate) it CENTRES in that lower card — max clearance from
+            // both. Where the box nearly fills the body (a short/wide register), there's no clean gap, so
+            // it drops just BELOW the body edge instead of clipping the box. The drop-shadow keeps it legible.
+            const gap = this.hPx / 2 - hh; // symbol-box bottom (cy+hh) → body bottom edge (cy+hPx/2)
+            const localY =
+              gap >= 16 ? cy + hh + gap / 2 : cy + this.hPx / 2 + 9;
+            // The chip lives in the UN-rotated `view`, so run its body-local spot through the part's
+            // rotate+mirror (the same `rotPx` the pins/symbol use) and keep the text itself upright — so a
+            // rotated/flipped part still parks its readout in the right place.
+            const rp = rotPx(
+              cx,
+              localY,
+              this.component.rot,
+              this.component.mirror,
+            );
+            this.stateLabel.position.set(rp.x, rp.y);
             this.stateLabel.alpha = ta;
             this.stateLabel.visible = true;
           }
