@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (189) — Overnight: all greenlit wire/bridge polish + the Datasheet feature
+
+**State:** 🟢 PRs #277 #278 #279 #280 MERGED; #281 (Datasheet) on the branch + CI. **Render/web only,
+golden `0xeaac_3764_99e4_fa24` untouched, 249 web tests (+33).** Owner: "finish all the greenlit work,
+checking as you go, then work the backlog autonomously overnight." All four greenlit items shipped, each
+its own PR, each landed green before the next.
+
+- **Wire-drag 3A+3C (#278).** A grabbed segment whose end sits on a JUNCTION now SLIDES the junction (its
+  incident wires follow) instead of folding a stub colinear with the tapped wire (the "over-lappy" bug). Pin
+  ends still fold a clean staple. Extracted pure `planSegmentDrag` + `cleanRouteWaypoints` (drops
+  zero-length steps, U-turn spikes, colinear bends), 11 unit tests.
+- **Lazy-follow router (#279).** Starting a wire loosely follows the pointer — `extendLazyTrail` builds a
+  heading-locked orthogonal staircase (2-cell turn threshold w/ hysteresis); bends bake as WAYPOINTS on
+  finish (`bakeLazyIntoWire`), never junctions, so preview == committed. 8 unit tests. **Tunable:** turn
+  threshold. *(Feel feature — owner will tune interactively; not pointer-driven E2E'd, the harness has no
+  segment-drag verb, but the staircase math is fully unit-tested.)*
+- **Bridges 4A+4C+4B (#280).** Clustered hops fold into ONE flat-topped arch (`ARCH_MERGE_GAP`); a dense
+  cluster (≥`ARCH_DENSE`=4) drops the hump and the flat hopper's opaque casing notches each under-wire (the
+  "break the under-wire" look — free, the over-draw already knocks out crossed pipes); dome a touch smaller
+  (`BUMP_W` 15→12, `BUMP_H` 16→13). 5 `applyCrossings` tests. **Tunable:** dome / merge gap / dense count.
+- **Datasheet #70 (#281).** Static reference card beside Behavior: pinout (every lead's real NAME +
+  direction; role inferred from the name when the def's role is unset — so an OLD save's Q0..Q3 still read
+  OUT), package, and the logic truth / next-state FUNCTION table (reuses `characterizeCell` /
+  `traceSequentialCell`). Pure `buildDatasheet` (`datasheet.ts`, 9 tests); top-centre bronze panel sharing
+  the slot with Behavior (one at a time); `📄 Datasheet` button per subassembly row; `__cecDatasheet` hook.
+  **Render-verified** (4-BIT REG → "free-form (14-pin)", Q-pins OUT, 64-row next-state table — screenshot).
+
+**Open follow-ups (NOT greenlit / not started):**
+- Datasheet button only on **subassembly** rows so far — roll out to **taped-out ICs + stock parts**
+  ("all your parts should have a datasheet"); add a **ratings** row from tier/variant params.
+- Lazy-follow turn-threshold + bridge dome size are eyeball-tune constants for the owner.
+- Backlog still open: #11 realism polish, #22 INV composite FETs, #35 char steppable, #41 curriculum,
+  #45 CPU templates, #47 RAM/ROM primitive (NEEDS GREENLIGHT), #48 A2 multi-bit sequential.
+
+---
+
 ## 2026-06-27 (188) — Die-builder fixes + per-cell scale re-anchor; wire/bridge brainstorms greenlit
 
 **State:** 🟢 PR #276 MERGED, #277 (CI). **Render/registry only, golden `0xeaac_3764_99e4_fa24` untouched,

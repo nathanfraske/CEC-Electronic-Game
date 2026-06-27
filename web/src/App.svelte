@@ -99,6 +99,11 @@
   import { characterizeCell } from "./lib/characterize";
   import { traceSequentialCell } from "./lib/sequentialTrace";
   import {
+    buildDatasheet,
+    type DatasheetModel,
+    type DatasheetChar,
+  } from "./lib/datasheet";
+  import {
     registerLibrary,
     addToLibrary,
     libraryEntries,
@@ -1804,6 +1809,7 @@
     registered: boolean;
   }
   let charResult = $state<CharPanel | null>(null);
+  let datasheet = $state<DatasheetModel | null>(null);
 
   /**
    * Characterize a player-built COMBINATIONAL subassembly (§2.9, the engine's "1"): sweep every input
@@ -1902,6 +1908,7 @@
       return;
     }
     circuitWarning = null;
+    datasheet = null; // the two reference panels share the top-centre slot — show one at a time
     charResult = panel;
   }
 
@@ -1926,6 +1933,63 @@
     setUserIcBehavior(charResult.tag, undefined);
     libRev++;
     charResult = { ...charResult, fast: false };
+  }
+
+  /**
+   * Open the DATASHEET panel for a part (#70, the "publish a datasheet" framing) — the static reference
+   * card: its PINOUT (every lead's real name + direction) and, for a logic cell, its truth / next-state
+   * FUNCTION table. Distinct from Behavior (which SHOWS/applies the runtime fast model); the datasheet
+   * never mutates the def. The function table is best-effort: it reuses the SAME characterization engines
+   * (`characterizeCell` → the canonical LUT table, else `traceSequentialCell` → the observed next-state),
+   * and falls back to a pinout-only sheet for a passive/analog part that has no readable logic function.
+   */
+  function showDatasheet(tag: string): void {
+    const ic = getUserIc(tag);
+    if (!ic) {
+      datasheet = null;
+      return;
+    }
+    charResult = null; // the two reference panels share the top-centre slot — show one at a time
+    let char: DatasheetChar | null = null;
+    try {
+      const opts = { pinNames: ic.pinNames, resolveCell: getUserIc };
+      const cr = characterizeCell(
+        ic.graph,
+        ic.frameId,
+        ic.pinRoles ?? [],
+        opts,
+      );
+      if (cr.ok) {
+        const registered = (cr.behavior.mode ?? 0) >= 1;
+        const g = recognizeGate(cr.behavior.word, cr.inputs);
+        char = {
+          inNames: cr.inputNames,
+          outName: cr.outName,
+          gate: registered && g === "BUFFER" ? "D-TYPE" : g,
+          registered,
+          rows: cr.vectors.map((v) => ({ in: v.in, out: v.out })),
+        };
+      } else {
+        const tr = traceSequentialCell(
+          ic.graph,
+          ic.frameId,
+          ic.pinRoles ?? [],
+          opts,
+        );
+        if (tr.ok) {
+          char = {
+            inNames: tr.trace.inputNames,
+            outName: tr.trace.outName,
+            gate: null,
+            registered: true,
+            rows: tr.trace.rows.map((r) => ({ in: r.in, out: r.settled })),
+          };
+        }
+      }
+    } catch {
+      // No readable logic function (passive/analog or won't solve) — the datasheet shows the pinout only.
+    }
+    datasheet = buildDatasheet(ic, char);
   }
 
   /** SVG path for a row's Q WAVEFORM — a step trace (high = top, low = bottom) over the sampled clock
@@ -2712,6 +2776,23 @@
           fast: charResult?.fast ?? false,
           collapsible: !!charResult?.behavior,
         };
+      };
+      // Open the DATASHEET panel (render/test hook): returns the assembled model so a test can assert the
+      // pinout + function table without scraping the DOM.
+      (
+        window as unknown as { __cecDatasheet?: (tag: string) => unknown }
+      ).__cecDatasheet = (tag: string) => {
+        showDatasheet(tag);
+        return datasheet
+          ? {
+              packageLabel: datasheet.packageLabel,
+              pinCount: datasheet.pinCount,
+              pins: datasheet.pins.map((p) => `${p.name}:${p.dir}`),
+              summary: datasheet.summary,
+              hasTable: !!datasheet.table,
+              rows: datasheet.table?.rows.length ?? 0,
+            }
+          : null;
       };
       // Center the camera on a placed component at an absolute zoom — lets the render harness drive a deep
       // zoom-to-open (the recursive internals view) for screenshot validation.
@@ -4545,6 +4626,15 @@
                   }}>◧ Behavior</button
                 >
                 <button
+                  class="ic-row-btn ic-row-datasheet"
+                  title="Datasheet — the part's reference card: package, pinout (every lead's name + direction), and its logic function table"
+                  aria-label="Datasheet of {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    showDatasheet(part.tag);
+                  }}>📄 Datasheet</button
+                >
+                <button
                   class="ic-row-btn ic-row-tapeout"
                   title="Tape out → board IC (choose a package, make it placeable)"
                   aria-label="Tape out {part.name}"
@@ -5923,6 +6013,89 @@
               >
             {/if}
           </div>
+        </div>
+      {/if}
+
+      {#if datasheet}
+        <!-- DATASHEET panel (#70): the part's reference card — package + pinout (every lead's real name &
+             direction) and, for a logic cell, its truth / next-state function table. Read-only; never
+             mutates the def (Behavior owns the fast-model collapse). -->
+        <div
+          class="ds-panel"
+          role="dialog"
+          aria-label="Datasheet of {datasheet.name}"
+        >
+          <div class="ds-head">
+            <span class="ds-title">{datasheet.name}</span>
+            <span class="ds-kind" title="Part class">{datasheet.kindLabel}</span
+            >
+            <span class="ds-pkg" title="Package">{datasheet.packageLabel}</span>
+            <button
+              class="char-close"
+              title="Close"
+              aria-label="Close datasheet panel"
+              onclick={() => (datasheet = null)}>×</button
+            >
+          </div>
+          <div class="ds-summary mono">{datasheet.summary}</div>
+          <div class="ds-section-h">Pinout</div>
+          <table class="ds-pins mono">
+            <thead>
+              <tr><th>#</th><th>Name</th><th>Dir</th></tr>
+            </thead>
+            <tbody>
+              {#each datasheet.pins as p (p.number)}
+                <tr>
+                  <td class="ds-pin-n">{p.number}</td>
+                  <td class="ds-pin-name">{p.name}</td>
+                  <td class="ds-dir ds-dir-{p.dir.replace('/', '')}">{p.dir}</td
+                  >
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+          {#if datasheet.table}
+            <div class="ds-section-h">
+              {datasheet.table.registered ? "Next-state table" : "Truth table"}
+              {#if datasheet.table.gate}
+                <span class="ds-fn" title="Recognised function"
+                  >{datasheet.table.gate}</span
+                >
+              {/if}
+            </div>
+            <table class="ds-tt mono">
+              <thead>
+                <tr>
+                  {#each datasheet.table.inputs as nm, i (i)}
+                    <th title="Input {nm}">{nm}</th>
+                  {/each}
+                  {#each datasheet.table.outputs as nm, i (i)}
+                    <th
+                      class="char-out"
+                      title={datasheet.table.registered
+                        ? "Next state (latched on the clock)"
+                        : "Output"}
+                      >{nm}{datasheet.table.registered ? "⁺" : ""}</th
+                    >
+                  {/each}
+                </tr>
+              </thead>
+              <tbody>
+                {#each datasheet.table.rows as r, ri (ri)}
+                  <tr>
+                    {#each r.in as bit, bi (bi)}
+                      <td class:hi={bit === 1}>{bit}</td>
+                    {/each}
+                    {#each r.out as o, oi (oi)}
+                      <td class="char-out" class:hi={o === 1}
+                        >{o === null ? "—" : o}</td
+                      >
+                    {/each}
+                  </tr>
+                {/each}
+              </tbody>
+            </table>
+          {/if}
         </div>
       {/if}
 
@@ -9299,6 +9472,138 @@
     stroke: var(--cyan);
     stroke-width: 1.5;
     stroke-linejoin: miter;
+  }
+
+  /* DATASHEET panel (#70) — the part reference card. Shares the top-centre slot with the Behavior panel
+     (only one shows at a time) but reads in a bronze/amber tone to distinguish "spec sheet" from the cyan
+     "behavior". Reuses .char-close + .char-out from the Behavior table. */
+  .ds-panel {
+    position: absolute;
+    top: 44px;
+    left: 50%;
+    transform: translateX(-50%);
+    min-width: 220px;
+    max-height: calc(100vh - 90px);
+    overflow-y: auto;
+    padding: 10px 12px 12px;
+    background: oklch(0.165 0.028 285 / 0.96);
+    border: 1px solid var(--warn);
+    border-radius: 4px;
+    box-shadow: 0 0 22px -9px var(--warn);
+    backdrop-filter: blur(3px);
+    z-index: 5;
+  }
+  .ds-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .ds-title {
+    font-family: var(--font-display, "Saira Condensed", sans-serif);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .ds-kind,
+  .ds-pkg {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+    color: var(--warn);
+    padding: 1px 6px;
+    border: 1px solid color-mix(in oklch, var(--warn) 45%, transparent);
+    border-radius: 2px;
+    background: color-mix(in oklch, var(--warn) 12%, transparent);
+  }
+  .ds-summary {
+    font-size: 11px;
+    color: var(--dim);
+    text-align: center;
+    margin-bottom: 8px;
+  }
+  .ds-section-h {
+    font-family: var(--font-display, var(--font-mono));
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    font-size: 10.5px;
+    color: var(--text-2, var(--dim));
+    margin: 8px 0 4px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .ds-fn {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--cyan);
+    padding: 0 5px;
+    border: 1px solid color-mix(in oklch, var(--cyan) 45%, transparent);
+    border-radius: 2px;
+  }
+  .ds-pins,
+  .ds-tt {
+    border-collapse: collapse;
+    font-size: 12px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  .ds-pins th,
+  .ds-pins td,
+  .ds-tt th,
+  .ds-tt td {
+    padding: 2px 9px;
+    text-align: center;
+    color: var(--dim);
+    border: 1px solid var(--border);
+  }
+  .ds-pins th,
+  .ds-tt th {
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-2, var(--dim));
+  }
+  .ds-pins td.ds-pin-name {
+    color: var(--text);
+    text-align: left;
+  }
+  .ds-pins td.ds-pin-n {
+    color: var(--dim);
+  }
+  /* Direction badges: inputs cyan, outputs rose, power amber, clock violet — a quick at-a-glance read. */
+  .ds-dir {
+    font-weight: 600;
+    font-size: 11px;
+  }
+  .ds-dir-IN {
+    color: var(--cyan);
+  }
+  .ds-dir-OUT {
+    color: var(--accent);
+  }
+  .ds-dir-IO {
+    color: var(--ok, var(--cyan));
+  }
+  .ds-dir-CLK {
+    color: var(--violet, var(--cyan));
+  }
+  .ds-dir-PWR,
+  .ds-dir-GND {
+    color: var(--warn);
+  }
+  .ds-tt .char-out {
+    border-left: 2px solid var(--cyan);
+  }
+  .ds-tt td.hi {
+    color: var(--cyan);
+    font-weight: 600;
+  }
+  .ds-tt td.char-out.hi {
+    color: var(--accent);
   }
   .hl {
     font-weight: 600;
