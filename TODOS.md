@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (191) — Wiring UX: KiCad-style net highlight + pin focus (owner direction)
+
+Owner picked label-declutter options 1+2 AND asked: when you drag a wire from a pin, bring ALL pins into
+focus + highlight the SAME electrical net like KiCad (ground / +5V), **by real node, not by name** (two
+"GND" nets that aren't joined stay distinct). Phased build:
+- ~~**Phase 1 — net highlight + wire-drag pin focus**~~ (PR, CI). `activeNetNode()` = the in-progress
+  wire's source node; `redrawWires` lays an amber halo UNDER every trace on that node (KiCad-style),
+  triggered on `startWiring`/`cancelWiring`. Pin labels now focus in WIRE mode OR while dragging a wire
+  (any tool). `startWireFromPin` / `__cecWireFrom` harness accessor. Render-verified: wiring from a GND
+  pin lit the whole GND net amber, non-GND traces normal, all pins labelled.
+- [ ] **Phase 2 — net highlight on HOVER** (not just while wiring) + highlight the net's PINS (rings), and
+  on a wire/pin select. Dim off-net for contrast (KiCad's "bring the net forward").
+- [ ] **Phase 3 — label declutter (1+2)** — collision-resolve pass (nudge/hide by priority out>in>chip) +
+  zoom/focus reveal, so a dense part's pin labels + the value chip stop overlapping when NOT wiring.
+- [ ] **Polish** — highlight colour/width tune; the value-chip lands among pin labels on short parts until
+  Phase 3 re-lays them.
+
+---
+
 ## 2026-06-27 (190) — Live symbol-state: the stored bit on a sequential cell's body
 
 PR (CI). Render/web only, golden untouched, 258 web tests (+6). Owner: "visual symbol characterization —

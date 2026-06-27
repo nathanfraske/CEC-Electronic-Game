@@ -2785,6 +2785,12 @@
           __cecPins?: (id: number) => Record<string, number | null> | null;
         }
       ).__cecPins = (id: number) => board?.cellPinVoltages(id) ?? null;
+      // Harness accessor: begin a wire from a pin (mid-drag) to exercise the net highlight + pin focus.
+      (
+        window as unknown as {
+          __cecWireFrom?: (c: number, p: number) => void;
+        }
+      ).__cecWireFrom = (c: number, p: number) => board?.startWireFromPin(c, p);
       // pinout + function table without scraping the DOM.
       (
         window as unknown as { __cecDatasheet?: (tag: string) => unknown }
