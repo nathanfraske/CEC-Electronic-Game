@@ -6,6 +6,16 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (187) — Scale rule node floor
+
+PR #275. Render-only, golden untouched, 215 web tests.
+- ~~**`scaleBar` node floor**~~ — clamp the physical scale rule at `MIN_FEATURE_MM` (100nm = 0.1µm; tunable)
+  so deeply-nested parts stop reading sub-1nm / 0.01nm; bar widens ≤2× target then holds; ×M stays honest.
+- [ ] **Scale re-anchor per opened cell** (#71) — the smoother "happy medium": each baked chip its own scale
+  universe (package mm → transistor ~node) regardless of depth. Needs a viewProbe local-anchor restructure.
+
+---
+
 ## 2026-06-27 (186) — Behavior panel (was "Characterize")
 
 PR #274. Web/registry only, golden untouched, 214 web tests.

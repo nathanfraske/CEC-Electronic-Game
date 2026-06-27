@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (187) — Scale rule: floor at an idealized process node
+
+**State:** 🟢 PR #275 (CI). **Render-only, golden `0xeaac_3764_99e4_fa24` untouched, 215 web tests.** Owner:
+deeply-nested parts read sub-1nm / 0.01nm "transistors" — the recursive bake-and-nest zoom compounds the
+top-anchored fit-scale (`MM_PER_TOP_CELL`) every level down.
+
+- **`zoomMeter.ts`** — `scaleBar` now clamps at **`MIN_FEATURE_MM`** (default 100nm = 0.1µm; tunable). Below
+  the floor the rule reads the node, and the drawn bar widens at most to 2× the target then holds (no
+  overflow). The magnification ×M readout stays honest — only the physical-size rule floors. +1 unit test
+  (deep nesting floors; shallow untouched). Verification: unit test (the math) + the HUD bar render is
+  structurally unchanged (only the floored values differ at depth).
+
+**The principled follow-up (owner leaned toward it; picker errored so the floor shipped as interim):** TODO
+**#71 — re-anchor PER opened cell** so each baked chip is its own scale universe (package ~mm → transistors
+~node) regardless of global nesting depth. Needs a viewProbe restructure to feed the meter a per-level local
+anchor + a smooth boundary handoff.
+
+---
+
 ## 2026-06-27 (186) — Behavior panel (was "Characterize"): names + waveform + fast-model toggle
 
 **State:** 🟢 PR #274 (CI running). **Web/registry only, golden `0xeaac_3764_99e4_fa24` untouched, 214 web

@@ -3,6 +3,7 @@ import { describe, it, expect } from "vitest";
 import { PITCH } from "./boardRender";
 import {
   MM_PER_TOP_CELL,
+  MIN_FEATURE_MM,
   mmPerScreenPx,
   magnification,
   niceLength,
@@ -92,5 +93,18 @@ describe("zoomMeter", () => {
     const n = parseFloat(bar.label);
     const mantissa = n / Math.pow(10, Math.floor(Math.log10(n)));
     expect([1, 2, 5]).toContain(Math.round(mantissa));
+  });
+
+  it("scaleBar FLOORS at the process node — deep nesting never reports sub-node features", () => {
+    // A CPU nested ~8 deep + zoomed hard: the raw scale is far below a nanometre, but the rule clamps at
+    // MIN_FEATURE_MM (the idealized node) and reads it instead of "0.01 nm".
+    const deep = scaleBar(3000, 1e-6, 90);
+    expect(deep.label).toBe(formatMm(MIN_FEATURE_MM));
+    // The bar never overflows: it widens at most to 2× the target, then holds.
+    expect(deep.px).toBeLessThanOrEqual(90 * 2 + 1e-6);
+    // Just ABOVE the floor the rule is untouched (normal µm/nm readout, bar ≈ the target width).
+    const shallow = scaleBar(8, 0.05, 90);
+    expect(parseFloat(shallow.label)).toBeGreaterThan(0);
+    expect(shallow.px).toBeLessThanOrEqual(90);
   });
 });
