@@ -7998,11 +7998,13 @@ class ComponentNode {
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            // A deliberate designator in the LOWER package card — clearly below the symbol box, short of the
-            // body's bottom edge (so it doesn't spill into the pinout text below) — with the drop-shadow
-            // keeping it legible on the body, like a part number printed on a chip.
-            const gap = Math.max(0, this.hPx / 2 - hh); // symbol-box bottom → body bottom edge
-            this.stateLabel.position.set(cx, cy + hh + gap * 0.62);
+            // The value chip wants clear air. Where there's room between the symbol box and the body's
+            // bottom edge (a tall body, e.g. a gate) it CENTRES in that lower card — max clearance from
+            // both. Where the box nearly fills the body (a short/wide register), there's no clean gap, so
+            // it drops just BELOW the body edge instead of clipping the box. The drop-shadow keeps it legible.
+            const gap = this.hPx / 2 - hh; // symbol-box bottom (cy+hh) → body bottom edge (cy+hPx/2)
+            const chipY = gap >= 16 ? cy + hh + gap / 2 : cy + this.hPx / 2 + 9;
+            this.stateLabel.position.set(cx, chipY);
             this.stateLabel.alpha = ta;
             this.stateLabel.visible = true;
           }
