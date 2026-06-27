@@ -1821,6 +1821,14 @@
     }
     if (!res.ok) {
       circuitWarning = `Can't characterize “${ic.name || partName(tag)}”: ${res.reason}.`;
+      // Drop any STALE behavior so a cell that no longer collapses reverts to full-fidelity DISCRETE
+      // instead of keeping a wrong cached LUT. This heals a cell whose pinout changed since it was last
+      // swept — e.g. a CLR/CLK/OE pin was added, making it sequential or tri-state and thus uncollapsible
+      // (the bug: a register sat on a constant-0 `word`, so behavioral-fidelity instances output 0).
+      if (getUserIc(tag)?.behavior) {
+        setUserIcBehavior(tag, undefined);
+        libRev++;
+      }
       charResult = null;
       return;
     }

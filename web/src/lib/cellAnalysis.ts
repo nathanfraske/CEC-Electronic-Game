@@ -113,6 +113,16 @@ function isClocky(name: string | undefined): boolean {
   return CLOCKY.has(N) || CLOCKY.has(norm(name));
 }
 
+/** A TRUE edge clock — CLK/CLOCK/CK/PHI — as opposed to a LEVEL enable/load (EN/LE/G/LD/WE), which
+ * {@link isClocky} also matches. A pin named like a true clock means the cell is CLOCKED, hence has state
+ * (sequential): it can't be swept as a combinational truth table no matter what else it contains. Kept
+ * narrow (not strobe/enable/load) so an enabled COMBINATIONAL gate isn't force-routed to the seq sweep. */
+const TRUE_CLOCKS = new Set(["CLK", "CK", "CLOCK", "PHI"]);
+function isTrueClock(name: string | undefined): boolean {
+  const N = norm(name).replace(/[_]?(B|BAR|N)$/, "");
+  return TRUE_CLOCKS.has(N) || TRUE_CLOCKS.has(norm(name));
+}
+
 /** Web gate kinds (powered logic) — a DIRECTED gain stage in the signal graph: pin 0 = OUT, 1/2 = IN. */
 const LOGIC_GATES = new Set([
   "NOT",
@@ -187,18 +197,31 @@ export function analyzeCell(opts: {
   // complement = the barred one. A lone clocky pin drives alone (no complement).
   let clockPin = -1;
   let clockComplementPin = -1;
-  outer: for (let a = 0; a < clocks.length; a++) {
-    for (let b = 0; b < clocks.length; b++) {
-      if (a === b) continue;
-      if (isComplementName(nameOf(clocks[a]), nameOf(clocks[b]))) {
-        const barA = looksBarred(nameOf(clocks[a]));
-        clockPin = barA ? clocks[b] : clocks[a];
-        clockComplementPin = barA ? clocks[a] : clocks[b];
-        break outer;
+  // A TRUE edge clock (CLK/CLOCK/CK) WINS — so a register carrying both a load-enable (LD) and a CLK pin
+  // (both "clocky") drives the real clock, not LD. Pick its complement only if a barred CLK pin exists.
+  const trueClk = clocks.find((i) => isTrueClock(nameOf(i)));
+  if (trueClk !== undefined) {
+    clockPin = trueClk;
+    clockComplementPin =
+      clocks.find(
+        (i) => i !== trueClk && isComplementName(nameOf(i), nameOf(trueClk)),
+      ) ?? -1;
+  } else {
+    // No true clock: a complementary name pair among the clocky pins (EN/ENB) ⇒ clock = the non-barred one,
+    // its complement = the barred one. A lone clocky pin drives alone (no complement).
+    outer: for (let a = 0; a < clocks.length; a++) {
+      for (let b = 0; b < clocks.length; b++) {
+        if (a === b) continue;
+        if (isComplementName(nameOf(clocks[a]), nameOf(clocks[b]))) {
+          const barA = looksBarred(nameOf(clocks[a]));
+          clockPin = barA ? clocks[b] : clocks[a];
+          clockComplementPin = barA ? clocks[a] : clocks[b];
+          break outer;
+        }
       }
     }
+    if (clockPin < 0 && clocks.length > 0) clockPin = clocks[0]; // lone clock/enable, no complement
   }
-  if (clockPin < 0 && clocks.length > 0) clockPin = clocks[0]; // lone clock, no complement
 
   // Output: prefer a true Q (named "Q" exactly, or a non-barred output) and record Q̄ if a complementary
   // output exists ("Q available, Q̄ not" ⇒ qbarPin stays -1).
@@ -239,10 +262,18 @@ export function analyzeCell(opts: {
       break;
     }
   }
-  const sequential = loopSequential || registeredSubCell !== undefined;
+  // A TRUE clock pin (CLK/CLOCK/CK) makes the cell sequential on its own: it's clocked, so it has state —
+  // even when its storage sits inside an UN-characterized (discrete) sub-flop the embedded-state check
+  // below can't see (a register built from a discrete D-flip-flop). Without this it sweeps combinationally
+  // with the clock held static, the flop never latches, and every combo reads Q=0 → a garbage word-0 LUT.
+  const clockSequential = clockPin >= 0 && isTrueClock(nameOf(clockPin));
+  const sequential =
+    loopSequential || registeredSubCell !== undefined || clockSequential;
   const why = loopSequential
     ? loopReason
-    : `contains a registered sub-cell (${registeredSubCell}) — it has embedded state`;
+    : registeredSubCell !== undefined
+      ? `contains a registered sub-cell (${registeredSubCell}) — it has embedded state`
+      : `has a clock pin (${nameOf(clockPin) || `pin ${clockPin}`}) — a clocked cell holds state`;
 
   // --- 4. compose ---------------------------------------------------------------------------------------
   let reason: string;

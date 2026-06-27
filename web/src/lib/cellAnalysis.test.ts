@@ -206,3 +206,50 @@ describe("analyzeCell — embedded state (DFF from registered latches)", () => {
     expect(a.clockPin).toBe(-1);
   });
 });
+
+describe("analyzeCell — a TRUE clock pin makes a cell sequential (the register bug)", () => {
+  // The owner's 1-bit register: pins [CLR, Q, VCC, LD, GND, D, CLK, OE]. Its storage sits inside an
+  // UN-characterized (discrete) sub-flop, so the embedded-state check can't see it — but its own CLK pin
+  // means it is clocked. Without the true-clock rule it swept COMBINATIONALLY (clock held static), the
+  // flop never latched, and every combo read Q=0 → a garbage constant-0 word. A *graph-free* shell is
+  // enough: the clock classification is purely from the frame pins.
+  const shell = {
+    components: [],
+    wires: [],
+    junctions: [],
+    netLabels: [],
+  } as unknown as GraphSnapshot;
+  const a = analyzeCell({
+    graph: shell,
+    frameId: 1,
+    // CLK carries an "in" role (the real mis-tag) and sits alongside a load-enable LD that is ALSO "clocky".
+    pinRoles: ["in", "out", "vcc", "in", "gnd", "in", "in"],
+    pinNames: ["CLR", "Q", "VCC", "LD", "GND", "D", "CLK", "OE"],
+  });
+
+  it("is sequential because it has a CLK pin", () => {
+    expect(a.sequential).toBe(true);
+    expect(a.reason).toMatch(/clock pin|clocked/i);
+  });
+
+  it("drives the TRUE clock CLK (pin 6), not the load-enable LD (pin 3)", () => {
+    expect(a.clockPin).toBe(6);
+  });
+
+  it("the clock + load-enable are NOT swept as data; CLR / D / OE are", () => {
+    expect(a.dataInputs).toEqual([0, 5, 7]); // CLR, D, OE — not LD(3) or CLK(6)
+    expect(a.outPin).toBe(1); // Q
+  });
+
+  it("an ENABLED combinational gate (EN, no true clock) is NOT force-sequentialized", () => {
+    // Guard the narrowness of the true-clock rule: a plain enable must not route a combinational cell to
+    // the sequential sweep (it has no CLK/CLOCK/CK pin).
+    const b = analyzeCell({
+      graph: shell,
+      frameId: 1,
+      pinRoles: ["in", "in", "out", "vcc", "gnd"],
+      pinNames: ["A", "EN", "Y", "VCC", "GND"],
+    });
+    expect(b.sequential).toBe(false);
+  });
+});
