@@ -255,6 +255,9 @@ interface UndoEntry {
 const DOUBLE_CLICK_MS = 350;
 /** Alpha the armed-part placement ghost is drawn at (a faint translucent preview). */
 const GHOST_ALPHA = 0.32;
+/** Alpha an OFF-net part recedes to under the KiCad-style net highlight (a gentle dim — it should recede,
+ * not vanish — while the highlighted net's own parts stay full + ringed). */
+const NET_DIM_ALPHA = 0.45;
 /**
  * Visual flow clock. The animated belts/dots/pulses advance off a *bounded* phase
  * that ticks at a fixed wall-clock rate, NOT at the playback ticks-per-second and
@@ -636,6 +639,11 @@ export class Board {
   private readonly regionLabels: Text[] = [];
   private readonly pendingWire = new Graphics();
   private readonly componentLayer = new Container();
+  // KiCad-style NET FOCUS overlay: amber rings on every pin of the net brought forward (the in-progress
+  // wire's source net, or the net under an idle hover). Drawn ABOVE the component bodies so the rings sit
+  // on top of the pins they mark; the net's TRACES get their halo on `wireLayer` (below) and off-net parts
+  // are dimmed via each node's `view.alpha`.
+  private readonly netFocusLayer = new Graphics();
   // Translucent placement preview ("ghost") of the armed part at the snapped
   // cursor cell. A dedicated low-alpha layer holding one reused Graphics — no DOM,
   // and it rotates the held part's glyph in place via the holder's rotation.
@@ -822,6 +830,10 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: Endpoint } | null = null;
+  // The net node under an idle hover (cursor over a pin or trace, build/wire modes) — the source of the
+  // KiCad-style net highlight when NOT actively routing. Recomputed on each idle pointer move; consumed by
+  // `highlightNet`. Null when the cursor is off the copper or a gesture is in progress.
+  private hoverNet: number | null = null;
   // KiCad-style click-to-continue wiring tracks, per press, whether the pointer left
   // the cell it went down in. A press+release IN PLACE (a click) leaves the wire
   // *pending* so the next click extends it (drop corners, T into a trace, finish on a
@@ -989,6 +1001,10 @@ export class Board {
     this.world.addChild(this.groundLayer);
     this.world.addChild(this.selectionLayer);
     this.world.addChild(this.componentLayer);
+    // The net-focus pin rings sit just above the parts (on top of the pins they mark) and below the
+    // net-label tags / overlays. Non-interactive — purely a highlight.
+    this.netFocusLayer.eventMode = "none";
+    this.world.addChild(this.netFocusLayer);
     // Net-label tags ride above the components so the name is never occluded, and
     // below the ghost / pending-wire / probe overlays. Non-interactive (hit-testing
     // is by endpoint, not the tag glyph).
@@ -1242,6 +1258,7 @@ export class Board {
 
   private readonly onPointerLeave = (): void => {
     this.pointerInside = false;
+    this.hoverNet = null; // drop the net highlight when the cursor leaves the canvas
     this.updateGhost();
     this.updatePasteGhost();
   };
@@ -2959,6 +2976,10 @@ export class Board {
       scale: 1,
       anchorPx: 0,
     };
+    // KiCad-style "bring the net forward": when a net is highlighted (routing / hover), parts with NO pin
+    // on it recede to a gentle dim so the net's own parts (kept bright, pins ringed, traces haloed) pop.
+    // null ⇒ nothing highlighted ⇒ every part at full alpha. The die frame never dims (it's the wall).
+    const dimNet = this.highlightNet();
     for (const [id, node] of this.nodes) {
       const e = electrical?.get(id) ?? ZERO_ELECTRICAL;
       // Ease the glyph's flow/heat toward its measured RMS as the part's AC outruns the
@@ -2990,6 +3011,14 @@ export class Board {
         this.mode === "wire" || this.wiring !== null,
         this.cellLiveState(id),
       );
+      // Off-net parts recede under the net highlight (the node's own per-child fades compose with this
+      // container alpha). On-net parts, the die frame, and the no-highlight case stay fully opaque.
+      node.view.alpha =
+        dimNet === null ||
+        id === this.dieFrameId ||
+        this.componentOnNet(id, dimNet)
+          ? 1
+          : NET_DIM_ALPHA;
     }
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
     // open board, when no IC body claimed the centre this frame).
@@ -4305,12 +4334,70 @@ export class Board {
     return node === null ? null : this.nodeVoltage(node);
   }
 
-  /** The electrical NET (node) currently being routed — the net of the in-progress wire's source pin — so
-   * the wire layer can highlight every trace on that SAME net, KiCad-style. By real connectivity (the
-   * node), NOT by name: two separate "GND" nets that aren't actually joined stay distinct. Null when not
-   * wiring or the source net touches no element pin. */
-  private activeNetNode(): number | null {
-    return this.wiring ? this.endpointNode(this.wiring.from) : null;
+  /** The electrical NET (node) to bring forward, KiCad-style — its traces get a halo (`redrawWires`), its
+   * pins get focus rings ({@link drawNetFocus}), and off-net parts dim (the node loop in {@link update}).
+   * It's the net of the in-progress wire's source pin while ROUTING, else the net under an idle HOVER (a
+   * pin or trace, build/wire modes — {@link hoverNet}). Suppressed mid-gesture so a stale hover-net doesn't
+   * linger while dragging. By real connectivity (the node), NOT by name: two separate "GND" nets that
+   * aren't actually joined stay distinct. Null when nothing is brought forward. */
+  private highlightNet(): number | null {
+    if (this.wiring) return this.endpointNode(this.wiring.from);
+    // A drag/pan/marquee owns the pointer — don't highlight a stale hover net under it.
+    if (
+      this.dragging ||
+      this.panning ||
+      this.wireDrag ||
+      this.junctionDrag ||
+      this.labelDrag ||
+      this.pinDrag ||
+      this.boxHandleDrag ||
+      this.draggingProbe ||
+      this.marquee ||
+      this.regionDrawing ||
+      this.pasting
+    )
+      return null;
+    return this.hoverNet;
+  }
+
+  /** Is any pin of component `id` on net `node`? (Element pins resolve directly through `probeNodes`.) Used
+   * to decide whether a part stays bright or dims under the net highlight, and which pins get focus rings. */
+  private componentOnNet(id: number, node: number): boolean {
+    const c = this.graph.components.get(id);
+    if (!c) return false;
+    const kind = this.graph.kindOf(c);
+    if (!kind) return false;
+    for (const p of kind.pins) {
+      if (this.pinNode({ componentId: id, pinIndex: p.index }) === node)
+        return true;
+    }
+    return false;
+  }
+
+  /** Lay the net-focus PIN RINGS: an amber ring on every element pin sitting on the brought-forward net,
+   * so the whole net's pins read at a glance (KiCad "bring the net forward"). Cleared + redrawn each frame
+   * from {@link highlightNet}; a no-op (just a clear) when nothing is highlighted. */
+  private drawNetFocus(node: number | null): void {
+    const g = this.netFocusLayer;
+    g.clear();
+    if (node === null) return;
+    for (const c of this.graph.components.values()) {
+      if (c.id === this.dieFrameId) continue; // the die wall isn't a part — skip its frame pins
+      const kind = this.graph.kindOf(c);
+      if (!kind) continue;
+      for (const p of kind.pins) {
+        if (this.pinNode({ componentId: c.id, pinIndex: p.index }) !== node)
+          continue;
+        const pos = this.cellToWorld(this.graph.pinCell(c, p));
+        // A dark backing ring + bright amber ring on top, so the marker reads against ANY net colour (the
+        // net's traces are already amber-rail-coloured, where a plain amber ring would vanish) and the dark
+        // board alike.
+        g.circle(pos.x, pos.y, PIN_R + 3.5);
+        g.stroke({ width: 4, color: 0x0a0814, alpha: 0.7 });
+        g.circle(pos.x, pos.y, PIN_R + 3.5);
+        g.stroke({ width: 2, color: PALETTE.warn, alpha: 0.95 });
+      }
+    }
   }
 
   /**
@@ -5512,6 +5599,15 @@ export class Board {
     // that draws a ghost must refresh here or its preview freezes in place.
     if (this.armed || this.mode === "junction" || this.mode === "label")
       this.updateGhost();
+    // KiCad-style net highlight: the net under an IDLE hover (cursor over a pin or trace) is brought
+    // forward — its traces halo, its pins ring, off-net parts dim (see `highlightNet` / `drawNetFocus` /
+    // the node-dim in `update`). Only in the BUILD (`select`) and `wire` editing modes; never while routing
+    // (that uses the wire's own source net) or mid-gesture (those branches returned above). `snapProbe`
+    // resolves the net by real connectivity, so two unrelated same-named nets stay separate.
+    this.hoverNet =
+      !this.wiring && (this.mode === "select" || this.mode === "wire")
+        ? (this.snapProbe(wp.x, wp.y)?.node ?? null)
+        : null;
   };
 
   private readonly onPointerUp = (e: FederatedPointerEvent): void => {
@@ -6134,10 +6230,11 @@ export class Board {
       conduitCrossDots = cross.dots;
       wireOrder = wireDrawOrder([...this.graph.wires.keys()], cross.overpasses);
     }
-    // KiCad-style NET HIGHLIGHT: while routing a wire, lay a bright halo UNDER every trace on the SAME
-    // electrical net as the source pin (resolved by node, not name), so you can see the whole net you're
-    // wiring into. Drawn first so the real traces paint on top of the glow.
-    const activeNode = this.activeNetNode();
+    // KiCad-style NET HIGHLIGHT: lay a bright halo UNDER every trace on the brought-forward net (the wire
+    // being routed, or the net under an idle hover — resolved by node, not name) so the whole net pops.
+    // Drawn first so the real traces paint on top of the glow; the net's PIN RINGS + off-net dimming are
+    // applied alongside ({@link drawNetFocus} + the node loop in {@link update}).
+    const activeNode = this.highlightNet();
     if (activeNode !== null) {
       for (const w of this.graph.wires.values()) {
         if (this.endpointNode(w.from) !== activeNode) continue;
@@ -6147,6 +6244,7 @@ export class Board {
         g.stroke({ width: 10, color: PALETTE.warn, alpha: 0.5 });
       }
     }
+    this.drawNetFocus(activeNode);
     for (const id of wireOrder) {
       const w = this.graph.wires.get(id);
       if (!w) continue;

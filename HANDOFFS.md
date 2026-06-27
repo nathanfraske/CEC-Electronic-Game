@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (193) — Wiring Phase 2: KiCad net highlight on hover + pin rings + dim off-net
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
+Continues the wiring UX work (191). Owner: highlight the same net like KiCad, by REAL node not name. Phase
+1 shipped the halo + pin-label focus during a wire drag; Phase 2 extends it to idle HOVER and adds pin
+rings + off-net dimming. All in `board.ts`:
+
+- **`activeNetNode` → `highlightNet`.** The net to bring forward = the in-progress wire's source net while
+  routing, ELSE `hoverNet` — the net under an idle hover over a pin/trace, resolved by `snapProbe` (so it's
+  by real connectivity), gated to the BUILD (`select`) / `wire` modes and suppressed mid-gesture so a stale
+  hover-net doesn't linger under a drag. `hoverNet` is set at the tail of `onPointerMove` and cleared on
+  `onPointerLeave`. The render loop runs every rAF (paused or not — `loop.ts` `frame()`), so the highlight
+  refreshes with no explicit redraw.
+- **Pin rings (`drawNetFocus`).** Amber ring on every element pin on the highlighted net, drawn on a new
+  `netFocusLayer` ABOVE the parts (dark backing ring + bright amber on top, so it reads on the rail-coloured
+  traces where a plain amber ring would vanish). `pinNode` (the direct `probeNodes` map) resolves the pins.
+- **Dim off-net (`node.view.alpha`).** In the node loop, parts with NO pin on the highlighted net recede to
+  `NET_DIM_ALPHA` (0.45) — the container alpha composes with the node's own per-child fades. The die frame
+  and the no-highlight case stay full. `componentOnNet(id, node)` is the membership test.
+- **Verified** headlessly on the reg bench (V source + 1-bit reg + pulse + R): HOVERING the V-net wire lit
+  the whole V net amber, ringed its pins, and faded the PULSE + resistor; zoomed in, the rings read clearly
+  on the register's pins. Wiring gets the same treatment (a superset of Phase 1's halo).
+- **Deferred (Polish):** off-net WIRE dimming — only component BODIES dim today; the wire draw loop's
+  per-stroke alphas were left untouched (too invasive, and the halo already differentiates on-net traces).
+  Next in order: **Phase 3** — general label declutter (collision-resolve pin labels + value chip).
+
+---
+
 ## 2026-06-27 (192) — Behavior panel: "Computing…" feedback + scroll + readable table
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
