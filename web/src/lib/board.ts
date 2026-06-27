@@ -2495,7 +2495,25 @@ export class Board {
     )
       return false; // no change
     if (recordUndo) this.pushUndo(this.graph.serialize());
-    const pins = geom.pins.map((p) => clampPinToBox(p, geom.w, geom.h, nw, nh));
+    // How far the ORIGIN moved (a W/N/corner drag shifts it; an E/S drag / the steppers don't → 0).
+    const dCol = frame.cell.col - nLeft;
+    const dRow = frame.cell.row - nTop;
+    const pins = geom.pins.map((p) => {
+      const c = clampPinToBox(p, geom.w, geom.h, nw, nh);
+      // A pin on a wall PERPENDICULAR to a moved origin would otherwise RIDE the shifting origin (the bug:
+      // dragging the LEFT wall slid the top/bottom pins). Shift a MID top/bottom pin by the column delta and
+      // a MID left/right pin by the row delta so it holds its absolute spot — exactly like the E/S drag,
+      // where dCol = dRow = 0 makes this a no-op. (A wall-hugging pin rides its own wall, as before.)
+      const dx =
+        c.dx > 0 && c.dx < nw - 1
+          ? Math.max(0, Math.min(nw - 1, c.dx + dCol))
+          : c.dx;
+      const dy =
+        c.dy > 0 && c.dy < nh - 1
+          ? Math.max(0, Math.min(nh - 1, c.dy + dRow))
+          : c.dy;
+      return { ...c, dx, dy };
+    });
     frame.cell = { col: nLeft, row: nTop };
     this.reregisterFreeForm(frame, fid, { w: nw, h: nh, pins });
     return true;
