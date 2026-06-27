@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (201) — Rename backfills to placed instances; pin "facing-in" not reproduced (owner)
+
+**State:** 🟢 ready to PR (rename fix). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**
+Owner reported three things; this lands the rename fix and reports on the other two.
+
+- **Rename now backfills to placed instances (FIXED).** A sealed cell's `tag` is the stable identity key and
+  its `name` is the editable display label, but `Node.defaultLabel()` returned the **tag** for a placed user
+  IC — so renaming a cell in My ICs changed only the library row, never the chips already on the board (owner:
+  "does not backfill to placed assemblies… does not change its internal name"). Fix (`board.ts`): a user-IC
+  node's `defaultLabel()` now resolves the def's `name` via its tag (`resolveUserIc(...).name`, falling back
+  to the kind name then the tag); a stock part still shows its tag (`R`, `LED`). Added `Board.refreshLabels()`,
+  called from `commitRenameIc` (App.svelte) so the new name lands on placed instances **live**. **Verified
+  headless:** placing the renamed kind `4-BIT ALU` (def.name now `4-BIT LOGIC`) shows **"4-BIT LOGIC"** on the
+  body (was "4-BIT ALU"). The tag stays the identity key, so connectivity/the netlist never move.
+
+- **Pin "bending as if facing in" — NOT reproduced.** Owner says some placed-cell pins face inward; confirmed
+  it's the **drilled-in** view. Reproduced both shared saves (`4c16805f` 4-BIT LOGIC, `873c4c88` 4-BIT FULL
+  ALU) in the opened replica and screenshotted the package nubs + lead-connectors close up: they route
+  **outward** correctly. Traced every path — `drawUserIcPackageBody` free-form nubs (straddle, inner half
+  tucked under the body), `pinLeadRoot` (never returns an inward root), the opened-view lead-connector staples
+  (`userIcInternalsView` ~554), and the placed/frame index-alignment (`framePinCells` ↔ `packFreeFormFootprint`
+  are index-aligned). All 22 FULL-ALU pins sit on extreme walls; nothing routes inward. **Need the owner to
+  pinpoint the exact pin** (it may be a specific interaction/state). Not fixed — do not guess-change correct
+  geometry.
+
+- **"Is my ALU implemented properly?"** — pending; needs a functional sim (4 outputs → can't single-
+  characterize). Next.
+
+---
+
 ## 2026-06-27 (200) — Zoom-to-silicon ceiling + a magnification gauge that stops jumping (owner)
 
 **State:** 🟢 ready to PR. **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**

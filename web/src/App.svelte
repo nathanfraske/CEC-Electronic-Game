@@ -1744,8 +1744,10 @@
     }));
   }
   // --- "My ICs" per-row management: rename + remove. `renamingTag` is the row being inline-renamed
-  // (null = none); committing writes `renameLibraryIc` (display name only — the tag, and so every placed
-  // instance, is stable) and bumps `libRev` to re-derive the bin. Remove drops the library row but
+  // (null = none); committing writes `renameLibraryIc` (the DISPLAY NAME; the tag stays the stable
+  // identity key so connectivity/the netlist never move), bumps `libRev` to re-derive the bin, AND calls
+  // `board.refreshLabels()` so the new name backfills to every already-placed instance's body label (a
+  // placed chip shows its kind's display name, resolved via the tag). Remove drops the library row but
   // NEVER unregisters the kind (gap #7), so placed copies keep working + re-appear if you reload a board
   // that embeds the def. ---
   let renamingTag = $state<string | null>(null);
@@ -1762,6 +1764,9 @@
     if (nm) {
       renameLibraryIc(tag, nm);
       libRev++;
+      // Backfill the new name to every PLACED instance's body label (they show the kind's display name,
+      // resolved via its stable tag) — so a rename isn't just a library-row change (owner).
+      board?.refreshLabels();
     }
   }
   function removeIc(tag: string, name: string): void {
