@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (190) — Live symbol-state: a sequential cell shows its stored bit on the board
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests (+6).**
+Owner: "visual symbol characterization — show what's happening inside a known cell when you aren't zoomed
+in (the bit a 1-bit register stores). Go off the refsheets." Picked "combine the LED + value reads smartly
+across zoom" + "sequential cells first" + "check it isn't cluttered" + "set up a sim bench to show it."
+
+- **What it does.** A recognised DFF/DLATCH/REG wears its stored bit(s) on its body symbol: a centred row
+  of LEDs inside the box (filled rail-colour = 1, dim hollow ring = 0) that carry the state at a glance when
+  zoomed OUT, plus a mono "Q=…" value chip that fades IN under the body as you zoom toward the part. Both
+  ride the existing symbol fade, gone by the time the open replica takes over.
+- **How.** Pure `cellState.ts` (`storedOutputs` drops Q̄ + orders a word MSB-first; `formatStoredValue`;
+  `isSequentialCellSymbol`) — 6 unit tests. `drawCellLiveBits` in glyphs. Board reads each `out` pin's live
+  level via `pinVoltage` (VCC/2 threshold) in `cellLiveState(id)`, threaded to the node renderer. New
+  harness accessor `__cecPins`/`board.cellPinVoltages(id)` reads a placed cell's pin voltages headlessly.
+- **Verified.** Built a sim bench (authored fixture: 1-bit REG + 5 kHz square clock + 5 V/GND, wired by
+  endpoint), drove placement/wiring + RAN the sim, and watched Q go 0→1: the LED went dim-ring → bright-disc
+  and the chip "Q=0" → "Q=1"; zoomed out it's a clean box + one bit dot (not cluttered). **Gotcha learned:**
+  the owner's 1-bit REG = 2:1 MUX (D vs Q-feedback, sel=LD) → D-FF (CLR active-LOW) → **OE Gate that is
+  active-LOW** (word `2` = A·¬OE); the working drive is **LD=H, OE=L, CLR=H**.
+- **Next (as the owner builds parts):** extend the live read to MUX (passed input), adders (sum/carry),
+  gates (output), and add the refsheets' "hold / track / load" MODE tag.
+
+---
+
 ## 2026-06-27 (189) — Overnight: all greenlit wire/bridge polish + the Datasheet feature
 
 **State:** 🟢 PRs #277 #278 #279 #280 #281 #282 ALL MERGED (branch == main @ `02be564`). **Render/web only,

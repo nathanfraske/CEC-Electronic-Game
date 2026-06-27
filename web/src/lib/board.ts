@@ -66,6 +66,7 @@ import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
   drawCellSymbol,
+  drawCellLiveBits,
   flowStabilized,
   isSymbol,
   setGlyphStyle,
@@ -73,6 +74,13 @@ import {
   type ElectricalState,
   type GlyphStyle,
 } from "./glyphs";
+import {
+  isSequentialCellSymbol,
+  storedOutputs,
+  formatStoredValue,
+  type StoredState,
+  type OutputLevel,
+} from "./cellState";
 import { hasValue } from "./values";
 import { drawDetail, hasDetail } from "./detailDrawers";
 import { drawAnalogy, hasAnalogy } from "./analogyDrawers";
@@ -2782,6 +2790,19 @@ export class Board {
     };
   }
 
+  /** Harness accessor (render/test tools): the live voltage at every pin of a placed cell, keyed by the
+   * cell's pin NAME — so a headless bench can assert a clocked register actually loaded its bit. */
+  cellPinVoltages(id: number): Record<string, number | null> | null {
+    const comp = this.graph.components.get(id);
+    if (!comp) return null;
+    const def = resolveUserIc(comp.kind, comp.variant ?? 0);
+    const out: Record<string, number | null> = {};
+    (def?.pinNames ?? []).forEach((nm, i) => {
+      out[nm || `p${i}`] = this.pinVoltage({ componentId: id, pinIndex: i });
+    });
+    return out;
+  }
+
   /** Restore a saved camera (pan + zoom), clamped to the valid zoom range and
    * ignoring a malformed value (so a corrupt save can't break the view). */
   setCamera(cam: { x: number; y: number; scale: number } | undefined): void {
@@ -2958,6 +2979,7 @@ export class Board {
         viewProbe,
         snap.elementCurrents,
         this.mode === "wire",
+        this.cellLiveState(id),
       );
     }
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
@@ -4272,6 +4294,40 @@ export class Board {
   private pinVoltage(e: Endpoint): number | null {
     const node = this.endpointNode(e);
     return node === null ? null : this.nodeVoltage(node);
+  }
+
+  /**
+   * Live SYMBOL-STATE for a placed cell: the bit(s) a recognised SEQUENTIAL cell (flip-flop / latch /
+   * register) is currently storing, read off the sim at its OUTPUT pins. Resolves the selected variant's
+   * def, confirms it wears a stateful symbol, then samples each `out`-role pin's voltage against the
+   * cell's own VCC/2 threshold (default 1.5 V when unpowered/unknown) and folds them into the stored word
+   * ({@link storedOutputs} drops the Q̄ bar + orders MSB-first). Undefined for any non-sequential or
+   * un-recognised part, so the body shows nothing. Render-only — pure read of the displayed node voltages.
+   */
+  private cellLiveState(id: number): StoredState | undefined {
+    const comp = this.graph.components.get(id);
+    if (!comp || !isUserIc(comp.kind)) return undefined;
+    const def = resolveUserIc(comp.kind, comp.variant ?? 0);
+    if (!def || !isSequentialCellSymbol(cellSymbol(def))) return undefined;
+    const roles = def.pinRoles ?? [];
+    const vccIdx = roles.indexOf("vcc");
+    const vcc =
+      vccIdx >= 0
+        ? (this.pinVoltage({ componentId: id, pinIndex: vccIdx }) ?? 0)
+        : 0;
+    const thresh = vcc > 0.5 ? vcc * 0.5 : 1.5;
+    const outs: OutputLevel[] = [];
+    roles.forEach((r, i) => {
+      if (r !== "out") return;
+      const v = this.pinVoltage({ componentId: id, pinIndex: i });
+      if (v === null) return;
+      outs.push({
+        name: def.pinNames?.[i]?.trim() || `O${i}`,
+        level: v > thresh ? 1 : 0,
+      });
+    });
+    const s = storedOutputs(outs);
+    return s.bits.length > 0 ? s : undefined;
   }
 
   /** Snap a world point to the nearest pin or trace, resolving its net node. */
@@ -7522,6 +7578,9 @@ class ComponentNode {
   private readonly failBox = new Graphics();
   private readonly label: Text;
   private readonly value: Text | null;
+  /** The live stored-value chip ("Q=…") a recognised sequential cell shows under its body symbol; it
+   * fades IN as you zoom toward the part (the LED bits carry the state when zoomed out). */
+  private readonly stateLabel: Text;
   private readonly meter: Text;
   private readonly failText: Text;
   private readonly pinPositions: { x: number; y: number }[] = [];
@@ -7627,6 +7686,21 @@ class ComponentNode {
     this.label.anchor.set(0.5);
     this.label.resolution = DPR;
     this.view.addChild(this.label);
+
+    // The live stored-value chip for a recognised sequential cell (set + faded each frame in `update`).
+    this.stateLabel = new Text({
+      text: "",
+      style: {
+        fill: this.color,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 9,
+        fontWeight: "600",
+      },
+    });
+    this.stateLabel.anchor.set(0.5);
+    this.stateLabel.resolution = DPR;
+    this.stateLabel.visible = false;
+    this.view.addChild(this.stateLabel);
 
     if (symbol && kind?.unit) {
       this.value = new Text({
@@ -7780,6 +7854,7 @@ class ComponentNode {
     },
     elemCurrents?: Float64Array,
     wireMode = false,
+    liveState?: StoredState,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -7847,6 +7922,7 @@ class ComponentNode {
     // the text on the package should become transparent"). Non-ICs keep their label fully opaque.
     this.symbolGlyph.clear();
     this.symbolGlyph.visible = false;
+    this.stateLabel.visible = false; // turned on only by the live-state branch below
     if (isUserIc(this.kindTag)) {
       const fadeStart = INTERNALS_ZOOM * 0.8; // hold the symbol full until ~80% of the open zoom, then fade
       const fadeAlpha = Math.max(
@@ -7891,6 +7967,31 @@ class ComponentNode {
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
+        // Live SYMBOL-STATE: a recognised SEQUENTIAL cell shows the bit(s) it is storing. The LED bits sit
+        // inside the box and carry the state at a glance when zoomed OUT (riding the symbol fade); the
+        // mono "Q=…" value chip fades IN under the body as you zoom toward the part (the two combined
+        // across zoom levels). Both gone by the time the open replica takes over.
+        if (liveState && isSequentialCellSymbol(gname)) {
+          drawCellLiveBits(
+            this.symbolGlyph,
+            cx,
+            cy,
+            hw,
+            hh,
+            this.color,
+            liveState.bits,
+            fadeAlpha,
+          );
+          const textIn = Math.max(0, Math.min(1, (zoom - 3.5) / 2)); // fades in over zoom 3.5 → 5.5
+          const ta = textIn * fadeAlpha;
+          if (ta > 0.02) {
+            this.stateLabel.text = formatStoredValue(liveState);
+            this.stateLabel.style.fill = this.color;
+            this.stateLabel.position.set(cx, cy + hh + 9);
+            this.stateLabel.alpha = ta;
+            this.stateLabel.visible = true;
+          }
+        }
       } else {
         this.label.alpha = fadeAlpha;
       }
