@@ -8003,8 +8003,18 @@ class ComponentNode {
             // both. Where the box nearly fills the body (a short/wide register), there's no clean gap, so
             // it drops just BELOW the body edge instead of clipping the box. The drop-shadow keeps it legible.
             const gap = this.hPx / 2 - hh; // symbol-box bottom (cy+hh) → body bottom edge (cy+hPx/2)
-            const chipY = gap >= 16 ? cy + hh + gap / 2 : cy + this.hPx / 2 + 9;
-            this.stateLabel.position.set(cx, chipY);
+            const localY =
+              gap >= 16 ? cy + hh + gap / 2 : cy + this.hPx / 2 + 9;
+            // The chip lives in the UN-rotated `view`, so run its body-local spot through the part's
+            // rotate+mirror (the same `rotPx` the pins/symbol use) and keep the text itself upright — so a
+            // rotated/flipped part still parks its readout in the right place.
+            const rp = rotPx(
+              cx,
+              localY,
+              this.component.rot,
+              this.component.mirror,
+            );
+            this.stateLabel.position.set(rp.x, rp.y);
             this.stateLabel.alpha = ta;
             this.stateLabel.visible = true;
           }
