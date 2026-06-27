@@ -75,7 +75,6 @@ import {
   type GlyphStyle,
 } from "./glyphs";
 import {
-  isSequentialCellSymbol,
   storedOutputs,
   formatStoredValue,
   type StoredState,
@@ -4308,7 +4307,9 @@ export class Board {
     const comp = this.graph.components.get(id);
     if (!comp || !isUserIc(comp.kind)) return undefined;
     const def = resolveUserIc(comp.kind, comp.variant ?? 0);
-    if (!def || !isSequentialCellSymbol(cellSymbol(def))) return undefined;
+    // Any RECOGNISED cell (it wears a symbol) shows its live output: a register's stored Q, a gate's Y,
+    // an adder's sum/carry — read from the `out` pins below.
+    if (!def || !cellSymbol(def)) return undefined;
     const roles = def.pinRoles ?? [];
     const vccIdx = roles.indexOf("vcc");
     const vcc =
@@ -7687,7 +7688,9 @@ class ComponentNode {
     this.label.resolution = DPR;
     this.view.addChild(this.label);
 
-    // The live stored-value chip for a recognised sequential cell (set + faded each frame in `update`).
+    // The live value chip a recognised cell shows ("Q=…" / "Y=…"), set + faded each frame in `update`. A
+    // soft dark drop-shadow keeps it legible over the package body it sits on (it shares the crowded body
+    // region with the pinout text — the readability is the point).
     this.stateLabel = new Text({
       text: "",
       style: {
@@ -7695,6 +7698,13 @@ class ComponentNode {
         fontFamily: "IBM Plex Mono, monospace",
         fontSize: 9,
         fontWeight: "600",
+        dropShadow: {
+          color: 0x0a0814,
+          alpha: 0.85,
+          blur: 3,
+          distance: 0,
+          angle: 0,
+        },
       },
     });
     this.stateLabel.anchor.set(0.5);
@@ -7967,11 +7977,12 @@ class ComponentNode {
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
-        // Live SYMBOL-STATE: a recognised SEQUENTIAL cell shows the bit(s) it is storing. The LED bits sit
-        // inside the box and carry the state at a glance when zoomed OUT (riding the symbol fade); the
-        // mono "Q=…" value chip fades IN under the body as you zoom toward the part (the two combined
-        // across zoom levels). Both gone by the time the open replica takes over.
-        if (liveState && isSequentialCellSymbol(gname)) {
+        // Live SYMBOL-STATE: a recognised cell shows its live OUTPUT bit(s) on its body — a register's
+        // stored Q, a gate's output Y, an adder's sum/carry. The LED bits sit inside the box and carry the
+        // state at a glance when zoomed OUT (riding the symbol fade); the mono value chip ("Q=1"/"Y=0…")
+        // fades IN as you zoom toward the part (the two reads combined across zoom). Both gone by the time
+        // the open replica takes over.
+        if (liveState) {
           drawCellLiveBits(
             this.symbolGlyph,
             cx,
@@ -7987,7 +7998,11 @@ class ComponentNode {
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            this.stateLabel.position.set(cx, cy + hh + 9);
+            // A deliberate designator in the LOWER package card — clearly below the symbol box, short of the
+            // body's bottom edge (so it doesn't spill into the pinout text below) — with the drop-shadow
+            // keeping it legible on the body, like a part number printed on a chip.
+            const gap = Math.max(0, this.hPx / 2 - hh); // symbol-box bottom → body bottom edge
+            this.stateLabel.position.set(cx, cy + hh + gap * 0.62);
             this.stateLabel.alpha = ta;
             this.stateLabel.visible = true;
           }

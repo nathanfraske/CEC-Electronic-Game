@@ -21,8 +21,15 @@ Answer combined two reads across zoom (owner pick); sequential cells first.
   `cellPinVoltages(id)` + `__cecPins` harness accessor (read a placed cell's live pin voltages).
 - **Render-verified** on a built sim bench (1-bit REG + 5 kHz clock + power, wired; LD=H load, OE=L enable,
   CLR=H): Q 0→1 under stepping lit the LED (dim ring → bright disc) + the "Q=1" chip; clean (not cluttered).
-- [ ] **Extend** to MUX (which input it's passing), adders (sum/carry), gates (output level), + the
-  "hold/track/load" MODE tag from the refsheets — as the owner builds more components.
+- ~~**Cue-chip placement + extend to all recognised cells**~~ (owner feedback) — value chip moved to a
+  drop-shadowed designator in the LOWER package card (was clipping into the body); `cellLiveState` now reads
+  the OUTPUT level of ANY recognised cell (gate `Y`, adder sum/carry, …), not just sequential — verified a
+  NAND showing its symbol + a lit output LED + "Y=1" beside the register.
+- [ ] **Pinout-text awareness (brainstorm, owner)** — on-body text (pin labels + the value chip) is placed
+  at fixed offsets with no awareness of neighbours/the body, so it overlaps + gets hard to read on dense
+  parts. Options: collision-nudge/hide pass · zoom-LOD (show labels only when they fit) · leader-line
+  callouts · focus-only/hover labels · place each on the clearest side. **Owner to pick a direction.**
+- [ ] **MODE tag** ("hold/track/load") from the refsheets; MUX selected-input highlight.
 
 ---
 
