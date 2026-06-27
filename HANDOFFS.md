@@ -5,6 +5,36 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (202) — ALU verified CORRECT; the wrong result is a CLK-coupling ENGINE bug (owner)
+
+**State:** 🟢 diagnosis only (no code change). Owner asked "is my 4-BIT FULL ALU implemented properly?" +
+noted the headless ALU test-bench I built is "exactly the kind of thing we want."
+
+**Verdict: the ALU design is CORRECT.** Built a headless test-bench (drive A/B + SEL/Binv/M/Cin, step,
+read R0–R3 + flags) and isolated a real, stable wrong result (e.g. AND(6,2)→6, NOT-A(3)→13 for *mixed*-bit
+inputs) down the hierarchy:
+- `4-BIT LOGIC` and `OUTPUT MUX` sub-cells: **correct** standalone (all ops, all patterns).
+- Full-ALU top wiring: **correct** — logic gets raw A/B, adder gets A + B-invert output, mux I1=adder
+  I2=logic, M selects, all bit-aligned, **no driver conflicts**, flatten is complete (318 instances / 866
+  leaves, well under the 4096 cap), no behavioral/LUT collapse.
+- **The discriminator: CLK.** `AND(6,2)` = **6 with CLK=1** but **2 with CLK=0**; `NOT-A(3)` = 14 vs 12.
+  Every "failure" is a CLK=1 artifact. CLK is electrically isolated to the FLAG REGISTER (net = {frame.CLK,
+  FR.CLK} only), and FR's outputs (Q0/Q1) drive only the frame Z/C FLAG pins — **nothing touches the
+  datapath**. Toggling an isolated signal cannot change a correct sim of a correct netlist → this is an
+  **ENGINE-level coupling** between the clocked sequential register and the (electrically separate)
+  combinational datapath, NOT a design flaw. **Critical for the CPU goal** (a CPU = clocked seq + big
+  combinational; if clocking corrupts isolated combinational results, nothing will run).
+- [ ] **Next:** localize web-flatten (node-remap collision merging CLK/FR nodes into datapath nodes →
+  golden-safe web fix) vs sim-core solver coupling (golden-sensitive, needs owner greenlight). Dump the
+  flattened netlist node ids and check CLK/FR-output isolation.
+
+**Owner's meta-point → feature:** the bench IS the in-app **chip test-bench / verification tool** for
+player-built chips (drive vectors → step-until-stable → read → compare to a truth/op-table). Non-obvious
+lesson this debug surfaced: a deep-cell test-bench must **step-until-stable (detect convergence)**, not a
+fixed tick count. See TODOS.
+
+---
+
 ## 2026-06-27 (201) — Rename backfills to placed instances; pin "facing-in" not reproduced (owner)
 
 **State:** 🟢 ready to PR (rename fix). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 263 web tests.**
