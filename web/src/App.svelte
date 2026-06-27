@@ -3084,6 +3084,12 @@
     if (!board) return;
     dieShapeMode = on;
     board.setShapeMode(on);
+    // Couple the STANDARD board tool so the builder's WIRE mode also turns on the board's WIRE tool — so you
+    // can wire junctions and SEE every pinout (the pin labels show in wire mode), not just when zoomed in
+    // far. SHAPE returns to select (a pin-bead drag moves the pin). Without this, "w"/the Wire button only
+    // flipped the builder bit and left the board in select, so junctions weren't wireable from the die.
+    arm(null);
+    setMode(on ? "select" : "wire");
   }
 
   /** The free-form die's live box size, refreshed whenever the board changes (boardRev), so the editor's
