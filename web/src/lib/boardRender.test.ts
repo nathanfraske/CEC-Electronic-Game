@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Headless tests for the bridge over/under draw order (pure id-ordering, no PixiJS render needed).
 import { describe, it, expect } from "vitest";
+import { Point } from "pixi.js";
 import {
   wireDrawOrder,
   snapToBoxEdge,
@@ -11,6 +12,7 @@ import {
   emptyLazyRoute,
   extendLazyTrail,
   lazyWaypoints,
+  applyCrossings,
 } from "./boardRender";
 import type { Wire, Endpoint, Cell } from "./graph";
 
@@ -441,5 +443,119 @@ describe("lazy-follow router — sketch a route with the mouse, bake bends as wa
     const r = extendLazyTrail(start, prev, c(8, 3));
     expect(prev.trail).toEqual([c(5, 0)]); // unchanged
     expect(r.trail).not.toBe(prev.trail);
+  });
+});
+
+describe("applyCrossings — bridge hops cluster into arches; dense crossings notch instead (4A/4C)", () => {
+  const hWire = (y: number, x0: number, x1: number): Point[] => [
+    new Point(x0, y),
+    new Point(x1, y),
+  ];
+  const vWire = (x: number, y0: number, y1: number): Point[] => [
+    new Point(x, y0),
+    new Point(x, y1),
+  ];
+  const crestYs = (route: Point[]): number[] =>
+    route.filter((p) => p.y < 99).map((p) => p.y); // points lifted above the y=100 run
+
+  it("a lone different-net crossing → one small dome (4 bump points), hopper draws OVER", () => {
+    const routes = new Map([
+      [1, hWire(100, 0, 300)],
+      [2, vWire(150, 0, 200)],
+    ]);
+    const { dots, overpasses } = applyCrossings(
+      routes,
+      new Map([
+        [1, 1],
+        [2, 2],
+      ]),
+      () => 0,
+    );
+    expect(routes.get(1)!.length).toBe(6); // 2 ends + 4 dome points
+    expect(crestYs(routes.get(1)!).length).toBe(2); // a flat crest plateau (2 raised corners)
+    expect(overpasses).toEqual([[1, 2]]); // horizontal hops the vertical
+    expect(dots).toEqual([]);
+  });
+
+  it("two CLOSE crossings merge into ONE arch (still 4 points, crest spans both)", () => {
+    const routes = new Map([
+      [1, hWire(100, 0, 300)],
+      [2, vWire(150, 0, 200)],
+      [3, vWire(170, 0, 200)], // 20px away ⇒ same cluster
+    ]);
+    applyCrossings(
+      routes,
+      new Map([
+        [1, 1],
+        [2, 2],
+        [3, 3],
+      ]),
+      () => 0,
+    );
+    const r = routes.get(1)!;
+    expect(r.length).toBe(6); // ONE merged arch, not two stacked domes (which would be 10)
+    const crest = r.filter((p) => p.y < 99);
+    expect(crest.length).toBe(2);
+    expect(crest[0]!.x).toBeLessThan(150); // crest plateau brackets both crossings
+    expect(crest[1]!.x).toBeGreaterThan(170);
+  });
+
+  it("FAR-apart crossings stay separate domes", () => {
+    const routes = new Map([
+      [1, hWire(100, 0, 360)],
+      [2, vWire(100, 0, 200)],
+      [3, vWire(260, 0, 200)], // 160px away ⇒ separate clusters
+    ]);
+    applyCrossings(
+      routes,
+      new Map([
+        [1, 1],
+        [2, 2],
+        [3, 3],
+      ]),
+      () => 0,
+    );
+    expect(routes.get(1)!.length).toBe(10); // 2 ends + two 4-point domes
+  });
+
+  it("a DENSE cluster (4 crossings) drops the hump → flat hopper notches each under-wire", () => {
+    const routes = new Map([
+      [1, hWire(100, 0, 400)],
+      [2, vWire(150, 0, 200)],
+      [3, vWire(170, 0, 200)],
+      [4, vWire(190, 0, 200)],
+      [5, vWire(210, 0, 200)], // 4 within one cluster ⇒ dense
+    ]);
+    const { overpasses } = applyCrossings(
+      routes,
+      new Map([
+        [1, 1],
+        [2, 2],
+        [3, 3],
+        [4, 4],
+        [5, 5],
+      ]),
+      () => 0,
+    );
+    expect(routes.get(1)!.length).toBe(2); // hopper left FLAT — no bumps
+    expect(overpasses.length).toBe(4); // …but still drawn OVER all four (the casing knocks them out)
+  });
+
+  it("a SAME-net crossing ties a junction dot, never a bridge", () => {
+    const routes = new Map([
+      [1, hWire(100, 0, 300)],
+      [2, vWire(150, 0, 200)],
+    ]);
+    const { dots, overpasses } = applyCrossings(
+      routes,
+      new Map([
+        [1, 7],
+        [2, 7], // same net
+      ]),
+      () => 0xabcdef,
+    );
+    expect(routes.get(1)!.length).toBe(2); // no bump
+    expect(overpasses).toEqual([]);
+    expect(dots).toEqual([{ x: 150, y: 100, color: 0xabcdef }]);
   });
 });
