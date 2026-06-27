@@ -119,6 +119,8 @@ import {
   dieFramePinExit,
   frameLeadRoute,
   routeForWire,
+  cleanRouteWaypoints,
+  planSegmentDrag,
   snapToBoxEdge,
   firstFreePerimeterCell,
   voltageColor,
@@ -835,6 +837,10 @@ export class Board {
     pts: Cell[];
     bi: number;
     axis: "h" | "v";
+    // Brackets that coincide with a JUNCTION endpoint of the wire: dragging the segment MOVES
+    // that junction (all its incident wires follow) instead of folding a stub over the tapped
+    // wire — the "over-lappy" segment-drag bug. `end` is which bracket (lo=pts[bi], hi=pts[bi+1]).
+    moveJunctions: { end: "lo" | "hi"; id: number }[];
     moved: boolean;
   } | null = null;
   // Dragging a junction (started by a double-click on it) to a new grid cell; its
@@ -4757,6 +4763,7 @@ export class Board {
             pts: begun.pts,
             bi: begun.bi,
             axis: begun.axis,
+            moveJunctions: begun.moveJunctions,
             moved: false,
           };
           this.pendingUndo = this.snapshotEntry();
@@ -6985,88 +6992,55 @@ export class Board {
   private cleanWaypoints(w: Wire): Cell[] {
     const a = this.graph.endpointCell(w.from);
     const b = this.graph.endpointCell(w.to);
-    const wps = (w.waypoints ?? []).map((c) => ({ ...c }));
-    if (!a || !b || wps.length === 0) return wps;
-    const kept: Cell[] = [];
-    for (let i = 0; i < wps.length; i++) {
-      const prev = kept.length > 0 ? kept[kept.length - 1]! : a;
-      const next = i + 1 < wps.length ? wps[i + 1]! : b;
-      // Colinear with its neighbours (within half a cell) ⇒ the bend is redundant.
-      if (
-        distToSegment(
-          wps[i]!.col,
-          wps[i]!.row,
-          prev.col,
-          prev.row,
-          next.col,
-          next.row,
-        ) < 0.5
-      ) {
-        continue;
-      }
-      kept.push(wps[i]!);
-    }
-    return kept;
+    const wps = w.waypoints ?? [];
+    if (!a || !b || wps.length === 0) return wps.map((c) => ({ ...c }));
+    // Pure, unit-tested minimiser (drops zero-length steps, U-turn spikes, colinear bends) — 3C.
+    return cleanRouteWaypoints(a, wps, b);
   }
 
   /**
-   * Begin a KiCad-style segment drag on wire `w` at world point (wx,wy). Picks the
-   * grabbed segment of the drawn route, materializes the route's interior corners
-   * as explicit grid waypoints (so the polyline corners become movable points), and
-   * guarantees the grabbed segment's two brackets are *interior* waypoints — if a
-   * bracket was the from/to endpoint, a coincident waypoint is spliced in so the
-   * endpoint stays fixed and the route bends near it. Returns the working state, or
-   * null if the wire has no drawable route. Only horizontal/vertical segments are
-   * grabbable (the route is orthogonal).
+   * Begin a KiCad-style segment drag on wire `w` at world point (wx,wy). Delegates the geometry to the
+   * pure {@link planSegmentDrag} (pick the grabbed segment, materialise the drawn corners as grid
+   * brackets) and resolves each grabbed-segment end: a bracket on a fixed PIN gets a coincident interior
+   * waypoint spliced in (the endpoint holds, the route bends near it); a bracket on a JUNCTION is mapped
+   * to that junction's id in `moveJunctions`, so the drag slides the junction (its incident wires follow)
+   * instead of folding a stub over the tapped wire. Returns null if the wire has no drawable route.
    */
   private beginWireSegmentDrag(
     w: Wire,
     wx: number,
     wy: number,
-  ): { pts: Cell[]; bi: number; axis: "h" | "v" } | null {
+  ): {
+    pts: Cell[];
+    bi: number;
+    axis: "h" | "v";
+    moveJunctions: { end: "lo" | "hi"; id: number }[];
+  } | null {
     const route = this.routeForWire(w);
-    if (route.length < 2) return null;
-    // Find the grabbed drawn segment.
-    let segIdx = 0;
-    let bestD = Infinity;
-    for (let i = 0; i + 1 < route.length; i++) {
-      const d = distToSegment(
-        wx,
-        wy,
-        route[i]!.x,
-        route[i]!.y,
-        route[i + 1]!.x,
-        route[i + 1]!.y,
-      );
-      if (d < bestD) {
-        bestD = d;
-        segIdx = i;
-      }
+    const a = this.graph.endpointCell(w.from);
+    const b = this.graph.endpointCell(w.to);
+    if (!a || !b) return null;
+    // Pure planner (unit-tested): picks the grabbed segment, materialises grid brackets, and decides
+    // each end — a FIXED pin gets a spliced interior bracket (the route bends near it); a JUNCTION end
+    // is flagged so we slide the junction with the drag instead of folding a stub over the tapped wire.
+    const plan = planSegmentDrag(
+      route,
+      a,
+      b,
+      isJunctionRef(w.from),
+      isJunctionRef(w.to),
+      wx,
+      wy,
+    );
+    if (!plan) return null;
+    // Map each flagged bracket end back to its junction id. The planner only flags an end whose
+    // endpoint is a junction, so the matching from/to is always a JunctionRef here.
+    const moveJunctions: { end: "lo" | "hi"; id: number }[] = [];
+    for (const end of plan.moveEnds) {
+      const ep = end === "lo" ? w.from : w.to;
+      if (isJunctionRef(ep)) moveJunctions.push({ end, id: ep.junctionId });
     }
-    const s0 = route[segIdx]!;
-    const s1 = route[segIdx + 1]!;
-    // Run of the grabbed segment: horizontal (same Y) drags in row, vertical in col.
-    const axis: "h" | "v" =
-      Math.abs(s1.y - s0.y) <= Math.abs(s1.x - s0.x) ? "h" : "v";
-    // Materialize every drawn corner as a grid cell: [fromCell, ...corners, toCell].
-    // Endpoints keep their exact pin/junction cell; interior corners snap to grid
-    // (each is already an orthogonal step, so this preserves the Manhattan shape).
-    const pts: Cell[] = route.map((p, i) => {
-      if (i === 0) return { ...this.graph.endpointCell(w.from)! };
-      if (i === route.length - 1) return { ...this.graph.endpointCell(w.to)! };
-      return { col: snap(p.x, PITCH), row: snap(p.y, PITCH) };
-    });
-    let bi = segIdx;
-    // Ensure the right bracket is interior first (splice before touching the left,
-    // so the left index is unaffected). Then ensure the left bracket is interior.
-    if (bi + 1 === pts.length - 1) {
-      pts.splice(bi + 1, 0, { ...pts[bi + 1]! }); // duplicate the to-endpoint inward
-    }
-    if (bi === 0) {
-      pts.splice(1, 0, { ...pts[0]! }); // duplicate the from-endpoint inward
-      bi = 1;
-    }
-    return { pts, bi, axis };
+    return { pts: plan.pts, bi: plan.bi, axis: plan.axis, moveJunctions };
   }
 
   /**
@@ -7089,6 +7063,12 @@ export class Board {
       const col = snap(wx, PITCH);
       lo.col = col;
       hi.col = col;
+    }
+    // A bracket that coincides with a junction endpoint slides the JUNCTION itself (kept in lockstep
+    // with the bracket cell), so the segment translates cleanly and the junction's other wires follow —
+    // instead of folding a stub over the tapped wire. moveJunction copies the cell, so aliasing is safe.
+    for (const mj of d.moveJunctions) {
+      this.graph.moveJunction(mj.id, mj.end === "lo" ? lo : hi);
     }
     // Interior points are the waypoints; the two ends stay the pins/junctions.
     this.graph.setWireWaypoints(d.id, pts.slice(1, -1));

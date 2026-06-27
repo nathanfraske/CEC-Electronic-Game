@@ -16,6 +16,7 @@ import {
   isJunctionRef,
   isPinRef,
   endpointKey,
+  snap,
   type BoardGraph,
   type Cell,
   type Endpoint,
@@ -1000,6 +1001,125 @@ export function routeForWire(
     else out.push(...leg.slice(1));
   }
   return out;
+}
+
+/** Distance from (px,py) to segment (ax,ay)→(bx,by). Local copy for {@link cleanRouteWaypoints}. */
+function distToSeg(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const dx = bx - ax;
+  const dy = by - ay;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 > 0 ? ((px - ax) * dx + (py - ay) * dy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
+}
+
+/**
+ * Minimise an orthogonal wire's interior waypoints after an edit (a segment drag): drop points
+ * coincident with their predecessor (zero-length steps), U-turn spike tips (the route leaves a point
+ * and immediately returns to it — a doubled-back spur), and bends colinear with their neighbours
+ * (within half a cell). `a`/`b` are the wire's fixed endpoints. Returns a fresh, copied, minimal
+ * waypoint list — render/geometry only, never the netlist (connectivity is by endpoint, not route).
+ */
+export function cleanRouteWaypoints(
+  a: Cell,
+  wps: readonly Cell[],
+  b: Cell,
+): Cell[] {
+  const kept: Cell[] = [];
+  for (let i = 0; i < wps.length; i++) {
+    const p = wps[i]!;
+    const prev = kept.length > 0 ? kept[kept.length - 1]! : a;
+    const next = i + 1 < wps.length ? wps[i + 1]! : b;
+    // Coincident with the previous kept point ⇒ a zero-length step (also collapses the far half of a
+    // U-turn once its tip is removed below).
+    if (prev.col === p.col && prev.row === p.row) continue;
+    // A U-turn spike: the route leaves `prev` and immediately returns to it ⇒ drop the tip.
+    if (prev.col === next.col && prev.row === next.row) continue;
+    // Colinear with its neighbours (within half a cell) ⇒ the bend is redundant.
+    if (distToSeg(p.col, p.row, prev.col, prev.row, next.col, next.row) < 0.5)
+      continue;
+    kept.push({ ...p });
+  }
+  return kept;
+}
+
+/** The worked-out plan of a KiCad-style wire segment drag (pure; {@link SegmentDragPlan.moveEnds}
+ * names the bracket(s) that sit on a junction endpoint and should drag the junction, not fold). */
+export interface SegmentDragPlan {
+  /** Anchor list `[fromCell, ...interior, toCell]`; the grabbed segment is `pts[bi]`→`pts[bi+1]`. */
+  pts: Cell[];
+  bi: number;
+  /** Run of the grabbed segment: "h" ⇒ drag it in row/Y, "v" ⇒ in col/X. */
+  axis: "h" | "v";
+  /** Brackets coincident with a JUNCTION endpoint: "lo"=`pts[bi]` (from side), "hi"=`pts[bi+1]` (to). */
+  moveEnds: ("lo" | "hi")[];
+}
+
+/**
+ * Plan a KiCad-style segment drag on a wire whose drawn `route` (world points) runs `fromCell`→…→`toCell`.
+ * Picks the grabbed segment nearest (wx,wy), materialises the drawn corners as grid cells, and decides
+ * each end of the grabbed segment: a bracket on a FIXED pin endpoint gets a coincident interior waypoint
+ * spliced in (the route bends near the pin); a bracket on a JUNCTION endpoint is flagged in `moveEnds`
+ * so the caller slides the junction instead (no folded stub over the tapped wire). Pure — the caller
+ * maps `moveEnds` to junction ids and applies the perpendicular move. Returns null for a non-route.
+ */
+export function planSegmentDrag(
+  route: readonly { x: number; y: number }[],
+  fromCell: Cell,
+  toCell: Cell,
+  fromIsJunction: boolean,
+  toIsJunction: boolean,
+  wx: number,
+  wy: number,
+): SegmentDragPlan | null {
+  if (route.length < 2) return null;
+  let segIdx = 0;
+  let bestD = Infinity;
+  for (let i = 0; i + 1 < route.length; i++) {
+    const d = distToSeg(
+      wx,
+      wy,
+      route[i]!.x,
+      route[i]!.y,
+      route[i + 1]!.x,
+      route[i + 1]!.y,
+    );
+    if (d < bestD) {
+      bestD = d;
+      segIdx = i;
+    }
+  }
+  const s0 = route[segIdx]!;
+  const s1 = route[segIdx + 1]!;
+  const axis: "h" | "v" =
+    Math.abs(s1.y - s0.y) <= Math.abs(s1.x - s0.x) ? "h" : "v";
+  const pts: Cell[] = route.map((p, i) => {
+    if (i === 0) return { ...fromCell };
+    if (i === route.length - 1) return { ...toCell };
+    return { col: snap(p.x, PITCH), row: snap(p.y, PITCH) };
+  });
+  let bi = segIdx;
+  const moveEnds: ("lo" | "hi")[] = [];
+  // Right bracket first (the splice grows the tail, leaving the left index below correct); then left.
+  if (bi + 1 === pts.length - 1) {
+    if (toIsJunction) moveEnds.push("hi");
+    else pts.splice(bi + 1, 0, { ...pts[bi + 1]! });
+  }
+  if (bi === 0) {
+    if (fromIsJunction) moveEnds.push("lo");
+    else {
+      pts.splice(1, 0, { ...pts[0]! });
+      bi = 1;
+    }
+  }
+  return { pts, bi, axis, moveEnds };
 }
 
 /**
