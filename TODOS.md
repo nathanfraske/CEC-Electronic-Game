@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (186) — Behavior panel (was "Characterize")
+
+PR #274. Web/registry only, golden untouched, 214 web tests.
+- ~~**`sequentialTrace.ts` engine**~~ — observe a clocked cell's real discrete behaviour per input combo
+  (Q response + settled next-state); works for self-dependent cells that refuse LUT characterization.
+- ~~**Behavior panel**~~ — `⊨ Characterize` → `◧ Behavior`; SHOW (table + per-row Q waveform) without
+  mutating; explicit "Use fast model ⚡" toggle + ⚡ FAST badge. Real pin names (`D CLR → Q⁺`, not I0/I1).
+  Un-collapsible cells show OBSERVED behaviour + "can't simplify" note. Screenshot-verified.
+- [ ] **Datasheet for every part** (#70) — separate feature the owner wants: pinout + package + ratings +
+  (logic) truth/next-state table; the sand→CPU "publish a datasheet" framing.
+- [ ] **A2 faithfulness** (#48) — a load-enable register's characterization (LD-hold, tri-state OE) isn't
+  provably faithful yet; "Use fast model" on such a cell needs the state-aware sweep. The Behavior panel
+  shows the observed behaviour correctly regardless.
+- [ ] **Waveform → full timing diagram** — currently a per-row sparkline; could become a proper diagram.
+
+---
+
 ## 2026-06-27 (185) — Characterization faithfulness + load-conflict library merge
 
 Char. fixes merged (PR #272); load-conflict merge on the branch. Web-only, golden untouched, 214 web tests.

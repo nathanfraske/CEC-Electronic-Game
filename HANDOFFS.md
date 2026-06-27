@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (186) — Behavior panel (was "Characterize"): names + waveform + fast-model toggle
+
+**State:** 🟢 PR #274 (CI running). **Web/registry only, golden `0xeaac_3764_99e4_fa24` untouched, 214 web
+tests.** Owner reframed the opaque "Characterize" button into an accessible **Behavior** view.
+
+- **`sequentialTrace.ts`** — `traceSequentialCell` drives a cell's REAL discrete circuit through a clock per
+  input combo and records the full Q response + settled next-state. OBSERVES (never collapses), so it works
+  for ANY sequential cell incl. self-dependent registers. App-only (scratch sim), modeled on
+  characterizeSequential.
+- **Behavior panel (App.svelte)** — button `⊨ Characterize` → `◧ Behavior`. `showBehavior(tag)` SHOWS the
+  truth/next-state table + a per-row Q **waveform** column WITHOUT mutating the cell; the collapse is an
+  explicit in-panel **"Use fast model ⚡"** toggle (`applyFastModel`/`clearFastModel`) with a ⚡ FAST badge.
+  Table shows the player's REAL pin names (`characterizeCell` now returns `inputNames`/`outName`) — `D CLR
+  → Q⁺`, not `I0/I1`. An un-collapsible cell shows its OBSERVED behaviour (from the trace) + a "can't
+  simplify this one" note. Verified by screenshot (D LATCH + 1-BIT REG panels). New `__cecBehavior` hook.
+
+**Owner design decisions (locked):** "Behavior" + "Use fast model ⚡" (vs "Datasheet" / two buttons). Real
+pin names in the table. Clicking must feel like something happened (the toggle + badge).
+
+**Follow-ups:** (A) **Datasheet for every part** — separate feature, owner wants it (TODO #70). (B) **A2
+faithfulness** — a self-dependent register's underlying characterization (LD-hold, tri-state OE) still isn't
+provably faithful; the panel SHOWS behaviour correctly, but "Use fast model" on such a cell needs the A2
+state-aware sweep (#48). (C) the waveform is a per-row sparkline; could grow to a full timing diagram.
+
+---
+
 ## 2026-06-27 (185) — Char. faithfulness fixes + load-conflict library merge (sharing-safe)
 
 **State:** 🟢 char. fixes MERGED (PR #272); load-conflict merge on the branch, gating green. **Web-only,
