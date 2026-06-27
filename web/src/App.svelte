@@ -1808,6 +1808,9 @@
     gate: string | null;
     /** true for a clocked cell — the table is the next-state Q⁺, latched on the clock. */
     registered: boolean;
+    /** the cell had a SAVED fast model that no longer matched a fresh sweep (a stale LUT from before an
+     * edit) — it's been cleared so the cell reverts to its correct composite; the panel says so. */
+    staleCleared: boolean;
   }
   let charResult = $state<CharPanel | null>(null);
   /** The Behavior characterization runs a scratch sim per input combination, so a wide cell (a 4-bit
@@ -1881,9 +1884,19 @@
       ic.pinRoles ?? [],
       opts,
     );
-    // Heal a STALE fast model: if the cell can no longer collapse but a cached LUT is still installed, drop
-    // it (it can't be a faithful fast model) so the cell reverts to discrete. (The word:0 register bug.)
-    if (!cr.ok && getUserIc(tag)?.behavior) {
+    // Heal a STALE fast model. A saved LUT goes out of date when the cell is later EDITED (a pin re-tagged,
+    // internals changed) so a fresh sweep no longer matches it — it either can NO LONGER collapse, or now
+    // collapses to a DIFFERENT word/mode than what's stored. Either way the stored LUT is wrong, so drop it
+    // and revert the cell to its correct discrete composite (re-applying "Use fast model" re-collapses it).
+    // The old heal only caught the can't-collapse case, which let an edited cell keep simulating the stale
+    // LUT — exactly the owner's S0/S1 trap (tagged the selects, but the 2-input LUT lingered).
+    const installed = getUserIc(tag)?.behavior;
+    const staleCleared =
+      !!installed &&
+      (!cr.ok ||
+        cr.behavior.word !== installed.word ||
+        (cr.behavior.mode ?? 0) !== (installed.mode ?? 0));
+    if (staleCleared) {
       setUserIcBehavior(tag, undefined);
       libRev++;
     }
@@ -1910,6 +1923,7 @@
         // A REGISTERED next-state of "BUFFER" (Q⁺ = D) is a D-type flop, not a transparent buffer.
         gate: registered && g === "BUFFER" ? "D-TYPE" : g,
         registered,
+        staleCleared,
       };
     } else if (tr.ok) {
       // Can't collapse, but we can OBSERVE it — a self-dependent register: show its real behaviour.
@@ -1930,6 +1944,7 @@
         word: null,
         gate: null,
         registered: true,
+        staleCleared,
       };
     } else {
       circuitWarning = `Can't read “${ic.name || partName(tag)}”: ${cr.reason}.`;
@@ -6052,6 +6067,14 @@
             </tbody>
           </table>
           <div class="char-foot">
+            {#if charResult.staleCleared}
+              <!-- The cell carried a SAVED fast model that no longer matched this fresh sweep (a stale LUT
+                   from before an edit). It's been cleared so the cell reverts to its correct composite. -->
+              <span class="char-foot-note char-stale"
+                >⚠ Out-of-date fast model cleared (the cell changed since it was
+                collapsed) — re-apply below to collapse again.</span
+              >
+            {/if}
             {#if charResult.behavior}
               {#if charResult.fast}
                 <button
@@ -9559,6 +9582,12 @@
     margin-top: 5px;
     font-size: 10.5px;
     color: var(--dim);
+  }
+  /* The "your saved fast model was out of date" note — amber so it reads as an advisory, not an error. */
+  .char-foot-note.char-stale {
+    margin-top: 0;
+    margin-bottom: 6px;
+    color: var(--warn);
   }
   .char-tt th.char-wave-h {
     text-transform: none;

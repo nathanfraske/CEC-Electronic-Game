@@ -5,6 +5,28 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (198) — Characterize: heal a STALE fast model (not just an unsolvable one)
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 261 web tests.**
+Owner-greenlit follow-up to (197). The existing heal only dropped a cached LUT when the cell could NO
+LONGER collapse; it didn't notice when a cell still collapses but to a DIFFERENT word — so an EDITED cell
+kept simulating its old LUT (the owner tagged the 1-BIT LOGIC's selects, but the 2-input `word 3` LUT
+lingered, breaking the 4-BIT ALU built on it). Fix in `showBehavior` (App.svelte):
+
+- Compare a FRESH sweep to the installed model: stale = `!cr.ok || cr.behavior.word !== installed.word ||
+  mode mismatch`. On stale, drop the model (`setUserIcBehavior(tag, undefined)`) so the cell reverts to its
+  correct discrete composite, and flag `CharPanel.staleCleared` → an amber note *"⚠ Out-of-date fast model
+  cleared… re-apply below to collapse again."* (Dropping, not re-collapsing, keeps "viewing never silently
+  collapses" — same direction as the old failure-heal.)
+- **Verified** on the owner's three saves: untagged S0/S1 → the (197) guard warns; tagged-but-stale `word 3`
+  → model dropped + note + fresh 16-row table; tagged + correct `word 34531` → untouched (`fast` stays on).
+
+**Also confirmed (no bug):** the owner's latest 4-BIT ALU save HAS the corrected 1-BIT LOGIC (`word 34531`,
+8 of 16 outputs high = the real ALU: 00 NOT A · 01 XOR · 10 OR · 11 AND). The ALU can't single-characterize
+(4 outputs Y0–Y3) but runs correctly as a composite of the four slices.
+
+---
+
 ## 2026-06-27 (197) — Characterize guardrail: warn on wired-but-un-roled frame pins
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 261 web tests (+3).**

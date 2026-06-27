@@ -6,6 +6,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (198) — Characterize: heal a stale fast model + verify the 4-BIT ALU (owner)
+
+- ~~**Stale-fast-model heal**~~ (PR, CI): `showBehavior` now drops a saved LUT when a fresh sweep gives a
+  DIFFERENT word/mode (not only when it can't collapse), reverting the cell to its correct composite +
+  amber `staleCleared` note. Catches the edit-then-stale trap (tagged the selects, old 2-input LUT
+  lingered). Verified on the owner's 3 saves (untagged → 197 guard; tagged-stale → dropped+note; tagged-ok
+  → untouched).
+- Confirmed the owner's **4-BIT ALU** is correct: the 1-BIT LOGIC slice now carries `word 34531` (the real
+  ALU: 00 NOT A · 01 XOR · 10 OR · 11 AND); the ALU can't single-characterize (4 outputs) but runs as a
+  composite of four slices.
+- [ ] **CPU-ward:** the player now has gates → 1-bit logic → 4-bit ALU. Natural next blocks: a register
+  file / accumulator, then datapath. (Owner is driving the build; we supply guardrails + diagnosis.)
+
+---
+
 ## 2026-06-27 (197) — Characterize guardrail + 4:1-MUX/1-BIT-LOGIC debug (owner)
 
 - Diagnosed the owner's **4:1 MUX** ("won't characterize"): 6 inputs > the ≤4-input single-LUT cap (works
