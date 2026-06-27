@@ -1045,8 +1045,10 @@
   // magnification ×M and the snapped scale bar derive from them via lib/zoomMeter.
   let viewZoom = $state(1);
   let viewScale = $state(1);
+  // The opened cell's package width on screen (0 = open board) — re-anchors the scale rule per cell (#71).
+  let viewAnchorPx = $state(0);
   let magLabel = $derived(formatMag(magnification(viewZoom, viewScale)));
-  let scaleRule = $derived(scaleBar(viewZoom, viewScale));
+  let scaleRule = $derived(scaleBar(viewZoom, viewScale, 90, viewAnchorPx));
   // The "armed" part: clicking the board drops it (place-and-repeat). Null = none.
   let armedPart = $state<string | null>(null);
   // The armed part's pre-placement configurator choices (variant / tier / family /
@@ -2488,6 +2490,7 @@
           const vm = b.getViewMetrics();
           viewZoom = vm.zoom;
           viewScale = vm.viewScale;
+          viewAnchorPx = vm.anchorPx;
           // Sweep the phase-scope play-head on the frame clock (cosmetic, fixed rate — the
           // traces are static between edits) and repaint just that small canvas.
           if (phaseSweep) {

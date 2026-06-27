@@ -26,6 +26,13 @@ export const MM_PER_TOP_CELL = 2.5;
  * floor of the readout, never the rendered geometry or the simulation. */
 export const MIN_FEATURE_MM = 1e-4;
 
+/** Per-cell re-anchor (#71): when an IC is OPENED, the scale rule anchors to THAT cell's package — its
+ * on-screen width reads as this many millimetres (a chip ~a few mm) — so each baked chip is its OWN scale
+ * universe (package ~mm → gates µm → transistors nm) regardless of how deep it's nested, instead of the
+ * top-anchored cumulative shrink compounding toward 0.01 nm. The open board keeps the {@link MM_PER_TOP_CELL}
+ * bench anchor. Tunable: bigger ⇒ a chip reads physically larger (finer internal features). */
+export const CHIP_MM = 5;
+
 const EPS = 1e-12;
 
 /** Physical millimetres represented by one SCREEN pixel at the current view. One world cell = PITCH
@@ -93,8 +100,13 @@ export function scaleBar(
   zoom: number,
   viewScale: number,
   targetPx = 90,
+  anchorPx = 0,
 ): ScaleBar {
-  const mmpp = mmPerScreenPx(zoom, viewScale);
+  // PER-CELL re-anchor (#71): inside an OPENED IC, anchor to that cell's package — its on-screen width
+  // (`anchorPx`) reads as CHIP_MM — so the chip is its own scale universe (mm → µm → nm), depth-independent.
+  // The open board (anchorPx 0) keeps the top-down bench anchor.
+  const mmpp =
+    anchorPx > 0 ? CHIP_MM / anchorPx : mmPerScreenPx(zoom, viewScale);
   // Clamp the bar's physical length at the process-node floor (see MIN_FEATURE_MM): below it the rule
   // stops shrinking and reads the floor (e.g. "0.1 µm") instead of "0.01 nm". Above the floor the snapped
   // length is ≤ the target px; once floored it would widen without bound (floor / mmpp), so cap the drawn
