@@ -16,7 +16,37 @@
 //
 // The characterizer uses this to STOP mischaracterizing a latch as a buffer: a detected loop (or a clear
 // clock/enable) routes to the sequential sweep instead of emitting a combinational LUT.
-import type { GraphSnapshot, PinRole } from "./graph";
+import { isPinRef, type GraphSnapshot, type PinRole } from "./graph";
+
+/**
+ * Frame pins that are WIRED into the cell but carry NO semantic role (not in/out/vcc/gnd/clk). The sweep
+ * only drives `in` pins and reads the `out` pin, so an un-roled-but-connected frame pin is SILENTLY dropped
+ * from the truth table — e.g. a mux/ALU select named `S0`/`S1` (which the name→role guesser doesn't know,
+ * unlike `SEL0`) ends up untagged, so characterization sweeps only the data inputs and returns a partial,
+ * wrong table. This returns those pins' display names so the Behavior panel can tell the player to tag them
+ * instead of quietly handing back a partial sweep. A truly UNCONNECTED (NC) pin carries no signal, so it's
+ * not reported. Pure graph read — headless-tested.
+ */
+export function untaggedSignalPins(
+  graph: GraphSnapshot,
+  frameId: number,
+  pinRoles: (PinRole | undefined)[],
+  pinNames?: (string | undefined)[],
+): string[] {
+  const count = Math.max(pinRoles.length, pinNames?.length ?? 0);
+  const wired = (i: number): boolean =>
+    graph.wires.some(
+      (w) =>
+        (isPinRef(w.from) &&
+          w.from.componentId === frameId &&
+          w.from.pinIndex === i) ||
+        (isPinRef(w.to) && w.to.componentId === frameId && w.to.pinIndex === i),
+    );
+  const out: string[] = [];
+  for (let i = 0; i < count; i++)
+    if (!pinRoles[i] && wired(i)) out.push(pinNames?.[i]?.trim() || `pin ${i}`);
+  return out;
+}
 
 /** What `analyzeCell` needs to know about a placed sub-cell: its pin roles (in/out/control…) and whether
  * it's been characterized (has a behavior word ⇒ a DIRECTED gain stage, vs an un-characterized pass cell).

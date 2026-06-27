@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (197) — Characterize guardrail: warn on wired-but-un-roled frame pins
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 261 web tests (+3).**
+Owner-greenlit follow-up to the 4:1-MUX/1-BIT-LOGIC debugging. Their 1-BIT LOGIC's select pins `S0`/`S1`
+had NO role (the name→role guesser knows `SEL0` but not `S0` — it strips to base `"S"`), so the sweep
+silently dropped them and the cell collapsed to a wrong 2-input table (`Y = NOT A`) instead of the real
+16-row ALU. The fix makes that loud:
+
+- **`untaggedSignalPins(graph, frameId, pinRoles, pinNames)`** (new, in `cellAnalysis.ts` — pure/wasm-free,
+  3 unit tests): returns the names of frame pins that are WIRED but carry no role. A truly UNCONNECTED (NC)
+  pin is not reported.
+- **`showBehavior` guard (App.svelte):** before characterizing, if any such pins exist it sets a
+  `circuitWarning` naming them ("S1, S0 have no pin role… give them an input role… then re-seal"), shows NO
+  table, and DROPS any stale (wrongly-collapsed) fast model so the cell reverts to its correct discrete
+  composite. `characterizeCell` is only called here, so this is the single chokepoint (the "Use fast model"
+  button can't install a wrong LUT either, since `charResult` stays null).
+- **Verified** headlessly on the owner's fixture: the panel now warns instead of returning `Y=NOT A`; with
+  `S0`/`S1` tagged `in` it characterizes to the correct 16-row table (00→NOT A, 01→XOR, 10→OR, 11→AND).
+
+**Also diagnosed (no code):** the owner's **4:1 MUX is now correctly wired** (three 2:1 muxes, both
+stage-1 on SEL0, stage-2 on SEL1); it can't collapse to one LUT (6 inputs) but works as a composite.
+
+---
+
 ## 2026-06-27 (196) — Wiring Phase 3b: always-on cross-part label de-overlap
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
