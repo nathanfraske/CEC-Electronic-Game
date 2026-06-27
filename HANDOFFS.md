@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (196) — Wiring Phase 3b: always-on cross-part label de-overlap
+
+**State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
+Owner picked "build 3b anyway" (after I flagged it as mostly a no-op today — natural pin pitch ≫ label
+size, so labels rarely collide; it's a safety net for the future dense CPU board). All in `board.ts`:
+
+- **`ComponentNode.collectLabels(out)`** pushes this part's currently-visible pin names + value chip with a
+  de-overlap PRIORITY: focused part (`this.focused`, latched in `update`) outranks ambient; within a part an
+  output pin name beats an input/other beats the value chip.
+- **`Board.deOverlapLabels()`** runs once after the node-update loop: collect every visible label, sort by
+  priority high→low, and HIDE whichever lower-priority label's screen box (`text.getBounds()` → `minX..maxY`)
+  overlaps one already kept. Pin DOTS stay; only the name text yields. Re-run every frame, so it tracks
+  zoom/pan/selection live.
+- **Verified** by forcing an overlap (3 NANDs 1 cell apart at deep zoom): 9 A/B/Y labels → 6, three hidden
+  (no mush). On normal boards it's a no-op (nothing overlaps).
+- **Note:** per-frame `getBounds` over visible labels — fine for teaching boards; cache/spatial-hash if a
+  board ever shows hundreds of labels at once.
+
+**Also this session:** diagnosed the owner's **4:1 MUX won't characterize** — it has 6 inputs (IN0–3 +
+SEL0/1) and the LUT collapse caps at ≤4 inputs (one truth-table word); the app says "6 inputs — only
+≤4-input gates collapse to one LUT." Separately its internals are mis-wired (two 2:1-MUX outputs shorted onto
+OUT, second mux on SEL1, no output stage) — a correct 4:1 = three 2:1 muxes (two on SEL0 → A/B, one on SEL1
+→ OUT). It works as a COMPOSITE once rewired; it just can't collapse to a single 6-input LUT.
+
+---
+
 ## 2026-06-27 (195) — Symbol→pin leads refined (orthogonal) + value chip dodges them
 
 **State:** 🟢 PR (CI). **Render/web only, golden `0xeaac_3764_99e4_fa24` untouched, 258 web tests.**
