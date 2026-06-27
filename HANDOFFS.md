@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (203) — Engine CLK-bug narrowed (real, subtle); test-bench design doc (owner)
+
+**State:** 🟢 design doc landed; engine bug deeply localized (no fix yet — needs sim-core instrumentation +
+greenlight). Owner: "get on the engine bug (bigger issue)" + "panel-brainstorm the test bench, debuggable
+by any age." Both advanced.
+
+**Engine CLK-coupling bug — narrowed, ruled out the easy causes:**
+- **ALU design is CORRECT** (re-confirmed: CLK=0 computes every op right — AND(6,2)=2, NOT-A(3)=12).
+- NOT iteration starvation: bumped `NEWTON_MAX_ITERS` 100→400, rebuilt wasm, AND(6,2) CLK=1 **still 6**
+  (reverted; golden held at 400 — so a future bump is golden-safe but isn't the fix).
+- NOT a structural netlist merge: headless `buildNetlist`/`flattenUserIcs` dump on the full-ALU bench shows
+  **872 components / 1100 junctions, all unique ids, max id 318M < the 1M·318 stride** — no dup-id collapse,
+  no node-merge. Minimal repro (isolated inverter chain + a clocked DFF) is **clean** at CLK=0 and CLK=1, so
+  it needs the ALU's SCALE.
+- Core verified (engine panelist): `set_netlist*` stamps node integers verbatim, no merge — so the core
+  can't cross-couple electrically-isolated nets via the MNA.
+- **Net:** a real, subtle ENGINE bug where a clocked register's state perturbs an electrically-isolated
+  combinational result only at scale. Every black-box-reachable cause is excluded. **Next step (golden-
+  sensitive → needs owner greenlight):** instrument sim-core to dump per-node voltages for the full ALU at
+  CLK=0 vs CLK=1, find the node that diverges where it shouldn't, and trace its stamp. Workaround today:
+  read combinational outputs with the clock idle.
+
+**Test-bench design:** `docs/ui/test-bench-design.md` — synthesis of a 3-voice panel (UX/accessibility,
+engine/methodology, debugging pedagogy). Headline: the headless drive→step→read→compare engine **already
+exists** (`characterize.ts`/`sequentialTrace.ts`/`sweepNetlist.ts`), so the bench is mostly a UX surface;
+two doors ("Check It" one-button vs the vector grid); **step-until-stable** convergence (not fixed ticks —
+the false-failure lesson); per-BIT verdict; divide-and-conquer **auto-bisection** of sub-cells; a Probe
+"Debug Helper" teaching isolate/compare/one-variable/falsify to any age; golden-safe (scratch Simulation);
+one tiny optional sim-core ask (`state_hash()`). Build order: cheap wins (pin card, Check-It, spotlight via
+existing `NET_DIM_ALPHA`) → big lifts (helper wizard, auto-bisection).
+
+---
+
 ## 2026-06-27 (202) — ALU verified CORRECT; the wrong result is a CLK-coupling ENGINE bug (owner)
 
 **State:** 🟢 diagnosis only (no code change). Owner asked "is my 4-BIT FULL ALU implemented properly?" +
