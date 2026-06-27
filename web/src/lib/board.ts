@@ -275,6 +275,11 @@ const MAX_TEXT_RES = 4;
  * so it stays crisp + readable near the pin instead of ballooning blurry as you dive deep into a chip
  * (owner: "text should scale and move after about ×7, but stay near the pin"). */
 const LABEL_CAP_ZOOM = 7;
+/** In WIRE mode every pin label on the CURRENT layer is forced visible at any zoom (so you can see what
+ * you're connecting). To keep them legible when revealed zoomed-OUT, their on-screen size never drops
+ * below this multiple of the base glyph — the floor the constant-size counter-scale clamps up to. Above
+ * this zoom the labels just ride the camera as usual, so toggling wire mode is seamless past it. */
+const WIRE_LABEL_MIN = 2.5;
 
 // Multimeter lead colours: red "+" and steel "−", like a real DMM.
 const PROBE_PLUS = 0xe0533a;
@@ -2900,6 +2905,7 @@ export class Board {
         viewport,
         viewProbe,
         snap.elementCurrents,
+        this.mode === "wire",
       );
     }
     // Latch the metered depth for the HUD: the deepest opened level under the view centre (or 1 on the
@@ -7792,6 +7798,7 @@ class ComponentNode {
     viewport?: { w: number; h: number },
     viewProbe?: { cx: number; cy: number; depth: number; scale: number },
     elemCurrents?: Float64Array,
+    wireMode = false,
   ): void {
     const g = this.glyph;
     g.clear();
@@ -8102,11 +8109,17 @@ class ComponentNode {
     // labels (the package number or the player's name) show at the working die zoom.
     // A sealed USER IC always labels its pins at detail zoom (its pinout IS the player's pad names —
     // "the chip, labelled how you built it"), without needing the zoom-to-open miniature to be open.
-    const showPins = isDieFrame(this.kindTag)
-      ? zoom >= TIER_ZOOM
-      : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
-        ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
-          zoom >= DETAIL_ZOOM);
+    // WIRE mode reveals every pin label on the CURRENT layer regardless of zoom (owner: "wire mode should
+    // show all pin labels regardless of zoom level, but only those of the current layer") — these placed
+    // nodes ARE the current layer; the recursive zoom-to-open sub-cell labels (userIcInternalsView) are a
+    // deeper layer and stay zoom-gated, so they're not forced here.
+    const showPins =
+      wireMode ||
+      (isDieFrame(this.kindTag)
+        ? zoom >= TIER_ZOOM
+        : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
+          ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
+            zoom >= DETAIL_ZOOM));
     const lcx = this.wPx / 2;
     const lcy = this.hPx / 2;
     const LABEL_MARGIN = 14; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
@@ -8146,8 +8159,14 @@ class ComponentNode {
         // its glyph size AND its pin offset by `cs` so it holds a fixed on-screen size and stays the same
         // small distance from the pin instead of ballooning away. Resolution tracks the capped on-screen
         // scale so the texture stays crisp at any depth (the shared MAX_TEXT_RES cap blurred it past ~×7).
-        const eff = Math.max(1, Math.min(zoom, LABEL_CAP_ZOOM));
-        const cs = eff / Math.max(1, zoom);
+        // WIRE mode adds a LOWER floor (WIRE_LABEL_MIN): a label revealed zoomed-out for wiring counter-
+        // scales UP to a readable minimum instead of shrinking with the camera. The two agree at any zoom
+        // ≥ WIRE_LABEL_MIN, so toggling wire mode never resizes a label that was already on-screen.
+        const capHi = Math.min(zoom, LABEL_CAP_ZOOM);
+        const eff = wireMode
+          ? Math.max(WIRE_LABEL_MIN, capHi)
+          : Math.max(1, capHi);
+        const cs = wireMode ? eff / zoom : eff / Math.max(1, zoom);
         const r = rotPx(
           p.x + ox * cs,
           p.y + oy * cs,
