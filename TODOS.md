@@ -19,6 +19,9 @@ then work the backlog autonomously overnight."
 - ~~**Lazy-follow base router** (#279)~~ — starting a wire loosely follows the pointer (heading-locked
   orthogonal staircase, `extendLazyTrail` w/ a 2-cell turn threshold); bends bake as WAYPOINTS on finish,
   never junctions. Preview == committed via `bakeLazyIntoWire`. +8 tests. Tunable: the turn threshold.
+  - ~~**+ retraction**~~ — owner: going back over a locked-in segment should RETRACT, not double back.
+    `extendLazyTrail` now POPS the last corner when the open run collapses onto its line and the cursor
+    travels back along the previous segment (heading flips back). +3 tests. [PR after #283]
 - ~~**Bridges 4A + 4C + 4B** (#280)~~ — clustered hops fold into ONE arch; a DENSE cluster (≥4) drops the
   hump and the flat hopper's opaque casing notches each under-wire ("break the under-wire"); dome a touch
   smaller (`BUMP_W` 15→12, `BUMP_H` 16→13). +5 `applyCrossings` tests. Tunable: dome size / merge gap / dense.
