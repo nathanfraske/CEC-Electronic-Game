@@ -98,6 +98,7 @@
   } from "./lib/userIc";
   import { characterizeCell } from "./lib/characterize";
   import { traceSequentialCell } from "./lib/sequentialTrace";
+  import { untaggedSignalPins } from "./lib/cellAnalysis";
   import {
     buildDatasheet,
     type DatasheetModel,
@@ -1837,6 +1838,30 @@
   function showBehavior(tag: string): void {
     const ic = getUserIc(tag);
     if (!ic) return;
+    // GUARDRAIL: a frame pin that's WIRED but carries no role is silently dropped from the sweep, so the
+    // truth table comes back partial + wrong (the classic trap: a mux/ALU select named S0/S1 — which the
+    // name→role guesser doesn't know, unlike SEL0 — stays untagged, so only the data inputs get swept).
+    // Refuse loudly and name the pins instead of handing back a misleading table; also drop any stale
+    // (wrongly-collapsed) fast model so the cell reverts to its correct discrete composite.
+    const untagged = untaggedSignalPins(
+      ic.graph,
+      ic.frameId,
+      ic.pinRoles ?? [],
+      ic.pinNames,
+    );
+    if (untagged.length > 0) {
+      const many = untagged.length > 1;
+      circuitWarning =
+        `${untagged.join(", ")} ${many ? "have" : "has"} no pin role, so ${many ? "they're" : "it's"} dropped from the sweep and the truth table would be incomplete. ` +
+        `Give ${many ? "them an input role" : "it an input role"} (a select line like S0/S1 is an input) — or VCC/GND — in the die editor, then re-seal.`;
+      if (getUserIc(tag)?.behavior) {
+        setUserIcBehavior(tag, undefined);
+        libRev++;
+      }
+      charResult = null;
+      datasheet = null;
+      return;
+    }
     const opts = { pinNames: ic.pinNames, resolveCell: getUserIc };
     let cr: ReturnType<typeof characterizeCell>;
     try {

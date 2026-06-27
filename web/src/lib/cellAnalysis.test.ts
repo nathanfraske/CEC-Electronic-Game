@@ -5,8 +5,12 @@
 // feedback loop ⇒ sequential, (2) recognise EN/ENB as a complementary clock pair, and (3) pick Q (with no
 // Q̄). Plus a combinational control (no loop) and a Q/Q̄ output case.
 import { describe, it, expect } from "vitest";
-import { analyzeCell, type ResolvedCell } from "./cellAnalysis";
-import type { GraphSnapshot } from "./graph";
+import {
+  analyzeCell,
+  untaggedSignalPins,
+  type ResolvedCell,
+} from "./cellAnalysis";
+import type { GraphSnapshot, PinRole } from "./graph";
 
 // Sub-cell defs the latch is built from: a transmission gate (in/out pass, NO behavior) and an inverter
 // (a characterized gain stage — behavior present). Matches the owner's saved cec-circuit.
@@ -251,5 +255,51 @@ describe("analyzeCell — a TRUE clock pin makes a cell sequential (the register
       pinNames: ["A", "EN", "Y", "VCC", "GND"],
     });
     expect(b.sequential).toBe(false);
+  });
+});
+
+describe("untaggedSignalPins — a wired frame pin with no role is a silent-drop trap", () => {
+  // Frame id 1; a wire from each listed frame pin to a junction marks that pin 'wired'.
+  const wireTo = (pinIndex: number, jid: number) => ({
+    id: 100 + pinIndex,
+    from: { componentId: 1, pinIndex },
+    to: { junctionId: jid },
+  });
+  // A(0), Y(2), S0(4), S1(5) are wired; NC(6) is left unconnected.
+  const graph = {
+    components: [{ id: 1, kind: "__DIE_FF", cell: { col: 0, row: 0 } }],
+    wires: [wireTo(0, 1), wireTo(2, 2), wireTo(4, 3), wireTo(5, 4)],
+    junctions: [],
+    netLabels: [],
+    nextComponentId: 2,
+    nextWireId: 110,
+    nextJunctionId: 5,
+    nextNetLabelId: 1,
+  } as unknown as GraphSnapshot;
+  const pinNames = ["A", "VCC", "Y", "GND", "S0", "S1", "NC"];
+  // Only A/VCC/Y/GND are roled; the wired selects S0/S1 (and unwired NC) carry no role.
+  const partial: (PinRole | undefined)[] = ["in", "vcc", "out", "gnd"];
+
+  it("reports the wired-but-roleless select pins, by name (the S0/S1 trap)", () => {
+    expect(untaggedSignalPins(graph, 1, partial, pinNames)).toEqual([
+      "S0",
+      "S1",
+    ]);
+  });
+
+  it("does NOT report a roleless pin that is unconnected (a true NC)", () => {
+    expect(untaggedSignalPins(graph, 1, partial, pinNames)).not.toContain("NC");
+  });
+
+  it("reports nothing once every wired pin is roled", () => {
+    const full: (PinRole | undefined)[] = [
+      "in",
+      "vcc",
+      "out",
+      "gnd",
+      "in",
+      "in",
+    ];
+    expect(untaggedSignalPins(graph, 1, full, pinNames)).toEqual([]);
   });
 });

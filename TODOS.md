@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (197) — Characterize guardrail + 4:1-MUX/1-BIT-LOGIC debug (owner)
+
+- Diagnosed the owner's **4:1 MUX** ("won't characterize"): 6 inputs > the ≤4-input single-LUT cap (works
+  as a composite; can't collapse). After their fix, the wiring is correct (three 2:1 muxes, both stage-1 on
+  SEL0, stage-2 on SEL1).
+- Diagnosed the **1-BIT LOGIC**: its select pins `S0`/`S1` had no role (name guesser knows `SEL0`, not
+  `S0`), so the sweep dropped them → wrong 2-input collapse (`Y=NOT A`) instead of the 16-row ALU
+  (00 NOT A · 01 XOR · 10 OR · 11 AND).
+- ~~**Guardrail**~~ (PR, CI): `untaggedSignalPins` (new in `cellAnalysis.ts`, 3 tests) finds wired-but-roleless
+  frame pins; `showBehavior` now refuses + names them + drops the stale fast model instead of quietly
+  showing a partial table. Golden untouched, 261 web tests.
+- [ ] **Maybe:** auto-recognize `S0/S1`-style select names as inputs? Deferred — `S<n>` is also how an
+  adder's SUM bus gets named, so the warning is the safe call (don't silently guess).
+
+---
+
 ## 2026-06-27 (192) — Behavior panel: computing feedback + scroll + readability (owner bug)
 
 Owner: clicking **Behavior** on the 4-bit register froze the UI silently while it computed, the 64-row
