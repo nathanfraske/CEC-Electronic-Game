@@ -39,6 +39,7 @@ import {
   type Cell,
 } from "./graph";
 import { packageLayout, BLOCK_ARCHETYPE, BLOCK_MAX_PINS } from "./packages";
+import { analyzeCell } from "./cellAnalysis";
 
 /** A sealed, user-authored IC. */
 export interface UserIc {
@@ -92,6 +93,13 @@ export interface UserIc {
    * Golden-safe: the golden places no user IC, and a combinational LUT folds an all-zero state block.
    */
   behavior?: CellBehavior;
+  /**
+   * Optional EXPLICIT schematic-symbol id chosen by the player (a `drawCellSymbol` id — a gate name or a
+   * `CellSymbolId`: DFF/DLATCH/REG/HADD/FADD/MUX/TRI/ARRAY/AND/…). Absent ⇒ Auto (the recognized face from
+   * {@link cellSymbol}). Pure presentation — never affects the netlist, never hashed, never crosses the
+   * wasm boundary (the `pinNames` pattern); it WINS over auto-detection in `cellSymbol`.
+   */
+  symbol?: string;
 }
 
 /**
@@ -182,6 +190,85 @@ export function recognizeGate(word: number, inputs: number): string | null {
       case 0xf:
         return "HIGH";
     }
+  }
+  return null;
+}
+
+/** Gate names {@link drawGateBodySymbol} can actually draw (LOW/HIGH are constants with no shape). */
+const DRAWABLE_GATES = new Set([
+  "AND",
+  "NAND",
+  "OR",
+  "NOR",
+  "XOR",
+  "XNOR",
+  "NOT",
+  "BUFFER",
+]);
+/** 2:1 MUX LUT word for `out = sel ? b : a` (inputs i0=a, i1=b, i2=sel). The N:1 generalization needs the
+ * explicit override; only the 2:1 case is auto-named here. */
+const MUX_WORD_2TO1 = 0xca;
+
+/** Match the player's CELL NAME to a symbol id — the declared-intent shortcut for the types structure /
+ * truth-table can't infer (adder / array / tri-state) and a fast path for the rest. Most specific first. */
+function symbolFromName(name: string): string | null {
+  const n = name.toUpperCase();
+  if (/FULL[\s_-]*ADD|\bFADD\b/.test(n)) return "FADD";
+  if (/HALF[\s_-]*ADD|\bHADD\b/.test(n)) return "HADD";
+  if (/\bADDER\b/.test(n)) return "FADD";
+  if (/\bREGISTER\b|\bREG\b/.test(n)) return "REG";
+  if (/\bMUX\b|MULTIPLEX/.test(n)) return "MUX";
+  if (/\bARRAY\b|\bPLA\b|\bROM\b|\bRAM\b/.test(n)) return "ARRAY";
+  if (/TRI[\s_-]*STATE|3[\s_-]*STATE|\bTRI\b|\bOE\b/.test(n)) return "TRI";
+  if (/FLIP[\s_-]*FLOP|\bDFF\b|\bFF\b/.test(n)) return "DFF";
+  if (/\bLATCH\b/.test(n)) return "DLATCH";
+  return null;
+}
+
+const cellSymbolMemo = new WeakMap<UserIc, string | null>();
+/**
+ * The schematic SYMBOL id a sealed cell should wear (a {@link drawCellSymbol} id), or `null` ⇒ fall back to
+ * the name label. Decision order: explicit owner override (`def.symbol`) → the player's NAME keyword
+ * (declared intent — the only signal for adder/array/tri-state) → a combinational GATE or 2:1 MUX from the
+ * characterized truth-table → the SEQUENTIAL class (latch vs flop vs register) from {@link analyzeCell}'s
+ * structure. Pure render/registry — never crosses the wasm boundary, never affects the netlist or golden.
+ * Memoized on the `def` object identity: a reseal mints a fresh def ⇒ the cache invalidates naturally
+ * (`analyzeCell` does a union-find + DFS, too heavy to run per-frame uncached).
+ */
+export function cellSymbol(def: UserIc): string | null {
+  const cached = cellSymbolMemo.get(def);
+  if (cached !== undefined) return cached;
+  const sym = computeCellSymbol(def);
+  cellSymbolMemo.set(def, sym);
+  return sym;
+}
+function computeCellSymbol(def: UserIc): string | null {
+  if (def.symbol && def.symbol.trim()) return def.symbol.trim();
+  const named = symbolFromName(def.name ?? "");
+  if (named) return named;
+  const inN = def.pinRoles?.filter((r) => r === "in").length ?? 0;
+  if (def.behavior && def.behavior.mode === 0) {
+    if (inN === 3 && (def.behavior.word & 0xff) === MUX_WORD_2TO1) return "MUX";
+    const g = recognizeGate(def.behavior.word, inN);
+    if (g && DRAWABLE_GATES.has(g)) return g;
+  }
+  const a = analyzeCell({
+    graph: def.graph,
+    frameId: def.frameId,
+    pinRoles: def.pinRoles ?? [],
+    pinNames: def.pinNames,
+    resolveCell: getUserIc,
+  });
+  if (a.sequential) {
+    // A direct feedback loop with no registered sub-cell ⇒ the primitive level-sensitive LATCH; built FROM
+    // registered stages ⇒ a flop (one data bit) or a register word (several), keyed by data WIDTH (a
+    // master/slave DFF is 2 latches but still ONE data bit, so don't count sub-cells for DFF-vs-REG).
+    const hasRegSub = def.graph.components.some(
+      (c) =>
+        c.id !== def.frameId && (getUserIc(c.kind)?.behavior?.mode ?? 0) >= 1,
+    );
+    if (!hasRegSub) return "DLATCH";
+    return a.dataInputs.length >= 2 ? "REG" : "DFF";
   }
   return null;
 }

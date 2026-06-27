@@ -18,10 +18,10 @@
 // (ADR 0005 "seal-as-same-netlist").
 import { Container, Graphics, Point } from "pixi.js";
 import { PALETTE, PART_KINDS, isJunctionRef, isFreeFormFrame } from "./graph";
-import { isUserIc, getUserIc, recognizeGate } from "./userIc";
+import { isUserIc, getUserIc, cellSymbol } from "./userIc";
 import {
   drawGlyphIn,
-  drawGateBodySymbol,
+  drawCellSymbol,
   drawUserIcPackageBody,
   userIcBodyBox,
   pinLeadRoot,
@@ -787,18 +787,13 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       );
     }
 
-    // SUB-CELL SYMBOL (owner refinement): a non-recursing nested user IC wears its OWN gate symbol on its
-    // body — exactly like the top level (board.ts) — so each sub-system reads as what it IS until you dive
-    // into it. It fades across the run-up to the cell's own open bar (absScale → internalsZoom), where the
-    // recursion takes over. Reuses `recognizeGate` + `drawGateBodySymbol` (pure Graphics, no text), pooled
-    // per slot in `symG` and torn down with the holder on pool shrink.
+    // SUB-CELL SYMBOL (owner refinement): a non-recursing nested user IC wears its OWN schematic symbol on
+    // its body — exactly like the top level (board.ts) — so each sub-system reads as what it IS until you
+    // dive into it. It fades across the run-up to the cell's own open bar (absScale → internalsZoom), where
+    // the recursion takes over. Reuses `cellSymbol` + `drawCellSymbol` (pure Graphics, no text), pooled per
+    // slot in `symG` and torn down with the holder on pool shrink.
     const subDef = isUserIc(part.kind) ? getUserIc(part.kind) : undefined;
-    const subGate = subDef?.behavior
-      ? recognizeGate(
-          subDef.behavior.word,
-          subDef.pinRoles?.filter((r) => r === "in").length ?? 0,
-        )
-      : null;
+    const subGate = subDef ? cellSymbol(subDef) : null;
     if (subGate) {
       let symG = slot.symG;
       if (!symG) {
@@ -816,7 +811,7 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
       const subWPx = (kind.w - 1) * PITCH;
       const subHPx = (kind.h - 1) * PITCH;
       const ss = Math.min(subWPx, subHPx);
-      drawGateBodySymbol(
+      drawCellSymbol(
         symG,
         subGate,
         subWPx / 2,

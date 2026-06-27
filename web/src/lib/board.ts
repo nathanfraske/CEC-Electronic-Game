@@ -57,7 +57,7 @@ import {
   previewRegion,
   isUserIc,
   resolveUserIc,
-  recognizeGate,
+  cellSymbol,
   type UserIc,
   type RegionCapture,
   type RegionBox,
@@ -65,7 +65,7 @@ import {
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import {
   drawGlyph,
-  drawGateBodySymbol,
+  drawCellSymbol,
   flowStabilized,
   isSymbol,
   setGlyphStyle,
@@ -7599,10 +7599,13 @@ class ComponentNode {
       const t = new Text({
         text: lbl,
         style: {
-          fill: this.color,
+          // A calm telemetry grey + a dark halo so the pin name reads cleanly OVER the pink leads/symbol
+          // around it instead of merging with them (owner: keep the labels visually distinct).
+          fill: PALETTE.dim,
           fontFamily: "IBM Plex Mono, monospace",
           fontSize: 9,
           fontWeight: "600",
+          stroke: { color: 0x0d0b16, width: 3 },
         },
       });
       t.anchor.set(0.5);
@@ -7842,16 +7845,11 @@ class ComponentNode {
         0,
         Math.min(1, 1 - (zoom - fadeStart) / (INTERNALS_ZOOM - fadeStart)),
       );
-      // A characterized cell recognised as a gate wears that gate's schematic symbol on its body (like a
-      // real logic chip), in place of the name designator, fading with the SAME rule as the label. Resolve
-      // the SELECTED variant so a family member shows ITS own characterized gate symbol, not the default's.
+      // A recognised cell wears its schematic SYMBOL on its body (a gate face, or a DFF/latch/register/mux/
+      // adder/… face from `cellSymbol`), in place of the name designator, fading with the SAME rule as the
+      // label. Resolve the SELECTED variant so a family member shows ITS own face, not the default's.
       const gdef = resolveUserIc(this.kindTag, this.component.variant ?? 0);
-      const gname = gdef?.behavior
-        ? recognizeGate(
-            gdef.behavior.word,
-            gdef.pinRoles?.filter((r) => r === "in").length ?? 0,
-          )
-        : null;
+      const gname = gdef ? cellSymbol(gdef) : null;
       if (gname) {
         this.symbolGlyph.visible = true;
         this.symbolGlyph.alpha = fadeAlpha;
@@ -7883,7 +7881,7 @@ class ComponentNode {
             .lineTo(pin.x, pin.y)
             .stroke(lead);
         }
-        drawGateBodySymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
+        drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
         this.label.alpha = 0; // the symbol is the body identity; hide the name
       } else {
         this.label.alpha = fadeAlpha;
@@ -8091,7 +8089,8 @@ class ComponentNode {
           zoom >= DETAIL_ZOOM);
     const lcx = this.wPx / 2;
     const lcy = this.hPx / 2;
-    const LABEL_MARGIN = 12; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
+    const LABEL_MARGIN = 14; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
+    const LEAD_CLEAR = 7; // px the label slides ALONGSIDE its lead so the trace doesn't pierce the text
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       // Park the label at the PACKAGE pin position (the compact footprint edge — spread across the
@@ -8100,15 +8099,28 @@ class ComponentNode {
       // the names colliding (a SOT-23 die crushes to a few px), so the label rides the package edge.
       const p = this.pinPositions[i];
       if (showPins && p) {
-        // Park the label OUTSIDE the chip, on the edge this pin sits on — NOT on top of the body.
-        // Push it out from the footprint centre along the pins' edge axis, then rotate that offset
-        // point with the part so the label tracks the pin's real edge at every rotation/mirror. The
-        // text itself stays upright (it lives on the un-rotated `view`).
-        let ox = 0;
-        let oy = 0;
-        if (this.labelPushVertical)
-          oy = p.y >= lcy ? LABEL_MARGIN : -LABEL_MARGIN;
-        else ox = p.x >= lcx ? LABEL_MARGIN : -LABEL_MARGIN;
+        // Place the label OUTSIDE the chip and BESIDE its lead, never on top of it, oriented ALONGSIDE the
+        // pin. Classify THIS pin's edge from its offset to the footprint centre (a 4-edge chip needs a
+        // per-pin decision, not one per-part axis; a perfect corner tie falls back to the part's dominant
+        // edge axis): push it outboard on the lead's axis (LABEL_MARGIN) and nudge it sideways off the
+        // lead (LEAD_CLEAR). A top/bottom-edge pin (vertical lead) turns its label 90° to run up the lead;
+        // a left/right-edge label stays flat. Rotate the offset point with the part so placement tracks
+        // rotation/mirror (the text itself lives on the un-rotated `view`).
+        const dx = p.x - lcx;
+        const dy = p.y - lcy;
+        const adx = Math.abs(dx);
+        const ady = Math.abs(dy);
+        const horizontalEdge =
+          adx === ady ? !this.labelPushVertical : adx > ady;
+        let ox: number;
+        let oy: number;
+        if (horizontalEdge) {
+          ox = dx >= 0 ? LABEL_MARGIN : -LABEL_MARGIN;
+          oy = (dy >= 0 ? 1 : -1) * LEAD_CLEAR;
+        } else {
+          oy = dy >= 0 ? LABEL_MARGIN : -LABEL_MARGIN;
+          ox = (dx >= 0 ? 1 : -1) * LEAD_CLEAR;
+        }
         const r = rotPx(
           p.x + ox,
           p.y + oy,
@@ -8116,6 +8128,10 @@ class ComponentNode {
           this.component.mirror,
         );
         t.position.set(r.x, r.y);
+        // A vertical-lead label runs alongside the lead (−90°, reading bottom-up); an edge label stays
+        // flat. (Orientation from the un-rotated edge — correct for an upright chip; a rotated user-IC
+        // chip keeps correct PLACEMENT, an accepted edge case for the glyph orientation.)
+        t.rotation = horizontalEdge ? 0 : -Math.PI / 2;
         t.visible = true;
       } else {
         t.visible = false;
