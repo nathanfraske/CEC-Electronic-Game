@@ -1239,8 +1239,13 @@ export function derivePinRoles(
 }
 
 /** Map a pin NAME (upper-cased) to the SEMANTIC role it implies, or undefined. Common synonyms:
- * VCC/VDD/VS → vcc; GND/VSS/GROUND → gnd; CLK/CLOCK/CK → clk; Y/Q/OUT/O/F → out; A/B/C/D/IN/I → in;
- * IO/INOUT/BIDIR/BUS → inout. Used by {@link derivePinRoles} and the builder's auto-role-from-name. */
+ * VCC/VDD/VS → vcc; GND/VSS/GROUND → gnd; CLK/CLOCK/CK → clk; OUTPUTS Y/Q/OUT/O/F plus QB/QN/NQ (Q-bar)
+ * and SUM/COUT (adder); INPUTS A/B/C/D/IN/I plus the control family CLR/CLEAR/RST/RESET/MR (clear),
+ * PRE/PRESET/SET (preset), EN/ENABLE/OE (enable), SEL/SELECT/LD/LOAD (select/load), CE/CS/WE/RE (memory)
+ * and J/K/T/CIN (flip-flop & adder data); IO/INOUT/BIDIR/BUS → inout. A trailing COMPLEMENT marker
+ * (`_BAR` / `-BAR` / `BAR` / `_B` / `_N`) or a BUS INDEX (`Q0`, `D3`, `A1`) resolves to the BASE name's role
+ * — an active-low EN_BAR is still an input, a Q_BAR / Q2 still an output. Used by {@link derivePinRoles}
+ * and the builder's auto-role-from-name. */
 export function roleFromName(n: string): PinRole | undefined {
   switch (n) {
     case "VCC":
@@ -1255,27 +1260,65 @@ export function roleFromName(n: string): PinRole | undefined {
     case "CLOCK":
     case "CK":
       return "clk";
+    // OUTPUTS: data outputs, complemented (Q-bar) outputs, and adder sum / carry-out.
     case "Y":
     case "Q":
     case "OUT":
     case "O":
     case "F":
+    case "QB":
+    case "QN":
+    case "NQ":
+    case "SUM":
+    case "COUT":
       return "out";
+    // INPUTS: data, clear/reset/preset/set, enable/output-enable, select/load, memory control, and
+    // flip-flop / adder data. (Complemented forms like ENB/SEL_BAR fall through to the bar-strip below.)
     case "A":
     case "B":
     case "C":
     case "D":
     case "IN":
     case "I":
+    case "CLR":
+    case "CLEAR":
+    case "RST":
+    case "RESET":
+    case "MR":
+    case "PRE":
+    case "PRESET":
+    case "SET":
+    case "EN":
+    case "ENABLE":
+    case "ENB":
+    case "OE":
+    case "OEB":
+    case "SEL":
+    case "SELECT":
+    case "LD":
+    case "LOAD":
+    case "CE":
+    case "CS":
+    case "WE":
+    case "RE":
+    case "J":
+    case "K":
+    case "T":
+    case "CIN":
       return "in";
     case "IO":
     case "INOUT":
     case "BIDIR":
     case "BUS":
       return "inout";
-    default:
-      return undefined;
   }
+  // A COMPLEMENTED (active-low / "bar") pin keeps its base name's role (an enable's inverse is still an
+  // input, an output's inverse still an output), and a BUS-INDEXED pin keeps its base letter's role
+  // (Q0/Q1/Q2/Q3 → out, D0..D3 / A1 → in). Strip a trailing bar marker OR a numeric index and resolve the
+  // base — guarded so a bare/empty result (the literal "BAR", or "0") can't recurse.
+  const base = n.replace(/(?:[_-]?BAR|[_-][BN]|[_-]?\d+)$/, "");
+  if (base && base !== n) return roleFromName(base);
+  return undefined;
 }
 
 /** The integration-scale bands (real VLSI ladder), a derived display/sort label. */

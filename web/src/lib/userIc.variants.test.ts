@@ -35,6 +35,7 @@ import {
   tapeOut,
   isReservedTag,
   derivePinRoles,
+  roleFromName,
   integrationTier,
   type UserIc,
 } from "./userIc";
@@ -449,6 +450,65 @@ describe("IC variants — determinism contract", () => {
     // integrationTier counts active devices over the expansion (the die frame is skipped): a 1-part
     // cell is SSI.
     expect(integrationTier(rPackageDef("TierR", 1000))).toBe("SSI");
+  });
+
+  it("roleFromName recognizes the control-pin family + complemented (bar) names", () => {
+    // The original synonyms still resolve.
+    expect(roleFromName("VCC")).toBe("vcc");
+    expect(roleFromName("GND")).toBe("gnd");
+    expect(roleFromName("CLK")).toBe("clk");
+    expect(roleFromName("Q")).toBe("out");
+    expect(roleFromName("D")).toBe("in");
+    // Clear / reset / preset / set are control INPUTS (the bug: "CLR" used to fall through to undefined,
+    // so an added clear pin carried no role and the characterization sweep skipped it).
+    for (const n of [
+      "CLR",
+      "CLEAR",
+      "RST",
+      "RESET",
+      "MR",
+      "PRE",
+      "PRESET",
+      "SET",
+    ])
+      expect(roleFromName(n)).toBe("in");
+    // Enable / select / load / memory / FF+adder data — also inputs.
+    for (const n of [
+      "EN",
+      "ENABLE",
+      "OE",
+      "SEL",
+      "LD",
+      "LOAD",
+      "CE",
+      "WE",
+      "J",
+      "K",
+      "T",
+      "CIN",
+    ])
+      expect(roleFromName(n)).toBe("in");
+    // Complemented outputs (Q-bar) + adder outputs.
+    for (const n of ["QB", "QN", "NQ", "SUM", "COUT"])
+      expect(roleFromName(n)).toBe("out");
+    // A trailing bar marker resolves to the BASE name's role (active-low input stays in; out-bar stays out).
+    expect(roleFromName("EN_BAR")).toBe("in"); // enable complement
+    expect(roleFromName("ENB")).toBe("in");
+    expect(roleFromName("SEL_BAR")).toBe("in"); // the latch's select complement
+    expect(roleFromName("Q_BAR")).toBe("out");
+    expect(roleFromName("QBAR")).toBe("out");
+    expect(roleFromName("CLK_N")).toBe("clk"); // clock complement keeps the clk role
+    // A BUS INDEX resolves to the base letter's role (the 4-bit register's Q0..Q3 / D0..D3 bug).
+    for (const n of ["Q0", "Q1", "Q2", "Q3"])
+      expect(roleFromName(n)).toBe("out");
+    for (const n of ["D0", "D3", "A1", "B2"])
+      expect(roleFromName(n)).toBe("in");
+    expect(roleFromName("Q0_BAR")).toBe("out"); // indexed + complemented
+    expect(roleFromName("CLK0")).toBe("clk");
+    // Still undefined for genuinely unknown names (no false positives), incl. the bare bar marker / index.
+    expect(roleFromName("FOO")).toBeUndefined();
+    expect(roleFromName("BAR")).toBeUndefined();
+    expect(roleFromName("0")).toBeUndefined();
   });
 
   it("tape out (P3b): promotes a subassembly to a board IC; re-package grows pins; no-op on an IC", () => {
