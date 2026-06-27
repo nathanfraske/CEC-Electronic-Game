@@ -30,12 +30,19 @@ focus + highlight the SAME electrical net like KiCad (ground / +5V), **by real n
   triggered on `startWiring`/`cancelWiring`. Pin labels now focus in WIRE mode OR while dragging a wire
   (any tool). `startWireFromPin` / `__cecWireFrom` harness accessor. Render-verified: wiring from a GND
   pin lit the whole GND net amber, non-GND traces normal, all pins labelled.
-- [ ] **Phase 2 — net highlight on HOVER** (not just while wiring) + highlight the net's PINS (rings), and
-  on a wire/pin select. Dim off-net for contrast (KiCad's "bring the net forward").
+- ~~**Phase 2 — net highlight on HOVER + pin rings + dim off-net**~~ (PR, CI). `activeNetNode` →
+  `highlightNet` (routing source net, else `hoverNet` from an idle hover over a pin/trace via `snapProbe`,
+  gated to BUILD/`wire` modes + suppressed mid-gesture). `drawNetFocus` lays amber pin RINGS (dark underlay
+  + bright amber, so they read on the rail-coloured traces) on a new `netFocusLayer` above the parts; the
+  node loop dims OFF-net parts via `node.view.alpha` (`NET_DIM_ALPHA` 0.45, composes with the per-child
+  fades; die frame never dims). Render-verified on the reg bench: hovering the V net lit it amber, ringed
+  its pins, and faded the PULSE + resistor. Wiring gets the same treatment (a superset of Phase 1).
 - [ ] **Phase 3 — label declutter (1+2)** — collision-resolve pass (nudge/hide by priority out>in>chip) +
   zoom/focus reveal, so a dense part's pin labels + the value chip stop overlapping when NOT wiring.
-- [ ] **Polish** — highlight colour/width tune; the value-chip lands among pin labels on short parts until
-  Phase 3 re-lays them.
+- [ ] **Polish** — off-net WIRE dimming (only the component BODIES dim today; the wire loop's per-stroke
+  alphas were left untouched as too invasive — the amber halo already differentiates on-net traces);
+  highlight colour/width tune; per-frame on-net set could be cached if boards get large; the value-chip
+  lands among pin labels on short parts until Phase 3 re-lays them.
 
 ---
 
