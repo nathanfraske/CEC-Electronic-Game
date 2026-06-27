@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (185) — Characterization faithfulness + load-conflict library merge
+
+Char. fixes merged (PR #272); load-conflict merge on the branch. Web-only, golden untouched, 214 web tests.
+- ~~**`roleFromName` control family + bar + bus index**~~ — CLR/RST/EN/OE/SEL/LD/CE/WE/J/K/T/CIN → in;
+  ENB/Q_BAR → base role; Q0..Q3 → out, D0..D3 → in. [PR #272]
+- ~~**True-clock ⇒ sequential**~~ (`cellAnalysis` `isTrueClock`) — a CLK pin routes a register to the
+  fail-safe sequential sweep (refuse → discrete) instead of a combinational `word:0`; CLK wins over LD. [#272]
+- ~~**Clear stale behavior on characterize refuse**~~ — re-characterizing heals a `word:0`/stale cell. [#272]
+- ~~**`importUserIcs` (load-conflict merge)**~~ — merge a save's embedded library without clobbering: dedup
+  identical, import a divergent same-tag def under `"<tag> (2)"` + `applyTagRemap` the loaded board/inner
+  dies onto it; leaf-first, free-form frames + family sidecars remapped. Wired into all 4 board-load paths.
+- [ ] **Sequential characterization (A2)** — bit-slice recognition + state×inputs next-state table + OE
+  tri-state wrapper + a next-state-table/waveform panel (brainstormed; maps to #48/#35). Owner to steer.
+- [ ] **Heal existing saves** — re-characterize the affected register/latch (or run discrete) to drop the
+  baked-in `word:0`; re-derive roles (re-open pin / re-seal) to pick up the new `roleFromName` mappings.
+
+---
+
 ## 2026-06-27 (184) — Wire-mode pin labels + power carriers in the opened sub-assembly
 
 Merged to `main` (PR #270, #271). Web-only, golden untouched, 204 web tests (+4).

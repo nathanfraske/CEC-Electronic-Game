@@ -10,8 +10,8 @@ import type { GraphSnapshot, HotSlot } from "./graph";
 import {
   userIcsForGraphs,
   userIcFamiliesForGraphs,
-  registerUserIcs,
-  registerUserIcFamilies,
+  importUserIcs,
+  applyTagRemap,
   type UserIc,
   type UserIcFamilySidecar,
 } from "./userIc";
@@ -130,14 +130,18 @@ export function loadBoard(
     if (!obj || !Array.isArray(obj.components) || !Array.isArray(obj.wires)) {
       return null;
     }
-    if (parsed && typeof parsed === "object" && "userIcs" in parsed) {
-      registerUserIcs((parsed as BoardBlob).userIcs ?? []);
-    }
-    // Regroup any embedded variant families from the sidecar AFTER the flat defs (which include the
-    // child tags) are registered, so a restored board's placed family tags resolve + show their
-    // variant picker on cold start. Absent for single-variant boards (a no-op).
-    if (parsed && typeof parsed === "object" && "userIcFamilies" in parsed) {
-      registerUserIcFamilies((parsed as BoardBlob).userIcFamilies);
+    // MERGE the embedded library without clobbering (importUserIcs regroups variant families too). On a
+    // cold-start restore the registry is empty, so nothing conflicts and `remap` is empty — byte-identical
+    // to the old register-and-return; the remap only bites if the registry already holds a DIFFERENT
+    // version of a tag (then the loaded board is rewritten onto the imported copies).
+    let remap = new Map<string, string>();
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      ("userIcs" in parsed || "userIcFamilies" in parsed)
+    ) {
+      const b = parsed as BoardBlob;
+      remap = importUserIcs(b.userIcs ?? [], b.userIcFamilies).remap;
     }
     // Restore the in-progress dies into the live map (cleared first), so re-drilling a placed frame
     // finds its saved WIP. Only when the caller hands us the map; an absent field clears it to empty.
@@ -146,9 +150,15 @@ export function loadBoard(
         parsed && typeof parsed === "object" && "innerDies" in parsed
           ? (parsed as BoardBlob)
           : undefined;
-      restoreInnerDies(blob?.innerDies, innerGraphs);
+      restoreInnerDies(
+        blob?.innerDies?.map((d) => ({
+          ...d,
+          graph: applyTagRemap(d.graph, remap),
+        })),
+        innerGraphs,
+      );
     }
-    return obj;
+    return applyTagRemap(obj, remap);
   } catch {
     return null;
   }

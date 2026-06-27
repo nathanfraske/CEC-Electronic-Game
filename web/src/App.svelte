@@ -80,8 +80,8 @@
     roleFromName,
     registerUserIc,
     createBlankFreeFormSubassembly,
-    registerUserIcs,
-    registerUserIcFamilies,
+    importUserIcs,
+    applyTagRemap,
     userIcsForGraphs,
     userIcFamiliesForGraphs,
     userIcVariants,
@@ -2450,8 +2450,9 @@
 
       // Register the personal IC library into PART_KINDS / REGISTRY / FAMILIES BEFORE loadBoard /
       // example restore, so a restored board's placed library ICs resolve even if its embedded
-      // `userIcs` were trimmed (loadBoard's own registerUserIcs then harmlessly upserts the board's
-      // embedded copies on top). Purely additive; an empty library registers nothing (golden-safe).
+      // `userIcs` were trimmed (loadBoard's own importUserIcs then merges the board's embedded copies
+      // without clobbering — an identical copy dedups, a divergent one imports beside it). Purely
+      // additive; an empty library registers nothing (golden-safe).
       registerLibrary();
       libRev++; // surface any library ICs in the "My ICs" bin on first paint
 
@@ -2476,10 +2477,12 @@
               ? parsed.graph
               : (parsed as unknown as GraphSnapshot);
           if (fg && Array.isArray((fg as GraphSnapshot).components)) {
-            registerUserIcs(parsed.userIcs ?? []);
-            registerUserIcFamilies(parsed.userIcFamilies);
+            const { remap } = importUserIcs(
+              parsed.userIcs ?? [],
+              parsed.userIcFamilies,
+            );
             libRev++;
-            board.loadGraph(fg as GraphSnapshot);
+            board.loadGraph(applyTagRemap(fg as GraphSnapshot, remap));
             board.fitView(); // frame the injected circuit (it may be placed far off-origin)
             controls?.pause();
             syncRunning();
@@ -3965,12 +3968,19 @@
         // any variant families from the sidecar (after the flat defs, which include the child tags) so a
         // placed family tag resolves + shows its variant picker. Bump libRev so any newly-registered
         // single ICs surface in "My ICs" (families show after a placement embeds + the user saves).
+        let importRemap = new Map<string, string>();
         if (parsed && parsed.format === "cec-circuit") {
-          registerUserIcs(parsed.userIcs ?? []);
-          registerUserIcFamilies(parsed.userIcFamilies);
+          // MERGE the embedded library WITHOUT clobbering yours: a conflicting tag imports under a FRESH
+          // tag, and `importRemap` rewrites the loaded board onto the imported copies — so opening an old
+          // save can't downgrade a sub-assembly you've since improved (and a shared circuit keeps its
+          // author's intended design). `applyTagRemap` is a no-op when nothing clashed.
+          importRemap = importUserIcs(
+            parsed.userIcs ?? [],
+            parsed.userIcFamilies,
+          ).remap;
           libRev++;
         }
-        const snap = graph as GraphSnapshot;
+        const snap = applyTagRemap(graph as GraphSnapshot, importRemap);
         // A RAW die snapshot saved in isolation (a `__DIE_*` graph — the owner's existing die files):
         // open it straight into the die BUILDER instead of dropping the die-frame as a flat part.
         // resetDieState() already cleared innerGraphs; openDieGraphInBuilder rebuilds it + drills in.
@@ -3984,7 +3994,13 @@
         // A normal board: restore any embedded in-progress (unsealed) dies into innerGraphs BEFORE the
         // outer board loads, so re-drilling a placed frame resumes its WIP (an older save with no
         // innerDies clears the map to empty — exactly as before).
-        restoreInnerDies(parsed?.innerDies, innerGraphs);
+        restoreInnerDies(
+          parsed?.innerDies?.map((d) => ({
+            ...d,
+            graph: applyTagRemap(d.graph, importRemap),
+          })),
+          innerGraphs,
+        );
         board?.loadGraph(snap);
         demo = null;
         showIntro = false;
