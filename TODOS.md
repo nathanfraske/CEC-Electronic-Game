@@ -6,7 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-27 (202) — ALU verified correct; CLK-coupling engine bug; test-bench feature (owner)
+## 2026-06-27 (203) — Engine CLK-bug narrowed; test-bench design doc (owner)
+
+- ~~**Test-bench design doc**~~: `docs/ui/test-bench-design.md` (3-voice panel synthesis). The drive→step→
+  read→compare engine already exists (`characterize`/`sequentialTrace`/`sweepNetlist`); two doors; step-
+  until-stable; per-bit verdict; divide-and-conquer auto-bisection; Probe Debug Helper for all ages;
+  golden-safe. Build order cheap→big inside the doc.
+- [ ] **Engine CLK-coupling bug — ROOT-CAUSE + FIX (golden-sensitive → owner greenlight).** Narrowed hard:
+  ALU design is correct (CLK=0 fully correct); NOT iteration cap (400 didn't fix; golden held); NOT a
+  netlist node-merge (flatten dump: all ids unique, no collapse); NOT settling; core stamps nodes verbatim.
+  A clocked register perturbs an electrically-isolated combinational result only at SCALE. Next: add a
+  temporary sim-core node-voltage dump, run the full ALU at CLK=0 vs CLK=1, find the node that diverges
+  where it shouldn't, trace its MNA stamp. Likely a sim-core solver fix → moves the golden → regenerate +
+  document per `docs/determinism.md`. CRITICAL for the CPU goal (clocked seq + big combinational).
+- [ ] **Test-bench: build cheap wins first** (pin card, "Check It", input renderers, spotlight-the-suspect
+  via existing `NET_DIM_ALPHA`, "Debug this →" on FAIL, settle chip) — see the doc's build order.
+- [ ] **`state_hash()` sim-core accessor** (hash minus `tick`, read-only, golden-irrelevant) → one-compare
+  step-until-stable detector for the bench.
 
 - ~~**4-BIT FULL ALU verified**~~: the DESIGN is correct. With CLK=0 it computes every op correctly
   (AND(6,2)=2, NOT-A(3)=12, ADD/SUB/XOR/OR all good). The earlier "AND/NOT-A wrong" was a **CLK=1 artifact**.
