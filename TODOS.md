@@ -6,6 +6,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-26 (183) — Cell schematic symbols (library + auto-recognition + pin labels)
+
+Merging to `main`. Web-only, golden untouched, 200 web tests.
+- ~~**`drawCellSymbol` library**~~ — DFF/DLATCH/REG/HADD/FADD/MUX/TRI/ARRAY faces (+ gates delegate).
+- ~~**`cellSymbol` auto-recognition**~~ — override(validated)→name→gate/2:1-MUX truth-table→sequential class
+  (DLATCH / DFF / REG by data width); memoized; wired into board.ts + the zoom-to-open recursion.
+- ~~**Pin-label refine**~~ — calm grey + halo, beside the lead (no pierce), per-pin edge, top/bottom rotated.
+- ~~**Override-validation fix**~~ — an unknown `symbol` falls through to auto (no blank chip); +cellSymbol tests.
+- [ ] **Face TEXT labels** (D/CLK/Q, Σ) — a vector stroke-font in `drawCellSymbol` (no Pixi text); spec'd, offered.
+- [ ] **Symbol PICKER** dropdown in the seal panel (the `UserIc.symbol` field already works); spec'd, offered.
+
+---
+
 ## 2026-06-26 (182) — Zoom-to-open LOD refinements + onboarding off
 
 Merging to `main`. Web-only, golden untouched, 194 web tests.
