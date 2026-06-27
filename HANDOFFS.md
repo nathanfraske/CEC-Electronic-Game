@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-27 (184) — Wire-mode pin labels + power carriers in the opened sub-assembly
+
+**State:** 🟢 merged to `main` (PR #270, #271). **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 204 web
+tests (+4), full gate green.** Two owner asks, both render-only:
+
+- **Wire-mode pin labels (PR #270).** In WIRE mode every pin label on the CURRENT layer is forced visible at
+  any zoom (owner: "show all pin labels regardless of zoom, but only the current layer"). Threaded
+  `this.mode === "wire"` into `ComponentNode.update` → OR'd into `showPins`. These placed nodes ARE the
+  current layer; the recursive zoom-to-open sub-cell labels are a deeper layer and stay zoom-gated. A
+  revealed-zoomed-out label counter-scales UP to a readable floor (`WIRE_LABEL_MIN = 2.5`); the two agree at
+  any zoom ≥ that, so toggling wire mode is seamless. (The junction-wiring-in-sub-assembly bug was PR #269.)
+
+- **Power carriers in the sub-assembly (PR #271).** Zoom-to-open inner wires now flow charge carriers like
+  the board (the deferred flow-dots TODO). Extracted the board's spanning-forest KCL per-wire current solver
+  into a PURE `solveWireFlow(wires, electrical)` in `boardRender.ts` (board.ts delegates — behaviour-
+  preserving; now has 4 unit tests: series, KCL junction split, AC tint, empty). `userIcInternalsView` feeds
+  it each inner part's REAL current (`elemCurrents[part.elemIndex]`, injected at the part's authored `id` — a
+  new `UserIcInnerPart.id` field) and walks belt chevrons (schematic) / drift dots (analogy water · reality
+  electrons) along each live wire's route, scrolled by the shared `phase` — speed constant, direction follows
+  the current sign, recursive at every nested depth. Idle/static-logic nets stay calm (honest: static CMOS
+  draws ~no current; flow shows on power rails + resistive paths). **Best verified visually** by the owner.
+
+**Deferred follow-ups (still open, owner-offered):** face TEXT labels (D/CLK/Q, Σ — vector stroke-font);
+symbol PICKER dropdown in the seal panel; per-net voltage gauges/standpipes in the opened view (the other
+half of the old flow-dots TODO).
+
+---
+
 ## 2026-06-26 (183) — Cell schematic symbols: library + auto-recognition + pin-label refine
 
 **State:** 🟢 merging to `main`. **Web-only, golden `0xeaac_3764_99e4_fa24` untouched, 200 web tests, full

@@ -31,6 +31,8 @@ import {
 } from "./glyphs";
 import {
   PITCH,
+  PIPE_WATER,
+  COND_ELEC,
   cellToWorld,
   conduitDrawRoute,
   dirBit,
@@ -43,6 +45,11 @@ import {
   polyline,
   roundedPoints,
   routeForWire,
+  routeLength,
+  beltDots,
+  sampleRouteAt,
+  drawChevron,
+  solveWireFlow,
   voltageColor,
   type BoardLens,
 } from "./boardRender";
@@ -200,6 +207,20 @@ function slotOf(holder: Graphics): SlotRecord {
  * smaller than the placed chip's ×7 cap, so the inner labels read as "the pins, just smaller". */
 const INNER_LABEL_MIN_SCALE = 1.6;
 const INNER_LABEL_CAP = 5;
+
+// POWER CARRIERS along the inner wires (owner: "power carriers animating within the sub-assembly"). These
+// mirror the board's belt model in WORLD px (the container scale shrinks them with everything else), so an
+// opened sub-assembly's wires flow exactly like the board: speed CONSTANT (only direction follows the
+// current sign), magnitude sets density + size. `CARRIER_PX_RATE` (px advanced per `phase` unit) matches
+// the board, so the inner carriers scroll in lock-step with the parent board's; `phase` IS the shared flow
+// clock, so the redraw stays stateless (no per-frame offset accumulator needed at this layer).
+const CARRIER_PX_RATE = 100;
+const CARRIER_I_REF = 0.01; // 10 mA full-scale, the board's I_REF (sets density/size, never speed)
+const CARRIER_MIN_NORM = 0.02; // below this normalised current a wire reads as idle (no carriers)
+const CARRIER_SPACING_MAX = 46; // sparse at low current
+const CARRIER_SPACING_MIN = 16; // dense at high current
+const CARRIER_CHEVRON_MIN = 3.0;
+const CARRIER_CHEVRON_MAX = 6.5;
 
 export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
   const {
@@ -563,9 +584,62 @@ export function drawUserIcInternals(g: Graphics, o: UserIcInternalsOpts): void {
     }
   }
 
-  // TODO(phase-0-followup): per-net voltage gauges/standpipes (drawNetBars/drawNetStandpipes) and the
-  // carrier flow-dots (beltDots/sampleRouteAt) — additive, need a per-inner-wire current the struct
-  // doesn't carry yet.
+  // --- POWER CARRIERS: animate charge along each LIVE inner wire (owner: "power carriers animating within
+  // the sub-assembly"). Per-wire branch current via the SAME spanning-forest KCL the board runs
+  // (`solveWireFlow`), fed by each inner part's REAL solved current (`elemCurrents[part.elemIndex]`, injected
+  // at the part's authored id, which the inner wires reference); then belt chevrons (schematic) or drift
+  // dots (conduit) walk the wire's DRAWN route (`condRoutes`), scrolled by the shared flow `phase`. Speed is
+  // CONSTANT — only DIRECTION follows the current sign, and reality electrons drift AGAINST it — exactly
+  // like the board, so the opened chip flows in lock-step with its parent. Drawn into `innerG` AFTER the
+  // wire skins, so carriers ride ON the pipes. Only when the board solves (`elemCurrents` present); the
+  // static unpowered fallback stays at rest. (Per-net voltage gauges/standpipes remain a separate
+  // follow-up.) ---
+  if (elemCurrents && !degenerate) {
+    const innerElec = new Map<number, { current: number }>();
+    for (const part of parts) {
+      if (part.elemIndex === undefined) continue;
+      innerElec.set(part.id, { current: elemCurrents[part.elemIndex] ?? 0 });
+    }
+    const flow = solveWireFlow(innerGraph.wires.values(), innerElec);
+    const reality = lens === "reality";
+    for (const [wid, f] of flow) {
+      const normC = Math.min(1, Math.abs(f.current) / CARRIER_I_REF);
+      if (normC < CARRIER_MIN_NORM) continue; // idle wire — no carriers
+      const rd = condRoutes.get(wid);
+      if (!rd || rd.length < 2) continue;
+      const rounded = roundedPoints(rd, PW * 2);
+      const len = routeLength(rounded);
+      if (len <= 0) continue;
+      const dir = f.current >= 0 ? 1 : -1;
+      const drift = reality ? -dir : dir; // reality electrons drift AGAINST conventional current
+      const offset = (((phase * CARRIER_PX_RATE * drift) % len) + len) % len;
+      const spacing =
+        CARRIER_SPACING_MAX -
+        (CARRIER_SPACING_MAX - CARRIER_SPACING_MIN) * normC;
+      const color = colorOf.get(wid) ?? PALETTE.cyan;
+      for (const d of beltDots(len, spacing, offset)) {
+        const sm = sampleRouteAt(rounded, d);
+        if (schematic) {
+          drawChevron(
+            innerG,
+            sm.x,
+            sm.y,
+            sm.dx * dir,
+            sm.dy * dir,
+            color,
+            0.32 + 0.42 * normC,
+            CARRIER_CHEVRON_MIN +
+              (CARRIER_CHEVRON_MAX - CARRIER_CHEVRON_MIN) * normC,
+          );
+        } else {
+          innerG.circle(sm.x, sm.y, 1.5 + 1.2 * normC).fill({
+            color: reality ? COND_ELEC : PIPE_WATER,
+            alpha: 0.3 + 0.32 * normC,
+          });
+        }
+      }
+    }
+  }
 
   // --- INNER PARTS: each draws its REAL glyph into its pooled child Graphics at WORLD scale (the
   // container does the shrink). Positioned at the part's authored anchor cell × PITCH, pins at the

@@ -598,6 +598,10 @@ export interface CompositeInternals {
  * composite's {@link CompositeSubElement} (a generic-grid sub-element), this keeps the real kind tag
  * and the player's drawn position so the view can render the EXACT circuit's glyphs in place. */
 export interface UserIcInnerPart {
+  /** the inner component's AUTHORED graph id (`Component.id` within `innerGraph`), so the zoom-to-open
+   * replica can inject this part's current at its pin endpoints when solving per-inner-wire branch flow
+   * (`solveWireFlow`) — the wires reference these same authored ids. Render-only; never hashed. */
+  id: number;
   /** the inner component's kind tag (a real part — keys `PART_KINDS`). */
   kind: string;
   /** the authored anchor cell (the inner graph's component cell, the part's footprint top-left). */
@@ -713,6 +717,7 @@ export function userIcGeometry(def: UserIc): UserIcInternals {
     const kind = PART_KINDS[comp.kind];
     if (!kind) continue;
     parts.push({
+      id: comp.id,
       kind: comp.kind,
       cell: { col: comp.cell.col, row: comp.cell.row },
       rot: comp.rot,
@@ -1688,6 +1693,7 @@ export function buildNetlist(
       const kind = PART_KINDS[comp.kind];
       if (!kind) continue;
       parts.push({
+        id: comp.id,
         kind: comp.kind,
         cell: { col: comp.cell.col, row: comp.cell.row },
         rot: comp.rot,

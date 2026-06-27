@@ -109,6 +109,7 @@ import {
   sampleRoute,
   sampleRouteAt,
   drawChevron,
+  solveWireFlow,
   drawConduitSkin,
   drawJunctionConduit,
   cellToWorld,
@@ -123,6 +124,7 @@ import {
   voltageColor,
   type Dir,
   type BoardLens,
+  type WireFlow,
 } from "./boardRender";
 // Re-export so existing importers of `BoardLens` from `./board` keep working (the type
 // itself now lives in `./boardRender`, the shared `this`-free home).
@@ -7070,130 +7072,14 @@ export class Board {
    * Render-only — never touches the sim. The shimmer handoff (`redrawWires`) reads all
    * three; the ammeter still reads the cached currents (`lastWireCurrents`).
    */
-  private computeWireFlow(): Map<
-    number,
-    { current: number; freq: number; acFrac: number }
-  > {
-    const out = new Map<
-      number,
-      { current: number; freq: number; acFrac: number }
-    >();
-    const wires = [...this.graph.wires.values()].sort((p, q) => p.id - q.id);
-    for (const w of wires) out.set(w.id, { current: 0, freq: 0, acFrac: 0 });
-    if (!this.electrical || wires.length === 0) return out;
-
-    // Per-pin injections routed through the forest: signed current (`inj`), AC-amplitude
-    // weight (`fm`), freq-weighted amplitude (`fw`), and signed DC/mean current (`dm`).
-    const inj = new Map<string, number>();
-    const fm = new Map<string, number>();
-    const fw = new Map<string, number>();
-    const dm = new Map<string, number>();
-    const add = (m: Map<string, number>, k: string, v: number): void => {
-      m.set(k, (m.get(k) ?? 0) + v);
-    };
-    for (const [compId, e] of this.electrical) {
-      add(inj, compId + ":0", -e.current); // pin a: current leaves the net
-      add(inj, compId + ":1", +e.current); // pin b: current enters the net
-      // AC weight: the element's measured AC current amplitude carries its frequency;
-      // DC elements contribute amplitude ~0 (and freq 0), so they don't tint a wire AC.
-      const amp = e.ac?.valid ? Math.abs(e.ac.iamp) : 0;
-      const f = e.ac?.valid ? e.ac.freq : 0;
-      // DC (mean) current: the element's own DC component when measured, else its plain
-      // current — separates a true AC line from a DC rail carrying a little ripple.
-      const dc = e.ac?.valid ? e.ac.imean : e.current;
-      add(dm, compId + ":0", -dc);
-      add(dm, compId + ":1", +dc);
-      for (const pin of [":0", ":1"]) {
-        add(fm, compId + pin, amp);
-        add(fw, compId + pin, amp * f);
-      }
-    }
-
-    // Adjacency over pins, edges = wires (record from/to orientation per edge).
-    interface Edge {
-      other: string;
-      wireId: number;
-      otherIsFrom: boolean;
-    }
-    const adj = new Map<string, Edge[]>();
-    const node = (k: string): Edge[] => {
-      let l = adj.get(k);
-      if (!l) {
-        l = [];
-        adj.set(k, l);
-      }
-      return l;
-    };
-    for (const k of inj.keys()) node(k);
-    for (const w of wires) {
-      // Endpoint keys span pins and junctions; a junction injects nothing, so it
-      // is just a KCL pass-through node where the branch current splits/merges.
-      const f = endpointKey(w.from);
-      const t = endpointKey(w.to);
-      node(f).push({ other: t, wireId: w.id, otherIsFrom: false });
-      node(t).push({ other: f, wireId: w.id, otherIsFrom: true });
-    }
-
-    // Spanning forest by BFS; each tree edge carries the injection sum of the
-    // subtree beyond it (oriented child → parent), plus the unsigned AC-weight sums.
-    const visited = new Set<string>();
-    for (const root of [...adj.keys()].sort()) {
-      if (visited.has(root)) continue;
-      const order: string[] = [];
-      const parent = new Map<
-        string,
-        { pin: string; wireId: number; childIsFrom: boolean }
-      >();
-      visited.add(root);
-      const queue = [root];
-      while (queue.length) {
-        const u = queue.shift()!;
-        order.push(u);
-        for (const e of adj.get(u) ?? []) {
-          if (visited.has(e.other)) continue;
-          visited.add(e.other);
-          // The child is e.other; otherIsFrom already says whether it is the
-          // wire's "from" endpoint (used to map child→parent flow onto from→to).
-          parent.set(e.other, {
-            pin: u,
-            wireId: e.wireId,
-            childIsFrom: e.otherIsFrom,
-          });
-          queue.push(e.other);
-        }
-      }
-      // Reverse-BFS (post-order): each node's subtree sums are final by the time we
-      // reach it, so record its parent edge's flow, then roll it up.
-      const sub = new Map<string, number>();
-      const subFM = new Map<string, number>();
-      const subFW = new Map<string, number>();
-      const subDM = new Map<string, number>();
-      for (const u of order) {
-        sub.set(u, inj.get(u) ?? 0);
-        subFM.set(u, fm.get(u) ?? 0);
-        subFW.set(u, fw.get(u) ?? 0);
-        subDM.set(u, dm.get(u) ?? 0);
-      }
-      for (let i = order.length - 1; i >= 0; i--) {
-        const u = order[i]!;
-        const p = parent.get(u);
-        if (!p) continue;
-        const s = sub.get(u)!;
-        const sm = subFM.get(u)!;
-        const sfw = subFW.get(u)!;
-        const sdc = Math.abs(subDM.get(u)!);
-        out.set(p.wireId, {
-          current: p.childIsFrom ? s : -s, // child→parent mapped to from→to
-          freq: sm > 1e-12 ? sfw / sm : 0, // AC-amplitude-weighted mean frequency
-          acFrac: sm + sdc > 1e-12 ? sm / (sm + sdc) : 0, // AC vs DC dominance
-        });
-        sub.set(p.pin, (sub.get(p.pin) ?? 0) + s);
-        subFM.set(p.pin, (subFM.get(p.pin) ?? 0) + sm);
-        subFW.set(p.pin, (subFW.get(p.pin) ?? 0) + sfw);
-        subDM.set(p.pin, (subDM.get(p.pin) ?? 0) + (subDM.get(u) ?? 0));
-      }
-    }
-    return out;
+  private computeWireFlow(): Map<number, WireFlow> {
+    // The per-wire branch-current solve is pure graph math (`solveWireFlow`, shared with the zoom-to-open
+    // replica so the inner circuit animates by the SAME KCL). Feed it this board's wires + element
+    // electrical; with no solve (`electrical` absent) the empty injection set yields all-zero flow.
+    return solveWireFlow(
+      this.graph.wires.values(),
+      this.electrical ?? new Map(),
+    );
   }
 
   /** Draw a schematic ground symbol + "GND 0 V" at every node-0 source pin. */

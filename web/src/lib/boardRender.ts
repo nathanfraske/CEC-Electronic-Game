@@ -15,6 +15,7 @@ import {
   rotateOffset,
   isJunctionRef,
   isPinRef,
+  endpointKey,
   type BoardGraph,
   type Cell,
   type Endpoint,
@@ -586,6 +587,157 @@ export function drawChevron(
     .lineTo(x, y)
     .lineTo(bx - px * s, by - py * s);
   g.stroke({ width: Math.max(2, s * 0.5), color, alpha });
+}
+
+/** Per-wire branch current (+ AC mean frequency and AC-vs-DC dominance), keyed by wire id. */
+export interface WireFlow {
+  /** signed branch current (A); sign sets the carrier direction. */
+  current: number;
+  /** AC-amplitude-weighted mean frequency of the branch (0 for a DC rail). */
+  freq: number;
+  /** AC vs DC dominance in [0,1] (1 ⇒ a true AC line, 0 ⇒ a DC rail with at most ripple). */
+  acFrac: number;
+}
+
+/** The minimal per-element electrical the flow forest reads; the board's `ElectricalState` satisfies it
+ * structurally. `current` is the signed two-terminal branch current; `ac` (when measured) separates a
+ * true AC line from a DC rail carrying a little ripple. */
+export interface FlowElectrical {
+  current: number;
+  ac?: { valid: boolean; iamp: number; freq: number; imean: number } | null;
+}
+
+/**
+ * KCL branch current per wire, by a spanning forest over the pin/junction graph (edges = wires). Each
+ * tree edge carries the signed injection sum of the subtree beyond it; loops (non-tree edges) read 0.
+ * Injections are each element's two-terminal current — pin a leaves the net (−I), pin b enters (+I) —
+ * so a shared rail visibly thickens toward a source and thins past each tap. The AC-amplitude-weighted
+ * mean frequency and AC-vs-DC fraction roll up the same tree (for the carrier→shimmer handoff).
+ *
+ * PURE graph math, no `this`: the board feeds `graph.wires` + its `ElectricalState` map; the zoom-to-open
+ * replica feeds its inner graph + per-inner-part currents — identical branch-current solve at every layer.
+ * Endpoint keys span pins (`compId:pinIndex`) and junctions (`j<id>`); a junction injects nothing, so it
+ * is a pass-through node where the branch current splits/merges (and so is any unpowered frame pin).
+ */
+export function solveWireFlow(
+  wires: Iterable<Wire>,
+  electrical: Iterable<readonly [number, FlowElectrical]>,
+): Map<number, WireFlow> {
+  const out = new Map<number, WireFlow>();
+  const wireList = [...wires].sort((p, q) => p.id - q.id);
+  for (const w of wireList) out.set(w.id, { current: 0, freq: 0, acFrac: 0 });
+  if (wireList.length === 0) return out;
+
+  // Per-pin injections routed through the forest: signed current (`inj`), AC-amplitude weight (`fm`),
+  // freq-weighted amplitude (`fw`), and signed DC/mean current (`dm`).
+  const inj = new Map<string, number>();
+  const fm = new Map<string, number>();
+  const fw = new Map<string, number>();
+  const dm = new Map<string, number>();
+  const add = (m: Map<string, number>, k: string, v: number): void => {
+    m.set(k, (m.get(k) ?? 0) + v);
+  };
+  for (const [compId, e] of electrical) {
+    add(inj, compId + ":0", -e.current); // pin a: current leaves the net
+    add(inj, compId + ":1", +e.current); // pin b: current enters the net
+    // AC weight: the element's measured AC current amplitude carries its frequency; DC elements
+    // contribute amplitude ~0 (and freq 0), so they don't tint a wire AC.
+    const amp = e.ac?.valid ? Math.abs(e.ac.iamp) : 0;
+    const f = e.ac?.valid ? e.ac.freq : 0;
+    // DC (mean) current: the element's own DC component when measured, else its plain current —
+    // separates a true AC line from a DC rail carrying a little ripple.
+    const dc = e.ac?.valid ? e.ac.imean : e.current;
+    add(dm, compId + ":0", -dc);
+    add(dm, compId + ":1", +dc);
+    for (const pin of [":0", ":1"]) {
+      add(fm, compId + pin, amp);
+      add(fw, compId + pin, amp * f);
+    }
+  }
+
+  // Adjacency over pins, edges = wires (record from/to orientation per edge).
+  interface Edge {
+    other: string;
+    wireId: number;
+    otherIsFrom: boolean;
+  }
+  const adj = new Map<string, Edge[]>();
+  const node = (k: string): Edge[] => {
+    let l = adj.get(k);
+    if (!l) {
+      l = [];
+      adj.set(k, l);
+    }
+    return l;
+  };
+  for (const k of inj.keys()) node(k);
+  for (const w of wireList) {
+    const f = endpointKey(w.from);
+    const t = endpointKey(w.to);
+    node(f).push({ other: t, wireId: w.id, otherIsFrom: false });
+    node(t).push({ other: f, wireId: w.id, otherIsFrom: true });
+  }
+
+  // Spanning forest by BFS; each tree edge carries the injection sum of the subtree beyond it
+  // (oriented child → parent), plus the unsigned AC-weight sums.
+  const visited = new Set<string>();
+  for (const root of [...adj.keys()].sort()) {
+    if (visited.has(root)) continue;
+    const order: string[] = [];
+    const parent = new Map<
+      string,
+      { pin: string; wireId: number; childIsFrom: boolean }
+    >();
+    visited.add(root);
+    const queue = [root];
+    while (queue.length) {
+      const u = queue.shift()!;
+      order.push(u);
+      for (const e of adj.get(u) ?? []) {
+        if (visited.has(e.other)) continue;
+        visited.add(e.other);
+        // The child is e.other; otherIsFrom already says whether it is the wire's "from" endpoint
+        // (used to map child→parent flow onto from→to).
+        parent.set(e.other, {
+          pin: u,
+          wireId: e.wireId,
+          childIsFrom: e.otherIsFrom,
+        });
+        queue.push(e.other);
+      }
+    }
+    // Reverse-BFS (post-order): each node's subtree sums are final by the time we reach it, so record
+    // its parent edge's flow, then roll it up.
+    const sub = new Map<string, number>();
+    const subFM = new Map<string, number>();
+    const subFW = new Map<string, number>();
+    const subDM = new Map<string, number>();
+    for (const u of order) {
+      sub.set(u, inj.get(u) ?? 0);
+      subFM.set(u, fm.get(u) ?? 0);
+      subFW.set(u, fw.get(u) ?? 0);
+      subDM.set(u, dm.get(u) ?? 0);
+    }
+    for (let i = order.length - 1; i >= 0; i--) {
+      const u = order[i]!;
+      const p = parent.get(u);
+      if (!p) continue;
+      const s = sub.get(u)!;
+      const sm = subFM.get(u)!;
+      const sfw = subFW.get(u)!;
+      const sdc = Math.abs(subDM.get(u)!);
+      out.set(p.wireId, {
+        current: p.childIsFrom ? s : -s, // child→parent mapped to from→to
+        freq: sm > 1e-12 ? sfw / sm : 0, // AC-amplitude-weighted mean frequency
+        acFrac: sm + sdc > 1e-12 ? sm / (sm + sdc) : 0, // AC vs DC dominance
+      });
+      sub.set(p.pin, (sub.get(p.pin) ?? 0) + s);
+      subFM.set(p.pin, (subFM.get(p.pin) ?? 0) + sm);
+      subFW.set(p.pin, (subFW.get(p.pin) ?? 0) + sfw);
+      subDM.set(p.pin, (subDM.get(p.pin) ?? 0) + (subDM.get(u) ?? 0));
+    }
+  }
+  return out;
 }
 
 /**

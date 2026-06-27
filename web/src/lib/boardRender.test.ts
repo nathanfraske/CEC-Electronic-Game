@@ -5,7 +5,9 @@ import {
   wireDrawOrder,
   snapToBoxEdge,
   firstFreePerimeterCell,
+  solveWireFlow,
 } from "./boardRender";
+import type { Wire, Endpoint } from "./graph";
 
 describe("wireDrawOrder — bridges draw OVER the traces they hop", () => {
   it("no crossings → original order, unchanged", () => {
@@ -153,5 +155,96 @@ describe("firstFreePerimeterCell — where a newly-added free-form pin lands", (
     for (let dx = 0; dx < 5; dx++)
       for (let dy = 0; dy < 4; dy++) all.push({ dx, dy });
     expect(firstFreePerimeterCell(all, 5, 4)).toEqual({ dx: 0, dy: 0 });
+  });
+});
+
+describe("solveWireFlow — per-wire branch current by spanning-forest KCL", () => {
+  // The pure flow solver shared by the board and the zoom-to-open replica (so an opened sub-assembly's
+  // wires animate by the SAME KCL the board runs). Endpoints span pins (compId:pinIndex) and junctions.
+  const pin = (componentId: number, pinIndex: number): Endpoint => ({
+    componentId,
+    pinIndex,
+  });
+  const jct = (junctionId: number): Endpoint => ({ junctionId });
+  const wire = (id: number, from: Endpoint, to: Endpoint): Wire => ({
+    id,
+    from,
+    to,
+  });
+
+  it("no electrical → every wire reads zero (the unpowered look)", () => {
+    const flow = solveWireFlow([wire(1, pin(1, 0), pin(2, 0))], []);
+    expect(Math.abs(flow.get(1)!.current)).toBe(0); // ±0 both fine (idle wire)
+  });
+
+  it("series source↔load: each wire carries the element current", () => {
+    // source(1) and resistor(2) share two nets (a loop); each wire carries |I|.
+    const I = 0.005;
+    const flow = solveWireFlow(
+      [wire(1, pin(1, 0), pin(2, 0)), wire(2, pin(1, 1), pin(2, 1))],
+      [
+        [1, { current: I }],
+        [2, { current: I }],
+      ],
+    );
+    expect(Math.abs(flow.get(1)!.current)).toBeCloseTo(I, 9);
+    expect(Math.abs(flow.get(2)!.current)).toBeCloseTo(I, 9);
+  });
+
+  it("KCL split at a junction: the trunk carries the sum of the branches", () => {
+    // source(1) → J1 → two loads R2 (20 mA) + R3 (10 mA): trunk = 30 mA = branchB + branchC.
+    const flow = solveWireFlow(
+      [
+        wire(10, pin(1, 1), jct(1)), // trunk
+        wire(20, jct(1), pin(2, 0)), // branch to R2
+        wire(30, jct(1), pin(3, 0)), // branch to R3
+      ],
+      [
+        [1, { current: 0.03 }],
+        [2, { current: 0.02 }],
+        [3, { current: 0.01 }],
+      ],
+    );
+    expect(Math.abs(flow.get(10)!.current)).toBeCloseTo(0.03, 9);
+    expect(Math.abs(flow.get(20)!.current)).toBeCloseTo(0.02, 9);
+    expect(Math.abs(flow.get(30)!.current)).toBeCloseTo(0.01, 9);
+    expect(Math.abs(flow.get(10)!.current)).toBeCloseTo(
+      Math.abs(flow.get(20)!.current) + Math.abs(flow.get(30)!.current),
+      9,
+    );
+  });
+
+  it("an AC element tints its wire's freq + acFrac; a pure DC element does not", () => {
+    const flow = solveWireFlow(
+      [wire(1, pin(1, 0), pin(2, 0)), wire(2, pin(1, 1), pin(2, 1))],
+      [
+        [
+          1,
+          {
+            current: 0.01,
+            ac: { valid: true, iamp: 0.01, freq: 1000, imean: 0 },
+          },
+        ],
+        [
+          2,
+          {
+            current: 0.01,
+            ac: { valid: true, iamp: 0.01, freq: 1000, imean: 0 },
+          },
+        ],
+      ],
+    );
+    expect(flow.get(1)!.freq).toBeCloseTo(1000, 6);
+    expect(flow.get(1)!.acFrac).toBeGreaterThan(0.9);
+
+    const dc = solveWireFlow(
+      [wire(1, pin(1, 0), pin(2, 0)), wire(2, pin(1, 1), pin(2, 1))],
+      [
+        [1, { current: 0.01 }],
+        [2, { current: 0.01 }],
+      ],
+    );
+    expect(dc.get(1)!.freq).toBe(0);
+    expect(dc.get(1)!.acFrac).toBe(0);
   });
 });
