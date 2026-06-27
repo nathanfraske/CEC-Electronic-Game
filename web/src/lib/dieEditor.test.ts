@@ -40,6 +40,8 @@ import {
   createBlankFreeFormSubassembly,
   compactFreeFormGeom,
   packFreeFormFootprint,
+  cellSymbol,
+  type UserIc,
   TIER_FOOTPRINT_SCALE,
   countGraphDevices,
   registerUserIc,
@@ -1033,6 +1035,57 @@ describe("packFreeFormFootprint — decoupled pin-RING placed footprint (owner d
     expect(out.h).toBeGreaterThanOrEqual(3);
     expect(out.pins[0]!.dx).toBe(0);
     expect(out.pins[1]!.dx).toBe(out.w - 1);
+  });
+});
+
+describe("cellSymbol — auto-recognition + override validation", () => {
+  const mk = (over: Partial<UserIc>): UserIc => ({
+    tag: "T",
+    name: "",
+    package: { archetype: "BLOCK", pinCount: 0 },
+    frameId: 1,
+    graph: {
+      components: [],
+      wires: [],
+      junctions: [],
+      netLabels: [],
+    } as unknown as GraphSnapshot,
+    ...over,
+  });
+  const beh = (word: number, mode = 0) => ({ prog: 4, word, mode, sig: 0 });
+
+  it("recognizes a 2-input gate from its truth-table word", () => {
+    expect(
+      cellSymbol(mk({ behavior: beh(0x8), pinRoles: ["in", "in", "out"] })),
+    ).toBe("AND");
+    expect(
+      cellSymbol(mk({ behavior: beh(0x1), pinRoles: ["in", "in", "out"] })),
+    ).toBe("NOR");
+  });
+  it("recognizes the 2:1 MUX truth-table (3 inputs, word 0xCA)", () => {
+    expect(
+      cellSymbol(mk({ behavior: beh(0xca), pinRoles: ["in", "in", "in"] })),
+    ).toBe("MUX");
+  });
+  it("maps the cell NAME to its building-block face", () => {
+    expect(cellSymbol(mk({ name: "D-FLIPFLOP" }))).toBe("DFF");
+    expect(cellSymbol(mk({ name: "D LATCH" }))).toBe("DLATCH");
+    expect(cellSymbol(mk({ name: "Full Adder" }))).toBe("FADD");
+    expect(cellSymbol(mk({ name: "8-bit Register" }))).toBe("REG");
+    expect(cellSymbol(mk({ name: "2:1 MUX" }))).toBe("MUX");
+  });
+  it("honors a VALID explicit override (case-insensitive), beating auto", () => {
+    expect(cellSymbol(mk({ symbol: "TRI", name: "Buffer" }))).toBe("TRI");
+    expect(cellSymbol(mk({ symbol: "and", name: "weird" }))).toBe("AND");
+  });
+  it("IGNORES an UNKNOWN override id (no blank chip) — falls through to auto/null", () => {
+    expect(
+      cellSymbol(mk({ symbol: "bogus", name: "plain widget" })),
+    ).toBeNull();
+    expect(cellSymbol(mk({ symbol: "nope", name: "Full Adder" }))).toBe("FADD"); // name still wins
+  });
+  it("returns null for a plain cell with no behavior / name / loop", () => {
+    expect(cellSymbol(mk({ name: "widget" }))).toBeNull();
   });
 });
 

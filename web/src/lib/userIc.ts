@@ -209,6 +209,22 @@ const DRAWABLE_GATES = new Set([
  * explicit override; only the 2:1 case is auto-named here. */
 const MUX_WORD_2TO1 = 0xca;
 
+/** The higher-level (non-gate) {@link CellSymbolId} faces `drawCellSymbol` can draw. */
+const CELL_SYMBOL_IDS = [
+  "DFF",
+  "DLATCH",
+  "REG",
+  "HADD",
+  "FADD",
+  "MUX",
+  "TRI",
+  "ARRAY",
+];
+/** EVERY id `drawCellSymbol` can actually render (gate faces + cell faces). The explicit override is
+ * validated against this so a typo / unknown / external `def.symbol` falls back to auto-detect instead of
+ * blanking the chip (drawCellSymbol's switch has no default + board.ts hides the name when a face draws). */
+const DRAWABLE_SYMBOLS = new Set([...DRAWABLE_GATES, ...CELL_SYMBOL_IDS]);
+
 /** Match the player's CELL NAME to a symbol id — the declared-intent shortcut for the types structure /
  * truth-table can't infer (adder / array / tri-state) and a fast path for the rest. Most specific first. */
 function symbolFromName(name: string): string | null {
@@ -243,7 +259,10 @@ export function cellSymbol(def: UserIc): string | null {
   return sym;
 }
 function computeCellSymbol(def: UserIc): string | null {
-  if (def.symbol && def.symbol.trim()) return def.symbol.trim();
+  if (def.symbol && def.symbol.trim()) {
+    const ov = def.symbol.trim().toUpperCase();
+    if (DRAWABLE_SYMBOLS.has(ov)) return ov; // a known face; an unknown id falls through to auto-detect
+  }
   const named = symbolFromName(def.name ?? "");
   if (named) return named;
   const inN = def.pinRoles?.filter((r) => r === "in").length ?? 0;
