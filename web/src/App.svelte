@@ -2778,6 +2778,13 @@
         };
       };
       // Open the DATASHEET panel (render/test hook): returns the assembled model so a test can assert the
+      // Harness accessor: live pin voltages of a placed cell, by pin name (used by headless benches to
+      // assert e.g. a clocked register actually loaded its bit).
+      (
+        window as unknown as {
+          __cecPins?: (id: number) => Record<string, number | null> | null;
+        }
+      ).__cecPins = (id: number) => board?.cellPinVoltages(id) ?? null;
       // pinout + function table without scraping the DOM.
       (
         window as unknown as { __cecDatasheet?: (tag: string) => unknown }

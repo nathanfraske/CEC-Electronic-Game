@@ -2347,6 +2347,44 @@ export function drawCellSymbol(
   }
 }
 
+/**
+ * Draw a recognised cell's LIVE stored BIT(S) inside its body symbol: a centred row of small LEDs —
+ * FILLED in the rail colour (with a soft halo) = 1, a dim hollow ring = 0 — one LED per stored bit (a
+ * flop/latch → 1, a register → its word, MSB-left). `alpha` fades the whole row with the body symbol.
+ * Pure geometry, no text (the caller draws the optional "Q=…" value chip as a Text). Kept small + centred
+ * so it reads at a glance when zoomed out without cluttering the symbol shape.
+ */
+export function drawCellLiveBits(
+  g: Graphics,
+  cx: number,
+  cy: number,
+  hw: number,
+  hh: number,
+  color: number,
+  bits: number[],
+  alpha = 1,
+): void {
+  const n = bits.length;
+  if (n === 0 || alpha <= 0.01) return;
+  const innerW = hw * 1.3; // usable width for the bit row inside the box
+  const slot = innerW / n; // per-bit horizontal slot
+  const r = Math.max(1.4, Math.min(hh * 0.32, slot * 0.34));
+  const x0 = cx - (slot * (n - 1)) / 2; // centre the row on cx
+  for (let i = 0; i < n; i++) {
+    const x = x0 + i * slot;
+    if (bits[i]) {
+      g.circle(x, cy, r * 1.75).fill({ color, alpha: alpha * 0.22 }); // lit halo
+      g.circle(x, cy, r).fill({ color, alpha: alpha * 0.95 }); // lit core
+    } else {
+      g.circle(x, cy, r).stroke({
+        width: Math.max(1, r * 0.42),
+        color,
+        alpha: alpha * 0.4,
+      }); // off: dim ring
+    }
+  }
+}
+
 function drawUserIcPackage(g: Graphics, o: GlyphOpts): void {
   // A free-form subassembly (BLOCK archetype) reads as a teal "block", not an accent-bodied chip; its body
   // is the AUTHORED box (freeForm), not the pin bbox, so pass the free-form flag through.

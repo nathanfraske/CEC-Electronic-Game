@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-27 (190) — Live symbol-state: the stored bit on a sequential cell's body
+
+PR (CI). Render/web only, golden untouched, 258 web tests (+6). Owner: "visual symbol characterization —
+show what's happening inside a known cell when you aren't zoomed in (e.g. the bit a 1-bit register stores)."
+Answer combined two reads across zoom (owner pick); sequential cells first.
+- ~~**`cellState.ts`**~~ — pure `storedOutputs` (drop the Q̄ bar, order a register word MSB-first) +
+  `formatStoredValue` ("Q=1"/"Q=0101") + `isSequentialCellSymbol`. 6 tests.
+- ~~**`drawCellLiveBits` (glyphs)**~~ — a centred row of LEDs inside the body symbol: filled rail-colour
+  (+halo) = 1, dim hollow ring = 0 (1 per stored bit). Small + centred so it doesn't clutter the shape.
+- ~~**board wiring**~~ — `cellLiveState(id)` reads each `out` pin's level via `pinVoltage` (VCC/2 thresh)
+  for a recognised DFF/DLATCH/REG; threaded to the node renderer. LED bits ride the symbol fade (carry the
+  state when zoomed OUT); a mono "Q=…" value chip fades IN under the body as you zoom toward the part.
+  `cellPinVoltages(id)` + `__cecPins` harness accessor (read a placed cell's live pin voltages).
+- **Render-verified** on a built sim bench (1-bit REG + 5 kHz clock + power, wired; LD=H load, OE=L enable,
+  CLR=H): Q 0→1 under stepping lit the LED (dim ring → bright disc) + the "Q=1" chip; clean (not cluttered).
+- [ ] **Extend** to MUX (which input it's passing), adders (sum/carry), gates (output level), + the
+  "hold/track/load" MODE tag from the refsheets — as the owner builds more components.
+
+---
+
 ## 2026-06-27 (189) — Greenlit wire/bridge polish + the Datasheet feature (overnight)
 
 PRs #278 #279 #280 (merged) + #281 (datasheet, CI). Render/web only, golden `0xeaac_3764_99e4_fa24`
