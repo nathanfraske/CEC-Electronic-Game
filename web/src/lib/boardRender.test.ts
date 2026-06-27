@@ -6,8 +6,10 @@ import {
   snapToBoxEdge,
   firstFreePerimeterCell,
   solveWireFlow,
+  cleanRouteWaypoints,
+  planSegmentDrag,
 } from "./boardRender";
-import type { Wire, Endpoint } from "./graph";
+import type { Wire, Endpoint, Cell } from "./graph";
 
 describe("wireDrawOrder — bridges draw OVER the traces they hop", () => {
   it("no crossings → original order, unchanged", () => {
@@ -246,5 +248,133 @@ describe("solveWireFlow — per-wire branch current by spanning-forest KCL", () 
     );
     expect(dc.get(1)!.freq).toBe(0);
     expect(dc.get(1)!.acFrac).toBe(0);
+  });
+});
+
+describe("cleanRouteWaypoints — minimise an orthogonal route after a segment drag (3C)", () => {
+  const c = (col: number, row: number): Cell => ({ col, row });
+
+  it("empty waypoints stay empty", () => {
+    expect(cleanRouteWaypoints(c(0, 0), [], c(5, 0))).toEqual([]);
+  });
+
+  it("drops a bend colinear with its neighbours", () => {
+    // a — wp — b all on row 0: the middle bend is redundant.
+    expect(cleanRouteWaypoints(c(0, 0), [c(3, 0)], c(6, 0))).toEqual([]);
+    // A real corner (off the a→b line) is kept.
+    expect(cleanRouteWaypoints(c(0, 0), [c(3, 2)], c(6, 0))).toEqual([c(3, 2)]);
+  });
+
+  it("drops a point coincident with its predecessor (zero-length step)", () => {
+    // The first wp equals the from-endpoint, the second is a real corner.
+    expect(cleanRouteWaypoints(c(0, 0), [c(0, 0), c(0, 4)], c(5, 4))).toEqual([
+      c(0, 4),
+    ]);
+  });
+
+  it("collapses a U-turn spike — out to a tip and immediately back", () => {
+    // From a, out to the tip (3,3), then back to (0,0)=a, then on to a real corner. The tip is a
+    // doubled-back spur (prev===next around it) and the return point coincides with a — both drop.
+    expect(
+      cleanRouteWaypoints(c(0, 0), [c(3, 3), c(0, 0), c(0, 6)], c(5, 6)),
+    ).toEqual([c(0, 6)]);
+  });
+
+  it("keeps a genuine staple (two real corners offset from the endpoints)", () => {
+    // a(0,0) → (0,3) → (5,3) → b(5,0): a clean orthogonal staple, both corners real.
+    expect(cleanRouteWaypoints(c(0, 0), [c(0, 3), c(5, 3)], c(5, 0))).toEqual([
+      c(0, 3),
+      c(5, 3),
+    ]);
+  });
+
+  it("returns copies, not aliases of the input cells", () => {
+    const wps = [c(3, 2)];
+    const out = cleanRouteWaypoints(c(0, 0), wps, c(6, 0));
+    expect(out).toEqual([c(3, 2)]);
+    expect(out[0]).not.toBe(wps[0]);
+  });
+});
+
+describe("planSegmentDrag — grab a wire segment; junction ends move, pin ends fold (3A)", () => {
+  const P = 26; // PITCH
+  const c = (col: number, row: number): Cell => ({ col, row });
+  const w = (col: number, row: number) => ({ x: col * P, y: row * P });
+
+  it("returns null for a wire with no drawable route", () => {
+    expect(planSegmentDrag([], c(0, 0), c(1, 0), false, false, 0, 0)).toBe(
+      null,
+    );
+  });
+
+  it("a JUNCTION end is flagged to MOVE (no fold) — a vertical tap whose top sits on a bus", () => {
+    // Wire pin(5,10) → junction(5,5); grab the single vertical segment. The pin end folds (spliced
+    // bracket), the junction end is flagged "hi" so the caller slides the junction — no stub on the bus.
+    const route = [w(5, 10), w(5, 5)];
+    const plan = planSegmentDrag(
+      route,
+      c(5, 10), // from = pin
+      c(5, 5), // to = junction
+      false,
+      true,
+      5 * P,
+      7 * P,
+    )!;
+    expect(plan.axis).toBe("v");
+    expect(plan.moveEnds).toEqual(["hi"]);
+    // Pin end spliced inward → [pin, pin', junction], grabbed segment = pts[1]→pts[2].
+    expect(plan.pts).toEqual([c(5, 10), c(5, 10), c(5, 5)]);
+    expect(plan.bi).toBe(1);
+  });
+
+  it("BOTH ends junctions → both move, no brackets spliced", () => {
+    const route = [w(2, 2), w(8, 2)];
+    const plan = planSegmentDrag(
+      route,
+      c(2, 2),
+      c(8, 2),
+      true,
+      true,
+      5 * P,
+      2 * P,
+    )!;
+    expect(plan.axis).toBe("h");
+    expect(new Set(plan.moveEnds)).toEqual(new Set(["lo", "hi"]));
+    expect(plan.pts).toEqual([c(2, 2), c(8, 2)]); // untouched — both ends slide their junctions
+    expect(plan.bi).toBe(0);
+  });
+
+  it("BOTH ends fixed pins → a clean staple (both brackets spliced, no junction move)", () => {
+    const route = [w(0, 0), w(5, 0)];
+    const plan = planSegmentDrag(
+      route,
+      c(0, 0),
+      c(5, 0),
+      false,
+      false,
+      2 * P,
+      0,
+    )!;
+    expect(plan.moveEnds).toEqual([]);
+    // [from, from', to', to] — grabbed segment pts[1]→pts[2] drags between the two spliced brackets.
+    expect(plan.pts).toEqual([c(0, 0), c(0, 0), c(5, 0), c(5, 0)]);
+    expect(plan.bi).toBe(1);
+  });
+
+  it("a MIDDLE segment touches no endpoint → nothing spliced, nothing moved", () => {
+    // pin(0,0) → (0,3) → (5,3) → pin(5,0); grab the middle horizontal leg.
+    const route = [w(0, 0), w(0, 3), w(5, 3), w(5, 0)];
+    const plan = planSegmentDrag(
+      route,
+      c(0, 0),
+      c(5, 0),
+      false,
+      false,
+      2 * P,
+      3 * P,
+    )!;
+    expect(plan.moveEnds).toEqual([]);
+    expect(plan.bi).toBe(1);
+    expect(plan.pts).toEqual([c(0, 0), c(0, 3), c(5, 3), c(5, 0)]);
   });
 });
