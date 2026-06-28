@@ -3551,6 +3551,13 @@ pub struct Sim {
     /// at a different point). Folds beside `mem_digest`. Real-mode-gated wear-out; in Ideal it is a
     /// constant, golden-clean.
     mem_wear: Vec<u32>,
+    /// **DRAM per-word refresh epoch** — the absolute tick each word was last refreshed (accessed or
+    /// written), one `u64` per word, mirroring `mem_data`'s shape; all-zero for non-DRAM. A DRAM word not
+    /// refreshed within its `retention_ticks` leaks its stored 1 → 0 (eager decay in the commit phase), so
+    /// "refresh or your data rots" is real + deterministic. Hashed (folded) ONLY for DRAM (mode 3)
+    /// elements — program-visible state that must reproduce on rewind; RAM/ROM/EEPROM (and the golden)
+    /// fold nothing here, so they are byte-identical.
+    mem_refresh: Vec<Vec<u64>>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -3697,6 +3704,7 @@ impl Sim {
             mem_data: Vec::new(),
             mem_digest: Vec::new(),
             mem_wear: Vec::new(),
+            mem_refresh: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -4076,6 +4084,12 @@ impl Sim {
             .collect();
         self.mem_digest = vec![0u64; elements.len()];
         self.mem_wear = vec![0u32; elements.len()];
+        // DRAM refresh epochs mirror `mem_data`'s shape (one u64 per word; empty for non-memory), all 0.
+        self.mem_refresh = self
+            .mem_data
+            .iter()
+            .map(|store| vec![0u64; store.len()])
+            .collect();
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -4147,6 +4161,11 @@ impl Sim {
         }
         for w in &mut self.mem_wear {
             *w = 0;
+        }
+        for v in &mut self.mem_refresh {
+            for r in v.iter_mut() {
+                *r = 0;
+            }
         }
         for s in &mut self.net_level {
             *s = Level::Low;
@@ -6855,18 +6874,39 @@ impl Sim {
             let rail = (vhigh - vlow).max(0.0);
             let depth = self.mem_data[i].len();
             if rail < GATE_MIN_RAIL || depth == 0 {
-                continue; // unpowered → hold
+                continue; // unpowered → hold (no write, no refresh, no decay)
             }
             let fam = &FAMILIES[0];
-            if fam.quantize(self.node_v[e.b] - vlow, rail) != Level::High {
-                continue; // WE low → hold
-            }
+            // The addressed word — needed both for the write and for the DRAM access-refresh below.
             let a0 = (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High) as usize;
             let a1 = (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High) as usize;
             let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
             let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
-            let din = (fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32;
-            self.write_cell(i, addr, din);
+            // WRITE: while WE (b) is high, latch D_in (c) into the addressed word (digest-consistent).
+            if fam.quantize(self.node_v[e.b] - vlow, rail) == Level::High {
+                let din = (fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32;
+                self.write_cell(i, addr, din);
+            }
+            // DRAM (mode 3): per-word refresh + EAGER decay. An ACCESS (the addressed word, read out on
+            // D_out and/or written this tick) refreshes that row's epoch; any word not refreshed within
+            // `retention_ticks` (param slot 4, Real-mode) leaks its stored 1 → 0 — the "refresh or your
+            // data rots" lesson. Applied EAGERLY here (not lazily on read) so snapshot_hash always reflects
+            // decayed contents and a rewind onto a decay tick replays bit-for-bit. retention 0 (default /
+            // Ideal / RAM/ROM/EEPROM) → no decay → bit-identical to a non-leaky store (golden-safe).
+            if e.params[0] == 3.0 {
+                let tick = self.tick;
+                self.mem_refresh[i][addr] = tick; // an access refreshes the addressed row
+                let retention = e.params[4] as u64;
+                if retention > 0 {
+                    for w in 0..depth {
+                        if tick.saturating_sub(self.mem_refresh[i][w]) > retention
+                            && self.mem_data[i][w] != 0
+                        {
+                            self.write_cell(i, w, 0);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -7631,6 +7671,17 @@ impl Sim {
             if e.kind == ELEM_MEMORY {
                 bytes.extend_from_slice(&self.mem_digest[i].to_le_bytes());
                 bytes.extend_from_slice(&self.mem_wear[i].to_le_bytes());
+            }
+        }
+        // Then each DRAM (mode 3) element's per-word refresh epochs — APPENDED after the digest/wear fold,
+        // gated on mode so RAM/ROM/EEPROM (and the golden, and the P1 RAM tests) fold ZERO extra bytes and
+        // hash byte-identically. The epochs are program-visible (they drive eager decay), so they must
+        // reproduce on rewind. Integer state only.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_MEMORY && e.params[0] == 3.0 {
+                for r in &self.mem_refresh[i] {
+                    bytes.extend_from_slice(&r.to_le_bytes());
+                }
             }
         }
         fnv1a(&bytes)
@@ -12596,6 +12647,74 @@ mod tests {
         assert_eq!(
             d, hi.mem_digest[5],
             "digest consistent after terminal writes"
+        );
+    }
+
+    /// DRAM (mode 3): a word never re-accessed leaks its stored 1 → 0 once `retention_ticks` elapse
+    /// ("refresh or your data rots"), eagerly + deterministically; the continuously-addressed word stays
+    /// refreshed. Nodes: 0=gnd, 1=VCC(5), 2=D_out, 3=WE(5), 4=D_in(0), 5=A0(5 ⇒ address 1).
+    fn dram_rig() -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE] = 3.0; // MEMORY (elem 5): mode 3 = DRAM
+        params[5 * PARAM_STRIDE + 1] = 1.0; // addrWidth 1 → depth 2
+        params[5 * PARAM_STRIDE + 4] = 5.0; // retention_ticks = 5
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 3, 4, 5, 2, 2],
+            &[0, 0, 0, 0, 0, 3],
+            &[0, 0, 0, 0, 0, 4],
+            &[0, 0, 0, 0, 0, 1],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 5], // A0 = node 5 (high ⇒ address 1; word 0 never accessed)
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 5.0, 1.0e6, 0.0],
+            &[0.0; 6],
+            &params,
+        ));
+        sim.load_memory(5, &[1, 0]); // word 0 = 1 (never addressed → must rot)
+        sim
+    }
+
+    #[test]
+    fn dram_word_rots_without_refresh() {
+        let mut sim = dram_rig();
+        for _ in 0..4 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.mem_read(5, 0),
+            1,
+            "word 0 holds before retention elapses"
+        );
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.mem_read(5, 0),
+            0,
+            "word 0 rots once unrefreshed past retention"
+        );
+        // Deterministic: a second identical run rots at the same tick + hashes identically (the per-word
+        // refresh epoch is in the snapshot, so a rewind onto a decay tick replays bit-for-bit).
+        let mut b = dram_rig();
+        for _ in 0..14 {
+            b.step();
+        }
+        assert_eq!(b.mem_read(5, 0), 0);
+        assert_eq!(
+            sim.snapshot_hash(),
+            b.snapshot_hash(),
+            "DRAM rot is deterministic"
         );
     }
 
