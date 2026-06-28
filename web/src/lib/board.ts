@@ -63,7 +63,6 @@ import {
   type RegionBox,
 } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
-import { planBusAutocomplete } from "./busWiring";
 import {
   drawGlyph,
   drawCellSymbol,
@@ -5962,15 +5961,10 @@ export class Board {
       if (wire) {
         // Keep the lazy-follow sketch: bake the trail as this wire's bend waypoints before redraw.
         this.bakeLazyIntoWire(from, target);
-        // BUS auto-complete ("draw one → wire the whole bus"): when this single strand connects two
-        // same-width name-indexed buses (A0→A0 …) with all siblings free, lay the rest of the ribbon
-        // NOW, inside this same undo. They're ordinary wires (no bus abstraction) so they fan out via
-        // the parallel-nudge router and the netlist is unchanged. Guards live in planBusAutocomplete;
-        // it returns null for a deliberate single-bit wire, so this is a strict no-op there.
-        if (isPinRef(from) && isPinRef(target)) {
-          const plan = planBusAutocomplete(this.graph, from, target);
-          if (plan) for (const [s, d] of plan) this.graph.connect(s, d);
-        }
+        // (Bus auto-complete was removed: auto-creating N independently-routed sibling wires produced
+        // cluttered traces that ignored the player's drawn path — the "smart bus routing" rabbit hole.
+        // The bus is being redesigned as a SINGLE drawn route that fans out to strands only at the
+        // endpoints — see docs/ui/bus-scaling-design.md. The detection in busWiring.ts is reused there.)
         this.pushUndo(before);
         this.redrawWires();
         this.cb.onChange?.(this.graph);
