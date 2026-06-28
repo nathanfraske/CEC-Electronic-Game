@@ -1028,6 +1028,19 @@ pub const ELEM_BEHAVIORAL: u8 = 25;
 /// `0xeaac_3764_99e4_fa24` is byte-identical; program 1's word map (0..8) is unchanged.
 pub const BEH_STATE_WORDS: usize = 16;
 
+/// **Behavioral MEMORY array** (`docs/memory-characterization-design.md`). A word-addressable
+/// ROM / RAM / EEPROM / DRAM whose contents live in a ragged heap store (`mem_data`), NOT the MNA
+/// matrix — so a multi-MB array stamps identically to a few bytes and per-tick cost is
+/// O(accesses), not O(bits). Id **26**, appended after [`ELEM_BEHAVIORAL`] = 25 (append-only: no
+/// existing id moves, so a circuit with no memory element folds zero extra bytes and the golden is
+/// byte-identical). Structural params: slot 0 = `mode` (0 ROM / 1 RAM / 2 EEPROM / 3 DRAM), slot 1 =
+/// `addrWidth` (depth = `2^addrWidth`), slot 3 = `wordWidth` (slot 2 is left at 0 = unrated, the
+/// general [`RATED_CURRENT_SLOT`]). Deliberately **not** in [`is_nonlinear`] — reads are a constant
+/// Thévenin stamp, so memory-only circuits stay on the linear fast path. P1 lays the storage + the
+/// incremental hash digest + `load_memory`; the terminal-driven read/write step and the
+/// characterization collapse land in later phases.
+pub const ELEM_MEMORY: u8 = 26;
+
 /// Behavioral SPI master — default SCLK **half-period in analog ticks** when `params[0] <= 0`.
 /// A full SCLK period is `2 ·` this; with [`DT`] = 2 µs the default 4 → an 8 µs period
 /// (125 kHz). Purely structural (a clock divider), so the bus timing is deterministic and never
@@ -2718,6 +2731,25 @@ fn param_or(params: &[f64; PARAM_STRIDE], i: usize, default: f64) -> f64 {
     }
 }
 
+/// One word's contribution to an [`ELEM_MEMORY`]'s incremental content digest, **keyed by word
+/// index** so the digest is an order-independent XOR fold over the whole store
+/// (`⊕ₖ mem_cell_hash(k, mem_data[k])`) yet stays O(1) per write (XOR out the old term, XOR in the
+/// new — see [`Sim::write_cell`]). A **zero word contributes nothing**, so an all-zero store has
+/// digest 0 — which makes `reset()`'s zeroed contents digest-consistent for free and keeps the
+/// golden (no memory element) untouched. The index key defeats a swap of two equal-valued cells; a
+/// replay/grading digest, not a MAC.
+#[inline]
+fn mem_cell_hash(k: usize, w: u32) -> u64 {
+    if w == 0 {
+        0
+    } else {
+        let mut b = [0u8; 12];
+        b[..8].copy_from_slice(&(k as u64).to_le_bytes());
+        b[8..].copy_from_slice(&w.to_le_bytes());
+        fnv1a(&b)
+    }
+}
+
 /// Minimal complex number for the frequency-domain AC analysis ([`Sim::ac_solve`]).
 /// Dependency-free `f64`, so the AC solve is as deterministic as the transient one.
 #[derive(Clone, Copy)]
@@ -3493,6 +3525,25 @@ pub struct Sim {
     /// with no behavioral block folds zero extra bytes and the golden is byte-identical).
     /// Indexed in lockstep with `elements`.
     beh_state: Vec<[u32; BEH_STATE_WORDS]>,
+    /// **Behavioral memory contents** ([`ELEM_MEMORY`]) — a ragged per-element store: an
+    /// [`ELEM_MEMORY`] element gets `depth = 2^addrWidth` words (one `u32` per word for
+    /// `wordWidth ≤ 32`); EVERY other element gets an **empty** `Vec` so the outer length stays in
+    /// lockstep with `elements` (the fixed element order the hash fold relies on). The bytes live
+    /// in the heap, never the MNA matrix. Mutated ONLY through [`Sim::write_cell`] so `mem_digest`
+    /// can never drift. Sized at install beside `beh_state`.
+    mem_data: Vec<Vec<u32>>,
+    /// **Incremental content digest** for each [`ELEM_MEMORY`] (0 for every other element). A pure,
+    /// order-independent function of the current contents, maintained O(1) per write
+    /// ([`Sim::write_cell`]) — the perf keystone, since [`Sim::snapshot_hash`] rebuilds its whole
+    /// byte stream every step and folding a multi-MB array byte-by-byte would stall. Only the
+    /// 8-byte digest folds. All-zero contents → digest 0 (a zero word contributes nothing), so
+    /// `reset()`'s zeroed store is digest-consistent and the golden is untouched.
+    mem_digest: Vec<u64>,
+    /// **Hashed EEPROM wear counter** per element (0 for non-memory). Program activity increments
+    /// it and it decides a program-visible wear-out FAIL, so it MUST hash (else a replay wears out
+    /// at a different point). Folds beside `mem_digest`. Real-mode-gated wear-out; in Ideal it is a
+    /// constant, golden-clean.
+    mem_wear: Vec<u32>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -3636,6 +3687,9 @@ impl Sim {
             samp_clk_prev: Vec::new(),
             cmp_q: Vec::new(),
             beh_state: Vec::new(),
+            mem_data: Vec::new(),
+            mem_digest: Vec::new(),
+            mem_wear: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -3875,6 +3929,7 @@ impl Sim {
                     | ELEM_COMPARATOR
                     | ELEM_ASWITCH
                     | ELEM_BEHAVIORAL
+                    | ELEM_MEMORY
             ) {
                 self.install_empty();
                 return false;
@@ -3996,6 +4051,24 @@ impl Sim {
         self.samp_clk_prev = vec![Level::Low; elements.len()];
         self.cmp_q = vec![Level::Low; elements.len()];
         self.beh_state = vec![[0u32; BEH_STATE_WORDS]; elements.len()];
+        // Behavioral memory: size each ELEM_MEMORY's store to its depth (2^addrWidth, capped so a
+        // malformed param can't request an absurd allocation); every other element gets an empty
+        // Vec so the outer length stays == elements.len() (the fixed-order fold depends on it).
+        // All-zero contents → digest 0 (a zero word contributes nothing), so the parallel zeroed
+        // digest/wear are already consistent. Sized in lockstep with `beh_state`.
+        self.mem_data = elements
+            .iter()
+            .map(|e| {
+                if e.kind == ELEM_MEMORY {
+                    let aw = param_or(&e.params, 1, 0.0).clamp(0.0, 24.0) as u32;
+                    vec![0u32; 1usize << aw]
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        self.mem_digest = vec![0u64; elements.len()];
+        self.mem_wear = vec![0u32; elements.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -4052,6 +4125,21 @@ impl Sim {
         }
         for s in &mut self.beh_state {
             *s = [0u32; BEH_STATE_WORDS];
+        }
+        // Behavioral memory: zero contents + digest + wear uniformly (the golden has no memory, so
+        // this is golden-clean; volatility — re-seeding ROM/EEPROM from its saved image — lives
+        // web-side, re-issued via `load_memory` only for non-volatile modes). All-zero contents are
+        // digest-consistent with digest 0 (a zero word contributes nothing).
+        for v in &mut self.mem_data {
+            for w in v.iter_mut() {
+                *w = 0;
+            }
+        }
+        for d in &mut self.mem_digest {
+            *d = 0;
+        }
+        for w in &mut self.mem_wear {
+            *w = 0;
         }
         for s in &mut self.net_level {
             *s = Level::Low;
@@ -7363,6 +7451,47 @@ impl Sim {
         self.net_classes.get(n).copied().unwrap_or(NetClass::Analog) as u8
     }
 
+    /// THE single mutation site for [`ELEM_MEMORY`] contents (`mem_data[i][k] = v`), maintaining the
+    /// incremental [`Sim::mem_digest`] in O(1) — XOR the old word's keyed term out, the new word's
+    /// term in. EVERY memory mutation (player write, ROM/EEPROM seed, and later DRAM refresh /
+    /// destructive-read writeback / decay) MUST funnel through here, or the digest silently drifts
+    /// from contents and the snapshot hash is wrong forever with no golden tripwire.
+    fn write_cell(&mut self, i: usize, k: usize, v: u32) {
+        let old = self.mem_data[i][k];
+        if old == v {
+            return;
+        }
+        self.mem_data[i][k] = v;
+        self.mem_digest[i] ^= mem_cell_hash(k, old) ^ mem_cell_hash(k, v);
+    }
+
+    /// Seed an [`ELEM_MEMORY`] element's contents (a ROM/EEPROM image, or an initial RAM pattern):
+    /// word `k` ← `words[k]` across the store's depth (missing words ⇒ 0, extra words ignored).
+    /// Writes through [`Sim::write_cell`] so the digest stays consistent. A no-op for an out-of-range
+    /// index or a non-memory element (its store is empty). Issued web-side after install/reset for
+    /// non-volatile modes — the volatility policy lives there, not in the engine.
+    pub fn load_memory(&mut self, elem_index: usize, words: &[u32]) {
+        if elem_index >= self.mem_data.len() {
+            return;
+        }
+        let depth = self.mem_data[elem_index].len();
+        for k in 0..depth {
+            let v = words.get(k).copied().unwrap_or(0);
+            self.write_cell(elem_index, k, v);
+        }
+    }
+
+    /// Read word `addr` of an [`ELEM_MEMORY`] element's contents (`0` for an out-of-range
+    /// index/addr or a non-memory element). Read-only — never touches the digest. The stored bit is
+    /// observed here (and via the renderer/MEASURE readout), not through a Q pin.
+    pub fn mem_read(&self, elem_index: usize, addr: usize) -> u32 {
+        self.mem_data
+            .get(elem_index)
+            .and_then(|v| v.get(addr))
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Stable hash of the full snapshot. Part of the replay contract. FNV-1a over, in
     /// fixed order: the tick (little-endian); then each node — a pure-`Digital` net
     /// folds its discrete [`Level`] (one `u8`, no float compares cross the boundary),
@@ -7426,6 +7555,17 @@ impl Sim {
                 for w in &self.beh_state[i] {
                     bytes.extend_from_slice(&w.to_le_bytes());
                 }
+            }
+        }
+        // Then each behavioral MEMORY's incremental content digest (8 bytes) + its wear counter
+        // (4 bytes), in fixed element order — APPENDED after the behavioral fold, so a circuit with
+        // no memory element (the RC golden, every existing test) folds ZERO extra bytes and hashes
+        // byte-identically to before. Folding the O(1)-maintained DIGEST (not the contents) is what
+        // makes a multi-MB array hashable every step. Integer state only (no floats, no std hasher).
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_MEMORY {
+                bytes.extend_from_slice(&self.mem_digest[i].to_le_bytes());
+                bytes.extend_from_slice(&self.mem_wear[i].to_le_bytes());
             }
         }
         fnv1a(&bytes)
@@ -12253,6 +12393,79 @@ mod tests {
             &params,
         ));
         sim
+    }
+
+    /// ELEM_MEMORY P1 rig (`docs/memory-characterization-design.md`): a well-posed VSOURCE+R solve
+    /// plus one inert MEMORY element (addrWidth = 2 ⇒ depth 4) seeded with `seed`. Nodes: 0 = gnd,
+    /// 1 = src/R junction. The memory sits on ground (P1 has no terminal-driven read/write yet); it
+    /// exists to prove the storage + incremental digest + golden-safe fold.
+    fn mem_rig(seed: &[u32]) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + 1] = 2.0; // MEMORY (elem 2): addrWidth = 2 -> depth 4
+        assert!(sim.set_netlist_pefgh(
+            2,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_MEMORY],
+            &[1, 1, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[5.0, 1000.0, 0.0],
+            &[0.0, 0.0, 0.0],
+            &params,
+        ));
+        sim.load_memory(2, seed);
+        sim
+    }
+
+    /// A behavioral memory array stores + recalls words, and its incrementally-maintained digest
+    /// matches a from-scratch recompute (no drift past `write_cell`). An all-zero store hashes to a
+    /// zero digest (so `reset`'s zeroed contents are consistent and the golden is untouched).
+    #[test]
+    fn memory_stores_and_recalls_words_with_consistent_digest() {
+        let seed = [0xDEAD_BEEFu32, 0, 0x1234_5678, 0xFFFF_FFFF];
+        let sim = mem_rig(&seed);
+        for (k, &w) in seed.iter().enumerate() {
+            assert_eq!(sim.mem_read(2, k), w, "word {k}");
+        }
+        let mut d = 0u64;
+        for (k, w) in sim.mem_data[2].iter().enumerate() {
+            d ^= mem_cell_hash(k, *w);
+        }
+        assert_eq!(
+            d, sim.mem_digest[2],
+            "incremental digest must match recompute"
+        );
+        let zero = mem_rig(&[0, 0, 0, 0]);
+        assert_eq!(zero.mem_digest[2], 0, "all-zero store ⇒ zero digest");
+    }
+
+    /// A circuit carrying a memory element hashes deterministically across runs, and distinct
+    /// contents produce distinct hashes (the digest genuinely feeds the snapshot fold).
+    #[test]
+    fn memory_circuit_hashes_deterministically() {
+        let seed = [9u32, 0, 7, 3];
+        let mut a = mem_rig(&seed);
+        let mut b = mem_rig(&seed);
+        for _ in 0..50 {
+            a.step();
+            b.step();
+        }
+        assert_eq!(
+            a.snapshot_hash(),
+            b.snapshot_hash(),
+            "same contents ⇒ same hash"
+        );
+        let other = mem_rig(&[1, 0, 0, 0]);
+        assert_ne!(
+            a.snapshot_hash(),
+            other.snapshot_hash(),
+            "different contents ⇒ different hash"
+        );
     }
 
     /// A registered LUT is a LUT followed by a flip-flop: with CLK held low it never latches (Q
