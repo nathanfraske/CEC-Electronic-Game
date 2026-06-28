@@ -409,7 +409,7 @@ export const PREFAB_USER_ICS = [
         },
         {
           id: 10,
-          kind: "OR Gate",
+          kind: "NOR Gate",
           cell: { col: 22, row: 11 },
           value: 0,
           rot: 0,
@@ -636,7 +636,7 @@ export const PREFAB_USER_ICS = [
     role: "subassembly",
   },
   {
-    tag: "OR Gate",
+    tag: "NOR Gate",
     name: "NOR Gate",
     package: { archetype: "BLOCK", pinCount: 5 },
     frameId: 1,
@@ -1186,7 +1186,7 @@ export const PREFAB_USER_ICS = [
         },
         {
           id: 4,
-          kind: "OR Gate",
+          kind: "NOR Gate",
           cell: { col: 18, row: 16 },
           value: 0,
           rot: 0,
@@ -1580,7 +1580,7 @@ export const PREFAB_USER_ICS = [
         },
         {
           id: 4,
-          kind: "OR Gate",
+          kind: "NOR Gate",
           cell: { col: 11, row: 14 },
           value: 0,
           rot: 0,
