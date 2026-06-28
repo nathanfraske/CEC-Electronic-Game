@@ -552,15 +552,26 @@ const BEH_SPEC: Record<string, BehSpec> = {
  */
 interface MemSpec {
   term: number[]; // length 8: terminal a..h ← visual pin index (-1 = ground/unused)
-  mode: number; // sim-core ELEM_MEMORY param slot 0
+  mode: number; // sim-core ELEM_MEMORY param slot 0 (0 ROM / 1 RAM / 2 EEPROM / 3 DRAM)
   addrWidth: number; // param slot 1 → depth 2^addrWidth
   wordWidth: number; // param slot 3
+  retention?: number; // DRAM only: param slot 4 = retention_ticks (Real-mode non-ideality)
 }
 const MEM_ADDR_SLOT = 1; // ELEM_MEMORY param slots (mirror sim-core)
 const MEM_WORD_SLOT = 3;
+const MEM_RETENTION_SLOT = 4;
 const MEM_SPEC: Record<string, MemSpec> = {
   // RAM chip: visual pins [D, A0, A1, A2, WE, DI, VCC, GND] (graph.ts PART_KINDS.RAM). 8×1 SRAM.
   RAM: { term: [0, 4, 5, 6, 7, 1, 2, 3], mode: 1, addrWidth: 3, wordWidth: 1 },
+  // DRAM chip: same cell-level interface; mode 3 → a row not re-accessed within `retention` ticks rots
+  // (sim-core eager decay). Retention is a Real-mode non-ideality (Ideal mode = nominal, no decay).
+  DRAM: {
+    term: [0, 4, 5, 6, 7, 1, 2, 3],
+    mode: 3,
+    addrWidth: 3,
+    wordWidth: 1,
+    retention: 1000,
+  },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
@@ -1697,6 +1708,11 @@ export function buildNetlist(
       params[ei * PARAM_STRIDE + 0] = memSpec.mode;
       params[ei * PARAM_STRIDE + MEM_ADDR_SLOT] = memSpec.addrWidth;
       params[ei * PARAM_STRIDE + MEM_WORD_SLOT] = memSpec.wordWidth;
+      // DRAM retention is a Real-mode non-ideality: in Ideal mode the array is nominal (no decay), so
+      // slot 4 stays 0 and the cell holds forever, like SRAM. Bites only in Real mode.
+      if (memSpec.retention && real) {
+        params[ei * PARAM_STRIDE + MEM_RETENTION_SLOT] = memSpec.retention;
+      }
     }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op

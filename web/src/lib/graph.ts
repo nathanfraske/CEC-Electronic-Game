@@ -547,6 +547,27 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     false,
   ),
+  // Behavioral DRAM chip (ELEM_MEMORY mode 3) — same cell-level interface as RAM, but in Real mode a row
+  // not re-accessed within its retention window rots (the "refresh or your data rots" lesson). MEM_SPEC.DRAM
+  // in netlist.ts maps the pins + sets mode/retention.
+  DRAM: kind(
+    "DRAM",
+    "DRAM",
+    "violet",
+    [
+      pin("D", 0, 0),
+      pin("A0", 0, 2),
+      pin("A1", 0, 3),
+      pin("A2", 0, 4),
+      pin("WE", 3, 0),
+      pin("DI", 3, 2),
+      pin("VCC", 3, 3),
+      pin("GND", 3, 4),
+    ],
+    0,
+    "",
+    false,
+  ),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
   // is the capacitance (F); the ESR is fixed in the netlist. Pins are polarized

@@ -277,6 +277,13 @@
       color: "var(--violet)",
     },
     {
+      tag: "DRAM",
+      name: "DRAM",
+      desc: "Behavioral memory · refresh or it rots",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "EC",
       name: "Electrolytic Cap",
       desc: "Bulk storage + ESR",
@@ -795,6 +802,7 @@
     HADD: "Logic & ICs",
     FADD: "Logic & ICs",
     RAM: "Logic & ICs",
+    DRAM: "Logic & ICs",
     MUX2: "Logic & ICs",
     DMUX: "Logic & ICs",
     MAJ3: "Logic & ICs",
