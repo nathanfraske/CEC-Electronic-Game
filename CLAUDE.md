@@ -91,6 +91,7 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
 | `crates/sim-wasm` | thin wasm-bindgen layer |
 | `web/src/sim/loop.ts` | the once-per-frame wasm boundary |
 | `web/src/lib/board.ts` | PixiJS renderer (grid + signal traces) |
+| `web/src/lib/thermal.ts` | lumped self-heating model (`P=V·I`→`Tj`); web-only, golden-safe, tick-driven (`docs/heat-on-the-board-ideation.md`) |
 | `web/src/App.svelte` | HUD shell |
 | `web/src/app.css` | design tokens + component styles |
 | `web/src/lib/examples.ts` | worked examples; `savedExample()` turns a board **Save** JSON into one |

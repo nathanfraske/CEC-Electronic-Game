@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (228) — Thermal self-heating: model + pipeline LANDED (Phase 0), golden-safe
+
+- ~~**Engine-fundamental survey**~~ DONE — mapped what's modelled vs. not (clean level-1 fidelity; biggest
+  in-scope gaps: thermal self-heating, noise, reactive device physics, op-amp/source non-idealities).
+  Owner picked **thermal self-heating**.
+- ~~**Thermal model + P=V·I→Tj pipeline (Phase 0)**~~ DONE (`web/src/lib/thermal.ts`, commit `f8bfb51`,
+  web-only, golden-safe): per-kind `θ_JA`/`Cth`, `steadyTemp`, tick-driven `stepTemp` (stable/no
+  overshoot), `derate`, `glowFactor`, `dissipatedPower`, `advanceTemps` (Real-mode gated). Tests:
+  `thermal.test.ts` (11) + `thermalPipeline.test.ts` (1 W resistor → ~105 °C; 10 kΩ + source cool; Ideal
+  = ambient). Web 320.
+- [ ] **Thermal Phase 1/2 — the live vertical** (next): wire `advanceTemps` into `onFrame` (`partTemps`
+  map, tick-delta dt) → pass to `b.update`; body heat-glow (board.ts `ComponentNode`, mirror `failBox`)
+  + °C readout; then the `"thermal"` lens + a golden-safe over-temp/derate→FAIL flag (web-side, NOT into
+  the solve). See `docs/heat-on-the-board-ideation.md` §6 (STATUS block) + the (228) handoff.
+- [ ] **Thermal Path 2 (deferred, owner-greenlit)** — sim-core hashed `Tj` for R(T) drift / thermal
+  runaway / replay-exact thermal-contract grading (moves the golden; the per-tick feedback the web path
+  can't do replay-safely).
+
+---
+
 ## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention LANDED, golden-safe
 
 - ~~**"Same as SRAM, for DRAM?"**~~ SCOPED + DONE. DRAM is **1T1C** (charge on a cap), not bistable →

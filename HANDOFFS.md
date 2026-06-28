@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (228) — Thermal self-heating: model + P=V·I→Tj pipeline LANDED (Phase 0, golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, commit `f8bfb51` (NOT yet merged; (226)+(227) already merged
+to main via PR #313). Owner picked **thermal self-heating** as the next engine fundamental (from a
+surveyed menu — the biggest in-scope missing reality). Web-only, golden-safe (zero sim-core change). Gate
+green: web **320** (+11), check/lint/build 0.
+
+**What this is:** the first slice of the heat system (`docs/heat-on-the-board-ideation.md` Path 1). The
+deterministic self-heating PHYSICS + the power→temperature PIPELINE, headless-verified. The
+linear-vs-switcher lesson emerges purely from per-part `P = V·I`.
+
+**Landed (`web/src/lib/thermal.ts`):** first-order lumped model — per-kind `θ_JA`(°C/W)+`Cth`(J/°C)
+(`thermalSpec`); `steadyTemp = Tamb + P·θ_JA`; the **tick-driven** transient integrator `stepTemp`
+(`Tj += (target−Tj)·min(1, dt/τ)`, τ=θ·Cth — the clamp makes it unconditionally stable / never
+overshoots); `derate(Tj)`; `glowFactor`; `dissipatedPower = max(0, V·I)`; `advanceTemps` (integrate
+every part one sim-time interval, **Real-mode gated**, ideal/source kinds stay ambient). Pure +
+deterministic. Tests: `thermal.test.ts` (11 incl. steady state, ~63%@τ, monotone/no-overshoot, cooldown,
+determinism) + `thermalPipeline.test.ts` (full chain via wasm + `electricalMap`: 1 W resistor → ~105 °C,
+10 kΩ + source stay cool, Ideal = ambient).
+
+**KEY determinism finding (drove the architecture):** `loop.ts` steps a **wall-clock-dependent** #ticks
+per frame, so `Tj` must integrate by the **sim-tick delta** (`Δticks·DT`), never wall-clock → then it's
+steady-state-exact + a pure function of the sim trajectory. A consequence that **doesn't perturb the
+solve** (over-temp/derated-rating → FAIL flag, the body glow) is replay-safe web-side; one that **does**
+(R(T) drift, thermal runaway) needs the **sim-core hashed-Tj (Path 2, per-tick)** to be replay-exact. So
+v1 = presentational Tj + the FAIL-flag consequence; R(T) feedback deferred to Path 2.
+
+**NEXT (the live vertical — Phase 1/2, presentation + a golden-safe consequence):**
+1. Wire `advanceTemps` into `App.svelte`'s `onFrame` (right after the existing `electricalMap` call,
+   ~line 2668) into a `partTemps` map: `dt = Number(snap.tick − prevTick)·DT_SECONDS`,
+   `partTemps = advanceTemps(partTemps, components, id=>dissipatedPower(electrical.get(id)), dt, realModels)`.
+   Reset on netlist change / restart. Pass into `b.update(snap, electrical, running, scopeBatch, partTemps)`.
+2. **Body heat-glow** (board.ts `ComponentNode`, mirror the `failBox` Graphics layer at ~7963): a warm
+   emissive ramp (bronze→amber→red→white) at `alpha = glowFactor(Tj)`, invisible at ambient. Thread a
+   `temp` param through `board.update` → `node.update` (17-arg call ~3066 / signature ~8273). SEE via
+   `shoot`. + a °C "Body temp" line in the info panel (`partInfo.ts` already prints "Power dissipated V·I").
+3. Then the `"thermal"` `BoardLens` (ironbow heatmap) + the derate→FAIL/over-temp vent (golden-safe: a
+   web-side over-temp flag, NOT routed into the solve).
+Defer to a later/owner-greenlit Path 2: sim-core hashed `Tj` for R(T) drift, thermal runaway, and
+replay-exact thermal-contract grading.
+
+---
+
 ## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention (the DRAM mirror of (226))
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Owner asked "can we do the same for a DRAM cell?" →

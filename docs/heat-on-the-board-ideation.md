@@ -172,11 +172,33 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 
 ## 6. Phased build path
 
-0. **Read-only heat (a day).** `P=V·I` per part → steady-state `Tj = Tambient + P·θ_JA` (per-kind default
-   `θ_JA`) → show it: body heat-glow (A) + °C readout (C). No accumulation, no feedback — "see where the
-   heat is." Immediately teaches linear-vs-switcher visually.
-1. **Thermal lens + the time-constant.** Add the `"thermal"` `BoardLens` (B) + the transient `Tj`
-   integrator (web-side, deterministic) so parts warm/cool over time; add the thermal scope (C).
+> **STATUS 2026-06-28 — the model + pipeline (Phase 0/1 core) LANDED** (`web/src/lib/thermal.ts`,
+> commit `f8bfb51`, web-only, golden-safe, headless-tested). What's built: the lumped model
+> (`thermalSpec` per-kind `θ_JA`/`Cth`, `steadyTemp`, the TICK-DRIVEN transient integrator `stepTemp`
+> with a clamped step factor so it's unconditionally stable, `derate`, `glowFactor`), `dissipatedPower`
+> = `max(0, V·I)`, and `advanceTemps` (integrate every part one sim-time interval, Real-mode-gated).
+> Proven end-to-end by `thermalPipeline.test.ts` (buildNetlist → wasm → `electricalMap` → `Tj`: a 1 W
+> resistor heats to ~105 °C, a 10 kΩ one and the source stay cool, Ideal = ambient).
+>
+> **Determinism refinement (learned building it):** the loop steps a *wall-clock-dependent* number of
+> ticks per frame, so `Tj` must be integrated by the **sim-tick delta** (`Δticks·DT`), never wall-clock
+> — then it's steady-state-exact and a pure function of the sim trajectory. A consequence that **doesn't
+> perturb the solve** (over-temp / derated-rating → FAIL flag; the body glow) is replay-safe even
+> web-side. A consequence that **does** (R(T) drift, thermal runaway) applied at frame granularity would
+> make the sim frame-rate-dependent → it needs the **sim-core hashed-`Tj`** (Path 2, per-tick) to be
+> replay-exact. So v1 keeps `Tj` purely presentational + the FAIL-flag consequence; R(T) feedback is
+> deferred to Path 2. (This sharpens §2's "self-heating thermistor closes its R(T) loop" — that loop is
+> Path 2, not the v1 web path.)
+>
+> **NEXT:** wire `advanceTemps` into the per-frame `onFrame` (App.svelte, beside the existing
+> `electricalMap`) into a `partTemps` map; the body heat-glow (A) in `board.ts` `ComponentNode` +
+> the °C readout (C); then the `"thermal"` lens (B) and the derate→FAIL/vent consequence (Phase 2).
+
+0. ~~**Read-only heat.**~~ Model + `P=V·I` → steady-state `Tj` DONE (`thermal.ts`). Live glow + °C
+   readout in the renderer = the remaining presentation wiring.
+1. **Thermal lens + the time-constant.** ~~The transient `Tj` integrator (web-side, deterministic)~~ DONE
+   (`advanceTemps`, tick-driven). Remaining: wire it into the live loop; add the `"thermal"` `BoardLens`
+   (B) + the thermal scope (C).
 2. **Derating → FAIL + magic smoke.** Wire `Tj` into a derated `RATED_CURRENT_SLOT` (Real mode) so the FAIL
    box triggers sooner when hot; add the thermal-death vent (E) as a destroyed state distinct from the
    over-current box; hook autopsy → Lux. Heat becomes a *consequence*.
