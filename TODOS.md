@@ -22,9 +22,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   subcells + 2 NMOS access gated by WL; BL/BLB bitlines). Fixed pinRoles (BL/BLB → `inout`). Headless drive:
   writes/reads correctly via BL/BLB+WL ONLY with the inner inverters in fast model; raw transistor level
   returns wrong/inverted Q (known raw-FET limit).
-- [ ] **6T SRAM — Q pin vs forced bitline lesson (OWNER'S CALL).** Kept the Q tap for now. If the owner wants
-  authenticity, remove Q (read/write only via BL/BLB+WL; observe the stored bit with MEASURE / symbol-state).
-  1-line def change + regen prefabs.ts. Recommendation delivered in chat.
+- ~~**6T SRAM — Q pin vs forced bitline lesson**~~ DECIDED + DONE (commit 49c6448): owner chose **drop Q —
+  force the lesson**. SRAM is now 5-pin [WL, VCC, GND, BLB, BL]; read AND write only via the bitlines + word
+  line; observe the bit with MEASURE / symbol-state. Q removed consistently (def + frame pinNames/pinTests +
+  internal wires remapped); verified flattens with no dangling frame-pin ref.
+- [ ] **6T SRAM — optional follow-ups (not requested):** ship a worked EXAMPLE of the real read protocol
+  (precharge BL/BLB → assert WL → sense the differential) once a sense-amp/analog-read story exists; and a
+  small RAM-array demo. The cell behaves with its inner inverters in fast model (Behavior ▸ use fast model).
 
 ## 2026-06-28 (211) — Bus wiring (Phase 1) + prefab library + huge-bus brainstorm
 

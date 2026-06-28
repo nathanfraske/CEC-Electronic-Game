@@ -29,9 +29,10 @@ the user's drawn route; render-only (stored route unchanged → still manipulabl
 Inverter subcells + 2 NMOS access gated by WL; BL/BLB bitlines). **Fixed** pinRoles (BL/BLB were unroled →
 now `inout`). **Headless drive finding:** the cell writes/reads correctly via BL/BLB+WL ONLY with the inner
 inverters in fast-model (behavioral) mode — at raw transistor level the engine returns wrong/inverted Q
-(the known raw-FET limitation). **OPEN — owner's call:** keep the Q tap pin vs. force the bitline lesson
-(remove Q, observe via MEASURE/symbol-state). Kept Q for now; removing it later is a 1-line def change +
-regen. Recommendation delivered in chat.
+(the known raw-FET limitation). **RESOLVED (commit 49c6448):** owner chose **drop Q — force the lesson**.
+The SRAM is now 5-pin [WL, VCC, GND, BLB, BL]; read AND written ONLY via the bitlines + word line; the
+stored bit is observed with MEASURE/symbol-state. Q removed consistently (def + frame pinNames/pinTests +
+internal wires remapped; verified flattens with no dangling frame-pin ref).
 
 **Remaining:** Cable P2 (LoD unzip + conduit skin + ×N badge) → P3 (fan-out edits) → P5 (hierarchy + 16-bit
 example). Owner's ALU rewires (ADD/NOR). #88 Newton globalization (golden-sensitive, last). Tasks #92-94, #88.
