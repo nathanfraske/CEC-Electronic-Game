@@ -568,6 +568,27 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     false,
   ),
+  // NAND flash chip (ELEM_MEMORY mode 4) — non-volatile. A program can only CLEAR bits (1→0); ERASE high
+  // resets the whole block to 1s. MEM_SPEC.FLASH maps the pins (h = ERASE) + sets mode 4. Try to overwrite
+  // a 0 with a 1 (without erasing first) and it FAILs — the erase-before-write lesson.
+  FLASH: kind(
+    "FLASH",
+    "NAND Flash",
+    "violet",
+    [
+      pin("D", 0, 0),
+      pin("A0", 0, 2),
+      pin("A1", 0, 3),
+      pin("WE", 3, 0),
+      pin("DI", 3, 2),
+      pin("ERASE", 0, 4),
+      pin("VCC", 3, 3),
+      pin("GND", 3, 4),
+    ],
+    0,
+    "",
+    false,
+  ),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
   // is the capacitance (F); the ESR is fixed in the netlist. Pins are polarized
