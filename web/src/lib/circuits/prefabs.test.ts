@@ -15,8 +15,8 @@ const cleanup = () => {
 };
 
 describe("prefab reference library", () => {
-  it("ships the 15 curated building blocks", () => {
-    expect(PREFAB_USER_ICS).toHaveLength(15);
+  it("ships the 16 curated building blocks", () => {
+    expect(PREFAB_USER_ICS).toHaveLength(16);
     const tags = PREFAB_USER_ICS.map((c) => c.tag);
     for (const t of [
       "Inverter",
@@ -25,8 +25,22 @@ describe("prefab reference library", () => {
       "FULL ADDER",
       "D-FLIPFLOP",
       "4:1 MUX",
+      "6T SRAM",
     ])
       expect(tags).toContain(t);
+  });
+
+  it("6T SRAM has bidirectional bitlines (BL/BLB role inout)", () => {
+    const sram = PREFAB_USER_ICS.find((c) => c.tag === "6T SRAM")!;
+    expect(sram.pinNames).toEqual(["WL", "Q", "VCC", "GND", "BLB", "BL"]);
+    expect(sram.pinRoles).toEqual([
+      "in",
+      "out",
+      "vcc",
+      "gnd",
+      "inout",
+      "inout",
+    ]);
   });
 
   it("registers every prefab so they're placeable", () => {
