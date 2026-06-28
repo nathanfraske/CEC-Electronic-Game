@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (205) — #35 shipped: global Behavioral⇄Discrete fidelity toggle (the scale unlock)
+
+**State:** 🟢 PR #301. Owner greenlit all four next steps (build #35, verify arithmetic, greenlight Newton
+globalization, test-bench cheap wins). #35 done first — it's the golden-safe unlock that makes the ALU run.
+
+**What shipped:** a GLOBAL "Behavioral vs Discrete" toggle (sibling to Real/Ideal), not per-instance flips.
+`buildNetlist(graph, real, preferBehavioral)` → `flattenUserIcs(graph, sink, preferBehavioral)`; the
+collapse condition gains `|| preferBehavioral`, so every characterized cell collapses to its LUT at **every
+depth** (wave-based inliner). App: `behavioralModels` $state + a "○ Discrete / ● Behavioral" button by the
+Fidelity control (emitChange + Bode/phase recompute on toggle). Default false = byte-identical + golden-safe
+(golden has no user IC). Tests: single-level + nested depth-2 collapse via the global flag. Full gate green
+(web 265 pass). Proven earlier headless: the owner's 548-FET ALU → 34 LUTs, linear, logic ops bit-exact.
+
+**Owner ISA context (for #87 arithmetic verify):** ISA = LDA, STA, ADD, NOR, JCC, HLT. **C flag** is read by
+JCC; **Z** is computed but not consumed yet. So the ALU must produce correct ADD (+ C) and NOR. Still need
+the ALU's **control-line encoding** (which M/SEL/Binv drive ADD vs NOR) — reverse-engineer from the adder/
+B-INVERT/output-mux wiring, or owner specifies. (My probe: M=0 logic ops are bit-exact; M=1 arithmetic read
+0 — that's the thing to chase, and it's exactly the ADD instruction's datapath.)
+
+**Next (remaining greenlit):** #87 verify arithmetic (ADD/NOR + C flag), #89 test-bench cheap wins, #88
+Newton globalization (golden-sensitive — do LAST, isolated).
+
+---
+
 ## 2026-06-28 (204) — Engine "CLK bug" ROOT-CAUSED: Newton non-convergence on raw transistors at scale
 
 **State:** 🟢 root-caused with hard numbers + proven fix path. Supersedes (203)'s "subtle solver coupling"

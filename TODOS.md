@@ -21,9 +21,13 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Shipped (golden-safe, verified)**~~: `Sim::last_newton_iters()/last_newton_converged()` +
   `Simulation.newton_iters()/newton_converged()` (read-only, never hashed; golden tests pass). Discovered
   the **wasm core runs headless in node** (`initSync({module})`) → browser-free drive→step→read tests.
-- [ ] **Build #35 — recursive "use behavioral fidelity" toggle** (golden-safe, web-only): for a selected
-  cell, set `fidelity:'behavioral'` on every nested instance whose def has a valid `behavior`. THE unlock
-  for scale (a deep hierarchy can't be opted in by hand). This is what makes the owner's ALU run.
+- ~~**Build #35 — "use behavioral" fidelity toggle**~~ DONE (PR #301). Shipped as a GLOBAL Behavioral⇄
+  Discrete toggle (sibling to Real/Ideal) rather than per-instance flips — simpler, reversible, and it
+  collapses **every depth** at once via the wave-based inliner. `buildNetlist(graph, real,
+  preferBehavioral)` → `flattenUserIcs(graph, sink, preferBehavioral)`; collapse fires when
+  `def.behavior && pinRoles && (instance.fidelity==='behavioral' || preferBehavioral)`. App: `behavioralModels`
+  $state + a "○ Discrete / ● Behavioral" button by the Fidelity control. Default false = byte-identical +
+  golden-safe. Tests: single-level + nested depth-2 collapse via the global flag (web 265 pass).
 - [ ] **Owner: confirm ALU arithmetic-mode encoding (M/SEL/Cin).** Logic ops verified; M=1 ops read 0 in
   tried configs (a *converged* result → not the engine bug). Either control-encoding I didn't match, or a
   stale `behavior` word on an arithmetic-only sub-gate (adder carry / output-mux select).

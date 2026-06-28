@@ -1513,6 +1513,12 @@
   // (cap ESL/ESR + inductor DCR/winding-C self-resonance). Analysis-only — never touches
   // the transient sim or the snapshot hash.
   let realModels = $state(false);
+  // GLOBAL model-abstraction toggle (Behavioral vs Discrete), a sibling axis to Real/Ideal. When true,
+  // any placed cell that carries a characterized `behavior` collapses to its fast LUT model at every
+  // depth (see flattenUserIcs / docs/sim/transistor-scale-convergence.md) — the unlock for hierarchical
+  // designs that would otherwise flatten to thousands of transistors and overwhelm the Newton solve.
+  // Default false = today's discrete behaviour, byte-identical (and golden-safe: the golden has no user IC).
+  let behavioralModels = $state(false);
   // 1 Hz … 1 GHz log sweep — wide enough for both the low-frequency filter corners and the
   // MHz-scale self-resonant frequencies the Real models expose. The frequency-domain solve
   // has no Nyquist limit, so a "1 GHz" reading is honest here. Fixed list, reused each sweep.
@@ -2344,6 +2350,7 @@
         const nl = buildNetlist(
           drill ? dieSolveGraph(graph, drill.innerFrameId) : graph,
           realModels,
+          behavioralModels,
         );
         // Onboarding: a non-null netlist means the circuit forms a solvable loop —
         // the trigger for the "a circuit is a loop" / "reading a part" concept cards.
@@ -7051,6 +7058,20 @@
         title="Ideal = perfect components. Real = each part's quality tier bites: resistor tolerance, capacitor/inductor ESR/ESL/DCR + self-resonance, op-amp finite gain-bandwidth."
       >
         {realModels ? "● Real" : "○ Ideal"}
+      </button>
+      <button
+        class="btn btn-ghost fidelity-toggle {behavioralModels
+          ? 'is-real'
+          : ''}"
+        onclick={() => {
+          behavioralModels = !behavioralModels;
+          board?.emitChange();
+          recomputeBode(bodeNodeCount);
+          recomputePhaseScope(bodeNodeCount);
+        }}
+        title="Models for your CHARACTERIZED sub-cells. Discrete = simulate their real transistors (exact, but a deep design becomes thousands of FETs and the solver may not converge at scale). Behavioral = use each characterized cell's fast LUT model where available, at every depth — the way to run a big hierarchical build (e.g. a whole ALU)."
+      >
+        {behavioralModels ? "● Behavioral" : "○ Discrete"}
       </button>
     </div>
 

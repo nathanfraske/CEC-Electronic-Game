@@ -1130,6 +1130,111 @@ describe("IC variants — determinism contract", () => {
     }
   });
 
+  it("global preferBehavioral collapses a characterized cell without per-instance fidelity (the Behavioral toggle)", () => {
+    const ELEM_BEHAVIORAL = 25;
+    const ELEM_RESISTOR = 1;
+    // Same fixture as above, but the placed instance never sets fidelity. The GLOBAL preferBehavioral
+    // flag (buildNetlist's 3rd arg = the app's Behavioral/Discrete toggle) must collapse it anyway.
+    const inner = new BoardGraph();
+    const frame = place(inner, "DIP8", 0, 0);
+    const rIn = place(inner, "R", 6, 0, 1000);
+    connect(inner, frame, 0, rIn, 0);
+    connect(inner, rIn, 1, frame, 1);
+    registerUserIc({
+      tag: "GATEY",
+      name: "GATEY",
+      package: { archetype: "DIP", pinCount: 8 },
+      frameId: frame.id,
+      graph: inner.serialize(),
+      pinRoles: ["out", "in", "vcc", "gnd"],
+      behavior: { prog: 4, word: 0x5555, mode: 0, sig: 0 },
+      role: "subassembly",
+    });
+    try {
+      const buildBoard = (preferBehavioral: boolean): number[] => {
+        const g = new BoardGraph();
+        const v = place(g, "V", 0, 0, 5);
+        const gg = place(g, "GND", 0, 6);
+        const ic = place(g, "GATEY", 4, 0); // NOTE: per-instance fidelity left unset
+        connect(g, v, 0, ic, 2);
+        connect(g, ic, 3, gg, 0);
+        connect(g, v, 0, ic, 1);
+        connect(g, ic, 0, gg, 0);
+        connect(g, v, 1, gg, 0);
+        const nl = buildNetlist(g, false, preferBehavioral);
+        expect(nl).not.toBeNull();
+        return [...nl!.types];
+      };
+      // Default (toggle OFF): discrete — inner R inlines, no LUT, byte-identical to today.
+      const discrete = buildBoard(false);
+      expect(discrete).toContain(ELEM_RESISTOR);
+      expect(discrete).not.toContain(ELEM_BEHAVIORAL);
+      // Behavioral toggle ON: collapses to ONE LUT even though no instance opted in.
+      const behavioral = buildBoard(true);
+      expect(behavioral.filter((t) => t === ELEM_BEHAVIORAL).length).toBe(1);
+      expect(behavioral).not.toContain(ELEM_RESISTOR);
+    } finally {
+      unregisterUserIc("GATEY");
+    }
+  });
+
+  it("global preferBehavioral collapses NESTED characterized cells at every depth", () => {
+    const ELEM_BEHAVIORAL = 25;
+    const ELEM_RESISTOR = 1;
+    // Leaf cell GATEZ (characterized) wrapped inside WRAPZ (no behavior of its own). The wave-based
+    // inliner surfaces the nested GATEZ on a later wave; preferBehavioral must collapse it there too —
+    // the mechanism that turns a deep transistor-level build (e.g. a 4-bit ALU) into a few LUTs.
+    const leaf = new BoardGraph();
+    const lf = place(leaf, "DIP8", 0, 0);
+    const lr = place(leaf, "R", 6, 0, 1000);
+    connect(leaf, lf, 0, lr, 0);
+    connect(leaf, lr, 1, lf, 1);
+    registerUserIc({
+      tag: "GATEZ",
+      name: "GATEZ",
+      package: { archetype: "DIP", pinCount: 8 },
+      frameId: lf.id,
+      graph: leaf.serialize(),
+      pinRoles: ["out", "in", "vcc", "gnd"],
+      behavior: { prog: 4, word: 0x5555, mode: 0, sig: 0 },
+      role: "subassembly",
+    });
+    const wrap = new BoardGraph();
+    const wf = place(wrap, "DIP8", 0, 0);
+    const innerGate = place(wrap, "GATEZ", 6, 0);
+    connect(wrap, wf, 0, innerGate, 0); // OUT
+    connect(wrap, wf, 1, innerGate, 1); // IN
+    connect(wrap, wf, 2, innerGate, 2); // VCC
+    connect(wrap, wf, 3, innerGate, 3); // GND
+    registerUserIc({
+      tag: "WRAPZ",
+      name: "WRAPZ",
+      package: { archetype: "DIP", pinCount: 8 },
+      frameId: wf.id,
+      graph: wrap.serialize(),
+      pinRoles: ["out", "in", "vcc", "gnd"],
+      role: "subassembly",
+    });
+    try {
+      const g = new BoardGraph();
+      const v = place(g, "V", 0, 0, 5);
+      const gg = place(g, "GND", 0, 6);
+      const ic = place(g, "WRAPZ", 4, 0);
+      connect(g, v, 0, ic, 2);
+      connect(g, ic, 3, gg, 0);
+      connect(g, v, 0, ic, 1);
+      connect(g, ic, 0, gg, 0);
+      connect(g, v, 1, gg, 0);
+      // Behavioral ON: the depth-2 GATEZ collapses to a LUT; its inner R is gone.
+      const types = [...buildNetlist(g, false, true)!.types];
+      expect(types.filter((t) => t === ELEM_BEHAVIORAL).length).toBe(1);
+      expect(types).not.toContain(ELEM_RESISTOR);
+    } finally {
+      unregisterUserIc("WRAPZ");
+      unregisterUserIc("GATEZ");
+    }
+  });
+
   it("recognizeGate names the 1- and 2-input primitives from a swept word, null otherwise", () => {
     // 2-input words use the sweep's combo encoding bit(i0 | i1<<1): AND=0x8, OR=0xE, NAND=0x7, NOR=0x1,
     // XOR=0x6, XNOR=0x9. The NAND case is the owner's headline test (a built NAND must read "NAND").
