@@ -19,9 +19,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - [ ] **Prefab reference library** (owner) — ship the 15 curated cells in
   `docs/prefab-reference-library/source-20260628.json` as a built-in, auto-registered library in a parts-bin
   "reference/prefab" section. Golden-safe web data (CLAUDE.md `web/src/lib/circuits/` pattern; relates #41/#45).
-- [ ] **Huge-bus combining (16/32-bit)** (owner, brainstorm-workflow) — a "connector size" that bundles N
-  pins over one physical route for long hauls, fanning out where you process. Design panel →
-  `docs/ui/bus-scaling-design.md`.
+- [ ] **Huge-bus combining (16/32-bit) — DESIGN LANDED: the Cable.** `docs/ui/bus-scaling-design.md` (9-agent
+  panel synthesis). A **Cable** = a render/route-only overlay owning ONE player-drawn polyline + auto-managed
+  per-bit **net-label aliases**; connectivity rides the EXISTING same-name union in `buildNetlist`, so the sim
+  sees N independent nets and **sim-core is untouched (golden-safe by construction)**. No N routed wires (kills
+  the 212 clutter); strands fan out only at the ends/taps ("show the wires" preserved). Build order: **P0**
+  data+`deriveCableLinks`+headless gates (no pixels — alone makes 32-bit hauls work, zero renderer risk) →
+  P1 gesture (reuse `busOfPin`) → P2 LoD unzip → P3 fan-out edits → P4 instruments → P5 hierarchy. This also
+  REPLACES Bus Phase 2. Build when greenlit.
 
 ---
 
