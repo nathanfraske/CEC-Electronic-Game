@@ -5,6 +5,25 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (213) — Cable P0 landed: data layer + deriveCableLinks (golden-safe) [building P0→P5]
+
+**State:** 🟢 implementing the whole Cable (owner: "chunk it out and push through... verifying with renders
+and test items as you go. Then make a reference library of my symbols"). P0 done (PR #307 pending).
+
+**P0 (data + connectivity, NO pixels):** `graph.ts` — `Cable` interface + `cables?`/`nextCableId?` on
+GraphSnapshot + `BoardGraph.cables` map + serialize (emit only when present → cable-free saves byte-
+identical)/restore; `NetLabel.ownerId` (cable-owned marker); `addCable`/`removeCable`; **`deriveCableLinks`**
+(idempotent, owner-namespaced per-bit label pairs — the cable lowers to matched NetLabels unioned by the
+existing same-name pass → N independent nets, sim-core untouched); component-removal drops cables + reconciles.
+Tests (`cable.test.ts`): golden-safe serialize; idempotency (stable ids); **connectivity equivalence —
+cable === N hand-wires, bits independent, identical canonical node partition** (via sense-R node reads). Full
+gate green (web 282, golden stable).
+
+**Remaining:** P1 gesture+render (create one Cable on a clean bus connect; render conduit fanning to strands)
+→ P2 LoD unzip → P3 fan-out edits → P5 hierarchy → then the prefab reference library. Tasks #91-95.
+
+---
+
 ## 2026-06-28 (212) — Bus auto-complete REVERTED (owner feedback) → pivot to collapse-to-cable
 
 **State:** 🟡 Phase-1 auto-complete hook removed; cable redesign incoming. Owner tried it: drawing one strand
