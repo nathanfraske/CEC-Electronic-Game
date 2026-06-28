@@ -8429,11 +8429,77 @@ class ComponentNode {
           ]);
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
-        // Name the auto-applied symbol: the glyph alone can't tell a NAND from a NOR, so show WHAT it is as
-        // text just ABOVE the body — outside the box, so it never lands on the in-body stored-Q / Y value
-        // chip (owner ask). Rides the same fade as the symbol; uses the symbol's function name when known.
+
+        // Smart in-body placement shared by the NAME label and the value chip: score a grid of interior
+        // spots by clearance from the symbol box, the auto-routed leads, the pins, AND any already-placed
+        // label, and take the roomiest that stays inside the body and off the glyph. So both the name and
+        // the stored-Q/Y readout sit INSIDE the box, threaded clear of everything and of each other (owner:
+        // name inside, placed smartly, not interfering with the Q value).
+        const bestBodySpot = (
+          halfW: number,
+          halfH: number,
+          avoid: { x: number; y: number }[],
+        ): { x: number; y: number } => {
+          const xMin = cx - this.wPx / 2 + halfW;
+          const xMax = cx + this.wPx / 2 - halfW;
+          const yMin = cy - this.hPx / 2 + halfH;
+          const yMax = cy + this.hPx / 2 - halfH;
+          let bx = cx;
+          let by = cy + this.hPx / 2 - halfH; // fallback: inner bottom edge
+          if (xMax > xMin && yMax > yMin) {
+            let best = -Infinity;
+            const NX = 5;
+            const NY = 5;
+            for (let gi = 0; gi < NX; gi++) {
+              for (let gj = 0; gj < NY; gj++) {
+                const qx = xMin + ((xMax - xMin) * gi) / (NX - 1);
+                const qy = yMin + ((yMax - yMin) * gj) / (NY - 1);
+                if (
+                  Math.abs(qx - cx) < hw + halfW &&
+                  Math.abs(qy - cy) < hh + halfH
+                )
+                  continue; // off the symbol glyph
+                let d = Math.hypot(
+                  Math.max(Math.abs(qx - cx) - hw, 0),
+                  Math.max(Math.abs(qy - cy) - hh, 0),
+                );
+                for (const sg of leadSegs)
+                  d = Math.min(
+                    d,
+                    distToSegment(qx, qy, sg.ax, sg.ay, sg.bx, sg.by),
+                  );
+                for (const pp of this.pinPositions)
+                  d = Math.min(d, Math.hypot(qx - pp.x, qy - pp.y));
+                for (const a of avoid)
+                  d = Math.min(d, Math.hypot(qx - a.x, qy - a.y));
+                const score = d - Math.abs(qx - cx) * 0.015;
+                if (score > best) {
+                  best = score;
+                  bx = qx;
+                  by = qy;
+                }
+              }
+            }
+          }
+          return { x: bx, y: by };
+        };
+
+        // NAME the symbol IN the box, in the clearest gap — the glyph alone can't tell a NAND from a NOR, so
+        // show WHAT it is (the symbol's function name). Mapped through the part's rotate/mirror (it lives on
+        // the un-rotated `view`) and faded with the symbol.
         this.label.text = gname ?? this.component.label ?? this.defaultLabel();
-        this.label.position.set(this.wPx / 2, -9);
+        const nameSpot = bestBodySpot(
+          (this.label.text.length * 6) / 2 + 2,
+          11 / 2 + 2,
+          [],
+        );
+        const nameRp = rotPx(
+          nameSpot.x,
+          nameSpot.y,
+          this.component.rot,
+          this.component.mirror,
+        );
+        this.label.position.set(nameRp.x, nameRp.y);
         this.label.alpha = fadeAlpha;
         // Live SYMBOL-STATE: a recognised cell shows its live OUTPUT bit(s) on its body — a register's
         // stored Q, a gate's output Y, an adder's sum/carry. The LED bits sit inside the box and carry the
@@ -8463,58 +8529,15 @@ class ComponentNode {
           if (ta > 0.02) {
             this.stateLabel.text = formatStoredValue(liveState);
             this.stateLabel.style.fill = this.color;
-            // Park the chip INSIDE the body, in the CLEAREST gap (owner: "in the body, aware and not
-            // overlapping anything smartly" + "aware of the traces it auto-generates"). Score a small grid of
-            // candidate centres by their nearest obstacle — the symbol box, every pin dot, AND every auto-
-            // routed I/O lead segment — and take the roomiest that keeps the chip inside the body and off the
-            // symbol. So it lands beside the symbol on a wide register, below it on a tall gate, always
-            // threading clear of the leads. Inner bottom edge is the fallback when nothing fits.
-            const chipW = this.stateLabel.text.length * 6; // ~mono advance at the 9px base font (local px)
-            const chipH = 11;
-            const hcw = chipW / 2 + 2;
-            const hch = chipH / 2 + 2;
-            const xMin = cx - this.wPx / 2 + hcw;
-            const xMax = cx + this.wPx / 2 - hcw;
-            const yMin = cy - this.hPx / 2 + hch;
-            const yMax = cy + this.hPx / 2 - hch;
-            let localX = cx;
-            let localY = cy + this.hPx / 2 - hch; // fallback: inner bottom edge
-            if (xMax > xMin && yMax > yMin) {
-              let bestScore = -Infinity;
-              const NX = 5;
-              const NY = 5;
-              for (let gi = 0; gi < NX; gi++) {
-                for (let gj = 0; gj < NY; gj++) {
-                  const qx = xMin + ((xMax - xMin) * gi) / (NX - 1);
-                  const qy = yMin + ((yMax - yMin) * gj) / (NY - 1);
-                  // The chip must not cover the symbol glyph / LED bits.
-                  if (
-                    Math.abs(qx - cx) < hw + hcw &&
-                    Math.abs(qy - cy) < hh + hch
-                  )
-                    continue;
-                  // Nearest obstacle: the symbol box, then every lead, then every pin dot.
-                  let d = Math.hypot(
-                    Math.max(Math.abs(qx - cx) - hw, 0),
-                    Math.max(Math.abs(qy - cy) - hh, 0),
-                  );
-                  for (const sg of leadSegs)
-                    d = Math.min(
-                      d,
-                      distToSegment(qx, qy, sg.ax, sg.ay, sg.bx, sg.by),
-                    );
-                  for (const pp of this.pinPositions)
-                    d = Math.min(d, Math.hypot(qx - pp.x, qy - pp.y));
-                  // Tiny pull toward the horizontal centre breaks ties toward a natural reading spot.
-                  const score = d - Math.abs(qx - cx) * 0.015;
-                  if (score > bestScore) {
-                    bestScore = score;
-                    localX = qx;
-                    localY = qy;
-                  }
-                }
-              }
-            }
+            // Park the chip INSIDE the body in the clearest gap — same scorer as the name label, but ALSO
+            // avoiding the name's spot so the two readouts never overlap (owner: not interfering with Q).
+            const chipSpot = bestBodySpot(
+              (this.stateLabel.text.length * 6) / 2 + 2,
+              11 / 2 + 2,
+              [nameSpot],
+            );
+            const localX = chipSpot.x;
+            const localY = chipSpot.y;
             // Crispness + a fixed on-screen size, exactly the way the pin labels do it (counter-scale by
             // `cs`, resolution tracks the capped on-screen scale) — so the chip stops blurring and ballooning
             // as you zoom (owner: "its resolution does not scale properly like the pin text does").
