@@ -5,6 +5,23 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (212) — Bus auto-complete REVERTED (owner feedback) → pivot to collapse-to-cable
+
+**State:** 🟡 Phase-1 auto-complete hook removed; cable redesign incoming. Owner tried it: drawing one strand
+nicely then auto-completing made N **independently-routed** sibling wires that overlapped + ignored the drawn
+path (screenshot). Owner: "a better way that doesn't go down the smart-bus-routing 'looks nice' rabbit hole."
+Correct call — N independently-routed wires can't be made clean without exactly that rabbit hole.
+
+**Done:** removed the `planBusAutocomplete` call + import from `board.ts continueOrFinishWiring` (gate green,
+web 278). Kept `busWiring.ts` + its tests — the name-indexed bus DETECTION is reused by the cable design.
+
+**Pivot (in flight):** the huge-bus brainstorm workflow (collapse-to-cable / fan-out-to-process) IS the
+answer to this too — represent a bus as ONE drawn route (you control it, clean) that fans to individual
+strands only at the endpoints, instead of N independently-routed wires. Synthesis → `docs/ui/bus-scaling-
+design.md`; build the cable from there. "Show the wires" preserved (strands shown at the fans / taps).
+
+---
+
 ## 2026-06-28 (210) — Bus wiring "draw one → wire the bus" (Phase 1) + prefab library queued
 
 **State:** 🟢 bus wiring Phase 1 shipped (PR #305 pending); prefab reference library + huge-bus brainstorm
