@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (224) — Gate rename + FET terminal distinction + auto-symbol naming (all verified live)
+
+**State:** 🟢 All on `claude/kind-turing-hdelb3`, pushed, web 300 green. Three owner asks, each shot + Read.
+
+- **Gate rename:** the prefab tagged `OR Gate` actually computed **NOR** (display name was already "NOR
+  Gate") and collided with the built-in behavioral OR (tag `OR`, name "OR Gate"). Renamed the prefab tag →
+  `NOR Gate` (tag==name==function) + updated the 3 cells that place it (D LATCH, OE Gate, OR-Gate). The
+  hyphenated `OR-Gate` (real transistor OR = NOR+INV) left as-is.
+- **FET terminals distinct (owner: "show gate and drain, they flip them around"):** in `glyphs.ts
+  mosfetSchematic` the polarity arrow now rides the **source** finger (`srcY` tracks pin 1 under any flip)
+  → marks source-vs-drain AND polarity; with the type-coloured gate bar + PMOS bubble, gate/source/drain
+  all read. Plus `board.ts`: MOSFETs joined the `showPins` gate so a placed FET spells out **D/S/G** pin
+  labels (upright) at label zoom.
+- **Auto-applied symbols named (owner ask):** a characterized cell wore its gate glyph *instead of* its
+  name (`this.label.alpha = 0`). Now it shows the function name (`cellSymbol`) as text **above the body**,
+  outside the box so it never hits the in-body stored-Q/Y chip. Verified: a placed NAND prefab reads
+  "NAND" over its glyph.
+- **Lint fix:** `scripts/mcp-app.mjs` (from 223) hadn't been Prettier-run — formatted.
+
+**Live-verify is now routine** (the 223 capability surfacing paid off): every visual change this run was
+confirmed by `pnpm -C web shoot … --lens/--zoom/--center` + Read. The `cec-app` MCP loads next session for
+persistent interactive sessions.
+
+---
+
 ## 2026-06-28 (223) — MOSFET P/N legibility (verified live) + reference-library curriculum + self-interaction MCP
 
 **State:** 🟢 All on `claude/kind-turing-hdelb3`, pushed. Big realization this run: **the agent can SEE +
