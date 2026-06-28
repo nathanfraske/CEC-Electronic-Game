@@ -50,12 +50,17 @@ SUM/B each sit on a backing plate, lifted off the copper — exactly the ask). F
 `docs/prefab-reference-library/source-20260628.json`'s `userIcs` + place one IC; `--center 1 --zoom 7.5` for
 labels, `--zoom 16 --lens analogy` for internals/pipes.
 
-**Tweak 2 (pipe LoD bends inward) — NOT REPRODUCED yet; needs the specific cell.** With the hook I rendered a
-FULL ADDER's internals under the analogy lens (zoom 16): the conduit pipes route cleanly/orthogonally — no
-inward bend visible. The owner said "certain sub-assemblies," so it's layout-specific. Next: hunt it with the
-hook across other prefab cells (Inverter, MUX, latch — different pin edges) or ask the owner which cell shows
-it; then fix. Code pointers if/when reproduced: conduit pin-stub outward-normal where `condRoutes` is built
-(board.ts ~169), `drawConduitSkin`, conduit draw ~6404. Do NOT blind sign-flip (it'd regress the clean case).
+**Tweak 2 (pipe LoD bends inward) — NOT REPRODUCED from zoom-to-open; likely the DIE-EDITOR path.** Rendered
+TWO cells' internals under the analogy lens with the hook — **FULL ADDER** (zoom 16) and the **6T SRAM**
+(free-form, raw transistors, zoom 16): both route conduit pipes cleanly/orthogonally, no inward bend. So the
+bug is NOT in the zoom-to-open replica for these. The owner said "zooming down into, OR **editing** certain
+sub-assemblies" → most likely the **die-EDITOR** render path (drill-in to edit), which the harness can't drive
+yet (`__cecView` does camera+lens but not DRILL). Next: extend `__cecView` with a `drill: componentId` hook
+(call the App's edit-die flow), screenshot the editor under analogy, then localize + fix. Root logic:
+`pinOutward` (boardRender.ts:886 — outward dir from pin offset vs part centre) feeding `pinExit`/the conduit
+stub; in the die editor a frame pad already gets `null` (dieFramePinExit) but a NON-frame inner pin may not.
+Do NOT blind sign-flip (it'd regress the verified-clean FULL ADDER / 6T SRAM cases). Evidence screenshots in
+scratch (ic-pipes.png, sram-pipes.png).
 
 **Remaining queue (in order):**
 1. **P2** — `classifyStorageCell` (cellAnalysis.ts) + `characterizeMemoryCell` (sibling of characterize.ts) +
