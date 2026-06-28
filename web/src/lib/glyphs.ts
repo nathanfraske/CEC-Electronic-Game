@@ -1202,20 +1202,24 @@ function mosfetSchematic(g: Graphics, o: GlyphOpts, nch: boolean): void {
   g.moveTo(gatex, topY).lineTo(gatex, botY);
   g.stroke({ width: 2.6, color: typeCol, alpha: 0.95 });
 
-  // The body/channel arrow on the middle finger: N-channel points IN (toward the gate/channel), P-channel
-  // points OUT — the polarity mark, now drawn larger + in the type colour so it's legible at small sizes.
+  // The arrow rides the SOURCE finger (not the body) — so it marks WHICH terminal is the source (vs the
+  // plain drain) AND, by direction, the polarity (N points IN toward the channel, P points OUT). `srcY`
+  // tracks the actual source pin (pin 1) so it stays on the source under any rotation/flip; the drain finger
+  // is left plain. With the gate bar (type-coloured + PMOS bubble) on the left, all three terminals — gate,
+  // drain, source — now read distinctly without knowing the convention.
+  const srcY = s.y >= d.y ? botY : topY;
   const ax = platex + reach;
   const ah = 4.6;
   if (nch) {
-    g.moveTo(platex, midY)
-      .lineTo(platex + ah, midY - ah)
-      .moveTo(platex, midY)
-      .lineTo(platex + ah, midY + ah);
+    g.moveTo(platex, srcY)
+      .lineTo(platex + ah, srcY - ah)
+      .moveTo(platex, srcY)
+      .lineTo(platex + ah, srcY + ah);
   } else {
-    g.moveTo(ax, midY)
-      .lineTo(ax - ah, midY - ah)
-      .moveTo(ax, midY)
-      .lineTo(ax - ah, midY + ah);
+    g.moveTo(ax, srcY)
+      .lineTo(ax - ah, srcY - ah)
+      .moveTo(ax, srcY)
+      .lineTo(ax - ah, srcY + ah);
   }
   g.stroke({ width: 2.4, color: typeCol, alpha: 0.95 });
 

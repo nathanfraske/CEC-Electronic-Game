@@ -8740,12 +8740,18 @@ class ComponentNode {
     // overlapping pin names ("the labels aren't aware of their neighbours"). Wire mode + the open replica +
     // the die frame are unchanged (wiring needs every pin; the replica/ die frame label their own pads).
     const labelZoom = focused ? DETAIL_ZOOM : AMBIENT_LABEL_ZOOM;
+    // MOSFETs label their D/S/G terminals at the same zoom as a tiered part — schematics flip transistors
+    // around constantly, so spelling out which lead is gate/drain/source (owner ask) removes the guesswork.
+    const isFet = this.kindTag === "NM" || this.kindTag === "PM";
     const showPins =
       wireMode ||
       (isDieFrame(this.kindTag)
         ? zoom >= TIER_ZOOM
         : showUserIc || // the zoom-to-open replica always labels its edge pins (its 1:1 pinout)
-          ((tier !== null || showInternals || isUserIc(this.kindTag)) &&
+          ((tier !== null ||
+            showInternals ||
+            isUserIc(this.kindTag) ||
+            isFet) &&
             zoom >= labelZoom));
     const lcx = this.wPx / 2;
     const lcy = this.hPx / 2;
