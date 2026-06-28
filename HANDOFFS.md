@@ -21,8 +21,11 @@ device physics) done; gate green (sim-core **202** incl. golden, web 300, wasm/c
   `mem_fail` is never hashed → golden-safe; golden `0xeaac…` untouched.
 - 5 tests: program-clears / cant-set-without-erase(+FAIL) / erase-resets / erase-wins / reproducible.
 
-**Next (named in the flash doc UPDATE):** `mem_meta` + wear/endurance (§5.2,§6); the **web layer** — a
-placeable flash chip (`netlist.ts` MEM_SPEC mode 4, an ERASE pin) + the **persistence/replay** plumbing
+**Also landed (web): a placeable NAND Flash chip.** `graph.ts PART_KINDS.FLASH` (8-pin D/A0/A1/WE/DI/ERASE/
+VCC/GND) + `netlist.ts MEM_SPEC.FLASH` (mode 4, addrWidth 2, ERASE on terminal h) + bin entry + `flash.test.ts`
+(place→build→install→drive: erase restores 1s, program clears 1→0, illegal 0→1 FAILs). Web **303** green.
+
+**Next (named in the flash doc UPDATE):** `mem_meta` + wear/endurance (§5.2,§6); the **persistence/replay** plumbing
 (`memImage` capture + IndexedDB Tier-B + the t=0-captured-input seed, §3–§4); lazy/chunked alloc for big
 SSDs; the floating-gate zoom leaf. **NB: the word-level bus-port (P3a) — a flash-controller prerequisite —
 already landed**, so the rich FTL/wear-leveler lesson is now unblocked.
