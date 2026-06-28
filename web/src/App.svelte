@@ -97,6 +97,7 @@
     type CellBehavior,
   } from "./lib/userIc";
   import { characterizeCell } from "./lib/characterize";
+  import { gradeCombinational } from "./lib/testBench";
   import { traceSequentialCell } from "./lib/sequentialTrace";
   import { untaggedSignalPins, floatingPowerPins } from "./lib/cellAnalysis";
   import {
@@ -1827,6 +1828,10 @@
     /** the cell had a SAVED fast model that no longer matched a fresh sweep (a stale LUT from before an
      * edit) — it's been cleared so the cell reverts to its correct composite; the panel says so. */
     staleCleared: boolean;
+    /** Door-1 "Check It" verdict (test-bench grading engine, §1 of the test-bench design): a one-sentence
+     * plain-language answer + status, computed by {@link gradeCombinational} (drive→step-until-stable→read).
+     * Null for a cell the combinational bench can't grade (registered / multi-output / wide). */
+    bench: { status: "ok" | "warn"; text: string } | null;
   }
   let charResult = $state<CharPanel | null>(null);
   /** The Behavior characterization runs a scratch sim per input combination, so a wide cell (a 4-bit
@@ -1945,6 +1950,32 @@
     if (cr.ok) {
       const registered = (cr.behavior.mode ?? 0) >= 1;
       const g = recognizeGate(cr.behavior.word, cr.inputs);
+      // Door-1 "Check It" verdict (test-bench engine): re-grade the cell with STEP-UNTIL-STABLE (not the
+      // characterizer's fixed settle) so the panel can answer "does it work?" in one sentence AND flag the
+      // honest "didn't finish settling" — the false-failure guard. Combinational cells only (a registered/
+      // multi-output cell gets bench:null and keeps its existing next-state view; that's Door-2 territory).
+      let bench: CharPanel["bench"] = null;
+      if (!registered) {
+        const gr = gradeCombinational(ic.graph, ic.frameId, ic.pinRoles ?? []);
+        if (gr.ok) {
+          const n = gr.vectors.length;
+          if (gr.unsettled.length > 0)
+            bench = {
+              status: "warn",
+              text: `${gr.unsettled.length} of ${n} case${n === 1 ? "" : "s"} didn't finish settling — the design may be unstable. Simplify it, or give it longer to settle.`,
+            };
+          else if (gr.recognizedAs)
+            bench = {
+              status: "ok",
+              text: `Checks out — it computes ${gr.recognizedAs}, and all ${n} cases settled cleanly.`,
+            };
+          else
+            bench = {
+              status: "ok",
+              text: `Checks out — stable across all ${n} cases. It's a custom function (truth word 0x${gr.word.toString(16)}), not a standard gate.`,
+            };
+        }
+      }
       panel = {
         tag,
         name: ic.name || partName(tag),
@@ -1964,6 +1995,7 @@
         gate: registered && g === "BUFFER" ? "D-TYPE" : g,
         registered,
         staleCleared,
+        bench,
       };
     } else if (tr.ok) {
       // Can't collapse, but we can OBSERVE it — a self-dependent register: show its real behaviour.
@@ -1985,6 +2017,7 @@
         gate: null,
         registered: true,
         staleCleared,
+        bench: null,
       };
     } else {
       circuitWarning = `Can't read “${ic.name || partName(tag)}”: ${cr.reason}.`;
@@ -6070,6 +6103,16 @@
               onclick={() => (charResult = null)}>×</button
             >
           </div>
+          {#if charResult.bench}
+            <!-- Door-1 "Check It" verdict: one-sentence "does it work?" from the test-bench engine
+                 (step-until-stable). Redundant across colour + glyph + text (accessibility §4). -->
+            <div class="char-verdict char-verdict-{charResult.bench.status}">
+              <span class="char-verdict-mark" aria-hidden="true"
+                >{charResult.bench.status === "ok" ? "✓" : "⚠"}</span
+              >
+              <span>{charResult.bench.text}</span>
+            </div>
+          {/if}
           <table class="char-tt mono">
             <thead>
               <tr>
@@ -9533,6 +9576,32 @@
     border: 1px solid color-mix(in oklch, var(--cyan) 45%, transparent);
     border-radius: 2px;
     background: color-mix(in oklch, var(--cyan) 12%, transparent);
+  }
+  /* Door-1 "Check It" verdict line: a one-sentence plain-language "does it work?" under the panel header.
+     Status carried redundantly by colour (ok green / warn amber) + glyph (✓ / ⚠) + the worded text. */
+  .char-verdict {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin: 6px 0 2px;
+    padding: 5px 8px;
+    border-radius: 3px;
+    border: 1px solid transparent;
+    font-size: 12px;
+    line-height: 1.35;
+  }
+  .char-verdict-mark {
+    font-weight: 700;
+  }
+  .char-verdict-ok {
+    color: var(--ok);
+    border-color: color-mix(in oklch, var(--ok) 45%, transparent);
+    background: color-mix(in oklch, var(--ok) 10%, transparent);
+  }
+  .char-verdict-warn {
+    color: var(--warn);
+    border-color: color-mix(in oklch, var(--warn) 50%, transparent);
+    background: color-mix(in oklch, var(--warn) 12%, transparent);
   }
   /* The "REGISTERED" pill: accent (rose) so a sequential cell reads distinctly from the cyan gate badge. */
   .char-reg {

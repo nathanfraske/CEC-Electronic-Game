@@ -5,6 +5,27 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (208) — Test-bench Door-1 "Check It" verdict in the Behavior panel (#89)
+
+**State:** 🟢 PR #303 (pending). First VISIBLE test-bench piece, wired to the engine from (207).
+Screenshot-verified.
+
+**What shipped:** the Behavior panel now shows a one-sentence Door-1 verdict line (above the truth table)
+for any combinational cell, computed by `gradeCombinational` (the step-until-stable bench engine, not the
+characterizer's fixed settle). Green ✓ "Checks out — it computes AND, and all 4 cases settled cleanly." /
+amber ⚠ "N of M cases didn't finish settling…" (the honest false-failure guard) / ✓ custom-function fallback.
+Redundant colour+glyph+text (accessibility §4). `CharPanel.bench` field; computed in `showBehavior` (combinational
+only → registered/multi-output get `bench:null`); rendered as `.char-verdict` (--ok/--warn tokens). App-only/
+golden-safe (scratch sim, nothing hashed). Verified via a headless screenshot on the owner's AND-Gate
+(rendered correctly, 0 page errors). Full gate green (web 272). No new tests (engine already covered in 207;
+this is the thin UI binding).
+
+**Next (build order):** pin card · input renderers · per-bit fail highlight + spotlight-the-suspect
+(`NET_DIM_ALPHA`) · settle chip + "Debug this →" · Door-2 vector grid (the ALU showcase needs multi-output
+grading — extend the engine with `gradeVectors`). Then #88 Newton globalization (golden-sensitive, LAST).
+
+---
+
 ## 2026-06-28 (207) — Test-bench grading ENGINE landed (#89 foundation)
 
 **State:** 🟢 PR #302 (pending). The load-bearing core of the test bench (doc §2) — headless, golden-safe,
