@@ -184,6 +184,22 @@ impl Simulation {
         self.inner.node_voltages()
     }
 
+    /// Seed an `ELEM_MEMORY` element's contents (a ROM/EEPROM image, or an initial RAM pattern):
+    /// word `k` ← `words[k]` across the store's depth. A no-op for an out-of-range index or a
+    /// non-memory element. Issued after install/reset for non-volatile (ROM/EEPROM) modes — the
+    /// volatility policy lives web-side. Maintains the incremental content digest, so replay/grading
+    /// stay deterministic.
+    pub fn load_memory(&mut self, elem_index: usize, words: &[u32]) {
+        self.inner.load_memory(elem_index, words);
+    }
+
+    /// Read one word of an `ELEM_MEMORY` element's contents (`0` for an out-of-range index/addr or a
+    /// non-memory element). The stored bit is observed here (the MEASURE/symbol-state readout), not
+    /// through a Q pin.
+    pub fn mem_read(&self, elem_index: usize, addr: usize) -> u32 {
+        self.inner.mem_read(elem_index, addr)
+    }
+
     /// Current through each element in amperes, in the **same order** as
     /// [`Simulation::set_netlist`], signed `a -> b` (positive flows from terminal
     /// `a` to terminal `b`). One entry per element; the front end maps these back

@@ -2090,6 +2090,7 @@ fn is_digital(kind: u8) -> bool {
         || kind == ELEM_SAMPLER
         || kind == ELEM_COMPARATOR
         || kind == ELEM_BEHAVIORAL
+        || kind == ELEM_MEMORY
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -2147,6 +2148,11 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 // Unused pins default to ground (node 0, forced analog), so listing all of a/b/c and
                 // f/g/h is safe for every program — an unused one only ever re-marks ground.
                 &[e.a, e.b, e.c, e.f, e.g, e.h]
+            } else if e.kind == ELEM_MEMORY {
+                // Cell-level memory: D_out (a) is a digital OUTPUT; WE (b), D_in (c) and the
+                // address A0..A2 (f, g, h) are digital INPUTS. VCC (d), GND (e) are analog supply
+                // pins (marked below, exactly like a powered gate's power pins).
+                &[e.a, e.b, e.c, e.f, e.g, e.h]
             } else {
                 &[e.a, e.b, e.c, e.d]
             };
@@ -2179,11 +2185,12 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                     }
                 }
             }
-            if e.kind == ELEM_BEHAVIORAL {
+            if e.kind == ELEM_BEHAVIORAL || e.kind == ELEM_MEMORY {
                 // VCC (d) / GND (e) are analog SUPPLY pins (treated exactly like a powered
-                // gate's power pins), so the behavioral block's supply nets stay Analog and a
-                // node shared with a digital pin is Boundary. Its signal pins (SCLK/MOSI/CS/
-                // MISO/START) are digital-touched above.
+                // gate's power pins), so the behavioral block's (and memory array's) supply nets
+                // stay Analog and a node shared with a digital pin is Boundary. Their signal pins
+                // (SCLK/MOSI/CS/MISO/START; the memory's D_out/WE/D_in/addr) are digital-touched
+                // above.
                 for t in [e.d, e.e] {
                     if t < node_count {
                         analog_touched[t] = true;
@@ -6010,6 +6017,36 @@ impl Sim {
                     self.digital_vlow[e.a] = vlow;
                     self.digital_family[e.a] = fi as u8;
                 }
+                ELEM_MEMORY => {
+                    // READ (cell-level, P1): drive D_out (a) with the addressed word's bit. Powered
+                    // like a gate — VCC (d) / GND (e) set the rail; the address A0..A2 (f, g, h) is
+                    // quantised from the committed (last-tick) voltages relative to GND and masked to
+                    // the store's depth. The word is stable within the solve (writes commit in
+                    // `commit_sequential_digital_state`), so this is a CONSTANT drive — no Newton.
+                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                    let rail = (vhigh - vlow).max(0.0);
+                    let depth = self.mem_data[i].len();
+                    if rail >= GATE_MIN_RAIL && depth > 0 {
+                        let fam = &FAMILIES[0];
+                        let a0 =
+                            (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High) as usize;
+                        let a1 =
+                            (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High) as usize;
+                        let a2 =
+                            (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
+                        let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
+                        let dout = if self.mem_data[i][addr] & 1 != 0 {
+                            Level::High
+                        } else {
+                            Level::Low
+                        };
+                        self.digital_drive[e.a] = combine(self.digital_drive[e.a], dout);
+                        self.digital_vhigh[e.a] = rail;
+                        self.digital_vlow[e.a] = vlow;
+                        self.digital_family[e.a] = 0;
+                    }
+                    // unpowered → D_out released (Z, the default), like a dead gate.
+                }
                 ELEM_DFF => {
                     // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
                     // in the commit phase, so the output is constant within the solve.
@@ -6802,6 +6839,34 @@ impl Sim {
                 }
                 _ => {}
             }
+        }
+        // WRITE (cell-level memory, P1): a separate index pass — the match loop above holds an
+        // immutable borrow of `self.elements`, so `write_cell` (which needs `&mut self`) cannot run
+        // inside it. Level-sensitive async write: while WE (b) is high, latch D_in (c) into the
+        // addressed word. Powered like a gate (VCC d / GND e set the rail); address + WE + D_in are
+        // quantised from the just-solved committed voltages relative to GND. Funnels through
+        // `write_cell` so `mem_digest` stays consistent.
+        for i in 0..self.elements.len() {
+            let e = self.elements[i];
+            if e.kind != ELEM_MEMORY {
+                continue;
+            }
+            let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+            let rail = (vhigh - vlow).max(0.0);
+            let depth = self.mem_data[i].len();
+            if rail < GATE_MIN_RAIL || depth == 0 {
+                continue; // unpowered → hold
+            }
+            let fam = &FAMILIES[0];
+            if fam.quantize(self.node_v[e.b] - vlow, rail) != Level::High {
+                continue; // WE low → hold
+            }
+            let a0 = (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High) as usize;
+            let a1 = (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High) as usize;
+            let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
+            let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
+            let din = (fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32;
+            self.write_cell(i, addr, din);
         }
     }
 
@@ -12465,6 +12530,72 @@ mod tests {
             a.snapshot_hash(),
             other.snapshot_hash(),
             "different contents ⇒ different hash"
+        );
+    }
+
+    /// Powered cell-level memory (P1): a write through the terminals (WE high latches D_in into the
+    /// addressed word) is read back both via `mem_read` and as the driven D_out node voltage.
+    /// Nodes: 0 = gnd, 1 = VCC (5 V), 2 = D_out, 3 = WE, 4 = D_in, 5 = A0. addrWidth = 1 (depth 2).
+    fn mem_rw_rig(din_v: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE + 1] = 1.0; // MEMORY (elem 5): addrWidth = 1 -> depth 2
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 3, 4, 5, 2, 2], // a: VCC/WE/Din/A0 src nodes; R→Dout; MEM D_out = 2
+            &[0, 0, 0, 0, 0, 3], // b: src grounds; R→gnd; MEM WE = 3
+            &[0, 0, 0, 0, 0, 4], // c: MEM D_in = 4
+            &[0, 0, 0, 0, 0, 1], // d: MEM VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: MEM GND = node 0
+            &[0, 0, 0, 0, 0, 5], // f: MEM A0 = node 5
+            &[0, 0, 0, 0, 0, 0], // g: MEM A1 = gnd
+            &[0, 0, 0, 0, 0, 0], // h: MEM A2 = gnd
+            &[5.0, 5.0, din_v, 0.0, 1.0e6, 0.0], // VCC 5, WE 5, Din din_v, A0 0, R 1 MΩ load
+            &[0.0; 6],
+            &params,
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim
+    }
+
+    #[test]
+    fn memory_writes_and_reads_through_terminals() {
+        let hi = mem_rw_rig(5.0);
+        assert_eq!(
+            hi.mem_read(5, 0),
+            1,
+            "WE high + D_in high ⇒ word 0 stores 1"
+        );
+        assert!(
+            hi.node_v[2] > 2.5,
+            "D_out drives high when the stored bit is 1 (got {})",
+            hi.node_v[2]
+        );
+        let lo = mem_rw_rig(0.0);
+        assert_eq!(lo.mem_read(5, 0), 0, "WE high + D_in low ⇒ word 0 stores 0");
+        assert!(
+            lo.node_v[2] < 2.5,
+            "D_out drives low when the stored bit is 0 (got {})",
+            lo.node_v[2]
+        );
+        // the incremental digest stayed consistent through the terminal writes
+        let mut d = 0u64;
+        for (k, w) in hi.mem_data[5].iter().enumerate() {
+            d ^= mem_cell_hash(k, *w);
+        }
+        assert_eq!(
+            d, hi.mem_digest[5],
+            "digest consistent after terminal writes"
         );
     }
 
