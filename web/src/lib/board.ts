@@ -6629,21 +6629,43 @@ export class Board {
       x: ps.reduce((s, p) => s + p.x, 0) / ps.length,
       y: ps.reduce((s, p) => s + p.y, 0) / ps.length,
     });
-    // The trunk gathers at a point pushed OUT from the pin cluster (toward the cable run) by the cluster's
-    // own spread + a cell, so the N strands visibly FAN between the spread-out pins and that gather point —
-    // a ribbon-cable breakout, not N near-coincident lines hidden on the chip body.
-    const gather = (ctr: XY, toward: XY, pins: XY[]): XY => {
-      let dx = toward.x - ctr.x;
-      let dy = toward.y - ctr.y;
-      const len = Math.hypot(dx, dy) || 1;
-      dx /= len;
-      dy /= len;
+    // The gather sits on the pin-array CENTRE line, pushed OUT toward the partner part by the cluster's own
+    // spread + a cell — leaving room for the orthogonal comb to fan between the spread-out pins and the
+    // gather. The fan AXIS is set by the array's own orientation (a vertical pin column — more Y-spread — is
+    // approached HORIZONTALLY and fans vertically), NOT the run direction, so a route jog can't flip it; the
+    // partner direction only chooses which side (sign). Snapped to H/V → the whole breakout is on-grid.
+    const gatherAxis = (
+      ctr: XY,
+      toward: XY,
+      pins: XY[],
+    ): { pt: XY; axis: "h" | "v" } => {
+      let sx = 0;
+      let sy = 0;
+      for (const p of pins) {
+        sx += Math.abs(p.x - ctr.x);
+        sy += Math.abs(p.y - ctr.y);
+      }
+      const axis: "h" | "v" = sy >= sx ? "h" : "v"; // ⟂ the dominant pin-array spread
       const spread = Math.max(
         PITCH,
         ...pins.map((p) => Math.hypot(p.x - ctr.x, p.y - ctr.y)),
       );
       const d = spread + PITCH;
-      return { x: ctr.x + dx * d, y: ctr.y + dy * d };
+      const pt: XY =
+        axis === "h"
+          ? { x: ctr.x + Math.sign(toward.x - ctr.x || 1) * d, y: ctr.y }
+          : { x: ctr.x, y: ctr.y + Math.sign(toward.y - ctr.y || 1) * d };
+      return { pt, axis };
+    };
+    // One orthogonal "comb tooth" per conductor: pin → out along the run axis → turn once (an L) into the
+    // gather, so every strand follows the same Manhattan rules as a hand-drawn wire — no diagonals, and
+    // BOTH ends fan identically. The shared leg into the gather reads as the bus manifold.
+    const comb = (pins: XY[], gp: XY, axis: "h" | "v") => {
+      for (const p of pins) {
+        if (axis === "h")
+          g.moveTo(p.x, p.y).lineTo(gp.x, p.y).lineTo(gp.x, gp.y);
+        else g.moveTo(p.x, p.y).lineTo(p.x, gp.y).lineTo(gp.x, gp.y);
+      }
     };
     for (const c of this.graph.cables.values()) {
       const worldOf = (componentId: number, pinIndex: number): Point | null => {
@@ -6661,17 +6683,42 @@ export class Board {
       const sc = centroid(srcW);
       const dc = centroid(dstW);
       const routeW = c.route.map((cell) => this.cellToWorld(cell));
-      // Each end gathers toward the first/last route bend (or the far cluster when the run is straight).
-      const sg = gather(sc, routeW[0] ?? dc, srcW);
-      const dg = gather(dc, routeW[routeW.length - 1] ?? sc, dstW);
-      // End fans: EVERY conductor is its own strand from its pin to the gather point (show the wires).
-      for (const p of srcW) g.moveTo(p.x, p.y).lineTo(sg.x, sg.y);
-      for (const p of dstW) g.moveTo(p.x, p.y).lineTo(dg.x, dg.y);
+      // Each end's gather sits on the pin-array CENTRE line, pushed out toward the PARTNER part — so the
+      // trunk meets each array at its centre and the comb fans symmetrically either side, identically at
+      // both ends, no matter how the route jogs in between.
+      const src = gatherAxis(sc, dc, srcW);
+      const dst = gatherAxis(dc, sc, dstW);
+      // End fans: an orthogonal comb at BOTH ends — every conductor on-grid, symmetric about the centre.
+      comb(srcW, src.pt, src.axis);
+      comb(dstW, dst.pt, dst.axis);
       g.stroke({ width: 2, color, alpha: 0.75 });
-      // Trunk (thick): gather → drawn route bends → gather.
-      g.moveTo(sg.x, sg.y);
-      for (const p of routeW) g.lineTo(p.x, p.y);
-      g.lineTo(dg.x, dg.y);
+      // Trunk (thick): src-centre gather → the user's drawn route bends → dst-centre gather, walked as an
+      // ORTHOGONAL polyline. Any diagonal segment (notably the leg from the route's end to the centre-line
+      // gather) gets an inserted elbow, so the trunk is pure Manhattan and meets each comb spine head-on —
+      // the leg touching a gather leaves/enters along that end's fan axis. Already-orthogonal user bends are
+      // untouched. Render-only; the stored route (manipulable) is unchanged.
+      const pts: XY[] = [src.pt, ...routeW, dst.pt];
+      const trunk: XY[] = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const a = trunk[trunk.length - 1];
+        const b = pts[i];
+        if (a.x !== b.x && a.y !== b.y) {
+          const corner =
+            i === pts.length - 1
+              ? dst.axis === "h"
+                ? { x: a.x, y: b.y }
+                : { x: b.x, y: a.y }
+              : i === 1
+                ? src.axis === "h"
+                  ? { x: b.x, y: a.y }
+                  : { x: a.x, y: b.y }
+                : { x: b.x, y: a.y };
+          trunk.push(corner);
+        }
+        trunk.push(b);
+      }
+      g.moveTo(trunk[0].x, trunk[0].y);
+      for (let i = 1; i < trunk.length; i++) g.lineTo(trunk[i].x, trunk[i].y);
       g.stroke({ width: 6, color, alpha: 0.9 });
     }
   }
