@@ -572,6 +572,16 @@ const MEM_SPEC: Record<string, MemSpec> = {
     wordWidth: 1,
     retention: 1000,
   },
+  // NAND flash chip (mode 4): non-volatile, but a program can only CLEAR bits (1→0) and a high on ERASE
+  // resets the whole block to 1s. Visual pins [D, A0, A1, WE, DI, ERASE, VCC, GND] (graph.ts PART_KINDS.FLASH).
+  // The toy reserves the 3rd address bit's slot for ERASE, so it addresses on A0/A1 only (addrWidth 2 →
+  // depth 4); sim terminal h = ERASE. Try to program a 0→1 and the device FAILs ("erase the block first").
+  FLASH: {
+    term: [0, 3, 4, 6, 7, 1, 2, 5],
+    mode: 4,
+    addrWidth: 2,
+    wordWidth: 1,
+  },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.

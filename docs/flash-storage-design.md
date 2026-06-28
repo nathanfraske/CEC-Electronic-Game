@@ -60,6 +60,25 @@ fold), so per golden rule #1 / `TODOS.md` #47 it needs **explicit owner greenlig
 touching `crates/sim-core`. The deliverable of this panel is this doc (`HANDOFFS.md` #218
 item 5); no engine code is written until greenlit.
 
+> **UPDATE 2026-06-28 (225) — greenlit; P-flash-1 (engine physics) LANDED.** Mode **4 = NAND** is live in
+> `crates/sim-core`, golden-safe (golden `0xeaac…` untouched, `golden_snapshot_hash_is_stable` green):
+> - **Program** (§2.2): the commit write pass branches on mode — NAND does `write_cell(i, addr, old & pw)`
+>   (program can only CLEAR bits 1→0).
+> - **Erase** (§2.3): a high on terminal **`h` = ERASE** resets the whole device (the toy's single block)
+>   to word-width-masked all-1s, in a bounded `write_cell` loop. **Erase wins** over a simultaneous program
+>   (§2.4) — checked first. The v1 toy reserves `h` for ERASE, so it addresses on `f`/`g` (depth ≤ 4); the
+>   masked `a2<<2` never collides.
+> - **Erase-before-write FAIL** (§2.2): a 0→1 program raises a per-element `mem_fail` latch that
+>   `flag_and_clamp_fails` folds into `failed_elements` (it otherwise *overwrites* that array from the
+>   current/clamp check — so the latch was load-bearing, the doc's "set it at the write site" alone is wiped).
+>   `mem_fail` is never hashed → golden-safe.
+> - Tests (sim-core **202**): `nand_program_clears_a_bit`, `nand_cannot_set_a_bit_without_erase_and_fails`,
+>   `nand_erase_resets_block_to_ones`, `nand_erase_wins_over_simultaneous_program`, `nand_flash_run_is_reproducible`.
+>
+> **Still ahead:** `mem_meta` + wear/endurance (§5.2, §6); the **web layer** — a placeable flash chip
+> (`netlist.ts` MEM_SPEC mode 4) + the **persistence/replay** plumbing (`memImage` capture, IndexedDB Tier-B,
+> the t=0-captured-input seed, §3–§4); lazy/chunked alloc for large SSDs (§3); the floating-gate zoom leaf (§8).
+
 ---
 
 ## 1. Where flash sits, and why mode 4

@@ -1033,7 +1033,9 @@ pub const BEH_STATE_WORDS: usize = 16;
 /// matrix — so a multi-MB array stamps identically to a few bytes and per-tick cost is
 /// O(accesses), not O(bits). Id **26**, appended after [`ELEM_BEHAVIORAL`] = 25 (append-only: no
 /// existing id moves, so a circuit with no memory element folds zero extra bytes and the golden is
-/// byte-identical). Structural params: slot 0 = `mode` (0 ROM / 1 RAM / 2 EEPROM / 3 DRAM), slot 1 =
+/// byte-identical). Structural params: slot 0 = `mode` (0 ROM / 1 RAM / 2 EEPROM / 3 DRAM / 4 NAND
+/// flash — non-volatile, where a program can only CLEAR bits 1→0 and an ERASE pin resets a block to
+/// 1s; see the WRITE pass + `docs/flash-storage-design.md`), slot 1 =
 /// `addrWidth` (depth = `2^addrWidth`), slot 3 = `wordWidth` (slot 2 is left at 0 = unrated, the
 /// general [`RATED_CURRENT_SLOT`]). Deliberately **not** in [`is_nonlinear`] — reads are a constant
 /// Thévenin stamp, so memory-only circuits stay on the linear fast path. P1 lays the storage + the
@@ -3515,6 +3517,11 @@ pub struct Sim {
     /// own reading hit the FAIL bound this step, so the renderer can box exactly the
     /// offending parts. Recomputed every step.
     failed_elements: Vec<bool>,
+    /// **Commit-phase FAIL latch** (length = `elements.len()`): a logical FAIL raised during the digital
+    /// commit pass that `flag_and_clamp_fails` then folds into [`Sim::failed_elements`] (which it otherwise
+    /// overwrites from the per-element current/clamp check). Today only NAND flash sets it — an
+    /// erase-before-write violation (a 0→1 program). Set fresh each commit tick, never hashed → golden-safe.
+    mem_fail: Vec<bool>,
     /// The D flip-flop's stored output [`Level`]: the bit latched at the last rising
     /// clock edge, which drives `Q` (and inverted, `Q̄`) every tick until the next edge.
     /// Used only by [`ELEM_DFF`]; `Level::Low` for every other element. Persistent
@@ -3730,6 +3737,7 @@ impl Sim {
             secondary_state: Vec::new(),
             failed: false,
             failed_elements: Vec::new(),
+            mem_fail: Vec::new(),
             ff_q: Vec::new(),
             ff_clk_prev: Vec::new(),
             samp_q: Vec::new(),
@@ -4100,6 +4108,7 @@ impl Sim {
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
         self.failed_elements = vec![false; elements.len()];
+        self.mem_fail = vec![false; elements.len()];
         self.ff_q = vec![Level::Low; elements.len()];
         self.ff_clk_prev = vec![Level::Low; elements.len()];
         self.samp_q = vec![Level::Low; elements.len()];
@@ -4171,6 +4180,9 @@ impl Sim {
             *s = 0.0;
         }
         self.failed = false;
+        for s in &mut self.mem_fail {
+            *s = false;
+        }
         for s in &mut self.failed_elements {
             *s = false;
         }
@@ -6994,6 +7006,7 @@ impl Sim {
             if e.kind != ELEM_MEMORY {
                 continue;
             }
+            self.mem_fail[i] = false; // fresh each tick; raised below only by a NAND program violation
             let (vlow, vhigh) = gate_rails(&e, &self.node_v);
             let rail = (vhigh - vlow).max(0.0);
             let depth = self.mem_data[i].len();
@@ -7013,12 +7026,26 @@ impl Sim {
                 let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
                 (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1)
             };
-            // WRITE: while WE (b) is high, latch the data-in bus into the addressed word (digest-consistent).
-            if fam.quantize(self.node_v[e.b] - vlow, rail) == Level::High {
-                if wide {
-                    // Assemble the word from the data-in bus (LSB = bit 0). A wide memory with no data-in
-                    // bus is a ROM — WE is ignored, nothing is written.
-                    if !self.mem_din_nodes[i].is_empty() {
+            // NAND ERASE (mode 4): a high on the ERASE terminal (h) resets the whole device — the toy's
+            // single block — back to all-1s (the only way to turn a programmed 0 back into a 1). Checked
+            // BEFORE the program so ERASE WINS on a tick that requests both (§2.4 deterministic precedence).
+            // For the v1 NAND toy, h is the ERASE pin, so the device addresses on f/g only (depth ≤ 4; the
+            // a2<<2 bit is masked off by `& (depth-1)` at the decode above, so it never collides). All-1s is
+            // wordWidth-masked (§5.5); for the 1-bit toy that is simply 1.
+            let nand = e.params[0] == 4.0;
+            if nand && fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High {
+                let ww = param_or(&e.params, 3, 1.0).max(1.0) as u32;
+                let all_ones = if ww >= 32 { u32::MAX } else { (1u32 << ww) - 1 };
+                for w in 0..depth {
+                    self.write_cell(i, w, all_ones);
+                }
+            } else if fam.quantize(self.node_v[e.b] - vlow, rail) == Level::High {
+                // The word the player is programming — the cell-level D_in bit, or the assembled wide
+                // data-in bus (a wide ROM with no data-in bus writes nothing). LSB = bit 0.
+                let program_word = if wide {
+                    if self.mem_din_nodes[i].is_empty() {
+                        None
+                    } else {
                         let mut word = 0u32;
                         for b in 0..self.mem_din_nodes[i].len() {
                             let node = self.mem_din_nodes[i][b];
@@ -7026,11 +7053,27 @@ impl Sim {
                                 word |= 1 << b;
                             }
                         }
-                        self.write_cell(i, addr, word);
+                        Some(word)
                     }
                 } else {
-                    let din = (fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32;
-                    self.write_cell(i, addr, din);
+                    Some((fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32)
+                };
+                if let Some(pw) = program_word {
+                    if nand {
+                        // NAND flash (mode 4): a program can only CLEAR bits (monotone 1 → 0). A bit it tries
+                        // to SET (0 → 1) is the erase-before-write violation — a deterministic no-op (real
+                        // NAND must ERASE the whole block back to 1s first, §2.3) that FLAGS the element
+                        // FAILed ("you must erase first"). `failed_elements` is never folded into
+                        // `snapshot_hash`, so the flag is golden-safe; the AND routes through `write_cell`
+                        // so the digest stays correct. Other modes latch the word directly.
+                        let old = self.mem_data[i][addr];
+                        if pw & !old != 0 {
+                            self.mem_fail[i] = true; // folded into failed_elements by flag_and_clamp_fails
+                        }
+                        self.write_cell(i, addr, old & pw);
+                    } else {
+                        self.write_cell(i, addr, pw);
+                    }
                 }
             }
             // DRAM (mode 3): per-word refresh + EAGER decay. An ACCESS (the addressed word, read out on
@@ -7158,8 +7201,11 @@ impl Sim {
             if rated > 0.0 && self.currents[i].abs() > rated {
                 bad = true;
             }
-            self.failed_elements[i] = bad;
-            failed |= bad;
+            // Fold in a commit-phase logical FAIL (today: a NAND erase-before-write violation) — it has no
+            // current/clamp signature, so it must be OR-ed in here or the line above would erase it.
+            let fail_i = bad || self.mem_fail[i];
+            self.failed_elements[i] = fail_i;
+            failed |= fail_i;
         }
         self.failed = failed;
     }
@@ -13066,6 +13112,119 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "wide memory must reproduce exactly");
+    }
+
+    /// A cell-level **NAND flash** (mode 4) toy: depth 4 (addr f/g), 1-bit words, with **h = ERASE**.
+    /// Nodes: 0 = gnd, 1 = VCC(5), 2 = D_out (R pulldown), 3 = WE, 4 = D_in, 5 = A0, 6 = A1, 7 = ERASE.
+    /// `seed` pre-loads contents (e.g. all-1s = freshly erased). Stepped to settle the committed write.
+    fn flash_rig(we: f64, din: f64, a0: f64, a1: f64, erase: f64, seed: &[u32]) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 8 * PARAM_STRIDE];
+        params[7 * PARAM_STRIDE] = 4.0; // MEMORY (elem 7): mode 4 = NAND flash
+        params[7 * PARAM_STRIDE + 1] = 2.0; // addrWidth 2 → depth 4 (h is ERASE, not an address bit)
+        assert!(sim.set_netlist_pefgh(
+            8,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 3, 4, 5, 6, 7, 2, 2], // a: src +nodes; R→D_out; MEM D_out = 2
+            &[0, 0, 0, 0, 0, 0, 0, 3], // b: src/R grounds; MEM WE = 3
+            &[0, 0, 0, 0, 0, 0, 0, 4], // c: MEM D_in = 4
+            &[0, 0, 0, 0, 0, 0, 0, 1], // d: MEM VCC = 1
+            &[0; 8],                   // e: MEM GND = 0
+            &[0, 0, 0, 0, 0, 0, 0, 5], // f: MEM A0 = 5
+            &[0, 0, 0, 0, 0, 0, 0, 6], // g: MEM A1 = 6
+            &[0, 0, 0, 0, 0, 0, 0, 7], // h: MEM ERASE = 7
+            &[5.0, we, din, a0, a1, erase, 1.0e6, 0.0],
+            &[0.0; 8],
+            &params,
+        ));
+        if !seed.is_empty() {
+            sim.load_memory(7, seed);
+        }
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim
+    }
+
+    /// NAND program can only CLEAR a bit (1 → 0): an erased word (1) programmed with D_in = 0 becomes 0;
+    /// other words are untouched. This is the floating-gate physics — a program injects charge, it never
+    /// removes it.
+    #[test]
+    fn nand_program_clears_a_bit() {
+        // Freshly erased (all 1s); program word 0 ← 0 (WE high, D_in low, addr 0, no erase).
+        let s = flash_rig(5.0, 0.0, 0.0, 0.0, 0.0, &[1, 1, 1, 1]);
+        assert_eq!(s.mem_read(7, 0), 0, "programming D_in=0 clears the bit 1→0");
+        assert_eq!(s.mem_read(7, 1), 1, "an unaddressed word is untouched");
+        assert!(
+            !s.failed_elements[7],
+            "a legal program (clearing) does not FAIL the device"
+        );
+    }
+
+    /// You CANNOT just overwrite: programming a 1 onto an already-cleared (0) bit is a deterministic no-op
+    /// — the bit stays 0 — AND it FAILs the device ("you must ERASE the block first"). This is the
+    /// erase-before-write rule, the defining lesson of flash.
+    #[test]
+    fn nand_cannot_set_a_bit_without_erase_and_fails() {
+        // word 0 is already 0; try to program it to 1 (WE high, D_in high, addr 0, no erase).
+        let s = flash_rig(5.0, 5.0, 0.0, 0.0, 0.0, &[0, 1, 1, 1]);
+        assert_eq!(
+            s.mem_read(7, 0),
+            0,
+            "a 0→1 program is a no-op — the bit stays 0"
+        );
+        assert!(
+            s.failed_elements[7],
+            "the erase-before-write violation FAILs the device"
+        );
+    }
+
+    /// ERASE resets the WHOLE block back to all-1s — the only way to turn a programmed 0 back into a 1.
+    #[test]
+    fn nand_erase_resets_block_to_ones() {
+        // All words programmed to 0; pulse ERASE (h high). Every word returns to 1.
+        let s = flash_rig(0.0, 0.0, 0.0, 0.0, 5.0, &[0, 0, 0, 0]);
+        for a in 0..4 {
+            assert_eq!(s.mem_read(7, a), 1, "erase restores word {a} to 1");
+        }
+    }
+
+    /// Deterministic program-vs-erase precedence on one tick: ERASE WINS. With both ERASE and WE+program
+    /// asserted, the block erases to 1s and the program is ignored.
+    #[test]
+    fn nand_erase_wins_over_simultaneous_program() {
+        // Erased start; drive ERASE high AND a program of 0 at addr 0 on the same tick → erase wins.
+        let s = flash_rig(5.0, 0.0, 0.0, 0.0, 5.0, &[1, 1, 1, 1]);
+        assert_eq!(
+            s.mem_read(7, 0),
+            1,
+            "erase wins: word 0 is 1, the simultaneous program-to-0 is ignored"
+        );
+    }
+
+    /// The NAND write/erase path is on the determinism contract — a long run hashes identically (the
+    /// program AND, the erase loop, and the digest fold are all integer-pure).
+    #[test]
+    fn nand_flash_run_is_reproducible() {
+        let run = || {
+            let mut s = flash_rig(5.0, 0.0, 5.0, 0.0, 0.0, &[1, 1, 1, 1]);
+            let mut acc = s.snapshot_hash();
+            for _ in 0..200 {
+                s.step();
+                acc ^= s.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "NAND flash must reproduce exactly");
     }
 
     /// A registered LUT is a LUT followed by a flip-flop: with CLK held low it never latches (Q

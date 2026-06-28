@@ -284,6 +284,13 @@
       color: "var(--violet)",
     },
     {
+      tag: "FLASH",
+      name: "NAND Flash",
+      desc: "Non-volatile · program clears bits, ERASE to write again",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "EC",
       name: "Electrolytic Cap",
       desc: "Bulk storage + ESR",
@@ -803,6 +810,7 @@
     FADD: "Logic & ICs",
     RAM: "Logic & ICs",
     DRAM: "Logic & ICs",
+    FLASH: "Logic & ICs",
     MUX2: "Logic & ICs",
     DMUX: "Logic & ICs",
     MAJ3: "Logic & ICs",
