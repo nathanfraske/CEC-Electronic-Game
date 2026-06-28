@@ -28,15 +28,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   `def.behavior && pinRoles && (instance.fidelity==='behavioral' || preferBehavioral)`. App: `behavioralModels`
   $state + a "○ Discrete / ● Behavioral" button by the Fidelity control. Default false = byte-identical +
   golden-safe. Tests: single-level + nested depth-2 collapse via the global flag (web 265 pass).
-- [ ] **Owner: confirm ALU arithmetic-mode encoding (M/SEL/Cin).** Logic ops verified; M=1 ops read 0 in
-  tried configs (a *converged* result → not the engine bug). Either control-encoding I didn't match, or a
-  stale `behavior` word on an arithmetic-only sub-gate (adder carry / output-mux select).
+- ~~**Verify ALU arithmetic-mode (#87)**~~ DONE — see HANDOFFS (206). Encoding: M=0 logic = SEL{00 NOT-A,
+  01 XOR, 10 OR, 11 AND}; M=1 arithmetic = 0 for all. Two DESIGN gaps (engine/adder/gates all correct):
+  (a) **ADD broken at integration** — RIPPLE ADDER is correct alone (6+2=8, 9+9→2/C1), but its SUM doesn't
+  reach the OUTPUT MUX I2 (arithmetic) bank (`I2:3` has no role); M=1 → 0. (b) **NOR missing** from the
+  logic unit — the ISA needs it. Both are owner circuit/design edits. Flags need a clocked re-verify.
 - [ ] **Optional: Newton globalization (gmin/source stepping + damped Newton)** so small/medium
   raw-transistor designs converge. GOLDEN-SENSITIVE → moves `0xeaac…fa24` → regenerate per
   `docs/determinism.md`. Needs explicit owner greenlight; never scales to a CPU (Path A required there).
-- [ ] **Test-bench cheap wins** (unchanged from 203): pin card, "Check It", input renderers, spotlight via
-  `NET_DIM_ALPHA`, "Debug this →" on FAIL, settle chip — the `newton_converged()` accessor is the
-  "did it finish thinking?" detector.
+- [ ] **Test-bench cheap wins (#89)** — IN PROGRESS. ~~Engine core~~ DONE (PR #302): `lib/testBench.ts`
+  `gradeCombinational` (drive→**step-until-stable**→read→compare on a scratch sim) + `settleUntilStable` +
+  `pinsFromRoles` + `expectedWordForOp`; tested headless (NAND fixture). Remaining = UI doors (need
+  screenshot iteration): pin card · Door-1 "Check It" button · input renderers · per-bit fail highlight +
+  spotlight (`NET_DIM_ALPHA`) · settle chip + "Debug this →".
 
 ---
 
