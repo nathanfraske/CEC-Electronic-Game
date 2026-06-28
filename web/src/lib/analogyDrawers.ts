@@ -1548,10 +1548,26 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
     .stroke({ width: 3, color: PLATE, alpha: 0.65 });
 
   // --- the SEALED gate pilot line (no flow) + pressure gauge --------------------
+  // Type colour on the gate pilot (cyan n-channel / warm p-channel), with the PMOS inversion BUBBLE on the
+  // line — the same at-a-glance P-vs-N tell as the schematic, so the two views agree and a flipped valve
+  // still reads its polarity (the flow-direction cue alone is too subtle).
+  const typeCol = pch ? 0xff8a5c : 0x46d2e6;
   const gaugeX = G.x + hw * 0.07;
-  g.moveTo(G.x, G.y)
-    .lineTo(gaugeX, G.y)
-    .stroke({ width: 2.4, color: PALETTE.border, alpha: 0.8 });
+  const gbub = 3.8;
+  if (pch) {
+    g.moveTo(G.x, G.y)
+      .lineTo(gaugeX - 11 - 2 * gbub, G.y)
+      .stroke({ width: 2.4, color: typeCol, alpha: 0.9 });
+    g.circle(gaugeX - 11 - gbub, G.y, gbub).stroke({
+      width: 1.8,
+      color: typeCol,
+      alpha: 0.95,
+    });
+  } else {
+    g.moveTo(G.x, G.y)
+      .lineTo(gaugeX, G.y)
+      .stroke({ width: 2.4, color: typeCol, alpha: 0.9 });
+  }
   g.moveTo(cylX, G.y)
     .lineTo(cylX, throatY)
     .moveTo(gaugeX, G.y)
@@ -1559,18 +1575,18 @@ function drawAnalogyMosfet(g: Graphics, o: AnalogyOpts): void {
     .stroke({ width: 2.4, color: PALETTE.border, alpha: 0.7 });
   g.circle(gaugeX, G.y, 11).fill({ color: 0x10131f, alpha: 0.7 });
   g.circle(gaugeX, G.y, 11).stroke({
-    width: 1.4,
-    color: PALETTE.rail,
-    alpha: 0.8,
+    width: 1.6,
+    color: typeCol, // gauge ring edged in the type colour
+    alpha: 0.85,
   });
   const ang = (-60 + open * 120) * (Math.PI / 180);
   g.moveTo(gaugeX, G.y)
     .lineTo(gaugeX + 9 * Math.sin(ang), G.y - 9 * Math.cos(ang))
     .stroke({ width: 1.8, color: PALETTE.accent, alpha: 0.95 });
 
-  stud(g, G.x, G.y, PALETTE.accent);
+  stud(g, G.x, G.y, typeCol); // gate stud in the type colour (pairs with the schematic)
   stud(g, D.x, D.y, PALETTE.bronze);
-  stud(g, S.x, S.y, PALETTE.bronze);
+  stud(g, S.x, S.y, typeCol); // source stud type-coloured so source ≠ drain at a glance
 }
 
 // ============================================================================

@@ -1499,9 +1499,9 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
       alpha: a(0.95),
     });
     g.roundRect(surf - 24, dBandB, 17, sBandT - dBandB, 2).stroke({
-      width: 1.2,
-      color: PALETTE.rail,
-      alpha: a(0.9),
+      width: 1.5,
+      color: carrier, // gate plate edged in the device's type colour (n cyan / p warm), readable when off
+      alpha: a(0.95),
     });
 
     // --- gate-plate charge + field lines through the oxide (none cross) --------
@@ -1537,15 +1537,60 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
   if (sil > 0.01) drawMosfetSilicon(g, o, geo, sil);
 
   // --- gate / drain / source leads + studs (SHARED — both tiers anchor here) ----
-  g.moveTo(surf - 24, 0)
-    .lineTo(G.x, G.y)
-    .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  // TYPE-LEGIBLE at any rotation, on OR off (the owner's ask): the GATE lead carries the device's type
+  // colour (n-channel cyan / p-channel warm), a PMOS gate gets the universal inversion BUBBLE, and the
+  // SOURCE lead carries an arrowhead — which terminal is the source AND the type (n points into the body,
+  // p points out), the standard MOSFET source-arrow convention. None of these depend on the carrier stream
+  // (which only shows when conducting), so a flipped, idle FET still reads P-vs-N and drain-vs-source.
+  const GBUB = Math.max(3, Math.min(5.5, hw * 0.05)); // gate-bubble radius
+  const gatePlateX = surf - 24;
+  if (!nch) {
+    // PMOS: lead stops short, then an open inversion bubble against the gate plate.
+    g.moveTo(gatePlateX - 2 * GBUB, 0)
+      .lineTo(G.x, G.y)
+      .stroke({ width: 3, color: carrier, alpha: 0.92 });
+    g.circle(gatePlateX - GBUB, 0, GBUB).stroke({
+      width: 2,
+      color: carrier,
+      alpha: 0.95,
+    });
+  } else {
+    g.moveTo(gatePlateX, 0)
+      .lineTo(G.x, G.y)
+      .stroke({ width: 3, color: carrier, alpha: 0.92 });
+  }
   g.moveTo(dLeadX, bodyT)
     .lineTo(D.x, D.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
   g.moveTo(sLeadX, bodyB)
     .lineTo(S.x, S.y)
     .stroke({ width: 3, color: PALETTE.border, alpha: 0.85 });
+  // Source arrowhead at the lead's midpoint: n-channel points INTO the body (toward sLeadX,bodyB),
+  // p-channel points OUT (toward S). The direction is the source convention; the head colour is the type.
+  {
+    const tipx = nch ? sLeadX : S.x;
+    const tipy = nch ? bodyB : S.y;
+    const tailx = nch ? S.x : sLeadX;
+    const taily = nch ? S.y : bodyB;
+    const mx = (tipx + tailx) / 2;
+    const my = (tipy + taily) / 2;
+    let dx = tipx - tailx;
+    let dy = tipy - taily;
+    const len = Math.hypot(dx, dy) || 1;
+    dx /= len;
+    dy /= len;
+    const ah = Math.max(5, Math.min(8, hw * 0.07)); // arrowhead length
+    const px = -dy;
+    const py = dx; // perpendicular
+    g.poly([
+      mx + dx * ah,
+      my + dy * ah,
+      mx - dx * ah * 0.2 + px * ah * 0.55,
+      my - dy * ah * 0.2 + py * ah * 0.55,
+      mx - dx * ah * 0.2 - px * ah * 0.55,
+      my - dy * ah * 0.2 - py * ah * 0.55,
+    ]).fill({ color: carrier, alpha: 0.95 });
+  }
 
   // Lead-current carriers live on the shared leads (drawn at full density at both tiers,
   // so the wires into the part never dim during the cross-fade).
@@ -1554,9 +1599,11 @@ function drawDetailMOSFET(g: Graphics, o: DetailOpts): void {
     belt(g, dLeadX, dBandB, D.x, D.y, id, dir, o.phase, carrier, 2.4);
   }
 
+  // Studs tinted by terminal so drain (top) and source (bottom) never read the same: source = type colour
+  // (pairs with its arrow), gate = type colour, drain = neutral bronze.
   stud(g, D.x, D.y, PALETTE.bronze);
-  stud(g, S.x, S.y, PALETTE.bronze);
-  stud(g, G.x, G.y, PALETTE.bronze);
+  stud(g, S.x, S.y, carrier);
+  stud(g, G.x, G.y, carrier);
 }
 
 // ============================================================================
