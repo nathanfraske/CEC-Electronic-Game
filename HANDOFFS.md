@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (216) — DOOM-circuit vision + memory-characterization design (panel landed)
+
+**State:** 🟢 Two design docs landed on `claude/kind-turing-hdelb3`; no code changes. The session pivoted to
+the "run DOOM on a machine built from sand" arc (owner's north-star).
+
+**Docs:**
+- `docs/doom-circuit-vision.md` — north-star + full discussion: the unbroken **zoom-ladder sell** (DOOM frame
+  → framebuffer → RAM → 6T cell → transistor), behavioral-collapse architecture, the full inspectable I/O
+  loop (keyboard matrix + mouse quadrature → **memory-mapped I/O** → CPU → RAM → framebuffer → palette →
+  **RGB-LED array**), the color pipeline (direct-RGB vs DOOM palette/CLUT/RAMDAC; two "shaders" — circuit
+  color-map vs GPU texture-blit; far-texture/near-real-LED LoD), the CPU wall, roadmap + mini-sells.
+- `docs/memory-characterization-design.md` — **12-agent panel** output (9 lenses → synth → adversarial
+  critique → finalize), source-verified. THE build-against spec for cheap RAM. Headlines: `ELEM_MEMORY`=id 26
+  (append-only, golden-safe); **incremental `mem_digest`** (O(1)/write — naive full-array hash ×10k/frame is
+  fatal); single `write_cell` primitive; structural params (slots 0/1/3, reclaim slot 2 via flag_and_clamp
+  skip) + analog block on a Real-mode-only **unhashed** side-channel; **eager hashed** DRAM rot/refresh
+  (epoch stored in mem_data); 10mV quantization grid; 6 gating tests. Honest: v1 `write_trip` = tunable
+  designer-margin (silicon-true gated on #88); **word-level bus-port BLOCKED on a sound contiguous-node
+  design (§4)** — base+width is unsound on today's pin-walk numbering — which gates the CPU/DOOM path.
+
+**Next / decisions for owner:** `ELEM_MEMORY` greenlight (gates `crates/sim-core`, #47) — recommended scope
+P1+P2 (cell-level teaching SRAM + data layer + tests), defer P3 bus-port + P4 DRAM. Doc §10 open Qs (esp. the
+v1 tunable-margin framing vs requiring #88 Newton fix first). The **I/O & display subsystem** (keyboard/mouse
+decoders + framebuffer/palette + RGB-LED display) is the next design pass (offered a dedicated panel).
+Build order when greenlit: P0 golden-tripwire → P1 data layer (Cable-style headless) → P2 cell collapse.
+
+---
+
 ## 2026-06-28 (215) — Prefab reference library (16 cells incl. 6T SRAM) + Cable fan rebuilt (symmetric comb)
 
 **State:** 🟢 Three things landed on `claude/kind-turing-hdelb3` (commits 8c1e5ad, 0fc73a1, 6a514fe;

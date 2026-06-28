@@ -13,10 +13,19 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   inspectable I/O loop (keyboard matrix + mouse quadrature → MMIO → CPU → RAM → framebuffer → palette →
   RGB-LED array), the two-"shader" distinction (circuit color-map vs GPU texture-blit; far-texture/near-LED
   LoD), the CPU wall, and the roadmap/milestones. Captures the full discussion with the owner.
-- [ ] **Memory characterization → `ELEM_MEMORY`** (backlog #47): design panel RUNNING (9 lenses → synthesize
-  → critique → finalize). Output lands in `docs/memory-characterization-design.md`. Core reframe: characterize
-  ONE bit cell once → behavioral array whose size is a parameter → O(accesses) not O(bits); hand-build the
-  decoder/sense/IO, collapse only the storage core; deterministic (FNV-1a) + golden-safe. Build data-first.
+- ~~**Memory characterization design panel**~~ DONE: `docs/memory-characterization-design.md` (12-agent
+  panel: 9 lenses → synthesize → adversarial critique → finalize; source-verified). `ELEM_MEMORY` = id 26
+  (after ELEM_BEHAVIORAL=25, append-only, golden-safe); ragged `mem_data: Vec<Vec<u32>>` + **incremental
+  `mem_digest` (O(1)/write, the perf keystone — naive full-array hashing ×10000 steps/frame is fatal)**;
+  single `write_cell` mutation primitive; structural params (slots 0/1/3, skip slot 2 via flag_and_clamp
+  skip) + analog block on a Real-mode-only side-channel (unhashed); eager hashed DRAM rot/refresh; 10mV
+  quantization grid; 6 gating tests. Honest framings: v1 write_trip is a tunable designer-margin (silicon-
+  true gated on #88); **the word-level bus-port is BLOCKED on a sound contiguous-node design (§4), not just
+  greenlight** — gates the CPU path. Build order P0 greenlight → P1 data layer → P2 cell-level collapse
+  (ships the teaching SRAM) → P3 bus-port → P4 DRAM → P5 tiers.
+- [ ] **`ELEM_MEMORY` greenlight (OWNER — gates touching sim-core, #47).** Recommended: greenlight P1+P2
+  (cell-level core + data layer + tests 1-4,6); defer P3 bus-port + P4 DRAM. Open Qs in doc §10 (esp. #2:
+  accept v1 tunable-margin framing vs require #88 first).
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
