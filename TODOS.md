@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (211) — Bus wiring (Phase 1) + prefab library + huge-bus brainstorm
+
+- ~~**Bus wiring Phase 1 — "draw one → wire the bus"**~~ DONE (PR #305): `lib/busWiring.ts`
+  `planBusAutocomplete` (name-indexed bus detect + sibling pairing, guarded) hooked into
+  `continueOrFinishWiring`; siblings lay in one undo, fan out via `nudgeParallel` (real wires, netlist
+  unchanged). Tested (`busWiring.test.ts`). Golden-safe.
+- [ ] **Bus wiring Phase 2** — live fan PREVIEW while dragging (`drawPendingWire`), + bus GROUPING so the
+  ribbon moves/routes/deletes as one ("combine as one thing for routing"); optional bus highlight + `A[3:0]`
+  label on hover (reuse #80 net-highlight). Plus replay-log each auto-completed strand (Phase 1 logs only
+  the drawn one).
+- [ ] **Prefab reference library** (owner) — ship the 15 curated cells in
+  `docs/prefab-reference-library/source-20260628.json` as a built-in, auto-registered library in a parts-bin
+  "reference/prefab" section. Golden-safe web data (CLAUDE.md `web/src/lib/circuits/` pattern; relates #41/#45).
+- [ ] **Huge-bus combining (16/32-bit)** (owner, brainstorm-workflow) — a "connector size" that bundles N
+  pins over one physical route for long hauls, fanning out where you process. Design panel →
+  `docs/ui/bus-scaling-design.md`.
+
+---
+
 ## 2026-06-28 (204) — Engine "CLK bug" ROOT-CAUSED (Newton non-convergence on raw transistors)
 
 - ~~**Engine CLK-coupling bug — ROOT-CAUSED**~~ (supersedes the 203 "node-voltage dump" plan, which was

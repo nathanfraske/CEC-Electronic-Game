@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (210) — Bus wiring "draw one → wire the bus" (Phase 1) + prefab library queued
+
+**State:** 🟢 bus wiring Phase 1 shipped (PR #305 pending); prefab reference library + huge-bus brainstorm
+queued. Owner: "better way to wire busses (the tedium point) — but still show all the wires."
+
+**Bus wiring Phase 1 (the tedium-killer):** `web/src/lib/busWiring.ts` (PURE, headless-tested) — a BUS is a
+name-indexed pin group on one component (A0/A1/A2/A3, R0..R3, SUM0..SUM3). `planBusAutocomplete(graph, from,
+to)` returns the sibling pairs to wire when you draw ONE strand between two same-width buses. Hooked into
+`board.ts continueOrFinishWiring`: after a successful pin→pin connect, if both ends are bus members (equal
+width, all siblings free, aligned offset) it lays the rest of the ribbon in the SAME undo. They're ORDINARY
+wires (no bus abstraction) so they FAN OUT via the existing `nudgeParallel` router and the netlist/KCL are
+unchanged — exactly the owner's "fan out visually, combine as one for wiring." Guards make it a strict no-op
+for a deliberate single-bit wire. Tests: `busWiring.test.ts` (parse, group, plan, offset, no-clobber,
+non-bus). Golden-safe. Gate green (web 278). **Phase 2 (queued):** live fan PREVIEW during the drag, +
+bus grouping to move/route/delete the bundle as one (owner's "combine as one thing for routing").
+
+**Prefab reference library (queued — owner ask "add my sub-assemblies to a core prefab reference library"):**
+15 curated cells (Inverter, NAND/NOR/AND/OR/XOR/TMS/OE gates, 2:1 & 4:1 MUX, D LATCH, D-FLIPFLOP, 1-BIT REG,
+HALF/FULL ADDER) captured to `docs/prefab-reference-library/source-20260628.json` (uploads dir is ephemeral).
+TODO: ship as a built-in auto-registered library in a parts-bin "reference/prefab" section (golden-safe web
+data; see CLAUDE.md `web/src/lib/circuits/` pattern + TODOS #41/#45).
+
+**Huge-bus combining (queued — owner ask, explicit brainstorm-workflow):** a mechanism for 16/32-bit buses
+(a "connector size" that bundles N pins over one physical route for long hauls, fanning out where you
+process). Running a multi-agent design panel → `docs/ui/bus-scaling-design.md`.
+
+---
+
 ## 2026-06-28 (209) — Explicit OUT pin role + updated-ALU NOR verification (owner)
 
 **State:** 🟢 OUT role shipped (PR #304 pending). New-ALU NOR fix VERIFIED INCOMPLETE (report only).

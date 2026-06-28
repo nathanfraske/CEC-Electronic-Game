@@ -1,0 +1,6077 @@
+{
+  "format": "cec-circuit",
+  "version": 3,
+  "savedAt": "2026-06-28T01:45:11.556Z",
+  "graph": {
+    "components": [
+      {
+        "id": 50,
+        "kind": "Inverter",
+        "cell": {
+          "col": -15,
+          "row": -27
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 51,
+        "kind": "CEC9001",
+        "cell": {
+          "col": -15,
+          "row": -16
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 52,
+        "kind": "2:1 MUX",
+        "cell": {
+          "col": -22,
+          "row": -22
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 53,
+        "kind": "D LATCH",
+        "cell": {
+          "col": -16,
+          "row": -9
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 54,
+        "kind": "D-FLIPFLOP",
+        "cell": {
+          "col": -22,
+          "row": -28
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 55,
+        "kind": "NAND Gate",
+        "cell": {
+          "col": -13,
+          "row": -32
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 56,
+        "kind": "OR Gate",
+        "cell": {
+          "col": -13,
+          "row": -37
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 57,
+        "kind": "OE Gate",
+        "cell": {
+          "col": -13,
+          "row": -42
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 58,
+        "kind": "1-BIT REG",
+        "cell": {
+          "col": -23,
+          "row": -32
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 59,
+        "kind": "OR-Gate",
+        "cell": {
+          "col": -6,
+          "row": -32
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 60,
+        "kind": "AND-Gate",
+        "cell": {
+          "col": -6,
+          "row": -37
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 61,
+        "kind": "XOR-Gate",
+        "cell": {
+          "col": -6,
+          "row": -42
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 62,
+        "kind": "CEC9003",
+        "cell": {
+          "col": 1,
+          "row": -42
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 63,
+        "kind": "FULL ADDER",
+        "cell": {
+          "col": 1,
+          "row": -37
+        },
+        "value": 0,
+        "rot": 0
+      },
+      {
+        "id": 64,
+        "kind": "4:1 MUX",
+        "cell": {
+          "col": 0,
+          "row": -30
+        },
+        "value": 0,
+        "rot": 0
+      }
+    ],
+    "wires": [],
+    "junctions": [],
+    "netLabels": [],
+    "nextComponentId": 65,
+    "nextWireId": 38,
+    "nextJunctionId": 17,
+    "nextNetLabelId": 1
+  },
+  "userIcs": [
+    {
+      "tag": "Inverter",
+      "name": "Inverter",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 4
+      },
+      "freeForm": {
+        "w": 7,
+        "h": 9,
+        "pins": [
+          {
+            "dx": 6,
+            "dy": 4,
+            "name": "Y"
+          },
+          {
+            "dx": 4,
+            "dy": 0,
+            "name": "VCC"
+          },
+          {
+            "dx": 0,
+            "dy": 4,
+            "name": "IN"
+          },
+          {
+            "dx": 4,
+            "dy": 8,
+            "name": "GND"
+          }
+        ]
+      },
+      "frameId": 31,
+      "graph": {
+        "components": [
+          {
+            "id": 3,
+            "kind": "PM",
+            "cell": {
+              "col": 9,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 2,
+            "mirror": true
+          },
+          {
+            "id": 4,
+            "kind": "NM",
+            "cell": {
+              "col": 9,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 31,
+            "kind": "__DIE_FF_Inverter",
+            "cell": {
+              "col": 7,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "OUT",
+              "VCC",
+              "IN",
+              "GND"
+            ],
+            "pinTests": [
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 0
+              }
+            ]
+          }
+        ],
+        "wires": [
+          {
+            "id": 19,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 31,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 49,
+            "from": {
+              "componentId": 31,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 67,
+            "from": {
+              "junctionId": 29
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 68,
+            "from": {
+              "componentId": 31,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 29
+            }
+          },
+          {
+            "id": 69,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 29
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 73,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 32
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 11
+              }
+            ]
+          },
+          {
+            "id": 74,
+            "from": {
+              "junctionId": 32
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 75,
+            "from": {
+              "componentId": 31,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 32
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 29,
+            "cell": {
+              "col": 8,
+              "row": 12
+            }
+          },
+          {
+            "id": 32,
+            "cell": {
+              "col": 12,
+              "row": 12
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 32,
+        "nextWireId": 76,
+        "nextJunctionId": 33,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "OUT",
+        "VCC",
+        "IN",
+        "GND"
+      ],
+      "pinRoles": [
+        "out",
+        "vcc",
+        "in",
+        "gnd"
+      ],
+      "role": "subassembly",
+      "behavior": {
+        "prog": 4,
+        "word": 1,
+        "mode": 0,
+        "sig": 2291427017
+      }
+    },
+    {
+      "tag": "CEC9001",
+      "name": "TMS Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 4
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_CEC9001",
+            "cell": {
+              "col": 7,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              null,
+              null
+            ],
+            "pinNames": [
+              "IN",
+              "OUT",
+              "SEL_BAR",
+              "SEL"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "PM",
+            "cell": {
+              "col": 11,
+              "row": 9
+            },
+            "value": 0,
+            "rot": 1
+          },
+          {
+            "id": 3,
+            "kind": "NM",
+            "cell": {
+              "col": 9,
+              "row": 15
+            },
+            "value": 0,
+            "rot": 3
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 11
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 11
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 7,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 3
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 12,
+              "row": 12
+            }
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 8,
+              "row": 12
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 4,
+        "nextWireId": 9,
+        "nextJunctionId": 3,
+        "nextNetLabelId": 1
+      },
+      "freeForm": {
+        "w": 7,
+        "h": 9,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 6,
+            "dy": 4
+          },
+          {
+            "dx": 3,
+            "dy": 0
+          },
+          {
+            "dx": 3,
+            "dy": 8
+          }
+        ]
+      },
+      "role": "subassembly",
+      "pinNames": [
+        "IN",
+        "OUT",
+        "SEL_BAR",
+        "SEL"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "in",
+        "in"
+      ]
+    },
+    {
+      "tag": "2:1 MUX",
+      "name": "2:1 MUX",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 6
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_2:1 MUX",
+            "cell": {
+              "col": 8,
+              "row": 12
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              null,
+              {
+                "role": "in",
+                "value": 0
+              },
+              null
+            ],
+            "pinNames": [
+              "IN1",
+              "GND",
+              "VCC",
+              "SEL",
+              "IN2",
+              "OUT"
+            ]
+          },
+          {
+            "id": 5,
+            "kind": "CEC9001",
+            "cell": {
+              "col": 15,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 6,
+            "kind": "CEC9001",
+            "cell": {
+              "col": 15,
+              "row": 18
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 7,
+            "kind": "Inverter",
+            "cell": {
+              "col": 11,
+              "row": 20
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 80,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 41
+            }
+          },
+          {
+            "id": 81,
+            "from": {
+              "junctionId": 41
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 86,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 44
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 87,
+            "from": {
+              "junctionId": 44
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 98,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 49
+            },
+            "waypoints": [
+              {
+                "col": 16,
+                "row": 13
+              },
+              {
+                "col": 14,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 99,
+            "from": {
+              "junctionId": 49
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 21
+              },
+              {
+                "col": 16,
+                "row": 21
+              }
+            ]
+          },
+          {
+            "id": 100,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 49
+            }
+          },
+          {
+            "id": 105,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 53
+            }
+          },
+          {
+            "id": 110,
+            "from": {
+              "junctionId": 53
+            },
+            "to": {
+              "junctionId": 54
+            }
+          },
+          {
+            "id": 113,
+            "from": {
+              "junctionId": 41
+            },
+            "to": {
+              "junctionId": 54
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 17
+              }
+            ]
+          },
+          {
+            "id": 114,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 53
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 115,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 116,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 117,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 3
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 118,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "componentId": 7,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 119,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 5
+            },
+            "to": {
+              "junctionId": 44
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 41,
+            "cell": {
+              "col": 16,
+              "row": 17
+            }
+          },
+          {
+            "id": 44,
+            "cell": {
+              "col": 18,
+              "row": 17
+            }
+          },
+          {
+            "id": 49,
+            "cell": {
+              "col": 14,
+              "row": 21
+            }
+          },
+          {
+            "id": 53,
+            "cell": {
+              "col": 10,
+              "row": 21
+            }
+          },
+          {
+            "id": 54,
+            "cell": {
+              "col": 10,
+              "row": 21
+            },
+            "free": true
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 8,
+        "nextWireId": 120,
+        "nextJunctionId": 56,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "IN1",
+        "GND",
+        "VCC",
+        "SEL",
+        "IN2",
+        "OUT"
+      ],
+      "pinRoles": [
+        "in",
+        "gnd",
+        "vcc",
+        null,
+        "in",
+        "out"
+      ],
+      "freeForm": {
+        "w": 13,
+        "h": 13,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 4,
+            "dy": 12
+          },
+          {
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "dx": 2,
+            "dy": 12
+          },
+          {
+            "dx": 0,
+            "dy": 7
+          },
+          {
+            "dx": 12,
+            "dy": 5
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "D LATCH",
+      "name": "D LATCH",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 6
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_D LATCH",
+            "cell": {
+              "col": 11,
+              "row": 9
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "D",
+              "GND",
+              "VCC",
+              "Q",
+              "EN",
+              "ENB",
+              "QB",
+              "CLR"
+            ],
+            "pinTests": [
+              null,
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              null,
+              null,
+              null
+            ]
+          },
+          {
+            "id": 6,
+            "kind": "CEC9001",
+            "cell": {
+              "col": 13,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 0,
+            "label": "TG(in)"
+          },
+          {
+            "id": 7,
+            "kind": "CEC9001",
+            "cell": {
+              "col": 16,
+              "row": 16
+            },
+            "value": 0,
+            "rot": 0,
+            "label": "TG(fb)"
+          },
+          {
+            "id": 8,
+            "kind": "Inverter",
+            "cell": {
+              "col": 17,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 10,
+            "kind": "OR Gate",
+            "cell": {
+              "col": 22,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 11,
+            "kind": "Inverter",
+            "cell": {
+              "col": 27,
+              "row": 18
+            },
+            "value": 0,
+            "rot": 0,
+            "mirror": true
+          }
+        ],
+        "wires": [
+          {
+            "id": 53,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 26
+            }
+          },
+          {
+            "id": 54,
+            "from": {
+              "componentId": 8,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 25
+            }
+          },
+          {
+            "id": 60,
+            "from": {
+              "junctionId": 24
+            },
+            "to": {
+              "componentId": 8,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 62,
+            "from": {
+              "junctionId": 26
+            },
+            "to": {
+              "componentId": 8,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 65,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 31
+            }
+          },
+          {
+            "id": 67,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 28
+            },
+            "waypoints": [
+              {
+                "col": 25,
+                "row": 17
+              }
+            ]
+          },
+          {
+            "id": 71,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 33
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 73,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 24
+            }
+          },
+          {
+            "id": 74,
+            "from": {
+              "junctionId": 30
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 76,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 78,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 31
+            }
+          },
+          {
+            "id": 79,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 28
+            }
+          },
+          {
+            "id": 82,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 6
+            },
+            "to": {
+              "junctionId": 25
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 83,
+            "from": {
+              "junctionId": 33
+            },
+            "to": {
+              "junctionId": 30
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 19
+              },
+              {
+                "col": 12,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 84,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 5
+            },
+            "to": {
+              "junctionId": 33
+            }
+          },
+          {
+            "id": 86,
+            "from": {
+              "componentId": 10,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 28
+            }
+          },
+          {
+            "id": 87,
+            "from": {
+              "componentId": 10,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 25
+            }
+          },
+          {
+            "id": 90,
+            "from": {
+              "componentId": 10,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 50
+            }
+          },
+          {
+            "id": 92,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 26
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 17
+              },
+              {
+                "col": 15,
+                "row": 14
+              },
+              {
+                "col": 16,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 93,
+            "from": {
+              "junctionId": 31
+            },
+            "to": {
+              "junctionId": 36
+            }
+          },
+          {
+            "id": 95,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 36
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 102,
+            "from": {
+              "componentId": 8,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 44
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 14
+              },
+              {
+                "col": 19,
+                "row": 14
+              },
+              {
+                "col": 19,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 108,
+            "from": {
+              "componentId": 10,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 44
+            },
+            "waypoints": [
+              {
+                "col": 23,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 110,
+            "from": {
+              "junctionId": 44
+            },
+            "to": {
+              "junctionId": 45
+            }
+          },
+          {
+            "id": 112,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 47
+            }
+          },
+          {
+            "id": 113,
+            "from": {
+              "junctionId": 47
+            },
+            "to": {
+              "junctionId": 45
+            }
+          },
+          {
+            "id": 114,
+            "from": {
+              "componentId": 11,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 47
+            },
+            "waypoints": [
+              {
+                "col": 26,
+                "row": 21
+              }
+            ]
+          },
+          {
+            "id": 117,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 7
+            },
+            "to": {
+              "componentId": 11,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 28,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 119,
+            "from": {
+              "junctionId": 50
+            },
+            "to": {
+              "junctionId": 24
+            },
+            "waypoints": [
+              {
+                "col": 23,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 121,
+            "from": {
+              "componentId": 11,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 50
+            },
+            "waypoints": [
+              {
+                "col": 26,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 126,
+            "from": {
+              "componentId": 11,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 10,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 21,
+                "row": 19
+              },
+              {
+                "col": 21,
+                "row": 13
+              }
+            ]
+          }
+        ],
+        "junctions": [
+          {
+            "id": 24,
+            "cell": {
+              "col": 19,
+              "row": 10
+            }
+          },
+          {
+            "id": 25,
+            "cell": {
+              "col": 20,
+              "row": 12
+            }
+          },
+          {
+            "id": 26,
+            "cell": {
+              "col": 16,
+              "row": 12
+            }
+          },
+          {
+            "id": 28,
+            "cell": {
+              "col": 25,
+              "row": 12
+            },
+            "free": true
+          },
+          {
+            "id": 30,
+            "cell": {
+              "col": 14,
+              "row": 10
+            }
+          },
+          {
+            "id": 31,
+            "cell": {
+              "col": 14,
+              "row": 15
+            }
+          },
+          {
+            "id": 33,
+            "cell": {
+              "col": 16,
+              "row": 19
+            }
+          },
+          {
+            "id": 36,
+            "cell": {
+              "col": 14,
+              "row": 15
+            },
+            "free": true
+          },
+          {
+            "id": 44,
+            "cell": {
+              "col": 20,
+              "row": 16
+            }
+          },
+          {
+            "id": 45,
+            "cell": {
+              "col": 20,
+              "row": 16
+            },
+            "free": true
+          },
+          {
+            "id": 47,
+            "cell": {
+              "col": 20,
+              "row": 21
+            }
+          },
+          {
+            "id": 50,
+            "cell": {
+              "col": 23,
+              "row": 10
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 12,
+        "nextWireId": 127,
+        "nextJunctionId": 53,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "D",
+        "GND",
+        "VCC",
+        "Q",
+        "EN",
+        "ENB",
+        "QB",
+        "CLR"
+      ],
+      "pinRoles": [
+        "in",
+        "gnd",
+        "vcc",
+        "out"
+      ],
+      "freeForm": {
+        "w": 20,
+        "h": 14,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 9,
+            "dy": 13
+          },
+          {
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "dx": 19,
+            "dy": 3
+          },
+          {
+            "dx": 3,
+            "dy": 13
+          },
+          {
+            "dx": 5,
+            "dy": 13
+          },
+          {
+            "dx": 19,
+            "dy": 6
+          },
+          {
+            "dx": 17,
+            "dy": 0
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "OR Gate",
+      "name": "NOR Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_OR Gate",
+            "cell": {
+              "col": 4,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "A",
+              "Y",
+              "VCC",
+              "GND",
+              "B"
+            ],
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "PM",
+            "cell": {
+              "col": 7,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 2,
+            "mirror": true
+          },
+          {
+            "id": 4,
+            "kind": "PM",
+            "cell": {
+              "col": 11,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 2,
+            "mirror": false
+          },
+          {
+            "id": 5,
+            "kind": "NM",
+            "cell": {
+              "col": 6,
+              "row": 19
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 6,
+            "kind": "NM",
+            "cell": {
+              "col": 12,
+              "row": 19
+            },
+            "value": 0,
+            "rot": 0,
+            "mirror": true
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 3,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 8,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 14,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 8
+            },
+            "waypoints": [
+              {
+                "col": 5,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 19,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 9
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "from": {
+              "junctionId": 8
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 5,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 8
+            }
+          },
+          {
+            "id": 23,
+            "from": {
+              "junctionId": 9
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 32,
+            "from": {
+              "junctionId": 9
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 23
+              }
+            ]
+          },
+          {
+            "id": 34,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 2
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 9,
+              "row": 18
+            },
+            "free": true
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 9,
+              "row": 16
+            }
+          },
+          {
+            "id": 3,
+            "cell": {
+              "col": 9,
+              "row": 22
+            }
+          },
+          {
+            "id": 8,
+            "cell": {
+              "col": 5,
+              "row": 11
+            }
+          },
+          {
+            "id": 9,
+            "cell": {
+              "col": 13,
+              "row": 20
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 7,
+        "nextWireId": 35,
+        "nextJunctionId": 10,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "Y",
+        "VCC",
+        "GND",
+        "B"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "gnd",
+        "in"
+      ],
+      "freeForm": {
+        "w": 11,
+        "h": 17,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 10,
+            "dy": 8
+          },
+          {
+            "dx": 5,
+            "dy": 0
+          },
+          {
+            "dx": 5,
+            "dy": 16
+          },
+          {
+            "dx": 0,
+            "dy": 15
+          }
+        ]
+      },
+      "role": "subassembly",
+      "behavior": {
+        "prog": 4,
+        "word": 1,
+        "mode": 0,
+        "sig": 3521982737
+      }
+    },
+    {
+      "tag": "D-FLIPFLOP",
+      "name": "D-FLIPFLOP",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_D-FLIPFLOP",
+            "cell": {
+              "col": 18,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "D",
+              "Q",
+              "VCC",
+              "CLK",
+              "GND",
+              "QB",
+              "CLR"
+            ],
+            "pinTests": [
+              null,
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              null,
+              {
+                "role": "gnd",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "kind": "D LATCH",
+            "cell": {
+              "col": 19,
+              "row": 16
+            },
+            "value": 0,
+            "rot": 0,
+            "label": "LATCH(m)"
+          },
+          {
+            "id": 6,
+            "kind": "D LATCH",
+            "cell": {
+              "col": 25,
+              "row": 16
+            },
+            "value": 0,
+            "rot": 0,
+            "label": "LATCH(s)"
+          },
+          {
+            "id": 7,
+            "kind": "Inverter",
+            "cell": {
+              "col": 23,
+              "row": 23
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 87,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 3
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 92,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 42
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 93,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 5
+            },
+            "to": {
+              "junctionId": 41
+            }
+          },
+          {
+            "id": 94,
+            "from": {
+              "junctionId": 40
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 26,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 95,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 40
+            }
+          },
+          {
+            "id": 96,
+            "from": {
+              "junctionId": 41
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 21
+              },
+              {
+                "col": 26,
+                "row": 21
+              }
+            ]
+          },
+          {
+            "id": 97,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 43
+            }
+          },
+          {
+            "id": 98,
+            "from": {
+              "junctionId": 42
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 5
+            },
+            "waypoints": [
+              {
+                "col": 27,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 99,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 42
+            },
+            "waypoints": [
+              {
+                "col": 27,
+                "row": 24
+              },
+              {
+                "col": 27,
+                "row": 22
+              }
+            ]
+          },
+          {
+            "id": 100,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 40
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 14
+              },
+              {
+                "col": 24,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 102,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 40
+            }
+          },
+          {
+            "id": 104,
+            "from": {
+              "junctionId": 43
+            },
+            "to": {
+              "junctionId": 41
+            }
+          },
+          {
+            "id": 105,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 43
+            }
+          },
+          {
+            "id": 106,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 107,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 3
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 115,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 6
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 5
+            }
+          },
+          {
+            "id": 119,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 52
+            }
+          },
+          {
+            "id": 121,
+            "from": {
+              "junctionId": 52
+            },
+            "to": {
+              "junctionId": 54
+            },
+            "waypoints": [
+              {
+                "col": 24,
+                "row": 26
+              }
+            ]
+          },
+          {
+            "id": 123,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 52
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 26
+              }
+            ]
+          },
+          {
+            "id": 127,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 54
+            }
+          },
+          {
+            "id": 128,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 54
+            },
+            "waypoints": [
+              {
+                "col": 28,
+                "row": 26
+              }
+            ]
+          },
+          {
+            "id": 129,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 6
+            },
+            "to": {
+              "junctionId": 56
+            }
+          },
+          {
+            "id": 131,
+            "from": {
+              "junctionId": 56
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 7
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 15
+              },
+              {
+                "col": 21,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 133,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 7
+            },
+            "to": {
+              "junctionId": 56
+            },
+            "waypoints": [
+              {
+                "col": 27,
+                "row": 15
+              }
+            ]
+          }
+        ],
+        "junctions": [
+          {
+            "id": 40,
+            "cell": {
+              "col": 24,
+              "row": 14
+            }
+          },
+          {
+            "id": 41,
+            "cell": {
+              "col": 21,
+              "row": 21
+            }
+          },
+          {
+            "id": 42,
+            "cell": {
+              "col": 27,
+              "row": 22
+            }
+          },
+          {
+            "id": 43,
+            "cell": {
+              "col": 21,
+              "row": 24
+            }
+          },
+          {
+            "id": 52,
+            "cell": {
+              "col": 24,
+              "row": 26
+            }
+          },
+          {
+            "id": 54,
+            "cell": {
+              "col": 27,
+              "row": 26
+            }
+          },
+          {
+            "id": 56,
+            "cell": {
+              "col": 22,
+              "row": 15
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 8,
+        "nextWireId": 134,
+        "nextJunctionId": 57,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "D",
+        "Q",
+        "VCC",
+        "CLK",
+        "GND",
+        "QB",
+        "CLR"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "clk",
+        "gnd"
+      ],
+      "freeForm": {
+        "w": 14,
+        "h": 15,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 13,
+            "dy": 4
+          },
+          {
+            "dx": 6,
+            "dy": 0
+          },
+          {
+            "dx": 3,
+            "dy": 14
+          },
+          {
+            "dx": 9,
+            "dy": 14
+          },
+          {
+            "dx": 13,
+            "dy": 5
+          },
+          {
+            "dx": 4,
+            "dy": 0
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "NAND Gate",
+      "name": "NAND Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_NAND Gate",
+            "cell": {
+              "col": 8,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              }
+            ],
+            "pinNames": [
+              "A",
+              "Y",
+              "VCC",
+              "B",
+              "GND"
+            ]
+          },
+          {
+            "id": 3,
+            "kind": "PM",
+            "cell": {
+              "col": 10,
+              "row": 12
+            },
+            "value": 0,
+            "rot": 2,
+            "mirror": true
+          },
+          {
+            "id": 6,
+            "kind": "NM",
+            "cell": {
+              "col": 11,
+              "row": 17
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 7,
+            "kind": "PM",
+            "cell": {
+              "col": 16,
+              "row": 12
+            },
+            "value": 0,
+            "rot": 2
+          },
+          {
+            "id": 8,
+            "kind": "NM",
+            "cell": {
+              "col": 11,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 8,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 8,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 4,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 5,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 10,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 11,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 9,
+                "row": 15
+              },
+              {
+                "col": 9,
+                "row": 11
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "from": {
+              "componentId": 8,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 13,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 14,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 19,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 7,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 9,
+                "row": 21
+              },
+              {
+                "col": 17,
+                "row": 21
+              },
+              {
+                "col": 17,
+                "row": 11
+              }
+            ]
+          },
+          {
+            "id": 21,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 7
+            }
+          },
+          {
+            "id": 22,
+            "from": {
+              "componentId": 7,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 7
+            }
+          },
+          {
+            "id": 23,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 7
+            }
+          },
+          {
+            "id": 24,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 1
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 13,
+              "row": 12
+            },
+            "free": true
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 13,
+              "row": 13
+            }
+          },
+          {
+            "id": 3,
+            "cell": {
+              "col": 9,
+              "row": 15
+            }
+          },
+          {
+            "id": 4,
+            "cell": {
+              "col": 9,
+              "row": 18
+            }
+          },
+          {
+            "id": 7,
+            "cell": {
+              "col": 13,
+              "row": 10
+            },
+            "free": true
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 9,
+        "nextWireId": 25,
+        "nextJunctionId": 8,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "Y",
+        "VCC",
+        "B",
+        "GND"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "in",
+        "gnd"
+      ],
+      "freeForm": {
+        "w": 12,
+        "h": 15,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 7
+          },
+          {
+            "dx": 11,
+            "dy": 5
+          },
+          {
+            "dx": 5,
+            "dy": 0
+          },
+          {
+            "dx": 0,
+            "dy": 10
+          },
+          {
+            "dx": 5,
+            "dy": 14
+          }
+        ]
+      },
+      "role": "subassembly",
+      "behavior": {
+        "prog": 4,
+        "word": 7,
+        "mode": 0,
+        "sig": 2582526095
+      }
+    },
+    {
+      "tag": "OE Gate",
+      "name": "OE Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_OE Gate",
+            "cell": {
+              "col": 9,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "A",
+              "Y",
+              "VCC",
+              "OE",
+              "GND"
+            ],
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "Inverter",
+            "cell": {
+              "col": 11,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "NAND Gate",
+            "cell": {
+              "col": 16,
+              "row": 10
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 4,
+            "kind": "OR Gate",
+            "cell": {
+              "col": 18,
+              "row": 16
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 5,
+            "kind": "PM",
+            "cell": {
+              "col": 23,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 2,
+            "mirror": true
+          },
+          {
+            "id": 6,
+            "kind": "NM",
+            "cell": {
+              "col": 23,
+              "row": 15
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 15
+              },
+              {
+                "col": 15,
+                "row": 12
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 17
+            }
+          },
+          {
+            "id": 7,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 19,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 11
+            }
+          },
+          {
+            "id": 14,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 6,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 17
+              },
+              {
+                "col": 22,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 11
+              },
+              {
+                "col": 22,
+                "row": 12
+              }
+            ]
+          },
+          {
+            "id": 19,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 9
+            },
+            "waypoints": [
+              {
+                "col": 25,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 20,
+            "from": {
+              "junctionId": 9
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 25,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "from": {
+              "componentId": 6,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 11
+            },
+            "waypoints": [
+              {
+                "col": 25,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 15
+            }
+          },
+          {
+            "id": 28,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 25,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 29,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 13
+            }
+          },
+          {
+            "id": 30,
+            "from": {
+              "junctionId": 13
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 4
+            }
+          },
+          {
+            "id": 31,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 13
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 33,
+            "from": {
+              "junctionId": 15
+            },
+            "to": {
+              "junctionId": 11
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 20
+              },
+              {
+                "col": 18,
+                "row": 20
+              },
+              {
+                "col": 19,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 35,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 15
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 37,
+            "from": {
+              "junctionId": 17
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 39,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 17
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 40,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 18
+            }
+          },
+          {
+            "id": 41,
+            "from": {
+              "junctionId": 18
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 44,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 18
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 17
+              }
+            ]
+          },
+          {
+            "id": 45,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 9
+            }
+          },
+          {
+            "id": 46,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 47,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 11
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 3,
+            "cell": {
+              "col": 19,
+              "row": 9
+            }
+          },
+          {
+            "id": 9,
+            "cell": {
+              "col": 25,
+              "row": 14
+            }
+          },
+          {
+            "id": 11,
+            "cell": {
+              "col": 19,
+              "row": 20
+            }
+          },
+          {
+            "id": 13,
+            "cell": {
+              "col": 10,
+              "row": 18
+            }
+          },
+          {
+            "id": 15,
+            "cell": {
+              "col": 17,
+              "row": 20
+            }
+          },
+          {
+            "id": 17,
+            "cell": {
+              "col": 17,
+              "row": 9
+            }
+          },
+          {
+            "id": 18,
+            "cell": {
+              "col": 14,
+              "row": 11
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 7,
+        "nextWireId": 48,
+        "nextJunctionId": 19,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "Y",
+        "VCC",
+        "OE",
+        "GND"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "in",
+        "gnd"
+      ],
+      "freeForm": {
+        "w": 19,
+        "h": 14,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 18,
+            "dy": 6
+          },
+          {
+            "dx": 10,
+            "dy": 0
+          },
+          {
+            "dx": 0,
+            "dy": 10
+          },
+          {
+            "dx": 10,
+            "dy": 13
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "1-BIT REG",
+      "name": "1-BIT REG",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 8
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_1-BIT REG",
+            "cell": {
+              "col": 9,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "in",
+                "value": 0
+              }
+            ],
+            "pinNames": [
+              "CLR",
+              "Q",
+              "VCC",
+              "LD",
+              "GND",
+              "D",
+              "CLK",
+              "OE",
+              "Qint"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "2:1 MUX",
+            "cell": {
+              "col": 11,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "D-FLIPFLOP",
+            "cell": {
+              "col": 16,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 4,
+            "kind": "OE Gate",
+            "cell": {
+              "col": 22,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 5,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 23,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 10,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 17,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 18
+              },
+              {
+                "col": 10,
+                "row": 18
+              },
+              {
+                "col": 10,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 22,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 9
+            }
+          },
+          {
+            "id": 23,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 9
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "from": {
+              "junctionId": 9
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 23,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 25,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 9
+            }
+          },
+          {
+            "id": 26,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 29,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 7
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 21,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 30,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 31,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 32,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 6
+            }
+          },
+          {
+            "id": 33,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 6
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 34,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 35,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 8
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 2,
+            "cell": {
+              "col": 18,
+              "row": 9
+            },
+            "free": true
+          },
+          {
+            "id": 4,
+            "cell": {
+              "col": 20,
+              "row": 14
+            }
+          },
+          {
+            "id": 9,
+            "cell": {
+              "col": 18,
+              "row": 19
+            },
+            "free": true
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 5,
+        "nextWireId": 36,
+        "nextJunctionId": 10,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "CLR",
+        "Q",
+        "VCC",
+        "LD",
+        "GND",
+        "D",
+        "CLK",
+        "OE",
+        "Qint"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "in",
+        "gnd",
+        "in",
+        "in",
+        "in"
+      ],
+      "freeForm": {
+        "w": 17,
+        "h": 13,
+        "pins": [
+          {
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "dx": 16,
+            "dy": 6
+          },
+          {
+            "dx": 9,
+            "dy": 0
+          },
+          {
+            "dx": 3,
+            "dy": 12
+          },
+          {
+            "dx": 9,
+            "dy": 12
+          },
+          {
+            "dx": 0,
+            "dy": 6
+          },
+          {
+            "dx": 8,
+            "dy": 12
+          },
+          {
+            "dx": 12,
+            "dy": 12
+          },
+          {
+            "dx": 11,
+            "dy": 0
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "OR-Gate",
+      "name": "OR-Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_OR-Gate",
+            "cell": {
+              "col": 10,
+              "row": 12
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              }
+            ],
+            "pinNames": [
+              "A",
+              "Y",
+              "VCC",
+              "B",
+              "GND"
+            ]
+          },
+          {
+            "id": 4,
+            "kind": "OR Gate",
+            "cell": {
+              "col": 11,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 5,
+            "kind": "Inverter",
+            "cell": {
+              "col": 15,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 4,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 16,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 6,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 5,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 16,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 5,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 10,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 4
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 14,
+              "row": 18
+            }
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 14,
+              "row": 13
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 6,
+        "nextWireId": 11,
+        "nextJunctionId": 3,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "Y",
+        "VCC",
+        "B",
+        "GND"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "in",
+        "gnd"
+      ],
+      "freeForm": {
+        "w": 9,
+        "h": 8,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 8,
+            "dy": 3
+          },
+          {
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 4,
+            "dy": 7
+          }
+        ]
+      },
+      "role": "subassembly",
+      "behavior": {
+        "prog": 4,
+        "word": 14,
+        "mode": 0,
+        "sig": 1054623047
+      }
+    },
+    {
+      "tag": "AND-Gate",
+      "name": "AND-Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_AND-Gate",
+            "cell": {
+              "col": 9,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              }
+            ],
+            "pinNames": [
+              "B",
+              "Y",
+              "VCC",
+              "GND",
+              "A"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "NAND Gate",
+            "cell": {
+              "col": 10,
+              "row": 10
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "Inverter",
+            "cell": {
+              "col": 14,
+              "row": 10
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 6,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 10,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 3
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 13,
+              "row": 9
+            }
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 13,
+              "row": 14
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 4,
+        "nextWireId": 11,
+        "nextJunctionId": 3,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "B",
+        "Y",
+        "VCC",
+        "GND",
+        "A"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "gnd",
+        "in"
+      ],
+      "freeForm": {
+        "w": 9,
+        "h": 8,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 8,
+            "dy": 3
+          },
+          {
+            "dx": 4,
+            "dy": 0
+          },
+          {
+            "dx": 4,
+            "dy": 7
+          },
+          {
+            "dx": 0,
+            "dy": 3
+          }
+        ]
+      },
+      "role": "subassembly",
+      "behavior": {
+        "prog": 4,
+        "word": 8,
+        "mode": 0,
+        "sig": 4390584
+      }
+    },
+    {
+      "tag": "XOR-Gate",
+      "name": "XOR-Gate",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 5
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_XOR-Gate",
+            "cell": {
+              "col": 10,
+              "row": 9
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              }
+            ],
+            "pinNames": [
+              "B",
+              "Y",
+              "VCC",
+              "GND",
+              "A"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "OR-Gate",
+            "cell": {
+              "col": 13,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "NAND Gate",
+            "cell": {
+              "col": 13,
+              "row": 17
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 4,
+            "kind": "AND-Gate",
+            "cell": {
+              "col": 19,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 12
+              },
+              {
+                "col": 18,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 18
+              },
+              {
+                "col": 18,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 12
+              }
+            ]
+          },
+          {
+            "id": 4,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 7,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 1
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 16
+              },
+              {
+                "col": 16,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 14,
+                "row": 15
+              },
+              {
+                "col": 17,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 9,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 21
+              },
+              {
+                "col": 14,
+                "row": 21
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 2
+            },
+            "waypoints": [
+              {
+                "col": 20,
+                "row": 21
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 12,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 13,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 14,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 16,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 17,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 4
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 16,
+              "row": 10
+            }
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 17,
+              "row": 21
+            }
+          },
+          {
+            "id": 3,
+            "cell": {
+              "col": 12,
+              "row": 14
+            }
+          },
+          {
+            "id": 4,
+            "cell": {
+              "col": 11,
+              "row": 17
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 5,
+        "nextWireId": 18,
+        "nextJunctionId": 5,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "B",
+        "Y",
+        "VCC",
+        "GND",
+        "A"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "gnd",
+        "in"
+      ],
+      "freeForm": {
+        "w": 13,
+        "h": 14,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 8
+          },
+          {
+            "dx": 12,
+            "dy": 6
+          },
+          {
+            "dx": 6,
+            "dy": 0
+          },
+          {
+            "dx": 7,
+            "dy": 13
+          },
+          {
+            "dx": 0,
+            "dy": 5
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "CEC9003",
+      "name": "HALF ADDER",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 6
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_CEC9003",
+            "cell": {
+              "col": 8,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinNames": [
+              "A",
+              "SUM",
+              "B",
+              "GND",
+              "VCC",
+              "COUT"
+            ],
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              null
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "XOR-Gate",
+            "cell": {
+              "col": 12,
+              "row": 10
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "AND-Gate",
+            "cell": {
+              "col": 14,
+              "row": 14
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 1,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 13,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 4,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 5,
+            "from": {
+              "junctionId": 1
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 10,
+                "row": 11
+              },
+              {
+                "col": 10,
+                "row": 15
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "junctionId": 1
+            }
+          },
+          {
+            "id": 7,
+            "from": {
+              "junctionId": 2
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 12
+              },
+              {
+                "col": 11,
+                "row": 16
+              }
+            ]
+          },
+          {
+            "id": 8,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 2
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 10,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 11,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 3
+            }
+          },
+          {
+            "id": 12,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 18
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 14,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 5
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 1,
+            "cell": {
+              "col": 10,
+              "row": 11
+            }
+          },
+          {
+            "id": 2,
+            "cell": {
+              "col": 11,
+              "row": 12
+            }
+          },
+          {
+            "id": 3,
+            "cell": {
+              "col": 14,
+              "row": 9
+            }
+          },
+          {
+            "id": 4,
+            "cell": {
+              "col": 14,
+              "row": 18
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 4,
+        "nextWireId": 15,
+        "nextJunctionId": 5,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "SUM",
+        "B",
+        "GND",
+        "VCC",
+        "COUT"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "in",
+        "gnd",
+        "vcc",
+        "out"
+      ],
+      "freeForm": {
+        "w": 11,
+        "h": 12,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 10,
+            "dy": 3
+          },
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 6,
+            "dy": 11
+          },
+          {
+            "dx": 6,
+            "dy": 0
+          },
+          {
+            "dx": 10,
+            "dy": 7
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "FULL ADDER",
+      "name": "FULL ADDER",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 7
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_FULL ADDER",
+            "cell": {
+              "col": 9,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              null,
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "in",
+                "value": 0
+              }
+            ],
+            "pinNames": [
+              "A",
+              "COUT",
+              "VCC",
+              "GND",
+              "SUM",
+              "B",
+              "CIN"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "CEC9003",
+            "cell": {
+              "col": 11,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "CEC9003",
+            "cell": {
+              "col": 16,
+              "row": 11
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 4,
+            "kind": "OR-Gate",
+            "cell": {
+              "col": 21,
+              "row": 13
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 4,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 14
+              },
+              {
+                "col": 15,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 5,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 6,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 9,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 19,
+                "row": 13
+              },
+              {
+                "col": 19,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 10,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 11,
+            "from": {
+              "junctionId": 3
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 12,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 3
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 10
+              }
+            ]
+          },
+          {
+            "id": 13,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 3
+            },
+            "waypoints": [
+              {
+                "col": 17,
+                "row": 17
+              },
+              {
+                "col": 12,
+                "row": 17
+              }
+            ]
+          },
+          {
+            "id": 14,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 4
+            },
+            "to": {
+              "junctionId": 4
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 17
+              }
+            ]
+          },
+          {
+            "id": 15,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 16,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 2
+            }
+          },
+          {
+            "id": 17,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 6
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 18,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 4
+            }
+          },
+          {
+            "id": 19,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          },
+          {
+            "id": 20,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 21,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 3
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 3,
+            "cell": {
+              "col": 17,
+              "row": 10
+            }
+          },
+          {
+            "id": 4,
+            "cell": {
+              "col": 17,
+              "row": 17
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 5,
+        "nextWireId": 22,
+        "nextJunctionId": 5,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "A",
+        "COUT",
+        "VCC",
+        "GND",
+        "SUM",
+        "B",
+        "CIN"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "gnd",
+        "out",
+        "in",
+        "in"
+      ],
+      "freeForm": {
+        "w": 17,
+        "h": 12,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 6
+          },
+          {
+            "dx": 16,
+            "dy": 6
+          },
+          {
+            "dx": 8,
+            "dy": 0
+          },
+          {
+            "dx": 8,
+            "dy": 11
+          },
+          {
+            "dx": 16,
+            "dy": 4
+          },
+          {
+            "dx": 0,
+            "dy": 7
+          },
+          {
+            "dx": 0,
+            "dy": 4
+          }
+        ]
+      },
+      "role": "subassembly"
+    },
+    {
+      "tag": "4:1 MUX",
+      "name": "4:1 MUX",
+      "package": {
+        "archetype": "BLOCK",
+        "pinCount": 9
+      },
+      "frameId": 1,
+      "graph": {
+        "components": [
+          {
+            "id": 1,
+            "kind": "__DIE_FF_4:1 MUX",
+            "cell": {
+              "col": 9,
+              "row": 8
+            },
+            "value": 0,
+            "rot": 0,
+            "pinTests": [
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              {
+                "role": "vcc",
+                "value": 5
+              },
+              {
+                "role": "gnd",
+                "value": 5
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              {
+                "role": "in",
+                "value": 0
+              },
+              null,
+              null
+            ],
+            "pinNames": [
+              "IN1",
+              "OUT",
+              "VCC",
+              "GND",
+              "IN0",
+              "IN2",
+              "IN3",
+              "SEL0",
+              "SEL1"
+            ]
+          },
+          {
+            "id": 2,
+            "kind": "2:1 MUX",
+            "cell": {
+              "col": 10,
+              "row": 10
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 3,
+            "kind": "2:1 MUX",
+            "cell": {
+              "col": 14,
+              "row": 15
+            },
+            "value": 0,
+            "rot": 0
+          },
+          {
+            "id": 4,
+            "kind": "2:1 MUX",
+            "cell": {
+              "col": 20,
+              "row": 12
+            },
+            "value": 0,
+            "rot": 0
+          }
+        ],
+        "wires": [
+          {
+            "id": 15,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 7
+            },
+            "to": {
+              "junctionId": 4
+            }
+          },
+          {
+            "id": 17,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 6
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 4
+            }
+          },
+          {
+            "id": 18,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 19,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 4
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 0
+            }
+          },
+          {
+            "id": 20,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 0
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 4
+            }
+          },
+          {
+            "id": 21,
+            "from": {
+              "junctionId": 4
+            },
+            "to": {
+              "componentId": 2,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 22,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 4
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 20
+              }
+            ]
+          },
+          {
+            "id": 24,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 0
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 11
+              },
+              {
+                "col": 18,
+                "row": 13
+              }
+            ]
+          },
+          {
+            "id": 29,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 4
+            },
+            "waypoints": [
+              {
+                "col": 18,
+                "row": 16
+              },
+              {
+                "col": 18,
+                "row": 14
+              }
+            ]
+          },
+          {
+            "id": 30,
+            "from": {
+              "junctionId": 8
+            },
+            "to": {
+              "componentId": 3,
+              "pinIndex": 2
+            },
+            "waypoints": [
+              {
+                "col": 15,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 31,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 8
+            },
+            "waypoints": [
+              {
+                "col": 21,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 32,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 8
+            },
+            "waypoints": [
+              {
+                "col": 11,
+                "row": 9
+              },
+              {
+                "col": 13,
+                "row": 9
+              }
+            ]
+          },
+          {
+            "id": 33,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 2
+            },
+            "to": {
+              "junctionId": 8
+            }
+          },
+          {
+            "id": 36,
+            "from": {
+              "componentId": 2,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 10
+            },
+            "waypoints": [
+              {
+                "col": 12,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 37,
+            "from": {
+              "junctionId": 10
+            },
+            "to": {
+              "junctionId": 11
+            }
+          },
+          {
+            "id": 38,
+            "from": {
+              "componentId": 3,
+              "pinIndex": 1
+            },
+            "to": {
+              "junctionId": 10
+            }
+          },
+          {
+            "id": 39,
+            "from": {
+              "junctionId": 11
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 1
+            },
+            "waypoints": [
+              {
+                "col": 22,
+                "row": 19
+              }
+            ]
+          },
+          {
+            "id": 40,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 3
+            },
+            "to": {
+              "junctionId": 11
+            }
+          },
+          {
+            "id": 41,
+            "from": {
+              "componentId": 1,
+              "pinIndex": 8
+            },
+            "to": {
+              "componentId": 4,
+              "pinIndex": 3
+            }
+          },
+          {
+            "id": 42,
+            "from": {
+              "componentId": 4,
+              "pinIndex": 5
+            },
+            "to": {
+              "componentId": 1,
+              "pinIndex": 1
+            }
+          }
+        ],
+        "junctions": [
+          {
+            "id": 4,
+            "cell": {
+              "col": 11,
+              "row": 20
+            }
+          },
+          {
+            "id": 8,
+            "cell": {
+              "col": 15,
+              "row": 9
+            }
+          },
+          {
+            "id": 10,
+            "cell": {
+              "col": 16,
+              "row": 19
+            }
+          },
+          {
+            "id": 11,
+            "cell": {
+              "col": 22,
+              "row": 19
+            }
+          }
+        ],
+        "netLabels": [],
+        "nextComponentId": 5,
+        "nextWireId": 43,
+        "nextJunctionId": 12,
+        "nextNetLabelId": 1
+      },
+      "pinNames": [
+        "IN1",
+        "OUT",
+        "VCC",
+        "GND",
+        "IN0",
+        "IN2",
+        "IN3",
+        "SEL0",
+        "SEL1"
+      ],
+      "pinRoles": [
+        "in",
+        "out",
+        "vcc",
+        "gnd",
+        "in",
+        "in",
+        "in",
+        "in",
+        "in"
+      ],
+      "freeForm": {
+        "w": 16,
+        "h": 14,
+        "pins": [
+          {
+            "dx": 0,
+            "dy": 4
+          },
+          {
+            "dx": 15,
+            "dy": 5
+          },
+          {
+            "dx": 6,
+            "dy": 0
+          },
+          {
+            "dx": 13,
+            "dy": 13
+          },
+          {
+            "dx": 0,
+            "dy": 3
+          },
+          {
+            "dx": 0,
+            "dy": 8
+          },
+          {
+            "dx": 0,
+            "dy": 9
+          },
+          {
+            "dx": 2,
+            "dy": 13
+          },
+          {
+            "dx": 12,
+            "dy": 13
+          }
+        ]
+      },
+      "role": "subassembly"
+    }
+  ]
+}
