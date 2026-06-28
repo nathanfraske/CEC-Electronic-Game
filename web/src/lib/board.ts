@@ -853,13 +853,9 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: Endpoint } | null = null;
-  // The net node under an idle hover (cursor over a pin or trace, build/wire modes) — the source of the
-  // KiCad-style net highlight when NOT actively routing. Recomputed on each idle pointer move; consumed by
-  // `highlightNet`. Null when the cursor is off the copper or a gesture is in progress.
-  private hoverNet: number | null = null;
   // The component under an idle hover (its body or one of its pins) — so a FOCUSED part reveals its full
   // pin labels + value chip while ambient parts stay decluttered (Phase 3 label reveal). Recomputed each
-  // idle move alongside `hoverNet`; null off any part.
+  // idle move; null off any part.
   private hoverComponentId: number | null = null;
   // KiCad-style click-to-continue wiring tracks, per press, whether the pointer left
   // the cell it went down in. A press+release IN PLACE (a click) leaves the wire
@@ -1285,7 +1281,6 @@ export class Board {
 
   private readonly onPointerLeave = (): void => {
     this.pointerInside = false;
-    this.hoverNet = null; // drop the net highlight when the cursor leaves the canvas
     this.hoverComponentId = null; // …and the label-reveal focus
     this.updateGhost();
     this.updatePasteGhost();
@@ -4439,28 +4434,16 @@ export class Board {
 
   /** The electrical NET (node) to bring forward, KiCad-style — its traces get a halo (`redrawWires`), its
    * pins get focus rings ({@link drawNetFocus}), and off-net parts dim (the node loop in {@link update}).
-   * It's the net of the in-progress wire's source pin while ROUTING, else the net under an idle HOVER (a
-   * pin or trace, build/wire modes — {@link hoverNet}). Suppressed mid-gesture so a stale hover-net doesn't
-   * linger while dragging. By real connectivity (the node), NOT by name: two separate "GND" nets that
-   * aren't actually joined stay distinct. Null when nothing is brought forward. */
+   * It's the net of the in-progress wire's source pin while ROUTING; nothing otherwise. By real
+   * connectivity (the node), NOT by name: two separate "GND" nets that aren't actually joined stay
+   * distinct. Null when nothing is brought forward. */
   private highlightNet(): number | null {
-    if (this.wiring) return this.endpointNode(this.wiring.from);
-    // A drag/pan/marquee owns the pointer — don't highlight a stale hover net under it.
-    if (
-      this.dragging ||
-      this.panning ||
-      this.wireDrag ||
-      this.junctionDrag ||
-      this.labelDrag ||
-      this.pinDrag ||
-      this.boxHandleDrag ||
-      this.draggingProbe ||
-      this.marquee ||
-      this.regionDrawing ||
-      this.pasting
-    )
-      return null;
-    return this.hoverNet;
+    // KiCad-style: ONLY the net you are actively WIRING is brought forward (its traces halo, its pins
+    // ring, off-net parts dim). An idle hover-over no longer highlights the whole net — that read as noisy
+    // "walk-over" flicker; KiCad ties the cross-probe highlight to an action (here, drawing the wire), not
+    // passive cursor motion. The hovered PART still reveals its pin labels (`hoverComponentId`), a separate,
+    // calmer affordance.
+    return this.wiring ? this.endpointNode(this.wiring.from) : null;
   }
 
   /** Is any pin of component `id` on net `node`? (Element pins resolve directly through `probeNodes`.) Used
@@ -5702,15 +5685,6 @@ export class Board {
     // that draws a ghost must refresh here or its preview freezes in place.
     if (this.armed || this.mode === "junction" || this.mode === "label")
       this.updateGhost();
-    // KiCad-style net highlight: the net under an IDLE hover (cursor over a pin or trace) is brought
-    // forward — its traces halo, its pins ring, off-net parts dim (see `highlightNet` / `drawNetFocus` /
-    // the node-dim in `update`). Only in the BUILD (`select`) and `wire` editing modes; never while routing
-    // (that uses the wire's own source net) or mid-gesture (those branches returned above). `snapProbe`
-    // resolves the net by real connectivity, so two unrelated same-named nets stay separate.
-    this.hoverNet =
-      !this.wiring && (this.mode === "select" || this.mode === "wire")
-        ? (this.snapProbe(wp.x, wp.y)?.node ?? null)
-        : null;
     // The part under the cursor (its body, or one of its pins just outside it) gets its full pin labels +
     // value chip revealed (Phase 3) — ambient parts stay decluttered. Same idle-only gate as the net hover.
     this.hoverComponentId =
