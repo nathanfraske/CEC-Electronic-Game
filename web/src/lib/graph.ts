@@ -524,6 +524,29 @@ export const PART_KINDS: Record<string, PartKind> = {
     "Ω",
     true,
   ),
+  // Behavioral RAM chip (convenience primitive → ELEM_MEMORY, docs/memory-characterization-design.md).
+  // The REAL chip-level pinout — address + data + control, never bitlines (those are internal to the
+  // cell grid the array collapses). Cell-level core: 8-deep × 1-bit (addrWidth 3, wordWidth 1; tile N
+  // for an N-bit word). Pins map by position to the ELEM_MEMORY terminals via MEM_SPEC in netlist.ts:
+  // [D, A0, A1, A2, WE, DI, VCC, GND] → a=D_out, f/g/h=A0..A2, b=WE, c=D_in, d=VCC, e=GND.
+  RAM: kind(
+    "RAM",
+    "RAM (SRAM)",
+    "violet",
+    [
+      pin("D", 0, 0),
+      pin("A0", 0, 2),
+      pin("A1", 0, 3),
+      pin("A2", 0, 4),
+      pin("WE", 3, 0),
+      pin("DI", 3, 2),
+      pin("VCC", 3, 3),
+      pin("GND", 3, 4),
+    ],
+    0,
+    "",
+    false,
+  ),
   C: kind("C", "Capacitor", "cyan", twoPin("+", "−"), 1e-6, "F", true),
   // Electrolytic cap: a big polarized bulk cap with a real parasitic ESR. `value`
   // is the capacitance (F); the ESR is fixed in the netlist. Pins are polarized

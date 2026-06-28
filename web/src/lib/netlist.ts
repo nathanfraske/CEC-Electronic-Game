@@ -206,6 +206,8 @@ const GATE_AUX: Record<string, number> = {
 const ELEM_GATE = 17;
 // Element type for a behavioral block (LUT / SPI / UART), run by an FSM in the core.
 const ELEM_BEHAVIORAL = 25;
+// Element type for a behavioral MEMORY array (ROM/RAM/EEPROM/DRAM), contents in a heap store.
+const ELEM_MEMORY = 26;
 
 /**
  * CEC composite logic ICs (`docs/ui/cec-teaching-ics.md`) — house teaching parts with no single
@@ -538,6 +540,27 @@ const BEH_SPEC: Record<string, BehSpec> = {
   // SAR's DONE — same term map). VCC is the reference. No data word (aux unused). Visual pins
   // [VIN, CLK, D2, D1, D0, BS, VCC, GND].
   SDM: { prog: 8, term: [4, 3, 2, 6, 7, 0, 5, 1], defWord: 0 },
+};
+
+/**
+ * Behavioral MEMORY arrays (`ELEM_MEMORY`, `docs/memory-characterization-design.md`) — one 8-terminal
+ * element whose contents live in a heap store, NOT the MNA matrix. `term` maps each sim terminal a..h to a
+ * visual pin index (the cell-level core map: a=D_out, b=WE, c=D_in, d=VCC, e=GND, f=A0, g=A1, h=A2);
+ * `mode` is the sim-core param-slot-0 identity (1 RAM(SRAM) / 0 ROM / 2 EEPROM / 3 DRAM); `addrWidth`
+ * (slot 1) sets depth `2^addrWidth`, `wordWidth` (slot 3) the bits per word. The chip-level pinout is
+ * address + data + control — real chips never expose bitlines, which are internal to the collapsed grid.
+ */
+interface MemSpec {
+  term: number[]; // length 8: terminal a..h ← visual pin index (-1 = ground/unused)
+  mode: number; // sim-core ELEM_MEMORY param slot 0
+  addrWidth: number; // param slot 1 → depth 2^addrWidth
+  wordWidth: number; // param slot 3
+}
+const MEM_ADDR_SLOT = 1; // ELEM_MEMORY param slots (mirror sim-core)
+const MEM_WORD_SLOT = 3;
+const MEM_SPEC: Record<string, MemSpec> = {
+  // RAM chip: visual pins [D, A0, A1, A2, WE, DI, VCC, GND] (graph.ts PART_KINDS.RAM). 8×1 SRAM.
+  RAM: { term: [0, 4, 5, 6, 7, 1, 2, 3], mode: 1, addrWidth: 3, wordWidth: 1 },
 };
 
 // Element types the EC (electrolytic cap) expansion stamps directly.
@@ -1382,6 +1405,31 @@ export function buildNetlist(
       continue;
     }
 
+    // Behavioral MEMORY array (ELEM_MEMORY): one element whose contents live in the core's heap store,
+    // not the MNA matrix. Visual pins route to the cell-level terminal map via MEM_SPEC.term (a=D_out,
+    // b=WE, c=D_in, d=VCC, e=GND, f/g/h=A0..A2); mode/addrWidth/wordWidth ride params (set in the params
+    // loop). RAM starts zeroed; ROM/EEPROM image seeding (load_memory) is a later phase.
+    const mem = MEM_SPEC[c.kind];
+    if (mem) {
+      const nodeOfPin = (pinIdx: number): number =>
+        pinIdx < 0 ? 0 : (nodeIndex.get(find(key(c.id, pinIdx))) ?? 0);
+      const tm = mem.term;
+      const ei = types.length;
+      types.push(ELEM_MEMORY);
+      aArr.push(nodeOfPin(tm[0]!));
+      bArr.push(nodeOfPin(tm[1]!));
+      cArr.push(nodeOfPin(tm[2]!));
+      dArr.push(nodeOfPin(tm[3]!)); // VCC
+      eArr.push(nodeOfPin(tm[4]!)); // GND
+      pushFGH(nodeOfPin(tm[5]!), nodeOfPin(tm[6]!), nodeOfPin(tm[7]!));
+      values.push(0);
+      auxArr.push(0);
+      elemOfComponent.set(c.id, ei);
+      // vAcross read as D_out (terminal a) relative to the GND pin (terminal e).
+      nodesOfComponent.set(c.id, [nodeOfPin(tm[0]!), nodeOfPin(tm[4]!)]);
+      continue;
+    }
+
     const t = TYPE_OF[c.kind];
     if (t === undefined) continue;
     // The third terminal: any device with a pin 2 stamps it as node c. For a 3-pin
@@ -1640,6 +1688,15 @@ export function buildNetlist(
     // cell's register on the rising CLK edge (params slot 4 ≥ 1 → registered in sim-core).
     if (comp.kind === "LUT" && (comp.mode ?? 0) >= 1) {
       params[ei * PARAM_STRIDE + BEH_LUT_MODE_SLOT] = 1;
+    }
+    // Behavioral MEMORY array: identity params — mode (slot 0), addrWidth (slot 1 → depth 2^addrWidth),
+    // wordWidth (slot 3). Installed in both fidelity modes (the array is its nominal self regardless of
+    // tier); slot 2 (RATED_CURRENT) is left 0 = unrated, as P1 intends.
+    const memSpec = MEM_SPEC[comp.kind];
+    if (memSpec) {
+      params[ei * PARAM_STRIDE + 0] = memSpec.mode;
+      params[ei * PARAM_STRIDE + MEM_ADDR_SLOT] = memSpec.addrWidth;
+      params[ei * PARAM_STRIDE + MEM_WORD_SLOT] = memSpec.wordWidth;
     }
   }
   // Fold the params into the signature so changing a tier reinstalls the sim (a no-op
