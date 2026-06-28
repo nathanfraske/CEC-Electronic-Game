@@ -7942,6 +7942,10 @@ class ComponentNode {
   private readonly pinLabels: string[] = [];
   // Small pin-name labels (A/K, B/C/E, …) drawn over the part at the deepest LOD.
   private readonly pinTexts: Text[] = [];
+  // Backing plates + short leaders for the pin labels (owner: a high-pin-count chip's names were hard to
+  // read and didn't visibly connect to their pin). Sits BEHIND the pin texts; redrawn each frame in
+  // `update` since the labels reflow with zoom/rotation.
+  private readonly pinLabelDeco = new Graphics();
   private readonly wPx: number;
   private readonly hPx: number;
   private readonly color: number;
@@ -8010,7 +8014,9 @@ class ComponentNode {
     this.glyphHolder.addChild(this.userIcGlyphs);
     this.view.addChild(this.glyphHolder);
     // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
-    // upright; positioned at the rotated pin and shown only at the deepest zoom.
+    // upright; positioned at the rotated pin and shown only at the deepest zoom. The backing/leader deco
+    // sits just behind them (added first), so each plate lifts its name off the busy copper.
+    this.view.addChild(this.pinLabelDeco);
     for (const lbl of this.pinLabels) {
       const t = new Text({
         text: lbl,
@@ -8715,6 +8721,7 @@ class ComponentNode {
     const lcy = this.hPx / 2;
     const LABEL_MARGIN = 14; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     const LEAD_CLEAR = 7; // px the label slides ALONGSIDE its lead so the trace doesn't pierce the text
+    this.pinLabelDeco.clear(); // rebuilt per frame (labels reflow with zoom/rotation)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       // Park the label at the PACKAGE pin position (the compact footprint edge — spread across the
@@ -8772,6 +8779,27 @@ class ComponentNode {
         // chip keeps correct PLACEMENT, an accepted edge case for the glyph orientation.)
         t.rotation = horizontalEdge ? 0 : -Math.PI / 2;
         t.visible = true;
+        // Deco (owner: connect the name to its pin + lift it off the busy copper). A short LEADER runs
+        // from the pin to the label, then a BACKING PLATE (drawn after, so it caps the leader's inner end)
+        // sits behind the text. Sized from the string (IBM Plex Mono 9px ≈ 5.4px/char) and counter-scaled
+        // by `cs` so it holds a fixed on-screen size like the label; the box swaps W/H for a vertical label.
+        const pr = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
+        const natW = String(t.text).length * 5.4;
+        const bw = (horizontalEdge ? natW : 11) * cs + 6 * cs;
+        const bh = (horizontalEdge ? 11 : natW) * cs + 4 * cs;
+        this.pinLabelDeco.moveTo(pr.x, pr.y).lineTo(r.x, r.y);
+        this.pinLabelDeco.stroke({
+          width: Math.max(1, 1.2 * cs),
+          color: PALETTE.rail,
+          alpha: 0.7,
+        });
+        this.pinLabelDeco.roundRect(r.x - bw / 2, r.y - bh / 2, bw, bh, 3 * cs);
+        this.pinLabelDeco.fill({ color: 0x0d0b16, alpha: 0.82 });
+        this.pinLabelDeco.stroke({
+          width: Math.max(0.75, cs),
+          color: PALETTE.border,
+          alpha: 0.55,
+        });
       } else {
         t.visible = false;
       }
