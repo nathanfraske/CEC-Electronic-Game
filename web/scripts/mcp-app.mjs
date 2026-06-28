@@ -110,14 +110,11 @@ async function callTool(name, args) {
     const s = await ensureOpen();
     if (args.lens || args.zoom || args.center) {
       await s.page
-        .evaluate(
-          (o) => window.__cecView?.(o),
-          {
-            ...(args.lens ? { lens: args.lens } : {}),
-            ...(args.zoom ? { zoom: Number(args.zoom) } : {}),
-            ...(args.center != null ? { centerId: Number(args.center) } : {}),
-          },
-        )
+        .evaluate((o) => window.__cecView?.(o), {
+          ...(args.lens ? { lens: args.lens } : {}),
+          ...(args.zoom ? { zoom: Number(args.zoom) } : {}),
+          ...(args.center != null ? { centerId: Number(args.center) } : {}),
+        })
         .catch(() => {});
       await s.page.waitForTimeout(1500);
     }
