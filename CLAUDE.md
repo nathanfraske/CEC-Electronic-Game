@@ -44,12 +44,19 @@ headless **vitest** suite (e.g. `web/src/lib/netlist.test.ts`) — `buildNetlist
 only, so it compiles in node, letting us verify determinism-critical compilation (the IC-maker seal
 expanding to the same netlist as the inline circuit) without a browser.
 
-**SEE render changes — don't guess.** Chromium + Playwright are pre-installed, so any visual change
-(`board.ts`, the drawers, glyphs, `App.svelte`) can be screenshotted and Read back. **Never claim a render
-can't be verified.** `pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>]
-[--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <componentId>]`, then Read the PNG
-(`web/scripts/shoot.mjs`; never run `playwright install`). The wasm core also runs headless in node
-(`initSync`) for deterministic drive→step→read tests.
+**SEE + DRIVE the live app — don't guess.** Chromium + Playwright are pre-installed (never run
+`playwright install`), so any visual change (`board.ts`, the drawers, glyphs, `App.svelte`) can be
+exercised and Read back. **Never claim a render can't be verified.** Three ways in:
+- **SEE** — `pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>]
+  [--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <componentId>]`, then Read the PNG
+  (`web/scripts/shoot.mjs`).
+- **DRIVE** — `pnpm -C web replay --bundle <cec-feedback.json> --drive [--filmstrip]` re-walks a recorded
+  action journal from a clean boot (`web/scripts/replay.mjs`).
+- **LIVE** — the **`cec-app` MCP server** (`.mcp.json`, `web/scripts/mcp-app.mjs`) keeps ONE app session
+  alive across calls: `cec_open` / `cec_screenshot` / `cec_eval` (run JS in the page — place parts, call
+  `window.__cecView`, read sim state) / `cec_close`. No per-shot reboot, no throwaway fixtures.
+
+The wasm core also runs headless in node (`initSync`) for deterministic drive→step→read tests.
 
 ## Design system (the look)
 

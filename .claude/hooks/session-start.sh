@@ -31,11 +31,13 @@ echo "  cargo clippy -p sim-core -p sim-protocol --all-targets -- -D warnings &&
 echo "  cargo test -p sim-core -p sim-protocol && \\"
 echo "  pnpm run build:wasm && pnpm -C web check && pnpm -C web lint && pnpm -C web build"
 echo
-echo "You CAN SEE render changes — never say 'I can't verify visually'. Chromium + Playwright are"
-echo "pre-installed; shoot a PNG and Read it (don't guess at glyphs / board.ts / drawers / App.svelte):"
-echo "  pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>] \\"
-echo "    [--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <componentId>]"
-echo "  then Read /tmp/x.png. (Harness: web/scripts/shoot.mjs · NEVER run 'playwright install'.)"
+echo "You CAN SEE + DRIVE the live app — never say 'I can't verify visually'. Chromium + Playwright are"
+echo "pre-installed (NEVER run 'playwright install'). Three ways in:"
+echo "  • SEE    pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>] \\"
+echo "             [--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <id>]  → Read the PNG"
+echo "  • DRIVE  pnpm -C web replay --bundle <cec-feedback.json> --drive [--filmstrip]  (re-walk a route)"
+echo "  • LIVE   the 'cec-app' MCP server (.mcp.json) keeps ONE app session alive: cec_open / cec_screenshot"
+echo "           / cec_eval (run JS in the page — place parts, call window.__cecView, read sim state) / cec_close"
 echo "The wasm core ALSO runs headless in node (initSync) for deterministic drive->step->read tests."
 echo
 

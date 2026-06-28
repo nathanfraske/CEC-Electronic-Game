@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "cec-app": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CLAUDE_PROJECT_DIR}/web/scripts/mcp-app.mjs"]
+    }
+  }
+}
