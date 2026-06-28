@@ -8429,7 +8429,12 @@ class ComponentNode {
           ]);
         }
         drawCellSymbol(this.symbolGlyph, gname, cx, cy, hw, hh, this.color);
-        this.label.alpha = 0; // the symbol is the body identity; hide the name
+        // Name the auto-applied symbol: the glyph alone can't tell a NAND from a NOR, so show WHAT it is as
+        // text just ABOVE the body — outside the box, so it never lands on the in-body stored-Q / Y value
+        // chip (owner ask). Rides the same fade as the symbol; uses the symbol's function name when known.
+        this.label.text = gname ?? this.component.label ?? this.defaultLabel();
+        this.label.position.set(this.wPx / 2, -9);
+        this.label.alpha = fadeAlpha;
         // Live SYMBOL-STATE: a recognised cell shows its live OUTPUT bit(s) on its body — a register's
         // stored Q, a gate's output Y, an adder's sum/carry. The LED bits sit inside the box and carry the
         // state at a glance when zoomed OUT (riding the symbol fade); the mono value chip ("Q=1"/"Y=0…")
