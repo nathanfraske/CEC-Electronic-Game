@@ -36,6 +36,14 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - [ ] **NAND/flash design panel** (#102): RUNNING in background → `docs/flash-storage-design.md` (fast flash
   arrays, persistence across runs, persistence-vs-replay reconciliation). Owner ask.
 - [ ] **Newton globalization (#88)** — owner asked to take a crack AFTER the memory phases (golden-sensitive).
+- ~~**RAM placeable from bin**~~ DONE (0322db3). ~~**Tweak: net highlight → KiCad (wire-time, not hover)**~~
+  DONE (bd58617). ~~**Tweak: pin-label leader + backing plate**~~ DONE (a9deabb). ~~**Flash panel doc**~~
+  DONE (`docs/flash-storage-design.md`).
+- [ ] **Tweak: pipe LoD bends inward (analogy lens, inside opened sub-assemblies)** — DEFERRED; needs
+  deep-zoom + analogy-lens visual iteration (headless shoot can't drill/set lens). Pointers: condRoutes
+  outward-normal (board.ts ~169), drawConduitSkin, conduit draw ~6404. Likely a die-context normal sign.
+- [ ] **ELEM_MEMORY P3/P4/P5** (bus-port / DRAM / tiers) and **Newton #88** — remaining; large/golden-
+  sensitive, best in focused sessions with verification.
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.

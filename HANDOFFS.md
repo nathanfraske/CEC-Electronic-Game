@@ -35,6 +35,22 @@ wordWidth via slots 0/1/3; image via `load_memory` in `loop.ts`). The characteri
 cell with inner inverters in **fast-model** (the raw-FET bug, #215) and is bitline-observable; treat extracted
 margins as a tunable datasheet (doc §2.1). Full spec: `docs/memory-characterization-design.md`.
 
+**UPDATE (this run):** flash panel doc landed + committed (`docs/flash-storage-design.md`). RAM chip now
+PLACEABLE from the bin (App.svelte PARTS + PART_CAT_OF + codex.ts) under "Logic & ICs"; renders fine
+(screenshot-verified). **Tweak 3 (net highlight → KiCad)** DONE (bd58617): `highlightNet()` only brings a net
+forward while WIRING, not on idle hover; removed dead `hoverNet`. **Tweak 1 (pin labels)** DONE (a9deabb):
+added `pinLabelDeco` — a leader from each pin to its label + a backing plate behind the text (board.ts, the
+pin-label layout loop ~8730; deco field ~7945, addChild before the pin-texts loop). Gate green throughout
+(sim-core 191, web 288).
+
+**Tweak 2 (pipe LoD bends inward) — DEFERRED, needs visual iteration.** Inside an opened sub-assembly under
+the ANALOGY lens, the conduit pipes bend as if pins face inward when they should face outward. Code pointers:
+the conduit pin-stub alignment + outward-normal lives where `condRoutes` is built (board.ts ~169 "chosen
+outward normal (ox,oy)"); the skin is `drawConduitSkin`; the per-wire conduit draw is board.ts ~6404-6436.
+Likely a context-dependent normal sign inside the die/opened-cell (frame pins face into the die). Fix needs
+deep-zoom + analogy-lens screenshots of an opened cell (the headless shoot can't set lens/zoom/drill) — do it
+live or extend the harness with a camera/lens hook first; do NOT blind sign-flip.
+
 **Remaining queue (in order):**
 1. **P2** — `classifyStorageCell` (cellAnalysis.ts) + `characterizeMemoryCell` (sibling of characterize.ts) +
    the mint-a-memory-array part + `flattenUserIcs`→ELEM_MEMORY emission + `loop.ts` load_memory + Behavior-
