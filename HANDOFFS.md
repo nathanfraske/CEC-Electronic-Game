@@ -5,6 +5,47 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (218) — ELEM_MEMORY P1 DONE + P2 started; autonomous build continuing [big work queue]
+
+**Owner directive (standing):** "Continue on through autonomously until it's all implemented" — finish the
+whole ELEM_MEMORY build (P2→P5), THEN a list of 3 UI tweaks (below), and (asked earlier) take a crack at the
+global **Newton issue (#88)** after the memory phases. Everything green + committed at each step on
+`claude/kind-turing-hdelb3`.
+
+**Done so far:** P1 complete (dda2444 + 8809a6e — element works in-circuit, golden-safe). P2 slice 1
+(37bfedc): `MemBehavior {mode,addrWidth,wordWidth,sig}` on `UserIc.memBehavior` + `setUserIcMemBehavior`
+(mirrors CellBehavior). Gate green (sim-core 191, web 286).
+
+**P2 DESIGN DECISION uncovered (read before continuing P2):** the LUT collapse remaps a cell's existing pins
+to the LUT's pins. **Memory can't do that** — the owner's 6T cell is bitline-accessed (roles `WL,VCC,GND,
+BLB,BL`, no Dout), but the P1 `ELEM_MEMORY` array has an addr/data/WE interface with MORE pins (an address
+bus). So characterizing a cell does NOT collapse-in-place; it should **mint a NEW placeable "memory array"
+part** (its own array interface: D_out, WE, D_in, VCC, GND, A0..A2 — sim-core cell-level map) seeded from the
+cell's `memBehavior`. i.e. P2 = "characterize this 6T cell → here's an N×1 RAM array part to place," not "swap
+the placed cell." `flattenUserIcs` emits `ELEM_MEMORY` for that array part's kind (params mode/addrWidth/
+wordWidth via slots 0/1/3; image via `load_memory` in `loop.ts`). The characterization sweep must run the
+cell with inner inverters in **fast-model** (the raw-FET bug, #215) and is bitline-observable; treat extracted
+margins as a tunable datasheet (doc §2.1). Full spec: `docs/memory-characterization-design.md`.
+
+**Remaining queue (in order):**
+1. **P2** — `classifyStorageCell` (cellAnalysis.ts) + `characterizeMemoryCell` (sibling of characterize.ts) +
+   the mint-a-memory-array part + `flattenUserIcs`→ELEM_MEMORY emission + `loop.ts` load_memory + Behavior-
+   panel memory card + words×bits picker. Headless emission test first (data-layer-first).
+2. **P3** word-level bus-port (gated on §4 contiguous-node fix — real netlist surgery). 3. **P4** DRAM
+   (eager hashed rot/refresh). 4. **P5** tiers/ratings.
+5. **NAND/flash panel** (#102) is RUNNING in background → write `docs/flash-storage-design.md` when it returns
+   (handle the task-notification).
+6. **Three UI tweaks (owner, after ELEM_MEMORY):**
+   a. **Pin labels** hard to read — don't align with the header; need a stronger label↔pin connector + a
+      background separator (chip/halo), esp. high-pin-count parts. (board.ts pin-label render.)
+   b. **Analogy (pipes) LoD when zooming into sub-assemblies** bends pipes inward as if pins face in, when
+      they should face OUTWARD — strange bending. (board.ts/boardRender pipe-elbow direction inside opened cells.)
+   c. **Net highlight** fires on hover-walk-over; make it **KiCad-like** — highlight the net you're WIRING,
+      not just hovering. (the #80 net-highlight; gate it on wiring state.)
+7. **Newton globalization (#88)** — golden-sensitive, do isolated/last.
+
+---
+
 ## 2026-06-28 (217) — ELEM_MEMORY P1 foundation landed (sim-core, golden-safe) [owner greenlit full build]
 
 **State:** 🟢 Owner greenlit the FULL `ELEM_MEMORY` build (#47). First slice in on `claude/kind-turing-hdelb3`
