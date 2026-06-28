@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (217) — ELEM_MEMORY P1 foundation landed (sim-core, golden-safe) [owner greenlit full build]
+
+**State:** 🟢 Owner greenlit the FULL `ELEM_MEMORY` build (#47). First slice in on `claude/kind-turing-hdelb3`
+(commit dda2444); gate green (fmt, clippy -D warnings, cargo test -p sim-core **190** incl. the golden,
+build:wasm, web check). Building in the design's strict phase order, green at each gate.
+
+**Landed (the golden-safe data-layer foundation, all in `crates/sim-core/src/lib.rs`):** `ELEM_MEMORY` = id
+26 (append-only after ELEM_BEHAVIORAL=25; in the set_netlist whitelist; **not** is_nonlinear). Ragged
+`mem_data: Vec<Vec<u32>>` (depth 2^addrWidth from param slot 1) + `mem_digest: Vec<u64>` + `mem_wear:
+Vec<u32>`, sized beside `beh_state` at install, zeroed in `reset()`. `write_cell(i,k,v)` = THE single
+mutation site (O(1) incremental digest via `mem_cell_hash`, zero word ⇒ 0 ⇒ all-zero store digest 0).
+`load_memory`/`mem_read` (pub). Hash fold appends each ELEM_MEMORY's 8-byte digest + 4-byte wear → golden
+byte-identical (no memory ⇒ zero extra bytes). Tests: round-trip + digest-consistency + deterministic hash.
+
+**Remaining P1 (the element is currently INERT in the solve):** terminal-driven SYNCHRONOUS read (constant
+Thévenin stamp from the addressed word) + write (commit-phase latch via `write_cell`) so it works in-circuit.
+Needs: the cell-level terminal map (addr/data/WE/OE within the 8 `a..h` terminals — small widths for now),
+`is_digital` += ELEM_MEMORY + a `classify_nets` arm (data=signal, addr/WE/OE=signal, VCC/GND=analog supply),
+the stamp + `commit_sequential_digital_state` dispatch, and `load_memory`/`mem_read` wasm exports in
+`crates/sim-wasm`. Then P2 (cell characterization → teaching SRAM), P3 (word-level bus-port, gated on §4
+node-numbering fix), P4 (DRAM), P5 (tiers). Full spec: `docs/memory-characterization-design.md`.
+
+---
+
 ## 2026-06-28 (216) — DOOM-circuit vision + memory-characterization design (panel landed)
 
 **State:** 🟢 Two design docs landed on `claude/kind-turing-hdelb3`; no code changes. The session pivoted to

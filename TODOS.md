@@ -23,9 +23,15 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   true gated on #88); **the word-level bus-port is BLOCKED on a sound contiguous-node design (§4), not just
   greenlight** — gates the CPU path. Build order P0 greenlight → P1 data layer → P2 cell-level collapse
   (ships the teaching SRAM) → P3 bus-port → P4 DRAM → P5 tiers.
-- [ ] **`ELEM_MEMORY` greenlight (OWNER — gates touching sim-core, #47).** Recommended: greenlight P1+P2
-  (cell-level core + data layer + tests 1-4,6); defer P3 bus-port + P4 DRAM. Open Qs in doc §10 (esp. #2:
-  accept v1 tunable-margin framing vs require #88 first).
+- ~~**`ELEM_MEMORY` greenlight**~~ DONE: owner greenlit the **FULL** build (P1→P5). Building in strict phase
+  order, gate-green at each step.
+- [ ] **`ELEM_MEMORY` P1 — data layer** (#98, in progress). ~~Foundation~~ DONE (commit dda2444): id 26
+  (append-only, golden-safe), `mem_data`/`mem_digest`/`mem_wear` + install/reset, `write_cell` single
+  mutation site + incremental digest, `load_memory`/`mem_read`, hash fold (golden byte-identical), tests;
+  gate green (sim-core 190, build:wasm, web check). **Remaining P1:** terminal-driven synchronous read
+  (Thévenin stamp) + write (commit latch) so the element is usable in-circuit — needs the cell-level terminal
+  map (addr/data/WE/OE in 8 pins), `is_digital`+arm in `classify_nets`, stamp + commit dispatch, and the
+  `load_memory`/`mem_read` wasm exports (`crates/sim-wasm`).
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
