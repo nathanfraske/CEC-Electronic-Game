@@ -365,6 +365,41 @@ export interface NetLabel {
    * Render-side only: never crosses the wasm boundary, never enters the snapshot hash.
    */
   color?: number;
+  /**
+   * Owner id when this label is AUTO-MANAGED by a {@link Cable} (= the cable's id), else absent for a
+   * player-placed label. {@link BoardGraph.deriveCableLinks} is the sole author of owner-tagged labels:
+   * it creates/prunes them to realize a cable's per-bit connectivity through the existing same-name union,
+   * and never touches a hand-placed label. The label's `name` is an internal per-cable/per-bit token
+   * (namespaced by the owner id), so two cables never cross-couple. Render/connectivity only — never hashed.
+   */
+  ownerId?: number;
+}
+
+/**
+ * A BUS CABLE (`docs/ui/bus-scaling-design.md`): a render/route-only overlay that carries `width` signals
+ * along ONE player-drawn polyline (the long haul) and fans out to individual pins at each end. It stores NO
+ * connectivity of its own — {@link BoardGraph.deriveCableLinks} lowers it to matched per-bit {@link NetLabel}
+ * pairs (one at each end's pin) sharing an owner-namespaced name, which `buildNetlist`'s same-name union ties
+ * into `width` INDEPENDENT nets (identical to the player drawing `width` wires, or placing `width` same-name
+ * label pairs). So the sim only ever sees N nets; `sim-core` is untouched and the golden cannot move (a
+ * cable-free circuit emits no cables and no owned labels → byte-identical). Never crosses the wasm boundary.
+ */
+export interface Cable {
+  id: number;
+  /** Friendly bus name (e.g. "DATA"); display only — the auto-labels use an internal namespaced token. */
+  base: string;
+  /** Number of conductors N (= the matched pin-group width at each end). */
+  width: number;
+  /** The ONE long-haul polyline the player drew (interior grid cells), src→dst. */
+  route: Cell[];
+  /** The bus pin-group at one end: a component + its pin indices, bit 0 first. */
+  src: { componentId: number; pinIndices: number[] };
+  /** The same-width bus pin-group at the other end, paired bit-for-bit with `src`. */
+  dst: { componentId: number; pinIndices: number[] };
+  /** LoD / manual zip state: true = drawn as a single collapsed jacket, false = fanned strands. */
+  collapsed?: boolean;
+  /** Optional pinned sheath tint (a PIXI hex; reuses the {@link NetLabel.color} render path). */
+  color?: number;
 }
 
 /**
@@ -408,12 +443,17 @@ export interface GraphSnapshot {
   junctions?: Junction[];
   /** Net labels (names + global aliases). Absent in older snapshots (treated as []). */
   netLabels?: NetLabel[];
+  /** Bus cables (render/route-only bundles). Absent in older snapshots (treated as []); a cable-free
+   * circuit emits this as undefined so the golden + all existing saves round-trip byte-identical. */
+  cables?: Cable[];
   nextComponentId: number;
   nextWireId: number;
   /** Next junction id. Absent in older snapshots (rederived from junctions). */
   nextJunctionId?: number;
   /** Next net-label id. Absent in older snapshots (rederived from netLabels). */
   nextNetLabelId?: number;
+  /** Next cable id. Absent in older snapshots (rederived from cables). */
+  nextCableId?: number;
 }
 
 /**
@@ -1806,10 +1846,12 @@ export class BoardGraph {
   private nextWireId = 1;
   private nextJunctionId = 1;
   private nextNetLabelId = 1;
+  private nextCableId = 1;
   readonly components = new Map<number, Component>();
   readonly wires = new Map<number, Wire>();
   readonly junctions = new Map<number, Junction>();
   readonly netLabels = new Map<number, NetLabel>();
+  readonly cables = new Map<number, Cable>();
 
   /**
    * Place a new component of `kind` anchored at the given (already-snapped) cell.
@@ -1888,6 +1930,16 @@ export class BoardGraph {
     for (const [lid, l] of this.netLabels) {
       if (endpointHasComponent(l.at, id)) this.netLabels.delete(lid);
     }
+    // Drop any cable that ends on this component, then reconcile owned labels (prunes the dangling pair
+    // at the surviving end so a removed part never leaves a half-connected bus).
+    let cableRemoved = false;
+    for (const [cid, c] of this.cables) {
+      if (c.src.componentId === id || c.dst.componentId === id) {
+        this.cables.delete(cid);
+        cableRemoved = true;
+      }
+    }
+    if (cableRemoved) this.deriveCableLinks();
     this.pruneJunctions();
   }
 
@@ -2342,10 +2394,116 @@ export class BoardGraph {
     this.wires.clear();
     this.junctions.clear();
     this.netLabels.clear();
+    this.cables.clear();
     this.nextComponentId = 1;
     this.nextWireId = 1;
     this.nextJunctionId = 1;
     this.nextNetLabelId = 1;
+    this.nextCableId = 1;
+  }
+
+  // --- Bus cables (docs/ui/bus-scaling-design.md) -------------------------------------------------------
+  // A Cable is a render/route-only bundle; its electrical effect is realized ENTIRELY through auto-managed
+  // per-bit NetLabel pairs (owner-tagged), unioned by the existing same-name pass in buildNetlist. The
+  // wasm core never sees a cable — only the N independent nets it implies. Golden-safe by construction.
+
+  /** The internal, owner-namespaced net name shared by a cable's two ends for one bit. Per (cable, bit),
+   *  so two cables never cross-couple; the leading NUL keeps it out of any player-typeable name space. */
+  private cableNetName(cableId: number, bit: number): string {
+    return ` cbl${cableId}.${bit}`;
+  }
+
+  /** Add a bus cable and realize its per-bit links. Pin-group widths are clamped to the cable width. */
+  addCable(spec: Omit<Cable, "id">): Cable {
+    const cable: Cable = {
+      id: this.nextCableId++,
+      base: spec.base,
+      width: spec.width,
+      route: spec.route.map((c) => ({ ...c })),
+      src: {
+        componentId: spec.src.componentId,
+        pinIndices: [...spec.src.pinIndices],
+      },
+      dst: {
+        componentId: spec.dst.componentId,
+        pinIndices: [...spec.dst.pinIndices],
+      },
+      ...(spec.collapsed ? { collapsed: true } : {}),
+      ...(spec.color !== undefined ? { color: spec.color } : {}),
+    };
+    this.cables.set(cable.id, cable);
+    this.deriveCableLinks();
+    return cable;
+  }
+
+  /** Remove a cable; `deriveCableLinks` then prunes its now-orphaned owned labels. */
+  removeCable(id: number): void {
+    if (!this.cables.delete(id)) return;
+    this.deriveCableLinks();
+  }
+
+  /**
+   * Reconcile the auto-managed per-bit NetLabel pairs for every cable (idempotent; the SOLE author of
+   * owner-tagged labels). For each cable + bit it ensures one owner-tagged label at each end's pin sharing
+   * the per-bit name (so the same-name union ties the two pins into one net); it updates names in place
+   * (stable ids → no node-numbering drift) and prunes owner-tagged labels no cable wants anymore. Player-
+   * placed labels (no `ownerId`) are never touched. Running it twice is a no-op.
+   */
+  deriveCableLinks(): void {
+    const desired = new Map<
+      string,
+      { name: string; at: Endpoint; ownerId: number }
+    >();
+    for (const c of this.cables.values()) {
+      const w = Math.min(
+        c.width,
+        c.src.pinIndices.length,
+        c.dst.pinIndices.length,
+      );
+      for (let i = 0; i < w; i++) {
+        const name = this.cableNetName(c.id, i);
+        const sAt: Endpoint = {
+          componentId: c.src.componentId,
+          pinIndex: c.src.pinIndices[i],
+        };
+        const dAt: Endpoint = {
+          componentId: c.dst.componentId,
+          pinIndex: c.dst.pinIndices[i],
+        };
+        desired.set(`${c.id}|${endpointKey(sAt)}`, {
+          name,
+          at: sAt,
+          ownerId: c.id,
+        });
+        desired.set(`${c.id}|${endpointKey(dAt)}`, {
+          name,
+          at: dAt,
+          ownerId: c.id,
+        });
+      }
+    }
+    const existing = new Map<string, NetLabel>();
+    for (const l of this.netLabels.values()) {
+      if (l.ownerId !== undefined)
+        existing.set(`${l.ownerId}|${endpointKey(l.at)}`, l);
+    }
+    for (const [key, l] of existing) {
+      if (!desired.has(key)) this.netLabels.delete(l.id);
+    }
+    for (const [key, d] of desired) {
+      const ex = existing.get(key);
+      if (ex) {
+        if (ex.name !== d.name) ex.name = d.name;
+      } else {
+        const id = this.nextNetLabelId++;
+        this.netLabels.set(id, {
+          id,
+          name: d.name,
+          at: { ...d.at },
+          ownerId: d.ownerId,
+        });
+      }
+    }
   }
 
   /** Deep-copy the whole graph (for the undo stack). */
@@ -2386,7 +2544,31 @@ export class BoardGraph {
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
         ...(l.color !== undefined ? { color: l.color } : {}),
+        ...(l.ownerId !== undefined ? { ownerId: l.ownerId } : {}),
       })),
+      // Cables emit only when present, so a cable-free graph serializes byte-identical to before (the
+      // golden + every existing save round-trip unchanged). nextCableId rides along only then too.
+      ...(this.cables.size > 0
+        ? {
+            cables: [...this.cables.values()].map((c) => ({
+              id: c.id,
+              base: c.base,
+              width: c.width,
+              route: c.route.map((cell) => ({ ...cell })),
+              src: {
+                componentId: c.src.componentId,
+                pinIndices: [...c.src.pinIndices],
+              },
+              dst: {
+                componentId: c.dst.componentId,
+                pinIndices: [...c.dst.pinIndices],
+              },
+              ...(c.collapsed ? { collapsed: true } : {}),
+              ...(c.color !== undefined ? { color: c.color } : {}),
+            })),
+            nextCableId: this.nextCableId,
+          }
+        : {}),
       nextComponentId: this.nextComponentId,
       nextWireId: this.nextWireId,
       nextJunctionId: this.nextJunctionId,
@@ -2400,6 +2582,7 @@ export class BoardGraph {
     this.wires.clear();
     this.junctions.clear();
     this.netLabels.clear();
+    this.cables.clear();
     for (const c of s.components) {
       this.components.set(c.id, {
         ...c,
@@ -2428,6 +2611,25 @@ export class BoardGraph {
         ...(l.pos ? { pos: { ...l.pos } } : {}),
         ...(l.tagOff ? { tagOff: { ...l.tagOff } } : {}),
         ...(l.color !== undefined ? { color: l.color } : {}),
+        ...(l.ownerId !== undefined ? { ownerId: l.ownerId } : {}),
+      });
+    }
+    for (const c of s.cables ?? []) {
+      this.cables.set(c.id, {
+        id: c.id,
+        base: c.base,
+        width: c.width,
+        route: (c.route ?? []).map((cell) => ({ ...cell })),
+        src: {
+          componentId: c.src.componentId,
+          pinIndices: [...c.src.pinIndices],
+        },
+        dst: {
+          componentId: c.dst.componentId,
+          pinIndices: [...c.dst.pinIndices],
+        },
+        ...(c.collapsed ? { collapsed: true } : {}),
+        ...(c.color !== undefined ? { color: c.color } : {}),
       });
     }
     for (const w of s.wires) {
@@ -2456,6 +2658,10 @@ export class BoardGraph {
     this.nextNetLabelId =
       s.nextNetLabelId ??
       [...this.netLabels.keys()].reduce((m, id) => Math.max(m, id + 1), 1);
+    // Cables: absent in older snapshots (treated as none); derive a safe next id from the restored set.
+    this.nextCableId =
+      s.nextCableId ??
+      [...this.cables.keys()].reduce((m, id) => Math.max(m, id + 1), 1);
   }
 }
 
