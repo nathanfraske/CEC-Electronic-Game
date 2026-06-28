@@ -42,8 +42,17 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - [ ] **Tweak: pipe LoD bends inward (analogy lens, inside opened sub-assemblies)** — DEFERRED; needs
   deep-zoom + analogy-lens visual iteration (headless shoot can't drill/set lens). Pointers: condRoutes
   outward-normal (board.ts ~169), drawConduitSkin, conduit draw ~6404. Likely a die-context normal sign.
-- [ ] **ELEM_MEMORY P3/P4/P5** (bus-port / DRAM / tiers) and **Newton #88** — remaining; large/golden-
-  sensitive, best in focused sessions with verification.
+- ~~**ELEM_MEMORY P4 (DRAM)**~~ DONE (03021b0 engine + 0e2c2e6 web): mode 3 eager hashed rot/refresh
+  (per-word epoch, decay via write_cell, mode-3-gated fold → golden+RAM byte-identical); placeable DRAM chip
+  (Real-mode retention); test `dram_word_rots_without_refresh`.
+- ~~**Deep-zoom harness hook**~~ DONE (ab93098): shoot.mjs --zoom/--lens/--center.
+- ~~**Tweak 2 (pipe bend)**~~ FIXED (b927c0c): pinOutward nearest-edge (was centre-ratio → mis-faced
+  one-sided pinouts). Owner to confirm live on the ALU 4-bit cell.
+- [ ] **ELEM_MEMORY P3 (word-level bus-port)** (#100) — node-numbering surgery (memory doc §4); the CPU-grade
+  wide-memory prerequisite. Hard; fresh focused window.
+- [ ] **ELEM_MEMORY P5 (memory tiers)** — lower value until the read/write-margin datasheet path exists.
+- [ ] **P2 authentic layer** — characterize-a-6T → mint array part (convenience RAM/DRAM already usable).
+- [ ] **Newton #88** — golden-sensitive solver globalization; also unlocks silicon-true write_trip.
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.

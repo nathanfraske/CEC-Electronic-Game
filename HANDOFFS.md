@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (219) — Autonomous push: 3 UI tweaks + ELEM_MEMORY P1/P2/P4 + harness hook + flash doc
+
+**State:** 🟢 Huge autonomous run, all green + pushed on `claude/kind-turing-hdelb3`. Owner: "power through
+it all, don't stop until done." Memory core + all 3 tweaks landed; P3/P5/Newton remain (hard/golden-sensitive).
+
+**Landed (this run, gate green at each — sim-core 192 incl. golden, web 288, build):**
+- **ELEM_MEMORY P1** complete (dda2444, 8809a6e): element + digest + terminal read/write + wasm exports.
+- **ELEM_MEMORY P2** (37bfedc, ae5ef5d, 0322db3): `MemBehavior` type + a working **RAM chip** (PART_KINDS.RAM
+  + MEM_SPEC → emits ELEM_MEMORY; memory.test.ts proves write/read), placeable from the bin.
+- **ELEM_MEMORY P4 DRAM** (03021b0 engine + 0e2c2e6 web): mode 3 = eager hashed rot/refresh (per-word epoch
+  `mem_refresh`, decay via write_cell, folded ONLY for mode 3 → golden + RAM byte-identical); placeable DRAM
+  chip (Real-mode retention). sim-core test `dram_word_rots_without_refresh`.
+- **Deep-zoom harness hook** (ab93098): `shoot.mjs --zoom/--lens/--center` + `window.__cecView` +
+  `board.centerOnComponent` — screenshot the LoD render headlessly.
+- **Tweak 1 (pin labels)** (a9deabb): leader + backing plate per label — VERIFIED at zoom 7.5 on a FULL ADDER.
+- **Tweak 3 (net highlight)** (bd58617): KiCad-style — highlights only while WIRING, not on hover.
+- **Tweak 2 (pipe bend)** (b927c0c): FIXED — `pinOutward` now classifies by NEAREST body edge, not the
+  centre-distance ratio (which mis-faced one-sided pinouts like the ALU 4-bit logic). **Owner to confirm live
+  on the ALU 4-bit cell under the analogy lens.**
+- **Flash/NAND design** doc (`docs/flash-storage-design.md`) from the panel.
+
+**Remaining (hard / golden-sensitive — fresh focused windows; gate protects the golden):**
+- **P3 word-level bus-port** (#100) — the node-numbering surgery (§4 of the memory doc); unblocks CPU-grade
+  wide memory. The one real prerequisite for the CPU/DOOM RAM.
+- **P2 authentic layer** — characterize-a-6T-cell → mint array part (the convenience RAM/DRAM parts already
+  give usable memory; this is the "hand-build the decoder, collapse the cell grid" teaching path).
+- **P5 memory tiers** — lower value until the read/write-margin "tunable datasheet" path exists (doc §2.1).
+- **Newton globalization (#88)** — the golden-sensitive solver fix; also unlocks silicon-true write_trip.
+- **Flash (mode 4)** — design ready (`flash-storage-design.md`), gated on owner greenlight.
+
+---
+
 ## 2026-06-28 (218) — ELEM_MEMORY P1 DONE + P2 started; autonomous build continuing [big work queue]
 
 **Owner directive (standing):** "Continue on through autonomously until it's all implemented" — finish the
