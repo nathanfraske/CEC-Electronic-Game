@@ -1159,10 +1159,20 @@ export interface FlattenRecord {
  * the element arrays it compiles to. When there are no sealed ICs the early no-op return leaves
  * `sink` untouched (empty) and returns the input unchanged — so the element output stays
  * byte-identical to today in every case.
+ *
+ * `preferBehavioral` is the GLOBAL "use the characterized fast models" switch (the Behavioral/Discrete
+ * fidelity toggle, sibling to Real/Ideal). When true, every instance whose def carries a swept
+ * `behavior` collapses to its prog-4 LUT — at EVERY depth, since the wave-based inliner re-evaluates
+ * each surfaced nested instance — exactly as if each had `fidelity:'behavioral'` set. This is the unlock
+ * for hierarchical designs: a deep transistor-level build (e.g. a 4-bit ALU = 548 FETs) collapses to a
+ * handful of linear LUTs, sidestepping the transistor-scale Newton non-convergence documented in
+ * `docs/sim/transistor-scale-convergence.md`. Golden-safe: the golden places no user IC, so the flag is
+ * inert there; default false keeps every per-instance circuit byte-identical to today.
  */
 export function flattenUserIcs(
   graph: BoardGraph,
   sink?: FlattenRecord[],
+  preferBehavioral = false,
 ): BoardGraph {
   let any = false;
   for (const c of graph.components.values()) {
@@ -1238,7 +1248,11 @@ export function flattenUserIcs(
         word?: number;
         mode?: number;
       };
-      if (def.behavior && def.pinRoles && instX.fidelity === "behavioral") {
+      if (
+        def.behavior &&
+        def.pinRoles &&
+        (instX.fidelity === "behavioral" || preferBehavioral)
+      ) {
         const roles = def.pinRoles;
         let inK = 0;
         const lutPin: number[] = roles.map((r) =>

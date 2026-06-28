@@ -925,6 +925,7 @@ export interface BuiltNetlist {
 export function buildNetlist(
   graph: BoardGraph,
   real = false,
+  preferBehavioral = false,
 ): BuiltNetlist | null {
   // Seal expansion (IC maker, ADR 0006): inline any placed sealed-IC instance's authored inner
   // circuit before compiling, so the sim sees the real discrete parts (seal-as-same-netlist). A
@@ -932,7 +933,7 @@ export function buildNetlist(
   // The `flatSink` collects each instance's id offset (render-only — it does not change the flatten's
   // element output) so we can build the zoom-to-open mini-board map (`userIcInternals`) below.
   const flatSink: FlattenRecord[] = [];
-  graph = flattenUserIcs(graph, flatSink);
+  graph = flattenUserIcs(graph, flatSink, preferBehavioral);
   // Union-find over wire endpoints: pins (keyed "componentId:pinIndex") AND
   // junctions (keyed "j<id>"). A junction is not an element — it only joins the
   // wire-ends that meet at it into one net, exactly like a wire does.
