@@ -30,17 +30,13 @@ describe("prefab reference library", () => {
       expect(tags).toContain(t);
   });
 
-  it("6T SRAM has bidirectional bitlines (BL/BLB role inout)", () => {
+  it("6T SRAM is bitline-only (no Q pin; BL/BLB are inout)", () => {
     const sram = PREFAB_USER_ICS.find((c) => c.tag === "6T SRAM")!;
-    expect(sram.pinNames).toEqual(["WL", "Q", "VCC", "GND", "BLB", "BL"]);
-    expect(sram.pinRoles).toEqual([
-      "in",
-      "out",
-      "vcc",
-      "gnd",
-      "inout",
-      "inout",
-    ]);
+    // Forced bitline lesson: read AND write only through BL/BLB + WL — there is NO direct Q output pin.
+    expect(sram.pinNames).toEqual(["WL", "VCC", "GND", "BLB", "BL"]);
+    expect(sram.pinNames).not.toContain("Q");
+    expect(sram.pinRoles).toEqual(["in", "vcc", "gnd", "inout", "inout"]);
+    expect(sram.package.pinCount).toBe(5);
   });
 
   it("registers every prefab so they're placeable", () => {
