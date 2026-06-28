@@ -853,13 +853,9 @@ export class Board {
     moved: boolean;
   } | null = null;
   private wiring: { from: Endpoint } | null = null;
-  // The net node under an idle hover (cursor over a pin or trace, build/wire modes) — the source of the
-  // KiCad-style net highlight when NOT actively routing. Recomputed on each idle pointer move; consumed by
-  // `highlightNet`. Null when the cursor is off the copper or a gesture is in progress.
-  private hoverNet: number | null = null;
   // The component under an idle hover (its body or one of its pins) — so a FOCUSED part reveals its full
   // pin labels + value chip while ambient parts stay decluttered (Phase 3 label reveal). Recomputed each
-  // idle move alongside `hoverNet`; null off any part.
+  // idle move; null off any part.
   private hoverComponentId: number | null = null;
   // KiCad-style click-to-continue wiring tracks, per press, whether the pointer left
   // the cell it went down in. A press+release IN PLACE (a click) leaves the wire
@@ -1285,7 +1281,6 @@ export class Board {
 
   private readonly onPointerLeave = (): void => {
     this.pointerInside = false;
-    this.hoverNet = null; // drop the net highlight when the cursor leaves the canvas
     this.hoverComponentId = null; // …and the label-reveal focus
     this.updateGhost();
     this.updatePasteGhost();
@@ -2350,6 +2345,36 @@ export class Board {
     this.world.position.set(
       this.app.screen.width / 2 - cx * scale,
       this.app.screen.height / 2 - cy * scale,
+    );
+    this.viewportDirty = true;
+    this.applyTextRes();
+  }
+
+  /** Harness/test accessor (render tools): centre the camera on a placed component at a given zoom scale,
+   * so a headless screenshot can reach the deep-zoom LoD (pin labels, conduit skins, zoom-to-open
+   * internals) that `fitView` never gets to for a single small part. Centres on the part's pin-bbox centre
+   * (not its anchor) so the body sits mid-view. No-op for an unknown id. */
+  centerOnComponent(id: number, scale: number): void {
+    const c = this.graph.components.get(id);
+    if (!c) return;
+    const kind = this.graph.kindOf(c);
+    const cells = kind
+      ? kind.pins.map((p) => this.graph.pinCell(c, p))
+      : [c.cell];
+    let sx = 0;
+    let sy = 0;
+    for (const cell of cells) {
+      const p = this.cellToWorld(cell);
+      sx += p.x;
+      sy += p.y;
+    }
+    const cx = sx / cells.length;
+    const cy = sy / cells.length;
+    const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+    this.world.scale.set(s);
+    this.world.position.set(
+      this.app.screen.width / 2 - cx * s,
+      this.app.screen.height / 2 - cy * s,
     );
     this.viewportDirty = true;
     this.applyTextRes();
@@ -4439,28 +4464,16 @@ export class Board {
 
   /** The electrical NET (node) to bring forward, KiCad-style — its traces get a halo (`redrawWires`), its
    * pins get focus rings ({@link drawNetFocus}), and off-net parts dim (the node loop in {@link update}).
-   * It's the net of the in-progress wire's source pin while ROUTING, else the net under an idle HOVER (a
-   * pin or trace, build/wire modes — {@link hoverNet}). Suppressed mid-gesture so a stale hover-net doesn't
-   * linger while dragging. By real connectivity (the node), NOT by name: two separate "GND" nets that
-   * aren't actually joined stay distinct. Null when nothing is brought forward. */
+   * It's the net of the in-progress wire's source pin while ROUTING; nothing otherwise. By real
+   * connectivity (the node), NOT by name: two separate "GND" nets that aren't actually joined stay
+   * distinct. Null when nothing is brought forward. */
   private highlightNet(): number | null {
-    if (this.wiring) return this.endpointNode(this.wiring.from);
-    // A drag/pan/marquee owns the pointer — don't highlight a stale hover net under it.
-    if (
-      this.dragging ||
-      this.panning ||
-      this.wireDrag ||
-      this.junctionDrag ||
-      this.labelDrag ||
-      this.pinDrag ||
-      this.boxHandleDrag ||
-      this.draggingProbe ||
-      this.marquee ||
-      this.regionDrawing ||
-      this.pasting
-    )
-      return null;
-    return this.hoverNet;
+    // KiCad-style: ONLY the net you are actively WIRING is brought forward (its traces halo, its pins
+    // ring, off-net parts dim). An idle hover-over no longer highlights the whole net — that read as noisy
+    // "walk-over" flicker; KiCad ties the cross-probe highlight to an action (here, drawing the wire), not
+    // passive cursor motion. The hovered PART still reveals its pin labels (`hoverComponentId`), a separate,
+    // calmer affordance.
+    return this.wiring ? this.endpointNode(this.wiring.from) : null;
   }
 
   /** Is any pin of component `id` on net `node`? (Element pins resolve directly through `probeNodes`.) Used
@@ -5702,15 +5715,6 @@ export class Board {
     // that draws a ghost must refresh here or its preview freezes in place.
     if (this.armed || this.mode === "junction" || this.mode === "label")
       this.updateGhost();
-    // KiCad-style net highlight: the net under an IDLE hover (cursor over a pin or trace) is brought
-    // forward — its traces halo, its pins ring, off-net parts dim (see `highlightNet` / `drawNetFocus` /
-    // the node-dim in `update`). Only in the BUILD (`select`) and `wire` editing modes; never while routing
-    // (that uses the wire's own source net) or mid-gesture (those branches returned above). `snapProbe`
-    // resolves the net by real connectivity, so two unrelated same-named nets stay separate.
-    this.hoverNet =
-      !this.wiring && (this.mode === "select" || this.mode === "wire")
-        ? (this.snapProbe(wp.x, wp.y)?.node ?? null)
-        : null;
     // The part under the cursor (its body, or one of its pins just outside it) gets its full pin labels +
     // value chip revealed (Phase 3) — ambient parts stay decluttered. Same idle-only gate as the net hover.
     this.hoverComponentId =
@@ -6629,21 +6633,43 @@ export class Board {
       x: ps.reduce((s, p) => s + p.x, 0) / ps.length,
       y: ps.reduce((s, p) => s + p.y, 0) / ps.length,
     });
-    // The trunk gathers at a point pushed OUT from the pin cluster (toward the cable run) by the cluster's
-    // own spread + a cell, so the N strands visibly FAN between the spread-out pins and that gather point —
-    // a ribbon-cable breakout, not N near-coincident lines hidden on the chip body.
-    const gather = (ctr: XY, toward: XY, pins: XY[]): XY => {
-      let dx = toward.x - ctr.x;
-      let dy = toward.y - ctr.y;
-      const len = Math.hypot(dx, dy) || 1;
-      dx /= len;
-      dy /= len;
+    // The gather sits on the pin-array CENTRE line, pushed OUT toward the partner part by the cluster's own
+    // spread + a cell — leaving room for the orthogonal comb to fan between the spread-out pins and the
+    // gather. The fan AXIS is set by the array's own orientation (a vertical pin column — more Y-spread — is
+    // approached HORIZONTALLY and fans vertically), NOT the run direction, so a route jog can't flip it; the
+    // partner direction only chooses which side (sign). Snapped to H/V → the whole breakout is on-grid.
+    const gatherAxis = (
+      ctr: XY,
+      toward: XY,
+      pins: XY[],
+    ): { pt: XY; axis: "h" | "v" } => {
+      let sx = 0;
+      let sy = 0;
+      for (const p of pins) {
+        sx += Math.abs(p.x - ctr.x);
+        sy += Math.abs(p.y - ctr.y);
+      }
+      const axis: "h" | "v" = sy >= sx ? "h" : "v"; // ⟂ the dominant pin-array spread
       const spread = Math.max(
         PITCH,
         ...pins.map((p) => Math.hypot(p.x - ctr.x, p.y - ctr.y)),
       );
       const d = spread + PITCH;
-      return { x: ctr.x + dx * d, y: ctr.y + dy * d };
+      const pt: XY =
+        axis === "h"
+          ? { x: ctr.x + Math.sign(toward.x - ctr.x || 1) * d, y: ctr.y }
+          : { x: ctr.x, y: ctr.y + Math.sign(toward.y - ctr.y || 1) * d };
+      return { pt, axis };
+    };
+    // One orthogonal "comb tooth" per conductor: pin → out along the run axis → turn once (an L) into the
+    // gather, so every strand follows the same Manhattan rules as a hand-drawn wire — no diagonals, and
+    // BOTH ends fan identically. The shared leg into the gather reads as the bus manifold.
+    const comb = (pins: XY[], gp: XY, axis: "h" | "v") => {
+      for (const p of pins) {
+        if (axis === "h")
+          g.moveTo(p.x, p.y).lineTo(gp.x, p.y).lineTo(gp.x, gp.y);
+        else g.moveTo(p.x, p.y).lineTo(p.x, gp.y).lineTo(gp.x, gp.y);
+      }
     };
     for (const c of this.graph.cables.values()) {
       const worldOf = (componentId: number, pinIndex: number): Point | null => {
@@ -6661,17 +6687,42 @@ export class Board {
       const sc = centroid(srcW);
       const dc = centroid(dstW);
       const routeW = c.route.map((cell) => this.cellToWorld(cell));
-      // Each end gathers toward the first/last route bend (or the far cluster when the run is straight).
-      const sg = gather(sc, routeW[0] ?? dc, srcW);
-      const dg = gather(dc, routeW[routeW.length - 1] ?? sc, dstW);
-      // End fans: EVERY conductor is its own strand from its pin to the gather point (show the wires).
-      for (const p of srcW) g.moveTo(p.x, p.y).lineTo(sg.x, sg.y);
-      for (const p of dstW) g.moveTo(p.x, p.y).lineTo(dg.x, dg.y);
+      // Each end's gather sits on the pin-array CENTRE line, pushed out toward the PARTNER part — so the
+      // trunk meets each array at its centre and the comb fans symmetrically either side, identically at
+      // both ends, no matter how the route jogs in between.
+      const src = gatherAxis(sc, dc, srcW);
+      const dst = gatherAxis(dc, sc, dstW);
+      // End fans: an orthogonal comb at BOTH ends — every conductor on-grid, symmetric about the centre.
+      comb(srcW, src.pt, src.axis);
+      comb(dstW, dst.pt, dst.axis);
       g.stroke({ width: 2, color, alpha: 0.75 });
-      // Trunk (thick): gather → drawn route bends → gather.
-      g.moveTo(sg.x, sg.y);
-      for (const p of routeW) g.lineTo(p.x, p.y);
-      g.lineTo(dg.x, dg.y);
+      // Trunk (thick): src-centre gather → the user's drawn route bends → dst-centre gather, walked as an
+      // ORTHOGONAL polyline. Any diagonal segment (notably the leg from the route's end to the centre-line
+      // gather) gets an inserted elbow, so the trunk is pure Manhattan and meets each comb spine head-on —
+      // the leg touching a gather leaves/enters along that end's fan axis. Already-orthogonal user bends are
+      // untouched. Render-only; the stored route (manipulable) is unchanged.
+      const pts: XY[] = [src.pt, ...routeW, dst.pt];
+      const trunk: XY[] = [pts[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const a = trunk[trunk.length - 1];
+        const b = pts[i];
+        if (a.x !== b.x && a.y !== b.y) {
+          const corner =
+            i === pts.length - 1
+              ? dst.axis === "h"
+                ? { x: a.x, y: b.y }
+                : { x: b.x, y: a.y }
+              : i === 1
+                ? src.axis === "h"
+                  ? { x: b.x, y: a.y }
+                  : { x: a.x, y: b.y }
+                : { x: b.x, y: a.y };
+          trunk.push(corner);
+        }
+        trunk.push(b);
+      }
+      g.moveTo(trunk[0].x, trunk[0].y);
+      for (let i = 1; i < trunk.length; i++) g.lineTo(trunk[i].x, trunk[i].y);
       g.stroke({ width: 6, color, alpha: 0.9 });
     }
   }
@@ -7921,6 +7972,10 @@ class ComponentNode {
   private readonly pinLabels: string[] = [];
   // Small pin-name labels (A/K, B/C/E, …) drawn over the part at the deepest LOD.
   private readonly pinTexts: Text[] = [];
+  // Backing plates + short leaders for the pin labels (owner: a high-pin-count chip's names were hard to
+  // read and didn't visibly connect to their pin). Sits BEHIND the pin texts; redrawn each frame in
+  // `update` since the labels reflow with zoom/rotation.
+  private readonly pinLabelDeco = new Graphics();
   private readonly wPx: number;
   private readonly hPx: number;
   private readonly color: number;
@@ -7989,7 +8044,9 @@ class ComponentNode {
     this.glyphHolder.addChild(this.userIcGlyphs);
     this.view.addChild(this.glyphHolder);
     // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
-    // upright; positioned at the rotated pin and shown only at the deepest zoom.
+    // upright; positioned at the rotated pin and shown only at the deepest zoom. The backing/leader deco
+    // sits just behind them (added first), so each plate lifts its name off the busy copper.
+    this.view.addChild(this.pinLabelDeco);
     for (const lbl of this.pinLabels) {
       const t = new Text({
         text: lbl,
@@ -8694,6 +8751,7 @@ class ComponentNode {
     const lcy = this.hPx / 2;
     const LABEL_MARGIN = 14; // px the label sits OUTSIDE the body edge (datasheet-style edge mount)
     const LEAD_CLEAR = 7; // px the label slides ALONGSIDE its lead so the trace doesn't pierce the text
+    this.pinLabelDeco.clear(); // rebuilt per frame (labels reflow with zoom/rotation)
     for (let i = 0; i < this.pinTexts.length; i++) {
       const t = this.pinTexts[i]!;
       // Park the label at the PACKAGE pin position (the compact footprint edge — spread across the
@@ -8751,6 +8809,27 @@ class ComponentNode {
         // chip keeps correct PLACEMENT, an accepted edge case for the glyph orientation.)
         t.rotation = horizontalEdge ? 0 : -Math.PI / 2;
         t.visible = true;
+        // Deco (owner: connect the name to its pin + lift it off the busy copper). A short LEADER runs
+        // from the pin to the label, then a BACKING PLATE (drawn after, so it caps the leader's inner end)
+        // sits behind the text. Sized from the string (IBM Plex Mono 9px ≈ 5.4px/char) and counter-scaled
+        // by `cs` so it holds a fixed on-screen size like the label; the box swaps W/H for a vertical label.
+        const pr = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
+        const natW = String(t.text).length * 5.4;
+        const bw = (horizontalEdge ? natW : 11) * cs + 6 * cs;
+        const bh = (horizontalEdge ? 11 : natW) * cs + 4 * cs;
+        this.pinLabelDeco.moveTo(pr.x, pr.y).lineTo(r.x, r.y);
+        this.pinLabelDeco.stroke({
+          width: Math.max(1, 1.2 * cs),
+          color: PALETTE.rail,
+          alpha: 0.7,
+        });
+        this.pinLabelDeco.roundRect(r.x - bw / 2, r.y - bh / 2, bw, bh, 3 * cs);
+        this.pinLabelDeco.fill({ color: 0x0d0b16, alpha: 0.82 });
+        this.pinLabelDeco.stroke({
+          width: Math.max(0.75, cs),
+          color: PALETTE.border,
+          alpha: 0.55,
+        });
       } else {
         t.visible = false;
       }

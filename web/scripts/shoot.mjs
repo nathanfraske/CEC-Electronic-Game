@@ -24,6 +24,12 @@ const port = Number(arg("port", "5191"));
 const settle = Number(arg("wait", "1500"));
 const width = Number(arg("width", "1280"));
 const height = Number(arg("height", "900"));
+// Deep-zoom / lens / drill hooks (window.__cecView) so the harness can capture LoD-only render — pin-label
+// deco, conduit pipes, zoom-to-open internals — that fitView never reaches: --zoom <scale> (screen px per
+// world px), --lens <schematic|analogy|reality>, --center <componentId> (centre + zoom on a placed part).
+const zoom = arg("zoom", null);
+const lens = arg("lens", null);
+const center = arg("center", null);
 
 const fixture = fixturePath ? readFileSync(fixturePath, "utf8") : null;
 
@@ -35,6 +41,14 @@ const { page, errors, cleanup } = await openApp({
   settleMs: settle,
 });
 try {
+  if (zoom || lens || center) {
+    await page.evaluate((o) => window.__cecView?.(o), {
+      ...(zoom ? { zoom: Number(zoom) } : {}),
+      ...(lens ? { lens } : {}),
+      ...(center ? { centerId: Number(center) } : {}),
+    });
+    await page.waitForTimeout(settle); // re-settle after the view change
+  }
   await page.screenshot({ path: out, scale: "css" });
   console.log(`✓ shot → ${out} (${width}x${height})`);
   if (errors.length)

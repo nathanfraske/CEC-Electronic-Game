@@ -1028,6 +1028,19 @@ pub const ELEM_BEHAVIORAL: u8 = 25;
 /// `0xeaac_3764_99e4_fa24` is byte-identical; program 1's word map (0..8) is unchanged.
 pub const BEH_STATE_WORDS: usize = 16;
 
+/// **Behavioral MEMORY array** (`docs/memory-characterization-design.md`). A word-addressable
+/// ROM / RAM / EEPROM / DRAM whose contents live in a ragged heap store (`mem_data`), NOT the MNA
+/// matrix — so a multi-MB array stamps identically to a few bytes and per-tick cost is
+/// O(accesses), not O(bits). Id **26**, appended after [`ELEM_BEHAVIORAL`] = 25 (append-only: no
+/// existing id moves, so a circuit with no memory element folds zero extra bytes and the golden is
+/// byte-identical). Structural params: slot 0 = `mode` (0 ROM / 1 RAM / 2 EEPROM / 3 DRAM), slot 1 =
+/// `addrWidth` (depth = `2^addrWidth`), slot 3 = `wordWidth` (slot 2 is left at 0 = unrated, the
+/// general [`RATED_CURRENT_SLOT`]). Deliberately **not** in [`is_nonlinear`] — reads are a constant
+/// Thévenin stamp, so memory-only circuits stay on the linear fast path. P1 lays the storage + the
+/// incremental hash digest + `load_memory`; the terminal-driven read/write step and the
+/// characterization collapse land in later phases.
+pub const ELEM_MEMORY: u8 = 26;
+
 /// Behavioral SPI master — default SCLK **half-period in analog ticks** when `params[0] <= 0`.
 /// A full SCLK period is `2 ·` this; with [`DT`] = 2 µs the default 4 → an 8 µs period
 /// (125 kHz). Purely structural (a clock divider), so the bus timing is deterministic and never
@@ -2077,6 +2090,7 @@ fn is_digital(kind: u8) -> bool {
         || kind == ELEM_SAMPLER
         || kind == ELEM_COMPARATOR
         || kind == ELEM_BEHAVIORAL
+        || kind == ELEM_MEMORY
 }
 
 /// How a circuit node relates to the analog/digital split — the substrate for the
@@ -2101,10 +2115,32 @@ enum NetClass {
 /// does; ground (node `0`) is always analog (the shared reference). Unused element
 /// terminals sit at ground, so iterating all four terminals is safe — an unused
 /// terminal can only ever re-mark ground, which is forced analog regardless.
-fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
+fn classify_nets(
+    node_count: usize,
+    elements: &[Element],
+    // Word-level bus-port node lists (#100), indexed by element. Empty slices ⇒ no wide memory (the
+    // cell-level / non-memory path, byte-identical to before). For an `ELEM_MEMORY` with wide ports the
+    // address / data-in / data-out bus nodes are digital signal nets and must be touched here so they
+    // classify Digital/Boundary exactly like the cell-level a/c/f/g/h pins.
+    mem_addr_nodes: &[Vec<usize>],
+    mem_din_nodes: &[Vec<usize>],
+    mem_dout_nodes: &[Vec<usize>],
+) -> Vec<NetClass> {
     let mut analog_touched = vec![false; node_count];
     let mut digital_touched = vec![false; node_count];
-    for e in elements {
+    for (ei, e) in elements.iter().enumerate() {
+        if e.kind == ELEM_MEMORY {
+            // Wide bus-port nodes (if any) are digital signal nets — touch every addr/din/dout bit.
+            for list in [mem_addr_nodes, mem_din_nodes, mem_dout_nodes] {
+                if let Some(nodes) = list.get(ei) {
+                    for &t in nodes {
+                        if t < node_count {
+                            digital_touched[t] = true;
+                        }
+                    }
+                }
+            }
+        }
         if is_digital(e.kind) {
             // Digital SIGNAL pins (driven / read as logic levels). A powered gate's
             // POWER pins (VCC = d, GND = e) are NOT signal nets — they are ordinary
@@ -2133,6 +2169,11 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                 //   3 UART:       a=TX,b=RXVALID (out); f=RX,g=SEND (in)
                 // Unused pins default to ground (node 0, forced analog), so listing all of a/b/c and
                 // f/g/h is safe for every program — an unused one only ever re-marks ground.
+                &[e.a, e.b, e.c, e.f, e.g, e.h]
+            } else if e.kind == ELEM_MEMORY {
+                // Cell-level memory: D_out (a) is a digital OUTPUT; WE (b), D_in (c) and the
+                // address A0..A2 (f, g, h) are digital INPUTS. VCC (d), GND (e) are analog supply
+                // pins (marked below, exactly like a powered gate's power pins).
                 &[e.a, e.b, e.c, e.f, e.g, e.h]
             } else {
                 &[e.a, e.b, e.c, e.d]
@@ -2166,11 +2207,12 @@ fn classify_nets(node_count: usize, elements: &[Element]) -> Vec<NetClass> {
                     }
                 }
             }
-            if e.kind == ELEM_BEHAVIORAL {
+            if e.kind == ELEM_BEHAVIORAL || e.kind == ELEM_MEMORY {
                 // VCC (d) / GND (e) are analog SUPPLY pins (treated exactly like a powered
-                // gate's power pins), so the behavioral block's supply nets stay Analog and a
-                // node shared with a digital pin is Boundary. Its signal pins (SCLK/MOSI/CS/
-                // MISO/START) are digital-touched above.
+                // gate's power pins), so the behavioral block's (and memory array's) supply nets
+                // stay Analog and a node shared with a digital pin is Boundary. Their signal pins
+                // (SCLK/MOSI/CS/MISO/START; the memory's D_out/WE/D_in/addr) are digital-touched
+                // above.
                 for t in [e.d, e.e] {
                     if t < node_count {
                         analog_touched[t] = true;
@@ -2715,6 +2757,25 @@ fn param_or(params: &[f64; PARAM_STRIDE], i: usize, default: f64) -> f64 {
         v
     } else {
         default
+    }
+}
+
+/// One word's contribution to an [`ELEM_MEMORY`]'s incremental content digest, **keyed by word
+/// index** so the digest is an order-independent XOR fold over the whole store
+/// (`⊕ₖ mem_cell_hash(k, mem_data[k])`) yet stays O(1) per write (XOR out the old term, XOR in the
+/// new — see [`Sim::write_cell`]). A **zero word contributes nothing**, so an all-zero store has
+/// digest 0 — which makes `reset()`'s zeroed contents digest-consistent for free and keeps the
+/// golden (no memory element) untouched. The index key defeats a swap of two equal-valued cells; a
+/// replay/grading digest, not a MAC.
+#[inline]
+fn mem_cell_hash(k: usize, w: u32) -> u64 {
+    if w == 0 {
+        0
+    } else {
+        let mut b = [0u8; 12];
+        b[..8].copy_from_slice(&(k as u64).to_le_bytes());
+        b[8..].copy_from_slice(&w.to_le_bytes());
+        fnv1a(&b)
     }
 }
 
@@ -3493,6 +3554,45 @@ pub struct Sim {
     /// with no behavioral block folds zero extra bytes and the golden is byte-identical).
     /// Indexed in lockstep with `elements`.
     beh_state: Vec<[u32; BEH_STATE_WORDS]>,
+    /// **Behavioral memory contents** ([`ELEM_MEMORY`]) — a ragged per-element store: an
+    /// [`ELEM_MEMORY`] element gets `depth = 2^addrWidth` words (one `u32` per word for
+    /// `wordWidth ≤ 32`); EVERY other element gets an **empty** `Vec` so the outer length stays in
+    /// lockstep with `elements` (the fixed element order the hash fold relies on). The bytes live
+    /// in the heap, never the MNA matrix. Mutated ONLY through [`Sim::write_cell`] so `mem_digest`
+    /// can never drift. Sized at install beside `beh_state`.
+    mem_data: Vec<Vec<u32>>,
+    /// **Incremental content digest** for each [`ELEM_MEMORY`] (0 for every other element). A pure,
+    /// order-independent function of the current contents, maintained O(1) per write
+    /// ([`Sim::write_cell`]) — the perf keystone, since [`Sim::snapshot_hash`] rebuilds its whole
+    /// byte stream every step and folding a multi-MB array byte-by-byte would stall. Only the
+    /// 8-byte digest folds. All-zero contents → digest 0 (a zero word contributes nothing), so
+    /// `reset()`'s zeroed store is digest-consistent and the golden is untouched.
+    mem_digest: Vec<u64>,
+    /// **Hashed EEPROM wear counter** per element (0 for non-memory). Program activity increments
+    /// it and it decides a program-visible wear-out FAIL, so it MUST hash (else a replay wears out
+    /// at a different point). Folds beside `mem_digest`. Real-mode-gated wear-out; in Ideal it is a
+    /// constant, golden-clean.
+    mem_wear: Vec<u32>,
+    /// **DRAM per-word refresh epoch** — the absolute tick each word was last refreshed (accessed or
+    /// written), one `u64` per word, mirroring `mem_data`'s shape; all-zero for non-DRAM. A DRAM word not
+    /// refreshed within its `retention_ticks` leaks its stored 1 → 0 (eager decay in the commit phase), so
+    /// "refresh or your data rots" is real + deterministic. Hashed (folded) ONLY for DRAM (mode 3)
+    /// elements — program-visible state that must reproduce on rewind; RAM/ROM/EEPROM (and the golden)
+    /// fold nothing here, so they are byte-identical.
+    mem_refresh: Vec<Vec<u64>>,
+    /// **Word-level bus-port node lists** (#100, ELEM_MEMORY P3 / option A) — the explicit per-bit node
+    /// channel that lets a single `ELEM_MEMORY` span a wide address + data bus the 8 fixed terminals cannot
+    /// hold. `mem_addr_nodes[i]` is element `i`'s address bus (LSB-first node indices), `mem_din_nodes[i]`
+    /// the data-IN bus, `mem_dout_nodes[i]` the data-OUT bus; every non-wide element (cell-level memory, and
+    /// every other kind) holds an **empty** `Vec`, so the outer length stays `== elements.len()`. Populated
+    /// out-of-band by [`Sim::set_memory_ports`] AFTER install (the indices reference the just-installed node
+    /// space), which then re-classifies + re-primes. **Topology, not state:** set at install, untouched by
+    /// `reset`, and never hashed (the *contents* hash via `mem_digest`, identical regardless of port width).
+    /// An element with a NON-empty `mem_dout_nodes` takes the wide READ/WRITE path; empty ⇒ the cell-level
+    /// a/b/c/f/g/h path, byte-identical to before (golden-safe by construction).
+    mem_addr_nodes: Vec<Vec<usize>>,
+    mem_din_nodes: Vec<Vec<usize>>,
+    mem_dout_nodes: Vec<Vec<usize>>,
     /// Committed digital [`Level`] of every node, from the quantisation of last tick's
     /// solved voltage ([`LogicFamily::quantize`]). The digital engine reads these as its
     /// inputs (one tick of delay). Meaningful for `Digital`/`Boundary` nets; `Low` for
@@ -3636,6 +3736,13 @@ impl Sim {
             samp_clk_prev: Vec::new(),
             cmp_q: Vec::new(),
             beh_state: Vec::new(),
+            mem_data: Vec::new(),
+            mem_digest: Vec::new(),
+            mem_wear: Vec::new(),
+            mem_refresh: Vec::new(),
+            mem_addr_nodes: Vec::new(),
+            mem_din_nodes: Vec::new(),
+            mem_dout_nodes: Vec::new(),
             net_level: vec![Level::Low],
             digital_drive: vec![Level::Z],
             digital_vhigh: vec![0.0],
@@ -3875,6 +3982,7 @@ impl Sim {
                     | ELEM_COMPARATOR
                     | ELEM_ASWITCH
                     | ELEM_BEHAVIORAL
+                    | ELEM_MEMORY
             ) {
                 self.install_empty();
                 return false;
@@ -3955,7 +4063,9 @@ impl Sim {
         }
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
-        let net_classes = classify_nets(node_count, &elements);
+        // Install classifies with NO wide ports (the cell-level / non-memory path). A wide memory's bus
+        // nodes are added later by `set_memory_ports`, which re-runs classification with the filled lists.
+        let net_classes = classify_nets(node_count, &elements, &[], &[], &[]);
         // Deterministic pure-digital row partition (ADR 0004 phase-3, step 3a): the MNA row
         // index (`node − 1`) of every node classified pure-`Digital` (NOT `Boundary`, NOT
         // `Analog`), in ascending node index — fixed at install, no hashed order. Ground
@@ -3996,6 +4106,35 @@ impl Sim {
         self.samp_clk_prev = vec![Level::Low; elements.len()];
         self.cmp_q = vec![Level::Low; elements.len()];
         self.beh_state = vec![[0u32; BEH_STATE_WORDS]; elements.len()];
+        // Behavioral memory: size each ELEM_MEMORY's store to its depth (2^addrWidth, capped so a
+        // malformed param can't request an absurd allocation); every other element gets an empty
+        // Vec so the outer length stays == elements.len() (the fixed-order fold depends on it).
+        // All-zero contents → digest 0 (a zero word contributes nothing), so the parallel zeroed
+        // digest/wear are already consistent. Sized in lockstep with `beh_state`.
+        self.mem_data = elements
+            .iter()
+            .map(|e| {
+                if e.kind == ELEM_MEMORY {
+                    let aw = param_or(&e.params, 1, 0.0).clamp(0.0, 24.0) as u32;
+                    vec![0u32; 1usize << aw]
+                } else {
+                    Vec::new()
+                }
+            })
+            .collect();
+        self.mem_digest = vec![0u64; elements.len()];
+        self.mem_wear = vec![0u32; elements.len()];
+        // DRAM refresh epochs mirror `mem_data`'s shape (one u64 per word; empty for non-memory), all 0.
+        self.mem_refresh = self
+            .mem_data
+            .iter()
+            .map(|store| vec![0u64; store.len()])
+            .collect();
+        // Word-level bus-port lists start empty (cell-level path); `set_memory_ports` fills them after
+        // install for wide memories. Sized to elements.len() so the wide READ/WRITE arms can index by `i`.
+        self.mem_addr_nodes = vec![Vec::new(); self.mem_data.len()];
+        self.mem_din_nodes = vec![Vec::new(); self.mem_data.len()];
+        self.mem_dout_nodes = vec![Vec::new(); self.mem_data.len()];
         self.net_level = vec![Level::Low; node_count];
         self.digital_drive = vec![Level::Z; node_count];
         self.digital_vhigh = vec![0.0; node_count];
@@ -4052,6 +4191,26 @@ impl Sim {
         }
         for s in &mut self.beh_state {
             *s = [0u32; BEH_STATE_WORDS];
+        }
+        // Behavioral memory: zero contents + digest + wear uniformly (the golden has no memory, so
+        // this is golden-clean; volatility — re-seeding ROM/EEPROM from its saved image — lives
+        // web-side, re-issued via `load_memory` only for non-volatile modes). All-zero contents are
+        // digest-consistent with digest 0 (a zero word contributes nothing).
+        for v in &mut self.mem_data {
+            for w in v.iter_mut() {
+                *w = 0;
+            }
+        }
+        for d in &mut self.mem_digest {
+            *d = 0;
+        }
+        for w in &mut self.mem_wear {
+            *w = 0;
+        }
+        for v in &mut self.mem_refresh {
+            for r in v.iter_mut() {
+                *r = 0;
+            }
         }
         for s in &mut self.net_level {
             *s = Level::Low;
@@ -4729,6 +4888,13 @@ impl Sim {
         // Reciprocal of the timestep for the diode reverse-recovery charge companion: `1/DT` in
         // a transient step, `0.0` at the operating point (so the DC solve has no charge term).
         inv_dt: f64,
+        // GMIN-STEPPING homotopy shunt (S) added to EVERY node's diagonal this solve — `0.0` for the plain
+        // solve (the default, byte-identical to before), a positive ramp during the convergence-fallback in
+        // [`Sim::solve_nonlinear`]. A large extra shunt to ground well-conditions a stiff/feedback network
+        // (e.g. cross-coupled inverters), giving a unique near-ground operating point the homotopy then
+        // walks back to `gmin_extra = 0`. Linear, so the inner solve handles it exactly; it never changes
+        // the converged answer at `gmin_extra = 0`.
+        gmin_extra: f64,
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -4739,6 +4905,12 @@ impl Sim {
         for _iter in 0..NEWTON_MAX_ITERS {
             let mut mat = base_mat.to_vec();
             let mut rhs = base_rhs.to_vec();
+            // GMIN-stepping shunt to ground on every node (no-op at 0 → the plain solve is unchanged).
+            if gmin_extra > 0.0 {
+                for r in 0..(self.node_count - 1) {
+                    mat[r * n + r] += gmin_extra;
+                }
+            }
 
             // Stamp each diode's companion at its current junction voltage.
             // g = di/dv and Ieq = i(v*) - g*v* (plus GMIN for a finite slope).
@@ -5231,6 +5403,49 @@ impl Sim {
         x
     }
 
+    /// Solve the nonlinear network with a GMIN-stepping **convergence fallback** (#88). First runs the plain
+    /// seeded Newton ([`Sim::newton_iterate`] with `gmin_extra = 0`) — for any circuit that converges (the
+    /// golden, every existing test, every transient step that settles) this returns immediately and is
+    /// **byte-identical** to before. Only when the plain solve hits the iteration cap does it fall back to
+    /// **gmin stepping**: shunt every node to ground with a large conductance (a unique, well-conditioned
+    /// near-ground operating point that bare Newton + `pnjlim` can't reach for a stiff/positive-feedback
+    /// network like cross-coupled inverters), then ramp the shunt down by decades — re-seeding each solve
+    /// from the last via `node_v` — until `gmin_extra = 0` recovers the true answer. Deterministic (a fixed
+    /// schedule, integer-free control flow) and golden-safe by construction (the fallback is unreachable for
+    /// a converging circuit). Both the operating-point and transient solves route through here.
+    #[allow(clippy::too_many_arguments)]
+    fn solve_nonlinear(
+        &mut self,
+        n: usize,
+        base_mat: &[f64],
+        base_rhs: &[f64],
+        diodes: &[DiodeMap],
+        mosfets: &[MosfetMap],
+        bjts: &[BjtMap],
+        varistors: &[VaristorMap],
+        opamps: &[OpampMap],
+        inv_dt: f64,
+    ) -> Vec<f64> {
+        let result = self.newton_iterate(
+            n, base_mat, base_rhs, diodes, mosfets, bjts, varistors, opamps, inv_dt, 0.0,
+        );
+        if self.last_newton_converged {
+            return result;
+        }
+        // Fallback: walk a large shunt-to-ground conductance down to zero, each step seeded from the last
+        // (newton_iterate writes the iterate into node_v, which the next solve reads as its seed).
+        const GMIN_STEPS: [f64; 12] = [
+            1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 0.0,
+        ];
+        let mut result = result;
+        for &g in &GMIN_STEPS {
+            result = self.newton_iterate(
+                n, base_mat, base_rhs, diodes, mosfets, bjts, varistors, opamps, inv_dt, g,
+            );
+        }
+        result
+    }
+
     /// Newton operating-point solve (install/reset, `t = 0`) for nonlinear
     /// netlists. The linear part matches [`Sim::solve_operating_point`]
     /// (capacitors and voltage sources carry branch unknowns; inductors are
@@ -5377,7 +5592,8 @@ impl Sim {
 
         // Operating point is a DC steady state: pass inv_dt = 0 so the diode reverse-recovery
         // charge companion contributes nothing (dq/dt = 0), leaving the DC solve unchanged.
-        let x = self.newton_iterate(
+        // solve_nonlinear is the plain seeded Newton unless it stalls, then a gmin-stepping fallback.
+        let x = self.solve_nonlinear(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps, 0.0,
         );
 
@@ -5626,7 +5842,8 @@ impl Sim {
         self.stamp_floating_refs(&mut base_mat, n);
 
         // Transient step: inv_dt = 1/DT engages the diode reverse-recovery charge companion.
-        let x = self.newton_iterate(
+        // solve_nonlinear is the plain seeded Newton unless it stalls, then a gmin-stepping fallback.
+        let x = self.solve_nonlinear(
             n,
             &base_mat,
             &base_rhs,
@@ -5921,6 +6138,57 @@ impl Sim {
                     self.digital_vhigh[e.a] = rail;
                     self.digital_vlow[e.a] = vlow;
                     self.digital_family[e.a] = fi as u8;
+                }
+                ELEM_MEMORY => {
+                    // READ: drive the data-out bus with the addressed word's bits. Powered like a gate —
+                    // VCC (d) / GND (e) set the rail; the address is quantised from the committed
+                    // (last-tick) voltages relative to GND and masked to the store's depth. The word is
+                    // stable within the solve (writes commit in `commit_sequential_digital_state`), so this
+                    // is a CONSTANT drive — no Newton.
+                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                    let rail = (vhigh - vlow).max(0.0);
+                    let depth = self.mem_data[i].len();
+                    if rail >= GATE_MIN_RAIL && depth > 0 {
+                        let fam = &FAMILIES[0];
+                        if !self.mem_dout_nodes[i].is_empty() {
+                            // WIDE READ (P3, option A): the explicit address bus selects the word; each
+                            // data-out bit node is driven with the corresponding bit (LSB = bit 0). The 8
+                            // fixed terminals carry only the supply rail; the buses live in the side lists.
+                            let addr = self.mem_wide_addr(i, fam, vlow, rail, depth);
+                            let word = self.mem_data[i][addr];
+                            for b in 0..self.mem_dout_nodes[i].len() {
+                                let node = self.mem_dout_nodes[i][b];
+                                let dout = if (word >> b) & 1 != 0 {
+                                    Level::High
+                                } else {
+                                    Level::Low
+                                };
+                                self.digital_drive[node] = combine(self.digital_drive[node], dout);
+                                self.digital_vhigh[node] = rail;
+                                self.digital_vlow[node] = vlow;
+                                self.digital_family[node] = 0;
+                            }
+                        } else {
+                            // CELL-LEVEL READ (P1): address A0..A2 = f, g, h; D_out = a (one bit).
+                            let a0 = (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High)
+                                as usize;
+                            let a1 = (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High)
+                                as usize;
+                            let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High)
+                                as usize;
+                            let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
+                            let dout = if self.mem_data[i][addr] & 1 != 0 {
+                                Level::High
+                            } else {
+                                Level::Low
+                            };
+                            self.digital_drive[e.a] = combine(self.digital_drive[e.a], dout);
+                            self.digital_vhigh[e.a] = rail;
+                            self.digital_vlow[e.a] = vlow;
+                            self.digital_family[e.a] = 0;
+                        }
+                    }
+                    // unpowered → outputs released (Z, the default), like a dead gate.
                 }
                 ELEM_DFF => {
                     // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
@@ -6715,6 +6983,77 @@ impl Sim {
                 _ => {}
             }
         }
+        // WRITE (cell-level memory, P1): a separate index pass — the match loop above holds an
+        // immutable borrow of `self.elements`, so `write_cell` (which needs `&mut self`) cannot run
+        // inside it. Level-sensitive async write: while WE (b) is high, latch D_in (c) into the
+        // addressed word. Powered like a gate (VCC d / GND e set the rail); address + WE + D_in are
+        // quantised from the just-solved committed voltages relative to GND. Funnels through
+        // `write_cell` so `mem_digest` stays consistent.
+        for i in 0..self.elements.len() {
+            let e = self.elements[i];
+            if e.kind != ELEM_MEMORY {
+                continue;
+            }
+            let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+            let rail = (vhigh - vlow).max(0.0);
+            let depth = self.mem_data[i].len();
+            if rail < GATE_MIN_RAIL || depth == 0 {
+                continue; // unpowered → hold (no write, no refresh, no decay)
+            }
+            let fam = &FAMILIES[0];
+            // A wide memory (P3, option A) carries its address + data on the explicit bus lists; a
+            // cell-level one uses the fixed terminals (addr = f/g/h, D_in = c). WE (b) / VCC (d) / GND (e)
+            // are scalar in both. The addressed word is needed for the write AND the DRAM refresh below.
+            let wide = !self.mem_dout_nodes[i].is_empty();
+            let addr = if wide {
+                self.mem_wide_addr(i, fam, vlow, rail, depth)
+            } else {
+                let a0 = (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High) as usize;
+                let a1 = (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High) as usize;
+                let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
+                (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1)
+            };
+            // WRITE: while WE (b) is high, latch the data-in bus into the addressed word (digest-consistent).
+            if fam.quantize(self.node_v[e.b] - vlow, rail) == Level::High {
+                if wide {
+                    // Assemble the word from the data-in bus (LSB = bit 0). A wide memory with no data-in
+                    // bus is a ROM — WE is ignored, nothing is written.
+                    if !self.mem_din_nodes[i].is_empty() {
+                        let mut word = 0u32;
+                        for b in 0..self.mem_din_nodes[i].len() {
+                            let node = self.mem_din_nodes[i][b];
+                            if fam.quantize(self.node_v[node] - vlow, rail) == Level::High {
+                                word |= 1 << b;
+                            }
+                        }
+                        self.write_cell(i, addr, word);
+                    }
+                } else {
+                    let din = (fam.quantize(self.node_v[e.c] - vlow, rail) == Level::High) as u32;
+                    self.write_cell(i, addr, din);
+                }
+            }
+            // DRAM (mode 3): per-word refresh + EAGER decay. An ACCESS (the addressed word, read out on
+            // D_out and/or written this tick) refreshes that row's epoch; any word not refreshed within
+            // `retention_ticks` (param slot 4, Real-mode) leaks its stored 1 → 0 — the "refresh or your
+            // data rots" lesson. Applied EAGERLY here (not lazily on read) so snapshot_hash always reflects
+            // decayed contents and a rewind onto a decay tick replays bit-for-bit. retention 0 (default /
+            // Ideal / RAM/ROM/EEPROM) → no decay → bit-identical to a non-leaky store (golden-safe).
+            if e.params[0] == 3.0 {
+                let tick = self.tick;
+                self.mem_refresh[i][addr] = tick; // an access refreshes the addressed row
+                let retention = e.params[4] as u64;
+                if retention > 0 {
+                    for w in 0..depth {
+                        if tick.saturating_sub(self.mem_refresh[i][w]) > retention
+                            && self.mem_data[i][w] != 0
+                        {
+                            self.write_cell(i, w, 0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// ADR 0004 phase-3, step 3b — the integer **multi-rate sub-tick loop**. Called from
@@ -7363,6 +7702,124 @@ impl Sim {
         self.net_classes.get(n).copied().unwrap_or(NetClass::Analog) as u8
     }
 
+    /// Decode a wide memory element's address bus ([`Sim::mem_addr_nodes`]`[i]`, LSB-first) into a word
+    /// index — each bit quantised from the committed node voltage relative to `vlow`, masked to `depth`
+    /// (a power of two). Shared by the wide READ and WRITE paths so they always agree on the addressed
+    /// word. An empty address list ⇒ word 0 (a depth-1 single-word store), the natural degenerate case.
+    fn mem_wide_addr(
+        &self,
+        i: usize,
+        fam: &LogicFamily,
+        vlow: f64,
+        rail: f64,
+        depth: usize,
+    ) -> usize {
+        let mut addr = 0usize;
+        for (b, &node) in self.mem_addr_nodes[i].iter().enumerate() {
+            if fam.quantize(self.node_v[node] - vlow, rail) == Level::High {
+                addr |= 1 << b;
+            }
+        }
+        addr & (depth - 1)
+    }
+
+    /// THE single mutation site for [`ELEM_MEMORY`] contents (`mem_data[i][k] = v`), maintaining the
+    /// incremental [`Sim::mem_digest`] in O(1) — XOR the old word's keyed term out, the new word's
+    /// term in. EVERY memory mutation (player write, ROM/EEPROM seed, and later DRAM refresh /
+    /// destructive-read writeback / decay) MUST funnel through here, or the digest silently drifts
+    /// from contents and the snapshot hash is wrong forever with no golden tripwire.
+    fn write_cell(&mut self, i: usize, k: usize, v: u32) {
+        let old = self.mem_data[i][k];
+        if old == v {
+            return;
+        }
+        self.mem_data[i][k] = v;
+        self.mem_digest[i] ^= mem_cell_hash(k, old) ^ mem_cell_hash(k, v);
+    }
+
+    /// Seed an [`ELEM_MEMORY`] element's contents (a ROM/EEPROM image, or an initial RAM pattern):
+    /// word `k` ← `words[k]` across the store's depth (missing words ⇒ 0, extra words ignored).
+    /// Writes through [`Sim::write_cell`] so the digest stays consistent. A no-op for an out-of-range
+    /// index or a non-memory element (its store is empty). Issued web-side after install/reset for
+    /// non-volatile modes — the volatility policy lives there, not in the engine.
+    pub fn load_memory(&mut self, elem_index: usize, words: &[u32]) {
+        if elem_index >= self.mem_data.len() {
+            return;
+        }
+        let depth = self.mem_data[elem_index].len();
+        for k in 0..depth {
+            let v = words.get(k).copied().unwrap_or(0);
+            self.write_cell(elem_index, k, v);
+        }
+    }
+
+    /// Install the **word-level bus-port** node lists for a wide [`ELEM_MEMORY`] (#100, P3 option A): the
+    /// explicit address / data-in / data-out bus nodes the 8 fixed terminals cannot hold. Called AFTER
+    /// `set_netlist*` (the indices reference the just-installed node space), at most once per wide memory —
+    /// the coarse, batched side-channel (one call carries the whole bus, never per-bit per-frame). Address
+    /// is LSB-first; data-in / data-out are bit-`k`-first. Out-of-range node indices are dropped; an
+    /// out-of-range element index is a no-op. A **non-empty data-out list** switches the element onto the
+    /// wide READ/WRITE path; leaving it empty keeps the cell-level a/b/c/f/g/h path (byte-identical,
+    /// golden-safe). Storing ports re-runs net classification (so the bus nodes classify Digital/Boundary
+    /// exactly like the cell-level signal pins) and re-primes the `t = 0` operating point, so the wide
+    /// element is solvable before the first [`Sim::step`]. Must precede stepping (mirrors install).
+    pub fn set_memory_ports(
+        &mut self,
+        elem_index: usize,
+        addr_nodes: &[u32],
+        din_nodes: &[u32],
+        dout_nodes: &[u32],
+    ) {
+        if elem_index >= self.mem_data.len() {
+            return;
+        }
+        let node_count = self.node_count;
+        let keep = |nodes: &[u32]| -> Vec<usize> {
+            nodes
+                .iter()
+                .map(|&n| n as usize)
+                .filter(|&n| n < node_count)
+                .collect()
+        };
+        self.mem_addr_nodes[elem_index] = keep(addr_nodes);
+        self.mem_din_nodes[elem_index] = keep(din_nodes);
+        self.mem_dout_nodes[elem_index] = keep(dout_nodes);
+        self.reclassify_and_reprime();
+    }
+
+    /// Recompute the net classification (now aware of any wide memory bus-port nodes) and the pure-digital
+    /// row partition, then re-prime the `t = 0` operating point. Used by [`Sim::set_memory_ports`] to fold
+    /// the bus nodes into the digital domain after install. A circuit with no wide ports reduces to exactly
+    /// the install-time classification (the lists are empty), so this is golden-safe.
+    fn reclassify_and_reprime(&mut self) {
+        let net_classes = classify_nets(
+            self.node_count,
+            &self.elements,
+            &self.mem_addr_nodes,
+            &self.mem_din_nodes,
+            &self.mem_dout_nodes,
+        );
+        let digital_rows: Vec<usize> = (1..self.node_count)
+            .filter(|&n| net_classes[n] == NetClass::Digital)
+            .map(|n| n - 1)
+            .collect();
+        self.net_classes = net_classes;
+        self.digital_rows = digital_rows;
+        self.solve_operating_point();
+        self.commit_net_levels();
+    }
+
+    /// Read word `addr` of an [`ELEM_MEMORY`] element's contents (`0` for an out-of-range
+    /// index/addr or a non-memory element). Read-only — never touches the digest. The stored bit is
+    /// observed here (and via the renderer/MEASURE readout), not through a Q pin.
+    pub fn mem_read(&self, elem_index: usize, addr: usize) -> u32 {
+        self.mem_data
+            .get(elem_index)
+            .and_then(|v| v.get(addr))
+            .copied()
+            .unwrap_or(0)
+    }
+
     /// Stable hash of the full snapshot. Part of the replay contract. FNV-1a over, in
     /// fixed order: the tick (little-endian); then each node — a pure-`Digital` net
     /// folds its discrete [`Level`] (one `u8`, no float compares cross the boundary),
@@ -7425,6 +7882,28 @@ impl Sim {
             if e.kind == ELEM_BEHAVIORAL {
                 for w in &self.beh_state[i] {
                     bytes.extend_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
+        // Then each behavioral MEMORY's incremental content digest (8 bytes) + its wear counter
+        // (4 bytes), in fixed element order — APPENDED after the behavioral fold, so a circuit with
+        // no memory element (the RC golden, every existing test) folds ZERO extra bytes and hashes
+        // byte-identically to before. Folding the O(1)-maintained DIGEST (not the contents) is what
+        // makes a multi-MB array hashable every step. Integer state only (no floats, no std hasher).
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_MEMORY {
+                bytes.extend_from_slice(&self.mem_digest[i].to_le_bytes());
+                bytes.extend_from_slice(&self.mem_wear[i].to_le_bytes());
+            }
+        }
+        // Then each DRAM (mode 3) element's per-word refresh epochs — APPENDED after the digest/wear fold,
+        // gated on mode so RAM/ROM/EEPROM (and the golden, and the P1 RAM tests) fold ZERO extra bytes and
+        // hash byte-identically. The epochs are program-visible (they drive eager decay), so they must
+        // reproduce on rewind. Integer state only.
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.kind == ELEM_MEMORY && e.params[0] == 3.0 {
+                for r in &self.mem_refresh[i] {
+                    bytes.extend_from_slice(&r.to_le_bytes());
                 }
             }
         }
@@ -12255,6 +12734,340 @@ mod tests {
         sim
     }
 
+    /// ELEM_MEMORY P1 rig (`docs/memory-characterization-design.md`): a well-posed VSOURCE+R solve
+    /// plus one inert MEMORY element (addrWidth = 2 ⇒ depth 4) seeded with `seed`. Nodes: 0 = gnd,
+    /// 1 = src/R junction. The memory sits on ground (P1 has no terminal-driven read/write yet); it
+    /// exists to prove the storage + incremental digest + golden-safe fold.
+    fn mem_rig(seed: &[u32]) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + 1] = 2.0; // MEMORY (elem 2): addrWidth = 2 -> depth 4
+        assert!(sim.set_netlist_pefgh(
+            2,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_MEMORY],
+            &[1, 1, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[5.0, 1000.0, 0.0],
+            &[0.0, 0.0, 0.0],
+            &params,
+        ));
+        sim.load_memory(2, seed);
+        sim
+    }
+
+    /// A behavioral memory array stores + recalls words, and its incrementally-maintained digest
+    /// matches a from-scratch recompute (no drift past `write_cell`). An all-zero store hashes to a
+    /// zero digest (so `reset`'s zeroed contents are consistent and the golden is untouched).
+    #[test]
+    fn memory_stores_and_recalls_words_with_consistent_digest() {
+        let seed = [0xDEAD_BEEFu32, 0, 0x1234_5678, 0xFFFF_FFFF];
+        let sim = mem_rig(&seed);
+        for (k, &w) in seed.iter().enumerate() {
+            assert_eq!(sim.mem_read(2, k), w, "word {k}");
+        }
+        let mut d = 0u64;
+        for (k, w) in sim.mem_data[2].iter().enumerate() {
+            d ^= mem_cell_hash(k, *w);
+        }
+        assert_eq!(
+            d, sim.mem_digest[2],
+            "incremental digest must match recompute"
+        );
+        let zero = mem_rig(&[0, 0, 0, 0]);
+        assert_eq!(zero.mem_digest[2], 0, "all-zero store ⇒ zero digest");
+    }
+
+    /// A circuit carrying a memory element hashes deterministically across runs, and distinct
+    /// contents produce distinct hashes (the digest genuinely feeds the snapshot fold).
+    #[test]
+    fn memory_circuit_hashes_deterministically() {
+        let seed = [9u32, 0, 7, 3];
+        let mut a = mem_rig(&seed);
+        let mut b = mem_rig(&seed);
+        for _ in 0..50 {
+            a.step();
+            b.step();
+        }
+        assert_eq!(
+            a.snapshot_hash(),
+            b.snapshot_hash(),
+            "same contents ⇒ same hash"
+        );
+        let other = mem_rig(&[1, 0, 0, 0]);
+        assert_ne!(
+            a.snapshot_hash(),
+            other.snapshot_hash(),
+            "different contents ⇒ different hash"
+        );
+    }
+
+    /// Powered cell-level memory (P1): a write through the terminals (WE high latches D_in into the
+    /// addressed word) is read back both via `mem_read` and as the driven D_out node voltage.
+    /// Nodes: 0 = gnd, 1 = VCC (5 V), 2 = D_out, 3 = WE, 4 = D_in, 5 = A0. addrWidth = 1 (depth 2).
+    fn mem_rw_rig(din_v: f64) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE + 1] = 1.0; // MEMORY (elem 5): addrWidth = 1 -> depth 2
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 3, 4, 5, 2, 2], // a: VCC/WE/Din/A0 src nodes; R→Dout; MEM D_out = 2
+            &[0, 0, 0, 0, 0, 3], // b: src grounds; R→gnd; MEM WE = 3
+            &[0, 0, 0, 0, 0, 4], // c: MEM D_in = 4
+            &[0, 0, 0, 0, 0, 1], // d: MEM VCC = node 1
+            &[0, 0, 0, 0, 0, 0], // e: MEM GND = node 0
+            &[0, 0, 0, 0, 0, 5], // f: MEM A0 = node 5
+            &[0, 0, 0, 0, 0, 0], // g: MEM A1 = gnd
+            &[0, 0, 0, 0, 0, 0], // h: MEM A2 = gnd
+            &[5.0, 5.0, din_v, 0.0, 1.0e6, 0.0], // VCC 5, WE 5, Din din_v, A0 0, R 1 MΩ load
+            &[0.0; 6],
+            &params,
+        ));
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim
+    }
+
+    #[test]
+    fn memory_writes_and_reads_through_terminals() {
+        let hi = mem_rw_rig(5.0);
+        assert_eq!(
+            hi.mem_read(5, 0),
+            1,
+            "WE high + D_in high ⇒ word 0 stores 1"
+        );
+        assert!(
+            hi.node_v[2] > 2.5,
+            "D_out drives high when the stored bit is 1 (got {})",
+            hi.node_v[2]
+        );
+        let lo = mem_rw_rig(0.0);
+        assert_eq!(lo.mem_read(5, 0), 0, "WE high + D_in low ⇒ word 0 stores 0");
+        assert!(
+            lo.node_v[2] < 2.5,
+            "D_out drives low when the stored bit is 0 (got {})",
+            lo.node_v[2]
+        );
+        // the incremental digest stayed consistent through the terminal writes
+        let mut d = 0u64;
+        for (k, w) in hi.mem_data[5].iter().enumerate() {
+            d ^= mem_cell_hash(k, *w);
+        }
+        assert_eq!(
+            d, hi.mem_digest[5],
+            "digest consistent after terminal writes"
+        );
+    }
+
+    /// DRAM (mode 3): a word never re-accessed leaks its stored 1 → 0 once `retention_ticks` elapse
+    /// ("refresh or your data rots"), eagerly + deterministically; the continuously-addressed word stays
+    /// refreshed. Nodes: 0=gnd, 1=VCC(5), 2=D_out, 3=WE(5), 4=D_in(0), 5=A0(5 ⇒ address 1).
+    fn dram_rig() -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 6 * PARAM_STRIDE];
+        params[5 * PARAM_STRIDE] = 3.0; // MEMORY (elem 5): mode 3 = DRAM
+        params[5 * PARAM_STRIDE + 1] = 1.0; // addrWidth 1 → depth 2
+        params[5 * PARAM_STRIDE + 4] = 5.0; // retention_ticks = 5
+        assert!(sim.set_netlist_pefgh(
+            6,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 3, 4, 5, 2, 2],
+            &[0, 0, 0, 0, 0, 3],
+            &[0, 0, 0, 0, 0, 4],
+            &[0, 0, 0, 0, 0, 1],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 5], // A0 = node 5 (high ⇒ address 1; word 0 never accessed)
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[5.0, 5.0, 0.0, 5.0, 1.0e6, 0.0],
+            &[0.0; 6],
+            &params,
+        ));
+        sim.load_memory(5, &[1, 0]); // word 0 = 1 (never addressed → must rot)
+        sim
+    }
+
+    #[test]
+    fn dram_word_rots_without_refresh() {
+        let mut sim = dram_rig();
+        for _ in 0..4 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.mem_read(5, 0),
+            1,
+            "word 0 holds before retention elapses"
+        );
+        for _ in 0..10 {
+            sim.step();
+        }
+        assert_eq!(
+            sim.mem_read(5, 0),
+            0,
+            "word 0 rots once unrefreshed past retention"
+        );
+        // Deterministic: a second identical run rots at the same tick + hashes identically (the per-word
+        // refresh epoch is in the snapshot, so a rewind onto a decay tick replays bit-for-bit).
+        let mut b = dram_rig();
+        for _ in 0..14 {
+            b.step();
+        }
+        assert_eq!(b.mem_read(5, 0), 0);
+        assert_eq!(
+            sim.snapshot_hash(),
+            b.snapshot_hash(),
+            "DRAM rot is deterministic"
+        );
+    }
+
+    /// Word-level wide memory (P3, option A): a **4-word × 4-bit RAM** driven through the explicit
+    /// address / data-in / data-out bus lists ([`Sim::set_memory_ports`]), NOT the 8 fixed terminals
+    /// (which carry only WE / VCC / GND). Nodes: 0 = gnd, 1 = VCC(5), 2 = WE, 3 = A0, 4 = A1, 5..8 =
+    /// DI0..3, 9..12 = DO0..3 (each pulled to gnd through 1 MΩ so the driven data-out level reads back as
+    /// `node_v`). The memory's `a`/`c`/`f`/`g`/`h` terminals are unused (grounded). `seed` (if non-empty)
+    /// pre-loads the store before stepping. This is the CPU/Doom-grade wide port: one element spans a bus
+    /// the 8 terminals could never hold.
+    fn wide_mem_rig(we: f64, a0: f64, a1: f64, di: [f64; 4], seed: &[u32]) -> Sim {
+        let mut sim = Sim::new(1);
+        let mut params = vec![0.0; 13 * PARAM_STRIDE];
+        params[12 * PARAM_STRIDE] = 1.0; // MEMORY (elem 12): mode 1 = RAM
+        params[12 * PARAM_STRIDE + 1] = 2.0; // addrWidth 2 → depth 4
+        params[12 * PARAM_STRIDE + 3] = 4.0; // wordWidth 4 (engine reads bus-list lengths; documents intent)
+        assert!(sim.set_netlist_pefgh(
+            13,
+            &[
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_VSOURCE,
+                ELEM_RESISTOR,
+                ELEM_RESISTOR,
+                ELEM_RESISTOR,
+                ELEM_RESISTOR,
+                ELEM_MEMORY,
+            ],
+            &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 0], // a: src +nodes; DO pulldowns; MEM a unused
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2],    // b: src/R grounds; MEM WE = node 2
+            &[0; 13],                                    // c: MEM D_in (cell) unused
+            &[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],    // d: MEM VCC = node 1
+            &[0; 13],                                    // e: MEM GND = node 0
+            &[0; 13],                                    // f
+            &[0; 13],                                    // g
+            &[0; 13],                                    // h
+            &[5.0, we, a0, a1, di[0], di[1], di[2], di[3], 1e6, 1e6, 1e6, 1e6, 0.0],
+            &[0.0; 13],
+            &params,
+        ));
+        // Wide bus-port: address = [A0, A1], data-in = [DI0..3], data-out = [DO0..3] (LSB first).
+        sim.set_memory_ports(12, &[3, 4], &[5, 6, 7, 8], &[9, 10, 11, 12]);
+        if !seed.is_empty() {
+            sim.load_memory(12, seed);
+        }
+        for _ in 0..20 {
+            sim.step();
+        }
+        sim
+    }
+
+    /// A write through the wide bus-port latches the **whole assembled word** at the **bus address**, and
+    /// the data-out bus reads the same word back — the round-trip proof that the explicit per-bit channel
+    /// (option A) carries a wide address + data correctly. Write `0b1010` to address 1.
+    #[test]
+    fn wide_memory_writes_and_reads_through_bus_port() {
+        // WE high; A0=5 / A1=0 ⇒ address 1; DI = bits {1, 3} high ⇒ word 0b1010 (= 10).
+        let s = wide_mem_rig(5.0, 5.0, 0.0, [0.0, 5.0, 0.0, 5.0], &[]);
+        assert_eq!(
+            s.mem_read(12, 1),
+            0b1010,
+            "wide write latches the assembled word at the bus address"
+        );
+        assert_eq!(
+            s.mem_read(12, 0),
+            0,
+            "other rows untouched by the addressed write"
+        );
+        // Data-out bus reads the same word back: DO1, DO3 high; DO0, DO2 low.
+        assert!(
+            s.node_v[10] > 2.5 && s.node_v[12] > 2.5,
+            "DO1 / DO3 driven high (got {} / {})",
+            s.node_v[10],
+            s.node_v[12]
+        );
+        assert!(
+            s.node_v[9] < 2.5 && s.node_v[11] < 2.5,
+            "DO0 / DO2 driven low (got {} / {})",
+            s.node_v[9],
+            s.node_v[11]
+        );
+    }
+
+    /// With WE low (read-only, ROM-style), the wide port **decodes the address** and reads the seeded
+    /// word at that row onto the data-out bus — proving multi-row address decode, not just a single word.
+    #[test]
+    fn wide_memory_reads_seeded_word_at_addressed_row() {
+        // No writes (WE low). Seed rows 0..3; address row 2 (A0=0, A1=5) ⇒ word 0b1100.
+        let s = wide_mem_rig(0.0, 0.0, 5.0, [0.0; 4], &[0b0001, 0b0010, 0b1100, 0b1111]);
+        assert_eq!(
+            s.mem_read(12, 2),
+            0b1100,
+            "seed intact (no writes with WE low)"
+        );
+        // word 0b1100 → DO2 / DO3 high, DO0 / DO1 low.
+        assert!(
+            s.node_v[11] > 2.5 && s.node_v[12] > 2.5,
+            "DO2 / DO3 high for the addressed word (got {} / {})",
+            s.node_v[11],
+            s.node_v[12]
+        );
+        assert!(
+            s.node_v[9] < 2.5 && s.node_v[10] < 2.5,
+            "DO0 / DO1 low for the addressed word (got {} / {})",
+            s.node_v[9],
+            s.node_v[10]
+        );
+    }
+
+    /// The wide bus-port path is on the determinism contract: a long run of a wide RAM hashes identically
+    /// every time (the address decode, the per-bit drive, and the digest fold are all integer-pure).
+    #[test]
+    fn wide_memory_run_is_reproducible() {
+        let run = || {
+            let mut s = wide_mem_rig(5.0, 5.0, 0.0, [0.0, 5.0, 0.0, 5.0], &[]);
+            let mut acc = s.snapshot_hash();
+            for _ in 0..200 {
+                s.step();
+                acc ^= s.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "wide memory must reproduce exactly");
+    }
+
     /// A registered LUT is a LUT followed by a flip-flop: with CLK held low it never latches (Q
     /// holds its reset 0 even though IN0 is high), and under a real clock it latches IN0 onto Q and
     /// drives OUT high — the building block of all sequential FPGA logic.
@@ -15110,6 +15923,84 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "NMOS+PMOS pair must reproduce exactly");
+    }
+
+    /// Three identical diodes in series driven **hard** (30 V across the string, no
+    /// ballast) is a textbook Newton-killer: from a cold start the exponential I-V
+    /// overflows and bare seeded Newton + `pnjlim` never settles (it hits
+    /// [`NEWTON_MAX_ITERS`] un-converged → a NaN / garbage operating point). The
+    /// gmin-stepping fallback in [`Sim::solve_nonlinear`] (#88) shunts every node to
+    /// ground with a large conductance — a unique, well-conditioned near-ground
+    /// point — then walks the shunt down by decades back to zero, recovering the
+    /// true answer. By series symmetry the only physical DC root is an **even split**
+    /// (identical diodes carry one series current ⇒ equal forward drops), so each
+    /// node sits at `drive * (3 - k) / 3`. This is the circuit that exercises the
+    /// new convergence path; the gentler ≤10 V version converges on the plain solve
+    /// alone (and the fallback then returns immediately, byte-identical).
+    #[test]
+    fn hard_driven_diode_string_recovers_via_gmin_stepping() {
+        // node 0 = GND, 1 = drive rail, 2/3 = inter-diode taps. D: 1->2, 2->3, 3->0.
+        let drive = 30.0;
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_DIODE, ELEM_DIODE, ELEM_DIODE],
+            &[1, 1, 2, 3],
+            &[0, 2, 3, 0],
+            &[0, 0, 0, 0],
+            &[drive, 0.0, 0.0, 0.0],
+        );
+        let v = sim.node_voltages();
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "the operating point is finite (gmin stepping converged): {v:?}"
+        );
+        assert!(
+            sim.last_newton_converged(),
+            "the gmin-stepping fallback drove the hard diode string to convergence"
+        );
+        // Even split across three identical series diodes: node 2 = 2/3 of the
+        // drive, node 3 = 1/3. (The bare solve would leave these NaN.)
+        assert!(
+            (v[2] - drive * 2.0 / 3.0).abs() < 1e-6,
+            "node 2 sits at two-thirds of the drive (two diode drops): got {}",
+            v[2]
+        );
+        assert!(
+            (v[3] - drive / 3.0).abs() < 1e-6,
+            "node 3 sits at one-third of the drive (one diode drop): got {}",
+            v[3]
+        );
+    }
+
+    /// The gmin-stepping fallback is a **fixed, integer-free** schedule, so a circuit
+    /// that routes through it still reproduces bit-for-bit under the determinism
+    /// contract — the same hard diode string hashes identically across two runs.
+    /// (Golden-safety of the *engine* golden is separate and stronger: the golden RC
+    /// is linear and never enters the Newton path at all, so `GOLDEN_HASH` is
+    /// untouched by construction.)
+    #[test]
+    fn gmin_stepping_fallback_run_is_reproducible() {
+        let run = || {
+            let mut sim = build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_DIODE, ELEM_DIODE, ELEM_DIODE],
+                &[1, 1, 2, 3],
+                &[0, 2, 3, 0],
+                &[0, 0, 0, 0],
+                &[30.0, 0.0, 0.0, 0.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "the gmin-rescued circuit must reproduce exactly"
+        );
     }
 
     // --- Three-terminal: NPN / PNP BJT + Newton -------------------------------

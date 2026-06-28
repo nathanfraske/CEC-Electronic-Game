@@ -5,6 +5,265 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary (option A, golden-safe)
+
+**State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **197** incl. golden + 3 new
+wide tests; web **288**; wasm/check/lint/build clean). This is the **CPU/Doom-grade wide-RAM keystone** —
+the doc's §4 "blocked on a sound contiguous-node design" is now **unblocked** (option A engine done).
+
+**What landed (`crates/sim-core` + `crates/sim-wasm`):**
+- Per-element wide-port lists `mem_addr_nodes` / `mem_din_nodes` / `mem_dout_nodes: Vec<Vec<usize>>` (empty for
+  cell-level / non-memory — they sit beside `mem_data`, not on the Copy `Element` struct).
+- Coarse boundary side-call **`Simulation.set_memory_ports(elem, addr[], din[], dout[])`** — once per wide
+  memory, AFTER `set_netlist*`; stores the buses, re-runs `classify_nets` (now digital-touches bus nodes) +
+  re-primes `t=0`. One batched call carries the whole bus (never per-bit per-frame — boundary stays coarse).
+- Wide READ (decode addr bus via `mem_wide_addr`, digital-drive each data-out bit) + wide WRITE (assemble the
+  word from the data-in bus while WE high, through `write_cell`). **Gated on a non-empty data-out list ⇒**
+  empty lists keep the cell-level a/b/c/f/g/h path byte-identical. Golden-safe by construction (linear-RC
+  golden never enters this code; `golden_snapshot_hash_is_stable` green).
+- Tests: `wide_memory_writes_and_reads_through_bus_port`, `wide_memory_reads_seeded_word_at_addressed_row`,
+  `wide_memory_run_is_reproducible`.
+
+**Remaining = P3b (web only):** a placeable word-level ROM/RAM part — `buildNetlist` emits one `ELEM_MEMORY`
++ calls `set_memory_ports` with the bus nodes — plus the §4(B) **read-back equivalence vitest** (bus-port ===
+N hand-wired bits) as the no-golden-tripwire guard. The engine no longer blocks it. (See memory doc §4 UPDATE.)
+
+---
+
+## 2026-06-28 (220) — Newton globalization (#88): gmin-stepping convergence fallback (golden-safe)
+
+**State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **194** incl. golden +
+the 2 new tests; web **288**; build:wasm/check/lint/build all clean). Closes the standing "take a crack at
+the global Newton issue" ask.
+
+**What landed (`crates/sim-core/src/lib.rs`):**
+- `newton_iterate` gained a `gmin_extra: f64` param — a shunt-to-ground conductance added to **every** node's
+  diagonal each iteration. At `0.0` (the plain solve) it's a literal no-op, so the existing path is
+  byte-identical.
+- New `solve_nonlinear(...)` wrapper now drives **both** the operating-point (inv_dt=0) and transient
+  (inv_dt=1/DT) solves. It runs the plain seeded Newton first; **if it converges it returns immediately**
+  (every converging circuit — the golden, every test, every settling step — is unchanged). Only on a stall
+  does it fall back to **gmin stepping**: a fixed 12-step decade ramp `[1, 1e-1 … 1e-10, 0]`, each solve
+  re-seeded from the last via `node_v`, ending at `gmin_extra = 0` to recover the true root.
+- **Golden-safety is structural, not lucky:** `GOLDEN_HASH = 0xeaac_3764_99e4_fa24` comes from a **linear RC**
+  that never enters the Newton path at all → untouched by construction. The fixed-constant test
+  `golden_snapshot_hash_is_stable` proves it, and it's green.
+
+**Tests added:** `hard_driven_diode_string_recovers_via_gmin_stepping` (30 V across 3 bare series diodes — bare
+Newton overflows & stalls; the fallback recovers the exact even split 20 V / 10 V) + a reproducibility test on
+the same circuit. *Empirically:* this circuit fires the fallback at ≥~25 V; ≤10 V the plain solve handles it
+alone. The symmetric CMOS/BJT latches DON'T fire it — they converge to the **metastable midpoint** (a valid DC
+root), which is a *different* problem (needs transient-kick / nodeset init, not gmin). See "Not fixed" below.
+
+**Not fixed by this (important for the 6T SRAM / CPU latch work):** gmin stepping rescues **non-convergence**,
+not **metastability**. A perfectly symmetric cross-coupled latch's DC operating point IS the metastable point
+(Vmid), and Newton legitimately lands there — so transistor-mode SRAM still needs a deterministic perturbation
+(initial condition / transient settling with an asymmetric kick) to choose a held bit. That's the real
+remaining unlock for silicon-true write_trip, and it's a separate mechanism from #88.
+
+---
+
+## 2026-06-28 (219) — Autonomous push: 3 UI tweaks + ELEM_MEMORY P1/P2/P4 + harness hook + flash doc
+
+**State:** 🟢 Huge autonomous run, all green + pushed on `claude/kind-turing-hdelb3`. Owner: "power through
+it all, don't stop until done." Memory core + all 3 tweaks landed; P3/P5/Newton remain (hard/golden-sensitive).
+
+**Landed (this run, gate green at each — sim-core 192 incl. golden, web 288, build):**
+- **ELEM_MEMORY P1** complete (dda2444, 8809a6e): element + digest + terminal read/write + wasm exports.
+- **ELEM_MEMORY P2** (37bfedc, ae5ef5d, 0322db3): `MemBehavior` type + a working **RAM chip** (PART_KINDS.RAM
+  + MEM_SPEC → emits ELEM_MEMORY; memory.test.ts proves write/read), placeable from the bin.
+- **ELEM_MEMORY P4 DRAM** (03021b0 engine + 0e2c2e6 web): mode 3 = eager hashed rot/refresh (per-word epoch
+  `mem_refresh`, decay via write_cell, folded ONLY for mode 3 → golden + RAM byte-identical); placeable DRAM
+  chip (Real-mode retention). sim-core test `dram_word_rots_without_refresh`.
+- **Deep-zoom harness hook** (ab93098): `shoot.mjs --zoom/--lens/--center` + `window.__cecView` +
+  `board.centerOnComponent` — screenshot the LoD render headlessly.
+- **Tweak 1 (pin labels)** (a9deabb): leader + backing plate per label — VERIFIED at zoom 7.5 on a FULL ADDER.
+- **Tweak 3 (net highlight)** (bd58617): KiCad-style — highlights only while WIRING, not on hover.
+- **Tweak 2 (pipe bend)** (b927c0c): FIXED — `pinOutward` now classifies by NEAREST body edge, not the
+  centre-distance ratio (which mis-faced one-sided pinouts like the ALU 4-bit logic). **Owner to confirm live
+  on the ALU 4-bit cell under the analogy lens.**
+- **Flash/NAND design** doc (`docs/flash-storage-design.md`) from the panel.
+
+**Remaining (hard / golden-sensitive — fresh focused windows; gate protects the golden):**
+- **P3 word-level bus-port** (#100) — the node-numbering surgery (§4 of the memory doc); unblocks CPU-grade
+  wide memory. The one real prerequisite for the CPU/DOOM RAM.
+- **P2 authentic layer** — characterize-a-6T-cell → mint array part (the convenience RAM/DRAM parts already
+  give usable memory; this is the "hand-build the decoder, collapse the cell grid" teaching path).
+- **P5 memory tiers** — lower value until the read/write-margin "tunable datasheet" path exists (doc §2.1).
+- **Newton globalization (#88)** — the golden-sensitive solver fix; also unlocks silicon-true write_trip.
+- **Flash (mode 4)** — design ready (`flash-storage-design.md`), gated on owner greenlight.
+
+---
+
+## 2026-06-28 (218) — ELEM_MEMORY P1 DONE + P2 started; autonomous build continuing [big work queue]
+
+**Owner directive (standing):** "Continue on through autonomously until it's all implemented" — finish the
+whole ELEM_MEMORY build (P2→P5), THEN a list of 3 UI tweaks (below), and (asked earlier) take a crack at the
+global **Newton issue (#88)** after the memory phases. Everything green + committed at each step on
+`claude/kind-turing-hdelb3`.
+
+**Done so far:** P1 complete (dda2444 + 8809a6e — element works in-circuit, golden-safe). P2 slice 1
+(37bfedc): `MemBehavior` type plumbing on `UserIc`. **P2 slice 2 (ae5ef5d): a WORKING RAM CHIP** —
+`PART_KINDS.RAM` (8-pin: D,A0,A1,A2,WE,DI,VCC,GND) + `netlist.ts` `ELEM_MEMORY`=26 + `MEM_SPEC` (position-maps
+visual pins → sim terminals) emits one ELEM_MEMORY with mode/addrWidth/wordWidth params; `memory.test.ts`
+proves place→buildNetlist→wasm write/read (D_out tracks the written bit). The "give my CPU some RAM"
+capability is functional. Gate green (sim-core 191, web 288, build).
+
+**Immediate P2 next (small):** add RAM to the **PARTS bin catalog** (App.svelte) + a glyph so it's
+user-placeable from the bin (it's in PART_KINDS, so placeable by code/test, but not yet shown in the bin).
+Then ROM/EEPROM image seeding (Component.memImage → load_memory in loop.ts), then the characterize-a-6T →
+mint-array-part flow + Behavior-panel memory card (the authentic-teaching layer).
+
+**P2 DESIGN DECISION uncovered (read before continuing P2):** the LUT collapse remaps a cell's existing pins
+to the LUT's pins. **Memory can't do that** — the owner's 6T cell is bitline-accessed (roles `WL,VCC,GND,
+BLB,BL`, no Dout), but the P1 `ELEM_MEMORY` array has an addr/data/WE interface with MORE pins (an address
+bus). So characterizing a cell does NOT collapse-in-place; it should **mint a NEW placeable "memory array"
+part** (its own array interface: D_out, WE, D_in, VCC, GND, A0..A2 — sim-core cell-level map) seeded from the
+cell's `memBehavior`. i.e. P2 = "characterize this 6T cell → here's an N×1 RAM array part to place," not "swap
+the placed cell." `flattenUserIcs` emits `ELEM_MEMORY` for that array part's kind (params mode/addrWidth/
+wordWidth via slots 0/1/3; image via `load_memory` in `loop.ts`). The characterization sweep must run the
+cell with inner inverters in **fast-model** (the raw-FET bug, #215) and is bitline-observable; treat extracted
+margins as a tunable datasheet (doc §2.1). Full spec: `docs/memory-characterization-design.md`.
+
+**UPDATE (this run):** flash panel doc landed + committed (`docs/flash-storage-design.md`). RAM chip now
+PLACEABLE from the bin (App.svelte PARTS + PART_CAT_OF + codex.ts) under "Logic & ICs"; renders fine
+(screenshot-verified). **Tweak 3 (net highlight → KiCad)** DONE (bd58617): `highlightNet()` only brings a net
+forward while WIRING, not on idle hover; removed dead `hoverNet`. **Tweak 1 (pin labels)** DONE (a9deabb):
+added `pinLabelDeco` — a leader from each pin to its label + a backing plate behind the text (board.ts, the
+pin-label layout loop ~8730; deco field ~7945, addChild before the pin-texts loop). Gate green throughout
+(sim-core 191, web 288).
+
+**Harness hook LANDED (ab93098):** `shoot.mjs --zoom/--lens/--center` + `window.__cecView` +
+`board.centerOnComponent` — can now screenshot the deep-zoom LoD (pin-label deco, conduit pipes, opened-cell
+internals) headlessly. **Tweak 1 VERIFIED with it** (a placed FULL ADDER at zoom 7.5: pin labels CIN/A/COUT/
+SUM/B each sit on a backing plate, lifted off the copper — exactly the ask). Fixture recipe: embed
+`docs/prefab-reference-library/source-20260628.json`'s `userIcs` + place one IC; `--center 1 --zoom 7.5` for
+labels, `--zoom 16 --lens analogy` for internals/pipes.
+
+**Tweak 2 (pipe LoD bends inward) — NOT REPRODUCED from zoom-to-open; likely the DIE-EDITOR path.** Rendered
+TWO cells' internals under the analogy lens with the hook — **FULL ADDER** (zoom 16) and the **6T SRAM**
+(free-form, raw transistors, zoom 16): both route conduit pipes cleanly/orthogonally, no inward bend. So the
+bug is NOT in the zoom-to-open replica for these. The owner said "zooming down into, OR **editing** certain
+sub-assemblies" → most likely the **die-EDITOR** render path (drill-in to edit), which the harness can't drive
+yet (`__cecView` does camera+lens but not DRILL). Next: extend `__cecView` with a `drill: componentId` hook
+(call the App's edit-die flow), screenshot the editor under analogy, then localize + fix. Root logic:
+`pinOutward` (boardRender.ts:886 — outward dir from pin offset vs part centre) feeding `pinExit`/the conduit
+stub; in the die editor a frame pad already gets `null` (dieFramePinExit) but a NON-frame inner pin may not.
+Do NOT blind sign-flip (it'd regress the verified-clean FULL ADDER / 6T SRAM cases). Evidence screenshots in
+scratch (ic-pipes.png, sram-pipes.png).
+
+**Remaining queue (in order):**
+1. **P2** — `classifyStorageCell` (cellAnalysis.ts) + `characterizeMemoryCell` (sibling of characterize.ts) +
+   the mint-a-memory-array part + `flattenUserIcs`→ELEM_MEMORY emission + `loop.ts` load_memory + Behavior-
+   panel memory card + words×bits picker. Headless emission test first (data-layer-first).
+2. **P3** word-level bus-port (gated on §4 contiguous-node fix — real netlist surgery). 3. **P4** DRAM
+   (eager hashed rot/refresh). 4. **P5** tiers/ratings.
+5. **NAND/flash panel** (#102) is RUNNING in background → write `docs/flash-storage-design.md` when it returns
+   (handle the task-notification).
+6. **Three UI tweaks (owner, after ELEM_MEMORY):**
+   a. **Pin labels** hard to read — don't align with the header; need a stronger label↔pin connector + a
+      background separator (chip/halo), esp. high-pin-count parts. (board.ts pin-label render.)
+   b. **Analogy (pipes) LoD when zooming into sub-assemblies** bends pipes inward as if pins face in, when
+      they should face OUTWARD — strange bending. (board.ts/boardRender pipe-elbow direction inside opened cells.)
+   c. **Net highlight** fires on hover-walk-over; make it **KiCad-like** — highlight the net you're WIRING,
+      not just hovering. (the #80 net-highlight; gate it on wiring state.)
+7. **Newton globalization (#88)** — golden-sensitive, do isolated/last.
+
+---
+
+## 2026-06-28 (217) — ELEM_MEMORY P1 foundation landed (sim-core, golden-safe) [owner greenlit full build]
+
+**State:** 🟢 Owner greenlit the FULL `ELEM_MEMORY` build (#47). First slice in on `claude/kind-turing-hdelb3`
+(commit dda2444); gate green (fmt, clippy -D warnings, cargo test -p sim-core **190** incl. the golden,
+build:wasm, web check). Building in the design's strict phase order, green at each gate.
+
+**Landed (the golden-safe data-layer foundation, all in `crates/sim-core/src/lib.rs`):** `ELEM_MEMORY` = id
+26 (append-only after ELEM_BEHAVIORAL=25; in the set_netlist whitelist; **not** is_nonlinear). Ragged
+`mem_data: Vec<Vec<u32>>` (depth 2^addrWidth from param slot 1) + `mem_digest: Vec<u64>` + `mem_wear:
+Vec<u32>`, sized beside `beh_state` at install, zeroed in `reset()`. `write_cell(i,k,v)` = THE single
+mutation site (O(1) incremental digest via `mem_cell_hash`, zero word ⇒ 0 ⇒ all-zero store digest 0).
+`load_memory`/`mem_read` (pub). Hash fold appends each ELEM_MEMORY's 8-byte digest + 4-byte wear → golden
+byte-identical (no memory ⇒ zero extra bytes). Tests: round-trip + digest-consistency + deterministic hash.
+
+**P1 COMPLETE** (commits dda2444 + 8809a6e; gate green, sim-core 191, web 286, golden byte-identical). The
+element now works in-circuit: cell-level terminal map (a=D_out, b=WE, c=D_in, d=VCC, e=GND, f/g/h=A0..A2;
+addrWidth ≤ 3 → depth ≤ 8, word width 1, tile N for an N-bit word), `is_digital`/`classify_nets` wired, the
+eval READ arm (constant Thévenin drive of D_out — stays off is_nonlinear, no Newton), the commit WRITE pass
+(separate index-loop so `write_cell` can take &mut self; level-sensitive async write), and `load_memory` /
+`mem_read` wasm exports. Test proves terminal write→read via both `mem_read` and the driven D_out voltage.
+
+**Next:** **P2** — cell characterization → teaching SRAM (web-side, the bigger chunk): `classifyStorageCell`
++ `characterizeMemoryCell` (bitline-observable sweep, 10mV grid), `MemBehavior`, `flattenUserIcs` emits one
+ELEM_MEMORY, the Behavior-panel memory verdict card + words×bits picker. Then P3 (bus-port, gated on §4), P4
+(DRAM), P5 (tiers). **Also:** owner asked for the global **Newton globalization** (#88) after the memory
+phases, and a **NAND/flash design panel** is RUNNING in the background (→ `docs/flash-storage-design.md`:
+fast flash arrays, persistence across runs, and the persistence-vs-replay tension). Spec:
+`docs/memory-characterization-design.md`.
+
+---
+
+## 2026-06-28 (216) — DOOM-circuit vision + memory-characterization design (panel landed)
+
+**State:** 🟢 Two design docs landed on `claude/kind-turing-hdelb3`; no code changes. The session pivoted to
+the "run DOOM on a machine built from sand" arc (owner's north-star).
+
+**Docs:**
+- `docs/doom-circuit-vision.md` — north-star + full discussion: the unbroken **zoom-ladder sell** (DOOM frame
+  → framebuffer → RAM → 6T cell → transistor), behavioral-collapse architecture, the full inspectable I/O
+  loop (keyboard matrix + mouse quadrature → **memory-mapped I/O** → CPU → RAM → framebuffer → palette →
+  **RGB-LED array**), the color pipeline (direct-RGB vs DOOM palette/CLUT/RAMDAC; two "shaders" — circuit
+  color-map vs GPU texture-blit; far-texture/near-real-LED LoD), the CPU wall, roadmap + mini-sells.
+- `docs/memory-characterization-design.md` — **12-agent panel** output (9 lenses → synth → adversarial
+  critique → finalize), source-verified. THE build-against spec for cheap RAM. Headlines: `ELEM_MEMORY`=id 26
+  (append-only, golden-safe); **incremental `mem_digest`** (O(1)/write — naive full-array hash ×10k/frame is
+  fatal); single `write_cell` primitive; structural params (slots 0/1/3, reclaim slot 2 via flag_and_clamp
+  skip) + analog block on a Real-mode-only **unhashed** side-channel; **eager hashed** DRAM rot/refresh
+  (epoch stored in mem_data); 10mV quantization grid; 6 gating tests. Honest: v1 `write_trip` = tunable
+  designer-margin (silicon-true gated on #88); **word-level bus-port BLOCKED on a sound contiguous-node
+  design (§4)** — base+width is unsound on today's pin-walk numbering — which gates the CPU/DOOM path.
+
+**Next / decisions for owner:** `ELEM_MEMORY` greenlight (gates `crates/sim-core`, #47) — recommended scope
+P1+P2 (cell-level teaching SRAM + data layer + tests), defer P3 bus-port + P4 DRAM. Doc §10 open Qs (esp. the
+v1 tunable-margin framing vs requiring #88 Newton fix first). The **I/O & display subsystem** (keyboard/mouse
+decoders + framebuffer/palette + RGB-LED display) is the next design pass (offered a dedicated panel).
+Build order when greenlit: P0 golden-tripwire → P1 data layer (Cable-style headless) → P2 cell collapse.
+
+---
+
+## 2026-06-28 (215) — Prefab reference library (16 cells incl. 6T SRAM) + Cable fan rebuilt (symmetric comb)
+
+**State:** 🟢 Three things landed on `claude/kind-turing-hdelb3` (commits 8c1e5ad, 0fc73a1, 6a514fe;
+gate green — check 0, lint clean, web 286, build OK; all screenshot-verified).
+
+**1. Prefab reference library** (`web/src/lib/circuits/prefabs.ts` + `.test.ts`, `App.svelte`): ships the
+owner's curated cells as a built-in **Reference Library** bin section (Inverter; NAND/NOR/AND/OR/XOR/OE
+gates; 2:1 & 4:1 MUX; D latch; D-FLIPFLOP; 1-BIT REG; HALF/FULL ADDER; TMS gate; **6T SRAM**). Sourced from
+module data (NOT the localStorage personal library) so it never mixes with / clobbers the player's own
+sealed cells. `registerPrefabLibrary()` registers each tag ADDITIVELY at mount (board's same-tag cells win).
+Rows are read-only: Edit/Behavior/Datasheet kept, Tape-out/Rename/Remove dropped via a `builtin` flag on
+`partRow`. Wired into bin search. Golden-safe (web data; golden places no user IC).
+
+**2. Cable fan geometry rebuilt** (`board.ts drawCables`): owner: fans were diagonal + didn't fan-IN. Now
+each end anchors its gather on the pin-array CENTRE line (offset toward the partner part; axis from the
+array's own orientation, NOT the route — a route jog can't flip it), fans as an orthogonal **comb** (pin →
+along axis → one turn into the gather) identically at BOTH ends, and the trunk is walked as an orthogonal
+polyline (elbow inserted on any diagonal seg) so it's pure Manhattan and meets each comb head-on. Follows
+the user's drawn route; render-only (stored route unchanged → still manipulable). Screenshot-verified.
+
+**3. 6T SRAM reviewed + added** (cell #16): topology traced net-by-net = textbook 6T (2 cross-coupled
+Inverter subcells + 2 NMOS access gated by WL; BL/BLB bitlines). **Fixed** pinRoles (BL/BLB were unroled →
+now `inout`). **Headless drive finding:** the cell writes/reads correctly via BL/BLB+WL ONLY with the inner
+inverters in fast-model (behavioral) mode — at raw transistor level the engine returns wrong/inverted Q
+(the known raw-FET limitation). **RESOLVED (commit 49c6448):** owner chose **drop Q — force the lesson**.
+The SRAM is now 5-pin [WL, VCC, GND, BLB, BL]; read AND written ONLY via the bitlines + word line; the
+stored bit is observed with MEASURE/symbol-state. Q removed consistently (def + frame pinNames/pinTests +
+internal wires remapped; verified flattens with no dangling frame-pin ref).
+
+**Remaining:** Cable P2 (LoD unzip + conduit skin + ×N badge) → P3 (fan-out edits) → P5 (hierarchy + 16-bit
+example). Owner's ALU rewires (ADD/NOR). #88 Newton globalization (golden-sensitive, last). Tasks #92-94, #88.
+
+---
+
 ## 2026-06-28 (214) — Cable P1 landed: create-gesture + trunk-and-fan render (screenshot-verified)
 
 **State:** 🟢 P1 done (PR #308 pending). Drawing ONE strand between two same-width name-indexed buses now

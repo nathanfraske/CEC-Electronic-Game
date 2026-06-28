@@ -88,6 +88,8 @@ export const PART_CAT_OF: Record<string, string> = {
   FF: "Logic & ICs",
   HADD: "Logic & ICs",
   FADD: "Logic & ICs",
+  RAM: "Logic & ICs",
+  DRAM: "Logic & ICs",
   MUX2: "Logic & ICs",
   DMUX: "Logic & ICs",
   MAJ3: "Logic & ICs",

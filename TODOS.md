@@ -6,6 +6,122 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary landed (option A)
+
+- ~~**P3 contiguous-node design blocker (§4)**~~ RESOLVED via **option A** (explicit per-bit node channel) —
+  the doc's "blocked on a sound design" is unblocked. Per-element `mem_addr_nodes`/`mem_din_nodes`/
+  `mem_dout_nodes: Vec<Vec<usize>>` (beside `mem_data`, not on the Copy `Element`); coarse boundary side-call
+  `set_memory_ports(elem, addr[], din[], dout[])` (called once after `set_netlist*`, re-classifies +
+  re-primes); wide READ decodes the addr bus + digital-drives each data-out bit; wide WRITE assembles the word
+  from the data-in bus through `write_cell`. Gated on a non-empty data-out list ⇒ empty = cell-level path,
+  byte-identical (golden-safe; the linear-RC golden never enters this code). wasm export added.
+- ~~**P3a engine tests**~~ DONE (sim-core 197): `wide_memory_writes_and_reads_through_bus_port`,
+  `wide_memory_reads_seeded_word_at_addressed_row`, `wide_memory_run_is_reproducible`.
+- [ ] **P3b — web emission (the only remaining P3 work)**: a placeable word-level ROM/RAM part whose
+  `buildNetlist` emits one `ELEM_MEMORY` + issues `set_memory_ports` with the bus nodes; PLUS the §4(B)
+  read-back **equivalence vitest** (bus-port === N hand-wired bits, the no-golden-tripwire guard). The engine
+  no longer blocks this. This is what mints the **program ROM / 512×22 control store** the CPU/Doom path needs.
+
+---
+
+## 2026-06-28 (220) — Newton globalization (#88) landed
+
+- ~~**Newton globalization (#88)**~~ DONE (gmin-stepping convergence fallback). `newton_iterate` gained a
+  `gmin_extra` shunt-to-ground param (no-op at 0 → plain solve byte-identical); new `solve_nonlinear` wrapper
+  drives both OP + transient solves: plain seeded Newton first, **returns immediately if it converges**, else
+  a fixed 12-step decade gmin ramp `[1 … 1e-10, 0]` re-seeded each step. Golden-safe by construction — the
+  golden RC is **linear** and never enters the Newton path, so `GOLDEN_HASH = 0xeaac_3764_99e4_fa24` is
+  untouched (proven green by `golden_snapshot_hash_is_stable`). Tests:
+  `hard_driven_diode_string_recovers_via_gmin_stepping` (30 V/3-diode string bare Newton can't solve →
+  fallback recovers the exact even split) + reproducibility. Gate green: sim-core **194**, web **288**.
+- ⚠️ **Caveat — NOT fixed by #88 (separate task):** gmin stepping rescues **non-convergence**, not
+  **metastability**. A symmetric cross-coupled latch's DC operating point IS the metastable midpoint, and
+  Newton legitimately lands there → transistor-mode SRAM still needs a deterministic perturbation (initial
+  condition / asymmetric transient kick) to pick a held bit. That's the real remaining unlock for silicon-true
+  `write_trip`, and it's a different mechanism. New open item below.
+- [ ] **Latch-state selection (deterministic metastability break)** — NEW, the actual gap for transistor-mode
+  6T SRAM / sequential silicon. Options: per-element initial-condition seed, asymmetric transient kick on
+  install, or a tiny deterministic node-id-derived bias. Golden-safe iff gated off for existing netlists.
+
+---
+
+## 2026-06-28 (216) — DOOM circuit vision + memory-characterization panel
+
+- ~~**Write down the DOOM-circuit vision**~~ DONE: `docs/doom-circuit-vision.md` — the north-star "run DOOM
+  on a machine built from sand," the zoom-ladder sell, the honest behavioral-collapse architecture, the full
+  inspectable I/O loop (keyboard matrix + mouse quadrature → MMIO → CPU → RAM → framebuffer → palette →
+  RGB-LED array), the two-"shader" distinction (circuit color-map vs GPU texture-blit; far-texture/near-LED
+  LoD), the CPU wall, and the roadmap/milestones. Captures the full discussion with the owner.
+- ~~**Memory characterization design panel**~~ DONE: `docs/memory-characterization-design.md` (12-agent
+  panel: 9 lenses → synthesize → adversarial critique → finalize; source-verified). `ELEM_MEMORY` = id 26
+  (after ELEM_BEHAVIORAL=25, append-only, golden-safe); ragged `mem_data: Vec<Vec<u32>>` + **incremental
+  `mem_digest` (O(1)/write, the perf keystone — naive full-array hashing ×10000 steps/frame is fatal)**;
+  single `write_cell` mutation primitive; structural params (slots 0/1/3, skip slot 2 via flag_and_clamp
+  skip) + analog block on a Real-mode-only side-channel (unhashed); eager hashed DRAM rot/refresh; 10mV
+  quantization grid; 6 gating tests. Honest framings: v1 write_trip is a tunable designer-margin (silicon-
+  true gated on #88); **the word-level bus-port is BLOCKED on a sound contiguous-node design (§4), not just
+  greenlight** — gates the CPU path. Build order P0 greenlight → P1 data layer → P2 cell-level collapse
+  (ships the teaching SRAM) → P3 bus-port → P4 DRAM → P5 tiers.
+- ~~**`ELEM_MEMORY` greenlight**~~ DONE: owner greenlit the **FULL** build (P1→P5). Building in strict phase
+  order, gate-green at each step.
+- ~~**`ELEM_MEMORY` P1 — data layer + terminal read/write**~~ DONE (#98; commits dda2444 + 8809a6e): id 26
+  (append-only, golden-safe), store/digest/wear + install/reset, `write_cell` single mutation site +
+  incremental digest, `load_memory`/`mem_read` (+ wasm exports), hash fold (golden byte-identical), and the
+  in-circuit cell-level read (constant Thévenin D_out, off is_nonlinear) + level-sensitive async write
+  (commit index-loop). Gate green (sim-core 191, web 286). The element works in a circuit.
+- [ ] **`ELEM_MEMORY` P2 — cell characterization → teaching SRAM** (#99, next): web-side. `classifyStorageCell`
+  + `characterizeMemoryCell` (bitline-observable sweep, 10mV grid, fast-model inner), `MemBehavior`,
+  `flattenUserIcs` emits one ELEM_MEMORY, Behavior-panel memory verdict card + words×bits picker.
+- [ ] **NAND/flash design panel** (#102): RUNNING in background → `docs/flash-storage-design.md` (fast flash
+  arrays, persistence across runs, persistence-vs-replay reconciliation). Owner ask.
+- ~~**Newton globalization (#88)**~~ DONE — see the (220) entry at the top (gmin-stepping fallback, golden-safe).
+- ~~**RAM placeable from bin**~~ DONE (0322db3). ~~**Tweak: net highlight → KiCad (wire-time, not hover)**~~
+  DONE (bd58617). ~~**Tweak: pin-label leader + backing plate**~~ DONE (a9deabb). ~~**Flash panel doc**~~
+  DONE (`docs/flash-storage-design.md`).
+- [ ] **Tweak: pipe LoD bends inward (analogy lens, inside opened sub-assemblies)** — DEFERRED; needs
+  deep-zoom + analogy-lens visual iteration (headless shoot can't drill/set lens). Pointers: condRoutes
+  outward-normal (board.ts ~169), drawConduitSkin, conduit draw ~6404. Likely a die-context normal sign.
+- ~~**ELEM_MEMORY P4 (DRAM)**~~ DONE (03021b0 engine + 0e2c2e6 web): mode 3 eager hashed rot/refresh
+  (per-word epoch, decay via write_cell, mode-3-gated fold → golden+RAM byte-identical); placeable DRAM chip
+  (Real-mode retention); test `dram_word_rots_without_refresh`.
+- ~~**Deep-zoom harness hook**~~ DONE (ab93098): shoot.mjs --zoom/--lens/--center.
+- ~~**Tweak 2 (pipe bend)**~~ FIXED (b927c0c): pinOutward nearest-edge (was centre-ratio → mis-faced
+  one-sided pinouts). Owner to confirm live on the ALU 4-bit cell.
+- [ ] **ELEM_MEMORY P3 (word-level bus-port)** (#100) — node-numbering surgery (memory doc §4); the CPU-grade
+  wide-memory prerequisite. Hard; fresh focused window.
+- [ ] **ELEM_MEMORY P5 (memory tiers)** — lower value until the read/write-margin datasheet path exists.
+- [ ] **P2 authentic layer** — characterize-a-6T → mint array part (convenience RAM/DRAM already usable).
+- ~~**Newton #88**~~ DONE (220): gmin-stepping fallback. NOTE: unlocks non-convergence, NOT the latch
+  metastability that silicon-true write_trip needs — that's the new "Latch-state selection" item in (220).
+- [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
+  keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
+  (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
+  64×64); brightness = value→intensity (PWM later). Leans on `ELEM_MEMORY`.
+
+## 2026-06-28 (215) — Prefab reference library (16 cells) + Cable fan rebuilt + 6T SRAM
+
+- ~~**Prefab reference library**~~ DONE (commits 8c1e5ad + 6a514fe): the owner's curated cells ship as a
+  built-in **Reference Library** bin section (`web/src/lib/circuits/prefabs.ts` + `.test.ts`, `App.svelte`).
+  16 cells (the 15 from `source-20260628.json` + the 6T SRAM). Module-data source (NOT localStorage), so it
+  never mixes with / clobbers a player's own cells; `registerPrefabLibrary()` registers additively at mount.
+  Read-only rows (Edit/Behavior/Datasheet; no Tape-out/Rename/Remove) via a `builtin` flag on `partRow`.
+  Golden-safe. Screenshot-verified (bin badge 16).
+- ~~**Cable fan geometry**~~ DONE (commit 0fc73a1): owner — fans were diagonal + didn't fan-IN. Rebuilt
+  `drawCables`: each end's gather on the pin-array CENTRE line (offset toward the partner; axis from the
+  array orientation, not the route), orthogonal **comb** at both ends, trunk walked as an orthogonal polyline
+  (elbow on any diagonal seg). Follows the drawn route; render-only (route stays manipulable). Verified.
+- ~~**6T SRAM review + add**~~ DONE (commit 6a514fe): topology traced = textbook 6T (2 cross-coupled Inverter
+  subcells + 2 NMOS access gated by WL; BL/BLB bitlines). Fixed pinRoles (BL/BLB → `inout`). Headless drive:
+  writes/reads correctly via BL/BLB+WL ONLY with the inner inverters in fast model; raw transistor level
+  returns wrong/inverted Q (known raw-FET limit).
+- ~~**6T SRAM — Q pin vs forced bitline lesson**~~ DECIDED + DONE (commit 49c6448): owner chose **drop Q —
+  force the lesson**. SRAM is now 5-pin [WL, VCC, GND, BLB, BL]; read AND write only via the bitlines + word
+  line; observe the bit with MEASURE / symbol-state. Q removed consistently (def + frame pinNames/pinTests +
+  internal wires remapped); verified flattens with no dangling frame-pin ref.
+- [ ] **6T SRAM — optional follow-ups (not requested):** ship a worked EXAMPLE of the real read protocol
+  (precharge BL/BLB → assert WL → sense the differential) once a sense-amp/analog-read story exists; and a
+  small RAM-array demo. The cell behaves with its inner inverters in fast model (Behavior ▸ use fast model).
+
 ## 2026-06-28 (211) — Bus wiring (Phase 1) + prefab library + huge-bus brainstorm
 
 - ~~**Bus wiring Phase 1 — "draw one → wire the bus"**~~ DONE (PR #305): `lib/busWiring.ts`
