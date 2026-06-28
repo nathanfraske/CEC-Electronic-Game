@@ -1093,6 +1093,9 @@ export function buildNetlist(
   const nodeNames = new Map<number, string>();
   const nodeColors = new Map<number, number>();
   for (const l of labels) {
+    // Cable-owned labels (deriveCableLinks) carry an internal namespaced token, not a display name — they
+    // still drive the connectivity union above, but must NOT name the net in the scope/telemetry.
+    if (l.ownerId !== undefined) continue;
     const node = nodeIndex.get(find(endpointKey(l.at)));
     if (node === undefined) continue;
     if (!nodeNames.has(node)) nodeNames.set(node, l.name);

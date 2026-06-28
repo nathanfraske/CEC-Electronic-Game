@@ -5,6 +5,26 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (214) — Cable P1 landed: create-gesture + trunk-and-fan render (screenshot-verified)
+
+**State:** 🟢 P1 done (PR #308 pending). Drawing ONE strand between two same-width name-indexed buses now
+creates a **Cable** instead of a wire: the drawn route becomes the trunk; the rest of the bits **fan in** at
+each end. Screenshot-verified (one pink trunk with the drawn bend + 4 pins fanning into it at each chip;
+internal labels hidden).
+
+**Code:** `busWiring.ts` `planBusCable` (full bit-ordered pin arrays, same guards). `board.ts`
+`continueOrFinishWiring`: on a clean bus connect, `removeWire` the drawn strand + `addCable` (route = drawn
+waypoints). `drawCables(g)` in `redrawWires`: thick trunk through the route + thin individual fan strands to
+each pin (bit 0 IS the trunk) — "show the wires" holds. Owner-tagged labels are now hidden from the render
+(`drawNetLabels`), the hit-test (`labelHitTest`), and the scope net-name (`netlist.ts nodeNames`) — they're
+internal connectivity tokens. Gate green (web 282, golden stable).
+
+**Remaining:** P2 LoD unzip + conduit skin (collapsed jacket far / fanned strands near, ×N badge) → P3
+fan-out edits (mid-span breakout, rename/delete-as-unit, hardWiredEnds) → P5 hierarchy (bus through sealed
+ICs + range labels + 16-bit example) → prefab reference library. Tasks #92-95.
+
+---
+
 ## 2026-06-28 (213) — Cable P0 landed: data layer + deriveCableLinks (golden-safe) [building P0→P5]
 
 **State:** 🟢 implementing the whole Cable (owner: "chunk it out and push through... verifying with renders

@@ -118,3 +118,57 @@ export function planBusAutocomplete(
   }
   return pairs.length > 0 ? pairs : null;
 }
+
+/**
+ * Plan a BUS CABLE from the single strand the player drew: the full bit-ordered pin-index arrays for both
+ * ends (a Cable connects `src.pinIndices[i]` ↔ `dst.pinIndices[i]`), or null when it isn't a clean bus
+ * connect. Same guards as {@link planBusAutocomplete} (both ends are buses, equal width, every bit aligned,
+ * siblings unwired) but it INCLUDES the drawn bit (the board replaces the drawn wire with the cable, whose
+ * own per-bit links — via deriveCableLinks — carry every bit including bit 0). Used by board.ts P1 gesture.
+ */
+export function planBusCable(
+  graph: BoardGraph,
+  fromPin: PinRef,
+  toPin: PinRef,
+): {
+  base: string;
+  width: number;
+  srcPinIndices: number[];
+  dstPinIndices: number[];
+} | null {
+  if (fromPin.componentId === toPin.componentId) return null;
+  const srcBus = busOfPin(graph, fromPin);
+  const dstBus = busOfPin(graph, toPin);
+  if (!srcBus || !dstBus) return null;
+  if (srcBus.members.length !== dstBus.members.length) return null;
+  const srcIdx = parseBusLabel(pinLabel(graph, fromPin))!.index;
+  const dstIdx = parseBusLabel(pinLabel(graph, toPin))!.index;
+  const offset = dstIdx - srcIdx;
+  const dstByIndex = new Map(dstBus.members.map((m) => [m.index, m.pinIndex]));
+  const srcPinIndices: number[] = [];
+  const dstPinIndices: number[] = [];
+  for (const m of srcBus.members) {
+    const dPin = dstByIndex.get(m.index + offset);
+    if (dPin === undefined) return null; // a bit has no aligned partner → not a clean full-width cable
+    if (m.index !== srcIdx) {
+      // siblings must be free (the drawn bit's pins carry the just-drawn wire, which the board replaces)
+      if (
+        pinIsWired(graph, {
+          componentId: fromPin.componentId,
+          pinIndex: m.pinIndex,
+        }) ||
+        pinIsWired(graph, { componentId: toPin.componentId, pinIndex: dPin })
+      )
+        return null;
+    }
+    srcPinIndices.push(m.pinIndex);
+    dstPinIndices.push(dPin);
+  }
+  if (srcPinIndices.length < 2) return null;
+  return {
+    base: srcBus.base,
+    width: srcPinIndices.length,
+    srcPinIndices,
+    dstPinIndices,
+  };
+}
