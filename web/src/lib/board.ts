@@ -6624,36 +6624,54 @@ export class Board {
    */
   private drawCables(g: Graphics): void {
     if (this.graph.cables.size === 0) return;
+    type XY = { x: number; y: number };
+    const centroid = (ps: XY[]): XY => ({
+      x: ps.reduce((s, p) => s + p.x, 0) / ps.length,
+      y: ps.reduce((s, p) => s + p.y, 0) / ps.length,
+    });
+    // The trunk gathers at a point pushed OUT from the pin cluster (toward the cable run) by the cluster's
+    // own spread + a cell, so the N strands visibly FAN between the spread-out pins and that gather point —
+    // a ribbon-cable breakout, not N near-coincident lines hidden on the chip body.
+    const gather = (ctr: XY, toward: XY, pins: XY[]): XY => {
+      let dx = toward.x - ctr.x;
+      let dy = toward.y - ctr.y;
+      const len = Math.hypot(dx, dy) || 1;
+      dx /= len;
+      dy /= len;
+      const spread = Math.max(
+        PITCH,
+        ...pins.map((p) => Math.hypot(p.x - ctr.x, p.y - ctr.y)),
+      );
+      const d = spread + PITCH;
+      return { x: ctr.x + dx * d, y: ctr.y + dy * d };
+    };
     for (const c of this.graph.cables.values()) {
       const worldOf = (componentId: number, pinIndex: number): Point | null => {
         const cell = this.graph.pinRefCell({ componentId, pinIndex });
         return cell ? this.cellToWorld(cell) : null;
       };
-      const srcW = c.src.pinIndices.map((i) => worldOf(c.src.componentId, i));
-      const dstW = c.dst.pinIndices.map((i) => worldOf(c.dst.componentId, i));
-      const trunkStart = srcW[0];
-      const trunkEnd = dstW[0];
-      if (!trunkStart || !trunkEnd) continue;
+      const srcW = c.src.pinIndices
+        .map((i) => worldOf(c.src.componentId, i))
+        .filter((p): p is Point => p !== null);
+      const dstW = c.dst.pinIndices
+        .map((i) => worldOf(c.dst.componentId, i))
+        .filter((p): p is Point => p !== null);
+      if (srcW.length === 0 || dstW.length === 0) continue;
       const color = c.color ?? PALETTE.accent;
-      // End fans (thin individual strands): every non-bit-0 pin into the near trunk anchor.
-      for (let i = 1; i < srcW.length; i++) {
-        const p = srcW[i];
-        if (!p) continue;
-        g.moveTo(p.x, p.y).lineTo(trunkStart.x, trunkStart.y);
-      }
-      for (let i = 1; i < dstW.length; i++) {
-        const p = dstW[i];
-        if (!p) continue;
-        g.moveTo(trunkEnd.x, trunkEnd.y).lineTo(p.x, p.y);
-      }
-      g.stroke({ width: 2, color, alpha: 0.7 });
-      // Trunk (thick) through the player's drawn route; bit 0 rides the trunk.
-      g.moveTo(trunkStart.x, trunkStart.y);
-      for (const cell of c.route) {
-        const p = this.cellToWorld(cell);
-        g.lineTo(p.x, p.y);
-      }
-      g.lineTo(trunkEnd.x, trunkEnd.y);
+      const sc = centroid(srcW);
+      const dc = centroid(dstW);
+      const routeW = c.route.map((cell) => this.cellToWorld(cell));
+      // Each end gathers toward the first/last route bend (or the far cluster when the run is straight).
+      const sg = gather(sc, routeW[0] ?? dc, srcW);
+      const dg = gather(dc, routeW[routeW.length - 1] ?? sc, dstW);
+      // End fans: EVERY conductor is its own strand from its pin to the gather point (show the wires).
+      for (const p of srcW) g.moveTo(p.x, p.y).lineTo(sg.x, sg.y);
+      for (const p of dstW) g.moveTo(p.x, p.y).lineTo(dg.x, dg.y);
+      g.stroke({ width: 2, color, alpha: 0.75 });
+      // Trunk (thick): gather → drawn route bends → gather.
+      g.moveTo(sg.x, sg.y);
+      for (const p of routeW) g.lineTo(p.x, p.y);
+      g.lineTo(dg.x, dg.y);
       g.stroke({ width: 6, color, alpha: 0.9 });
     }
   }
