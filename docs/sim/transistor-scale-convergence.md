@@ -178,6 +178,27 @@ definite_bit`, `jittered_cross_coupled_latch_settles_to_a_clean_rail`,
 `latch_metastability_break_run_is_reproducible` (sim-core); `sramPowerUp.test.ts` (web, the owner's 6T
 SRAM prefab: Ideal → mid-rail, Real → a deterministic complementary bit).
 
+## DRAM is the mirror image — capacitor leakage, not metastability, LANDED 2026-06-28
+
+"Can we do the same for a DRAM cell?" — **no, and it doesn't need it.** DRAM is **1 transistor + 1
+capacitor** (charge on a cap), not a bistable latch, so there is **no metastable midpoint**. Verified
+headlessly: an unwritten transistor 1T1C cell powers up to a **definite 0** (discharged cap), and a
+written cell holds the realistic NMOS-passed weak-1 (~3 V, the Vth drop) **rock-steady**. So the cell
+already works as memory — the metastability break is N/A here (and the DRAM **sense amp**, a
+cross-coupled latch, is already covered by `break_metastable_latches`).
+
+The real DRAM-specific gap is the **opposite** of the SRAM one: our ideal cap **never leaks**, so a
+1T1C cell read as non-volatile SRAM-on-a-cap. Real DRAM is *dynamic* — it leaks and must be refreshed.
+Fixed by **capacitor leakage** (`cap_leak_g`): a Real-mode parallel `G = C/tau` stamped in the
+transient companion, where `tau` (self-discharge time constant, [`CAP_LEAK_SLOT`] = 5) is emitted by
+`buildNetlist` **per quality tier** (`capLeakTau`/`ecLeakTau`) — the owner's call: **all** caps leak,
+proportional to reality, gated by grade (budget electrolytic leaks fast, lab-grade film ≈ ideal).
+Golden-safe: `tau = 0` (Ideal, every existing cap, the **RC golden's own cap**) → no leak →
+byte-identical (`golden_snapshot_hash_is_stable` green). Game-scaled (seconds; realistic ordering, like
+diode `TT`) so a held cap visibly decays while filter caps (`tau ≫` their signal period) are untouched.
+Tests: `leaky_capacitor_settles_at_the_insulation_divider` + reproducible (sim-core);
+`dramCell.test.ts` (Real-mode emission gate + a written 1T1C cell decays in Real, holds in Ideal).
+
 ## Takeaways
 
 1. The ALU design is sound; the engine cannot solve it as raw transistors at scale.

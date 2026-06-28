@@ -22,6 +22,8 @@ import {
   tierParams,
   ecEsr,
   resistorTolerance,
+  capLeakTau,
+  ecLeakTau,
   DEFAULT_TIER,
   PARAM_STRIDE,
 } from "./tiers";
@@ -518,6 +520,7 @@ interface BehSpec {
   defWord: number; // default aux (truth table / data word) when Component.word is unset
 }
 const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
+const CAP_LEAK_SLOT = 5; // params slot: capacitor self-discharge tau (s); 0 = no leak (mirror sim-core)
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1689,6 +1692,16 @@ export function buildNetlist(
     // symmetry, so an unwritten transistor 6T SRAM / flip-flop powers up to a definite bit.
     if ((comp.kind === "NM" || comp.kind === "PM") && real) {
       params[ei * PARAM_STRIDE + 1] = MOSFET_VTH_MISMATCH * jitter(comp.id);
+    }
+    // Capacitor leakage (Realistic mode only): the self-discharge time constant tau (s) in the
+    // reserved leak slot, per quality tier — sim-core stamps a parallel G = C/tau, so a charged cap
+    // bleeds off (a DRAM 1T1C cell / sample-and-hold loses its value; a budget electrolytic droops
+    // faster than a film cap) while a filter cap (tau ≫ signal period) is unaffected. Omitted in Ideal
+    // mode → perfect caps. EC's element is its expanded ideal-cap (`ei` = capIdx), so this lands on it.
+    if ((comp.kind === "C" || comp.kind === "EC") && real) {
+      const tier = comp.tier ?? DEFAULT_TIER;
+      params[ei * PARAM_STRIDE + CAP_LEAK_SLOT] =
+        comp.kind === "EC" ? ecLeakTau(tier) : capLeakTau(tier);
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an

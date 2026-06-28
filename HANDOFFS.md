@@ -5,6 +5,44 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention (the DRAM mirror of (226))
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Owner asked "can we do the same for a DRAM cell?" →
+scoped + built. Full gate green: sim-core **208** (incl. golden + repro), web **309**, sim-protocol,
+build:wasm, web check/lint/build all 0.
+
+**Scope finding (verified headless):** DRAM is **1T1C** (charge on a cap), NOT a bistable latch → **no
+metastability**. An unwritten transistor 1T1C cell already powers up to a definite **0**; a written
+cell holds the realistic NMOS weak-1 (~3 V). The metastability break is N/A for the cell (and the DRAM
+**sense amp** — a cross-coupled latch — is already covered by `break_metastable_latches`). The real
+DRAM gap is the **opposite**: our ideal cap never leaks → reads as non-volatile SRAM-on-a-cap.
+
+**Landed — capacitor leakage (the owner's design call: ALL caps leak, proportional to reality, gated by
+quality):**
+- **sim-core:** `cap_leak_g(e)` = `C / tau` from `CAP_LEAK_SLOT` (= 5, reserved range so it never
+  collides with the ESR/ESL tier block at slots 0/1). Stamped as a parallel conductance (no history) in
+  **both** transient cap companions (linear `solve_into_readout` + nonlinear
+  `solve_into_readout_newton`); the OP solve and the cap's displacement-current readout are untouched.
+  `tau = 0` → no leak.
+- **web (`tiers.ts` + `buildNetlist`):** `capLeakTau(tier)` = `[1, 8, 60, 600] s` (budget…lab,
+  game-scaled, realistic ordering); `ecLeakTau` = ×0.2 (electrolytics leak more). Emitted on `C`/`EC`
+  **only in Real mode** (EC's leak lands on its expanded ideal-cap element). Mirrors the
+  resistor-tolerance / Vth-mismatch pattern.
+
+**Golden-safe by construction:** the RC golden's cap has `tau = 0` (built sim-core-direct, no
+buildNetlist) → no leak → `0xeaac…` untouched (verified). Ideal mode emits nothing → every existing
+cap byte-identical; the leak is gentle over typical step counts (τ_mid = 8 s = 4 M steps), so no
+existing Real-mode test moved. Tests: `leaky_capacitor_settles_at_the_insulation_divider`,
+`leaky_capacitor_run_is_reproducible` (sim-core); `dramCell.test.ts` (Real-mode emission gate + a
+written 1T1C cell decays in Real, holds rock-steady in Ideal).
+
+**Note for next agent:** `tau` is **game-scaled** (real film caps leak over hours/days; real DRAM
+decays in ms via the *transistor* off-current, which we don't model — only the cap dielectric leak).
+Ordering is realistic, absolute is compressed for legibility (diode-`TT` convention). A future
+refinement could add an access-transistor subthreshold leak for true DRAM-speed decay.
+
+---
+
 ## 2026-06-28 (226) — Latch metastability break: transistor SRAM powers up to a real bit (golden-safe)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Owner picked "latch metastability break" as the next engine

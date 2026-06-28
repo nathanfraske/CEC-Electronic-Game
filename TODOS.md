@@ -6,6 +6,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention LANDED, golden-safe
+
+- ~~**"Same as SRAM, for DRAM?"**~~ SCOPED + DONE. DRAM is **1T1C** (charge on a cap), not bistable →
+  **no metastability** (verified: unwritten 1T1C powers up to a definite 0; written cell holds the
+  realistic NMOS weak-1 ~3 V). The metastability break is N/A for the cell; the DRAM **sense amp**
+  (cross-coupled) is already covered by `break_metastable_latches`. The real DRAM gap is the
+  **opposite** — our ideal cap never leaks.
+- ~~**Capacitor leakage** (owner: all caps leaky, proportional to reality, gated by quality)~~ DONE.
+  **sim-core:** `cap_leak_g(e) = C/tau` from `CAP_LEAK_SLOT` (= 5, reserved range), stamped as a
+  parallel conductance (no history) in both transient cap companions; OP solve + displacement-current
+  readout untouched; `tau = 0` → no leak. **web:** `capLeakTau(tier) = [1,8,60,600] s` (game-scaled,
+  realistic ordering), `ecLeakTau = ×0.2`; emitted on `C`/`EC` **Real mode only**. Golden-safe (RC
+  golden's cap `tau = 0` → byte-identical; `golden_snapshot_hash_is_stable` green). Tests:
+  `leaky_capacitor_settles_at_the_insulation_divider` + `…run_is_reproducible` (sim-core, 208);
+  `web/src/lib/dramCell.test.ts` (emission gate + 1T1C decays in Real, holds in Ideal; web 309).
+- [ ] **Optional future:** an access-transistor subthreshold leak for true DRAM-speed decay (today only
+  the cap dielectric leak is modelled; `tau` is game-scaled for legibility). See the convergence doc's
+  DRAM § + (227) handoff.
+
+---
+
 ## 2026-06-28 (226) — Latch metastability break (transistor SRAM power-up) LANDED, golden-safe
 
 - ~~**Latch-state selection / deterministic metastability break**~~ DONE — the #88 follow-on, the "actual

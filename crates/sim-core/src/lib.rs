@@ -2510,6 +2510,19 @@ const RATED_CURRENT_SLOT: usize = 2;
 /// realistic ordering (Schottky < fast-recovery < rectifier) is what matters, not the absolute ns.
 const DIODE_TT_SLOT: usize = 3;
 
+/// Param slot carrying an [`ELEM_CAPACITOR`]'s **self-discharge time constant `tau`** (seconds) — its
+/// leakage modelled as a parallel insulation resistance `R_leak`, with `tau = R_leak·C`. The transient
+/// solve stamps a parallel leak conductance `G = C / tau` (see [`cap_leak_g`]), so a charged cap bleeds
+/// off with time constant `tau` (golden-safe: `0` = no leak, the default for every Ideal-mode cap, the
+/// RC golden, and every existing netlist). The web layer installs `tau` per **quality tier** only in
+/// Real mode — a film cap leaks far slower than a budget electrolytic — so a held cap (a DRAM 1T1C
+/// storage cell, a sample-and-hold) self-discharges and must be refreshed, while a filter/coupling cap
+/// (`tau` ≫ its signal period) is unaffected. In the reserved slot range (≥ 4), so it never collides
+/// with the cap's ESR/ESL tier block (slots 0/1). Like `TT`, `tau` is **game-scaled** for legibility —
+/// the realistic ordering (budget < mid < high-end < lab-grade) is what matters, not the absolute
+/// seconds.
+const CAP_LEAK_SLOT: usize = 5;
+
 /// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
 /// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
 /// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
@@ -2614,7 +2627,8 @@ pub struct Element {
     /// the additive, golden-safe property. Current slot map (slot 0 is the kind's primary
     /// knob, slot 1 its secondary; slot 2 is a **general** rating read for every kind):
     /// - [`ELEM_OPAMP`]: `[0]` = gain-bandwidth product (Hz; `0` → [`OPAMP_GBW`]).
-    /// - [`ELEM_CAPACITOR`]: `[0]` = ESR (Ω), `[1]` = ESL (H) — AC parasitics.
+    /// - [`ELEM_CAPACITOR`]: `[0]` = ESR (Ω), `[1]` = ESL (H) — AC parasitics; `[`[`CAP_LEAK_SLOT`]`]`
+    ///   = self-discharge time constant `tau` (s) — a Real-mode leakage `G = C/tau` (`0` = ideal/no leak).
     /// - [`ELEM_INDUCTOR`]: `[0]` = DCR (Ω), `[1]` = winding capacitance (F) — AC parasitics.
     /// - [`ELEM_VSOURCE`]/[`ELEM_ACSOURCE`]: `[0]` = output impedance (Ω).
     /// - [`ELEM_NMOS`]/[`ELEM_PMOS`]: `[0]` = transconductance `Kp` (A/V²; `0` → [`MOS_KP`]),
@@ -2764,6 +2778,22 @@ fn param_or(params: &[f64; PARAM_STRIDE], i: usize, default: f64) -> f64 {
         v
     } else {
         default
+    }
+}
+
+/// A capacitor's **leakage conductance** (siemens): a parallel `G = C / tau` across its terminals,
+/// where `tau` ([`CAP_LEAK_SLOT`], seconds) is the self-discharge time constant. `tau ≤ 0` (every
+/// Ideal-mode cap, the RC golden, every existing netlist) → `0` → **no leak**, so the transient stamp
+/// is byte-identical. Read raw (`tau > 0` test) — the slot is unset (0) on a non-leaky cap, never
+/// negative. Because `G` scales with `C`, the discharge time constant is `tau` regardless of the
+/// capacitance — a dielectric/quality property, exactly as real insulation resistance behaves.
+#[inline]
+fn cap_leak_g(e: &Element) -> f64 {
+    let tau = e.params[CAP_LEAK_SLOT];
+    if tau > 0.0 {
+        e.value / tau
+    } else {
+        0.0
     }
 }
 
@@ -4809,20 +4839,23 @@ impl Sim {
                 }
                 ELEM_CAPACITOR => {
                     // Backward-Euler companion: conductance g = C/dt with a
-                    // history current source ieq = g * (V(a)-V(b))_prev.
+                    // history current source ieq = g * (V(a)-V(b))_prev. A Real-mode leak adds a
+                    // parallel conductance (C/tau, no history) so the cap slowly self-discharges; gm =
+                    // g for an ideal cap (no leak) → byte-identical.
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
+                    let gm = g + cap_leak_g(e);
                     if let Some(r) = ia {
-                        mat[r * n + r] += g;
+                        mat[r * n + r] += gm;
                         rhs[r] += ieq;
                     }
                     if let Some(r) = ib {
-                        mat[r * n + r] += g;
+                        mat[r * n + r] += gm;
                         rhs[r] -= ieq;
                     }
                     if let (Some(r), Some(c)) = (ia, ib) {
-                        mat[r * n + c] -= g;
-                        mat[c * n + r] -= g;
+                        mat[r * n + c] -= gm;
+                        mat[c * n + r] -= gm;
                     }
                 }
                 ELEM_VSOURCE => {
@@ -5883,19 +5916,22 @@ impl Sim {
                     }
                 }
                 ELEM_CAPACITOR => {
+                    // Backward-Euler companion (+ Real-mode parallel leak C/tau, no history); gm = g
+                    // for an ideal cap → byte-identical. See the linear path for the derivation.
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
+                    let gm = g + cap_leak_g(e);
                     if let Some(r) = ia {
-                        base_mat[r * n + r] += g;
+                        base_mat[r * n + r] += gm;
                         base_rhs[r] += ieq;
                     }
                     if let Some(r) = ib {
-                        base_mat[r * n + r] += g;
+                        base_mat[r * n + r] += gm;
                         base_rhs[r] -= ieq;
                     }
                     if let (Some(r), Some(c)) = (ia, ib) {
-                        base_mat[r * n + c] -= g;
-                        base_mat[c * n + r] -= g;
+                        base_mat[r * n + c] -= gm;
+                        base_mat[c * n + r] -= gm;
                     }
                 }
                 ELEM_VSOURCE => {
@@ -16348,6 +16384,76 @@ mod tests {
             run(),
             "the symmetry-broken latch must reproduce exactly"
         );
+    }
+
+    /// A Real-mode capacitor leak ([`CAP_LEAK_SLOT`] = self-discharge `tau`) is a parallel insulation
+    /// resistance `R_leak = tau/C`. In an RC charge (V → R → C → gnd) the cap no longer reaches the
+    /// full source voltage — it settles at the resistive divider `V·R_leak/(R + R_leak)`. With
+    /// `tau = 1 ms`, `C = 1 µF` ⇒ `R_leak = 1 kΩ = R` ⇒ 2.5 V; an ideal cap (`tau = 0`, the default)
+    /// charges to ~5 V. Proves the leak conductance is stamped (and that `tau = 0` is the ideal cap).
+    #[test]
+    fn leaky_capacitor_settles_at_the_insulation_divider() {
+        // node 0 = gnd, 1 = source/R junction, 2 = R/C junction. Cap is element index 2.
+        let charge = |tau: f64| -> f64 {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + CAP_LEAK_SLOT] = tau;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1.0e-6],
+                &[0.0; 3],
+                &params,
+            ));
+            // Settle well past the (leak-shortened) charge time constant (R‖R_leak·C = 0.5 ms = 250 steps).
+            for _ in 0..4000 {
+                sim.step();
+            }
+            sim.node_voltages()[2]
+        };
+        let ideal = charge(0.0);
+        let leaky = charge(1.0e-3); // R_leak = tau/C = 1 kΩ = R → half-divider
+        assert!(
+            (ideal - 5.0).abs() < 0.05,
+            "an ideal cap (tau = 0) charges to the full source: {ideal}"
+        );
+        assert!(
+            (leaky - 2.5).abs() < 0.1,
+            "a leaky cap settles at the R/R_leak divider (2.5 V), not the source: {leaky}"
+        );
+    }
+
+    /// The leak is a fixed linear conductance, so a leaking RC reproduces its snapshot-hash stream
+    /// exactly — the determinism contract holds with the new transient term.
+    #[test]
+    fn leaky_capacitor_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + CAP_LEAK_SLOT] = 2.0e-3;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1.0e-6],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a leaking RC must reproduce exactly");
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no

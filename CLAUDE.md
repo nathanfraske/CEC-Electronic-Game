@@ -150,6 +150,14 @@ what the param affects:
 - **Transient params** (source output impedance, MOSFET Kp, BJT β, resistor tolerance) gate
   **web-side in `buildNetlist`** — skipped when `!real` (see `TRANSIENT_TIER_KINDS`). Resistor
   tolerance also deviates the value deterministically per component id (`jitter`).
+- **Capacitor leakage** (`CAP_LEAK_SLOT` = 5, a transient param in the reserved slot range): a cap's
+  self-discharge time constant `tau`, emitted **web-side Real-mode-only** per quality tier via a
+  dedicated `capLeakTau`/`ecLeakTau` (NOT the `tierParams` ESR/ESL block — that's AC-only). sim-core
+  stamps a parallel leak conductance `G = C/tau` in **both transient solves** (`cap_leak_g`), so a
+  charged cap self-discharges (a held cap — DRAM 1T1C cell, sample-and-hold — loses its value;
+  electrolytics leak ~5× a film cap; filter caps with `tau ≫` their signal period are untouched).
+  `tau = 0` (Ideal / every existing netlist / the **RC golden's cap**) → no leak → byte-identical.
+  Game-scaled (seconds), realistic ordering — like diode `TT`.
 
 **Convention — every new component with real grades ships with its tier presets from the
 start:** add it to `tiers.ts` (wire its params in sim-core, or expand it web-side), make

@@ -123,6 +123,37 @@ export function resistorTolerance(tier: number): number {
   return R_TOLERANCE_BY_TIER[t] ?? 0.01;
 }
 
+// A capacitor's leakage is its insulation resistance, expressed as the self-discharge time constant
+// tau = R_leak·C — a dielectric/quality property, independent of the capacitance value. In REALISTIC
+// mode buildNetlist installs tau in the cap's leak slot (CAP_LEAK_SLOT), so a charged cap slowly
+// self-discharges: a held cap (a DRAM 1T1C storage cell, a sample-and-hold, a bootstrap) loses its
+// value and must be refreshed, while a filter/coupling cap (tau ≫ its signal period) is unaffected.
+// Ideal mode = perfect, non-leaking caps. GAME-SCALED for legibility (seconds, not the real
+// hours/days a film cap takes): the realistic ORDERING — budget < mid < high-end < lab-grade — is
+// what matters, not the absolute time. Mirrors the diode reverse-recovery TT convention.
+const CAP_LEAK_TAU_BY_TIER = [1.0, 8.0, 60.0, 600.0]; // budget … lab, seconds (self-discharge tau)
+
+// An electrolytic's oxide dielectric leaks far more than a film/ceramic cap (lower insulation
+// resistance), so its self-discharge tau is a fraction of the film-cap value at the same grade.
+const EC_LEAK_FACTOR = 0.2;
+
+/** The self-discharge time constant tau (s) for a film/ceramic cap (kind `C`) at the given tier —
+ * buildNetlist installs it as the cap's leak (Real mode only). Larger tau = a better, less-leaky
+ * part. */
+export function capLeakTau(tier: number): number {
+  const t = Math.max(
+    0,
+    Math.min(CAP_LEAK_TAU_BY_TIER.length - 1, Math.round(tier)),
+  );
+  return CAP_LEAK_TAU_BY_TIER[t] ?? 8.0;
+}
+
+/** The self-discharge tau (s) for an electrolytic cap (kind `EC`) at the given tier — leakier (a
+ * shorter tau) than a film cap of the same grade. */
+export function ecLeakTau(tier: number): number {
+  return capLeakTau(tier) * EC_LEAK_FACTOR;
+}
+
 /** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
 export function tierParams(kind: string, tier: number): number[] | null {
   const grades = TIER_PARAMS[kind];
