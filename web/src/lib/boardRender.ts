@@ -890,16 +890,25 @@ export function pinOutward(ep: Endpoint, graph: BoardGraph): Dir | null {
   const kind = graph.kindOf(c);
   const pin = kind?.pins[ep.pinIndex];
   if (!kind || !pin) return null;
-  const ox = pin.dx - (kind.w - 1) / 2;
-  const oy = pin.dy - (kind.h - 1) / 2;
-  if (ox === 0 && oy === 0) return null;
-  const rr = rotateOffset(ox, oy, c.rot, c.mirror);
-  const ax = Math.abs(rr.col);
-  const ay = Math.abs(rr.row);
-  if (Math.abs(ax - ay) < 0.4) return null; // corner pin → ambiguous facing
-  return ax > ay
-    ? { x: Math.sign(rr.col), y: 0 }
-    : { x: 0, y: Math.sign(rr.row) };
+  // The pin faces its NEAREST body edge. (Replaces the old centre-distance-RATIO test, which compared
+  // |dx−cx| vs |dy−cy|: on a long ONE-SIDED pinout — many pins stacked on one narrow edge, e.g. the ALU's
+  // 4-bit logic — a pin near the top/bottom of that column sat farther from the body's vertical centre than
+  // from the side wall, so it was mis-classified as facing UP/DOWN and its conduit stub bent INWARD along
+  // the wall instead of exiting outward. Distances to the four walls are exact integers, so the nearest is
+  // unambiguous except at a true corner.)
+  const left = pin.dx;
+  const right = kind.w - 1 - pin.dx;
+  const top = pin.dy;
+  const bottom = kind.h - 1 - pin.dy;
+  const min = Math.min(left, right, top, bottom);
+  const onSide = left === min || right === min; // nearest is a left/right wall
+  const onCap = top === min || bottom === min; // nearest is a top/bottom wall
+  if (onSide && onCap) return null; // corner (or a centred pin) → ambiguous facing
+  const lx = onSide ? (left === min ? -1 : 1) : 0;
+  const ly = onCap ? (top === min ? -1 : 1) : 0;
+  if (lx === 0 && ly === 0) return null;
+  const rr = rotateOffset(lx, ly, c.rot, c.mirror);
+  return { x: Math.sign(rr.col), y: Math.sign(rr.row) };
 }
 
 /** The conduit's exit direction at a pin end for {@link conduitDrawRoute}. A die-frame PAD already leaves
