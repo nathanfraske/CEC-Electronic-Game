@@ -6,6 +6,36 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (204) — Engine "CLK bug" ROOT-CAUSED (Newton non-convergence on raw transistors)
+
+- ~~**Engine CLK-coupling bug — ROOT-CAUSED**~~ (supersedes the 203 "node-voltage dump" plan, which was
+  aimed at the wrong mechanism). NOT electrical coupling / node-merge. The ALU flattens to **548 MOSFETs**
+  and the seeded Newton solve is **non-convergent at scale** (`iters=100, conv=false` every tick → garbage
+  last iterate). "CLK changes it" = the seed is the prior tick's `node_v` (CLK-dependent), so the garbage
+  differs. Fragile (flips with input pattern + a 1 GΩ sense R). Proven with the new
+  `newton_iters()/newton_converged()` telemetry. Full writeup + measurement tables:
+  **`docs/sim/transistor-scale-convergence.md`**.
+- ~~**Proven fix (golden-safe)**~~: flip nested instances to `fidelity:'behavioral'` → ALU = **34 linear
+  LUTs, 0 FETs** → linear solve, `iters=0` → **logic ops bit-exact** (AND(6,2)=2, OR=6, XOR=4, NOT-A=9).
+  The behavior already exists on 9/21 cells; 0/58 instances opt in — that's the gap.
+- ~~**Shipped (golden-safe, verified)**~~: `Sim::last_newton_iters()/last_newton_converged()` +
+  `Simulation.newton_iters()/newton_converged()` (read-only, never hashed; golden tests pass). Discovered
+  the **wasm core runs headless in node** (`initSync({module})`) → browser-free drive→step→read tests.
+- [ ] **Build #35 — recursive "use behavioral fidelity" toggle** (golden-safe, web-only): for a selected
+  cell, set `fidelity:'behavioral'` on every nested instance whose def has a valid `behavior`. THE unlock
+  for scale (a deep hierarchy can't be opted in by hand). This is what makes the owner's ALU run.
+- [ ] **Owner: confirm ALU arithmetic-mode encoding (M/SEL/Cin).** Logic ops verified; M=1 ops read 0 in
+  tried configs (a *converged* result → not the engine bug). Either control-encoding I didn't match, or a
+  stale `behavior` word on an arithmetic-only sub-gate (adder carry / output-mux select).
+- [ ] **Optional: Newton globalization (gmin/source stepping + damped Newton)** so small/medium
+  raw-transistor designs converge. GOLDEN-SENSITIVE → moves `0xeaac…fa24` → regenerate per
+  `docs/determinism.md`. Needs explicit owner greenlight; never scales to a CPU (Path A required there).
+- [ ] **Test-bench cheap wins** (unchanged from 203): pin card, "Check It", input renderers, spotlight via
+  `NET_DIM_ALPHA`, "Debug this →" on FAIL, settle chip — the `newton_converged()` accessor is the
+  "did it finish thinking?" detector.
+
+---
+
 ## 2026-06-27 (203) — Engine CLK-bug narrowed; test-bench design doc (owner)
 
 - ~~**Test-bench design doc**~~: `docs/ui/test-bench-design.md` (3-voice panel synthesis). The drive→step→

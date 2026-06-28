@@ -158,6 +158,17 @@ impl Simulation {
         self.inner.tick()
     }
 
+    /// Diagnostic: Newton iterations taken by the most recent nonlinear solve (telemetry only — never
+    /// hashed). At the cap with `newton_converged()` false the solve did not converge.
+    pub fn newton_iters(&self) -> u32 {
+        self.inner.last_newton_iters() as u32
+    }
+
+    /// Diagnostic: whether the most recent nonlinear solve converged (telemetry only).
+    pub fn newton_converged(&self) -> bool {
+        self.inner.last_newton_converged()
+    }
+
     /// Batched state snapshot for the renderer, as a `Float64Array`. Read once
     /// per frame and handed to PixiJS, never queried per component.
     ///

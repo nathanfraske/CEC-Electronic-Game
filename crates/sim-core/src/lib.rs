@@ -3517,6 +3517,13 @@ pub struct Sim {
     /// ([`Sim::commit_net_levels`]) use that driver's family levels. Paired with
     /// `digital_drive`/`digital_vhigh`; recomputed every solve. `0` (LEGACY) if undriven.
     digital_family: Vec<u8>,
+    /// Diagnostic ONLY (telemetry/render — NEVER folded into `snapshot_hash`, never read by the solve):
+    /// the Newton iteration count of the most recent nonlinear solve, and whether it converged. A solve
+    /// that reaches [`NEWTON_MAX_ITERS`] without converging (`last_newton_converged == false`) settled to
+    /// its last iterate — the sign of a network too large/stiff for the bare seeded Newton (e.g. a big
+    /// transistor-level cell). Pure read-out; adding/reading these cannot move the golden.
+    last_newton_iters: usize,
+    last_newton_converged: bool,
     /// Per-element junction voltage `V(a) - V(b)` carried for nonlinear devices
     /// (today: diodes). Seeds the Newton iterate and gives [`pnjlim`] its
     /// previous-iterate reference, so each step starts from the converged
@@ -3634,6 +3641,8 @@ impl Sim {
             digital_vhigh: vec![0.0],
             digital_vlow: vec![0.0],
             digital_family: vec![0],
+            last_newton_iters: 0,
+            last_newton_converged: true,
             diode_vd: Vec::new(),
             mosfet_vgs: Vec::new(),
             mosfet_vds: Vec::new(),
@@ -5203,6 +5212,9 @@ impl Sim {
             {
                 // Recompute node voltages from the limited junctions on the next
                 // pass would be a no-op (already converged); commit and stop.
+                // Diagnostic only (not hashed, not read by the solve).
+                self.last_newton_iters = _iter + 1;
+                self.last_newton_converged = true;
                 self.node_v[0] = 0.0;
                 self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
                 return x;
@@ -5211,6 +5223,9 @@ impl Sim {
         }
 
         // Iteration cap reached: settle deterministically to the last iterate.
+        // Diagnostic only (not hashed, not read by the solve).
+        self.last_newton_iters = NEWTON_MAX_ITERS;
+        self.last_newton_converged = false;
         self.node_v[0] = 0.0;
         self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
         x
@@ -6828,6 +6843,19 @@ impl Sim {
     /// Current tick count since the netlist was installed or reset.
     pub fn tick(&self) -> u64 {
         self.tick
+    }
+
+    /// Diagnostic: Newton iterations taken by the most recent nonlinear solve (telemetry only — never
+    /// hashed, never affects the solve). [`NEWTON_MAX_ITERS`] with [`Sim::last_newton_converged`] false
+    /// means the solve hit the cap without converging (settled to its last iterate).
+    pub fn last_newton_iters(&self) -> usize {
+        self.last_newton_iters
+    }
+
+    /// Diagnostic: whether the most recent nonlinear solve converged (telemetry only). A linear netlist
+    /// never runs Newton, so this stays at its install default (true).
+    pub fn last_newton_converged(&self) -> bool {
+        self.last_newton_converged
     }
 
     /// Number of circuit nodes including ground.

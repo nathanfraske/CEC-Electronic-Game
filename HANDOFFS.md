@@ -5,6 +5,52 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (204) — Engine "CLK bug" ROOT-CAUSED: Newton non-convergence on raw transistors at scale
+
+**State:** 🟢 root-caused with hard numbers + proven fix path. Supersedes (203)'s "subtle solver coupling"
+guess. Full writeup: **`docs/sim/transistor-scale-convergence.md`**. Owner directive ("get on the engine
+bug — the bigger issue") is answered.
+
+**What it actually is:** the owner's 4-BIT FULL ALU flattens to **548 discrete MOSFETs**, and the core's
+seeded Newton solve (`solve_into_readout_newton`, `NEWTON_MAX_ITERS=100`) is **non-convergent at that
+scale** — `iters=100, converged=false` every tick → it settles to a garbage last iterate. The "CLK changes
+the result" is a **symptom**: the Newton seed each tick is the previous tick's `node_v`, which differs for
+CLK=0 vs 1, so the non-converged garbage differs. Nets are genuinely isolated; the coupling is **numerical**
+(that's why "core stamps verbatim, no merge" was true yet coupling appeared). Convergence is **fragile** —
+it flips with input pattern and with a trivial 1 GΩ sense resistor (classic high-gain CMOS DC solve with NO
+globalization: no gmin/source stepping, no damping). Every sub-cell converges alone (Inverter→200-FET ripple
+adder all 1 iter); the cliff is the assembled ALU.
+
+**Why the owner hit it (workflow gap, NOT a design error):** 9/21 cells already have characterized
+`behavior` (XOR/OR/NOR/INV/NAND/AND/2:1MUX/1-BIT LOGIC/ZERO DETECT) but **0/58 nested instances** opt into
+`fidelity:'behavioral'`, so flatten inlines raw transistors everywhere → 548 FETs.
+
+**Proven fix (golden-safe = backlog #35):** flip nested instances to behavioral fidelity → ALU collapses
+to **34 linear LUTs, 0 MOSFETs** → `has_nonlinear=false` → **linear single pass, `iters=0`**, whole sweep
+~1 s headless → **logic ops compute bit-exact** (A=6,B=2: AND=2, OR=6, XOR=4, NOT-A=9). Raw-transistor
+build gave garbage (AND=9) for the same op. (Arithmetic-mode M=1 reads 0 in tried configs — a *converged*
+result, so NOT the engine bug; flagged for owner: control-encoding detail or stale arithmetic-path word.)
+
+**Optional engine fix (golden-SENSITIVE → needs greenlight):** add Newton globalization (gmin/source
+stepping + damped Newton) so small/medium raw-transistor designs converge. Moves the golden
+`0xeaac…fa24` → regenerate per `docs/determinism.md`. Never scales to a CPU anyway (Path A is mandatory
+there). Don't start without explicit owner OK.
+
+**Shipped this session (golden-safe, verified):**
+- sim-core `Sim::last_newton_iters()/last_newton_converged()` + sim-wasm `Simulation.newton_iters()/
+  newton_converged()` — read-only solver telemetry (never hashed; `run_is_reproducible` +
+  `golden_snapshot_hash_is_stable` pass). This is the engine half of the test-bench "did it finish
+  thinking?" detector.
+- Discovery: **the wasm core runs headless in node** via `initSync({module: bytes})` — the "APP-ONLY"
+  caveat on `characterize.ts`/`sequentialTrace.ts` is obsolete; unlocks browser-free drive→step→read tests.
+- `docs/sim/transistor-scale-convergence.md` (this analysis, with the measurement tables).
+
+**Next:** (1) build **#35** (recursive "use behavioral fidelity" toggle) — the real unlock for scale.
+(2) Owner: confirm arithmetic-mode encoding (M/SEL/Cin) so I can verify the adder path. (3) Decide on the
+optional golden-sensitive Newton globalization. (4) Test-bench cheap wins (`docs/ui/test-bench-design.md`).
+
+---
+
 ## 2026-06-27 (203) — Engine CLK-bug narrowed (real, subtle); test-bench design doc (owner)
 
 **State:** 🟢 design doc landed; engine bug deeply localized (no fix yet — needs sim-core instrumentation +
