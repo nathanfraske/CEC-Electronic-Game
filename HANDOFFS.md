@@ -5,6 +5,34 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (223) — MOSFET P/N legibility (verified live) + reference-library curriculum + self-interaction MCP
+
+**State:** 🟢 All on `claude/kind-turing-hdelb3`, pushed. Big realization this run: **the agent can SEE +
+DRIVE the live app** (Chromium+Playwright pre-installed) — never say "can't verify visually" again. Now
+surfaced in the SessionStart hook + CLAUDE.md so it isn't forgotten.
+
+**Landed:**
+- **MOSFET P/N legibility (owner ask)** — NMOS reads **cyan**, PMOS **amber + the inversion bubble** on the
+  gate, at any rotation (verified live via shoot.mjs at rot 0/90/180/270). `glyphs.ts mosfetSchematic` (the
+  symbol at normal zoom, both lenses) + `analogyDrawers.ts drawAnalogyMosfet` (valve) + `detailDrawers.ts
+  drawDetailMOSFET` (silicon, + a source arrowhead). Colour is rotation-invariant; the channel keeps its
+  voltage colour. Web 300 green. **Remaining: drain/source TEXT labels** (the pin-label system) — the colour
+  + bubble nail P-vs-N; D-vs-S text is the next increment.
+- **Reference-library curriculum** (`docs/reference-library-curriculum.md`) — the owner's earn-it-by-hand →
+  unlock → "sneaky" behavioral-swap-in vision, grounded in existing machinery (characterize → word+sig, the
+  fidelity collapse, the prefab library). **P1 keystone built**: `referenceMatch.ts` functional identity
+  oracle (canonical truth-table + arity; 11 tests). P2 unlock-state / P3 auto-swap / P4 bin-UX remain.
+- **Self-interaction MCP** `cec-app` (`web/scripts/mcp-app.mjs`, `.mcp.json`): persistent app session —
+  `cec_open`/`cec_screenshot`/`cec_eval`/`cec_close`. Smoke-tested.
+- **Earlier this run (already pushed):** verified the transistor 6T SRAM works as memory
+  (`sramTransistor.test.ts`); confirmed the owner's whole transistor gate library exists in `prefabs.ts`.
+
+**Naming nit flagged to owner (gates):** the prefab tagged `OR Gate` actually computes **NOR**, and
+`OR-Gate` (hyphen) is the real OR — rename so the label states the function (NOR → OR); `CEC9001` "TMS Gate"
+is a transmission gate. The CMOS-native basis (INV/NAND/NOR raw → AND/OR = primitive+INV) is the right spine.
+
+---
+
 ## 2026-06-28 (222) — Owner pivot: use transistor sub-assemblies (6T SRAM + gates) over behavioral; SRAM VERIFIED working
 
 **Owner directive:** "Use my sub-assembly for the SRAM primitive, and replace all the gates you can with my
