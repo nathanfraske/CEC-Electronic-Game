@@ -270,6 +270,13 @@
       color: "var(--cyan)",
     },
     {
+      tag: "RAM",
+      name: "RAM (SRAM)",
+      desc: "Behavioral memory · addr/data/WE",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "EC",
       name: "Electrolytic Cap",
       desc: "Bulk storage + ESR",
@@ -787,6 +794,7 @@
     FF: "Logic & ICs",
     HADD: "Logic & ICs",
     FADD: "Logic & ICs",
+    RAM: "Logic & ICs",
     MUX2: "Logic & ICs",
     DMUX: "Logic & ICs",
     MAJ3: "Logic & ICs",
