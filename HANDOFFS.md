@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (207) — Test-bench grading ENGINE landed (#89 foundation)
+
+**State:** 🟢 PR #302 (pending). The load-bearing core of the test bench (doc §2) — headless, golden-safe,
+tested. UI "doors" are the next pieces (need visual iteration).
+
+**Shipped:** `web/src/lib/testBench.ts` — `gradeCombinational(graph, frameId, roles, {expectedWord?})` runs
+the drive→**step-until-stable**→read→compare loop on a SCRATCH Simulation. Key vs `characterize.ts`: it
+GRADES against an expected op and **steps until stable** (`settleUntilStable`, quietN=8, eps≈10×NEWTON_RELTOL,
+cap 4096) instead of a fixed settle — the false-failure lesson from the ALU, encoded. Returns per-vector
+`{in,out,settled,expected?,pass?}` + `recognizedAs` (recognizeGate) + `allSettled`/`unsettled` (the honest
+"did not settle") + `allPass`/`firstFail`. Helpers: `pinsFromRoles` (refuses multi-output/>4-in/inout →
+Door-2 record-a-run), `expectedWordForOp` (AND/OR/NOR/NAND/XOR/XNOR/NOT/BUF → answer key). Tests
+(`testBench.test.ts`, self-contained NAND-gate fixture): recognizes NAND + all settle; PASS as NAND; "Not
+yet" as AND with firstFail=0 + per-bit pass; refuses multi-output. Golden-safe (scratch sim, nothing hashed;
+golden tests untouched — no sim-core change). Full gate green (web 272). Note: needed a per-file
+`/// <reference types="node" />` in the test (first test to load wasm via `initSync`+fs; app tsconfig types
+are svelte/vite only).
+
+**Next (build order, doc §6):** UI doors over this engine — (1) **Pin card** (role-grouped pins), (2) **Door 1
+"Check It"** button (verdict over gradeCombinational+recognizeGate), (3) input renderers, (4) per-bit fail
+highlight + spotlight-the-suspect (`NET_DIM_ALPHA`), (5) settle chip + "Debug this →". These need screenshot
+iteration. Then #88 Newton globalization (golden-sensitive, LAST/isolated).
+
+---
+
 ## 2026-06-28 (206) — ALU ISA verification (#87): ADD integration + NOR gap (design, not engine)
 
 **State:** 🟢 verified headless (behavioral mode → instant). All findings are DESIGN-level in the owner's

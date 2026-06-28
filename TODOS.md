@@ -36,9 +36,11 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - [ ] **Optional: Newton globalization (gmin/source stepping + damped Newton)** so small/medium
   raw-transistor designs converge. GOLDEN-SENSITIVE → moves `0xeaac…fa24` → regenerate per
   `docs/determinism.md`. Needs explicit owner greenlight; never scales to a CPU (Path A required there).
-- [ ] **Test-bench cheap wins** (unchanged from 203): pin card, "Check It", input renderers, spotlight via
-  `NET_DIM_ALPHA`, "Debug this →" on FAIL, settle chip — the `newton_converged()` accessor is the
-  "did it finish thinking?" detector.
+- [ ] **Test-bench cheap wins (#89)** — IN PROGRESS. ~~Engine core~~ DONE (PR #302): `lib/testBench.ts`
+  `gradeCombinational` (drive→**step-until-stable**→read→compare on a scratch sim) + `settleUntilStable` +
+  `pinsFromRoles` + `expectedWordForOp`; tested headless (NAND fixture). Remaining = UI doors (need
+  screenshot iteration): pin card · Door-1 "Check It" button · input renderers · per-bit fail highlight +
+  spotlight (`NET_DIM_ALPHA`) · settle chip + "Debug this →".
 
 ---
 
