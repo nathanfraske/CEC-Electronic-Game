@@ -98,6 +98,10 @@
   } from "./lib/userIc";
   import { characterizeCell } from "./lib/characterize";
   import { gradeCombinational } from "./lib/testBench";
+  import {
+    registerPrefabLibrary,
+    PREFAB_USER_ICS,
+  } from "./lib/circuits/prefabs";
   import { traceSequentialCell } from "./lib/sequentialTrace";
   import { untaggedSignalPins, floatingPowerPins } from "./lib/cellAnalysis";
   import {
@@ -1716,6 +1720,19 @@
       .filter((e: LibraryEntry) => entryRole(e) === "subassembly")
       .map(libRow);
   });
+  /** The built-in REFERENCE LIBRARY rows: the curated prefab cells (userIc.ts registry, registered at
+   * mount via `registerPrefabLibrary`). Sourced from the module data — NOT the personal localStorage
+   * library — so they're a read-only reference set that never mixes with (or clobbers) the player's own
+   * sealed cells. `builtin: true` drops the library-store controls (rename/remove/tape-out) from the row,
+   * leaving only the "learn from it" actions (Edit ▸ open the die, Behavior, Datasheet). They place/nest
+   * via the same arm path as any sealed cell, since `registerPrefabLibrary` registered each kind. */
+  const prefabParts = $derived.by(() => {
+    void libRev;
+    return PREFAB_USER_ICS.map((ic) => ({
+      ...libRow({ ic, addedAt: "", source: "imported" } as LibraryEntry),
+      builtin: true,
+    }));
+  });
   /** A family library row's family tag (strip the `#i` suffix off its variant-0 child tag). */
   function familyTagOf(e: LibraryEntry): string {
     const child = e.variants?.[0]?.tag ?? e.ic.tag;
@@ -2791,6 +2808,11 @@
         const primer = EXAMPLES.find((e) => e.id === "primer");
         if (primer) loadExample(primer);
       }
+      // Built-in PREFAB reference library: after the board + its embedded cells have loaded, register the
+      // curated building blocks that aren't already present (the board's own same-named cells WIN — purely
+      // additive, never remapped), so every session has the reference set available in the bin. Golden-safe.
+      registerPrefabLibrary();
+      libRev++;
       // Determinism signal for the screenshot harness (web/scripts/shoot.mjs): the board is loaded and a
       // frame has painted, so a capture is safe to take. Lets the harness wait on a real ready flag rather
       // than a fixed sleep. Render/test only.
@@ -4705,6 +4727,9 @@
         glyphKind?: string;
         // True for a "My Subassemblies" row — adds the Tape-out control (promote → board IC).
         isSubassembly?: boolean;
+        // True for a built-in REFERENCE LIBRARY row — read-only: keeps Edit/Behavior/Datasheet but drops
+        // the personal-library controls (Tape out / Rename / Remove) that would no-op on a non-library cell.
+        builtin?: boolean;
       })}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -4790,15 +4815,17 @@
                     runBehavior(part.tag);
                   }}>◧ Behavior</button
                 >
-                <button
-                  class="ic-row-btn ic-row-tapeout"
-                  title="Tape out → board IC (choose a package, make it placeable)"
-                  aria-label="Tape out {part.name}"
-                  onclick={(e) => {
-                    e.stopPropagation();
-                    tapeOutIc(part.tag);
-                  }}>⬡ Tape out</button
-                >
+                {#if !part.builtin}
+                  <button
+                    class="ic-row-btn ic-row-tapeout"
+                    title="Tape out → board IC (choose a package, make it placeable)"
+                    aria-label="Tape out {part.name}"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      tapeOutIc(part.tag);
+                    }}>⬡ Tape out</button
+                  >
+                {/if}
               {/if}
               <!-- Datasheet is for EVERY built part — a subassembly OR a taped-out IC (a finished chip's
                    published reference card) — so it sits OUTSIDE the subassembly-only authoring buttons. -->
@@ -4819,24 +4846,26 @@
                   >⎇{userIcVariants(part.tag)?.length ?? 0}</span
                 >
               {/if}
-              <button
-                class="ic-row-btn"
-                title="Rename"
-                aria-label="Rename {part.name}"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  startRenameIc(part.tag, part.name);
-                }}>✎</button
-              >
-              <button
-                class="ic-row-btn ic-row-del"
-                title="Remove from My ICs"
-                aria-label="Remove {part.name}"
-                onclick={(e) => {
-                  e.stopPropagation();
-                  removeIc(part.tag, part.name);
-                }}>×</button
-              >
+              {#if !part.builtin}
+                <button
+                  class="ic-row-btn"
+                  title="Rename"
+                  aria-label="Rename {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    startRenameIc(part.tag, part.name);
+                  }}>✎</button
+                >
+                <button
+                  class="ic-row-btn ic-row-del"
+                  title="Remove from My ICs"
+                  aria-label="Remove {part.name}"
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    removeIc(part.tag, part.name);
+                  }}>×</button
+                >
+              {/if}
             </span>
           {:else}
             <span class="part-tier">{part.tier}</span>
@@ -4912,6 +4941,10 @@
           (p) =>
             p.name.toLowerCase().includes(q) || p.tag.toLowerCase().includes(q),
         )}
+        {@const prefabHits = prefabParts.filter(
+          (p) =>
+            p.name.toLowerCase().includes(q) || p.tag.toLowerCase().includes(q),
+        )}
         {@const hits = PARTS.filter(
           (p) =>
             p.name.toLowerCase().includes(q) ||
@@ -4919,9 +4952,12 @@
             p.desc.toLowerCase().includes(q) ||
             (PART_SYNONYMS[p.tag] ?? []).some((s) => s.includes(q)),
         )}
-        {#if hits.length > 0 || icHits.length > 0}
+        {#if hits.length > 0 || icHits.length > 0 || prefabHits.length > 0}
           <ul class="part-list scroll">
             {#each icHits as part (part.tag)}
+              {@render partRow(part)}
+            {/each}
+            {#each prefabHits as part (part.tag)}
               {@render partRow(part)}
             {/each}
             {#each hits as part (part.name)}
@@ -5026,6 +5062,23 @@
               </p>
             {/if}
           </details>
+          <!-- "Reference Library" — the built-in curated prefab cells (the owner's symbol set). A read-only
+               reference: open one (Edit) to learn how it's built, read its Behavior / Datasheet, and arm it
+               to NEST it into a cell you're building — exactly like a My Subassemblies row, minus the
+               personal-library controls. Registered in-memory at mount; never written to the player's store. -->
+          {#if prefabParts.length > 0}
+            <details class="part-cat" open>
+              <summary class="part-cat-head">
+                <span class="part-cat-name">Reference Library</span>
+                <span class="part-cat-count">{prefabParts.length}</span>
+              </summary>
+              <ul class="part-list">
+                {#each prefabParts as part (part.tag)}
+                  {@render partRow(part)}
+                {/each}
+              </ul>
+            </details>
+          {/if}
           {#each PART_CATEGORIES as cat (cat)}
             {@const groups = familyGroups(cat)}
             {#if groups.length > 0}
