@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (216) — DOOM circuit vision + memory-characterization panel
+
+- ~~**Write down the DOOM-circuit vision**~~ DONE: `docs/doom-circuit-vision.md` — the north-star "run DOOM
+  on a machine built from sand," the zoom-ladder sell, the honest behavioral-collapse architecture, the full
+  inspectable I/O loop (keyboard matrix + mouse quadrature → MMIO → CPU → RAM → framebuffer → palette →
+  RGB-LED array), the two-"shader" distinction (circuit color-map vs GPU texture-blit; far-texture/near-LED
+  LoD), the CPU wall, and the roadmap/milestones. Captures the full discussion with the owner.
+- [ ] **Memory characterization → `ELEM_MEMORY`** (backlog #47): design panel RUNNING (9 lenses → synthesize
+  → critique → finalize). Output lands in `docs/memory-characterization-design.md`. Core reframe: characterize
+  ONE bit cell once → behavioral array whose size is a parameter → O(accesses) not O(bits); hand-build the
+  decoder/sense/IO, collapse only the storage core; deterministic (FNV-1a) + golden-safe. Build data-first.
+- [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
+  keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
+  (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
+  64×64); brightness = value→intensity (PWM later). Leans on `ELEM_MEMORY`.
+
 ## 2026-06-28 (215) — Prefab reference library (16 cells) + Cable fan rebuilt + 6T SRAM
 
 - ~~**Prefab reference library**~~ DONE (commits 8c1e5ad + 6a514fe): the owner's curated cells ship as a
