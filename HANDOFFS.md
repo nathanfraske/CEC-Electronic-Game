@@ -13,8 +13,16 @@ global **Newton issue (#88)** after the memory phases. Everything green + commit
 `claude/kind-turing-hdelb3`.
 
 **Done so far:** P1 complete (dda2444 + 8809a6e — element works in-circuit, golden-safe). P2 slice 1
-(37bfedc): `MemBehavior {mode,addrWidth,wordWidth,sig}` on `UserIc.memBehavior` + `setUserIcMemBehavior`
-(mirrors CellBehavior). Gate green (sim-core 191, web 286).
+(37bfedc): `MemBehavior` type plumbing on `UserIc`. **P2 slice 2 (ae5ef5d): a WORKING RAM CHIP** —
+`PART_KINDS.RAM` (8-pin: D,A0,A1,A2,WE,DI,VCC,GND) + `netlist.ts` `ELEM_MEMORY`=26 + `MEM_SPEC` (position-maps
+visual pins → sim terminals) emits one ELEM_MEMORY with mode/addrWidth/wordWidth params; `memory.test.ts`
+proves place→buildNetlist→wasm write/read (D_out tracks the written bit). The "give my CPU some RAM"
+capability is functional. Gate green (sim-core 191, web 288, build).
+
+**Immediate P2 next (small):** add RAM to the **PARTS bin catalog** (App.svelte) + a glyph so it's
+user-placeable from the bin (it's in PART_KINDS, so placeable by code/test, but not yet shown in the bin).
+Then ROM/EEPROM image seeding (Component.memImage → load_memory in loop.ts), then the characterize-a-6T →
+mint-array-part flow + Behavior-panel memory card (the authentic-teaching layer).
 
 **P2 DESIGN DECISION uncovered (read before continuing P2):** the LUT collapse remaps a cell's existing pins
 to the LUT's pins. **Memory can't do that** — the owner's 6T cell is bitline-accessed (roles `WL,VCC,GND,
