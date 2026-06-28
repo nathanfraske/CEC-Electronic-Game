@@ -185,6 +185,20 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
 
 ## Gotchas
 
+- **Latch metastability / transistor SRAM power-up.** A cross-coupled transistor latch (6T SRAM,
+  flip-flop) has three DC roots — two rails + an **unstable midpoint** — and the damped Newton OP solve,
+  seeded from all-zeros `node_v` (the cell's symmetry axis), lands on the midpoint, so an *unwritten*
+  cell powered up to `Q ≈ Q̄ ≈ VCC/2` mush. Fixed by **`Sim::break_metastable_latches()`** (runs once
+  after the install/reset OP solve): gated on a **MOSFET slot-1 Vth mismatch** (emitted by `buildNetlist`
+  **only in Real mode** — `MOSFET_VTH_MISMATCH * jitter(id)`, ±30 mV, the resistor-tolerance pattern; read
+  raw/signed via `e.params[1]`, **not** `param_or`, which clamps negatives). It detects cross-coupled
+  pairs as **gate→drain 2-cycles**, seeds the storage nodes to opposite rails + re-linearises every MOSFET
+  + re-solves (retrying the **flipped** direction — the near-singular latch matrix is node-order sensitive,
+  so one direction holds and its mirror drifts back). Mismatch **sign** picks the bit. **Golden-safe:** the
+  linear golden has no MOSFET → gate never fires → byte-identical; Ideal mode emits no mismatch → an ideal
+  symmetric cell stays *honestly* metastable. The *write* path was always fine (bit-line drive forces a
+  rail that holds); only the unwritten power-up was stuck. (Distinct from #88's convergence fix — see
+  `docs/sim/transistor-scale-convergence.md`.)
 - **Powered logic gates** (`ELEM_GATE`) are real **5-pin ICs** using the **5th `Element` terminal**:
   a=OUT, b=IN1, c=IN2, **d=VCC, e=GND**. The rail is `V(VCC) − V(GND)` (`gate_rails`), inputs
   threshold relative to `V(GND)`, and the output swings `V(GND)..V(VCC)` (the `digital_vlow`

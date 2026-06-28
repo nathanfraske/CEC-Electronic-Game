@@ -45,6 +45,15 @@ function jitter(id: number): number {
   return (h / 0x1_0000_0000) * 2 - 1;
 }
 
+/** Peak MOSFET threshold-voltage mismatch (volts) emitted per device in Realistic mode — a
+ * deterministic fab-variation spread (`MOSFET_VTH_MISMATCH * jitter(id)`, ±this). A few percent of
+ * the ~2 V threshold: negligible for logic noise margins, but enough to break a cross-coupled latch's
+ * perfect symmetry so an unwritten transistor 6T SRAM / flip-flop powers up to a definite, layout-
+ * determined bit instead of the metastable mid-rail (sim-core `break_metastable_latches` reads slot 1
+ * raw/signed). Omitted in Ideal mode → every device is its nominal self and an ideal symmetric cell is
+ * honestly metastable. */
+const MOSFET_VTH_MISMATCH = 0.03;
+
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
 // loop skips them. Mirrors the `ELEM_*` constants in `crates/sim-core/src/lib.rs`.
@@ -1672,6 +1681,14 @@ export function buildNetlist(
       for (let k = 0; k < PARAM_STRIDE; k++) {
         params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
       }
+    }
+    // MOSFET threshold mismatch (Realistic mode only): a deterministic per-device Vth offset (slot 1)
+    // modelling fab variation — deviated per component id (stable across rebuilds via `jitter`), the
+    // same pattern as resistor tolerance. Omitted in Ideal mode (every device nominal). Beyond a
+    // realistic threshold spread, this is the seed that lets sim-core break a cross-coupled latch's
+    // symmetry, so an unwritten transistor 6T SRAM / flip-flop powers up to a definite bit.
+    if ((comp.kind === "NM" || comp.kind === "PM") && real) {
+      params[ei * PARAM_STRIDE + 1] = MOSFET_VTH_MISMATCH * jitter(comp.id);
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an

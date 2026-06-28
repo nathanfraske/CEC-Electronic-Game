@@ -133,9 +133,56 @@ a robustness improvement for small/medium raw-transistor designs, **only with ex
   `sequentialTrace.ts`'s "APP-ONLY, can't run headless" caveat is obsolete. This unlocks deterministic,
   browser-free drive→step→read→compare tests (the test-bench engine, and the measurements in this doc).
 
+## Latch metastability — a separate axis (the power-up symmetry break), LANDED 2026-06-28
+
+Convergence (can the solver find *a* root for N transistors?) is **not** the same problem as
+**metastability** (does a symmetric bistable cell pick a *definite* bit?). #88's gmin stepping fixed
+the former; this fixes the latter. They are orthogonal: a 2-transistor-pair latch converges fine yet
+still has *three* DC roots — two stable rails and an **unstable metastable midpoint** — and the damped
+Newton OP solve, seeded from the all-zeros `node_v` (dead on the cell's symmetry axis), lands squarely
+on the midpoint. So an unwritten transistor 6T SRAM / flip-flop powered up to `Q ≈ Q̄ ≈ VCC/2` mush
+instead of a real bit. (The *write* path always worked — external bit-line drive forces the whole state
+to a rail, which then holds; only the **unwritten power-up** was stuck.)
+
+**Measured facts that shaped the fix** (headless, `cross_coupled_latch` in `lib.rs`):
+- A symmetric cell sits at *exactly* the midpoint (`Q = Q̄ = 2.500`).
+- A static **Vth mismatch alone does not escape it** — a +10 mV offset only *shifts* the midpoint root
+  to `(2.500, 2.505)`; Newton from the symmetric seed converges right back to the (shifted) midpoint.
+  The midpoint stays a root for any realistic mismatch; eliminating it would need an unphysical skew.
+- The decisive lever is the **seed**, but the `node_v` seed feeds only Newton's convergence test — the
+  device stamps linearise at the stored `mosfet_vgs`/`vds`. To bite, the bias must land on the device
+  operating points, and must be **strong + self-consistent** (a whole rail state), not a small nudge.
+- The near-singular latch matrix makes the solve **node-order sensitive**: one seed direction holds,
+  its mirror drifts back to mid-rail (a classic latch-DC pivoting effect). So a one-shot seed can't be
+  trusted — it must be retried with the flipped direction.
+
+**The fix — `Sim::break_metastable_latches()`** (called once after the install/reset OP solve):
+1. **Gate (Real mode only):** runs only if some MOSFET carries a slot-1 **threshold mismatch**. The web
+   layer (`buildNetlist`) emits a deterministic per-device Vth offset `MOSFET_VTH_MISMATCH * jitter(id)`
+   (±30 mV) **only in Realistic mode** — the same per-component-id deviation as resistor tolerance.
+   Ideal mode emits nothing → early return → `node_v` is the untouched OP → **byte-identical**, and an
+   ideal perfectly-symmetric cell stays *honestly* metastable (a real teaching point).
+2. **Detect** cross-coupled pairs as **gate→drain 2-cycles** (node *u*'s inverter drives node *v*'s
+   drain and vice-versa) — sorted-edge binary search, no hashing. Generalises to NAND/NOR SR latches.
+3. **Seed + re-solve:** for each pair still at mid-rail, drive its two storage nodes to opposite rails
+   (`0` / supply EMF), re-linearise every MOSFET from that seed, and re-solve the OP so it converges to
+   and *holds* the rail. The mismatch **sign** picks the bit; a still-metastable pair is retried with
+   the **flipped** direction (two attempts always suffice). `mosfet_op` also reads slot 1 (raw/signed)
+   for a realistic Vth spread.
+
+**Golden-safe by construction:** the golden RC is linear (no MOSFET) → the gate never fires → the
+hash `0xeaac_3764_99e4_fa24` is untouched (`golden_snapshot_hash_is_stable` green). Slot 1 defaults to
+0 for every existing Element and every Ideal-mode netlist, so they are bit-identical. Tests:
+`ideal_cross_coupled_latch_is_metastable_at_midrail`, `mismatched_cross_coupled_latch_powers_up_to_a_
+definite_bit`, `jittered_cross_coupled_latch_settles_to_a_clean_rail`,
+`latch_metastability_break_run_is_reproducible` (sim-core); `sramPowerUp.test.ts` (web, the owner's 6T
+SRAM prefab: Ideal → mid-rail, Real → a deterministic complementary bit).
+
 ## Takeaways
 
 1. The ALU design is sound; the engine cannot solve it as raw transistors at scale.
 2. The "CLK coupling" is a symptom of Newton non-convergence (seed = prior `node_v`), not electrical.
 3. The unlock is **using** the characterization that already exists (backlog #35) — the scalable path to
    a CPU. Raw-transistor globalization (Path B) is an optional, golden-sensitive nicety.
+4. **Convergence ≠ metastability.** Making a transistor latch *hold a bit* is a distinct, now-landed fix
+   (Real-mode mismatch → structural rail seed), orthogonal to making big CMOS *converge*.

@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (226) — Latch metastability break: transistor SRAM powers up to a real bit (golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Owner picked "latch metastability break" as the next engine
+work (the #88 follow-on, "the actual gap for transistor-mode"). Full gate green: sim-core **206** (incl.
+golden + repro), web **306**, sim-protocol, build:wasm, web check/lint/build all 0.
+
+**The gap (now closed):** an *unwritten* cross-coupled transistor latch (the owner's 6T SRAM prefab, any
+transistor flip-flop) powered up to the metastable mid-rail `Q ≈ Q̄ ≈ VCC/2` instead of a definite bit.
+The damped Newton OP solve, seeded from all-zeros `node_v` (the cell's symmetry axis), lands on the
+unstable midpoint root. (The *write* path always worked — bit-line drive forces a rail that then holds.)
+
+**Landed (engine, `crates/sim-core`):**
+- `mosfet_op` reads **slot 1 = Vth mismatch** (additive, **raw/signed** — `param_or` clamps negatives, so
+  it would have silently dropped −mismatch; that bug cost a debugging loop, noted in the convergence doc).
+- New **`Sim::break_metastable_latches()`**, called once after the install/reset OP solve. Gated on a
+  slot-1 mismatch (⇒ Real mode). Detects cross-coupled pairs as **gate→drain 2-cycles** (sorted-edge
+  binary search, deterministic), seeds each still-mid-rail pair's storage nodes to opposite rails (`0` /
+  supply EMF), re-linearises **every** MOSFET from that seed, and re-solves — **retrying the flipped
+  direction** because the near-singular latch matrix is node-order sensitive (one direction holds, its
+  mirror drifts back; two attempts always suffice). Mismatch **sign** picks the bit.
+
+**Landed (web, `buildNetlist`):** emits `MOSFET_VTH_MISMATCH * jitter(id)` (±30 mV) on NM/PM **only in
+Real mode** — the resistor-tolerance per-component-id pattern. Ideal mode emits nothing.
+
+**Golden-safe by construction:** linear golden has no MOSFET → the gate never fires → `0xeaac…` untouched;
+slot 1 defaults to 0 for every existing Element/Ideal netlist → byte-identical; an ideal symmetric cell
+stays **honestly** metastable (a genuine teaching point — "imperfections are what make real SRAM pick a
+state"). Tests: 4 sim-core (`ideal_…metastable`, `mismatched_…definite_bit`, `jittered_…clean_rail`,
+`…run_is_reproducible`) + `web/src/lib/sramPowerUp.test.ts` (Ideal mid-rail vs Real deterministic bit;
+write path `sramTransistor.test.ts` still green).
+
+**Crucial lesson for the next agent:** **convergence ≠ metastability**, and a static Vth mismatch *alone*
+does **not** escape the midpoint (it only *shifts* the root — measured). The lever is a strong,
+self-consistent **rail seed on the device op-points** (`mosfet_vgs`/`vds`), not the `node_v` seed (which
+only feeds Newton's convergence test) and not a small nudge. Full writeup:
+`docs/sim/transistor-scale-convergence.md` (metastability §).
+
+**Next engine candidates** (from the menu, not yet started): Newton source/damped stepping (push the
+~548-FET cliff); CLK-coupling re-test now that #88 + this landed.
+
+---
+
 ## 2026-06-28 (225) — NAND flash physics (mode 4) LANDED, golden-safe (greenlit)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, pushed. Owner greenlit the flash build. P-flash-1 (engine

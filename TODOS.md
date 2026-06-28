@@ -6,6 +6,30 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (226) — Latch metastability break (transistor SRAM power-up) LANDED, golden-safe
+
+- ~~**Latch-state selection / deterministic metastability break**~~ DONE — the #88 follow-on, the "actual
+  gap for transistor-mode sequential silicon." An unwritten cross-coupled transistor latch (6T SRAM,
+  flip-flop) used to power up to the metastable mid-rail (`Q ≈ Q̄ ≈ VCC/2`); now it lands on a definite,
+  deterministic bit. **Engine** (`crates/sim-core`): `mosfet_op` reads slot 1 as a signed Vth offset (raw,
+  not `param_or`); new `Sim::break_metastable_latches()` runs once after the install/reset OP solve —
+  gated on a slot-1 mismatch, detects cross-coupled pairs as **gate→drain 2-cycles**, seeds the storage
+  nodes to opposite rails + re-linearises every MOSFET + re-solves, retrying the **flipped** direction
+  (the near-singular latch matrix is node-order sensitive). **Web** (`buildNetlist`): emits
+  `MOSFET_VTH_MISMATCH * jitter(id)` (±30 mV) on NM/PM **only in Real mode** (resistor-tolerance pattern).
+  **Golden-safe by construction:** linear golden has no MOSFET → gate never fires → `0xeaac…` untouched;
+  Ideal mode emits no mismatch → ideal symmetric cell stays honestly metastable (a real teaching point).
+- ~~**sim-core tests**~~ DONE (206): `ideal_cross_coupled_latch_is_metastable_at_midrail`,
+  `mismatched_cross_coupled_latch_powers_up_to_a_definite_bit`,
+  `jittered_cross_coupled_latch_settles_to_a_clean_rail`, `latch_metastability_break_run_is_reproducible`.
+- ~~**web test**~~ DONE (306): `sramPowerUp.test.ts` — the owner's 6T SRAM prefab, unwritten: Ideal →
+  mid-rail, Real → a deterministic complementary bit. Write path (`sramTransistor.test.ts`) still green.
+- Key finding for the next agent: **convergence ≠ metastability**, and a static Vth mismatch *alone*
+  doesn't escape the midpoint (it only shifts the root) — the lever is a strong, self-consistent **rail
+  seed** on the device op-points, not a small nudge. Full writeup in the convergence doc's metastability §.
+
+---
+
 ## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary landed (option A)
 
 - ~~**P3 contiguous-node design blocker (§4)**~~ RESOLVED via **option A** (explicit per-bit node channel) —
@@ -39,9 +63,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   Newton legitimately lands there → transistor-mode SRAM still needs a deterministic perturbation (initial
   condition / asymmetric transient kick) to pick a held bit. That's the real remaining unlock for silicon-true
   `write_trip`, and it's a different mechanism. New open item below.
-- [ ] **Latch-state selection (deterministic metastability break)** — NEW, the actual gap for transistor-mode
-  6T SRAM / sequential silicon. Options: per-element initial-condition seed, asymmetric transient kick on
-  install, or a tiny deterministic node-id-derived bias. Golden-safe iff gated off for existing netlists.
+- ~~**Latch-state selection (deterministic metastability break)**~~ DONE (2026-06-28, (226) entry at top):
+  `Sim::break_metastable_latches()` — Real-mode MOSFET Vth mismatch (slot 1, `buildNetlist` per-id
+  `jitter`) gates a structural rail seed (gate→drain 2-cycle detect → seed opposite rails → re-solve,
+  retry flipped). Unwritten transistor 6T SRAM now powers up to a definite, deterministic bit; Ideal mode
+  stays honestly metastable; golden byte-identical. sim-core 206, web 306. See
+  `docs/sim/transistor-scale-convergence.md` (metastability §).
 
 ---
 
