@@ -25,13 +25,17 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   (ships the teaching SRAM) → P3 bus-port → P4 DRAM → P5 tiers.
 - ~~**`ELEM_MEMORY` greenlight**~~ DONE: owner greenlit the **FULL** build (P1→P5). Building in strict phase
   order, gate-green at each step.
-- [ ] **`ELEM_MEMORY` P1 — data layer** (#98, in progress). ~~Foundation~~ DONE (commit dda2444): id 26
-  (append-only, golden-safe), `mem_data`/`mem_digest`/`mem_wear` + install/reset, `write_cell` single
-  mutation site + incremental digest, `load_memory`/`mem_read`, hash fold (golden byte-identical), tests;
-  gate green (sim-core 190, build:wasm, web check). **Remaining P1:** terminal-driven synchronous read
-  (Thévenin stamp) + write (commit latch) so the element is usable in-circuit — needs the cell-level terminal
-  map (addr/data/WE/OE in 8 pins), `is_digital`+arm in `classify_nets`, stamp + commit dispatch, and the
-  `load_memory`/`mem_read` wasm exports (`crates/sim-wasm`).
+- ~~**`ELEM_MEMORY` P1 — data layer + terminal read/write**~~ DONE (#98; commits dda2444 + 8809a6e): id 26
+  (append-only, golden-safe), store/digest/wear + install/reset, `write_cell` single mutation site +
+  incremental digest, `load_memory`/`mem_read` (+ wasm exports), hash fold (golden byte-identical), and the
+  in-circuit cell-level read (constant Thévenin D_out, off is_nonlinear) + level-sensitive async write
+  (commit index-loop). Gate green (sim-core 191, web 286). The element works in a circuit.
+- [ ] **`ELEM_MEMORY` P2 — cell characterization → teaching SRAM** (#99, next): web-side. `classifyStorageCell`
+  + `characterizeMemoryCell` (bitline-observable sweep, 10mV grid, fast-model inner), `MemBehavior`,
+  `flattenUserIcs` emits one ELEM_MEMORY, Behavior-panel memory verdict card + words×bits picker.
+- [ ] **NAND/flash design panel** (#102): RUNNING in background → `docs/flash-storage-design.md` (fast flash
+  arrays, persistence across runs, persistence-vs-replay reconciliation). Owner ask.
+- [ ] **Newton globalization (#88)** — owner asked to take a crack AFTER the memory phases (golden-sensitive).
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
