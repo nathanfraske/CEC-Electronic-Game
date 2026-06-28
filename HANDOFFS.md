@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (215) — Prefab reference library (16 cells incl. 6T SRAM) + Cable fan rebuilt (symmetric comb)
+
+**State:** 🟢 Three things landed on `claude/kind-turing-hdelb3` (commits 8c1e5ad, 0fc73a1, 6a514fe;
+gate green — check 0, lint clean, web 286, build OK; all screenshot-verified).
+
+**1. Prefab reference library** (`web/src/lib/circuits/prefabs.ts` + `.test.ts`, `App.svelte`): ships the
+owner's curated cells as a built-in **Reference Library** bin section (Inverter; NAND/NOR/AND/OR/XOR/OE
+gates; 2:1 & 4:1 MUX; D latch; D-FLIPFLOP; 1-BIT REG; HALF/FULL ADDER; TMS gate; **6T SRAM**). Sourced from
+module data (NOT the localStorage personal library) so it never mixes with / clobbers the player's own
+sealed cells. `registerPrefabLibrary()` registers each tag ADDITIVELY at mount (board's same-tag cells win).
+Rows are read-only: Edit/Behavior/Datasheet kept, Tape-out/Rename/Remove dropped via a `builtin` flag on
+`partRow`. Wired into bin search. Golden-safe (web data; golden places no user IC).
+
+**2. Cable fan geometry rebuilt** (`board.ts drawCables`): owner: fans were diagonal + didn't fan-IN. Now
+each end anchors its gather on the pin-array CENTRE line (offset toward the partner part; axis from the
+array's own orientation, NOT the route — a route jog can't flip it), fans as an orthogonal **comb** (pin →
+along axis → one turn into the gather) identically at BOTH ends, and the trunk is walked as an orthogonal
+polyline (elbow inserted on any diagonal seg) so it's pure Manhattan and meets each comb head-on. Follows
+the user's drawn route; render-only (stored route unchanged → still manipulable). Screenshot-verified.
+
+**3. 6T SRAM reviewed + added** (cell #16): topology traced net-by-net = textbook 6T (2 cross-coupled
+Inverter subcells + 2 NMOS access gated by WL; BL/BLB bitlines). **Fixed** pinRoles (BL/BLB were unroled →
+now `inout`). **Headless drive finding:** the cell writes/reads correctly via BL/BLB+WL ONLY with the inner
+inverters in fast-model (behavioral) mode — at raw transistor level the engine returns wrong/inverted Q
+(the known raw-FET limitation). **OPEN — owner's call:** keep the Q tap pin vs. force the bitline lesson
+(remove Q, observe via MEASURE/symbol-state). Kept Q for now; removing it later is a 1-line def change +
+regen. Recommendation delivered in chat.
+
+**Remaining:** Cable P2 (LoD unzip + conduit skin + ×N badge) → P3 (fan-out edits) → P5 (hierarchy + 16-bit
+example). Owner's ALU rewires (ADD/NOR). #88 Newton globalization (golden-sensitive, last). Tasks #92-94, #88.
+
+---
+
 ## 2026-06-28 (214) — Cable P1 landed: create-gesture + trunk-and-fan render (screenshot-verified)
 
 **State:** 🟢 P1 done (PR #308 pending). Drawing ONE strand between two same-width name-indexed buses now

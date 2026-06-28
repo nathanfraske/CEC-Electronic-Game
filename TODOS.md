@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (215) — Prefab reference library (16 cells) + Cable fan rebuilt + 6T SRAM
+
+- ~~**Prefab reference library**~~ DONE (commits 8c1e5ad + 6a514fe): the owner's curated cells ship as a
+  built-in **Reference Library** bin section (`web/src/lib/circuits/prefabs.ts` + `.test.ts`, `App.svelte`).
+  16 cells (the 15 from `source-20260628.json` + the 6T SRAM). Module-data source (NOT localStorage), so it
+  never mixes with / clobbers a player's own cells; `registerPrefabLibrary()` registers additively at mount.
+  Read-only rows (Edit/Behavior/Datasheet; no Tape-out/Rename/Remove) via a `builtin` flag on `partRow`.
+  Golden-safe. Screenshot-verified (bin badge 16).
+- ~~**Cable fan geometry**~~ DONE (commit 0fc73a1): owner — fans were diagonal + didn't fan-IN. Rebuilt
+  `drawCables`: each end's gather on the pin-array CENTRE line (offset toward the partner; axis from the
+  array orientation, not the route), orthogonal **comb** at both ends, trunk walked as an orthogonal polyline
+  (elbow on any diagonal seg). Follows the drawn route; render-only (route stays manipulable). Verified.
+- ~~**6T SRAM review + add**~~ DONE (commit 6a514fe): topology traced = textbook 6T (2 cross-coupled Inverter
+  subcells + 2 NMOS access gated by WL; BL/BLB bitlines). Fixed pinRoles (BL/BLB → `inout`). Headless drive:
+  writes/reads correctly via BL/BLB+WL ONLY with the inner inverters in fast model; raw transistor level
+  returns wrong/inverted Q (known raw-FET limit).
+- [ ] **6T SRAM — Q pin vs forced bitline lesson (OWNER'S CALL).** Kept the Q tap for now. If the owner wants
+  authenticity, remove Q (read/write only via BL/BLB+WL; observe the stored bit with MEASURE / symbol-state).
+  1-line def change + regen prefabs.ts. Recommendation delivered in chat.
+
 ## 2026-06-28 (211) — Bus wiring (Phase 1) + prefab library + huge-bus brainstorm
 
 - ~~**Bus wiring Phase 1 — "draw one → wire the bus"**~~ DONE (PR #305): `lib/busWiring.ts`
