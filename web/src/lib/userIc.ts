@@ -95,6 +95,17 @@ export interface UserIc {
    */
   behavior?: CellBehavior;
   /**
+   * Optional CHARACTERIZED MEMORY behavior (`docs/memory-characterization-design.md`): once a storage cell
+   * (a 6T SRAM bit, a 1T1C DRAM bit) has been classified + characterized, this stores the cheap face it can
+   * collapse to — a single `ELEM_MEMORY` array. Absent ⇒ the cell flattens to its real discrete parts.
+   * When present AND a placed instance opts into the behavioral fidelity, `flattenUserIcs` emits ONE
+   * `ELEM_MEMORY` (sized by `addrWidth`/`wordWidth`, mode per `mode`) instead of inlining the cell. `sig`
+   * content-addresses the inner graph (via {@link cellBehaviorSig}), so a reseal that changes the logic
+   * drops the stale characterization. Golden-safe: the golden places no user IC, and `ELEM_MEMORY` folds
+   * zero bytes when absent.
+   */
+  memBehavior?: MemBehavior;
+  /**
    * Optional EXPLICIT schematic-symbol id chosen by the player (a `drawCellSymbol` id — a gate name or a
    * `CellSymbolId`: DFF/DLATCH/REG/HADD/FADD/MUX/TRI/ARRAY/AND/…). Absent ⇒ Auto (the recognized face from
    * {@link cellSymbol}). Pure presentation — never affects the netlist, never hashed, never crosses the
@@ -115,6 +126,22 @@ export interface CellBehavior {
   prog: number;
   word: number;
   mode: number;
+  sig: number;
+}
+
+/**
+ * The characterized cheap face of a STORAGE cell (`docs/memory-characterization-design.md`) — what a 6T
+ * SRAM / 1T1C DRAM bit collapses to: a single `ELEM_MEMORY` array. `mode` is 0 ROM / 1 RAM(SRAM) /
+ * 2 EEPROM / 3 DRAM (sim-core `ELEM_MEMORY` param slot 0). `addrWidth` sets the array depth (`2^addrWidth`)
+ * and `wordWidth` the bits per word — the size the player picks when collapsing (defaults from the cell:
+ * one bit, a small depth). `sig` is the {@link cellBehaviorSig} of the inner graph it was characterized
+ * from, so a reseal that changes the logic drops the stale characterization. Pure data; never hashed by
+ * sim-core (params/aux aren't folded), so storing it is golden-safe.
+ */
+export interface MemBehavior {
+  mode: number;
+  addrWidth: number;
+  wordWidth: number;
   sig: number;
 }
 
@@ -739,6 +766,21 @@ export function setUserIcBehavior(
   const prev = REGISTRY.get(tag);
   if (!prev) return;
   registerUserIc({ ...prev, behavior });
+}
+
+/**
+ * Store (or clear) a characterized {@link MemBehavior} on a registered storage cell, so a placed instance
+ * set to `fidelity:'behavioral'` collapses to one `ELEM_MEMORY` array in {@link flattenUserIcs}. Pass
+ * `undefined` to drop a stale characterization (inner logic changed → the {@link MemBehavior.sig} no longer
+ * matches). No-op when `tag` isn't registered. Spreads the prior def so every other field rides unchanged.
+ */
+export function setUserIcMemBehavior(
+  tag: string,
+  memBehavior: MemBehavior | undefined,
+): void {
+  const prev = REGISTRY.get(tag);
+  if (!prev) return;
+  registerUserIc({ ...prev, memBehavior });
 }
 
 /**
