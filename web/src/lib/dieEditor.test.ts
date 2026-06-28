@@ -44,6 +44,7 @@ import {
   type UserIc,
   TIER_FOOTPRINT_SCALE,
   countGraphDevices,
+  derivePinRoles,
   registerUserIc,
   userIcsForGraph,
   userIcsForGraphs,
@@ -244,6 +245,43 @@ describe("die editor — test stimuli (dieTestGraph) power an isolated die", () 
       null,
     ];
     expect(dieIsSealable(dieTestGraph(g.serialize(), die.frameId))).toBe(true);
+  });
+
+  it("an explicit `out` marker seals as the `out` role but is NEVER driven (observed, not injected)", () => {
+    // The OUT stimulus tags a result pin whose NAME isn't a known output word (e.g. R0, C FLAG) so it
+    // seals with the `out` role — but it must NOT inject a source (the internal circuit drives it).
+    // derivePinRoles picks up the marker:
+    const roles = derivePinRoles(
+      ["R0", "VCC", "GND"],
+      [
+        { role: "out", value: 0 },
+        { role: "vcc", value: 5 },
+        { role: "gnd", value: 0 },
+      ],
+      3,
+    );
+    expect(roles[0]).toBe("out");
+    expect(roles[1]).toBe("vcc");
+    expect(roles[2]).toBe("gnd");
+
+    // dieTestGraph injects a source for the IN drive but adds NOTHING for the OUT pin (only the shared
+    // virtual GND is ever added): an OUT-only frame gets just the GND hub, an IN-only frame gets GND + a V.
+    const mk = (role: "in" | "out") => {
+      const g = new BoardGraph();
+      const die = freshDieGraph("SOT23_3")!;
+      g.restore(die.snapshot);
+      const frame = g.components.get(die.frameId)!;
+      const r = place(g, "R", 30, 8, 1000);
+      connect(g, frame, 0, r, 0);
+      connect(g, frame, 1, r, 1);
+      frame.pinTests = [{ role, value: 0 }, null, null];
+      const raw = g.serialize();
+      return (
+        dieTestGraph(raw, die.frameId).components.length - raw.components.length
+      );
+    };
+    expect(mk("out")).toBe(1); // shared GND hub only — the output is observed, not driven
+    expect(mk("in")).toBe(2); // GND hub + the injected V drive
   });
 
   it("dieTestGraph is a STRICT no-op (returns the same reference) when there are no pinTests", () => {
