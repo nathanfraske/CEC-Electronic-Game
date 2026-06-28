@@ -339,6 +339,28 @@ store) is gated on this engine+netlist work, **not** on greenlight. Recommendati
 for the storage element (cleanest determinism story), and treat **(B)** as general bus infra that
 the arriving cable/range-label work (#94) may justify independently.
 
+> **UPDATE 2026-06-28 (221) — option (A) engine + boundary landed (P3a).** The explicit per-bit node
+> channel is implemented in `sim-core` + the wasm boundary, golden-safe and proven:
+> - **Fields** `mem_addr_nodes` / `mem_din_nodes` / `mem_dout_nodes: Vec<Vec<usize>>` (per element, empty for
+>   cell-level / non-memory — can't ride the Copy `Element` struct, so they live beside `mem_data`).
+> - **Coarse boundary side-call** `Simulation.set_memory_ports(elem, addr[], din[], dout[])` — called once
+>   per wide memory AFTER `set_netlist*` (the indices reference the installed node space); it stores the
+>   buses then re-runs net classification (`classify_nets` now digital-touches the bus nodes) + re-primes the
+>   `t=0` operating point. One batched call carries the whole bus — never per-bit per-frame.
+> - **Wide READ/WRITE** in `eval_digital` / the commit pass: gated on a non-empty data-out list. A wide read
+>   decodes the address bus (`mem_wide_addr`, LSB-first) and digital-drives every data-out bit; a wide write,
+>   while WE is high, assembles the word from the data-in bus and funnels through `write_cell` (digest stays
+>   O(1)). Empty lists ⇒ the cell-level a/b/c/f/g/h path, **byte-identical** (golden-safe by construction —
+>   the linear-RC golden never enters this code; `golden_snapshot_hash_is_stable` green).
+> - **Tests** (`sim-core` 197): `wide_memory_writes_and_reads_through_bus_port` (4-word × 4-bit RAM round-trip
+>   — write the assembled word at the bus address, read the same bits back on the data-out bus),
+>   `wide_memory_reads_seeded_word_at_addressed_row` (multi-row address decode of a seeded ROM image),
+>   `wide_memory_run_is_reproducible`.
+>
+> **Remaining = P3b (web emission only):** a placeable word-level ROM/RAM part whose `buildNetlist` emits one
+> `ELEM_MEMORY` + issues `set_memory_ports` with the bus nodes, plus the §4(B) **read-back equivalence**
+> vitest (bus-port === N hand-wired bits) as the no-golden-tripwire guard. The engine no longer blocks it.
+
 ---
 
 ## 5. Determinism & hashing — the sacred contract

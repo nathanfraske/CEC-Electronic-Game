@@ -193,6 +193,22 @@ impl Simulation {
         self.inner.load_memory(elem_index, words);
     }
 
+    /// Install a wide `ELEM_MEMORY`'s **word-level bus-port** (#100): the explicit address / data-in /
+    /// data-out bus node lists (LSB-first) the 8 fixed terminals cannot hold. Call AFTER `set_netlist*`
+    /// (the indices reference the just-installed node space), once per wide memory — the coarse, batched
+    /// boundary side-call (one call carries the whole bus, never per-bit per-frame). A non-empty data-out
+    /// list switches the element onto the wide READ/WRITE path; an empty one keeps the cell-level path.
+    pub fn set_memory_ports(
+        &mut self,
+        elem_index: usize,
+        addr_nodes: &[u32],
+        din_nodes: &[u32],
+        dout_nodes: &[u32],
+    ) {
+        self.inner
+            .set_memory_ports(elem_index, addr_nodes, din_nodes, dout_nodes);
+    }
+
     /// Read one word of an `ELEM_MEMORY` element's contents (`0` for an out-of-range index/addr or a
     /// non-memory element). The stored bit is observed here (the MEASURE/symbol-state readout), not
     /// through a Q pin.

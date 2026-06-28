@@ -5,6 +5,31 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary (option A, golden-safe)
+
+**State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **197** incl. golden + 3 new
+wide tests; web **288**; wasm/check/lint/build clean). This is the **CPU/Doom-grade wide-RAM keystone** —
+the doc's §4 "blocked on a sound contiguous-node design" is now **unblocked** (option A engine done).
+
+**What landed (`crates/sim-core` + `crates/sim-wasm`):**
+- Per-element wide-port lists `mem_addr_nodes` / `mem_din_nodes` / `mem_dout_nodes: Vec<Vec<usize>>` (empty for
+  cell-level / non-memory — they sit beside `mem_data`, not on the Copy `Element` struct).
+- Coarse boundary side-call **`Simulation.set_memory_ports(elem, addr[], din[], dout[])`** — once per wide
+  memory, AFTER `set_netlist*`; stores the buses, re-runs `classify_nets` (now digital-touches bus nodes) +
+  re-primes `t=0`. One batched call carries the whole bus (never per-bit per-frame — boundary stays coarse).
+- Wide READ (decode addr bus via `mem_wide_addr`, digital-drive each data-out bit) + wide WRITE (assemble the
+  word from the data-in bus while WE high, through `write_cell`). **Gated on a non-empty data-out list ⇒**
+  empty lists keep the cell-level a/b/c/f/g/h path byte-identical. Golden-safe by construction (linear-RC
+  golden never enters this code; `golden_snapshot_hash_is_stable` green).
+- Tests: `wide_memory_writes_and_reads_through_bus_port`, `wide_memory_reads_seeded_word_at_addressed_row`,
+  `wide_memory_run_is_reproducible`.
+
+**Remaining = P3b (web only):** a placeable word-level ROM/RAM part — `buildNetlist` emits one `ELEM_MEMORY`
++ calls `set_memory_ports` with the bus nodes — plus the §4(B) **read-back equivalence vitest** (bus-port ===
+N hand-wired bits) as the no-golden-tripwire guard. The engine no longer blocks it. (See memory doc §4 UPDATE.)
+
+---
+
 ## 2026-06-28 (220) — Newton globalization (#88): gmin-stepping convergence fallback (golden-safe)
 
 **State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **194** incl. golden +

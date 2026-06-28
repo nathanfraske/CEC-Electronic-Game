@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary landed (option A)
+
+- ~~**P3 contiguous-node design blocker (§4)**~~ RESOLVED via **option A** (explicit per-bit node channel) —
+  the doc's "blocked on a sound design" is unblocked. Per-element `mem_addr_nodes`/`mem_din_nodes`/
+  `mem_dout_nodes: Vec<Vec<usize>>` (beside `mem_data`, not on the Copy `Element`); coarse boundary side-call
+  `set_memory_ports(elem, addr[], din[], dout[])` (called once after `set_netlist*`, re-classifies +
+  re-primes); wide READ decodes the addr bus + digital-drives each data-out bit; wide WRITE assembles the word
+  from the data-in bus through `write_cell`. Gated on a non-empty data-out list ⇒ empty = cell-level path,
+  byte-identical (golden-safe; the linear-RC golden never enters this code). wasm export added.
+- ~~**P3a engine tests**~~ DONE (sim-core 197): `wide_memory_writes_and_reads_through_bus_port`,
+  `wide_memory_reads_seeded_word_at_addressed_row`, `wide_memory_run_is_reproducible`.
+- [ ] **P3b — web emission (the only remaining P3 work)**: a placeable word-level ROM/RAM part whose
+  `buildNetlist` emits one `ELEM_MEMORY` + issues `set_memory_ports` with the bus nodes; PLUS the §4(B)
+  read-back **equivalence vitest** (bus-port === N hand-wired bits, the no-golden-tripwire guard). The engine
+  no longer blocks this. This is what mints the **program ROM / 512×22 control store** the CPU/Doom path needs.
+
+---
+
 ## 2026-06-28 (220) — Newton globalization (#88) landed
 
 - ~~**Newton globalization (#88)**~~ DONE (gmin-stepping convergence fallback). `newton_iterate` gained a
