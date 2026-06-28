@@ -388,8 +388,9 @@ pub const ELEM_ZENER: u8 = 10;
 /// conductances and a current into the KCL rows — but unlike a diode it reads the
 /// third terminal, which is why [`Element`] carries `c`. The gate draws no DC
 /// current (a [`GMIN`] is stamped to keep its node non-singular). `value` is
-/// **unused** for now; the model uses the fixed [`NMOS_VTO`], [`MOS_KP`],
-/// [`MOS_LAMBDA`].
+/// **unused**; the model's `Kp` comes from [`Element::params`] slot 0 (`0` →
+/// [`MOS_KP`]) and its threshold from [`NMOS_VTO`] plus an optional slot-1 mismatch
+/// offset (`0` = ideal), with [`MOS_LAMBDA`] fixed.
 pub const ELEM_NMOS: u8 = 11;
 
 /// **P-channel MOSFET**. Drain `a`, source `b`, gate `c`; the conventions are the
@@ -2509,6 +2510,19 @@ const RATED_CURRENT_SLOT: usize = 2;
 /// realistic ordering (Schottky < fast-recovery < rectifier) is what matters, not the absolute ns.
 const DIODE_TT_SLOT: usize = 3;
 
+/// Param slot carrying an [`ELEM_CAPACITOR`]'s **self-discharge time constant `tau`** (seconds) — its
+/// leakage modelled as a parallel insulation resistance `R_leak`, with `tau = R_leak·C`. The transient
+/// solve stamps a parallel leak conductance `G = C / tau` (see [`cap_leak_g`]), so a charged cap bleeds
+/// off with time constant `tau` (golden-safe: `0` = no leak, the default for every Ideal-mode cap, the
+/// RC golden, and every existing netlist). The web layer installs `tau` per **quality tier** only in
+/// Real mode — a film cap leaks far slower than a budget electrolytic — so a held cap (a DRAM 1T1C
+/// storage cell, a sample-and-hold) self-discharges and must be refreshed, while a filter/coupling cap
+/// (`tau` ≫ its signal period) is unaffected. In the reserved slot range (≥ 4), so it never collides
+/// with the cap's ESR/ESL tier block (slots 0/1). Like `TT`, `tau` is **game-scaled** for legibility —
+/// the realistic ordering (budget < mid < high-end < lab-grade) is what matters, not the absolute
+/// seconds.
+const CAP_LEAK_SLOT: usize = 5;
+
 /// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
 /// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
 /// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
@@ -2613,10 +2627,15 @@ pub struct Element {
     /// the additive, golden-safe property. Current slot map (slot 0 is the kind's primary
     /// knob, slot 1 its secondary; slot 2 is a **general** rating read for every kind):
     /// - [`ELEM_OPAMP`]: `[0]` = gain-bandwidth product (Hz; `0` → [`OPAMP_GBW`]).
-    /// - [`ELEM_CAPACITOR`]: `[0]` = ESR (Ω), `[1]` = ESL (H) — AC parasitics.
+    /// - [`ELEM_CAPACITOR`]: `[0]` = ESR (Ω), `[1]` = ESL (H) — AC parasitics; `[`[`CAP_LEAK_SLOT`]`]`
+    ///   = self-discharge time constant `tau` (s) — a Real-mode leakage `G = C/tau` (`0` = ideal/no leak).
     /// - [`ELEM_INDUCTOR`]: `[0]` = DCR (Ω), `[1]` = winding capacitance (F) — AC parasitics.
     /// - [`ELEM_VSOURCE`]/[`ELEM_ACSOURCE`]: `[0]` = output impedance (Ω).
-    /// - [`ELEM_NMOS`]/[`ELEM_PMOS`]: `[0]` = transconductance `Kp` (A/V²; `0` → [`MOS_KP`]).
+    /// - [`ELEM_NMOS`]/[`ELEM_PMOS`]: `[0]` = transconductance `Kp` (A/V²; `0` → [`MOS_KP`]),
+    ///   `[1]` = threshold-voltage mismatch (additive V; `0` = ideal/identical). A deterministic
+    ///   per-device offset (Realistic mode only) modelling fab Vth variation; it breaks a
+    ///   cross-coupled latch's symmetry so an unwritten cell powers up to a definite bit instead
+    ///   of the metastable mid-rail. See [`Sim::mosfet_op`].
     /// - [`ELEM_NPN`]/[`ELEM_PNP`]: `[0]` = forward gain `β` (`0` → [`BJT_BF`]).
     /// - diode family ([`ELEM_DIODE`]/[`ELEM_SCHOTTKY`]/[`ELEM_LED`]/[`ELEM_ZENER`]):
     ///   `[0]` = saturation current `Is` (A), `[1]` = emission coefficient `n` — the
@@ -2759,6 +2778,22 @@ fn param_or(params: &[f64; PARAM_STRIDE], i: usize, default: f64) -> f64 {
         v
     } else {
         default
+    }
+}
+
+/// A capacitor's **leakage conductance** (siemens): a parallel `G = C / tau` across its terminals,
+/// where `tau` ([`CAP_LEAK_SLOT`], seconds) is the self-discharge time constant. `tau ≤ 0` (every
+/// Ideal-mode cap, the RC golden, every existing netlist) → `0` → **no leak**, so the transient stamp
+/// is byte-identical. Read raw (`tau > 0` test) — the slot is unset (0) on a non-leaky cap, never
+/// negative. Because `G` scales with `C`, the discharge time constant is `tau` regardless of the
+/// capacitance — a dielectric/quality property, exactly as real insulation resistance behaves.
+#[inline]
+fn cap_leak_g(e: &Element) -> f64 {
+    let tau = e.params[CAP_LEAK_SLOT];
+    if tau > 0.0 {
+        e.value / tau
+    } else {
+        0.0
     }
 }
 
@@ -4166,7 +4201,134 @@ impl Sim {
         // Prime the readout at the initial operating point (t = 0). Does not
         // advance the tick or the per-tick reactive state.
         self.solve_operating_point();
+        // A symmetric cross-coupled latch's OP is the metastable midpoint; push it to a definite rail
+        // (no-op unless a MOSFET carries a Realistic-mode mismatch).
+        self.break_metastable_latches();
         self.commit_net_levels();
+    }
+
+    /// Push any cross-coupled latch the operating-point solve left at its **metastable midpoint** to a
+    /// definite rail, so an unwritten 6T SRAM / flip-flop powers up to a deterministic bit instead of
+    /// `Q ≈ Q̄ ≈` mid-rail. Called once after the install/reset OP solve.
+    ///
+    /// Why a *strong, structural* seed (not a small per-device nudge): a bistable latch's midpoint is a
+    /// genuine DC root, and this damped Newton solve robustly converges to it from any near-symmetric
+    /// start — a small Vth mismatch only *shifts* that root, it does not escape its basin (measured).
+    /// The write path works only because external sources first drive the **whole state** (node
+    /// voltages *and* device linearisations) to a rail; this reproduces that at power-up.
+    ///
+    /// Mechanism: a cross-coupled pair is a **gate→drain 2-cycle** — node `u`'s inverter (gate = `u`)
+    /// drives node `v` (a MOSFET drain), and `v`'s inverter drives `u`. For each pair still sitting at
+    /// mid-rail, both storage nodes are seeded to opposite rails (`0` / the supply EMF) and **every**
+    /// MOSFET's linearisation (`mosfet_vgs`/`vds`) is recomputed from that seed, then the OP is
+    /// re-solved so it converges to (and holds) the rail. Generalises to NAND/NOR SR latches (their
+    /// feedback devices form the same 2-cycle). Because the near-singular latch matrix makes the solve
+    /// **node-order sensitive** (one seed direction holds, its mirror drifts back to mid-rail), each
+    /// still-metastable pair is retried with the **flipped** direction — one of the two always holds.
+    ///
+    /// Gated on a **Realistic-mode threshold mismatch** ([`Element::params`] slot 1): zero mismatch
+    /// (Ideal mode, every existing netlist, the golden) → early return → `node_v` is the untouched OP →
+    /// byte-identical, and an ideal perfectly-symmetric cell stays honestly metastable. The mismatch
+    /// **sign** picks the preferred rail (deterministic, reproducible); it is far weaker than any driven
+    /// write, so it only tie-breaks the otherwise-undefined power-up state.
+    fn break_metastable_latches(&mut self) {
+        // Real-mode gate + cheap exit: nothing to do without a mismatched MOSFET. (Slot 1 is read raw
+        // — `param_or` would clamp a negative mismatch to the default.)
+        if !self
+            .elements
+            .iter()
+            .any(|e| is_mosfet(e.kind) && e.params[1] != 0.0)
+        {
+            return;
+        }
+        // Directed gate(c) -> drain(a) edges among MOSFETs, skipping ground and self-loops. Sorted +
+        // deduped so a reverse-edge test is a deterministic binary search (no hashing).
+        let mut edges: Vec<(usize, usize)> = self
+            .elements
+            .iter()
+            .filter(|e| is_mosfet(e.kind) && e.c != 0 && e.a != 0 && e.c != e.a)
+            .map(|e| (e.c, e.a))
+            .collect();
+        edges.sort_unstable();
+        edges.dedup();
+        let has_edge = |g: usize, d: usize| edges.binary_search(&(g, d)).is_ok();
+        // Net mismatch pulling a node's inverter output: Σ slot-1 mismatch over MOSFETs draining it.
+        let drain_bias = |s: &Self, node: usize| -> f64 {
+            s.elements
+                .iter()
+                .filter(|e| is_mosfet(e.kind) && e.a == node)
+                .map(|e| e.params[1]) // raw (signed) mismatch
+                .sum()
+        };
+        // Cross-coupled pairs (u < v, both u->v and v->u), each with the mismatch-preferred high node.
+        let pairs: Vec<(usize, usize, usize)> = edges
+            .iter()
+            .filter(|&&(u, v)| u < v && has_edge(v, u))
+            .map(|&(u, v)| {
+                let prefer_hi = if drain_bias(self, v) - drain_bias(self, u) >= 0.0 {
+                    v
+                } else {
+                    u
+                };
+                (u, v, prefer_hi)
+            })
+            .collect();
+        if pairs.is_empty() {
+            return;
+        }
+        // The supply rail estimate: the largest source EMF magnitude (e.g. VCC = 5 V).
+        let vrail = self
+            .elements
+            .iter()
+            .filter(|e| e.kind == ELEM_VSOURCE || e.kind == ELEM_ACSOURCE)
+            .map(|e| e.value.abs())
+            .fold(0.0f64, f64::max);
+        let vrail = if vrail > 0.0 { vrail } else { 1.0 };
+        // A pair is "metastable" while its two storage nodes are within half a rail of each other.
+        let meta_gap = 0.5 * vrail;
+
+        // Try the preferred direction, then the flipped direction for whatever the node-ordered solve
+        // left at mid-rail. Two attempts always suffice (one direction holds); the loop just re-checks.
+        for attempt in 0..2 {
+            let mut seeded = false;
+            for &(u, v, prefer_hi) in &pairs {
+                if (self.node_v[u] - self.node_v[v]).abs() >= meta_gap {
+                    continue; // already split to a rail — leave it
+                }
+                // Preferred high node on attempt 0; the opposite on attempt 1.
+                let hi = if attempt == 0 {
+                    prefer_hi
+                } else if prefer_hi == v {
+                    u
+                } else {
+                    v
+                };
+                let lo = if hi == u { v } else { u };
+                self.node_v[hi] = vrail;
+                self.node_v[lo] = 0.0;
+                seeded = true;
+            }
+            if !seeded {
+                break; // every latch resolved
+            }
+            // Pin each ground-referenced DC source's node to its EMF (e.g. VCC → 5 V), then re-linearise
+            // every MOSFET at the seeded rail, so the re-solve starts from a self-consistent state.
+            for i in 0..self.elements.len() {
+                let e = self.elements[i];
+                if e.kind == ELEM_VSOURCE && e.b == 0 && e.a != 0 {
+                    self.node_v[e.a] = e.value;
+                }
+            }
+            for i in 0..self.elements.len() {
+                let e = self.elements[i];
+                if is_mosfet(e.kind) {
+                    let vs = self.node_v[e.b];
+                    self.mosfet_vgs[i] = self.node_v[e.c] - vs;
+                    self.mosfet_vds[i] = self.node_v[e.a] - vs;
+                }
+            }
+            self.solve_operating_point();
+        }
     }
 
     /// Reset to `t = 0` with reactive elements discharged, keeping the same
@@ -4256,6 +4418,9 @@ impl Sim {
             *a = AcMeas::default();
         }
         self.solve_operating_point();
+        // Reproduce the same deterministic latch power-up state on a reset
+        // (no-op unless a MOSFET carries a Realistic-mode mismatch).
+        self.break_metastable_latches();
         self.commit_net_levels();
     }
 
@@ -4322,16 +4487,28 @@ impl Sim {
         // Transconductance parameter Kp from param slot 0 (a quality tier — a stronger part
         // drives more current per volt), else the default.
         let kp = param_or(&e.params, 0, MOS_KP);
+        // Threshold-voltage mismatch from param slot 1 (additive volts), else 0. A `0` default
+        // (every existing netlist, and `set_netlist`'s empty block) leaves `Vto` exactly at the
+        // kind constant → byte-identical / golden-safe. The web layer emits a tiny deterministic
+        // per-device offset (`jitter`) **only in Realistic mode**; it models fab Vth variation and,
+        // crucially, breaks the perfect symmetry of a cross-coupled latch. Without it the all-zeros
+        // `node_v` install seed sits exactly on the latch's symmetry axis, so seeded Newton lands on
+        // the **unstable metastable midpoint root** (Q ≈ Q̄ ≈ mid-rail) and an unwritten 6T SRAM /
+        // flip-flop never picks a bit. The offset shifts the midpoint off the root set, so the solve
+        // falls to a definite, deterministic rail — silicon's real power-up behaviour. It is far
+        // weaker than any driven write, so it only tie-breaks the otherwise-undefined state. Read raw
+        // (not `param_or`, which clamps non-positive to the default) so the mismatch can be signed.
+        let dvth = e.params[1];
         if e.kind == ELEM_PMOS {
             // Evaluate the NMOS square law on the mirrored internal variables.
-            let op = mosfet_eval(-vgs, -vds, kp, -PMOS_VTO, MOS_LAMBDA);
+            let op = mosfet_eval(-vgs, -vds, kp, -PMOS_VTO + dvth, MOS_LAMBDA);
             MosfetOp {
                 id: -op.id,
                 gm: op.gm,
                 gds: op.gds,
             }
         } else {
-            mosfet_eval(vgs, vds, kp, NMOS_VTO, MOS_LAMBDA)
+            mosfet_eval(vgs, vds, kp, NMOS_VTO + dvth, MOS_LAMBDA)
         }
     }
 
@@ -4662,20 +4839,23 @@ impl Sim {
                 }
                 ELEM_CAPACITOR => {
                     // Backward-Euler companion: conductance g = C/dt with a
-                    // history current source ieq = g * (V(a)-V(b))_prev.
+                    // history current source ieq = g * (V(a)-V(b))_prev. A Real-mode leak adds a
+                    // parallel conductance (C/tau, no history) so the cap slowly self-discharges; gm =
+                    // g for an ideal cap (no leak) → byte-identical.
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
+                    let gm = g + cap_leak_g(e);
                     if let Some(r) = ia {
-                        mat[r * n + r] += g;
+                        mat[r * n + r] += gm;
                         rhs[r] += ieq;
                     }
                     if let Some(r) = ib {
-                        mat[r * n + r] += g;
+                        mat[r * n + r] += gm;
                         rhs[r] -= ieq;
                     }
                     if let (Some(r), Some(c)) = (ia, ib) {
-                        mat[r * n + c] -= g;
-                        mat[c * n + r] -= g;
+                        mat[r * n + c] -= gm;
+                        mat[c * n + r] -= gm;
                     }
                 }
                 ELEM_VSOURCE => {
@@ -5736,19 +5916,22 @@ impl Sim {
                     }
                 }
                 ELEM_CAPACITOR => {
+                    // Backward-Euler companion (+ Real-mode parallel leak C/tau, no history); gm = g
+                    // for an ideal cap → byte-identical. See the linear path for the derivation.
                     let g = e.value / DT;
                     let ieq = g * self.reactive_state[i];
+                    let gm = g + cap_leak_g(e);
                     if let Some(r) = ia {
-                        base_mat[r * n + r] += g;
+                        base_mat[r * n + r] += gm;
                         base_rhs[r] += ieq;
                     }
                     if let Some(r) = ib {
-                        base_mat[r * n + r] += g;
+                        base_mat[r * n + r] += gm;
                         base_rhs[r] -= ieq;
                     }
                     if let (Some(r), Some(c)) = (ia, ib) {
-                        base_mat[r * n + c] -= g;
-                        base_mat[c * n + r] -= g;
+                        base_mat[r * n + c] -= gm;
+                        base_mat[c * n + r] -= gm;
                     }
                 }
                 ELEM_VSOURCE => {
@@ -16082,6 +16265,195 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "NMOS+PMOS pair must reproduce exactly");
+    }
+
+    /// Build a cross-coupled CMOS latch (the heart of a 6T SRAM / static flip-flop) and
+    /// return `(V(Q), V(Q̄), converged)` after settling. Nodes: 0 = GND, 1 = VCC (5 V),
+    /// 2 = Q, 3 = Q̄. Two inverters in a ring:
+    ///   inverter A drives Q from Q̄:  PMOS(D=Q, S=VCC, G=Q̄) ‖ NMOS(D=Q, S=GND, G=Q̄)
+    ///   inverter B drives Q̄ from Q:  PMOS(D=Q̄, S=VCC, G=Q) ‖ NMOS(D=Q̄, S=GND, G=Q)
+    /// `dvth` is the per-device threshold offset written to [`Element::params`] slot 1, in
+    /// device order `[PMOS_A, NMOS_A, PMOS_B, NMOS_B]` — the mismatch the web layer emits in
+    /// Realistic mode. All-zero = a perfectly symmetric (ideal) cell.
+    fn cross_coupled_latch(dvth: [f64; 4]) -> (f64, f64, bool) {
+        let types = [ELEM_VSOURCE, ELEM_PMOS, ELEM_NMOS, ELEM_PMOS, ELEM_NMOS];
+        let a = [1u32, 2, 2, 3, 3]; // drain: VCC / Q / Q / Q̄ / Q̄
+        let b = [0u32, 1, 0, 1, 0]; // source: GND / VCC / GND / VCC / GND
+        let c = [0u32, 3, 3, 2, 2]; // gate: – / Q̄ / Q̄ / Q / Q
+        let d = [0u32; 5];
+        let values = [5.0, 0.0, 0.0, 0.0, 0.0];
+        let aux = [0.0; 5];
+        let mut params = vec![0.0f64; 5 * PARAM_STRIDE];
+        for (k, off) in dvth.iter().enumerate() {
+            params[(k + 1) * PARAM_STRIDE + 1] = *off; // slot 1 of each MOSFET (elements 1..=4)
+        }
+        let mut sim = Sim::new(1);
+        assert!(
+            sim.set_netlist_p(4, &types, &a, &b, &c, &d, &values, &aux, &params),
+            "valid cross-coupled latch netlist must install"
+        );
+        for _ in 0..50 {
+            sim.step();
+        }
+        let v = sim.node_voltages();
+        (v[2], v[3], sim.last_newton_converged())
+    }
+
+    /// An **ideal** (perfectly symmetric, zero-mismatch) cross-coupled latch has no reason to pick a
+    /// side: its only DC operating point reachable from the all-zeros seed is the unstable metastable
+    /// midpoint, and [`Sim::break_metastable_latches`] is gated off (no slot-1 mismatch). Both storage
+    /// nodes sit at mid-rail — the honest ideal physics, and proof the symmetry-break does nothing in
+    /// Ideal mode (so existing transistor netlists and the golden are byte-identical).
+    #[test]
+    fn ideal_cross_coupled_latch_is_metastable_at_midrail() {
+        let (q, qbar, conv) = cross_coupled_latch([0.0, 0.0, 0.0, 0.0]);
+        assert!(conv, "the operating point converges");
+        assert!(
+            (q - 2.5).abs() < 0.2 && (qbar - 2.5).abs() < 0.2,
+            "an ideal symmetric latch sits at the metastable midpoint: Q={q}, Q̄={qbar}"
+        );
+    }
+
+    /// A **Realistic-mode threshold mismatch** (slot 1) breaks the symmetry: an unwritten cell powers
+    /// up to a definite, complementary rail (one storage node high, the other low), and the mismatch
+    /// **sign** deterministically picks which — even at 1 mV, far below any logic threshold. This is
+    /// the unlock for transistor-level sequential silicon (a hand-built 6T SRAM / flip-flop that holds
+    /// a real bit at power-up, not mid-rail mush).
+    #[test]
+    fn mismatched_cross_coupled_latch_powers_up_to_a_definite_bit() {
+        // +mismatch on NMOS_A and -mismatch on NMOS_A give opposite, clean rails.
+        let pos = cross_coupled_latch([0.0, 0.001, 0.0, 0.0]);
+        let neg = cross_coupled_latch([0.0, -0.001, 0.0, 0.0]);
+        for (label, (q, qbar, conv)) in [("+", pos), ("-", neg)] {
+            assert!(conv, "{label}: converges");
+            let rails = (q > 4.5 && qbar < 0.5) || (q < 0.5 && qbar > 4.5);
+            assert!(
+                rails,
+                "{label}: latch holds a definite complementary bit, not mid-rail: Q={q}, Q̄={qbar}"
+            );
+        }
+        // Opposite mismatch signs select opposite bits (deterministic, layout-determined power-up).
+        assert!(
+            (pos.0 - neg.0).abs() > 4.0,
+            "the mismatch sign flips the stored bit: +Q={}, -Q={}",
+            pos.0,
+            neg.0
+        );
+    }
+
+    /// A realistic per-device mismatch spread (what `buildNetlist`'s `jitter` emits — a few mV, all
+    /// four devices distinct) settles the cell to a clean rail, not a partial/mid state.
+    #[test]
+    fn jittered_cross_coupled_latch_settles_to_a_clean_rail() {
+        let (q, qbar, conv) = cross_coupled_latch([0.004, -0.002, -0.003, 0.005]);
+        assert!(conv, "converges");
+        let rails = (q > 4.5 && qbar < 0.5) || (q < 0.5 && qbar > 4.5);
+        assert!(rails, "a jittered cell holds a clean bit: Q={q}, Q̄={qbar}");
+    }
+
+    /// The metastability break is a fixed, integer-free, deterministic procedure (sorted edges, a
+    /// two-attempt seed schedule), so a mismatched latch reproduces its snapshot-hash stream exactly —
+    /// the determinism contract holds through the new install-time path.
+    #[test]
+    fn latch_metastability_break_run_is_reproducible() {
+        let run = || {
+            let types = [ELEM_VSOURCE, ELEM_PMOS, ELEM_NMOS, ELEM_PMOS, ELEM_NMOS];
+            let mut params = vec![0.0f64; 5 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + 1] = 0.003; // NMOS_A mismatch
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                4,
+                &types,
+                &[1, 2, 2, 3, 3],
+                &[0, 1, 0, 1, 0],
+                &[0, 3, 3, 2, 2],
+                &[0; 5],
+                &[5.0, 0.0, 0.0, 0.0, 0.0],
+                &[0.0; 5],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..200 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "the symmetry-broken latch must reproduce exactly"
+        );
+    }
+
+    /// A Real-mode capacitor leak ([`CAP_LEAK_SLOT`] = self-discharge `tau`) is a parallel insulation
+    /// resistance `R_leak = tau/C`. In an RC charge (V → R → C → gnd) the cap no longer reaches the
+    /// full source voltage — it settles at the resistive divider `V·R_leak/(R + R_leak)`. With
+    /// `tau = 1 ms`, `C = 1 µF` ⇒ `R_leak = 1 kΩ = R` ⇒ 2.5 V; an ideal cap (`tau = 0`, the default)
+    /// charges to ~5 V. Proves the leak conductance is stamped (and that `tau = 0` is the ideal cap).
+    #[test]
+    fn leaky_capacitor_settles_at_the_insulation_divider() {
+        // node 0 = gnd, 1 = source/R junction, 2 = R/C junction. Cap is element index 2.
+        let charge = |tau: f64| -> f64 {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + CAP_LEAK_SLOT] = tau;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1.0e-6],
+                &[0.0; 3],
+                &params,
+            ));
+            // Settle well past the (leak-shortened) charge time constant (R‖R_leak·C = 0.5 ms = 250 steps).
+            for _ in 0..4000 {
+                sim.step();
+            }
+            sim.node_voltages()[2]
+        };
+        let ideal = charge(0.0);
+        let leaky = charge(1.0e-3); // R_leak = tau/C = 1 kΩ = R → half-divider
+        assert!(
+            (ideal - 5.0).abs() < 0.05,
+            "an ideal cap (tau = 0) charges to the full source: {ideal}"
+        );
+        assert!(
+            (leaky - 2.5).abs() < 0.1,
+            "a leaky cap settles at the R/R_leak divider (2.5 V), not the source: {leaky}"
+        );
+    }
+
+    /// The leak is a fixed linear conductance, so a leaking RC reproduces its snapshot-hash stream
+    /// exactly — the determinism contract holds with the new transient term.
+    #[test]
+    fn leaky_capacitor_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + CAP_LEAK_SLOT] = 2.0e-3;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_CAPACITOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1.0e-6],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a leaking RC must reproduce exactly");
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no

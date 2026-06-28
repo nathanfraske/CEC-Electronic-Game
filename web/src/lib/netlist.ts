@@ -22,6 +22,8 @@ import {
   tierParams,
   ecEsr,
   resistorTolerance,
+  capLeakTau,
+  ecLeakTau,
   DEFAULT_TIER,
   PARAM_STRIDE,
 } from "./tiers";
@@ -44,6 +46,15 @@ function jitter(id: number): number {
   h = (h ^ (h >>> 16)) >>> 0;
   return (h / 0x1_0000_0000) * 2 - 1;
 }
+
+/** Peak MOSFET threshold-voltage mismatch (volts) emitted per device in Realistic mode — a
+ * deterministic fab-variation spread (`MOSFET_VTH_MISMATCH * jitter(id)`, ±this). A few percent of
+ * the ~2 V threshold: negligible for logic noise margins, but enough to break a cross-coupled latch's
+ * perfect symmetry so an unwritten transistor 6T SRAM / flip-flop powers up to a definite, layout-
+ * determined bit instead of the metastable mid-rail (sim-core `break_metastable_latches` reads slot 1
+ * raw/signed). Omitted in Ideal mode → every device is its nominal self and an ideal symmetric cell is
+ * honestly metastable. */
+const MOSFET_VTH_MISMATCH = 0.03;
 
 // Solver element types, keyed by part tag. Only kinds listed here become
 // elements; 1-pin reference parts (GND) are deliberately absent so the element
@@ -509,6 +520,7 @@ interface BehSpec {
   defWord: number; // default aux (truth table / data word) when Component.word is unset
 }
 const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
+const CAP_LEAK_SLOT = 5; // params slot: capacitor self-discharge tau (s); 0 = no leak (mirror sim-core)
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1672,6 +1684,24 @@ export function buildNetlist(
       for (let k = 0; k < PARAM_STRIDE; k++) {
         params[ei * PARAM_STRIDE + k] = tp[k] ?? 0;
       }
+    }
+    // MOSFET threshold mismatch (Realistic mode only): a deterministic per-device Vth offset (slot 1)
+    // modelling fab variation — deviated per component id (stable across rebuilds via `jitter`), the
+    // same pattern as resistor tolerance. Omitted in Ideal mode (every device nominal). Beyond a
+    // realistic threshold spread, this is the seed that lets sim-core break a cross-coupled latch's
+    // symmetry, so an unwritten transistor 6T SRAM / flip-flop powers up to a definite bit.
+    if ((comp.kind === "NM" || comp.kind === "PM") && real) {
+      params[ei * PARAM_STRIDE + 1] = MOSFET_VTH_MISMATCH * jitter(comp.id);
+    }
+    // Capacitor leakage (Realistic mode only): the self-discharge time constant tau (s) in the
+    // reserved leak slot, per quality tier — sim-core stamps a parallel G = C/tau, so a charged cap
+    // bleeds off (a DRAM 1T1C cell / sample-and-hold loses its value; a budget electrolytic droops
+    // faster than a film cap) while a filter cap (tau ≫ signal period) is unaffected. Omitted in Ideal
+    // mode → perfect caps. EC's element is its expanded ideal-cap (`ei` = capIdx), so this lands on it.
+    if ((comp.kind === "C" || comp.kind === "EC") && real) {
+      const tier = comp.tier ?? DEFAULT_TIER;
+      params[ei * PARAM_STRIDE + CAP_LEAK_SLOT] =
+        comp.kind === "EC" ? ecLeakTau(tier) : capLeakTau(tier);
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an

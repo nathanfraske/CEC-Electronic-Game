@@ -150,6 +150,14 @@ what the param affects:
 - **Transient params** (source output impedance, MOSFET Kp, BJT β, resistor tolerance) gate
   **web-side in `buildNetlist`** — skipped when `!real` (see `TRANSIENT_TIER_KINDS`). Resistor
   tolerance also deviates the value deterministically per component id (`jitter`).
+- **Capacitor leakage** (`CAP_LEAK_SLOT` = 5, a transient param in the reserved slot range): a cap's
+  self-discharge time constant `tau`, emitted **web-side Real-mode-only** per quality tier via a
+  dedicated `capLeakTau`/`ecLeakTau` (NOT the `tierParams` ESR/ESL block — that's AC-only). sim-core
+  stamps a parallel leak conductance `G = C/tau` in **both transient solves** (`cap_leak_g`), so a
+  charged cap self-discharges (a held cap — DRAM 1T1C cell, sample-and-hold — loses its value;
+  electrolytics leak ~5× a film cap; filter caps with `tau ≫` their signal period are untouched).
+  `tau = 0` (Ideal / every existing netlist / the **RC golden's cap**) → no leak → byte-identical.
+  Game-scaled (seconds), realistic ordering — like diode `TT`.
 
 **Convention — every new component with real grades ships with its tier presets from the
 start:** add it to `tiers.ts` (wire its params in sim-core, or expand it web-side), make
@@ -185,6 +193,20 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
 
 ## Gotchas
 
+- **Latch metastability / transistor SRAM power-up.** A cross-coupled transistor latch (6T SRAM,
+  flip-flop) has three DC roots — two rails + an **unstable midpoint** — and the damped Newton OP solve,
+  seeded from all-zeros `node_v` (the cell's symmetry axis), lands on the midpoint, so an *unwritten*
+  cell powered up to `Q ≈ Q̄ ≈ VCC/2` mush. Fixed by **`Sim::break_metastable_latches()`** (runs once
+  after the install/reset OP solve): gated on a **MOSFET slot-1 Vth mismatch** (emitted by `buildNetlist`
+  **only in Real mode** — `MOSFET_VTH_MISMATCH * jitter(id)`, ±30 mV, the resistor-tolerance pattern; read
+  raw/signed via `e.params[1]`, **not** `param_or`, which clamps negatives). It detects cross-coupled
+  pairs as **gate→drain 2-cycles**, seeds the storage nodes to opposite rails + re-linearises every MOSFET
+  + re-solves (retrying the **flipped** direction — the near-singular latch matrix is node-order sensitive,
+  so one direction holds and its mirror drifts back). Mismatch **sign** picks the bit. **Golden-safe:** the
+  linear golden has no MOSFET → gate never fires → byte-identical; Ideal mode emits no mismatch → an ideal
+  symmetric cell stays *honestly* metastable. The *write* path was always fine (bit-line drive forces a
+  rail that holds); only the unwritten power-up was stuck. (Distinct from #88's convergence fix — see
+  `docs/sim/transistor-scale-convergence.md`.)
 - **Powered logic gates** (`ELEM_GATE`) are real **5-pin ICs** using the **5th `Element` terminal**:
   a=OUT, b=IN1, c=IN2, **d=VCC, e=GND**. The rail is `V(VCC) − V(GND)` (`gate_rails`), inputs
   threshold relative to `V(GND)`, and the output swings `V(GND)..V(VCC)` (the `digital_vlow`

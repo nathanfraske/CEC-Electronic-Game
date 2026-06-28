@@ -5,6 +5,86 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention (the DRAM mirror of (226))
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Owner asked "can we do the same for a DRAM cell?" →
+scoped + built. Full gate green: sim-core **208** (incl. golden + repro), web **309**, sim-protocol,
+build:wasm, web check/lint/build all 0.
+
+**Scope finding (verified headless):** DRAM is **1T1C** (charge on a cap), NOT a bistable latch → **no
+metastability**. An unwritten transistor 1T1C cell already powers up to a definite **0**; a written
+cell holds the realistic NMOS weak-1 (~3 V). The metastability break is N/A for the cell (and the DRAM
+**sense amp** — a cross-coupled latch — is already covered by `break_metastable_latches`). The real
+DRAM gap is the **opposite**: our ideal cap never leaks → reads as non-volatile SRAM-on-a-cap.
+
+**Landed — capacitor leakage (the owner's design call: ALL caps leak, proportional to reality, gated by
+quality):**
+- **sim-core:** `cap_leak_g(e)` = `C / tau` from `CAP_LEAK_SLOT` (= 5, reserved range so it never
+  collides with the ESR/ESL tier block at slots 0/1). Stamped as a parallel conductance (no history) in
+  **both** transient cap companions (linear `solve_into_readout` + nonlinear
+  `solve_into_readout_newton`); the OP solve and the cap's displacement-current readout are untouched.
+  `tau = 0` → no leak.
+- **web (`tiers.ts` + `buildNetlist`):** `capLeakTau(tier)` = `[1, 8, 60, 600] s` (budget…lab,
+  game-scaled, realistic ordering); `ecLeakTau` = ×0.2 (electrolytics leak more). Emitted on `C`/`EC`
+  **only in Real mode** (EC's leak lands on its expanded ideal-cap element). Mirrors the
+  resistor-tolerance / Vth-mismatch pattern.
+
+**Golden-safe by construction:** the RC golden's cap has `tau = 0` (built sim-core-direct, no
+buildNetlist) → no leak → `0xeaac…` untouched (verified). Ideal mode emits nothing → every existing
+cap byte-identical; the leak is gentle over typical step counts (τ_mid = 8 s = 4 M steps), so no
+existing Real-mode test moved. Tests: `leaky_capacitor_settles_at_the_insulation_divider`,
+`leaky_capacitor_run_is_reproducible` (sim-core); `dramCell.test.ts` (Real-mode emission gate + a
+written 1T1C cell decays in Real, holds rock-steady in Ideal).
+
+**Note for next agent:** `tau` is **game-scaled** (real film caps leak over hours/days; real DRAM
+decays in ms via the *transistor* off-current, which we don't model — only the cap dielectric leak).
+Ordering is realistic, absolute is compressed for legibility (diode-`TT` convention). A future
+refinement could add an access-transistor subthreshold leak for true DRAM-speed decay.
+
+---
+
+## 2026-06-28 (226) — Latch metastability break: transistor SRAM powers up to a real bit (golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Owner picked "latch metastability break" as the next engine
+work (the #88 follow-on, "the actual gap for transistor-mode"). Full gate green: sim-core **206** (incl.
+golden + repro), web **306**, sim-protocol, build:wasm, web check/lint/build all 0.
+
+**The gap (now closed):** an *unwritten* cross-coupled transistor latch (the owner's 6T SRAM prefab, any
+transistor flip-flop) powered up to the metastable mid-rail `Q ≈ Q̄ ≈ VCC/2` instead of a definite bit.
+The damped Newton OP solve, seeded from all-zeros `node_v` (the cell's symmetry axis), lands on the
+unstable midpoint root. (The *write* path always worked — bit-line drive forces a rail that then holds.)
+
+**Landed (engine, `crates/sim-core`):**
+- `mosfet_op` reads **slot 1 = Vth mismatch** (additive, **raw/signed** — `param_or` clamps negatives, so
+  it would have silently dropped −mismatch; that bug cost a debugging loop, noted in the convergence doc).
+- New **`Sim::break_metastable_latches()`**, called once after the install/reset OP solve. Gated on a
+  slot-1 mismatch (⇒ Real mode). Detects cross-coupled pairs as **gate→drain 2-cycles** (sorted-edge
+  binary search, deterministic), seeds each still-mid-rail pair's storage nodes to opposite rails (`0` /
+  supply EMF), re-linearises **every** MOSFET from that seed, and re-solves — **retrying the flipped
+  direction** because the near-singular latch matrix is node-order sensitive (one direction holds, its
+  mirror drifts back; two attempts always suffice). Mismatch **sign** picks the bit.
+
+**Landed (web, `buildNetlist`):** emits `MOSFET_VTH_MISMATCH * jitter(id)` (±30 mV) on NM/PM **only in
+Real mode** — the resistor-tolerance per-component-id pattern. Ideal mode emits nothing.
+
+**Golden-safe by construction:** linear golden has no MOSFET → the gate never fires → `0xeaac…` untouched;
+slot 1 defaults to 0 for every existing Element/Ideal netlist → byte-identical; an ideal symmetric cell
+stays **honestly** metastable (a genuine teaching point — "imperfections are what make real SRAM pick a
+state"). Tests: 4 sim-core (`ideal_…metastable`, `mismatched_…definite_bit`, `jittered_…clean_rail`,
+`…run_is_reproducible`) + `web/src/lib/sramPowerUp.test.ts` (Ideal mid-rail vs Real deterministic bit;
+write path `sramTransistor.test.ts` still green).
+
+**Crucial lesson for the next agent:** **convergence ≠ metastability**, and a static Vth mismatch *alone*
+does **not** escape the midpoint (it only *shifts* the root — measured). The lever is a strong,
+self-consistent **rail seed on the device op-points** (`mosfet_vgs`/`vds`), not the `node_v` seed (which
+only feeds Newton's convergence test) and not a small nudge. Full writeup:
+`docs/sim/transistor-scale-convergence.md` (metastability §).
+
+**Next engine candidates** (from the menu, not yet started): Newton source/damped stepping (push the
+~548-FET cliff); CLK-coupling re-test now that #88 + this landed.
+
+---
+
 ## 2026-06-28 (225) — NAND flash physics (mode 4) LANDED, golden-safe (greenlit)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, pushed. Owner greenlit the flash build. P-flash-1 (engine
