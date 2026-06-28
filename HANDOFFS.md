@@ -43,13 +43,19 @@ added `pinLabelDeco` — a leader from each pin to its label + a backing plate b
 pin-label layout loop ~8730; deco field ~7945, addChild before the pin-texts loop). Gate green throughout
 (sim-core 191, web 288).
 
-**Tweak 2 (pipe LoD bends inward) — DEFERRED, needs visual iteration.** Inside an opened sub-assembly under
-the ANALOGY lens, the conduit pipes bend as if pins face inward when they should face outward. Code pointers:
-the conduit pin-stub alignment + outward-normal lives where `condRoutes` is built (board.ts ~169 "chosen
-outward normal (ox,oy)"); the skin is `drawConduitSkin`; the per-wire conduit draw is board.ts ~6404-6436.
-Likely a context-dependent normal sign inside the die/opened-cell (frame pins face into the die). Fix needs
-deep-zoom + analogy-lens screenshots of an opened cell (the headless shoot can't set lens/zoom/drill) — do it
-live or extend the harness with a camera/lens hook first; do NOT blind sign-flip.
+**Harness hook LANDED (ab93098):** `shoot.mjs --zoom/--lens/--center` + `window.__cecView` +
+`board.centerOnComponent` — can now screenshot the deep-zoom LoD (pin-label deco, conduit pipes, opened-cell
+internals) headlessly. **Tweak 1 VERIFIED with it** (a placed FULL ADDER at zoom 7.5: pin labels CIN/A/COUT/
+SUM/B each sit on a backing plate, lifted off the copper — exactly the ask). Fixture recipe: embed
+`docs/prefab-reference-library/source-20260628.json`'s `userIcs` + place one IC; `--center 1 --zoom 7.5` for
+labels, `--zoom 16 --lens analogy` for internals/pipes.
+
+**Tweak 2 (pipe LoD bends inward) — NOT REPRODUCED yet; needs the specific cell.** With the hook I rendered a
+FULL ADDER's internals under the analogy lens (zoom 16): the conduit pipes route cleanly/orthogonally — no
+inward bend visible. The owner said "certain sub-assemblies," so it's layout-specific. Next: hunt it with the
+hook across other prefab cells (Inverter, MUX, latch — different pin edges) or ask the owner which cell shows
+it; then fix. Code pointers if/when reproduced: conduit pin-stub outward-normal where `condRoutes` is built
+(board.ts ~169), `drawConduitSkin`, conduit draw ~6404. Do NOT blind sign-flip (it'd regress the clean case).
 
 **Remaining queue (in order):**
 1. **P2** — `classifyStorageCell` (cellAnalysis.ts) + `characterizeMemoryCell` (sibling of characterize.ts) +
