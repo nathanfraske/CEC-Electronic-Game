@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (222) — Owner pivot: use transistor sub-assemblies (6T SRAM + gates) over behavioral; SRAM VERIFIED working
+
+**Owner directive:** "Use my sub-assembly for the SRAM primitive, and replace all the gates you can with my
+sub-assemblies — it actually shows the transistors." Also: PR #310 (the whole 30-commit branch) was **merged
+to main** (merge `39bfa5e`); branch fast-forwarded to match.
+
+**Investigated + VERIFIED (headless, post-#88):**
+- The owner's **transistor 6T SRAM prefab works as real memory.** Flattens to **6 MOSFETs**, converges
+  (`conv=true, iters=1`), and — driven by a bitline write through a **pulsed word-line** — RETAINS the bit
+  after WL drops (write1→Q=5 holds; write0→Q=0 holds). The metastability I flagged only bites a *never-written*
+  cold cell (like real SRAM at power-on); a written cell holds because Newton seeds from the prior tick (same
+  mechanism DFFs use). New regression test: `web/src/lib/sramTransistor.test.ts` (web 289). So "use the 6T as
+  the SRAM primitive" is **sound** — it already exists + works.
+- The owner already has a **full transistor-level sub-assembly library in `prefabs.ts`** (16 cells: Inverter,
+  NAND, NOR, AND, OR, XOR, MUX, D-latch, D-FF, 1-bit reg, 6T SRAM) and `flattenUserIcs` inlines them to real
+  FETs. The parts exist; small ones converge fine.
+
+**The ONE constraint to respect (documented `docs/sim/transistor-scale-convergence.md`):** raw-transistor
+networks hit a **Newton convergence cliff** at scale (the 548-FET ALU → garbage). My **Newton #88 = that doc's
+"Path B"** (gmin globalization), now landed **golden-safe**, so it *raises* the ceiling for modest circuits but
+does NOT remove it — a CPU still cannot be one transistor-level Newton system. The scaling path stays **Path A
+(behavioral collapse)**, which *still shows the transistors* on zoom-to-open. So: transistor sub-assemblies for
+teaching/small cells (works, shows silicon), behavioral for CPU-scale (the framebuffer/RAM arrays). The two
+coexist; behavioral ELEM_MEMORY (P1–P3a) is the *scale* path, not a competitor to the teaching 6T.
+
+**Open question put to owner (this turn):** scope of "replace all the gates" — default the small teaching
+gate/cell parts to the transistor sub-assemblies (keeping behavioral for scale), vs a broader swap. P3b
+(behavioral word-level RAM web emission, #103) is de-prioritised but NOT wasted — it's the CPU-scale memory path.
+
+---
+
 ## 2026-06-28 (221) — ELEM_MEMORY P3a: word-level bus-port engine + boundary (option A, golden-safe)
 
 **State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **197** incl. golden + 3 new
