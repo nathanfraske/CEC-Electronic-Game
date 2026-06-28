@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (209) — Explicit OUT pin role + updated-ALU NOR verification (owner)
+
+**State:** 🟢 OUT role shipped (PR #304 pending). New-ALU NOR fix VERIFIED INCOMPLETE (report only).
+
+**Explicit OUT pin role (owner ask "we need an explicit OUT pin role"):** the die-editor stimulus picker
+now offers **OUT** alongside None/GND/VCC/IN. `PinTestRole` widened to `gnd|vcc|in|out`; `out` is an
+OBSERVED marker — `dieTestGraph` SKIPS injecting a source for it (the internal circuit drives it), and
+`derivePinRoles` now reads any stimulus role (so an authored `out` seals as the `out` role). Naming a pad an
+output word (Y/Q/OUT/SUM/COUT…) also auto-sets the OUT marker. Fixes the gap where result pins whose names
+aren't recognised output words (R0–R3, C/Z FLAG) sealed with NO role → the characterizer/bench couldn't read
+them. Golden-safe (roles are web-only; golden has no user IC). Test: dieEditor.test.ts — derive `out` +
+`dieTestGraph` adds nothing for an out pin (vs a V for an in pin). Gate green (web 273).
+
+**Updated ALU (`09a78cf0…json`, tag `4-BIT FULL ALU (2)`) — NOR via Ainv: NOT working yet.** Owner added
+Ainv to do De Morgan NOR = (~A)&(~B). Verified headless (behavioral): **Ainv works** (inverts A into the
+logic unit → `Ainv+AND`=`~A&B`, `Ainv+XOR`=XNOR, `Ainv+SEL00`=A), but **Binv has ZERO effect on the logic
+unit** (only the adder), so `(~A)&(~B)` can't form → NOR unreachable in logic mode (full 16-combo sweep:
+no combo yields NOR). FIX: route the B-INVERT output into the **logic unit's B input** too (so Binv inverts
+B for both the adder and the logic AND); then Ainv=1,Binv=1,SEL=AND = NOR. **ADD still dead** (M=1 → 0) —
+the adder→OUTPUT-MUX I2 integration gap from (206) remains (the bigger ISA blocker).
+
+**Next:** owner rewires Binv→logic (NOR) + the adder→mux (ADD). Engine/bench side: Door-2 vector grid +
+`gradeVectors` multi-output (would auto-flag both gaps); #88 Newton globalization (golden-sensitive, last).
+
+---
+
 ## 2026-06-28 (208) — Test-bench Door-1 "Check It" verdict in the Behavior panel (#89)
 
 **State:** 🟢 PR #303 (pending). First VISIBLE test-bench piece, wired to the engine from (207).

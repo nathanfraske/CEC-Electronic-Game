@@ -1393,7 +1393,10 @@ export function derivePinRoles(
   const roles: PinRole[] = [];
   for (let i = 0; i < pinCount; i++) {
     const t = pinTests?.[i];
-    if (t?.role === "gnd" || t?.role === "vcc" || t?.role === "in") {
+    // An explicit stimulus role wins over the name heuristic. Every PinTestRole (gnd/vcc/in/out) is also a
+    // semantic PinRole, so an authored `out` marker (a result pin whose name isn't a known output word)
+    // seals as `out` — what the characterizer / test bench reads.
+    if (t?.role) {
       roles[i] = t.role;
       continue;
     }

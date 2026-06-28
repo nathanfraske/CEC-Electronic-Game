@@ -220,9 +220,13 @@ export interface Component {
 
 /**
  * A die-pin test stimulus (authoring-only): `gnd` = 0 V reference, `vcc` = a settable supply,
- * `in` = a settable input drive. `value` is the voltage for `vcc`/`in` (ignored for `gnd`).
+ * `in` = a settable input drive, `out` = an explicit OUTPUT marker (OBSERVED, never driven — no source is
+ * injected for it). `value` is the voltage for `vcc`/`in` (ignored for `gnd`/`out`). `out` lets the author
+ * tag a result pin whose NAME isn't a recognised output word (e.g. `R0`, `C FLAG`) so it seals with the
+ * `out` role — read by {@link derivePinRoles} and needed by the characterizer / test bench to know which
+ * pin to read. (Driven roles inject a virtual source in `dieTestGraph`; `out` is skipped there.)
  */
-export type PinTestRole = "gnd" | "vcc" | "in";
+export type PinTestRole = "gnd" | "vcc" | "in" | "out";
 export interface PinTest {
   role: PinTestRole;
   value: number;

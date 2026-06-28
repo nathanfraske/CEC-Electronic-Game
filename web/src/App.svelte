@@ -4431,12 +4431,16 @@
       pinNameEdit.pinIndex,
       pinNameValue,
     );
-    // Auto-stimulus from the name (owner QoL): naming a pad GND/VCC/IN (or a synonym) sets that LIVE test
-    // stimulus when none is set yet, so a named power/input pin drives the die solve in one step. (out /
-    // clk / inout take their SEALED role from the name via derivePinRoles — only gnd/vcc/in are live
-    // drives.) `setPinTestRole` reads the still-open `pinNameEdit`, so do it before clearing it.
+    // Auto-stimulus from the name (owner QoL): naming a pad GND/VCC/IN/OUT (or a synonym) sets that pin
+    // role when none is set yet — gnd/vcc/in become LIVE drives for the die solve; out becomes the OBSERVED
+    // marker (no drive, just the sealed role). So a named power/input/output pin is tagged in one step.
+    // (clk / inout still take their sealed role from the name via derivePinRoles.) `setPinTestRole` reads
+    // the still-open `pinNameEdit`, so do it before clearing it.
     const r = roleFromName(pinNameValue.trim().toUpperCase());
-    if (pinTestRole === "none" && (r === "gnd" || r === "vcc" || r === "in")) {
+    if (
+      pinTestRole === "none" &&
+      (r === "gnd" || r === "vcc" || r === "in" || r === "out")
+    ) {
       setPinTestRole(r);
     }
     pinNameEdit = null;
@@ -6373,7 +6377,7 @@
             role="group"
             aria-label="Pin test stimulus"
           >
-            {#each [{ r: "none", l: "None" }, { r: "gnd", l: "GND" }, { r: "vcc", l: "VCC" }, { r: "in", l: "IN" }] as opt (opt.r)}
+            {#each [{ r: "none", l: "None" }, { r: "gnd", l: "GND" }, { r: "vcc", l: "VCC" }, { r: "in", l: "IN" }, { r: "out", l: "OUT" }] as opt (opt.r)}
               <button
                 type="button"
                 class="pin-test-role mono {pinTestRole === opt.r
@@ -6389,7 +6393,9 @@
                     ? "0 V reference (the die's ground)"
                     : opt.r === "vcc"
                       ? "Supply voltage (powers the die)"
-                      : "Input drive voltage"}
+                      : opt.r === "in"
+                        ? "Input drive voltage"
+                        : "Output pin — observed, not driven (marks this as a result the bench reads)"}
               >
                 {opt.l}
               </button>

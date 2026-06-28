@@ -247,6 +247,9 @@ export function dieTestGraph(
   for (let i = 0; i < tests.length; i++) {
     const t = tests[i];
     if (!t) continue;
+    // `out` is an OBSERVED marker, not a stimulus — the internal circuit drives this pin; injecting a
+    // source here would fight that drive. Skip it (it carries only its sealed role, via derivePinRoles).
+    if (t.role === "out") continue;
     if (t.role === "gnd") {
       // Tie the lead straight to the shared ground (a 0 V reference for this pin).
       wire(
