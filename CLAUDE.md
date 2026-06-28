@@ -44,6 +44,13 @@ headless **vitest** suite (e.g. `web/src/lib/netlist.test.ts`) — `buildNetlist
 only, so it compiles in node, letting us verify determinism-critical compilation (the IC-maker seal
 expanding to the same netlist as the inline circuit) without a browser.
 
+**SEE render changes — don't guess.** Chromium + Playwright are pre-installed, so any visual change
+(`board.ts`, the drawers, glyphs, `App.svelte`) can be screenshotted and Read back. **Never claim a render
+can't be verified.** `pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>]
+[--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <componentId>]`, then Read the PNG
+(`web/scripts/shoot.mjs`; never run `playwright install`). The wasm core also runs headless in node
+(`initSync`) for deterministic drive→step→read tests.
+
 ## Design system (the look)
 
 Mirrors **criticalerrorcomputing.com** — a dark bench-instrument / HUD aesthetic.

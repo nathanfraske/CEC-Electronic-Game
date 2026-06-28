@@ -31,6 +31,13 @@ echo "  cargo clippy -p sim-core -p sim-protocol --all-targets -- -D warnings &&
 echo "  cargo test -p sim-core -p sim-protocol && \\"
 echo "  pnpm run build:wasm && pnpm -C web check && pnpm -C web lint && pnpm -C web build"
 echo
+echo "You CAN SEE render changes — never say 'I can't verify visually'. Chromium + Playwright are"
+echo "pre-installed; shoot a PNG and Read it (don't guess at glyphs / board.ts / drawers / App.svelte):"
+echo "  pnpm -C web shoot --out /tmp/x.png [--fixture <ceccircuit.json>] \\"
+echo "    [--lens reality|analogy|schematic] [--zoom <pxPerWorldPx>] [--center <componentId>]"
+echo "  then Read /tmp/x.png. (Harness: web/scripts/shoot.mjs · NEVER run 'playwright install'.)"
+echo "The wasm core ALSO runs headless in node (initSync) for deterministic drive->step->read tests."
+echo
 
 # Self-heal: silence the global stop hook's nag about GitHub's own merge commits.
 # ~/.claude/stop-hook-git-check.sh flags every committer != noreply@anthropic.com,
