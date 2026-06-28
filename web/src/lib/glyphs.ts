@@ -1160,12 +1160,32 @@ function mosfetSchematic(g: Graphics, o: GlyphOpts, nch: boolean): void {
     ).fill({ color: o.color, alpha: 0.16 * cond });
   }
 
+  // Type colour — a strong, rotation-independent P-vs-N tell carried on the GATE electrode (cyan
+  // n-channel / warm p-channel), beside the inversion bubble + the polarity arrow. The CHANNEL keeps
+  // `o.color` (its net/voltage colour), so voltage reading is unchanged.
+  const typeCol = nch ? 0x46d2e6 : 0xff8a5c;
+
   // Drain lead (top) and source lead (bottom) in to the channel spine.
   g.moveTo(d.x, d.y).lineTo(d.x, topY).lineTo(platex, topY);
   g.moveTo(s.x, s.y).lineTo(s.x, botY).lineTo(platex, botY);
-  // Gate lead in to the gate bar.
-  g.moveTo(gate.x, gate.y).lineTo(gatex, gate.y).lineTo(gatex, midY);
   g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+  // Gate lead in to the gate bar — TYPE-COLOURED, and for PMOS broken by the universal inversion BUBBLE,
+  // so a flipped or idle FET still reads its polarity without hunting for the tiny body arrow.
+  const gbub = 3.8;
+  if (!nch) {
+    g.moveTo(gate.x, gate.y).lineTo(gatex - 2 * gbub, gate.y);
+    g.stroke({ width: 2, color: typeCol, alpha: 0.92 });
+    g.circle(gatex - gbub, gate.y, gbub).stroke({
+      width: 1.8,
+      color: typeCol,
+      alpha: 0.95,
+    });
+    g.moveTo(gatex, gate.y).lineTo(gatex, midY);
+    g.stroke({ width: 2, color: typeCol, alpha: 0.92 });
+  } else {
+    g.moveTo(gate.x, gate.y).lineTo(gatex, gate.y).lineTo(gatex, midY);
+    g.stroke({ width: 2, color: typeCol, alpha: 0.92 });
+  }
 
   // The channel spine + the three "fingers" (the broken channel of an
   // enhancement device): top finger to the drain, bottom to the source, middle
@@ -1178,29 +1198,30 @@ function mosfetSchematic(g: Graphics, o: GlyphOpts, nch: boolean): void {
   }
   g.stroke({ width: 2.2, color: o.color, alpha: 0.6 + 0.35 * cond });
 
-  // The insulated gate bar (the MOS "plate"), parallel to the spine across the
-  // oxide gap. This is the control electrode that draws no DC current.
+  // The insulated gate bar (the MOS "plate") — TYPE-COLOURED so the gate reads N vs P at a glance.
   g.moveTo(gatex, topY).lineTo(gatex, botY);
-  g.stroke({ width: 2.6, color: o.color, alpha: 0.95 });
+  g.stroke({ width: 2.6, color: typeCol, alpha: 0.95 });
 
-  // The body/channel arrow on the middle finger: N-channel points IN (toward the
-  // gate/channel), P-channel points OUT. This is the polarity mark.
+  // The arrow rides the SOURCE finger (not the body) — so it marks WHICH terminal is the source (vs the
+  // plain drain) AND, by direction, the polarity (N points IN toward the channel, P points OUT). `srcY`
+  // tracks the actual source pin (pin 1) so it stays on the source under any rotation/flip; the drain finger
+  // is left plain. With the gate bar (type-coloured + PMOS bubble) on the left, all three terminals — gate,
+  // drain, source — now read distinctly without knowing the convention.
+  const srcY = s.y >= d.y ? botY : topY;
   const ax = platex + reach;
-  const ah = 3.2;
+  const ah = 4.6;
   if (nch) {
-    // arrowhead at the spine end, pointing left (into the channel)
-    g.moveTo(platex, midY)
-      .lineTo(platex + ah, midY - ah)
-      .moveTo(platex, midY)
-      .lineTo(platex + ah, midY + ah);
+    g.moveTo(platex, srcY)
+      .lineTo(platex + ah, srcY - ah)
+      .moveTo(platex, srcY)
+      .lineTo(platex + ah, srcY + ah);
   } else {
-    // arrowhead at the finger tip, pointing right (out of the channel)
-    g.moveTo(ax, midY)
-      .lineTo(ax - ah, midY - ah)
-      .moveTo(ax, midY)
-      .lineTo(ax - ah, midY + ah);
+    g.moveTo(ax, srcY)
+      .lineTo(ax - ah, srcY - ah)
+      .moveTo(ax, srcY)
+      .lineTo(ax - ah, srcY + ah);
   }
-  g.stroke({ width: 2, color: o.color, alpha: 0.9 });
+  g.stroke({ width: 2.4, color: typeCol, alpha: 0.95 });
 
   // The drain→source conduction belt: flowing dots down the channel spine, fed
   // the SIGNED drain current so it reverses with Id and vanishes in cutoff.

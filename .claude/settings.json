@@ -1,4 +1,5 @@
 {
+  "enabledMcpjsonServers": ["cec-app"],
   "hooks": {
     "SessionStart": [
       {
