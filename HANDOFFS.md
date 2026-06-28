@@ -5,6 +5,30 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (225) — NAND flash physics (mode 4) LANDED, golden-safe (greenlit)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, pushed. Owner greenlit the flash build. P-flash-1 (engine
+device physics) done; gate green (sim-core **202** incl. golden, web 300, wasm/check/build).
+
+**Landed (`crates/sim-core`, per `docs/flash-storage-design.md`):** `ELEM_MEMORY` **mode 4 = NAND flash**.
+- **Program** clears bits only (`old & pw`, monotone 1→0) — the floating-gate "inject charge, never remove".
+- **Erase** on terminal **`h`** resets the whole device (the toy block) to wordWidth-masked all-1s; **erase
+  wins** over a same-tick program (deterministic precedence). v1 toy reserves `h` for ERASE → addresses on
+  `f`/`g` (depth ≤4; the masked `a2<<2` never collides).
+- **Erase-before-write FAIL:** a 0→1 program raises a new per-element `mem_fail` latch that
+  `flag_and_clamp_fails` folds into `failed_elements` — load-bearing, because that pass OVERWRITES
+  `failed_elements` from the current/clamp check (the doc's "set it at the write site" alone gets wiped).
+  `mem_fail` is never hashed → golden-safe; golden `0xeaac…` untouched.
+- 5 tests: program-clears / cant-set-without-erase(+FAIL) / erase-resets / erase-wins / reproducible.
+
+**Next (named in the flash doc UPDATE):** `mem_meta` + wear/endurance (§5.2,§6); the **web layer** — a
+placeable flash chip (`netlist.ts` MEM_SPEC mode 4, an ERASE pin) + the **persistence/replay** plumbing
+(`memImage` capture + IndexedDB Tier-B + the t=0-captured-input seed, §3–§4); lazy/chunked alloc for big
+SSDs; the floating-gate zoom leaf. **NB: the word-level bus-port (P3a) — a flash-controller prerequisite —
+already landed**, so the rich FTL/wear-leveler lesson is now unblocked.
+
+---
+
 ## 2026-06-28 (224) — Gate rename + FET terminal distinction + auto-symbol naming (all verified live)
 
 **State:** 🟢 All on `claude/kind-turing-hdelb3`, pushed, web 300 green. Three owner asks, each shot + Read.
