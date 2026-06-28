@@ -63,6 +63,7 @@ import {
   type RegionBox,
 } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
+import { planBusCable } from "./busWiring";
 import {
   drawGlyph,
   drawCellSymbol,
@@ -3401,6 +3402,7 @@ export class Board {
   private labelHitTest(wx: number, wy: number): number | null {
     let best: number | null = null;
     for (const l of this.graph.netLabels.values()) {
+      if (l.ownerId !== undefined) continue; // cable-owned labels aren't user-pickable
       const cell = l.pos ?? this.graph.endpointCell(l.at);
       if (!cell) continue;
       const o = this.cellToWorld(cell);
@@ -5961,10 +5963,31 @@ export class Board {
       if (wire) {
         // Keep the lazy-follow sketch: bake the trail as this wire's bend waypoints before redraw.
         this.bakeLazyIntoWire(from, target);
-        // (Bus auto-complete was removed: auto-creating N independently-routed sibling wires produced
-        // cluttered traces that ignored the player's drawn path — the "smart bus routing" rabbit hole.
-        // The bus is being redesigned as a SINGLE drawn route that fans out to strands only at the
-        // endpoints — see docs/ui/bus-scaling-design.md. The detection in busWiring.ts is reused there.)
+        // BUS CABLE (docs/ui/bus-scaling-design.md, P1): if this single strand cleanly connects two
+        // same-width name-indexed buses (A0→A0 …, siblings free), REPLACE it with ONE Cable that owns the
+        // drawn route. The cable carries all N bits via auto net-labels (deriveCableLinks) and renders as a
+        // single trunk fanning out to strands at each end — no N independently-routed wires (the clutter
+        // the 212 revert removed). A deliberate single-bit wire returns null here → left as a plain wire.
+        if (isPinRef(from) && isPinRef(target)) {
+          const plan = planBusCable(this.graph, from, target);
+          if (plan) {
+            const route = (wire.waypoints ?? []).map((c) => ({ ...c }));
+            this.graph.removeWire(wire.id);
+            this.graph.addCable({
+              base: plan.base,
+              width: plan.width,
+              route,
+              src: {
+                componentId: from.componentId,
+                pinIndices: plan.srcPinIndices,
+              },
+              dst: {
+                componentId: target.componentId,
+                pinIndices: plan.dstPinIndices,
+              },
+            });
+          }
+        }
         this.pushUndo(before);
         this.redrawWires();
         this.cb.onChange?.(this.graph);
@@ -6586,8 +6609,53 @@ export class Board {
         }
       }
     }
+    // Bus cables overlay the wire layer: one trunk per cable, fanning to individual strands at each end.
+    this.drawCables(g);
     // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
     this.flowDelta = 0;
+  }
+
+  /**
+   * Draw the bus CABLES (docs/ui/bus-scaling-design.md, P1): each cable is ONE trunk through its drawn
+   * route, fanning out to the individual pin strands at both ends — "combine as one for routing, fan out
+   * where you plug in." Every conductor is still drawn (the fans are individual strands; bit 0 IS the
+   * trunk), so "show the wires" holds. Connectivity is the cable's auto net-labels (deriveCableLinks), not
+   * these strokes — this is pure presentation. (P2 adds the conduit skin + zoom LoD + ×N badge.)
+   */
+  private drawCables(g: Graphics): void {
+    if (this.graph.cables.size === 0) return;
+    for (const c of this.graph.cables.values()) {
+      const worldOf = (componentId: number, pinIndex: number): Point | null => {
+        const cell = this.graph.pinRefCell({ componentId, pinIndex });
+        return cell ? this.cellToWorld(cell) : null;
+      };
+      const srcW = c.src.pinIndices.map((i) => worldOf(c.src.componentId, i));
+      const dstW = c.dst.pinIndices.map((i) => worldOf(c.dst.componentId, i));
+      const trunkStart = srcW[0];
+      const trunkEnd = dstW[0];
+      if (!trunkStart || !trunkEnd) continue;
+      const color = c.color ?? PALETTE.accent;
+      // End fans (thin individual strands): every non-bit-0 pin into the near trunk anchor.
+      for (let i = 1; i < srcW.length; i++) {
+        const p = srcW[i];
+        if (!p) continue;
+        g.moveTo(p.x, p.y).lineTo(trunkStart.x, trunkStart.y);
+      }
+      for (let i = 1; i < dstW.length; i++) {
+        const p = dstW[i];
+        if (!p) continue;
+        g.moveTo(trunkEnd.x, trunkEnd.y).lineTo(p.x, p.y);
+      }
+      g.stroke({ width: 2, color, alpha: 0.7 });
+      // Trunk (thick) through the player's drawn route; bit 0 rides the trunk.
+      g.moveTo(trunkStart.x, trunkStart.y);
+      for (const cell of c.route) {
+        const p = this.cellToWorld(cell);
+        g.lineTo(p.x, p.y);
+      }
+      g.lineTo(trunkEnd.x, trunkEnd.y);
+      g.stroke({ width: 6, color, alpha: 0.9 });
+    }
   }
 
   /**
@@ -7257,6 +7325,9 @@ export class Board {
     );
     let ti = 0;
     for (const l of labels) {
+      // Cable-owned labels are internal connectivity tokens (deriveCableLinks), not user-facing pills —
+      // the Cable draws its own trunk + fans, so these never render.
+      if (l.ownerId !== undefined) continue;
       // A trace label draws at its `pos` on the wire; a pin/junction label at its
       // anchor. Either way the colour/voltage comes from the net (its `at` endpoint).
       const cell = l.pos ?? this.graph.endpointCell(l.at);
