@@ -2350,6 +2350,36 @@ export class Board {
     this.applyTextRes();
   }
 
+  /** Harness/test accessor (render tools): centre the camera on a placed component at a given zoom scale,
+   * so a headless screenshot can reach the deep-zoom LoD (pin labels, conduit skins, zoom-to-open
+   * internals) that `fitView` never gets to for a single small part. Centres on the part's pin-bbox centre
+   * (not its anchor) so the body sits mid-view. No-op for an unknown id. */
+  centerOnComponent(id: number, scale: number): void {
+    const c = this.graph.components.get(id);
+    if (!c) return;
+    const kind = this.graph.kindOf(c);
+    const cells = kind
+      ? kind.pins.map((p) => this.graph.pinCell(c, p))
+      : [c.cell];
+    let sx = 0;
+    let sy = 0;
+    for (const cell of cells) {
+      const p = this.cellToWorld(cell);
+      sx += p.x;
+      sy += p.y;
+    }
+    const cx = sx / cells.length;
+    const cy = sy / cells.length;
+    const s = Math.max(MIN_SCALE, Math.min(MAX_SCALE, scale));
+    this.world.scale.set(s);
+    this.world.position.set(
+      this.app.screen.width / 2 - cx * s,
+      this.app.screen.height / 2 - cy * s,
+    );
+    this.viewportDirty = true;
+    this.applyTextRes();
+  }
+
   /**
    * The live board graph (read-only use by the HUD): lets the die editor capture the in-place inner
    * circuit with {@link captureSeal} while it is the active graph, without a serialize round-trip.

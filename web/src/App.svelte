@@ -2912,6 +2912,32 @@
               size: board.freeFormBoxSize(),
             }
           : null;
+      // Render harness (scripts/shoot.mjs --zoom/--lens/--center): set the detail lens and drive the camera
+      // to a deep-zoom view of a placed component, so a headless screenshot can capture the LoD-only render
+      // (pin-label deco, conduit pipes, zoom-to-open internals) that fitView never reaches for one part.
+      (
+        window as unknown as {
+          __cecView?: (o: {
+            zoom?: number;
+            lens?: string;
+            centerId?: number;
+          }) => void;
+        }
+      ).__cecView = (o) => {
+        if (
+          o.lens === "schematic" ||
+          o.lens === "analogy" ||
+          o.lens === "reality"
+        ) {
+          boardLens = o.lens;
+          board?.setLens(boardLens);
+        }
+        if (board && o.zoom !== undefined) {
+          if (o.centerId !== undefined)
+            board.centerOnComponent(o.centerId, o.zoom);
+          else board.setCamera({ ...board.getCamera(), scale: o.zoom });
+        }
+      };
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now
