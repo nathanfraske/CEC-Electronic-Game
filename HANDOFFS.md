@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-28 (220) — Newton globalization (#88): gmin-stepping convergence fallback (golden-safe)
+
+**State:** 🟢 Landed + full gate green on `claude/kind-turing-hdelb3` (sim-core **194** incl. golden +
+the 2 new tests; web **288**; build:wasm/check/lint/build all clean). Closes the standing "take a crack at
+the global Newton issue" ask.
+
+**What landed (`crates/sim-core/src/lib.rs`):**
+- `newton_iterate` gained a `gmin_extra: f64` param — a shunt-to-ground conductance added to **every** node's
+  diagonal each iteration. At `0.0` (the plain solve) it's a literal no-op, so the existing path is
+  byte-identical.
+- New `solve_nonlinear(...)` wrapper now drives **both** the operating-point (inv_dt=0) and transient
+  (inv_dt=1/DT) solves. It runs the plain seeded Newton first; **if it converges it returns immediately**
+  (every converging circuit — the golden, every test, every settling step — is unchanged). Only on a stall
+  does it fall back to **gmin stepping**: a fixed 12-step decade ramp `[1, 1e-1 … 1e-10, 0]`, each solve
+  re-seeded from the last via `node_v`, ending at `gmin_extra = 0` to recover the true root.
+- **Golden-safety is structural, not lucky:** `GOLDEN_HASH = 0xeaac_3764_99e4_fa24` comes from a **linear RC**
+  that never enters the Newton path at all → untouched by construction. The fixed-constant test
+  `golden_snapshot_hash_is_stable` proves it, and it's green.
+
+**Tests added:** `hard_driven_diode_string_recovers_via_gmin_stepping` (30 V across 3 bare series diodes — bare
+Newton overflows & stalls; the fallback recovers the exact even split 20 V / 10 V) + a reproducibility test on
+the same circuit. *Empirically:* this circuit fires the fallback at ≥~25 V; ≤10 V the plain solve handles it
+alone. The symmetric CMOS/BJT latches DON'T fire it — they converge to the **metastable midpoint** (a valid DC
+root), which is a *different* problem (needs transient-kick / nodeset init, not gmin). See "Not fixed" below.
+
+**Not fixed by this (important for the 6T SRAM / CPU latch work):** gmin stepping rescues **non-convergence**,
+not **metastability**. A perfectly symmetric cross-coupled latch's DC operating point IS the metastable point
+(Vmid), and Newton legitimately lands there — so transistor-mode SRAM still needs a deterministic perturbation
+(initial condition / transient settling with an asymmetric kick) to choose a held bit. That's the real
+remaining unlock for silicon-true write_trip, and it's a separate mechanism from #88.
+
+---
+
 ## 2026-06-28 (219) — Autonomous push: 3 UI tweaks + ELEM_MEMORY P1/P2/P4 + harness hook + flash doc
 
 **State:** 🟢 Huge autonomous run, all green + pushed on `claude/kind-turing-hdelb3`. Owner: "power through

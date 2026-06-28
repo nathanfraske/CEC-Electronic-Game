@@ -4843,6 +4843,13 @@ impl Sim {
         // Reciprocal of the timestep for the diode reverse-recovery charge companion: `1/DT` in
         // a transient step, `0.0` at the operating point (so the DC solve has no charge term).
         inv_dt: f64,
+        // GMIN-STEPPING homotopy shunt (S) added to EVERY node's diagonal this solve — `0.0` for the plain
+        // solve (the default, byte-identical to before), a positive ramp during the convergence-fallback in
+        // [`Sim::solve_nonlinear`]. A large extra shunt to ground well-conditions a stiff/feedback network
+        // (e.g. cross-coupled inverters), giving a unique near-ground operating point the homotopy then
+        // walks back to `gmin_extra = 0`. Linear, so the inner solve handles it exactly; it never changes
+        // the converged answer at `gmin_extra = 0`.
+        gmin_extra: f64,
     ) -> Vec<f64> {
         // Working unknown vector; node-voltage entries seed from the last solve
         // so a transient step starts near its answer (few iterations).
@@ -4853,6 +4860,12 @@ impl Sim {
         for _iter in 0..NEWTON_MAX_ITERS {
             let mut mat = base_mat.to_vec();
             let mut rhs = base_rhs.to_vec();
+            // GMIN-stepping shunt to ground on every node (no-op at 0 → the plain solve is unchanged).
+            if gmin_extra > 0.0 {
+                for r in 0..(self.node_count - 1) {
+                    mat[r * n + r] += gmin_extra;
+                }
+            }
 
             // Stamp each diode's companion at its current junction voltage.
             // g = di/dv and Ieq = i(v*) - g*v* (plus GMIN for a finite slope).
@@ -5345,6 +5358,49 @@ impl Sim {
         x
     }
 
+    /// Solve the nonlinear network with a GMIN-stepping **convergence fallback** (#88). First runs the plain
+    /// seeded Newton ([`Sim::newton_iterate`] with `gmin_extra = 0`) — for any circuit that converges (the
+    /// golden, every existing test, every transient step that settles) this returns immediately and is
+    /// **byte-identical** to before. Only when the plain solve hits the iteration cap does it fall back to
+    /// **gmin stepping**: shunt every node to ground with a large conductance (a unique, well-conditioned
+    /// near-ground operating point that bare Newton + `pnjlim` can't reach for a stiff/positive-feedback
+    /// network like cross-coupled inverters), then ramp the shunt down by decades — re-seeding each solve
+    /// from the last via `node_v` — until `gmin_extra = 0` recovers the true answer. Deterministic (a fixed
+    /// schedule, integer-free control flow) and golden-safe by construction (the fallback is unreachable for
+    /// a converging circuit). Both the operating-point and transient solves route through here.
+    #[allow(clippy::too_many_arguments)]
+    fn solve_nonlinear(
+        &mut self,
+        n: usize,
+        base_mat: &[f64],
+        base_rhs: &[f64],
+        diodes: &[DiodeMap],
+        mosfets: &[MosfetMap],
+        bjts: &[BjtMap],
+        varistors: &[VaristorMap],
+        opamps: &[OpampMap],
+        inv_dt: f64,
+    ) -> Vec<f64> {
+        let result = self.newton_iterate(
+            n, base_mat, base_rhs, diodes, mosfets, bjts, varistors, opamps, inv_dt, 0.0,
+        );
+        if self.last_newton_converged {
+            return result;
+        }
+        // Fallback: walk a large shunt-to-ground conductance down to zero, each step seeded from the last
+        // (newton_iterate writes the iterate into node_v, which the next solve reads as its seed).
+        const GMIN_STEPS: [f64; 12] = [
+            1.0, 1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9, 1e-10, 0.0,
+        ];
+        let mut result = result;
+        for &g in &GMIN_STEPS {
+            result = self.newton_iterate(
+                n, base_mat, base_rhs, diodes, mosfets, bjts, varistors, opamps, inv_dt, g,
+            );
+        }
+        result
+    }
+
     /// Newton operating-point solve (install/reset, `t = 0`) for nonlinear
     /// netlists. The linear part matches [`Sim::solve_operating_point`]
     /// (capacitors and voltage sources carry branch unknowns; inductors are
@@ -5491,7 +5547,8 @@ impl Sim {
 
         // Operating point is a DC steady state: pass inv_dt = 0 so the diode reverse-recovery
         // charge companion contributes nothing (dq/dt = 0), leaving the DC solve unchanged.
-        let x = self.newton_iterate(
+        // solve_nonlinear is the plain seeded Newton unless it stalls, then a gmin-stepping fallback.
+        let x = self.solve_nonlinear(
             n, &base_mat, &base_rhs, &diodes, &mosfets, &bjts, &varistors, &opamps, 0.0,
         );
 
@@ -5740,7 +5797,8 @@ impl Sim {
         self.stamp_floating_refs(&mut base_mat, n);
 
         // Transient step: inv_dt = 1/DT engages the diode reverse-recovery charge companion.
-        let x = self.newton_iterate(
+        // solve_nonlinear is the plain seeded Newton unless it stalls, then a gmin-stepping fallback.
+        let x = self.solve_nonlinear(
             n,
             &base_mat,
             &base_rhs,
@@ -15573,6 +15631,84 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "NMOS+PMOS pair must reproduce exactly");
+    }
+
+    /// Three identical diodes in series driven **hard** (30 V across the string, no
+    /// ballast) is a textbook Newton-killer: from a cold start the exponential I-V
+    /// overflows and bare seeded Newton + `pnjlim` never settles (it hits
+    /// [`NEWTON_MAX_ITERS`] un-converged → a NaN / garbage operating point). The
+    /// gmin-stepping fallback in [`Sim::solve_nonlinear`] (#88) shunts every node to
+    /// ground with a large conductance — a unique, well-conditioned near-ground
+    /// point — then walks the shunt down by decades back to zero, recovering the
+    /// true answer. By series symmetry the only physical DC root is an **even split**
+    /// (identical diodes carry one series current ⇒ equal forward drops), so each
+    /// node sits at `drive * (3 - k) / 3`. This is the circuit that exercises the
+    /// new convergence path; the gentler ≤10 V version converges on the plain solve
+    /// alone (and the fallback then returns immediately, byte-identical).
+    #[test]
+    fn hard_driven_diode_string_recovers_via_gmin_stepping() {
+        // node 0 = GND, 1 = drive rail, 2/3 = inter-diode taps. D: 1->2, 2->3, 3->0.
+        let drive = 30.0;
+        let sim = build3(
+            4,
+            &[ELEM_VSOURCE, ELEM_DIODE, ELEM_DIODE, ELEM_DIODE],
+            &[1, 1, 2, 3],
+            &[0, 2, 3, 0],
+            &[0, 0, 0, 0],
+            &[drive, 0.0, 0.0, 0.0],
+        );
+        let v = sim.node_voltages();
+        assert!(
+            v.iter().all(|x| x.is_finite()),
+            "the operating point is finite (gmin stepping converged): {v:?}"
+        );
+        assert!(
+            sim.last_newton_converged(),
+            "the gmin-stepping fallback drove the hard diode string to convergence"
+        );
+        // Even split across three identical series diodes: node 2 = 2/3 of the
+        // drive, node 3 = 1/3. (The bare solve would leave these NaN.)
+        assert!(
+            (v[2] - drive * 2.0 / 3.0).abs() < 1e-6,
+            "node 2 sits at two-thirds of the drive (two diode drops): got {}",
+            v[2]
+        );
+        assert!(
+            (v[3] - drive / 3.0).abs() < 1e-6,
+            "node 3 sits at one-third of the drive (one diode drop): got {}",
+            v[3]
+        );
+    }
+
+    /// The gmin-stepping fallback is a **fixed, integer-free** schedule, so a circuit
+    /// that routes through it still reproduces bit-for-bit under the determinism
+    /// contract — the same hard diode string hashes identically across two runs.
+    /// (Golden-safety of the *engine* golden is separate and stronger: the golden RC
+    /// is linear and never enters the Newton path at all, so `GOLDEN_HASH` is
+    /// untouched by construction.)
+    #[test]
+    fn gmin_stepping_fallback_run_is_reproducible() {
+        let run = || {
+            let mut sim = build3(
+                4,
+                &[ELEM_VSOURCE, ELEM_DIODE, ELEM_DIODE, ELEM_DIODE],
+                &[1, 1, 2, 3],
+                &[0, 2, 3, 0],
+                &[0, 0, 0, 0],
+                &[30.0, 0.0, 0.0, 0.0],
+            );
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "the gmin-rescued circuit must reproduce exactly"
+        );
     }
 
     // --- Three-terminal: NPN / PNP BJT + Newton -------------------------------

@@ -6,6 +6,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-28 (220) — Newton globalization (#88) landed
+
+- ~~**Newton globalization (#88)**~~ DONE (gmin-stepping convergence fallback). `newton_iterate` gained a
+  `gmin_extra` shunt-to-ground param (no-op at 0 → plain solve byte-identical); new `solve_nonlinear` wrapper
+  drives both OP + transient solves: plain seeded Newton first, **returns immediately if it converges**, else
+  a fixed 12-step decade gmin ramp `[1 … 1e-10, 0]` re-seeded each step. Golden-safe by construction — the
+  golden RC is **linear** and never enters the Newton path, so `GOLDEN_HASH = 0xeaac_3764_99e4_fa24` is
+  untouched (proven green by `golden_snapshot_hash_is_stable`). Tests:
+  `hard_driven_diode_string_recovers_via_gmin_stepping` (30 V/3-diode string bare Newton can't solve →
+  fallback recovers the exact even split) + reproducibility. Gate green: sim-core **194**, web **288**.
+- ⚠️ **Caveat — NOT fixed by #88 (separate task):** gmin stepping rescues **non-convergence**, not
+  **metastability**. A symmetric cross-coupled latch's DC operating point IS the metastable midpoint, and
+  Newton legitimately lands there → transistor-mode SRAM still needs a deterministic perturbation (initial
+  condition / asymmetric transient kick) to pick a held bit. That's the real remaining unlock for silicon-true
+  `write_trip`, and it's a different mechanism. New open item below.
+- [ ] **Latch-state selection (deterministic metastability break)** — NEW, the actual gap for transistor-mode
+  6T SRAM / sequential silicon. Options: per-element initial-condition seed, asymmetric transient kick on
+  install, or a tiny deterministic node-id-derived bias. Golden-safe iff gated off for existing netlists.
+
+---
+
 ## 2026-06-28 (216) — DOOM circuit vision + memory-characterization panel
 
 - ~~**Write down the DOOM-circuit vision**~~ DONE: `docs/doom-circuit-vision.md` — the north-star "run DOOM
@@ -35,7 +56,7 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   `flattenUserIcs` emits one ELEM_MEMORY, Behavior-panel memory verdict card + words×bits picker.
 - [ ] **NAND/flash design panel** (#102): RUNNING in background → `docs/flash-storage-design.md` (fast flash
   arrays, persistence across runs, persistence-vs-replay reconciliation). Owner ask.
-- [ ] **Newton globalization (#88)** — owner asked to take a crack AFTER the memory phases (golden-sensitive).
+- ~~**Newton globalization (#88)**~~ DONE — see the (220) entry at the top (gmin-stepping fallback, golden-safe).
 - ~~**RAM placeable from bin**~~ DONE (0322db3). ~~**Tweak: net highlight → KiCad (wire-time, not hover)**~~
   DONE (bd58617). ~~**Tweak: pin-label leader + backing plate**~~ DONE (a9deabb). ~~**Flash panel doc**~~
   DONE (`docs/flash-storage-design.md`).
@@ -52,7 +73,8 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   wide-memory prerequisite. Hard; fresh focused window.
 - [ ] **ELEM_MEMORY P5 (memory tiers)** — lower value until the read/write-margin datasheet path exists.
 - [ ] **P2 authentic layer** — characterize-a-6T → mint array part (convenience RAM/DRAM already usable).
-- [ ] **Newton #88** — golden-sensitive solver globalization; also unlocks silicon-true write_trip.
+- ~~**Newton #88**~~ DONE (220): gmin-stepping fallback. NOTE: unlocks non-convergence, NOT the latch
+  metastability that silicon-true write_trip needs — that's the new "Latch-state selection" item in (220).
 - [ ] **I/O & display subsystem** — NEXT design pass (offered a dedicated panel): memory-mapped I/O bridge;
   keyboard matrix + mouse quadrature decoders; framebuffer + palette/CLUT (RAMDAC); the RGB-LED array display
   (texture-far / real-LED-near). Decisions banked: palette vs direct-RGB; resolution (start small, e.g.
