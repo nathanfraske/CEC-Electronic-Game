@@ -154,6 +154,33 @@ export function ecLeakTau(tier: number): number {
   return capLeakTau(tier) * EC_LEAK_FACTOR;
 }
 
+// A resistor's thermal (Johnson) noise. In REALISTIC mode buildNetlist installs a noise-current
+// amplitude in the resistor's noise slot (NOISE_SLOT); sim-core injects a deterministic, zero-mean
+// noise current each transient tick (its Norton form), so the node the resistor feeds fuzzes. Johnson
+// noise current ∝ 1/√R, so the resulting node-VOLTAGE noise ∝ √R — a bigger resistor is noisier, the
+// real ordering. The grade scales an excess/1-f noise factor on top (a budget carbon-film part hisses
+// more than a lab-grade metal-foil one). Ideal mode = silent. GAME-SCALED by NOISE_I_SCALE for
+// legibility (the ordering — bigger R, cheaper grade ⇒ noisier — is what matters, not the literal
+// √(4kTRΔf) microvolts). Mirrors the cap-leak / diode-TT game-scaling convention.
+// Conservative scale: the resulting node-voltage noise is `≈ NOISE_I_SCALE·√R` at a lone resistor, so it
+// grows with R (Johnson ordering) but a high-impedance node (e.g. a 1 MΩ pulldown) still swings only a
+// few hundred mV at the 3.46σ peak — visible on a kΩ–100 kΩ part without dominating or destabilising a
+// weakly-tied node. (Real Johnson voltage is √(4kTRΔf) microvolts; this is game-scaled for legibility.)
+const NOISE_I_SCALE = 2.5e-4; // game-scaled Johnson current scale (∝ A·√Ω)
+const NOISE_FACTOR_BY_TIER = [1.6, 1.0, 0.5, 0.25]; // budget … lab: excess-noise multiplier
+
+/** The Johnson-noise current amplitude (A) for a resistor of `ohms` at the given tier — buildNetlist
+ * installs it in the resistor's noise slot (Real mode only). `∝ 1/√R` so node-voltage noise grows with
+ * R; scaled down for a better grade. `0` for a non-positive resistance (treated as silent). */
+export function resistorNoiseAmp(ohms: number, tier: number): number {
+  if (!(ohms > 0)) return 0;
+  const t = Math.max(
+    0,
+    Math.min(NOISE_FACTOR_BY_TIER.length - 1, Math.round(tier)),
+  );
+  return (NOISE_I_SCALE / Math.sqrt(ohms)) * (NOISE_FACTOR_BY_TIER[t] ?? 1.0);
+}
+
 /** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
 export function tierParams(kind: string, tier: number): number[] | null {
   const grades = TIER_PARAMS[kind];

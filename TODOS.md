@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors), deterministic + replay-exact + golden-safe
+
+- ~~**Engine survey + owner pick**~~ DONE — surveyed engine fidelity vs. gaps (noise, op-amp non-idealities,
+  reactive physics, thermal Path 2, CPU memory spine). Owner picked **noise**.
+- ~~**Noise v1 — Johnson noise on resistors**~~ DONE (Rust 210, web 332; golden stable; verified live).
+  **sim-core:** `NOISE_SLOT = 6` + deterministic `noise_sample` (Irwin–Hall/`splitmix64`, no
+  transcendentals) + `add_noise_currents` injecting a Norton noise current into the **transient** RHS only
+  (OP stays clean), gated on a `has_noise` install flag → noiseless circuits / golden byte-identical. It
+  ENTERS the solve (node V fuzzes, hashed) but is replay-exact. **web:** `resistorNoiseAmp(R, tier)`
+  (`∝ 1/√R`, tier-coupled), emitted on `R` in Real mode only. Tests: `noisy_resistor_run_is_reproducible`
+  + `noise_actually_varies_the_node_voltage` (sim-core); `noise.test.ts` (web, 4). Docs:
+  `docs/sim/noise-ideation.md` + CLAUDE.md gotcha. (Scale tuned conservative — √R noise blows up a 1 MΩ
+  node; the first scale broke `sramPowerUp.test.ts`, fixed.)
+- [ ] **Noise follow-ons:** shot noise (`√(2qI)`, current-dependent), flicker/1-f (shaping filter +
+  state), op-amp input-referred noise, an RMS-noise / noise-floor inspector readout.
+- [ ] (still open) **Thermal:** death vent + management levers + Path 2 (hashed Tj). **CPU spine:**
+  ELEM_MEMORY P2/P3b (#47/#99).
+
+---
+
 ## 2026-06-29 (231) — Thermal Phase 2b: °C legend + derate→FAIL / magic-smoke (#116), golden-safe
 
 - ~~**Thermal Phase 2b — °C colour-scale legend**~~ DONE (web-only, golden-safe; web 328; verified live).

@@ -24,6 +24,7 @@ import {
   resistorTolerance,
   capLeakTau,
   ecLeakTau,
+  resistorNoiseAmp,
   DEFAULT_TIER,
   PARAM_STRIDE,
 } from "./tiers";
@@ -521,6 +522,7 @@ interface BehSpec {
 }
 const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
 const CAP_LEAK_SLOT = 5; // params slot: capacitor self-discharge tau (s); 0 = no leak (mirror sim-core)
+const NOISE_SLOT = 6; // params slot: thermal-noise current amplitude (A); 0 = silent (mirror sim-core)
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1702,6 +1704,17 @@ export function buildNetlist(
       const tier = comp.tier ?? DEFAULT_TIER;
       params[ei * PARAM_STRIDE + CAP_LEAK_SLOT] =
         comp.kind === "EC" ? ecLeakTau(tier) : capLeakTau(tier);
+    }
+    // Resistor thermal (Johnson) noise (Realistic mode only): a noise-current amplitude (slot NOISE_SLOT)
+    // sim-core injects as a deterministic, zero-mean per-tick current — the resistor's node fuzzes. The
+    // amplitude ∝ 1/√R so the resulting node-VOLTAGE noise grows with R (a bigger resistor is noisier),
+    // and a better grade is quieter. Omitted in Ideal mode (silent, golden-clean). `comp.value` is the
+    // nominal resistance in ohms.
+    if (comp.kind === "R" && real) {
+      params[ei * PARAM_STRIDE + NOISE_SLOT] = resistorNoiseAmp(
+        comp.value,
+        comp.tier ?? DEFAULT_TIER,
+      );
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an

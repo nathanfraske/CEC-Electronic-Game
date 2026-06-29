@@ -2523,6 +2523,53 @@ const DIODE_TT_SLOT: usize = 3;
 /// seconds.
 const CAP_LEAK_SLOT: usize = 5;
 
+/// Param slot carrying an element's **noise-current amplitude** (A) — its **thermal (Johnson) noise**
+/// modelled as a Norton current source `i_n` in parallel with the device. Each transient tick the solve
+/// injects `i_n = params[NOISE_SLOT] · noise_sample(element, tick)` into the element's two nodes (see
+/// [`Sim::add_noise_currents`]); the sample ([`noise_sample`]) is a zero-mean, ~unit-variance,
+/// **deterministic** function of `(element index, tick, fixed seed)` — replay-exact and
+/// machine-independent (Irwin–Hall over `splitmix64`, no transcendentals). The current is independent of
+/// the unknowns, so it stamps the RHS only — no matrix change, no Newton feedback. `0.0` (the default,
+/// every Ideal-mode part — the web layer emits the amplitude in Real mode only — every existing netlist,
+/// and the RC golden) means **no noise**: the injection is skipped (and a [`Sim::has_noise`]`= false`
+/// install never even reaches the noise path), so the solve is **byte-identical** and the golden is
+/// untouched. Injected ONLY in the **transient** solves, never the operating point, so the DC starting
+/// point stays clean and noise appears on top of it (like a diode's `TT` uses `inv_dt = 0` at the OP).
+/// In the reserved slot range (≥ 4), clear of every device's slots 0/1. **Game-scaled** web-side for
+/// legibility — the realistic ordering (bigger R, hotter, cheaper grade ⇒ noisier) is what matters, not
+/// the literal `√(4kTRΔf)` microvolts. See `docs/sim/noise-ideation.md`.
+const NOISE_SLOT: usize = 6;
+
+/// A fixed odd seed so the deterministic noise stream is identical across machines and runs.
+const NOISE_SEED: u64 = 0xA076_1D64_78BD_642F;
+
+/// One `splitmix64` step — a fast, well-distributed integer hash, used to derive the per-(element, tick)
+/// noise sample deterministically. Pure integer arithmetic (wrapping), so it is bit-identical everywhere.
+#[inline]
+fn noise_mix(mut z: u64) -> u64 {
+    z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
+}
+
+/// A deterministic, zero-mean, ~unit-variance noise sample for an element at a tick. Irwin–Hall: the sum
+/// of four independent uniforms in `[0, 1)` is approximately Gaussian; `(Σ − 2)·√3` centres it at `0`
+/// with ~unit variance. A pure function of `(element index, tick, NOISE_SEED)` built from integer hashing
+/// + `f64` adds/multiplies only (no `sin`/`exp`), so it is replay-exact and machine-independent.
+fn noise_sample(ei: usize, tick: u64) -> f64 {
+    let mut h = (ei as u64).wrapping_mul(0xD1B5_4A32_D192_ED03)
+        ^ tick.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        ^ NOISE_SEED;
+    let mut sum = 0.0f64;
+    for _ in 0..4 {
+        h = noise_mix(h);
+        // Top 53 bits → a uniform in [0, 1) (the f64 mantissa width).
+        sum += (h >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0);
+    }
+    (sum - 2.0) * 1.732_050_807_568_877_2
+}
+
 /// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
 /// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
 /// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
@@ -3482,6 +3529,10 @@ pub struct Sim {
     /// path; when `false`, the solve is byte-for-byte the original single-pass
     /// solve.
     has_nonlinear: bool,
+    /// `true` iff at least one installed element carries a non-zero [`NOISE_SLOT`] amplitude. When
+    /// `false` the transient solve never enters the noise path ([`Sim::add_noise_currents`]), so a
+    /// noiseless circuit — and the golden — is byte-for-byte the noise-free solve.
+    has_noise: bool,
     /// Per-node analog/digital classification (length `node_count`), computed at
     /// install from the element list ([`classify_nets`]). Topology metadata for the
     /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
@@ -3763,6 +3814,7 @@ impl Sim {
             dim: 0,
             branch_index: Vec::new(),
             has_nonlinear: false,
+            has_noise: false,
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
             subtick_rate: 1,
@@ -4106,6 +4158,9 @@ impl Sim {
         }
 
         let has_nonlinear = elements.iter().any(|e| is_nonlinear(e.kind));
+        // Any element carrying a non-zero noise amplitude (Real-mode web emission) arms the transient
+        // noise path; otherwise it is never entered, so a noiseless circuit / the golden is byte-identical.
+        let has_noise = elements.iter().any(|e| e.params[NOISE_SLOT] != 0.0);
         // Install classifies with NO wide ports (the cell-level / non-memory path). A wide memory's bus
         // nodes are added later by `set_memory_ports`, which re-runs classification with the filled lists.
         let net_classes = classify_nets(node_count, &elements, &[], &[], &[]);
@@ -4126,6 +4181,7 @@ impl Sim {
         self.dim = next;
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
+        self.has_noise = has_noise;
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
         // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
@@ -4458,6 +4514,30 @@ impl Sim {
         for &node in &self.floating_refs {
             let r = node - 1;
             mat[r * n + r] += GMIN;
+        }
+    }
+
+    /// Inject every noisy element's deterministic per-tick **thermal-noise current** into the transient
+    /// RHS — a Norton current source `i_n` in parallel with the element (amplitude = [`NOISE_SLOT`], A;
+    /// `0` skips it). `i_n` is zero-mean and independent of the unknowns, so it stamps the RHS only (no
+    /// matrix change, no Newton feedback) exactly like an [`ELEM_ISOURCE`] (current leaves `a`, enters
+    /// `b`). The sample is a pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact.
+    /// Called ONLY from the transient solves (the operating point stays clean) and ONLY when
+    /// [`Sim::has_noise`], so a noiseless circuit — and the golden — never reaches this code. The signed
+    /// sample makes the sign convention irrelevant.
+    fn add_noise_currents(&self, rhs: &mut [f64]) {
+        for (i, e) in self.elements.iter().enumerate() {
+            let amp = e.params[NOISE_SLOT];
+            if amp == 0.0 {
+                continue;
+            }
+            let i_n = amp * noise_sample(i, self.tick);
+            if let Some(r) = Self::node_idx(e.a) {
+                rhs[r] -= i_n;
+            }
+            if let Some(r) = Self::node_idx(e.b) {
+                rhs[r] += i_n;
+            }
         }
     }
 
@@ -4936,6 +5016,11 @@ impl Sim {
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
         self.stamp_floating_refs(&mut mat, n);
+        // Thermal-noise current injection (transient only — the OP stays clean). Skipped entirely unless
+        // a noisy element was installed, so a noiseless circuit / the golden is byte-identical.
+        if self.has_noise {
+            self.add_noise_currents(&mut rhs);
+        }
         // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
         // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
         Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
@@ -6035,6 +6120,12 @@ impl Sim {
         // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
         // base (copied into every iteration's matrix); a no-op when fully grounded.
         self.stamp_floating_refs(&mut base_mat, n);
+        // Thermal-noise current into the fixed Newton base RHS (constant across iterations; independent
+        // of the unknowns). Transient only — the OP base stays clean — and skipped unless a noisy element
+        // was installed, so a noiseless circuit / the golden is byte-identical.
+        if self.has_noise {
+            self.add_noise_currents(&mut base_rhs);
+        }
 
         // Transient step: inv_dt = 1/DT engages the diode reverse-recovery charge companion.
         // solve_nonlinear is the plain seeded Newton unless it stalls, then a gmin-stepping fallback.
@@ -16454,6 +16545,85 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "a leaking RC must reproduce exactly");
+    }
+
+    /// A resistor carrying a [`NOISE_SLOT`] amplitude injects a deterministic per-tick noise current, so
+    /// a noisy run still reproduces its snapshot-hash stream exactly — the determinism contract holds with
+    /// the new transient noise term (the sample is a pure function of element index + tick + fixed seed).
+    #[test]
+    fn noisy_resistor_run_is_reproducible() {
+        let run = || {
+            // Divider: V(1→0)=5, R1(1→2), R2(2→0); noise on R2 (element index 2) fuzzes the midpoint
+            // (node 2 is not pinned by the source, so the injected current shows as a node-voltage wobble).
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = 1.0e-3;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1_000.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a noisy resistor run must reproduce exactly");
+    }
+
+    /// Noise actually bites: the divider with a noise amplitude on its midpoint resistor produces a node
+    /// voltage that visibly varies tick-to-tick, while the noise-free (`amp = 0`) circuit holds a steady
+    /// DC level. Confirms the transient injection reaches the solve — and that `amp = 0` is byte-clean.
+    #[test]
+    fn noise_actually_varies_the_node_voltage() {
+        let stats = |amp: f64| -> (f64, f64) {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = amp;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1_000.0, 1_000.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut samples = Vec::new();
+            for _ in 0..500 {
+                sim.step();
+                samples.push(sim.node_voltages()[2]);
+            }
+            let mean = samples.iter().sum::<f64>() / samples.len() as f64;
+            let var =
+                samples.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / samples.len() as f64;
+            (mean, var)
+        };
+        let (clean_mean, clean_var) = stats(0.0);
+        let (noisy_mean, noisy_var) = stats(1.0e-3);
+        assert!(
+            (clean_mean - 2.5).abs() < 1e-9 && clean_var < 1e-12,
+            "a noise-free divider holds a steady 2.5 V DC node: mean={clean_mean}, var={clean_var}"
+        );
+        assert!(
+            noisy_var > 1e-3,
+            "a noisy resistor visibly fuzzes its node: var={noisy_var}"
+        );
+        // Johnson noise is zero-mean: the noisy node still averages near the ideal divider midpoint.
+        assert!(
+            (noisy_mean - 2.5).abs() < 0.25,
+            "zero-mean noise leaves the average near the 2.5 V divider point: mean={noisy_mean}"
+        );
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no

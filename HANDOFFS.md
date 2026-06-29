@@ -5,6 +5,49 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors): deterministic, replay-exact, golden-safe
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (231). The owner picked **noise** as the next
+engine fundamental (from a fresh engine survey — see below). **First sim-core change in this thermal/noise
+arc**, but golden-safe by the param-gate pattern: `golden_snapshot_hash_is_stable` + every
+`*_run_is_reproducible` green. Full gate green: Rust **210**, web **332** (+4), fmt/clippy/check/lint/build 0.
+**Verified live via Playwright** — a 100k/100k divider midpoint: Ideal range **0 V** (dead steady), Real
+range **0.19 V** (thermal fuzz around 2.5 V); the scope's Node-2 trace visibly jagged vs the flat Node-1.
+
+**Landed — v1 = Johnson noise on resistors (the canonical, most teachable; pairs with thermal — Johnson
+*is* thermal noise):**
+- **sim-core** (`crates/sim-core/src/lib.rs`): a new **`NOISE_SLOT = 6`** param (the per-element noise-
+  current amplitude, A); a deterministic **`noise_sample(ei, tick)`** (Irwin–Hall over `splitmix64`,
+  zero-mean ~unit-variance, **no transcendentals** → machine-independent, replay-exact); and
+  **`add_noise_currents`** which injects `amp·sample` as a Norton current into the **transient** RHS
+  (`solve_into_readout` + `_newton`), **never** the operating point (`solve_operating_point*` stay clean,
+  like a diode's `TT` at `inv_dt=0`). Gated on a **`has_noise`** install flag (mirrors `has_nonlinear`),
+  so a noiseless circuit / the golden **never enters** the noise path → byte-identical. The current is
+  independent of the unknowns → RHS-only, no matrix change, no Newton feedback. It **enters the solve**
+  (node `V` fuzzes, hashed) — replay-exact, not presentational (unlike thermal).
+- **web** (`tiers.ts` + `netlist.ts`): `resistorNoiseAmp(R, tier)` — `∝ 1/√R` (so node-voltage noise `∝ √R`,
+  the Johnson ordering) × a per-tier excess-noise factor (budget hisses more). `buildNetlist` emits it on
+  `R` in **Real mode only** (slot 6). Game-scaled (`NOISE_I_SCALE = 2.5e-4`).
+- **Tests:** sim-core `noisy_resistor_run_is_reproducible` (determinism with noise on) +
+  `noise_actually_varies_the_node_voltage` (Real fuzzes, Ideal byte-clean). web `noise.test.ts` (4:
+  emission Real-vs-Ideal, 1/√R + tier ordering, end-to-end divider fuzz). Docs: `docs/sim/noise-ideation.md`
+  + CLAUDE.md gotcha.
+
+**Gotcha learned (in CLAUDE.md):** node-voltage noise grows as `√R`, so a **high-impedance node** (a 1 MΩ
+pulldown on an isolated bus) swings hundreds of mV. The first scale (`3e-3`) made a 1 MΩ node swing volts,
+pushing the **6T-SRAM bit-line** into the mid-rail band and breaking `sramPowerUp.test.ts`. Fixed by a
+conservative `NOISE_I_SCALE` (peak < 1.8 V even at 1 MΩ). Keep test nodes firmly tied.
+
+**NEXT (noise + thermal, owner's call):**
+1. **Noise follow-ons:** shot noise (`√(2qI)`, current-dependent), flicker/1-f (needs a shaping filter
+   with state), op-amp input-referred noise, an RMS-noise inspector readout / noise-floor HUD.
+2. **Thermal:** the death *vent* (smoke + autopsy), management levers (heatsink/fan/spacing), **Path 2**
+   (sim-core hashed Tj → R(T) drift / runaway).
+3. **CPU spine:** ELEM_MEMORY P2/P3b (the RAM/ROM web emission, #47/#99).
+4. **Merge:** the whole thermal+noise arc is on the branch, **NOT merged** to main yet.
+
+---
+
 ## 2026-06-29 (231) — Thermal Phase 2b: °C colour-scale legend + derate→FAIL / magic-smoke (#116) — golden-safe
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (230). Web-only, golden-safe (zero sim-core
