@@ -4960,7 +4960,7 @@ impl Sim {
         // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
         Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
-        let x = solve_dense(mat, rhs, n);
+        let x = self.solve_dense_lift_digital(mat, rhs, n);
         // Node voltages occupy the first `node_count - 1` unknowns; ground (0)
         // stays pinned. The branch unknowns follow and are read separately.
         self.node_v[0] = 0.0;
@@ -5201,7 +5201,7 @@ impl Sim {
         // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
         Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
-        let x = solve_dense(mat, rhs, n);
+        let x = self.solve_dense_lift_digital(mat, rhs, n);
 
         // Scatter node voltages back; ground stays 0. They occupy the first
         // `node_count - 1` unknowns; branch currents follow.
@@ -5595,7 +5595,7 @@ impl Sim {
             // terminals, so they cannot couple a pure-digital row; nothing is moved.
             Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
 
-            x = solve_dense(mat, rhs, n);
+            x = self.solve_dense_lift_digital(mat, rhs, n);
 
             // Update junction voltages with pn-junction limiting, and measure the
             // largest limited junction swing for the residual-style current test.
@@ -7080,6 +7080,88 @@ impl Sim {
     #[cfg(not(debug_assertions))]
     #[inline]
     fn debug_assert_digital_closed_form(&self) {}
+
+    /// Solve a fully-assembled MNA system with the **pure-digital nets lifted out of the dense
+    /// factorisation** — the digital-matrix lift (`docs/sim/digital-matrix-lift-plan.md`, Stage A).
+    ///
+    /// A pure-`Digital` net is touched only by digital pins, so its MNA row is stamped ONLY by
+    /// [`Sim::stamp_digital`] — a lone `GMIN` + at most one Thévenin on its own diagonal, with no
+    /// off-diagonal coupling to any other row (proven each solve by
+    /// [`Sim::debug_assert_digital_block_diagonal`]). Such rows therefore never participate in the
+    /// elimination of the analog block (they are zero in every analog column, and no analog row is
+    /// nonzero in their column), so **dropping them and factoring only the analog + boundary +
+    /// branch submatrix is bit-identical** to factoring the whole matrix — the analog pivot
+    /// sequence and arithmetic are unchanged, and each dropped net's voltage is recovered from the
+    /// closed form [`Sim::digital_net_solved_voltage`], equal to its in-matrix diagonal solve to
+    /// the last bit (the Stage A0 invariant). This turns the dense `O(n³)` factorisation into
+    /// `O(n_analog³)` + an `O(n²)` extract, the structural win that makes a gate-level CPU's
+    /// thousands of pure-logic nets tractable instead of cubic in the gate count.
+    ///
+    /// Returns the **full-width** solution (length `n`), the dropped rows filled from the closed
+    /// form, so every caller's scatter/readout is unchanged. A circuit with no pure-digital net
+    /// (`digital_rows` empty — the RC golden, every pure-analog netlist) takes the fast path: the
+    /// original `solve_dense`, byte-identical with zero overhead.
+    fn solve_dense_lift_digital(&self, mat: Vec<f64>, rhs: Vec<f64>, n: usize) -> Vec<f64> {
+        // Fast path: nothing to lift — solve the full system exactly as before.
+        if self.digital_rows.is_empty() {
+            return solve_dense(mat, rhs, n);
+        }
+        // Keep a copy of the full system to shadow-solve and PROVE byte-identity (debug only).
+        #[cfg(debug_assertions)]
+        let (mat_full, rhs_full) = (mat.clone(), rhs.clone());
+
+        // Drop the pure-digital rows/cols (MNA row index = node − 1 = `digital_rows`); keep every
+        // analog/boundary node row and all branch-unknown rows, in ascending order.
+        let mut is_digital = vec![false; n];
+        for &r in &self.digital_rows {
+            is_digital[r] = true;
+        }
+        let keep: Vec<usize> = (0..n).filter(|&r| !is_digital[r]).collect();
+        let m = keep.len();
+        // Extract the kept (analog) submatrix + RHS — exactly the analog system, since the dropped
+        // rows carry no off-diagonal coupling into it.
+        let mut sub = vec![0.0f64; m * m];
+        let mut srhs = vec![0.0f64; m];
+        for (ri, &r) in keep.iter().enumerate() {
+            srhs[ri] = rhs[r];
+            let row = r * n;
+            let srow = ri * m;
+            for (ci, &c) in keep.iter().enumerate() {
+                sub[srow + ci] = mat[row + c];
+            }
+        }
+        let xs = if m > 0 {
+            solve_dense(sub, srhs, m)
+        } else {
+            Vec::new()
+        };
+        // Scatter into a full-width solution: kept rows from the analog sub-solve, dropped
+        // (pure-digital) rows from the closed form.
+        let mut x = vec![0.0f64; n];
+        for (ri, &r) in keep.iter().enumerate() {
+            x[r] = xs[ri];
+        }
+        for &r in &self.digital_rows {
+            x[r] = self.digital_net_solved_voltage(r + 1);
+        }
+
+        // Debug-only PROOF: the lifted solution must equal factoring the full matrix bit-for-bit.
+        // If this ever fires, the pure-digital block was not actually decoupled/diagonal (or the
+        // closed form drifted) and the lift would not be byte-identical — caught here, across every
+        // circuit the test suite exercises, before it can move a golden.
+        #[cfg(debug_assertions)]
+        {
+            let full = solve_dense(mat_full, rhs_full, n);
+            for (r, (xr, fr)) in x.iter().zip(full.iter()).enumerate() {
+                debug_assert_eq!(
+                    xr.to_bits(),
+                    fr.to_bits(),
+                    "digital-matrix lift changed row {r}: lifted={xr:e} full={fr:e}"
+                );
+            }
+        }
+        x
+    }
 
     /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
     /// current tick: `amplitude * sin(2*pi * f * tick * dt)`, where `e.value` is
@@ -11179,6 +11261,92 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "gate circuit must reproduce exactly");
+    }
+
+    /// The digital-matrix lift (`docs/sim/digital-matrix-lift-plan.md`) is actually EXERCISED: a
+    /// gate output that feeds only another gate's input — with nothing analog on that net — is
+    /// classified pure-`Digital`, so it leaves the dense factorisation and is recovered from the
+    /// closed form. Two inverters in series make node 2 (g1 OUT → g2 IN) such a net. The debug
+    /// shadow-solve inside [`Sim::solve_dense_lift_digital`] proves the lifted result is
+    /// bit-identical to factoring the full matrix on every step, so just running this asserts that
+    /// proof on the lift path; here we also confirm the net is lifted and the run reproduces.
+    #[test]
+    fn digital_matrix_lift_is_exercised_and_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            // node 1 = input (source + g1 IN → Boundary), node 2 = g1 OUT → g2 IN (pure-Digital),
+            // node 3 = g2 OUT (pure-Digital). Two legacy NOT gates (aux 6) in series.
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_VSOURCE, ELEM_GATE, ELEM_GATE],
+                &[1, 2, 3],
+                &[0, 1, 2],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 5.0, 5.0],
+                &[0.0, 6.0, 6.0],
+            ));
+            sim
+        };
+        // node 2 → MNA row 1 must be pure-Digital (lifted out of the matrix).
+        assert!(
+            build().digital_rows().contains(&1),
+            "the gate→gate net must be classified Digital and lifted"
+        );
+        let run = || {
+            let mut sim = build();
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "lifted digital circuit must reproduce exactly"
+        );
+    }
+
+    /// Edge case: a circuit whose every non-ground node is pure-`Digital` and which has no branch
+    /// unknowns — a three-inverter ring oscillator with no analog parts. Every MNA row is lifted,
+    /// so the kept (analog) submatrix is **empty** (`m == 0`): the solve is skipped entirely and
+    /// the whole solution comes from the closed form. The debug shadow-solve still proves it equals
+    /// factoring the full (all-diagonal) matrix bit-for-bit; here we confirm it classifies all
+    /// three nodes Digital, runs without panicking, and reproduces.
+    #[test]
+    fn digital_matrix_lift_all_digital_ring_is_reproducible() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            // Ring: g0 OUT=1 IN=3, g1 OUT=2 IN=1, g2 OUT=3 IN=2. Legacy NOT gates, no source.
+            assert!(sim.set_netlist(
+                4,
+                &[ELEM_GATE, ELEM_GATE, ELEM_GATE],
+                &[1, 2, 3],
+                &[3, 1, 2],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 5.0, 5.0],
+                &[6.0, 6.0, 6.0],
+            ));
+            sim
+        };
+        assert_eq!(
+            build().digital_rows(),
+            &[0, 1, 2],
+            "every non-ground node of the power-less ring is pure-Digital (m == 0 lift)"
+        );
+        let run = || {
+            let mut sim = build();
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "all-digital ring must reproduce exactly");
     }
 
     /// A gate driving an LED through a series resistor exercises the *Newton*-path

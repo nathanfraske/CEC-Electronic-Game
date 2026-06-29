@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (243) — DIGITAL-MATRIX LIFT IMPLEMENTED (Stage A): pure-digital nets leave the dense solve
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **sim-core**, **golden byte-identical** (proven, see below).
+Owner greenlit Stage A. Rust **229** (+2), golden `0xeaac…` untouched. Full gate re-running post-fmt.
+
+**What landed — the lift (`docs/sim/digital-matrix-lift-plan.md` Stage A):** the dense `O(n³)` factorisation
+is the wall to a gate-level CPU. Implemented as a **submatrix-extraction wrapper**
+`Sim::solve_dense_lift_digital` (replaces the 3 `solve_dense` call sites: OP, linear transient, Newton).
+The full matrix is still assembled byte-for-byte as before (every stamp / `branch_index` / `node_idx`
+untouched); the wrapper **drops the provably-diagonal pure-`Digital` rows/cols, factors only the
+analog+boundary+branch submatrix (`O(n_analog³)`), and refills the dropped nets from the closed form**
+`digital_net_solved_voltage`, returning a full-width `x` so all scatter/readout is unchanged. Pure-analog
+circuits (no `digital_rows` — the golden) take a fast path = the original `solve_dense`, zero overhead.
+
+**Why it's trustworthy (determinism is sacred):**
+- **A0** (committed `e5e4d81`): a debug invariant that each pure-digital net's in-matrix `node_v` == the
+  closed form bit-for-bit. Passed across the whole suite → the digital side is byte-identical by construction
+  (driven nets are `referenced` in `floating_refs` so no double-`GMIN`; undriven solve to 0 either way).
+- **Shadow solve** (debug-only, inside the wrapper): every step it ALSO factors the full matrix and asserts
+  the lifted `x` == the full `x` bit-for-bit. So **byte-identity is a proven runtime fact across all 229
+  tests**, not an argument. Compiled out of release/wasm.
+- New tests: `digital_matrix_lift_is_exercised_and_reproducible` (gate→gate pure-digital net is lifted),
+  `digital_matrix_lift_all_digital_ring_is_reproducible` (the `m==0` all-digital ring edge).
+
+**Residual / NEXT:** the full matrix is still *allocated + assembled* at `O(n²)` then extracted `O(n²)`; the
+factorisation wall (the `O(n³)` killer) is GONE, but a follow-up can assemble *directly* into the compacted
+system to drop the `O(n²)` too (true plan §5-A2). **Stage B** (Z/X as propagating levels — the only
+deliberate golden regen) remains unstarted/optional. Not yet committed — awaiting the full gate green.
+
+---
+
 ## 2026-06-29 (242) — ENGINE "BIGGEST WIN" PLAN: lift pure-digital nets out of the dense MNA
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **Docs-only** (`docs/sim/digital-matrix-lift-plan.md`), no code,

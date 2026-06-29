@@ -2,13 +2,30 @@
 
 # The biggest engine win: lift pure-digital nets out of the dense MNA matrix
 
-Status: **plan / research deliverable. No code yet.** Drafted in answer to "what is the
-biggest thing we can do for the engine, and how do we tackle it." This note names the win,
-inventories the (large) scaffolding already in place, scopes the one remaining structural
-step, and proves it can land **golden-byte-identical** before any deliberate behaviour
-change. It is the natural culmination of ADR 0004 (the protocol/behavioral engine) and
-`docs/ui/logic-analog-digital-nets.md` (§6–§7), and the gate to the project's stated
-endgame: **sand → CPU → DOOM** — a *gate-level* digital design running in the browser.
+Status: **Stage A0 + A (the lift) IMPLEMENTED and proven byte-identical; the residual
+`O(n²)` assembly is a noted follow-up.** Drafted in answer to "what is the biggest thing we
+can do for the engine, and how do we tackle it." This note names the win, inventories the
+(large) scaffolding already in place, scopes the structural step, and proves it lands
+**golden-byte-identical**. It is the natural culmination of ADR 0004 (the protocol/behavioral
+engine) and `docs/ui/logic-analog-digital-nets.md` (§6–§7), and the gate to the project's
+stated endgame: **sand → CPU → DOOM** — a *gate-level* digital design running in the browser.
+
+> **Implemented (2026-06-29).** Stage A landed as a **submatrix-extraction wrapper**
+> (`Sim::solve_dense_lift_digital`, `crates/sim-core/src/lib.rs`) rather than a from-scratch
+> compacted assembler — a byte-identical realisation that is far lower-risk. The full matrix
+> is still assembled exactly as before (every stamp, `branch_index`, `node_idx` untouched);
+> the wrapper then **drops the provably-diagonal pure-`Digital` rows/cols, factors only the
+> analog+boundary+branch submatrix, and refills the dropped nets from the closed form**,
+> returning a full-width solution so every caller's scatter/readout is unchanged. This turns
+> the dense **`O(n³)` factorisation into `O(n_analog³)`** — the wall for a gate-level CPU —
+> while a **debug-only shadow solve inside the wrapper asserts the lifted result equals
+> factoring the full matrix bit-for-bit on every step**, so byte-identity is a *proven runtime
+> fact* across the whole suite (229 tests, golden `0xeaac…` untouched), not just an argument.
+> A0 (the `closed-form == in-matrix` invariant) shipped first as the validating checkpoint.
+> **Residual / follow-up:** the full matrix is still *allocated and assembled* at `O(n²)`
+> (then extracted at `O(n²)`); assembling *directly* into the compacted system (true §5-A2)
+> would drop that to `O(n_analog²)` — a clean, separate optimisation now that the factorisation
+> wall is gone. Stage B (Z/X propagation) remains unstarted and optional.
 
 > One sentence: **the dense `O(n³)` MNA solve is the wall between us and a gate-level CPU,
 > and the entire codebase has already been scaffolded to climb it — what remains is to
