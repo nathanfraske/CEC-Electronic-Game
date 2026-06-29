@@ -1484,6 +1484,41 @@ export function buildNetlist(
       continue;
     }
 
+    // Centre-tapped transformer (XFCT): a primary + a CONTINUOUS secondary winding S+ → CT → S− (two coupled
+    // half-coils sharing the tap). Each half carries n/2 turns (L ∝ (n/2)²); orienting them as one continuous
+    // path makes S+ and S− swing ANTIPHASE about the grounded tap (full-wave rectifier / phase splitter). All
+    // three coils are mutually coupled (`k = XF_K`), installed in both fidelity modes.
+    if (c.kind === "XFCT") {
+      const nsp = nodeIndex.get(find(key(c.id, 2))) ?? 0; // S+
+      const nct = nodeIndex.get(find(key(c.id, 3))) ?? 0; // CT (tap)
+      const nsm = nodeIndex.get(find(key(c.id, 4))) ?? 0; // S−
+      const n = c.value > 0 ? c.value : 2;
+      const half = XF_L_BASE * (n / 2) * (n / 2); // each half-winding's inductance
+      const emitL = (a: number, b: number, l: number): number => {
+        const idx = types.length;
+        types.push(ELEM_INDUCTOR);
+        aArr.push(a);
+        bArr.push(b);
+        cArr.push(0);
+        dArr.push(0);
+        eArr.push(0);
+        pushFGH();
+        values.push(l);
+        auxArr.push(0);
+        return idx;
+      };
+      const priIdx = emitL(na, nb, XF_L_BASE); // primary  P+ → P−
+      const topIdx = emitL(nsp, nct, half); // secondary top half  S+ → CT
+      const botIdx = emitL(nct, nsm, half); // secondary bottom half  CT → S−
+      transformerEdges.push([priIdx, topIdx, XF_K]);
+      transformerEdges.push([priIdx, botIdx, XF_K]);
+      transformerEdges.push([topIdx, botIdx, XF_K]);
+      elemOfComponent.set(c.id, priIdx);
+      legsOfComponent.set(c.id, [topIdx, botIdx]);
+      nodesOfComponent.set(c.id, [na, nb]);
+      continue;
+    }
+
     // Electrolytic cap: expand into TWO elements on a shared internal node —
     // an ideal capacitor (+pin → internal, value = C) and the ESR resistor
     // (internal → −pin). The cap element carries the series current, so it is the

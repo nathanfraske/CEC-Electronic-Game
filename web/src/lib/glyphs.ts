@@ -1662,6 +1662,62 @@ function drawTR(g: Graphics, o: GlyphOpts): void {
   }
 }
 
+// Centre-tapped transformer: drawTR with the secondary across S+ (pin 2) and S− (pin 4), plus a CENTRE-TAP
+// stub from the middle of the secondary winding out to the CT pin (pin 3) — the wire that splits the
+// secondary into its two antiphase halves.
+function drawXFCT(g: Graphics, o: GlyphOpts): void {
+  const pp = o.pins[0];
+  const pm = o.pins[1];
+  const sp = o.pins[2];
+  const ct = o.pins[3];
+  const sm = o.pins[4];
+  if (!pp || !pm || !sp || !ct || !sm) return;
+  const priX = Math.min(pp.x, pm.x) + 8;
+  const secX = Math.max(sp.x, sm.x) - 8;
+  const topY = Math.min(pp.y, sp.y) + 4;
+  const botY = Math.max(pm.y, sm.y) - 4;
+  const midX = (priX + secX) / 2;
+  const midY = (topY + botY) / 2;
+  const bumps = 3;
+  const rr = (botY - topY) / (bumps * 2);
+  const drive = norm(o.electrical.current, CUR_SCALE);
+
+  if (drive > 0.02) {
+    const s = 1 + 0.12 * Math.sin(o.phase * PULSE_K);
+    g.ellipse(midX, midY, 6 * s, ((botY - topY) / 2) * s).fill({
+      color: 0x8a95f2,
+      alpha: 0.18 * drive,
+    });
+  }
+
+  // Leads: primary top/bottom, secondary top/bottom, and the centre-tap stub out the right.
+  g.moveTo(pp.x, pp.y).lineTo(priX, pp.y).lineTo(priX, topY);
+  g.moveTo(pm.x, pm.y).lineTo(priX, pm.y).lineTo(priX, botY);
+  g.moveTo(sp.x, sp.y).lineTo(secX, sp.y).lineTo(secX, topY);
+  g.moveTo(sm.x, sm.y).lineTo(secX, sm.y).lineTo(secX, botY);
+  g.moveTo(secX, midY).lineTo(ct.x, ct.y); // the centre tap
+  g.stroke({ width: 2, color: 0x6b6488, alpha: 0.85 });
+
+  for (let i = 0; i < bumps; i++) {
+    const cy = topY + rr * (2 * i + 1);
+    g.arc(priX, cy, rr, -Math.PI / 2, Math.PI / 2, false);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+  for (let i = 0; i < bumps; i++) {
+    const cy = topY + rr * (2 * i + 1);
+    g.arc(secX, cy, rr, -Math.PI / 2, Math.PI / 2, true);
+  }
+  g.stroke({ width: 2.2, color: o.color, alpha: 0.95 });
+
+  g.moveTo(midX - 2, topY).lineTo(midX - 2, botY);
+  g.moveTo(midX + 2, topY).lineTo(midX + 2, botY);
+  g.stroke({ width: 1.8, color: o.color, alpha: 0.55 + 0.35 * drive });
+  // A small node dot where the tap meets the winding.
+  g.circle(secX, midY, 2.2).fill({ color: o.color, alpha: 0.9 });
+
+  flow(g, priX, topY, priX, botY, o.electrical.current, o.phase, 0x46d2e6);
+}
+
 // --- Potentiometer (variable resistor with a movable wiper) --------------------
 // Pins ordered A, B, W: the two track ends (A left, B right) and the wiper W below.
 // The resistive track runs A→B; the wiper arrow taps it at `o.wiper` (0 = A end,
@@ -3404,6 +3460,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   PU: drawPU,
   TR: drawTR,
   XF: drawTR, // coupled-coil transformer — same two-winding + iron-core symbol
+  XFCT: drawXFCT, // centre-tapped transformer — two windings + a centre-tap stub
   POT: drawPOT,
   FF: drawFF,
   SAMP: drawSAMP,
@@ -3442,6 +3499,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   BUF: drawFBUF,
   TR: drawFTR,
   XF: drawFTR, // coupled-coil transformer — same factory-lens converter body
+  XFCT: drawXFCT, // centre-tapped — the 5-pin symbol (drawFTR only maps 4 pins, dangling S−)
   POT: drawFPOT,
   FF: drawFFF,
 };

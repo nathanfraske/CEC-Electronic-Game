@@ -319,6 +319,13 @@
       color: "var(--violet)",
     },
     {
+      tag: "XFCT",
+      name: "Centre-tap XF",
+      desc: "Two antiphase secondary halves",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
       tag: "POT",
       name: "Potentiometer",
       desc: "Variable divider · slide the wiper",
@@ -784,6 +791,7 @@
     L: "Passives",
     TR: "Passives",
     XF: "Passives",
+    XFCT: "Passives",
     POT: "Passives",
     NTC: "Passives",
     PTC: "Passives",
@@ -3193,7 +3201,7 @@
     if (kind === "MSW") return value >= 0.5 ? "Closed" : "Open";
     // Transformer: its value is the turns ratio n = Ns/Np; show it as Np:Ns (so a
     // step-up n = 2 reads "1:2" and a step-down n = 0.5 reads "2:1").
-    if (kind === "TR" || kind === "XF") {
+    if (kind === "TR" || kind === "XF" || kind === "XFCT") {
       const trim = (x: number): string =>
         (Number.isInteger(x) ? x.toString() : x.toFixed(2)).replace(
           /\.?0+$/,

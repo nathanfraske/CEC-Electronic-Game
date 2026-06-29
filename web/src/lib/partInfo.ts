@@ -582,6 +582,20 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Primary current Ip", value: f(e.current, "A") },
     ],
   },
+  XFCT: {
+    name: "Centre-tapped transformer",
+    equation: "V(S+,CT) = −V(S−,CT) · each half = n/2 turns",
+    headline: (e, n) =>
+      `Ratio ${ratioStr(n)} · two ${f((n / 2) * e.vAcross, "V")} halves, antiphase about the tap`,
+    plain: () =>
+      "A transformer whose secondary is one continuous winding with a tap brought out at its centre. Because the two halves are wound the same way along the wire, the top end (S+) swings positive at the same instant the bottom end (S−) swings negative, both measured from the grounded centre tap — the two halves are exactly antiphase. That is what a full-wave rectifier needs (each half feeds the load on alternate half-cycles through its own diode) and what a phase splitter wants (one input, two opposite outputs). Modelled as three coupled inductors — a primary and two secondary half-coils sharing the tap node — so it carries honest mutual-inductance behaviour, including across frequency. Like any transformer it passes AC, blocks DC, and isolates the secondary.",
+    derived: (e, n) => [
+      { label: "Turns ratio Np:Ns", value: ratioStr(n) },
+      { label: "Each half ≈ (n/2)·Vp", value: f((n / 2) * e.vAcross, "V") },
+      { label: "S+ and S− about CT", value: "antiphase" },
+      { label: "Primary current Ip", value: f(e.current, "A") },
+    ],
+  },
   POT: {
     name: "Potentiometer",
     equation: "R(A→W) = R·t · R(W→B) = R·(1−t)",

@@ -962,6 +962,24 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // Centre-tapped transformer: like XF but the secondary is a CONTINUOUS winding S+ → CT → S− (two coupled
+  // half-coils sharing the centre tap), so the two halves come out ANTIPHASE about the tap — the basis of
+  // full-wave rectifiers and phase splitters. Pins P+, P−, S+, CT, S−. `value` = total turns ratio n.
+  XFCT: kind(
+    "XFCT",
+    "Centre-tap XF",
+    "violet",
+    [
+      pin("P+", 0, 0),
+      pin("P−", 0, 2),
+      pin("S+", 2, 0),
+      pin("CT", 2, 1),
+      pin("S−", 2, 2),
+    ],
+    2,
+    "",
+    true,
+  ),
   // Potentiometer: a three-terminal variable resistor — two ends A, B and a movable
   // wiper W that taps somewhere along the track. Pins ordered A, B, W (pin 0 = A,
   // 1 = B, 2 = W). `value` is the total end-to-end resistance; the wiper position

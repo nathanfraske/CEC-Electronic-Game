@@ -58,6 +58,7 @@ export const PART_CAT_OF: Record<string, string> = {
   L: "Passives",
   TR: "Passives",
   XF: "Passives",
+  XFCT: "Passives",
   POT: "Passives",
   NTC: "Passives",
   PTC: "Passives",

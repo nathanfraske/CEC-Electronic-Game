@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (241) — CENTRE-TAP TRANSFORMER PART (XFCT) + transformer ANALOGY view wired up
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **web-only**, golden untouched. Full gate green: web **356**
+(+2), Rust **227** (unchanged), check/lint/build 0. **Verified live** (`shoot`, schematic + analogy lens).
+
+**Landed — `XFCT` centre-tapped transformer part (5-pin):**
+- `graph.ts`: new `XFCT` kind (pins P+/P−/S+/CT/S−, value = turns ratio, violet). `netlist.ts`: expands into a
+  primary + two coupled secondary half-coils as a CONTINUOUS winding `S+→CT→S−` (each `XF_L_BASE·(n/2)²`),
+  pushes 3 coupling edges (pri↔top, pri↔bot, top↔bot) into `transformerEdges` (both fidelity modes).
+  `elemOfComponent`=primary, `legsOfComponent`=`[top, bot]`. The two halves come out ANTIPHASE about the tap
+  (verified e2e). `glyphs.ts`: `drawXFCT` = the transformer symbol + a centre-tap stub (uses pins 2/4 for the
+  secondary, 3 for the tap); registered in schematic + factory drawers (factory uses `drawXFCT`, since
+  `drawFTR` only maps 4 pins). App.svelte PARTS + PART_CAT_OF, values.ts (turns ratios), partInfo.ts
+  (datasheet), codex.ts — all mirror XF. Tests: `transformerPart.test.ts` +2 (3 inductors + 3 edges; halves
+  antiphase).
+
+**Landed — transformer ANALOGY view:** `drawAnalogyTransformer` ALREADY EXISTED (belted-wheels metaphor:
+primary wheel belt-coupled to a secondary wheel sized by the turns ratio, secondary current from
+`electrical.legs[0]`) but was only registered for the legacy `TR`. Registered `XF` + `XFCT` →
+`drawAnalogyTransformer` in `ANALOGY_DRAWERS` (analogyDrawers.ts). Now both morph to the rich belted-wheels
+illustration when zoomed in under the analogy lens (verified `shoot`: a step-up shows a larger secondary
+wheel). Before this, XF fell back to the schematic glyph in the analogy lens.
+
+**NEXT:** the older list (flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating). (233)–(241)
+are on the branch, **NOT a PR** — a **#315 batch** awaits owner greenlight. (Separately: an engine "biggest
+win" plan is being drafted — see `docs/`.)
+
+---
+
 ## 2026-06-29 (240) — BUILDABLE TRANSFORMER PART (XF): a placeable coupled-coil transformer, looks nice
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. The last transformer gap (a placeable part) closed — **web-only**,

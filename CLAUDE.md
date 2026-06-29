@@ -328,8 +328,12 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   only loose-coil proximity coupling stays Real-only). `elemOfComponent` = primary, `legsOfComponent` =
   `[secondary]`; reuses the existing `drawTR`/`drawFTR` glyph (two coils + iron core). Verified live
   (`shoot`): renders as a proper transformer and the Bode/phase panel shows its response. Tests:
-  `transformerPart.test.ts`. (Next: a 5-pin **center-tap** `XF` variant = primary + two coupled secondary
-  halves — proven in sim-core, just needs the variant pin layout + glyph stub.)
+  `transformerPart.test.ts`. **`XFCT`** is the 5-pin **centre-tap** variant (P+/P−/S+/CT/S−) — expands to a
+  primary + two coupled secondary half-coils (continuous `S+→CT→S−`), so the halves swing antiphase about the
+  tap (`drawXFCT` adds a centre-tap stub to the glyph). **Analogy lens:** both register `drawAnalogyTransformer`
+  (the existing belted-wheels metaphor — primary wheel belt-coupled to a secondary wheel sized by the turns
+  ratio, reading the secondary current from `electrical.legs[0]`); a part shows it when zoomed in under the
+  analogy lens. Verified live in schematic + analogy.
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

@@ -21,6 +21,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (241) — CENTRE-TAP TRANSFORMER PART (XFCT) + transformer ANALOGY view (web-only)
+
+- ~~**Centre-tap XF variant**~~ DONE as a 5-pin part `XFCT` (P+/P−/S+/CT/S−; web 356; verified live in
+  schematic + analogy). Expands to primary + two coupled secondary half-coils (continuous `S+→CT→S−`, each
+  `XF_L_BASE·(n/2)²`) + 3 coupling edges (both modes); halves antiphase about the tap. `drawXFCT` glyph adds a
+  centre-tap stub. Mirrors XF across App.svelte/values/partInfo/codex. Test: `transformerPart.test.ts` +2.
+- ~~**Transformer analogy view**~~ DONE — `drawAnalogyTransformer` (belted wheels, secondary sized by turns
+  ratio) already existed but was only on the legacy `TR`; registered `XF` + `XFCT` in `ANALOGY_DRAWERS`, so
+  both morph to the rich belted-wheels illustration when zoomed in under the analogy lens (verified `shoot`).
+- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(241) await a
+  **#315 batch PR**. Engine "biggest win" plan being drafted in `docs/`.
+
+---
+
 ## 2026-06-29 (240) — BUILDABLE TRANSFORMER PART (XF), looks nice (web-only, golden untouched)
 
 - ~~**Placeable coupled-coil transformer part**~~ DONE (web 354; verified live via `shoot` — renders as a
