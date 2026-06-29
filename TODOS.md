@@ -6,6 +6,38 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (247) — OWNER BUG REPORTS (queued): thermal-over-traces clipping + bus-cable UX
+
+Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to fix, not yet started.**
+
+- [ ] **Thermal overlay clips + doesn't follow the traces.** Under the thermal lens the heat field is a
+  rounded-rect blob that gets cut off at its edges and doesn't track the rectangular trace loop. **Root
+  cause (CONFIRMED in code):** `updateHeatOverlay` (`board.ts:3266-3349`) sizes the field grid + copper
+  mask + sprite from the **part-CENTER bbox + only `PITCH*3` margin**, then stretches the `cols×rows`
+  sprite over exactly that bbox. But the trace loop routes OUTSIDE that box, and `buildCopperGrid`'s
+  `toCol`/`toRow` (`board.ts:3366-3368`) **clamp** out-of-box coordinates to the edge cells
+  (`Math.min(cols-1, Math.max(0, …))`) — so an off-box trace point isn't dropped, it's **smeared onto the
+  boundary row/col**. Net effect = heat piles up along the clipped sprite edge instead of following the
+  real trace (exactly the screenshot). **Fix:** derive the bbox from the **union of part `worldBox`es AND
+  every wire route polyline's bounds** (so the whole trace extent is inside the grid), keep the margin,
+  and the existing rasterizer then lands traces at their true cells. Secondary: re-check the dilation
+  keeps a thin run ≥1 cell wide, and whether the sprite's `linear` upscale over-blurs the on-copper field
+  into a blob. Repro: thermal lens + Real mode on any loop whose wires bow outside the part-center box —
+  the owner's AC+R+GND loop does. Web-only, golden-safe. Verify the fix via `shoot`/the `cec-app` MCP
+  (the live-session MCP is absent in headless runs, so this needs the in-app Real-mode heat build-up).
+- [ ] **Bus cable is not interactable.** A `Cable` (`drawCables`, `board.ts:6880`) renders its trunk +
+  end fans but has **no pick/drag/hit-test** path (only plain wires are interactive — see the cable-label
+  skip at `board.ts:3663`). Add cable hit-testing so the trunk can be selected/moved/re-routed/deleted
+  like a wire (Cable P3 "edit ops", task #93).
+- [ ] **Bus-cable "fork"/fan geometry is blocky.** The end fan-out reads as a stiff/blocky fork. Refine
+  the fan geometry (smoother splay, follow the routing rules) — extends the P0 fan work (#96).
+- [ ] **Can't tap an individual bit off the cable.** No gesture to break a single strand out of the
+  trunk mid-run (a per-bit breakout/tap). Part of Cable P3 fan-out-to-process / edit ops (#93).
+- [ ] **Can't tell the cable's width at a glance.** The trunk shows no bit-count / range label. Add a
+  width badge or `[base.0..N]` range label on the trunk (Cable P5 "range labels", task #94).
+
+---
+
 ## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: implemented (byte-identical, worst-case bounded)
 
 - ~~**S0 oracle harness**~~ DONE (`cc4603d`): `eval_digital_full` + `eval_digital` wrapper +
