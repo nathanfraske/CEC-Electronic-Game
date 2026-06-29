@@ -6,6 +6,24 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (230) — Thermal Phase 2: copper-weighted diffusion (heat follows traces) + glow off under lens
+
+- ~~**Thermal Phase 2 — copper-weighted diffusion**~~ DONE (web-only, golden-safe; web 327; verified live
+  via Playwright). The owner's ask: heat now **follows the traces/copper**, and the per-part **glow halo is
+  suppressed under the thermal lens** (colour contrast only). `thermalField.ts` `step` takes a per-cell
+  copper fraction; face conductance `= SUBSTRATE_W + (1−SUBSTRATE_W)·min(ci,cj)` so heat conducts along
+  copper and stalls at bare board (retuned `DIFFUSIVITY 30→55`, `CONVECTION 0.45→0.25`). `board.ts`
+  `buildCopperGrid` rasterises part footprints (`worldBox`) + `routeForWire` polylines into the field grid;
+  `ComponentNode.update` clears `heatGlow` when `lens === "thermal"`. `thermalField.test.ts` +1 copper test.
+- [ ] **Thermal Phase 2b — °C colour-scale legend** (next, small): a fixed legend strip mapping the inferno
+  ramp to °C with the live peak (`field.peak()`), shown when the lens is on — like the reference's bottom bar.
+- [ ] **Thermal derate→FAIL / magic-smoke** (#116, deferred): a web-side over-temp flag (NOT into the
+  solve → replay-safe) so an over-dissipated part boxes/chars at `Tj > T_MAX`.
+- [ ] **Thermal Path 2** (owner-greenlit, golden-moving): sim-core hashed `Tj` for R(T) drift / thermal
+  runaway / replay-exact thermal-contract grading.
+
+---
+
 ## 2026-06-29 (229) — Thermal LIVE: per-part glow + °C readout + inferno board lens, golden-safe
 
 - ~~**Thermal Phase 1 — the live vertical**~~ DONE (web-only, golden-safe; `79accf5` + `4fc0080`; web 326;

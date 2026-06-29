@@ -18,13 +18,20 @@ export interface FieldSource {
   tempC: number;
 }
 
-// Diffusivity (cells²/s, game-scaled) — how fast heat spreads across the board. Convection (1/s) — how
-// fast a cell relaxes back to ambient in still air. Tuned so heat from a sustained source spreads a few
-// cells and pools over ~seconds, matching the per-part Tj timescale.
-const DIFFUSIVITY = 9.0;
-const CONVECTION = 0.45;
-// Per-step explicit-diffusion stability cap (2D): the relaxation factor must stay ≤ 0.25.
-const MAX_ALPHA = 0.22;
+// Diffusivity (cells²/s, game-scaled) — how fast heat spreads ALONG COPPER. Convection (1/s) — how fast
+// a cell relaxes back to ambient in still air. Tuned so heat races down a trace across the board over a
+// few seconds (matching the per-part Tj timescale and a real solver's copper-conduction look).
+const DIFFUSIVITY = 55.0;
+const CONVECTION = 0.25;
+// Face conductance of bare board / air relative to copper (= 1): heat barely crosses the substrate, so
+// it follows the traces. A small floor keeps the field continuous (no fully-isolated cold cells).
+const SUBSTRATE_W = 0.02;
+// Explicit-diffusion stability: the per-substep `alpha · Σ face-weights` must stay below this (≤ 1). The
+// max neighbour-weight sum is 4 (all-copper), so `alpha ≤ STAB/4`.
+const STAB = 0.5;
+// Hard cap on diffusion sub-steps per call, so an absurd dt can't blow up the work (alpha is clamped to
+// the stability bound instead — the field then just relaxes toward steady state).
+const MAX_SUBSTEPS = 64;
 
 export class ThermalField {
   readonly cols: number;
@@ -64,19 +71,26 @@ export class ThermalField {
 
   /**
    * Advance the field by `dtSeconds` of sim time. Each step: (1) pin every source cell to at least its
-   * part's temperature (the part is a heat source held at its body temp); (2) diffuse laterally (an
-   * explicit 5-point relaxation, sub-stepped so a large dt stays stable); (3) convect toward ambient.
+   * part's temperature (the part is a held-temperature heat source); (2) diffuse laterally with a
+   * **copper-weighted** 5-point relaxation — the face conductance between two cells scales with their
+   * copper fraction, so heat conducts along the traces and barely crosses bare board (sub-stepped, with
+   * alpha clamped to the stability bound); (3) convect toward still-air ambient. `copper[i] ∈ [0,1]` is
+   * the per-cell copper fraction (a trace/pad ≈ 1, bare board ≈ 0); omit it for uniform diffusion.
    * `dtSeconds ≤ 0` (paused / scrubbing back) is a no-op.
    */
-  step(sources: FieldSource[], dtSeconds: number): void {
+  step(sources: FieldSource[], dtSeconds: number, copper?: Float32Array): void {
     if (dtSeconds <= 0) return;
-    // Sub-step the diffusion so the per-step relaxation factor stays within the stability cap regardless
-    // of dt (deterministic: the sub-step count is a pure function of dt).
     const want = DIFFUSIVITY * dtSeconds;
-    const subSteps = Math.max(1, Math.ceil(want / MAX_ALPHA));
-    const alpha = want / subSteps;
+    const subSteps = Math.min(
+      MAX_SUBSTEPS,
+      Math.max(1, Math.ceil((4 * want) / STAB)),
+    );
+    // alpha along full copper; clamped to the explicit-diffusion stability bound (so a huge dt relaxes
+    // toward steady state rather than oscillating).
+    const alpha = Math.min(want / subSteps, STAB / 4);
     const conv = 1 - Math.exp(-CONVECTION * (dtSeconds / subSteps));
     const { cols, rows, temp, scratch, ambient } = this;
+    const cu = (i: number): number => (copper ? copper[i]! : 1);
     for (let s = 0; s < subSteps; s++) {
       // Re-pin sources each sub-step: a hot part is a HELD-temperature boundary, so its cell stays at its
       // body temperature throughout — it delivers whatever heat the diffusion+convection drains. (max so
@@ -92,13 +106,18 @@ export class ThermalField {
         for (let c = 0; c < cols; c++) {
           const i = r * cols + c;
           const v = temp[i]!;
-          // Neighbour sum with reflective (insulated) edges — a board with no case loses heat only to
-          // air (the convection term), not off its edges.
-          const l = c > 0 ? temp[i - 1]! : v;
-          const rt = c < cols - 1 ? temp[i + 1]! : v;
-          const up = r > 0 ? temp[i - cols]! : v;
-          const dn = r < rows - 1 ? temp[i + cols]! : v;
-          const diffused = v + alpha * (l + rt + up + dn - 4 * v);
+          const ci = cu(i);
+          // Face conductance to a neighbour = SUBSTRATE_W + (1 − SUBSTRATE_W)·min(copper here, there) —
+          // a copper↔copper face conducts fully, anything touching bare board conducts barely. Reflective
+          // (insulated) board edges: a missing neighbour contributes no flux.
+          const fw = (cj: number): number =>
+            SUBSTRATE_W + (1 - SUBSTRATE_W) * Math.min(ci, cj);
+          let flux = 0;
+          if (c > 0) flux += fw(cu(i - 1)) * (temp[i - 1]! - v);
+          if (c < cols - 1) flux += fw(cu(i + 1)) * (temp[i + 1]! - v);
+          if (r > 0) flux += fw(cu(i - cols)) * (temp[i - cols]! - v);
+          if (r < rows - 1) flux += fw(cu(i + cols)) * (temp[i + cols]! - v);
+          const diffused = v + alpha * flux;
           scratch[i] = diffused + (ambient - diffused) * conv;
         }
       }

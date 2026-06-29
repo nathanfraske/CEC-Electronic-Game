@@ -5,6 +5,51 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (230) — Thermal Phase 2: copper-weighted diffusion (heat follows the traces) + glow off under the lens
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (229). Web-only, golden-safe (zero sim-core
+change). Gate green: web **327**, check/lint/build 0. **Verified live via Playwright** — heat conducts
+along the orange copper traces from R1 (white-hot, 10 Ω) to the V/GND junction, R2 (30 Ω) a fainter
+purple bloom, bare board dark, halo gone under the lens — matching the owner's electro-thermal reference.
+
+**Landed — the owner's ask ("heat should follow the traces and other copper… remove the glowing halo
+when toggled on, only the colour contrast"):**
+- **Copper-weighted heat diffusion** (`thermalField.ts`): `step(sources, dt, copper?)` now takes a
+  per-cell copper fraction. Face conductance between two cells = `SUBSTRATE_W + (1−SUBSTRATE_W)·min(ci,cj)`
+  (`SUBSTRATE_W = 0.02`), so a copper↔copper face conducts fully and anything touching bare board barely
+  conducts — heat races down a trace and stalls at the substrate gap. Retuned for a board-scale
+  characteristic length: `DIFFUSIVITY 30→55`, `CONVECTION 0.45→0.25` (`L = √(D/conv) ≈ 14.8 cells`).
+  Sub-stepped explicit relaxation with `alpha` clamped to the stability bound (unconditionally stable).
+- **Copper mask** (`board.ts` `buildCopperGrid`): rasterises every part footprint (`ComponentNode.worldBox`,
+  new getter) as a pad and every wire's `routeForWire` polyline as a one-cell-dilated trace into the
+  field's grid. Built per-frame only while the thermal lens is active (small boards → cheap).
+  `updateHeatOverlay` passes it to `field.step`.
+- **Glow halo suppressed under the lens** (`ComponentNode.update`): `if (lens === "thermal")
+  this.heatGlow.clear(); else this.drawHeatGlow();` — the board field now carries the heat as colour
+  contrast only; Tj is still integrated for the field's sources. The halo remains the cue in the
+  schematic/reality/analogy lenses.
+- **Tests:** `thermalField.test.ts` +1 (copper conduction: along-trace hot, off-trace cold across the gap),
+  7 field tests total; web **327**.
+
+**Golden-safe / determinism-safe:** unchanged from (229) — zero sim-core change; field is a pure function
+of per-part Tj advanced by the sim-tick delta (replay-safe); presentation only.
+
+**NEXT (thermal, in priority order):**
+1. **°C colour-scale legend** (the reference's bottom bar): a small fixed legend strip mapping the inferno
+   ramp to °C with the live peak, shown when the lens is on. (`field.peak()` already drives the scale top.)
+2. **Derate→FAIL / magic-smoke** (task #116): a web-side over-temp flag (NOT into the solve, replay-safe)
+   so an over-dissipated part boxes/chars when `Tj > T_MAX`; hook the existing FAIL render.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+4. **Merge decision:** the whole thermal vertical (Phase 0/1/2) is on the branch, NOT merged. Owner hasn't
+   asked to merge yet.
+
+**Verification note:** same as (229) — `shoot.mjs` is t=0 only; drive the live sim (Playwright: Real
+toggle → high rate + Run → wait → 🔥 Heat → `window.__cecView({centerId, zoom})`, NOT `lens`). The
+temp driver used this session was deleted after verifying.
+
+---
+
 ## 2026-06-29 (229) — Thermal LIVE: per-part heat-glow + °C readout + the inferno board lens (golden-safe)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Commits `79accf5` (per-part glow + readout) and `4fc0080`

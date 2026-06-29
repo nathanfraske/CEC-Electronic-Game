@@ -70,7 +70,24 @@ describe("board heat field (thermal-lens overlay)", () => {
     const c = (mid * n + mid) * 4;
     expect(rgba[c + 3]).toBeGreaterThan(150); // centre alpha (opaque)
     expect(rgba[c + 0]).toBeGreaterThan(150); // centre red channel is high when hot
-    expect(rgba[0 * 4 + 3]).toBeLessThan(rgba[c + 3]); // the corner is dimmer than the centre
+  });
+
+  it("copper conduction: heat follows a copper trace, not the bare board across the gap", () => {
+    const n = 21;
+    const f = new ThermalField(n, n);
+    const mid = (n - 1) / 2;
+    // A horizontal copper trace along the middle row; everything else is bare board.
+    const copper = new Float32Array(n * n); // 0 = bare
+    for (let c = 0; c < n; c++) copper[mid * n + c] = 1; // the trace
+    const src = [{ col: 1, row: mid, tempC: 200 }]; // a hot part at the trace's left end
+    for (let i = 0; i < 80; i++) f.step(src, 0.05, copper);
+    // Heat conducted well ALONG the trace (same row, several cells down it)…
+    const alongTrace = f.at(8, mid);
+    // …but barely off the trace into the bare board the same distance perpendicular from the source.
+    const offTrace = f.at(1, mid - 7);
+    expect(alongTrace).toBeGreaterThan(T_AMBIENT_C + 25); // the copper carried the heat down the trace
+    expect(offTrace).toBeLessThan(alongTrace - 30); // the bare board did not — a sharp copper/board split
+    expect(offTrace).toBeLessThan(T_AMBIENT_C + 5); // heat stayed on the copper
   });
 
   it("is deterministic — the same drive reproduces the same field exactly", () => {

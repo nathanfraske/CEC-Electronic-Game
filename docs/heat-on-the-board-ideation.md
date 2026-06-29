@@ -199,6 +199,17 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > `updateHeatOverlay`, board dimmed, components distinct; `App.svelte` 🔥 Heat toggle). All
 > golden-safe/presentational. **Remaining:** Phase 2 = copper-weighted diffusion (heat follows traces) +
 > a °C colour-scale legend; the derate→FAIL/vent consequence; Path 2 (sim-core hashed Tj).
+>
+> **UPDATE 2026-06-29 — Phase 2 copper conduction LANDED** (web 327, verified live). The owner's ask:
+> heat now **follows the traces/copper**, and the per-part glow halo is **suppressed under the lens**
+> (colour contrast only). `thermalField.ts` `step(sources, dt, copper?)` takes a per-cell copper
+> fraction; face conductance `= SUBSTRATE_W + (1−SUBSTRATE_W)·min(ci,cj)` (`SUBSTRATE_W = 0.02`) so a
+> copper↔copper face conducts fully and bare board barely conducts — heat races down a trace and stalls
+> at the substrate gap (retuned `DIFFUSIVITY 30→55`, `CONVECTION 0.45→0.25`, `L ≈ 14.8 cells`).
+> `board.ts` `buildCopperGrid` rasterises part footprints (`ComponentNode.worldBox`) + each wire's
+> `routeForWire` polyline (one-cell-dilated) into the field grid (per-frame, lens-active only);
+> `ComponentNode.update` clears `heatGlow` when `lens === "thermal"`. Still golden-safe/presentational.
+> **Remaining:** the °C colour-scale legend; derate→FAIL/vent; Path 2 (sim-core hashed Tj).
 
 0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
 1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node

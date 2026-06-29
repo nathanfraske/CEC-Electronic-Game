@@ -3301,7 +3301,9 @@ export class Board {
         tempC: tj,
       });
     }
-    field.step(sources, dtSec);
+    // The copper mask (traces + part pads) makes heat conduct along the wiring, not across bare board.
+    const copper = this.buildCopperGrid(cols, rows, minX, minY, w, h);
+    field.step(sources, dtSec, copper);
     const peakC = Math.max(field.peak(), T_AMBIENT_C + 80);
     field.writeImage(img.data, peakC);
     ctx.putImageData(img, 0, 0);
@@ -3311,6 +3313,58 @@ export class Board {
     this.heatSprite.width = w;
     this.heatSprite.height = h;
     this.heatSprite.visible = true;
+  }
+
+  /** Rasterise the COPPER (traces + part pads) into a `cols×rows` mask (1 = copper, 0 = bare board) over
+   *  the same world bbox as the heat field, so the field conducts heat along the wiring. Part footprints
+   *  are pads; each wire's routed polyline is drawn as a slightly-dilated line (the trace). */
+  private buildCopperGrid(
+    cols: number,
+    rows: number,
+    minX: number,
+    minY: number,
+    w: number,
+    h: number,
+  ): Float32Array {
+    const cu = new Float32Array(cols * rows);
+    const toCol = (x: number) =>
+      Math.min(cols - 1, Math.max(0, Math.floor(((x - minX) / w) * cols)));
+    const toRow = (y: number) =>
+      Math.min(rows - 1, Math.max(0, Math.floor(((y - minY) / h) * rows)));
+    const mark = (c: number, r: number) => {
+      if (c >= 0 && c < cols && r >= 0 && r < rows) cu[r * cols + c] = 1;
+    };
+    // Part footprints = copper pads/leads.
+    for (const node of this.nodes.values()) {
+      const b = node.worldBox;
+      const c0 = toCol(b.x);
+      const c1 = toCol(b.x + b.w);
+      const r0 = toRow(b.y);
+      const r1 = toRow(b.y + b.h);
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) mark(c, r);
+    }
+    // Wire routes = traces: rasterise each segment of each wire's routed polyline, dilated by one cell so
+    // a thin diagonal/orthogonal run stays a continuous copper path.
+    for (const wire of this.graph.wires.values()) {
+      const route = this.routeForWire(wire);
+      for (let k = 0; k + 1 < route.length; k++) {
+        const ca = toCol(route[k]!.x);
+        const ra = toRow(route[k]!.y);
+        const cb = toCol(route[k + 1]!.x);
+        const rb = toRow(route[k + 1]!.y);
+        const steps = Math.max(Math.abs(cb - ca), Math.abs(rb - ra), 1);
+        for (let s = 0; s <= steps; s++) {
+          const c = Math.round(ca + ((cb - ca) * s) / steps);
+          const r = Math.round(ra + ((rb - ra) * s) / steps);
+          mark(c, r);
+          mark(c - 1, r);
+          mark(c + 1, r);
+          mark(c, r - 1);
+          mark(c, r + 1);
+        }
+      }
+    }
+    return cu;
   }
 
   destroy(): void {
@@ -8434,6 +8488,11 @@ class ComponentNode {
     return { x: this.view.x + this.wPx / 2, y: this.view.y + this.hPx / 2 };
   }
 
+  /** The part's footprint box in world coordinates — copper pad/leads for the heat-field's copper mask. */
+  get worldBox(): { x: number; y: number; w: number; h: number } {
+    return { x: this.view.x, y: this.view.y, w: this.wPx, h: this.hPx };
+  }
+
   /** Reset the body temperature to ambient (on a sim restart / netlist rebuild). */
   resetThermal(): void {
     this.tj = T_AMBIENT_C;
@@ -8499,7 +8558,11 @@ class ComponentNode {
     this.tj = real
       ? stepTemp(this.kindTag, this.tj, heatPower, dtSec)
       : T_AMBIENT_C;
-    this.drawHeatGlow();
+    // The per-part incandescence halo is the SCHEMATIC heat cue. Under the thermal lens the board
+    // heat-field overlay carries the heat (colour contrast only), so the halo is suppressed there to
+    // avoid double-drawing — Tj is still integrated above for the field's sources.
+    if (lens === "thermal") this.heatGlow.clear();
+    else this.drawHeatGlow();
     const g = this.glyph;
     g.clear();
     // Default the mini-board glyphs hidden every frame; the zoom-to-open USER-IC branch below turns
