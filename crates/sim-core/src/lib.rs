@@ -3643,15 +3643,17 @@ pub struct Sim {
     /// a deterministic partition fixed at install from [`classify_nets`], with no hashed
     /// order. This is the row set of the analog-decoupled pure-digital block that ADR 0004's
     /// phase-3 sub-tick loop (step 3b) will re-solve N−1 extra times per analog tick; it is
-    /// the metadata that step staging needs. **Pure scaffolding today:** nothing in the solve
-    /// reads it — it is consumed ONLY by the debug-only structural invariant check
-    /// ([`Sim::debug_assert_digital_block_diagonal`]), which proves each of these rows is
-    /// strictly diagonal (no off-diagonal coupling to any other row) right before every
-    /// `solve_dense`. A pure-`Digital` net's row is stamped ONLY by [`Sim::stamp_digital`] (a
-    /// lone `GMIN` + one resolved Thévenin on its diagonal; a gate's inputs are GMIN-only and
-    /// its output is one combined drive), so the block is diagonal by construction — the
-    /// invariant step 3b's frozen-boundary sub-solve relies on. The solve, the partial-pivot
-    /// order, and the snapshot hash are untouched, so the analog golden is byte-identical.
+    /// the metadata that step staging needs. **Now load-bearing on the production solve:** the
+    /// digital-matrix lift ([`Sim::solve_dense_lift_digital`]) DROPS exactly these rows/cols from
+    /// the dense factorisation and refills each from the closed form
+    /// [`Sim::digital_net_solved_voltage`] (`docs/sim/digital-matrix-lift-plan.md`); it is also
+    /// consumed by the debug-only structural invariant ([`Sim::debug_assert_digital_block_diagonal`]),
+    /// which proves each of these rows is strictly diagonal right before every `solve_dense`. A
+    /// pure-`Digital` net's row is stamped ONLY by [`Sim::stamp_digital`] (a lone `GMIN` + one
+    /// resolved Thévenin on its diagonal; a gate's inputs are GMIN-only and its output is one
+    /// combined drive), so the block is diagonal by construction — what both the lift and the
+    /// sub-tick sub-solve rely on. Because the closed form is bit-identical to the in-matrix
+    /// diagonal solve, the lift is byte-identical and the analog golden is untouched.
     /// See `docs/adr/0004-protocol-engine.md` (phase-3 amendment).
     pub(crate) digital_rows: Vec<usize>,
     /// The **global digital sub-tick rate** `S = max over elements of their declared rate`
@@ -5358,9 +5360,17 @@ impl Sim {
         for _iter in 0..NEWTON_MAX_ITERS {
             let mut mat = base_mat.to_vec();
             let mut rhs = base_rhs.to_vec();
-            // GMIN-stepping shunt to ground on every node (no-op at 0 → the plain solve is unchanged).
+            // GMIN-stepping shunt to ground on every ANALOG/boundary node (no-op at 0 → the plain
+            // solve is unchanged). Pure-digital rows are skipped: they are strictly diagonal and
+            // decoupled (the homotopy never needed them), and the digital-matrix lift recovers them
+            // from the closed form `digital_net_solved_voltage`, which models only their `GMIN + g`
+            // diagonal — adding `gmin_extra` here would make the lifted and full solves disagree on
+            // a HIGH-driven pure-digital net during the gmin fallback (a false shadow-solve panic).
             if gmin_extra > 0.0 {
                 for r in 0..(self.node_count - 1) {
+                    if self.net_classes[r + 1] == NetClass::Digital {
+                        continue;
+                    }
                     mat[r * n + r] += gmin_extra;
                 }
             }
@@ -7094,8 +7104,10 @@ impl Sim {
     /// sequence and arithmetic are unchanged, and each dropped net's voltage is recovered from the
     /// closed form [`Sim::digital_net_solved_voltage`], equal to its in-matrix diagonal solve to
     /// the last bit (the Stage A0 invariant). This turns the dense `O(n³)` factorisation into
-    /// `O(n_analog³)` + an `O(n²)` extract, the structural win that makes a gate-level CPU's
-    /// thousands of pure-logic nets tractable instead of cubic in the gate count.
+    /// `O(n_analog³)` + an `O(m²)` extract (`m` = analog/boundary + branch rows kept). The matrix is
+    /// still *allocated and assembled* full upstream, so a residual `O(n²)` remains — a separate
+    /// follow-up (assemble directly compacted) would remove it. The cubic factorisation, the wall
+    /// for a gate-level CPU's thousands of pure-logic nets, is the part that is gone here.
     ///
     /// Returns the **full-width** solution (length `n`), the dropped rows filled from the closed
     /// form, so every caller's scatter/readout is unchanged. A circuit with no pure-digital net
@@ -7106,10 +7118,6 @@ impl Sim {
         if self.digital_rows.is_empty() {
             return solve_dense(mat, rhs, n);
         }
-        // Keep a copy of the full system to shadow-solve and PROVE byte-identity (debug only).
-        #[cfg(debug_assertions)]
-        let (mat_full, rhs_full) = (mat.clone(), rhs.clone());
-
         // Drop the pure-digital rows/cols (MNA row index = node − 1 = `digital_rows`); keep every
         // analog/boundary node row and all branch-unknown rows, in ascending order.
         let mut is_digital = vec![false; n];
@@ -7146,12 +7154,14 @@ impl Sim {
         }
 
         // Debug-only PROOF: the lifted solution must equal factoring the full matrix bit-for-bit.
-        // If this ever fires, the pure-digital block was not actually decoupled/diagonal (or the
-        // closed form drifted) and the lift would not be byte-identical — caught here, across every
-        // circuit the test suite exercises, before it can move a golden.
+        // The extract above only READ `mat`/`rhs` (f64 is Copy), so they are intact and can be
+        // consumed by the full solve here — no clone needed. If this ever fires, the pure-digital
+        // block was not actually decoupled/diagonal (or the closed form drifted) and the lift would
+        // not be byte-identical — caught across every circuit the suite exercises, before it can
+        // move a golden. (In release this block is absent and `mat`/`rhs` are simply dropped.)
         #[cfg(debug_assertions)]
         {
-            let full = solve_dense(mat_full, rhs_full, n);
+            let full = solve_dense(mat, rhs, n);
             for (r, (xr, fr)) in x.iter().zip(full.iter()).enumerate() {
                 debug_assert_eq!(
                     xr.to_bits(),
