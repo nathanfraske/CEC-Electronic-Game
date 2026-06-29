@@ -175,6 +175,7 @@
     rmsStabilized,
     type ElectricalState,
   } from "./lib/glyphs";
+  import { T_AMBIENT_C } from "./lib/thermal";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
@@ -1224,6 +1225,9 @@
   // track it either). Null when no part is selected.
   let selDisplay = $state<ElectricalState | null>(null);
   let selRmsMode = $state(false);
+  // The selected part's live self-heating body temperature (°C), updated each frame in onFrame from the
+  // renderer's integrated Tj — read by the inspector's "Body temp" row (Real mode).
+  let selBodyTemp = $state(T_AMBIENT_C);
   // Apparent rate (Hz, scaled by playback speed) above which the live numbers flail
   // unreadably and the inspector switches to the RMS read.
   const READOUT_RMS_HZ = 4;
@@ -2552,6 +2556,7 @@
           // the scope and the clock to t=0 so you always watch the new circuit
           // from the start rather than mid-flight in the old one.
           controls?.restart();
+          board?.resetThermals(); // back to t=0 → every part is cold again
           syncRunning();
         },
         onSelect: (sel) => {
@@ -2671,6 +2676,7 @@
             electrical,
             controls?.isRunning() ?? false,
             scopeBatch,
+            realModels,
           );
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
@@ -2680,6 +2686,9 @@
             selRmsMode =
               !!e.ac?.valid && apparentFreq(e.ac.freq) > READOUT_RMS_HZ;
             selDisplay = selRmsMode ? rmsStabilized(e) : e;
+            // The selected part's live self-heating temperature for the inspector readout (board read
+            // non-reactively here, not in the template).
+            selBodyTemp = b.bodyTempOf(selPart.id);
             // Redraw the inspector phasor (no-op unless its canvas is mounted + AC valid).
             drawHudPhasor(b.flowPhase());
             if (infoOpen) {
@@ -2699,6 +2708,7 @@
           } else {
             selDisplay = null;
             selRmsMode = false;
+            selBodyTemp = T_AMBIENT_C;
             // Arm-and-preview: nothing selected but a part armed + the drawer open → drive
             // the info diagram from the ARMED (unplaced) kind and a neutral electrical state,
             // so its symbol / internals render before you drop it.
@@ -3057,6 +3067,7 @@
   }
   function restartRun(): void {
     controls?.restart();
+    board?.resetThermals(); // back to t=0 → every part is cold again
     syncRunning();
   }
   function stepFwd(): void {
@@ -7110,6 +7121,15 @@
                           <span class="mono">{row.value}</span>
                         </div>
                       {/each}
+                      <!-- Live self-heating body temperature (Real mode), shown once a part warms above
+                           ambient. `selBodyTemp` is updated each frame in onFrame from the renderer's
+                           integrated Tj (board read non-reactively there, kept out of the template). -->
+                      {#if realModels && selBodyTemp > T_AMBIENT_C + 0.5}
+                        <div class="info-row">
+                          <span>Body temp</span>
+                          <span class="mono">{selBodyTemp.toFixed(0)} °C</span>
+                        </div>
+                      {/if}
                     </div>
                   {:else}
                     <!-- Arm-and-preview: an armed-but-unplaced part has no live electrical

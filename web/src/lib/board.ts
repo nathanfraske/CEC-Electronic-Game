@@ -95,6 +95,13 @@ import {
   type UserIcInternals,
   userIcGeometryDeep,
 } from "./netlist";
+import {
+  T_AMBIENT_C,
+  glowFactor,
+  stepTemp,
+  dissipatedPower,
+  partHeats,
+} from "./thermal";
 // The shared, `this`-free board render engine (geometry / carriers / conduit skins),
 // extracted so the sealed-IC opened view can run the SAME wire pipeline. board.ts keeps
 // thin wrappers for the few `this`-bound route helpers; everything else is used directly.
@@ -2948,6 +2955,7 @@ export class Board {
     electrical?: Map<number, ElectricalState>,
     running = true,
     scopeBatch?: SubFrameSample[],
+    real = false,
   ): void {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
@@ -2959,6 +2967,10 @@ export class Board {
     // and on the sign of the displayed-tick change when paused, so stepping/
     // scrubbing back runs the flow backward and an idle pause freezes it.
     const tick = Number(snap.tick);
+    // Sim-time elapsed since the last frame, for the self-heating integrator (0 when paused or scrubbing
+    // back — heat only accumulates as the sim advances forward). Tick-driven, never wall-clock, so Tj is
+    // a deterministic function of the sim trajectory.
+    const thermalDt = Math.max(0, tick - this.prevTick) * DT_SECONDS;
     let dir = 0;
     if (running) dir = 1;
     else if (tick > this.prevTick) dir = 1;
@@ -3083,6 +3095,8 @@ export class Board {
         // FOCUSED: hovered or selected → reveal this part's full pin labels + value chip even at mid zoom
         // (ambient parts wait for AMBIENT_LABEL_ZOOM, so a dense board's overview stays uncluttered).
         this.selected.has(id) || this.hoverComponentId === id,
+        thermalDt,
+        real,
       );
       // Off-net parts recede under the net highlight (the node's own per-child fades compose with this
       // container alpha). On-net parts, the die frame, and the no-highlight case stay fully opaque.
@@ -3167,6 +3181,18 @@ export class Board {
    */
   flowPhase(): number {
     return this.phase;
+  }
+
+  /** The live self-heating body temperature (°C) of a component — ambient if unknown or in Ideal mode.
+   *  Read by the inspector to show a "Body temp" line. */
+  bodyTempOf(id: number): number {
+    return this.nodes.get(id)?.bodyTemp ?? T_AMBIENT_C;
+  }
+
+  /** Reset every part's self-heating temperature to ambient — on a sim restart or netlist rebuild, so
+   *  the board doesn't keep a stale glow from before the change. */
+  resetThermals(): void {
+    for (const node of this.nodes.values()) node.resetThermal();
   }
 
   destroy(): void {
@@ -7961,6 +7987,12 @@ class ComponentNode {
   private readonly userIcGlyphs = new Container();
   private readonly glyph = new Graphics();
   private readonly failBox = new Graphics();
+  // Self-heating body glow: a warm incandescence ramp behind the part body, invisible at ambient and
+  // brightening (bronze→amber→red→white) as the part dissipates power. Presentation-only — `tj` is the
+  // live junction temperature integrated each frame from `P=V·I` (Real mode); it never re-enters the
+  // solve. See `web/src/lib/thermal.ts`.
+  private readonly heatGlow = new Graphics();
+  private tj = T_AMBIENT_C;
   private readonly label: Text;
   private readonly value: Text | null;
   /** The live stored-value chip ("Q=…") a recognised sequential cell shows under its body symbol; it
@@ -8043,6 +8075,9 @@ class ComponentNode {
     this.userIcGlyphs.visible = false;
     this.glyphHolder.addChild(this.userIcGlyphs);
     this.view.addChild(this.glyphHolder);
+    // Heat glow sits at the very back of the node (behind the body symbol), so a hot part reads as
+    // glowing from within without obscuring its glyph.
+    this.view.addChildAt(this.heatGlow, 0);
     // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
     // upright; positioned at the rotated pin and shown only at the deepest zoom. The backing/leader deco
     // sits just behind them (added first), so each plate lifts its name off the busy copper.
@@ -8270,6 +8305,41 @@ class ComponentNode {
       out.push({ text: this.stateLabel, prio: base + 10 }); // the value chip is lowest
   }
 
+  /** The live self-heating body temperature (°C). Ambient unless the part is dissipating in Real mode. */
+  get bodyTemp(): number {
+    return this.tj;
+  }
+
+  /** Reset the body temperature to ambient (on a sim restart / netlist rebuild). */
+  resetThermal(): void {
+    this.tj = T_AMBIENT_C;
+    this.heatGlow.clear();
+  }
+
+  /** Draw the warm incandescence halo behind the body, scaled by how hot the part is. Invisible at
+   *  ambient; ramps bronze → amber → red → white as `Tj` climbs toward the max junction temperature.
+   *  A few concentric falloff rings approximate a soft radial glow (Pixi Graphics has no gradient). */
+  private drawHeatGlow(): void {
+    const f = glowFactor(this.tj);
+    this.heatGlow.clear();
+    if (f <= 0.002) return;
+    const col =
+      f < 0.5
+        ? mix(PALETTE.bronze, PALETTE.warn, f / 0.5)
+        : f < 0.8
+          ? mix(PALETTE.warn, PALETTE.bad, (f - 0.5) / 0.3)
+          : mix(PALETTE.bad, 0xffffff, (f - 0.8) / 0.2);
+    const cx = this.wPx / 2;
+    const cy = this.hPx / 2;
+    const base = Math.max(this.wPx, this.hPx) / 2 + PITCH * 0.7;
+    const rings = 4;
+    for (let i = rings; i >= 1; i--) {
+      this.heatGlow
+        .circle(cx, cy, base * (i / rings))
+        .fill({ color: col, alpha: f * 0.28 * (1 - (i - 1) / rings) });
+    }
+  }
+
   update(
     electrical: ElectricalState,
     phase: number,
@@ -8292,8 +8362,20 @@ class ComponentNode {
     wireMode = false,
     liveState?: StoredState,
     focused = false,
+    dtSec = 0,
+    real = false,
   ): void {
     this.focused = focused; // latched for the board's label de-overlap ranking
+    // Self-heating (Real mode only): advance this part's body temperature toward Tamb + P·θ_JA on its
+    // thermal time constant, from the dissipated power P = max(0, V·I) of its live electrical state, then
+    // draw the warm body glow. `dtSec` is the frame's SIM-time delta (Δticks·DT, never wall-clock), so Tj
+    // tracks the deterministic sim clock. Ideal mode (or a non-dissipating kind) holds at ambient.
+    const heatPower =
+      real && partHeats(this.kindTag) ? dissipatedPower(electrical) : 0;
+    this.tj = real
+      ? stepTemp(this.kindTag, this.tj, heatPower, dtSec)
+      : T_AMBIENT_C;
+    this.drawHeatGlow();
     const g = this.glyph;
     g.clear();
     // Default the mini-board glyphs hidden every frame; the zoom-to-open USER-IC branch below turns
