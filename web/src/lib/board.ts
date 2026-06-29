@@ -756,6 +756,15 @@ export class Board {
   private readonly selectedWires = new Set<number>();
   private readonly selectedJunctions = new Set<number>();
   private readonly selectedLabels = new Set<number>();
+  // Selected bus cables (the trunk is pickable/deletable like a wire).
+  private readonly selectedCables = new Set<number>();
+  // The DRAWN trunk polyline per cable, cached each frame by `drawCables`, so a click hit-tests the trunk
+  // exactly as rendered (the cable analogue of `conduitDrawRoutes` for wires) and the selection highlight
+  // reuses the same geometry.
+  private readonly cableTrunkRoutes = new Map<
+    number,
+    { x: number; y: number }[]
+  >();
   // The net label whose name is being edited in the HUD input right now (its tag
   // text is hidden on the board meanwhile). Null when no editor is open.
   private editingLabelId: number | null = null;
@@ -2071,7 +2080,8 @@ export class Board {
       this.selected.size === 0 &&
       this.selectedWires.size === 0 &&
       this.selectedJunctions.size === 0 &&
-      this.selectedLabels.size === 0
+      this.selectedLabels.size === 0 &&
+      this.selectedCables.size === 0
     ) {
       return;
     }
@@ -2084,6 +2094,7 @@ export class Board {
       this.selectedWires.size === 1 &&
       this.selectedJunctions.size === 0 &&
       this.selectedLabels.size === 0 &&
+      this.selectedCables.size === 0 &&
       this.lastWireClick !== null &&
       this.selectedWires.has(this.lastWireClick.wireId)
     ) {
@@ -2107,12 +2118,14 @@ export class Board {
       wires: this.selectedWires.size,
       junctions: this.selectedJunctions.size,
       labels: this.selectedLabels.size,
+      cables: this.selectedCables.size,
     };
     this.pushUndo(this.graph.serialize());
     for (const id of this.selectedLabels) this.graph.removeNetLabel(id);
     for (const id of this.selected) this.graph.removeComponent(id);
     for (const id of this.selectedWires) this.graph.removeWire(id);
     for (const id of this.selectedJunctions) this.graph.dissolveJunction(id);
+    for (const id of this.selectedCables) this.graph.removeCable(id);
     this.rebuildNodes();
     this.clearSelection();
     this.redrawWires();
@@ -3612,6 +3625,20 @@ export class Board {
     return best;
   }
 
+  /** Which bus cable's TRUNK a world point sits on (the cable analogue of {@link wireHitTest}), tested
+   *  against the polyline cached by {@link drawCables} with a tolerance covering the trunk's stroke width.
+   *  Returns the cable id or null. */
+  private cableHitTest(wx: number, wy: number): number | null {
+    for (const [id, route] of this.cableTrunkRoutes) {
+      for (let i = 0; i + 1 < route.length; i++) {
+        const p0 = route[i]!;
+        const p1 = route[i + 1]!;
+        if (distToSegment(wx, wy, p0.x, p0.y, p1.x, p1.y) <= 9) return id;
+      }
+    }
+    return null;
+  }
+
   /**
    * Which *anchor leg* of a wire a world point sits on — the index into the route
    * `[from, …waypoints, to]` so that the click lies on the leg between anchor `i`
@@ -3704,6 +3731,7 @@ export class Board {
     this.selectedWires.clear();
     this.selectedJunctions.clear();
     this.selectedLabels.clear();
+    this.selectedCables.clear();
     this.lastWireClick = null;
     this.redrawSelection();
     this.emitSelect();
@@ -3716,7 +3744,8 @@ export class Board {
     const edges =
       this.selectedWires.size +
       this.selectedJunctions.size +
-      this.selectedLabels.size;
+      this.selectedLabels.size +
+      this.selectedCables.size;
     if (this.selected.size === 1 && edges === 0) {
       const id = [...this.selected][0]!;
       const c = this.graph.components.get(id);
@@ -4334,6 +4363,7 @@ export class Board {
       this.selectedWires.clear();
       this.selectedJunctions.clear();
       this.selectedLabels.clear();
+      this.selectedCables.clear();
       this.selected.add(id);
     }
     this.redrawSelection();
@@ -4349,7 +4379,24 @@ export class Board {
       this.selectedWires.clear();
       this.selectedJunctions.clear();
       this.selectedLabels.clear();
+      this.selectedCables.clear();
       this.selectedWires.add(id);
+    }
+    this.redrawSelection();
+    this.emitSelect();
+  }
+
+  private selectCable(id: number, additive: boolean): void {
+    if (additive) {
+      if (this.selectedCables.has(id)) this.selectedCables.delete(id);
+      else this.selectedCables.add(id);
+    } else {
+      this.selected.clear();
+      this.selectedWires.clear();
+      this.selectedJunctions.clear();
+      this.selectedLabels.clear();
+      this.selectedCables.clear();
+      this.selectedCables.add(id);
     }
     this.redrawSelection();
     this.emitSelect();
@@ -4364,6 +4411,7 @@ export class Board {
       this.selectedWires.clear();
       this.selectedJunctions.clear();
       this.selectedLabels.clear();
+      this.selectedCables.clear();
       this.selectedJunctions.add(id);
     }
     this.redrawSelection();
@@ -4379,6 +4427,7 @@ export class Board {
       this.selectedWires.clear();
       this.selectedJunctions.clear();
       this.selectedLabels.clear();
+      this.selectedCables.clear();
       this.selectedLabels.add(id);
     }
     this.redrawSelection();
@@ -4409,6 +4458,14 @@ export class Board {
         const m = this.cellToWorld(wp);
         g.circle(m.x, m.y, 4).fill({ color: PALETTE.accent, alpha: 0.9 });
       }
+    }
+    // Selected bus cables: a thick accent halo under the cached trunk polyline.
+    for (const id of this.selectedCables) {
+      const route = this.cableTrunkRoutes.get(id);
+      if (!route || route.length < 2) continue;
+      g.moveTo(route[0]!.x, route[0]!.y);
+      for (let i = 1; i < route.length; i++) g.lineTo(route[i]!.x, route[i]!.y);
+      g.stroke({ width: 10, color: PALETTE.accent, alpha: 0.4 });
     }
     this.drawBloom(g);
   }
@@ -5322,6 +5379,14 @@ export class Board {
           this.pendingUndo = this.snapshotEntry();
         }
       }
+      return;
+    }
+
+    // A bus cable's trunk picks like a wire (select → highlight → Delete removes it). Tested after wires
+    // so a wire lying over the trunk still wins. (Drag-to-reroute + per-bit tap are follow-ups.)
+    const cableId = this.cableHitTest(wp.x, wp.y);
+    if (cableId !== null) {
+      this.selectCable(cableId, additive);
       return;
     }
 
@@ -6895,6 +6960,8 @@ export class Board {
    * these strokes — this is pure presentation. (P2 adds the conduit skin + zoom LoD + ×N badge.)
    */
   private drawCables(g: Graphics): void {
+    // Refreshed every frame: the trunk hit-test geometry.
+    this.cableTrunkRoutes.clear();
     if (this.graph.cables.size === 0) return;
     type XY = { x: number; y: number };
     const centroid = (ps: XY[]): XY => ({
@@ -6992,6 +7059,11 @@ export class Board {
       g.moveTo(trunk[0].x, trunk[0].y);
       for (let i = 1; i < trunk.length; i++) g.lineTo(trunk[i].x, trunk[i].y);
       g.stroke({ width: 6, color, alpha: 0.9 });
+      // Cache the drawn trunk polyline so a click hit-tests exactly what's on screen.
+      this.cableTrunkRoutes.set(
+        c.id,
+        trunk.map((p) => ({ x: p.x, y: p.y })),
+      );
     }
   }
 
