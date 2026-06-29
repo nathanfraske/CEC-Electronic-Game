@@ -3001,10 +3001,16 @@ export class Board {
     // and on the sign of the displayed-tick change when paused, so stepping/
     // scrubbing back runs the flow backward and an idle pause freezes it.
     const tick = Number(snap.tick);
-    // Sim-time elapsed since the last frame, for the self-heating integrator (0 when paused or scrubbing
-    // back — heat only accumulates as the sim advances forward). Tick-driven, never wall-clock, so Tj is
-    // a deterministic function of the sim trajectory.
-    const thermalDt = Math.max(0, tick - this.prevTick) * DT_SECONDS;
+    // Heat-integrator time-step. Thermal τ is realistically SECONDS, but the sim's DT is 2 µs (electrical),
+    // so pure sim-time heat (Δticks·DT) is invisible at the slow playback you actually watch at and only
+    // appears if you crank to ~500K ticks/s. So advance on the GREATER of sim-time and a WALL-CLOCK floor
+    // (the clamped real frame `dt`) while the sim is playing: at slow speeds the wall floor dominates, so a
+    // part warms over a few real seconds (watchable, realistic real-world pace); fast-forwarding past
+    // real-time lets sim-time take over and ages it faster; paused/scrubbing freezes it (both terms 0).
+    // Presentational + golden-safe — the web heat model (glow / vent / lens field) never re-enters the
+    // solve or the snapshot hash (see ComponentNode `tj`/`vented`), so decoupling it from ticks is safe.
+    const simDt = Math.max(0, tick - this.prevTick) * DT_SECONDS;
+    const thermalDt = Math.max(simDt, running ? dt : 0);
     let dir = 0;
     if (running) dir = 1;
     else if (tick > this.prevTick) dir = 1;
