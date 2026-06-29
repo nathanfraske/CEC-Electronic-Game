@@ -18,6 +18,7 @@ import {
 import type { Endpoint } from "./graph";
 import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
+import { partHeats } from "./thermal";
 import {
   tierParams,
   ecEsr,
@@ -523,6 +524,56 @@ interface BehSpec {
 const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
 const CAP_LEAK_SLOT = 5; // params slot: capacitor self-discharge tau (s); 0 = no leak (mirror sim-core)
 const NOISE_SLOT = 6; // params slot: thermal-noise current amplitude (A); 0 = silent (mirror sim-core)
+// A diode's SHOT-noise scale (a √A): sim-core injects `SHOT_NOISE_SCALE · √|I| · sample` (the shot-noise
+// current ∝ √I). Game-scaled for legibility; a junction property, not a quality grade, so it's a constant.
+const SHOT_NOISE_SCALE = 0.02;
+const TEMPCO_SLOT = 7; // params slot: resistor self-heating temperature coefficient α (1/°C); 0 = none
+// Self-heating temperature coefficients (1/°C) — the thermal-runaway feedback (sim-core uses
+// R(T) = value·(1 + α·(Tj − 25))). NTC: a strong NEGATIVE α makes a dominant thermistor run away (heat ⇒
+// R drops ⇒ V²/R climbs ⇒ more heat). PTC: a POSITIVE α self-limits (heat ⇒ R rises ⇒ current falls).
+// Game-scaled (a legible linear slope, not the part's full β-model R(T)).
+const NTC_TEMPCO = -0.05;
+const PTC_TEMPCO = 0.03;
+// A BJT reuses TEMPCO_SLOT for its OWN runaway seed: the saturation-current temperature coefficient γ
+// (1/°C), feeding sim-core's Is(T) = BJT_IS·exp(γ·(Tj − 25)). At a fixed base bias the collector current
+// climbs with junction temperature → Vce·Ic dissipation climbs → hotter (runaway), tamed by an emitter
+// ballast. γ ≈ ln(2)/10 ⇒ Is roughly doubles every ~10 °C (the textbook rule). Game-scaled like the
+// thermistor α; Real-mode only (Ideal / golden ⇒ 0 ⇒ Is = BJT_IS, byte-identical).
+const BJT_IS_TEMPCO = 0.07;
+
+// --- Thermal coupling (mutual heating) — geometry-derived "this part heats that part" weights -----------
+// A hot part raises a nearby part's local ambient (sim-core's `set_thermal_coupling`), so e.g. a thermistor
+// beside a power resistor SENSES its heat → its R(T) shifts the circuit. The weight between two parts falls
+// off with board distance (a Gaussian over grid cells); each part's INCOMING row sum is normalised to
+// `COUPLE_ROW_MAX` so it stays passive (`Σ w < 1` ⇒ bounded — heat can't blow up however many hot
+// neighbours pile on, the constraint the owner asked for). All distances are in grid cells (col/row).
+const COUPLE_D0 = 3.0; // coupling length (cells): falloff e^(−(d/D0)²)
+const COUPLE_CUTOFF = 9.0; // ignore pairs farther than this (keeps the graph sparse on big boards)
+const COUPLE_PEAK = 0.6; // weight of two touching parts before normalisation
+const COUPLE_ROW_MAX = 0.7; // cap on a part's total incoming weight (sim-core re-caps at 0.9 as a backstop)
+// Parts whose junction temperature RE-ENTERS the solve (so mutual heating has a circuit effect): the
+// thermistors sense, the BJTs runaway-trigger. Coupling is emitted only when at least one of these is on
+// the board — otherwise it would be pure per-tick cost with no consequence.
+const TEMPCO_SENSOR_KINDS = new Set(["NTC", "PTC", "Q", "QP"]);
+
+// --- Magnetic coupling (mutual inductance) — two coils next to each other share flux = a transformer -----
+// The coupled-inductor analogue of thermal coupling: nearby inductors couple with coefficient k (sim-core's
+// `set_magnetic_coupling`), so an AC-driven primary coil induces a voltage in a secondary. k falls off
+// steeply with board distance (coils must be close to couple tightly), capped below 1 (k = 1 is a singular,
+// perfectly-coupled pair). Real-mode only (a teaching simplification: in Ideal mode parts are independent —
+// no stray coupling; in Real mode adjacent coils couple, mutual inductance being a "real" effect like the
+// parasitics). Distances are in grid cells (col/row).
+const MAG_D0 = 2.0; // coupling length (cells): k = K_PEAK·e^(−(d/D0)²)
+const MAG_CUTOFF = 5.0; // ignore coil pairs farther apart than this
+const MAG_K_PEAK = 0.95; // coupling of two touching coils
+const MAG_K_MAX = 0.98; // hard cap (sim-core re-caps at 0.999 to keep the L matrix non-singular)
+// The coupled-coil transformer part (`XF`): expands to a primary + secondary inductor, tightly coupled.
+// XF_L_BASE is the primary's magnetising inductance (high, so it acts as an ideal-ish transformer — large
+// magnetising impedance, low droop); the secondary is `XF_L_BASE·n²` (since L ∝ N²), giving the turns ratio
+// n = value. XF_K is the always-on coupling between the two windings (tight, like a wound transformer).
+const XF_L_BASE = 0.1; // H — primary magnetising inductance
+const XF_K = 0.98; // primary↔secondary coupling coefficient (a tightly-wound transformer)
+
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -601,6 +652,7 @@ const MEM_SPEC: Record<string, MemSpec> = {
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
 const ELEM_CAPACITOR = 2;
+const ELEM_INDUCTOR = 3;
 const ELEM_ISOURCE = 4;
 
 // (Electrolytic-cap ESR is now graded by tier — see `ecEsr` in lib/tiers.ts.)
@@ -921,6 +973,28 @@ export interface BuiltNetlist {
    * untiered circuit (so the core uses every kind default). See {@link tierParams}.
    */
   params: Float64Array;
+  /**
+   * The **thermal-coupling map** (mutual heating) — geometry-derived edges pushed via
+   * `Simulation.set_thermal_coupling` AFTER the netlist installs, so a hot part raises a nearby part's
+   * `Tj` (the canonical use: a thermistor sensing the heat of a part beside it). `idx[k]`/`nbr[k]`/`w[k]`
+   * is one directed edge (element `idx[k]` receives heat from element `nbr[k]` by weight `w[k]`). Present
+   * only in Real mode AND only when a tempco part (a thermistor / BJT — something whose `Tj` re-enters the
+   * solve) is on the board; `null` otherwise (no coupling installed → byte-identical / golden-safe). The
+   * weights are normalised per element so the row sum stays `< 1` (passive — heat can't blow up).
+   */
+  coupling: { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null;
+  /**
+   * The **magnetic-coupling map** (mutual inductance) — geometry-derived edges pushed via
+   * `Simulation.set_magnetic_coupling` AFTER the netlist installs, so two coils next to each other share
+   * flux (a transformer): an AC-driven primary induces a voltage in a nearby secondary. `idx[k]`/`nbr[k]` is
+   * an inductor pair, `w[k]` its coupling coefficient `k`. Present only in Real mode with ≥2 coils in range;
+   * `null` otherwise (no coupling installed → byte-identical / golden-safe).
+   */
+  magneticCoupling: {
+    idx: Uint32Array;
+    nbr: Uint32Array;
+    w: Float64Array;
+  } | null;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
   /**
@@ -978,6 +1052,132 @@ export interface BuiltNetlist {
   circuitOfNode: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
   sig: string;
+}
+
+/**
+ * The **thermal-coupling map** (mutual heating) from board geometry — which parts heat which, for
+ * `Simulation.set_thermal_coupling`. Each heating part (`partHeats`) with a primary element becomes a
+ * thermal node at its board cell; every pair within {@link COUPLE_CUTOFF} cells gets a weight that falls
+ * off as `e^(−(d/D0)²)`, and each part's INCOMING row sum is normalised down to {@link COUPLE_ROW_MAX} for
+ * passivity (`Σ w < 1` ⇒ bounded — heat can't blow up, the owner's constraint). Returns `null` (no coupling
+ * installed) outside Real mode, or when no part whose `Tj` re-enters the solve (a thermistor / BJT —
+ * {@link TEMPCO_SENSOR_KINDS}) is present, since then the coupling would be pure per-tick cost with no
+ * circuit effect. A sealed IC / sub-assembly participates as the single thermal node of its primary element
+ * (consistent with the per-component self-heating model), so it heats neighbours as a unit and is bounded.
+ */
+function computeThermalCoupling(
+  parts: Iterable<{
+    id: number;
+    kind: string;
+    cell: { col: number; row: number };
+  }>,
+  elemOfComponent: Map<number, number>,
+  real: boolean,
+): { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null {
+  if (!real) return null;
+  const nodes: { ei: number; col: number; row: number }[] = [];
+  let hasSensor = false;
+  for (const c of parts) {
+    if (!partHeats(c.kind)) continue;
+    const ei = elemOfComponent.get(c.id);
+    if (ei === undefined) continue;
+    nodes.push({ ei, col: c.cell.col, row: c.cell.row });
+    if (TEMPCO_SENSOR_KINDS.has(c.kind)) hasSensor = true;
+  }
+  if (!hasSensor || nodes.length < 2) return null;
+  const idx: number[] = [];
+  const nbr: number[] = [];
+  const w: number[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    // Raw incoming weights for receiver i, then normalise the row so Σ w ≤ COUPLE_ROW_MAX (passive).
+    const row: { j: number; w: number }[] = [];
+    for (let j = 0; j < nodes.length; j++) {
+      if (i === j) continue;
+      const d = Math.hypot(
+        nodes[i]!.col - nodes[j]!.col,
+        nodes[i]!.row - nodes[j]!.row,
+      );
+      if (d > COUPLE_CUTOFF) continue;
+      const wr = COUPLE_PEAK * Math.exp(-((d / COUPLE_D0) ** 2));
+      if (wr > 1e-4) row.push({ j, w: wr });
+    }
+    const sum = row.reduce((s, e) => s + e.w, 0);
+    const scale = sum > COUPLE_ROW_MAX ? COUPLE_ROW_MAX / sum : 1;
+    for (const e of row) {
+      idx.push(nodes[i]!.ei);
+      nbr.push(nodes[e.j]!.ei);
+      w.push(e.w * scale);
+    }
+  }
+  if (idx.length === 0) return null;
+  return {
+    idx: Uint32Array.from(idx),
+    nbr: Uint32Array.from(nbr),
+    w: Float64Array.from(w),
+  };
+}
+
+/**
+ * The **magnetic-coupling map** (mutual inductance) for sim-core's `set_magnetic_coupling`. Two sources:
+ * (1) **explicit** edges from the coupled-coil transformer part (`XF`), which always couple its two
+ * windings regardless of mode or distance (a transformer always transforms); and (2) **geometry** —
+ * loose inductors (`kind === "L"`) within {@link MAG_CUTOFF} cells couple with `k = MAG_K_PEAK·e^(−(d/D0)²)`
+ * (capped at {@link MAG_K_MAX}), so **two coils next to each other become a transformer** — but only in Real
+ * mode (Ideal keeps stray coils independent). One undirected edge per pair (sim-core symmetrises). Returns
+ * `null` when there is nothing to couple (no transformer + fewer than two coils in range) → golden-safe.
+ */
+function computeMagneticCoupling(
+  parts: Iterable<{
+    id: number;
+    kind: string;
+    cell: { col: number; row: number };
+  }>,
+  elemOfComponent: Map<number, number>,
+  real: boolean,
+  explicit: Array<[number, number, number]>,
+): { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null {
+  const idx: number[] = [];
+  const nbr: number[] = [];
+  const w: number[] = [];
+  // (1) Explicit transformer windings — installed in BOTH modes (the device's function, not a parasitic).
+  for (const [a, b, k] of explicit) {
+    idx.push(a);
+    nbr.push(b);
+    w.push(k);
+  }
+  // (2) Stray proximity coupling between loose coils — Real mode only.
+  if (real) {
+    const coils: { ei: number; col: number; row: number }[] = [];
+    for (const c of parts) {
+      if (c.kind !== "L") continue;
+      const ei = elemOfComponent.get(c.id);
+      if (ei === undefined) continue;
+      coils.push({ ei, col: c.cell.col, row: c.cell.row });
+    }
+    for (let i = 0; i < coils.length; i++) {
+      for (let j = i + 1; j < coils.length; j++) {
+        const d = Math.hypot(
+          coils[i]!.col - coils[j]!.col,
+          coils[i]!.row - coils[j]!.row,
+        );
+        if (d > MAG_CUTOFF) continue;
+        const k = Math.min(
+          MAG_K_MAX,
+          MAG_K_PEAK * Math.exp(-((d / MAG_D0) ** 2)),
+        );
+        if (k <= 1e-3) continue;
+        idx.push(coils[i]!.ei);
+        nbr.push(coils[j]!.ei);
+        w.push(k);
+      }
+    }
+  }
+  if (idx.length === 0) return null;
+  return {
+    idx: Uint32Array.from(idx),
+    nbr: Uint32Array.from(nbr),
+    w: Float64Array.from(w),
+  };
 }
 
 export function buildNetlist(
@@ -1206,6 +1406,10 @@ export function buildNetlist(
   const legsOfComponent = new Map<number, number[]>();
   const nodesOfComponent = new Map<number, [number, number]>();
   const compositeInternals = new Map<number, CompositeInternals>();
+  // EXPLICIT magnetic-coupling edges from parts that expand into coupled coils (the `XF` transformer):
+  // `[primaryElemIdx, secondaryElemIdx, k]`. Unlike the geometry/proximity coupling, these are installed in
+  // BOTH fidelity modes (a transformer always couples) and regardless of distance.
+  const transformerEdges: Array<[number, number, number]> = [];
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
@@ -1239,6 +1443,78 @@ export function buildNetlist(
       eArr.push(0);
       pushFGH();
       elemOfComponent.set(c.id, idx);
+      nodesOfComponent.set(c.id, [na, nb]);
+      continue;
+    }
+
+    // Coupled-coil transformer (XF): expand into TWO magnetically-coupled inductors — a primary
+    // (P+ → P−, magnetising inductance XF_L_BASE) and a secondary (S+ → S−, XF_L_BASE·n² for the turns
+    // ratio n = value, since L ∝ N²). An explicit, always-on coupling edge (k = XF_K) makes the windings
+    // share flux in BOTH fidelity modes (a transformer always transforms — it's not a Real-only parasitic).
+    // Both windings are plain inductors, so the part also shows in the frequency tools (Bode/phase) via the
+    // mutual-inductance AC stamp. The two windings are galvanically isolated (no shared node).
+    if (c.kind === "XF") {
+      const nsp = nodeIndex.get(find(key(c.id, 2))) ?? 0; // S+
+      const nsm = nodeIndex.get(find(key(c.id, 3))) ?? 0; // S−
+      const n = c.value > 0 ? c.value : 2; // turns ratio Ns/Np
+      const priIdx = types.length;
+      types.push(ELEM_INDUCTOR);
+      aArr.push(na); // P+
+      bArr.push(nb); // P−
+      cArr.push(0);
+      dArr.push(0);
+      eArr.push(0);
+      pushFGH();
+      values.push(XF_L_BASE);
+      auxArr.push(0);
+      const secIdx = types.length;
+      types.push(ELEM_INDUCTOR);
+      aArr.push(nsp); // S+
+      bArr.push(nsm); // S−
+      cArr.push(0);
+      dArr.push(0);
+      eArr.push(0);
+      pushFGH();
+      values.push(XF_L_BASE * n * n);
+      auxArr.push(0);
+      transformerEdges.push([priIdx, secIdx, XF_K]);
+      elemOfComponent.set(c.id, priIdx); // primary current is the main reading
+      legsOfComponent.set(c.id, [secIdx]); // secondary current as the extra leg
+      nodesOfComponent.set(c.id, [na, nb]); // V across the primary
+      continue;
+    }
+
+    // Centre-tapped transformer (XFCT): a primary + a CONTINUOUS secondary winding S+ → CT → S− (two coupled
+    // half-coils sharing the tap). Each half carries n/2 turns (L ∝ (n/2)²); orienting them as one continuous
+    // path makes S+ and S− swing ANTIPHASE about the grounded tap (full-wave rectifier / phase splitter). All
+    // three coils are mutually coupled (`k = XF_K`), installed in both fidelity modes.
+    if (c.kind === "XFCT") {
+      const nsp = nodeIndex.get(find(key(c.id, 2))) ?? 0; // S+
+      const nct = nodeIndex.get(find(key(c.id, 3))) ?? 0; // CT (tap)
+      const nsm = nodeIndex.get(find(key(c.id, 4))) ?? 0; // S−
+      const n = c.value > 0 ? c.value : 2;
+      const half = XF_L_BASE * (n / 2) * (n / 2); // each half-winding's inductance
+      const emitL = (a: number, b: number, l: number): number => {
+        const idx = types.length;
+        types.push(ELEM_INDUCTOR);
+        aArr.push(a);
+        bArr.push(b);
+        cArr.push(0);
+        dArr.push(0);
+        eArr.push(0);
+        pushFGH();
+        values.push(l);
+        auxArr.push(0);
+        return idx;
+      };
+      const priIdx = emitL(na, nb, XF_L_BASE); // primary  P+ → P−
+      const topIdx = emitL(nsp, nct, half); // secondary top half  S+ → CT
+      const botIdx = emitL(nct, nsm, half); // secondary bottom half  CT → S−
+      transformerEdges.push([priIdx, topIdx, XF_K]);
+      transformerEdges.push([priIdx, botIdx, XF_K]);
+      transformerEdges.push([topIdx, botIdx, XF_K]);
+      elemOfComponent.set(c.id, priIdx);
+      legsOfComponent.set(c.id, [topIdx, botIdx]);
       nodesOfComponent.set(c.id, [na, nb]);
       continue;
     }
@@ -1716,6 +1992,23 @@ export function buildNetlist(
         comp.tier ?? DEFAULT_TIER,
       );
     }
+    // Thermistor self-heating temperature coefficient → THERMAL RUNAWAY (Realistic mode only). A
+    // thermistor expands to a plain resistor (above); here we tag that element with its tempco α (slot
+    // TEMPCO_SLOT), so sim-core's per-tick R(T) feedback runs: an NTC that dominates its loop runs away
+    // (heat ⇒ R drops ⇒ V²/R climbs ⇒ more heat ⇒ OVERHEAT/vent), a PTC self-limits. Omitted in Ideal
+    // mode (no feedback, golden-clean). `elemOfComponent` maps the thermistor to its expanded resistor.
+    if ((comp.kind === "NTC" || comp.kind === "PTC") && real) {
+      params[ei * PARAM_STRIDE + TEMPCO_SLOT] =
+        comp.kind === "NTC" ? NTC_TEMPCO : PTC_TEMPCO;
+    }
+    // BJT saturation-current tempco γ → THERMAL RUNAWAY (Realistic mode only). The same TEMPCO_SLOT the
+    // thermistor uses, but for a BJT sim-core reads it as γ (Is(T) = BJT_IS·exp(γ·ΔTj)) instead of a
+    // linear α: at fixed base bias the collector current climbs with Tj → Vce·Ic dissipation climbs →
+    // hotter → runaway (an emitter ballast resistor tames it). Omitted in Ideal mode (Is = BJT_IS,
+    // golden-clean). A BJT maps to a single ELEM_NPN/ELEM_PNP element, so `ei` is its element index.
+    if ((comp.kind === "Q" || comp.kind === "QP") && real) {
+      params[ei * PARAM_STRIDE + TEMPCO_SLOT] = BJT_IS_TEMPCO;
+    }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an
     // over-rated diode FAILs), so it is omitted in Ideal mode (leaving the part unrated).
@@ -1723,11 +2016,14 @@ export function buildNetlist(
     if (dv) {
       params[ei * PARAM_STRIDE + 0] = dv.is;
       params[ei * PARAM_STRIDE + 1] = dv.n;
-      // The current rating (FAIL) and the transit time (reverse recovery) are both Real-mode
-      // non-idealities — an Ideal diode is unrated and recovers instantly.
+      // The current rating (FAIL), the transit time (reverse recovery), and shot noise are all Real-mode
+      // non-idealities — an Ideal diode is unrated, recovers instantly, and is silent.
       if (real) {
         params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
         params[ei * PARAM_STRIDE + DIODE_TT_SLOT] = dv.tt;
+        // Shot noise: a junction's noise current ∝ √I (sim-core multiplies this scale by √|I| of the live
+        // current). Fundamental to the junction (not a quality grade), so a single game-scaled constant.
+        params[ei * PARAM_STRIDE + NOISE_SLOT] = SHOT_NOISE_SCALE;
       }
     }
     // Pulse / clock generator: the AC-source element's waveform (slot 1: 1 = square, 2 =
@@ -1979,6 +2275,13 @@ export function buildNetlist(
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     params,
+    coupling: computeThermalCoupling(sorted, elemOfComponent, real),
+    magneticCoupling: computeMagneticCoupling(
+      sorted,
+      elemOfComponent,
+      real,
+      transformerEdges,
+    ),
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,

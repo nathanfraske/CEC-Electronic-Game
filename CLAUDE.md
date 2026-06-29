@@ -229,11 +229,15 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   The same geometric parasitic on *every* resistor, but the `ωL` term only swings the phase when R
   is tiny — invisible on a 10 kΩ, ~+32° on a 10 mΩ **SHUNT** at 100 kHz (hence the shunt part).
   AC-only + unhashed → the transient golden is untouched (resistors stay pure R in the time domain).
-- **Thermal (Johnson) noise** (`NOISE_SLOT` = 6, beside `CAP_LEAK_SLOT`): in **Real** mode `buildNetlist`
-  emits a per-resistor noise-current amplitude (`resistorNoiseAmp(R, tier)` in `tiers.ts`, `∝ 1/√R`,
-  tier-coupled so a budget part hisses more); sim-core injects it as a **deterministic, zero-mean,
-  per-`(element, tick)` current** into the **transient** RHS only (`add_noise_currents`, gated on a
-  `has_noise` install flag — the OP stays clean, like a diode's `TT` at `inv_dt = 0`). The sample is an
+- **Device noise** (`NOISE_SLOT` = 6, beside `CAP_LEAK_SLOT`): in **Real** mode `buildNetlist` emits a
+  per-element noise-current amplitude that `add_noise_currents` injects as a **deterministic, zero-mean,
+  per-`(element, tick)` current** into the **transient** RHS only (gated on a `has_noise` install flag —
+  the OP stays clean, like a diode's `TT` at `inv_dt = 0`). **Two mechanisms share the slot:**
+  **Johnson** on resistors — `resistorNoiseAmp(R, tier)` (`tiers.ts`, `∝ 1/√R`, tier-coupled so a budget
+  part hisses more), a **fixed** amplitude; and **shot** on diodes (`is_diode`) — `add_noise_currents`
+  scales the slot by **√|I|** of the device's previous-tick committed `currents[i]`, so a harder-biased
+  junction is noisier (`buildNetlist` emits `SHOT_NOISE_SCALE` on diodes, a junction property not a tier).
+  The sample is an
   Irwin–Hall over `splitmix64` (no transcendentals → machine-independent, replay-exact). It **enters the
   solve** (node `V` fuzzes — visible on the scope) but `0` (default / Ideal / the golden) skips it
   entirely → byte-identical. **Game-scaled** (the lesson is the ordering — bigger R, cheaper grade ⇒
@@ -244,6 +248,92 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   golden are byte-identical); even a 9.1 MΩ budget node's 3.46σ peak stays clear of the logic mid-rail.
   Still: firm up weakly-tied test nodes (the SRAM bit-line is tied through a resistor for this reason). See
   `docs/sim/noise-ideation.md`.
+- **Thermal runaway / per-tick `Tj` in the solve** (`TEMPCO_SLOT` = 7, the first **`Tj`-fed-back-into-the-
+  solve** feature — what the docs called "Path 2"). Unlike the web's presentational `Tj` (glow/vent), this
+  one is **in sim-core**: `thermal_state[i]` is advanced each tick from the committed power `P = |V·I|`
+  (`thermal_step`, gated on a `has_thermal` install flag), and a resistor's effective resistance tracks it
+  — `resistor_r_eff` returns `value·(1 + α·(Tj − T_AMBIENT))` (clamped) for the 4 **transient** stamps
+  (`solve_into_readout`/`_newton`, stamp + current-commit); the OP keeps `value` (`Tj = ambient` there). The
+  tempco `α` ([`TEMPCO_SLOT`]) is emitted Real-mode-only for **NTC** (`α < 0` → R drops with heat → if it
+  dominates the loop, **runaway**: heat ⇒ R↓ ⇒ V²/R↑ ⇒ hotter ⇒ the web boxes/vents it) and **PTC**
+  (`α > 0` → self-limits, the resettable-fuse effect). `Tj` is **folded into `snapshot_hash`** per element
+  with `α ≠ 0`, so a circuit without a tempco — and **the golden** — folds zero bytes ⇒ **byte-identical**
+  (verified). Replay-exact (`Tj` is a pure function of the committed trajectory). `pub fn
+  element_temperature(i)` exposes it. Game-scaled linear α (not the part's full β-model). See
+  `docs/heat-on-the-board-ideation.md` (the runaway update). (Every dissipating kind already self-heats
+  web-side — incl. **MOVs/varistors** [`partHeats` is true for all but sources/ground/meters], so a
+  badly-overloaded MOV overheats + vents; only the **R(T) feedback loop** is the new sim-core piece.)
+  **A BJT reuses the same slot** for its own runaway: there `TEMPCO_SLOT` carries the saturation-current
+  tempco `γ` (1/°C) feeding `bjt_is_eff` (`Is(T) = BJT_IS·exp(γ·(Tj − T_AMBIENT))`, capped at
+  `BJT_IS_MULT_MAX`) — so at a **fixed base bias** `Ic = Is·exp(Vbe/Vt)` climbs with `Tj` → `Vce·Ic`↑ ⇒
+  hotter ⇒ runaway, tamed by an **emitter ballast** (its `IR` drop pulls `Vbe` back). `bjt_op`'s saturation
+  current is now a passed-in arg, so every BJT call site threads `self.bjt_is_eff(e, i)`. The slots never
+  collide (only `ELEM_RESISTOR` reads slot 7 as `α`; a BJT reads it as `γ`) and both ride the **one**
+  `step()` `Tj` advance — for a BJT that's the collector dissipation `|Vce·Ic|` (a=C, b=E, `currents`=Ic).
+  Web emits `γ = BJT_IS_TEMPCO` on **Q/QP** Real-mode-only (`netlist.ts`), so Ideal / golden ⇒ `γ = 0` ⇒
+  `Is = BJT_IS` ⇒ byte-identical. Verified end-to-end (`bjtRunawayE2E.test.ts`: a Real BJT's collector
+  collapses 23.8→0.55 V into saturation, an Ideal one is dead flat, a ballast suppresses it).
+- **Mutual heating / thermistor-as-sensor** (`thermal_coupling`, `set_thermal_coupling`, the **second**
+  `Tj`-in-the-solve piece). A hot part raises a nearby part's **local ambient** so a **thermistor beside a
+  power part SENSES its heat** — its `R(T)` (the same NTC/PTC tempco) shifts the circuit (a real temperature
+  sensor). The per-tick `Tj` advance (in the existing `step()` thermal loop, now gated `has_thermal ||
+  has_coupling`) lifts each element's relax target to `Tamb + Σ_j w·(Tj_prev_j − Tamb)` from a **previous-tick
+  snapshot** (explicit 1-tick loop, like `R(T)`); when coupling is live, **every** element self-heats (even a
+  plain resistor needs a `Tj` to DONATE). The coupling map is **web geometry → sim-core**: `buildNetlist`
+  (`computeThermalCoupling`) makes each `partHeats` component a thermal node at its board cell, weights pairs
+  by `e^(−(d/D0)²)` within a cutoff, and **normalises each element's incoming row sum `Σ w ≤ COUPLE_ROW_MAX`**;
+  sim-core re-caps at `THERMAL_COUPLING_MAX` (0.9). The `Σ w < 1` **passivity** is the no-blow-up guarantee —
+  `(I − W)(Tj − Tamb) = P·θ` is bounded by `‖P·θ‖/(1 − Σw)` no matter how many hot neighbours (a dense IC's
+  internals) pile on (the owner's constraint). Pushed via `set_thermal_coupling` **AFTER** `set_netlist`
+  (which clears it) — a **separate, no-rewind** call (`App.svelte`, right after `sim.setNetlist`), so it's
+  NOT in the value-sig and a re-push never resets the run. **Real-mode + a tempco part (NTC/PTC/Q/QP →
+  `TEMPCO_SENSOR_KINDS`) present** gates emission (else `null` → no coupling → byte-identical/golden-safe).
+  A sealed IC participates as the **single thermal node of its primary element** (consistent with the
+  per-component self-heating model — heats neighbours as a unit, bounded). Tj is hashed only for tempco
+  elements (a non-tempco donor's Tj advances but isn't folded), so the golden / any coupling-free run is
+  byte-identical (verified: `empty_coupling_is_byte_identical`). Verified end-to-end (`mhE2E.test.ts`: a
+  coupled NTC's divider midpoint drops 4.97→2.33 V as it senses a hot resistor; uncoupled it holds at ~½ Vcc).
+  `pub fn element_temperature(i)` is now wasm-exposed (`loop.ts` `elementTemperature`) for the authoritative
+  in-solve `Tj`. **Live moves** re-push the coupling: `rebuildNetlist`'s pure-move early-return (sig
+  unchanged) re-applies `nl.coupling` (same element indices, new weights) — or EMPTY to clear when you drag
+  a part out of range — so dragging a part beside a thermistor updates what it senses without a reinstall.
+  (Per-internal-IC-element coupling + reading sim-core `Tj` for the glow are follow-ups.)
+- **Magnetic coupling / coupled inductors → transformers** (`magnetic_coupling`, `set_magnetic_coupling`).
+  The **coupled-inductor analogue of thermal coupling**: two inductors near each other share flux (mutual
+  inductance `M = k·√(Li·Lj)`), so an AC-driven primary coil induces a voltage in a secondary — **two coils
+  next to each other become a transformer**. The backward-Euler companion of `v = M·di/dt` adds an
+  off-diagonal `mat[bi][bj] −= M/DT` (+ history `rhs[bi] −= (M/DT)·i_prev_j`) to each inductor's **transient**
+  branch row — stamped by `stamp_mutual_inductance` after the per-element loop in BOTH transient paths
+  (`solve_into_readout` + `_newton`); the **OP is untouched** (inductors are DC current sources there,
+  `di/dt = 0`). `|k| < 1` (`MUTUAL_K_MAX` = 0.999) keeps the `L` matrix positive-definite (`det = Li·Lj(1 −
+  k²) > 0`). Pushed via `set_magnetic_coupling(idx,nbr,coeff)` **after** `set_netlist` (no rewind); non-inductor
+  endpoints + out-of-range + `|k| ≥ 1` are rejected. **Golden-safe:** no magnetic map (the RC golden has no
+  inductor; every uncoupled inductor circuit) ⇒ `has_magnetic` false ⇒ no off-diagonals ⇒ byte-identical
+  (verified `magnetic_coupling_is_reproducible_and_golden_safe`). Web (`netlist.ts` `computeMagneticCoupling`):
+  inductor (`"L"`) pairs within `MAG_CUTOFF` cells couple with `k = MAG_K_PEAK·e^(−(d/D0)²)`, **Real-mode only
+  + ≥2 coils** (Ideal keeps coils independent — no stray coupling); `BuiltNetlist.magneticCoupling`, pushed in
+  `App.svelte` beside the thermal one (full-rebuild + live-move). Verified e2e (`magneticCoupling.test.ts`:
+  two adjacent coils, AC-driven primary → the secondary swings; uncoupled it's dead; a 4× secondary steps the
+  voltage up `√(L2/L1)≈2×` in sim-core). **A center tap needs NO new element** — it's a continuous secondary
+  winding `top→tap→bottom` (two coupled half-coils sharing the tap node), and the two halves come out
+  **antiphase about the tap** (`center_tapped_transformer_halves_are_antiphase`: each ~10 Vpp, sum ~0 — the
+  basis of full-wave rectifiers / phase splitters). **The AC solve sees transformers too:** `ac_solve_models`
+  carries the same mutual off-diagonal in COMPLEX form (`a[bi][bj] −= jωM`, gated on `has_magnetic`), so the
+  Bode/phase tools read transformer action across frequency (`ac_solve_sees_a_transformer`); golden-safe
+  (no map ⇒ unchanged). **The buildable part is `XF`** (`graph.ts`, name "Transformer", the headline one;
+  the legacy ideal-T `TR` keeps its `kind()` for old saves but is dropped from the palette): `buildNetlist`
+  expands it into a primary + secondary `ELEM_INDUCTOR` (secondary `XF_L_BASE·n²` for the turns ratio
+  `n = value`, since `L ∝ N²`) and pushes an EXPLICIT coupling edge (`k = XF_K`) via a `transformerEdges`
+  list that `computeMagneticCoupling` installs in **both** fidelity modes (a transformer always transforms;
+  only loose-coil proximity coupling stays Real-only). `elemOfComponent` = primary, `legsOfComponent` =
+  `[secondary]`; reuses the existing `drawTR`/`drawFTR` glyph (two coils + iron core). Verified live
+  (`shoot`): renders as a proper transformer and the Bode/phase panel shows its response. Tests:
+  `transformerPart.test.ts`. **`XFCT`** is the 5-pin **centre-tap** variant (P+/P−/S+/CT/S−) — expands to a
+  primary + two coupled secondary half-coils (continuous `S+→CT→S−`), so the halves swing antiphase about the
+  tap (`drawXFCT` adds a centre-tap stub to the glyph). **Analogy lens:** both register `drawAnalogyTransformer`
+  (the existing belted-wheels metaphor — primary wheel belt-coupled to a secondary wheel sized by the turns
+  ratio, reading the secondary current from `electrical.legs[0]`); a part shows it when zoomed in under the
+  analogy lens. Verified live in schematic + analogy.
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

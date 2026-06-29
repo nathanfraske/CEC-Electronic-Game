@@ -89,6 +89,26 @@ export interface SimHandle {
   /** Reset to t=0 keeping the installed netlist. */
   reset(): void;
   /**
+   * Install the **thermal-coupling map** (mutual heating) — which parts heat which, from board geometry.
+   * Each `(idx[k], nbr[k], w[k])` is one directed edge (element `idx[k]`'s `Tj` is pulled toward element
+   * `nbr[k]`'s by weight `w[k]`), so a hot part raises a nearby part's local ambient (a thermistor senses
+   * the heat of a part beside it). Call AFTER `setNetlist` (which clears the prior map); does NOT rewind.
+   * Empty arrays leave the inert no-coupling default.
+   */
+  setThermalCoupling(idx: Uint32Array, nbr: Uint32Array, w: Float64Array): void;
+  /**
+   * Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors share
+   * flux, from coil geometry. Each `(idx[k], nbr[k], coeff[k])` couples two inductors with coefficient
+   * `coeff`, so two coils next to each other become a transformer. Call AFTER `setNetlist`; no rewind.
+   */
+  setMagneticCoupling(
+    idx: Uint32Array,
+    nbr: Uint32Array,
+    coeff: Float64Array,
+  ): void;
+  /** The in-solve junction temperature `Tj` (°C) of an element (thermal runaway + mutual heating). */
+  elementTemperature(index: number): number;
+  /**
    * Small-signal AC sweep (Bode data): for each frequency in `freqs` (Hz), the complex
    * node voltages from a frequency-domain solve, flattened `[re, im]` per non-ground node
    * — a block of `2·(nodeCount − 1)` per frequency, in input order. Frequency-domain, so
@@ -204,6 +224,10 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
       return sim.set_netlist(nodeCount, types, a, b, cc, dd, values, ax);
     },
     reset: () => sim.reset(),
+    setThermalCoupling: (idx, nbr, w) => sim.set_thermal_coupling(idx, nbr, w),
+    setMagneticCoupling: (idx, nbr, coeff) =>
+      sim.set_magnetic_coupling(idx, nbr, coeff),
+    elementTemperature: (index) => sim.element_temperature(index),
     acSweep: (freqs, real) => sim.ac_sweep(freqs, real),
     acElementMeasurements: (omega, real) =>
       sim.ac_element_measurements(omega, real),

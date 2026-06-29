@@ -765,6 +765,12 @@ const TRANSFORMER_RWIND: f64 = 5.0;
 /// ratio scaling stays clean. Makes the secondary current `Is` a second reactive state.
 const TRANSFORMER_LLEAK: f64 = 5.0e-3;
 
+/// Ceiling on the magnetic-coupling coefficient `|k|` (see [`Sim::set_magnetic_coupling`]). Mutual
+/// inductance `M = k·√(Li·Lj)` is bounded by `√(Li·Lj)` (the `L` matrix stays positive-definite, `det =
+/// Li·Lj(1 − k²) > 0`) — `k = 1` is perfect coupling (a singular pair). Clamp just under so a "tightly
+/// coupled" pair (`k ≈ 0.999`) is a near-ideal transformer without making the branch system singular.
+const MUTUAL_K_MAX: f64 = 0.999;
+
 /// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
 /// Four terminals: output `a` = `Q`, input `b` = `D` (data), input `c` = `CLK`
 /// (clock), output `d` = `Q̄` (the complement). Its `value` is the logic-high rail,
@@ -1856,6 +1862,12 @@ const BJT_BF: f64 = 100.0;
 /// inverted (collector and emitter swapped). Keeps the reverse junction's
 /// contribution physical. Fixed default. Shared by both polarities.
 const BJT_BR: f64 = 2.0;
+/// Ceiling on the **thermal-runaway** saturation-current multiplier `exp(γ·ΔTj)` (see
+/// [`Sim::bjt_is_eff`]). A runaway drives `Tj` (and hence `Is`) up exponentially; the cap keeps the
+/// near-shorted device's transconductance bounded so the Newton matrix stays conditioned — the external
+/// collector load, not `Is`, sets the real operating point once the junction is hard-on. ×1e6 (so `Is`
+/// tops out at ~1e-9 A) is far past where a real BJT has already cooked.
+const BJT_IS_MULT_MAX: f64 = 1.0e6;
 
 // --- Op-amp (clamped transconductance) model constants ------------------------
 
@@ -2568,6 +2580,56 @@ fn noise_sample(ei: usize, tick: u64) -> f64 {
         sum += (h >> 11) as f64 * (1.0 / 9_007_199_254_740_992.0);
     }
     (sum - 2.0) * 1.732_050_807_568_877_2
+}
+
+/// Param slot carrying a resistor's **self-heating temperature coefficient `α`** (1/°C) — the seed of
+/// **thermal runaway**. With it set, the resistor's effective resistance tracks its OWN self-heating
+/// junction temperature: `R(T) = value·(1 + α·(Tj − T_AMBIENT))` (clamped, see [`Sim::resistor_r_eff`]),
+/// where `Tj` is advanced each tick from the device's dissipated power `P = |V·I|` ([`thermal_step_amb`],
+/// stored in `thermal_state`). A **negative** `α` (an NTC) is unstable into a load: heat ⇒ `R` drops ⇒
+/// current rises ⇒ more heat ⇒ **runaway** (until it crosses `T_MAX` and the web boxes/vents it); a
+/// **positive** `α` (a PTC) is self-limiting (heat ⇒ `R` rises ⇒ current falls — the resettable-fuse
+/// effect). This is the **per-tick `Tj`-in-the-solve** feedback (the web's presentational `Tj` can't do
+/// it replay-safely). `0` (the default, every Ideal-mode / non-thermistor part, and the golden) ⇒ no
+/// feedback: `Tj` never advances, `R = value`, and `thermal_state` folds **zero** bytes into the hash, so
+/// the solve is **byte-identical**. Real-mode only (the web emits `α` for NTC/PTC). **Game-scaled** — the
+/// lesson is the sign/instability, not the exact β-model. In the reserved slot range (≥ 4).
+///
+/// **A BJT reuses this same slot** for its own runaway seed: there it carries the saturation-current
+/// temperature coefficient `γ` (1/°C) feeding [`Sim::bjt_is_eff`] (`Is(T) = BJT_IS·exp(γ·(Tj − T_AMBIENT))`)
+/// rather than a linear `α`. The two never collide — only an `ELEM_RESISTOR` reads the slot as `α` (in
+/// [`Sim::resistor_r_eff`]); a BJT reads it as `γ` (in `bjt_is_eff`). Both share the **one** `Tj` advance in
+/// `step()`, which uses the slot solely as a non-zero gate (the per-element power `P = |V·I|` it integrates
+/// is, for a BJT, the collector dissipation `|Vce·Ic|` since `a`=collector, `b`=emitter, `currents`=`Ic`).
+const TEMPCO_SLOT: usize = 7;
+
+/// Board ambient temperature (°C) — the self-heating `Tj` rests here with no dissipation (mirrors the
+/// web `T_AMBIENT_C`). The thermal-runaway `R(T)` and `Tj` advance are referenced to it.
+const T_AMBIENT: f64 = 25.0;
+/// Lumped junction-to-ambient thermal resistance (°C/W) for the thermal-runaway self-heating — the
+/// resistor spec, mirroring the web `thermal.ts` `R` kind. Game-scaled.
+const THERMAL_THETA: f64 = 80.0;
+/// Lumped thermal mass (J/°C); `τ = θ·Cth`. Mirrors the web resistor spec.
+const THERMAL_CTH: f64 = 0.03;
+/// Clamp band for the temperature-coefficient `R(T)` (× the nominal value), so a runaway's collapsing (or
+/// a PTC's climbing) resistance can never reach `0`/negative or blow the matrix conditioning.
+const R_TEMPCO_MIN: f64 = 0.02;
+const R_TEMPCO_MAX: f64 = 50.0;
+/// Hard ceiling on any element's **incoming thermal-coupling row sum** `Σ_j w` (see [`Sim::thermal_coupling`]).
+/// The web already normalises the weights, but this is the passivity backstop: with `Σ w ≤ MAX < 1` the
+/// coupled steady state `(I − W)(Tj − T_AMBIENT) = P·θ` is bounded by `‖P·θ‖/(1 − MAX)`, so mutual heating
+/// can never diverge no matter how many hot parts (or a dense IC's internals) couple into one node.
+const THERMAL_COUPLING_MAX: f64 = 0.9;
+
+/// One tick of the lumped self-heating relaxation toward a given `ambient`: `Tj` relaxes toward
+/// `ambient + P·θ` on `τ = θ·Cth`, step factor clamped to `≤ 1` (unconditionally stable, no overshoot).
+/// `ambient` is normally [`T_AMBIENT`] but is raised by hot neighbours under thermal coupling. Pure `f64`
+/// adds/mults (no transcendentals) → replay-exact and machine-independent.
+fn thermal_step_amb(tj: f64, power: f64, ambient: f64) -> f64 {
+    let tau = (THERMAL_THETA * THERMAL_CTH).max(DT);
+    let target = ambient + power.max(0.0) * THERMAL_THETA;
+    let a = (DT / tau).min(1.0);
+    tj + (target - tj) * a
 }
 
 /// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
@@ -3533,6 +3595,43 @@ pub struct Sim {
     /// `false` the transient solve never enters the noise path ([`Sim::add_noise_currents`]), so a
     /// noiseless circuit — and the golden — is byte-for-byte the noise-free solve.
     has_noise: bool,
+    /// `true` iff at least one installed element carries a non-zero [`TEMPCO_SLOT`] (thermal-runaway
+    /// feedback). When `false`, `thermal_state` never advances, `R(T) = value`, and zero `thermal_state`
+    /// bytes fold into the hash — a circuit without thermal feedback / the golden is byte-identical.
+    has_thermal: bool,
+    /// Per-element self-heating junction temperature `Tj` (°C), in lockstep with `elements`. Advanced each
+    /// tick from the device's dissipated power ([`thermal_step_amb`]) for tempco elements (gated on
+    /// `has_thermal`); read by [`Sim::resistor_r_eff`] for the `R(T)` runaway feedback. Folded into the
+    /// snapshot hash ONLY for elements with a non-zero [`TEMPCO_SLOT`] (so a circuit without thermal
+    /// feedback folds zero bytes). Reset to [`T_AMBIENT`] at install/reset.
+    thermal_state: Vec<f64>,
+    /// `true` iff a thermal-coupling map has been installed ([`Sim::set_thermal_coupling`]) — neighbouring
+    /// parts heat each other (a hot part raises a nearby part's local ambient; the canonical use is a
+    /// thermistor sensing the heat of a part beside it). When `false`, every part's `Tj` relaxes toward the
+    /// fixed board `T_AMBIENT` and this whole path is inert — a circuit with no coupling (and the golden) is
+    /// byte-identical.
+    has_coupling: bool,
+    /// Per-element thermal-coupling adjacency (in lockstep with `elements`): `thermal_coupling[i]` is a list
+    /// of `(j, w)` — element `i`'s `Tj` is pulled toward neighbour `j`'s by weight `w`. The web derives the
+    /// weights from part geometry and **normalises each element's incoming row sum `Σ_j w ≤ 1`** (passivity):
+    /// with `Σ w < 1` the steady state `(I − W)(Tj − T_AMBIENT) = P·θ` is bounded by `‖P·θ‖/(1 − Σw)`, so
+    /// heat can never blow up no matter how many parts pile on (e.g. a dense IC's internals). Empty for every
+    /// element with no neighbours. Installed separately from the netlist (no rewind); cleared on install.
+    thermal_coupling: Vec<Vec<(usize, f64)>>,
+    /// `true` iff a **magnetic-coupling** map has been installed ([`Sim::set_magnetic_coupling`]) — the
+    /// transformer/coupled-inductor analogue of `has_coupling`: two inductors near each other share flux
+    /// (mutual inductance `M = k·√(Li·Lj)`), so a primary coil drives a secondary. `false` ⇒ every inductor
+    /// is independent and this path is inert — a circuit with no magnetic coupling (and the golden) is
+    /// byte-identical.
+    has_magnetic: bool,
+    /// Per-element **magnetic-coupling** adjacency (in lockstep with `elements`): `magnetic_coupling[i]` is a
+    /// list of `(j, k)` — inductor `i` is flux-coupled to inductor `j` with coupling coefficient `k ∈ (−1, 1)`
+    /// (sign = winding sense / dot convention). In the **transient** branch equations each inductor's row
+    /// gains a mutual term `−(M/DT)·i_j` with `M = k·√(Li·Lj)` (the off-diagonal of the `L` matrix); `|k| < 1`
+    /// keeps that matrix positive-definite (`det = Li·Lj(1 − k²) > 0`), so the solve stays well-conditioned.
+    /// The web derives `k` from coil geometry (proximity), mirroring `thermal_coupling`. Empty when an inductor
+    /// has no magnetic neighbour. Installed separately from the netlist (no rewind); cleared on install.
+    magnetic_coupling: Vec<Vec<(usize, f64)>>,
     /// Per-node analog/digital classification (length `node_count`), computed at
     /// install from the element list ([`classify_nets`]). Topology metadata for the
     /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
@@ -3815,6 +3914,12 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             has_noise: false,
+            has_thermal: false,
+            thermal_state: Vec::new(),
+            has_coupling: false,
+            thermal_coupling: Vec::new(),
+            has_magnetic: false,
+            magnetic_coupling: Vec::new(),
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
             subtick_rate: 1,
@@ -4161,6 +4266,9 @@ impl Sim {
         // Any element carrying a non-zero noise amplitude (Real-mode web emission) arms the transient
         // noise path; otherwise it is never entered, so a noiseless circuit / the golden is byte-identical.
         let has_noise = elements.iter().any(|e| e.params[NOISE_SLOT] != 0.0);
+        // Any element with a temperature coefficient (Real-mode NTC/PTC) arms the thermal-runaway
+        // feedback; otherwise tj never advances + folds zero hash bytes → byte-identical / golden-safe.
+        let has_thermal = elements.iter().any(|e| e.params[TEMPCO_SLOT] != 0.0);
         // Install classifies with NO wide ports (the cell-level / non-memory path). A wide memory's bus
         // nodes are added later by `set_memory_ports`, which re-runs classification with the filled lists.
         let net_classes = classify_nets(node_count, &elements, &[], &[], &[]);
@@ -4182,6 +4290,7 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.has_noise = has_noise;
+        self.has_thermal = has_thermal;
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
         // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
@@ -4196,6 +4305,13 @@ impl Sim {
             .max(1);
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
+        self.thermal_state = vec![T_AMBIENT; elements.len()];
+        // A new netlist invalidates the old geometry-derived coupling; clear it (so the inert default holds
+        // until the web re-pushes via `set_thermal_coupling`), sized in lockstep with the elements.
+        self.has_coupling = false;
+        self.thermal_coupling = vec![Vec::new(); elements.len()];
+        self.has_magnetic = false;
+        self.magnetic_coupling = vec![Vec::new(); elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
         self.failed_elements = vec![false; elements.len()];
@@ -4394,6 +4510,9 @@ impl Sim {
         for s in &mut self.reactive_state {
             *s = 0.0;
         }
+        for s in &mut self.thermal_state {
+            *s = T_AMBIENT;
+        }
         for s in &mut self.secondary_state {
             *s = 0.0;
         }
@@ -4517,20 +4636,30 @@ impl Sim {
         }
     }
 
-    /// Inject every noisy element's deterministic per-tick **thermal-noise current** into the transient
-    /// RHS — a Norton current source `i_n` in parallel with the element (amplitude = [`NOISE_SLOT`], A;
-    /// `0` skips it). `i_n` is zero-mean and independent of the unknowns, so it stamps the RHS only (no
-    /// matrix change, no Newton feedback) exactly like an [`ELEM_ISOURCE`] (current leaves `a`, enters
-    /// `b`). The sample is a pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact.
-    /// Called ONLY from the transient solves (the operating point stays clean) and ONLY when
-    /// [`Sim::has_noise`], so a noiseless circuit — and the golden — never reaches this code. The signed
-    /// sample makes the sign convention irrelevant.
+    /// Inject every noisy element's deterministic per-tick **noise current** into the transient RHS — a
+    /// Norton current source `i_n` in parallel with the element (`base` = [`NOISE_SLOT`], A; `0` skips it).
+    /// Two mechanisms share the slot:
+    /// - **Johnson** (resistors etc.): `i_n = base · sample` — a fixed amplitude, independent of bias.
+    /// - **Shot** (junction devices, [`is_diode`]): `i_n = base · √|I| · sample` — the shot-noise current
+    ///   scales with the square root of the device's current (its previous-tick committed `currents[i]`,
+    ///   part of the deterministic state), so a harder-biased junction is noisier.
+    ///
+    /// `i_n` is zero-mean and independent of the unknowns, so it stamps the RHS only (no matrix change, no
+    /// Newton feedback) exactly like an [`ELEM_ISOURCE`] (current leaves `a`, enters `b`). The sample is a
+    /// pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact. Called ONLY from the
+    /// transient solves (the operating point stays clean) and ONLY when [`Sim::has_noise`], so a noiseless
+    /// circuit — and the golden — never reaches this code. The signed sample makes the sign irrelevant.
     fn add_noise_currents(&self, rhs: &mut [f64]) {
         for (i, e) in self.elements.iter().enumerate() {
-            let amp = e.params[NOISE_SLOT];
-            if amp == 0.0 {
+            let base = e.params[NOISE_SLOT];
+            if base == 0.0 {
                 continue;
             }
+            let amp = if is_diode(e.kind) {
+                base * self.currents[i].abs().sqrt()
+            } else {
+                base
+            };
             let i_n = amp * noise_sample(i, self.tick);
             if let Some(r) = Self::node_idx(e.a) {
                 rhs[r] -= i_n;
@@ -4539,6 +4668,22 @@ impl Sim {
                 rhs[r] += i_n;
             }
         }
+    }
+
+    /// The effective resistance of a resistor (element `i`), including any self-heating **thermal-runaway
+    /// feedback** ([`TEMPCO_SLOT`]): `R(T) = value·(1 + α·(Tj − T_AMBIENT))`, clamped to
+    /// `[value·R_TEMPCO_MIN, value·R_TEMPCO_MAX]` so a runaway's collapsing (or a PTC's climbing) `R` can
+    /// never reach `0`/negative or wreck the matrix. `α = 0` (the default, every non-thermistor / Ideal
+    /// part, the golden) returns the plain `value` — byte-identical. Used by the TRANSIENT resistor stamps
+    /// (the operating point keeps `value`, which equals `R(T_AMBIENT)`). `Tj` is `thermal_state[i]`.
+    #[inline]
+    fn resistor_r_eff(&self, e: &Element, i: usize) -> f64 {
+        let alpha = e.params[TEMPCO_SLOT];
+        if alpha == 0.0 {
+            return e.value;
+        }
+        let dt = self.thermal_state[i] - T_AMBIENT;
+        (e.value * (1.0 + alpha * dt)).clamp(e.value * R_TEMPCO_MIN, e.value * R_TEMPCO_MAX)
     }
 
     /// Map a node index to its MNA row/column, or `None` for ground (node `0`).
@@ -4604,13 +4749,14 @@ impl Sim {
     /// currents flip, so a single [`bjt_eval`] serves both polarities — the BJT
     /// analogue of [`Sim::mosfet_op`]. Pure `f64`, deterministic.
     #[inline]
-    fn bjt_op(e: &Element, vbe: f64, vbc: f64) -> BjtOp {
+    fn bjt_op(e: &Element, vbe: f64, vbc: f64, is: f64) -> BjtOp {
         // Forward current gain β from param slot 0 (a quality tier — a higher-gain part),
-        // else the default.
+        // else the default. The saturation current `is` is passed in (not the bare `BJT_IS`)
+        // so a Real-mode thermal-runaway device can feed its heated `Is(Tj)` — see `bjt_is_eff`.
         let bf = param_or(&e.params, 0, BJT_BF);
         if e.kind == ELEM_PNP {
             // Evaluate the NPN model on the mirrored internal junction voltages.
-            let op = bjt_eval(-vbe, -vbc, BJT_IS, DIODE_VT, bf, BJT_BR);
+            let op = bjt_eval(-vbe, -vbc, is, DIODE_VT, bf, BJT_BR);
             BjtOp {
                 ic: -op.ic,
                 ib: -op.ib,
@@ -4621,8 +4767,31 @@ impl Sim {
                 gic_bc: op.gic_bc,
             }
         } else {
-            bjt_eval(vbe, vbc, BJT_IS, DIODE_VT, bf, BJT_BR)
+            bjt_eval(vbe, vbc, is, DIODE_VT, bf, BJT_BR)
         }
+    }
+
+    /// The BJT's effective transport saturation current at its current junction temperature — the
+    /// **thermal-runaway** feedback for bipolar devices, the BJT analogue of [`Sim::resistor_r_eff`].
+    /// A real BJT's `Is` rises steeply with temperature (it roughly doubles every ~10 °C), so at a
+    /// **fixed** base-emitter bias the collector current `Ic = Is·exp(Vbe/Vt)` climbs as the junction
+    /// self-heats → more collector dissipation `Vce·Ic` → hotter → ... a positive feedback loop that
+    /// cooks an unballasted power BJT. An emitter ballast resistor tames it: its `IR` drop lifts the
+    /// emitter, pulling `Vbe` back down as `Ic` grows (local negative feedback).
+    ///
+    /// `Is(T) = BJT_IS · exp(γ·(Tj − T_AMBIENT))`, where `γ = params[TEMPCO_SLOT]` (1/°C) is emitted by
+    /// the web **only in Real mode**. `γ = 0` (Ideal / golden / any pre-thermal netlist) ⇒ `BJT_IS`
+    /// unchanged → byte-identical solve. The multiplier is capped at [`BJT_IS_MULT_MAX`] so a runaway
+    /// can't blow the matrix conditioning (the external collector load sets the real operating point
+    /// once the device is hard-on). `Tj` is `thermal_state[i]`, advanced each tick in [`Sim::step`].
+    #[inline]
+    fn bjt_is_eff(&self, e: &Element, i: usize) -> f64 {
+        let gamma = e.params[TEMPCO_SLOT];
+        if gamma == 0.0 {
+            return BJT_IS;
+        }
+        let dt = self.thermal_state[i] - T_AMBIENT;
+        BJT_IS * (gamma * dt).exp().min(BJT_IS_MULT_MAX)
     }
 
     /// Solve the **initial operating point** at `t = 0` and write the resulting
@@ -4679,7 +4848,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -4806,7 +4975,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -4883,7 +5052,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -5012,6 +5181,10 @@ impl Sim {
                 _ => {}
             }
         }
+        // Mutual inductance (transient only): couple inductors that share flux — a primary coil drives a
+        // secondary (transformer action). Inert unless a magnetic-coupling map was installed, so an
+        // uncoupled circuit / the golden is byte-identical.
+        self.stamp_mutual_inductance(&mut mat, &mut rhs, n);
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
@@ -5040,7 +5213,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -5314,7 +5487,7 @@ impl Sim {
                 let el = self.elements[ei];
                 let vbe = self.bjt_vbe[ei];
                 let vbc = self.bjt_vbc[ei];
-                let op = Self::bjt_op(&el, vbe, vbc);
+                let op = Self::bjt_op(&el, vbe, vbc, self.bjt_is_eff(&el, ei));
                 let (gpi, gmu, gif, gic_bc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                 let ieq_c = op.ic - gif * vbe - gic_bc * vbc;
                 let ieq_b = op.ib - gpi * vbe - gmu * vbc;
@@ -5538,8 +5711,9 @@ impl Sim {
                     max_vd_gap = gap;
                 }
                 // Terminal-current residual across the limited step (Ic and Ib).
-                let op_old = Self::bjt_op(&el, vbe_old, vbc_old);
-                let op_new = Self::bjt_op(&el, vbe_new, vbc_new);
+                let is = self.bjt_is_eff(&el, ei);
+                let op_old = Self::bjt_op(&el, vbe_old, vbc_old, is);
+                let op_new = Self::bjt_op(&el, vbe_new, vbc_new, is);
                 let dic = (op_new.ic - op_old.ic).abs();
                 let dib = (op_new.ib - op_old.ib).abs();
                 let tol_c = NEWTON_I_ABSTOL + NEWTON_RELTOL * op_new.ic.abs().max(op_old.ic.abs());
@@ -5767,7 +5941,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -5881,7 +6055,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -5899,7 +6073,9 @@ impl Sim {
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => {
+                    Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i)).ic
+                }
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -5988,7 +6164,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -6115,6 +6291,10 @@ impl Sim {
                 _ => {}
             }
         }
+        // Mutual inductance into the fixed Newton base (constant across iterations, like every inductor
+        // companion): couple flux-sharing inductors so a primary coil drives a secondary. Inert without a
+        // magnetic-coupling map, so an uncoupled circuit / the golden is byte-identical.
+        self.stamp_mutual_inductance(&mut base_mat, &mut base_rhs, n);
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
         // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
@@ -6149,7 +6329,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -6186,7 +6366,9 @@ impl Sim {
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => {
+                    Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i)).ic
+                }
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -7066,6 +7248,46 @@ impl Sim {
                 _ => {}
             }
         }
+        // Thermal feedback: advance each thermally-active element's self-heating Tj from its just-committed
+        // dissipated power P = |V·I| (a pure function of the committed state → replay-exact). An element is
+        // active if it has a tempco (runaway feedback — its Tj drives R(T)/Is(T) next tick) OR participates
+        // in thermal coupling (it heats / is heated by a neighbour). Under coupling, a hot neighbour raises
+        // this element's LOCAL ambient — `Tamb + Σ w·(Tj_nbr − Tamb)` from the PREVIOUS tick's Tj (explicit,
+        // order-independent), the bounded `Σ w < 1` passivity guaranteeing it can't diverge. The canonical
+        // payoff: a thermistor (tempco) beside a hot part senses its heat → its R(T) shifts the circuit
+        // (a real temperature sensor). Skipped entirely with no tempco AND no coupling, so a plain circuit /
+        // the golden never advances Tj (and folds zero Tj bytes into the hash) → byte-identical.
+        if self.has_thermal || self.has_coupling {
+            // Snapshot the previous-tick Tj so every element reads the SAME neighbour temperatures (the
+            // coupling is an explicit 1-tick-delayed loop, like R(T)); allocated only when coupling is live.
+            let prev: Vec<f64> = if self.has_coupling {
+                self.thermal_state.clone()
+            } else {
+                Vec::new()
+            };
+            for i in 0..self.elements.len() {
+                let (a, b, alpha) = {
+                    let e = &self.elements[i];
+                    (e.a, e.b, e.params[TEMPCO_SLOT])
+                };
+                // With coupling live, advance EVERY element's self-heating Tj — even a plain (non-tempco)
+                // resistor needs a Tj so it can DONATE heat to a coupled neighbour (a thermistor sensing it).
+                // With no coupling, only tempco elements advance, so the runaway path / golden is unchanged.
+                if alpha == 0.0 && !self.has_coupling {
+                    continue;
+                }
+                let power = ((self.node_v[a] - self.node_v[b]) * self.currents[i]).abs();
+                // Local ambient lifted by hot neighbours (a hot part heats this one). A non-receiver's list is
+                // empty → ambient stays the fixed board T_AMBIENT, i.e. pure self-heating.
+                let mut ambient = T_AMBIENT;
+                if self.has_coupling {
+                    for &(j, w) in &self.thermal_coupling[i] {
+                        ambient += w * (prev[j] - T_AMBIENT);
+                    }
+                }
+                self.thermal_state[i] = thermal_step_amb(self.thermal_state[i], power, ambient);
+            }
+        }
         // Sub-tick 0 of this analog tick: advance the sequential digital state once from the
         // just-solved committed voltages (the unit-delay edge-detect / FF / sampler / comparator /
         // behavioral commits) — UNCHANGED from the single-rate engine.
@@ -7527,6 +7749,125 @@ impl Sim {
         self.elements.len()
     }
 
+    /// The self-heating junction temperature `Tj` (°C) of element `index` — the thermal-runaway state
+    /// ([`TEMPCO_SLOT`]). `T_AMBIENT` for a part with no thermal feedback (or out of range). Lets the
+    /// front end read the authoritative in-solve `Tj` for a thermal-runaway part (instead of its own
+    /// presentational integral).
+    pub fn element_temperature(&self, index: usize) -> f64 {
+        self.thermal_state.get(index).copied().unwrap_or(T_AMBIENT)
+    }
+
+    /// Install the **thermal-coupling map** (see [`Sim::thermal_coupling`]) — the geometry-derived graph of
+    /// which parts heat which, computed web-side from board positions. Each triple
+    /// `(idx[k], nbr[k], w[k])` is one directed edge: element `idx[k]`'s `Tj` is pulled toward element
+    /// `nbr[k]`'s by weight `w[k]`. Self-edges (`i == j`), out-of-range indices, and non-positive weights are
+    /// skipped. Each element's incoming row sum is renormalised down to [`THERMAL_COUPLING_MAX`] if it
+    /// exceeds it (the passivity backstop — heat can't diverge however many neighbours pile on). Pushed
+    /// AFTER `set_netlist` (which clears the prior map); does NOT rewind or touch `thermal_state`, so
+    /// re-pushing on a part move never resets the run. Empty input (or all weights ≤ 0) leaves the inert
+    /// no-coupling default — byte-identical to before this feature, so the golden is untouched.
+    pub fn set_thermal_coupling(&mut self, idx: &[u32], nbr: &[u32], w: &[f64]) {
+        let n = self.elements.len();
+        let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        let k = idx.len().min(nbr.len()).min(w.len());
+        for t in 0..k {
+            let i = idx[t] as usize;
+            let j = nbr[t] as usize;
+            let wt = w[t];
+            // Keep only well-formed, in-range, positive-weight edges (skips self-edges and any NaN weight).
+            if i < n && j < n && i != j && wt > 0.0 {
+                adj[i].push((j, wt));
+            }
+        }
+        // Passivity backstop: renormalise any row whose incoming weight sum exceeds the cap so Σ w ≤ MAX < 1
+        // always holds (bounded steady state — coupling can never make Tj run away on its own).
+        let mut any = false;
+        for row in adj.iter_mut() {
+            let sum: f64 = row.iter().map(|&(_, wt)| wt).sum();
+            if sum > THERMAL_COUPLING_MAX {
+                let s = THERMAL_COUPLING_MAX / sum;
+                for e in row.iter_mut() {
+                    e.1 *= s;
+                }
+            }
+            if !row.is_empty() {
+                any = true;
+            }
+        }
+        self.thermal_coupling = adj;
+        self.has_coupling = any;
+    }
+
+    /// Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors
+    /// share flux, the coupled-inductor analogue of [`Sim::set_thermal_coupling`]. Each
+    /// `(idx[k], nbr[k], coeff[k])` is one **undirected** edge between two inductors with coupling
+    /// coefficient `coeff ∈ (−1, 1)` (sign = winding sense / dot convention); both directions are stored so
+    /// the symmetric mutual term `M = coeff·√(Li·Lj)` stamps into both branch rows. Self-edges, out-of-range
+    /// indices, **non-inductor** endpoints, and `|coeff| ≥ 1` (which would make the `L` matrix indefinite)
+    /// are skipped (`coeff` is clamped to `±MUTUAL_K_MAX`). Pushed AFTER `set_netlist` (which clears the prior
+    /// map); does NOT rewind. Empty input leaves the inert no-coupling default — byte-identical to before, so
+    /// the golden (no inductors) and every uncoupled inductor circuit are untouched.
+    pub fn set_magnetic_coupling(&mut self, idx: &[u32], nbr: &[u32], coeff: &[f64]) {
+        let n = self.elements.len();
+        let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        let k = idx.len().min(nbr.len()).min(coeff.len());
+        let mut any = false;
+        for t in 0..k {
+            let i = idx[t] as usize;
+            let j = nbr[t] as usize;
+            if i >= n || j >= n || i == j {
+                continue;
+            }
+            // Only inductors carry flux; a coefficient of 0 (or NaN) is no coupling.
+            if self.elements[i].kind != ELEM_INDUCTOR || self.elements[j].kind != ELEM_INDUCTOR {
+                continue;
+            }
+            let c = coeff[t].clamp(-MUTUAL_K_MAX, MUTUAL_K_MAX);
+            if c == 0.0 || c.is_nan() {
+                continue;
+            }
+            // Store BOTH directions so the symmetric off-diagonal stamps into both branch rows.
+            adj[i].push((j, c));
+            adj[j].push((i, c));
+            any = true;
+        }
+        self.magnetic_coupling = adj;
+        self.has_magnetic = any;
+    }
+
+    /// Stamp the **mutual-inductance** off-diagonals into a transient branch system (gated on
+    /// [`Sim::has_magnetic`]). For each magnetically-coupled inductor pair the backward-Euler companion of
+    /// `v = M·di/dt` adds `−(M/DT)·i_nbr` to the inductor's branch row: `mat[bi][bj] −= M/DT` and the history
+    /// term `rhs[bi] −= (M/DT)·i_prev_j`, with `M = coeff·√(Li·Lj)`. Called once per assembly **after** the
+    /// per-element inductor self-companions (order-independent — it only touches off-diagonals and the RHS).
+    /// Inert (returns immediately) with no magnetic coupling, so every uncoupled circuit / the golden is
+    /// byte-identical. Only the **transient** paths call it; the operating point holds inductors as DC
+    /// current sources (`di/dt = 0`, so mutual inductance contributes nothing there).
+    fn stamp_mutual_inductance(&self, mat: &mut [f64], rhs: &mut [f64], n: usize) {
+        if !self.has_magnetic {
+            return;
+        }
+        for i in 0..self.elements.len() {
+            if self.magnetic_coupling[i].is_empty() {
+                continue;
+            }
+            let li = self.elements[i].value;
+            let bi = self.branch_index[i];
+            if bi >= n {
+                continue;
+            }
+            for &(j, c) in &self.magnetic_coupling[i] {
+                let bj = self.branch_index[j];
+                if bj >= n {
+                    continue;
+                }
+                let m = c * (li * self.elements[j].value).max(0.0).sqrt();
+                mat[bi * n + bj] -= m / DT;
+                rhs[bi] -= (m / DT) * self.reactive_state[j];
+            }
+        }
+    }
+
     /// The element at `index` in submission order. Panics if out of range; the
     /// front end indexes by the order it supplied to `set_netlist`.
     pub fn element_at(&self, index: usize) -> Element {
@@ -7719,7 +8060,12 @@ impl Sim {
                     } else if is_bjt(e.kind) {
                         // Collector a, emitter b, base c; Jacobian of (Ic, Ib) w.r.t.
                         // (Vbe, Vbc), mapped onto the node voltages (see newton_iterate).
-                        let op = Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]);
+                        let op = Self::bjt_op(
+                            e,
+                            self.bjt_vbe[i],
+                            self.bjt_vbc[i],
+                            self.bjt_is_eff(e, i),
+                        );
                         let (gpi, gmu, gif, gbc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                         stamp_g(&mut a, ia, ia, -gbc);
                         stamp_g(&mut a, ia, ib, -gif);
@@ -7778,6 +8124,30 @@ impl Sim {
                         stamp_g(&mut a, ic, ic, GMIN);
                     }
                     // Logic gates / transformer: still open in this pass (follow-up).
+                }
+            }
+        }
+        // Mutual inductance (transformer action) in the frequency domain: the complex twin of the transient
+        // `stamp_mutual_inductance`. Each coupled inductor pair adds an off-diagonal reactance `−jωM` (with
+        // `M = k·√(Li·Lj)`) to the branch row, so the Bode/phase tools SEE a transformer (a primary coil's
+        // current induces a secondary voltage across frequency). Inert without a magnetic-coupling map —
+        // identical to before for every uncoupled inductor circuit.
+        if self.has_magnetic {
+            for i in 0..self.elements.len() {
+                if self.magnetic_coupling[i].is_empty() {
+                    continue;
+                }
+                let (bi, li) = (branch[i], self.elements[i].value);
+                if bi == usize::MAX {
+                    continue;
+                }
+                for &(j, k) in &self.magnetic_coupling[i] {
+                    let bj = branch[j];
+                    if bj == usize::MAX {
+                        continue;
+                    }
+                    let m = k * (li * self.elements[j].value).max(0.0).sqrt();
+                    a[bi * n + bj] = a[bi * n + bj].sub(Cplx::new(0.0, omega * m));
                 }
             }
         }
@@ -8225,6 +8595,15 @@ impl Sim {
                 for r in &self.mem_refresh[i] {
                     bytes.extend_from_slice(&r.to_le_bytes());
                 }
+            }
+        }
+        // Then each thermal-feedback (tempco) element's self-heating Tj — APPENDED after the DRAM fold,
+        // gated on a non-zero TEMPCO_SLOT so a circuit without thermal runaway (the RC golden, every
+        // existing test) folds ZERO extra bytes and hashes byte-identically. Tj drives the R(T) that
+        // changes the solve, so it is program-visible and must reproduce on rewind. (LE f64, fixed order.)
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.params[TEMPCO_SLOT] != 0.0 {
+                bytes.extend_from_slice(&self.thermal_state[i].to_le_bytes());
             }
         }
         fnv1a(&bytes)
@@ -15099,7 +15478,7 @@ mod tests {
             &[5.0, rc, 0.0, 2.0, rb, 100.0, rb],
         );
         let q = sim.element_at(2);
-        let op = Sim::bjt_op(&q, sim.bjt_vbe[2], sim.bjt_vbc[2]);
+        let op = Sim::bjt_op(&q, sim.bjt_vbe[2], sim.bjt_vbc[2], BJT_IS);
         assert!(
             sim.bjt_vbe[2] > 0.4 && sim.node_v[2] > sim.node_v[4],
             "BJT in forward-active: vbe = {}, Vc = {}, Vb = {}",
@@ -16623,6 +17002,704 @@ mod tests {
         assert!(
             (noisy_mean - 2.5).abs() < 0.25,
             "zero-mean noise leaves the average near the 2.5 V divider point: mean={noisy_mean}"
+        );
+    }
+
+    /// A diode carrying SHOT noise (its [`NOISE_SLOT`] scale × √|I| of the live current) still reproduces
+    /// its snapshot-hash stream exactly — the determinism contract holds with the current-dependent term
+    /// (the current is the previous-tick committed `currents[i]`, part of the deterministic state).
+    #[test]
+    fn shot_noise_diode_run_is_reproducible() {
+        let run = || {
+            // V(1→0)=5 through R(1→2)=100 into D(2→0): the diode conducts ~43 mA. Shot scale on the diode.
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = 0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 100.0, 0.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "a diode with shot noise must reproduce exactly"
+        );
+    }
+
+    /// Shot noise is current-dependent (`∝ √I`): a forward-biased, conducting diode's node fuzzes, but an
+    /// unbiased diode (`I ≈ 0`, so the amplitude `∝ √I ≈ 0`) is quiet — even with the same shot scale
+    /// installed. This is the defining property of shot noise (no current ⇒ no shot noise).
+    #[test]
+    fn shot_noise_needs_current() {
+        let node2_var = |vsrc: f64| -> f64 {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = 0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[vsrc, 100.0, 0.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut s = Vec::new();
+            for _ in 0..500 {
+                sim.step();
+                s.push(sim.node_voltages()[2]);
+            }
+            let m = s.iter().sum::<f64>() / s.len() as f64;
+            s.iter().map(|v| (v - m).powi(2)).sum::<f64>() / s.len() as f64
+        };
+        let on = node2_var(5.0); // ~43 mA through the diode → shot noise fuzzes node 2
+        let off = node2_var(0.0); // no bias → I ≈ 0 → amplitude ∝ √I ≈ 0 → quiet
+        assert!(
+            on > 1e-9,
+            "a conducting diode's shot noise fuzzes its node: {on}"
+        );
+        assert!(
+            off < on * 1e-3,
+            "an off diode (no current) carries no shot noise: off={off}, on={on}"
+        );
+    }
+
+    /// Build V(1→0)=5 → R1(1→2)=1Ω (small series) → R2(2→0)=100Ω with the given temperature coefficient,
+    /// run `steps` ticks, and return R2's self-heating Tj. R2 dominates the loop, so its power V²/R is
+    /// sensitive to its own R(T): a negative α (NTC) runs away, a positive α (PTC) self-limits.
+    #[cfg(test)]
+    fn run_tempco_tj(alpha: f64, steps: usize) -> f64 {
+        let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + TEMPCO_SLOT] = alpha;
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 1.0, 100.0],
+            &[0.0; 3],
+            &params,
+        ));
+        assert!(
+            (sim.element_temperature(2) - T_AMBIENT).abs() < 1e-9,
+            "Tj starts at ambient"
+        );
+        for _ in 0..steps {
+            sim.step();
+        }
+        sim.element_temperature(2)
+    }
+
+    /// Thermal RUNAWAY: an NTC (negative tempco) that dominates the loop self-heats → R drops → V²/R
+    /// (its power) climbs → more heat → Tj runs away far past the cook point. (A PTC self-limits — the
+    /// next test.) This is the per-tick Tj-in-the-solve feedback the web presentation can't do
+    /// replay-safely.
+    #[test]
+    fn ntc_resistor_thermal_runaway() {
+        // α = −0.05 ⇒ the loop gain exceeds 1 from the start (R collapses faster than the power falls), so
+        // Tj diverges instead of creeping to a marginal point.
+        let tj = run_tempco_tj(-0.05, 1_500_000); // ~3 s of sim time
+        assert!(
+            tj > 150.0,
+            "an NTC dominating the loop runs away past the cook point: Tj = {tj} °C"
+        );
+    }
+
+    /// A PTC (positive tempco) is the opposite: heat ⇒ R rises ⇒ V²/R (its power) falls ⇒ it SELF-LIMITS,
+    /// settling at a modest temperature instead of running away (the resettable-fuse / PTC-heater effect).
+    #[test]
+    fn ptc_resistor_self_limits() {
+        let tj = run_tempco_tj(0.02, 1_500_000);
+        assert!(
+            (T_AMBIENT..150.0).contains(&tj),
+            "a PTC self-limits well below runaway: Tj = {tj} °C"
+        );
+    }
+
+    /// The R(T) feedback is a fixed function of the deterministic state, so a thermal-runaway run
+    /// reproduces its snapshot-hash stream exactly — the determinism contract holds with Tj folded into
+    /// the hash for tempco elements.
+    #[test]
+    fn thermal_runaway_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = -0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1.0, 100.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a thermal-runaway run must reproduce exactly");
+    }
+
+    /// Build an NPN power stage and run it `steps` ticks, returning `(Tj, Ic)` of the transistor.
+    /// `Vcc(1→0) → Rc(1→2)=collector`, base held at a stiff `Vb`, emitter either grounded directly
+    /// (`re == 0`, no ballast) or returned through an emitter ballast `Re` (`re > 0`). The BJT carries
+    /// the Is-tempco `γ` in `TEMPCO_SLOT`, so its self-heating `Tj` feeds `Is(T)`: at fixed `Vb` the
+    /// collector current climbs with `Tj` → `Vce·Ic` dissipation climbs → hotter (runaway). An emitter
+    /// ballast turns a rising `Ic` into a rising `Ve` that pulls `Vbe` back, taming the loop.
+    #[cfg(test)]
+    fn run_bjt_tj(gamma: f64, re: f64, steps: usize) -> (f64, f64) {
+        let vcc = 24.0;
+        let rc = 15.0;
+        let vb = 0.78;
+        let mut sim = Sim::new(1);
+        let ok = if re > 0.0 {
+            // 0 GND, 1 Vcc, 2 collector, 3 base, 4 emitter. BJT is element index 2.
+            let mut params = vec![0.0f64; 5 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = gamma;
+            sim.set_netlist_p(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_NPN,
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                ],
+                &[1, 1, 2, 3, 4],
+                &[0, 2, 4, 0, 0],
+                &[0, 0, 3, 0, 0],
+                &[0, 0, 0, 0, 0],
+                &[vcc, rc, 0.0, vb, re],
+                &[0.0; 5],
+                &params,
+            )
+        } else {
+            // 0 GND, 1 Vcc, 2 collector, 3 base; emitter grounded. BJT is element index 2.
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = gamma;
+            sim.set_netlist_p(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[0, 0, 0, 0],
+                &[vcc, rc, 0.0, vb],
+                &[0.0; 4],
+                &params,
+            )
+        };
+        assert!(ok);
+        for _ in 0..steps {
+            sim.step();
+        }
+        (sim.element_temperature(2), sim.currents[2])
+    }
+
+    /// **BJT thermal runaway** — the bipolar analogue of the NTC resistor runaway, via `Is(T)`. A power
+    /// NPN at a fixed base bias self-heats: its transport saturation current rises with `Tj`, so at the
+    /// same `Vbe` the collector current climbs → `Vce·Ic` dissipation climbs → hotter → ... a positive
+    /// feedback loop. With no emitter ballast the collector current runs away ~100× (here from ~13 mA to
+    /// over 1.5 A, pinned only by the collector load saturating) and `Tj` climbs far past the warn point.
+    /// The cold reference (`γ = 0`, the Ideal / golden case) stays at ambient — `has_thermal` is never
+    /// armed, so `Tj` never advances and `Is = BJT_IS` — proving the feedback is what drives the runaway.
+    #[test]
+    fn bjt_thermal_runaway() {
+        let steps = 1_000_000; // ~2 s of sim time — the runaway settles into collector saturation by here
+        let (tj_cold, ic_cold) = run_bjt_tj(0.0, 0.0, steps);
+        let (tj_hot, ic_hot) = run_bjt_tj(0.07, 0.0, steps);
+        assert!(
+            (tj_cold - T_AMBIENT).abs() < 1e-9,
+            "γ = 0 ⇒ no thermal feedback armed ⇒ Tj rests at ambient: {tj_cold} °C"
+        );
+        assert!(
+            tj_hot > 75.0,
+            "an unballasted BJT at fixed bias runs away well past the warn point: Tj = {tj_hot} °C"
+        );
+        assert!(
+            ic_hot > 0.5 && ic_hot > ic_cold * 20.0,
+            "the collector current runs away (cold {ic_cold:.4} A → hot {ic_hot:.4} A)"
+        );
+    }
+
+    /// An **emitter ballast resistor** tames the runaway: as `Ic` grows, the ballast's `IR` drop lifts the
+    /// emitter, pulling `Vbe = Vb − Ve` back down — local negative feedback that caps `Ic` (and so the
+    /// dissipation). The same device + bias that ran away unballasted now settles cool, with a collector
+    /// current an order of magnitude below the runaway. This is the textbook fix for bipolar thermal
+    /// runaway (and why power stages use emitter degeneration / ballasting).
+    #[test]
+    fn bjt_emitter_ballast_tames_runaway() {
+        let steps = 1_000_000;
+        let (tj_hot, ic_hot) = run_bjt_tj(0.07, 0.0, steps);
+        let (tj_ballast, ic_ballast) = run_bjt_tj(0.07, 4.7, steps);
+        assert!(
+            tj_ballast < tj_hot - 30.0,
+            "an emitter ballast holds Tj far below the unballasted runaway: ballast {tj_ballast} vs runaway {tj_hot} °C"
+        );
+        assert!(
+            ic_ballast < ic_hot / 10.0,
+            "the ballast caps the collector current (ballast {ic_ballast:.4} A vs runaway {ic_hot:.4} A)"
+        );
+    }
+
+    /// `Is(T)` is a fixed function of the deterministic `Tj` state, so a BJT-runaway run reproduces its
+    /// snapshot-hash stream exactly — the determinism contract holds with the BJT's `Tj` folded into the
+    /// hash (the same fold the resistor runaway uses, gated on a non-zero `TEMPCO_SLOT`).
+    #[test]
+    fn bjt_thermal_run_is_reproducible() {
+        let run = || {
+            // 0 GND, 1 Vcc, 2 collector, 3 base; emitter grounded. BJT (element 2) carries γ.
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = 0.07;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[0, 0, 0, 0],
+                &[24.0, 15.0, 0.0, 0.78],
+                &[0.0; 4],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "a BJT thermal-runaway run must reproduce exactly"
+        );
+    }
+
+    /// Build a sense divider + a hot resistor, optionally THERMALLY COUPLED, run `steps` ticks, and return
+    /// `(Tj_hot, Tj_ntc, V_mid)`. Layout: node 0 GND, 1 Vcc, 2 divider midpoint. Elements: V(1→0)=10,
+    /// R_hot(1→0)=`rhot` (a deliberate dissipator), R_top(1→2)=10k, NTC(2→0)=10k with a self-heating tempco
+    /// α. The NTC carries little current (a high-impedance divider) so its OWN self-heat is negligible — any
+    /// rise in its Tj comes from the COUPLING to the hot resistor. `w > 0` couples R_hot → NTC (the NTC
+    /// senses the hot part beside it); `w == 0` installs no coupling (the control).
+    #[cfg(test)]
+    fn run_coupled_sensor(rhot: f64, w: f64, steps: usize) -> (f64, f64, f64) {
+        const NTC_ALPHA: f64 = -0.05;
+        let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+        params[3 * PARAM_STRIDE + TEMPCO_SLOT] = NTC_ALPHA; // element 3 = the NTC
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 1, 2],
+            &[0, 0, 2, 0],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[10.0, rhot, 10_000.0, 10_000.0],
+            &[0.0; 4],
+            &params,
+        ));
+        if w > 0.0 {
+            // Element 3 (NTC) receives heat from element 1 (the hot resistor).
+            sim.set_thermal_coupling(&[3], &[1], &[w]);
+        }
+        for _ in 0..steps {
+            sim.step();
+        }
+        (
+            sim.element_temperature(1),
+            sim.element_temperature(3),
+            sim.node_v[2],
+        )
+    }
+
+    /// **Thermistor as a temperature SENSOR** — the payoff of mutual heating. An NTC in a high-impedance
+    /// divider barely self-heats, so on its own it sits at ambient. Coupled to a hot resistor beside it, it
+    /// SENSES that heat: its Tj climbs, its R(T) drops (negative α), and the divider midpoint it sits in
+    /// shifts — a reading of the neighbour's temperature that re-enters the solve. Without the coupling the
+    /// same NTC stays cold and the midpoint holds, proving the coupling (not self-heat) drives it.
+    #[test]
+    fn thermistor_senses_neighbor_heat() {
+        let steps = 1_000_000;
+        let (_hot_un, ntc_un, mid_un) = run_coupled_sensor(20.0, 0.0, steps); // no coupling (control)
+        let (hot_c, ntc_c, mid_c) = run_coupled_sensor(20.0, 0.8, steps); // R_hot → NTC
+                                                                          // In the coupled run the hot resistor self-heats (its dissipation), giving it a Tj to donate.
+        assert!(
+            hot_c > 100.0,
+            "the hot resistor runs hot, the heat source the NTC will sense: {hot_c} °C"
+        );
+        // Uncoupled: the NTC barely self-heats (high-impedance divider) → near ambient.
+        assert!(
+            ntc_un < T_AMBIENT + 5.0,
+            "an uncoupled high-impedance NTC stays cold: {ntc_un} °C"
+        );
+        // Coupled: it SENSES the hot neighbour → Tj climbs far above ambient and the uncoupled case.
+        assert!(
+            ntc_c > 60.0 && ntc_c > ntc_un + 30.0,
+            "a coupled NTC senses the hot resistor: coupled {ntc_c} vs uncoupled {ntc_un} °C"
+        );
+        // The sensed heat re-enters the SOLVE: the NTC's R drops, so the divider midpoint moves.
+        assert!(
+            (mid_c - mid_un).abs() > 0.2,
+            "the sensed temperature shifts the divider it sits in: {mid_un} V → {mid_c} V"
+        );
+    }
+
+    /// **Passivity — coupling can never blow up.** With the normalised row sum `Σ w < 1`, a coupled part's
+    /// Tj is bounded by its hot neighbour's: the receiver can approach, but never exceed, the source. Even
+    /// asking for an over-unity weight (here `w = 5`, far past the cap) is renormalised down to
+    /// `THERMAL_COUPLING_MAX`, so the NTC settles strictly below the hot resistor — no runaway.
+    #[test]
+    fn mutual_heating_is_bounded() {
+        let steps = 1_000_000;
+        let (hot, ntc, _) = run_coupled_sensor(20.0, 5.0, steps); // absurd weight → clamped to the cap
+        assert!(
+            ntc < hot,
+            "a coupled part can never exceed its heat source (passive): NTC {ntc} vs source {hot} °C"
+        );
+        assert!(
+            ntc.is_finite() && ntc < 10_000.0,
+            "coupling stays bounded (no divergence): NTC {ntc} °C"
+        );
+    }
+
+    /// The coupling is a fixed function of the deterministic per-tick Tj, so a mutual-heating run reproduces
+    /// its snapshot-hash stream exactly — the determinism contract holds with the coupled (and hashed,
+    /// because it is a tempco part) NTC `Tj`.
+    #[test]
+    fn mutual_heating_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[3 * PARAM_STRIDE + TEMPCO_SLOT] = -0.05;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[10.0, 20.0, 10_000.0, 10_000.0],
+                &[0.0; 4],
+                &params,
+            ));
+            sim.set_thermal_coupling(&[3], &[1], &[0.8]);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a mutual-heating run must reproduce exactly");
+    }
+
+    /// **Golden-safety of the coupling path.** Installing an EMPTY (or all-zero-weight) coupling map leaves
+    /// `has_coupling` false, so the run is byte-identical to never calling the setter — the same guarantee
+    /// the golden relies on (it never pushes coupling). Verified by an identical hash stream.
+    #[test]
+    fn empty_coupling_is_byte_identical() {
+        let stream = |push: bool| {
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[3 * PARAM_STRIDE + TEMPCO_SLOT] = -0.05;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[10.0, 20.0, 10_000.0, 10_000.0],
+                &[0.0; 4],
+                &params,
+            ));
+            if push {
+                // A self-edge + a zero weight: both rejected → still no live coupling.
+                sim.set_thermal_coupling(&[3, 3], &[3, 1], &[0.5, 0.0]);
+            }
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            stream(false),
+            stream(true),
+            "an empty/all-rejected coupling map must be byte-identical to no coupling"
+        );
+    }
+
+    /// Build a two-coil transformer: an AC source drives the primary inductor `L1` (across the source),
+    /// and a magnetically-coupled secondary inductor `L2` feeds a load `rload`; couple them with coefficient
+    /// `k` (`0` = no coupling installed). Runs `steps` ticks and returns the secondary node's peak-to-peak
+    /// voltage over the LAST cycle — the transformer's output swing. `freq` is the source frequency (Hz).
+    #[cfg(test)]
+    fn run_coupled_coils(l1: f64, l2: f64, k: f64, rload: f64, freq: f64, steps: usize) -> f64 {
+        // 0 GND, 1 primary, 2 secondary. ACSOURCE(1→0), L1(1→0), L2(2→0), R_load(2→0).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+            &[1, 1, 2, 2],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[freq, l1, l2, rload],
+            &[5.0, 0.0, 0.0, 0.0], // AC amplitude 5 V on the source; aux unused elsewhere
+            &[],
+        ));
+        if k != 0.0 {
+            sim.set_magnetic_coupling(&[1], &[2], &[k]); // L1 (elem 1) ↔ L2 (elem 2)
+        }
+        // Steps over one source period, to sample a full output cycle at the end.
+        let period_ticks = ((1.0 / freq) / DT).round() as usize;
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        for s in 0..steps {
+            sim.step();
+            if s >= steps.saturating_sub(period_ticks.max(1)) {
+                let v2 = sim.node_v[2];
+                min = min.min(v2);
+                max = max.max(v2);
+            }
+        }
+        max - min
+    }
+
+    /// **Two coils next to each other couple = a transformer.** An AC-driven primary inductor induces a
+    /// voltage in a flux-coupled secondary (mutual inductance `M = k·√(L1·L2)`), so the secondary node
+    /// swings. With NO coupling (`k = 0`) the secondary is dead (only its weak floating-ref tie). This is
+    /// the coupled-inductor analogue of the thermal-coupling framework — geometry-derived `k` pushed into
+    /// the transient branch equations.
+    #[test]
+    fn coupled_coils_make_a_transformer() {
+        let freq = 1_000.0;
+        // 1:1-ish coils, tightly coupled, lightly loaded.
+        let coupled = run_coupled_coils(1e-3, 1e-3, 0.99, 100.0, freq, 6000);
+        let uncoupled = run_coupled_coils(1e-3, 1e-3, 0.0, 100.0, freq, 6000);
+        assert!(
+            coupled > 1.0,
+            "a coupled secondary develops a clear AC swing (transformer action): {coupled} Vpp"
+        );
+        assert!(
+            uncoupled < 0.05,
+            "with no coupling the secondary is dead: {uncoupled} Vpp"
+        );
+        assert!(
+            coupled > uncoupled * 20.0,
+            "coupling is what drives the secondary: coupled {coupled} vs uncoupled {uncoupled} Vpp"
+        );
+    }
+
+    /// A step-UP transformer: a secondary with 4× the inductance (≈ 2× the turns, since `L ∝ N²`) swings
+    /// **higher** than an identical-coil 1:1 — the coupled-inductor turns-ratio `√(L2/L1)` showing through.
+    #[test]
+    fn coupled_coils_step_up_with_turns_ratio() {
+        let freq = 1_000.0;
+        let one_to_one = run_coupled_coils(1e-3, 1e-3, 0.99, 1e6, freq, 6000); // ~open secondary
+        let step_up = run_coupled_coils(1e-3, 4e-3, 0.99, 1e6, freq, 6000); // L2 = 4·L1 ⇒ ~2× turns
+        assert!(
+            step_up > one_to_one * 1.4,
+            "a 4× secondary inductance steps the voltage up (√(L2/L1) ≈ 2×): 1:1 {one_to_one} vs step-up {step_up} Vpp"
+        );
+    }
+
+    /// A **center-tapped transformer** from three coupled coils: an AC-driven primary `L1`, and a secondary
+    /// wound as ONE continuous coil `top(2) → tap(0) → bottom(3)` (two half-windings `L2a`, `L2b` sharing the
+    /// grounded centre tap). Returns `(pp_top, pp_bottom, pp_sum)` — the peak-to-peak of `V(2)`, `V(3)`, and
+    /// their sum over the last cycle. The defining centre-tap property: the two halves swing ANTIPHASE about
+    /// the tap, so each `pp` is large but their SUM stays near zero (the basis of full-wave rectifiers and
+    /// phase splitters).
+    #[cfg(test)]
+    fn run_center_tap(k: f64, steps: usize) -> (f64, f64, f64) {
+        let freq = 1_000.0;
+        // 0 GND/tap, 1 primary, 2 sec-top, 3 sec-bottom. Secondary winding runs 2→0→3 (continuous).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            4,
+            &[
+                ELEM_ACSOURCE,
+                ELEM_INDUCTOR, // L1 primary (1→0)
+                ELEM_INDUCTOR, // L2a top half (2→0)
+                ELEM_INDUCTOR, // L2b bottom half (0→3)
+                ELEM_RESISTOR, // load on top (2→0)
+                ELEM_RESISTOR, // load on bottom (3→0)
+            ],
+            &[1, 1, 2, 0, 2, 3],
+            &[0, 0, 0, 3, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[freq, 1e-3, 1e-3, 1e-3, 1_000.0, 1_000.0],
+            &[5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            &[],
+        ));
+        if k != 0.0 {
+            // Couple all three coils: primary↔each half, and the two halves to each other (one winding).
+            sim.set_magnetic_coupling(&[1, 1, 2], &[2, 3, 3], &[k, k, k]);
+        }
+        let period = ((1.0 / freq) / DT).round() as usize;
+        let (mut min2, mut max2) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut min3, mut max3) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut mins, mut maxs) = (f64::INFINITY, f64::NEG_INFINITY);
+        for s in 0..steps {
+            sim.step();
+            if s >= steps.saturating_sub(period.max(1)) {
+                let (v2, v3) = (sim.node_v[2], sim.node_v[3]);
+                min2 = min2.min(v2);
+                max2 = max2.max(v2);
+                min3 = min3.min(v3);
+                max3 = max3.max(v3);
+                mins = mins.min(v2 + v3);
+                maxs = maxs.max(v2 + v3);
+            }
+        }
+        (max2 - min2, max3 - min3, maxs - mins)
+    }
+
+    /// **The center tap falls out of the coupled-coil framework** — no new element needed. The two
+    /// secondary halves of a continuous `top → tap → bottom` winding swing equally and ANTIPHASE about the
+    /// grounded centre tap (each ~10 Vpp, their SUM ~0), exactly the behaviour a full-wave rectifier or a
+    /// phase splitter needs. With no coupling the secondary is dead. So a buildable center-tapped
+    /// transformer is "place a primary coil + two series secondary coils next to it" — the owner's vision.
+    #[test]
+    fn center_tapped_transformer_halves_are_antiphase() {
+        let (top, bottom, sum) = run_center_tap(0.99, 6000);
+        assert!(
+            top > 5.0 && bottom > 5.0,
+            "both centre-tap halves swing: top {top}, bottom {bottom} Vpp"
+        );
+        assert!(
+            sum < top * 0.05,
+            "the halves are antiphase about the tap — their sum cancels: top {top} vs sum {sum} Vpp"
+        );
+        assert!(
+            (top - bottom).abs() < top * 0.05,
+            "the halves are balanced (equal turns): top {top} vs bottom {bottom} Vpp"
+        );
+        let (cold_top, _, _) = run_center_tap(0.0, 6000);
+        assert!(
+            cold_top < 0.1,
+            "with no coupling the secondary is dead: {cold_top} Vpp"
+        );
+    }
+
+    /// The **frequency-domain** solve now sees a transformer too: `ac_solve` carries the mutual-inductance
+    /// off-diagonal, so a coupled secondary develops a voltage across frequency (what the Bode / phase tools
+    /// read). Uncoupled, the secondary is silent in the AC solve — proving the off-diagonal is what couples
+    /// it, and that an uncoupled circuit's AC response is unchanged.
+    #[test]
+    fn ac_solve_sees_a_transformer() {
+        let mag = |couple: bool| {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+                &[1, 1, 2, 2],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[1_000.0, 1e-3, 1e-3, 100.0],
+                &[5.0, 0.0, 0.0, 0.0],
+                &[],
+            ));
+            if couple {
+                sim.set_magnetic_coupling(&[1], &[2], &[0.99]);
+            }
+            let v = sim.ac_solve(core::f64::consts::TAU * 100_000.0); // 100 kHz (frequency domain, no Nyquist)
+            v[1].0.hypot(v[1].1) // |V(node 2)| — the secondary
+        };
+        let coupled = mag(true);
+        let uncoupled = mag(false);
+        assert!(
+            coupled > 0.1,
+            "ac_solve sees transformer action — the secondary develops voltage: {coupled} V"
+        );
+        assert!(
+            uncoupled < 1e-6,
+            "uncoupled, the secondary is silent in the AC solve: {uncoupled} V"
+        );
+    }
+
+    /// The mutual-inductance stamp is a fixed function of the deterministic state, so a coupled-coil run
+    /// reproduces its snapshot-hash stream exactly — and an EMPTY magnetic map (or one with non-inductor /
+    /// out-of-range edges, all rejected) is byte-identical to never coupling, the golden's guarantee.
+    #[test]
+    fn magnetic_coupling_is_reproducible_and_golden_safe() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+                &[1, 1, 2, 2],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[1_000.0, 1e-3, 1e-3, 100.0],
+                &[5.0, 0.0, 0.0, 0.0],
+                &[],
+            ));
+            sim
+        };
+        // Reproducible WITH coupling.
+        let run = || {
+            let mut sim = build();
+            sim.set_magnetic_coupling(&[1], &[2], &[0.99]);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a coupled-coil run must reproduce exactly");
+        // An all-rejected magnetic map (self-edge, a non-inductor endpoint, out-of-range) installs nothing,
+        // so the run is byte-identical to never calling the setter.
+        let stream = |push: bool| {
+            let mut sim = build();
+            if push {
+                // elem 0 is the AC source (not an inductor) → rejected; (1,1) self → rejected; (1,9) OOR.
+                sim.set_magnetic_coupling(&[0, 1, 1], &[3, 1, 9], &[0.5, 0.5, 0.5]);
+            }
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            stream(false),
+            stream(true),
+            "an empty/all-rejected magnetic map is byte-identical to no coupling"
         );
     }
 

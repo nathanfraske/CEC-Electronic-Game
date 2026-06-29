@@ -175,7 +175,12 @@
     rmsStabilized,
     type ElectricalState,
   } from "./lib/glyphs";
-  import { T_AMBIENT_C, T_MAX_C } from "./lib/thermal";
+  import {
+    T_AMBIENT_C,
+    T_MAX_C,
+    HEATSINK_LABELS,
+    partHeats,
+  } from "./lib/thermal";
   import { infernoCssGradient } from "./lib/thermalField";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
@@ -307,9 +312,16 @@
       color: "var(--violet)",
     },
     {
-      tag: "TR",
+      tag: "XF",
       name: "Transformer",
-      desc: "Couples AC · set turns ratio",
+      desc: "Coupled coils · AC + turns ratio",
+      tier: "II",
+      color: "var(--violet)",
+    },
+    {
+      tag: "XFCT",
+      name: "Centre-tap XF",
+      desc: "Two antiphase secondary halves",
       tier: "II",
       color: "var(--violet)",
     },
@@ -778,6 +790,8 @@
     EC: "Passives",
     L: "Passives",
     TR: "Passives",
+    XF: "Passives",
+    XFCT: "Passives",
     POT: "Passives",
     NTC: "Passives",
     PTC: "Passives",
@@ -1229,6 +1243,14 @@
   // The selected part's live self-heating body temperature (°C), updated each frame in onFrame from the
   // renderer's integrated Tj — read by the inspector's "Body temp" row (Real mode).
   let selBodyTemp = $state(T_AMBIENT_C);
+  // The selected part's measured noise (RMS volts) — the std of its V-across over a sliding window, so a
+  // noisy resistor's Johnson fuzz becomes a number you can read and compare across grades. Presentational
+  // (frame-sampled), Real-mode only; shown in the inspector's "Noise (RMS)" row. The window + its part id
+  // (reset on a new selection) live outside `$state` — updated imperatively in onFrame.
+  let selNoiseRms = $state(0);
+  let noiseWindow: number[] = [];
+  let noiseWindowId = -1;
+  const NOISE_WINDOW_LEN = 90;
   // The thermal-lens °C legend readout, updated each frame in onFrame from the board's heat field:
   // `heatPeakC` is the hottest part on the board (the "PEAK" line); `heatScaleTopC` is the temperature
   // mapped to white-hot at the top of the inferno scale the overlay is painted with (so the legend's
@@ -2431,6 +2453,10 @@
       // part around never resets the running simulation.
       let netlist: BuiltNetlist | null = null;
       let netlistSig = "";
+      // Empty typed arrays for CLEARING the thermal-coupling map (a pure move that drags the last hot part
+      // out of range, or any no-coupling state) — pushing these leaves sim-core's inert no-coupling default.
+      const EMPTY_U32 = new Uint32Array(0);
+      const EMPTY_F64 = new Float64Array(0);
       const rebuildNetlist = (graph: BoardGraph): void => {
         // While drilled into a die, solve the graph with the frame's TEST STIMULI injected (so a
         // power-fed IC powers up + animates in isolation); on the outer board, solve as-is. The
@@ -2448,7 +2474,28 @@
             ? "A current source has no return path — its current can't flow, so this reading isn't meaningful. Complete the loop back to the source."
             : null;
         const sig = nl ? nl.sig : graph.components.size > 0 ? "empty" : "demo";
-        if (sig === netlistSig) return;
+        if (sig === netlistSig) {
+          // Pure move: the topology/values (and so the installed netlist) are unchanged, but the part
+          // POSITIONS are — and thermal coupling is geometry-derived. Re-apply it from the freshly-built
+          // `nl` (same element indices, new weights) so dragging a part beside a thermistor updates what
+          // it senses LIVE, without a netlist reinstall. Apply EMPTY when `nl.coupling` is null too, so
+          // dragging a part AWAY clears the stale coupling. `set_thermal_coupling` doesn't rewind.
+          const cp = nl?.coupling;
+          sim.setThermalCoupling(
+            cp?.idx ?? EMPTY_U32,
+            cp?.nbr ?? EMPTY_U32,
+            cp?.w ?? EMPTY_F64,
+          );
+          // Same live refresh for magnetic coupling — drag a coil beside another and they couple (or apart
+          // and they decouple) without a reinstall.
+          const mp = nl?.magneticCoupling;
+          sim.setMagneticCoupling(
+            mp?.idx ?? EMPTY_U32,
+            mp?.nbr ?? EMPTY_U32,
+            mp?.w ?? EMPTY_F64,
+          );
+          return;
+        }
         netlistSig = sig;
         netlist = nl;
         // The circuit actually changed (an example loaded, the board cleared, or a
@@ -2495,6 +2542,27 @@
             nl.g,
             nl.h,
           );
+          // Mutual heating: install the geometry-derived thermal-coupling map AFTER the netlist (which
+          // clears the prior one), so a hot part heats a nearby thermistor — which senses it (its R(T)
+          // shifts the circuit). Only present in Real mode with a tempco part on the board; null otherwise
+          // (no coupling installed → byte-identical / golden-safe).
+          if (nl.coupling) {
+            sim.setThermalCoupling(
+              nl.coupling.idx,
+              nl.coupling.nbr,
+              nl.coupling.w,
+            );
+          }
+          // Magnetic coupling: two coils next to each other share flux (a transformer) — an AC-driven
+          // primary induces a voltage in a nearby secondary. Same post-install push as thermal; null
+          // outside Real mode or with fewer than two coils in range (no install → golden-safe).
+          if (nl.magneticCoupling) {
+            sim.setMagneticCoupling(
+              nl.magneticCoupling.idx,
+              nl.magneticCoupling.nbr,
+              nl.magneticCoupling.w,
+            );
+          }
           controls?.resync();
         } else if (graph.components.size > 0) {
           // Parts placed but no voltage source to reference: install a quiet
@@ -2704,6 +2772,26 @@
             // The selected part's live self-heating temperature for the inspector readout (board read
             // non-reactively here, not in the template).
             selBodyTemp = b.bodyTempOf(selPart.id);
+            // Measured noise (RMS): slide a window of the part's V-across and take its std — on a DC part
+            // that's the Johnson noise. Reset the window on a new selection. Real-mode only (Ideal = clean).
+            if (realModels) {
+              if (noiseWindowId !== selPart.id) {
+                noiseWindow = [];
+                noiseWindowId = selPart.id;
+              }
+              noiseWindow.push(e.vAcross);
+              if (noiseWindow.length > NOISE_WINDOW_LEN) noiseWindow.shift();
+              const mean =
+                noiseWindow.reduce((a, b) => a + b, 0) / noiseWindow.length;
+              const variance =
+                noiseWindow.reduce((a, b) => a + (b - mean) ** 2, 0) /
+                noiseWindow.length;
+              selNoiseRms = Math.sqrt(variance);
+            } else {
+              noiseWindow = [];
+              noiseWindowId = -1;
+              selNoiseRms = 0;
+            }
             // Redraw the inspector phasor (no-op unless its canvas is mounted + AC valid).
             drawHudPhasor(b.flowPhase());
             if (infoOpen) {
@@ -2724,6 +2812,9 @@
             selDisplay = null;
             selRmsMode = false;
             selBodyTemp = T_AMBIENT_C;
+            noiseWindow = [];
+            noiseWindowId = -1;
+            selNoiseRms = 0;
             // Arm-and-preview: nothing selected but a part armed + the drawer open → drive
             // the info diagram from the ARMED (unplaced) kind and a neutral electrical state,
             // so its symbol / internals render before you drop it.
@@ -3110,7 +3201,7 @@
     if (kind === "MSW") return value >= 0.5 ? "Closed" : "Open";
     // Transformer: its value is the turns ratio n = Ns/Np; show it as Np:Ns (so a
     // step-up n = 2 reads "1:2" and a step-down n = 0.5 reads "2:1").
-    if (kind === "TR") {
+    if (kind === "TR" || kind === "XF" || kind === "XFCT") {
       const trim = (x: number): string =>
         (Number.isInteger(x) ? x.toString() : x.toFixed(2)).replace(
           /\.?0+$/,
@@ -3929,6 +4020,15 @@
       board?.setComponentVariant(selPart.id, idx);
       rememberConfig(selPart.kind, { variant: idx });
     } else setArmedAxis({ variant: idx });
+  }
+  function selHeatsink(): number {
+    return (selPart ? selPart.heatsink : armedConfig.heatsink) ?? 0;
+  }
+  function setHeatsink(idx: number): void {
+    if (selPart) {
+      board?.setComponentHeatsink(selPart.id, idx);
+      rememberConfig(selPart.kind, { heatsink: idx });
+    } else setArmedAxis({ heatsink: idx });
   }
   function selDuty(): number {
     return (selPart ? selPart.duty : armedConfig.duty) ?? 0.5;
@@ -5283,6 +5383,20 @@
           <button
             class="chip-val {selTier() === i ? 'is-active' : ''}"
             onclick={() => setTier(i)}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if partHeats(kind) && realModels}
+      <!-- Heatsink (thermal management lever, Real mode only): a sink drops the part's θ_JA so it runs
+             cooler for the same dissipated power — enough to pull an over-dissipating part back out of
+             OVERHEAT, or save it from venting. Presentational (Tj never enters the solve). -->
+      <div class="insp-sub">heatsink</div>
+      <div class="insp-chips wrap">
+        {#each HEATSINK_LABELS as label, i (label)}
+          <button
+            class="chip-val {selHeatsink() === i ? 'is-active' : ''}"
+            onclick={() => setHeatsink(i)}>{label}</button
           >
         {/each}
       </div>
@@ -7197,6 +7311,20 @@
                             >{selBodyTemp.toFixed(0)} °C{selBodyTemp >= T_MAX_C
                               ? " ⚠ OVERHEAT"
                               : ""}</span
+                          >
+                        </div>
+                      {/if}
+                      <!-- Measured thermal (Johnson) noise (Real mode): the RMS fluctuation of the
+                           resistor's V-across (`selNoiseRms`, computed each frame in onFrame). Makes the
+                           scope fuzz a number — compare grades, see bigger-R-is-noisier. Resistors only
+                           (where v1 models noise), and only once it's above a readable floor. -->
+                      {#if realModels && selPart.kind === "R" && selNoiseRms > 2e-4}
+                        <div class="info-row">
+                          <span>Noise (RMS)</span>
+                          <span class="mono"
+                            >{(selNoiseRms * 1000).toFixed(
+                              selNoiseRms < 0.01 ? 2 : 1,
+                            )} mV</span
                           >
                         </div>
                       {/if}

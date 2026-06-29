@@ -568,6 +568,34 @@ export const PART_INFO: Record<string, PartInfo> = {
       { label: "Primary current Ip", value: f(e.current, "A") },
     ],
   },
+  XF: {
+    name: "Transformer",
+    equation: "Vs/Vp = n = √(Ls/Lp) · M = k·√(Lp·Ls)",
+    headline: (e, n) =>
+      `Ratio ${ratioStr(n)} · primary ${f(e.vAcross, "V")} → secondary ≈ ${f(n * e.vAcross, "V")}`,
+    plain: () =>
+      "Two coils wound close together share magnetic flux: an alternating current in the primary induces a voltage in the secondary (Faraday's law), scaled by the turns ratio n = √(Ls/Lp). This part is modelled as two coupled inductors with a mutual inductance M = k·√(Lp·Ls) — the same physics as placing two coils next to each other, just packaged with a tight, fixed coupling. Because the coupling is mutual inductance rather than an idealised ratio, it behaves honestly across frequency (the frequency-domain tools show its response), and a centre tap is simply a continuous secondary winding. Only a *changing* flux couples, so it passes AC and blocks DC; the windings share no electrical connection, so it also isolates. Step up, step down, or wire it 1:1 to isolate.",
+    derived: (e, n) => [
+      { label: "Turns ratio Np:Ns", value: ratioStr(n) },
+      { label: "Primary voltage Vp", value: f(e.vAcross, "V") },
+      { label: "Secondary ≈ n·Vp", value: f(n * e.vAcross, "V") },
+      { label: "Primary current Ip", value: f(e.current, "A") },
+    ],
+  },
+  XFCT: {
+    name: "Centre-tapped transformer",
+    equation: "V(S+,CT) = −V(S−,CT) · each half = n/2 turns",
+    headline: (e, n) =>
+      `Ratio ${ratioStr(n)} · two ${f((n / 2) * e.vAcross, "V")} halves, antiphase about the tap`,
+    plain: () =>
+      "A transformer whose secondary is one continuous winding with a tap brought out at its centre. Because the two halves are wound the same way along the wire, the top end (S+) swings positive at the same instant the bottom end (S−) swings negative, both measured from the grounded centre tap — the two halves are exactly antiphase. That is what a full-wave rectifier needs (each half feeds the load on alternate half-cycles through its own diode) and what a phase splitter wants (one input, two opposite outputs). Modelled as three coupled inductors — a primary and two secondary half-coils sharing the tap node — so it carries honest mutual-inductance behaviour, including across frequency. Like any transformer it passes AC, blocks DC, and isolates the secondary.",
+    derived: (e, n) => [
+      { label: "Turns ratio Np:Ns", value: ratioStr(n) },
+      { label: "Each half ≈ (n/2)·Vp", value: f((n / 2) * e.vAcross, "V") },
+      { label: "S+ and S− about CT", value: "antiphase" },
+      { label: "Primary current Ip", value: f(e.current, "A") },
+    ],
+  },
   POT: {
     name: "Potentiometer",
     equation: "R(A→W) = R·t · R(W→B) = R·(1−t)",

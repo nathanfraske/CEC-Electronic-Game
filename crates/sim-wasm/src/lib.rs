@@ -216,6 +216,33 @@ impl Simulation {
         self.inner.mem_read(elem_index, addr)
     }
 
+    /// Install the **thermal-coupling map** — which parts heat which, derived web-side from board geometry
+    /// (a hot part raises a nearby part's local ambient; the canonical use is a thermistor sensing the heat
+    /// of a part beside it). Each `(idx[k], nbr[k], w[k])` is one directed edge (element `idx[k]`'s `Tj` is
+    /// pulled toward element `nbr[k]`'s by weight `w[k]`). Call AFTER `set_netlist*` (which clears the prior
+    /// map); does NOT rewind, so re-pushing on a part move never resets the run. Empty input leaves the
+    /// inert no-coupling default. Per-element row sums are renormalised for passivity (heat can't diverge).
+    pub fn set_thermal_coupling(&mut self, idx: &[u32], nbr: &[u32], w: &[f64]) {
+        self.inner.set_thermal_coupling(idx, nbr, w);
+    }
+
+    /// Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors
+    /// share flux, derived web-side from coil geometry. Each `(idx[k], nbr[k], coeff[k])` couples two
+    /// inductors with coefficient `coeff ∈ (−1, 1)` (sign = winding sense), adding the mutual term
+    /// `M = coeff·√(Li·Lj)` to the transient branch equations so a primary coil drives a secondary. Call
+    /// AFTER `set_netlist*` (which clears the prior map); does NOT rewind. Non-inductor endpoints and
+    /// `|coeff| ≥ 1` are skipped. Empty input leaves the inert no-coupling default.
+    pub fn set_magnetic_coupling(&mut self, idx: &[u32], nbr: &[u32], coeff: &[f64]) {
+        self.inner.set_magnetic_coupling(idx, nbr, coeff);
+    }
+
+    /// The self-heating junction temperature `Tj` (°C) of element `index` — the authoritative in-solve
+    /// temperature (thermal runaway + mutual heating). `T_AMBIENT` for a thermally-inert part or an
+    /// out-of-range index. Lets the front end read the real `Tj` instead of its own presentational integral.
+    pub fn element_temperature(&self, index: usize) -> f64 {
+        self.inner.element_temperature(index)
+    }
+
     /// Current through each element in amperes, in the **same order** as
     /// [`Simulation::set_netlist`], signed `a -> b` (positive flows from terminal
     /// `a` to terminal `b`). One entry per element; the front end maps these back

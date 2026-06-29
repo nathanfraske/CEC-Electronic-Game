@@ -148,6 +148,15 @@ export interface Component {
    */
   variant?: number;
   /**
+   * The part's **heatsink** level (a thermal management lever): `0` none, `1` a heatsink, `2` a large
+   * sink. A higher level multiplies the part's junction-to-ambient thermal resistance `θ_JA` DOWN
+   * ({@link heatsinkFactor}), so it runs cooler for the same dissipated power — enough to pull an
+   * over-dissipating part back out of OVERHEAT / save it from venting. Web-side / presentational only
+   * (thermal `Tj` never enters the deterministic solve), and it bites only in Real mode. Undefined → `0`
+   * (no sink), so older snapshots and untouched parts round-trip unchanged.
+   */
+  heatsink?: number;
+  /**
    * The pulse / clock generator's **duty cycle** in `[0, 1]`: the fraction of each period the
    * square output is high (and the symmetry point of the triangle). Only meaningful for kind
    * `"PULSE"` (where {@link buildNetlist} writes it into the waveform param block); other kinds
@@ -936,6 +945,37 @@ export const PART_KINDS: Record<string, PartKind> = {
     "Transformer",
     "violet",
     [pin("P+", 0, 0), pin("P−", 0, 2), pin("S+", 2, 0), pin("S−", 2, 2)],
+    2,
+    "",
+    true,
+  ),
+  // Coupled-coil transformer (the fully-modelled one): expands to two magnetically-coupled inductors
+  // (`set_magnetic_coupling`), so it works in the frequency tools (Bode/phase) too, and a center tap is just
+  // a continuous secondary. `value` is the turns ratio n = Ns/Np (default 2, a step-up); the inspector shows
+  // Np:Ns. Same 4-pin layout + violet family as the legacy ideal-T `TR`.
+  XF: kind(
+    "XF",
+    "Transformer",
+    "violet",
+    [pin("P+", 0, 0), pin("P−", 0, 2), pin("S+", 2, 0), pin("S−", 2, 2)],
+    2,
+    "",
+    true,
+  ),
+  // Centre-tapped transformer: like XF but the secondary is a CONTINUOUS winding S+ → CT → S− (two coupled
+  // half-coils sharing the centre tap), so the two halves come out ANTIPHASE about the tap — the basis of
+  // full-wave rectifiers and phase splitters. Pins P+, P−, S+, CT, S−. `value` = total turns ratio n.
+  XFCT: kind(
+    "XFCT",
+    "Centre-tap XF",
+    "violet",
+    [
+      pin("P+", 0, 0),
+      pin("P−", 0, 2),
+      pin("S+", 2, 0),
+      pin("CT", 2, 1),
+      pin("S−", 2, 2),
+    ],
     2,
     "",
     true,

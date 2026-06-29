@@ -2321,6 +2321,8 @@ const ANALOGY_DRAWERS: Record<string, (g: Graphics, o: AnalogyOpts) => void> = {
   EC: drawAnalogyElectrolyticCap,
   L: drawAnalogyInductor,
   TR: drawAnalogyTransformer,
+  XF: drawAnalogyTransformer, // coupled-coil transformer — same belted-wheels analogy
+  XFCT: drawAnalogyTransformer, // centre-tapped — same analogy (reads the top half via legs[0])
   D: drawAnalogyDiode,
   SD: drawAnalogyDiode,
   LED: drawAnalogyDiode,

@@ -6,6 +6,176 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (235) — THERMAL RUNAWAY: per-tick Tj-in-the-solve (Path 2), NTC runaway / PTC self-limit
+
+- ~~**Thermal runaway — the per-tick Tj-in-the-solve infrastructure + resistor R(T) feedback**~~ DONE
+  (sim-core, **golden byte-identical** by the param-gate; Rust 215, web 337; verified live). `thermal_state`
+  (per-element Tj) advanced each tick from committed P=|V·I| (`thermal_step`), gated on `has_thermal`,
+  folded into `snapshot_hash` per tempco element (zero bytes when none → golden untouched).
+  `resistor_r_eff = value·(1+α·(Tj−25))` clamped, in the 4 transient resistor sites (OP keeps value).
+  `pub element_temperature(i)`. **web:** emit α for NTC (−0.05 → runaway) / PTC (+0.03 → self-limit) Real
+  mode. Tests: `ntc_resistor_thermal_runaway`, `ptc_resistor_self_limits`, `thermal_runaway_run_is_
+  reproducible`, web `thermalRunaway.test.ts` (3). Verified: NTC ran away (R 100→2Ω, OVERHEAT); a 12V MOV
+  overloaded → DESTROYED (clamps 12.4V, vents). MOVs/all dissipating parts already self-heat web-side.
+- ~~**BJT thermal runaway** (#137, owner: "then BJT")~~ DONE — see (236) below.
+
+---
+
+## 2026-06-29 (241) — CENTRE-TAP TRANSFORMER PART (XFCT) + transformer ANALOGY view (web-only)
+
+- ~~**Centre-tap XF variant**~~ DONE as a 5-pin part `XFCT` (P+/P−/S+/CT/S−; web 356; verified live in
+  schematic + analogy). Expands to primary + two coupled secondary half-coils (continuous `S+→CT→S−`, each
+  `XF_L_BASE·(n/2)²`) + 3 coupling edges (both modes); halves antiphase about the tap. `drawXFCT` glyph adds a
+  centre-tap stub. Mirrors XF across App.svelte/values/partInfo/codex. Test: `transformerPart.test.ts` +2.
+- ~~**Transformer analogy view**~~ DONE — `drawAnalogyTransformer` (belted wheels, secondary sized by turns
+  ratio) already existed but was only on the legacy `TR`; registered `XF` + `XFCT` in `ANALOGY_DRAWERS`, so
+  both morph to the rich belted-wheels illustration when zoomed in under the analogy lens (verified `shoot`).
+- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(241) await a
+  **#315 batch PR**.
+
+---
+
+## 2026-06-29 (242) — ENGINE "BIGGEST WIN" PLAN (docs-only; owner greenlight pending)
+
+- ~~**Identify + plan the biggest engine win**~~ DONE as `docs/sim/digital-matrix-lift-plan.md` (no code).
+  The win: **lift pure-digital nets out of the dense `O(n³)` MNA** — the wall to a gate-level CPU
+  (sand→CPU→DOOM). ~85% pre-built across ADR 0004 (`classify_nets`, proven-diagonal `digital_rows`,
+  `eval_digital`/`combine`/`FAMILIES`, closed-form `digital_net_solved_voltage`, `run_digital_subticks`
+  already lifts for `S>1`, level-bearing `snapshot_hash`). **Key finding:** the perf lift (**Stage A**) is
+  **golden-byte-identical** (closed form == in-matrix diagonal solve; hash already folds the level), separable
+  from the Z/X-propagation correctness upgrade (**Stage B**, the only deliberate golden regen). Risk flagged:
+  a `floating_refs` GMIN double-stamp — Stage A0 adds a debug equality invariant to catch it first.
+- [ ] **OWNER DECISION:** greenlight Stage A (pure win, no golden churn)? Stage B later, per a lesson needing
+  high-Z/`X`. Plan has the staged build, the test bar (1000-tick byte-identity gate), and the honest vs-
+  sparse-solver / vs-dirty-set comparison.
+
+---
+
+## 2026-06-29 (240) — BUILDABLE TRANSFORMER PART (XF), looks nice (web-only, golden untouched)
+
+- ~~**Placeable coupled-coil transformer part**~~ DONE (web 354; verified live via `shoot` — renders as a
+  two-coil + iron-core transformer, Bode/phase panel shows its response). New `XF` kind (`graph.ts`, the
+  headline "Transformer"; legacy ideal-T `TR` kept for old saves, dropped from palette). `buildNetlist`
+  expands `XF` → primary + secondary `ELEM_INDUCTOR` (sec `XF_L_BASE·n²`, turns ratio n=value) + an explicit
+  coupling edge (`transformerEdges` → `computeMagneticCoupling`, installed in BOTH modes). Reuses
+  `drawTR`/`drawFTR` glyph; turns-ratio inspector + value pickers + datasheet + Passives category. Test:
+  `transformerPart.test.ts`.
+- [ ] **Center-tap XF variant** (5-pin P+/P−/S+/CT/S− → primary + two coupled secondary halves) — physics
+  proven (`center_tapped_transformer_halves_are_antiphase`), needs the variant pin layout + glyph stub. Plus
+  flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(240) await a **#315 batch PR**.
+
+---
+
+## 2026-06-29 (239) — TRANSFORMER ROAD: center tap + AC-solve mutual inductance (#140)
+
+- ~~**Center tap** (owner: "see if you can do the center tap")~~ DONE — needs NO new element. A center-tapped
+  transformer is a continuous secondary `top→tap→bottom` (two coupled half-coils sharing the tap); the halves
+  come out antiphase about the tap (`center_tapped_transformer_halves_are_antiphase`: each ~10 Vpp, sum ~0).
+- ~~**AC-solve mutual inductance**~~ DONE — `ac_solve_models` carries `a[bi][bj] −= jωM` (gated `has_magnetic`),
+  so the Bode/phase tools see a transformer across frequency (`ac_solve_sees_a_transformer`). Golden-safe.
+- [ ] **Only remaining transformer gap = UX:** a single placeable transformer/center-tap PART wrapping the
+  coupled-coil primitive (package + primary/secondary/tap pins + glyph + netlist expansion to coupled `L`s).
+  No longer an engine gap. Plus flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(239)
+  await a **#315 batch PR**.
+
+---
+
+## 2026-06-29 (238) — MAGNETIC COUPLING (two coils → a transformer) + live-move thermal coupling
+
+- ~~**Live-move thermal coupling** (#138 follow-up)~~ DONE. `App.svelte` `rebuildNetlist` pure-move
+  early-return re-applies `nl.coupling` (or EMPTY to clear) so dragging a part beside a thermistor updates the
+  sensing without a reinstall/rewind.
+- ~~**Magnetic coupling — mutual inductance / coupled inductors** (#139)~~ DONE (sim-core + web; **golden
+  byte-identical**; Rust 225, web 351; e2e verified). The thermal-coupling framework applied to FLUX: two
+  coils next to each other → a transformer. sim-core `magnetic_coupling`/`has_magnetic` + `set_magnetic_
+  coupling(idx,nbr,coeff)`; `stamp_mutual_inductance` adds `mat[bi][bj]−=M/DT` (`M=k·√(LiLj)`) in BOTH
+  transient paths (OP untouched — inductors are DC current sources there); `|k|<MUTUAL_K_MAX`(0.999) keeps the
+  L matrix PD. web `computeMagneticCoupling` (L pairs within `MAG_CUTOFF`, `k=MAG_K_PEAK·e^(−(d/D0)²)`,
+  Real-mode + ≥2 coils), `BuiltNetlist.magneticCoupling`, pushed in `App.svelte` (full-rebuild + live-move),
+  `loop.ts` `setMagneticCoupling`. Tests: sim-core `coupled_coils_make_a_transformer` / `_step_up_with_turns_
+  ratio` / `magnetic_coupling_is_reproducible_and_golden_safe`; web `magneticCoupling.test.ts` (emission + e2e:
+  secondary swings when coupled, dead when not).
+- [ ] **Transformer road (owner: "fully modelled and buildable"):** center tap (= primary + two coupled
+  secondary halves, OR +1 terminal on `ELEM_TRANSFORMER`); a buildable transformer part (place coils + name a
+  turns ratio + glyph); AC-solve support so Bode/phase see a transformer (today `ELEM_TRANSFORMER` is skipped
+  in `ac_solve`, mutual inductance is transient-only). Plus flicker/op-amp noise; fan/spacing thermal levers;
+  MOV joule-rating. (233)–(238) await a **#315 batch PR** (adversarial-review the sim-core changes first).
+
+---
+
+## 2026-06-29 (237) — MUTUAL HEATING + THERMISTOR-AS-SENSOR (golden-safe, owner-confirmed scope)
+
+- ~~**Part mutual heating + thermistor-as-sensor** (#138)~~ DONE (sim-core + web; **golden byte-identical**;
+  Rust 222, web 347; verified e2e buildNetlist→wasm). Owner picked **sim-core deterministic** + **normalised
+  per-element** coupling. sim-core: `thermal_coupling`/`has_coupling` + `set_thermal_coupling(idx,nbr,w)`
+  (no-rewind, post-`set_netlist`); per-tick each element relaxes toward `Tamb + Σ w·(Tj_prev−Tamb)` (prev-tick
+  snapshot), every element self-heats when coupling live (a donor needs a Tj). **Passivity `Σ w < 1` ⇒
+  bounded** (no blow-up). `thermal_step_amb`; `element_temperature` wasm-exposed. web: `computeThermalCoupling`
+  (Gaussian falloff, row-normalised, Real-mode + tempco-part-present gate), `BuiltNetlist.coupling`, pushed in
+  `App.svelte` after `setNetlist`. Tests: sim-core `thermistor_senses_neighbor_heat` / `mutual_heating_is_
+  bounded` / `mutual_heating_run_is_reproducible` / `empty_coupling_is_byte_identical`; web `mutualHeating.
+  test.ts` (5) + `mhE2E.test.ts` (NTC midpoint 4.97→2.33 V sensing a hot R). A sealed IC = one thermal node
+  (its primary element).
+- [ ] **Follow-ups:** coupling rides the netlist install (a PURE move doesn't repush — nudge a value to
+  recompute); an IC couples via its primary element (per-internal aggregation later); the web glow could read
+  sim-core `Tj` for coupled parts. **Balun** (owner asked): 1:1 isolation works today (`TR` n=1); a real
+  CM-rejecting balun needs a center-tap (+1 transformer terminal) or a common-mode-choke element + AC-solve
+  support — a deliberate small/medium feature if wanted.
+
+---
+
+## 2026-06-29 (236) — BJT THERMAL RUNAWAY: Is(T) on the same Tj infra (golden-safe), end-to-end verified
+
+- ~~**BJT thermal runaway — `Is(T)` feedback**~~ DONE (sim-core + web; **golden byte-identical**; Rust 218,
+  web 341; verified end-to-end buildNetlist→wasm). The BJT reuses **slot 7** as `γ` (not `α`):
+  `bjt_is_eff = BJT_IS·exp(γ·(Tj−25))` capped at `BJT_IS_MULT_MAX`; `bjt_op` now takes `is` as an arg
+  (all 6 sim-core sites + 1 test thread `self.bjt_is_eff(e,i)`; the no-tempco test passes `BJT_IS`). The
+  existing `step()` Tj-advance + hash-fold already cover the BJT (slot-7 gate; collector dissipation
+  `|Vce·Ic|`, a=C/b=E/currents=Ic — no new code). **web** (`netlist.ts`): emit `γ = BJT_IS_TEMPCO` (0.07 ≈
+  ln2/10) on Q/QP Real-mode-only. Tests: `bjt_thermal_runaway` (Tj>75, Ic 12.7 mA→1.56 A), `bjt_emitter_
+  ballast_tames_runaway`, `bjt_thermal_run_is_reproducible`; web `thermalRunaway.test.ts` +3; **`bjtRunaway
+  E2E.test.ts`** (Real collector collapses 23.8→0.55 V, Ideal dead flat, ballast suppresses).
+- [ ] **Still open (the (235) NEXT list):** flicker/1-f & op-amp input-referred noise; the other thermal
+  levers (fan ambient↓, part-spacing mutual heating); a MOV joule/energy rating + MOV-specific thermal
+  spec (today `DEFAULT_THERMAL`). Adversarial-review the sim-core runaway changes (resistor + BJT) before a
+  **#315 batch PR** (the (233)–(236) refinements are on the branch, awaiting owner greenlight).
+
+---
+
+## 2026-06-29 (234) — Refine round 2: thermal heatsink lever + diode shot noise
+
+- ~~**Thermal HEATSINK lever**~~ DONE (web-only, golden-safe; web 334; verified live). `Component.heatsink`
+  (0/1/2) → `heatsinkFactor` θ_JA multiplier in `stepTemp`; inspector picker (No sink / Heatsink / Large
+  sink, Real-mode + heating kinds); `board.setComponentHeatsink` (no rebuild — live Tj re-stabilises).
+  Persists for free. A 4 Ω resistor that vents at ~525 °C settles at **109 °C** with a Large sink — saved.
+- ~~**Noise — SHOT noise on diodes**~~ DONE (sim-core, golden-safe; Rust 212; golden stable).
+  `add_noise_currents` scales the noise current `∝ √|I|` for `is_diode` kinds (Johnson + shot share
+  `NOISE_SLOT`); `buildNetlist` emits `SHOT_NOISE_SCALE` on diodes in Real mode. Tests:
+  `shot_noise_needs_current` (the √I property — conducting noisy, off quiet), `shot_noise_diode_run_is_
+  reproducible`, web diode-emission. Adversarial-review the sim-core change before a PR.
+- [ ] **NEXT (menu):** flicker/1-f noise, op-amp input-referred noise; the other thermal levers (fan,
+  spacing) + Path 2 (hashed Tj); CPU spine (ELEM_MEMORY P2/P3b). (233)+(234) refinements on the branch,
+  not yet a new PR.
+
+---
+
+## 2026-06-29 (233) — MERGED thermal+noise arc (PR #314) + refinements: vent + noise RMS readout
+
+- ~~**Merge the thermal+noise arc to main**~~ DONE — PR #314 (`db07c09`), owner said "merge it up". Full
+  CI gate green before merge (Rust 210 + golden stable, web 333). Branch fast-forwarded to main.
+- ~~**Thermal refine — magic-smoke VENT**~~ DONE (web-only, golden-safe, verified live). Sustained over-temp
+  (`ventHeat ≥ VENT_SECONDS = 1.6 s` sim-time, sim-tick-driven → replay-safe) → a part **vents**: latched
+  `vented`, a charred **"DESTROYED"** box + rising smoke puffs, distinct from the transient OVERHEAT box.
+  `board.ts` `ComponentNode` (`drawSmoke`, two-stage render, `resetThermal` clears it). A 4 Ω resistor
+  vented at ~2.6 sim-s on screen.
+- ~~**Noise refine — RMS inspector readout**~~ DONE (web-only, golden-safe, verified live). `App.svelte`:
+  in Real mode a selected resistor shows **"Noise (RMS)"** = the std of its V-across over a 90-frame window
+  → the Johnson fuzz as a number. A 100 k divider midpoint read 54.8 mV in Real, absent in Ideal.
+- [ ] **NEXT (menu):** shot/flicker noise, op-amp input-referred noise; thermal management levers
+  (heatsink/fan/spacing) + Path 2 (hashed Tj → R(T) drift / runaway); CPU spine (ELEM_MEMORY P2/P3b).
+
+---
+
 ## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors), deterministic + replay-exact + golden-safe
 
 - ~~**Engine survey + owner pick**~~ DONE — surveyed engine fidelity vs. gaps (noise, op-amp non-idealities,
