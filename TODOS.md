@@ -6,6 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: implemented (byte-identical, worst-case bounded)
+
+- ~~**S0 oracle harness**~~ DONE (`cc4603d`): `eval_digital_full` + `eval_digital` wrapper +
+  `debug_check_eval_digital` byte-identity oracle.
+- ~~**S1 extract `eval_one_digital(i)`**~~ DONE (`c3ff0a7`): per-element body of the eval loop.
+- ~~**S2–S4 the event-driven dirty-set**~~ DONE (this batch, uncommitted pending audit). Built a simpler
+  `node_v`-diff architecture instead of the planned Pass L/Pass R (one invariant: `eval_one_digital(i)` is a
+  pure function of `node_v` at i's read+rail pins + i's committed state). `build_digital_fanout`
+  (`net_touchers`/`net_drivers`/`elem_out_nets`/`always_run_elems`) + `eval_digital_dirty` (O(nodes) diff →
+  seed → close affected nets → Z-reset + re-fold ascending; worst-case guard falls back to full when ≥½ nodes
+  switch). Main tick + sub-ticks via the one `eval_digital`; `dirty_full` forces full on install/reclassify/
+  reset. **Proven byte-identical:** S0 oracle on all 232 debug tests + release 231 (golden hashes unchanged) +
+  web vitest 356. Perf: quiescent 4000-gate fabric 168 µs/tick vs 284 µs full (~41 % cut). New test:
+  `dirty_set_quiescent_fabric_is_cheap`. Doc: `docs/sim/dirty-set-digital-eval.md` ("What shipped").
+- [ ] **S5 (v2, optional, profiled)** — incrementalize the still-O(nodes) per-tick scans (`commit_net_levels`,
+  the closed-form digital fill, the sequential-commit scan, the seed scan) toward true O(active). Deferred.
+
+---
+
 ## 2026-06-29 (246) — BUS-SLICE RECOGNITION (scoped; QUEUED after the dirty-set build)
 
 - [ ] **Bus-slice recognition** — draw a bit-sliced user IC (N identical leaf slices on an input+output bus

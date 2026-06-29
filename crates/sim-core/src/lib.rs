@@ -3706,6 +3706,32 @@ pub struct Sim {
     /// path's debug dual-assembly oracle pass this to the shared stamping helpers so they reproduce
     /// the original `Self::node_idx` mapping exactly — byte-identical to before the follow-up.
     full_row: Vec<usize>,
+    /// **Dirty-set digital eval** (`docs/sim/dirty-set-digital-eval.md`). Per-net adjacency, built at
+    /// install/reclassify in fixed element order (no hashed iteration, none hashed). The dirty-set
+    /// re-evaluates only the active fanout each (sub-)tick instead of every element:
+    /// `net_touchers[net]` = the **combinational** ([`ELEM_GATE`]) elements whose input/rail pins
+    /// (b/c/d/e) read `net`, so a change in `net`'s committed `node_v` re-seeds exactly them (ascending);
+    /// `net_drivers[net]` = every digital element that DRIVES `net` (ascending), used to re-fold a net
+    /// from scratch; `elem_out_nets[i]` = the net(s) element `i` drives. Ground (net 0) is excluded from
+    /// all three (never an observable digital level; the eval oracle skips it).
+    net_touchers: Vec<Vec<u32>>,
+    net_drivers: Vec<Vec<u32>>,
+    elem_out_nets: Vec<Vec<u32>>,
+    /// Digital elements **always** re-evaluated every (sub-)tick (ascending element index): everything
+    /// that is not a pure-combinational [`ELEM_GATE`] — the stateful kinds (DFF/SAMPLER/COMPARATOR/
+    /// BEHAVIORAL/MEMORY, whose committed sequential state we do not diff per-pin) and the level-shifter.
+    /// Their output nets are unconditionally re-folded, so only the gate fabric is event-gated in v1.
+    always_run_elems: Vec<u32>,
+    /// `node_v` snapshot taken at the END of the last [`Sim::eval_digital`]; the next eval diffs it
+    /// bit-for-bit to find the nodes whose committed voltage changed (a gate's quantised input or rail
+    /// only moves when its `node_v` does), seeding the dirty set. Length `node_count`. Never hashed.
+    prev_node_v: Vec<f64>,
+    /// Scratch membership flag for the per-eval "affected nets" set (length `node_count`, all-false
+    /// between evals — restored by walking the affected list, never an O(nodes) clear). Never hashed.
+    net_in_affected: Vec<bool>,
+    /// Force a full evaluate-all on the next [`Sim::eval_digital`] (set at install / reclassify / reset —
+    /// there is no valid previous-`node_v` snapshot to diff against yet). Cleared after the forced full.
+    dirty_full: bool,
     /// The **global digital sub-tick rate** `S = max over elements of their declared rate`
     /// ([`beh_subtick_rate`]), computed once at install (ADR 0004 phase-3, step 3b). `S = 1` for
     /// every circuit with no declared fast rate (i.e. every circuit that existed before sub-ticking
@@ -3976,6 +4002,13 @@ impl Sim {
             digital_rows: Vec::new(),
             solve_row: vec![usize::MAX],
             full_row: vec![usize::MAX],
+            net_touchers: vec![Vec::new()],
+            net_drivers: vec![Vec::new()],
+            elem_out_nets: Vec::new(),
+            always_run_elems: Vec::new(),
+            prev_node_v: vec![0.0],
+            net_in_affected: vec![false],
+            dirty_full: true,
             subtick_rate: 1,
             floating_refs: Vec::new(),
             node_v: vec![0.0],
@@ -4427,6 +4460,13 @@ impl Sim {
         self.node_v = vec![0.0; node_count];
         self.elements = elements;
         self.tick = 0;
+        // Dirty-set digital-eval scaffolding (`docs/sim/dirty-set-digital-eval.md`): build the per-net
+        // fanout maps for this netlist and force the first eval (in `solve_operating_point` below) to
+        // evaluate-all — there is no previous-`node_v` snapshot to diff against yet.
+        self.build_digital_fanout();
+        self.prev_node_v = vec![0.0; node_count];
+        self.net_in_affected = vec![false; node_count];
+        self.dirty_full = true;
         // Prime the readout at the initial operating point (t = 0). Does not
         // advance the tick or the per-tick reactive state.
         self.solve_operating_point();
@@ -4649,6 +4689,10 @@ impl Sim {
         for a in &mut self.ac {
             *a = AcMeas::default();
         }
+        // The persistent dirty-set drives + previous-`node_v` snapshot are stale after a rewind; force the
+        // next eval to evaluate-all to re-establish a clean baseline (the fanout maps stay valid — the
+        // netlist is unchanged). `net_in_affected` is already all-false between evals.
+        self.dirty_full = true;
         self.solve_operating_point();
         // Reproduce the same deterministic latch power-up state on a reset
         // (no-op unless a MOSFET carries a Realistic-mode mismatch).
@@ -6667,17 +6711,208 @@ impl Sim {
         }
     }
 
-    /// Resolve the digital domain for this (sub-)tick — the production entry. Today it is the full
-    /// evaluate-all ([`Sim::eval_digital_full`]); the event-driven **dirty-set**
-    /// (`docs/sim/dirty-set-digital-eval.md`) will replace it incrementally so a quiescent gate-level
-    /// CPU costs `O(active fanout)` instead of `O(gates)`. In debug builds a bit-for-bit oracle
-    /// ([`Sim::debug_check_eval_digital`]) re-runs the full eval and asserts the production result
-    /// matches it — the same discipline that fenced the digital-matrix lift, so no golden can move
-    /// silently as the dirty-set lands. Release/wasm: the oracle is compiled out.
+    /// Build the per-net digital fanout maps (`net_touchers`/`net_drivers`/`elem_out_nets`) and the
+    /// `always_run_elems` list the dirty-set uses, in fixed element order (deterministic, none hashed).
+    /// The DRIVE pins per kind mirror exactly what [`Sim::eval_one_digital`] folds into `digital_drive`;
+    /// the TOUCHER pins are the combinational gate's input/rail pins (b/c/d/e) only — every other kind is
+    /// instead listed in `always_run_elems` and re-evaluated unconditionally (so its committed sequential
+    /// state / live analog inputs need not be diffed, and only the gate-input toucher set must be exact
+    /// for byte-identity). Ground (node 0) is excluded from every list. Rebuilt on install / reclassify
+    /// after `net_classes` + the memory side-lists are known.
+    fn build_digital_fanout(&mut self) {
+        let n = self.node_count;
+        let mut touchers: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut drivers: Vec<Vec<u32>> = vec![Vec::new(); n];
+        let mut out_nets: Vec<Vec<u32>> = vec![Vec::new(); self.elements.len()];
+        let mut always: Vec<u32> = Vec::new();
+        for (i, e) in self.elements.iter().enumerate() {
+            let iu = i as u32;
+            // Pins this element DRIVES (folds an output level into) — every digital kind. Matches the
+            // `digital_drive[..]` writes in `eval_one_digital`.
+            let mut drives: Vec<usize> = Vec::new();
+            match e.kind {
+                ELEM_GATE => drives.push(e.a),
+                ELEM_DFF => drives.extend([e.a, e.d]),
+                ELEM_SAMPLER | ELEM_COMPARATOR | ELEM_LEVELSHIFT => drives.push(e.a),
+                ELEM_BEHAVIORAL => {
+                    drives.extend([e.a, e.b, e.c]);
+                    if matches!(e.value as u32, BEH_PROG_SAR_ADC | BEH_PROG_SIGMA_DELTA) {
+                        drives.push(e.g); // a 4th output (DONE / bit-stream)
+                    }
+                }
+                ELEM_MEMORY => {
+                    if self.mem_dout_nodes[i].is_empty() {
+                        drives.push(e.a); // cell-level: one data-out bit
+                    } else {
+                        drives.extend(self.mem_dout_nodes[i].iter().copied()); // wide data bus
+                    }
+                }
+                _ => {}
+            }
+            for net in drives {
+                if net != 0 && net < n {
+                    drivers[net].push(iu);
+                    out_nets[i].push(net as u32);
+                }
+            }
+            // Seeding adjacency. v1 event-gates ONLY the combinational gate fabric: a GATE re-seeds when
+            // any of its input (b,c) or rail (d,e) nets' `node_v` changes — that is its complete
+            // node_v dependency. Every other digital kind is always re-evaluated, UNCONDITIONALLY (not
+            // gated on driving a net): a COMPARATOR/LEVELSHIFT/BEHAVIORAL also writes the element-indexed
+            // `gate_target[i]`/`gate_gout[i]`, which would go stale if the element were skipped even when
+            // all its outputs land on ground (an unconnected output → empty `out_nets`). Non-digital kinds
+            // (the `_ => {}` arm, no drives) are excluded — re-running them would be pointless.
+            if e.kind == ELEM_GATE {
+                for net in [e.b, e.c, e.d, e.e] {
+                    if net != 0 && net < n {
+                        touchers[net].push(iu);
+                    }
+                }
+            } else if matches!(
+                e.kind,
+                ELEM_MEMORY
+                    | ELEM_DFF
+                    | ELEM_SAMPLER
+                    | ELEM_COMPARATOR
+                    | ELEM_LEVELSHIFT
+                    | ELEM_BEHAVIORAL
+            ) {
+                always.push(iu);
+            }
+        }
+        // Lists ascend by construction (elements scanned in index order). Drop the consecutive duplicate
+        // a single element makes when two of its pins land on one net (e.g. both gate inputs tied) — the
+        // dirty seed dedups nets via `net_in_affected`, and a driver is re-run once to re-fold all its
+        // contributions to a net, so each (net, element) pair must appear at most once.
+        for v in touchers.iter_mut() {
+            v.dedup();
+        }
+        for v in drivers.iter_mut() {
+            v.dedup();
+        }
+        self.net_touchers = touchers;
+        self.net_drivers = drivers;
+        self.elem_out_nets = out_nets;
+        self.always_run_elems = always;
+    }
+
+    /// Resolve the digital domain for this (sub-)tick — the production entry. The event-driven
+    /// **dirty-set** ([`Sim::eval_digital_dirty`], `docs/sim/dirty-set-digital-eval.md`) re-folds only the
+    /// active fanout, so a quiescent gate-level CPU costs `O(active fanout)` instead of `O(gates)`;
+    /// `dirty_full` forces a from-scratch [`Sim::eval_digital_full`] on install / reclassify / reset (no
+    /// previous-`node_v` baseline to diff yet). In debug builds a bit-for-bit oracle
+    /// ([`Sim::debug_check_eval_digital`]) re-runs the full eval and asserts the dirty result matches it —
+    /// the same discipline that fenced the digital-matrix lift, so no golden can move silently.
+    /// Release/wasm: the oracle is compiled out and the dirty result is authoritative.
     fn eval_digital(&mut self) {
-        self.eval_digital_full();
+        if self.dirty_full {
+            // No valid previous-`node_v` snapshot to diff (install / reclassify / reset): evaluate all,
+            // which also resets every net's drive — the clean baseline the incremental path extends.
+            self.eval_digital_full();
+            self.dirty_full = false;
+        } else {
+            self.eval_digital_dirty();
+        }
+        // Snapshot the `node_v` this eval read so the next eval can diff against it (the eval never writes
+        // `node_v`; the solve perturbs it afterwards). The bitwise diff is the dirty-set seed.
+        self.prev_node_v.copy_from_slice(&self.node_v);
         #[cfg(debug_assertions)]
         self.debug_check_eval_digital();
+    }
+
+    /// **Event-driven dirty-set** evaluation (`docs/sim/dirty-set-digital-eval.md`): re-fold only the nets
+    /// whose drivers' contributions could have changed since the previous [`Sim::eval_digital`], leaving
+    /// every quiescent net's persistent `digital_drive` + metadata untouched — instead of resetting and
+    /// re-evaluating every element. Proven equal to [`Sim::eval_digital_full`] every (sub-)tick by
+    /// [`Sim::debug_check_eval_digital`], so no golden can move.
+    ///
+    /// An element's `eval_one_digital` output is a pure function of its read/rail-pin `node_v` and its
+    /// committed sequential state. So an element must be re-run iff one of those changed: the stateful
+    /// kinds (`always_run_elems`) are re-run unconditionally; a combinational gate is re-run iff any of
+    /// its input/rail pins sits on a node whose `node_v` changed bit-for-bit (`net_touchers`). Because the
+    /// `combine` fold is non-invertible, the unit of recomputation is the **net**: any affected net is
+    /// Z-reset and re-folded from its *full* `net_drivers` list in ascending element order (reproducing the
+    /// full eval's Z-reset + element-order fold + last-driver-wins metadata). A multi-output driver pulled
+    /// in to re-fold one net would otherwise double-fold its sibling nets, so the affected set is closed
+    /// under "every driver of an affected net drives only affected nets".
+    fn eval_digital_dirty(&mut self) {
+        // `affected` = nets to Z-reset and re-fold; `net_in_affected` is O(1) membership, restored to
+        // all-false at the end (walked, never an O(nodes) clear). `refold` = the elements to re-run
+        // (seed elements + every driver of every affected net), sorted + deduped to ascending element
+        // order so the fold and last-driver-wins metadata reproduce `eval_digital_full` exactly.
+        // O(nodes) scan (the v1 floor): the nodes whose committed `node_v` changed bit-for-bit since the
+        // previous eval. A combinational gate's quantised input/rail only moves when one of these does.
+        let mut dirty_nodes: Vec<usize> = Vec::new();
+        for node in 1..self.node_count {
+            if self.node_v[node].to_bits() != self.prev_node_v[node].to_bits() {
+                dirty_nodes.push(node);
+            }
+        }
+        // Worst-case guard: when most of the circuit is switching (a settling chain, a free-running
+        // oscillator), the closure + sort overhead of the incremental path costs more than it saves and
+        // nearly every net re-folds anyway. The full evaluate-all is byte-identical (oracle-proven), so
+        // fall back to it — bounding the dirty-set at ~full-eval cost while keeping the quiescent win.
+        if dirty_nodes.len().saturating_mul(2) >= self.node_count {
+            self.eval_digital_full();
+            return;
+        }
+        let mut affected: Vec<u32> = Vec::new();
+        let mut refold: Vec<u32> = Vec::new();
+        // Seed A — always-run elements (stateful kinds + level-shift): always re-evaluated, so their
+        // output nets are always re-folded. (`net_in_affected` is a different field from the lists we
+        // iterate, so the disjoint-field borrow is fine.)
+        for &i in &self.always_run_elems {
+            refold.push(i);
+            for &net in &self.elem_out_nets[i as usize] {
+                if !self.net_in_affected[net as usize] {
+                    self.net_in_affected[net as usize] = true;
+                    affected.push(net);
+                }
+            }
+        }
+        // Seed B — gate fabric whose input/rail `node_v` changed (the dirty nodes collected above).
+        for &node in &dirty_nodes {
+            for &i in &self.net_touchers[node] {
+                refold.push(i);
+                for &net in &self.elem_out_nets[i as usize] {
+                    if !self.net_in_affected[net as usize] {
+                        self.net_in_affected[net as usize] = true;
+                        affected.push(net);
+                    }
+                }
+            }
+        }
+        // Close `affected` under multi-output drivers and collect every affected net's full driver list
+        // into `refold` (so a re-run driver never folds into an un-reset sibling net). `affected` grows
+        // as we walk it, so this stays an explicit index worklist.
+        let mut head = 0;
+        while head < affected.len() {
+            let net = affected[head] as usize;
+            head += 1;
+            for &drv in &self.net_drivers[net] {
+                refold.push(drv);
+                for &onet in &self.elem_out_nets[drv as usize] {
+                    if !self.net_in_affected[onet as usize] {
+                        self.net_in_affected[onet as usize] = true;
+                        affected.push(onet);
+                    }
+                }
+            }
+        }
+        // Z-reset the affected nets' accumulated drive (the from-scratch re-fold precondition).
+        for &net in &affected {
+            self.digital_drive[net as usize] = Level::Z;
+        }
+        // Re-fold seed + drivers in ascending element order.
+        refold.sort_unstable();
+        refold.dedup();
+        for &i in &refold {
+            self.eval_one_digital(i as usize);
+        }
+        // Restore the net-membership scratch to all-false for the next eval (O(affected)).
+        for &net in &affected {
+            self.net_in_affected[net as usize] = false;
+        }
     }
 
     /// **Debug-only byte-identity oracle** for the digital eval (S0 of `dirty-set-digital-eval.md`):
@@ -6695,7 +6930,9 @@ impl Sim {
         let target = self.gate_target.clone();
         let gout = self.gate_gout.clone();
         self.eval_digital_full();
-        for i in 0..drive.len() {
+        // Skip net 0 (ground): it is never an observable digital level, and the dirty-set excludes it
+        // from its fanout maps (so its drive can go stale), whereas the full eval resets + re-folds it.
+        for i in 1..drive.len() {
             assert_eq!(
                 self.digital_drive[i] as u8, drive[i] as u8,
                 "eval_digital oracle: digital_drive[{i}] diverged from full"
@@ -8814,6 +9051,11 @@ impl Sim {
         let (solve_row, full_row) = row_maps(&self.net_classes, self.node_count);
         self.solve_row = solve_row;
         self.full_row = full_row;
+        // A wide memory's bus-port nodes just became driven/touched nets — rebuild the dirty-set fanout
+        // and force the next eval (in `solve_operating_point`) to evaluate-all (`node_count` is unchanged,
+        // so the previous-`node_v` / membership scratch stay correctly sized).
+        self.build_digital_fanout();
+        self.dirty_full = true;
         self.solve_operating_point();
         self.commit_net_levels();
     }
@@ -11714,6 +11956,69 @@ mod tests {
         );
     }
 
+    /// The event-driven dirty-set's payoff (`docs/sim/dirty-set-digital-eval.md`): a large gate fabric
+    /// that has settled to a steady state re-folds *zero* nets per tick, so the per-tick digital cost
+    /// collapses to the O(nodes) seed scan instead of re-evaluating every gate. Built as a wide fan of
+    /// independent buffers off one constant source (each settles in one unit-delay tick, then is
+    /// quiescent). Asserts byte-for-byte reproducibility across the quiescent run (the dirty-set must
+    /// match evaluate-all — the debug oracle also checks this every tick) and prints the per-tick cost.
+    #[test]
+    fn dirty_set_quiescent_fabric_is_cheap() {
+        let n_gates: usize = if cfg!(debug_assertions) { 200 } else { 4000 };
+        // node 1 = constant 5 V source; nodes 2..=n_gates+1 = each buffer's output (pure-Digital).
+        let build = || {
+            let mut kinds: Vec<u8> = vec![ELEM_VSOURCE];
+            let mut a: Vec<u32> = vec![1];
+            let mut b: Vec<u32> = vec![0];
+            let (mut c, mut d): (Vec<u32>, Vec<u32>) = (vec![0], vec![0]);
+            let mut val = vec![5.0f64];
+            let mut aux = vec![0.0f64];
+            for i in 0..n_gates as u32 {
+                kinds.push(ELEM_GATE);
+                a.push(i + 2); // OUT = its own node
+                b.push(1); // IN = the shared constant source
+                c.push(0);
+                d.push(0);
+                val.push(5.0);
+                aux.push(7.0); // BUF
+            }
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(n_gates + 2, &kinds, &a, &b, &c, &d, &val, &aux));
+            sim
+        };
+        // Reproducibility across the quiescent run (dirty-set == evaluate-all, hash-stable).
+        let run = || {
+            let mut s = build();
+            let mut acc = s.snapshot_hash();
+            for _ in 0..100 {
+                s.step();
+                acc ^= s.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "quiescent fabric reproduces exactly");
+        // Each buffer settles to High in one tick; from then on no net's node_v moves, so the dirty-set
+        // does no re-folds. Warm well past settling, then time the quiescent steady state.
+        let mut sim = build();
+        for _ in 0..20 {
+            sim.step();
+        }
+        let t = std::time::Instant::now();
+        let steps = 100;
+        for _ in 0..steps {
+            sim.step();
+        }
+        let us = t.elapsed().as_micros() as f64 / steps as f64;
+        eprintln!(
+            "STRESS quiescent-fabric N={n_gates} -> {us:.1} us/tick ({})",
+            if cfg!(debug_assertions) {
+                "debug+oracle"
+            } else {
+                "release"
+            }
+        );
+    }
+
     /// A gate driving an LED through a series resistor exercises the *Newton*-path
     /// gate stamp (the LED makes the circuit nonlinear). Buffered high the LED
     /// lights; buffered low it is dark.
@@ -13134,6 +13439,63 @@ mod tests {
             &[],
         ));
         sim
+    }
+
+    /// **Dirty-set regression** (`docs/sim/dirty-set-digital-eval.md`): a COMPARATOR writes the
+    /// element-indexed `gate_target[i]`/`gate_gout[i]` every eval, even when its OUTPUT pin is on ground
+    /// (an unconnected output → empty `elem_out_nets`). Such an element must still be re-evaluated every
+    /// tick, or its `gate_target` goes stale as `cmp_q` flips — a hash-moving divergence from evaluate-all.
+    /// Here the chopped inputs flip the comparison repeatedly while OUT (a) = node 0; the debug oracle
+    /// (`debug_check_eval_digital`, active in test builds) asserts `dirty == full` on `gate_target` every
+    /// tick, and the run must reproduce exactly. (Before the fix that always-runs every non-gate digital
+    /// kind unconditionally, this circuit's `gate_target` diverged and the oracle fired.)
+    #[test]
+    fn comparator_unconnected_output_gate_target_stays_fresh() {
+        // Same chopped front end as `comparator_chopped_input`, but OUT (comparator a) = node 0 (ground):
+        // the output is unconnected, so its `elem_out_nets` is empty, yet `cmp_q` still toggles.
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_pefgh(
+                7,
+                &[
+                    ELEM_VSOURCE,  // VCC 5 V        (node 1)
+                    ELEM_VSOURCE,  // IN+ 2.5 V      (node 2)
+                    ELEM_VSOURCE,  // IN- rail 4 V   (node 5)
+                    ELEM_VSOURCE,  // LE rail 5 V    (node 6, transparent)
+                    ELEM_SWITCH,   // chop node 5 onto IN- (node 3), 50% duty
+                    ELEM_RESISTOR, // pull-down on IN-
+                    ELEM_COMPARATOR,
+                ],
+                &[1, 2, 5, 6, 5, 3, 0], // a: comparator OUT = node 0 (UNCONNECTED)
+                &[0, 0, 0, 0, 3, 0, 2], // b: switch b = IN- (node 3); comparator IN+ = node 2
+                &[0, 0, 0, 0, 0, 0, 3], // c: comparator IN- = node 3
+                &[0, 0, 0, 0, 0, 0, 1], // d: comparator VCC = node 1
+                &[0, 0, 0, 0, 0, 0, 0], // e: comparator GND = node 0
+                &[0, 0, 0, 0, 0, 0, 6], // f: comparator LE = node 6 (transparent)
+                &[],
+                &[],
+                &[5.0, 2.5, 4.0, 5.0, 0.5, 1000.0, 0.0],
+                &[0.0; 7],
+                &[],
+            ));
+            sim
+        };
+        // The debug oracle fires inside `step()` if `gate_target` (or any eval array) diverges from the
+        // full evaluate-all on any tick — so simply running is the assertion. Also check reproducibility.
+        let run = || {
+            let mut s = build();
+            let mut acc = s.snapshot_hash();
+            for _ in 0..400 {
+                s.step();
+                acc ^= s.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "unconnected-output comparator reproduces exactly (gate_target stays fresh)"
+        );
     }
 
     /// With LE held LOW the comparator is latched: the chopped inputs (which swing the live

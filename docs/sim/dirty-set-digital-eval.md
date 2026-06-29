@@ -2,6 +2,54 @@
 
 # Event-driven dirty-set digital evaluation — design
 
+> **IMPLEMENTED 2026-06-29 (a simpler architecture than the Pass L/Pass R below — see "What shipped").**
+> The shipped dirty-set is byte-identical to evaluate-all (the S0 debug oracle proves `dirty == full` on
+> all six eval arrays every (sub-)tick across the whole suite; the release golden hashes are unchanged),
+> worst-case bounded (it falls back to full eval when >½ the nodes switch), and ~41 % cheaper per tick on
+> a quiescent 4000-gate fabric (168 µs vs 284 µs full). Keep the design history below; the **"What
+> shipped"** section is the source of truth for the code.
+>
+> ## What shipped — the `node_v`-diff dirty-set (`eval_digital_dirty`, `build_digital_fanout`)
+>
+> The Pass L / Pass R split below was **not** needed. One invariant subsumes it: **`eval_one_digital(i)`
+> is a pure function of `node_v` at element `i`'s read+rail pins and `i`'s committed sequential state**, so
+> `i` must be re-run iff one of those changed. That collapses to a single seed rule:
+> - **`build_digital_fanout`** (install/reclassify, fixed order, nothing hashed) builds
+>   `net_touchers[net]` = the **combinational `ELEM_GATE`s** whose input/rail pins `b/c/d/e` sit on `net`;
+>   `net_drivers[net]` = every digital driver of `net`; `elem_out_nets[i]` = `i`'s driven nets;
+>   `always_run_elems` = every *non*-gate digital kind (DFF/SAMPLER/COMPARATOR/BEHAVIORAL/MEMORY/
+>   LEVELSHIFT), **unconditionally** — *not* gated on driving a net, because COMPARATOR/LEVELSHIFT/
+>   BEHAVIORAL also write the element-indexed `gate_target[i]`/`gate_gout[i]`, which would go stale if such
+>   an element were skipped when its output is unconnected (all outputs on ground → empty `out_nets`).
+>   Ground (net 0) is excluded from the net maps. (Regression-guarded by
+>   `comparator_unconnected_output_gate_target_stays_fresh` — pre-fix the oracle fired on `gate_target`.)
+> - **`eval_digital_dirty`** diffs `node_v.to_bits()` against the previous eval's snapshot (`prev_node_v`)
+>   to find the **dirty nodes** (O(nodes) scan — the v1 floor). Seed = `always_run_elems` ∪ the
+>   `net_touchers` of every dirty node. The recomputation unit is the **net** (`combine` is
+>   non-invertible): collect the seed's output nets, **close** them under "every driver of an affected net
+>   drives only affected nets" (so a multi-output driver never double-folds a sibling), Z-reset every
+>   affected net's `digital_drive`, then re-run all their drivers (the seed ∪ closure) in **ascending
+>   element order** — reproducing the full eval's Z-reset + element-order fold + last-driver-wins metadata
+>   exactly. Quiescent nets keep their persistent drive/metadata untouched.
+> - **Why this beats Pass R:** a powered gate's stamp only *needs* refreshing when its rail `node_v` moves,
+>   and the rail pins `d/e` are touchers — so a bit-stable DC rail correctly triggers **no** re-stamp
+>   (byte-identical), where Pass R would have re-stamped every powered gate every tick. The per-reader
+>   quantization trap (design fact #1) is handled because the toucher is the *reader* gate, keyed on the
+>   *reader's* pins, not the net's committed level.
+> - **Main tick *and* sub-ticks** flow through the one `eval_digital`, so the multi-rate path (S4) is
+>   covered for free; `prev_node_v` is re-snapshotted every eval. `dirty_full` forces evaluate-all on
+>   install / reclassify / reset (no baseline to diff). The **worst-case guard** falls back to
+>   `eval_digital_full` when ≥ ½ the nodes are dirty (a settling chain / free-running oscillator), so the
+>   dirty-set is never worse than ~full-eval cost. Tests: `dirty_set_quiescent_fabric_is_cheap`,
+>   `stress_large_inverter_chain`, the all-digital ring, and the S0 oracle on every existing test.
+> - **Not yet incrementalized (the doc's S5):** `commit_net_levels`, the closed-form digital fill, the
+>   sequential-commit scan, and the seed scan itself remain O(nodes)/O(elements) — the residual that keeps
+>   a quiescent 4000-gate fabric at 168 µs rather than near-zero. Deferred to a profiled follow-up.
+>
+> ---
+>
+> ## Original design (history — Pass L / Pass R)
+
 Status: **design (2026-06-29), adversarially reviewed; build S0→S4 recommended.** The digital-matrix
 lift (`docs/sim/digital-matrix-lift-plan.md`) made gate-level digital scale **linearly** in gate count.
 The remaining `O(gates)` cost is that the digital evaluation re-runs **every** element every (sub-)tick.

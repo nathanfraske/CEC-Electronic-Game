@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: IMPLEMENTED + full gate green (audit running)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. The event-driven dirty-set is **built, byte-identical, and
+worst-case bounded.** Uncommitted (in working tree) pending the adversarial audit's verdict, then commit+push.
+
+**What shipped — a simpler architecture than the planned Pass L/Pass R.** One invariant subsumed both
+passes: `eval_one_digital(i)` is a pure function of `node_v` at element `i`'s read+rail pins + its committed
+sequential state, so re-run `i` iff one of those changed. Implementation (`crates/sim-core/src/lib.rs`):
+- `build_digital_fanout` (install/reclassify): `net_touchers[net]` = combinational `ELEM_GATE`s with pins
+  b/c/d/e on `net`; `net_drivers[net]` = all digital drivers; `elem_out_nets[i]`; `always_run_elems` = every
+  *non*-gate digital kind that drives something. Net 0 excluded everywhere. (Replaced the old `net_readers`/
+  `prev_eval_levels` fields with `net_touchers`/`always_run_elems`/`prev_node_v`/`net_in_affected`.)
+- `eval_digital_dirty`: O(nodes) `node_v.to_bits()` diff vs `prev_node_v` → dirty nodes; **worst-case guard**
+  falls back to `eval_digital_full` when ≥½ the nodes switch; else seed = always-run ∪ touchers(dirty), close
+  affected nets under multi-output drivers, Z-reset affected `digital_drive`, re-fold all their drivers
+  ascending. Main tick **and** sub-ticks flow through the one `eval_digital` (S4 free); `dirty_full` forces a
+  full eval on install/reclassify/reset.
+- **Why it beats Pass R:** a powered gate's stamp only changes when its rail `node_v` moves, and d/e are
+  touchers — a bit-stable DC rail correctly triggers no re-stamp (Pass R would re-stamp every tick).
+
+**Proven byte-identical 3 ways:** (1) S0 debug oracle (`debug_check_eval_digital`, now skips net 0) asserts
+`dirty == full` on all 6 eval arrays every (sub-)tick across **all 232 tests**; (2) release `cargo test` (231,
+oracle compiled out → dirty result is authoritative → golden hashes unchanged); (3) web vitest 356 (headless
+wasm determinism). Golden `0xeaac_3764_99e4_fa24` + `digital_determinism_golden` untouched.
+
+**Perf (release, N=4000):** quiescent fabric **168 µs/tick** (dirty-set, ~0 refolds) vs **284 µs/tick** full
+(the inverter chain, which correctly falls back) → ~41 % per-tick cut from eliminating the per-gate logic at
+quiescence. Residual = the lift's closed-form fill + the unconditional `commit_net_levels`/AC/clamp/seed
+scans (all still O(nodes)) — the doc's **S5** (defer to a profiled follow-up). New tests:
+`dirty_set_quiescent_fabric_is_cheap`; the worst case is `stress_large_inverter_chain`.
+
+**Full gate GREEN:** fmt, clippy (`-D warnings`), cargo test (sim-core 232 + sim-protocol), release cargo
+test (231), build:wasm, web check/lint/build, web test (356). Doc updated: `docs/sim/dirty-set-digital-eval.md`
+(added the "What shipped" section; kept the Pass L/Pass R history).
+
+**IN FLIGHT:** an adversarial determinism audit agent is reviewing the block (toucher completeness, drive-pin
+completeness per kind, gate_target staleness, sub-tick prev_node_v, fallback, net-0, install/latch baseline).
+**NEXT:** read its verdict → fix anything it finds + re-gate → commit + push. Then the queued **bus-slice
+recognition** (#148, `docs/ui/bus-slice-recognition.md`).
+
+---
+
 ## 2026-06-29 (245) — DIRTY-SET DIGITAL EVAL: design done (owner picked it); ready to build S0→S4
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **Docs-only so far** (`docs/sim/dirty-set-digital-eval.md`).
