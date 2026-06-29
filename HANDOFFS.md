@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (244) — DIGITAL-MATRIX LIFT FOLLOW-UP: direct compacted assembly (71× on a 4000-gate chain)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **sim-core**, **proven byte-identical** (golden + 4-circuit
+digital golden unchanged; dual-assembly oracle green on all 231 tests). Owner greenlit "proceed (safe path)"
+after a 26-agent panel + asked to stress-test it. Not yet committed — full gate (web) running.
+
+**What landed — the residual `O(n²)` is gone.** Stage A (242/243) removed the `O(n³)` factorisation but
+still *allocated + zeroed + assembled* the full `n×n` matrix each tick (then extracted). This assembles
+straight into the compacted `m×m` system: `solve_into_readout` calls a new shared
+`assemble_linear(rows, branch_off, dim)` with the compacted `solve_row` map (a pure-digital node's
+`solve_row` is `usize::MAX` → `row_of` returns `None` → never written), solves `m×m`, and **expands** the
+result to full width (kept rows from the sub-solve, digital from the closed form, branches re-offset by
+`n_dig`) so all scatter/readout is unchanged. OP + Newton paths pass the identity `full_row` to the same 5
+parameterized helpers → byte-identical. `row_maps`/`solve_row`/`full_row` computed at install + `set_memory_ports`.
+
+**Panel-driven safe path (the panel said GO-but-DEFER; owner overrode to proceed):**
+- Pre-fixed the latent GMIN×digital-diagonal false-panic (committed `6a0843d`) — the follow-up would have
+  inherited it.
+- **Debug-only dual-assembly oracle** (the panel's linchpin): `solve_into_readout` also assembles the FULL
+  system via `assemble_linear(full_row, 0, n)`, runs it through `solve_dense_lift_digital` (whose own shadow
+  solve proves it == a full factorisation), and asserts the compacted result matches **bit-for-bit every
+  step**. Green across the suite → byte-identity is a proven runtime fact, not the 4-hash golden alone.
+- **Stress test** `stress_large_inverter_chain` (N=150 debug w/ oracle proof; N=4000 release for perf):
+  **16,784 µs/tick → 237 µs/tick (~71×)**. Cost is now the irreducible `O(gates)` digital eval → scales
+  **linearly** in gate count, not quadratically. This IS the multi-thousand-node circuit the panel wanted.
+
+**NEXT:** commit + push once the web gate is green. **Stage B** (Z/X as propagating levels — the only
+deliberate golden regen) still optional. The whole digital-matrix-lift arc (242–244) awaits a PR (owner asked
+to PR/merge the prior batch; ask before opening this one).
+
+---
+
 ## 2026-06-29 (243) — DIGITAL-MATRIX LIFT IMPLEMENTED (Stage A): pure-digital nets leave the dense solve
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **sim-core**, **golden byte-identical** (proven, see below).

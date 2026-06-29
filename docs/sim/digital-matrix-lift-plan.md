@@ -2,13 +2,29 @@
 
 # The biggest engine win: lift pure-digital nets out of the dense MNA matrix
 
-Status: **Stage A0 + A (the lift) IMPLEMENTED and proven byte-identical; the residual
-`O(n²)` assembly is a noted follow-up.** Drafted in answer to "what is the biggest thing we
-can do for the engine, and how do we tackle it." This note names the win, inventories the
-(large) scaffolding already in place, scopes the structural step, and proves it lands
-**golden-byte-identical**. It is the natural culmination of ADR 0004 (the protocol/behavioral
-engine) and `docs/ui/logic-analog-digital-nets.md` (§6–§7), and the gate to the project's
-stated endgame: **sand → CPU → DOOM** — a *gate-level* digital design running in the browser.
+Status: **Stage A (the lift) + the direct-compacted-assembly follow-up IMPLEMENTED, proven
+byte-identical, and measured (71× on a 4000-gate chain).** Drafted in answer to "what is the
+biggest thing we can do for the engine, and how do we tackle it." This note names the win,
+inventories the (large) scaffolding already in place, scopes the structural step, and proves it
+lands **golden-byte-identical**. It is the natural culmination of ADR 0004 (the
+protocol/behavioral engine) and `docs/ui/logic-analog-digital-nets.md` (§6–§7), and the gate to
+the project's stated endgame: **sand → CPU → DOOM** — a *gate-level* digital design in the browser.
+
+> **Follow-up landed (2026-06-29): direct compacted assembly.** Stage A removed the `O(n³)`
+> factorisation; this removes the residual `O(n²)` — the full `n×n` matrix that was still
+> *allocated, zeroed, and assembled* every tick before the digital rows were extracted.
+> `Sim::solve_into_readout` now calls a shared `assemble_linear(rows, branch_off, dim)` with the
+> compacted `solve_row` map, building straight into the `m×m` analog+boundary+branch system (a
+> pure-digital node's row is `usize::MAX`, so it is simply never written), solving that, and
+> **expanding** the result back to a full-width `x` (kept rows from the sub-solve, digital rows
+> from the closed form, branches re-offset) so all downstream scatter/readout is unchanged. The
+> operating-point and Newton paths pass the identity `full_row` to the same helpers → byte-identical.
+> **Proof:** a **debug-only dual-assembly oracle** assembles the full system the original way and
+> asserts the compacted result matches it bit-for-bit every step — green across all 231 tests, with
+> the golden `0xeaac…` and the 4-circuit digital golden unchanged. **Measured** on a 4000-inverter
+> chain (`stress_large_inverter_chain`, release): **16.8 ms/tick → 237 µs/tick (~71×)**; the cost is
+> now the irreducible `O(gates)` digital evaluation, so it scales **linearly** in gate count, not
+> quadratically — the complexity a gate-level CPU needs. Stage B (Z/X propagation) remains optional.
 
 > **Implemented (2026-06-29).** Stage A landed as a **submatrix-extraction wrapper**
 > (`Sim::solve_dense_lift_digital`, `crates/sim-core/src/lib.rs`) rather than a from-scratch

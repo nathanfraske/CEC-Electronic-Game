@@ -2272,6 +2272,41 @@ fn classify_nets(
         .collect()
 }
 
+/// Build the two node→row maps the linear transient assembly uses (digital-matrix-lift follow-up).
+/// `solve_row` is the **compacted** map: each kept (analog/boundary, non-ground) node gets the next
+/// ascending row in the shrunk `m×m` system; ground and every pure-`Digital` node map to
+/// `usize::MAX` (absent from the matrix — filled from the closed form). `full_row` is the **identity**
+/// map (`node − 1`, ground = `usize::MAX`) the non-compacted paths and the debug oracle use to
+/// reproduce `Sim::node_idx` exactly. Deterministic, ascending; no hashed order. With no pure-digital
+/// net the compacted map equals the identity, so the shrunk system is the full one (golden-safe).
+fn row_maps(net_classes: &[NetClass], node_count: usize) -> (Vec<usize>, Vec<usize>) {
+    let mut solve_row = vec![usize::MAX; node_count];
+    let mut full_row = vec![usize::MAX; node_count];
+    let mut keep = 0usize;
+    for node in 1..node_count {
+        full_row[node] = node - 1;
+        if net_classes[node] != NetClass::Digital {
+            solve_row[node] = keep;
+            keep += 1;
+        }
+    }
+    (solve_row, full_row)
+}
+
+/// A node's row in a (possibly compacted) MNA system via a row map (`row_maps`): `None` for ground
+/// or a lifted pure-digital net (`usize::MAX`), else its row. The shared analog stamping helpers use
+/// this so one assembly codepath serves both the full operating-point/Newton systems and the
+/// compacted linear-transient system, differing only by which map is passed.
+#[inline]
+fn row_of(rows: &[usize], node: usize) -> Option<usize> {
+    let r = rows[node];
+    if r == usize::MAX {
+        None
+    } else {
+        Some(r)
+    }
+}
+
 /// Union-find `find` with path halving over the `parent` table. The table is kept
 /// **union-by-min** by [`floating_refs`], so the returned root is always the
 /// lowest node index in `x`'s connected component — a deterministic, stable choice.
@@ -3656,6 +3691,21 @@ pub struct Sim {
     /// diagonal solve, the lift is byte-identical and the analog golden is untouched.
     /// See `docs/adr/0004-protocol-engine.md` (phase-3 amendment).
     pub(crate) digital_rows: Vec<usize>,
+    /// **Compacted** node→row map for the direct-compacted linear transient assembly
+    /// (`docs/sim/digital-matrix-lift-plan.md`, the follow-up). `solve_row[node]` is the row a kept
+    /// (analog/boundary, non-ground) node occupies in the *shrunk* `m×m` system, assigned in
+    /// ascending node order; ground and every pure-`Digital` node map to `usize::MAX` (not in the
+    /// matrix — digital nets are filled from the closed form). Length `node_count`; computed at
+    /// install from `net_classes`. The compacted branch unknowns sit at `branch_index[i] −
+    /// n_digital` (`n_digital = digital_rows.len()`), and the compacted dimension is `dim −
+    /// n_digital`. When there are no pure-digital nets this is the identity (`node−1`) and the
+    /// compacted system equals the full one, so pure-analog circuits and the golden are unchanged.
+    solve_row: Vec<usize>,
+    /// **Full** node→row identity map (`full_row[0] = usize::MAX`, else `node − 1`), length
+    /// `node_count`. The non-compacted assembly paths (operating point, Newton) and the linear
+    /// path's debug dual-assembly oracle pass this to the shared stamping helpers so they reproduce
+    /// the original `Self::node_idx` mapping exactly — byte-identical to before the follow-up.
+    full_row: Vec<usize>,
     /// The **global digital sub-tick rate** `S = max over elements of their declared rate`
     /// ([`beh_subtick_rate`]), computed once at install (ADR 0004 phase-3, step 3b). `S = 1` for
     /// every circuit with no declared fast rate (i.e. every circuit that existed before sub-ticking
@@ -3924,6 +3974,8 @@ impl Sim {
             magnetic_coupling: Vec::new(),
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
+            solve_row: vec![usize::MAX],
+            full_row: vec![usize::MAX],
             subtick_rate: 1,
             floating_refs: Vec::new(),
             node_v: vec![0.0],
@@ -4295,6 +4347,9 @@ impl Sim {
         self.has_thermal = has_thermal;
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
+        let (solve_row, full_row) = row_maps(&self.net_classes, node_count);
+        self.solve_row = solve_row;
+        self.full_row = full_row;
         // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
         // Structural — read once here from the declared params, never from a solved value. `S = 1`
         // (no element declares a fast rate) ⇒ the `S > 1` branch in `step()` is skipped, so the run
@@ -4631,9 +4686,12 @@ impl Sim {
     /// node is `>= 1` (ground is never floating), so its MNA row `node - 1` is always a
     /// valid node-voltage index `< n`. See `docs/sim/floating-networks.md`.
     #[inline]
-    fn stamp_floating_refs(&self, mat: &mut [f64], n: usize) {
+    fn stamp_floating_refs(&self, mat: &mut [f64], n: usize, rows: &[usize]) {
         for &node in &self.floating_refs {
-            let r = node - 1;
+            let r = rows[node];
+            if r == usize::MAX {
+                continue; // ground, or a lifted pure-digital net — absent from this matrix
+            }
             mat[r * n + r] += GMIN;
         }
     }
@@ -4651,7 +4709,7 @@ impl Sim {
     /// pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact. Called ONLY from the
     /// transient solves (the operating point stays clean) and ONLY when [`Sim::has_noise`], so a noiseless
     /// circuit — and the golden — never reaches this code. The signed sample makes the sign irrelevant.
-    fn add_noise_currents(&self, rhs: &mut [f64]) {
+    fn add_noise_currents(&self, rhs: &mut [f64], rows: &[usize]) {
         for (i, e) in self.elements.iter().enumerate() {
             let base = e.params[NOISE_SLOT];
             if base == 0.0 {
@@ -4663,11 +4721,12 @@ impl Sim {
                 base
             };
             let i_n = amp * noise_sample(i, self.tick);
-            if let Some(r) = Self::node_idx(e.a) {
-                rhs[r] -= i_n;
+            let (ra, rb) = (rows[e.a], rows[e.b]);
+            if ra != usize::MAX {
+                rhs[ra] -= i_n;
             }
-            if let Some(r) = Self::node_idx(e.b) {
-                rhs[r] += i_n;
+            if rb != usize::MAX {
+                rhs[rb] += i_n;
             }
         }
     }
@@ -4955,9 +5014,9 @@ impl Sim {
         }
         // Digital gates and flip-flops drive their nets through the resolved digital
         // domain (one stamp per net), not per element.
-        self.stamp_digital(&mut mat, &mut rhs, n);
+        self.stamp_digital(&mut mat, &mut rhs, n, &self.full_row);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
-        self.stamp_floating_refs(&mut mat, n);
+        self.stamp_floating_refs(&mut mat, n, &self.full_row);
         // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
         // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
         Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
@@ -5021,6 +5080,147 @@ impl Sim {
         }
     }
 
+    /// Assemble the **linear transient** MNA system into a `dim×dim` matrix using a node→row map
+    /// (`row_maps`) and a branch offset, so ONE assembly codepath serves two layouts. With
+    /// `rows = full_row, branch_off = 0, dim = self.dim` it is the original full assembly,
+    /// **byte-identical** to before this refactor. With `rows = solve_row, branch_off = n_digital,
+    /// dim = self.dim − n_digital` it assembles the **compacted** system directly: a pure-digital
+    /// node's `rows[node]` is `usize::MAX`, so `row_of` returns `None` and nothing is ever written
+    /// for it — no `n×n` matrix is allocated for a gate-heavy circuit (the residual `O(n²)` the
+    /// lift left). The shared stamping helpers take the same `rows`/`branch_off`.
+    fn assemble_linear(
+        &self,
+        rows: &[usize],
+        branch_off: usize,
+        dim: usize,
+    ) -> (Vec<f64>, Vec<f64>) {
+        let mut mat = vec![0.0f64; dim * dim];
+        let mut rhs = vec![0.0f64; dim];
+        for (i, e) in self.elements.iter().enumerate() {
+            let ia = row_of(rows, e.a);
+            let ib = row_of(rows, e.b);
+            match e.kind {
+                ELEM_RESISTOR => {
+                    // Skip a zero/negative resistance deterministically (treat as open).
+                    if e.value <= 0.0 {
+                        continue;
+                    }
+                    let g = 1.0 / self.resistor_r_eff(e, i);
+                    if let Some(r) = ia {
+                        mat[r * dim + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        mat[r * dim + c] -= g;
+                        mat[c * dim + r] -= g;
+                    }
+                }
+                ELEM_SWITCH | ELEM_ASWITCH => {
+                    // Clock / node-gated switch: a symmetric conductance, stamped like a resistor.
+                    let g = if e.kind == ELEM_ASWITCH {
+                        self.aswitch_conductance(e)
+                    } else {
+                        self.switch_conductance(e)
+                    };
+                    if let Some(r) = ia {
+                        mat[r * dim + r] += g;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + r] += g;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        mat[r * dim + c] -= g;
+                        mat[c * dim + r] -= g;
+                    }
+                }
+                ELEM_CAPACITOR => {
+                    // Backward-Euler companion g = C/dt + history; a Real-mode leak adds C/tau.
+                    let g = e.value / DT;
+                    let ieq = g * self.reactive_state[i];
+                    let gm = g + cap_leak_g(e);
+                    if let Some(r) = ia {
+                        mat[r * dim + r] += gm;
+                        rhs[r] += ieq;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + r] += gm;
+                        rhs[r] -= ieq;
+                    }
+                    if let (Some(r), Some(c)) = (ia, ib) {
+                        mat[r * dim + c] -= gm;
+                        mat[c * dim + r] -= gm;
+                    }
+                }
+                ELEM_VSOURCE => {
+                    let bi = self.branch_index[i] - branch_off;
+                    if let Some(r) = ia {
+                        mat[r * dim + bi] += 1.0;
+                        mat[bi * dim + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + bi] -= 1.0;
+                        mat[bi * dim + r] -= 1.0;
+                    }
+                    rhs[bi] += e.value;
+                }
+                ELEM_ACSOURCE => {
+                    let bi = self.branch_index[i] - branch_off;
+                    if let Some(r) = ia {
+                        mat[r * dim + bi] += 1.0;
+                        mat[bi * dim + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + bi] -= 1.0;
+                        mat[bi * dim + r] -= 1.0;
+                    }
+                    rhs[bi] += self.ac_source_emf(e);
+                }
+                ELEM_INDUCTOR => {
+                    let bi = self.branch_index[i] - branch_off;
+                    let r_l = e.value / DT;
+                    if let Some(r) = ia {
+                        mat[r * dim + bi] += 1.0;
+                        mat[bi * dim + r] += 1.0;
+                    }
+                    if let Some(r) = ib {
+                        mat[r * dim + bi] -= 1.0;
+                        mat[bi * dim + r] -= 1.0;
+                    }
+                    mat[bi * dim + bi] -= r_l;
+                    rhs[bi] -= r_l * self.reactive_state[i];
+                }
+                ELEM_TRANSFORMER => {
+                    self.stamp_transformer(&mut mat, &mut rhs, dim, e, i, rows, branch_off);
+                }
+                ELEM_ISOURCE => {
+                    let i = self.i_source_current(e);
+                    if let Some(r) = ia {
+                        rhs[r] -= i;
+                    }
+                    if let Some(r) = ib {
+                        rhs[r] += i;
+                    }
+                }
+                ELEM_PULLUP => {
+                    if let Some(r) = ia {
+                        mat[r * dim + r] += 1.0 / PULLUP_R;
+                        rhs[r] += e.value / PULLUP_R;
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.stamp_mutual_inductance(&mut mat, &mut rhs, dim, branch_off);
+        self.stamp_digital(&mut mat, &mut rhs, dim, rows);
+        self.stamp_floating_refs(&mut mat, dim, rows);
+        if self.has_noise {
+            self.add_noise_currents(&mut rhs, rows);
+        }
+        (mat, rhs)
+    }
+
     /// Assemble the MNA system for the current reactive state, solve it, and
     /// write the resulting node voltages into `self.node_v`. Returns the solved
     /// unknown vector `x` (node voltages followed by branch currents) so the
@@ -5044,166 +5244,54 @@ impl Sim {
             return Vec::new();
         }
 
-        let mut mat = vec![0.0f64; n * n];
-        let mut rhs = vec![0.0f64; n];
+        // Direct-compacted assembly (digital-matrix-lift follow-up): assemble straight into the
+        // `m×m` analog+boundary+branch system — the pure-digital rows/cols are never written — and
+        // solve that, instead of allocating the full `n×n` matrix and extracting. `m == n` when
+        // there is no pure-digital net, so a pure-analog circuit (and the golden) is unchanged.
+        let n_dig = self.digital_rows.len();
+        let m = n - n_dig;
+        let (mat_c, rhs_c) = self.assemble_linear(&self.solve_row, n_dig, m);
+        let xs = if m > 0 {
+            solve_dense(mat_c, rhs_c, m)
+        } else {
+            Vec::new()
+        };
+        // Expand the compacted solution to the full-width `x` the caller expects: kept node rows
+        // from `xs`, pure-digital rows from the closed form, branch rows re-offset by `n_dig`.
+        let mut x = vec![0.0f64; n];
+        for node in 1..self.node_count {
+            let r = self.solve_row[node];
+            x[node - 1] = if r == usize::MAX {
+                self.digital_net_solved_voltage(node)
+            } else {
+                xs[r]
+            };
+        }
+        // Branch unknowns: full rows `[node_count-1, n)` map to compacted `[n_keep, m)` (subtract
+        // `n_dig`); the kept-node count `n_keep = node_count-1 - n_dig`.
+        let kb = self.node_count - 1;
+        x[kb..n].copy_from_slice(&xs[(kb - n_dig)..m]);
 
-        for (i, e) in self.elements.iter().enumerate() {
-            let ia = Self::node_idx(e.a);
-            let ib = Self::node_idx(e.b);
-            match e.kind {
-                ELEM_RESISTOR => {
-                    // Guard a zero/negative resistance deterministically: skip
-                    // the stamp (treat as open) rather than dividing by zero.
-                    if e.value <= 0.0 {
-                        continue;
-                    }
-                    let g = 1.0 / self.resistor_r_eff(e, i);
-                    if let Some(r) = ia {
-                        mat[r * n + r] += g;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + r] += g;
-                    }
-                    if let (Some(r), Some(c)) = (ia, ib) {
-                        mat[r * n + c] -= g;
-                        mat[c * n + r] -= g;
-                    }
-                }
-                ELEM_SWITCH | ELEM_ASWITCH => {
-                    // Clock-driven switch (a time-varying conductance, a pure function of
-                    // the current tick) or node-gated analog switch (its conductance from
-                    // the control node's committed previous-tick voltage). Either way a
-                    // symmetric conductance stamped exactly like a resistor — no branch
-                    // unknown, no reactive state.
-                    let g = if e.kind == ELEM_ASWITCH {
-                        self.aswitch_conductance(e)
-                    } else {
-                        self.switch_conductance(e)
-                    };
-                    if let Some(r) = ia {
-                        mat[r * n + r] += g;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + r] += g;
-                    }
-                    if let (Some(r), Some(c)) = (ia, ib) {
-                        mat[r * n + c] -= g;
-                        mat[c * n + r] -= g;
-                    }
-                }
-                ELEM_CAPACITOR => {
-                    // Backward-Euler companion: conductance g = C/dt with a
-                    // history current source ieq = g * (V(a)-V(b))_prev. A Real-mode leak adds a
-                    // parallel conductance (C/tau, no history) so the cap slowly self-discharges; gm =
-                    // g for an ideal cap (no leak) → byte-identical.
-                    let g = e.value / DT;
-                    let ieq = g * self.reactive_state[i];
-                    let gm = g + cap_leak_g(e);
-                    if let Some(r) = ia {
-                        mat[r * n + r] += gm;
-                        rhs[r] += ieq;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + r] += gm;
-                        rhs[r] -= ieq;
-                    }
-                    if let (Some(r), Some(c)) = (ia, ib) {
-                        mat[r * n + c] -= gm;
-                        mat[c * n + r] -= gm;
-                    }
-                }
-                ELEM_VSOURCE => {
-                    // MNA augmentation: branch current i (oriented a -> b)
-                    // couples into the KCL rows; the branch row enforces
-                    // V(a) - V(b) = value.
-                    let bi = self.branch_index[i];
-                    if let Some(r) = ia {
-                        mat[r * n + bi] += 1.0;
-                        mat[bi * n + r] += 1.0;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + bi] -= 1.0;
-                        mat[bi * n + r] -= 1.0;
-                    }
-                    rhs[bi] += e.value;
-                }
-                ELEM_ACSOURCE => {
-                    // Identical MNA augmentation to a DC source; the only
-                    // difference is the EMF is the tick-determined sine, computed
-                    // once here from the current tick (linear and time-varying).
-                    let bi = self.branch_index[i];
-                    if let Some(r) = ia {
-                        mat[r * n + bi] += 1.0;
-                        mat[bi * n + r] += 1.0;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + bi] -= 1.0;
-                        mat[bi * n + r] -= 1.0;
-                    }
-                    rhs[bi] += self.ac_source_emf(e);
-                }
-                ELEM_INDUCTOR => {
-                    // Backward-Euler companion with a branch current i
-                    // (oriented a -> b): V(a) - V(b) - (L/dt)*i = -(L/dt)*i_prev.
-                    let bi = self.branch_index[i];
-                    let r_l = e.value / DT;
-                    if let Some(r) = ia {
-                        mat[r * n + bi] += 1.0;
-                        mat[bi * n + r] += 1.0;
-                    }
-                    if let Some(r) = ib {
-                        mat[r * n + bi] -= 1.0;
-                        mat[bi * n + r] -= 1.0;
-                    }
-                    mat[bi * n + bi] -= r_l;
-                    rhs[bi] -= r_l * self.reactive_state[i];
-                }
-                ELEM_TRANSFORMER => {
-                    // Ideal-T model: magnetising-inductor companion (Im) + a hard
-                    // forced secondary differential (Is), n·Is reflected to the primary.
-                    self.stamp_transformer(&mut mat, &mut rhs, n, e, i);
-                }
-                ELEM_ISOURCE => {
-                    // Ideal current source injecting `i` a -> b: current leaves a
-                    // (rhs[a] -= i) and enters b (rhs[b] += i). No branch unknown and no
-                    // history term — a pure KCL stamp. `i` is the programmable load
-                    // current (constant `value`, or a stepped excursion when dynamic).
-                    let i = self.i_source_current(e);
-                    if let Some(r) = ia {
-                        rhs[r] -= i;
-                    }
-                    if let Some(r) = ib {
-                        rhs[r] += i;
-                    }
-                }
-                ELEM_PULLUP => {
-                    // Pull node a toward Vcc (value) through PULLUP_R (constant Thevenin).
-                    if let Some(r) = ia {
-                        mat[r * n + r] += 1.0 / PULLUP_R;
-                        rhs[r] += e.value / PULLUP_R;
-                    }
-                }
-                _ => {}
+        // Debug-only PROOF (the dual-assembly oracle): assemble the FULL system the original way
+        // (`full_row`, no offset) and run it through `solve_dense_lift_digital` (whose own shadow
+        // solve already proves it equals a full factorisation), then assert the directly-compacted
+        // result matches it bit-for-bit. If a single stamp were mis-indexed this fires loudly here,
+        // across every circuit the suite exercises, instead of silently moving a hash. Compiled out
+        // of release/wasm.
+        #[cfg(debug_assertions)]
+        {
+            let (mat_f, rhs_f) = self.assemble_linear(&self.full_row, 0, n);
+            Self::debug_assert_digital_block_diagonal(&mat_f, n, &self.digital_rows);
+            let x_f = self.solve_dense_lift_digital(mat_f, rhs_f, n);
+            for (r, (xr, fr)) in x.iter().zip(x_f.iter()).enumerate() {
+                debug_assert_eq!(
+                    xr.to_bits(),
+                    fr.to_bits(),
+                    "direct-compacted assembly diverged from the full system at row {r}: \
+                     compacted={xr:e} full={fr:e}"
+                );
             }
         }
-        // Mutual inductance (transient only): couple inductors that share flux — a primary coil drives a
-        // secondary (transformer action). Inert unless a magnetic-coupling map was installed, so an
-        // uncoupled circuit / the golden is byte-identical.
-        self.stamp_mutual_inductance(&mut mat, &mut rhs, n);
-        // Digital gates/flip-flops drive their nets through the resolved digital domain.
-        self.stamp_digital(&mut mat, &mut rhs, n);
-        // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
-        self.stamp_floating_refs(&mut mat, n);
-        // Thermal-noise current injection (transient only — the OP stays clean). Skipped entirely unless
-        // a noisy element was installed, so a noiseless circuit / the golden is byte-identical.
-        if self.has_noise {
-            self.add_noise_currents(&mut rhs);
-        }
-        // Debug-only: the pure-digital block must be diagonal (the sub-tick partition
-        // invariant, ADR 0004 step 3a). Matrix is fully assembled here; nothing is moved.
-        Self::debug_assert_digital_block_diagonal(&mat, n, &self.digital_rows);
-
-        let x = self.solve_dense_lift_digital(mat, rhs, n);
 
         // Scatter node voltages back; ground stays 0. They occupy the first
         // `node_count - 1` unknowns; branch currents follow.
@@ -6049,10 +6137,10 @@ impl Sim {
             }
         }
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
-        self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        self.stamp_digital(&mut base_mat, &mut base_rhs, n, &self.full_row);
         // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
         // base (copied into every iteration's matrix); a no-op when fully grounded.
-        self.stamp_floating_refs(&mut base_mat, n);
+        self.stamp_floating_refs(&mut base_mat, n, &self.full_row);
 
         // Operating point is a DC steady state: pass inv_dt = 0 so the diode reverse-recovery
         // charge companion contributes nothing (dq/dt = 0), leaving the DC solve unchanged.
@@ -6254,7 +6342,15 @@ impl Sim {
                 ELEM_TRANSFORMER => {
                     // Ideal-T companion into the fixed linear base (constant across the
                     // Newton loop, like any inductor).
-                    self.stamp_transformer(&mut base_mat, &mut base_rhs, n, e, i);
+                    self.stamp_transformer(
+                        &mut base_mat,
+                        &mut base_rhs,
+                        n,
+                        e,
+                        i,
+                        &self.full_row,
+                        0,
+                    );
                 }
                 ELEM_ISOURCE => {
                     let i = self.i_source_current(e);
@@ -6307,17 +6403,17 @@ impl Sim {
         // Mutual inductance into the fixed Newton base (constant across iterations, like every inductor
         // companion): couple flux-sharing inductors so a primary coil drives a secondary. Inert without a
         // magnetic-coupling map, so an uncoupled circuit / the golden is byte-identical.
-        self.stamp_mutual_inductance(&mut base_mat, &mut base_rhs, n);
+        self.stamp_mutual_inductance(&mut base_mat, &mut base_rhs, n, 0);
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
-        self.stamp_digital(&mut base_mat, &mut base_rhs, n);
+        self.stamp_digital(&mut base_mat, &mut base_rhs, n, &self.full_row);
         // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
         // base (copied into every iteration's matrix); a no-op when fully grounded.
-        self.stamp_floating_refs(&mut base_mat, n);
+        self.stamp_floating_refs(&mut base_mat, n, &self.full_row);
         // Thermal-noise current into the fixed Newton base RHS (constant across iterations; independent
         // of the unknowns). Transient only — the OP base stays clean — and skipped unless a noisy element
         // was installed, so a noiseless circuit / the golden is byte-identical.
         if self.has_noise {
-            self.add_noise_currents(&mut base_rhs);
+            self.add_noise_currents(&mut base_rhs, &self.full_row);
         }
 
         // Transient step: inv_dt = 1/DT engages the diode reverse-recovery charge companion.
@@ -6441,6 +6537,7 @@ impl Sim {
     /// carries reactive memory (from `reactive_state`); `Is` is algebraic. A `GMIN`
     /// floor on every terminal keeps a winding that lacks its own ground reference (an
     /// isolated secondary) non-singular without materially loading a referenced one.
+    #[allow(clippy::too_many_arguments)] // mat/rhs/dim/e/i + the (rows, branch_off) row-map pair
     fn stamp_transformer(
         &self,
         mat: &mut [f64],
@@ -6448,6 +6545,8 @@ impl Sim {
         dim: usize,
         e: &Element,
         i: usize,
+        rows: &[usize],
+        branch_off: usize,
     ) {
         // Ideal-transformer "T" model (docs/sim/transformer-bridge-convergence.md §6):
         // a magnetising inductance L1 (with primary winding resistance Rp) across the
@@ -6463,17 +6562,17 @@ impl Sim {
         // entirely. Two branch unknowns: Im (magnetiser, a→b) and Is (secondary, c→d);
         // only Im carries reactive memory.
         let n = e.value;
-        let bi_m = self.branch_index[i]; // magnetising current Im (a -> b)
+        let bi_m = self.branch_index[i] - branch_off; // magnetising current Im (a -> b)
         let bi_s = bi_m + 1; // secondary current Is (c -> d)
         let g_mag = TRANSFORMER_L1 / DT; // backward-Euler companion of the magnetiser
         let g_leak = TRANSFORMER_LLEAK / DT; // backward-Euler companion of the secondary leakage
         let rp = TRANSFORMER_RWIND;
         let im_prev = self.reactive_state[i];
         let is_prev = self.secondary_state[i];
-        let ia = Self::node_idx(e.a);
-        let ib = Self::node_idx(e.b);
-        let ic = Self::node_idx(e.c);
-        let id = Self::node_idx(e.d);
+        let ia = row_of(rows, e.a);
+        let ib = row_of(rows, e.b);
+        let ic = row_of(rows, e.c);
+        let id = row_of(rows, e.d);
         // KCL: the primary draws Im + n·Is (a -> b); the secondary carries Is (c -> d).
         if let Some(r) = ia {
             mat[r * dim + bi_m] += 1.0;
@@ -7003,7 +7102,8 @@ impl Sim {
     /// `eval_digital`, so two outputs on a net resolve (wired-AND/conflict→X) instead of
     /// fighting in the matrix. The stamp is constant within the solve, so a gate/FF-only
     /// circuit stays on the linear fast path — no Newton, no branch unknown.
-    fn stamp_digital(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize) {
+    #[allow(clippy::needless_range_loop)] // `node` indexes net_classes + rows + drives the thevenin
+    fn stamp_digital(&self, mat: &mut [f64], rhs: &mut [f64], dim: usize, rows: &[usize]) {
         for node in 1..self.node_count {
             if !matches!(
                 self.net_classes[node],
@@ -7011,7 +7111,10 @@ impl Sim {
             ) {
                 continue;
             }
-            let r = node - 1; // node n -> MNA row n-1 (ground excluded)
+            let r = rows[node];
+            if r == usize::MAX {
+                continue; // a lifted pure-digital net — filled from the closed form, not stamped
+            }
             mat[r * dim + r] += GMIN;
             if let Some((vt, g)) = self.digital_net_thevenin(node) {
                 // `vt` is the absolute Thévenin target (the family rail fraction already offset
@@ -7975,7 +8078,13 @@ impl Sim {
     /// Inert (returns immediately) with no magnetic coupling, so every uncoupled circuit / the golden is
     /// byte-identical. Only the **transient** paths call it; the operating point holds inductors as DC
     /// current sources (`di/dt = 0`, so mutual inductance contributes nothing there).
-    fn stamp_mutual_inductance(&self, mat: &mut [f64], rhs: &mut [f64], n: usize) {
+    fn stamp_mutual_inductance(
+        &self,
+        mat: &mut [f64],
+        rhs: &mut [f64],
+        n: usize,
+        branch_off: usize,
+    ) {
         if !self.has_magnetic {
             return;
         }
@@ -7984,12 +8093,15 @@ impl Sim {
                 continue;
             }
             let li = self.elements[i].value;
-            let bi = self.branch_index[i];
+            // Branch unknowns sit at `branch_index − branch_off` in the (possibly compacted) system;
+            // `branch_off = 0` is the full layout. A non-branch element's `usize::MAX` index wraps to
+            // a huge value caught by the `>= n` guard.
+            let bi = self.branch_index[i].wrapping_sub(branch_off);
             if bi >= n {
                 continue;
             }
             for &(j, c) in &self.magnetic_coupling[i] {
-                let bj = self.branch_index[j];
+                let bj = self.branch_index[j].wrapping_sub(branch_off);
                 if bj >= n {
                     continue;
                 }
@@ -8627,6 +8739,9 @@ impl Sim {
             .collect();
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
+        let (solve_row, full_row) = row_maps(&self.net_classes, self.node_count);
+        self.solve_row = solve_row;
+        self.full_row = full_row;
         self.solve_operating_point();
         self.commit_net_levels();
     }

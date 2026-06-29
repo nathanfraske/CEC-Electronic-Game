@@ -17,8 +17,12 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   from the closed form, returns a full-width `x` (all scatter/readout unchanged). A **debug-only shadow solve**
   inside the wrapper asserts lifted == full bit-for-bit every step → byte-identity proven across 229 tests.
   Tests: `digital_matrix_lift_is_exercised_and_reproducible`, `digital_matrix_lift_all_digital_ring_…`.
-- [ ] **Follow-up:** assemble DIRECTLY into the compacted system to also drop the residual `O(n²)` matrix
-  alloc/assemble/extract (true plan §5-A2). The `O(n³)` factorisation wall is already gone.
+- ~~**Follow-up: direct compacted assembly**~~ DONE (244, sim-core, **proven byte-identical**). `solve_into_
+  readout` assembles straight into the `m×m` system via `assemble_linear(rows, branch_off, dim)` + the
+  compacted `solve_row` map, then expands to full width. A **debug dual-assembly oracle** (panel's linchpin)
+  asserts compacted == full bit-for-bit every step (green, 231 tests). Stress: `stress_large_inverter_chain`
+  N=4000 **16.8 ms → 237 µs/tick (~71×)**; now `O(gates)` linear, not `O(n²)`. Pre-fixed a latent GMIN×digital
+  false-panic (`6a0843d`) the panel surfaced.
 - [ ] **Stage B (optional):** commit the raw `combine` level → `Z`/`X` as first-class propagating levels (the
   one deliberate golden regen). Schedule when a lesson needs a visible high-Z bus / `X`.
 
