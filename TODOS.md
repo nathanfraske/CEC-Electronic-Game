@@ -10,8 +10,18 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to fix, not yet started.**
 
-- [ ] **Thermal overlay clips + doesn't follow the traces.** Under the thermal lens the heat field is a
-  rounded-rect blob that gets cut off at its edges and doesn't track the rectangular trace loop. **Root
+- ~~**Thermal overlay clips + doesn't follow the traces.**~~ FIXED (`1d9a78c`): bbox now unions part
+  worldBoxes + every wire route polyline, so off-box traces stay in the grid; verified live (heat follows
+  the full loop incl. the parts-exterior top run, no edge-clip). Also extended the shoot harness
+  (`__cecView` + `shoot.mjs` `--thermal/--real/--run/--tps`) so the thermal lens is screenshot-able.
+- ~~**Heat invisible at watchable playback speeds (timescale).**~~ FIXED (`6ff75f3`, owner-flagged): the
+  presentational heat advanced by sim-time only (Δticks·DT), so at the slow speeds the player uses it never
+  built (needed ~500K ticks/s). Now `thermalDt = max(simDt, wall-clock floor)` while playing — warms over a
+  few REAL seconds at any slow speed (watchable + realistic τ), fast-forward still ages it, pause freezes
+  it. Golden-safe (web heat never enters the solve/hash). Verified: 12V/150Ω loop → 73 °C at the default
+  500/s in 4.6 ms sim-time.
+- ~~ORIGINAL bug write-up (kept for reference):~~ Under the thermal lens the heat field was a rounded-rect
+  blob that got cut off at its edges and didn't track the rectangular trace loop. **Root
   cause (CONFIRMED in code):** `updateHeatOverlay` (`board.ts:3266-3349`) sizes the field grid + copper
   mask + sprite from the **part-CENTER bbox + only `PITCH*3` margin**, then stretches the `cols×rows`
   sprite over exactly that bbox. But the trace loop routes OUTSIDE that box, and `buildCopperGrid`'s
