@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (235) — THERMAL RUNAWAY: per-tick Tj-in-the-solve (Path 2), NTC runaway / PTC self-limit
+
+- ~~**Thermal runaway — the per-tick Tj-in-the-solve infrastructure + resistor R(T) feedback**~~ DONE
+  (sim-core, **golden byte-identical** by the param-gate; Rust 215, web 337; verified live). `thermal_state`
+  (per-element Tj) advanced each tick from committed P=|V·I| (`thermal_step`), gated on `has_thermal`,
+  folded into `snapshot_hash` per tempco element (zero bytes when none → golden untouched).
+  `resistor_r_eff = value·(1+α·(Tj−25))` clamped, in the 4 transient resistor sites (OP keeps value).
+  `pub element_temperature(i)`. **web:** emit α for NTC (−0.05 → runaway) / PTC (+0.03 → self-limit) Real
+  mode. Tests: `ntc_resistor_thermal_runaway`, `ptc_resistor_self_limits`, `thermal_runaway_run_is_
+  reproducible`, web `thermalRunaway.test.ts` (3). Verified: NTC ran away (R 100→2Ω, OVERHEAT); a 12V MOV
+  overloaded → DESTROYED (clamps 12.4V, vents). MOVs/all dissipating parts already self-heat web-side.
+- [ ] **BJT thermal runaway** (#137, owner: "then BJT"): `Is(T)`/Vbe-tempco on the same Tj infra; emitter
+  ballast tames it. Then: flicker/op-amp noise; fan/spacing levers; MOV joule-rating + thermal spec.
+  Adversarial-review the sim-core runaway change before a #315 PR.
+
+---
+
 ## 2026-06-29 (234) — Refine round 2: thermal heatsink lever + diode shot noise
 
 - ~~**Thermal HEATSINK lever**~~ DONE (web-only, golden-safe; web 334; verified live). `Component.heatsink`

@@ -248,6 +248,21 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   golden are byte-identical); even a 9.1 MΩ budget node's 3.46σ peak stays clear of the logic mid-rail.
   Still: firm up weakly-tied test nodes (the SRAM bit-line is tied through a resistor for this reason). See
   `docs/sim/noise-ideation.md`.
+- **Thermal runaway / per-tick `Tj` in the solve** (`TEMPCO_SLOT` = 7, the first **`Tj`-fed-back-into-the-
+  solve** feature — what the docs called "Path 2"). Unlike the web's presentational `Tj` (glow/vent), this
+  one is **in sim-core**: `thermal_state[i]` is advanced each tick from the committed power `P = |V·I|`
+  (`thermal_step`, gated on a `has_thermal` install flag), and a resistor's effective resistance tracks it
+  — `resistor_r_eff` returns `value·(1 + α·(Tj − T_AMBIENT))` (clamped) for the 4 **transient** stamps
+  (`solve_into_readout`/`_newton`, stamp + current-commit); the OP keeps `value` (`Tj = ambient` there). The
+  tempco `α` ([`TEMPCO_SLOT`]) is emitted Real-mode-only for **NTC** (`α < 0` → R drops with heat → if it
+  dominates the loop, **runaway**: heat ⇒ R↓ ⇒ V²/R↑ ⇒ hotter ⇒ the web boxes/vents it) and **PTC**
+  (`α > 0` → self-limits, the resettable-fuse effect). `Tj` is **folded into `snapshot_hash`** per element
+  with `α ≠ 0`, so a circuit without a tempco — and **the golden** — folds zero bytes ⇒ **byte-identical**
+  (verified). Replay-exact (`Tj` is a pure function of the committed trajectory). `pub fn
+  element_temperature(i)` exposes it. Game-scaled linear α (not the part's full β-model). See
+  `docs/heat-on-the-board-ideation.md` (the runaway update). (Every dissipating kind already self-heats
+  web-side — incl. **MOVs/varistors** [`partHeats` is true for all but sources/ground/meters], so a
+  badly-overloaded MOV overheats + vents; only the **R(T) feedback loop** is the new sim-core piece.)
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

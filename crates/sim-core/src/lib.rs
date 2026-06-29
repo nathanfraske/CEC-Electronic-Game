@@ -2570,6 +2570,43 @@ fn noise_sample(ei: usize, tick: u64) -> f64 {
     (sum - 2.0) * 1.732_050_807_568_877_2
 }
 
+/// Param slot carrying a resistor's **self-heating temperature coefficient `α`** (1/°C) — the seed of
+/// **thermal runaway**. With it set, the resistor's effective resistance tracks its OWN self-heating
+/// junction temperature: `R(T) = value·(1 + α·(Tj − T_AMBIENT))` (clamped, see [`Sim::resistor_r_eff`]),
+/// where `Tj` is advanced each tick from the device's dissipated power `P = |V·I|` ([`thermal_step`],
+/// stored in `thermal_state`). A **negative** `α` (an NTC) is unstable into a load: heat ⇒ `R` drops ⇒
+/// current rises ⇒ more heat ⇒ **runaway** (until it crosses `T_MAX` and the web boxes/vents it); a
+/// **positive** `α` (a PTC) is self-limiting (heat ⇒ `R` rises ⇒ current falls — the resettable-fuse
+/// effect). This is the **per-tick `Tj`-in-the-solve** feedback (the web's presentational `Tj` can't do
+/// it replay-safely). `0` (the default, every Ideal-mode / non-thermistor part, and the golden) ⇒ no
+/// feedback: `Tj` never advances, `R = value`, and `thermal_state` folds **zero** bytes into the hash, so
+/// the solve is **byte-identical**. Real-mode only (the web emits `α` for NTC/PTC). **Game-scaled** — the
+/// lesson is the sign/instability, not the exact β-model. In the reserved slot range (≥ 4).
+const TEMPCO_SLOT: usize = 7;
+
+/// Board ambient temperature (°C) — the self-heating `Tj` rests here with no dissipation (mirrors the
+/// web `T_AMBIENT_C`). The thermal-runaway `R(T)` and `Tj` advance are referenced to it.
+const T_AMBIENT: f64 = 25.0;
+/// Lumped junction-to-ambient thermal resistance (°C/W) for the thermal-runaway self-heating — the
+/// resistor spec, mirroring the web `thermal.ts` `R` kind. Game-scaled.
+const THERMAL_THETA: f64 = 80.0;
+/// Lumped thermal mass (J/°C); `τ = θ·Cth`. Mirrors the web resistor spec.
+const THERMAL_CTH: f64 = 0.03;
+/// Clamp band for the temperature-coefficient `R(T)` (× the nominal value), so a runaway's collapsing (or
+/// a PTC's climbing) resistance can never reach `0`/negative or blow the matrix conditioning.
+const R_TEMPCO_MIN: f64 = 0.02;
+const R_TEMPCO_MAX: f64 = 50.0;
+
+/// One tick of the lumped self-heating relaxation: `Tj` relaxes toward `T_AMBIENT + P·θ` on `τ = θ·Cth`,
+/// with the step factor clamped to `≤ 1` (unconditionally stable, no overshoot). Pure `f64` adds/mults
+/// (no transcendentals) → replay-exact and machine-independent. Mirrors the web `stepTemp`.
+fn thermal_step(tj: f64, power: f64) -> f64 {
+    let tau = (THERMAL_THETA * THERMAL_CTH).max(DT);
+    let target = T_AMBIENT + power.max(0.0) * THERMAL_THETA;
+    let a = (DT / tau).min(1.0);
+    tj + (target - tj) * a
+}
+
 /// Param slot carrying an [`ELEM_BEHAVIORAL`] block's **declared digital sub-tick rate `N`** — how
 /// many digital sub-ticks the block runs per analog tick (ADR 0004 phase-3, step 3b). It is a
 /// **structural** divider read from the netlist, never from a solved value (multi-rate ≠ adaptive —
@@ -3533,6 +3570,16 @@ pub struct Sim {
     /// `false` the transient solve never enters the noise path ([`Sim::add_noise_currents`]), so a
     /// noiseless circuit — and the golden — is byte-for-byte the noise-free solve.
     has_noise: bool,
+    /// `true` iff at least one installed element carries a non-zero [`TEMPCO_SLOT`] (thermal-runaway
+    /// feedback). When `false`, `thermal_state` never advances, `R(T) = value`, and zero `thermal_state`
+    /// bytes fold into the hash — a circuit without thermal feedback / the golden is byte-identical.
+    has_thermal: bool,
+    /// Per-element self-heating junction temperature `Tj` (°C), in lockstep with `elements`. Advanced each
+    /// tick from the device's dissipated power ([`thermal_step`]) for tempco elements (gated on
+    /// `has_thermal`); read by [`Sim::resistor_r_eff`] for the `R(T)` runaway feedback. Folded into the
+    /// snapshot hash ONLY for elements with a non-zero [`TEMPCO_SLOT`] (so a circuit without thermal
+    /// feedback folds zero bytes). Reset to [`T_AMBIENT`] at install/reset.
+    thermal_state: Vec<f64>,
     /// Per-node analog/digital classification (length `node_count`), computed at
     /// install from the element list ([`classify_nets`]). Topology metadata for the
     /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
@@ -3815,6 +3862,8 @@ impl Sim {
             branch_index: Vec::new(),
             has_nonlinear: false,
             has_noise: false,
+            has_thermal: false,
+            thermal_state: Vec::new(),
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
             subtick_rate: 1,
@@ -4161,6 +4210,9 @@ impl Sim {
         // Any element carrying a non-zero noise amplitude (Real-mode web emission) arms the transient
         // noise path; otherwise it is never entered, so a noiseless circuit / the golden is byte-identical.
         let has_noise = elements.iter().any(|e| e.params[NOISE_SLOT] != 0.0);
+        // Any element with a temperature coefficient (Real-mode NTC/PTC) arms the thermal-runaway
+        // feedback; otherwise tj never advances + folds zero hash bytes → byte-identical / golden-safe.
+        let has_thermal = elements.iter().any(|e| e.params[TEMPCO_SLOT] != 0.0);
         // Install classifies with NO wide ports (the cell-level / non-memory path). A wide memory's bus
         // nodes are added later by `set_memory_ports`, which re-runs classification with the filled lists.
         let net_classes = classify_nets(node_count, &elements, &[], &[], &[]);
@@ -4182,6 +4234,7 @@ impl Sim {
         self.branch_index = branch_index;
         self.has_nonlinear = has_nonlinear;
         self.has_noise = has_noise;
+        self.has_thermal = has_thermal;
         self.net_classes = net_classes;
         self.digital_rows = digital_rows;
         // Global digital sub-tick rate S = max declared rate over all elements (ADR 0004 step 3b).
@@ -4196,6 +4249,7 @@ impl Sim {
             .max(1);
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
+        self.thermal_state = vec![T_AMBIENT; elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
         self.failed_elements = vec![false; elements.len()];
@@ -4394,6 +4448,9 @@ impl Sim {
         for s in &mut self.reactive_state {
             *s = 0.0;
         }
+        for s in &mut self.thermal_state {
+            *s = T_AMBIENT;
+        }
         for s in &mut self.secondary_state {
             *s = 0.0;
         }
@@ -4551,6 +4608,22 @@ impl Sim {
         }
     }
 
+    /// The effective resistance of a resistor (element `i`), including any self-heating **thermal-runaway
+    /// feedback** ([`TEMPCO_SLOT`]): `R(T) = value·(1 + α·(Tj − T_AMBIENT))`, clamped to
+    /// `[value·R_TEMPCO_MIN, value·R_TEMPCO_MAX]` so a runaway's collapsing (or a PTC's climbing) `R` can
+    /// never reach `0`/negative or wreck the matrix. `α = 0` (the default, every non-thermistor / Ideal
+    /// part, the golden) returns the plain `value` — byte-identical. Used by the TRANSIENT resistor stamps
+    /// (the operating point keeps `value`, which equals `R(T_AMBIENT)`). `Tj` is `thermal_state[i]`.
+    #[inline]
+    fn resistor_r_eff(&self, e: &Element, i: usize) -> f64 {
+        let alpha = e.params[TEMPCO_SLOT];
+        if alpha == 0.0 {
+            return e.value;
+        }
+        let dt = self.thermal_state[i] - T_AMBIENT;
+        (e.value * (1.0 + alpha * dt)).clamp(e.value * R_TEMPCO_MIN, e.value * R_TEMPCO_MAX)
+    }
+
     /// Map a node index to its MNA row/column, or `None` for ground (node `0`).
     #[inline]
     fn node_idx(node: usize) -> Option<usize> {
@@ -4689,7 +4762,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -4816,7 +4889,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -4893,7 +4966,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         mat[r * n + r] += g;
                     }
@@ -5050,7 +5123,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -5777,7 +5850,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -5891,7 +5964,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -5998,7 +6071,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         continue;
                     }
-                    let g = 1.0 / e.value;
+                    let g = 1.0 / self.resistor_r_eff(e, i);
                     if let Some(r) = ia {
                         base_mat[r * n + r] += g;
                     }
@@ -6159,7 +6232,7 @@ impl Sim {
                     if e.value <= 0.0 {
                         0.0
                     } else {
-                        self.element_voltage(e) / e.value
+                        self.element_voltage(e) / self.resistor_r_eff(e, i)
                     }
                 }
                 ELEM_SWITCH => self.switch_conductance(e) * self.element_voltage(e),
@@ -7076,6 +7149,24 @@ impl Sim {
                 _ => {}
             }
         }
+        // Thermal-runaway feedback: advance each tempco element's self-heating Tj toward Tamb + P·θ from
+        // its just-committed dissipated power P = |V·I| (a pure function of the committed state → replay-
+        // exact). The updated Tj drives the resistor R(T) in NEXT tick's transient stamp (a 1-tick-delayed
+        // explicit loop). Skipped entirely unless a tempco element was installed, so a circuit without
+        // thermal feedback / the golden never advances Tj (and folds zero Tj bytes into the hash).
+        if self.has_thermal {
+            for i in 0..self.elements.len() {
+                let (a, b, alpha) = {
+                    let e = &self.elements[i];
+                    (e.a, e.b, e.params[TEMPCO_SLOT])
+                };
+                if alpha == 0.0 {
+                    continue;
+                }
+                let power = ((self.node_v[a] - self.node_v[b]) * self.currents[i]).abs();
+                self.thermal_state[i] = thermal_step(self.thermal_state[i], power);
+            }
+        }
         // Sub-tick 0 of this analog tick: advance the sequential digital state once from the
         // just-solved committed voltages (the unit-delay edge-detect / FF / sampler / comparator /
         // behavioral commits) — UNCHANGED from the single-rate engine.
@@ -7535,6 +7626,14 @@ impl Sim {
     /// Number of installed elements.
     pub fn element_count(&self) -> usize {
         self.elements.len()
+    }
+
+    /// The self-heating junction temperature `Tj` (°C) of element `index` — the thermal-runaway state
+    /// ([`TEMPCO_SLOT`]). `T_AMBIENT` for a part with no thermal feedback (or out of range). Lets the
+    /// front end read the authoritative in-solve `Tj` for a thermal-runaway part (instead of its own
+    /// presentational integral).
+    pub fn element_temperature(&self, index: usize) -> f64 {
+        self.thermal_state.get(index).copied().unwrap_or(T_AMBIENT)
     }
 
     /// The element at `index` in submission order. Panics if out of range; the
@@ -8235,6 +8334,15 @@ impl Sim {
                 for r in &self.mem_refresh[i] {
                     bytes.extend_from_slice(&r.to_le_bytes());
                 }
+            }
+        }
+        // Then each thermal-feedback (tempco) element's self-heating Tj — APPENDED after the DRAM fold,
+        // gated on a non-zero TEMPCO_SLOT so a circuit without thermal runaway (the RC golden, every
+        // existing test) folds ZERO extra bytes and hashes byte-identically. Tj drives the R(T) that
+        // changes the solve, so it is program-visible and must reproduce on rewind. (LE f64, fixed order.)
+        for (i, e) in self.elements.iter().enumerate() {
+            if e.params[TEMPCO_SLOT] != 0.0 {
+                bytes.extend_from_slice(&self.thermal_state[i].to_le_bytes());
             }
         }
         fnv1a(&bytes)
@@ -16709,6 +16817,91 @@ mod tests {
             off < on * 1e-3,
             "an off diode (no current) carries no shot noise: off={off}, on={on}"
         );
+    }
+
+    /// Build V(1→0)=5 → R1(1→2)=1Ω (small series) → R2(2→0)=100Ω with the given temperature coefficient,
+    /// run `steps` ticks, and return R2's self-heating Tj. R2 dominates the loop, so its power V²/R is
+    /// sensitive to its own R(T): a negative α (NTC) runs away, a positive α (PTC) self-limits.
+    #[cfg(test)]
+    fn run_tempco_tj(alpha: f64, steps: usize) -> f64 {
+        let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+        params[2 * PARAM_STRIDE + TEMPCO_SLOT] = alpha;
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 2],
+            &[0, 2, 0],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 1.0, 100.0],
+            &[0.0; 3],
+            &params,
+        ));
+        assert!(
+            (sim.element_temperature(2) - T_AMBIENT).abs() < 1e-9,
+            "Tj starts at ambient"
+        );
+        for _ in 0..steps {
+            sim.step();
+        }
+        sim.element_temperature(2)
+    }
+
+    /// Thermal RUNAWAY: an NTC (negative tempco) that dominates the loop self-heats → R drops → V²/R
+    /// (its power) climbs → more heat → Tj runs away far past the cook point. (A PTC self-limits — the
+    /// next test.) This is the per-tick Tj-in-the-solve feedback the web presentation can't do
+    /// replay-safely.
+    #[test]
+    fn ntc_resistor_thermal_runaway() {
+        // α = −0.05 ⇒ the loop gain exceeds 1 from the start (R collapses faster than the power falls), so
+        // Tj diverges instead of creeping to a marginal point.
+        let tj = run_tempco_tj(-0.05, 1_500_000); // ~3 s of sim time
+        assert!(
+            tj > 150.0,
+            "an NTC dominating the loop runs away past the cook point: Tj = {tj} °C"
+        );
+    }
+
+    /// A PTC (positive tempco) is the opposite: heat ⇒ R rises ⇒ V²/R (its power) falls ⇒ it SELF-LIMITS,
+    /// settling at a modest temperature instead of running away (the resettable-fuse / PTC-heater effect).
+    #[test]
+    fn ptc_resistor_self_limits() {
+        let tj = run_tempco_tj(0.02, 1_500_000);
+        assert!(
+            (T_AMBIENT..150.0).contains(&tj),
+            "a PTC self-limits well below runaway: Tj = {tj} °C"
+        );
+    }
+
+    /// The R(T) feedback is a fixed function of the deterministic state, so a thermal-runaway run
+    /// reproduces its snapshot-hash stream exactly — the determinism contract holds with Tj folded into
+    /// the hash for tempco elements.
+    #[test]
+    fn thermal_runaway_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = -0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 1.0, 100.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a thermal-runaway run must reproduce exactly");
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no

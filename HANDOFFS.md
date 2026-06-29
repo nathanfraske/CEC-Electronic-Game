@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (235) — THERMAL RUNAWAY: per-tick Tj-in-the-solve (Path 2), NTC runaway / PTC self-limit (golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. The **first `Tj`-fed-back-into-the-solve** feature (the docs'
+"Path 2"), but **golden-safe** by the param-gate: golden byte-identical (`golden_snapshot_hash_is_stable`
+ok, every `*_run_is_reproducible` ok). Full gate green: Rust **215** (+3), web **337** (+3), fmt/clippy/
+check/lint/build 0. **Verified live** (owner picked thermistor/resistor tempco; BJT is the next step).
+
+**Landed — sim-core `Tj`-in-the-solve + resistor R(T) feedback:**
+- `thermal_state: Vec<f64>` (per-element `Tj`, init `T_AMBIENT=25`), `has_thermal` install flag (any
+  element with `TEMPCO_SLOT=7` ≠ 0). Each tick in `step()` (gated `has_thermal`), advance `Tj` for tempco
+  elements from committed `P=|V·I|` (`thermal_step`, lumped θ=80/Cth=0.03). Folded into `snapshot_hash`
+  per tempco element → golden/no-tempco circuits fold **zero** bytes (byte-identical).
+- `resistor_r_eff(e, i) = value·(1 + α·(Tj − 25))` clamped `[×0.02, ×50]`, used in the **4 transient**
+  resistor sites (`solve_into_readout` + `_newton`, stamp + current-commit); the **OP keeps `value`**
+  (`Tj=ambient` ⇒ `R_eff=value`, byte-identical). `pub fn element_temperature(i)` accessor.
+- **web** (`netlist.ts`): emit `α` on **NTC** (`NTC_TEMPCO=-0.05` → runaway) / **PTC** (`+0.03` →
+  self-limit) in Real mode (a thermistor already expands to a plain resistor; we tag it). The web's
+  presentational `Tj` (glow/OVERHEAT/vent) tracks the runaway via the rising power — no wasm wire change.
+- **Tests:** sim-core `ntc_resistor_thermal_runaway` (Tj > 150), `ptc_resistor_self_limits`,
+  `thermal_runaway_run_is_reproducible`; web `thermalRunaway.test.ts` (3, NTC<0 / PTC>0 / Ideal 0).
+- **Verified live:** an NTC (V→1Ω→NTC) ran away — R collapsed 100Ω→2Ω (clamp), node 4.95V→3.33V, OVERHEAT.
+  And (answering the owner) a **12V MOV** overloaded (48V/10Ω) **DESTROYED** — clamping at 12.4V, vented +
+  smoke. Every dissipating part already self-heats web-side (incl. MOVs — `partHeats` true); only the
+  R(T) **loop** is new in sim-core.
+
+**NEXT:** **BJT thermal runaway** (task #137, owner: "then go to BJT") on the same `Tj` infra — `Is(T)` (or
+Vbe −2 mV/°C) so at fixed Vbe `Ic` climbs with `Tj` → `V_ce·I_c` → runaway; an emitter ballast resistor
+tames it. Then: flicker/1-f & op-amp noise; the other thermal levers (fan, spacing); a MOV joule-rating +
+MOV-specific thermal spec (today it uses `DEFAULT_THERMAL`, no energy rating). These (233)–(235)
+refinements are on the branch, **NOT yet a new PR** (a #315 batch awaits). Adversarial-review the sim-core
+runaway change before that PR.
+
+---
+
 ## 2026-06-29 (234) — Refine round 2: thermal HEATSINK lever + diode SHOT noise (one from each thread)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3` (on top of #314's merged base + the (233) refinements).

@@ -242,6 +242,19 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > persists for free. Heat now has the full design loop: a 4 Ω resistor that **vents at ~525 °C** is
 > **saved at ~109 °C** by a Large sink. **Remaining levers:** fan (ambient↓), part-spacing mutual heating,
 > the wattage axis; then Path 2 (hashed Tj).
+>
+> **UPDATE 2026-06-29 — PATH 2 (per-tick `Tj`-in-the-solve) + THERMAL RUNAWAY LANDED** (sim-core, golden
+> byte-identical by the param-gate; verified live). The first time `Tj` feeds **back into the deterministic
+> solve** (not just presentation): `thermal_state[i]` is advanced each tick from the committed power
+> `P=|V·I|`, gated on `has_thermal` and folded into `snapshot_hash` per tempco element (zero bytes / golden
+> untouched when none). A resistor's effective resistance tracks it — `resistor_r_eff = value·(1 + α·(Tj −
+> 25))` (clamped) in the 4 **transient** stamps (the OP keeps `value`). The web emits `α` Real-mode-only for
+> **NTC** (`−0.05` → if it dominates the loop, **runaway**: heat ⇒ R↓ ⇒ V²/R↑ ⇒ hotter ⇒ OVERHEAT/vent) and
+> **PTC** (`+0.03` → self-limits — the resettable-fuse effect). Replay-exact (`Tj` is a pure function of the
+> committed trajectory); `pub element_temperature(i)` exposes it. Verified live: an NTC ran away (R 100 Ω→2 Ω
+> clamp, OVERHEAT) and a badly-overloaded **12 V MOV** cooked → **DESTROYED** (every dissipating kind already
+> self-heats web-side; only this R(T) **loop** is the new sim-core piece). **Next:** BJT `Is(T)` runaway on
+> the same infra; R(T) drift for ordinary resistors; a MOV joule/energy rating.
 
 0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
 1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node

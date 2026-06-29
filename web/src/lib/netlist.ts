@@ -526,6 +526,13 @@ const NOISE_SLOT = 6; // params slot: thermal-noise current amplitude (A); 0 = s
 // A diode's SHOT-noise scale (a √A): sim-core injects `SHOT_NOISE_SCALE · √|I| · sample` (the shot-noise
 // current ∝ √I). Game-scaled for legibility; a junction property, not a quality grade, so it's a constant.
 const SHOT_NOISE_SCALE = 0.02;
+const TEMPCO_SLOT = 7; // params slot: resistor self-heating temperature coefficient α (1/°C); 0 = none
+// Self-heating temperature coefficients (1/°C) — the thermal-runaway feedback (sim-core uses
+// R(T) = value·(1 + α·(Tj − 25))). NTC: a strong NEGATIVE α makes a dominant thermistor run away (heat ⇒
+// R drops ⇒ V²/R climbs ⇒ more heat). PTC: a POSITIVE α self-limits (heat ⇒ R rises ⇒ current falls).
+// Game-scaled (a legible linear slope, not the part's full β-model R(T)).
+const NTC_TEMPCO = -0.05;
+const PTC_TEMPCO = 0.03;
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1718,6 +1725,15 @@ export function buildNetlist(
         comp.value,
         comp.tier ?? DEFAULT_TIER,
       );
+    }
+    // Thermistor self-heating temperature coefficient → THERMAL RUNAWAY (Realistic mode only). A
+    // thermistor expands to a plain resistor (above); here we tag that element with its tempco α (slot
+    // TEMPCO_SLOT), so sim-core's per-tick R(T) feedback runs: an NTC that dominates its loop runs away
+    // (heat ⇒ R drops ⇒ V²/R climbs ⇒ more heat ⇒ OVERHEAT/vent), a PTC self-limits. Omitted in Ideal
+    // mode (no feedback, golden-clean). `elemOfComponent` maps the thermistor to its expanded resistor.
+    if ((comp.kind === "NTC" || comp.kind === "PTC") && real) {
+      params[ei * PARAM_STRIDE + TEMPCO_SLOT] =
+        comp.kind === "NTC" ? NTC_TEMPCO : PTC_TEMPCO;
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an
