@@ -5,10 +5,10 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
-## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: IMPLEMENTED + full gate green (audit running)
+## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: IMPLEMENTED, AUDITED (SHIP), pushed
 
-**State:** 🟢 On `claude/kind-turing-hdelb3`. The event-driven dirty-set is **built, byte-identical, and
-worst-case bounded.** Uncommitted (in working tree) pending the adversarial audit's verdict, then commit+push.
+**State:** 🟢 On `claude/kind-turing-hdelb3`, **committed + pushed** (`4317397`). The event-driven dirty-set
+is built, byte-identical, worst-case bounded, and **independently audited → SHIP** (no divergence found).
 
 **What shipped — a simpler architecture than the planned Pass L/Pass R.** One invariant subsumed both
 passes: `eval_one_digital(i)` is a pure function of `node_v` at element `i`'s read+rail pins + its committed
@@ -40,10 +40,16 @@ scans (all still O(nodes)) — the doc's **S5** (defer to a profiled follow-up).
 test (231), build:wasm, web check/lint/build, web test (356). Doc updated: `docs/sim/dirty-set-digital-eval.md`
 (added the "What shipped" section; kept the Pass L/Pass R history).
 
-**IN FLIGHT:** an adversarial determinism audit agent is reviewing the block (toucher completeness, drive-pin
-completeness per kind, gate_target staleness, sub-tick prev_node_v, fallback, net-0, install/latch baseline).
-**NEXT:** read its verdict → fix anything it finds + re-gate → commit + push. Then the queued **bus-slice
-recognition** (#148, `docs/ui/bus-slice-recognition.md`).
+**AUDIT (done, SHIP).** A self-audit found + fixed one latent bug: a non-gate digital kind (COMPARATOR/
+LEVELSHIFT/BEHAVIORAL) with an UNCONNECTED output (all outputs on net 0 → empty `out_nets`) was excluded
+from `always_run_elems`, so its element-indexed `gate_target[i]` went stale → `gate_target` divergence.
+Proved it (reverted the fix → oracle fired on `gate_target[6]`), fixed by classifying `always_run_elems`
+**by kind, unconditionally**, regression test `comparator_unconnected_output_gate_target_stays_fresh`. An
+independent adversarial audit agent then reviewed all 8 risk areas (toucher completeness, drive-pin
+completeness per kind, gate_target staleness, sub-tick `prev_node_v`, fallback, net-0, install/latch
+baseline) → **SHIP, no divergence**; it confirmed the fix and flagged only the LUT over-record (safe,
+perf-only) + one stale doc comment (fixed). **NEXT:** the queued **bus-slice recognition** (#148,
+`docs/ui/bus-slice-recognition.md`) — web-only, golden-safe, render+classification.
 
 ---
 
