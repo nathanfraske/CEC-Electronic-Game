@@ -42,6 +42,13 @@ cable counts as an edge in `emitSelect`.
    junction is a new concept (a junction today joins single wires); a per-bit tap creates a normal wire
    from bit i's net at the tap point. Design the data model: likely a tap = a net-label/wire anchored at a
    point on the trunk on bit i's net (reusing `deriveCableLinks`' per-bit nets), NOT a new sim element.
+   **Canonical owner reference: `docs/ui/bus-tap-reference.ceccircuit.json`** (2026-06-29) — the owner's
+   MANUAL implementation of exactly this: a 4-bit bus (`A0..A3`, four `R`s ↔ four `R`s) with two taps off
+   it — a **"junction up"** breaking the four bits out **forward** (A0→A3) and a **"sequential junction
+   down"** breaking them out **reversed** (A3→A0), each via a per-bit junction on the bus wire + a matched
+   net label. The native cable tap must reproduce this (forward AND reversed bit order), without the player
+   hand-placing 16 wires + 8 labels + 8 junctions. (It currently uses plain wires + labels, NOT a `Cable`
+   — it is the behavioural spec, not a cable fixture.)
 
 ## Implementation order (each shoot-verifiable; build a reusable cable fixture first)
 

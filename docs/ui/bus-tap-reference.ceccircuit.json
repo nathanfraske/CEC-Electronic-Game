@@ -1,0 +1,823 @@
+{
+  "format": "cec-circuit",
+  "version": 3,
+  "savedAt": "2026-06-29T23:47:56.887Z",
+  "graph": {
+    "components": [
+      {
+        "id": 5,
+        "kind": "R",
+        "cell": {
+          "col": -4,
+          "row": -4
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 6,
+        "kind": "R",
+        "cell": {
+          "col": -4,
+          "row": -3
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 7,
+        "kind": "R",
+        "cell": {
+          "col": -4,
+          "row": -2
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 8,
+        "kind": "R",
+        "cell": {
+          "col": -4,
+          "row": -1
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 9,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": 8
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 10,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": 9
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 11,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": 10
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 12,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": 11
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 13,
+        "kind": "R",
+        "cell": {
+          "col": 18,
+          "row": -4
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 14,
+        "kind": "R",
+        "cell": {
+          "col": 18,
+          "row": -3
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 15,
+        "kind": "R",
+        "cell": {
+          "col": 18,
+          "row": -2
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 16,
+        "kind": "R",
+        "cell": {
+          "col": 18,
+          "row": -1
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 17,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": -17
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 18,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": -16
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 19,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": -15
+        },
+        "value": 1000,
+        "rot": 0
+      },
+      {
+        "id": 20,
+        "kind": "R",
+        "cell": {
+          "col": 16,
+          "row": -14
+        },
+        "value": 1000,
+        "rot": 0
+      }
+    ],
+    "wires": [
+      {
+        "id": 13,
+        "from": {
+          "componentId": 5,
+          "pinIndex": 1
+        },
+        "to": {
+          "junctionId": 13
+        }
+      },
+      {
+        "id": 14,
+        "from": {
+          "componentId": 6,
+          "pinIndex": 1
+        },
+        "to": {
+          "junctionId": 14
+        }
+      },
+      {
+        "id": 15,
+        "from": {
+          "componentId": 7,
+          "pinIndex": 1
+        },
+        "to": {
+          "junctionId": 15
+        },
+        "waypoints": [
+          {
+            "col": 6,
+            "row": -2
+          }
+        ]
+      },
+      {
+        "id": 16,
+        "from": {
+          "componentId": 8,
+          "pinIndex": 1
+        },
+        "to": {
+          "junctionId": 16
+        },
+        "waypoints": [
+          {
+            "col": 5,
+            "row": -1
+          }
+        ]
+      },
+      {
+        "id": 17,
+        "from": {
+          "junctionId": 13
+        },
+        "to": {
+          "junctionId": 24
+        },
+        "waypoints": [
+          {
+            "col": 8,
+            "row": -4
+          }
+        ]
+      },
+      {
+        "id": 18,
+        "from": {
+          "junctionId": 14
+        },
+        "to": {
+          "junctionId": 23
+        },
+        "waypoints": [
+          {
+            "col": 7,
+            "row": -3
+          }
+        ]
+      },
+      {
+        "id": 19,
+        "from": {
+          "junctionId": 15
+        },
+        "to": {
+          "junctionId": 22
+        }
+      },
+      {
+        "id": 20,
+        "from": {
+          "junctionId": 16
+        },
+        "to": {
+          "junctionId": 21
+        }
+      },
+      {
+        "id": 21,
+        "from": {
+          "junctionId": 13
+        },
+        "to": {
+          "junctionId": 17
+        }
+      },
+      {
+        "id": 22,
+        "from": {
+          "junctionId": 14
+        },
+        "to": {
+          "junctionId": 18
+        }
+      },
+      {
+        "id": 23,
+        "from": {
+          "junctionId": 15
+        },
+        "to": {
+          "junctionId": 19
+        }
+      },
+      {
+        "id": 24,
+        "from": {
+          "junctionId": 16
+        },
+        "to": {
+          "junctionId": 20
+        }
+      },
+      {
+        "id": 25,
+        "from": {
+          "junctionId": 21
+        },
+        "to": {
+          "junctionId": 4
+        }
+      },
+      {
+        "id": 26,
+        "from": {
+          "junctionId": 22
+        },
+        "to": {
+          "junctionId": 3
+        }
+      },
+      {
+        "id": 27,
+        "from": {
+          "junctionId": 23
+        },
+        "to": {
+          "junctionId": 2
+        }
+      },
+      {
+        "id": 28,
+        "from": {
+          "junctionId": 24
+        },
+        "to": {
+          "junctionId": 1
+        }
+      },
+      {
+        "id": 29,
+        "from": {
+          "junctionId": 21
+        },
+        "to": {
+          "junctionId": 25
+        }
+      },
+      {
+        "id": 30,
+        "from": {
+          "junctionId": 22
+        },
+        "to": {
+          "junctionId": 26
+        }
+      },
+      {
+        "id": 31,
+        "from": {
+          "junctionId": 23
+        },
+        "to": {
+          "junctionId": 27
+        }
+      },
+      {
+        "id": 32,
+        "from": {
+          "junctionId": 24
+        },
+        "to": {
+          "junctionId": 28
+        }
+      },
+      {
+        "id": 33,
+        "from": {
+          "junctionId": 28
+        },
+        "to": {
+          "componentId": 9,
+          "pinIndex": 0
+        }
+      },
+      {
+        "id": 34,
+        "from": {
+          "componentId": 10,
+          "pinIndex": 0
+        },
+        "to": {
+          "junctionId": 27
+        },
+        "waypoints": [
+          {
+            "col": 12,
+            "row": 9
+          }
+        ]
+      },
+      {
+        "id": 35,
+        "from": {
+          "componentId": 11,
+          "pinIndex": 0
+        },
+        "to": {
+          "junctionId": 26
+        },
+        "waypoints": [
+          {
+            "col": 11,
+            "row": 10
+          }
+        ]
+      },
+      {
+        "id": 36,
+        "from": {
+          "componentId": 12,
+          "pinIndex": 0
+        },
+        "to": {
+          "junctionId": 25
+        },
+        "waypoints": [
+          {
+            "col": 10,
+            "row": 11
+          }
+        ]
+      },
+      {
+        "id": 37,
+        "from": {
+          "junctionId": 20
+        },
+        "to": {
+          "componentId": 20,
+          "pinIndex": 0
+        }
+      },
+      {
+        "id": 38,
+        "from": {
+          "junctionId": 19
+        },
+        "to": {
+          "componentId": 19,
+          "pinIndex": 0
+        },
+        "waypoints": [
+          {
+            "col": 7,
+            "row": -15
+          }
+        ]
+      },
+      {
+        "id": 39,
+        "from": {
+          "junctionId": 18
+        },
+        "to": {
+          "componentId": 18,
+          "pinIndex": 0
+        },
+        "waypoints": [
+          {
+            "col": 6,
+            "row": -16
+          }
+        ]
+      },
+      {
+        "id": 40,
+        "from": {
+          "junctionId": 17
+        },
+        "to": {
+          "componentId": 17,
+          "pinIndex": 0
+        },
+        "waypoints": [
+          {
+            "col": 5,
+            "row": -17
+          }
+        ]
+      }
+    ],
+    "junctions": [
+      {
+        "id": 1,
+        "cell": {
+          "col": 18,
+          "row": -4
+        },
+        "free": true
+      },
+      {
+        "id": 2,
+        "cell": {
+          "col": 18,
+          "row": -3
+        },
+        "free": true
+      },
+      {
+        "id": 3,
+        "cell": {
+          "col": 18,
+          "row": -2
+        },
+        "free": true
+      },
+      {
+        "id": 4,
+        "cell": {
+          "col": 18,
+          "row": -1
+        },
+        "free": true
+      },
+      {
+        "id": 13,
+        "cell": {
+          "col": 5,
+          "row": -4
+        }
+      },
+      {
+        "id": 14,
+        "cell": {
+          "col": 6,
+          "row": -3
+        }
+      },
+      {
+        "id": 15,
+        "cell": {
+          "col": 7,
+          "row": -2
+        }
+      },
+      {
+        "id": 16,
+        "cell": {
+          "col": 8,
+          "row": -1
+        }
+      },
+      {
+        "id": 17,
+        "cell": {
+          "col": 5,
+          "row": -12
+        },
+        "free": true
+      },
+      {
+        "id": 18,
+        "cell": {
+          "col": 6,
+          "row": -12
+        },
+        "free": true
+      },
+      {
+        "id": 19,
+        "cell": {
+          "col": 7,
+          "row": -12
+        },
+        "free": true
+      },
+      {
+        "id": 20,
+        "cell": {
+          "col": 8,
+          "row": -14
+        },
+        "free": true
+      },
+      {
+        "id": 21,
+        "cell": {
+          "col": 10,
+          "row": -1
+        }
+      },
+      {
+        "id": 22,
+        "cell": {
+          "col": 11,
+          "row": -2
+        }
+      },
+      {
+        "id": 23,
+        "cell": {
+          "col": 12,
+          "row": -3
+        }
+      },
+      {
+        "id": 24,
+        "cell": {
+          "col": 13,
+          "row": -4
+        }
+      },
+      {
+        "id": 25,
+        "cell": {
+          "col": 10,
+          "row": 7
+        },
+        "free": true
+      },
+      {
+        "id": 26,
+        "cell": {
+          "col": 11,
+          "row": 7
+        },
+        "free": true
+      },
+      {
+        "id": 27,
+        "cell": {
+          "col": 12,
+          "row": 7
+        },
+        "free": true
+      },
+      {
+        "id": 28,
+        "cell": {
+          "col": 13,
+          "row": 8
+        },
+        "free": true
+      }
+    ],
+    "netLabels": [
+      {
+        "id": 1,
+        "name": "A0",
+        "at": {
+          "componentId": 5,
+          "pinIndex": 1
+        },
+        "pos": {
+          "col": 1,
+          "row": -4
+        }
+      },
+      {
+        "id": 2,
+        "name": "A1",
+        "at": {
+          "componentId": 6,
+          "pinIndex": 1
+        },
+        "pos": {
+          "col": 1,
+          "row": -3
+        }
+      },
+      {
+        "id": 3,
+        "name": "A2",
+        "at": {
+          "componentId": 7,
+          "pinIndex": 1
+        },
+        "pos": {
+          "col": 1,
+          "row": -2
+        }
+      },
+      {
+        "id": 4,
+        "name": "A3",
+        "at": {
+          "componentId": 8,
+          "pinIndex": 1
+        },
+        "pos": {
+          "col": 1,
+          "row": -1
+        }
+      },
+      {
+        "id": 5,
+        "name": "A0",
+        "at": {
+          "junctionId": 13
+        },
+        "pos": {
+          "col": 5,
+          "row": -11
+        },
+        "tagOff": {
+          "dx": -13.18198158590259,
+          "dy": -50.44799975247946
+        }
+      },
+      {
+        "id": 6,
+        "name": "A1",
+        "at": {
+          "junctionId": 14
+        },
+        "pos": {
+          "col": 6,
+          "row": -11
+        },
+        "tagOff": {
+          "dx": -11.192588145107266,
+          "dy": -50.99681138857346
+        }
+      },
+      {
+        "id": 7,
+        "name": "A2",
+        "at": {
+          "junctionId": 15
+        },
+        "pos": {
+          "col": 7,
+          "row": -11
+        },
+        "tagOff": {
+          "dx": -9.203194704311926,
+          "dy": -50.99681138857346
+        }
+      },
+      {
+        "id": 8,
+        "name": "A3",
+        "at": {
+          "junctionId": 16
+        },
+        "pos": {
+          "col": 8,
+          "row": -11
+        },
+        "tagOff": {
+          "dx": -6.664989627422557,
+          "dy": -49.8991881163854
+        }
+      },
+      {
+        "id": 9,
+        "name": "A3",
+        "at": {
+          "junctionId": 21
+        },
+        "pos": {
+          "col": 10,
+          "row": 6
+        },
+        "tagOff": {
+          "dx": -14.261705052877062,
+          "dy": 34.37018180673513
+        }
+      },
+      {
+        "id": 10,
+        "name": "A2",
+        "at": {
+          "junctionId": 22
+        },
+        "pos": {
+          "col": 11,
+          "row": 6
+        },
+        "tagOff": {
+          "dx": -11.424061050111789,
+          "dy": 34.92232175451724
+        }
+      },
+      {
+        "id": 11,
+        "name": "A1",
+        "at": {
+          "junctionId": 23
+        },
+        "pos": {
+          "col": 12,
+          "row": 6
+        },
+        "tagOff": {
+          "dx": -9.679182460393463,
+          "dy": 34.43556949855727
+        }
+      },
+      {
+        "id": 12,
+        "name": "A0",
+        "at": {
+          "junctionId": 24
+        },
+        "pos": {
+          "col": 13,
+          "row": 6
+        },
+        "tagOff": {
+          "dx": -6.960799358755139,
+          "dy": 34.43556949855727
+        }
+      }
+    ],
+    "nextComponentId": 21,
+    "nextWireId": 41,
+    "nextJunctionId": 29,
+    "nextNetLabelId": 13
+  }
+}
