@@ -6,7 +6,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
-## 2026-06-29 (235) — THERMAL RUNAWAY: per-tick Tj-in-the-solve (Path 2), NTC runaway / PTC self-limit
+## 2026-06-29 (243) — DIGITAL-MATRIX LIFT (Stage A): pure-digital nets out of the dense factorisation
+
+- ~~**Stage A0 — closed-form == in-matrix invariant**~~ DONE (`e5e4d81`, debug-only, golden byte-identical).
+  Validated across the whole suite that a pure-digital net's matrix-solved `node_v` equals
+  `digital_net_solved_voltage` bit-for-bit — the precondition for the lift.
+- ~~**Stage A — the lift**~~ DONE (sim-core, **proven golden byte-identical**). `Sim::solve_dense_lift_digital`
+  wraps the 3 `solve_dense` sites: drops the provably-diagonal pure-`Digital` rows/cols, factors only the
+  analog+boundary+branch submatrix (`O(n³)→O(n_analog³)` — the gate-level-CPU wall), refills the digital nets
+  from the closed form, returns a full-width `x` (all scatter/readout unchanged). A **debug-only shadow solve**
+  inside the wrapper asserts lifted == full bit-for-bit every step → byte-identity proven across 229 tests.
+  Tests: `digital_matrix_lift_is_exercised_and_reproducible`, `digital_matrix_lift_all_digital_ring_…`.
+- ~~**Follow-up: direct compacted assembly**~~ DONE (244, sim-core, **proven byte-identical**). `solve_into_
+  readout` assembles straight into the `m×m` system via `assemble_linear(rows, branch_off, dim)` + the
+  compacted `solve_row` map, then expands to full width. A **debug dual-assembly oracle** (panel's linchpin)
+  asserts compacted == full bit-for-bit every step (green, 231 tests). Stress: `stress_large_inverter_chain`
+  N=4000 **16.8 ms → 237 µs/tick (~71×)**; now `O(gates)` linear, not `O(n²)`. Pre-fixed a latent GMIN×digital
+  false-panic (`6a0843d`) the panel surfaced.
+- [ ] **Stage B (optional):** commit the raw `combine` level → `Z`/`X` as first-class propagating levels (the
+  one deliberate golden regen). Schedule when a lesson needs a visible high-Z bus / `X`.
 
 - ~~**Thermal runaway — the per-tick Tj-in-the-solve infrastructure + resistor R(T) feedback**~~ DONE
   (sim-core, **golden byte-identical** by the param-gate; Rust 215, web 337; verified live). `thermal_state`
@@ -30,8 +48,9 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Transformer analogy view**~~ DONE — `drawAnalogyTransformer` (belted wheels, secondary sized by turns
   ratio) already existed but was only on the legacy `TR`; registered `XF` + `XFCT` in `ANALOGY_DRAWERS`, so
   both morph to the rich belted-wheels illustration when zoomed in under the analogy lens (verified `shoot`).
-- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(241) await a
-  **#315 batch PR**.
+- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating.
+- ~~**(233)–(242) batch PR**~~ MERGED to `main` as **PR #315** (merge commit `bf47e82`; CI + local gate green;
+  golden untouched).
 
 ---
 
