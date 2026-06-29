@@ -35,24 +35,16 @@ Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to f
   into a blob. Repro: thermal lens + Real mode on any loop whose wires bow outside the part-center box —
   the owner's AC+R+GND loop does. Web-only, golden-safe. Verify the fix via `shoot`/the `cec-app` MCP
   (the live-session MCP is absent in headless runs, so this needs the in-app Real-mode heat build-up).
-- **Bus cable interactable** — PARTIAL (`db2db96`): trunk now **select + delete** (`cableHitTest` vs the
-  cached trunk polyline + `selectedCables` + `selectCable` mirroring `selectWire`; Delete →
-  `graph.removeCable`). **Still TODO (Cable P3, #93):** drag-to-reroute the trunk (mirror
-  `beginWireSegmentDrag`) + **per-bit tap** (break one strand out of the bundle mid-run).
-- [ ] **Cable zoom-unzip → see the literal traces + what they carry (owner's real want, supersedes the
-  "×N badge" idea).** When zoomed in, the trunk should split into its **N literal strands**, each coloured
-  by its bit's net voltage (reuse the wire `voltageColor` per `src.pinIndices[i]` net); zoomed out, the
-  bundled trunk. The `Cable.collapsed` field already exists for the LoD state. This is **Cable P2** (#92).
-- [ ] **Pretty symmetric "belt" fan (owner art-direction, 2026-06-29).** Replace the blocky comb that
-  pinches all teeth to one point with a **Factorio-balancer-style symmetric staggered convergence**: the N
-  conductors run from the spread pins, each turning toward the bus centreline at a STAGGERED offset (outer
-  conductors turn furthest out) so the perpendicular legs **nest symmetrically** about the centre, run
-  parallel through the bundle, then diverge identically at the far end. (Owner ref image: 4× 1 kΩ resistors
-  → 4 teal traces converging with clean nested right-angle bends → 4 dots. "Looks super nice.") Pairs with
-  the unzip — the strands ARE the belts. Geometry lives in `drawCables` (`board.ts:~6897`).
-  (The "fork is blocky" + "can't tell width at a glance" + "per-bit tap" complaints all fold into the two
-  bullets above: the belt-fan fixes the blocky fork, the unzip shows the literal traces [count + signal],
-  and the per-bit tap is the Cable P3 edit-op.)
+- **Bus cable → FIRST-CLASS TRACE** (owner expanded the ask across 2026-06-29; full design +
+  implementation-ready sequence in **`docs/ui/bus-cable-first-class-trace.md`**). The owner wants the cable
+  to read + behave like any other trace, only bundled: **(1)** zoom-unzip into the N literal strands, each
+  coloured by its bit's signal (`voltageColor`); **(2)** a pretty symmetric "belt-fan" staggered
+  convergence (Factorio 4-belt ref — nested right-angle bends, not a blocky pinch); **(3)** respect the
+  lens (`drawConduitSkin` per strand: schematic trace / analogy pipe / reality conductor); **(4)** drag-
+  reroute the trunk (mirror `beginWireSegmentDrag` onto `Cable.route`); **(5)** junction off it + per-bit
+  tap (Cable P3). All web-only/golden-safe. **DONE:** select + delete (`db2db96`). **NEXT (build order in
+  the doc):** S0 cable fixture (so it's `shoot`-verifiable) → S1 lens-respect → S2 belt-fan → S3 unzip+colour
+  → S4 drag-reroute → S5 junction/tap. Spans Cable P2 (#92) + P3 (#93).
 
 ---
 
