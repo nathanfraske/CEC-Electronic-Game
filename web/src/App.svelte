@@ -2508,6 +2508,17 @@
             nl.g,
             nl.h,
           );
+          // Mutual heating: install the geometry-derived thermal-coupling map AFTER the netlist (which
+          // clears the prior one), so a hot part heats a nearby thermistor — which senses it (its R(T)
+          // shifts the circuit). Only present in Real mode with a tempco part on the board; null otherwise
+          // (no coupling installed → byte-identical / golden-safe).
+          if (nl.coupling) {
+            sim.setThermalCoupling(
+              nl.coupling.idx,
+              nl.coupling.nbr,
+              nl.coupling.w,
+            );
+          }
           controls?.resync();
         } else if (graph.components.size > 0) {
           // Parts placed but no voltage source to reference: install a quiet

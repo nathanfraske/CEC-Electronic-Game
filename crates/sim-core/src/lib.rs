@@ -2579,7 +2579,7 @@ fn noise_sample(ei: usize, tick: u64) -> f64 {
 /// Param slot carrying a resistor's **self-heating temperature coefficient `α`** (1/°C) — the seed of
 /// **thermal runaway**. With it set, the resistor's effective resistance tracks its OWN self-heating
 /// junction temperature: `R(T) = value·(1 + α·(Tj − T_AMBIENT))` (clamped, see [`Sim::resistor_r_eff`]),
-/// where `Tj` is advanced each tick from the device's dissipated power `P = |V·I|` ([`thermal_step`],
+/// where `Tj` is advanced each tick from the device's dissipated power `P = |V·I|` ([`thermal_step_amb`],
 /// stored in `thermal_state`). A **negative** `α` (an NTC) is unstable into a load: heat ⇒ `R` drops ⇒
 /// current rises ⇒ more heat ⇒ **runaway** (until it crosses `T_MAX` and the web boxes/vents it); a
 /// **positive** `α` (a PTC) is self-limiting (heat ⇒ `R` rises ⇒ current falls — the resettable-fuse
@@ -2609,13 +2609,19 @@ const THERMAL_CTH: f64 = 0.03;
 /// a PTC's climbing) resistance can never reach `0`/negative or blow the matrix conditioning.
 const R_TEMPCO_MIN: f64 = 0.02;
 const R_TEMPCO_MAX: f64 = 50.0;
+/// Hard ceiling on any element's **incoming thermal-coupling row sum** `Σ_j w` (see [`Sim::thermal_coupling`]).
+/// The web already normalises the weights, but this is the passivity backstop: with `Σ w ≤ MAX < 1` the
+/// coupled steady state `(I − W)(Tj − T_AMBIENT) = P·θ` is bounded by `‖P·θ‖/(1 − MAX)`, so mutual heating
+/// can never diverge no matter how many hot parts (or a dense IC's internals) couple into one node.
+const THERMAL_COUPLING_MAX: f64 = 0.9;
 
-/// One tick of the lumped self-heating relaxation: `Tj` relaxes toward `T_AMBIENT + P·θ` on `τ = θ·Cth`,
-/// with the step factor clamped to `≤ 1` (unconditionally stable, no overshoot). Pure `f64` adds/mults
-/// (no transcendentals) → replay-exact and machine-independent. Mirrors the web `stepTemp`.
-fn thermal_step(tj: f64, power: f64) -> f64 {
+/// One tick of the lumped self-heating relaxation toward a given `ambient`: `Tj` relaxes toward
+/// `ambient + P·θ` on `τ = θ·Cth`, step factor clamped to `≤ 1` (unconditionally stable, no overshoot).
+/// `ambient` is normally [`T_AMBIENT`] but is raised by hot neighbours under thermal coupling. Pure `f64`
+/// adds/mults (no transcendentals) → replay-exact and machine-independent.
+fn thermal_step_amb(tj: f64, power: f64, ambient: f64) -> f64 {
     let tau = (THERMAL_THETA * THERMAL_CTH).max(DT);
-    let target = T_AMBIENT + power.max(0.0) * THERMAL_THETA;
+    let target = ambient + power.max(0.0) * THERMAL_THETA;
     let a = (DT / tau).min(1.0);
     tj + (target - tj) * a
 }
@@ -3588,11 +3594,24 @@ pub struct Sim {
     /// bytes fold into the hash — a circuit without thermal feedback / the golden is byte-identical.
     has_thermal: bool,
     /// Per-element self-heating junction temperature `Tj` (°C), in lockstep with `elements`. Advanced each
-    /// tick from the device's dissipated power ([`thermal_step`]) for tempco elements (gated on
+    /// tick from the device's dissipated power ([`thermal_step_amb`]) for tempco elements (gated on
     /// `has_thermal`); read by [`Sim::resistor_r_eff`] for the `R(T)` runaway feedback. Folded into the
     /// snapshot hash ONLY for elements with a non-zero [`TEMPCO_SLOT`] (so a circuit without thermal
     /// feedback folds zero bytes). Reset to [`T_AMBIENT`] at install/reset.
     thermal_state: Vec<f64>,
+    /// `true` iff a thermal-coupling map has been installed ([`Sim::set_thermal_coupling`]) — neighbouring
+    /// parts heat each other (a hot part raises a nearby part's local ambient; the canonical use is a
+    /// thermistor sensing the heat of a part beside it). When `false`, every part's `Tj` relaxes toward the
+    /// fixed board `T_AMBIENT` and this whole path is inert — a circuit with no coupling (and the golden) is
+    /// byte-identical.
+    has_coupling: bool,
+    /// Per-element thermal-coupling adjacency (in lockstep with `elements`): `thermal_coupling[i]` is a list
+    /// of `(j, w)` — element `i`'s `Tj` is pulled toward neighbour `j`'s by weight `w`. The web derives the
+    /// weights from part geometry and **normalises each element's incoming row sum `Σ_j w ≤ 1`** (passivity):
+    /// with `Σ w < 1` the steady state `(I − W)(Tj − T_AMBIENT) = P·θ` is bounded by `‖P·θ‖/(1 − Σw)`, so
+    /// heat can never blow up no matter how many parts pile on (e.g. a dense IC's internals). Empty for every
+    /// element with no neighbours. Installed separately from the netlist (no rewind); cleared on install.
+    thermal_coupling: Vec<Vec<(usize, f64)>>,
     /// Per-node analog/digital classification (length `node_count`), computed at
     /// install from the element list ([`classify_nets`]). Topology metadata for the
     /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
@@ -3877,6 +3896,8 @@ impl Sim {
             has_noise: false,
             has_thermal: false,
             thermal_state: Vec::new(),
+            has_coupling: false,
+            thermal_coupling: Vec::new(),
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
             subtick_rate: 1,
@@ -4263,6 +4284,10 @@ impl Sim {
         self.floating_refs = floating;
         self.reactive_state = vec![0.0; elements.len()];
         self.thermal_state = vec![T_AMBIENT; elements.len()];
+        // A new netlist invalidates the old geometry-derived coupling; clear it (so the inert default holds
+        // until the web re-pushes via `set_thermal_coupling`), sized in lockstep with the elements.
+        self.has_coupling = false;
+        self.thermal_coupling = vec![Vec::new(); elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
         self.failed_elements = vec![false; elements.len()];
@@ -7191,22 +7216,44 @@ impl Sim {
                 _ => {}
             }
         }
-        // Thermal-runaway feedback: advance each tempco element's self-heating Tj toward Tamb + P·θ from
-        // its just-committed dissipated power P = |V·I| (a pure function of the committed state → replay-
-        // exact). The updated Tj drives the resistor R(T) in NEXT tick's transient stamp (a 1-tick-delayed
-        // explicit loop). Skipped entirely unless a tempco element was installed, so a circuit without
-        // thermal feedback / the golden never advances Tj (and folds zero Tj bytes into the hash).
-        if self.has_thermal {
+        // Thermal feedback: advance each thermally-active element's self-heating Tj from its just-committed
+        // dissipated power P = |V·I| (a pure function of the committed state → replay-exact). An element is
+        // active if it has a tempco (runaway feedback — its Tj drives R(T)/Is(T) next tick) OR participates
+        // in thermal coupling (it heats / is heated by a neighbour). Under coupling, a hot neighbour raises
+        // this element's LOCAL ambient — `Tamb + Σ w·(Tj_nbr − Tamb)` from the PREVIOUS tick's Tj (explicit,
+        // order-independent), the bounded `Σ w < 1` passivity guaranteeing it can't diverge. The canonical
+        // payoff: a thermistor (tempco) beside a hot part senses its heat → its R(T) shifts the circuit
+        // (a real temperature sensor). Skipped entirely with no tempco AND no coupling, so a plain circuit /
+        // the golden never advances Tj (and folds zero Tj bytes into the hash) → byte-identical.
+        if self.has_thermal || self.has_coupling {
+            // Snapshot the previous-tick Tj so every element reads the SAME neighbour temperatures (the
+            // coupling is an explicit 1-tick-delayed loop, like R(T)); allocated only when coupling is live.
+            let prev: Vec<f64> = if self.has_coupling {
+                self.thermal_state.clone()
+            } else {
+                Vec::new()
+            };
             for i in 0..self.elements.len() {
                 let (a, b, alpha) = {
                     let e = &self.elements[i];
                     (e.a, e.b, e.params[TEMPCO_SLOT])
                 };
-                if alpha == 0.0 {
+                // With coupling live, advance EVERY element's self-heating Tj — even a plain (non-tempco)
+                // resistor needs a Tj so it can DONATE heat to a coupled neighbour (a thermistor sensing it).
+                // With no coupling, only tempco elements advance, so the runaway path / golden is unchanged.
+                if alpha == 0.0 && !self.has_coupling {
                     continue;
                 }
                 let power = ((self.node_v[a] - self.node_v[b]) * self.currents[i]).abs();
-                self.thermal_state[i] = thermal_step(self.thermal_state[i], power);
+                // Local ambient lifted by hot neighbours (a hot part heats this one). A non-receiver's list is
+                // empty → ambient stays the fixed board T_AMBIENT, i.e. pure self-heating.
+                let mut ambient = T_AMBIENT;
+                if self.has_coupling {
+                    for &(j, w) in &self.thermal_coupling[i] {
+                        ambient += w * (prev[j] - T_AMBIENT);
+                    }
+                }
+                self.thermal_state[i] = thermal_step_amb(self.thermal_state[i], power, ambient);
             }
         }
         // Sub-tick 0 of this analog tick: advance the sequential digital state once from the
@@ -7678,6 +7725,47 @@ impl Sim {
         self.thermal_state.get(index).copied().unwrap_or(T_AMBIENT)
     }
 
+    /// Install the **thermal-coupling map** (see [`Sim::thermal_coupling`]) — the geometry-derived graph of
+    /// which parts heat which, computed web-side from board positions. Each triple
+    /// `(idx[k], nbr[k], w[k])` is one directed edge: element `idx[k]`'s `Tj` is pulled toward element
+    /// `nbr[k]`'s by weight `w[k]`. Self-edges (`i == j`), out-of-range indices, and non-positive weights are
+    /// skipped. Each element's incoming row sum is renormalised down to [`THERMAL_COUPLING_MAX`] if it
+    /// exceeds it (the passivity backstop — heat can't diverge however many neighbours pile on). Pushed
+    /// AFTER `set_netlist` (which clears the prior map); does NOT rewind or touch `thermal_state`, so
+    /// re-pushing on a part move never resets the run. Empty input (or all weights ≤ 0) leaves the inert
+    /// no-coupling default — byte-identical to before this feature, so the golden is untouched.
+    pub fn set_thermal_coupling(&mut self, idx: &[u32], nbr: &[u32], w: &[f64]) {
+        let n = self.elements.len();
+        let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        let k = idx.len().min(nbr.len()).min(w.len());
+        for t in 0..k {
+            let i = idx[t] as usize;
+            let j = nbr[t] as usize;
+            let wt = w[t];
+            // Keep only well-formed, in-range, positive-weight edges (skips self-edges and any NaN weight).
+            if i < n && j < n && i != j && wt > 0.0 {
+                adj[i].push((j, wt));
+            }
+        }
+        // Passivity backstop: renormalise any row whose incoming weight sum exceeds the cap so Σ w ≤ MAX < 1
+        // always holds (bounded steady state — coupling can never make Tj run away on its own).
+        let mut any = false;
+        for row in adj.iter_mut() {
+            let sum: f64 = row.iter().map(|&(_, wt)| wt).sum();
+            if sum > THERMAL_COUPLING_MAX {
+                let s = THERMAL_COUPLING_MAX / sum;
+                for e in row.iter_mut() {
+                    e.1 *= s;
+                }
+            }
+            if !row.is_empty() {
+                any = true;
+            }
+        }
+        self.thermal_coupling = adj;
+        self.has_coupling = any;
+    }
+
     /// The element at `index` in submission order. Panics if out of range; the
     /// front end indexes by the order it supplied to `set_netlist`.
     pub fn element_at(&self, index: usize) -> Element {
@@ -7870,7 +7958,12 @@ impl Sim {
                     } else if is_bjt(e.kind) {
                         // Collector a, emitter b, base c; Jacobian of (Ic, Ib) w.r.t.
                         // (Vbe, Vbc), mapped onto the node voltages (see newton_iterate).
-                        let op = Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i));
+                        let op = Self::bjt_op(
+                            e,
+                            self.bjt_vbe[i],
+                            self.bjt_vbc[i],
+                            self.bjt_is_eff(e, i),
+                        );
                         let (gpi, gmu, gif, gbc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                         stamp_g(&mut a, ia, ia, -gbc);
                         stamp_g(&mut a, ia, ib, -gif);
@@ -17076,7 +17169,167 @@ mod tests {
             }
             acc
         };
-        assert_eq!(run(), run(), "a BJT thermal-runaway run must reproduce exactly");
+        assert_eq!(
+            run(),
+            run(),
+            "a BJT thermal-runaway run must reproduce exactly"
+        );
+    }
+
+    /// Build a sense divider + a hot resistor, optionally THERMALLY COUPLED, run `steps` ticks, and return
+    /// `(Tj_hot, Tj_ntc, V_mid)`. Layout: node 0 GND, 1 Vcc, 2 divider midpoint. Elements: V(1→0)=10,
+    /// R_hot(1→0)=`rhot` (a deliberate dissipator), R_top(1→2)=10k, NTC(2→0)=10k with a self-heating tempco
+    /// α. The NTC carries little current (a high-impedance divider) so its OWN self-heat is negligible — any
+    /// rise in its Tj comes from the COUPLING to the hot resistor. `w > 0` couples R_hot → NTC (the NTC
+    /// senses the hot part beside it); `w == 0` installs no coupling (the control).
+    #[cfg(test)]
+    fn run_coupled_sensor(rhot: f64, w: f64, steps: usize) -> (f64, f64, f64) {
+        const NTC_ALPHA: f64 = -0.05;
+        let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+        params[3 * PARAM_STRIDE + TEMPCO_SLOT] = NTC_ALPHA; // element 3 = the NTC
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+            &[1, 1, 1, 2],
+            &[0, 0, 2, 0],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[10.0, rhot, 10_000.0, 10_000.0],
+            &[0.0; 4],
+            &params,
+        ));
+        if w > 0.0 {
+            // Element 3 (NTC) receives heat from element 1 (the hot resistor).
+            sim.set_thermal_coupling(&[3], &[1], &[w]);
+        }
+        for _ in 0..steps {
+            sim.step();
+        }
+        (
+            sim.element_temperature(1),
+            sim.element_temperature(3),
+            sim.node_v[2],
+        )
+    }
+
+    /// **Thermistor as a temperature SENSOR** — the payoff of mutual heating. An NTC in a high-impedance
+    /// divider barely self-heats, so on its own it sits at ambient. Coupled to a hot resistor beside it, it
+    /// SENSES that heat: its Tj climbs, its R(T) drops (negative α), and the divider midpoint it sits in
+    /// shifts — a reading of the neighbour's temperature that re-enters the solve. Without the coupling the
+    /// same NTC stays cold and the midpoint holds, proving the coupling (not self-heat) drives it.
+    #[test]
+    fn thermistor_senses_neighbor_heat() {
+        let steps = 1_000_000;
+        let (_hot_un, ntc_un, mid_un) = run_coupled_sensor(20.0, 0.0, steps); // no coupling (control)
+        let (hot_c, ntc_c, mid_c) = run_coupled_sensor(20.0, 0.8, steps); // R_hot → NTC
+                                                                          // In the coupled run the hot resistor self-heats (its dissipation), giving it a Tj to donate.
+        assert!(
+            hot_c > 100.0,
+            "the hot resistor runs hot, the heat source the NTC will sense: {hot_c} °C"
+        );
+        // Uncoupled: the NTC barely self-heats (high-impedance divider) → near ambient.
+        assert!(
+            ntc_un < T_AMBIENT + 5.0,
+            "an uncoupled high-impedance NTC stays cold: {ntc_un} °C"
+        );
+        // Coupled: it SENSES the hot neighbour → Tj climbs far above ambient and the uncoupled case.
+        assert!(
+            ntc_c > 60.0 && ntc_c > ntc_un + 30.0,
+            "a coupled NTC senses the hot resistor: coupled {ntc_c} vs uncoupled {ntc_un} °C"
+        );
+        // The sensed heat re-enters the SOLVE: the NTC's R drops, so the divider midpoint moves.
+        assert!(
+            (mid_c - mid_un).abs() > 0.2,
+            "the sensed temperature shifts the divider it sits in: {mid_un} V → {mid_c} V"
+        );
+    }
+
+    /// **Passivity — coupling can never blow up.** With the normalised row sum `Σ w < 1`, a coupled part's
+    /// Tj is bounded by its hot neighbour's: the receiver can approach, but never exceed, the source. Even
+    /// asking for an over-unity weight (here `w = 5`, far past the cap) is renormalised down to
+    /// `THERMAL_COUPLING_MAX`, so the NTC settles strictly below the hot resistor — no runaway.
+    #[test]
+    fn mutual_heating_is_bounded() {
+        let steps = 1_000_000;
+        let (hot, ntc, _) = run_coupled_sensor(20.0, 5.0, steps); // absurd weight → clamped to the cap
+        assert!(
+            ntc < hot,
+            "a coupled part can never exceed its heat source (passive): NTC {ntc} vs source {hot} °C"
+        );
+        assert!(
+            ntc.is_finite() && ntc < 10_000.0,
+            "coupling stays bounded (no divergence): NTC {ntc} °C"
+        );
+    }
+
+    /// The coupling is a fixed function of the deterministic per-tick Tj, so a mutual-heating run reproduces
+    /// its snapshot-hash stream exactly — the determinism contract holds with the coupled (and hashed,
+    /// because it is a tempco part) NTC `Tj`.
+    #[test]
+    fn mutual_heating_run_is_reproducible() {
+        let run = || {
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[3 * PARAM_STRIDE + TEMPCO_SLOT] = -0.05;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[10.0, 20.0, 10_000.0, 10_000.0],
+                &[0.0; 4],
+                &params,
+            ));
+            sim.set_thermal_coupling(&[3], &[1], &[0.8]);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a mutual-heating run must reproduce exactly");
+    }
+
+    /// **Golden-safety of the coupling path.** Installing an EMPTY (or all-zero-weight) coupling map leaves
+    /// `has_coupling` false, so the run is byte-identical to never calling the setter — the same guarantee
+    /// the golden relies on (it never pushes coupling). Verified by an identical hash stream.
+    #[test]
+    fn empty_coupling_is_byte_identical() {
+        let stream = |push: bool| {
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[3 * PARAM_STRIDE + TEMPCO_SLOT] = -0.05;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_RESISTOR, ELEM_RESISTOR],
+                &[1, 1, 1, 2],
+                &[0, 0, 2, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[10.0, 20.0, 10_000.0, 10_000.0],
+                &[0.0; 4],
+                &params,
+            ));
+            if push {
+                // A self-edge + a zero weight: both rejected → still no live coupling.
+                sim.set_thermal_coupling(&[3, 3], &[3, 1], &[0.5, 0.0]);
+            }
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            stream(false),
+            stream(true),
+            "an empty/all-rejected coupling map must be byte-identical to no coupling"
+        );
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no

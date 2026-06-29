@@ -273,6 +273,29 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   Web emits `γ = BJT_IS_TEMPCO` on **Q/QP** Real-mode-only (`netlist.ts`), so Ideal / golden ⇒ `γ = 0` ⇒
   `Is = BJT_IS` ⇒ byte-identical. Verified end-to-end (`bjtRunawayE2E.test.ts`: a Real BJT's collector
   collapses 23.8→0.55 V into saturation, an Ideal one is dead flat, a ballast suppresses it).
+- **Mutual heating / thermistor-as-sensor** (`thermal_coupling`, `set_thermal_coupling`, the **second**
+  `Tj`-in-the-solve piece). A hot part raises a nearby part's **local ambient** so a **thermistor beside a
+  power part SENSES its heat** — its `R(T)` (the same NTC/PTC tempco) shifts the circuit (a real temperature
+  sensor). The per-tick `Tj` advance (in the existing `step()` thermal loop, now gated `has_thermal ||
+  has_coupling`) lifts each element's relax target to `Tamb + Σ_j w·(Tj_prev_j − Tamb)` from a **previous-tick
+  snapshot** (explicit 1-tick loop, like `R(T)`); when coupling is live, **every** element self-heats (even a
+  plain resistor needs a `Tj` to DONATE). The coupling map is **web geometry → sim-core**: `buildNetlist`
+  (`computeThermalCoupling`) makes each `partHeats` component a thermal node at its board cell, weights pairs
+  by `e^(−(d/D0)²)` within a cutoff, and **normalises each element's incoming row sum `Σ w ≤ COUPLE_ROW_MAX`**;
+  sim-core re-caps at `THERMAL_COUPLING_MAX` (0.9). The `Σ w < 1` **passivity** is the no-blow-up guarantee —
+  `(I − W)(Tj − Tamb) = P·θ` is bounded by `‖P·θ‖/(1 − Σw)` no matter how many hot neighbours (a dense IC's
+  internals) pile on (the owner's constraint). Pushed via `set_thermal_coupling` **AFTER** `set_netlist`
+  (which clears it) — a **separate, no-rewind** call (`App.svelte`, right after `sim.setNetlist`), so it's
+  NOT in the value-sig and a re-push never resets the run. **Real-mode + a tempco part (NTC/PTC/Q/QP →
+  `TEMPCO_SENSOR_KINDS`) present** gates emission (else `null` → no coupling → byte-identical/golden-safe).
+  A sealed IC participates as the **single thermal node of its primary element** (consistent with the
+  per-component self-heating model — heats neighbours as a unit, bounded). Tj is hashed only for tempco
+  elements (a non-tempco donor's Tj advances but isn't folded), so the golden / any coupling-free run is
+  byte-identical (verified: `empty_coupling_is_byte_identical`). Verified end-to-end (`mhE2E.test.ts`: a
+  coupled NTC's divider midpoint drops 4.97→2.33 V as it senses a hot resistor; uncoupled it holds at ~½ Vcc).
+  `pub fn element_temperature(i)` is now wasm-exposed (`loop.ts` `elementTemperature`) for the authoritative
+  in-solve `Tj`. (v1: positions ride the netlist install, not pure moves — nudge a value after moving a part
+  to recompute coupling. Per-internal-IC-element coupling + reading sim-core `Tj` for the glow are follow-ups.)
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

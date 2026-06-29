@@ -5,6 +5,52 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (237) — MUTUAL HEATING + THERMISTOR-AS-SENSOR: per-tick Tj coupling (golden-safe), e2e verified
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. The **second `Tj`-in-the-solve** feature — neighbouring parts
+heat each other, so a **thermistor beside a hot part SENSES it** (its R(T) re-enters the solve = a real temp
+sensor). Owner-confirmed scope: **sim-core deterministic** (not web-presentational) + **normalised
+per-element** coupling (Σ<1 passive ⇒ bounded, can't blow up). Golden byte-identical. Full gate green: Rust
+**222** (+4), web **347** (+6), fmt/clippy/check/lint/build 0.
+
+**Landed — sim-core (`thermal_coupling` + `set_thermal_coupling`):**
+- New `thermal_coupling: Vec<Vec<(usize,f64)>>` + `has_coupling`. Per-tick (existing `step()` thermal loop,
+  now gated `has_thermal || has_coupling`): each element relaxes toward `Tamb + Σ_j w·(Tj_prev_j − Tamb)`
+  from a previous-tick Tj snapshot (explicit 1-tick loop). When coupling is live, **every** element
+  self-heats (a plain resistor needs a Tj to DONATE to the thermistor). `thermal_step_amb(tj,power,ambient)`
+  generalises the old `thermal_step`.
+- `set_thermal_coupling(idx,nbr,w)` (wasm-exposed) installs the geometry map AFTER `set_netlist` (which clears
+  it) — **no rewind**, so re-pushing on a move never resets the run. Renormalises any row sum > `THERMAL_
+  COUPLING_MAX`(0.9) → passivity backstop. `element_temperature(i)` now wasm-exposed too.
+- **Passivity = no blow-up:** `Σ w < 1` ⇒ `(I−W)(Tj−Tamb)=P·θ` bounded by `‖P·θ‖/(1−Σw)` — the owner's "dense
+  IC can't blow up" guaranteed by construction.
+- Hash: only tempco elements fold Tj (unchanged) → no coupling / golden = byte-identical (`empty_coupling_is_
+  byte_identical`). Tests: `thermistor_senses_neighbor_heat` (NTC senses a hot R → Tj↑, R↓, midpoint moves),
+  `mutual_heating_is_bounded`, `mutual_heating_run_is_reproducible`.
+
+**Landed — web:**
+- `buildNetlist` `computeThermalCoupling`: each `partHeats` component = a thermal node at its board cell;
+  pairs weighted `e^(−(d/D0)²)` within `COUPLE_CUTOFF`, each row normalised to `COUPLE_ROW_MAX`(0.7). Emitted
+  **Real-mode only + only when a tempco part (NTC/PTC/Q/QP) is present** (else `null`). A sealed IC = the one
+  thermal node of its primary element (heats neighbours as a unit, bounded). New `BuiltNetlist.coupling`.
+- `loop.ts` `setThermalCoupling`/`elementTemperature`; `App.svelte` pushes `nl.coupling` right after
+  `sim.setNetlist`. Tests: `mutualHeating.test.ts` (5 — emission gating/falloff/passivity), `mhE2E.test.ts`
+  (buildNetlist→wasm: a coupled NTC's midpoint drops 4.97→2.33 V sensing a hot R; uncoupled holds ~½ Vcc).
+
+**Balun question (owner asked):** a **1:1 isolation transformer works today** (`TR`, n=1 — galvanic isolation
+real). A true **CM-rejecting balun does NOT** — no center-tap (secondary is one P+/P− pair) and no common-mode
+choke; needs +1 terminal on `ELEM_TRANSFORMER` (medium) or a new coupled-inductor element (larger). Also
+transformers are skipped in the AC solve, so a balun's frequency response wouldn't show on Bode/phase yet. A
+deliberate small-to-medium feature if wanted.
+
+**NEXT:** v1 limits to note — coupling rides the netlist install (a PURE move doesn't repush; nudge a value to
+recompute) and an IC couples via its primary element (per-internal aggregation is a follow-up); the web glow
+could read sim-core `Tj` for coupled parts. Then the older list: flicker/op-amp noise; fan/spacing thermal
+levers; MOV joule-rating. These (233)–(237) refinements are on the branch, **NOT yet a PR** — a **#315 batch**
+awaits owner greenlight (adversarial-review the sim-core thermal changes first).
+
+---
+
 ## 2026-06-29 (236) — BJT THERMAL RUNAWAY: Is(T) on the same Tj infra (golden-safe), end-to-end verified
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Task #137 ("then go to BJT") done — the bipolar analogue of

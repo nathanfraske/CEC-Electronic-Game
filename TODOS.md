@@ -21,6 +21,27 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (237) — MUTUAL HEATING + THERMISTOR-AS-SENSOR (golden-safe, owner-confirmed scope)
+
+- ~~**Part mutual heating + thermistor-as-sensor** (#138)~~ DONE (sim-core + web; **golden byte-identical**;
+  Rust 222, web 347; verified e2e buildNetlist→wasm). Owner picked **sim-core deterministic** + **normalised
+  per-element** coupling. sim-core: `thermal_coupling`/`has_coupling` + `set_thermal_coupling(idx,nbr,w)`
+  (no-rewind, post-`set_netlist`); per-tick each element relaxes toward `Tamb + Σ w·(Tj_prev−Tamb)` (prev-tick
+  snapshot), every element self-heats when coupling live (a donor needs a Tj). **Passivity `Σ w < 1` ⇒
+  bounded** (no blow-up). `thermal_step_amb`; `element_temperature` wasm-exposed. web: `computeThermalCoupling`
+  (Gaussian falloff, row-normalised, Real-mode + tempco-part-present gate), `BuiltNetlist.coupling`, pushed in
+  `App.svelte` after `setNetlist`. Tests: sim-core `thermistor_senses_neighbor_heat` / `mutual_heating_is_
+  bounded` / `mutual_heating_run_is_reproducible` / `empty_coupling_is_byte_identical`; web `mutualHeating.
+  test.ts` (5) + `mhE2E.test.ts` (NTC midpoint 4.97→2.33 V sensing a hot R). A sealed IC = one thermal node
+  (its primary element).
+- [ ] **Follow-ups:** coupling rides the netlist install (a PURE move doesn't repush — nudge a value to
+  recompute); an IC couples via its primary element (per-internal aggregation later); the web glow could read
+  sim-core `Tj` for coupled parts. **Balun** (owner asked): 1:1 isolation works today (`TR` n=1); a real
+  CM-rejecting balun needs a center-tap (+1 transformer terminal) or a common-mode-choke element + AC-solve
+  support — a deliberate small/medium feature if wanted.
+
+---
+
 ## 2026-06-29 (236) — BJT THERMAL RUNAWAY: Is(T) on the same Tj infra (golden-safe), end-to-end verified
 
 - ~~**BJT thermal runaway — `Is(T)` feedback**~~ DONE (sim-core + web; **golden byte-identical**; Rust 218,

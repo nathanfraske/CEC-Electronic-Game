@@ -18,6 +18,7 @@ import {
 import type { Endpoint } from "./graph";
 import type { AcReadout, ElectricalState } from "./glyphs";
 import { isThermistor, thermistorResistance } from "./thermistor";
+import { partHeats } from "./thermal";
 import {
   tierParams,
   ecEsr,
@@ -539,6 +540,22 @@ const PTC_TEMPCO = 0.03;
 // ballast. γ ≈ ln(2)/10 ⇒ Is roughly doubles every ~10 °C (the textbook rule). Game-scaled like the
 // thermistor α; Real-mode only (Ideal / golden ⇒ 0 ⇒ Is = BJT_IS, byte-identical).
 const BJT_IS_TEMPCO = 0.07;
+
+// --- Thermal coupling (mutual heating) — geometry-derived "this part heats that part" weights -----------
+// A hot part raises a nearby part's local ambient (sim-core's `set_thermal_coupling`), so e.g. a thermistor
+// beside a power resistor SENSES its heat → its R(T) shifts the circuit. The weight between two parts falls
+// off with board distance (a Gaussian over grid cells); each part's INCOMING row sum is normalised to
+// `COUPLE_ROW_MAX` so it stays passive (`Σ w < 1` ⇒ bounded — heat can't blow up however many hot
+// neighbours pile on, the constraint the owner asked for). All distances are in grid cells (col/row).
+const COUPLE_D0 = 3.0; // coupling length (cells): falloff e^(−(d/D0)²)
+const COUPLE_CUTOFF = 9.0; // ignore pairs farther than this (keeps the graph sparse on big boards)
+const COUPLE_PEAK = 0.6; // weight of two touching parts before normalisation
+const COUPLE_ROW_MAX = 0.7; // cap on a part's total incoming weight (sim-core re-caps at 0.9 as a backstop)
+// Parts whose junction temperature RE-ENTERS the solve (so mutual heating has a circuit effect): the
+// thermistors sense, the BJTs runaway-trigger. Coupling is emitted only when at least one of these is on
+// the board — otherwise it would be pure per-tick cost with no consequence.
+const TEMPCO_SENSOR_KINDS = new Set(["NTC", "PTC", "Q", "QP"]);
+
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -937,6 +954,16 @@ export interface BuiltNetlist {
    * untiered circuit (so the core uses every kind default). See {@link tierParams}.
    */
   params: Float64Array;
+  /**
+   * The **thermal-coupling map** (mutual heating) — geometry-derived edges pushed via
+   * `Simulation.set_thermal_coupling` AFTER the netlist installs, so a hot part raises a nearby part's
+   * `Tj` (the canonical use: a thermistor sensing the heat of a part beside it). `idx[k]`/`nbr[k]`/`w[k]`
+   * is one directed edge (element `idx[k]` receives heat from element `nbr[k]` by weight `w[k]`). Present
+   * only in Real mode AND only when a tempco part (a thermistor / BJT — something whose `Tj` re-enters the
+   * solve) is on the board; `null` otherwise (no coupling installed → byte-identical / golden-safe). The
+   * weights are normalised per element so the row sum stays `< 1` (passive — heat can't blow up).
+   */
+  coupling: { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
   /**
@@ -994,6 +1021,69 @@ export interface BuiltNetlist {
   circuitOfNode: number[];
   /** Topology+values signature; unchanged across pure moves so the sim isn't reset. */
   sig: string;
+}
+
+/**
+ * The **thermal-coupling map** (mutual heating) from board geometry — which parts heat which, for
+ * `Simulation.set_thermal_coupling`. Each heating part (`partHeats`) with a primary element becomes a
+ * thermal node at its board cell; every pair within {@link COUPLE_CUTOFF} cells gets a weight that falls
+ * off as `e^(−(d/D0)²)`, and each part's INCOMING row sum is normalised down to {@link COUPLE_ROW_MAX} for
+ * passivity (`Σ w < 1` ⇒ bounded — heat can't blow up, the owner's constraint). Returns `null` (no coupling
+ * installed) outside Real mode, or when no part whose `Tj` re-enters the solve (a thermistor / BJT —
+ * {@link TEMPCO_SENSOR_KINDS}) is present, since then the coupling would be pure per-tick cost with no
+ * circuit effect. A sealed IC / sub-assembly participates as the single thermal node of its primary element
+ * (consistent with the per-component self-heating model), so it heats neighbours as a unit and is bounded.
+ */
+function computeThermalCoupling(
+  parts: Iterable<{
+    id: number;
+    kind: string;
+    cell: { col: number; row: number };
+  }>,
+  elemOfComponent: Map<number, number>,
+  real: boolean,
+): { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null {
+  if (!real) return null;
+  const nodes: { ei: number; col: number; row: number }[] = [];
+  let hasSensor = false;
+  for (const c of parts) {
+    if (!partHeats(c.kind)) continue;
+    const ei = elemOfComponent.get(c.id);
+    if (ei === undefined) continue;
+    nodes.push({ ei, col: c.cell.col, row: c.cell.row });
+    if (TEMPCO_SENSOR_KINDS.has(c.kind)) hasSensor = true;
+  }
+  if (!hasSensor || nodes.length < 2) return null;
+  const idx: number[] = [];
+  const nbr: number[] = [];
+  const w: number[] = [];
+  for (let i = 0; i < nodes.length; i++) {
+    // Raw incoming weights for receiver i, then normalise the row so Σ w ≤ COUPLE_ROW_MAX (passive).
+    const row: { j: number; w: number }[] = [];
+    for (let j = 0; j < nodes.length; j++) {
+      if (i === j) continue;
+      const d = Math.hypot(
+        nodes[i]!.col - nodes[j]!.col,
+        nodes[i]!.row - nodes[j]!.row,
+      );
+      if (d > COUPLE_CUTOFF) continue;
+      const wr = COUPLE_PEAK * Math.exp(-((d / COUPLE_D0) ** 2));
+      if (wr > 1e-4) row.push({ j, w: wr });
+    }
+    const sum = row.reduce((s, e) => s + e.w, 0);
+    const scale = sum > COUPLE_ROW_MAX ? COUPLE_ROW_MAX / sum : 1;
+    for (const e of row) {
+      idx.push(nodes[i]!.ei);
+      nbr.push(nodes[e.j]!.ei);
+      w.push(e.w * scale);
+    }
+  }
+  if (idx.length === 0) return null;
+  return {
+    idx: Uint32Array.from(idx),
+    nbr: Uint32Array.from(nbr),
+    w: Float64Array.from(w),
+  };
 }
 
 export function buildNetlist(
@@ -2015,6 +2105,7 @@ export function buildNetlist(
     values: Float64Array.from(values),
     aux: Float64Array.from(auxArr),
     params,
+    coupling: computeThermalCoupling(sorted, elemOfComponent, real),
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,
