@@ -11451,6 +11451,82 @@ mod tests {
         );
     }
 
+    /// **Stress test: a long inverter chain — the worst case for the residual O(n²).** `N` legacy
+    /// NOT gates in series: a source drives node 1 (Boundary), and every gate output feeds only the
+    /// next gate's input, so nodes 2..=N+1 are all pure-`Digital` and leave the dense factorisation.
+    /// The kept analog submatrix is just the source node + its branch (≈2 rows) regardless of `N` —
+    /// so the dense factorisation is O(1) while the full matrix the lift still *allocates/assembles*
+    /// is N×N. This is exactly the circuit where the direct-compacted-assembly follow-up will show:
+    /// the lift already removed the O(N³) factorisation wall, leaving only the O(N²) alloc/assembly.
+    ///
+    /// In debug the per-step shadow solve factors the full N×N matrix (O(N³)), so `N` is kept modest
+    /// there to prove byte-identity at scale without a slow test; in release the shadow is gone and a
+    /// large `N` measures the real per-tick cost (run with `--release -- --nocapture`).
+    #[test]
+    fn stress_large_inverter_chain() {
+        let n_gates: usize = if cfg!(debug_assertions) { 150 } else { 4000 };
+        let build = || {
+            let mut kinds: Vec<u8> = vec![ELEM_VSOURCE];
+            let mut a: Vec<u32> = vec![1];
+            let mut b: Vec<u32> = vec![0];
+            let (mut c, mut d): (Vec<u32>, Vec<u32>) = (vec![0], vec![0]);
+            let mut val = vec![5.0f64];
+            let mut aux = vec![0.0f64];
+            for i in 0..n_gates as u32 {
+                kinds.push(ELEM_GATE);
+                a.push(i + 2); // OUT = node i+2
+                b.push(i + 1); // IN  = node i+1 (prev gate's OUT, or the source at i==0)
+                c.push(0);
+                d.push(0);
+                val.push(5.0);
+                aux.push(6.0); // NOT
+            }
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist(n_gates + 2, &kinds, &a, &b, &c, &d, &val, &aux));
+            sim
+        };
+        let sim0 = build();
+        // Nodes 2..=N+1 are pure-Digital (each lifted); node 1 is the Boundary source node.
+        assert_eq!(
+            sim0.digital_rows().len(),
+            n_gates,
+            "every gate-to-gate net is pure-Digital and lifted out of the dense matrix"
+        );
+        // Correctness at scale: finite + reproducible.
+        let run = || {
+            let mut s = build();
+            let mut acc = s.snapshot_hash();
+            for _ in 0..100 {
+                s.step();
+                acc ^= s.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "large inverter chain reproduces exactly");
+
+        // Per-tick timing — meaningful in release (debug is dominated by the shadow solve).
+        let mut sim = build();
+        for _ in 0..20 {
+            sim.step(); // warm up
+        }
+        let t = std::time::Instant::now();
+        let steps = 100;
+        for _ in 0..steps {
+            sim.step();
+        }
+        let us = t.elapsed().as_micros() as f64 / steps as f64;
+        eprintln!(
+            "STRESS inverter-chain N={n_gates} dim_total={} digital_lifted={} -> {us:.1} us/tick ({})",
+            n_gates + 1,
+            sim.digital_rows().len(),
+            if cfg!(debug_assertions) {
+                "debug+shadow"
+            } else {
+                "release"
+            }
+        );
+    }
+
     /// A gate driving an LED through a series resistor exercises the *Newton*-path
     /// gate stamp (the LED makes the circuit nonlinear). Buffered high the LED
     /// lights; buffered low it is dark.
