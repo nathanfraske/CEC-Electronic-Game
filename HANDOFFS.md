@@ -31,9 +31,15 @@ parameterized helpers → byte-identical. `row_maps`/`solve_row`/`full_row` comp
   **16,784 µs/tick → 237 µs/tick (~71×)**. Cost is now the irreducible `O(gates)` digital eval → scales
   **linearly** in gate count, not quadratically. This IS the multi-thousand-node circuit the panel wanted.
 
-**NEXT:** commit + push once the web gate is green. **Stage B** (Z/X as propagating levels — the only
-deliberate golden regen) still optional. The whole digital-matrix-lift arc (242–244) awaits a PR (owner asked
-to PR/merge the prior batch; ask before opening this one).
+**LANDED:** the whole digital-matrix-lift arc (242–244) merged to `main` as **PR #316** (merge commit
+`f65b298`) — CI green, golden + digital golden untouched. Branch `claude/kind-turing-hdelb3` fully contained
+in `main`; continue from here.
+
+**NEXT (engine agenda):** the lift unlocked gate-level *scale*; candidate successors — (A) **event-driven
+dirty-set** digital eval (eval_digital currently re-runs every gate each sub-tick → make it O(active fanout);
+golden-safe vs evaluate-all, the doc §7.5 pre-blessed it); (B) **Stage B** Z/X as first-class propagating
+levels (high-Z/wired-AND/I²C; the one deliberate golden regen); (C) **sparse analog solver** (the analog-scale
+O(n³); higher determinism risk); (D) **sensor/transducer framework** (CCVS/VCVS, Rogowski). Owner to pick.
 
 ---
 
