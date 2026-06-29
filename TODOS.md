@@ -6,6 +6,26 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (229) — Thermal LIVE: per-part glow + °C readout + inferno board lens, golden-safe
+
+- ~~**Thermal Phase 1 — the live vertical**~~ DONE (web-only, golden-safe; `79accf5` + `4fc0080`; web 326;
+  verified live via Playwright). Per-part **heat-glow** + **°C readout** (`board.ts` ComponentNode owns
+  `tj`, integrates from `dissipatedPower` by the sim-tick delta, draws a warm incandescence halo;
+  `App.svelte` `selBodyTemp` → inspector "Body temp" row). Plus the owner-requested **thermal lens** (a
+  full-board inferno heatmap like their electro-thermal solver): `thermalField.ts` (deterministic 2D heat
+  field — held-temp sources, explicit diffusion, convection, inferno colourmap; 6 tests), `board.ts`
+  `"thermal"` BoardLens + canvas-texture overlay (`updateHeatOverlay`, dims the board, components
+  distinct), `App.svelte` **🔥 Heat** toggle.
+- [ ] **Thermal Phase 2** (next): **copper-weighted diffusion** so heat follows the TRACES (weight the
+  field's conductance by wire presence) + a **°C colour-scale legend**. The user's reference shows heat
+  conducting along the copper, not just a board-area blob.
+- [ ] **Thermal derate→FAIL / magic-smoke** (#116, deferred): a web-side over-temp flag (NOT into the
+  solve → replay-safe) so an over-dissipated part boxes/chars at `Tj > T_MAX`.
+- [ ] **Thermal Path 2** (owner-greenlit, golden-moving): sim-core hashed `Tj` for R(T) drift / thermal
+  runaway / replay-exact thermal-contract grading.
+
+---
+
 ## 2026-06-28 (228) — Thermal self-heating: model + pipeline LANDED (Phase 0), golden-safe
 
 - ~~**Engine-fundamental survey**~~ DONE — mapped what's modelled vs. not (clean level-1 fidelity; biggest

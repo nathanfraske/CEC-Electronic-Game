@@ -190,15 +190,20 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > deferred to Path 2. (This sharpens §2's "self-heating thermistor closes its R(T) loop" — that loop is
 > Path 2, not the v1 web path.)
 >
-> **NEXT:** wire `advanceTemps` into the per-frame `onFrame` (App.svelte, beside the existing
-> `electricalMap`) into a `partTemps` map; the body heat-glow (A) in `board.ts` `ComponentNode` +
-> the °C readout (C); then the `"thermal"` lens (B) and the derate→FAIL/vent consequence (Phase 2).
+> **UPDATE 2026-06-29 — the LIVE vertical + the thermal lens LANDED** (`79accf5` + `4fc0080`, web 326,
+> verified live). Per-part **heat-glow** (A) + **°C readout** (C): each `board.ts` `ComponentNode` owns
+> `tj`, integrates it from its own `dissipatedPower` by the sim-tick delta, draws the warm halo; the
+> inspector shows a "Body temp" row from `Board.bodyTempOf`. And the **thermal lens** (B) — a full-board
+> **inferno heat-field overlay** (`thermalField.ts`: held-temp sources, explicit 5-point diffusion,
+> still-air convection, inferno colourmap; `board.ts` `"thermal"` `BoardLens` + canvas-texture sprite +
+> `updateHeatOverlay`, board dimmed, components distinct; `App.svelte` 🔥 Heat toggle). All
+> golden-safe/presentational. **Remaining:** Phase 2 = copper-weighted diffusion (heat follows traces) +
+> a °C colour-scale legend; the derate→FAIL/vent consequence; Path 2 (sim-core hashed Tj).
 
-0. ~~**Read-only heat.**~~ Model + `P=V·I` → steady-state `Tj` DONE (`thermal.ts`). Live glow + °C
-   readout in the renderer = the remaining presentation wiring.
-1. **Thermal lens + the time-constant.** ~~The transient `Tj` integrator (web-side, deterministic)~~ DONE
-   (`advanceTemps`, tick-driven). Remaining: wire it into the live loop; add the `"thermal"` `BoardLens`
-   (B) + the thermal scope (C).
+0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
+1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node
+   `stepTemp`), wired into the live loop, the `"thermal"` `BoardLens` + inferno board heat-field overlay.
+   Remaining sub-items: the thermal **scope** (a warm/cool curve over time) + the **legend**.
 2. **Derating → FAIL + magic smoke.** Wire `Tj` into a derated `RATED_CURRENT_SLOT` (Real mode) so the FAIL
    box triggers sooner when hot; add the thermal-death vent (E) as a destroyed state distinct from the
    over-current box; hook autopsy → Lux. Heat becomes a *consequence*.

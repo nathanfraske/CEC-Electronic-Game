@@ -5,6 +5,52 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (229) — Thermal LIVE: per-part heat-glow + °C readout + the inferno board lens (golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Commits `79accf5` (per-part glow + readout) and `4fc0080`
+(thermal lens overlay) on top of (228)'s model+pipeline. NOT yet merged (the metastability + cap-leak
+work is on main via PR #313; all thermal commits — `f8bfb51`, `61cc84c`, `79accf5`, `4fc0080` — are on
+the branch). Web-only, golden-safe (zero sim-core change). Gate green: web **326**, check/lint/build 0.
+**Verified live via Playwright** (drive a hot circuit in Real mode → screenshot).
+
+**Landed — the live thermal vertical (Phase 1):**
+- **Per-part heat-glow** (`board.ts` `ComponentNode`): each node owns `tj`, integrates it from its own
+  `dissipatedPower(electrical)` each frame (Real mode) by the sim-tick delta, and draws a warm
+  incandescence halo (bronze→amber→red→white via `glowFactor`) at the back of the node. `Board.update`
+  gained a `real` param + computes the sim-time delta from its tick delta. `bodyTempOf(id)` /
+  `resetThermals()` added.
+- **°C readout** (`App.svelte`): a `selBodyTemp` `$state` (set in onFrame from `b.bodyTempOf(selPart.id)`,
+  board read non-reactively) → a "Body temp °C" inspector row in Real mode above ambient. Kept SEPARATE
+  from `Component.temp` (thermistor knob) so no R(T) rebuild.
+- **Thermal lens** (the owner's ask — a full-board heatmap like their electro-thermal solver):
+  `thermalField.ts` — a deterministic coarse 2D heat FIELD (held-temperature sources at hot parts,
+  explicit 5-point diffusion sub-stepped for stability, still-air convection, inferno colourmap, alpha
+  fades from ambient). `board.ts` adds a `"thermal"` `BoardLens` + a canvas-texture `heatSprite` (behind
+  wires/parts); `updateHeatOverlay()` builds the field from node Tj + positions, diffuses it the frame's
+  sim-time, paints it over the content bbox, dims the board (components stay distinct). `App.svelte` has
+  a **🔥 Heat** toggle (separate from the tier-lens cycle). `thermalField.test.ts` (6 tests).
+
+**Golden-safe / determinism-safe:** zero sim-core change; all Tj/field state is presentational and never
+re-enters the solve (no rebuild, no FAIL-freeze); Real-mode only; the field is a pure function of the
+per-part Tj (replay-safe via the sim-tick delta).
+
+**NEXT (thermal, in priority order):**
+1. **Phase 2 — copper-weighted diffusion** so heat follows the TRACES (the user's reference shows heat
+   conducting along the copper, not just a board-area blob): weight the field's lateral conductance by
+   whether a cell sits under a wire. + a **°C colour-scale legend** (like the reference's bottom bar).
+2. **Derate→FAIL / magic-smoke** (task #116): a web-side over-temp flag (NOT into the solve, replay-safe)
+   so an over-dissipated part boxes/chars when `Tj > T_MAX`; hook the existing FAIL render.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+
+**Verification note for the next agent:** `shoot.mjs` renders t=0 only (no heat accrues). To SEE thermal,
+drive the live sim: a Playwright script that reuses `scripts/lib/harness.mjs` `openApp`, clicks the Real
+toggle (`.fidelity-toggle`), sets `.rate-custom` high + clicks Run (`.transport .btn-accent`), waits,
+clicks the 🔥 Heat button, then screenshots. (The cec-app MCP was absent this session.) `window.__cecView`
+can't set the thermal lens and resets it if you pass `lens` — pass only `{centerId, zoom}`.
+
+---
+
 ## 2026-06-28 (228) — Thermal self-heating: model + P=V·I→Tj pipeline LANDED (Phase 0, golden-safe)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, commit `f8bfb51` (NOT yet merged; (226)+(227) already merged
