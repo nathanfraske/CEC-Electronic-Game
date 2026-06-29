@@ -11349,6 +11349,98 @@ mod tests {
         assert_eq!(run(), run(), "all-digital ring must reproduce exactly");
     }
 
+    /// **Digital determinism golden** — the byte-level regression net for the digital-matrix lift
+    /// (and its follow-ups). For each representative circuit it folds 500 ticks of `snapshot_hash`
+    /// and asserts a PINNED value. Unlike the `*_run_is_reproducible` tests (which only check
+    /// run==run, so a byte-change that stays self-consistent would slip past) and the behavioural
+    /// tests (which check outcomes, not bytes), this catches ANY change to the committed bytes of a
+    /// digital circuit. The pins were captured from the proven-byte-identical lift, so they equal
+    /// the pre-lift behaviour; any later solver change that is meant to be byte-identical (e.g. the
+    /// direct-compacted-assembly follow-up) must keep them. Spans: a linear pure-digital net, the
+    /// `m==0` all-digital ring, a boundary-digital gate, and a Newton-path gate→LED.
+    #[test]
+    fn digital_determinism_golden() {
+        fn fold(sim: &mut Sim, ticks: usize) -> u64 {
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..ticks {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        }
+        // A: two legacy inverters in series — a pure-Digital middle net (the lift's headline case).
+        let mut a = Sim::new(1);
+        assert!(a.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_GATE, ELEM_GATE],
+            &[1, 2, 3],
+            &[0, 1, 2],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 5.0, 5.0],
+            &[0.0, 6.0, 6.0],
+        ));
+        // B: power-less three-inverter ring — every node pure-Digital (m == 0).
+        let mut b = Sim::new(1);
+        assert!(b.set_netlist(
+            4,
+            &[ELEM_GATE, ELEM_GATE, ELEM_GATE],
+            &[1, 2, 3],
+            &[3, 1, 2],
+            &[0, 0, 0],
+            &[0, 0, 0],
+            &[5.0, 5.0, 5.0],
+            &[6.0, 6.0, 6.0],
+        ));
+        // C: XOR gate fed by two sources, output loaded by a resistor (all Boundary nets).
+        let mut c = Sim::new(1);
+        assert!(c.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR],
+            &[1, 2, 3, 3],
+            &[0, 0, 1, 0],
+            &[0, 0, 2, 0],
+            &[0, 0, 0, 0],
+            &[5.0, 0.0, 5.0, 1000.0],
+            &[0.0, 0.0, 4.0, 0.0],
+        ));
+        // D: a BUF gate driving an LED through a resistor — the Newton path with a boundary OUT.
+        let mut d = Sim::new(1);
+        assert!(d.set_netlist(
+            4,
+            &[ELEM_VSOURCE, ELEM_GATE, ELEM_RESISTOR, ELEM_LED],
+            &[1, 2, 2, 3],
+            &[0, 1, 3, 0],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[5.0, 5.0, 220.0, 0.0],
+            &[0.0, 7.0, 0.0, 0.0],
+        ));
+        // Pinned, captured from the proven-byte-identical lift (= pre-lift behaviour). A solver
+        // change meant to be byte-identical must keep these; a deliberate digital behaviour change
+        // (e.g. Stage B's Z/X propagation) regenerates them with an explanation.
+        assert_eq!(
+            fold(&mut a, 500),
+            0x71f6_6fcd_7f6a_f503,
+            "A: linear pure-digital chain"
+        );
+        assert_eq!(
+            fold(&mut b, 500),
+            0xd646_6e7a_e6f1_a960,
+            "B: m==0 all-digital ring"
+        );
+        assert_eq!(
+            fold(&mut c, 500),
+            0x3932_0c78_8d6c_7fbe,
+            "C: boundary-digital XOR + R load"
+        );
+        assert_eq!(
+            fold(&mut d, 500),
+            0xce60_c7a8_72b4_707f,
+            "D: Newton-path gate → LED"
+        );
+    }
+
     /// A gate driving an LED through a series resistor exercises the *Newton*-path
     /// gate stamp (the LED makes the circuit nonlinear). Buffered high the LED
     /// lights; buffered low it is dark.
