@@ -6743,347 +6743,356 @@ impl Sim {
             *d = Level::Z;
         }
         for i in 0..self.elements.len() {
-            let e = self.elements[i];
-            match e.kind {
-                ELEM_GATE => {
-                    // This gate's selected logic family (packed in aux's upper bits).
-                    let fi = gate_family_index(e.aux);
-                    let fam = &FAMILIES[fi];
-                    // Supply rails: a powered IC reads GND (e) and VCC (d) and works in
-                    // that window; a legacy gate (no power pins) uses the `value` rail
-                    // referenced to ground. `rail` is the span, `vlow` the GND offset.
-                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
-                    let rail = (vhigh - vlow).max(0.0);
-                    // Receiver: quantise each input's committed (last-tick) voltage
-                    // RELATIVE to this gate's GND, over its rail (per-reader threshold,
-                    // one tick of delay).
-                    let in1 = fam.quantize(self.node_v[e.b] - vlow, rail);
-                    let in2 = fam.quantize(self.node_v[e.c] - vlow, rail);
-                    let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
-                    // The output releases (high-impedance Z) in two cases: an UNPOWERED
-                    // chip (rail below the operating minimum, e.g. its VCC pin unwired)
-                    // sits dead; and an open-drain output pulls low but RELEASES the high
-                    // side (the high comes from an external pull-up — open-drain outputs on
-                    // one net form a wired-AND bus: any low wins, all release -> pull-up
-                    // high). Otherwise it drives the computed level.
-                    let driven =
-                        if rail < GATE_MIN_RAIL || (gate_open_drain(e.aux) && out == Level::High) {
-                            Level::Z
-                        } else {
-                            out
-                        };
-                    // The family's Thévenin target is a rail fraction; offset it by the
-                    // gate's GND so the output swings `vlow .. vlow+rail`.
-                    let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
-                    self.gate_target[i] = vlow + tvf;
-                    self.gate_gout[i] = g;
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
-                    self.digital_vhigh[e.a] = rail;
-                    self.digital_vlow[e.a] = vlow;
-                    self.digital_family[e.a] = fi as u8;
-                }
-                ELEM_MEMORY => {
-                    // READ: drive the data-out bus with the addressed word's bits. Powered like a gate —
-                    // VCC (d) / GND (e) set the rail; the address is quantised from the committed
-                    // (last-tick) voltages relative to GND and masked to the store's depth. The word is
-                    // stable within the solve (writes commit in `commit_sequential_digital_state`), so this
-                    // is a CONSTANT drive — no Newton.
-                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
-                    let rail = (vhigh - vlow).max(0.0);
-                    let depth = self.mem_data[i].len();
-                    if rail >= GATE_MIN_RAIL && depth > 0 {
-                        let fam = &FAMILIES[0];
-                        if !self.mem_dout_nodes[i].is_empty() {
-                            // WIDE READ (P3, option A): the explicit address bus selects the word; each
-                            // data-out bit node is driven with the corresponding bit (LSB = bit 0). The 8
-                            // fixed terminals carry only the supply rail; the buses live in the side lists.
-                            let addr = self.mem_wide_addr(i, fam, vlow, rail, depth);
-                            let word = self.mem_data[i][addr];
-                            for b in 0..self.mem_dout_nodes[i].len() {
-                                let node = self.mem_dout_nodes[i][b];
-                                let dout = if (word >> b) & 1 != 0 {
-                                    Level::High
-                                } else {
-                                    Level::Low
-                                };
-                                self.digital_drive[node] = combine(self.digital_drive[node], dout);
-                                self.digital_vhigh[node] = rail;
-                                self.digital_vlow[node] = vlow;
-                                self.digital_family[node] = 0;
-                            }
-                        } else {
-                            // CELL-LEVEL READ (P1): address A0..A2 = f, g, h; D_out = a (one bit).
-                            let a0 = (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High)
-                                as usize;
-                            let a1 = (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High)
-                                as usize;
-                            let a2 = (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High)
-                                as usize;
-                            let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
-                            let dout = if self.mem_data[i][addr] & 1 != 0 {
+            self.eval_one_digital(i);
+        }
+    }
+
+    /// Evaluate ONE digital element's drive contribution — the per-element body of
+    /// [`Sim::eval_digital_full`]'s loop, extracted so the dirty-set can re-run a single element (or
+    /// re-fold a single net) instead of every element. Folds the element's output level into
+    /// `digital_drive[outnet]` via [`combine`]; the caller resets the net to `Z` first for a
+    /// from-scratch re-fold. Pure function of the committed `node_v`/levels + sequential state.
+    fn eval_one_digital(&mut self, i: usize) {
+        let e = self.elements[i];
+        match e.kind {
+            ELEM_GATE => {
+                // This gate's selected logic family (packed in aux's upper bits).
+                let fi = gate_family_index(e.aux);
+                let fam = &FAMILIES[fi];
+                // Supply rails: a powered IC reads GND (e) and VCC (d) and works in
+                // that window; a legacy gate (no power pins) uses the `value` rail
+                // referenced to ground. `rail` is the span, `vlow` the GND offset.
+                let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                let rail = (vhigh - vlow).max(0.0);
+                // Receiver: quantise each input's committed (last-tick) voltage
+                // RELATIVE to this gate's GND, over its rail (per-reader threshold,
+                // one tick of delay).
+                let in1 = fam.quantize(self.node_v[e.b] - vlow, rail);
+                let in2 = fam.quantize(self.node_v[e.c] - vlow, rail);
+                let out = gate_logic_level(gate_func_code(e.aux), in1, in2);
+                // The output releases (high-impedance Z) in two cases: an UNPOWERED
+                // chip (rail below the operating minimum, e.g. its VCC pin unwired)
+                // sits dead; and an open-drain output pulls low but RELEASES the high
+                // side (the high comes from an external pull-up — open-drain outputs on
+                // one net form a wired-AND bus: any low wins, all release -> pull-up
+                // high). Otherwise it drives the computed level.
+                let driven =
+                    if rail < GATE_MIN_RAIL || (gate_open_drain(e.aux) && out == Level::High) {
+                        Level::Z
+                    } else {
+                        out
+                    };
+                // The family's Thévenin target is a rail fraction; offset it by the
+                // gate's GND so the output swings `vlow .. vlow+rail`.
+                let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
+                self.gate_target[i] = vlow + tvf;
+                self.gate_gout[i] = g;
+                self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
+                self.digital_vhigh[e.a] = rail;
+                self.digital_vlow[e.a] = vlow;
+                self.digital_family[e.a] = fi as u8;
+            }
+            ELEM_MEMORY => {
+                // READ: drive the data-out bus with the addressed word's bits. Powered like a gate —
+                // VCC (d) / GND (e) set the rail; the address is quantised from the committed
+                // (last-tick) voltages relative to GND and masked to the store's depth. The word is
+                // stable within the solve (writes commit in `commit_sequential_digital_state`), so this
+                // is a CONSTANT drive — no Newton.
+                let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                let rail = (vhigh - vlow).max(0.0);
+                let depth = self.mem_data[i].len();
+                if rail >= GATE_MIN_RAIL && depth > 0 {
+                    let fam = &FAMILIES[0];
+                    if !self.mem_dout_nodes[i].is_empty() {
+                        // WIDE READ (P3, option A): the explicit address bus selects the word; each
+                        // data-out bit node is driven with the corresponding bit (LSB = bit 0). The 8
+                        // fixed terminals carry only the supply rail; the buses live in the side lists.
+                        let addr = self.mem_wide_addr(i, fam, vlow, rail, depth);
+                        let word = self.mem_data[i][addr];
+                        for b in 0..self.mem_dout_nodes[i].len() {
+                            let node = self.mem_dout_nodes[i][b];
+                            let dout = if (word >> b) & 1 != 0 {
                                 Level::High
                             } else {
                                 Level::Low
                             };
-                            self.digital_drive[e.a] = combine(self.digital_drive[e.a], dout);
-                            self.digital_vhigh[e.a] = rail;
-                            self.digital_vlow[e.a] = vlow;
-                            self.digital_family[e.a] = 0;
+                            self.digital_drive[node] = combine(self.digital_drive[node], dout);
+                            self.digital_vhigh[node] = rail;
+                            self.digital_vlow[node] = vlow;
+                            self.digital_family[node] = 0;
                         }
-                    }
-                    // unpowered → outputs released (Z, the default), like a dead gate.
-                }
-                ELEM_DFF => {
-                    // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
-                    // in the commit phase, so the output is constant within the solve.
-                    let fi = gate_family_index(e.aux);
-                    let q = self.ff_q[i];
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], q);
-                    self.digital_vhigh[e.a] = e.value;
-                    self.digital_vlow[e.a] = 0.0;
-                    self.digital_family[e.a] = fi as u8;
-                    self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
-                    self.digital_vhigh[e.d] = e.value;
-                    self.digital_vlow[e.d] = 0.0;
-                    self.digital_family[e.d] = fi as u8;
-                }
-                ELEM_SAMPLER => {
-                    // OUT (a) drives the stored comparison bit at the output rail (`aux`,
-                    // defaulted). The bit is latched in the commit phase, so the output is
-                    // constant within the solve (one tick of clock-to-output delay). IN (b)
-                    // is a high-Z analog sense pin — read, not driven. Ideal driver family.
-                    let rail = sampler_rail(&e);
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], self.samp_q[i]);
-                    self.digital_vhigh[e.a] = rail;
-                    self.digital_vlow[e.a] = 0.0;
-                    self.digital_family[e.a] = 0;
-                }
-                ELEM_COMPARATOR => {
-                    // POWERED output stage, identical machinery to a powered gate: OUT (a)
-                    // swings between the GND pin (e, vlow) and the VCC pin (d, vhigh) and
-                    // releases (Z) when the rail collapses below the operating minimum (an
-                    // unpowered chip sits dead). The held comparison bit (`cmp_q`, latched in
-                    // the commit phase) is constant within the solve, so this is a constant
-                    // Thévenin stamp — no Newton. IN+ (b)/IN- (c) are analog sense pins (read
-                    // in the commit phase, not driven here); LE (f) is read there too. Ideal
-                    // driver family (a clean rail-to-rail output), GND-offset by `vlow`.
-                    let fam = &FAMILIES[0];
-                    let (vlow, vhigh) = gate_rails(&e, &self.node_v);
-                    let rail = (vhigh - vlow).max(0.0);
-                    let driven = if rail < GATE_MIN_RAIL {
-                        Level::Z
                     } else {
-                        self.cmp_q[i]
-                    };
-                    let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
-                    self.gate_target[i] = vlow + tvf;
-                    self.gate_gout[i] = g;
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
-                    self.digital_vhigh[e.a] = rail;
-                    self.digital_vlow[e.a] = vlow;
-                    self.digital_family[e.a] = 0;
-                }
-                ELEM_LEVELSHIFT => {
-                    // Read the input (b) at the INPUT rail A (value), re-drive the output
-                    // (a) at the OUTPUT rail B (aux) — the part that translates levels
-                    // across rails. Ideal receiver/driver (a translator, not a family).
-                    let fam = &FAMILIES[0];
-                    let lvl = fam.quantize(self.node_v[e.b], e.value);
-                    let (tv, g) = fam.drive_level(lvl, e.aux).unwrap_or((0.0, 0.0));
-                    self.gate_target[i] = tv;
-                    self.gate_gout[i] = g;
-                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], lvl);
-                    self.digital_vhigh[e.a] = e.aux; // output net carries rail B
-                    self.digital_vlow[e.a] = 0.0;
-                    self.digital_family[e.a] = 0;
-                }
-                ELEM_BEHAVIORAL => {
-                    // Behavioral block: up to three POWERED digital outputs on a/b/c, driven from
-                    // the COMMITTED integer state through the SAME powered-gate output path the
-                    // gate/comparator use. They swing between the GND pin (e, vlow) and the VCC pin
-                    // (d, vhigh) and release (Z) when the rail collapses below the operating minimum
-                    // (an unpowered chip sits dead). The state is advanced in the commit phase, so
-                    // the levels are constant within the solve — a constant Thévenin stamp, no
-                    // Newton, one tick of state-to-output delay. The input pins f/g/h are read in
-                    // the commit phase (not driven here). Ideal driver family (a clean rail-to-rail
-                    // output), GND-offset by `vlow`. The per-program output map (which pin carries
-                    // what, and whether c is used) is the only thing that differs between programs:
-                    //   prog 1 SPI master: a=SCLK, b=MOSI, c=CS
-                    //   prog 2 SPI slave:  a=MISO, b=RXVALID, c unused (Z)
-                    //   prog 3 UART:       a=TX,   b=RXVALID, c unused (Z)
-                    let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
-                    let fam = &FAMILIES[0];
-                    // The behavioral block is ALWAYS powered through its VCC (d) / GND (e) pins —
-                    // `value` is the program id, NOT a logic rail, so it has no legacy `value`-rail
-                    // fallback (that would misread the program id as a 1 V rail). An unwired VCC
-                    // floats to ~0 V → rail below the minimum → the chip reads dead/released.
-                    let vlow = self.node_v[e.e];
-                    let rail = (self.node_v[e.d] - vlow).max(0.0);
-                    let bit = |hi: bool| if hi { Level::High } else { Level::Low };
-                    // Program 4 (the FPGA logic element) drives a SINGLE powered output on `a` and
-                    // reads its inputs on b/c/f/g/h — so it must NOT touch b/c (the generic a/b/c
-                    // drive loop below unconditionally overwrites each pin's quantisation rail, which
-                    // would clobber an input net driven by an external clock/gate). Handle it here
-                    // and skip the generic output path. Combinational mode looks the truth table up
-                    // from the LIVE inputs (gate-like, settling within the digital sub-solve, no
-                    // clock-to-output delay); registered mode drives the committed `Q` (a LUT+FF,
-                    // one tick of clock-to-output delay like the DFF). Unpowered ⇒ released (Z).
-                    if prog == BEH_PROG_LUT {
-                        let la = if rail < GATE_MIN_RAIL {
-                            Level::Z
-                        } else if beh_lut_registered(&e) {
-                            bit(self.beh_state[i][BEH_LUT_Q] != 0)
+                        // CELL-LEVEL READ (P1): address A0..A2 = f, g, h; D_out = a (one bit).
+                        let a0 =
+                            (fam.quantize(self.node_v[e.f] - vlow, rail) == Level::High) as usize;
+                        let a1 =
+                            (fam.quantize(self.node_v[e.g] - vlow, rail) == Level::High) as usize;
+                        let a2 =
+                            (fam.quantize(self.node_v[e.h] - vlow, rail) == Level::High) as usize;
+                        let addr = (a0 | (a1 << 1) | (a2 << 2)) & (depth - 1);
+                        let dout = if self.mem_data[i][addr] & 1 != 0 {
+                            Level::High
                         } else {
-                            let idx = beh_lut_live_index(&self.node_v, &e, vlow, rail);
-                            bit(beh_lut_bit(e.aux as u32, idx))
+                            Level::Low
                         };
-                        let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
-                        self.gate_target[i] = vlow + tvf;
-                        self.gate_gout[i] = g;
-                        self.digital_drive[e.a] = combine(self.digital_drive[e.a], la);
+                        self.digital_drive[e.a] = combine(self.digital_drive[e.a], dout);
                         self.digital_vhigh[e.a] = rail;
                         self.digital_vlow[e.a] = vlow;
                         self.digital_family[e.a] = 0;
-                        continue;
                     }
-                    // Program 6 (the 3-bit SAR ADC) drives FOUR powered outputs from committed state
-                    // — D0/D1/D2 (a/b/c) = the successive-approximation result register, DONE (g) =
-                    // high once a full conversion has completed — and reads VIN (f) / CLK (h) in the
-                    // commit phase. The fourth output (g) is why it can't use the generic a/b/c loop
-                    // below; handle it here and skip (like the LUT). Reference is the VCC rail
-                    // (single supply). Unpowered ⇒ everything released (Z). One tick of
-                    // state-to-output delay, like the other clocked programs.
-                    if prog == BEH_PROG_SAR_ADC {
-                        let powered = rail >= GATE_MIN_RAIL;
-                        let code = self.beh_state[i][BEH_SAR_CODE];
-                        let done_hi = self.beh_state[i][BEH_SAR_DONE] != 0;
-                        // (output node, high?) for D0, D1, D2, DONE.
-                        let outs = [
-                            (e.a, code & 1 != 0),
-                            (e.b, code & 2 != 0),
-                            (e.c, code & 4 != 0),
-                            (e.g, done_hi),
-                        ];
-                        for (k, &(node, hi)) in outs.iter().enumerate() {
-                            let lvl = if powered { bit(hi) } else { Level::Z };
-                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
-                            if k == 0 {
-                                // OUT (a = D0): record the element-indexed Thévenin so the OUT current
-                                // readout (oriented out of `a`) matches the stamp, like the gate.
-                                self.gate_target[i] = vlow + tvf;
-                                self.gate_gout[i] = g;
-                            }
-                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
-                            self.digital_vhigh[node] = rail;
-                            self.digital_vlow[node] = vlow;
-                            self.digital_family[node] = 0;
-                        }
-                        continue;
-                    }
-                    // Program 8 (the sigma-delta ADC) also drives FOUR outputs from committed state —
-                    // D0/D1/D2 (a/b/c) = the decimated code, and BS (g) = the live 1-bit modulator
-                    // stream (so its density ∝ VIN is visible). Same shape as the SAR; handle it here
-                    // and skip the generic a/b/c path.
-                    if prog == BEH_PROG_SIGMA_DELTA {
-                        let powered = rail >= GATE_MIN_RAIL;
-                        let code = self.beh_state[i][SD_CODE];
-                        let bs_hi = self.beh_state[i][SD_BIT] != 0;
-                        // (output node, high?) for D0, D1, D2, BS (the bit stream).
-                        let outs = [
-                            (e.a, code & 1 != 0),
-                            (e.b, code & 2 != 0),
-                            (e.c, code & 4 != 0),
-                            (e.g, bs_hi),
-                        ];
-                        for (k, &(node, hi)) in outs.iter().enumerate() {
-                            let lvl = if powered { bit(hi) } else { Level::Z };
-                            let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
-                            if k == 0 {
-                                self.gate_target[i] = vlow + tvf;
-                                self.gate_gout[i] = g;
-                            }
-                            self.digital_drive[node] = combine(self.digital_drive[node], lvl);
-                            self.digital_vhigh[node] = rail;
-                            self.digital_vlow[node] = vlow;
-                            self.digital_family[node] = 0;
-                        }
-                        continue;
-                    }
-                    // (a, b, c) output levels for this program (Z = released). Unpowered or an
-                    // inert/unknown program releases everything.
-                    let (la, lb, lc) = if rail < GATE_MIN_RAIL {
-                        (Level::Z, Level::Z, Level::Z)
+                }
+                // unpowered → outputs released (Z, the default), like a dead gate.
+            }
+            ELEM_DFF => {
+                // Q (a) drives the stored bit; Q̄ (d) its inverse. The bit is latched
+                // in the commit phase, so the output is constant within the solve.
+                let fi = gate_family_index(e.aux);
+                let q = self.ff_q[i];
+                self.digital_drive[e.a] = combine(self.digital_drive[e.a], q);
+                self.digital_vhigh[e.a] = e.value;
+                self.digital_vlow[e.a] = 0.0;
+                self.digital_family[e.a] = fi as u8;
+                self.digital_drive[e.d] = combine(self.digital_drive[e.d], q.invert());
+                self.digital_vhigh[e.d] = e.value;
+                self.digital_vlow[e.d] = 0.0;
+                self.digital_family[e.d] = fi as u8;
+            }
+            ELEM_SAMPLER => {
+                // OUT (a) drives the stored comparison bit at the output rail (`aux`,
+                // defaulted). The bit is latched in the commit phase, so the output is
+                // constant within the solve (one tick of clock-to-output delay). IN (b)
+                // is a high-Z analog sense pin — read, not driven. Ideal driver family.
+                let rail = sampler_rail(&e);
+                self.digital_drive[e.a] = combine(self.digital_drive[e.a], self.samp_q[i]);
+                self.digital_vhigh[e.a] = rail;
+                self.digital_vlow[e.a] = 0.0;
+                self.digital_family[e.a] = 0;
+            }
+            ELEM_COMPARATOR => {
+                // POWERED output stage, identical machinery to a powered gate: OUT (a)
+                // swings between the GND pin (e, vlow) and the VCC pin (d, vhigh) and
+                // releases (Z) when the rail collapses below the operating minimum (an
+                // unpowered chip sits dead). The held comparison bit (`cmp_q`, latched in
+                // the commit phase) is constant within the solve, so this is a constant
+                // Thévenin stamp — no Newton. IN+ (b)/IN- (c) are analog sense pins (read
+                // in the commit phase, not driven here); LE (f) is read there too. Ideal
+                // driver family (a clean rail-to-rail output), GND-offset by `vlow`.
+                let fam = &FAMILIES[0];
+                let (vlow, vhigh) = gate_rails(&e, &self.node_v);
+                let rail = (vhigh - vlow).max(0.0);
+                let driven = if rail < GATE_MIN_RAIL {
+                    Level::Z
+                } else {
+                    self.cmp_q[i]
+                };
+                let (tvf, g) = fam.drive_level(driven, rail).unwrap_or((0.0, 0.0));
+                self.gate_target[i] = vlow + tvf;
+                self.gate_gout[i] = g;
+                self.digital_drive[e.a] = combine(self.digital_drive[e.a], driven);
+                self.digital_vhigh[e.a] = rail;
+                self.digital_vlow[e.a] = vlow;
+                self.digital_family[e.a] = 0;
+            }
+            ELEM_LEVELSHIFT => {
+                // Read the input (b) at the INPUT rail A (value), re-drive the output
+                // (a) at the OUTPUT rail B (aux) — the part that translates levels
+                // across rails. Ideal receiver/driver (a translator, not a family).
+                let fam = &FAMILIES[0];
+                let lvl = fam.quantize(self.node_v[e.b], e.value);
+                let (tv, g) = fam.drive_level(lvl, e.aux).unwrap_or((0.0, 0.0));
+                self.gate_target[i] = tv;
+                self.gate_gout[i] = g;
+                self.digital_drive[e.a] = combine(self.digital_drive[e.a], lvl);
+                self.digital_vhigh[e.a] = e.aux; // output net carries rail B
+                self.digital_vlow[e.a] = 0.0;
+                self.digital_family[e.a] = 0;
+            }
+            ELEM_BEHAVIORAL => {
+                // Behavioral block: up to three POWERED digital outputs on a/b/c, driven from
+                // the COMMITTED integer state through the SAME powered-gate output path the
+                // gate/comparator use. They swing between the GND pin (e, vlow) and the VCC pin
+                // (d, vhigh) and release (Z) when the rail collapses below the operating minimum
+                // (an unpowered chip sits dead). The state is advanced in the commit phase, so
+                // the levels are constant within the solve — a constant Thévenin stamp, no
+                // Newton, one tick of state-to-output delay. The input pins f/g/h are read in
+                // the commit phase (not driven here). Ideal driver family (a clean rail-to-rail
+                // output), GND-offset by `vlow`. The per-program output map (which pin carries
+                // what, and whether c is used) is the only thing that differs between programs:
+                //   prog 1 SPI master: a=SCLK, b=MOSI, c=CS
+                //   prog 2 SPI slave:  a=MISO, b=RXVALID, c unused (Z)
+                //   prog 3 UART:       a=TX,   b=RXVALID, c unused (Z)
+                let prog = if e.value >= 1.0 { e.value as u32 } else { 0 };
+                let fam = &FAMILIES[0];
+                // The behavioral block is ALWAYS powered through its VCC (d) / GND (e) pins —
+                // `value` is the program id, NOT a logic rail, so it has no legacy `value`-rail
+                // fallback (that would misread the program id as a 1 V rail). An unwired VCC
+                // floats to ~0 V → rail below the minimum → the chip reads dead/released.
+                let vlow = self.node_v[e.e];
+                let rail = (self.node_v[e.d] - vlow).max(0.0);
+                let bit = |hi: bool| if hi { Level::High } else { Level::Low };
+                // Program 4 (the FPGA logic element) drives a SINGLE powered output on `a` and
+                // reads its inputs on b/c/f/g/h — so it must NOT touch b/c (the generic a/b/c
+                // drive loop below unconditionally overwrites each pin's quantisation rail, which
+                // would clobber an input net driven by an external clock/gate). Handle it here
+                // and skip the generic output path. Combinational mode looks the truth table up
+                // from the LIVE inputs (gate-like, settling within the digital sub-solve, no
+                // clock-to-output delay); registered mode drives the committed `Q` (a LUT+FF,
+                // one tick of clock-to-output delay like the DFF). Unpowered ⇒ released (Z).
+                if prog == BEH_PROG_LUT {
+                    let la = if rail < GATE_MIN_RAIL {
+                        Level::Z
+                    } else if beh_lut_registered(&e) {
+                        bit(self.beh_state[i][BEH_LUT_Q] != 0)
                     } else {
-                        let st = &self.beh_state[i];
-                        match prog {
-                            BEH_PROG_SPI_MASTER => {
-                                let (nbits, _half) = beh_spi_config(&e);
-                                let sclk = bit(st[BEH_SPI_SCLK_LEVEL] != 0);
-                                let mosi = bit(beh_spi_mosi_bit(st, nbits));
-                                // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
-                                // output level, so it idles High and asserts Low during a
-                                // transaction. Guard the all-zero RESET state (cs_level = 0 before
-                                // the first commit runs the idle branch that raises it): CS is
-                                // asserted Low ONLY while a transaction is active (fsm = 1), else
-                                // deasserted High — so a freshly installed/idle master reads CS High
-                                // from the very first tick (spec: "Idle (fsm = 0): CS = 1").
-                                let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
-                                    Level::Low
-                                } else {
-                                    Level::High
-                                };
-                                (sclk, mosi, cs)
-                            }
-                            BEH_PROG_SPI_SLAVE => {
-                                // MISO (a): the reply word `aux` MSB-first while CS is asserted,
-                                // else idle low. RXVALID (b): high while a received word is latched
-                                // (until CS deasserts). c unused.
-                                let nbits = beh_spi_slave_nbits(&e);
-                                let miso = bit(beh_spi_slave_miso_bit(st, e.aux as u64, nbits));
-                                let rxvalid = bit(st[BEH_SLV_RXVALID] != 0);
-                                (miso, rxvalid, Level::Z)
-                            }
-                            BEH_PROG_UART => {
-                                // TX (a): the framed line (idle/mark high). RXVALID (b): the one-tick
-                                // received-byte pulse. c unused.
-                                let (_baud, nbits) = beh_uart_config(&e);
-                                let tx = bit(beh_uart_tx_high(st, nbits));
-                                let rxvalid = bit(st[BEH_UART_RXVALID] != 0);
-                                (tx, rxvalid, Level::Z)
-                            }
-                            BEH_PROG_FLASH_ADC => {
-                                // 3-bit flash ADC: quantize the live analog input (f) against the
-                                // reference span to a code 0..7, driving D0/D1/D2 on a/b/c. Purely
-                                // combinational (reads node_v, carries no state -> no commit arm).
-                                let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
-                                (bit(code & 1 != 0), bit(code & 2 != 0), bit(code & 4 != 0))
-                            }
-                            BEH_PROG_COUNTER => {
-                                // 3-bit binary counter: drive Q0/Q1/Q2 (a/b/c) from the committed
-                                // count (advanced on each rising CLK in the commit phase).
-                                let n = st[BEH_CNT_COUNT];
-                                (bit(n & 1 != 0), bit(n & 2 != 0), bit(n & 4 != 0))
-                            }
-                            // Inert / unknown program: release all outputs.
-                            _ => (Level::Z, Level::Z, Level::Z),
-                        }
+                        let idx = beh_lut_live_index(&self.node_v, &e, vlow, rail);
+                        bit(beh_lut_bit(e.aux as u32, idx))
                     };
-                    // OUT pin a: also record the element-indexed Thévenin so the OUT current readout
-                    // (oriented out of `a`) matches the stamp, exactly like the gate.
                     let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
                     self.gate_target[i] = vlow + tvf;
                     self.gate_gout[i] = g;
-                    // Drive all three output pins a/b/c uniformly (an unused pin carries Z, which
-                    // combine() yields on, so it neither pulls its net nor is double-counted).
-                    for (node, lvl) in [(e.a, la), (e.b, lb), (e.c, lc)] {
+                    self.digital_drive[e.a] = combine(self.digital_drive[e.a], la);
+                    self.digital_vhigh[e.a] = rail;
+                    self.digital_vlow[e.a] = vlow;
+                    self.digital_family[e.a] = 0;
+                    return;
+                }
+                // Program 6 (the 3-bit SAR ADC) drives FOUR powered outputs from committed state
+                // — D0/D1/D2 (a/b/c) = the successive-approximation result register, DONE (g) =
+                // high once a full conversion has completed — and reads VIN (f) / CLK (h) in the
+                // commit phase. The fourth output (g) is why it can't use the generic a/b/c loop
+                // below; handle it here and skip (like the LUT). Reference is the VCC rail
+                // (single supply). Unpowered ⇒ everything released (Z). One tick of
+                // state-to-output delay, like the other clocked programs.
+                if prog == BEH_PROG_SAR_ADC {
+                    let powered = rail >= GATE_MIN_RAIL;
+                    let code = self.beh_state[i][BEH_SAR_CODE];
+                    let done_hi = self.beh_state[i][BEH_SAR_DONE] != 0;
+                    // (output node, high?) for D0, D1, D2, DONE.
+                    let outs = [
+                        (e.a, code & 1 != 0),
+                        (e.b, code & 2 != 0),
+                        (e.c, code & 4 != 0),
+                        (e.g, done_hi),
+                    ];
+                    for (k, &(node, hi)) in outs.iter().enumerate() {
+                        let lvl = if powered { bit(hi) } else { Level::Z };
+                        let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                        if k == 0 {
+                            // OUT (a = D0): record the element-indexed Thévenin so the OUT current
+                            // readout (oriented out of `a`) matches the stamp, like the gate.
+                            self.gate_target[i] = vlow + tvf;
+                            self.gate_gout[i] = g;
+                        }
                         self.digital_drive[node] = combine(self.digital_drive[node], lvl);
                         self.digital_vhigh[node] = rail;
                         self.digital_vlow[node] = vlow;
                         self.digital_family[node] = 0;
                     }
+                    return;
                 }
-                _ => {}
+                // Program 8 (the sigma-delta ADC) also drives FOUR outputs from committed state —
+                // D0/D1/D2 (a/b/c) = the decimated code, and BS (g) = the live 1-bit modulator
+                // stream (so its density ∝ VIN is visible). Same shape as the SAR; handle it here
+                // and skip the generic a/b/c path.
+                if prog == BEH_PROG_SIGMA_DELTA {
+                    let powered = rail >= GATE_MIN_RAIL;
+                    let code = self.beh_state[i][SD_CODE];
+                    let bs_hi = self.beh_state[i][SD_BIT] != 0;
+                    // (output node, high?) for D0, D1, D2, BS (the bit stream).
+                    let outs = [
+                        (e.a, code & 1 != 0),
+                        (e.b, code & 2 != 0),
+                        (e.c, code & 4 != 0),
+                        (e.g, bs_hi),
+                    ];
+                    for (k, &(node, hi)) in outs.iter().enumerate() {
+                        let lvl = if powered { bit(hi) } else { Level::Z };
+                        let (tvf, g) = fam.drive_level(lvl, rail).unwrap_or((0.0, 0.0));
+                        if k == 0 {
+                            self.gate_target[i] = vlow + tvf;
+                            self.gate_gout[i] = g;
+                        }
+                        self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                        self.digital_vhigh[node] = rail;
+                        self.digital_vlow[node] = vlow;
+                        self.digital_family[node] = 0;
+                    }
+                    return;
+                }
+                // (a, b, c) output levels for this program (Z = released). Unpowered or an
+                // inert/unknown program releases everything.
+                let (la, lb, lc) = if rail < GATE_MIN_RAIL {
+                    (Level::Z, Level::Z, Level::Z)
+                } else {
+                    let st = &self.beh_state[i];
+                    match prog {
+                        BEH_PROG_SPI_MASTER => {
+                            let (nbits, _half) = beh_spi_config(&e);
+                            let sclk = bit(st[BEH_SPI_SCLK_LEVEL] != 0);
+                            let mosi = bit(beh_spi_mosi_bit(st, nbits));
+                            // CS is active-low: the stored cs_level (1 = deasserted/high) IS the
+                            // output level, so it idles High and asserts Low during a
+                            // transaction. Guard the all-zero RESET state (cs_level = 0 before
+                            // the first commit runs the idle branch that raises it): CS is
+                            // asserted Low ONLY while a transaction is active (fsm = 1), else
+                            // deasserted High — so a freshly installed/idle master reads CS High
+                            // from the very first tick (spec: "Idle (fsm = 0): CS = 1").
+                            let cs = if st[BEH_SPI_FSM] == 1 && st[BEH_SPI_CS_LEVEL] == 0 {
+                                Level::Low
+                            } else {
+                                Level::High
+                            };
+                            (sclk, mosi, cs)
+                        }
+                        BEH_PROG_SPI_SLAVE => {
+                            // MISO (a): the reply word `aux` MSB-first while CS is asserted,
+                            // else idle low. RXVALID (b): high while a received word is latched
+                            // (until CS deasserts). c unused.
+                            let nbits = beh_spi_slave_nbits(&e);
+                            let miso = bit(beh_spi_slave_miso_bit(st, e.aux as u64, nbits));
+                            let rxvalid = bit(st[BEH_SLV_RXVALID] != 0);
+                            (miso, rxvalid, Level::Z)
+                        }
+                        BEH_PROG_UART => {
+                            // TX (a): the framed line (idle/mark high). RXVALID (b): the one-tick
+                            // received-byte pulse. c unused.
+                            let (_baud, nbits) = beh_uart_config(&e);
+                            let tx = bit(beh_uart_tx_high(st, nbits));
+                            let rxvalid = bit(st[BEH_UART_RXVALID] != 0);
+                            (tx, rxvalid, Level::Z)
+                        }
+                        BEH_PROG_FLASH_ADC => {
+                            // 3-bit flash ADC: quantize the live analog input (f) against the
+                            // reference span to a code 0..7, driving D0/D1/D2 on a/b/c. Purely
+                            // combinational (reads node_v, carries no state -> no commit arm).
+                            let code = beh_flash_adc_code(&self.node_v, &e, vlow, rail);
+                            (bit(code & 1 != 0), bit(code & 2 != 0), bit(code & 4 != 0))
+                        }
+                        BEH_PROG_COUNTER => {
+                            // 3-bit binary counter: drive Q0/Q1/Q2 (a/b/c) from the committed
+                            // count (advanced on each rising CLK in the commit phase).
+                            let n = st[BEH_CNT_COUNT];
+                            (bit(n & 1 != 0), bit(n & 2 != 0), bit(n & 4 != 0))
+                        }
+                        // Inert / unknown program: release all outputs.
+                        _ => (Level::Z, Level::Z, Level::Z),
+                    }
+                };
+                // OUT pin a: also record the element-indexed Thévenin so the OUT current readout
+                // (oriented out of `a`) matches the stamp, exactly like the gate.
+                let (tvf, g) = fam.drive_level(la, rail).unwrap_or((0.0, 0.0));
+                self.gate_target[i] = vlow + tvf;
+                self.gate_gout[i] = g;
+                // Drive all three output pins a/b/c uniformly (an unused pin carries Z, which
+                // combine() yields on, so it neither pulls its net nor is double-counted).
+                for (node, lvl) in [(e.a, la), (e.b, lb), (e.c, lc)] {
+                    self.digital_drive[node] = combine(self.digital_drive[node], lvl);
+                    self.digital_vhigh[node] = rail;
+                    self.digital_vlow[node] = vlow;
+                    self.digital_family[node] = 0;
+                }
             }
+            _ => {}
         }
     }
 
