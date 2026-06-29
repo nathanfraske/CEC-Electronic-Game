@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (233) — MERGED thermal+noise arc (PR #314) + refinements: vent + noise RMS readout
+
+- ~~**Merge the thermal+noise arc to main**~~ DONE — PR #314 (`db07c09`), owner said "merge it up". Full
+  CI gate green before merge (Rust 210 + golden stable, web 333). Branch fast-forwarded to main.
+- ~~**Thermal refine — magic-smoke VENT**~~ DONE (web-only, golden-safe, verified live). Sustained over-temp
+  (`ventHeat ≥ VENT_SECONDS = 1.6 s` sim-time, sim-tick-driven → replay-safe) → a part **vents**: latched
+  `vented`, a charred **"DESTROYED"** box + rising smoke puffs, distinct from the transient OVERHEAT box.
+  `board.ts` `ComponentNode` (`drawSmoke`, two-stage render, `resetThermal` clears it). A 4 Ω resistor
+  vented at ~2.6 sim-s on screen.
+- ~~**Noise refine — RMS inspector readout**~~ DONE (web-only, golden-safe, verified live). `App.svelte`:
+  in Real mode a selected resistor shows **"Noise (RMS)"** = the std of its V-across over a 90-frame window
+  → the Johnson fuzz as a number. A 100 k divider midpoint read 54.8 mV in Real, absent in Ideal.
+- [ ] **NEXT (menu):** shot/flicker noise, op-amp input-referred noise; thermal management levers
+  (heatsink/fan/spacing) + Path 2 (hashed Tj → R(T) drift / runaway); CPU spine (ELEM_MEMORY P2/P3b).
+
+---
+
 ## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors), deterministic + replay-exact + golden-safe
 
 - ~~**Engine survey + owner pick**~~ DONE — surveyed engine fidelity vs. gaps (noise, op-amp non-idealities,

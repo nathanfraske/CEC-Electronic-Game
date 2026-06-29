@@ -5,6 +5,32 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (233) — MERGED the thermal+noise arc to main (PR #314); now refining thermal + noise
+
+**State:** 🟢 The whole thermal vertical (Phase 0→2b + derate→FAIL) **and** device noise landed on **main**
+via **PR #314** (`db07c09`) — owner said "merge it up." Branch `claude/kind-turing-hdelb3` fast-forwarded
+to main (0 ahead). Full CI gate was green before merge (Rust 210 + golden stable, web 333, fmt/clippy/
+check/lint/build 0). Owner: "continue to refine thermal and noise."
+
+**Refinements LANDED (web-only, golden-safe, verified live):**
+- **Thermal magic-smoke VENT** (`board.ts` `ComponentNode`): past sustained over-temp (`ventHeat` ≥
+  `VENT_SECONDS` = 1.6 s of sim-time, accumulated by the sim-tick delta → replay-safe; brief spikes
+  recover), a part **vents** — latched `vented` for the run → a steady **charred "DESTROYED" box** +
+  rising **smoke puffs** (`drawSmoke`, wall-clock), distinct from the transient pulsing OVERHEAT warning.
+  Render restructured into the two stages (OVERHEAT cooking → DESTROYED vented), Real-mode gated;
+  `resetThermal` clears it. The sim keeps solving (presentational only). **Verified:** a 4 Ω resistor
+  cooked to ~525 °C vented at ~2.6 sim-s — DESTROYED + smoke on screen.
+- **Noise RMS inspector readout** (`App.svelte`): in Real mode the inspector shows a selected resistor's
+  **"Noise (RMS)"** — the std of its V-across over a 90-frame sliding window (reset on a new selection),
+  making the Johnson fuzz a number. **Verified:** a 100 k divider midpoint read **54.8 mV** in Real, row
+  **absent** in Ideal.
+
+**NEXT (the fuller menu, owner's call):** shot/flicker noise, op-amp input-referred noise; thermal
+management levers (heatsink θ↓ / fan ambient↓ / spacing) + Path 2 (sim-core hashed Tj → R(T) drift /
+runaway); CPU spine (ELEM_MEMORY P2/P3b). These refinements are on the branch (NOT yet a new PR).
+
+---
+
 ## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors): deterministic, replay-exact, golden-safe
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (231). The owner picked **noise** as the next

@@ -223,6 +223,16 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > safe (presentational flag, never re-enters the solve — `failed_elements` was never hashed; Tj is the
 > sim-tick-advanced power). **Remaining:** the thermal-death *vent* (animated smoke + autopsy→Lux);
 > the management levers (§3 — heatsinks/fan/spacing/wattage axis); Path 2 (sim-core hashed Tj).
+>
+> **UPDATE 2026-06-29 — the thermal-death VENT (E) LANDED** (web-only, golden-safe, verified live). Past
+> **sustained** over-temp (`ventHeat ≥ VENT_SECONDS = 1.6 s` of sim-time, accumulated by the sim-tick
+> delta so it's replay-safe; a brief spike recovers), a part **vents** — the magic smoke escapes: a steady
+> **charred "DESTROYED" box** + rising **smoke puffs** (`board.ts` `ComponentNode.drawSmoke`), latched for
+> the run (`vented`), distinct from the transient pulsing OVERHEAT warning. So heat now has the full
+> escalation: glow → OVERHEAT (cooking) → DESTROYED (cooked). The sim keeps solving (presentational only).
+> Plus a **noise** companion refinement — an inspector **"Noise (RMS)"** readout (the std of a resistor's
+> V-across over a window) makes the Johnson fuzz measurable. **Remaining:** autopsy→Lux hook; the
+> management levers (§3); Path 2 (hashed Tj for R(T) drift / runaway).
 
 0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
 1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node

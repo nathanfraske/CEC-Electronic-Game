@@ -1229,6 +1229,14 @@
   // The selected part's live self-heating body temperature (°C), updated each frame in onFrame from the
   // renderer's integrated Tj — read by the inspector's "Body temp" row (Real mode).
   let selBodyTemp = $state(T_AMBIENT_C);
+  // The selected part's measured noise (RMS volts) — the std of its V-across over a sliding window, so a
+  // noisy resistor's Johnson fuzz becomes a number you can read and compare across grades. Presentational
+  // (frame-sampled), Real-mode only; shown in the inspector's "Noise (RMS)" row. The window + its part id
+  // (reset on a new selection) live outside `$state` — updated imperatively in onFrame.
+  let selNoiseRms = $state(0);
+  let noiseWindow: number[] = [];
+  let noiseWindowId = -1;
+  const NOISE_WINDOW_LEN = 90;
   // The thermal-lens °C legend readout, updated each frame in onFrame from the board's heat field:
   // `heatPeakC` is the hottest part on the board (the "PEAK" line); `heatScaleTopC` is the temperature
   // mapped to white-hot at the top of the inferno scale the overlay is painted with (so the legend's
@@ -2704,6 +2712,26 @@
             // The selected part's live self-heating temperature for the inspector readout (board read
             // non-reactively here, not in the template).
             selBodyTemp = b.bodyTempOf(selPart.id);
+            // Measured noise (RMS): slide a window of the part's V-across and take its std — on a DC part
+            // that's the Johnson noise. Reset the window on a new selection. Real-mode only (Ideal = clean).
+            if (realModels) {
+              if (noiseWindowId !== selPart.id) {
+                noiseWindow = [];
+                noiseWindowId = selPart.id;
+              }
+              noiseWindow.push(e.vAcross);
+              if (noiseWindow.length > NOISE_WINDOW_LEN) noiseWindow.shift();
+              const mean =
+                noiseWindow.reduce((a, b) => a + b, 0) / noiseWindow.length;
+              const variance =
+                noiseWindow.reduce((a, b) => a + (b - mean) ** 2, 0) /
+                noiseWindow.length;
+              selNoiseRms = Math.sqrt(variance);
+            } else {
+              noiseWindow = [];
+              noiseWindowId = -1;
+              selNoiseRms = 0;
+            }
             // Redraw the inspector phasor (no-op unless its canvas is mounted + AC valid).
             drawHudPhasor(b.flowPhase());
             if (infoOpen) {
@@ -2724,6 +2752,9 @@
             selDisplay = null;
             selRmsMode = false;
             selBodyTemp = T_AMBIENT_C;
+            noiseWindow = [];
+            noiseWindowId = -1;
+            selNoiseRms = 0;
             // Arm-and-preview: nothing selected but a part armed + the drawer open → drive
             // the info diagram from the ARMED (unplaced) kind and a neutral electrical state,
             // so its symbol / internals render before you drop it.
@@ -7197,6 +7228,20 @@
                             >{selBodyTemp.toFixed(0)} °C{selBodyTemp >= T_MAX_C
                               ? " ⚠ OVERHEAT"
                               : ""}</span
+                          >
+                        </div>
+                      {/if}
+                      <!-- Measured thermal (Johnson) noise (Real mode): the RMS fluctuation of the
+                           resistor's V-across (`selNoiseRms`, computed each frame in onFrame). Makes the
+                           scope fuzz a number — compare grades, see bigger-R-is-noisier. Resistors only
+                           (where v1 models noise), and only once it's above a readable floor. -->
+                      {#if realModels && selPart.kind === "R" && selNoiseRms > 2e-4}
+                        <div class="info-row">
+                          <span>Noise (RMS)</span>
+                          <span class="mono"
+                            >{(selNoiseRms * 1000).toFixed(
+                              selNoiseRms < 0.01 ? 2 : 1,
+                            )} mV</span
                           >
                         </div>
                       {/if}

@@ -8170,6 +8170,11 @@ export class Board {
  *  keeps pulsing even though a FAIL freezes the run (the flow phase is frozen then). */
 const FAIL_PULSE_HZ = 1.4;
 
+/** Sustained over-temperature SIM-time (s) a part survives past `T_MAX_C` before it VENTS — the magic
+ *  smoke escapes and it's destroyed for the run. Accumulated by the sim-tick delta (replay-safe), so a
+ *  brief spike is survivable but a sustained overload kills it. Game-scaled to the thermal τ (~2.4 s). */
+const VENT_SECONDS = 1.6;
+
 class ComponentNode {
   readonly view = new Container();
   private readonly glyphHolder = new Container();
@@ -8202,6 +8207,12 @@ class ComponentNode {
   private overTemp = false;
   private readonly overheatBox = new Graphics();
   private readonly overheatText: Text;
+  // Thermal-death VENT: accumulated over-temp sim-time (s); once it passes VENT_SECONDS the part is
+  // destroyed for the run (`vented` latched) — the magic smoke escapes (the `smoke` puff animation + a
+  // charred body). Replay-safe (ventHeat is advanced by the sim-tick delta); presentational, never the solve.
+  private ventHeat = 0;
+  private vented = false;
+  private readonly smoke = new Graphics();
   private readonly label: Text;
   private readonly value: Text | null;
   /** The live stored-value chip ("Q=…") a recognised sequential cell shows under its body symbol; it
@@ -8417,6 +8428,10 @@ class ComponentNode {
     this.overheatText.resolution = DPR;
     this.overheatText.visible = false;
     this.view.addChild(this.overheatText);
+    // Smoke puffs (drawn on top) for a vented/destroyed part.
+    this.smoke.eventMode = "none";
+    this.smoke.visible = false;
+    this.view.addChild(this.smoke);
 
     this.layoutLabels();
     // pin dots
@@ -8553,10 +8568,33 @@ class ComponentNode {
   resetThermal(): void {
     this.tj = T_AMBIENT_C;
     this.overTemp = false;
+    this.ventHeat = 0;
+    this.vented = false;
     this.heatGlow.clear();
     this.overheatBox.clear();
     this.overheatBox.visible = false;
     this.overheatText.visible = false;
+    this.smoke.clear();
+    this.smoke.visible = false;
+  }
+
+  /** Draw a few rising, fading smoke puffs above a vented (destroyed) part — the magic smoke escaping. On
+   *  a free wall-clock (pure presentation), so it animates even while a FAIL freezes the run. */
+  private drawSmoke(cx: number, topY: number): void {
+    this.smoke.clear();
+    const t = performance.now() / 1000;
+    const puffs = 4;
+    for (let i = 0; i < puffs; i++) {
+      const phase = (t * 0.55 + i / puffs) % 1; // 0 (born at the body) → 1 (faded out, high up)
+      const rise = phase * PITCH * 2.4;
+      const r = PITCH * 0.26 * (0.45 + phase);
+      // Fade in over the first slice, then out toward the top.
+      const fade = (phase < 0.18 ? phase / 0.18 : 1) * (1 - phase);
+      const drift = Math.sin((t * 1.3 + i) * Math.PI) * PITCH * 0.3 * phase;
+      this.smoke
+        .circle(cx + drift, topY - rise, r)
+        .fill({ color: 0x7a7a7a, alpha: 0.4 * fade });
+    }
   }
 
   /** Draw the warm incandescence halo behind the body, scaled by how hot the part is. Invisible at
@@ -8621,6 +8659,15 @@ class ComponentNode {
     // Thermal-death flag: cooked past the max junction temperature (Real mode only). Purely a render flag
     // (the OVERHEAT box + the inspector readout) — never re-enters the solve, so golden-safe + replay-safe.
     this.overTemp = real && this.tj >= T_MAX_C;
+    // Accumulate over-temp sim-time toward the VENT (magic smoke). Sustained over-temp destroys the part
+    // (latched for the run); a brief spike recovers (ventHeat decays when back under T_MAX). Advanced by
+    // the sim-tick delta → replay-safe. `vented` is presentational only (shown Real-mode only below).
+    if (this.overTemp) {
+      this.ventHeat += dtSec;
+      if (this.ventHeat >= VENT_SECONDS) this.vented = true;
+    } else if (!this.vented) {
+      this.ventHeat = Math.max(0, this.ventHeat - dtSec);
+    }
     // The per-part incandescence halo is the SCHEMATIC heat cue. Under the thermal lens the board
     // heat-field overlay carries the heat (colour contrast only), so the halo is suppressed there to
     // avoid double-drawing — Tj is still integrated above for the field's sources.
@@ -9251,11 +9298,13 @@ class ComponentNode {
       this.failBox.visible = false;
       this.failText.visible = false;
     }
-    // OVERHEAT (magic-smoke) overlay: a part that has cooked past T_MAX_C from self-heating gets a
-    // distinct amber/char box + "OVERHEAT" — a thermal death, separate from the red over-current FAIL
-    // above. Shown only when NOT already over-current-failed (that box dominates), so a part shows one
-    // box. Web-side + presentational, like the FAIL flag: it only marks the part, never the solve.
-    if (this.overTemp && !electrical.failed) {
+    // THERMAL-DEATH overlay (self-heating past T_MAX_C, Real mode, when NOT already over-current-FAILed —
+    // that red box dominates). Two stages, both distinct from the FAIL red; web-side + presentational
+    // (only ever a render flag, never the solve):
+    //   1. OVERHEAT — a transient pulsing amber/char warning box while the part is still cooking.
+    //   2. DESTROYED — sustained over-temp (`vented`) lets the magic smoke out: a steady charred box +
+    //      rising smoke puffs, latched for the run (the part is cooked).
+    if (real && !electrical.failed && (this.overTemp || this.vented)) {
       let minX = 0;
       let maxX = 0;
       let minY = 0;
@@ -9268,29 +9317,57 @@ class ComponentNode {
         maxY = Math.max(maxY, r.y);
       }
       const pad = 13;
-      const pulse =
-        0.5 +
-        0.5 *
-          Math.sin((performance.now() / 1000) * Math.PI * 2 * FAIL_PULSE_HZ);
+      const cx = (minX + maxX) / 2;
       this.overheatBox.clear();
-      this.overheatBox
-        .roundRect(
-          minX - pad,
-          minY - pad,
-          maxX - minX + 2 * pad,
-          maxY - minY + 2 * pad,
-          4,
-        )
-        // A charred scorch fill under an amber stroke — reads as "burnt", distinct from the FAIL red.
-        .fill({ color: 0x1a0d06, alpha: 0.5 })
-        .stroke({ color: PALETTE.warn, width: 2, alpha: 0.35 + 0.65 * pulse });
+      if (this.vented) {
+        // Destroyed: a steady, deeply-charred box + smoke + "DESTROYED" (no pulse — it's dead, not alarming).
+        this.overheatBox
+          .roundRect(
+            minX - pad,
+            minY - pad,
+            maxX - minX + 2 * pad,
+            maxY - minY + 2 * pad,
+            4,
+          )
+          .fill({ color: 0x120a05, alpha: 0.72 })
+          .stroke({ color: PALETTE.bronze, width: 2, alpha: 0.6 });
+        if (this.overheatText.text !== "DESTROYED")
+          this.overheatText.text = "DESTROYED";
+        this.overheatText.alpha = 0.92;
+        this.drawSmoke(cx, minY - pad);
+        this.smoke.visible = true;
+      } else {
+        // Still cooking: a pulsing amber/char scorch box warning the part is over-temp.
+        const pulse =
+          0.5 +
+          0.5 *
+            Math.sin((performance.now() / 1000) * Math.PI * 2 * FAIL_PULSE_HZ);
+        this.overheatBox
+          .roundRect(
+            minX - pad,
+            minY - pad,
+            maxX - minX + 2 * pad,
+            maxY - minY + 2 * pad,
+            4,
+          )
+          .fill({ color: 0x1a0d06, alpha: 0.5 })
+          .stroke({
+            color: PALETTE.warn,
+            width: 2,
+            alpha: 0.35 + 0.65 * pulse,
+          });
+        if (this.overheatText.text !== "OVERHEAT")
+          this.overheatText.text = "OVERHEAT";
+        this.overheatText.alpha = 0.55 + 0.45 * pulse;
+        this.smoke.visible = false;
+      }
       this.overheatBox.visible = true;
-      this.overheatText.position.set((minX + maxX) / 2, minY - pad - 9);
-      this.overheatText.alpha = 0.55 + 0.45 * pulse;
+      this.overheatText.position.set(cx, minY - pad - 9);
       this.overheatText.visible = true;
     } else {
       this.overheatBox.visible = false;
       this.overheatText.visible = false;
+      this.smoke.visible = false;
     }
   }
 
