@@ -6,6 +6,22 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (246) — BUS-SLICE RECOGNITION (scoped; QUEUED after the dirty-set build)
+
+- [ ] **Bus-slice recognition** — draw a bit-sliced user IC (N identical leaf slices on an input+output bus
+  sharing control/power, e.g. the owner's `4-INVERT` = 4 XOR slices on `Binv`) as **N stacked gate symbols**
+  on the sealed/zoomed-out symbol instead of one opaque block. Scoped in `docs/ui/bus-slice-recognition.md`.
+  **Render + classification only — web-only, golden-safe, no sim change.** Pragmatic approach: drive detection
+  from the EXISTING bus-label parser (`busWiring.parseBusLabel`/`busOfPin`), NOT subgraph isomorphism — match
+  an input/output bus of equal width N where each bit routes through one same-kind leaf sharing the leftover
+  nets (correctly fails a ripple adder). Reuse `drawGateBodySymbol` ×N + the `cellSymbol` cascade
+  (`userIc.ts:282`) + `recognizeGate`. New: `busSlice.ts` recognizer + a cascade branch + multi-glyph layout
+  in `board.ts:8767`. Nuance: the `4-INVERT` slices are XOR (conditional invert), so draw faithful XOR (or a
+  NOT-with-invert-enable special case for an XOR slice on a whole-bus control). Verify via `shoot` + a
+  headless `busSlice.test.ts`.
+
+---
+
 ## 2026-06-29 (243) — DIGITAL-MATRIX LIFT (Stage A): pure-digital nets out of the dense factorisation
 
 - ~~**Stage A0 — closed-form == in-matrix invariant**~~ DONE (`e5e4d81`, debug-only, golden byte-identical).
