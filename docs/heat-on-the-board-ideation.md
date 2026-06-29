@@ -233,6 +233,15 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > Plus a **noise** companion refinement — an inspector **"Noise (RMS)"** readout (the std of a resistor's
 > V-across over a window) makes the Johnson fuzz measurable. **Remaining:** autopsy→Lux hook; the
 > management levers (§3); Path 2 (hashed Tj for R(T) drift / runaway).
+>
+> **UPDATE 2026-06-29 — the first MANAGEMENT LEVER (§3): a per-part HEATSINK** (web-only, golden-safe,
+> verified live). `Component.heatsink` (0 none / 1 / 2 large) → a θ_JA multiplier (`heatsinkFactor`,
+> `[1, 0.4, 0.18]`) in `stepTemp`'s `thetaScale`, so a cooled part runs cooler for the same power. An
+> inspector picker (`partConfig`, Real-mode + heating kinds); `board.setComponentHeatsink` sets it with no
+> netlist rebuild (the live node reads `component.heatsink` each frame → Tj re-stabilises, no reset);
+> persists for free. Heat now has the full design loop: a 4 Ω resistor that **vents at ~525 °C** is
+> **saved at ~109 °C** by a Large sink. **Remaining levers:** fan (ambient↓), part-spacing mutual heating,
+> the wattage axis; then Path 2 (hashed Tj).
 
 0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
 1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node

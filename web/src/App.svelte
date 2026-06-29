@@ -175,7 +175,12 @@
     rmsStabilized,
     type ElectricalState,
   } from "./lib/glyphs";
-  import { T_AMBIENT_C, T_MAX_C } from "./lib/thermal";
+  import {
+    T_AMBIENT_C,
+    T_MAX_C,
+    HEATSINK_LABELS,
+    partHeats,
+  } from "./lib/thermal";
   import { infernoCssGradient } from "./lib/thermalField";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
@@ -3961,6 +3966,15 @@
       rememberConfig(selPart.kind, { variant: idx });
     } else setArmedAxis({ variant: idx });
   }
+  function selHeatsink(): number {
+    return (selPart ? selPart.heatsink : armedConfig.heatsink) ?? 0;
+  }
+  function setHeatsink(idx: number): void {
+    if (selPart) {
+      board?.setComponentHeatsink(selPart.id, idx);
+      rememberConfig(selPart.kind, { heatsink: idx });
+    } else setArmedAxis({ heatsink: idx });
+  }
   function selDuty(): number {
     return (selPart ? selPart.duty : armedConfig.duty) ?? 0.5;
   }
@@ -5314,6 +5328,20 @@
           <button
             class="chip-val {selTier() === i ? 'is-active' : ''}"
             onclick={() => setTier(i)}>{label}</button
+          >
+        {/each}
+      </div>
+    {/if}
+    {#if partHeats(kind) && realModels}
+      <!-- Heatsink (thermal management lever, Real mode only): a sink drops the part's θ_JA so it runs
+             cooler for the same dissipated power — enough to pull an over-dissipating part back out of
+             OVERHEAT, or save it from venting. Presentational (Tj never enters the solve). -->
+      <div class="insp-sub">heatsink</div>
+      <div class="insp-chips wrap">
+        {#each HEATSINK_LABELS as label, i (label)}
+          <button
+            class="chip-val {selHeatsink() === i ? 'is-active' : ''}"
+            onclick={() => setHeatsink(i)}>{label}</button
           >
         {/each}
       </div>

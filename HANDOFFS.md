@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (234) — Refine round 2: thermal HEATSINK lever + diode SHOT noise (one from each thread)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3` (on top of #314's merged base + the (233) refinements).
+Owner: "do both" of the two threads. Full gate green: Rust **212** (+2, golden stable), web **334** (+1),
+fmt/clippy/check/lint/build 0. **Verified live.**
+
+**Thermal — the HEATSINK management lever** (web-only, golden-safe): a `Component.heatsink` field
+(0 none / 1 / 2 large) → a θ_JA multiplier (`heatsinkFactor` in `thermal.ts`, `[1, 0.4, 0.18]`) applied
+in `stepTemp`'s `thetaScale`, so a cooled part runs cooler for the same power. An inspector **heatsink
+picker** (`App.svelte` `partConfig`, gated `partHeats(kind) && realModels`); `board.setComponentHeatsink`
+sets it with NO netlist rebuild (the live `ComponentNode` reads `component.heatsink` each frame, so Tj
+re-stabilises gradually — no reset). Persists for free (`serialize` spreads the component; paste + the
+clipboard/`SelectedPart` types carry it). **Verified:** a 4 Ω resistor that vents at ~525 °C, given a
+**Large sink**, settles at **109 °C** (< T_MAX) — saved. The picker renders No sink / Heatsink / Large sink.
+
+**Noise — SHOT noise on diodes** (sim-core, golden-safe by the param-gate): `add_noise_currents` now
+scales the noise current by **√|I|** for `is_diode` kinds (the previous-tick committed `currents[i]`), so
+a junction's shot noise grows with bias — Johnson (fixed amp) and shot (`∝√I`) share `NOISE_SLOT`. `web`:
+`buildNetlist` emits `SHOT_NOISE_SCALE` on diodes in Real mode (a junction property, not a tier).
+**Golden-safe:** the golden has no diode; an Ideal diode emits 0. Tests: sim-core `shot_noise_needs_current`
+(conducting diode noisy, off diode quiet — the √I property) + `shot_noise_diode_run_is_reproducible`; web
+`noise.test.ts` diode-emission (Real vs Ideal). Adversarial-review the sim-core change before a PR.
+
+**NEXT (menu):** flicker/1-f noise, op-amp input-referred noise; the other thermal levers (fan ambient↓,
+part-spacing mutual heating) + Path 2 (hashed Tj → R(T) drift / runaway); CPU spine (ELEM_MEMORY P2/P3b).
+These (233)+(234) refinements are on the branch, **NOT yet a new PR** (the owner may want a #315 batch).
+
+---
+
 ## 2026-06-29 (233) — MERGED the thermal+noise arc to main (PR #314); now refining thermal + noise
 
 **State:** 🟢 The whole thermal vertical (Phase 0→2b + derate→FAIL) **and** device noise landed on **main**

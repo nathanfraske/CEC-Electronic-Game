@@ -21,6 +21,22 @@ export const T_WARN_C = 85;
 /** Junction temperature (°C) at which a part is cooked — full derate / thermal death. */
 export const T_MAX_C = 150;
 
+/** Heatsink levels (the picker labels): none / a heatsink / a large sink. A management lever. */
+export const HEATSINK_LABELS = ["No sink", "Heatsink", "Large sink"] as const;
+// θ_JA multiplier per heatsink level: a sink bonds the junction to far more surface area, dropping the
+// junction-to-ambient resistance (so the same power yields a lower steady Tj). Game-scaled ordering.
+const HEATSINK_FACTOR = [1, 0.4, 0.18];
+
+/** The θ_JA multiplier for a heatsink level (0 none … 2 large) — multiplies a part's thermal resistance
+ *  DOWN so it runs cooler for the same power. `1` (no sink) leaves the part's nominal θ_JA. */
+export function heatsinkFactor(level: number | undefined): number {
+  const l = Math.max(
+    0,
+    Math.min(HEATSINK_FACTOR.length - 1, Math.round(level ?? 0)),
+  );
+  return HEATSINK_FACTOR[l] ?? 1;
+}
+
 /** Per-kind lumped thermal parameters. */
 export interface ThermalSpec {
   /** θ_JA — junction-to-ambient thermal resistance (°C/W). Higher = hotter per watt (a tiny SMD part);
@@ -97,11 +113,15 @@ export function stepTemp(
   powerW: number,
   dt: number,
   ambientC = T_AMBIENT_C,
+  thetaScale = 1,
 ): number {
   if (!partHeats(kind)) return ambientC;
   const s = thermalSpec(kind);
-  const tau = Math.max(dt, s.thetaJA * s.cth);
-  const target = ambientC + Math.max(0, powerW) * s.thetaJA;
+  // A heatsink (thetaScale < 1) lowers the effective θ_JA → a lower steady target (and, since τ = θ·Cth,
+  // a faster relaxation, which reads as the sink whisking heat away).
+  const theta = s.thetaJA * thetaScale;
+  const tau = Math.max(dt, theta * s.cth);
+  const target = ambientC + Math.max(0, powerW) * theta;
   const a = Math.min(1, dt / tau);
   return tjC + (target - tjC) * a;
 }

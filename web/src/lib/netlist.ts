@@ -523,6 +523,9 @@ interface BehSpec {
 const BEH_LUT_MODE_SLOT = 4; // params slot: >= 1 → registered, else combinational (sim-core)
 const CAP_LEAK_SLOT = 5; // params slot: capacitor self-discharge tau (s); 0 = no leak (mirror sim-core)
 const NOISE_SLOT = 6; // params slot: thermal-noise current amplitude (A); 0 = silent (mirror sim-core)
+// A diode's SHOT-noise scale (a √A): sim-core injects `SHOT_NOISE_SCALE · √|I| · sample` (the shot-noise
+// current ∝ √I). Game-scaled for legibility; a junction property, not a quality grade, so it's a constant.
+const SHOT_NOISE_SCALE = 0.02;
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1723,11 +1726,14 @@ export function buildNetlist(
     if (dv) {
       params[ei * PARAM_STRIDE + 0] = dv.is;
       params[ei * PARAM_STRIDE + 1] = dv.n;
-      // The current rating (FAIL) and the transit time (reverse recovery) are both Real-mode
-      // non-idealities — an Ideal diode is unrated and recovers instantly.
+      // The current rating (FAIL), the transit time (reverse recovery), and shot noise are all Real-mode
+      // non-idealities — an Ideal diode is unrated, recovers instantly, and is silent.
       if (real) {
         params[ei * PARAM_STRIDE + RATED_CURRENT_SLOT] = dv.ratedA;
         params[ei * PARAM_STRIDE + DIODE_TT_SLOT] = dv.tt;
+        // Shot noise: a junction's noise current ∝ √I (sim-core multiplies this scale by √|I| of the live
+        // current). Fundamental to the junction (not a quality grade), so a single game-scaled constant.
+        params[ei * PARAM_STRIDE + NOISE_SLOT] = SHOT_NOISE_SCALE;
       }
     }
     // Pulse / clock generator: the AC-source element's waveform (slot 1: 1 = square, 2 =

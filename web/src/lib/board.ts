@@ -104,6 +104,7 @@ import {
   stepTemp,
   dissipatedPower,
   partHeats,
+  heatsinkFactor,
 } from "./thermal";
 import { ThermalField, type FieldSource } from "./thermalField";
 // The shared, `this`-free board render engine (geometry / carriers / conduit skins),
@@ -528,6 +529,9 @@ export interface SelectedPart {
   /** The part's device variant (a diode's type / an LED's colour). Undefined → 0. Only the
    * multi-variant kinds (see {@link hasDiodeTypes}) use it. */
   variant?: number;
+  /** The part's heatsink level (0 none … 2 large) — a thermal management lever that lowers θ_JA.
+   * Undefined → 0. Only self-heating kinds (see {@link partHeats}) use it, in Real mode. */
+  heatsink?: number;
   /** The pulse generator's duty cycle (0..1). Undefined → 0.5. Only kind `"PULSE"` uses it.
    * The electronic load `"LOAD"` reuses it as its dynamic load-step duty. */
   duty?: number;
@@ -564,6 +568,7 @@ interface ClipboardSnippet {
     label?: string;
     tier?: number;
     variant?: number;
+    heatsink?: number;
     duty?: number;
     mode?: number;
     loadHz?: number;
@@ -3713,6 +3718,7 @@ export class Board {
           label: c.label,
           tier: c.tier,
           variant: c.variant,
+          heatsink: c.heatsink,
           duty: c.duty,
           mode: c.mode,
           loadHz: c.loadHz,
@@ -3935,6 +3941,20 @@ export class Board {
     c.variant = variant;
     this.cb.onChange?.(this.graph);
     this.emitSelect(); // refresh the inspector's displayed variant
+  }
+
+  /**
+   * Set a part's **heatsink** level (a thermal management lever) from the inspector. Purely thermal —
+   * `θ_JA` is web-side and never enters the netlist — so this does NOT rebuild/`onChange` (no Tj reset):
+   * the live `ComponentNode` reads `component.heatsink` each frame, so the part just re-stabilises toward
+   * its new, lower steady temperature. Undo-tracked.
+   */
+  setComponentHeatsink(id: number, level: number): void {
+    const c = this.graph.components.get(id);
+    if (!c || (c.heatsink ?? 0) === level) return;
+    this.pushUndo(this.graph.serialize());
+    c.heatsink = level;
+    this.emitSelect(); // refresh the inspector's displayed heatsink
   }
 
   /**
@@ -5579,6 +5599,7 @@ export class Board {
         label: c.label,
         tier: c.tier,
         variant: c.variant,
+        heatsink: c.heatsink,
         duty: c.duty,
         mode: c.mode,
         loadHz: c.loadHz,
@@ -5671,6 +5692,7 @@ export class Board {
       if (cc.label !== undefined) nc.label = cc.label;
       if (cc.tier !== undefined) nc.tier = cc.tier;
       if (cc.variant !== undefined) nc.variant = cc.variant;
+      if (cc.heatsink !== undefined) nc.heatsink = cc.heatsink;
       if (cc.duty !== undefined) nc.duty = cc.duty;
       if (cc.mode !== undefined) nc.mode = cc.mode;
       if (cc.loadHz !== undefined) nc.loadHz = cc.loadHz;
@@ -8653,8 +8675,10 @@ class ComponentNode {
     // tracks the deterministic sim clock. Ideal mode (or a non-dissipating kind) holds at ambient.
     const heatPower =
       real && partHeats(this.kindTag) ? dissipatedPower(electrical) : 0;
+    // A heatsink (the part's management lever) scales θ_JA down, so the same power settles at a lower Tj.
+    const sink = heatsinkFactor(this.component.heatsink);
     this.tj = real
-      ? stepTemp(this.kindTag, this.tj, heatPower, dtSec)
+      ? stepTemp(this.kindTag, this.tj, heatPower, dtSec, T_AMBIENT_C, sink)
       : T_AMBIENT_C;
     // Thermal-death flag: cooked past the max junction temperature (Real mode only). Purely a render flag
     // (the OVERHEAT box + the inspector readout) — never re-enters the solve, so golden-safe + replay-safe.

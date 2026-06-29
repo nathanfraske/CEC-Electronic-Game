@@ -6,6 +6,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (234) — Refine round 2: thermal heatsink lever + diode shot noise
+
+- ~~**Thermal HEATSINK lever**~~ DONE (web-only, golden-safe; web 334; verified live). `Component.heatsink`
+  (0/1/2) → `heatsinkFactor` θ_JA multiplier in `stepTemp`; inspector picker (No sink / Heatsink / Large
+  sink, Real-mode + heating kinds); `board.setComponentHeatsink` (no rebuild — live Tj re-stabilises).
+  Persists for free. A 4 Ω resistor that vents at ~525 °C settles at **109 °C** with a Large sink — saved.
+- ~~**Noise — SHOT noise on diodes**~~ DONE (sim-core, golden-safe; Rust 212; golden stable).
+  `add_noise_currents` scales the noise current `∝ √|I|` for `is_diode` kinds (Johnson + shot share
+  `NOISE_SLOT`); `buildNetlist` emits `SHOT_NOISE_SCALE` on diodes in Real mode. Tests:
+  `shot_noise_needs_current` (the √I property — conducting noisy, off quiet), `shot_noise_diode_run_is_
+  reproducible`, web diode-emission. Adversarial-review the sim-core change before a PR.
+- [ ] **NEXT (menu):** flicker/1-f noise, op-amp input-referred noise; the other thermal levers (fan,
+  spacing) + Path 2 (hashed Tj); CPU spine (ELEM_MEMORY P2/P3b). (233)+(234) refinements on the branch,
+  not yet a new PR.
+
+---
+
 ## 2026-06-29 (233) — MERGED thermal+noise arc (PR #314) + refinements: vent + noise RMS readout
 
 - ~~**Merge the thermal+noise arc to main**~~ DONE — PR #314 (`db07c09`), owner said "merge it up". Full

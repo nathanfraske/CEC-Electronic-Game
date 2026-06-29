@@ -148,6 +148,15 @@ export interface Component {
    */
   variant?: number;
   /**
+   * The part's **heatsink** level (a thermal management lever): `0` none, `1` a heatsink, `2` a large
+   * sink. A higher level multiplies the part's junction-to-ambient thermal resistance `θ_JA` DOWN
+   * ({@link heatsinkFactor}), so it runs cooler for the same dissipated power — enough to pull an
+   * over-dissipating part back out of OVERHEAT / save it from venting. Web-side / presentational only
+   * (thermal `Tj` never enters the deterministic solve), and it bites only in Real mode. Undefined → `0`
+   * (no sink), so older snapshots and untouched parts round-trip unchanged.
+   */
+  heatsink?: number;
+  /**
    * The pulse / clock generator's **duty cycle** in `[0, 1]`: the fraction of each period the
    * square output is high (and the symmetry point of the triangle). Only meaningful for kind
    * `"PULSE"` (where {@link buildNetlist} writes it into the waveform param block); other kinds

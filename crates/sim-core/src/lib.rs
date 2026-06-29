@@ -4517,20 +4517,30 @@ impl Sim {
         }
     }
 
-    /// Inject every noisy element's deterministic per-tick **thermal-noise current** into the transient
-    /// RHS — a Norton current source `i_n` in parallel with the element (amplitude = [`NOISE_SLOT`], A;
-    /// `0` skips it). `i_n` is zero-mean and independent of the unknowns, so it stamps the RHS only (no
-    /// matrix change, no Newton feedback) exactly like an [`ELEM_ISOURCE`] (current leaves `a`, enters
-    /// `b`). The sample is a pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact.
-    /// Called ONLY from the transient solves (the operating point stays clean) and ONLY when
-    /// [`Sim::has_noise`], so a noiseless circuit — and the golden — never reaches this code. The signed
-    /// sample makes the sign convention irrelevant.
+    /// Inject every noisy element's deterministic per-tick **noise current** into the transient RHS — a
+    /// Norton current source `i_n` in parallel with the element (`base` = [`NOISE_SLOT`], A; `0` skips it).
+    /// Two mechanisms share the slot:
+    /// - **Johnson** (resistors etc.): `i_n = base · sample` — a fixed amplitude, independent of bias.
+    /// - **Shot** (junction devices, [`is_diode`]): `i_n = base · √|I| · sample` — the shot-noise current
+    ///   scales with the square root of the device's current (its previous-tick committed `currents[i]`,
+    ///   part of the deterministic state), so a harder-biased junction is noisier.
+    ///
+    /// `i_n` is zero-mean and independent of the unknowns, so it stamps the RHS only (no matrix change, no
+    /// Newton feedback) exactly like an [`ELEM_ISOURCE`] (current leaves `a`, enters `b`). The sample is a
+    /// pure function of `(element index, tick)` ([`noise_sample`]) ⇒ replay-exact. Called ONLY from the
+    /// transient solves (the operating point stays clean) and ONLY when [`Sim::has_noise`], so a noiseless
+    /// circuit — and the golden — never reaches this code. The signed sample makes the sign irrelevant.
     fn add_noise_currents(&self, rhs: &mut [f64]) {
         for (i, e) in self.elements.iter().enumerate() {
-            let amp = e.params[NOISE_SLOT];
-            if amp == 0.0 {
+            let base = e.params[NOISE_SLOT];
+            if base == 0.0 {
                 continue;
             }
+            let amp = if is_diode(e.kind) {
+                base * self.currents[i].abs().sqrt()
+            } else {
+                base
+            };
             let i_n = amp * noise_sample(i, self.tick);
             if let Some(r) = Self::node_idx(e.a) {
                 rhs[r] -= i_n;
@@ -16623,6 +16633,81 @@ mod tests {
         assert!(
             (noisy_mean - 2.5).abs() < 0.25,
             "zero-mean noise leaves the average near the 2.5 V divider point: mean={noisy_mean}"
+        );
+    }
+
+    /// A diode carrying SHOT noise (its [`NOISE_SLOT`] scale × √|I| of the live current) still reproduces
+    /// its snapshot-hash stream exactly — the determinism contract holds with the current-dependent term
+    /// (the current is the previous-tick committed `currents[i]`, part of the deterministic state).
+    #[test]
+    fn shot_noise_diode_run_is_reproducible() {
+        let run = || {
+            // V(1→0)=5 through R(1→2)=100 into D(2→0): the diode conducts ~43 mA. Shot scale on the diode.
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = 0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[5.0, 100.0, 0.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..1000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            run(),
+            run(),
+            "a diode with shot noise must reproduce exactly"
+        );
+    }
+
+    /// Shot noise is current-dependent (`∝ √I`): a forward-biased, conducting diode's node fuzzes, but an
+    /// unbiased diode (`I ≈ 0`, so the amplitude `∝ √I ≈ 0`) is quiet — even with the same shot scale
+    /// installed. This is the defining property of shot noise (no current ⇒ no shot noise).
+    #[test]
+    fn shot_noise_needs_current() {
+        let node2_var = |vsrc: f64| -> f64 {
+            let mut params = vec![0.0f64; 3 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + NOISE_SLOT] = 0.02;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_DIODE],
+                &[1, 1, 2],
+                &[0, 2, 0],
+                &[0, 0, 0],
+                &[0, 0, 0],
+                &[vsrc, 100.0, 0.0],
+                &[0.0; 3],
+                &params,
+            ));
+            let mut s = Vec::new();
+            for _ in 0..500 {
+                sim.step();
+                s.push(sim.node_voltages()[2]);
+            }
+            let m = s.iter().sum::<f64>() / s.len() as f64;
+            s.iter().map(|v| (v - m).powi(2)).sum::<f64>() / s.len() as f64
+        };
+        let on = node2_var(5.0); // ~43 mA through the diode → shot noise fuzzes node 2
+        let off = node2_var(0.0); // no bias → I ≈ 0 → amplitude ∝ √I ≈ 0 → quiet
+        assert!(
+            on > 1e-9,
+            "a conducting diode's shot noise fuzzes its node: {on}"
+        );
+        assert!(
+            off < on * 1e-3,
+            "an off diode (no current) carries no shot noise: off={off}, on={on}"
         );
     }
 

@@ -84,6 +84,40 @@ describe("resistor noise emission (Real mode only)", () => {
     expect(real.params[ei * PARAM_STRIDE + NOISE_SLOT]).toBeGreaterThan(0);
     expect(ideal.params[ei * PARAM_STRIDE + NOISE_SLOT]).toBe(0);
   });
+
+  it("installs a diode's shot-noise scale in Real mode and omits it in Ideal mode", () => {
+    // V → R → D → gnd. The diode (kind "D") gets a shot-noise scale in slot 6 (Real only); sim-core
+    // multiplies it by √|I| of the live current.
+    const g = new BoardGraph();
+    const gnd = g.place("GND", { col: 0, row: 0 })!;
+    const src = g.place("V", { col: 2, row: 0 })!;
+    src.value = 5;
+    const r = g.place("R", { col: 6, row: 0 })!;
+    r.value = 100;
+    const d = g.place("D", { col: 10, row: 0 })!;
+    g.connect(
+      { componentId: src.id, pinIndex: 0 },
+      { componentId: r.id, pinIndex: 0 },
+    );
+    g.connect(
+      { componentId: r.id, pinIndex: 1 },
+      { componentId: d.id, pinIndex: 0 },
+    );
+    g.connect(
+      { componentId: d.id, pinIndex: 1 },
+      { componentId: gnd.id, pinIndex: 0 },
+    );
+    g.connect(
+      { componentId: src.id, pinIndex: 1 },
+      { componentId: gnd.id, pinIndex: 0 },
+    );
+
+    const real = buildNetlist(g, true, false)!;
+    const ideal = buildNetlist(g, false, false)!;
+    const ei = real.elemOfComponent.get(d.id)!;
+    expect(real.params[ei * PARAM_STRIDE + NOISE_SLOT]).toBeGreaterThan(0);
+    expect(ideal.params[ei * PARAM_STRIDE + NOISE_SLOT]).toBe(0);
+  });
 });
 
 // A 100k/100k divider; sample the midpoint node over many ticks. Returns the peak-to-peak range.

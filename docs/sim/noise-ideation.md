@@ -90,8 +90,13 @@ shows the fuzz directly (the noise is in `node_v`); no new render path needed.
 
 ## Later (not v1)
 
-- **Shot noise** (`√(2qIΔf)`, current-dependent) and **flicker / 1-f** (needs a
-  shaping filter with state) — both larger; shot couples to the operating-point
-  current, flicker needs `reactive_state`.
-- Noise on other devices (op-amp input-referred, diode/BJT) via the same slot.
-- A "noise floor" HUD / an RMS-noise readout in the inspector.
+- **Shot noise** (`√(2qIΔf)`, current-dependent) — **LANDED** (2026-06-29) for **diodes**:
+  `add_noise_currents` scales the slot by `√|I|` of the device's previous-tick committed `currents[i]`
+  for `is_diode` kinds, so Johnson (fixed) and shot (`∝√I`) share `NOISE_SLOT`; `buildNetlist` emits a
+  `SHOT_NOISE_SCALE` on diodes in Real mode (a junction property, not a tier). Tests:
+  `shot_noise_needs_current` (the defining property — a conducting diode is noisy, an off one quiet) +
+  `shot_noise_diode_run_is_reproducible`. Golden-safe (the golden has no diode; an Ideal diode emits 0).
+- **Flicker / 1-f** (needs a shaping filter with `reactive_state`) — still later.
+- An **RMS-noise readout** in the inspector — **LANDED** (2026-06-29): the std of a selected resistor's
+  V-across over a sliding window ("Noise (RMS)", Real mode).
+- Noise on more devices (op-amp input-referred, BJT shot) via the same slot.
