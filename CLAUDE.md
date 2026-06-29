@@ -314,8 +314,14 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   + ≥2 coils** (Ideal keeps coils independent — no stray coupling); `BuiltNetlist.magneticCoupling`, pushed in
   `App.svelte` beside the thermal one (full-rebuild + live-move). Verified e2e (`magneticCoupling.test.ts`:
   two adjacent coils, AC-driven primary → the secondary swings; uncoupled it's dead; a 4× secondary steps the
-  voltage up `√(L2/L1)≈2×` in sim-core). (Next on the transformer road: a center tap = primary + two coupled
-  secondary halves; a proper buildable transformer part; AC-solve support so the Bode tools see it.)
+  voltage up `√(L2/L1)≈2×` in sim-core). **A center tap needs NO new element** — it's a continuous secondary
+  winding `top→tap→bottom` (two coupled half-coils sharing the tap node), and the two halves come out
+  **antiphase about the tap** (`center_tapped_transformer_halves_are_antiphase`: each ~10 Vpp, sum ~0 — the
+  basis of full-wave rectifiers / phase splitters). **The AC solve sees transformers too:** `ac_solve_models`
+  carries the same mutual off-diagonal in COMPLEX form (`a[bi][bj] −= jωM`, gated on `has_magnetic`), so the
+  Bode/phase tools read transformer action across frequency (`ac_solve_sees_a_transformer`); golden-safe
+  (no map ⇒ unchanged). (Next: a single placeable transformer/center-tap PART wrapping the coupled-coil
+  primitive — a UX/glyph step, no longer an engine gap.)
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

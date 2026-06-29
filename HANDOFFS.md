@@ -5,6 +5,33 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (239) — TRANSFORMER ROAD: center tap (no new element) + AC-solve sees transformers
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Continuing the magnetic-coupling work — two sim-core additions,
+both golden byte-identical. Full gate green: Rust **227** (+2), web **351** (unchanged), fmt/clippy/check 0.
+
+**Landed — center tap falls out of the framework (no new element):** a center-tapped transformer is just a
+continuous secondary winding `top(2) → tap(0) → bottom(3)` = two coupled half-coils sharing the grounded tap.
+The two halves come out **antiphase about the tap** (each ~10 Vpp, their SUM ~0 — full-wave rectifier / phase
+splitter). Verified `center_tapped_transformer_halves_are_antiphase` (3 coupled coils via the existing
+`set_magnetic_coupling`; orient the secondary as one continuous path 2→0→3 to get the antiphase). So a
+buildable center-tapped transformer is "place a primary + two series secondary coils next to it."
+
+**Landed — AC-solve mutual inductance (`ac_solve_models`):** the complex twin of `stamp_mutual_inductance` —
+each coupled inductor pair adds `a[bi][bj] −= jωM` (`M = k·√(Li·Lj)`) to the branch row, gated on
+`has_magnetic`, after the per-element loop (the old "transformer: still open in this pass" TODO). So the
+**Bode/phase frequency tools now SEE a transformer** (a primary's current induces a secondary voltage across
+frequency). Verified `ac_solve_sees_a_transformer` (coupled secondary develops V; uncoupled silent). Golden-
+safe (no map ⇒ no off-diagonal ⇒ unchanged; the RC golden has no inductor).
+
+**NEXT (the only remaining transformer gap is UX):** a single **placeable transformer / center-tap PART** that
+wraps the coupled-coil primitive (real package, primary/secondary/tap pins, glyph, netlist expansion to
+coupled `L`s) — no longer an engine gap, just part-authoring. Plus the older list: flicker/op-amp noise;
+fan/spacing thermal levers; MOV joule-rating. These (233)–(239) are on the branch, **NOT a PR** — a **#315
+batch** awaits owner greenlight (adversarial-review the sim-core thermal + MNA-mutual changes first).
+
+---
+
 ## 2026-06-29 (238) — MAGNETIC COUPLING: two coils → a transformer (the thermal-coupling framework, for flux)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Owner: "two coils next to each other coupling is the goal... a

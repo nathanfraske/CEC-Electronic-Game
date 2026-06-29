@@ -8127,6 +8127,30 @@ impl Sim {
                 }
             }
         }
+        // Mutual inductance (transformer action) in the frequency domain: the complex twin of the transient
+        // `stamp_mutual_inductance`. Each coupled inductor pair adds an off-diagonal reactance `−jωM` (with
+        // `M = k·√(Li·Lj)`) to the branch row, so the Bode/phase tools SEE a transformer (a primary coil's
+        // current induces a secondary voltage across frequency). Inert without a magnetic-coupling map —
+        // identical to before for every uncoupled inductor circuit.
+        if self.has_magnetic {
+            for i in 0..self.elements.len() {
+                if self.magnetic_coupling[i].is_empty() {
+                    continue;
+                }
+                let (bi, li) = (branch[i], self.elements[i].value);
+                if bi == usize::MAX {
+                    continue;
+                }
+                for &(j, k) in &self.magnetic_coupling[i] {
+                    let bj = branch[j];
+                    if bj == usize::MAX {
+                        continue;
+                    }
+                    let m = k * (li * self.elements[j].value).max(0.0).sqrt();
+                    a[bi * n + bj] = a[bi * n + bj].sub(Cplx::new(0.0, omega * m));
+                }
+            }
+        }
         let x = solve_dense_complex(a, b, n);
         x[..node_unknowns].iter().map(|c| (c.re, c.im)).collect()
     }
@@ -17506,6 +17530,122 @@ mod tests {
         assert!(
             step_up > one_to_one * 1.4,
             "a 4× secondary inductance steps the voltage up (√(L2/L1) ≈ 2×): 1:1 {one_to_one} vs step-up {step_up} Vpp"
+        );
+    }
+
+    /// A **center-tapped transformer** from three coupled coils: an AC-driven primary `L1`, and a secondary
+    /// wound as ONE continuous coil `top(2) → tap(0) → bottom(3)` (two half-windings `L2a`, `L2b` sharing the
+    /// grounded centre tap). Returns `(pp_top, pp_bottom, pp_sum)` — the peak-to-peak of `V(2)`, `V(3)`, and
+    /// their sum over the last cycle. The defining centre-tap property: the two halves swing ANTIPHASE about
+    /// the tap, so each `pp` is large but their SUM stays near zero (the basis of full-wave rectifiers and
+    /// phase splitters).
+    #[cfg(test)]
+    fn run_center_tap(k: f64, steps: usize) -> (f64, f64, f64) {
+        let freq = 1_000.0;
+        // 0 GND/tap, 1 primary, 2 sec-top, 3 sec-bottom. Secondary winding runs 2→0→3 (continuous).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            4,
+            &[
+                ELEM_ACSOURCE,
+                ELEM_INDUCTOR, // L1 primary (1→0)
+                ELEM_INDUCTOR, // L2a top half (2→0)
+                ELEM_INDUCTOR, // L2b bottom half (0→3)
+                ELEM_RESISTOR, // load on top (2→0)
+                ELEM_RESISTOR, // load on bottom (3→0)
+            ],
+            &[1, 1, 2, 0, 2, 3],
+            &[0, 0, 0, 3, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[0, 0, 0, 0, 0, 0],
+            &[freq, 1e-3, 1e-3, 1e-3, 1_000.0, 1_000.0],
+            &[5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            &[],
+        ));
+        if k != 0.0 {
+            // Couple all three coils: primary↔each half, and the two halves to each other (one winding).
+            sim.set_magnetic_coupling(&[1, 1, 2], &[2, 3, 3], &[k, k, k]);
+        }
+        let period = ((1.0 / freq) / DT).round() as usize;
+        let (mut min2, mut max2) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut min3, mut max3) = (f64::INFINITY, f64::NEG_INFINITY);
+        let (mut mins, mut maxs) = (f64::INFINITY, f64::NEG_INFINITY);
+        for s in 0..steps {
+            sim.step();
+            if s >= steps.saturating_sub(period.max(1)) {
+                let (v2, v3) = (sim.node_v[2], sim.node_v[3]);
+                min2 = min2.min(v2);
+                max2 = max2.max(v2);
+                min3 = min3.min(v3);
+                max3 = max3.max(v3);
+                mins = mins.min(v2 + v3);
+                maxs = maxs.max(v2 + v3);
+            }
+        }
+        (max2 - min2, max3 - min3, maxs - mins)
+    }
+
+    /// **The center tap falls out of the coupled-coil framework** — no new element needed. The two
+    /// secondary halves of a continuous `top → tap → bottom` winding swing equally and ANTIPHASE about the
+    /// grounded centre tap (each ~10 Vpp, their SUM ~0), exactly the behaviour a full-wave rectifier or a
+    /// phase splitter needs. With no coupling the secondary is dead. So a buildable center-tapped
+    /// transformer is "place a primary coil + two series secondary coils next to it" — the owner's vision.
+    #[test]
+    fn center_tapped_transformer_halves_are_antiphase() {
+        let (top, bottom, sum) = run_center_tap(0.99, 6000);
+        assert!(
+            top > 5.0 && bottom > 5.0,
+            "both centre-tap halves swing: top {top}, bottom {bottom} Vpp"
+        );
+        assert!(
+            sum < top * 0.05,
+            "the halves are antiphase about the tap — their sum cancels: top {top} vs sum {sum} Vpp"
+        );
+        assert!(
+            (top - bottom).abs() < top * 0.05,
+            "the halves are balanced (equal turns): top {top} vs bottom {bottom} Vpp"
+        );
+        let (cold_top, _, _) = run_center_tap(0.0, 6000);
+        assert!(
+            cold_top < 0.1,
+            "with no coupling the secondary is dead: {cold_top} Vpp"
+        );
+    }
+
+    /// The **frequency-domain** solve now sees a transformer too: `ac_solve` carries the mutual-inductance
+    /// off-diagonal, so a coupled secondary develops a voltage across frequency (what the Bode / phase tools
+    /// read). Uncoupled, the secondary is silent in the AC solve — proving the off-diagonal is what couples
+    /// it, and that an uncoupled circuit's AC response is unchanged.
+    #[test]
+    fn ac_solve_sees_a_transformer() {
+        let mag = |couple: bool| {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+                &[1, 1, 2, 2],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[1_000.0, 1e-3, 1e-3, 100.0],
+                &[5.0, 0.0, 0.0, 0.0],
+                &[],
+            ));
+            if couple {
+                sim.set_magnetic_coupling(&[1], &[2], &[0.99]);
+            }
+            let v = sim.ac_solve(core::f64::consts::TAU * 100_000.0); // 100 kHz (frequency domain, no Nyquist)
+            v[1].0.hypot(v[1].1) // |V(node 2)| — the secondary
+        };
+        let coupled = mag(true);
+        let uncoupled = mag(false);
+        assert!(
+            coupled > 0.1,
+            "ac_solve sees transformer action — the secondary develops voltage: {coupled} V"
+        );
+        assert!(
+            uncoupled < 1e-6,
+            "uncoupled, the secondary is silent in the AC solve: {uncoupled} V"
         );
     }
 

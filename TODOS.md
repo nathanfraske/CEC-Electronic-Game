@@ -21,6 +21,20 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (239) — TRANSFORMER ROAD: center tap + AC-solve mutual inductance (#140)
+
+- ~~**Center tap** (owner: "see if you can do the center tap")~~ DONE — needs NO new element. A center-tapped
+  transformer is a continuous secondary `top→tap→bottom` (two coupled half-coils sharing the tap); the halves
+  come out antiphase about the tap (`center_tapped_transformer_halves_are_antiphase`: each ~10 Vpp, sum ~0).
+- ~~**AC-solve mutual inductance**~~ DONE — `ac_solve_models` carries `a[bi][bj] −= jωM` (gated `has_magnetic`),
+  so the Bode/phase tools see a transformer across frequency (`ac_solve_sees_a_transformer`). Golden-safe.
+- [ ] **Only remaining transformer gap = UX:** a single placeable transformer/center-tap PART wrapping the
+  coupled-coil primitive (package + primary/secondary/tap pins + glyph + netlist expansion to coupled `L`s).
+  No longer an engine gap. Plus flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(239)
+  await a **#315 batch PR**.
+
+---
+
 ## 2026-06-29 (238) — MAGNETIC COUPLING (two coils → a transformer) + live-move thermal coupling
 
 - ~~**Live-move thermal coupling** (#138 follow-up)~~ DONE. `App.svelte` `rebuildNetlist` pure-move
