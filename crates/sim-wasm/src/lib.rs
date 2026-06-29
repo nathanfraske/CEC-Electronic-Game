@@ -226,6 +226,16 @@ impl Simulation {
         self.inner.set_thermal_coupling(idx, nbr, w);
     }
 
+    /// Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors
+    /// share flux, derived web-side from coil geometry. Each `(idx[k], nbr[k], coeff[k])` couples two
+    /// inductors with coefficient `coeff ∈ (−1, 1)` (sign = winding sense), adding the mutual term
+    /// `M = coeff·√(Li·Lj)` to the transient branch equations so a primary coil drives a secondary. Call
+    /// AFTER `set_netlist*` (which clears the prior map); does NOT rewind. Non-inductor endpoints and
+    /// `|coeff| ≥ 1` are skipped. Empty input leaves the inert no-coupling default.
+    pub fn set_magnetic_coupling(&mut self, idx: &[u32], nbr: &[u32], coeff: &[f64]) {
+        self.inner.set_magnetic_coupling(idx, nbr, coeff);
+    }
+
     /// The self-heating junction temperature `Tj` (°C) of element `index` — the authoritative in-solve
     /// temperature (thermal runaway + mutual heating). `T_AMBIENT` for a thermally-inert part or an
     /// out-of-range index. Lets the front end read the real `Tj` instead of its own presentational integral.

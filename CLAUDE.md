@@ -294,8 +294,28 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   byte-identical (verified: `empty_coupling_is_byte_identical`). Verified end-to-end (`mhE2E.test.ts`: a
   coupled NTC's divider midpoint drops 4.97→2.33 V as it senses a hot resistor; uncoupled it holds at ~½ Vcc).
   `pub fn element_temperature(i)` is now wasm-exposed (`loop.ts` `elementTemperature`) for the authoritative
-  in-solve `Tj`. (v1: positions ride the netlist install, not pure moves — nudge a value after moving a part
-  to recompute coupling. Per-internal-IC-element coupling + reading sim-core `Tj` for the glow are follow-ups.)
+  in-solve `Tj`. **Live moves** re-push the coupling: `rebuildNetlist`'s pure-move early-return (sig
+  unchanged) re-applies `nl.coupling` (same element indices, new weights) — or EMPTY to clear when you drag
+  a part out of range — so dragging a part beside a thermistor updates what it senses without a reinstall.
+  (Per-internal-IC-element coupling + reading sim-core `Tj` for the glow are follow-ups.)
+- **Magnetic coupling / coupled inductors → transformers** (`magnetic_coupling`, `set_magnetic_coupling`).
+  The **coupled-inductor analogue of thermal coupling**: two inductors near each other share flux (mutual
+  inductance `M = k·√(Li·Lj)`), so an AC-driven primary coil induces a voltage in a secondary — **two coils
+  next to each other become a transformer**. The backward-Euler companion of `v = M·di/dt` adds an
+  off-diagonal `mat[bi][bj] −= M/DT` (+ history `rhs[bi] −= (M/DT)·i_prev_j`) to each inductor's **transient**
+  branch row — stamped by `stamp_mutual_inductance` after the per-element loop in BOTH transient paths
+  (`solve_into_readout` + `_newton`); the **OP is untouched** (inductors are DC current sources there,
+  `di/dt = 0`). `|k| < 1` (`MUTUAL_K_MAX` = 0.999) keeps the `L` matrix positive-definite (`det = Li·Lj(1 −
+  k²) > 0`). Pushed via `set_magnetic_coupling(idx,nbr,coeff)` **after** `set_netlist` (no rewind); non-inductor
+  endpoints + out-of-range + `|k| ≥ 1` are rejected. **Golden-safe:** no magnetic map (the RC golden has no
+  inductor; every uncoupled inductor circuit) ⇒ `has_magnetic` false ⇒ no off-diagonals ⇒ byte-identical
+  (verified `magnetic_coupling_is_reproducible_and_golden_safe`). Web (`netlist.ts` `computeMagneticCoupling`):
+  inductor (`"L"`) pairs within `MAG_CUTOFF` cells couple with `k = MAG_K_PEAK·e^(−(d/D0)²)`, **Real-mode only
+  + ≥2 coils** (Ideal keeps coils independent — no stray coupling); `BuiltNetlist.magneticCoupling`, pushed in
+  `App.svelte` beside the thermal one (full-rebuild + live-move). Verified e2e (`magneticCoupling.test.ts`:
+  two adjacent coils, AC-driven primary → the secondary swings; uncoupled it's dead; a 4× secondary steps the
+  voltage up `√(L2/L1)≈2×` in sim-core). (Next on the transformer road: a center tap = primary + two coupled
+  secondary halves; a proper buildable transformer part; AC-solve support so the Bode tools see it.)
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

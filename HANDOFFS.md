@@ -5,6 +5,43 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (238) — MAGNETIC COUPLING: two coils → a transformer (the thermal-coupling framework, for flux)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Owner: "two coils next to each other coupling is the goal... a
+similar framework to what you just made." Done exactly that — **mutual inductance via a pushed coupling map**,
+the coupled-inductor analogue of thermal coupling. Plus **live-move thermal coupling** (the small follow-up).
+Golden byte-identical. Full gate green: Rust **225** (+3), web **351** (+4), fmt/clippy/check/lint/build 0.
+
+**Landed — live-move thermal coupling (`App.svelte`):** `rebuildNetlist`'s pure-move early-return (sig
+unchanged) now re-applies `nl.coupling` (same element indices, new weights) — or EMPTY to clear when a part is
+dragged out of range — so dragging beside a thermistor updates what it senses without a reinstall/rewind.
+
+**Landed — magnetic coupling (sim-core `magnetic_coupling` + `set_magnetic_coupling`):**
+- The backward-Euler companion of `v = M·di/dt` (`M = k·√(Li·Lj)`) adds an off-diagonal `mat[bi][bj] −= M/DT`
+  (+ history) to each inductor's **transient** branch row — `stamp_mutual_inductance`, called after the
+  per-element loop in BOTH transient paths; the **OP is untouched** (inductors are DC current sources there).
+  `|k| < 1` (`MUTUAL_K_MAX` 0.999) keeps the `L` matrix positive-definite. `set_magnetic_coupling(idx,nbr,coeff)`
+  (wasm-exposed), post-`set_netlist`, no rewind; non-inductor / OOR / `|k|≥1` edges rejected.
+- **Golden-safe:** no map (RC golden has no inductor; every uncoupled inductor circuit) ⇒ `has_magnetic` false
+  ⇒ no off-diagonals ⇒ byte-identical. Tests: `coupled_coils_make_a_transformer` (AC primary → secondary
+  swings; uncoupled dead), `coupled_coils_step_up_with_turns_ratio` (4× L2 ⇒ ~2× `√(L2/L1)`),
+  `magnetic_coupling_is_reproducible_and_golden_safe`.
+- **web** (`netlist.ts` `computeMagneticCoupling`): inductor (`"L"`) pairs within `MAG_CUTOFF` cells couple
+  `k = MAG_K_PEAK·e^(−(d/D0)²)`, **Real-mode + ≥2 coils** (Ideal keeps coils independent). `BuiltNetlist.
+  magneticCoupling`, pushed in `App.svelte` beside thermal (full-rebuild + live-move). `loop.ts`
+  `setMagneticCoupling`. Tests: `magneticCoupling.test.ts` (emission gating/falloff + e2e: two adjacent coils,
+  AC primary → secondary swings, uncoupled dead).
+
+**NEXT (the transformer road the owner wants — "fully modelled and buildable"):** a **center tap** = primary +
+two coupled secondary halves (now expressible via coupled coils, or +1 terminal on `ELEM_TRANSFORMER`); a
+proper **buildable transformer part** (place 2+ coils, name a turns ratio, glyph); **AC-solve support** so the
+Bode/phase tools see a transformer (today `ELEM_TRANSFORMER` is skipped in `ac_solve`, and mutual inductance is
+transient-only). Plus the older list (flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating).
+These (233)–(238) are on the branch, **NOT a PR** — a **#315 batch** awaits owner greenlight (adversarial-review
+the sim-core thermal + MNA-mutual changes first).
+
+---
+
 ## 2026-06-29 (237) — MUTUAL HEATING + THERMISTOR-AS-SENSOR: per-tick Tj coupling (golden-safe), e2e verified
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. The **second `Tj`-in-the-solve** feature — neighbouring parts

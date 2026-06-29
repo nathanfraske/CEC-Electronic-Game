@@ -21,6 +21,29 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (238) — MAGNETIC COUPLING (two coils → a transformer) + live-move thermal coupling
+
+- ~~**Live-move thermal coupling** (#138 follow-up)~~ DONE. `App.svelte` `rebuildNetlist` pure-move
+  early-return re-applies `nl.coupling` (or EMPTY to clear) so dragging a part beside a thermistor updates the
+  sensing without a reinstall/rewind.
+- ~~**Magnetic coupling — mutual inductance / coupled inductors** (#139)~~ DONE (sim-core + web; **golden
+  byte-identical**; Rust 225, web 351; e2e verified). The thermal-coupling framework applied to FLUX: two
+  coils next to each other → a transformer. sim-core `magnetic_coupling`/`has_magnetic` + `set_magnetic_
+  coupling(idx,nbr,coeff)`; `stamp_mutual_inductance` adds `mat[bi][bj]−=M/DT` (`M=k·√(LiLj)`) in BOTH
+  transient paths (OP untouched — inductors are DC current sources there); `|k|<MUTUAL_K_MAX`(0.999) keeps the
+  L matrix PD. web `computeMagneticCoupling` (L pairs within `MAG_CUTOFF`, `k=MAG_K_PEAK·e^(−(d/D0)²)`,
+  Real-mode + ≥2 coils), `BuiltNetlist.magneticCoupling`, pushed in `App.svelte` (full-rebuild + live-move),
+  `loop.ts` `setMagneticCoupling`. Tests: sim-core `coupled_coils_make_a_transformer` / `_step_up_with_turns_
+  ratio` / `magnetic_coupling_is_reproducible_and_golden_safe`; web `magneticCoupling.test.ts` (emission + e2e:
+  secondary swings when coupled, dead when not).
+- [ ] **Transformer road (owner: "fully modelled and buildable"):** center tap (= primary + two coupled
+  secondary halves, OR +1 terminal on `ELEM_TRANSFORMER`); a buildable transformer part (place coils + name a
+  turns ratio + glyph); AC-solve support so Bode/phase see a transformer (today `ELEM_TRANSFORMER` is skipped
+  in `ac_solve`, mutual inductance is transient-only). Plus flicker/op-amp noise; fan/spacing thermal levers;
+  MOV joule-rating. (233)–(238) await a **#315 batch PR** (adversarial-review the sim-core changes first).
+
+---
+
 ## 2026-06-29 (237) — MUTUAL HEATING + THERMISTOR-AS-SENSOR (golden-safe, owner-confirmed scope)
 
 - ~~**Part mutual heating + thermistor-as-sensor** (#138)~~ DONE (sim-core + web; **golden byte-identical**;

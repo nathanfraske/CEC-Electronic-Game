@@ -556,6 +556,18 @@ const COUPLE_ROW_MAX = 0.7; // cap on a part's total incoming weight (sim-core r
 // the board — otherwise it would be pure per-tick cost with no consequence.
 const TEMPCO_SENSOR_KINDS = new Set(["NTC", "PTC", "Q", "QP"]);
 
+// --- Magnetic coupling (mutual inductance) — two coils next to each other share flux = a transformer -----
+// The coupled-inductor analogue of thermal coupling: nearby inductors couple with coefficient k (sim-core's
+// `set_magnetic_coupling`), so an AC-driven primary coil induces a voltage in a secondary. k falls off
+// steeply with board distance (coils must be close to couple tightly), capped below 1 (k = 1 is a singular,
+// perfectly-coupled pair). Real-mode only (a teaching simplification: in Ideal mode parts are independent —
+// no stray coupling; in Real mode adjacent coils couple, mutual inductance being a "real" effect like the
+// parasitics). Distances are in grid cells (col/row).
+const MAG_D0 = 2.0; // coupling length (cells): k = K_PEAK·e^(−(d/D0)²)
+const MAG_CUTOFF = 5.0; // ignore coil pairs farther apart than this
+const MAG_K_PEAK = 0.95; // coupling of two touching coils
+const MAG_K_MAX = 0.98; // hard cap (sim-core re-caps at 0.999 to keep the L matrix non-singular)
+
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -964,6 +976,18 @@ export interface BuiltNetlist {
    * weights are normalised per element so the row sum stays `< 1` (passive — heat can't blow up).
    */
   coupling: { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null;
+  /**
+   * The **magnetic-coupling map** (mutual inductance) — geometry-derived edges pushed via
+   * `Simulation.set_magnetic_coupling` AFTER the netlist installs, so two coils next to each other share
+   * flux (a transformer): an AC-driven primary induces a voltage in a nearby secondary. `idx[k]`/`nbr[k]` is
+   * an inductor pair, `w[k]` its coupling coefficient `k`. Present only in Real mode with ≥2 coils in range;
+   * `null` otherwise (no coupling installed → byte-identical / golden-safe).
+   */
+  magneticCoupling: {
+    idx: Uint32Array;
+    nbr: Uint32Array;
+    w: Float64Array;
+  } | null;
   /** component id → element index (into `element_currents`). */
   elemOfComponent: Map<number, number>;
   /**
@@ -1076,6 +1100,60 @@ function computeThermalCoupling(
       idx.push(nodes[i]!.ei);
       nbr.push(nodes[e.j]!.ei);
       w.push(e.w * scale);
+    }
+  }
+  if (idx.length === 0) return null;
+  return {
+    idx: Uint32Array.from(idx),
+    nbr: Uint32Array.from(nbr),
+    w: Float64Array.from(w),
+  };
+}
+
+/**
+ * The **magnetic-coupling map** (mutual inductance) from coil geometry — which inductors share flux, for
+ * sim-core's `set_magnetic_coupling`. Two inductors (`kind === "L"`) within {@link MAG_CUTOFF} cells couple
+ * with coefficient `k = MAG_K_PEAK·e^(−(d/D0)²)` (capped at {@link MAG_K_MAX}), so an AC-driven primary coil
+ * induces a voltage in a nearby secondary — **two coils next to each other become a transformer**. One
+ * undirected edge per pair (sim-core symmetrises). Real-mode only (Ideal keeps coils independent — no stray
+ * coupling); `null` when fewer than two coils are in range (nothing to couple → golden-safe, no install).
+ */
+function computeMagneticCoupling(
+  parts: Iterable<{
+    id: number;
+    kind: string;
+    cell: { col: number; row: number };
+  }>,
+  elemOfComponent: Map<number, number>,
+  real: boolean,
+): { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null {
+  if (!real) return null;
+  const coils: { ei: number; col: number; row: number }[] = [];
+  for (const c of parts) {
+    if (c.kind !== "L") continue;
+    const ei = elemOfComponent.get(c.id);
+    if (ei === undefined) continue;
+    coils.push({ ei, col: c.cell.col, row: c.cell.row });
+  }
+  if (coils.length < 2) return null;
+  const idx: number[] = [];
+  const nbr: number[] = [];
+  const w: number[] = [];
+  for (let i = 0; i < coils.length; i++) {
+    for (let j = i + 1; j < coils.length; j++) {
+      const d = Math.hypot(
+        coils[i]!.col - coils[j]!.col,
+        coils[i]!.row - coils[j]!.row,
+      );
+      if (d > MAG_CUTOFF) continue;
+      const k = Math.min(
+        MAG_K_MAX,
+        MAG_K_PEAK * Math.exp(-((d / MAG_D0) ** 2)),
+      );
+      if (k <= 1e-3) continue;
+      idx.push(coils[i]!.ei);
+      nbr.push(coils[j]!.ei);
+      w.push(k);
     }
   }
   if (idx.length === 0) return null;
@@ -2106,6 +2184,7 @@ export function buildNetlist(
     aux: Float64Array.from(auxArr),
     params,
     coupling: computeThermalCoupling(sorted, elemOfComponent, real),
+    magneticCoupling: computeMagneticCoupling(sorted, elemOfComponent, real),
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,

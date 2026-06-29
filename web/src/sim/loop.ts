@@ -96,6 +96,16 @@ export interface SimHandle {
    * Empty arrays leave the inert no-coupling default.
    */
   setThermalCoupling(idx: Uint32Array, nbr: Uint32Array, w: Float64Array): void;
+  /**
+   * Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors share
+   * flux, from coil geometry. Each `(idx[k], nbr[k], coeff[k])` couples two inductors with coefficient
+   * `coeff`, so two coils next to each other become a transformer. Call AFTER `setNetlist`; no rewind.
+   */
+  setMagneticCoupling(
+    idx: Uint32Array,
+    nbr: Uint32Array,
+    coeff: Float64Array,
+  ): void;
   /** The in-solve junction temperature `Tj` (°C) of an element (thermal runaway + mutual heating). */
   elementTemperature(index: number): number;
   /**
@@ -215,6 +225,8 @@ export async function createSimulation(seed: number): Promise<SimHandle> {
     },
     reset: () => sim.reset(),
     setThermalCoupling: (idx, nbr, w) => sim.set_thermal_coupling(idx, nbr, w),
+    setMagneticCoupling: (idx, nbr, coeff) =>
+      sim.set_magnetic_coupling(idx, nbr, coeff),
     elementTemperature: (index) => sim.element_temperature(index),
     acSweep: (freqs, real) => sim.ac_sweep(freqs, real),
     acElementMeasurements: (omega, real) =>

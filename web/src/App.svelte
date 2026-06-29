@@ -2444,6 +2444,10 @@
       // part around never resets the running simulation.
       let netlist: BuiltNetlist | null = null;
       let netlistSig = "";
+      // Empty typed arrays for CLEARING the thermal-coupling map (a pure move that drags the last hot part
+      // out of range, or any no-coupling state) — pushing these leaves sim-core's inert no-coupling default.
+      const EMPTY_U32 = new Uint32Array(0);
+      const EMPTY_F64 = new Float64Array(0);
       const rebuildNetlist = (graph: BoardGraph): void => {
         // While drilled into a die, solve the graph with the frame's TEST STIMULI injected (so a
         // power-fed IC powers up + animates in isolation); on the outer board, solve as-is. The
@@ -2461,7 +2465,28 @@
             ? "A current source has no return path — its current can't flow, so this reading isn't meaningful. Complete the loop back to the source."
             : null;
         const sig = nl ? nl.sig : graph.components.size > 0 ? "empty" : "demo";
-        if (sig === netlistSig) return;
+        if (sig === netlistSig) {
+          // Pure move: the topology/values (and so the installed netlist) are unchanged, but the part
+          // POSITIONS are — and thermal coupling is geometry-derived. Re-apply it from the freshly-built
+          // `nl` (same element indices, new weights) so dragging a part beside a thermistor updates what
+          // it senses LIVE, without a netlist reinstall. Apply EMPTY when `nl.coupling` is null too, so
+          // dragging a part AWAY clears the stale coupling. `set_thermal_coupling` doesn't rewind.
+          const cp = nl?.coupling;
+          sim.setThermalCoupling(
+            cp?.idx ?? EMPTY_U32,
+            cp?.nbr ?? EMPTY_U32,
+            cp?.w ?? EMPTY_F64,
+          );
+          // Same live refresh for magnetic coupling — drag a coil beside another and they couple (or apart
+          // and they decouple) without a reinstall.
+          const mp = nl?.magneticCoupling;
+          sim.setMagneticCoupling(
+            mp?.idx ?? EMPTY_U32,
+            mp?.nbr ?? EMPTY_U32,
+            mp?.w ?? EMPTY_F64,
+          );
+          return;
+        }
         netlistSig = sig;
         netlist = nl;
         // The circuit actually changed (an example loaded, the board cleared, or a
@@ -2517,6 +2542,16 @@
               nl.coupling.idx,
               nl.coupling.nbr,
               nl.coupling.w,
+            );
+          }
+          // Magnetic coupling: two coils next to each other share flux (a transformer) — an AC-driven
+          // primary induces a voltage in a nearby secondary. Same post-install push as thermal; null
+          // outside Real mode or with fewer than two coils in range (no install → golden-safe).
+          if (nl.magneticCoupling) {
+            sim.setMagneticCoupling(
+              nl.magneticCoupling.idx,
+              nl.magneticCoupling.nbr,
+              nl.magneticCoupling.w,
             );
           }
           controls?.resync();

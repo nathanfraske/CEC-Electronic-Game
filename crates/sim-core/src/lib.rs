@@ -765,6 +765,12 @@ const TRANSFORMER_RWIND: f64 = 5.0;
 /// ratio scaling stays clean. Makes the secondary current `Is` a second reactive state.
 const TRANSFORMER_LLEAK: f64 = 5.0e-3;
 
+/// Ceiling on the magnetic-coupling coefficient `|k|` (see [`Sim::set_magnetic_coupling`]). Mutual
+/// inductance `M = k·√(Li·Lj)` is bounded by `√(Li·Lj)` (the `L` matrix stays positive-definite, `det =
+/// Li·Lj(1 − k²) > 0`) — `k = 1` is perfect coupling (a singular pair). Clamp just under so a "tightly
+/// coupled" pair (`k ≈ 0.999`) is a near-ideal transformer without making the branch system singular.
+const MUTUAL_K_MAX: f64 = 0.999;
+
 /// **D flip-flop** (edge-triggered one-bit memory — the first *sequential* element).
 /// Four terminals: output `a` = `Q`, input `b` = `D` (data), input `c` = `CLK`
 /// (clock), output `d` = `Q̄` (the complement). Its `value` is the logic-high rail,
@@ -3612,6 +3618,20 @@ pub struct Sim {
     /// heat can never blow up no matter how many parts pile on (e.g. a dense IC's internals). Empty for every
     /// element with no neighbours. Installed separately from the netlist (no rewind); cleared on install.
     thermal_coupling: Vec<Vec<(usize, f64)>>,
+    /// `true` iff a **magnetic-coupling** map has been installed ([`Sim::set_magnetic_coupling`]) — the
+    /// transformer/coupled-inductor analogue of `has_coupling`: two inductors near each other share flux
+    /// (mutual inductance `M = k·√(Li·Lj)`), so a primary coil drives a secondary. `false` ⇒ every inductor
+    /// is independent and this path is inert — a circuit with no magnetic coupling (and the golden) is
+    /// byte-identical.
+    has_magnetic: bool,
+    /// Per-element **magnetic-coupling** adjacency (in lockstep with `elements`): `magnetic_coupling[i]` is a
+    /// list of `(j, k)` — inductor `i` is flux-coupled to inductor `j` with coupling coefficient `k ∈ (−1, 1)`
+    /// (sign = winding sense / dot convention). In the **transient** branch equations each inductor's row
+    /// gains a mutual term `−(M/DT)·i_j` with `M = k·√(Li·Lj)` (the off-diagonal of the `L` matrix); `|k| < 1`
+    /// keeps that matrix positive-definite (`det = Li·Lj(1 − k²) > 0`), so the solve stays well-conditioned.
+    /// The web derives `k` from coil geometry (proximity), mirroring `thermal_coupling`. Empty when an inductor
+    /// has no magnetic neighbour. Installed separately from the netlist (no rewind); cleared on install.
+    magnetic_coupling: Vec<Vec<(usize, f64)>>,
     /// Per-node analog/digital classification (length `node_count`), computed at
     /// install from the element list ([`classify_nets`]). Topology metadata for the
     /// separated digital domain (`docs/ui/logic-analog-digital-nets.md` §7); does not
@@ -3898,6 +3918,8 @@ impl Sim {
             thermal_state: Vec::new(),
             has_coupling: false,
             thermal_coupling: Vec::new(),
+            has_magnetic: false,
+            magnetic_coupling: Vec::new(),
             net_classes: vec![NetClass::Analog],
             digital_rows: Vec::new(),
             subtick_rate: 1,
@@ -4288,6 +4310,8 @@ impl Sim {
         // until the web re-pushes via `set_thermal_coupling`), sized in lockstep with the elements.
         self.has_coupling = false;
         self.thermal_coupling = vec![Vec::new(); elements.len()];
+        self.has_magnetic = false;
+        self.magnetic_coupling = vec![Vec::new(); elements.len()];
         self.secondary_state = vec![0.0; elements.len()];
         self.failed = false;
         self.failed_elements = vec![false; elements.len()];
@@ -5157,6 +5181,10 @@ impl Sim {
                 _ => {}
             }
         }
+        // Mutual inductance (transient only): couple inductors that share flux — a primary coil drives a
+        // secondary (transformer action). Inert unless a magnetic-coupling map was installed, so an
+        // uncoupled circuit / the golden is byte-identical.
+        self.stamp_mutual_inductance(&mut mat, &mut rhs, n);
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut mat, &mut rhs, n);
         // Weakly tie each floating subnet's common-mode to ground (no-op when grounded).
@@ -6263,6 +6291,10 @@ impl Sim {
                 _ => {}
             }
         }
+        // Mutual inductance into the fixed Newton base (constant across iterations, like every inductor
+        // companion): couple flux-sharing inductors so a primary coil drives a secondary. Inert without a
+        // magnetic-coupling map, so an uncoupled circuit / the golden is byte-identical.
+        self.stamp_mutual_inductance(&mut base_mat, &mut base_rhs, n);
         // Digital gates/flip-flops drive their nets through the resolved digital domain.
         self.stamp_digital(&mut base_mat, &mut base_rhs, n);
         // Weakly tie each floating subnet's common-mode to ground in the fixed Newton
@@ -7764,6 +7796,76 @@ impl Sim {
         }
         self.thermal_coupling = adj;
         self.has_coupling = any;
+    }
+
+    /// Install the **magnetic-coupling map** (mutual inductance / transformer action) — which inductors
+    /// share flux, the coupled-inductor analogue of [`Sim::set_thermal_coupling`]. Each
+    /// `(idx[k], nbr[k], coeff[k])` is one **undirected** edge between two inductors with coupling
+    /// coefficient `coeff ∈ (−1, 1)` (sign = winding sense / dot convention); both directions are stored so
+    /// the symmetric mutual term `M = coeff·√(Li·Lj)` stamps into both branch rows. Self-edges, out-of-range
+    /// indices, **non-inductor** endpoints, and `|coeff| ≥ 1` (which would make the `L` matrix indefinite)
+    /// are skipped (`coeff` is clamped to `±MUTUAL_K_MAX`). Pushed AFTER `set_netlist` (which clears the prior
+    /// map); does NOT rewind. Empty input leaves the inert no-coupling default — byte-identical to before, so
+    /// the golden (no inductors) and every uncoupled inductor circuit are untouched.
+    pub fn set_magnetic_coupling(&mut self, idx: &[u32], nbr: &[u32], coeff: &[f64]) {
+        let n = self.elements.len();
+        let mut adj: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+        let k = idx.len().min(nbr.len()).min(coeff.len());
+        let mut any = false;
+        for t in 0..k {
+            let i = idx[t] as usize;
+            let j = nbr[t] as usize;
+            if i >= n || j >= n || i == j {
+                continue;
+            }
+            // Only inductors carry flux; a coefficient of 0 (or NaN) is no coupling.
+            if self.elements[i].kind != ELEM_INDUCTOR || self.elements[j].kind != ELEM_INDUCTOR {
+                continue;
+            }
+            let c = coeff[t].clamp(-MUTUAL_K_MAX, MUTUAL_K_MAX);
+            if c == 0.0 || c.is_nan() {
+                continue;
+            }
+            // Store BOTH directions so the symmetric off-diagonal stamps into both branch rows.
+            adj[i].push((j, c));
+            adj[j].push((i, c));
+            any = true;
+        }
+        self.magnetic_coupling = adj;
+        self.has_magnetic = any;
+    }
+
+    /// Stamp the **mutual-inductance** off-diagonals into a transient branch system (gated on
+    /// [`Sim::has_magnetic`]). For each magnetically-coupled inductor pair the backward-Euler companion of
+    /// `v = M·di/dt` adds `−(M/DT)·i_nbr` to the inductor's branch row: `mat[bi][bj] −= M/DT` and the history
+    /// term `rhs[bi] −= (M/DT)·i_prev_j`, with `M = coeff·√(Li·Lj)`. Called once per assembly **after** the
+    /// per-element inductor self-companions (order-independent — it only touches off-diagonals and the RHS).
+    /// Inert (returns immediately) with no magnetic coupling, so every uncoupled circuit / the golden is
+    /// byte-identical. Only the **transient** paths call it; the operating point holds inductors as DC
+    /// current sources (`di/dt = 0`, so mutual inductance contributes nothing there).
+    fn stamp_mutual_inductance(&self, mat: &mut [f64], rhs: &mut [f64], n: usize) {
+        if !self.has_magnetic {
+            return;
+        }
+        for i in 0..self.elements.len() {
+            if self.magnetic_coupling[i].is_empty() {
+                continue;
+            }
+            let li = self.elements[i].value;
+            let bi = self.branch_index[i];
+            if bi >= n {
+                continue;
+            }
+            for &(j, c) in &self.magnetic_coupling[i] {
+                let bj = self.branch_index[j];
+                if bj >= n {
+                    continue;
+                }
+                let m = c * (li * self.elements[j].value).max(0.0).sqrt();
+                mat[bi * n + bj] -= m / DT;
+                rhs[bi] -= (m / DT) * self.reactive_state[j];
+            }
+        }
     }
 
     /// The element at `index` in submission order. Panics if out of range; the
@@ -17329,6 +17431,135 @@ mod tests {
             stream(false),
             stream(true),
             "an empty/all-rejected coupling map must be byte-identical to no coupling"
+        );
+    }
+
+    /// Build a two-coil transformer: an AC source drives the primary inductor `L1` (across the source),
+    /// and a magnetically-coupled secondary inductor `L2` feeds a load `rload`; couple them with coefficient
+    /// `k` (`0` = no coupling installed). Runs `steps` ticks and returns the secondary node's peak-to-peak
+    /// voltage over the LAST cycle — the transformer's output swing. `freq` is the source frequency (Hz).
+    #[cfg(test)]
+    fn run_coupled_coils(l1: f64, l2: f64, k: f64, rload: f64, freq: f64, steps: usize) -> f64 {
+        // 0 GND, 1 primary, 2 secondary. ACSOURCE(1→0), L1(1→0), L2(2→0), R_load(2→0).
+        let mut sim = Sim::new(1);
+        assert!(sim.set_netlist_p(
+            3,
+            &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+            &[1, 1, 2, 2],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[0, 0, 0, 0],
+            &[freq, l1, l2, rload],
+            &[5.0, 0.0, 0.0, 0.0], // AC amplitude 5 V on the source; aux unused elsewhere
+            &[],
+        ));
+        if k != 0.0 {
+            sim.set_magnetic_coupling(&[1], &[2], &[k]); // L1 (elem 1) ↔ L2 (elem 2)
+        }
+        // Steps over one source period, to sample a full output cycle at the end.
+        let period_ticks = ((1.0 / freq) / DT).round() as usize;
+        let mut min = f64::INFINITY;
+        let mut max = f64::NEG_INFINITY;
+        for s in 0..steps {
+            sim.step();
+            if s >= steps.saturating_sub(period_ticks.max(1)) {
+                let v2 = sim.node_v[2];
+                min = min.min(v2);
+                max = max.max(v2);
+            }
+        }
+        max - min
+    }
+
+    /// **Two coils next to each other couple = a transformer.** An AC-driven primary inductor induces a
+    /// voltage in a flux-coupled secondary (mutual inductance `M = k·√(L1·L2)`), so the secondary node
+    /// swings. With NO coupling (`k = 0`) the secondary is dead (only its weak floating-ref tie). This is
+    /// the coupled-inductor analogue of the thermal-coupling framework — geometry-derived `k` pushed into
+    /// the transient branch equations.
+    #[test]
+    fn coupled_coils_make_a_transformer() {
+        let freq = 1_000.0;
+        // 1:1-ish coils, tightly coupled, lightly loaded.
+        let coupled = run_coupled_coils(1e-3, 1e-3, 0.99, 100.0, freq, 6000);
+        let uncoupled = run_coupled_coils(1e-3, 1e-3, 0.0, 100.0, freq, 6000);
+        assert!(
+            coupled > 1.0,
+            "a coupled secondary develops a clear AC swing (transformer action): {coupled} Vpp"
+        );
+        assert!(
+            uncoupled < 0.05,
+            "with no coupling the secondary is dead: {uncoupled} Vpp"
+        );
+        assert!(
+            coupled > uncoupled * 20.0,
+            "coupling is what drives the secondary: coupled {coupled} vs uncoupled {uncoupled} Vpp"
+        );
+    }
+
+    /// A step-UP transformer: a secondary with 4× the inductance (≈ 2× the turns, since `L ∝ N²`) swings
+    /// **higher** than an identical-coil 1:1 — the coupled-inductor turns-ratio `√(L2/L1)` showing through.
+    #[test]
+    fn coupled_coils_step_up_with_turns_ratio() {
+        let freq = 1_000.0;
+        let one_to_one = run_coupled_coils(1e-3, 1e-3, 0.99, 1e6, freq, 6000); // ~open secondary
+        let step_up = run_coupled_coils(1e-3, 4e-3, 0.99, 1e6, freq, 6000); // L2 = 4·L1 ⇒ ~2× turns
+        assert!(
+            step_up > one_to_one * 1.4,
+            "a 4× secondary inductance steps the voltage up (√(L2/L1) ≈ 2×): 1:1 {one_to_one} vs step-up {step_up} Vpp"
+        );
+    }
+
+    /// The mutual-inductance stamp is a fixed function of the deterministic state, so a coupled-coil run
+    /// reproduces its snapshot-hash stream exactly — and an EMPTY magnetic map (or one with non-inductor /
+    /// out-of-range edges, all rejected) is byte-identical to never coupling, the golden's guarantee.
+    #[test]
+    fn magnetic_coupling_is_reproducible_and_golden_safe() {
+        let build = || {
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                3,
+                &[ELEM_ACSOURCE, ELEM_INDUCTOR, ELEM_INDUCTOR, ELEM_RESISTOR],
+                &[1, 1, 2, 2],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[0, 0, 0, 0],
+                &[1_000.0, 1e-3, 1e-3, 100.0],
+                &[5.0, 0.0, 0.0, 0.0],
+                &[],
+            ));
+            sim
+        };
+        // Reproducible WITH coupling.
+        let run = || {
+            let mut sim = build();
+            sim.set_magnetic_coupling(&[1], &[2], &[0.99]);
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a coupled-coil run must reproduce exactly");
+        // An all-rejected magnetic map (self-edge, a non-inductor endpoint, out-of-range) installs nothing,
+        // so the run is byte-identical to never calling the setter.
+        let stream = |push: bool| {
+            let mut sim = build();
+            if push {
+                // elem 0 is the AC source (not an inductor) → rejected; (1,1) self → rejected; (1,9) OOR.
+                sim.set_magnetic_coupling(&[0, 1, 1], &[3, 1, 9], &[0.5, 0.5, 0.5]);
+            }
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..2000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(
+            stream(false),
+            stream(true),
+            "an empty/all-rejected magnetic map is byte-identical to no coupling"
         );
     }
 
