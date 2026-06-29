@@ -30,8 +30,9 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 - ~~**Transformer analogy view**~~ DONE — `drawAnalogyTransformer` (belted wheels, secondary sized by turns
   ratio) already existed but was only on the legacy `TR`; registered `XF` + `XFCT` in `ANALOGY_DRAWERS`, so
   both morph to the rich belted-wheels illustration when zoomed in under the analogy lens (verified `shoot`).
-- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(241) await a
-  **#315 batch PR**.
+- [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating.
+- ~~**(233)–(242) batch PR**~~ MERGED to `main` as **PR #315** (merge commit `bf47e82`; CI + local gate green;
+  golden untouched).
 
 ---
 

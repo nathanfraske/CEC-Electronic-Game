@@ -37,7 +37,11 @@ whole suite before removing rows.
 **NEXT (owner decision):** greenlight Stage A (pure win, no golden churn) — or not. Stage B (Z/X propagation)
 schedule when a lesson needs a visible high-Z bus / `X`. Plan has full staged build + test bar + the honest
 comparison (vs sparse analog solver / event-driven dirty-set: this is higher-leverage AND lower-risk for the
-CPU goal). The (233)–(241) web refinements still await a **#315 batch PR**.
+CPU goal).
+
+**LANDED:** the whole (233)–(242) batch merged to `main` as **PR #315** (merge commit `bf47e82`) — CI green
+(`rust-core` + `web-build`), local gate green (Rust 228, web 356), golden `0xeaac_3764_99e4_fa24` untouched.
+Branch `claude/kind-turing-hdelb3` is fully contained in `main`; continue from here for the next batch.
 
 ---
 
