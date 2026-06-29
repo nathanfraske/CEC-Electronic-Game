@@ -6667,6 +6667,68 @@ impl Sim {
         }
     }
 
+    /// Resolve the digital domain for this (sub-)tick — the production entry. Today it is the full
+    /// evaluate-all ([`Sim::eval_digital_full`]); the event-driven **dirty-set**
+    /// (`docs/sim/dirty-set-digital-eval.md`) will replace it incrementally so a quiescent gate-level
+    /// CPU costs `O(active fanout)` instead of `O(gates)`. In debug builds a bit-for-bit oracle
+    /// ([`Sim::debug_check_eval_digital`]) re-runs the full eval and asserts the production result
+    /// matches it — the same discipline that fenced the digital-matrix lift, so no golden can move
+    /// silently as the dirty-set lands. Release/wasm: the oracle is compiled out.
+    fn eval_digital(&mut self) {
+        self.eval_digital_full();
+        #[cfg(debug_assertions)]
+        self.debug_check_eval_digital();
+    }
+
+    /// **Debug-only byte-identity oracle** for the digital eval (S0 of `dirty-set-digital-eval.md`):
+    /// snapshot every array [`Sim::eval_digital_full`] produces, re-run the full eval, and assert the
+    /// production result equals it bit-for-bit. While `eval_digital` is still the full eval this is a
+    /// tautology (it proves the array list is complete and the eval is deterministic); once
+    /// `eval_digital` becomes the dirty-set it proves **dirty == full** every (sub-)tick. If it ever
+    /// fires the dirty-set seeding is incomplete — design feedback, never a cue to regenerate a golden.
+    #[cfg(debug_assertions)]
+    fn debug_check_eval_digital(&mut self) {
+        let drive = self.digital_drive.clone();
+        let vhigh = self.digital_vhigh.clone();
+        let vlow = self.digital_vlow.clone();
+        let family = self.digital_family.clone();
+        let target = self.gate_target.clone();
+        let gout = self.gate_gout.clone();
+        self.eval_digital_full();
+        for i in 0..drive.len() {
+            assert_eq!(
+                self.digital_drive[i] as u8, drive[i] as u8,
+                "eval_digital oracle: digital_drive[{i}] diverged from full"
+            );
+            assert_eq!(
+                self.digital_vhigh[i].to_bits(),
+                vhigh[i].to_bits(),
+                "eval_digital oracle: digital_vhigh[{i}] diverged from full"
+            );
+            assert_eq!(
+                self.digital_vlow[i].to_bits(),
+                vlow[i].to_bits(),
+                "eval_digital oracle: digital_vlow[{i}] diverged from full"
+            );
+            assert_eq!(
+                self.digital_family[i], family[i],
+                "eval_digital oracle: digital_family[{i}] diverged from full"
+            );
+        }
+        for i in 0..target.len() {
+            assert_eq!(
+                self.gate_target[i].to_bits(),
+                target[i].to_bits(),
+                "eval_digital oracle: gate_target[{i}] diverged from full"
+            );
+            assert_eq!(
+                self.gate_gout[i].to_bits(),
+                gout[i].to_bits(),
+                "eval_digital oracle: gate_gout[{i}] diverged from full"
+            );
+        }
+    }
+
     /// Evaluate the digital domain for this tick — the unit-delay event engine
     /// (`docs/ui/logic-analog-digital-nets.md` §7.4). From the **committed** input
     /// levels (`net_level`, one tick of delay) compute each gate's and flip-flop's
@@ -6674,8 +6736,9 @@ impl Sim {
     /// folding its drivers via [`combine`] in element-index order (so the result is
     /// order-independent and deterministic). Pure enum logic; runs once per solve,
     /// before MNA assembly. Also records each gate's own driven voltage in `gate_target`
-    /// for the current readout, and the driver rail in `digital_vhigh`.
-    fn eval_digital(&mut self) {
+    /// for the current readout, and the driver rail in `digital_vhigh`. The full
+    /// evaluate-all reference; the dirty-set ([`Sim::eval_digital`]) must match it bit-for-bit.
+    fn eval_digital_full(&mut self) {
         for d in self.digital_drive.iter_mut() {
             *d = Level::Z;
         }
