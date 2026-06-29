@@ -5,6 +5,232 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (232) — Device NOISE (Johnson/thermal on resistors): deterministic, replay-exact, golden-safe
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (231). The owner picked **noise** as the next
+engine fundamental (from a fresh engine survey — see below). **First sim-core change in this thermal/noise
+arc**, but golden-safe by the param-gate pattern: `golden_snapshot_hash_is_stable` + every
+`*_run_is_reproducible` green. Full gate green: Rust **210**, web **332** (+4), fmt/clippy/check/lint/build 0.
+**Verified live via Playwright** — a 100k/100k divider midpoint: Ideal range **0 V** (dead steady), Real
+range **0.19 V** (thermal fuzz around 2.5 V); the scope's Node-2 trace visibly jagged vs the flat Node-1.
+
+**Landed — v1 = Johnson noise on resistors (the canonical, most teachable; pairs with thermal — Johnson
+*is* thermal noise):**
+- **sim-core** (`crates/sim-core/src/lib.rs`): a new **`NOISE_SLOT = 6`** param (the per-element noise-
+  current amplitude, A); a deterministic **`noise_sample(ei, tick)`** (Irwin–Hall over `splitmix64`,
+  zero-mean ~unit-variance, **no transcendentals** → machine-independent, replay-exact); and
+  **`add_noise_currents`** which injects `amp·sample` as a Norton current into the **transient** RHS
+  (`solve_into_readout` + `_newton`), **never** the operating point (`solve_operating_point*` stay clean,
+  like a diode's `TT` at `inv_dt=0`). Gated on a **`has_noise`** install flag (mirrors `has_nonlinear`),
+  so a noiseless circuit / the golden **never enters** the noise path → byte-identical. The current is
+  independent of the unknowns → RHS-only, no matrix change, no Newton feedback. It **enters the solve**
+  (node `V` fuzzes, hashed) — replay-exact, not presentational (unlike thermal).
+- **web** (`tiers.ts` + `netlist.ts`): `resistorNoiseAmp(R, tier)` — `∝ 1/√R` (so node-voltage noise `∝ √R`,
+  the Johnson ordering) × a per-tier excess-noise factor (budget hisses more). `buildNetlist` emits it on
+  `R` in **Real mode only** (slot 6). Game-scaled (`NOISE_I_SCALE = 2.5e-4`).
+- **Tests:** sim-core `noisy_resistor_run_is_reproducible` (determinism with noise on) +
+  `noise_actually_varies_the_node_voltage` (Real fuzzes, Ideal byte-clean). web `noise.test.ts` (4:
+  emission Real-vs-Ideal, 1/√R + tier ordering, end-to-end divider fuzz). Docs: `docs/sim/noise-ideation.md`
+  + CLAUDE.md gotcha.
+
+**Gotcha learned (in CLAUDE.md):** node-voltage noise grows as `√R`, which swings **volts** at the picker's
+multi-MΩ ceiling (a 9.1 MΩ budget pulldown). The first scale (`3e-3`) made a 1 MΩ node swing volts, pushing
+the **6T-SRAM bit-line** into the mid-rail band and breaking `sramPowerUp.test.ts`; the conservative
+`NOISE_I_SCALE = 2.5e-4` fixed that at 1 MΩ. An adversarial review then caught that the *picker reaches
+9.1 MΩ*, where even `2.5e-4` peaks ~4 V — so `resistorNoiseAmp` now **soft-saturates** above
+`NOISE_R_KNEE = 1 MΩ` (amp `∝ 1/R`, so a lone resistor's node-voltage noise caps at `NOISE_V_MAX·tier`).
+`≤ 1 MΩ is byte-identical` (SRAM/golden/live verification unchanged); a 9.1 MΩ budget node's 3.46σ peak now
+stays clear of the mid-rail. Keep test nodes firmly tied.
+
+**NEXT (noise + thermal, owner's call):**
+1. **Noise follow-ons:** shot noise (`√(2qI)`, current-dependent), flicker/1-f (needs a shaping filter
+   with state), op-amp input-referred noise, an RMS-noise inspector readout / noise-floor HUD.
+2. **Thermal:** the death *vent* (smoke + autopsy), management levers (heatsink/fan/spacing), **Path 2**
+   (sim-core hashed Tj → R(T) drift / runaway).
+3. **CPU spine:** ELEM_MEMORY P2/P3b (the RAM/ROM web emission, #47/#99).
+4. **Merge:** the whole thermal+noise arc is on the branch, **NOT merged** to main yet.
+
+---
+
+## 2026-06-29 (231) — Thermal Phase 2b: °C colour-scale legend + derate→FAIL / magic-smoke (#116) — golden-safe
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (230). Web-only, golden-safe (zero sim-core
+change — `golden_snapshot_hash_is_stable` + all `*_run_is_reproducible` green). Gate green: web **328**
+(+1), check/lint/build 0. **Verified live via Playwright** — a 5 V / 4 Ω resistor cooked to ~323 °C shows
+the OVERHEAT box + the legend reads ⚠ PEAK 323 °C; a 30 Ω part runs warm (no box).
+
+**Landed — both owner-greenlit follow-ons:**
+- **°C colour-scale legend** (the reference's bottom-bar, as a HUD side strip): a DOM overlay in
+  `App.svelte` (`.thermal-legend`, mirroring the `.zoom-meter` glass recipe), shown `{#if thermalLens &&
+  realModels}`, pinned right-centre (clears the zoom meter bottom-left + scope bottom-right). A vertical
+  **inferno gradient** strip + mono tick labels (ambient floor → live scale top) + a live **PEAK** read.
+  The gradient is shared from `thermalField.ts` `infernoCssGradient()` (single source of truth, can't
+  drift from the canvas colormap). `board.ts` exposes `heatReadout(): {peakC, scaleTopC}` (the field's
+  hottest cell + the scale top the overlay is painted with, so the ticks line up with the on-board
+  colours; reset to ambient when the lens is off — no staleness). `App.svelte` reads it non-reactively
+  each frame into `heatPeakC`/`heatScaleTopC` `$state` (the `selBodyTemp` pattern).
+- **Derate→FAIL / magic-smoke** (#116): a **web-side `overTemp` flag** on `ComponentNode`
+  (`real && this.tj >= T_MAX_C`, set right after the Tj integrate) drives a **distinct OVERHEAT overlay**
+  — a charred scorch fill + pulsing amber box + "OVERHEAT" label (separate `overheatBox`/`overheatText`),
+  shown only when **not** also over-current-FAILed (so a part shows one box). The inspector "Body temp"
+  row turns red + appends "⚠ OVERHEAT" past T_MAX_C. Presentational, like the existing rating-FAIL: it
+  only flags, never re-enters the solve — golden-safe + replay-safe (Tj is the sim-tick-advanced power).
+- **Tests:** `thermalField.test.ts` +1 (`infernoCssGradient` mirrors the colormap as evenly-spaced CSS
+  stops). Web **328**.
+
+**Golden-safe / determinism-safe:** unchanged class as the rest of the thermal vertical — zero sim-core
+change, `failed_elements` was never in `snapshot_hash` and `overTemp` is a separate web-only render flag.
+
+**NEXT (thermal, in priority order):**
+1. **Thermal-death vent / autopsy polish** (optional): an animated smoke puff + a destroyed "charred"
+   glyph state distinct from the box; tie over-temp into the existing autopsy→Lux flow.
+2. **Management levers** (ideation §3): heatsinks (θ↓), fan (ambient↓), part-spacing mutual heating, the
+   wattage axis on resistors — the gameplay payoff that makes heat a thing you *design around*.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+4. **Merge decision:** the whole thermal vertical (Phase 0/1/2/2b + #116) is on the branch, NOT merged.
+
+**Verification note:** `shoot.mjs` is t=0 only. To cook a part headless, drive the live sim (Playwright):
+Real toggle → set `.rate-custom` to **500000** (rate is *ticks/sec*; DT = 2 µs, so ~1 sim-s per wall-s)
++ Run → wait ~14 s → 🔥 Heat → screenshot. A low ohmage (R = 4 Ω across 5 V ≈ 6 W) crosses T_MAX early in
+the ramp so you don't need full steady state. The temp driver was deleted after verifying.
+
+---
+
+## 2026-06-29 (230) — Thermal Phase 2: copper-weighted diffusion (heat follows the traces) + glow off under the lens
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (229). Web-only, golden-safe (zero sim-core
+change). Gate green: web **327**, check/lint/build 0. **Verified live via Playwright** — heat conducts
+along the orange copper traces from R1 (white-hot, 10 Ω) to the V/GND junction, R2 (30 Ω) a fainter
+purple bloom, bare board dark, halo gone under the lens — matching the owner's electro-thermal reference.
+
+**Landed — the owner's ask ("heat should follow the traces and other copper… remove the glowing halo
+when toggled on, only the colour contrast"):**
+- **Copper-weighted heat diffusion** (`thermalField.ts`): `step(sources, dt, copper?)` now takes a
+  per-cell copper fraction. Face conductance between two cells = `SUBSTRATE_W + (1−SUBSTRATE_W)·min(ci,cj)`
+  (`SUBSTRATE_W = 0.02`), so a copper↔copper face conducts fully and anything touching bare board barely
+  conducts — heat races down a trace and stalls at the substrate gap. Retuned for a board-scale
+  characteristic length: `DIFFUSIVITY 30→55`, `CONVECTION 0.45→0.25` (`L = √(D/conv) ≈ 14.8 cells`).
+  Sub-stepped explicit relaxation with `alpha` clamped to the stability bound (unconditionally stable).
+- **Copper mask** (`board.ts` `buildCopperGrid`): rasterises every part footprint (`ComponentNode.worldBox`,
+  new getter) as a pad and every wire's `routeForWire` polyline as a one-cell-dilated trace into the
+  field's grid. Built per-frame only while the thermal lens is active (small boards → cheap).
+  `updateHeatOverlay` passes it to `field.step`.
+- **Glow halo suppressed under the lens** (`ComponentNode.update`): `if (lens === "thermal")
+  this.heatGlow.clear(); else this.drawHeatGlow();` — the board field now carries the heat as colour
+  contrast only; Tj is still integrated for the field's sources. The halo remains the cue in the
+  schematic/reality/analogy lenses.
+- **Tests:** `thermalField.test.ts` +1 (copper conduction: along-trace hot, off-trace cold across the gap),
+  7 field tests total; web **327**.
+
+**Golden-safe / determinism-safe:** unchanged from (229) — zero sim-core change; field is a pure function
+of per-part Tj advanced by the sim-tick delta (replay-safe); presentation only.
+
+**NEXT (thermal, in priority order):**
+1. **°C colour-scale legend** (the reference's bottom bar): a small fixed legend strip mapping the inferno
+   ramp to °C with the live peak, shown when the lens is on. (`field.peak()` already drives the scale top.)
+2. **Derate→FAIL / magic-smoke** (task #116): a web-side over-temp flag (NOT into the solve, replay-safe)
+   so an over-dissipated part boxes/chars when `Tj > T_MAX`; hook the existing FAIL render.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+4. **Merge decision:** the whole thermal vertical (Phase 0/1/2) is on the branch, NOT merged. Owner hasn't
+   asked to merge yet.
+
+**Verification note:** same as (229) — `shoot.mjs` is t=0 only; drive the live sim (Playwright: Real
+toggle → high rate + Run → wait → 🔥 Heat → `window.__cecView({centerId, zoom})`, NOT `lens`). The
+temp driver used this session was deleted after verifying.
+
+---
+
+## 2026-06-29 (229) — Thermal LIVE: per-part heat-glow + °C readout + the inferno board lens (golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Commits `79accf5` (per-part glow + readout) and `4fc0080`
+(thermal lens overlay) on top of (228)'s model+pipeline. NOT yet merged (the metastability + cap-leak
+work is on main via PR #313; all thermal commits — `f8bfb51`, `61cc84c`, `79accf5`, `4fc0080` — are on
+the branch). Web-only, golden-safe (zero sim-core change). Gate green: web **326**, check/lint/build 0.
+**Verified live via Playwright** (drive a hot circuit in Real mode → screenshot).
+
+**Landed — the live thermal vertical (Phase 1):**
+- **Per-part heat-glow** (`board.ts` `ComponentNode`): each node owns `tj`, integrates it from its own
+  `dissipatedPower(electrical)` each frame (Real mode) by the sim-tick delta, and draws a warm
+  incandescence halo (bronze→amber→red→white via `glowFactor`) at the back of the node. `Board.update`
+  gained a `real` param + computes the sim-time delta from its tick delta. `bodyTempOf(id)` /
+  `resetThermals()` added.
+- **°C readout** (`App.svelte`): a `selBodyTemp` `$state` (set in onFrame from `b.bodyTempOf(selPart.id)`,
+  board read non-reactively) → a "Body temp °C" inspector row in Real mode above ambient. Kept SEPARATE
+  from `Component.temp` (thermistor knob) so no R(T) rebuild.
+- **Thermal lens** (the owner's ask — a full-board heatmap like their electro-thermal solver):
+  `thermalField.ts` — a deterministic coarse 2D heat FIELD (held-temperature sources at hot parts,
+  explicit 5-point diffusion sub-stepped for stability, still-air convection, inferno colourmap, alpha
+  fades from ambient). `board.ts` adds a `"thermal"` `BoardLens` + a canvas-texture `heatSprite` (behind
+  wires/parts); `updateHeatOverlay()` builds the field from node Tj + positions, diffuses it the frame's
+  sim-time, paints it over the content bbox, dims the board (components stay distinct). `App.svelte` has
+  a **🔥 Heat** toggle (separate from the tier-lens cycle). `thermalField.test.ts` (6 tests).
+
+**Golden-safe / determinism-safe:** zero sim-core change; all Tj/field state is presentational and never
+re-enters the solve (no rebuild, no FAIL-freeze); Real-mode only; the field is a pure function of the
+per-part Tj (replay-safe via the sim-tick delta).
+
+**NEXT (thermal, in priority order):**
+1. **Phase 2 — copper-weighted diffusion** so heat follows the TRACES (the user's reference shows heat
+   conducting along the copper, not just a board-area blob): weight the field's lateral conductance by
+   whether a cell sits under a wire. + a **°C colour-scale legend** (like the reference's bottom bar).
+2. **Derate→FAIL / magic-smoke** (task #116): a web-side over-temp flag (NOT into the solve, replay-safe)
+   so an over-dissipated part boxes/chars when `Tj > T_MAX`; hook the existing FAIL render.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+
+**Verification note for the next agent:** `shoot.mjs` renders t=0 only (no heat accrues). To SEE thermal,
+drive the live sim: a Playwright script that reuses `scripts/lib/harness.mjs` `openApp`, clicks the Real
+toggle (`.fidelity-toggle`), sets `.rate-custom` high + clicks Run (`.transport .btn-accent`), waits,
+clicks the 🔥 Heat button, then screenshots. (The cec-app MCP was absent this session.) `window.__cecView`
+can't set the thermal lens and resets it if you pass `lens` — pass only `{centerId, zoom}`.
+
+---
+
+## 2026-06-28 (228) — Thermal self-heating: model + P=V·I→Tj pipeline LANDED (Phase 0, golden-safe)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, commit `f8bfb51` (NOT yet merged; (226)+(227) already merged
+to main via PR #313). Owner picked **thermal self-heating** as the next engine fundamental (from a
+surveyed menu — the biggest in-scope missing reality). Web-only, golden-safe (zero sim-core change). Gate
+green: web **320** (+11), check/lint/build 0.
+
+**What this is:** the first slice of the heat system (`docs/heat-on-the-board-ideation.md` Path 1). The
+deterministic self-heating PHYSICS + the power→temperature PIPELINE, headless-verified. The
+linear-vs-switcher lesson emerges purely from per-part `P = V·I`.
+
+**Landed (`web/src/lib/thermal.ts`):** first-order lumped model — per-kind `θ_JA`(°C/W)+`Cth`(J/°C)
+(`thermalSpec`); `steadyTemp = Tamb + P·θ_JA`; the **tick-driven** transient integrator `stepTemp`
+(`Tj += (target−Tj)·min(1, dt/τ)`, τ=θ·Cth — the clamp makes it unconditionally stable / never
+overshoots); `derate(Tj)`; `glowFactor`; `dissipatedPower = max(0, V·I)`; `advanceTemps` (integrate
+every part one sim-time interval, **Real-mode gated**, ideal/source kinds stay ambient). Pure +
+deterministic. Tests: `thermal.test.ts` (11 incl. steady state, ~63%@τ, monotone/no-overshoot, cooldown,
+determinism) + `thermalPipeline.test.ts` (full chain via wasm + `electricalMap`: 1 W resistor → ~105 °C,
+10 kΩ + source stay cool, Ideal = ambient).
+
+**KEY determinism finding (drove the architecture):** `loop.ts` steps a **wall-clock-dependent** #ticks
+per frame, so `Tj` must integrate by the **sim-tick delta** (`Δticks·DT`), never wall-clock → then it's
+steady-state-exact + a pure function of the sim trajectory. A consequence that **doesn't perturb the
+solve** (over-temp/derated-rating → FAIL flag, the body glow) is replay-safe web-side; one that **does**
+(R(T) drift, thermal runaway) needs the **sim-core hashed-Tj (Path 2, per-tick)** to be replay-exact. So
+v1 = presentational Tj + the FAIL-flag consequence; R(T) feedback deferred to Path 2.
+
+**NEXT (the live vertical — Phase 1/2, presentation + a golden-safe consequence):**
+1. Wire `advanceTemps` into `App.svelte`'s `onFrame` (right after the existing `electricalMap` call,
+   ~line 2668) into a `partTemps` map: `dt = Number(snap.tick − prevTick)·DT_SECONDS`,
+   `partTemps = advanceTemps(partTemps, components, id=>dissipatedPower(electrical.get(id)), dt, realModels)`.
+   Reset on netlist change / restart. Pass into `b.update(snap, electrical, running, scopeBatch, partTemps)`.
+2. **Body heat-glow** (board.ts `ComponentNode`, mirror the `failBox` Graphics layer at ~7963): a warm
+   emissive ramp (bronze→amber→red→white) at `alpha = glowFactor(Tj)`, invisible at ambient. Thread a
+   `temp` param through `board.update` → `node.update` (17-arg call ~3066 / signature ~8273). SEE via
+   `shoot`. + a °C "Body temp" line in the info panel (`partInfo.ts` already prints "Power dissipated V·I").
+3. Then the `"thermal"` `BoardLens` (ironbow heatmap) + the derate→FAIL/over-temp vent (golden-safe: a
+   web-side over-temp flag, NOT routed into the solve).
+Defer to a later/owner-greenlit Path 2: sim-core hashed `Tj` for R(T) drift, thermal runaway, and
+replay-exact thermal-contract grading.
+
+---
+
 ## 2026-06-28 (227) — Capacitor leakage → transistor DRAM retention (the DRAM mirror of (226))
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Owner asked "can we do the same for a DRAM cell?" →

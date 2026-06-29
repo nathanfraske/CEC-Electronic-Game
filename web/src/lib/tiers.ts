@@ -154,6 +154,43 @@ export function ecLeakTau(tier: number): number {
   return capLeakTau(tier) * EC_LEAK_FACTOR;
 }
 
+// A resistor's thermal (Johnson) noise. In REALISTIC mode buildNetlist installs a noise-current
+// amplitude in the resistor's noise slot (NOISE_SLOT); sim-core injects a deterministic, zero-mean
+// noise current each transient tick (its Norton form), so the node the resistor feeds fuzzes. Johnson
+// noise current ∝ 1/√R, so the resulting node-VOLTAGE noise ∝ √R — a bigger resistor is noisier, the
+// real ordering. The grade scales an excess/1-f noise factor on top (a budget carbon-film part hisses
+// more than a lab-grade metal-foil one). Ideal mode = silent. GAME-SCALED by NOISE_I_SCALE for
+// legibility (the ordering — bigger R, cheaper grade ⇒ noisier — is what matters, not the literal
+// √(4kTRΔf) microvolts). Mirrors the cap-leak / diode-TT game-scaling convention.
+// Conservative scale: below the knee the resulting node-voltage noise is `≈ NOISE_I_SCALE·√R` at a lone
+// resistor, so it grows with R (the Johnson ordering). Real Johnson voltage is `√(4kTRΔf)` microvolts;
+// this is game-scaled for legibility.
+const NOISE_I_SCALE = 2.5e-4; // game-scaled Johnson current scale (∝ A·√Ω)
+const NOISE_FACTOR_BY_TIER = [1.6, 1.0, 0.5, 0.25]; // budget … lab: excess-noise multiplier
+// Soft saturation: node-voltage noise `∝ √R` would swing VOLTS at the picker's multi-MΩ ceiling (a 9.1 MΩ
+// budget pulldown peaks ~4 V at 3.46σ), which is unphysical for the game and could push a high-impedance
+// node — a directly-tied CMOS input / latch — into the logic mid-rail and metastabilise it. So above the
+// knee the current `∝ 1/R` instead of `1/√R`, which caps the lone-resistor node-voltage noise at
+// `NOISE_V_MAX·tier` (the Johnson ordering still holds across the realistic ≤ 1 MΩ range). The knee is the
+// R where the `√R` growth reaches NOISE_V_MAX, so the two branches meet continuously there.
+const NOISE_V_MAX = 0.25; // V — lone-resistor node-voltage noise (1σ) saturates here (× tier) above the knee
+const NOISE_R_KNEE = (NOISE_V_MAX / NOISE_I_SCALE) ** 2; // = 1 MΩ — where √R growth hits NOISE_V_MAX
+
+/** The Johnson-noise current amplitude (A) for a resistor of `ohms` at the given tier — buildNetlist
+ * installs it in the resistor's noise slot (Real mode only). `∝ 1/√R` below {@link NOISE_R_KNEE} so the
+ * node-voltage noise grows with R; `∝ 1/R` above it so that node-voltage noise saturates (a multi-MΩ node
+ * can't swing volts). Scaled down for a better grade. `0` for a non-positive resistance (silent). */
+export function resistorNoiseAmp(ohms: number, tier: number): number {
+  if (!(ohms > 0)) return 0;
+  const t = Math.max(
+    0,
+    Math.min(NOISE_FACTOR_BY_TIER.length - 1, Math.round(tier)),
+  );
+  const amp =
+    ohms <= NOISE_R_KNEE ? NOISE_I_SCALE / Math.sqrt(ohms) : NOISE_V_MAX / ohms;
+  return amp * (NOISE_FACTOR_BY_TIER[t] ?? 1.0);
+}
+
 /** The param block for a part's `(kind, tier)`, or `null` if the kind has no tiers. */
 export function tierParams(kind: string, tier: number): number[] | null {
   const grades = TIER_PARAMS[kind];

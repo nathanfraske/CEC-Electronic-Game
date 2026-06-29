@@ -91,6 +91,7 @@ Tokens live in `web/src/app.css`; the same palette is mirrored as hex in
 | `crates/sim-wasm` | thin wasm-bindgen layer |
 | `web/src/sim/loop.ts` | the once-per-frame wasm boundary |
 | `web/src/lib/board.ts` | PixiJS renderer (grid + signal traces) |
+| `web/src/lib/thermal.ts` | lumped self-heating model (`P=V·I`→`Tj`); web-only, golden-safe, tick-driven (`docs/heat-on-the-board-ideation.md`) |
 | `web/src/App.svelte` | HUD shell |
 | `web/src/app.css` | design tokens + component styles |
 | `web/src/lib/examples.ts` | worked examples; `savedExample()` turns a board **Save** JSON into one |
@@ -228,6 +229,21 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   The same geometric parasitic on *every* resistor, but the `ωL` term only swings the phase when R
   is tiny — invisible on a 10 kΩ, ~+32° on a 10 mΩ **SHUNT** at 100 kHz (hence the shunt part).
   AC-only + unhashed → the transient golden is untouched (resistors stay pure R in the time domain).
+- **Thermal (Johnson) noise** (`NOISE_SLOT` = 6, beside `CAP_LEAK_SLOT`): in **Real** mode `buildNetlist`
+  emits a per-resistor noise-current amplitude (`resistorNoiseAmp(R, tier)` in `tiers.ts`, `∝ 1/√R`,
+  tier-coupled so a budget part hisses more); sim-core injects it as a **deterministic, zero-mean,
+  per-`(element, tick)` current** into the **transient** RHS only (`add_noise_currents`, gated on a
+  `has_noise` install flag — the OP stays clean, like a diode's `TT` at `inv_dt = 0`). The sample is an
+  Irwin–Hall over `splitmix64` (no transcendentals → machine-independent, replay-exact). It **enters the
+  solve** (node `V` fuzzes — visible on the scope) but `0` (default / Ideal / the golden) skips it
+  entirely → byte-identical. **Game-scaled** (the lesson is the ordering — bigger R, cheaper grade ⇒
+  noisier — not the literal √(4kTRΔf) µV). **Gotcha:** the node-voltage noise grows as `√R`, which would
+  swing **volts** at the picker's multi-MΩ ceiling (a 9.1 MΩ budget pulldown). `resistorNoiseAmp` **soft-
+  saturates** above a `NOISE_R_KNEE` (= 1 MΩ — the amp goes `∝ 1/R`, not `1/√R`) so a lone resistor's
+  node-voltage noise caps at `NOISE_V_MAX·tier` (≤ 1 MΩ is unchanged, so the 6T-SRAM 1 MΩ bit-line and the
+  golden are byte-identical); even a 9.1 MΩ budget node's 3.46σ peak stays clear of the logic mid-rail.
+  Still: firm up weakly-tied test nodes (the SRAM bit-line is tied through a resistor for this reason). See
+  `docs/sim/noise-ideation.md`.
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

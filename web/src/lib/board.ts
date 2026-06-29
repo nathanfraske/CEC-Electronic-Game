@@ -10,6 +10,8 @@ import {
   Application,
   Container,
   Graphics,
+  Sprite,
+  Texture,
   Text,
   Rectangle,
   Point,
@@ -95,6 +97,15 @@ import {
   type UserIcInternals,
   userIcGeometryDeep,
 } from "./netlist";
+import {
+  T_AMBIENT_C,
+  T_MAX_C,
+  glowFactor,
+  stepTemp,
+  dissipatedPower,
+  partHeats,
+} from "./thermal";
+import { ThermalField, type FieldSource } from "./thermalField";
 // The shared, `this`-free board render engine (geometry / carriers / conduit skins),
 // extracted so the sealed-IC opened view can run the SAME wire pipeline. board.ts keeps
 // thin wrappers for the few `this`-bound route helpers; everything else is used directly.
@@ -642,6 +653,24 @@ export interface BoardCallbacks {
 export class Board {
   private readonly world = new Container();
   private readonly grid = new Graphics();
+  // Thermal-lens heat-field overlay (web-only, presentational): an inferno board heatmap shown when the
+  // lens is "thermal". A coarse field diffuses heat from the hot parts across the board; it is rendered
+  // via a small canvas-texture sprite stretched over the board content bbox (so it pans/zooms with the
+  // board, behind the wires + components which stay distinct on top). Built lazily — the grid is sized to
+  // the content bbox on first use. See thermalField.ts + docs/heat-on-the-board-ideation.md (§1 B).
+  private readonly heatSprite = new Sprite();
+  private heatField: ThermalField | null = null;
+  private heatCanvas: HTMLCanvasElement | null = null;
+  private heatCtx: CanvasRenderingContext2D | null = null;
+  private heatTexture: Texture | null = null;
+  private heatImage: ImageData | null = null;
+  private heatCols = 0;
+  private heatRows = 0;
+  // The live thermal-lens readout, for the °C colour-scale legend: the hottest cell on the board and the
+  // temperature mapped to the top (white-hot) of the inferno scale the overlay is painted with (so the
+  // legend's labels line up with the overlay's colours). Ambient when the lens is off.
+  private heatPeakC = T_AMBIENT_C;
+  private heatScaleTopC = T_AMBIENT_C + 80;
   // The die-editor boundary ("walls"): drawn behind everything but the grid when the board is the
   // inner canvas of an IC-maker frame (ADR 0006). Empty/invisible on the normal outer board.
   private readonly dieWallLayer = new Graphics();
@@ -1016,6 +1045,12 @@ export class Board {
     private readonly cb: BoardCallbacks = {},
   ) {
     this.world.addChild(this.grid);
+    // The thermal heat-field overlay sits just above the grid and below the wires/parts, so the board
+    // heatmap reads as a background field with the traces + components distinct on top. Non-interactive;
+    // hidden unless the lens is "thermal".
+    this.heatSprite.eventMode = "none";
+    this.heatSprite.visible = false;
+    this.world.addChild(this.heatSprite);
     // The die boundary sits just above the grid and below the wires/parts, so it reads as the
     // canvas's "wall" the circuit is built inside. Non-interactive; invisible unless in die mode.
     this.dieWallLayer.eventMode = "none";
@@ -1337,7 +1372,8 @@ export class Board {
         // zoomed in past TIER_ZOOM under the analogy/reality lens, preview the tier
         // illustration (drawDetail/drawAnalogy) so the ghost matches the placed part;
         // otherwise fall back to the schematic glyph.
-        const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+        const effLens: BoardLens =
+          this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
         const tier =
           effLens === "reality" && hasDetail(this.armed)
             ? "reality"
@@ -2948,6 +2984,7 @@ export class Board {
     electrical?: Map<number, ElectricalState>,
     running = true,
     scopeBatch?: SubFrameSample[],
+    real = false,
   ): void {
     const now = performance.now();
     const dt = this.lastTime ? Math.min(0.05, (now - this.lastTime) / 1000) : 0;
@@ -2959,6 +2996,10 @@ export class Board {
     // and on the sign of the displayed-tick change when paused, so stepping/
     // scrubbing back runs the flow backward and an idle pause freezes it.
     const tick = Number(snap.tick);
+    // Sim-time elapsed since the last frame, for the self-heating integrator (0 when paused or scrubbing
+    // back — heat only accumulates as the sim advances forward). Tick-driven, never wall-clock, so Tj is
+    // a deterministic function of the sim trajectory.
+    const thermalDt = Math.max(0, tick - this.prevTick) * DT_SECONDS;
     let dir = 0;
     if (running) dir = 1;
     else if (tick > this.prevTick) dir = 1;
@@ -3031,7 +3072,8 @@ export class Board {
     if (this.dieFrameId !== null) this.drawDieWalls();
     this.drawNetLabels();
     // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
-    const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+    const effLens: BoardLens =
+      this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
     // Per-frame view state shared across every node: the screen rect (for the opened-IC view cull) and
     // ONE zoom-meter probe (Phase 5) seeded at the view centre. Each opened IC writes the probe if its
     // body contains the centre and it's the deepest level seen, so after the loop `scale` is the
@@ -3083,6 +3125,8 @@ export class Board {
         // FOCUSED: hovered or selected → reveal this part's full pin labels + value chip even at mid zoom
         // (ambient parts wait for AMBIENT_LABEL_ZOOM, so a dense board's overview stays uncluttered).
         this.selected.has(id) || this.hoverComponentId === id,
+        thermalDt,
+        real,
       );
       // Off-net parts recede under the net highlight (the node's own per-child fades compose with this
       // container alpha). On-net parts, the die frame, and the no-highlight case stay fully opaque.
@@ -3093,6 +3137,9 @@ export class Board {
           ? 1
           : NET_DIM_ALPHA;
     }
+    // Thermal-lens heat-field overlay: now that every node has integrated its body temperature this
+    // frame, diffuse those into the board heat field and paint it (a no-op outside the thermal lens).
+    this.updateHeatOverlay(thermalDt, real);
     this.deOverlapLabels();
     // Latch the metered depth for the HUD — STICKY so the readout doesn't flap. The probe reports the
     // deepest opened cell whose body contains the view CENTRE; a chip's centre is often a routing GAP
@@ -3167,6 +3214,187 @@ export class Board {
    */
   flowPhase(): number {
     return this.phase;
+  }
+
+  /** The live self-heating body temperature (°C) of a component — ambient if unknown or in Ideal mode.
+   *  Read by the inspector to show a "Body temp" line. */
+  bodyTempOf(id: number): number {
+    return this.nodes.get(id)?.bodyTemp ?? T_AMBIENT_C;
+  }
+
+  /** The live heat-field readout for the thermal-lens °C legend: `peakC` is the hottest PART's junction
+   *  temperature (so the legend's over-temp ⚠ flips together with the per-part OVERHEAT box) and
+   *  `scaleTopC` is the temperature mapped to the top (white-hot) of the inferno colour scale the overlay
+   *  is painted with — so the legend's tick labels line up with the overlay's colours. Both are ambient
+   *  when the lens is off. Presentation only. */
+  heatReadout(): { peakC: number; scaleTopC: number } {
+    return { peakC: this.heatPeakC, scaleTopC: this.heatScaleTopC };
+  }
+
+  /** Reset every part's self-heating temperature to ambient — on a sim restart or netlist rebuild, so
+   *  the board doesn't keep a stale glow from before the change. */
+  resetThermals(): void {
+    for (const node of this.nodes.values()) node.resetThermal();
+    this.heatField?.reset();
+    this.heatPeakC = T_AMBIENT_C;
+    this.heatScaleTopC = T_AMBIENT_C + 80;
+  }
+
+  /**
+   * The thermal-lens board heat-field overlay. When the lens is "thermal", build a coarse heat field
+   * over the content bbox, inject each hot part as a held-temperature source, diffuse it `dtSec` of sim
+   * time, and paint it as an inferno heatmap stretched under the wires/parts; the board itself is dimmed
+   * so the field reads while the components stay distinct on top. A no-op (overlay hidden) otherwise.
+   * Presentation only — never re-enters the solve.
+   */
+  private updateHeatOverlay(dtSec: number, real: boolean): void {
+    const on = this.lens === "thermal" && real;
+    // Dim the board under the heat camera so the field dominates; restore otherwise.
+    this.grid.alpha = on ? 0.32 : 1;
+    this.wireLayer.alpha = on ? 0.4 : 1;
+    if (!on || this.nodes.size === 0) {
+      this.heatSprite.visible = false;
+      this.heatPeakC = T_AMBIENT_C;
+      this.heatScaleTopC = T_AMBIENT_C + 80;
+      return;
+    }
+    // Content bbox from the part centres (+ a margin so the field extends past the outermost parts).
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const node of this.nodes.values()) {
+      const { x, y } = node.center;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+    const margin = PITCH * 3;
+    minX -= margin;
+    minY -= margin;
+    maxX += margin;
+    maxY += margin;
+    const w = maxX - minX;
+    const h = maxY - minY;
+    // One heat cell per ~half a pitch, clamped — coarse enough to be cheap, fine enough to read.
+    const cell = PITCH * 0.6;
+    const cols = Math.max(8, Math.min(120, Math.round(w / cell)));
+    const rows = Math.max(8, Math.min(120, Math.round(h / cell)));
+    if (
+      !this.heatField ||
+      cols !== this.heatCols ||
+      rows !== this.heatRows ||
+      !this.heatCanvas ||
+      !this.heatCtx
+    ) {
+      this.heatCols = cols;
+      this.heatRows = rows;
+      this.heatField = new ThermalField(cols, rows);
+      this.heatCanvas = document.createElement("canvas");
+      this.heatCanvas.width = cols;
+      this.heatCanvas.height = rows;
+      this.heatCtx = this.heatCanvas.getContext("2d");
+      this.heatImage = this.heatCtx?.createImageData(cols, rows) ?? null;
+      this.heatTexture?.destroy();
+      this.heatTexture = Texture.from(this.heatCanvas);
+      this.heatTexture.source.scaleMode = "linear";
+      this.heatSprite.texture = this.heatTexture;
+    }
+    const field = this.heatField;
+    const ctx = this.heatCtx;
+    const img = this.heatImage;
+    if (!field || !ctx || !img) {
+      this.heatSprite.visible = false;
+      this.heatPeakC = T_AMBIENT_C;
+      this.heatScaleTopC = T_AMBIENT_C + 80;
+      return;
+    }
+    // Each hot part is a held-temperature source at its grid cell. Track the hottest PART (node Tj) for
+    // the legend's PEAK read — the diffused field peak sags slightly below the source's held temperature,
+    // so the PEAK must come from the parts, not the field, to flip its over-temp ⚠ in step with the
+    // per-part OVERHEAT box.
+    const sources: FieldSource[] = [];
+    let maxTj = T_AMBIENT_C;
+    for (const node of this.nodes.values()) {
+      const tj = node.bodyTemp;
+      if (tj > maxTj) maxTj = tj;
+      if (tj <= T_AMBIENT_C + 0.5) continue;
+      const { x, y } = node.center;
+      sources.push({
+        col: Math.floor(((x - minX) / w) * cols),
+        row: Math.floor(((y - minY) / h) * rows),
+        tempC: tj,
+      });
+    }
+    // The copper mask (traces + part pads) makes heat conduct along the wiring, not across bare board.
+    const copper = this.buildCopperGrid(cols, rows, minX, minY, w, h);
+    field.step(sources, dtSec, copper);
+    const peakC = Math.max(field.peak(), T_AMBIENT_C + 80);
+    // Publish the legend readout: PEAK = the hottest PART (so its ⚠ flips with the OVERHEAT box), scale
+    // top = the value the colourmap is painted with (so the gradient tick labels line up with the colours).
+    this.heatPeakC = maxTj;
+    this.heatScaleTopC = peakC;
+    field.writeImage(img.data, peakC);
+    ctx.putImageData(img, 0, 0);
+    this.heatTexture!.source.update();
+    // Stretch the cols×rows texture over the world-space content bbox (it pans/zooms with the board).
+    this.heatSprite.position.set(minX, minY);
+    this.heatSprite.width = w;
+    this.heatSprite.height = h;
+    this.heatSprite.visible = true;
+  }
+
+  /** Rasterise the COPPER (traces + part pads) into a `cols×rows` mask (1 = copper, 0 = bare board) over
+   *  the same world bbox as the heat field, so the field conducts heat along the wiring. Part footprints
+   *  are pads; each wire's routed polyline is drawn as a slightly-dilated line (the trace). */
+  private buildCopperGrid(
+    cols: number,
+    rows: number,
+    minX: number,
+    minY: number,
+    w: number,
+    h: number,
+  ): Float32Array {
+    const cu = new Float32Array(cols * rows);
+    const toCol = (x: number) =>
+      Math.min(cols - 1, Math.max(0, Math.floor(((x - minX) / w) * cols)));
+    const toRow = (y: number) =>
+      Math.min(rows - 1, Math.max(0, Math.floor(((y - minY) / h) * rows)));
+    const mark = (c: number, r: number) => {
+      if (c >= 0 && c < cols && r >= 0 && r < rows) cu[r * cols + c] = 1;
+    };
+    // Part footprints = copper pads/leads.
+    for (const node of this.nodes.values()) {
+      const b = node.worldBox;
+      const c0 = toCol(b.x);
+      const c1 = toCol(b.x + b.w);
+      const r0 = toRow(b.y);
+      const r1 = toRow(b.y + b.h);
+      for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) mark(c, r);
+    }
+    // Wire routes = traces: rasterise each segment of each wire's routed polyline, dilated by one cell so
+    // a thin diagonal/orthogonal run stays a continuous copper path.
+    for (const wire of this.graph.wires.values()) {
+      const route = this.routeForWire(wire);
+      for (let k = 0; k + 1 < route.length; k++) {
+        const ca = toCol(route[k]!.x);
+        const ra = toRow(route[k]!.y);
+        const cb = toCol(route[k + 1]!.x);
+        const rb = toRow(route[k + 1]!.y);
+        const steps = Math.max(Math.abs(cb - ca), Math.abs(rb - ra), 1);
+        for (let s = 0; s <= steps; s++) {
+          const c = Math.round(ca + ((cb - ca) * s) / steps);
+          const r = Math.round(ra + ((rb - ra) * s) / steps);
+          mark(c, r);
+          mark(c - 1, r);
+          mark(c + 1, r);
+          mark(c, r - 1);
+          mark(c, r + 1);
+        }
+      }
+    }
+    return cu;
   }
 
   destroy(): void {
@@ -6243,7 +6471,8 @@ export class Board {
     const fd = this.flowDelta;
     // Re-skin bare traces as conduits (pipes / metal conductors) when zoomed into the
     // analogy/reality lens — the same threshold + gating the parts morph at.
-    const effLens = this.lodEnabled ? this.lens : "schematic";
+    const effLens =
+      this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
     const conduit: BoardLens | null =
       effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
         ? effLens
@@ -7961,6 +8190,18 @@ class ComponentNode {
   private readonly userIcGlyphs = new Container();
   private readonly glyph = new Graphics();
   private readonly failBox = new Graphics();
+  // Self-heating body glow: a warm incandescence ramp behind the part body, invisible at ambient and
+  // brightening (bronze→amber→red→white) as the part dissipates power. Presentation-only — `tj` is the
+  // live junction temperature integrated each frame from `P=V·I` (Real mode); it never re-enters the
+  // solve. See `web/src/lib/thermal.ts`.
+  private readonly heatGlow = new Graphics();
+  private tj = T_AMBIENT_C;
+  // Web-side thermal-death flag: this part has cooked past T_MAX_C (Real-mode self-heating). Drives the
+  // distinct OVERHEAT box below (separate from the red over-current FAIL). Presentational only — like the
+  // FAIL flag it only marks the part and never re-enters the solve, so it stays golden-safe + replay-safe.
+  private overTemp = false;
+  private readonly overheatBox = new Graphics();
+  private readonly overheatText: Text;
   private readonly label: Text;
   private readonly value: Text | null;
   /** The live stored-value chip ("Q=…") a recognised sequential cell shows under its body symbol; it
@@ -8043,6 +8284,9 @@ class ComponentNode {
     this.userIcGlyphs.visible = false;
     this.glyphHolder.addChild(this.userIcGlyphs);
     this.view.addChild(this.glyphHolder);
+    // Heat glow sits at the very back of the node (behind the body symbol), so a hot part reads as
+    // glowing from within without obscuring its glyph.
+    this.view.addChildAt(this.heatGlow, 0);
     // Pinout labels live on `view` (not the rotated `glyphHolder`) so they stay
     // upright; positioned at the rotated pin and shown only at the deepest zoom. The backing/leader deco
     // sits just behind them (added first), so each plate lifts its name off the busy copper.
@@ -8155,6 +8399,25 @@ class ComponentNode {
     this.failText.visible = false;
     this.view.addChild(this.failText);
 
+    // OVERHEAT overlay: a pulsing amber/char box + "OVERHEAT" label when this part cooks past T_MAX_C
+    // (Real-mode self-heating). Distinct from the red over-current FAIL above; shown only when not also
+    // over-current-failed, so a part shows one box, not two.
+    this.view.addChild(this.overheatBox);
+    this.overheatText = new Text({
+      text: "OVERHEAT",
+      style: {
+        fill: PALETTE.warn,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 11,
+        fontWeight: "700",
+        letterSpacing: 1,
+      },
+    });
+    this.overheatText.anchor.set(0.5);
+    this.overheatText.resolution = DPR;
+    this.overheatText.visible = false;
+    this.view.addChild(this.overheatText);
+
     this.layoutLabels();
     // pin dots
     for (const p of this.pinPositions) {
@@ -8212,6 +8475,7 @@ class ComponentNode {
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
     this.failText.resolution = r;
+    this.overheatText.resolution = r;
     // Pin labels manage their OWN resolution + counter-scale in the layout loop (LABEL_CAP_ZOOM), so they
     // stay crisp + constant-size near the pin past the zoom where this shared, MAX_TEXT_RES-capped value
     // would blur and balloon them.
@@ -8270,6 +8534,55 @@ class ComponentNode {
       out.push({ text: this.stateLabel, prio: base + 10 }); // the value chip is lowest
   }
 
+  /** The live self-heating body temperature (°C). Ambient unless the part is dissipating in Real mode. */
+  get bodyTemp(): number {
+    return this.tj;
+  }
+
+  /** The part's body centre in world coordinates — the heat-field overlay's source location. */
+  get center(): { x: number; y: number } {
+    return { x: this.view.x + this.wPx / 2, y: this.view.y + this.hPx / 2 };
+  }
+
+  /** The part's footprint box in world coordinates — copper pad/leads for the heat-field's copper mask. */
+  get worldBox(): { x: number; y: number; w: number; h: number } {
+    return { x: this.view.x, y: this.view.y, w: this.wPx, h: this.hPx };
+  }
+
+  /** Reset the body temperature to ambient (on a sim restart / netlist rebuild). */
+  resetThermal(): void {
+    this.tj = T_AMBIENT_C;
+    this.overTemp = false;
+    this.heatGlow.clear();
+    this.overheatBox.clear();
+    this.overheatBox.visible = false;
+    this.overheatText.visible = false;
+  }
+
+  /** Draw the warm incandescence halo behind the body, scaled by how hot the part is. Invisible at
+   *  ambient; ramps bronze → amber → red → white as `Tj` climbs toward the max junction temperature.
+   *  A few concentric falloff rings approximate a soft radial glow (Pixi Graphics has no gradient). */
+  private drawHeatGlow(): void {
+    const f = glowFactor(this.tj);
+    this.heatGlow.clear();
+    if (f <= 0.002) return;
+    const col =
+      f < 0.5
+        ? mix(PALETTE.bronze, PALETTE.warn, f / 0.5)
+        : f < 0.8
+          ? mix(PALETTE.warn, PALETTE.bad, (f - 0.5) / 0.3)
+          : mix(PALETTE.bad, 0xffffff, (f - 0.8) / 0.2);
+    const cx = this.wPx / 2;
+    const cy = this.hPx / 2;
+    const base = Math.max(this.wPx, this.hPx) / 2 + PITCH * 0.7;
+    const rings = 4;
+    for (let i = rings; i >= 1; i--) {
+      this.heatGlow
+        .circle(cx, cy, base * (i / rings))
+        .fill({ color: col, alpha: f * 0.28 * (1 - (i - 1) / rings) });
+    }
+  }
+
   update(
     electrical: ElectricalState,
     phase: number,
@@ -8292,8 +8605,27 @@ class ComponentNode {
     wireMode = false,
     liveState?: StoredState,
     focused = false,
+    dtSec = 0,
+    real = false,
   ): void {
     this.focused = focused; // latched for the board's label de-overlap ranking
+    // Self-heating (Real mode only): advance this part's body temperature toward Tamb + P·θ_JA on its
+    // thermal time constant, from the dissipated power P = max(0, V·I) of its live electrical state, then
+    // draw the warm body glow. `dtSec` is the frame's SIM-time delta (Δticks·DT, never wall-clock), so Tj
+    // tracks the deterministic sim clock. Ideal mode (or a non-dissipating kind) holds at ambient.
+    const heatPower =
+      real && partHeats(this.kindTag) ? dissipatedPower(electrical) : 0;
+    this.tj = real
+      ? stepTemp(this.kindTag, this.tj, heatPower, dtSec)
+      : T_AMBIENT_C;
+    // Thermal-death flag: cooked past the max junction temperature (Real mode only). Purely a render flag
+    // (the OVERHEAT box + the inspector readout) — never re-enters the solve, so golden-safe + replay-safe.
+    this.overTemp = real && this.tj >= T_MAX_C;
+    // The per-part incandescence halo is the SCHEMATIC heat cue. Under the thermal lens the board
+    // heat-field overlay carries the heat (colour contrast only), so the halo is suppressed there to
+    // avoid double-drawing — Tj is still integrated above for the field's sources.
+    if (lens === "thermal") this.heatGlow.clear();
+    else this.drawHeatGlow();
     const g = this.glyph;
     g.clear();
     // Default the mini-board glyphs hidden every frame; the zoom-to-open USER-IC branch below turns
@@ -8918,6 +9250,47 @@ class ComponentNode {
     } else {
       this.failBox.visible = false;
       this.failText.visible = false;
+    }
+    // OVERHEAT (magic-smoke) overlay: a part that has cooked past T_MAX_C from self-heating gets a
+    // distinct amber/char box + "OVERHEAT" — a thermal death, separate from the red over-current FAIL
+    // above. Shown only when NOT already over-current-failed (that box dominates), so a part shows one
+    // box. Web-side + presentational, like the FAIL flag: it only marks the part, never the solve.
+    if (this.overTemp && !electrical.failed) {
+      let minX = 0;
+      let maxX = 0;
+      let minY = 0;
+      let maxY = 0;
+      for (const p of this.pinPositions) {
+        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y);
+      }
+      const pad = 13;
+      const pulse =
+        0.5 +
+        0.5 *
+          Math.sin((performance.now() / 1000) * Math.PI * 2 * FAIL_PULSE_HZ);
+      this.overheatBox.clear();
+      this.overheatBox
+        .roundRect(
+          minX - pad,
+          minY - pad,
+          maxX - minX + 2 * pad,
+          maxY - minY + 2 * pad,
+          4,
+        )
+        // A charred scorch fill under an amber stroke — reads as "burnt", distinct from the FAIL red.
+        .fill({ color: 0x1a0d06, alpha: 0.5 })
+        .stroke({ color: PALETTE.warn, width: 2, alpha: 0.35 + 0.65 * pulse });
+      this.overheatBox.visible = true;
+      this.overheatText.position.set((minX + maxX) / 2, minY - pad - 9);
+      this.overheatText.alpha = 0.55 + 0.45 * pulse;
+      this.overheatText.visible = true;
+    } else {
+      this.overheatBox.visible = false;
+      this.overheatText.visible = false;
     }
   }
 

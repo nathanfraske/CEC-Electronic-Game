@@ -111,8 +111,9 @@ export function voltageColor(v: number): number {
 }
 
 /** The lens (fidelity tier) a part / wire renders in. Mirrors the info panel's `DiagramMode`;
- *  re-exported by `board.ts` so existing importers keep working. */
-export type BoardLens = "schematic" | "analogy" | "reality";
+ *  re-exported by `board.ts` so existing importers keep working. `"thermal"` is the heat-camera view:
+ *  components render in their clean SCHEMATIC form over an inferno board heat-field overlay (board.ts). */
+export type BoardLens = "schematic" | "analogy" | "reality" | "thermal";
 
 /** Position + unit direction at a point along a trace (for belt-dot / carrier placement). */
 export interface RouteSample {

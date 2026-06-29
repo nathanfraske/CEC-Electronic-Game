@@ -172,11 +172,62 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 
 ## 6. Phased build path
 
-0. **Read-only heat (a day).** `P=V·I` per part → steady-state `Tj = Tambient + P·θ_JA` (per-kind default
-   `θ_JA`) → show it: body heat-glow (A) + °C readout (C). No accumulation, no feedback — "see where the
-   heat is." Immediately teaches linear-vs-switcher visually.
-1. **Thermal lens + the time-constant.** Add the `"thermal"` `BoardLens` (B) + the transient `Tj`
-   integrator (web-side, deterministic) so parts warm/cool over time; add the thermal scope (C).
+> **STATUS 2026-06-28 — the model + pipeline (Phase 0/1 core) LANDED** (`web/src/lib/thermal.ts`,
+> commit `f8bfb51`, web-only, golden-safe, headless-tested). What's built: the lumped model
+> (`thermalSpec` per-kind `θ_JA`/`Cth`, `steadyTemp`, the TICK-DRIVEN transient integrator `stepTemp`
+> with a clamped step factor so it's unconditionally stable, `derate`, `glowFactor`), `dissipatedPower`
+> = `max(0, V·I)`, and `advanceTemps` (integrate every part one sim-time interval, Real-mode-gated).
+> Proven end-to-end by `thermalPipeline.test.ts` (buildNetlist → wasm → `electricalMap` → `Tj`: a 1 W
+> resistor heats to ~105 °C, a 10 kΩ one and the source stay cool, Ideal = ambient).
+>
+> **Determinism refinement (learned building it):** the loop steps a *wall-clock-dependent* number of
+> ticks per frame, so `Tj` must be integrated by the **sim-tick delta** (`Δticks·DT`), never wall-clock
+> — then it's steady-state-exact and a pure function of the sim trajectory. A consequence that **doesn't
+> perturb the solve** (over-temp / derated-rating → FAIL flag; the body glow) is replay-safe even
+> web-side. A consequence that **does** (R(T) drift, thermal runaway) applied at frame granularity would
+> make the sim frame-rate-dependent → it needs the **sim-core hashed-`Tj`** (Path 2, per-tick) to be
+> replay-exact. So v1 keeps `Tj` purely presentational + the FAIL-flag consequence; R(T) feedback is
+> deferred to Path 2. (This sharpens §2's "self-heating thermistor closes its R(T) loop" — that loop is
+> Path 2, not the v1 web path.)
+>
+> **UPDATE 2026-06-29 — the LIVE vertical + the thermal lens LANDED** (`79accf5` + `4fc0080`, web 326,
+> verified live). Per-part **heat-glow** (A) + **°C readout** (C): each `board.ts` `ComponentNode` owns
+> `tj`, integrates it from its own `dissipatedPower` by the sim-tick delta, draws the warm halo; the
+> inspector shows a "Body temp" row from `Board.bodyTempOf`. And the **thermal lens** (B) — a full-board
+> **inferno heat-field overlay** (`thermalField.ts`: held-temp sources, explicit 5-point diffusion,
+> still-air convection, inferno colourmap; `board.ts` `"thermal"` `BoardLens` + canvas-texture sprite +
+> `updateHeatOverlay`, board dimmed, components distinct; `App.svelte` 🔥 Heat toggle). All
+> golden-safe/presentational. **Remaining:** Phase 2 = copper-weighted diffusion (heat follows traces) +
+> a °C colour-scale legend; the derate→FAIL/vent consequence; Path 2 (sim-core hashed Tj).
+>
+> **UPDATE 2026-06-29 — Phase 2 copper conduction LANDED** (web 327, verified live). The owner's ask:
+> heat now **follows the traces/copper**, and the per-part glow halo is **suppressed under the lens**
+> (colour contrast only). `thermalField.ts` `step(sources, dt, copper?)` takes a per-cell copper
+> fraction; face conductance `= SUBSTRATE_W + (1−SUBSTRATE_W)·min(ci,cj)` (`SUBSTRATE_W = 0.02`) so a
+> copper↔copper face conducts fully and bare board barely conducts — heat races down a trace and stalls
+> at the substrate gap (retuned `DIFFUSIVITY 30→55`, `CONVECTION 0.45→0.25`, `L ≈ 14.8 cells`).
+> `board.ts` `buildCopperGrid` rasterises part footprints (`ComponentNode.worldBox`) + each wire's
+> `routeForWire` polyline (one-cell-dilated) into the field grid (per-frame, lens-active only);
+> `ComponentNode.update` clears `heatGlow` when `lens === "thermal"`. Still golden-safe/presentational.
+> **Remaining:** the °C colour-scale legend; derate→FAIL/vent; Path 2 (sim-core hashed Tj).
+>
+> **UPDATE 2026-06-29 — Phase 2b legend + the derate→FAIL consequence (#116) LANDED** (web 328, verified
+> live). The **°C legend** (§1's "show the whole power budget"): a HUD side strip (`App.svelte`
+> `.thermal-legend`, `{#if thermalLens && realModels}`) — a vertical inferno gradient (shared from
+> `thermalField.ts` `infernoCssGradient()`, single source of truth with the canvas colormap) + mono ticks
+> (ambient → the live scale top) + a live PEAK read, fed by `board.ts` `heatReadout(): {peakC, scaleTopC}`.
+> And the **consequence** (§2/§6 step 2, the first half): a web-side `overTemp = real && tj >= T_MAX_C`
+> flag on each `ComponentNode` → a **distinct OVERHEAT box** (charred fill + pulsing amber + label,
+> separate from the red over-current FAIL, shown only when not also FAILed) + the inspector "Body temp"
+> row goes red with "⚠ OVERHEAT". Heat is now a *consequence*, not just a readout. Golden-safe + replay-
+> safe (presentational flag, never re-enters the solve — `failed_elements` was never hashed; Tj is the
+> sim-tick-advanced power). **Remaining:** the thermal-death *vent* (animated smoke + autopsy→Lux);
+> the management levers (§3 — heatsinks/fan/spacing/wattage axis); Path 2 (sim-core hashed Tj).
+
+0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
+1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node
+   `stepTemp`), wired into the live loop, the `"thermal"` `BoardLens` + inferno board heat-field overlay.
+   Remaining sub-items: the thermal **scope** (a warm/cool curve over time) + the **legend**.
 2. **Derating → FAIL + magic smoke.** Wire `Tj` into a derated `RATED_CURRENT_SLOT` (Real mode) so the FAIL
    box triggers sooner when hot; add the thermal-death vent (E) as a destroyed state distinct from the
    over-current box; hook autopsy → Lux. Heat becomes a *consequence*.

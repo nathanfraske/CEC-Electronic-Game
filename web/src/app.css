@@ -861,6 +861,78 @@ body {
   color: var(--dim);
 }
 
+/* Thermal heat-camera legend ---------------------------------------------------
+ * The inferno °C colour scale shown over the board while the heat camera (thermal
+ * lens) is active in Real mode: a vertical gradient strip (ambient floor → the live
+ * scale top the on-board overlay is painted with) with mono tick labels, plus the
+ * board's PEAK junction temperature — like a thermal camera's reference bar. Same
+ * glass/mono/tracked language as the zoom meter; pinned to the board's right edge so
+ * it clears the zoom meter (bottom-left) and the scope (bottom-right). The inferno
+ * gradient is the one exception to "use design tokens" — it must match the heatmap's
+ * colourmap exactly (shared from thermalField.ts via infernoCssGradient). */
+.thermal-legend {
+  position: absolute;
+  z-index: 4;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 9px;
+  background: oklch(0.135 0.022 285 / 0.72);
+  backdrop-filter: blur(3px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow:
+    0 0 0 1px oklch(0 0 0 / 0.3),
+    0 8px 22px -14px oklch(0 0 0 / 0.9);
+}
+
+.thermal-legend-head {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.thermal-legend-scale {
+  display: flex;
+  flex-direction: row;
+  gap: 5px;
+  align-items: stretch;
+}
+
+.thermal-legend-strip {
+  width: 12px;
+  height: 116px;
+  border: 1px solid var(--border-bright);
+  border-radius: var(--radius-sm);
+}
+
+.thermal-legend-ticks {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+
+.thermal-legend-peak {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.thermal-legend-peak.is-overheat {
+  color: var(--bad);
+  text-shadow: 0 0 9px color-mix(in oklch, var(--bad) 55%, transparent);
+}
+
 /* Quick-recall hotbar (1–9) ----------------------------------------------------
  * A low-profile strip of nine slots along the board's bottom edge: a digit hotkey,
  * the captured part's glyph (tinted by its kind identity colour) + a compact name,
