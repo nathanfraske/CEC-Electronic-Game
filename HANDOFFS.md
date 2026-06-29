@@ -26,11 +26,24 @@ re-evaluate only the *active fanout* instead of every element each (sub-)tick. T
 drives/stamps/net_level/node_v/sequential state) — same discipline that proved the lift. **No golden moves**
 at any stage. Time-driven/analog-sense state (clocks, DRAM decay, comparator/SAR) is never event-gated.
 
-**Staged plan:** S0 oracle harness (tautology) → S1 install maps → S2 Pass R split → S3 Pass L dirty-set
-(main tick) → S4 sub-ticks → S5 (optional v2) incrementalize the O(n) scans. S0–S2 zero behavioural risk.
+**Staged plan + progress:** **S0 DONE** (`cc4603d`): `eval_digital_full` + `eval_digital` wrapper +
+`debug_check_eval_digital` byte-identity oracle (re-runs full eval, asserts dirty==full; tautology now).
+**S1 DONE** (`c3ff0a7`): extracted `eval_one_digital(i)` — the per-element body of the eval loop, the
+dirty-set's building block (3 BEHAVIORAL `continue`→`return`). Both golden-safe + oracle-verified, 231 green.
+**REMAINING:** S2 install maps (`net_readers`/`net_drivers`/`analog_driving_gates`/`powered_digital_drivers`/
+`clocked_elements`) + Pass R stamp split → S3 Pass L dirty-set (main tick: persist drives, seed from
+level-diff + sequential mutation + rail-bits, refold_net, fixpoint, force-full on install/first-tick) → S4
+sub-ticks → S5 (optional v2). Note: the S2 maps are dead-code until S3 uses them, so S2/S3 land together (or
+S2 adds a debug refold==in-place assert to exercise them). Design: `docs/sim/dirty-set-digital-eval.md`.
 
-**NEXT:** build S0→S4 (recommended). Honest caveat: the win is on per-gate *logic* (2× quantize + truth
-table + combine + 4 writes), not the per-tick stamp; analog-solve-bound circuits see it as a near-no-op.
+**NEXT:** S2–S4 (the actual event-driven win — a fresh-focus chunk; the S0 oracle fences it). Honest caveat:
+the win is on per-gate *logic* (2× quantize + truth table + combine + 4 writes), not the per-tick stamp;
+analog-solve-bound circuits see it as a near-no-op.
+
+**Also scoped + QUEUED:** **bus-slice recognition** (`docs/ui/bus-slice-recognition.md`, `1aade61`-area) —
+draw a bit-sliced user IC (N identical leaf slices on a bus, e.g. the owner's `4-INVERT` = 4 XOR slices on
+`Binv`) as N gate symbols on the sealed glyph. Render-only/golden-safe; bus-label-driven detection (not
+subgraph isomorphism). Queued after the dirty-set per owner.
 
 ---
 
