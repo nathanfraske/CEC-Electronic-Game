@@ -4965,6 +4965,9 @@ impl Sim {
         // stays pinned. The branch unknowns follow and are read separately.
         self.node_v[0] = 0.0;
         self.node_v[1..self.node_count].copy_from_slice(&x[..self.node_count - 1]);
+        // Stage A0 invariant (digital-matrix lift): pure-digital nets' solved voltages match the
+        // closed form bit-for-bit at the operating point too. Debug-only.
+        self.debug_assert_digital_closed_form();
         // Commit per-element currents (oriented a -> b) from the operating
         // point. Voltage sources and capacitors carry their branch unknown;
         // inductors carry their stored initial current; resistors and the
@@ -7045,6 +7048,39 @@ impl Sim {
         }
     }
 
+    /// **Debug-only structural invariant** (digital-matrix-lift Stage A0,
+    /// `docs/sim/digital-matrix-lift-plan.md`): after a full solve, every pure-`Digital` net's
+    /// matrix-solved `node_v` must equal the closed-form [`Sim::digital_net_solved_voltage`]
+    /// **bit-for-bit**. This is the precondition for lifting pure-digital nets OUT of the dense
+    /// matrix — filling their `node_v` from the closed form instead of factoring their rows: the
+    /// lift is byte-identical on the digital side iff this holds for every solve.
+    ///
+    /// It holds by construction: a pure-`Digital` row is stamped ONLY by [`Sim::stamp_digital`] (a
+    /// lone `GMIN` + at most one resolved Thévenin on its own diagonal — proven by
+    /// [`Sim::debug_assert_digital_block_diagonal`]); a *driven* net's output pin is marked
+    /// `referenced` in [`floating_refs`], so it never picks up a second `GMIN` from
+    /// [`Sim::stamp_floating_refs`]; and an *undriven* (`Z`) net solves to `0` either way
+    /// (`0 / k·GMIN = 0`). If this ever fires, some pure-digital net carries an extra stamp the
+    /// closed form does not model and the lift would not be byte-identical there until reconciled.
+    /// Compiled only under `debug_assertions`, so release/the wasm hot path is untouched.
+    #[cfg(debug_assertions)]
+    fn debug_assert_digital_closed_form(&self) {
+        for &row in &self.digital_rows {
+            let node = row + 1;
+            let in_matrix = self.node_v[node];
+            let closed = self.digital_net_solved_voltage(node);
+            assert_eq!(
+                in_matrix.to_bits(),
+                closed.to_bits(),
+                "Stage A0: pure-digital net {node}: in-matrix v={in_matrix:e} != closed-form v={closed:e} \
+                 (an extra stamp on a pure-digital row would break the lift's byte-identity)"
+            );
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    #[inline]
+    fn debug_assert_digital_closed_form(&self) {}
+
     /// The instantaneous EMF of a sinusoidal AC source ([`ELEM_ACSOURCE`]) at the
     /// current tick: `amplitude * sin(2*pi * f * tick * dt)`, where `e.value` is
     /// the frequency `f` in hertz (clamped to `>= 0`) and the peak `amplitude` is
@@ -7207,6 +7243,10 @@ impl Sim {
     /// `f64`, fixed order.
     pub fn step(&mut self) {
         let x = self.solve_into_readout();
+        // Stage A0 invariant (digital-matrix lift): each pure-digital net's matrix-solved voltage
+        // equals the closed-form `digital_net_solved_voltage` bit-for-bit — the precondition for
+        // filling those nets from the closed form once their rows leave the dense matrix. Debug-only.
+        self.debug_assert_digital_closed_form();
         // Commit each digital/boundary net's level (the receiver, one tick of delay
         // before the digital engine reads it next tick) for the hash and the renderer.
         self.commit_net_levels();
