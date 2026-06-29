@@ -34,8 +34,27 @@ already **bus-labeled**, and the label parser already exists — so detect from 
    instance, so the kind tag gives the symbol directly; for a raw-transistor slice, characterize it and call
    `recognizeGate` (`web/src/lib/userIc.ts:189`).
 
-This correctly **fails on a ripple-carry adder** (its slices share a cross-slice carry → not a clean parallel
-bus), so the array symbol appears only when the structure really is a bus. That's the desired behaviour.
+A pure-parallel match **fails on a ripple-carry adder** (its slices share a cross-slice carry), so the
+plain array symbol appears only when the structure really is an independent bus.
+
+### Chained slices (ripple adder, shift register) — the second mode
+
+A ripple-carry adder is still a clean repeated structure — **N identical full-adder slices in a chain**,
+where one internal signal threads slice *i* → slice *i+1* (the **carry** `Cout_i = Cin_{i+1}`; for a shift
+register it's the shift bit, for a subtractor the borrow). So generalize the recognizer to two modes:
+
+1. **Parallel** (the base case): the only nets crossing slice boundaries are the shared control/power lines.
+2. **Chained**: in addition, **exactly one internal net per boundary** connects consecutive slices in bit
+   order (slice *i*'s one leftover output → slice *i+1*'s one leftover input). Detect it as: after matching
+   the input/output buses, the remaining unaccounted internal nets form a linear `slice0 → slice1 → … →
+   sliceN-1` path; the open ends (`Cin` of slice 0, `Cout` of slice N-1) become the array's carry-in /
+   carry-out pins.
+
+Render the chained case as N stacked slice symbols (full-adder / adder-slice / register-cell) with the
+**chain wire drawn between consecutive glyphs** (`Cout` ↓ `Cin`) and the two open ends exposed — the standard
+"bit-slice with carry chain" datapath picture. Anything that is neither a clean parallel bus nor a clean
+single-signal chain (irregular cross-slice wiring) falls back to the generic block. This keeps the recogniser
+honest: it draws an array only when the structure genuinely is one (parallel **or** chained), never forcing it.
 
 ## Building blocks that already exist (reuse)
 
