@@ -10,6 +10,8 @@ import {
   Application,
   Container,
   Graphics,
+  Sprite,
+  Texture,
   Text,
   Rectangle,
   Point,
@@ -102,6 +104,7 @@ import {
   dissipatedPower,
   partHeats,
 } from "./thermal";
+import { ThermalField, type FieldSource } from "./thermalField";
 // The shared, `this`-free board render engine (geometry / carriers / conduit skins),
 // extracted so the sealed-IC opened view can run the SAME wire pipeline. board.ts keeps
 // thin wrappers for the few `this`-bound route helpers; everything else is used directly.
@@ -649,6 +652,19 @@ export interface BoardCallbacks {
 export class Board {
   private readonly world = new Container();
   private readonly grid = new Graphics();
+  // Thermal-lens heat-field overlay (web-only, presentational): an inferno board heatmap shown when the
+  // lens is "thermal". A coarse field diffuses heat from the hot parts across the board; it is rendered
+  // via a small canvas-texture sprite stretched over the board content bbox (so it pans/zooms with the
+  // board, behind the wires + components which stay distinct on top). Built lazily — the grid is sized to
+  // the content bbox on first use. See thermalField.ts + docs/heat-on-the-board-ideation.md (§1 B).
+  private readonly heatSprite = new Sprite();
+  private heatField: ThermalField | null = null;
+  private heatCanvas: HTMLCanvasElement | null = null;
+  private heatCtx: CanvasRenderingContext2D | null = null;
+  private heatTexture: Texture | null = null;
+  private heatImage: ImageData | null = null;
+  private heatCols = 0;
+  private heatRows = 0;
   // The die-editor boundary ("walls"): drawn behind everything but the grid when the board is the
   // inner canvas of an IC-maker frame (ADR 0006). Empty/invisible on the normal outer board.
   private readonly dieWallLayer = new Graphics();
@@ -1023,6 +1039,12 @@ export class Board {
     private readonly cb: BoardCallbacks = {},
   ) {
     this.world.addChild(this.grid);
+    // The thermal heat-field overlay sits just above the grid and below the wires/parts, so the board
+    // heatmap reads as a background field with the traces + components distinct on top. Non-interactive;
+    // hidden unless the lens is "thermal".
+    this.heatSprite.eventMode = "none";
+    this.heatSprite.visible = false;
+    this.world.addChild(this.heatSprite);
     // The die boundary sits just above the grid and below the wires/parts, so it reads as the
     // canvas's "wall" the circuit is built inside. Non-interactive; invisible unless in die mode.
     this.dieWallLayer.eventMode = "none";
@@ -1344,7 +1366,8 @@ export class Board {
         // zoomed in past TIER_ZOOM under the analogy/reality lens, preview the tier
         // illustration (drawDetail/drawAnalogy) so the ghost matches the placed part;
         // otherwise fall back to the schematic glyph.
-        const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+        const effLens: BoardLens =
+          this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
         const tier =
           effLens === "reality" && hasDetail(this.armed)
             ? "reality"
@@ -3043,7 +3066,8 @@ export class Board {
     if (this.dieFrameId !== null) this.drawDieWalls();
     this.drawNetLabels();
     // LOD off ⇒ force the schematic lens (clean symbols at any zoom).
-    const effLens: BoardLens = this.lodEnabled ? this.lens : "schematic";
+    const effLens: BoardLens =
+      this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
     // Per-frame view state shared across every node: the screen rect (for the opened-IC view cull) and
     // ONE zoom-meter probe (Phase 5) seeded at the view centre. Each opened IC writes the probe if its
     // body contains the centre and it's the deepest level seen, so after the loop `scale` is the
@@ -3107,6 +3131,9 @@ export class Board {
           ? 1
           : NET_DIM_ALPHA;
     }
+    // Thermal-lens heat-field overlay: now that every node has integrated its body temperature this
+    // frame, diffuse those into the board heat field and paint it (a no-op outside the thermal lens).
+    this.updateHeatOverlay(thermalDt, real);
     this.deOverlapLabels();
     // Latch the metered depth for the HUD — STICKY so the readout doesn't flap. The probe reports the
     // deepest opened cell whose body contains the view CENTRE; a chip's centre is often a routing GAP
@@ -3193,6 +3220,97 @@ export class Board {
    *  the board doesn't keep a stale glow from before the change. */
   resetThermals(): void {
     for (const node of this.nodes.values()) node.resetThermal();
+    this.heatField?.reset();
+  }
+
+  /**
+   * The thermal-lens board heat-field overlay. When the lens is "thermal", build a coarse heat field
+   * over the content bbox, inject each hot part as a held-temperature source, diffuse it `dtSec` of sim
+   * time, and paint it as an inferno heatmap stretched under the wires/parts; the board itself is dimmed
+   * so the field reads while the components stay distinct on top. A no-op (overlay hidden) otherwise.
+   * Presentation only — never re-enters the solve.
+   */
+  private updateHeatOverlay(dtSec: number, real: boolean): void {
+    const on = this.lens === "thermal" && real;
+    // Dim the board under the heat camera so the field dominates; restore otherwise.
+    this.grid.alpha = on ? 0.32 : 1;
+    this.wireLayer.alpha = on ? 0.4 : 1;
+    if (!on || this.nodes.size === 0) {
+      this.heatSprite.visible = false;
+      return;
+    }
+    // Content bbox from the part centres (+ a margin so the field extends past the outermost parts).
+    let minX = Infinity,
+      minY = Infinity,
+      maxX = -Infinity,
+      maxY = -Infinity;
+    for (const node of this.nodes.values()) {
+      const { x, y } = node.center;
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+    const margin = PITCH * 3;
+    minX -= margin;
+    minY -= margin;
+    maxX += margin;
+    maxY += margin;
+    const w = maxX - minX;
+    const h = maxY - minY;
+    // One heat cell per ~half a pitch, clamped — coarse enough to be cheap, fine enough to read.
+    const cell = PITCH * 0.6;
+    const cols = Math.max(8, Math.min(120, Math.round(w / cell)));
+    const rows = Math.max(8, Math.min(120, Math.round(h / cell)));
+    if (
+      !this.heatField ||
+      cols !== this.heatCols ||
+      rows !== this.heatRows ||
+      !this.heatCanvas ||
+      !this.heatCtx
+    ) {
+      this.heatCols = cols;
+      this.heatRows = rows;
+      this.heatField = new ThermalField(cols, rows);
+      this.heatCanvas = document.createElement("canvas");
+      this.heatCanvas.width = cols;
+      this.heatCanvas.height = rows;
+      this.heatCtx = this.heatCanvas.getContext("2d");
+      this.heatImage = this.heatCtx?.createImageData(cols, rows) ?? null;
+      this.heatTexture?.destroy();
+      this.heatTexture = Texture.from(this.heatCanvas);
+      this.heatTexture.source.scaleMode = "linear";
+      this.heatSprite.texture = this.heatTexture;
+    }
+    const field = this.heatField;
+    const ctx = this.heatCtx;
+    const img = this.heatImage;
+    if (!field || !ctx || !img) {
+      this.heatSprite.visible = false;
+      return;
+    }
+    // Each hot part is a held-temperature source at its grid cell.
+    const sources: FieldSource[] = [];
+    for (const node of this.nodes.values()) {
+      const tj = node.bodyTemp;
+      if (tj <= T_AMBIENT_C + 0.5) continue;
+      const { x, y } = node.center;
+      sources.push({
+        col: Math.floor(((x - minX) / w) * cols),
+        row: Math.floor(((y - minY) / h) * rows),
+        tempC: tj,
+      });
+    }
+    field.step(sources, dtSec);
+    const peakC = Math.max(field.peak(), T_AMBIENT_C + 80);
+    field.writeImage(img.data, peakC);
+    ctx.putImageData(img, 0, 0);
+    this.heatTexture!.source.update();
+    // Stretch the cols×rows texture over the world-space content bbox (it pans/zooms with the board).
+    this.heatSprite.position.set(minX, minY);
+    this.heatSprite.width = w;
+    this.heatSprite.height = h;
+    this.heatSprite.visible = true;
   }
 
   destroy(): void {
@@ -6269,7 +6387,8 @@ export class Board {
     const fd = this.flowDelta;
     // Re-skin bare traces as conduits (pipes / metal conductors) when zoomed into the
     // analogy/reality lens — the same threshold + gating the parts morph at.
-    const effLens = this.lodEnabled ? this.lens : "schematic";
+    const effLens =
+      this.lodEnabled && this.lens !== "thermal" ? this.lens : "schematic";
     const conduit: BoardLens | null =
       effLens !== "schematic" && this.world.scale.x >= TIER_ZOOM
         ? effLens
@@ -8308,6 +8427,11 @@ class ComponentNode {
   /** The live self-heating body temperature (°C). Ambient unless the part is dissipating in Real mode. */
   get bodyTemp(): number {
     return this.tj;
+  }
+
+  /** The part's body centre in world coordinates — the heat-field overlay's source location. */
+  get center(): { x: number; y: number } {
+    return { x: this.view.x + this.wPx / 2, y: this.view.y + this.hPx / 2 };
   }
 
   /** Reset the body temperature to ambient (on a sim restart / netlist rebuild). */

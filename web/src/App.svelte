@@ -4262,6 +4262,7 @@
   // Cycle the board lens schematic → analogy → reality → schematic. Analogy/reality
   // reveal their full-panel illustration once a part is zoomed in (see Board.setLens).
   function cycleLens(): void {
+    thermalLens = false; // cycling the tier lens exits the heat camera
     boardLens =
       boardLens === "schematic"
         ? "analogy"
@@ -4269,6 +4270,14 @@
           ? "reality"
           : "schematic";
     board?.setLens(boardLens);
+    persistSettings();
+  }
+  // The thermal "heat camera": an inferno board heat-field overlay (Real-mode self-heating). A separate
+  // toggle from the tier lens — it overrides the board view with the heatmap while it's on.
+  let thermalLens = $state(false);
+  function toggleThermalLens(): void {
+    thermalLens = !thermalLens;
+    board?.setLens(thermalLens ? "thermal" : boardLens);
     persistSettings();
   }
   // Master on/off for the zoom level-of-detail (the tier reveal). Off ⇒ plain
@@ -5685,6 +5694,14 @@
         title="Zoom level-of-detail: on reveals analogy/reality detail as you zoom into a part; off keeps plain schematic symbols at any zoom."
       >
         {lodOn ? "⊕ LOD" : "⊘ LOD"}
+      </button>
+      <button
+        class="btn btn-ghost {thermalLens ? 'is-active' : ''}"
+        onclick={toggleThermalLens}
+        disabled={!ready}
+        title="Thermal heat-camera: an inferno board heat-field overlay showing self-heating spread across the board. Needs Real mode (self-heating is a realistic non-ideality)."
+      >
+        {thermalLens ? "🔥 Heat" : "🔥 Heat"}
       </button>
       {#if armedPart}
         <span class="armed-wrap">
