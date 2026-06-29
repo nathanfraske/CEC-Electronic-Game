@@ -30,6 +30,14 @@ const height = Number(arg("height", "900"));
 const zoom = arg("zoom", null);
 const lens = arg("lens", null);
 const center = arg("center", null);
+// Thermal-lens capture: --thermal turns on the heat-field overlay, --real flips Real-mode fidelity (parts
+// only self-heat in Real mode), --run resumes the paused sim so Tj accumulates. Use a long --wait so the
+// heat builds before the shot, e.g. `shoot --thermal --real --run --wait 6000`.
+const flag = (k) => argv.includes(`--${k}`);
+const thermal = flag("thermal");
+const real = flag("real");
+const run = flag("run");
+const tps = arg("tps", null); // ticks/sec while running — high values let game-scaled (seconds) heat build fast
 
 const fixture = fixturePath ? readFileSync(fixturePath, "utf8") : null;
 
@@ -41,13 +49,17 @@ const { page, errors, cleanup } = await openApp({
   settleMs: settle,
 });
 try {
-  if (zoom || lens || center) {
+  if (zoom || lens || center || thermal || real || run || tps) {
     await page.evaluate((o) => window.__cecView?.(o), {
       ...(zoom ? { zoom: Number(zoom) } : {}),
       ...(lens ? { lens } : {}),
       ...(center ? { centerId: Number(center) } : {}),
+      ...(thermal ? { thermal: true } : {}),
+      ...(real ? { real: true } : {}),
+      ...(run ? { run: true } : {}),
+      ...(tps ? { tps: Number(tps) } : {}),
     });
-    await page.waitForTimeout(settle); // re-settle after the view change
+    await page.waitForTimeout(settle); // re-settle (+ let heat build under --thermal --run) after the change
   }
   await page.screenshot({ path: out, scale: "css" });
   console.log(`✓ shot → ${out} (${width}x${height})`);

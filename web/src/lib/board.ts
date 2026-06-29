@@ -3263,17 +3263,28 @@ export class Board {
       this.heatScaleTopC = T_AMBIENT_C + 80;
       return;
     }
-    // Content bbox from the part centres (+ a margin so the field extends past the outermost parts).
+    // Content bbox covering BOTH the part footprints AND every wire's routed polyline (+ a margin so the
+    // field extends past the outermost copper). It MUST include the traces' true extent, not just the part
+    // centres: a loop whose wires bow outside the parts would otherwise fall outside the grid, and
+    // `buildCopperGrid`'s `toCol/toRow` clamp those off-box points onto the boundary cells — smearing heat
+    // along the clipped edge instead of letting it follow the trace (the heat-doesn't-follow-traces bug).
     let minX = Infinity,
       minY = Infinity,
       maxX = -Infinity,
       maxY = -Infinity;
+    const grow = (x: number, y: number): void => {
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x > maxX) maxX = x;
+      if (y > maxY) maxY = y;
+    };
     for (const node of this.nodes.values()) {
-      const { x, y } = node.center;
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
+      const b = node.worldBox;
+      grow(b.x, b.y);
+      grow(b.x + b.w, b.y + b.h);
+    }
+    for (const wire of this.graph.wires.values()) {
+      for (const p of this.routeForWire(wire)) grow(p.x, p.y);
     }
     const margin = PITCH * 3;
     minX -= margin;

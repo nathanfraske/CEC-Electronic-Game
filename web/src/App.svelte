@@ -3053,6 +3053,10 @@
             zoom?: number;
             lens?: string;
             centerId?: number;
+            thermal?: boolean;
+            real?: boolean;
+            run?: boolean;
+            tps?: number;
           }) => void;
         }
       ).__cecView = (o) => {
@@ -3063,6 +3067,19 @@
         ) {
           boardLens = o.lens;
           board?.setLens(boardLens);
+        }
+        // Thermal-lens / Real-mode / run harness hooks (scripts/shoot.mjs): the heat-field overlay only
+        // paints under the thermal lens AND Real mode AND with the sim running (parts must accumulate Tj),
+        // so a screenshot of it needs all three driven — otherwise the thermal render can't be SEEN.
+        if (o.real !== undefined) realModels = o.real;
+        if (o.thermal !== undefined) {
+          thermalLens = o.thermal;
+          board?.setLens(thermalLens ? "thermal" : boardLens);
+        }
+        if (o.tps !== undefined) controls?.setTicksPerSecond(o.tps);
+        if (o.run !== undefined) {
+          if (o.run) controls?.resume();
+          else controls?.pause();
         }
         if (board && o.zoom !== undefined) {
           if (o.centerId !== undefined)
