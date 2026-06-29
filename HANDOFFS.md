@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (242) — ENGINE "BIGGEST WIN" PLAN: lift pure-digital nets out of the dense MNA
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **Docs-only** (`docs/sim/digital-matrix-lift-plan.md`), no code,
+goldens untouched. This is the deliverable for the owner ask "see what the biggest thing we can do for the
+engine is and draft a plan." **No implementation** — plan presented for the owner to greenlight.
+
+**The win:** the dense `O(n³)` `solve_dense` is the wall to a gate-level CPU (sand→CPU→DOOM). A CPU is ~5k
+pure-digital nets, all of which are STILL stamped+factored in the dense matrix today (`stamp_digital`
+`lib.rs:6993`; the doc-comments at `:2114`/`:3638` say "pure-digital nets still stamp into the MNA until the
+event scheduler lands"). Lift them out → dense matrix shrinks to analog+boundary fringe (dozens of nodes),
+digital resolves in `O(gates)` → ~10⁶× on the dominant term for the endgame.
+
+**Why it's now a bounded capstone (~85% pre-built across ADR 0004):** `classify_nets` (`:2133`,
+Analog/Digital/Boundary, fully tested), `digital_rows` (`:3656`, proven strictly diagonal at `:6956`),
+`eval_digital` (`:6566`) + 4-state `combine` (`:528`) + `FAMILIES` (`:625`), the closed-form
+`digital_net_solved_voltage` (`:7041`), and `run_digital_subticks` (`:7628`) **which already solves
+pure-digital nets out-of-matrix for `S>1`**. And `snapshot_hash` (`:8528`) **already folds the discrete
+`Level` for pure-`Digital` nets**, not the voltage.
+
+**The key finding (de-risks it):** the *performance lift* (Stage A) is **golden-byte-identical**, separable
+from the *correctness upgrade* (Stage B = Z/X propagation, the only deliberate golden regen). Because the
+closed form is bit-identical to the in-matrix diagonal solve, the digital block is decoupled (can't perturb
+the analog pivot order), and the hash already commits the re-quantised level — we can drop the rows, fill
+`node_v` from the closed form, re-quantise as today → same hash. ADR 0004 thought "leave the matrix" REQUIRED
+the golden-breaking raw-`combine` commit; it doesn't (the sub-tick loop already proved the closed form ==
+matrix). **One real risk flagged:** a `floating_refs` GMIN double-stamp on a driven released net would differ
+in the last ULPs — Stage A0 adds a debug invariant (closed form == in-matrix `node_v`) to catch it across the
+whole suite before removing rows.
+
+**NEXT (owner decision):** greenlight Stage A (pure win, no golden churn) — or not. Stage B (Z/X propagation)
+schedule when a lesson needs a visible high-Z bus / `X`. Plan has full staged build + test bar + the honest
+comparison (vs sparse analog solver / event-driven dirty-set: this is higher-leverage AND lower-risk for the
+CPU goal). The (233)–(241) web refinements still await a **#315 batch PR**.
+
+---
+
 ## 2026-06-29 (241) — CENTRE-TAP TRANSFORMER PART (XFCT) + transformer ANALOGY view wired up
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **web-only**, golden untouched. Full gate green: web **356**

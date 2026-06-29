@@ -31,7 +31,23 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   ratio) already existed but was only on the legacy `TR`; registered `XF` + `XFCT` in `ANALOGY_DRAWERS`, so
   both morph to the rich belted-wheels illustration when zoomed in under the analogy lens (verified `shoot`).
 - [ ] **Remaining:** flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(241) await a
-  **#315 batch PR**. Engine "biggest win" plan being drafted in `docs/`.
+  **#315 batch PR**.
+
+---
+
+## 2026-06-29 (242) — ENGINE "BIGGEST WIN" PLAN (docs-only; owner greenlight pending)
+
+- ~~**Identify + plan the biggest engine win**~~ DONE as `docs/sim/digital-matrix-lift-plan.md` (no code).
+  The win: **lift pure-digital nets out of the dense `O(n³)` MNA** — the wall to a gate-level CPU
+  (sand→CPU→DOOM). ~85% pre-built across ADR 0004 (`classify_nets`, proven-diagonal `digital_rows`,
+  `eval_digital`/`combine`/`FAMILIES`, closed-form `digital_net_solved_voltage`, `run_digital_subticks`
+  already lifts for `S>1`, level-bearing `snapshot_hash`). **Key finding:** the perf lift (**Stage A**) is
+  **golden-byte-identical** (closed form == in-matrix diagonal solve; hash already folds the level), separable
+  from the Z/X-propagation correctness upgrade (**Stage B**, the only deliberate golden regen). Risk flagged:
+  a `floating_refs` GMIN double-stamp — Stage A0 adds a debug equality invariant to catch it first.
+- [ ] **OWNER DECISION:** greenlight Stage A (pure win, no golden churn)? Stage B later, per a lesson needing
+  high-Z/`X`. Plan has the staged build, the test bar (1000-tick byte-identity gate), and the honest vs-
+  sparse-solver / vs-dirty-set comparison.
 
 ---
 
