@@ -210,6 +210,19 @@ smoke — **without touching sim-core or the golden**, exactly as the rating/FAI
 > `routeForWire` polyline (one-cell-dilated) into the field grid (per-frame, lens-active only);
 > `ComponentNode.update` clears `heatGlow` when `lens === "thermal"`. Still golden-safe/presentational.
 > **Remaining:** the °C colour-scale legend; derate→FAIL/vent; Path 2 (sim-core hashed Tj).
+>
+> **UPDATE 2026-06-29 — Phase 2b legend + the derate→FAIL consequence (#116) LANDED** (web 328, verified
+> live). The **°C legend** (§1's "show the whole power budget"): a HUD side strip (`App.svelte`
+> `.thermal-legend`, `{#if thermalLens && realModels}`) — a vertical inferno gradient (shared from
+> `thermalField.ts` `infernoCssGradient()`, single source of truth with the canvas colormap) + mono ticks
+> (ambient → the live scale top) + a live PEAK read, fed by `board.ts` `heatReadout(): {peakC, scaleTopC}`.
+> And the **consequence** (§2/§6 step 2, the first half): a web-side `overTemp = real && tj >= T_MAX_C`
+> flag on each `ComponentNode` → a **distinct OVERHEAT box** (charred fill + pulsing amber + label,
+> separate from the red over-current FAIL, shown only when not also FAILed) + the inspector "Body temp"
+> row goes red with "⚠ OVERHEAT". Heat is now a *consequence*, not just a readout. Golden-safe + replay-
+> safe (presentational flag, never re-enters the solve — `failed_elements` was never hashed; Tj is the
+> sim-tick-advanced power). **Remaining:** the thermal-death *vent* (animated smoke + autopsy→Lux);
+> the management levers (§3 — heatsinks/fan/spacing/wattage axis); Path 2 (sim-core hashed Tj).
 
 0. ~~**Read-only heat.**~~ DONE — model + `P=V·I` → `Tj` (`thermal.ts`) + live glow + °C readout.
 1. ~~**Thermal lens + the time-constant.**~~ DONE — the tick-driven integrator (`advanceTemps` / per-node

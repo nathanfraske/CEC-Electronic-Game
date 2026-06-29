@@ -175,7 +175,8 @@
     rmsStabilized,
     type ElectricalState,
   } from "./lib/glyphs";
-  import { T_AMBIENT_C } from "./lib/thermal";
+  import { T_AMBIENT_C, T_MAX_C } from "./lib/thermal";
+  import { infernoCssGradient } from "./lib/thermalField";
   import { pinoutOf } from "./lib/pinout";
   import { hasDetail } from "./lib/detailDrawers";
   import { hasAnalogy } from "./lib/analogyDrawers";
@@ -1228,6 +1229,15 @@
   // The selected part's live self-heating body temperature (°C), updated each frame in onFrame from the
   // renderer's integrated Tj — read by the inspector's "Body temp" row (Real mode).
   let selBodyTemp = $state(T_AMBIENT_C);
+  // The thermal-lens °C legend readout, updated each frame in onFrame from the board's heat field:
+  // `heatPeakC` is the hottest part on the board (the "PEAK" line); `heatScaleTopC` is the temperature
+  // mapped to white-hot at the top of the inferno scale the overlay is painted with (so the legend's
+  // tick labels line up with the on-board colours). Both ambient when the heat camera is off.
+  let heatPeakC = $state(T_AMBIENT_C);
+  let heatScaleTopC = $state(T_AMBIENT_C + 80);
+  // The inferno colour ramp as a CSS gradient (single source of truth shared with the canvas heatmap),
+  // bottom = ambient → top = peak; painted into the legend strip.
+  const infernoGradient = infernoCssGradient("to top");
   // Apparent rate (Hz, scaled by playback speed) above which the live numbers flail
   // unreadably and the inspector switches to the RMS read.
   const READOUT_RMS_HZ = 4;
@@ -2678,6 +2688,11 @@
             scopeBatch,
             realModels,
           );
+          // Board-wide thermal-lens legend readout (non-reactive board read, like selBodyTemp below) —
+          // unconditional, so the peak/scale reflect the whole board even with nothing selected.
+          const heat = b.heatReadout();
+          heatPeakC = heat.peakC;
+          heatScaleTopC = heat.scaleTopC;
           if (selPart) {
             const e = electrical?.get(selPart.id) ?? ZERO_ELECTRICAL;
             // Once the part's AC reverses faster than the eye/meter can track, swap the
@@ -6139,6 +6154,33 @@
         </div>
       </div>
 
+      <!-- Thermal heat-camera legend: the inferno °C colour scale (ambient floor → the live scale top the
+           on-board overlay is painted with) plus the board's PEAK junction temperature — like a thermal
+           camera's reference bar. Shown only with the heat camera on in Real mode; pinned to the right
+           edge so it clears the zoom meter (bottom-left) and the scope (bottom-right). Non-interactive. -->
+      {#if thermalLens && realModels}
+        <div class="thermal-legend" aria-hidden="true">
+          <span class="thermal-legend-head mono">TEMP</span>
+          <div class="thermal-legend-scale">
+            <div
+              class="thermal-legend-strip"
+              style="background: {infernoGradient}"
+            ></div>
+            <div class="thermal-legend-ticks mono">
+              <span>{heatScaleTopC.toFixed(0)}°</span>
+              <span>{((T_AMBIENT_C + heatScaleTopC) / 2).toFixed(0)}°</span>
+              <span>{T_AMBIENT_C}°</span>
+            </div>
+          </div>
+          <span
+            class="thermal-legend-peak mono"
+            class:is-overheat={heatPeakC >= T_MAX_C}
+          >
+            {heatPeakC >= T_MAX_C ? "⚠ " : ""}PEAK {heatPeakC.toFixed(0)}°C
+          </span>
+        </div>
+      {/if}
+
       <!-- Quick-recall hotbar: nine configured-part slots along the board's bottom edge.
            Press a digit to arm that slot's part (place-and-repeat), Shift+digit to store
            the armed part there, right-click (or the ×) to clear; Q pipettes the selected
@@ -7142,9 +7184,16 @@
                            ambient. `selBodyTemp` is updated each frame in onFrame from the renderer's
                            integrated Tj (board read non-reactively there, kept out of the template). -->
                       {#if realModels && selBodyTemp > T_AMBIENT_C + 0.5}
-                        <div class="info-row">
+                        <div
+                          class="info-row"
+                          class:is-overheat={selBodyTemp >= T_MAX_C}
+                        >
                           <span>Body temp</span>
-                          <span class="mono">{selBodyTemp.toFixed(0)} °C</span>
+                          <span class="mono"
+                            >{selBodyTemp.toFixed(0)} °C{selBodyTemp >= T_MAX_C
+                              ? " ⚠ OVERHEAT"
+                              : ""}</span
+                          >
                         </div>
                       {/if}
                     </div>
@@ -8926,6 +8975,11 @@
   }
   .info-row .mono {
     color: var(--text);
+  }
+  /* A part cooked past T_MAX_C (Real-mode self-heating): the body-temp row reads in fail red. */
+  .info-row.is-overheat,
+  .info-row.is-overheat .mono {
+    color: var(--bad);
   }
   .info-empty {
     font-size: 13px;

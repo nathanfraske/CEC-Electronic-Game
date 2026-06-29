@@ -159,6 +159,23 @@ const INFERNO: [number, number, number][] = [
   [0xff, 0xff, 0xe0], // >1 white-hot
 ];
 
+/**
+ * The INFERNO colourmap as a CSS `linear-gradient(...)` string, so the thermal-lens °C legend strip
+ * reads identically to the on-board heatmap — a single source of truth for the stops (the CSS bar and
+ * the canvas writeImage must never drift). The stops are evenly spaced because {@link infernoRGBA}
+ * interpolates over `n−1` equal segments. Opaque (the legend sits on the dark HUD glass, so the
+ * near-black cold end already reads as "ambient/board"); the canvas overlay's alpha fade is its own
+ * concern.
+ */
+export function infernoCssGradient(direction = "to top"): string {
+  const n = INFERNO.length - 1;
+  const stops = INFERNO.map(([r, g, b], i) => {
+    const pct = ((i / n) * 100).toFixed(1);
+    return `rgb(${r}, ${g}, ${b}) ${pct}%`;
+  });
+  return `linear-gradient(${direction}, ${stops.join(", ")})`;
+}
+
 /** Inferno colour + alpha for a normalised heat value `f` (0 = ambient → transparent, 1 = peak). */
 function infernoRGBA(f: number): [number, number, number, number] {
   const t = Math.min(1, Math.max(0, f));

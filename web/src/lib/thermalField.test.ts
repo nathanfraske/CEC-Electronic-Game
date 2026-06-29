@@ -2,7 +2,7 @@
 // The board heat-FIELD: a hot source spreads to its neighbours (diffusion), the field decays back to
 // ambient when the source is removed (convection), it stays stable at any dt, and it's deterministic.
 import { describe, it, expect } from "vitest";
-import { ThermalField } from "./thermalField";
+import { ThermalField, infernoCssGradient } from "./thermalField";
 import { T_AMBIENT_C } from "./thermal";
 
 describe("board heat field (thermal-lens overlay)", () => {
@@ -88,6 +88,21 @@ describe("board heat field (thermal-lens overlay)", () => {
     expect(alongTrace).toBeGreaterThan(T_AMBIENT_C + 25); // the copper carried the heat down the trace
     expect(offTrace).toBeLessThan(alongTrace - 30); // the bare board did not — a sharp copper/board split
     expect(offTrace).toBeLessThan(T_AMBIENT_C + 5); // heat stayed on the copper
+  });
+
+  it("infernoCssGradient mirrors the colourmap as evenly-spaced CSS stops (legend ↔ heatmap sync)", () => {
+    const g = infernoCssGradient("to top");
+    expect(g.startsWith("linear-gradient(to top, ")).toBe(true);
+    // The cold floor and white-hot ceiling of the inferno table, at 0% and 100%.
+    expect(g).toContain("rgb(0, 0, 4) 0.0%");
+    expect(g).toContain("rgb(255, 255, 224) 100.0%");
+    // 10 stops → 9 even segments; the second stop sits at 1/9 ≈ 11.1%.
+    expect(g).toContain("11.1%");
+    expect((g.match(/rgb\(/g) ?? []).length).toBe(10);
+    // Direction is parameterised (the legend strip paints bottom→top = ambient→peak).
+    expect(
+      infernoCssGradient("to right").startsWith("linear-gradient(to right, "),
+    ).toBe(true);
   });
 
   it("is deterministic — the same drive reproduces the same field exactly", () => {

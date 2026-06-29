@@ -99,6 +99,7 @@ import {
 } from "./netlist";
 import {
   T_AMBIENT_C,
+  T_MAX_C,
   glowFactor,
   stepTemp,
   dissipatedPower,
@@ -665,6 +666,11 @@ export class Board {
   private heatImage: ImageData | null = null;
   private heatCols = 0;
   private heatRows = 0;
+  // The live thermal-lens readout, for the °C colour-scale legend: the hottest cell on the board and the
+  // temperature mapped to the top (white-hot) of the inferno scale the overlay is painted with (so the
+  // legend's labels line up with the overlay's colours). Ambient when the lens is off.
+  private heatPeakC = T_AMBIENT_C;
+  private heatScaleTopC = T_AMBIENT_C + 80;
   // The die-editor boundary ("walls"): drawn behind everything but the grid when the board is the
   // inner canvas of an IC-maker frame (ADR 0006). Empty/invisible on the normal outer board.
   private readonly dieWallLayer = new Graphics();
@@ -3216,6 +3222,14 @@ export class Board {
     return this.nodes.get(id)?.bodyTemp ?? T_AMBIENT_C;
   }
 
+  /** The live heat-field readout for the thermal-lens °C legend: `peakC` is the hottest cell on the board
+   *  and `scaleTopC` is the temperature mapped to the top (white-hot) of the inferno colour scale the
+   *  overlay is painted with — so the legend's labels line up with the overlay's colours. Both are ambient
+   *  when the lens is off. Presentation only. */
+  heatReadout(): { peakC: number; scaleTopC: number } {
+    return { peakC: this.heatPeakC, scaleTopC: this.heatScaleTopC };
+  }
+
   /** Reset every part's self-heating temperature to ambient — on a sim restart or netlist rebuild, so
    *  the board doesn't keep a stale glow from before the change. */
   resetThermals(): void {
@@ -3237,6 +3251,8 @@ export class Board {
     this.wireLayer.alpha = on ? 0.4 : 1;
     if (!on || this.nodes.size === 0) {
       this.heatSprite.visible = false;
+      this.heatPeakC = T_AMBIENT_C;
+      this.heatScaleTopC = T_AMBIENT_C + 80;
       return;
     }
     // Content bbox from the part centres (+ a margin so the field extends past the outermost parts).
@@ -3305,6 +3321,9 @@ export class Board {
     const copper = this.buildCopperGrid(cols, rows, minX, minY, w, h);
     field.step(sources, dtSec, copper);
     const peakC = Math.max(field.peak(), T_AMBIENT_C + 80);
+    // Publish the legend readout: the true hottest cell + the scale top the colourmap is painted with.
+    this.heatPeakC = field.peak();
+    this.heatScaleTopC = peakC;
     field.writeImage(img.data, peakC);
     ctx.putImageData(img, 0, 0);
     this.heatTexture!.source.update();
@@ -8166,6 +8185,12 @@ class ComponentNode {
   // solve. See `web/src/lib/thermal.ts`.
   private readonly heatGlow = new Graphics();
   private tj = T_AMBIENT_C;
+  // Web-side thermal-death flag: this part has cooked past T_MAX_C (Real-mode self-heating). Drives the
+  // distinct OVERHEAT box below (separate from the red over-current FAIL). Presentational only — like the
+  // FAIL flag it only marks the part and never re-enters the solve, so it stays golden-safe + replay-safe.
+  private overTemp = false;
+  private readonly overheatBox = new Graphics();
+  private readonly overheatText: Text;
   private readonly label: Text;
   private readonly value: Text | null;
   /** The live stored-value chip ("Q=…") a recognised sequential cell shows under its body symbol; it
@@ -8363,6 +8388,25 @@ class ComponentNode {
     this.failText.visible = false;
     this.view.addChild(this.failText);
 
+    // OVERHEAT overlay: a pulsing amber/char box + "OVERHEAT" label when this part cooks past T_MAX_C
+    // (Real-mode self-heating). Distinct from the red over-current FAIL above; shown only when not also
+    // over-current-failed, so a part shows one box, not two.
+    this.view.addChild(this.overheatBox);
+    this.overheatText = new Text({
+      text: "OVERHEAT",
+      style: {
+        fill: PALETTE.warn,
+        fontFamily: "IBM Plex Mono, monospace",
+        fontSize: 11,
+        fontWeight: "700",
+        letterSpacing: 1,
+      },
+    });
+    this.overheatText.anchor.set(0.5);
+    this.overheatText.resolution = DPR;
+    this.overheatText.visible = false;
+    this.view.addChild(this.overheatText);
+
     this.layoutLabels();
     // pin dots
     for (const p of this.pinPositions) {
@@ -8420,6 +8464,7 @@ class ComponentNode {
     if (this.value) this.value.resolution = r;
     this.meter.resolution = r;
     this.failText.resolution = r;
+    this.overheatText.resolution = r;
     // Pin labels manage their OWN resolution + counter-scale in the layout loop (LABEL_CAP_ZOOM), so they
     // stay crisp + constant-size near the pin past the zoom where this shared, MAX_TEXT_RES-capped value
     // would blur and balloon them.
@@ -8496,7 +8541,11 @@ class ComponentNode {
   /** Reset the body temperature to ambient (on a sim restart / netlist rebuild). */
   resetThermal(): void {
     this.tj = T_AMBIENT_C;
+    this.overTemp = false;
     this.heatGlow.clear();
+    this.overheatBox.clear();
+    this.overheatBox.visible = false;
+    this.overheatText.visible = false;
   }
 
   /** Draw the warm incandescence halo behind the body, scaled by how hot the part is. Invisible at
@@ -8558,6 +8607,9 @@ class ComponentNode {
     this.tj = real
       ? stepTemp(this.kindTag, this.tj, heatPower, dtSec)
       : T_AMBIENT_C;
+    // Thermal-death flag: cooked past the max junction temperature (Real mode only). Purely a render flag
+    // (the OVERHEAT box + the inspector readout) — never re-enters the solve, so golden-safe + replay-safe.
+    this.overTemp = real && this.tj >= T_MAX_C;
     // The per-part incandescence halo is the SCHEMATIC heat cue. Under the thermal lens the board
     // heat-field overlay carries the heat (colour contrast only), so the halo is suppressed there to
     // avoid double-drawing — Tj is still integrated above for the field's sources.
@@ -9187,6 +9239,47 @@ class ComponentNode {
     } else {
       this.failBox.visible = false;
       this.failText.visible = false;
+    }
+    // OVERHEAT (magic-smoke) overlay: a part that has cooked past T_MAX_C from self-heating gets a
+    // distinct amber/char box + "OVERHEAT" — a thermal death, separate from the red over-current FAIL
+    // above. Shown only when NOT already over-current-failed (that box dominates), so a part shows one
+    // box. Web-side + presentational, like the FAIL flag: it only marks the part, never the solve.
+    if (this.overTemp && !electrical.failed) {
+      let minX = 0;
+      let maxX = 0;
+      let minY = 0;
+      let maxY = 0;
+      for (const p of this.pinPositions) {
+        const r = rotPx(p.x, p.y, this.component.rot, this.component.mirror);
+        minX = Math.min(minX, r.x);
+        maxX = Math.max(maxX, r.x);
+        minY = Math.min(minY, r.y);
+        maxY = Math.max(maxY, r.y);
+      }
+      const pad = 13;
+      const pulse =
+        0.5 +
+        0.5 *
+          Math.sin((performance.now() / 1000) * Math.PI * 2 * FAIL_PULSE_HZ);
+      this.overheatBox.clear();
+      this.overheatBox
+        .roundRect(
+          minX - pad,
+          minY - pad,
+          maxX - minX + 2 * pad,
+          maxY - minY + 2 * pad,
+          4,
+        )
+        // A charred scorch fill under an amber stroke — reads as "burnt", distinct from the FAIL red.
+        .fill({ color: 0x1a0d06, alpha: 0.5 })
+        .stroke({ color: PALETTE.warn, width: 2, alpha: 0.35 + 0.65 * pulse });
+      this.overheatBox.visible = true;
+      this.overheatText.position.set((minX + maxX) / 2, minY - pad - 9);
+      this.overheatText.alpha = 0.55 + 0.45 * pulse;
+      this.overheatText.visible = true;
+    } else {
+      this.overheatBox.visible = false;
+      this.overheatText.visible = false;
     }
   }
 

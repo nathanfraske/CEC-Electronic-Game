@@ -6,6 +6,28 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (231) — Thermal Phase 2b: °C legend + derate→FAIL / magic-smoke (#116), golden-safe
+
+- ~~**Thermal Phase 2b — °C colour-scale legend**~~ DONE (web-only, golden-safe; web 328; verified live).
+  A HUD side strip (`App.svelte` `.thermal-legend`, mirrors `.zoom-meter`) shown `{#if thermalLens &&
+  realModels}`: a vertical **inferno gradient** (shared from `thermalField.ts` `infernoCssGradient()` so it
+  can't drift from the canvas colormap) + mono ticks (ambient → live scale top) + a live **PEAK** read.
+  `board.ts` `heatReadout(): {peakC, scaleTopC}` exposes the field peak + the painted scale top;
+  `App.svelte` reads it non-reactively each frame into `$state`.
+- ~~**Thermal derate→FAIL / magic-smoke** (#116)~~ DONE (web-only, golden-safe). A web-side `overTemp`
+  flag (`real && tj >= T_MAX_C`) on `ComponentNode` → a **distinct OVERHEAT box** (charred fill + pulsing
+  amber + "OVERHEAT", separate from the red over-current FAIL; shown only when not also FAILed) + the
+  inspector "Body temp" row turns red + "⚠ OVERHEAT". Presentational only (never re-enters the solve) —
+  golden-safe + replay-safe. `thermalField.test.ts` +1 (gradient ↔ colormap sync).
+- [ ] **Thermal-death polish** (optional): animated smoke puff + a charred destroyed-glyph state distinct
+  from the box; hook over-temp into the autopsy→Lux flow.
+- [ ] **Thermal management levers** (ideation §3): heatsinks (θ↓), fan (ambient↓), part-spacing mutual
+  heating, the wattage axis on resistors — the gameplay payoff.
+- [ ] **Thermal Path 2** (owner-greenlit, golden-moving): sim-core hashed `Tj` for R(T) drift / thermal
+  runaway / replay-exact thermal-contract grading.
+
+---
+
 ## 2026-06-29 (230) — Thermal Phase 2: copper-weighted diffusion (heat follows traces) + glow off under lens
 
 - ~~**Thermal Phase 2 — copper-weighted diffusion**~~ DONE (web-only, golden-safe; web 327; verified live

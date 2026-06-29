@@ -5,6 +5,51 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (231) — Thermal Phase 2b: °C colour-scale legend + derate→FAIL / magic-smoke (#116) — golden-safe
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (230). Web-only, golden-safe (zero sim-core
+change — `golden_snapshot_hash_is_stable` + all `*_run_is_reproducible` green). Gate green: web **328**
+(+1), check/lint/build 0. **Verified live via Playwright** — a 5 V / 4 Ω resistor cooked to ~323 °C shows
+the OVERHEAT box + the legend reads ⚠ PEAK 323 °C; a 30 Ω part runs warm (no box).
+
+**Landed — both owner-greenlit follow-ons:**
+- **°C colour-scale legend** (the reference's bottom-bar, as a HUD side strip): a DOM overlay in
+  `App.svelte` (`.thermal-legend`, mirroring the `.zoom-meter` glass recipe), shown `{#if thermalLens &&
+  realModels}`, pinned right-centre (clears the zoom meter bottom-left + scope bottom-right). A vertical
+  **inferno gradient** strip + mono tick labels (ambient floor → live scale top) + a live **PEAK** read.
+  The gradient is shared from `thermalField.ts` `infernoCssGradient()` (single source of truth, can't
+  drift from the canvas colormap). `board.ts` exposes `heatReadout(): {peakC, scaleTopC}` (the field's
+  hottest cell + the scale top the overlay is painted with, so the ticks line up with the on-board
+  colours; reset to ambient when the lens is off — no staleness). `App.svelte` reads it non-reactively
+  each frame into `heatPeakC`/`heatScaleTopC` `$state` (the `selBodyTemp` pattern).
+- **Derate→FAIL / magic-smoke** (#116): a **web-side `overTemp` flag** on `ComponentNode`
+  (`real && this.tj >= T_MAX_C`, set right after the Tj integrate) drives a **distinct OVERHEAT overlay**
+  — a charred scorch fill + pulsing amber box + "OVERHEAT" label (separate `overheatBox`/`overheatText`),
+  shown only when **not** also over-current-FAILed (so a part shows one box). The inspector "Body temp"
+  row turns red + appends "⚠ OVERHEAT" past T_MAX_C. Presentational, like the existing rating-FAIL: it
+  only flags, never re-enters the solve — golden-safe + replay-safe (Tj is the sim-tick-advanced power).
+- **Tests:** `thermalField.test.ts` +1 (`infernoCssGradient` mirrors the colormap as evenly-spaced CSS
+  stops). Web **328**.
+
+**Golden-safe / determinism-safe:** unchanged class as the rest of the thermal vertical — zero sim-core
+change, `failed_elements` was never in `snapshot_hash` and `overTemp` is a separate web-only render flag.
+
+**NEXT (thermal, in priority order):**
+1. **Thermal-death vent / autopsy polish** (optional): an animated smoke puff + a destroyed "charred"
+   glyph state distinct from the box; tie over-temp into the existing autopsy→Lux flow.
+2. **Management levers** (ideation §3): heatsinks (θ↓), fan (ambient↓), part-spacing mutual heating, the
+   wattage axis on resistors — the gameplay payoff that makes heat a thing you *design around*.
+3. **Path 2 (owner-greenlit, golden-moving):** sim-core hashed `Tj` for R(T) drift / thermal runaway /
+   replay-exact thermal-contract grading — the per-tick feedback the web path can't do replay-safely.
+4. **Merge decision:** the whole thermal vertical (Phase 0/1/2/2b + #116) is on the branch, NOT merged.
+
+**Verification note:** `shoot.mjs` is t=0 only. To cook a part headless, drive the live sim (Playwright):
+Real toggle → set `.rate-custom` to **500000** (rate is *ticks/sec*; DT = 2 µs, so ~1 sim-s per wall-s)
++ Run → wait ~14 s → 🔥 Heat → screenshot. A low ohmage (R = 4 Ω across 5 V ≈ 6 W) crosses T_MAX early in
+the ramp so you don't need full steady state. The temp driver was deleted after verifying.
+
+---
+
 ## 2026-06-29 (230) — Thermal Phase 2: copper-weighted diffusion (heat follows the traces) + glow off under the lens
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, on top of (229). Web-only, golden-safe (zero sim-core
