@@ -6159,7 +6159,11 @@
            camera's reference bar. Shown only with the heat camera on in Real mode; pinned to the right
            edge so it clears the zoom meter (bottom-left) and the scope (bottom-right). Non-interactive. -->
       {#if thermalLens && realModels}
-        <div class="thermal-legend" aria-hidden="true">
+        <div
+          class="thermal-legend"
+          aria-hidden="true"
+          title="Heat-camera °C colour scale"
+        >
           <span class="thermal-legend-head mono">TEMP</span>
           <div class="thermal-legend-scale">
             <div

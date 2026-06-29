@@ -3222,9 +3222,10 @@ export class Board {
     return this.nodes.get(id)?.bodyTemp ?? T_AMBIENT_C;
   }
 
-  /** The live heat-field readout for the thermal-lens °C legend: `peakC` is the hottest cell on the board
-   *  and `scaleTopC` is the temperature mapped to the top (white-hot) of the inferno colour scale the
-   *  overlay is painted with — so the legend's labels line up with the overlay's colours. Both are ambient
+  /** The live heat-field readout for the thermal-lens °C legend: `peakC` is the hottest PART's junction
+   *  temperature (so the legend's over-temp ⚠ flips together with the per-part OVERHEAT box) and
+   *  `scaleTopC` is the temperature mapped to the top (white-hot) of the inferno colour scale the overlay
+   *  is painted with — so the legend's tick labels line up with the overlay's colours. Both are ambient
    *  when the lens is off. Presentation only. */
   heatReadout(): { peakC: number; scaleTopC: number } {
     return { peakC: this.heatPeakC, scaleTopC: this.heatScaleTopC };
@@ -3235,6 +3236,8 @@ export class Board {
   resetThermals(): void {
     for (const node of this.nodes.values()) node.resetThermal();
     this.heatField?.reset();
+    this.heatPeakC = T_AMBIENT_C;
+    this.heatScaleTopC = T_AMBIENT_C + 80;
   }
 
   /**
@@ -3303,12 +3306,19 @@ export class Board {
     const img = this.heatImage;
     if (!field || !ctx || !img) {
       this.heatSprite.visible = false;
+      this.heatPeakC = T_AMBIENT_C;
+      this.heatScaleTopC = T_AMBIENT_C + 80;
       return;
     }
-    // Each hot part is a held-temperature source at its grid cell.
+    // Each hot part is a held-temperature source at its grid cell. Track the hottest PART (node Tj) for
+    // the legend's PEAK read — the diffused field peak sags slightly below the source's held temperature,
+    // so the PEAK must come from the parts, not the field, to flip its over-temp ⚠ in step with the
+    // per-part OVERHEAT box.
     const sources: FieldSource[] = [];
+    let maxTj = T_AMBIENT_C;
     for (const node of this.nodes.values()) {
       const tj = node.bodyTemp;
+      if (tj > maxTj) maxTj = tj;
       if (tj <= T_AMBIENT_C + 0.5) continue;
       const { x, y } = node.center;
       sources.push({
@@ -3321,8 +3331,9 @@ export class Board {
     const copper = this.buildCopperGrid(cols, rows, minX, minY, w, h);
     field.step(sources, dtSec, copper);
     const peakC = Math.max(field.peak(), T_AMBIENT_C + 80);
-    // Publish the legend readout: the true hottest cell + the scale top the colourmap is painted with.
-    this.heatPeakC = field.peak();
+    // Publish the legend readout: PEAK = the hottest PART (so its ⚠ flips with the OVERHEAT box), scale
+    // top = the value the colourmap is painted with (so the gradient tick labels line up with the colours).
+    this.heatPeakC = maxTj;
     this.heatScaleTopC = peakC;
     field.writeImage(img.data, peakC);
     ctx.putImageData(img, 0, 0);
