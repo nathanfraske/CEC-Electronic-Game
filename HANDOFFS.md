@@ -33,10 +33,14 @@ range **0.19 V** (thermal fuzz around 2.5 V); the scope's Node-2 trace visibly j
   emission Real-vs-Ideal, 1/√R + tier ordering, end-to-end divider fuzz). Docs: `docs/sim/noise-ideation.md`
   + CLAUDE.md gotcha.
 
-**Gotcha learned (in CLAUDE.md):** node-voltage noise grows as `√R`, so a **high-impedance node** (a 1 MΩ
-pulldown on an isolated bus) swings hundreds of mV. The first scale (`3e-3`) made a 1 MΩ node swing volts,
-pushing the **6T-SRAM bit-line** into the mid-rail band and breaking `sramPowerUp.test.ts`. Fixed by a
-conservative `NOISE_I_SCALE` (peak < 1.8 V even at 1 MΩ). Keep test nodes firmly tied.
+**Gotcha learned (in CLAUDE.md):** node-voltage noise grows as `√R`, which swings **volts** at the picker's
+multi-MΩ ceiling (a 9.1 MΩ budget pulldown). The first scale (`3e-3`) made a 1 MΩ node swing volts, pushing
+the **6T-SRAM bit-line** into the mid-rail band and breaking `sramPowerUp.test.ts`; the conservative
+`NOISE_I_SCALE = 2.5e-4` fixed that at 1 MΩ. An adversarial review then caught that the *picker reaches
+9.1 MΩ*, where even `2.5e-4` peaks ~4 V — so `resistorNoiseAmp` now **soft-saturates** above
+`NOISE_R_KNEE = 1 MΩ` (amp `∝ 1/R`, so a lone resistor's node-voltage noise caps at `NOISE_V_MAX·tier`).
+`≤ 1 MΩ is byte-identical` (SRAM/golden/live verification unchanged); a 9.1 MΩ budget node's 3.46σ peak now
+stays clear of the mid-rail. Keep test nodes firmly tied.
 
 **NEXT (noise + thermal, owner's call):**
 1. **Noise follow-ons:** shot noise (`√(2qI)`, current-dependent), flicker/1-f (needs a shaping filter

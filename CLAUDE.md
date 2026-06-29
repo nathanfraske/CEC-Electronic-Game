@@ -237,10 +237,13 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   Irwin–Hall over `splitmix64` (no transcendentals → machine-independent, replay-exact). It **enters the
   solve** (node `V` fuzzes — visible on the scope) but `0` (default / Ideal / the golden) skips it
   entirely → byte-identical. **Game-scaled** (the lesson is the ordering — bigger R, cheaper grade ⇒
-  noisier — not the literal √(4kTRΔf) µV). **Gotcha:** the resulting node-voltage noise grows as `√R`, so
-  a high-impedance node (e.g. a 1 MΩ pulldown on an isolated bus) swings hundreds of mV — keep
-  `NOISE_I_SCALE` conservative and firm up weakly-tied test nodes (the 6T-SRAM bit-line is tied through a
-  resistor for exactly this reason). See `docs/sim/noise-ideation.md`.
+  noisier — not the literal √(4kTRΔf) µV). **Gotcha:** the node-voltage noise grows as `√R`, which would
+  swing **volts** at the picker's multi-MΩ ceiling (a 9.1 MΩ budget pulldown). `resistorNoiseAmp` **soft-
+  saturates** above a `NOISE_R_KNEE` (= 1 MΩ — the amp goes `∝ 1/R`, not `1/√R`) so a lone resistor's
+  node-voltage noise caps at `NOISE_V_MAX·tier` (≤ 1 MΩ is unchanged, so the 6T-SRAM 1 MΩ bit-line and the
+  golden are byte-identical); even a 9.1 MΩ budget node's 3.46σ peak stays clear of the logic mid-rail.
+  Still: firm up weakly-tied test nodes (the SRAM bit-line is tied through a resistor for this reason). See
+  `docs/sim/noise-ideation.md`.
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

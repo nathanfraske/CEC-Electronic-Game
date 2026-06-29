@@ -32,6 +32,19 @@ describe("resistor thermal-noise amplitude (tiers.ts)", () => {
     expect(b / a).toBeCloseTo(0.5, 6);
   });
 
+  it("saturates the lone-resistor node-voltage noise above the knee (a multi-MΩ node can't swing volts)", () => {
+    // dv_lone(R) = amp(R)·R. Below the 1 MΩ knee this grows as √R; above it, it must stay bounded so a
+    // 9.1 MΩ budget pulldown can't peak into the logic mid-rail (the 3.46σ peak is dv·2√3).
+    const dvLone = (r: number, tier: number) => resistorNoiseAmp(r, tier) * r;
+    // Below the knee: √R growth (100 kΩ noisier than 10 kΩ).
+    expect(dvLone(100_000, 1)).toBeGreaterThan(dvLone(10_000, 1));
+    // Above the knee: bounded — a 9.1 MΩ budget node's 3.46σ peak stays clear of the 1.8 V mid-rail floor.
+    const peak91MegBudget = dvLone(9_100_000, 0) * 2 * Math.sqrt(3);
+    expect(peak91MegBudget).toBeLessThan(1.8);
+    // The cap is monotone (more R never reduces it) and tracks tier.
+    expect(dvLone(9_100_000, 0)).toBeGreaterThan(dvLone(9_100_000, 3));
+  });
+
   it("a worse grade is noisier (budget > mid > high-end > lab)", () => {
     const r = 10_000;
     const budget = resistorNoiseAmp(r, 0);

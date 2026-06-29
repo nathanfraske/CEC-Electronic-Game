@@ -41,6 +41,20 @@ is **game-scaled** web-side for legibility — like diode `TT` and cap `tau`, th
 realistic *ordering* (bigger R, hotter, cheaper grade ⇒ noisier) is what
 matters, not the literal `√(4kTRΔf)` microvolts.
 
+**Soft saturation (the high-impedance guardrail).** A lone resistor's
+node-voltage noise is `≈ NOISE_I_SCALE·√R·tier·sample`, so it grows as `√R` —
+and the part picker reaches **9.1 MΩ**, where the `3.46σ` peak (`|sample|` is
+hard-bounded at `2√3`) would be **volts**. That is unphysical for the game and
+could push a high-impedance node (a directly-tied CMOS input / latch storage
+node) into the logic mid-rail and metastabilise it. So `resistorNoiseAmp`
+**saturates above a knee** (`NOISE_R_KNEE = (NOISE_V_MAX/NOISE_I_SCALE)² =
+1 MΩ`): below it the current is `∝ 1/√R` (the Johnson ordering, unchanged);
+above it the current is `∝ 1/R`, so the lone-resistor node-voltage noise caps
+at `NOISE_V_MAX·tier` (the two branches meet continuously at the knee). `≤ 1 MΩ
+is byte-identical` to the un-clamped scale (so the 6T-SRAM 1 MΩ bit-line, the
+golden, and the live-verified ≤ 100 kΩ dividers are unchanged); a 9.1 MΩ budget
+node's `3.46σ` peak now stays clear of the `1.8 V` mid-rail floor.
+
 ## Why it's golden-safe
 
 - New param **slot 6** (`NOISE_SLOT`), default `0`. `param_or`/direct read of an
