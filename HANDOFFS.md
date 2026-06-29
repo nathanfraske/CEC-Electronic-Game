@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (245) — DIRTY-SET DIGITAL EVAL: design done (owner picked it); ready to build S0→S4
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **Docs-only so far** (`docs/sim/dirty-set-digital-eval.md`).
+Owner picked option **A** (event-driven dirty-set) off the post-lift engine agenda. A multi-agent design
+panel (3 proposals, 31 adversarial divergences, judge-scored) produced the design below.
+
+**The design (Proposal 3 + Proposal 2's tier-2).** Make `eval_digital` / `commit_sequential_digital_state`
+re-evaluate only the *active fanout* instead of every element each (sub-)tick. Two passes:
+- **Pass L** (event-driven, the win): the discrete LEVEL/`combine` resolution. Skip an element iff its
+  recomputed (input Levels at its own rail, powered bool, sequential state) tuple == its cache — **the skip
+  key IS the first half of `eval_digital`'s work, so skipped ⇒ bit-identical**. Verified fact: `eval_digital`
+  re-quantizes inputs from live `node_v` (NOT `net_level`) at each reader's own rail — the trap a naive
+  level-diff hits.
+- **Pass R** (always-on, scoped): the rail-dependent stamp (`gate_target/gout/digital_v*`), which moves
+  every tick — runs unconditionally for `analog_driving_gates` (small boundary set) + rail-bits-dirty
+  pure-digital drivers; legacy (constant-rail) folds into Pass L.
+
+**Fenced by a debug oracle** (run dirty-set + evaluate-all, assert bit-identical on
+drives/stamps/net_level/node_v/sequential state) — same discipline that proved the lift. **No golden moves**
+at any stage. Time-driven/analog-sense state (clocks, DRAM decay, comparator/SAR) is never event-gated.
+
+**Staged plan:** S0 oracle harness (tautology) → S1 install maps → S2 Pass R split → S3 Pass L dirty-set
+(main tick) → S4 sub-ticks → S5 (optional v2) incrementalize the O(n) scans. S0–S2 zero behavioural risk.
+
+**NEXT:** build S0→S4 (recommended). Honest caveat: the win is on per-gate *logic* (2× quantize + truth
+table + combine + 4 writes), not the per-tick stamp; analog-solve-bound circuits see it as a near-no-op.
+
+---
+
 ## 2026-06-29 (244) — DIGITAL-MATRIX LIFT FOLLOW-UP: direct compacted assembly (71× on a 4000-gate chain)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **sim-core**, **proven byte-identical** (golden + 4-circuit
