@@ -5,6 +5,35 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (240) — BUILDABLE TRANSFORMER PART (XF): a placeable coupled-coil transformer, looks nice
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. The last transformer gap (a placeable part) closed — **web-only**,
+golden untouched. Full gate green: web **354** (+3), Rust **227** (unchanged), check/lint/build 0. **Verified
+live** (`shoot`): renders as a proper two-coil + iron-core transformer, and the Bode/phase panel shows its
+frequency response.
+
+**Landed — the `XF` "Transformer" part (coupled coils):**
+- `graph.ts`: new `XF` kind (4 pins P+/P−/S+/S−, value = turns ratio, violet) — the headline "Transformer" in
+  the palette. The legacy ideal-T `TR` keeps its `kind()` (old saves still load/render/solve) but its PALETTE
+  entry is swapped to `XF` (App.svelte PARTS), so new boards get the fully-modelled one.
+- `netlist.ts`: `buildNetlist` expands `XF` → primary + secondary `ELEM_INDUCTOR` (secondary `XF_L_BASE·n²`,
+  `XF_L_BASE=0.1 H`), `elemOfComponent`=primary, `legsOfComponent`=`[secondary]`. Pushes an EXPLICIT coupling
+  edge (`k=XF_K=0.98`) into a new `transformerEdges` list; `computeMagneticCoupling` now takes that list and
+  installs the explicit edges in BOTH fidelity modes (a transformer always couples), keeping loose-coil
+  proximity coupling Real-only. `ELEM_INDUCTOR=3` added to netlist.ts.
+- Reuses the existing `drawTR`/`drawFTR` glyph (registered `XF` in both `SCHEMATIC_DRAWERS`/`FACTORY_DRAWERS`).
+  Turns-ratio inspector display (`TR || XF`), value pickers (`values.ts` CURATED_FULL + chips), datasheet
+  (`partInfo.ts`, coupled-coil framing), `PART_CAT_OF` (App.svelte + codex.ts) → Passives.
+- Tests: `transformerPart.test.ts` (expands to 2 coupled inductors in BOTH modes; secondary L ∝ N²; transforms
+  end-to-end through wasm).
+
+**NEXT:** a **center-tap `XF` variant** (5-pin: P+/P−/S+/CT/S−) = primary + two coupled secondary halves —
+the physics is proven (handoff 239 `center_tapped_transformer_halves_are_antiphase`), this just needs the
+variant pin layout + a glyph tweak. Plus the older list (flicker/op-amp noise; fan/spacing thermal levers;
+MOV joule-rating). (233)–(240) are on the branch, **NOT a PR** — a **#315 batch** awaits owner greenlight.
+
+---
+
 ## 2026-06-29 (239) — TRANSFORMER ROAD: center tap (no new element) + AC-solve sees transformers
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Continuing the magnetic-coupling work — two sim-core additions,

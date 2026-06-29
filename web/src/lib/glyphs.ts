@@ -3403,6 +3403,7 @@ const DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   // Pull-up: a resistor to an internal Vcc rail.
   PU: drawPU,
   TR: drawTR,
+  XF: drawTR, // coupled-coil transformer — same two-winding + iron-core symbol
   POT: drawPOT,
   FF: drawFF,
   SAMP: drawSAMP,
@@ -3440,6 +3441,7 @@ const FACTORY_DRAWERS: Record<string, (g: Graphics, o: GlyphOpts) => void> = {
   NOT: drawFNOT,
   BUF: drawFBUF,
   TR: drawFTR,
+  XF: drawFTR, // coupled-coil transformer — same factory-lens converter body
   POT: drawFPOT,
   FF: drawFFF,
 };

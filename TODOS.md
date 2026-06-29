@@ -21,6 +21,21 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (240) — BUILDABLE TRANSFORMER PART (XF), looks nice (web-only, golden untouched)
+
+- ~~**Placeable coupled-coil transformer part**~~ DONE (web 354; verified live via `shoot` — renders as a
+  two-coil + iron-core transformer, Bode/phase panel shows its response). New `XF` kind (`graph.ts`, the
+  headline "Transformer"; legacy ideal-T `TR` kept for old saves, dropped from palette). `buildNetlist`
+  expands `XF` → primary + secondary `ELEM_INDUCTOR` (sec `XF_L_BASE·n²`, turns ratio n=value) + an explicit
+  coupling edge (`transformerEdges` → `computeMagneticCoupling`, installed in BOTH modes). Reuses
+  `drawTR`/`drawFTR` glyph; turns-ratio inspector + value pickers + datasheet + Passives category. Test:
+  `transformerPart.test.ts`.
+- [ ] **Center-tap XF variant** (5-pin P+/P−/S+/CT/S− → primary + two coupled secondary halves) — physics
+  proven (`center_tapped_transformer_halves_are_antiphase`), needs the variant pin layout + glyph stub. Plus
+  flicker/op-amp noise; fan/spacing thermal levers; MOV joule-rating. (233)–(240) await a **#315 batch PR**.
+
+---
+
 ## 2026-06-29 (239) — TRANSFORMER ROAD: center tap + AC-solve mutual inductance (#140)
 
 - ~~**Center tap** (owner: "see if you can do the center tap")~~ DONE — needs NO new element. A center-tapped

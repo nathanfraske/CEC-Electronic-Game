@@ -320,8 +320,16 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   basis of full-wave rectifiers / phase splitters). **The AC solve sees transformers too:** `ac_solve_models`
   carries the same mutual off-diagonal in COMPLEX form (`a[bi][bj] −= jωM`, gated on `has_magnetic`), so the
   Bode/phase tools read transformer action across frequency (`ac_solve_sees_a_transformer`); golden-safe
-  (no map ⇒ unchanged). (Next: a single placeable transformer/center-tap PART wrapping the coupled-coil
-  primitive — a UX/glyph step, no longer an engine gap.)
+  (no map ⇒ unchanged). **The buildable part is `XF`** (`graph.ts`, name "Transformer", the headline one;
+  the legacy ideal-T `TR` keeps its `kind()` for old saves but is dropped from the palette): `buildNetlist`
+  expands it into a primary + secondary `ELEM_INDUCTOR` (secondary `XF_L_BASE·n²` for the turns ratio
+  `n = value`, since `L ∝ N²`) and pushes an EXPLICIT coupling edge (`k = XF_K`) via a `transformerEdges`
+  list that `computeMagneticCoupling` installs in **both** fidelity modes (a transformer always transforms;
+  only loose-coil proximity coupling stays Real-only). `elemOfComponent` = primary, `legsOfComponent` =
+  `[secondary]`; reuses the existing `drawTR`/`drawFTR` glyph (two coils + iron core). Verified live
+  (`shoot`): renders as a proper transformer and the Bode/phase panel shows its response. Tests:
+  `transformerPart.test.ts`. (Next: a 5-pin **center-tap** `XF` variant = primary + two coupled secondary
+  halves — proven in sim-core, just needs the variant pin layout + glyph stub.)
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

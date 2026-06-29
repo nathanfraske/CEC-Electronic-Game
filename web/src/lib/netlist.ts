@@ -567,6 +567,12 @@ const MAG_D0 = 2.0; // coupling length (cells): k = K_PEAK·e^(−(d/D0)²)
 const MAG_CUTOFF = 5.0; // ignore coil pairs farther apart than this
 const MAG_K_PEAK = 0.95; // coupling of two touching coils
 const MAG_K_MAX = 0.98; // hard cap (sim-core re-caps at 0.999 to keep the L matrix non-singular)
+// The coupled-coil transformer part (`XF`): expands to a primary + secondary inductor, tightly coupled.
+// XF_L_BASE is the primary's magnetising inductance (high, so it acts as an ideal-ish transformer — large
+// magnetising impedance, low droop); the secondary is `XF_L_BASE·n²` (since L ∝ N²), giving the turns ratio
+// n = value. XF_K is the always-on coupling between the two windings (tight, like a wound transformer).
+const XF_L_BASE = 0.1; // H — primary magnetising inductance
+const XF_K = 0.98; // primary↔secondary coupling coefficient (a tightly-wound transformer)
 
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
@@ -646,6 +652,7 @@ const MEM_SPEC: Record<string, MemSpec> = {
 // Element types the EC (electrolytic cap) expansion stamps directly.
 const ELEM_RESISTOR = 1;
 const ELEM_CAPACITOR = 2;
+const ELEM_INDUCTOR = 3;
 const ELEM_ISOURCE = 4;
 
 // (Electrolytic-cap ESR is now graded by tier — see `ecEsr` in lib/tiers.ts.)
@@ -1111,12 +1118,13 @@ function computeThermalCoupling(
 }
 
 /**
- * The **magnetic-coupling map** (mutual inductance) from coil geometry — which inductors share flux, for
- * sim-core's `set_magnetic_coupling`. Two inductors (`kind === "L"`) within {@link MAG_CUTOFF} cells couple
- * with coefficient `k = MAG_K_PEAK·e^(−(d/D0)²)` (capped at {@link MAG_K_MAX}), so an AC-driven primary coil
- * induces a voltage in a nearby secondary — **two coils next to each other become a transformer**. One
- * undirected edge per pair (sim-core symmetrises). Real-mode only (Ideal keeps coils independent — no stray
- * coupling); `null` when fewer than two coils are in range (nothing to couple → golden-safe, no install).
+ * The **magnetic-coupling map** (mutual inductance) for sim-core's `set_magnetic_coupling`. Two sources:
+ * (1) **explicit** edges from the coupled-coil transformer part (`XF`), which always couple its two
+ * windings regardless of mode or distance (a transformer always transforms); and (2) **geometry** —
+ * loose inductors (`kind === "L"`) within {@link MAG_CUTOFF} cells couple with `k = MAG_K_PEAK·e^(−(d/D0)²)`
+ * (capped at {@link MAG_K_MAX}), so **two coils next to each other become a transformer** — but only in Real
+ * mode (Ideal keeps stray coils independent). One undirected edge per pair (sim-core symmetrises). Returns
+ * `null` when there is nothing to couple (no transformer + fewer than two coils in range) → golden-safe.
  */
 function computeMagneticCoupling(
   parts: Iterable<{
@@ -1126,34 +1134,42 @@ function computeMagneticCoupling(
   }>,
   elemOfComponent: Map<number, number>,
   real: boolean,
+  explicit: Array<[number, number, number]>,
 ): { idx: Uint32Array; nbr: Uint32Array; w: Float64Array } | null {
-  if (!real) return null;
-  const coils: { ei: number; col: number; row: number }[] = [];
-  for (const c of parts) {
-    if (c.kind !== "L") continue;
-    const ei = elemOfComponent.get(c.id);
-    if (ei === undefined) continue;
-    coils.push({ ei, col: c.cell.col, row: c.cell.row });
-  }
-  if (coils.length < 2) return null;
   const idx: number[] = [];
   const nbr: number[] = [];
   const w: number[] = [];
-  for (let i = 0; i < coils.length; i++) {
-    for (let j = i + 1; j < coils.length; j++) {
-      const d = Math.hypot(
-        coils[i]!.col - coils[j]!.col,
-        coils[i]!.row - coils[j]!.row,
-      );
-      if (d > MAG_CUTOFF) continue;
-      const k = Math.min(
-        MAG_K_MAX,
-        MAG_K_PEAK * Math.exp(-((d / MAG_D0) ** 2)),
-      );
-      if (k <= 1e-3) continue;
-      idx.push(coils[i]!.ei);
-      nbr.push(coils[j]!.ei);
-      w.push(k);
+  // (1) Explicit transformer windings — installed in BOTH modes (the device's function, not a parasitic).
+  for (const [a, b, k] of explicit) {
+    idx.push(a);
+    nbr.push(b);
+    w.push(k);
+  }
+  // (2) Stray proximity coupling between loose coils — Real mode only.
+  if (real) {
+    const coils: { ei: number; col: number; row: number }[] = [];
+    for (const c of parts) {
+      if (c.kind !== "L") continue;
+      const ei = elemOfComponent.get(c.id);
+      if (ei === undefined) continue;
+      coils.push({ ei, col: c.cell.col, row: c.cell.row });
+    }
+    for (let i = 0; i < coils.length; i++) {
+      for (let j = i + 1; j < coils.length; j++) {
+        const d = Math.hypot(
+          coils[i]!.col - coils[j]!.col,
+          coils[i]!.row - coils[j]!.row,
+        );
+        if (d > MAG_CUTOFF) continue;
+        const k = Math.min(
+          MAG_K_MAX,
+          MAG_K_PEAK * Math.exp(-((d / MAG_D0) ** 2)),
+        );
+        if (k <= 1e-3) continue;
+        idx.push(coils[i]!.ei);
+        nbr.push(coils[j]!.ei);
+        w.push(k);
+      }
     }
   }
   if (idx.length === 0) return null;
@@ -1390,6 +1406,10 @@ export function buildNetlist(
   const legsOfComponent = new Map<number, number[]>();
   const nodesOfComponent = new Map<number, [number, number]>();
   const compositeInternals = new Map<number, CompositeInternals>();
+  // EXPLICIT magnetic-coupling edges from parts that expand into coupled coils (the `XF` transformer):
+  // `[primaryElemIdx, secondaryElemIdx, k]`. Unlike the geometry/proximity coupling, these are installed in
+  // BOTH fidelity modes (a transformer always couples) and regardless of distance.
+  const transformerEdges: Array<[number, number, number]> = [];
   for (const c of sorted) {
     const kind = graph.kindOf(c);
     if (!kind || kind.pins.length < 2) continue;
@@ -1424,6 +1444,43 @@ export function buildNetlist(
       pushFGH();
       elemOfComponent.set(c.id, idx);
       nodesOfComponent.set(c.id, [na, nb]);
+      continue;
+    }
+
+    // Coupled-coil transformer (XF): expand into TWO magnetically-coupled inductors — a primary
+    // (P+ → P−, magnetising inductance XF_L_BASE) and a secondary (S+ → S−, XF_L_BASE·n² for the turns
+    // ratio n = value, since L ∝ N²). An explicit, always-on coupling edge (k = XF_K) makes the windings
+    // share flux in BOTH fidelity modes (a transformer always transforms — it's not a Real-only parasitic).
+    // Both windings are plain inductors, so the part also shows in the frequency tools (Bode/phase) via the
+    // mutual-inductance AC stamp. The two windings are galvanically isolated (no shared node).
+    if (c.kind === "XF") {
+      const nsp = nodeIndex.get(find(key(c.id, 2))) ?? 0; // S+
+      const nsm = nodeIndex.get(find(key(c.id, 3))) ?? 0; // S−
+      const n = c.value > 0 ? c.value : 2; // turns ratio Ns/Np
+      const priIdx = types.length;
+      types.push(ELEM_INDUCTOR);
+      aArr.push(na); // P+
+      bArr.push(nb); // P−
+      cArr.push(0);
+      dArr.push(0);
+      eArr.push(0);
+      pushFGH();
+      values.push(XF_L_BASE);
+      auxArr.push(0);
+      const secIdx = types.length;
+      types.push(ELEM_INDUCTOR);
+      aArr.push(nsp); // S+
+      bArr.push(nsm); // S−
+      cArr.push(0);
+      dArr.push(0);
+      eArr.push(0);
+      pushFGH();
+      values.push(XF_L_BASE * n * n);
+      auxArr.push(0);
+      transformerEdges.push([priIdx, secIdx, XF_K]);
+      elemOfComponent.set(c.id, priIdx); // primary current is the main reading
+      legsOfComponent.set(c.id, [secIdx]); // secondary current as the extra leg
+      nodesOfComponent.set(c.id, [na, nb]); // V across the primary
       continue;
     }
 
@@ -2184,7 +2241,12 @@ export function buildNetlist(
     aux: Float64Array.from(auxArr),
     params,
     coupling: computeThermalCoupling(sorted, elemOfComponent, real),
-    magneticCoupling: computeMagneticCoupling(sorted, elemOfComponent, real),
+    magneticCoupling: computeMagneticCoupling(
+      sorted,
+      elemOfComponent,
+      real,
+      transformerEdges,
+    ),
     elemOfComponent,
     legsOfComponent,
     nodesOfComponent,

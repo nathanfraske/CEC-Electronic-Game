@@ -312,9 +312,9 @@
       color: "var(--violet)",
     },
     {
-      tag: "TR",
+      tag: "XF",
       name: "Transformer",
-      desc: "Couples AC · set turns ratio",
+      desc: "Coupled coils · AC + turns ratio",
       tier: "II",
       color: "var(--violet)",
     },
@@ -783,6 +783,7 @@
     EC: "Passives",
     L: "Passives",
     TR: "Passives",
+    XF: "Passives",
     POT: "Passives",
     NTC: "Passives",
     PTC: "Passives",
@@ -3192,7 +3193,7 @@
     if (kind === "MSW") return value >= 0.5 ? "Closed" : "Open";
     // Transformer: its value is the turns ratio n = Ns/Np; show it as Np:Ns (so a
     // step-up n = 2 reads "1:2" and a step-down n = 0.5 reads "2:1").
-    if (kind === "TR") {
+    if (kind === "TR" || kind === "XF") {
       const trim = (x: number): string =>
         (Number.isInteger(x) ? x.toString() : x.toFixed(2)).replace(
           /\.?0+$/,

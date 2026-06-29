@@ -949,6 +949,19 @@ export const PART_KINDS: Record<string, PartKind> = {
     "",
     true,
   ),
+  // Coupled-coil transformer (the fully-modelled one): expands to two magnetically-coupled inductors
+  // (`set_magnetic_coupling`), so it works in the frequency tools (Bode/phase) too, and a center tap is just
+  // a continuous secondary. `value` is the turns ratio n = Ns/Np (default 2, a step-up); the inspector shows
+  // Np:Ns. Same 4-pin layout + violet family as the legacy ideal-T `TR`.
+  XF: kind(
+    "XF",
+    "Transformer",
+    "violet",
+    [pin("P+", 0, 0), pin("P−", 0, 2), pin("S+", 2, 0), pin("S−", 2, 2)],
+    2,
+    "",
+    true,
+  ),
   // Potentiometer: a three-terminal variable resistor — two ends A, B and a movable
   // wiper W that taps somewhere along the track. Pins ordered A, B, W (pin 0 = A,
   // 1 = B, 2 = W). `value` is the total end-to-end resistance; the wiper position
