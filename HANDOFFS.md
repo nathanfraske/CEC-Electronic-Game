@@ -5,6 +5,38 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-29 (236) — BJT THERMAL RUNAWAY: Is(T) on the same Tj infra (golden-safe), end-to-end verified
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Task #137 ("then go to BJT") done — the bipolar analogue of
+(235)'s resistor runaway, on the **same `thermal_state` / `TEMPCO_SLOT` / `step()` Tj-advance / hash-fold
+infra**, still golden byte-identical (`golden_snapshot_hash_is_stable` ok, all `*_run_is_reproducible` ok).
+Full gate green: Rust **218** (+3), web **341** (+4), fmt/clippy/check/lint/build 0. **Verified end-to-end**
+(buildNetlist→wasm) AND deterministically in sim-core.
+
+**Landed — sim-core `Is(T)` feedback (the BJT reuses slot 7 as `γ`, not `α`):**
+- `bjt_is_eff(e, i) = BJT_IS·exp(γ·(Tj − T_AMBIENT))` capped at `BJT_IS_MULT_MAX` (=1e6, keeps the near-shorted
+  device's gm bounded). `γ = params[TEMPCO_SLOT]`; `0` ⇒ `BJT_IS` (Ideal/golden → byte-identical).
+- `bjt_op(e, vbe, vbc, is)` now takes the saturation current as an **arg** (was the bare `BJT_IS` constant);
+  all 6 sim-core call sites + 1 test updated to thread `self.bjt_is_eff(e/&el, i/ei)` (the 1 test that has no
+  tempco passes `BJT_IS`). The existing `step()` Tj-advance + hash-fold already cover the BJT (slot-7 gate;
+  for a BJT the power is the collector dissipation `|Vce·Ic|` — a=C, b=E, `currents`=Ic — no new code).
+- **Tests:** `bjt_thermal_runaway` (Tj > 75, Ic runs away ~123×: 12.7 mA→1.56 A), `bjt_emitter_ballast_tames_runaway`
+  (4.7 Ω ballast: Tj < runaway−30, Ic < runaway/10), `bjt_thermal_run_is_reproducible`.
+- **web** (`netlist.ts`): emit `γ = BJT_IS_TEMPCO` (=0.07 ≈ ln2/10, Is doubles ~10 °C) on **Q/QP** Real-mode-only.
+  Tests: `thermalRunaway.test.ts` +3 (NPN/PNP γ>0 in Real, 0 in Ideal); **`bjtRunawayE2E.test.ts`** (NEW,
+  buildNetlist→wasm: Real collector collapses 23.8→0.55 V, Ideal dead flat, ballast suppresses).
+- The web presentational `Tj` (glow/OVERHEAT/vent) tracks the runaway via the climbing `Vce·Ic` power — no wasm
+  wire change. (Note: sim-core's fixed `THERMAL_THETA=80` vs the web BJT spec `θ_JA=120` — the web `Tj` runs a
+  bit hotter than the solve-side `Tj`; fine, both integrate the same power & track together. A per-kind sim-core
+  θ is a possible future unification, not needed now.)
+
+**NEXT:** flicker/1-f & op-amp input-referred noise; the other thermal levers (fan ambient↓, part-spacing
+mutual heating); a MOV joule/energy rating + MOV-specific thermal spec (today it uses `DEFAULT_THERMAL`).
+These (233)–(236) refinements are on the branch, **NOT yet a new PR** — a **#315 batch** awaits owner greenlight.
+Adversarial-review the sim-core runaway changes (resistor + BJT) before that PR.
+
+---
+
 ## 2026-06-29 (235) — THERMAL RUNAWAY: per-tick Tj-in-the-solve (Path 2), NTC runaway / PTC self-limit (golden-safe)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. The **first `Tj`-fed-back-into-the-solve** feature (the docs'

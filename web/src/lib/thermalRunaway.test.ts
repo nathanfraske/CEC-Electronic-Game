@@ -47,3 +47,54 @@ describe("thermistor thermal-runaway tempco emission (Real mode only)", () => {
     expect(thermistorAlpha("PTC", false)).toBe(0);
   });
 });
+
+// A BJT reuses TEMPCO_SLOT for its Is(T) runaway seed γ: at a fixed base bias the collector current
+// climbs with junction temperature → Vce·Ic dissipation climbs → hotter (runaway). The runaway BEHAVIOUR
+// is proven in sim-core (bjt_thermal_runaway / bjt_emitter_ballast_tames_runaway); this guards the
+// Real-mode-only emission and that it lands on the BJT's element (γ > 0, positive — Is always rises).
+function bjtGamma(kind: string, real: boolean): number {
+  const g = new BoardGraph();
+  const gnd = g.place("GND", { col: 0, row: 0 })!;
+  const vcc = g.place("V", { col: 2, row: 0 })!;
+  vcc.value = 12;
+  const rc = g.place("R", { col: 4, row: 0 })!;
+  rc.value = 1000;
+  const q = g.place(kind, { col: 8, row: 0 })!;
+  // Vcc+ → Rc → collector(pin 0); emitter(pin 1) → GND; base(pin 2) → Vcc+ (stiff bias); Vcc− → GND.
+  g.connect(
+    { componentId: vcc.id, pinIndex: 0 },
+    { componentId: rc.id, pinIndex: 0 },
+  );
+  g.connect(
+    { componentId: rc.id, pinIndex: 1 },
+    { componentId: q.id, pinIndex: 0 },
+  );
+  g.connect(
+    { componentId: q.id, pinIndex: 1 },
+    { componentId: gnd.id, pinIndex: 0 },
+  );
+  g.connect(
+    { componentId: q.id, pinIndex: 2 },
+    { componentId: vcc.id, pinIndex: 0 },
+  );
+  g.connect(
+    { componentId: vcc.id, pinIndex: 1 },
+    { componentId: gnd.id, pinIndex: 0 },
+  );
+  const nl = buildNetlist(g, real, false)!;
+  const ei = nl.elemOfComponent.get(q.id)!;
+  return nl.params[ei * PARAM_STRIDE + TEMPCO_SLOT];
+}
+
+describe("BJT thermal-runaway Is-tempco emission (Real mode only)", () => {
+  it("an NPN gets a POSITIVE Is-tempco γ in Real mode (Is rises with heat → runaway)", () => {
+    expect(bjtGamma("Q", true)).toBeGreaterThan(0);
+  });
+  it("a PNP gets the same positive γ in Real mode (Is is a junction property, polarity-independent)", () => {
+    expect(bjtGamma("QP", true)).toBeGreaterThan(0);
+  });
+  it("neither emits a tempco in Ideal mode (Is = BJT_IS, golden-clean)", () => {
+    expect(bjtGamma("Q", false)).toBe(0);
+    expect(bjtGamma("QP", false)).toBe(0);
+  });
+});

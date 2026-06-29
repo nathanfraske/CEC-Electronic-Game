@@ -533,6 +533,12 @@ const TEMPCO_SLOT = 7; // params slot: resistor self-heating temperature coeffic
 // Game-scaled (a legible linear slope, not the part's full β-model R(T)).
 const NTC_TEMPCO = -0.05;
 const PTC_TEMPCO = 0.03;
+// A BJT reuses TEMPCO_SLOT for its OWN runaway seed: the saturation-current temperature coefficient γ
+// (1/°C), feeding sim-core's Is(T) = BJT_IS·exp(γ·(Tj − 25)). At a fixed base bias the collector current
+// climbs with junction temperature → Vce·Ic dissipation climbs → hotter (runaway), tamed by an emitter
+// ballast. γ ≈ ln(2)/10 ⇒ Is roughly doubles every ~10 °C (the textbook rule). Game-scaled like the
+// thermistor α; Real-mode only (Ideal / golden ⇒ 0 ⇒ Is = BJT_IS, byte-identical).
+const BJT_IS_TEMPCO = 0.07;
 const BEH_SPEC: Record<string, BehSpec> = {
   // FPGA logic cell (prog 4): a=OUT b=CLK c=I3 d=VCC e=GND f=I0 g=I1 h=I2.
   // Visual pins [OUT, I0, I1, I2, I3, CLK, VCC, GND]. Default table = 2-input XOR (0x6666).
@@ -1734,6 +1740,14 @@ export function buildNetlist(
     if ((comp.kind === "NTC" || comp.kind === "PTC") && real) {
       params[ei * PARAM_STRIDE + TEMPCO_SLOT] =
         comp.kind === "NTC" ? NTC_TEMPCO : PTC_TEMPCO;
+    }
+    // BJT saturation-current tempco γ → THERMAL RUNAWAY (Realistic mode only). The same TEMPCO_SLOT the
+    // thermistor uses, but for a BJT sim-core reads it as γ (Is(T) = BJT_IS·exp(γ·ΔTj)) instead of a
+    // linear α: at fixed base bias the collector current climbs with Tj → Vce·Ic dissipation climbs →
+    // hotter → runaway (an emitter ballast resistor tames it). Omitted in Ideal mode (Is = BJT_IS,
+    // golden-clean). A BJT maps to a single ELEM_NPN/ELEM_PNP element, so `ei` is its element index.
+    if ((comp.kind === "Q" || comp.kind === "QP") && real) {
+      params[ei * PARAM_STRIDE + TEMPCO_SLOT] = BJT_IS_TEMPCO;
     }
     // Diode TYPE params: the forward junction (Is/n → forward drop) is the part's identity, so
     // it is installed in both modes; the current rating is a Real-mode non-ideality (an

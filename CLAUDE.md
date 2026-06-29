@@ -263,6 +263,16 @@ game-scaled to the fixed `DT` so the spike is legible (ordering, not absolute ns
   `docs/heat-on-the-board-ideation.md` (the runaway update). (Every dissipating kind already self-heats
   web-side — incl. **MOVs/varistors** [`partHeats` is true for all but sources/ground/meters], so a
   badly-overloaded MOV overheats + vents; only the **R(T) feedback loop** is the new sim-core piece.)
+  **A BJT reuses the same slot** for its own runaway: there `TEMPCO_SLOT` carries the saturation-current
+  tempco `γ` (1/°C) feeding `bjt_is_eff` (`Is(T) = BJT_IS·exp(γ·(Tj − T_AMBIENT))`, capped at
+  `BJT_IS_MULT_MAX`) — so at a **fixed base bias** `Ic = Is·exp(Vbe/Vt)` climbs with `Tj` → `Vce·Ic`↑ ⇒
+  hotter ⇒ runaway, tamed by an **emitter ballast** (its `IR` drop pulls `Vbe` back). `bjt_op`'s saturation
+  current is now a passed-in arg, so every BJT call site threads `self.bjt_is_eff(e, i)`. The slots never
+  collide (only `ELEM_RESISTOR` reads slot 7 as `α`; a BJT reads it as `γ`) and both ride the **one**
+  `step()` `Tj` advance — for a BJT that's the collector dissipation `|Vce·Ic|` (a=C, b=E, `currents`=Ic).
+  Web emits `γ = BJT_IS_TEMPCO` on **Q/QP** Real-mode-only (`netlist.ts`), so Ideal / golden ⇒ `γ = 0` ⇒
+  `Is = BJT_IS` ⇒ byte-identical. Verified end-to-end (`bjtRunawayE2E.test.ts`: a Real BJT's collector
+  collapses 23.8→0.55 V into saturation, an Ideal one is dead flat, a ballast suppresses it).
 - **Two frequency regimes.** The transient solve has a fixed `DT = 2µs` → time-domain signals
   alias above ~62.5 kHz (board + time-scope are for ≤ that). The **frequency domain** (`ac_solve`
   / `ac_sweep` → the **Bode** and the **phase scope** `lib/phaseScope.ts`) is analytic with **no

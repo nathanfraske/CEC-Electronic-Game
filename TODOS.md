@@ -17,9 +17,25 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
   mode. Tests: `ntc_resistor_thermal_runaway`, `ptc_resistor_self_limits`, `thermal_runaway_run_is_
   reproducible`, web `thermalRunaway.test.ts` (3). Verified: NTC ran away (R 100→2Ω, OVERHEAT); a 12V MOV
   overloaded → DESTROYED (clamps 12.4V, vents). MOVs/all dissipating parts already self-heat web-side.
-- [ ] **BJT thermal runaway** (#137, owner: "then BJT"): `Is(T)`/Vbe-tempco on the same Tj infra; emitter
-  ballast tames it. Then: flicker/op-amp noise; fan/spacing levers; MOV joule-rating + thermal spec.
-  Adversarial-review the sim-core runaway change before a #315 PR.
+- ~~**BJT thermal runaway** (#137, owner: "then BJT")~~ DONE — see (236) below.
+
+---
+
+## 2026-06-29 (236) — BJT THERMAL RUNAWAY: Is(T) on the same Tj infra (golden-safe), end-to-end verified
+
+- ~~**BJT thermal runaway — `Is(T)` feedback**~~ DONE (sim-core + web; **golden byte-identical**; Rust 218,
+  web 341; verified end-to-end buildNetlist→wasm). The BJT reuses **slot 7** as `γ` (not `α`):
+  `bjt_is_eff = BJT_IS·exp(γ·(Tj−25))` capped at `BJT_IS_MULT_MAX`; `bjt_op` now takes `is` as an arg
+  (all 6 sim-core sites + 1 test thread `self.bjt_is_eff(e,i)`; the no-tempco test passes `BJT_IS`). The
+  existing `step()` Tj-advance + hash-fold already cover the BJT (slot-7 gate; collector dissipation
+  `|Vce·Ic|`, a=C/b=E/currents=Ic — no new code). **web** (`netlist.ts`): emit `γ = BJT_IS_TEMPCO` (0.07 ≈
+  ln2/10) on Q/QP Real-mode-only. Tests: `bjt_thermal_runaway` (Tj>75, Ic 12.7 mA→1.56 A), `bjt_emitter_
+  ballast_tames_runaway`, `bjt_thermal_run_is_reproducible`; web `thermalRunaway.test.ts` +3; **`bjtRunaway
+  E2E.test.ts`** (Real collector collapses 23.8→0.55 V, Ideal dead flat, ballast suppresses).
+- [ ] **Still open (the (235) NEXT list):** flicker/1-f & op-amp input-referred noise; the other thermal
+  levers (fan ambient↓, part-spacing mutual heating); a MOV joule/energy rating + MOV-specific thermal
+  spec (today `DEFAULT_THERMAL`). Adversarial-review the sim-core runaway changes (resistor + BJT) before a
+  **#315 batch PR** (the (233)–(236) refinements are on the branch, awaiting owner greenlight).
 
 ---
 

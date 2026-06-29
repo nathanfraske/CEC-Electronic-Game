@@ -93,6 +93,16 @@ wants to teach:
   feedback. Model a `Tj`-dependent bump to leakage/β (or an accelerating `Tj_target`) so past a tipping
   point `Tj` diverges and the part vents — the canonical "why power transistors need heatsinks/ballasting"
   lesson.
+  > **DONE (Path 2, golden-safe — handoffs 235/236).** Shipped as a per-tick `Tj`-in-the-solve loop on a
+  > new `TEMPCO_SLOT` (=7), gated so the golden folds zero bytes ⇒ byte-identical. A **resistor** reads the
+  > slot as a linear tempco `α` (`resistor_r_eff = value·(1+α·(Tj−25))` — an NTC runs away, a PTC
+  > self-limits); a **BJT** reads it as the saturation-current tempco `γ` (`Is(T) = BJT_IS·exp(γ·(Tj−25))`,
+  > capped) — at a fixed base bias `Ic` climbs with `Tj` → `Vce·Ic`↑ → runaway, and an **emitter ballast
+  > resistor tames it** (textbook). Both ride the one `step()` `Tj` advance (from committed `P = |V·I|`) and
+  > the one hash-fold; the web emits the tempco on NTC/PTC and Q/QP **Real-mode-only**. The MOV/power-part
+  > "diverges and vents" is delivered by the climbing power driving the web's presentational `Tj` past
+  > `T_MAX`. (Future: per-kind sim-core `θ` to match the web's per-kind `θ_JA`; today sim-core uses one
+  > fixed `THERMAL_THETA`.)
 
 **Connections to what exists:** `Component.temp` becomes the live junction temperature (sim-driven, as its
 doc foresaw); the **thermistor R(T)** closes its loop (an NTC's `temp` driven by its own I²R self-heating

@@ -1856,6 +1856,12 @@ const BJT_BF: f64 = 100.0;
 /// inverted (collector and emitter swapped). Keeps the reverse junction's
 /// contribution physical. Fixed default. Shared by both polarities.
 const BJT_BR: f64 = 2.0;
+/// Ceiling on the **thermal-runaway** saturation-current multiplier `exp(γ·ΔTj)` (see
+/// [`Sim::bjt_is_eff`]). A runaway drives `Tj` (and hence `Is`) up exponentially; the cap keeps the
+/// near-shorted device's transconductance bounded so the Newton matrix stays conditioned — the external
+/// collector load, not `Is`, sets the real operating point once the junction is hard-on. ×1e6 (so `Is`
+/// tops out at ~1e-9 A) is far past where a real BJT has already cooked.
+const BJT_IS_MULT_MAX: f64 = 1.0e6;
 
 // --- Op-amp (clamped transconductance) model constants ------------------------
 
@@ -2582,6 +2588,13 @@ fn noise_sample(ei: usize, tick: u64) -> f64 {
 /// feedback: `Tj` never advances, `R = value`, and `thermal_state` folds **zero** bytes into the hash, so
 /// the solve is **byte-identical**. Real-mode only (the web emits `α` for NTC/PTC). **Game-scaled** — the
 /// lesson is the sign/instability, not the exact β-model. In the reserved slot range (≥ 4).
+///
+/// **A BJT reuses this same slot** for its own runaway seed: there it carries the saturation-current
+/// temperature coefficient `γ` (1/°C) feeding [`Sim::bjt_is_eff`] (`Is(T) = BJT_IS·exp(γ·(Tj − T_AMBIENT))`)
+/// rather than a linear `α`. The two never collide — only an `ELEM_RESISTOR` reads the slot as `α` (in
+/// [`Sim::resistor_r_eff`]); a BJT reads it as `γ` (in `bjt_is_eff`). Both share the **one** `Tj` advance in
+/// `step()`, which uses the slot solely as a non-zero gate (the per-element power `P = |V·I|` it integrates
+/// is, for a BJT, the collector dissipation `|Vce·Ic|` since `a`=collector, `b`=emitter, `currents`=`Ic`).
 const TEMPCO_SLOT: usize = 7;
 
 /// Board ambient temperature (°C) — the self-heating `Tj` rests here with no dissipation (mirrors the
@@ -4687,13 +4700,14 @@ impl Sim {
     /// currents flip, so a single [`bjt_eval`] serves both polarities — the BJT
     /// analogue of [`Sim::mosfet_op`]. Pure `f64`, deterministic.
     #[inline]
-    fn bjt_op(e: &Element, vbe: f64, vbc: f64) -> BjtOp {
+    fn bjt_op(e: &Element, vbe: f64, vbc: f64, is: f64) -> BjtOp {
         // Forward current gain β from param slot 0 (a quality tier — a higher-gain part),
-        // else the default.
+        // else the default. The saturation current `is` is passed in (not the bare `BJT_IS`)
+        // so a Real-mode thermal-runaway device can feed its heated `Is(Tj)` — see `bjt_is_eff`.
         let bf = param_or(&e.params, 0, BJT_BF);
         if e.kind == ELEM_PNP {
             // Evaluate the NPN model on the mirrored internal junction voltages.
-            let op = bjt_eval(-vbe, -vbc, BJT_IS, DIODE_VT, bf, BJT_BR);
+            let op = bjt_eval(-vbe, -vbc, is, DIODE_VT, bf, BJT_BR);
             BjtOp {
                 ic: -op.ic,
                 ib: -op.ib,
@@ -4704,8 +4718,31 @@ impl Sim {
                 gic_bc: op.gic_bc,
             }
         } else {
-            bjt_eval(vbe, vbc, BJT_IS, DIODE_VT, bf, BJT_BR)
+            bjt_eval(vbe, vbc, is, DIODE_VT, bf, BJT_BR)
         }
+    }
+
+    /// The BJT's effective transport saturation current at its current junction temperature — the
+    /// **thermal-runaway** feedback for bipolar devices, the BJT analogue of [`Sim::resistor_r_eff`].
+    /// A real BJT's `Is` rises steeply with temperature (it roughly doubles every ~10 °C), so at a
+    /// **fixed** base-emitter bias the collector current `Ic = Is·exp(Vbe/Vt)` climbs as the junction
+    /// self-heats → more collector dissipation `Vce·Ic` → hotter → ... a positive feedback loop that
+    /// cooks an unballasted power BJT. An emitter ballast resistor tames it: its `IR` drop lifts the
+    /// emitter, pulling `Vbe` back down as `Ic` grows (local negative feedback).
+    ///
+    /// `Is(T) = BJT_IS · exp(γ·(Tj − T_AMBIENT))`, where `γ = params[TEMPCO_SLOT]` (1/°C) is emitted by
+    /// the web **only in Real mode**. `γ = 0` (Ideal / golden / any pre-thermal netlist) ⇒ `BJT_IS`
+    /// unchanged → byte-identical solve. The multiplier is capped at [`BJT_IS_MULT_MAX`] so a runaway
+    /// can't blow the matrix conditioning (the external collector load sets the real operating point
+    /// once the device is hard-on). `Tj` is `thermal_state[i]`, advanced each tick in [`Sim::step`].
+    #[inline]
+    fn bjt_is_eff(&self, e: &Element, i: usize) -> f64 {
+        let gamma = e.params[TEMPCO_SLOT];
+        if gamma == 0.0 {
+            return BJT_IS;
+        }
+        let dt = self.thermal_state[i] - T_AMBIENT;
+        BJT_IS * (gamma * dt).exp().min(BJT_IS_MULT_MAX)
     }
 
     /// Solve the **initial operating point** at `t = 0` and write the resulting
@@ -5397,7 +5434,7 @@ impl Sim {
                 let el = self.elements[ei];
                 let vbe = self.bjt_vbe[ei];
                 let vbc = self.bjt_vbc[ei];
-                let op = Self::bjt_op(&el, vbe, vbc);
+                let op = Self::bjt_op(&el, vbe, vbc, self.bjt_is_eff(&el, ei));
                 let (gpi, gmu, gif, gic_bc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                 let ieq_c = op.ic - gif * vbe - gic_bc * vbc;
                 let ieq_b = op.ib - gpi * vbe - gmu * vbc;
@@ -5621,8 +5658,9 @@ impl Sim {
                     max_vd_gap = gap;
                 }
                 // Terminal-current residual across the limited step (Ic and Ib).
-                let op_old = Self::bjt_op(&el, vbe_old, vbc_old);
-                let op_new = Self::bjt_op(&el, vbe_new, vbc_new);
+                let is = self.bjt_is_eff(&el, ei);
+                let op_old = Self::bjt_op(&el, vbe_old, vbc_old, is);
+                let op_new = Self::bjt_op(&el, vbe_new, vbc_new, is);
                 let dic = (op_new.ic - op_old.ic).abs();
                 let dib = (op_new.ib - op_old.ib).abs();
                 let tol_c = NEWTON_I_ABSTOL + NEWTON_RELTOL * op_new.ic.abs().max(op_old.ic.abs());
@@ -5982,7 +6020,9 @@ impl Sim {
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => {
+                    Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i)).ic
+                }
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -6269,7 +6309,9 @@ impl Sim {
                 }
                 // The BJT main current is the collector current Ic, oriented a -> b
                 // (collector -> emitter), consistent with the MOSFET's drain current.
-                ELEM_NPN | ELEM_PNP => Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]).ic,
+                ELEM_NPN | ELEM_PNP => {
+                    Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i)).ic
+                }
                 // The varistor current is the symmetric clamp current at its committed
                 // terminal voltage iterate, oriented a -> b.
                 ELEM_VARISTOR => varistor_eval(self.varistor_v[i], e.value.max(MOV_VC_MIN)).0,
@@ -7828,7 +7870,7 @@ impl Sim {
                     } else if is_bjt(e.kind) {
                         // Collector a, emitter b, base c; Jacobian of (Ic, Ib) w.r.t.
                         // (Vbe, Vbc), mapped onto the node voltages (see newton_iterate).
-                        let op = Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i]);
+                        let op = Self::bjt_op(e, self.bjt_vbe[i], self.bjt_vbc[i], self.bjt_is_eff(e, i));
                         let (gpi, gmu, gif, gbc) = (op.gpi, op.gmu, op.gif, op.gic_bc);
                         stamp_g(&mut a, ia, ia, -gbc);
                         stamp_g(&mut a, ia, ib, -gif);
@@ -15217,7 +15259,7 @@ mod tests {
             &[5.0, rc, 0.0, 2.0, rb, 100.0, rb],
         );
         let q = sim.element_at(2);
-        let op = Sim::bjt_op(&q, sim.bjt_vbe[2], sim.bjt_vbc[2]);
+        let op = Sim::bjt_op(&q, sim.bjt_vbe[2], sim.bjt_vbc[2], BJT_IS);
         assert!(
             sim.bjt_vbe[2] > 0.4 && sim.node_v[2] > sim.node_v[4],
             "BJT in forward-active: vbe = {}, Vc = {}, Vb = {}",
@@ -16902,6 +16944,139 @@ mod tests {
             acc
         };
         assert_eq!(run(), run(), "a thermal-runaway run must reproduce exactly");
+    }
+
+    /// Build an NPN power stage and run it `steps` ticks, returning `(Tj, Ic)` of the transistor.
+    /// `Vcc(1→0) → Rc(1→2)=collector`, base held at a stiff `Vb`, emitter either grounded directly
+    /// (`re == 0`, no ballast) or returned through an emitter ballast `Re` (`re > 0`). The BJT carries
+    /// the Is-tempco `γ` in `TEMPCO_SLOT`, so its self-heating `Tj` feeds `Is(T)`: at fixed `Vb` the
+    /// collector current climbs with `Tj` → `Vce·Ic` dissipation climbs → hotter (runaway). An emitter
+    /// ballast turns a rising `Ic` into a rising `Ve` that pulls `Vbe` back, taming the loop.
+    #[cfg(test)]
+    fn run_bjt_tj(gamma: f64, re: f64, steps: usize) -> (f64, f64) {
+        let vcc = 24.0;
+        let rc = 15.0;
+        let vb = 0.78;
+        let mut sim = Sim::new(1);
+        let ok = if re > 0.0 {
+            // 0 GND, 1 Vcc, 2 collector, 3 base, 4 emitter. BJT is element index 2.
+            let mut params = vec![0.0f64; 5 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = gamma;
+            sim.set_netlist_p(
+                5,
+                &[
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                    ELEM_NPN,
+                    ELEM_VSOURCE,
+                    ELEM_RESISTOR,
+                ],
+                &[1, 1, 2, 3, 4],
+                &[0, 2, 4, 0, 0],
+                &[0, 0, 3, 0, 0],
+                &[0, 0, 0, 0, 0],
+                &[vcc, rc, 0.0, vb, re],
+                &[0.0; 5],
+                &params,
+            )
+        } else {
+            // 0 GND, 1 Vcc, 2 collector, 3 base; emitter grounded. BJT is element index 2.
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = gamma;
+            sim.set_netlist_p(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[0, 0, 0, 0],
+                &[vcc, rc, 0.0, vb],
+                &[0.0; 4],
+                &params,
+            )
+        };
+        assert!(ok);
+        for _ in 0..steps {
+            sim.step();
+        }
+        (sim.element_temperature(2), sim.currents[2])
+    }
+
+    /// **BJT thermal runaway** — the bipolar analogue of the NTC resistor runaway, via `Is(T)`. A power
+    /// NPN at a fixed base bias self-heats: its transport saturation current rises with `Tj`, so at the
+    /// same `Vbe` the collector current climbs → `Vce·Ic` dissipation climbs → hotter → ... a positive
+    /// feedback loop. With no emitter ballast the collector current runs away ~100× (here from ~13 mA to
+    /// over 1.5 A, pinned only by the collector load saturating) and `Tj` climbs far past the warn point.
+    /// The cold reference (`γ = 0`, the Ideal / golden case) stays at ambient — `has_thermal` is never
+    /// armed, so `Tj` never advances and `Is = BJT_IS` — proving the feedback is what drives the runaway.
+    #[test]
+    fn bjt_thermal_runaway() {
+        let steps = 1_000_000; // ~2 s of sim time — the runaway settles into collector saturation by here
+        let (tj_cold, ic_cold) = run_bjt_tj(0.0, 0.0, steps);
+        let (tj_hot, ic_hot) = run_bjt_tj(0.07, 0.0, steps);
+        assert!(
+            (tj_cold - T_AMBIENT).abs() < 1e-9,
+            "γ = 0 ⇒ no thermal feedback armed ⇒ Tj rests at ambient: {tj_cold} °C"
+        );
+        assert!(
+            tj_hot > 75.0,
+            "an unballasted BJT at fixed bias runs away well past the warn point: Tj = {tj_hot} °C"
+        );
+        assert!(
+            ic_hot > 0.5 && ic_hot > ic_cold * 20.0,
+            "the collector current runs away (cold {ic_cold:.4} A → hot {ic_hot:.4} A)"
+        );
+    }
+
+    /// An **emitter ballast resistor** tames the runaway: as `Ic` grows, the ballast's `IR` drop lifts the
+    /// emitter, pulling `Vbe = Vb − Ve` back down — local negative feedback that caps `Ic` (and so the
+    /// dissipation). The same device + bias that ran away unballasted now settles cool, with a collector
+    /// current an order of magnitude below the runaway. This is the textbook fix for bipolar thermal
+    /// runaway (and why power stages use emitter degeneration / ballasting).
+    #[test]
+    fn bjt_emitter_ballast_tames_runaway() {
+        let steps = 1_000_000;
+        let (tj_hot, ic_hot) = run_bjt_tj(0.07, 0.0, steps);
+        let (tj_ballast, ic_ballast) = run_bjt_tj(0.07, 4.7, steps);
+        assert!(
+            tj_ballast < tj_hot - 30.0,
+            "an emitter ballast holds Tj far below the unballasted runaway: ballast {tj_ballast} vs runaway {tj_hot} °C"
+        );
+        assert!(
+            ic_ballast < ic_hot / 10.0,
+            "the ballast caps the collector current (ballast {ic_ballast:.4} A vs runaway {ic_hot:.4} A)"
+        );
+    }
+
+    /// `Is(T)` is a fixed function of the deterministic `Tj` state, so a BJT-runaway run reproduces its
+    /// snapshot-hash stream exactly — the determinism contract holds with the BJT's `Tj` folded into the
+    /// hash (the same fold the resistor runaway uses, gated on a non-zero `TEMPCO_SLOT`).
+    #[test]
+    fn bjt_thermal_run_is_reproducible() {
+        let run = || {
+            // 0 GND, 1 Vcc, 2 collector, 3 base; emitter grounded. BJT (element 2) carries γ.
+            let mut params = vec![0.0f64; 4 * PARAM_STRIDE];
+            params[2 * PARAM_STRIDE + TEMPCO_SLOT] = 0.07;
+            let mut sim = Sim::new(1);
+            assert!(sim.set_netlist_p(
+                4,
+                &[ELEM_VSOURCE, ELEM_RESISTOR, ELEM_NPN, ELEM_VSOURCE],
+                &[1, 1, 2, 3],
+                &[0, 2, 0, 0],
+                &[0, 0, 3, 0],
+                &[0, 0, 0, 0],
+                &[24.0, 15.0, 0.0, 0.78],
+                &[0.0; 4],
+                &params,
+            ));
+            let mut acc = sim.snapshot_hash();
+            for _ in 0..3000 {
+                sim.step();
+                acc ^= sim.snapshot_hash().rotate_left(1);
+            }
+            acc
+        };
+        assert_eq!(run(), run(), "a BJT thermal-runaway run must reproduce exactly");
     }
 
     /// Three identical diodes in series driven **hard** (30 V across the string, no
