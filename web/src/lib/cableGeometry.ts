@@ -153,6 +153,12 @@ export function offsetOrtho(pts: Point[], d: number): Point[] {
  * `y = x`) the inputs into the horizontal frame, running the one belt-fan, then transposing the routes back:
  * a reflection preserves orthogonality AND distances, so the crossing-free property carries over unchanged
  * with no duplicated geometry. (The caller only takes this path when both ends share an approach axis.)
+ *
+ * `lanePack` scales the inter-strand lane gap (and, since the chevron stagger derives from it, the whole
+ * convergence) — `1` is the spread unzip the bus shows when zoomed in; a small value (≈0.4) gives the SAME
+ * staggered belt-fan but a tightly-packed ribbon in the middle, the look the collapsed/zoomed-out bundle uses
+ * instead of a single fat trunk. The pin lead-out (`LEAD`) is unscaled, so the strands still leave their pins
+ * cleanly before packing.
  */
 export function cableStrandRoutes(
   srcW: Point[],
@@ -160,6 +166,7 @@ export function cableStrandRoutes(
   trunk: Point[],
   pitch: number,
   axis: "h" | "v" = "h",
+  lanePack = 1,
 ): Point[][] {
   if (axis === "v") {
     const T = (p: Point) => new Point(p.y, p.x);
@@ -169,12 +176,13 @@ export function cableStrandRoutes(
       trunk.map(T),
       pitch,
       "h",
+      lanePack,
     ).map((r) => r.map(T));
   }
   const n = srcW.length;
   const sx = trunk[0]!.x;
   const dx = trunk[trunk.length - 1]!.x;
-  const LANE = pitch * 0.24; // perpendicular gap between adjacent strands — a dense ribbon
+  const LANE = pitch * 0.24 * lanePack; // perpendicular gap between adjacent strands (×lanePack ⇒ packed ribbon)
   const LEAD = pitch * 0.8; // straight lead-out track off each pin BEFORE any turn (no harsh pin-bends)
   const STEP = LANE * 1.2; // x-stagger of the convergence verticals — on par with LANE, a touch bigger, so
   //                          the nested chevron packs at just over 45° (matching the bundle's strand density)

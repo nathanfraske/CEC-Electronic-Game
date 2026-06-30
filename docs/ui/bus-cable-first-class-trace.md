@@ -127,9 +127,21 @@ bus still uses the collapsed comb). Verified via `shoot --democable-mode vertica
 both packages 90° + stacks them) — both belt-fans symmetric, the bundle vertical, no crossings. (2) **Width
 badge:** a collapsed/zoomed-out (or mixed-axis) bundle hides its strands, so it now stamps a small `×N`
 trace-count pill (in the bus colour) at the trunk's arc-length midpoint — read the bus width at a glance
-without unzipping. Pooled `cableBadgeTexts`, drawn in the collapsed branch of `drawCables`, only for a real
-bundle (≥2). Verified via `shoot … --zoom 1.45` (the `×8` pill centred on the collapsed trunk). Both render-
-only / golden-safe.
+without unzipping. Pooled `cableBadgeTexts`, drawn only on the collapsed/packed bundle, only for a real
+bundle (≥2). Both render-only / golden-safe.
+
+**Collapsed = PACKED RIBBON belt-fan, not a comb + fat trunk** (owner: "the zoomed out cable looks much worse
+than the zoomed in one — make it the same staggered approach, just with a much more packed ribbon cable in the
+centre"). The collapsed/zoomed-out view used to drop to the orthogonal comb + one fat trunk (the "blocky"
+look). Now a same-axis bus draws the **same staggered belt-fan at every zoom** — `cableStrandRoutes` gained a
+`lanePack` factor that scales the lane gap (and, since the chevron stagger derives from it, the whole
+convergence): `lanePack = 1` is the wide zoomed-in spread; collapsed uses `RIBBON_PACK = 0.4` for a tightly-
+packed ribbon down the middle (strands drawn thinner to stay distinct), with the `×N` badge on it. A uniform
+scale of the perpendicular offsets keeps the lanes monotonic in rank ⇒ still crossing-free (`cableGeometry.test
+.ts` now also guards the packed factor across widths + both axes, 117 cases total). Only a **mixed-axis**
+(corner-turning) bus still uses the comb + fat trunk. Verified live: `shoot --democable --zoom 1.45` (packed
+straight), `--democable-mode bend --zoom 1.5` (packed ribbon nests through the Z-bend), `--democable-mode
+vertical --zoom 1.5` (packed + transposed) — and the zoomed-in spread is unchanged.
 
 ## The five remaining asks (owner, verbatim intent)
 

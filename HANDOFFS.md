@@ -5,6 +5,37 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (251) — Bus-cable: collapsed view = PACKED RIBBON belt-fan (not comb + fat trunk)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+`0xeaac_3764_99e4_fa24` byte-identical**, build:wasm, web check/lint/build, **476 web tests** — +39 packed-
+ribbon geometry cases). Web-only / render-only.
+
+**Why (owner):** "the zoomed out cable looks much worse than the zoomed in one — can you make it [have] that
+same staggered approach, just with a much more packed ribbon cable in the centre?" The collapsed/zoomed-out
+view dropped to the orthogonal **comb + one fat trunk** (the blocky look), unlike the nice zoomed-in belt-fan.
+
+**What landed:** the collapsed view is now the **same staggered belt-fan, just packed**. `cableGeometry.ts`
+`cableStrandRoutes` gained a **`lanePack`** factor scaling the lane gap (`LANE = pitch*0.24*lanePack`); since the
+chevron stagger derives from `LANE`, the whole convergence scales with it. `lanePack = 1` = the wide zoomed-in
+spread (unchanged); collapsed uses **`RIBBON_PACK = 0.4`** for a tight ribbon (strands drawn thinner —
+`pipeW 3`/`lineW 1.5` — to stay distinct). `board.ts` `drawCables` restructured: a same-axis bus (`canFan`)
+**always** belt-fans — `unzipped ? 1 : RIBBON_PACK` — with the `×N` width badge only on the packed/collapsed
+state (extracted to `drawCableWidthBadge`); only a **mixed-axis** (corner-turning) bus still uses the comb +
+fat trunk. A uniform perpendicular-offset scale keeps the lanes monotonic in rank ⇒ still crossing-free
+(`cableGeometry.test.ts` now guards `RIBBON_PACK` across widths + both axes; 78→**117 cases**).
+
+**Verified live (shoot):** packed straight (`--zoom 1.45`), packed ribbon nesting through a Z-bend
+(`--democable-mode bend --zoom 1.5`), packed + transposed vertical (`--democable-mode vertical --zoom 1.5`),
+and the zoomed-in spread unchanged. All render-only / golden-safe.
+
+**Files:** `cableGeometry.ts` (`lanePack` param), `cableGeometry.test.ts` (+packed block), `board.ts`
+(`RIBBON_PACK`, `drawCables` `canFan` restructure, `drawCableStrands(lanePack)` + thinner packed strokes,
+`drawCableWidthBadge` helper). Bus-cable first-class-trace remains feature-complete; remaining cable items are
+the separate Cable P5 hierarchy (#94) + bus-slice IC recognition (#148).
+
+---
+
 ## 2026-06-30 (250) — Bus-cable: VERTICAL-approach unzip + WIDTH BADGE (the last two cable follow-ups)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden

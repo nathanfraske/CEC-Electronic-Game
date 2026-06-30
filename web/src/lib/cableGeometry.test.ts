@@ -202,3 +202,56 @@ describe("cable strand geometry is crossing-free for a vertical-approach bus", (
     },
   );
 });
+
+// PACKED RIBBON (the collapsed/zoomed-out look): the same belt-fan but `lanePack < 1` tightens the lanes (and,
+// since the chevron stagger derives from the lane gap, the whole convergence) into a dense ribbon. A uniform
+// scale of the perpendicular offsets keeps the lanes monotonic in rank, so it must stay crossing-free — guard
+// it at the live RIBBON_PACK (0.4) across widths, straight + bent, both axes.
+const RIBBON_PACK = 0.4;
+describe("packed-ribbon belt-fan is crossing-free", () => {
+  it.each(WIDTHS)("packed straight bus (h) — width %i", (n) => {
+    const srcW = pinColumn(-SEP, 0, n);
+    const dstW = pinColumn(SEP, 0, n);
+    const trunk = buildCableTrunk(
+      gatherH(srcW, SEP),
+      gatherH(dstW, -SEP),
+      [],
+      "h",
+      "h",
+    );
+    expect(
+      crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "h", RIBBON_PACK)),
+    ).toBe(0);
+  });
+
+  it.each(WIDTHS)("packed Z-bent bus (h) — width %i", (n) => {
+    const srcW = pinColumn(-SEP, -PITCH / 2, n);
+    const dstW = pinColumn(SEP, PITCH * 3.5, n);
+    const route = [new Point(0, -PITCH * 3), new Point(0, PITCH * 3)];
+    const trunk = buildCableTrunk(
+      gatherH(srcW, SEP),
+      gatherH(dstW, -SEP),
+      route,
+      "h",
+      "h",
+    );
+    expect(
+      crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "h", RIBBON_PACK)),
+    ).toBe(0);
+  });
+
+  it.each(WIDTHS)("packed straight vertical bus (v) — width %i", (n) => {
+    const srcW = pinRow(0, -SEP, n);
+    const dstW = pinRow(0, SEP, n);
+    const trunk = buildCableTrunk(
+      gatherV(srcW, SEP),
+      gatherV(dstW, -SEP),
+      [],
+      "v",
+      "v",
+    );
+    expect(
+      crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "v", RIBBON_PACK)),
+    ).toBe(0);
+  });
+});

@@ -226,6 +226,10 @@ const JUNCTION_R = 4;
 /** A cable break-out tap renders as a smaller node — proportional to the thin bus strands it sits on (the
  *  hit/grab range stays {@link JUNCTION_R}-based, so it's still easy to wire from). */
 const TAP_R = 2.5;
+/** Lane-pack factor for a COLLAPSED bus: the same belt-fan as the zoomed-in unzip but with the strands packed
+ *  into a tight ribbon in the middle (vs the wider `lanePack = 1` spread). Keeps the staggered approach at all
+ *  zooms — no more comb + fat trunk. */
+const RIBBON_PACK = 0.4;
 const MAX_SAMPLES = 240;
 // Fixed integration step (s) — the determinism contract's dt. Display-only here
 // (ticks → seconds for the scope's time-window label); never feeds the sim.
@@ -7344,20 +7348,21 @@ export class Board {
       // end's fan axis). Both the unzipped strands and the collapsed trunk follow it; cached for hit-test.
       const trunk = buildCableTrunk(src.pt, dst.pt, routeW, src.axis, dst.axis);
       this.cableTrunkRoutes.set(c.id, trunk);
-      // UNZIP (S2/S3): zoomed in past TIER_ZOOM, a bus fans into its N literal signal-coloured strands via a
+      // BELT-FAN at ALL zooms (S2/S3): the bus fans into its N literal signal-coloured strands via the
       // symmetric staggered "belt" convergence (the owner's Factorio-balancer reference), each lens-skinned,
       // the parallel bundle following the (possibly bent) trunk. Works for a horizontal-approach bus (pins
       // stacked vertically, strands run left↔right) OR a vertical-approach one (pins stacked horizontally,
-      // strands run up↕down) — gated on BOTH ends sharing an approach axis (`cableStrandRoutes` transposes the
-      // vertical case into the one belt-fan). A mixed-axis (corner-turning) bus / zoomed-out / manually-
-      // collapsed cable falls back to the bundled comb + trunk below.
-      if (
-        this.world.scale.x >= TIER_ZOOM &&
-        !c.collapsed &&
+      // strands run up↕down) — `cableStrandRoutes` transposes the vertical case into the one belt-fan, so it
+      // needs BOTH ends on the same approach axis. Zoomed IN it's a wide spread (`lanePack = 1`); collapsed
+      // (zoomed out past TIER_ZOOM, or manually) it's the SAME staggered fan but with the strands packed into a
+      // tight ribbon down the middle (RIBBON_PACK) + a width badge — NOT a comb + fat trunk. A mixed-axis
+      // (corner-turning) bus can't lay a single belt-fan, so it uses the comb fallback below.
+      const canFan =
         srcW.length >= 2 &&
         srcW.length === dstW.length &&
-        src.axis === dst.axis
-      ) {
+        src.axis === dst.axis;
+      if (canFan) {
+        const unzipped = this.world.scale.x >= TIER_ZOOM && !c.collapsed;
         this.drawCableStrands(
           g,
           c.id,
@@ -7368,10 +7373,16 @@ export class Board {
           c.src.pinIndices,
           conduit,
           src.axis,
+          unzipped ? 1 : RIBBON_PACK,
         );
+        // Packed ribbon: the strands merge at low zoom, so keep the "×N" count pill; spread/unzipped you can
+        // just count the strands, so no badge.
+        if (!unzipped && c.width >= 2)
+          this.drawCableWidthBadge(g, trunk, c.width, color, badgeIdx++);
         continue;
       }
-      // End fans: an orthogonal comb at BOTH ends — every conductor on-grid, symmetric about the centre.
+      // MIXED-AXIS (corner-turning) bus: can't lay one belt-fan, so fall back to the orthogonal comb at BOTH
+      // ends + a single fat trunk — every conductor on-grid, symmetric about the centre.
       comb(srcW, src.pt, src.axis);
       comb(dstW, dst.pt, dst.axis);
       g.stroke({ width: 2, color, alpha: 0.75 });
@@ -7386,23 +7397,8 @@ export class Board {
           g.lineTo(trunk[i]!.x, trunk[i]!.y);
         g.stroke({ width: 6, color, alpha: 0.9 });
       }
-      // WIDTH BADGE: a collapsed/zoomed-out bundle hides its strands, so stamp a small "×N" trace-count pill
-      // at the trunk's arc-length midpoint (in the bus colour) — read the bus width at a glance without
-      // unzipping. Only for a real bundle (≥2); a single conductor needs no count.
-      if (c.width >= 2) {
-        const mid = this.polylineMidpoint(trunk);
-        const text = this.cableBadgeText(badgeIdx++);
-        text.text = `×${c.width}`;
-        text.style.fill = color;
-        const w = text.width + 10;
-        const h = text.height + 4;
-        const bx = mid.x - w / 2;
-        const by = mid.y - h / 2;
-        g.roundRect(bx, by, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.95 });
-        g.roundRect(bx, by, w, h, 3).stroke({ width: 1, color, alpha: 0.85 });
-        text.position.set(bx + 5, by + 2);
-        text.visible = true;
-      }
+      if (c.width >= 2)
+        this.drawCableWidthBadge(g, trunk, c.width, color, badgeIdx++);
     }
     // Break-out stubs: a thin bit-coloured Manhattan leg from each tap's strand (or the collapsed trunk) to
     // its junction, so the tap ATTACHES to the bus instead of floating. Drawn after every cable's
@@ -7565,6 +7561,30 @@ export class Board {
     return new Point(poly[poly.length - 1]!.x, poly[poly.length - 1]!.y);
   }
 
+  /** Stamp the "×N" trace-count pill at the trunk's arc-length midpoint (bus colour, opaque fill) — the
+   *  read-the-width-at-a-glance marker on a COLLAPSED/packed bundle (the strands merge at low zoom). `idx`
+   *  indexes the pooled badge Text. */
+  private drawCableWidthBadge(
+    g: Graphics,
+    trunk: Point[],
+    width: number,
+    color: number,
+    idx: number,
+  ): void {
+    const mid = this.polylineMidpoint(trunk);
+    const text = this.cableBadgeText(idx);
+    text.text = `×${width}`;
+    text.style.fill = color;
+    const w = text.width + 10;
+    const h = text.height + 4;
+    const bx = mid.x - w / 2;
+    const by = mid.y - h / 2;
+    g.roundRect(bx, by, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.95 });
+    g.roundRect(bx, by, w, h, 3).stroke({ width: 1, color, alpha: 0.85 });
+    text.position.set(bx + 5, by + 2);
+    text.visible = true;
+  }
+
   /**
    * Draw a cable's N literal strands (the zoom-in UNZIP): each bit routes pin → a symmetric STAGGERED
    * "belt" fan → its parallel bus lane (the trunk offset perpendicular by the strand's rank, so the bundle
@@ -7573,7 +7593,9 @@ export class Board {
    * perpendicular legs so the bundle reads like a Factorio balancer, not a blocky pinch. When the trunk is
    * shorter than the fan needs (zip and unzip too close), it falls back to a straight pin→pin RUN-THROUGH —
    * no bundling. `axis` is the shared approach axis (`"h"` left↔right / `"v"` up↕down); the caller gates on
-   * both ends matching. Other cables (mixed-axis / collapsed) use the bundled render.
+   * both ends matching. `lanePack` < 1 packs the strands into a tight ribbon (the COLLAPSED look — same
+   * staggered belt-fan, just a dense middle instead of a fat trunk); the strands are drawn thinner to match.
+   * Other cables (mixed-axis) use the bundled comb render.
    */
   private drawCableStrands(
     g: Graphics,
@@ -7585,12 +7607,17 @@ export class Board {
     srcPinIndices: number[],
     conduit: BoardLens | null,
     axis: "h" | "v",
+    lanePack = 1,
   ): void {
     // Geometry is pure ({@link cableStrandRoutes}, unit-tested for crossing-freeness at any width); here we
     // just colour each bit by its signal and stroke it through the active lens. Cache the per-bit routes so
     // a per-bit TAP can hit-test which strand was clicked.
-    const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH, axis);
+    const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH, axis, lanePack);
     this.cableStrandCache.set(cableId, routes);
+    // Packed ribbon ⇒ thinner conductors so the tight lanes stay distinct (don't bleed into one slab).
+    const packed = lanePack < 1;
+    const pipeW = packed ? 3 : 5;
+    const lineW = packed ? 1.5 : 2.5;
     for (let i = 0; i < routes.length; i++) {
       const route = routes[i];
       if (!route) continue;
@@ -7599,12 +7626,12 @@ export class Board {
         pinIndex: srcPinIndices[i]!,
       });
       if (conduit) {
-        this.drawConduitSkin(g, route, col, 5, conduit);
+        this.drawConduitSkin(g, route, col, pipeW, conduit);
       } else {
         g.moveTo(route[0]!.x, route[0]!.y);
         for (let k = 1; k < route.length; k++)
           g.lineTo(route[k]!.x, route[k]!.y);
-        g.stroke({ width: 2.5, color: col, alpha: 0.95 });
+        g.stroke({ width: lineW, color: col, alpha: 0.95 });
       }
     }
   }
