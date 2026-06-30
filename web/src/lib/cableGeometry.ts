@@ -158,7 +158,8 @@ export function cableStrandRoutes(
   const dx = trunk[trunk.length - 1]!.x;
   const LANE = pitch * 0.24; // perpendicular gap between adjacent strands — a dense ribbon
   const LEAD = pitch * 0.8; // straight lead-out track off each pin BEFORE any turn (no harsh pin-bends)
-  const STEP = pitch * 0.5; // tight x-spacing between adjacent convergence verticals (a compact chevron)
+  const STEP = LANE * 1.2; // x-stagger of the convergence verticals — on par with LANE, a touch bigger, so
+  //                          the nested chevron packs at just over 45° (matching the bundle's strand density)
   // Order strands top→bottom by their SOURCE pin so the lanes never cross, and place each on the lane at its
   // sorted rank.
   const order = Array.from({ length: n }, (_, i) => i).sort(
@@ -188,10 +189,12 @@ export function cableStrandRoutes(
     }
     return routes;
   }
-  // BELT-FAN + parallel bundle. Fan zones run from each pin column's lead-out end IN to the gather; the
-  // convergence is a COMPACT NESTED CHEVRON (outermost strands turn in LAST, just before the gather; each
-  // more-central pair one tight `STEP` further out — keyed to each strand's rank FROM the centre, so it
-  // stays evenly spaced + non-crossing as the bus widens). Between the two chevrons each strand follows a
+  // BELT-FAN + parallel bundle. The convergence is a COMPACT NESTED CHEVRON anchored at each end's FAN-START
+  // (the pin column's lead-out end), NOT out at the gather — so the strands begin converging right after they
+  // leave their pins (a short pin→convergence lead) and then run as a long parallel bundle to the gather and
+  // along the trunk. Each strand's turn is staggered by its rank FROM the centre: the innermost pair turns at
+  // the fan-start, each more-outward pair one `STEP` further along, so the outermost runs straight longest —
+  // the same nested chevron, just sitting next to the pins. Between the two chevrons each strand follows a
   // lane parallel to the trunk (offsetOrtho), so the bundle bends with the route. Signed by the trunk's
   // leaving direction so the topmost source pin always takes the topmost lane (no twist) at the source end.
   const srcDirSign = Math.sign(trunk[1]!.x - trunk[0]!.x) || 1;
@@ -203,13 +206,23 @@ export function cableStrandRoutes(
     Math.min(...dstW.map((p) => p.x)) - LEAD,
     dx + pitch * 0.3,
   );
+  const maxRank = Math.floor(mid); // rank of the innermost pair — anchors the chevron at the fan-start
   for (let p = 0; p < n; p++) {
     const i = order[p]!;
     const sp = srcW[i]!;
     const dp = dstW[i]!;
     const rankOut = mid - Math.abs(p - mid); // 0 for the outermost strands, +1 per pair toward the centre
-    const sTurn = Math.max(srcFanStart, sx - (rankOut + 1) * STEP);
-    const dTurn = Math.min(dstFanStart, dx + (rankOut + 1) * STEP);
+    // Turn x, measured OUT from the fan-start (clamped to leave a sliver of bundle before the gather): the
+    // innermost pair turns at the fan-start, each outward pair `STEP` further along. Strictly monotonic in
+    // rankOut ⇒ the lanes still nest without crossing.
+    const sTurn = Math.min(
+      sx - pitch * 0.3,
+      srcFanStart + (maxRank - rankOut) * STEP,
+    );
+    const dTurn = Math.max(
+      dx + pitch * 0.3,
+      dstFanStart - (maxRank - rankOut) * STEP,
+    );
     const lane = offsetOrtho(trunk, (p - mid) * LANE * srcDirSign);
     const entry = lane[0]!;
     const exit = lane[lane.length - 1]!;

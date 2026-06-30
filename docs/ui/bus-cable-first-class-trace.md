@@ -45,6 +45,11 @@ that backtrack spur to a clean monotonic run. **Width-agnostic:** `cableStrandRo
 ANY N — the test asserts zero inter-strand crossings + a spur-free trunk for widths **2,3,4,5,7,8,10,12,16,
 24,32,48,64** across straight / bent / too-close (odd widths centre a strand on the trunk at `d=0`). A very
 wide bus simply needs the parts proportionally further apart to belt-fan, else it cleanly run-throughs.
+**Convergence tuning** (owner art-direction): the nested chevron is anchored at each end's FAN-START (the
+pin lead-out), NOT out at the gather, so the strands begin converging right next to their pins (short
+pin→convergence lead) and then run as a long parallel bundle to the gather; and the chevron's x-stagger
+`STEP = LANE·1.2` (on par with the bundle's strand spacing, a touch bigger) so the nest packs at just over
+45°, matching the ribbon density.
 
 ## The five remaining asks (owner, verbatim intent)
 
