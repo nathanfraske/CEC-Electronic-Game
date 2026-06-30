@@ -78,8 +78,16 @@ column each so the break-out wires don't collide), forward bit order by default 
 (the owner's "junction up" vs "sequential junction down"). The gesture is zoom-disambiguated: zoomed IN a
 click hits a strand → single-bit tap; zoomed OUT it hits the trunk → whole-bus fan-out. Tested
 (`cable.test.ts`: N taps, forward/reversed bit order, staggered cells, each on its bit's net) + headless
-drive (zoomed-out junction-click → `cable.taps` 0→N). **Follow-up the owner can direct:** a visual tap marker
-/ bit label on the tap junctions.
+drive (zoomed-out junction-click → `cable.taps` 0→N).
+
+**Break-out stubs + scaled tap nodes** (owner review — the staggered tap junctions sat at grid cells off the
+sub-cell strands, so they floated and read oversized). Fixes, both render-only in `board.ts`: each tap now
+draws a thin, bit-coloured, lens-skinned Manhattan **stub** (`drawCableTapStubs`, end of `drawCables`) from
+the point on its bit's strand (`cableStrandCache`; the collapsed trunk when zoomed out) to the junction — so
+a tap reads as ATTACHED to the bus and a whole-bus fan-out reads as the strands visibly dropping out at
+staggered points; and `drawJunctions` renders cable-tap junctions at a smaller `TAP_R` (the grab/hit range
+stays `JUNCTION_R`-based, so they're still easy to wire from). **Follow-up the owner can direct:** a bit
+label on the tap node.
 
 ## The five remaining asks (owner, verbatim intent)
 
