@@ -2584,6 +2584,24 @@ export class BoardGraph {
     this.deriveCableLinks();
   }
 
+  /** Fan the WHOLE bus out at cell `at`: ONE break-out tap per bit, on a staggered down-right diagonal so the
+   *  break-out wires leave without colliding (one column each). `reversed` flips the bit order (forward
+   *  bit 0→N−1 vs reversed N−1→0 — the owner's "junction up" vs "sequential junction down"). Returns the tap
+   *  junction ids in placement order, or [] on an unknown cable. */
+  addCableFanOut(cableId: number, at: Cell, reversed = false): number[] {
+    const c = this.cables.get(cableId);
+    if (!c) return [];
+    const ids: number[] = [];
+    for (let k = 0; k < c.width; k++) {
+      const bit = reversed ? c.width - 1 - k : k;
+      const j = this.addJunction({ col: at.col + k, row: at.row + k }, true);
+      (c.taps ??= []).push({ bit, junctionId: j.id });
+      ids.push(j.id);
+    }
+    this.deriveCableLinks();
+    return ids;
+  }
+
   /**
    * Reconcile the auto-managed per-bit NetLabel pairs for every cable (idempotent; the SOLE author of
    * owner-tagged labels). For each cable + bit it ensures one owner-tagged label at each end's pin sharing

@@ -71,9 +71,15 @@ junction + a label, exactly the owner's manual `bus-tap-reference` pattern, auto
 cleaned up with `removeCableTap` / when the cable or an endpoint part is removed; stale taps self-heal in
 `deriveCableLinks`. Strand hit-test reads a per-frame `cableStrandCache` (only matches when fanned). Verified
 by unit tests (`cable.test.ts`: the tap lands on the right bit's net, is bit-isolated, and cleans up) AND a
-headless drive (junction-mode click on a strand → `cable.taps` 0→1, junction dot on the bit). **Follow-ups
-the owner can direct:** a one-click whole-bus fan-out (N staggered taps, forward/reversed per the reference),
-and a visual tap marker / bit label.
+headless drive (junction-mode click on a strand → `cable.taps` 0→1, junction dot on the bit). **Whole-bus fan-out** (this change): the JUNCTION
+tool on the COLLAPSED TRUNK (zoomed out, where no strands are drawn) breaks EVERY bit out at once —
+`graph.addCableFanOut(cableId, at, reversed)` drops one tap per bit on a staggered down-right diagonal (one
+column each so the break-out wires don't collide), forward bit order by default or **reversed with Shift**
+(the owner's "junction up" vs "sequential junction down"). The gesture is zoom-disambiguated: zoomed IN a
+click hits a strand → single-bit tap; zoomed OUT it hits the trunk → whole-bus fan-out. Tested
+(`cable.test.ts`: N taps, forward/reversed bit order, staggered cells, each on its bit's net) + headless
+drive (zoomed-out junction-click → `cable.taps` 0→N). **Follow-up the owner can direct:** a visual tap marker
+/ bit label on the tap junctions.
 
 ## The five remaining asks (owner, verbatim intent)
 

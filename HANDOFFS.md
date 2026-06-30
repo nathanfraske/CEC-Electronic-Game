@@ -71,9 +71,18 @@ a per-frame `cableStrandCache`. Wired into the junction tool (`placeCableTapAt` 
 Tested: `cable.test.ts` (tap on right bit's net, isolated, cleans up) + headless drive (`__cecSetMode` +
 `cableProbe.strandsScreen`: junction-mode click on a strand → tap junction on the bit, screenshot confirms).
 
-**NEXT on the cable (owner-directable):** one-click whole-bus fan-out (N staggered taps, forward/reversed per
-the reference); a visual tap marker / bit label on the tap junction; vertical-approach unzip (currently the
-comb fallback). Design doc updated: `docs/ui/bus-cable-first-class-trace.md`.
+**Whole-bus fan-out (landed):** JUNCTION tool on the COLLAPSED TRUNK (zoomed out) breaks every bit out at
+once — `graph.addCableFanOut(cableId, at, reversed)` drops one tap per bit on a staggered down-right diagonal,
+forward by default / **reversed with Shift** (the reference's "junction up" vs "sequential junction down").
+Zoom-disambiguated: zoomed-in click → strand → single tap; zoomed-out click → trunk → fan-out
+(`placeCableFanOutAt`, after `placeCableTapAt` in the junction handler; the additive/Shift branch does the
+reversed fan). Tested (`cable.test.ts`) + headless drive (zoomed-out junction-click → `cable.taps` 0→N,
+staggered junctions screenshot-confirmed).
+
+**Cable S0–S5 + fan-out are DONE** (unzip → belt-fan → lens → drag-reroute → per-bit tap → whole-bus fan-out,
+crossing-free at any width). **NEXT on the cable (owner-directable):** a visual tap marker / bit label on the
+tap junctions; vertical-approach unzip (currently the comb fallback). Design doc:
+`docs/ui/bus-cable-first-class-trace.md`.
 
 ---
 

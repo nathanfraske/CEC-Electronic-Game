@@ -271,4 +271,64 @@ describe("Cable P3: per-bit tap (break-out)", () => {
       unregisterUserIc("CBLTAP2");
     }
   });
+
+  it("whole-bus fan-out drops one tap per bit (forward + reversed), each on its bit's net", () => {
+    registerBus8("CBLFAN");
+    try {
+      const g = new BoardGraph();
+      const a = place(g, "CBLFAN", 0, 0);
+      const b = place(g, "CBLFAN", 20, 0);
+      const cable = g.addCable({
+        base: "A",
+        width: 4,
+        route: [],
+        src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
+        dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
+      });
+      // Forward: tap k carries bit k, on a staggered down-right diagonal from the click.
+      const fwd = g.addCableFanOut(cable.id, { col: 5, row: 0 }, false);
+      expect(fwd).toHaveLength(4);
+      cable.taps!.slice(0, 4).forEach((t, k) => {
+        expect(t.bit).toBe(k);
+        expect(g.junctions.get(t.junctionId)!.cell).toEqual({
+          col: 5 + k,
+          row: k,
+        });
+      });
+      // Reversed: tap k carries bit (N-1-k).
+      const rev = g.addCableFanOut(cable.id, { col: 5, row: 10 }, true);
+      cable.taps!.slice(4).forEach((t, k) => expect(t.bit).toBe(3 - k));
+
+      // Both the forward AND reversed bit-1 taps sit on bit 1's net (one netlist).
+      const fwdBit1 = cable.taps!.find(
+        (t) => t.bit === 1 && fwd.includes(t.junctionId),
+      )!.junctionId;
+      const revBit1 = cable.taps!.find(
+        (t) => t.bit === 1 && rev.includes(t.junctionId),
+      )!.junctionId;
+      const gnd = place(g, "GND", -20, -20);
+      const sense = (
+        ep: { componentId: number; pinIndex: number } | { junctionId: number },
+        kk: number,
+      ): number => {
+        const r = place(g, "R", -22, -22 - kk);
+        r.value = 1e9;
+        g.connect({ componentId: r.id, pinIndex: 0 }, ep);
+        g.connect(
+          { componentId: r.id, pinIndex: 1 },
+          { componentId: gnd.id, pinIndex: 0 },
+        );
+        return r.id;
+      };
+      const rF = sense({ junctionId: fwdBit1 }, 0);
+      const rR = sense({ junctionId: revBit1 }, 1);
+      const rSrc1 = sense({ componentId: a.id, pinIndex: 1 }, 2);
+      const nl = buildNetlist(g, false)!;
+      const node = (id: number) => nl.nodesOfComponent.get(id)?.[0];
+      expect(node(rF)).toBe(node(rSrc1));
+      expect(node(rR)).toBe(node(rSrc1));
+    } finally {
+      unregisterUserIc("CBLFAN");
+    }
+  });
 });

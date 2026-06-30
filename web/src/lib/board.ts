@@ -3782,6 +3782,28 @@ export class Board {
     return true;
   }
 
+  /** Whole-bus FAN-OUT (junction tool on the collapsed/zoomed-out trunk): break every bit out at once on a
+   *  staggered diagonal (`reversed` flips the bit order). One undo step. Returns true if the trunk was hit. */
+  private placeCableFanOutAt(
+    wx: number,
+    wy: number,
+    reversed: boolean,
+  ): boolean {
+    const cableId = this.cableHitTest(wx, wy);
+    if (cableId === null) return false;
+    this.pushUndo(this.graph.serialize());
+    this.graph.addCableFanOut(
+      cableId,
+      { col: snap(wx, PITCH), row: snap(wy, PITCH) },
+      reversed,
+    );
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    return true;
+  }
+
   /**
    * Which *anchor leg* of a wire a world point sits on — the index into the route
    * `[from, …waypoints, to]` so that the click lies on the leg between anchor `i`
@@ -5323,12 +5345,18 @@ export class Board {
     // create+split path as ending a wire on a wire, but with no incoming wire.
     // Falls through to pan when not over a wire (and shift-click still selects).
     if (this.mode === "junction" && !additive) {
-      // A click on an unzipped cable STRAND taps that one bit out (a break-out junction on its net); else
-      // the normal place-junction-on-a-wire path; else pan.
+      // Cable break-out: zoomed IN, a click on a STRAND taps that one bit; zoomed OUT, a click on the TRUNK
+      // FANS the whole bus out (forward bit order). Else the normal place-junction-on-a-wire path; else pan.
       if (this.placeCableTapAt(wp.x, wp.y)) return;
+      if (this.placeCableFanOutAt(wp.x, wp.y, false)) return;
       if (this.placeJunctionAt(wp.x, wp.y)) return;
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
+    }
+    // SHIFT + junction tool on a cable trunk: fan the whole bus out in REVERSED bit order (the owner's
+    // "sequential junction down"). Falls through to normal additive handling off any cable.
+    if (this.mode === "junction" && additive) {
+      if (this.placeCableFanOutAt(wp.x, wp.y, true)) return;
     }
 
     // Label tool: a non-additive click attaches (or edits) a net label. Precedence
