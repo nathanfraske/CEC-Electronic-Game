@@ -2404,6 +2404,27 @@ export class Board {
     this.applyTextRes();
   }
 
+  /** TEST HARNESS ONLY (`scripts/shoot.mjs --democable`): stand up a 4-bit bus `Cable` between two
+   *  instances of an already-registered bus IC `busTag`, so the cable render (lens skin / belt-fan / unzip)
+   *  is screenshot-verifiable. Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
+  buildDemoCable(busTag: string): void {
+    this.graph.clear(); // start from an empty board so the demo cable reads cleanly
+    const a = this.graph.place(busTag, { col: -10, row: 0 });
+    const b = this.graph.place(busTag, { col: 10, row: 0 });
+    if (!a || !b) return;
+    this.graph.addCable({
+      base: "DATA",
+      width: 4,
+      route: [{ col: 0, row: -3 }],
+      src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
+      dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
+    });
+    this.rebuildNodes();
+    this.redrawWires();
+    this.fitView();
+    this.cb.onChange?.(this.graph);
+  }
+
   /** Harness/test accessor (render tools): centre the camera on a placed component at a given zoom scale,
    * so a headless screenshot can reach the deep-zoom LoD (pin labels, conduit skins, zoom-to-open
    * internals) that `fitView` never gets to for a single small part. Centres on the part's pin-bbox centre
