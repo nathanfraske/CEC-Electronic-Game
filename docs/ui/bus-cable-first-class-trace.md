@@ -35,6 +35,17 @@ fallback:** when the trunk is shorter than the fan needs (zip and unzip would me
 Verified via `shoot --democable --democable-mode straight|bend|close` (the harness now stands up all three
 layouts). All render-only / golden-safe.
 
+**The geometry now lives in `web/src/lib/cableGeometry.ts`** (`buildCableTrunk` / `offsetOrtho` /
+`cableStrandRoutes` — pure, no instance state), so the crossing-free property is unit-tested in
+`cableGeometry.test.ts` without a browser. **Bowtie fix (bent buses):** the first version crossed the
+strands at the entry bend — `buildCableTrunk`'s elbow landed at the gather's coordinate while the first
+route waypoint sat the *other* side of it, so the trunk hooked out-and-back (a cusp), and the perpendicular
+offset of a cusp crosses. `buildCableTrunk` now drops any vertex collinear with both neighbours, collapsing
+that backtrack spur to a clean monotonic run. **Width-agnostic:** `cableStrandRoutes` is crossing-free at
+ANY N — the test asserts zero inter-strand crossings + a spur-free trunk for widths **2,3,4,5,7,8,10,12,16,
+24,32,48,64** across straight / bent / too-close (odd widths centre a strand on the trunk at `d=0`). A very
+wide bus simply needs the parts proportionally further apart to belt-fan, else it cleanly run-throughs.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in

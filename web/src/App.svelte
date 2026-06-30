@@ -51,6 +51,7 @@
     isFrame,
     isFreeFormFrame,
     framePackage,
+    ensureFrameKind,
     type GraphSnapshot,
     type HotSlot,
     type PinTest,
@@ -3095,39 +3096,31 @@
           __cecDemoCable?: (width?: number, mode?: string) => void;
         }
       ).__cecDemoCable = (width = 4, mode = "straight") => {
+        const w = Math.max(2, Math.min(16, Math.round(width)));
+        // Package wide enough for `w` bus bits on ONE side (DIP = pinCount/2 per side): DIP16 keeps the
+        // familiar small demo for ≤8-wide; wider needs a bigger DIP, registered on demand (only 8/14/16
+        // ship by default) so we can show 10- and 16-bit buses too.
+        const pinCount = Math.max(16, 2 * w);
+        const half = pinCount / 2;
+        const frameTag = ensureFrameKind("DIP", pinCount);
         const inner = new BoardGraph();
-        const frame = inner.place("DIP16", { col: 0, row: 0 });
+        const frame = inner.place(frameTag, { col: 0, row: 0 });
         if (!frame) return;
+        const pinNames: string[] = [];
+        for (let i = 0; i < half; i++) pinNames.push(`A${i}`); // bus column (pins 0..half-1)
+        for (let i = 0; i < half; i++) pinNames.push(`B${i}`); // far side
         registerUserIc({
           tag: "CBLDEMO",
           name: "Bus",
-          package: { archetype: "DIP", pinCount: 16 },
+          package: { archetype: "DIP", pinCount },
           frameId: frame.id,
           graph: inner.serialize(),
-          // 8 bus bits on one side (a column) so the cable demo can be 2..8 wide off a single pin column.
-          pinNames: [
-            "A0",
-            "A1",
-            "A2",
-            "A3",
-            "A4",
-            "A5",
-            "A6",
-            "A7",
-            "VCC",
-            "GND",
-            "EN",
-            "CLK",
-            "B0",
-            "B1",
-            "B2",
-            "B3",
-          ],
+          pinNames,
           role: "ic",
         });
         board?.buildDemoCable(
           "CBLDEMO",
-          Math.max(2, Math.min(8, width)),
+          w,
           mode === "bend" || mode === "close" ? mode : "straight",
         );
       };

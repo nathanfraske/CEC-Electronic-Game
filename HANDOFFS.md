@@ -37,6 +37,18 @@ time of writing — commit next): the headline geometry in `board.ts`.
   through the corner), close→run-through (4 straight traces between two touching parts), 6-bit bend under the
   **analogy lens** (parallel pipes follow the bend — lens-respect holds).
 
+**Bowtie fix + crossing-free proof (owner review, same session):** the first S3 cut crossed the strands at
+the ENTRY bend. Root cause: `buildCableTrunk`'s elbow landed at the gather's coord while the first route
+waypoint sat the OTHER side of it (gather = pin centroid, waypoint = anchor row), so the trunk hooked
+out-and-back — a cusp — and the perpendicular offset of a cusp crosses. Fix: `buildCableTrunk` now collapses
+any vertex collinear with both neighbours (drops the backtrack spur) → clean monotonic run → no crossing.
+Extracted the pure geometry to **`web/src/lib/cableGeometry.ts`** (`buildCableTrunk`/`offsetOrtho`/
+`cableStrandRoutes`; board.ts now just colours+strokes), and added **`cableGeometry.test.ts`** — asserts
+ZERO inter-strand crossings + a spur-free trunk for widths **2,3,4,5,7,8,10,12,16,24,32,48,64** × straight /
+bent / too-close (39 cases, answers the owner's 5-/10-/64-bit questions). Demo widened: `__cecDemoCable`
+registers a DIP sized to the width on demand (`ensureFrameKind`), so `--democable-width` now goes to 16;
+shot 5- and 10-bit bends clean.
+
 **NEXT on the cable:** S4 drag-reroute (mirror `beginWireSegmentDrag` onto `Cable.route`), S5 junction /
 per-bit tap (the saved `docs/ui/bus-tap-reference.ceccircuit.json` is the spec: forward A0→A3 + reversed
 A3→A0). Then: vertical-approach unzip; the `cableTrunkRoutes` hit-test now follows the bent trunk so it's
