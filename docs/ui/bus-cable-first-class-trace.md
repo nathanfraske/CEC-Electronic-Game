@@ -8,12 +8,32 @@ to behave and read like **any other trace** — only bundled. This note captures
 grounded implementation approach. **All of it is web-only / render+UX, golden-safe** (a cable lowers to N
 auto net-labels via `deriveCableLinks`; `sim-core` never sees it).
 
-## Landed already (`db2db96`)
+## Landed already
 
-**Select + delete.** `cableHitTest` (vs the trunk polyline cached each frame in `cableTrunkRoutes`, the
-analogue of `conduitDrawRoutes`), `selectedCables` + `selectCable` (mirrors `selectWire`); accent halo in
-`redrawSelection`; `deleteSelection` → `graph.removeCable`; every selection reset clears cables; a selected
-cable counts as an edge in `emitSelect`.
+**Select + delete** (`db2db96`). `cableHitTest` (vs the trunk polyline cached each frame in
+`cableTrunkRoutes`, the analogue of `conduitDrawRoutes`), `selectedCables` + `selectCable` (mirrors
+`selectWire`); accent halo in `redrawSelection`; `deleteSelection` → `graph.removeCable`; every selection
+reset clears cables; a selected cable counts as an edge in `emitSelect`.
+
+**S1 lens-respect** (`6bd4a84`). The bundled trunk skins via `drawConduitSkin` (analogy pipe / reality
+conductor / schematic trace), threaded from `redrawWires`.
+
+**S2 belt-fan** (`84107ad`). Replaced the blocky pinch with the owner's Factorio-balancer symmetric
+convergence: strands ordered top→bottom by source-pin Y (no crossings), each turning toward the bus centre
+as a **compact nested chevron** keyed to its rank FROM the centre — outermost strands run straight out
+longest and turn in last; evenly scalable (verified 4 + 8 wide).
+
+**S3 zoom-unzip + per-strand colour + bent/close generalization** (this change). Above `TIER_ZOOM` and
+`!collapsed`, a cable fans into its N literal strands, each `endpointColor`'d by its bit's net and
+lens-skinned (S1). The unzip now handles **any horizontal-approach bus, straight OR bent**: the parallel
+bundle follows the (possibly routed) trunk via `offsetOrtho` (parallel-curve of the Manhattan centreline —
+each strand a lane offset perpendicular by its rank, so the bundle bends with the route, corners nesting),
+spliced between the two belt-fan chevrons. `buildCableTrunk` orthogonalizes `[srcGather, …route, dstGather]`
+(a Z when both gathers share an approach axis at different rows, an L when they differ). **Too-close
+fallback:** when the trunk is shorter than the fan needs (zip and unzip would meet), each bit instead runs
+**straight through** pin→pin — a clean Manhattan trace (a single line for an aligned bus), no bundling.
+Verified via `shoot --democable --democable-mode straight|bend|close` (the harness now stands up all three
+layouts). All render-only / golden-safe.
 
 ## The five remaining asks (owner, verbatim intent)
 
@@ -77,6 +97,11 @@ heaviest; design the tap data model before coding.
 
 - **The ortho perpendicular-offset of a bent trunk** (S3 parallel strands) is the fiddliest geometry —
   for a straight bus it's a trivial uniform offset; handle bends by offsetting per-segment and reconnecting
-  at the shifted corner. Start with the straight-bus common case looking great.
+  at the shifted corner. Start with the straight-bus common case looking great. **DONE** (`offsetOrtho` in
+  `board.ts`): per-segment left-normal offset, interior corners = intersection of the two adjacent offset
+  lines (never singular for 90° turns), collinear/dup points dropped first. Signed by the trunk's leaving
+  direction so the topmost source pin always takes the topmost lane. **Still horizontal-approach only**
+  (`src.axis === "h" && dst.axis === "h"`); a vertical-approach bus still falls back to the collapsed comb —
+  a follow-up.
 - **Golden-safe throughout** — none of this crosses the wasm boundary or the snapshot hash.
 - **Verify every slice with `shoot`** on the S0 fixture (the owner is art-directing — show, don't guess).

@@ -42,9 +42,13 @@ Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to f
   convergence (Factorio 4-belt ref — nested right-angle bends, not a blocky pinch); **(3)** respect the
   lens (`drawConduitSkin` per strand: schematic trace / analogy pipe / reality conductor); **(4)** drag-
   reroute the trunk (mirror `beginWireSegmentDrag` onto `Cable.route`); **(5)** junction off it + per-bit
-  tap (Cable P3). All web-only/golden-safe. **DONE:** select + delete (`db2db96`). **NEXT (build order in
-  the doc):** S0 cable fixture (so it's `shoot`-verifiable) → S1 lens-respect → S2 belt-fan → S3 unzip+colour
-  → S4 drag-reroute → S5 junction/tap. Spans Cable P2 (#92) + P3 (#93).
+  tap (Cable P3). All web-only/golden-safe. **DONE:** select + delete (`db2db96`); ~~S0 fixture~~ (`3393756`);
+  ~~S1 lens-respect~~ (`6bd4a84`); ~~S2 belt-fan~~ (`84107ad`); ~~S3 zoom-unzip + per-strand colour + bent-trunk
+  generalization (`offsetOrtho` follows the route's bends) + too-close→straight-run-through (owner ask)~~ (248,
+  this batch — `buildCableTrunk`/`offsetOrtho`/`drawCableStrands`; `shoot --democable-mode straight|bend|close`;
+  horizontal-approach only so far). **NEXT (build order in the doc):** S4 drag-reroute (mirror
+  `beginWireSegmentDrag` onto `Cable.route`) → S5 junction/tap (forward + reversed, per the saved reference) →
+  vertical-approach unzip. Spans Cable P2 (#92) + P3 (#93).
 
 ---
 

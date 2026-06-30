@@ -5,6 +5,45 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (248) — BUS-CABLE S2 belt-fan + S3 unzip (bent trunk + too-close run-through)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+byte-identical**, web check/lint/build, **356 web tests**). All this session's cable work is **web-only /
+golden-safe** (cables lower to net-labels; nothing crosses the wasm boundary or the hash). Owner art-directed
+each slice via `shoot`.
+
+**S2 belt-fan** (`84107ad`, prior turn): the Factorio-balancer symmetric convergence — strands ordered
+top→bottom by source-pin Y, a **compact nested chevron** keyed to each strand's rank FROM the centre (outer
+strands turn in last); evenly scalable. Approved by owner ("Perfect. On to the unzip.").
+
+**S3 unzip — generalized for routed/bent cables + too-close run-through** (this turn, NOT yet committed at
+time of writing — commit next): the headline geometry in `board.ts`.
+- **`buildCableTrunk(srcPt,dstPt,routeW,srcAxis,dstAxis)`** — extracted the trunk orthogonalization (shared by
+  the collapsed render AND the unzip). No-route diagonal → a **Z** (two elbows) when both gathers share an
+  approach axis at different rows, an **L** when they differ; routed → one elbow per leg (first honours
+  `srcAxis`, last `dstAxis`).
+- **`offsetOrtho(pts,d)`** — parallel-curve of a Manhattan polyline (per-segment left-normal; interior corner
+  = intersection of the two adjacent offset lines, never singular for 90°; dedups collinear/dup pts first).
+- **`drawCableStrands`** now takes the trunk: each strand's bus lane = `offsetOrtho(trunk, rank·LANE·dir)`
+  spliced between the two chevrons, so **the bundle follows the route's bends** (strands stay parallel, corners
+  nest). Signed by the trunk's leaving direction so the top source pin always takes the top lane (no twist).
+- **Too-close fallback** (owner ask): when `trunkLen < max(PITCH,(mid+1)·STEP)` — zip & unzip would meet — each
+  bit runs **straight through** pin→pin (a single line for an aligned bus), no bundling.
+- The unzip gate dropped `route.length===0` + the y-alignment clause; **kept `src.axis==="h" && dst.axis==="h"`**
+  (vertical-approach bus still uses the collapsed comb — a follow-up).
+- **Harness:** `buildDemoCable(tag,width,mode)` + `__cecDemoCable(width,mode)` + `shoot --democable-mode
+  straight|bend|close`; demo also floors its zoom just past `TIER_ZOOM` so the strand render is always shot.
+- **Verified via shoot:** straight belt-fan (identical to approved), 4- & 8-bit Z-bend (parallel lanes nest
+  through the corner), close→run-through (4 straight traces between two touching parts), 6-bit bend under the
+  **analogy lens** (parallel pipes follow the bend — lens-respect holds).
+
+**NEXT on the cable:** S4 drag-reroute (mirror `beginWireSegmentDrag` onto `Cable.route`), S5 junction /
+per-bit tap (the saved `docs/ui/bus-tap-reference.ceccircuit.json` is the spec: forward A0→A3 + reversed
+A3→A0). Then: vertical-approach unzip; the `cableTrunkRoutes` hit-test now follows the bent trunk so it's
+ready for drag. Design doc updated: `docs/ui/bus-cable-first-class-trace.md`.
+
+---
+
 ## 2026-06-30 (247) — THERMAL fixes + BUS-CABLE first-class-trace (S0+S1 landed; S2/S3 next)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **Merged to main as PR #317** (merge `715a733`) — the whole

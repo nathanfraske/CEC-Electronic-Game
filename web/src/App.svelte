@@ -3091,8 +3091,10 @@
       // two instances, so the bus-cable render (lens skin / belt-fan / unzip) is screenshot-verifiable
       // without hand-authoring a user-IC fixture. Mirrors cable.test.ts' registerBus8.
       (
-        window as unknown as { __cecDemoCable?: (width?: number) => void }
-      ).__cecDemoCable = (width = 4) => {
+        window as unknown as {
+          __cecDemoCable?: (width?: number, mode?: string) => void;
+        }
+      ).__cecDemoCable = (width = 4, mode = "straight") => {
         const inner = new BoardGraph();
         const frame = inner.place("DIP16", { col: 0, row: 0 });
         if (!frame) return;
@@ -3123,7 +3125,11 @@
           ],
           role: "ic",
         });
-        board?.buildDemoCable("CBLDEMO", Math.max(2, Math.min(8, width)));
+        board?.buildDemoCable(
+          "CBLDEMO",
+          Math.max(2, Math.min(8, width)),
+          mode === "bend" || mode === "close" ? mode : "straight",
+        );
       };
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
