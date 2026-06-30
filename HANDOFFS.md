@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (250) — Bus-cable: VERTICAL-approach unzip + WIDTH BADGE (the last two cable follow-ups)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+`0xeaac_3764_99e4_fa24` byte-identical**, build:wasm, web check/lint/build, **437 web tests** — +39 from the
+new vertical geometry cases). Web-only / render-only.
+
+**(1) Vertical-approach unzip.** The unzip used to bail to the collapsed comb unless BOTH ends approached
+horizontally (`src.axis === "h" && dst.axis === "h"`). Now a **vertical-approach** bus (pins stacked
+horizontally, bundle running up↕down) unzips with the same symmetric belt-fan. `cableGeometry.ts`
+`cableStrandRoutes` gained an `axis` param and solves vertical by **TRANSPOSING** (reflect across `y = x`) into
+the horizontal frame, running the one belt-fan, then transposing the routes back — a reflection preserves
+orthogonality + distances, so crossing-freeness carries over unchanged with **zero duplicated geometry**. The
+board gate (`board.ts` `drawCables`) is now `src.axis === dst.axis`, threading `src.axis` into
+`drawCableStrands` → `cableStrandRoutes`. (A **mixed-axis** corner-turning bus still uses the collapsed comb.)
+`cableGeometry.test.ts` now runs every width in BOTH axes (39→78 cases). Verified live: `shoot --democable-mode
+vertical` (a new `buildDemoCable` mode rotates both packages 90° + stacks them top/bottom) → both belt-fans
+symmetric, bundle vertical, no crossings.
+
+**(2) Width badge.** A collapsed/zoomed-out (or mixed-axis) bundle hides its strands, so `drawCables` now
+stamps a small **`×N`** trace-count pill (bus colour, opaque dark fill) at the trunk's **arc-length midpoint**
+(`polylineMidpoint`) — read the bus width at a glance without unzipping. Pooled `cableBadgeTexts` (own pool,
+resolution-tracked like the tap tags), drawn only in the collapsed branch and only for a real bundle (≥2).
+Verified live: `shoot … --zoom 1.45` → the `×8` pill centred on the collapsed trunk.
+
+**Files:** `cableGeometry.ts` (axis param + transpose), `cableGeometry.test.ts` (+vertical block),
+`board.ts` (gate `=== dst.axis`, `drawCableStrands(axis)`, width-badge render + `cableBadgeTexts` pool +
+`cableBadgeText`/`polylineMidpoint` helpers + `buildDemoCable` `vertical` mode), `App.svelte` (`__cecDemoCable`
+passes `vertical`), `shoot.mjs` (comment). Both render-only / golden-safe. **Bus-cable first-class-trace work
+is now feature-complete** for the owner's asks (S1–S5 + right-click menu + vertical + width badge); remaining
+cable items are the separate Cable P5 hierarchy (#94) and bus-slice IC recognition (#148).
+
+---
+
 ## 2026-06-30 (249) — Consistent right-click CONTEXT MENU (replaces per-target delete; cable fan-out forward/reverse → menu rows)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden

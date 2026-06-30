@@ -3146,7 +3146,9 @@
         board?.buildDemoCable(
           "CBLDEMO",
           w,
-          mode === "bend" || mode === "close" ? mode : "straight",
+          mode === "bend" || mode === "close" || mode === "vertical"
+            ? mode
+            : "straight",
         );
       };
       // Render harness (drag-reroute driver): the first cable's trunk (canvas-local screen coords) + route,

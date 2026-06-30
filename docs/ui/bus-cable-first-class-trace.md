@@ -116,6 +116,21 @@ order; reversed = up + reversed order). Web-only / render-only; verified by a he
 right-click opens the menu — does NOT delete; *Fan out forward* fanned an 8-bit bus, taps 0→8; Escape +
 click-away dismiss; package body gives Rotate/Flip/Delete) and on-brand menu screenshots.
 
+**Vertical-approach unzip + width badge** (the two deferred follow-ups). (1) **Vertical unzip:** the unzip used
+to bail to the collapsed comb unless BOTH ends approached horizontally; now a vertical-approach bus (pins
+stacked horizontally, the bundle running up↕down) unzips with the same symmetric belt-fan. `cableStrandRoutes`
+takes an `axis` and solves vertical by TRANSPOSING (reflect across `y = x`) into the horizontal frame, running
+the one belt-fan, then transposing back — a reflection preserves orthogonality + distances, so the
+crossing-free property carries over unchanged (the geometry test now runs all widths in BOTH axes:
+`cableGeometry.test.ts`, 78 cases). The board gate is now `src.axis === dst.axis` (a mixed-axis corner-turning
+bus still uses the collapsed comb). Verified via `shoot --democable-mode vertical` (a new demo mode rotates
+both packages 90° + stacks them) — both belt-fans symmetric, the bundle vertical, no crossings. (2) **Width
+badge:** a collapsed/zoomed-out (or mixed-axis) bundle hides its strands, so it now stamps a small `×N`
+trace-count pill (in the bus colour) at the trunk's arc-length midpoint — read the bus width at a glance
+without unzipping. Pooled `cableBadgeTexts`, drawn in the collapsed branch of `drawCables`, only for a real
+bundle (≥2). Verified via `shoot … --zoom 1.45` (the `×8` pill centred on the collapsed trunk). Both render-
+only / golden-safe.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in
@@ -181,8 +196,11 @@ heaviest; design the tap data model before coding.
   at the shifted corner. Start with the straight-bus common case looking great. **DONE** (`offsetOrtho` in
   `board.ts`): per-segment left-normal offset, interior corners = intersection of the two adjacent offset
   lines (never singular for 90° turns), collinear/dup points dropped first. Signed by the trunk's leaving
-  direction so the topmost source pin always takes the topmost lane. **Still horizontal-approach only**
-  (`src.axis === "h" && dst.axis === "h"`); a vertical-approach bus still falls back to the collapsed comb —
-  a follow-up.
+  direction so the topmost source pin always takes the topmost lane. **Now handles vertical approach too**
+  (`cableStrandRoutes(..., axis)`: a vertical-approach bus is solved by TRANSPOSING — reflecting across `y = x`
+  — into the horizontal belt-fan, then transposing the routes back; a reflection preserves orthogonality +
+  distances, so crossing-freeness carries over unchanged at any width, no duplicated geometry). The board
+  unzips whenever BOTH ends share an approach axis (`src.axis === dst.axis`); a mixed-axis (corner-turning)
+  bus still falls back to the collapsed comb.
 - **Golden-safe throughout** — none of this crosses the wasm boundary or the snapshot hash.
 - **Verify every slice with `shoot`** on the S0 fixture (the owner is art-directing — show, don't guess).

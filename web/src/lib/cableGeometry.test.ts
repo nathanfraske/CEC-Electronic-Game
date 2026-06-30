@@ -34,6 +34,28 @@ function gatherH(pins: Point[], towardX: number): Point {
   return new Point(cx + Math.sign(towardX - cx || 1) * d, cy);
 }
 
+/** A horizontal pin ROW (the bus port of a VERTICAL-approach bus) of `n` pins centred on `centerX`. */
+function pinRow(centerX: number, y: number, n: number): Point[] {
+  const mid = (n - 1) / 2;
+  return Array.from(
+    { length: n },
+    (_, j) => new Point(centerX + (j - mid) * PITCH, y),
+  );
+}
+
+/** board.ts `gatherAxis` for a horizontal pin row (axis "v"): the gather sits on the row's centre line,
+ *  pushed toward the partner (in Y) by the cluster's own spread + a cell — the vertical analogue of gatherH. */
+function gatherV(pins: Point[], towardY: number): Point {
+  const cx = pins.reduce((s, p) => s + p.x, 0) / pins.length;
+  const cy = pins.reduce((s, p) => s + p.y, 0) / pins.length;
+  const spread = Math.max(
+    PITCH,
+    ...pins.map((p) => Math.hypot(p.x - cx, p.y - cy)),
+  );
+  const d = spread + PITCH;
+  return new Point(cx, cy + Math.sign(towardY - cy || 1) * d);
+}
+
 /** Strict proper-intersection (collinear / shared-endpoint touches don't count). Two DIFFERENT strands
  *  share no endpoint, so any true intersection here is a visible cable-over-cable cross. */
 function segsCross(p: Point, q: Point, r: Point, s: Point): boolean {
@@ -121,4 +143,62 @@ describe("cable strand geometry is crossing-free at any width", () => {
     );
     expect(crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH))).toBe(0);
   });
+});
+
+// VERTICAL-approach bus (pins stacked horizontally, strands run up↕down) — the transpose of the horizontal
+// case (`cableStrandRoutes(..., "v")` reflects across y=x, solves the one belt-fan, reflects back). These
+// mirror the horizontal cases exactly; a reflection preserves orthogonality + distances, so crossing-free
+// must carry over unchanged. (The board only unzips when BOTH ends share an approach axis.)
+describe("cable strand geometry is crossing-free for a vertical-approach bus", () => {
+  it.each(WIDTHS)("straight aligned vertical bus — width %i", (n) => {
+    const srcW = pinRow(0, -SEP, n);
+    const dstW = pinRow(0, SEP, n);
+    const trunk = buildCableTrunk(
+      gatherV(srcW, SEP),
+      gatherV(dstW, -SEP),
+      [],
+      "v",
+      "v",
+    );
+    expect(trunkIsClean(trunk)).toBe(true);
+    expect(crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "v"))).toBe(0);
+  });
+
+  it.each(WIDTHS)(
+    "Z-bent vertical bus (spur/bowtie scenario) — width %i",
+    (n) => {
+      const srcW = pinRow(-PITCH / 2, -SEP, n);
+      const dstW = pinRow(PITCH * 3.5, SEP, n);
+      const route = [new Point(-PITCH * 3, 0), new Point(PITCH * 3, 0)];
+      const trunk = buildCableTrunk(
+        gatherV(srcW, SEP),
+        gatherV(dstW, -SEP),
+        route,
+        "v",
+        "v",
+      );
+      expect(trunkIsClean(trunk)).toBe(true);
+      expect(crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "v"))).toBe(
+        0,
+      );
+    },
+  );
+
+  it.each(WIDTHS)(
+    "too-close vertical pair → straight run-through — width %i",
+    (n) => {
+      const srcW = pinRow(0, -60, n);
+      const dstW = pinRow(0, 60, n);
+      const trunk = buildCableTrunk(
+        new Point(0, -8),
+        new Point(0, 8),
+        [],
+        "v",
+        "v",
+      );
+      expect(crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "v"))).toBe(
+        0,
+      );
+    },
+  );
 });

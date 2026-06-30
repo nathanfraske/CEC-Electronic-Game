@@ -52,8 +52,14 @@ Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to f
   delete board-wide; fan-out forward/reversed are now clean menu rows (no junction-tool gesture / shift /
   toolbar bloat); part = Rotate/Flip/Delete; wire/junction/label = Delete; cable = Tap bit N / Fan out
   forward / Fan out reversed / Delete cable~~ (249, this batch — `board.ts` `buildContextMenu`, `App.svelte`
-  `.ctx-menu` popover; web-only, gate green). **NEXT (owner-directable):** vertical-approach unzip (still
-  comb-fallback) + the original width-badge (trace-count on a collapsed cable). Spans Cable P2 (#92) + P3 (#93).
+  `.ctx-menu` popover; web-only, gate green); ~~**vertical-approach unzip** — `cableStrandRoutes(axis)`
+  transposes the vertical case into the one horizontal belt-fan (crossing-free, geometry test runs both axes,
+  78 cases); board gate is now `src.axis === dst.axis`~~ + ~~**width badge** — `×N` trace-count pill on a
+  collapsed/zoomed-out bundle at the trunk midpoint~~ (250, this batch — `cableGeometry.ts`/`board.ts`;
+  `shoot --democable-mode vertical` + `--zoom`; web-only, gate green). **Bus-cable first-class-trace is now
+  feature-complete** for the owner's asks. Remaining cable items are separate: Cable P5 hierarchy (#94) +
+  bus-slice IC recognition (#148). A mixed-axis (corner-turning) bus still uses the collapsed comb (minor
+  follow-up). Spanned Cable P2 (#92) + P3 (#93).
 
 ---
 

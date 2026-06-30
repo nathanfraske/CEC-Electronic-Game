@@ -146,13 +146,31 @@ export function offsetOrtho(pts: Point[], d: number): Point[] {
  * 64-bit and beyond) joined by a lane parallel to the `trunk` ({@link offsetOrtho}), so the bundle follows
  * the route's bends. When the trunk is shorter than the fan needs (zip and unzip too close) it falls back to
  * a straight pin→pin RUN-THROUGH — no bundling. Pure geometry; the caller colours + strokes each route.
+ *
+ * `axis` is the bus's APPROACH axis (the gather's fan axis, from board.ts `gatherAxis`): `"h"` (the default)
+ * is a horizontal-approach bus — pins stacked vertically, strands run left↔right. `"v"` is a vertical-approach
+ * bus — pins stacked horizontally, strands run up↕down. Vertical is solved by TRANSPOSING (reflecting across
+ * `y = x`) the inputs into the horizontal frame, running the one belt-fan, then transposing the routes back:
+ * a reflection preserves orthogonality AND distances, so the crossing-free property carries over unchanged
+ * with no duplicated geometry. (The caller only takes this path when both ends share an approach axis.)
  */
 export function cableStrandRoutes(
   srcW: Point[],
   dstW: Point[],
   trunk: Point[],
   pitch: number,
+  axis: "h" | "v" = "h",
 ): Point[][] {
+  if (axis === "v") {
+    const T = (p: Point) => new Point(p.y, p.x);
+    return cableStrandRoutes(
+      srcW.map(T),
+      dstW.map(T),
+      trunk.map(T),
+      pitch,
+      "h",
+    ).map((r) => r.map(T));
+  }
   const n = srcW.length;
   const sx = trunk[0]!.x;
   const dx = trunk[trunk.length - 1]!.x;

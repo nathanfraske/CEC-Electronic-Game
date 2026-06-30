@@ -748,6 +748,9 @@ export class Board {
   private readonly netLabelTexts: Text[] = [];
   // Pooled per-cable-tap bit tags (their own pool so they don't clash with the net-label pool indices).
   private readonly cableTapTexts: Text[] = [];
+  // Pooled per-cable WIDTH badges (the trace-count pill on a COLLAPSED/zoomed-out bundle — `×N` — so you can
+  // tell how many traces are in the bundle without unzipping it). Its own pool, like the tap tags.
+  private readonly cableBadgeTexts: Text[] = [];
   private readonly probeLayer = new Graphics();
   private readonly probeText = new Text({
     text: "",
@@ -2446,12 +2449,13 @@ export class Board {
   /** TEST HARNESS ONLY (`scripts/shoot.mjs --democable`): stand up a bus `Cable` between two instances of an
    *  already-registered bus IC `busTag`, so the cable render (lens skin / belt-fan / unzip) is
    *  screenshot-verifiable. `mode` picks the layout: `straight` (aligned, no route), `bend` (offset rows +
-   *  a midline route → a Z-bent trunk), or `close` (gathers nearly touching → the run-through fallback).
+   *  a midline route → a Z-bent trunk), `close` (gathers nearly touching → the run-through fallback), or
+   *  `vertical` (both packages rotated 90° + stacked top/bottom → a vertical-APPROACH bus that unzips up↕down).
    *  Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
   buildDemoCable(
     busTag: string,
     width = 4,
-    mode: "straight" | "bend" | "close" = "straight",
+    mode: "straight" | "bend" | "close" | "vertical" = "straight",
   ): void {
     this.graph.clear(); // start from an empty board so the demo cable reads cleanly
     const layout: { a: Cell; b: Cell; route: Cell[] } =
@@ -2466,10 +2470,18 @@ export class Board {
           }
         : mode === "close"
           ? { a: { col: -3, row: 0 }, b: { col: 3, row: 0 }, route: [] }
-          : { a: { col: -7, row: 0 }, b: { col: 7, row: 0 }, route: [] };
+          : mode === "vertical"
+            ? { a: { col: 0, row: -7 }, b: { col: 0, row: 7 }, route: [] }
+            : { a: { col: -7, row: 0 }, b: { col: 7, row: 0 }, route: [] };
     const a = this.graph.place(busTag, layout.a);
     const b = this.graph.place(busTag, layout.b);
     if (!a || !b) return;
+    if (mode === "vertical") {
+      // Rotate both packages 90° so the bus-pin column becomes a horizontal ROW → a vertical-approach bus
+      // (gatherAxis reads "v"), exercising the transposed belt-fan. Pins still index the same; render-only.
+      a.rot = 1;
+      b.rot = 1;
+    }
     const pins = Array.from({ length: width }, (_, i) => i);
     this.graph.addCable({
       base: "DATA",
@@ -3605,6 +3617,7 @@ export class Board {
     for (const t of this.groundLabels) t.resolution = rounded;
     for (const t of this.netLabelTexts) t.resolution = rounded;
     for (const t of this.cableTapTexts) t.resolution = rounded;
+    for (const t of this.cableBadgeTexts) t.resolution = rounded;
     for (const t of this.regionLabels) t.resolution = rounded;
     for (const node of this.nodes.values()) node.setTextRes(rounded);
   }
@@ -7259,6 +7272,8 @@ export class Board {
     // Refreshed every frame: the trunk + per-bit strand hit-test geometry.
     this.cableTrunkRoutes.clear();
     this.cableStrandCache.clear();
+    for (const t of this.cableBadgeTexts) t.visible = false; // width badges re-shown per collapsed bundle
+    let badgeIdx = 0;
     if (this.graph.cables.size === 0) return;
     type XY = { x: number; y: number };
     const centroid = (ps: XY[]): XY => ({
@@ -7329,17 +7344,19 @@ export class Board {
       // end's fan axis). Both the unzipped strands and the collapsed trunk follow it; cached for hit-test.
       const trunk = buildCableTrunk(src.pt, dst.pt, routeW, src.axis, dst.axis);
       this.cableTrunkRoutes.set(c.id, trunk);
-      // UNZIP (S2/S3): zoomed in past TIER_ZOOM, a horizontal-approach bus fans into its N literal
-      // signal-coloured strands via a symmetric staggered "belt" convergence (the owner's Factorio-balancer
-      // reference), each lens-skinned, the parallel bundle following the (possibly bent) trunk. Vertical-
-      // approach / zoomed-out / manually-collapsed cables fall back to the bundled comb + trunk below.
+      // UNZIP (S2/S3): zoomed in past TIER_ZOOM, a bus fans into its N literal signal-coloured strands via a
+      // symmetric staggered "belt" convergence (the owner's Factorio-balancer reference), each lens-skinned,
+      // the parallel bundle following the (possibly bent) trunk. Works for a horizontal-approach bus (pins
+      // stacked vertically, strands run left↔right) OR a vertical-approach one (pins stacked horizontally,
+      // strands run up↕down) — gated on BOTH ends sharing an approach axis (`cableStrandRoutes` transposes the
+      // vertical case into the one belt-fan). A mixed-axis (corner-turning) bus / zoomed-out / manually-
+      // collapsed cable falls back to the bundled comb + trunk below.
       if (
         this.world.scale.x >= TIER_ZOOM &&
         !c.collapsed &&
         srcW.length >= 2 &&
         srcW.length === dstW.length &&
-        src.axis === "h" &&
-        dst.axis === "h"
+        src.axis === dst.axis
       ) {
         this.drawCableStrands(
           g,
@@ -7350,6 +7367,7 @@ export class Board {
           c.src.componentId,
           c.src.pinIndices,
           conduit,
+          src.axis,
         );
         continue;
       }
@@ -7367,6 +7385,23 @@ export class Board {
         for (let i = 1; i < trunk.length; i++)
           g.lineTo(trunk[i]!.x, trunk[i]!.y);
         g.stroke({ width: 6, color, alpha: 0.9 });
+      }
+      // WIDTH BADGE: a collapsed/zoomed-out bundle hides its strands, so stamp a small "×N" trace-count pill
+      // at the trunk's arc-length midpoint (in the bus colour) — read the bus width at a glance without
+      // unzipping. Only for a real bundle (≥2); a single conductor needs no count.
+      if (c.width >= 2) {
+        const mid = this.polylineMidpoint(trunk);
+        const text = this.cableBadgeText(badgeIdx++);
+        text.text = `×${c.width}`;
+        text.style.fill = color;
+        const w = text.width + 10;
+        const h = text.height + 4;
+        const bx = mid.x - w / 2;
+        const by = mid.y - h / 2;
+        g.roundRect(bx, by, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.95 });
+        g.roundRect(bx, by, w, h, 3).stroke({ width: 1, color, alpha: 0.85 });
+        text.position.set(bx + 5, by + 2);
+        text.visible = true;
       }
     }
     // Break-out stubs: a thin bit-coloured Manhattan leg from each tap's strand (or the collapsed trunk) to
@@ -7485,6 +7520,51 @@ export class Board {
     return t;
   }
 
+  /** Fetch (or lazily create) the pooled cable WIDTH-badge Text at index `i` (the `×N` trace-count pill). */
+  private cableBadgeText(i: number): Text {
+    let t = this.cableBadgeTexts[i];
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.cyan,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 11,
+          fontWeight: "700",
+        },
+      });
+      t.resolution = this.textRes;
+      this.cableBadgeTexts[i] = t;
+      this.netLabelLayer.addChild(t);
+    }
+    return t;
+  }
+
+  /** The arc-length MIDPOINT of a polyline (half the total run, interpolated within the straddling segment) —
+   *  where the width badge sits so it lands on the middle of the bundle whether the trunk is straight or bent. */
+  private polylineMidpoint(poly: Point[]): Point {
+    if (poly.length === 0) return new Point(0, 0);
+    if (poly.length === 1) return new Point(poly[0]!.x, poly[0]!.y);
+    let total = 0;
+    for (let i = 1; i < poly.length; i++)
+      total += Math.hypot(
+        poly[i]!.x - poly[i - 1]!.x,
+        poly[i]!.y - poly[i - 1]!.y,
+      );
+    let half = total / 2;
+    for (let i = 1; i < poly.length; i++) {
+      const a = poly[i - 1]!;
+      const b = poly[i]!;
+      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      if (half <= segLen) {
+        const t = segLen > 1e-9 ? half / segLen : 0;
+        return new Point(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+      }
+      half -= segLen;
+    }
+    return new Point(poly[poly.length - 1]!.x, poly[poly.length - 1]!.y);
+  }
+
   /**
    * Draw a cable's N literal strands (the zoom-in UNZIP): each bit routes pin → a symmetric STAGGERED
    * "belt" fan → its parallel bus lane (the trunk offset perpendicular by the strand's rank, so the bundle
@@ -7492,7 +7572,8 @@ export class Board {
    * ({@link endpointColor}) and skinned through the active lens. The staggered turn-x nests the
    * perpendicular legs so the bundle reads like a Factorio balancer, not a blocky pinch. When the trunk is
    * shorter than the fan needs (zip and unzip too close), it falls back to a straight pin→pin RUN-THROUGH —
-   * no bundling. Horizontal-approach bus only (the caller gates); other cables use the collapsed render.
+   * no bundling. `axis` is the shared approach axis (`"h"` left↔right / `"v"` up↕down); the caller gates on
+   * both ends matching. Other cables (mixed-axis / collapsed) use the bundled render.
    */
   private drawCableStrands(
     g: Graphics,
@@ -7503,11 +7584,12 @@ export class Board {
     srcComponentId: number,
     srcPinIndices: number[],
     conduit: BoardLens | null,
+    axis: "h" | "v",
   ): void {
     // Geometry is pure ({@link cableStrandRoutes}, unit-tested for crossing-freeness at any width); here we
     // just colour each bit by its signal and stroke it through the active lens. Cache the per-bit routes so
     // a per-bit TAP can hit-test which strand was clicked.
-    const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH);
+    const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH, axis);
     this.cableStrandCache.set(cableId, routes);
     for (let i = 0; i < routes.length; i++) {
       const route = routes[i];
