@@ -79,10 +79,17 @@ Zoom-disambiguated: zoomed-in click → strand → single tap; zoomed-out click 
 reversed fan). Tested (`cable.test.ts`) + headless drive (zoomed-out junction-click → `cable.taps` 0→N,
 staggered junctions screenshot-confirmed).
 
-**Cable S0–S5 + fan-out are DONE** (unzip → belt-fan → lens → drag-reroute → per-bit tap → whole-bus fan-out,
-crossing-free at any width). **NEXT on the cable (owner-directable):** a visual tap marker / bit label on the
-tap junctions; vertical-approach unzip (currently the comb fallback). Design doc:
-`docs/ui/bus-cable-first-class-trace.md`.
+**Tap visual polish (landed):** the staggered tap junctions used to float at grid cells off the sub-cell
+strands. Now each tap draws a **break-out stub** to attach it (`drawCableTapStubs`), sits as a haloed node ON
+the strand, has a smaller `TAP_R` node, and carries a distinct **bit tag** pill (`${base}${bit}`, e.g.
+`DATA2`; pooled `cableTapTexts`). `drawJunctions` skips cable-tap junctions (the cable layer owns the visual).
+A fan-out reads as the strands peeling off to `DATA0..DATA3` at staggered points.
+
+**Cable S0–S5 + fan-out + tap polish are DONE** (unzip → belt-fan → lens → drag-reroute → per-bit tap →
+whole-bus fan-out → on-strand labelled taps; crossing-free at any width; all render-only / golden-safe).
+**NEXT on the cable (owner-directable, optional):** the width badge ("how many traces at a glance" on a
+collapsed cable — the last open item from the original bug report); vertical-approach unzip (currently the
+comb fallback). Design doc: `docs/ui/bus-cable-first-class-trace.md`.
 
 ---
 
