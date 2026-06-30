@@ -7151,27 +7151,34 @@ export class Board {
     const spineY = (srcGather.y + dstGather.y) / 2;
     const sx = srcGather.x;
     const dx = dstGather.x;
-    const LANE = PITCH * 0.42; // perpendicular gap between adjacent strands in the bundle
-    // Fan zones: the span between each pin column and its gather, where the spread pins funnel into the
-    // tight lane bundle. Stagger the turn within it so no two strands share a vertical (the nested look).
-    const srcFanW = Math.max(PITCH, sx - Math.max(...srcW.map((p) => p.x)));
-    const dstFanW = Math.max(PITCH, Math.min(...dstW.map((p) => p.x)) - dx);
+    const LANE = PITCH * 0.24; // perpendicular gap between adjacent strands — a dense ribbon
+    const LEAD = PITCH * 0.8; // straight lead-out track off each pin BEFORE any turn (no harsh pin-bends)
+    // Fan zones run from each pin column's lead-out end IN to the gather. No strand may turn before its
+    // lead-out, so the outermost (deepest) turn sits at the lead-out end and the rest stagger toward the
+    // gather — every strand angling toward the central bundle in a nested funnel (not pinching at the pin).
+    const srcFanStart = Math.min(
+      Math.max(...srcW.map((p) => p.x)) + LEAD,
+      sx - PITCH * 0.3,
+    );
+    const dstFanStart = Math.max(
+      Math.min(...dstW.map((p) => p.x)) - LEAD,
+      dx + PITCH * 0.3,
+    );
     // Order strands top→bottom by their SOURCE pin so the lanes never cross, and place each on the lane at
-    // its sorted rank. The turn staggers SYMMETRICALLY about the centre — outer ranks turn furthest from the
-    // bus, inner ranks closest (mirror-pair verticals sit on opposite sides of the spine, so they never
-    // collide) — giving the nested Factorio-balancer convergence rather than a one-way staircase.
+    // its sorted rank. The turn staggers as a UNIFORM CASCADE from the top: the top strand turns at the
+    // lead-out end (furthest from the gather) and each lower one steps progressively toward the gather —
+    // every strand fanning the same way (a clean staircase) rather than a top/bottom funnel.
     const order = Array.from({ length: n }, (_, i) => i).sort(
       (a, b) => srcW[a]!.y - srcW[b]!.y,
     );
-    const mid = (n - 1) / 2;
     for (let p = 0; p < n; p++) {
       const i = order[p]!;
-      const laneY = spineY + (p - mid) * LANE;
+      const laneY = spineY + (p - (n - 1) / 2) * LANE;
       const sp = srcW[i]!;
       const dp = dstW[i]!;
-      const depth = (Math.abs(p - mid) + 0.5) / (mid + 0.5); // 1 at the edges, smallest in the middle
-      const sTurn = sx - srcFanW * depth;
-      const dTurn = dx + dstFanW * depth;
+      const depth = (n - 1 - p) / Math.max(1, n - 1); // 1 at the TOP strand → 0 at the bottom
+      const sTurn = sx - (sx - srcFanStart) * depth;
+      const dTurn = dx + (dstFanStart - dx) * depth;
       const route: Point[] = [
         sp,
         new Point(sTurn, sp.y),
