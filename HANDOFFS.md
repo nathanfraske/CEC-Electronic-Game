@@ -7,9 +7,11 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ## 2026-06-30 (247) — THERMAL fixes + BUS-CABLE first-class-trace (S0+S1 landed; S2/S3 next)
 
-**State:** 🟢 On `claude/kind-turing-hdelb3`, all **committed + pushed** (head `ca85197`). Full gate green
-throughout. This session, after the dirty-set (246): two thermal fixes, then the bus-cable UX, all owner-
-driven + shoot-verified.
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **Merged to main as PR #317** (merge `715a733`) — the whole
+batch below (dirty-set + thermal fixes + bus-cable S0/S1 + MCP) is now on `main`. Full gate green
+throughout (cargo fmt/clippy/test debug+release, build:wasm, web check/lint/build/test; golden unchanged).
+This session, after the dirty-set (246): two thermal fixes, then the bus-cable UX, all owner-driven +
+shoot-verified. Keep developing the cable S2/S3 on this branch.
 
 **Thermal (both fixed + verified live):**
 - **Heat-overlay clipping** (`1d9a78c`): `updateHeatOverlay` sized the field/copper/sprite from the
