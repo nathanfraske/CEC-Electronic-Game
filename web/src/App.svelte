@@ -3129,6 +3129,10 @@
       (
         window as unknown as { __cecCableProbe?: () => unknown }
       ).__cecCableProbe = () => board?.cableProbe() ?? null;
+      // Render harness (tap driver): set the active tool so a headless drive can enter junction mode.
+      (
+        window as unknown as { __cecSetMode?: (m: string) => void }
+      ).__cecSetMode = (m) => setMode(m as Mode);
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now

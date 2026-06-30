@@ -409,6 +409,9 @@ export interface Cable {
   collapsed?: boolean;
   /** Optional pinned sheath tint (a PIXI hex; reuses the {@link NetLabel.color} render path). */
   color?: number;
+  /** Per-bit break-out taps: each is a FREE junction (it holds the board cell) the player can wire off, tied
+   *  to bit `bit`'s net by an owner-managed label (so a tap reaches the bundle without a new sim element). */
+  taps?: { bit: number; junctionId: number }[];
 }
 
 /**
@@ -2040,6 +2043,7 @@ export class BoardGraph {
     let cableRemoved = false;
     for (const [cid, c] of this.cables) {
       if (c.src.componentId === id || c.dst.componentId === id) {
+        for (const t of c.taps ?? []) this.junctions.delete(t.junctionId);
         this.cables.delete(cid);
         cableRemoved = true;
       }
@@ -2541,9 +2545,12 @@ export class BoardGraph {
     return cable;
   }
 
-  /** Remove a cable; `deriveCableLinks` then prunes its now-orphaned owned labels. */
+  /** Remove a cable (+ its tap junctions); `deriveCableLinks` then prunes its now-orphaned owned labels. */
   removeCable(id: number): void {
-    if (!this.cables.delete(id)) return;
+    const c = this.cables.get(id);
+    if (!c) return;
+    for (const t of c.taps ?? []) this.junctions.delete(t.junctionId);
+    this.cables.delete(id);
     this.deriveCableLinks();
   }
 
@@ -2552,6 +2559,29 @@ export class BoardGraph {
   setCableRoute(id: number, route: readonly Cell[]): void {
     const c = this.cables.get(id);
     if (c) c.route = route.map((cell) => ({ ...cell }));
+  }
+
+  /** Tap one bit of a cable at board cell `at`: drop a FREE junction there + record it, so a matched
+   *  owner-label (added by {@link deriveCableLinks}) ties it to bit `bit`'s net and the player can wire off
+   *  the junction. Returns the junction id, or undefined on an unknown cable / out-of-range bit. */
+  addCableTap(cableId: number, bit: number, at: Cell): number | undefined {
+    const c = this.cables.get(cableId);
+    if (!c || bit < 0 || bit >= c.width) return undefined;
+    const j = this.addJunction(at, true);
+    (c.taps ??= []).push({ bit, junctionId: j.id });
+    this.deriveCableLinks();
+    return j.id;
+  }
+
+  /** Remove a cable tap by its junction id (and the junction); `deriveCableLinks` prunes the owned label. */
+  removeCableTap(cableId: number, junctionId: number): void {
+    const c = this.cables.get(cableId);
+    if (!c || !c.taps) return;
+    const before = c.taps.length;
+    c.taps = c.taps.filter((t) => t.junctionId !== junctionId);
+    if (c.taps.length === before) return;
+    this.junctions.delete(junctionId);
+    this.deriveCableLinks();
   }
 
   /**
@@ -2592,6 +2622,20 @@ export class BoardGraph {
           at: dAt,
           ownerId: c.id,
         });
+      }
+      // Per-bit taps: drop any whose junction is gone (self-heal), then desire an owner-label at each live
+      // tap junction tying it to that bit's net — so the player's wire off the junction joins the bundle.
+      if (c.taps && c.taps.length > 0) {
+        c.taps = c.taps.filter((t) => this.junctions.has(t.junctionId));
+        for (const t of c.taps) {
+          if (t.bit < 0 || t.bit >= w) continue;
+          const at: Endpoint = { junctionId: t.junctionId };
+          desired.set(`${c.id}|${endpointKey(at)}`, {
+            name: this.cableNetName(c.id, t.bit),
+            at,
+            ownerId: c.id,
+          });
+        }
       }
     }
     const existing = new Map<string, NetLabel>();
@@ -2677,6 +2721,9 @@ export class BoardGraph {
               },
               ...(c.collapsed ? { collapsed: true } : {}),
               ...(c.color !== undefined ? { color: c.color } : {}),
+              ...(c.taps && c.taps.length > 0
+                ? { taps: c.taps.map((t) => ({ ...t })) }
+                : {}),
             })),
             nextCableId: this.nextCableId,
           }
@@ -2742,6 +2789,9 @@ export class BoardGraph {
         },
         ...(c.collapsed ? { collapsed: true } : {}),
         ...(c.color !== undefined ? { color: c.color } : {}),
+        ...(c.taps && c.taps.length > 0
+          ? { taps: c.taps.map((t) => ({ ...t })) }
+          : {}),
       });
     }
     for (const w of s.wires) {

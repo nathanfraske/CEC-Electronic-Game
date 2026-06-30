@@ -766,6 +766,9 @@ export class Board {
     number,
     { x: number; y: number }[]
   >();
+  // Per-bit strand routes (world coords), refreshed each frame when a cable is UNZIPPED — so a per-bit tap
+  // can hit-test which strand was clicked. Absent for collapsed/zoomed-out cables (no strands drawn).
+  private readonly cableStrandCache = new Map<number, Point[][]>();
   // The net label whose name is being edited in the HUD input right now (its tag
   // text is hidden on the board meanwhile). Null when no editor is open.
   private editingLabelId: number | null = null;
@@ -2470,24 +2473,30 @@ export class Board {
     this.cb.onChange?.(this.graph);
   }
 
-  /** TEST HARNESS ONLY (drag-reroute driver): the first cable's id, its drawn trunk in CANVAS-LOCAL screen
-   *  coords (so a headless pointer drive can grab a segment), and its stored route (to assert it bent). */
+  /** TEST HARNESS ONLY (drag-reroute + tap drivers): the first cable's id, its drawn trunk + per-bit strands
+   *  in CANVAS-LOCAL screen coords (so a headless pointer drive can grab a segment or click a strand), its
+   *  stored route (to assert a bend), and its tap count (to assert a tap landed). */
   cableProbe(): {
     id: number;
     trunkScreen: { x: number; y: number }[];
+    strandsScreen: { x: number; y: number }[][];
     route: Cell[];
+    taps: number;
   } | null {
     const first = this.graph.cables.values().next().value;
     if (!first) return null;
-    const trunk = this.cableTrunkRoutes.get(first.id) ?? [];
-    const trunkScreen = trunk.map((p) => {
+    const toScreen = (p: { x: number; y: number }) => {
       const g = this.world.toGlobal(new Point(p.x, p.y));
       return { x: g.x, y: g.y };
-    });
+    };
+    const trunk = this.cableTrunkRoutes.get(first.id) ?? [];
+    const strands = this.cableStrandCache.get(first.id) ?? [];
     return {
       id: first.id,
-      trunkScreen,
+      trunkScreen: trunk.map(toScreen),
+      strandsScreen: strands.map((r) => r.map(toScreen)),
       route: first.route.map((c) => ({ ...c })),
+      taps: first.taps?.length ?? 0,
     };
   }
 
@@ -3724,6 +3733,53 @@ export class Board {
       }
     }
     return null;
+  }
+
+  /** Which UNZIPPED cable strand a world point sits on — the cable + bit (+ the snapped grid cell on it),
+   *  nearest-wins within a strand-width tolerance. Reads the per-frame {@link cableStrandCache}, so it only
+   *  matches when the cable is fanned (zoomed in); collapsed cables aren't tapped per-bit. Null off any strand. */
+  private cableStrandHitTest(
+    wx: number,
+    wy: number,
+  ): { cableId: number; bit: number; cell: Cell } | null {
+    let best: { cableId: number; bit: number; cell: Cell } | null = null;
+    let bestD = PITCH * 0.24; // ~one strand-lane: must click near a strand; nearest of overlapping lanes wins
+    for (const [cableId, routes] of this.cableStrandCache) {
+      for (let bit = 0; bit < routes.length; bit++) {
+        const route = routes[bit];
+        if (!route) continue;
+        for (let i = 0; i + 1 < route.length; i++) {
+          const p0 = route[i]!;
+          const p1 = route[i + 1]!;
+          const d = distToSegment(wx, wy, p0.x, p0.y, p1.x, p1.y);
+          if (d < bestD) {
+            bestD = d;
+            best = {
+              cableId,
+              bit,
+              cell: { col: snap(wx, PITCH), row: snap(wy, PITCH) },
+            };
+          }
+        }
+      }
+    }
+    return best;
+  }
+
+  /** Per-bit TAP (junction tool on a strand): drop a break-out junction on the clicked bit's net at the
+   *  snapped cell, so the player can wire that one bit off to a process. One undo step. Returns true if a
+   *  strand was hit (so the caller skips the wire-junction path). */
+  private placeCableTapAt(wx: number, wy: number): boolean {
+    const hit = this.cableStrandHitTest(wx, wy);
+    if (!hit) return false;
+    this.pushUndo(this.graph.serialize());
+    const jid = this.graph.addCableTap(hit.cableId, hit.bit, hit.cell);
+    if (jid === undefined) return false;
+    this.rebuildNodes(); // the tap's label adds an endpoint to that bit's net — recompile
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+    return true;
   }
 
   /**
@@ -5267,6 +5323,9 @@ export class Board {
     // create+split path as ending a wire on a wire, but with no incoming wire.
     // Falls through to pan when not over a wire (and shift-click still selects).
     if (this.mode === "junction" && !additive) {
+      // A click on an unzipped cable STRAND taps that one bit out (a break-out junction on its net); else
+      // the normal place-junction-on-a-wire path; else pan.
+      if (this.placeCableTapAt(wp.x, wp.y)) return;
       if (this.placeJunctionAt(wp.x, wp.y)) return;
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
@@ -7093,8 +7152,9 @@ export class Board {
    * these strokes — this is pure presentation. (P2 adds the conduit skin + zoom LoD + ×N badge.)
    */
   private drawCables(g: Graphics, conduit: BoardLens | null): void {
-    // Refreshed every frame: the trunk hit-test geometry.
+    // Refreshed every frame: the trunk + per-bit strand hit-test geometry.
     this.cableTrunkRoutes.clear();
+    this.cableStrandCache.clear();
     if (this.graph.cables.size === 0) return;
     type XY = { x: number; y: number };
     const centroid = (ps: XY[]): XY => ({
@@ -7179,6 +7239,7 @@ export class Board {
       ) {
         this.drawCableStrands(
           g,
+          c.id,
           srcW,
           dstW,
           trunk,
@@ -7217,6 +7278,7 @@ export class Board {
    */
   private drawCableStrands(
     g: Graphics,
+    cableId: number,
     srcW: Point[],
     dstW: Point[],
     trunk: Point[],
@@ -7225,8 +7287,10 @@ export class Board {
     conduit: BoardLens | null,
   ): void {
     // Geometry is pure ({@link cableStrandRoutes}, unit-tested for crossing-freeness at any width); here we
-    // just colour each bit by its signal and stroke it through the active lens.
+    // just colour each bit by its signal and stroke it through the active lens. Cache the per-bit routes so
+    // a per-bit TAP can hit-test which strand was clicked.
     const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH);
+    this.cableStrandCache.set(cableId, routes);
     for (let i = 0; i < routes.length; i++) {
       const route = routes[i];
       if (!route) continue;

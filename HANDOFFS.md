@@ -62,10 +62,18 @@ bundle + every strand follow. One undo, movement-gated. New harness: `board.cabl
 (drove a headless drag: a straight cable's empty route → clean Z-bend, strands follow). `cableDrag` state +
 pointer-handler wiring mirror `wireDrag`.
 
-**NEXT on the cable:** S5 junction / per-bit tap (the saved `docs/ui/bus-tap-reference.ceccircuit.json` is
-the spec: forward A0→A3 + reversed A3→A0 — design the tap data model first, likely a net-label/wire anchored
-on bit i's net, NOT a new sim element). Then: vertical-approach unzip (currently the comb fallback). Design
-doc updated: `docs/ui/bus-cable-first-class-trace.md`.
+**S5 per-bit tap (landed):** JUNCTION tool on an unzipped strand breaks that bit out — a FREE junction on the
+strand the player wires off. Data model `Cable.taps?: {bit, junctionId}[]`; `graph.addCableTap` creates the
+free junction, `deriveCableLinks` emits a matching owner label (`cableNetName(id,bit)`) so the same-name union
+ties it to bit i's net — NO new sim element, golden-safe (exactly the manual `bus-tap-reference` pattern,
+auto-managed: cleaned on `removeCableTap`/cable-delete/part-delete; stale taps self-heal). Strand hit-test via
+a per-frame `cableStrandCache`. Wired into the junction tool (`placeCableTapAt` before `placeJunctionAt`).
+Tested: `cable.test.ts` (tap on right bit's net, isolated, cleans up) + headless drive (`__cecSetMode` +
+`cableProbe.strandsScreen`: junction-mode click on a strand → tap junction on the bit, screenshot confirms).
+
+**NEXT on the cable (owner-directable):** one-click whole-bus fan-out (N staggered taps, forward/reversed per
+the reference); a visual tap marker / bit label on the tap junction; vertical-approach unzip (currently the
+comb fallback). Design doc updated: `docs/ui/bus-cable-first-class-trace.md`.
 
 ---
 

@@ -62,6 +62,19 @@ undo step; gated on actual movement (a bare click only selects). Verified by a h
 (`board.cableProbe` / `window.__cecCableProbe`): dragging a straight cable's trunk down turns its empty route
 into a clean Z-bend and the strands follow.
 
+**S5 per-bit tap** (this change). The JUNCTION tool on an unzipped cable STRAND breaks that one bit out: it
+drops a **free junction** on the strand at the click cell and the player wires off it to a process. Data
+model: `Cable.taps?: { bit, junctionId }[]` — `graph.addCableTap(cableId, bit, at)` creates the free junction
+and `deriveCableLinks` emits a matching owner-tagged label (`cableNetName(id, bit)`) at it, so buildNetlist's
+same-name union ties the junction onto bit `bit`'s net — **no new sim element, golden-safe** (a tap === a
+junction + a label, exactly the owner's manual `bus-tap-reference` pattern, auto-managed). The tap junction is
+cleaned up with `removeCableTap` / when the cable or an endpoint part is removed; stale taps self-heal in
+`deriveCableLinks`. Strand hit-test reads a per-frame `cableStrandCache` (only matches when fanned). Verified
+by unit tests (`cable.test.ts`: the tap lands on the right bit's net, is bit-isolated, and cleans up) AND a
+headless drive (junction-mode click on a strand → `cable.taps` 0→1, junction dot on the bit). **Follow-ups
+the owner can direct:** a one-click whole-bus fan-out (N staggered taps, forward/reversed per the reference),
+and a visual tap marker / bit label.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in

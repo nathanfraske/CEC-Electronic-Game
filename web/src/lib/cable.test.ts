@@ -180,3 +180,95 @@ describe("Cable P0: connectivity equivalence (cable === N hand-wires)", () => {
     }
   });
 });
+
+describe("Cable P3: per-bit tap (break-out)", () => {
+  it("drops a free junction on the tapped bit's net (wire-able), bit-isolated", () => {
+    registerBus8("CBLTAP");
+    try {
+      const g = new BoardGraph();
+      const a = place(g, "CBLTAP", 0, 0);
+      const b = place(g, "CBLTAP", 20, 0);
+      const cable = g.addCable({
+        base: "A",
+        width: 4,
+        route: [],
+        src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
+        dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
+      });
+      // Tap bit 2 at a cell on the trunk.
+      const jid = g.addCableTap(cable.id, 2, { col: 10, row: 0 });
+      expect(jid).toBeDefined();
+      const j = g.junctions.get(jid!);
+      expect(j?.free).toBe(true); // a free junction (0 wires) that the player will wire off
+      expect(j?.cell).toEqual({ col: 10, row: 0 });
+      // …carrying an owner-managed label naming bit 2's net.
+      const tapLabel = [...g.netLabels.values()].find(
+        (l) =>
+          l.ownerId === cable.id &&
+          "junctionId" in l.at &&
+          l.at.junctionId === jid,
+      );
+      expect(tapLabel).toBeDefined();
+
+      // Net check (ONE netlist so node numbers are comparable): a high-Z sense resistor off the tap
+      // junction, off bit 2's src + dst pins, and off bit 0's src.
+      const gnd = place(g, "GND", -20, -20);
+      const sense = (
+        ep: { componentId: number; pinIndex: number } | { junctionId: number },
+        k: number,
+      ): number => {
+        const r = place(g, "R", -22, -22 - k);
+        r.value = 1e9;
+        g.connect({ componentId: r.id, pinIndex: 0 }, ep);
+        g.connect(
+          { componentId: r.id, pinIndex: 1 },
+          { componentId: gnd.id, pinIndex: 0 },
+        );
+        return r.id;
+      };
+      const rTap = sense({ junctionId: jid! }, 0);
+      const rSrc2 = sense({ componentId: a.id, pinIndex: 2 }, 1);
+      const rDst2 = sense({ componentId: b.id, pinIndex: 2 }, 2);
+      const rSrc0 = sense({ componentId: a.id, pinIndex: 0 }, 3);
+      const nl = buildNetlist(g, false)!;
+      const node = (id: number) => nl.nodesOfComponent.get(id)?.[0];
+      expect(node(rTap)).toBe(node(rSrc2)); // the tap reaches bit 2's net
+      expect(node(rSrc2)).toBe(node(rDst2)); // bit 2 still ties src↔dst
+      expect(node(rTap)).not.toBe(node(rSrc0)); // and it's NOT bit 0 — no cross-bit bleed
+    } finally {
+      unregisterUserIc("CBLTAP");
+    }
+  });
+
+  it("removing the tap (or the cable) drops the junction + label", () => {
+    registerBus8("CBLTAP2");
+    try {
+      const g = new BoardGraph();
+      const a = place(g, "CBLTAP2", 0, 0);
+      const b = place(g, "CBLTAP2", 20, 0);
+      const cable = g.addCable({
+        base: "A",
+        width: 4,
+        route: [],
+        src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
+        dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
+      });
+      const owned = () =>
+        [...g.netLabels.values()].filter((l) => l.ownerId !== undefined).length;
+      expect(owned()).toBe(8); // 4 bits × 2 pin ends
+      const jid = g.addCableTap(cable.id, 1, { col: 10, row: 0 })!;
+      expect(owned()).toBe(9); // + the tap label
+      expect(g.junctions.has(jid)).toBe(true);
+      g.removeCableTap(cable.id, jid);
+      expect(owned()).toBe(8); // tap label pruned
+      expect(g.junctions.has(jid)).toBe(false); // junction gone
+      // re-tap, then delete the whole cable: tap junction + ALL owned labels go.
+      const jid2 = g.addCableTap(cable.id, 3, { col: 10, row: 0 })!;
+      g.removeCable(cable.id);
+      expect(owned()).toBe(0);
+      expect(g.junctions.has(jid2)).toBe(false);
+    } finally {
+      unregisterUserIc("CBLTAP2");
+    }
+  });
+});
