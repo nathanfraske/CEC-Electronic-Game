@@ -590,9 +590,28 @@ export interface AnchorRect {
   height: number;
 }
 
+/** One row of the right-click context menu. `run` performs the action — the board owns the logic + its undo
+ *  step; the HUD only renders the label and calls `run` on click (then closes the menu). */
+export interface ContextMenuItem {
+  label: string;
+  run: () => void;
+  /** Render in the destructive (red) style — Delete and friends. */
+  danger?: boolean;
+}
+/** A request to open the right-click context menu at PAGE coords `x,y` with these rows (empty ⇒ no menu). */
+export interface ContextMenuRequest {
+  x: number;
+  y: number;
+  items: ContextMenuItem[];
+}
+
 export interface BoardCallbacks {
   /** Fired after the model changes so the HUD can reflect counts, etc. */
   onChange?: (graph: BoardGraph) => void;
+  /** Open the right-click CONTEXT MENU. The board selects the target (so you see what the menu acts on),
+   *  builds the rows (each `run` does the action + its own undo), and the HUD renders the menu at the page
+   *  coords. A null payload closes any open menu. The ONE consistent right-click affordance board-wide. */
+  onContextMenu?: (menu: ContextMenuRequest | null) => void;
   /** Fired when the selection changes; `single` is set iff exactly one part (and
    * no wires) is selected, so an inspector can edit its value. */
   onSelect?: (sel: {
@@ -2483,6 +2502,8 @@ export class Board {
    *  stored route (to assert a bend), and its tap count (to assert a tap landed). */
   cableProbe(): {
     id: number;
+    srcId: number;
+    dstId: number;
     trunkScreen: { x: number; y: number }[];
     strandsScreen: { x: number; y: number }[][];
     route: Cell[];
@@ -2498,6 +2519,8 @@ export class Board {
     const strands = this.cableStrandCache.get(first.id) ?? [];
     return {
       id: first.id,
+      srcId: first.src.componentId,
+      dstId: first.dst.componentId,
       trunkScreen: trunk.map(toScreen),
       strandsScreen: strands.map((r) => r.map(toScreen)),
       route: first.route.map((c) => ({ ...c })),
@@ -3782,28 +3805,6 @@ export class Board {
     const jid = this.graph.addCableTap(hit.cableId, hit.bit, hit.cell);
     if (jid === undefined) return false;
     this.rebuildNodes(); // the tap's label adds an endpoint to that bit's net — recompile
-    this.redrawWires();
-    this.redrawSelection();
-    this.cb.onChange?.(this.graph);
-    return true;
-  }
-
-  /** Whole-bus FAN-OUT (junction tool on the collapsed/zoomed-out trunk): break every bit out at once on a
-   *  staggered diagonal (`reversed` flips the bit order). One undo step. Returns true if the trunk was hit. */
-  private placeCableFanOutAt(
-    wx: number,
-    wy: number,
-    reversed: boolean,
-  ): boolean {
-    const cableId = this.cableHitTest(wx, wy);
-    if (cableId === null) return false;
-    this.pushUndo(this.graph.serialize());
-    this.graph.addCableFanOut(
-      cableId,
-      { col: snap(wx, PITCH), row: snap(wy, PITCH) },
-      reversed,
-    );
-    this.rebuildNodes();
     this.redrawWires();
     this.redrawSelection();
     this.cb.onChange?.(this.graph);
@@ -5351,18 +5352,12 @@ export class Board {
     // create+split path as ending a wire on a wire, but with no incoming wire.
     // Falls through to pan when not over a wire (and shift-click still selects).
     if (this.mode === "junction" && !additive) {
-      // Cable break-out: zoomed IN, a click on a STRAND taps that one bit; zoomed OUT, a click on the TRUNK
-      // FANS the whole bus out (forward bit order). Else the normal place-junction-on-a-wire path; else pan.
+      // A click on an unzipped cable STRAND quick-taps that one bit; else the normal place-junction-on-a-wire
+      // path; else pan. (Whole-bus fan-out + forward/reversed live in the right-click menu — see onRightDown.)
       if (this.placeCableTapAt(wp.x, wp.y)) return;
-      if (this.placeCableFanOutAt(wp.x, wp.y, false)) return;
       if (this.placeJunctionAt(wp.x, wp.y)) return;
       this.panning = { lastX: e.global.x, lastY: e.global.y };
       return;
-    }
-    // SHIFT + junction tool on a cable trunk: fan the whole bus out in REVERSED bit order (the owner's
-    // "sequential junction down"). Falls through to normal additive handling off any cable.
-    if (this.mode === "junction" && additive) {
-      if (this.placeCableFanOutAt(wp.x, wp.y, true)) return;
     }
 
     // Label tool: a non-additive click attaches (or edits) a net label. Precedence
@@ -6618,60 +6613,135 @@ export class Board {
 
   private readonly onRightDown = (e: FederatedPointerEvent): void => {
     e.preventDefault?.();
-    // While a part is armed, right-click disarms instead of deleting.
+    // While a part is armed, right-click disarms (the place-mode escape), no menu.
     if (this.armed) {
       this.setArmed(null);
       this.cb.onArm?.(null);
+      this.cb.onContextMenu?.(null);
       return;
     }
     const wp = this.screenToWorld(e.global.x, e.global.y);
-    // Net-label tags sit on top of everything, so test them first: right-click
-    // deletes the label (mirrors junction/wire delete).
-    const lid = this.labelHitTest(wp.x, wp.y);
-    if (lid !== null) {
-      this.pushUndo(this.graph.serialize());
-      this.graph.removeNetLabel(lid);
-      this.selectedLabels.delete(lid);
-      this.redrawWires();
-      this.redrawSelection();
-      this.cb.onChange?.(this.graph);
+    const items = this.buildContextMenu(wp.x, wp.y);
+    if (items.length === 0) {
+      this.cb.onContextMenu?.(null); // empty space → close any open menu, do nothing
       return;
     }
-    // Junction sits atop the wire it splits, so test it first.
-    const jid = this.junctionHitTest(wp.x, wp.y);
-    if (jid !== null) {
-      this.pushUndo(this.graph.serialize());
-      // Remove the junction but heal the wire it joined (keep the connection); right-click on a
-      // real 3+-way branch falls back to dropping the incident wires (dissolveJunction).
-      this.graph.dissolveJunction(jid);
-      this.selectedJunctions.delete(jid);
-      this.redrawWires();
-      this.redrawSelection();
-      this.cb.onChange?.(this.graph);
-      return;
-    }
-    const wireId = this.wireHitTest(wp.x, wp.y);
-    if (wireId !== null) {
-      this.pushUndo(this.graph.serialize());
-      this.graph.removeWire(wireId);
-      this.selectedWires.delete(wireId);
-      this.redrawWires();
-      this.redrawSelection();
-      this.cb.onChange?.(this.graph);
-      return;
-    }
-    const body = this.bodyHitTest(wp.x, wp.y);
-    if (body) {
-      this.pushUndo(this.graph.serialize());
-      this.graph.removeComponent(body.id);
-      this.nodes.get(body.id)?.destroy();
-      this.nodes.delete(body.id);
-      this.selected.delete(body.id);
-      this.redrawWires();
-      this.redrawSelection();
-      this.cb.onChange?.(this.graph);
-    }
+    // Page coords for the HUD popover: the canvas's viewport offset + the canvas-local pointer.
+    const rect = this.app.canvas.getBoundingClientRect();
+    this.cb.onContextMenu?.({
+      x: rect.left + e.global.x,
+      y: rect.top + e.global.y,
+      items,
+    });
   };
+
+  /**
+   * The ONE consistent right-click affordance: hit-test the topmost element under the cursor, SELECT it (so
+   * the highlight shows what the menu acts on), and return its action rows. Topmost-first pick order mirrors
+   * the left-click one (label → junction → wire → cable → part). Empty array off any element (empty space).
+   * Destructive rows run {@link deleteSelection} on the just-made selection; cable rows tap/fan that cable.
+   */
+  private buildContextMenu(wx: number, wy: number): ContextMenuItem[] {
+    const del: ContextMenuItem = {
+      label: "Delete",
+      danger: true,
+      run: () => this.deleteSelection(),
+    };
+    const lid = this.labelHitTest(wx, wy);
+    if (lid !== null) {
+      this.selectOnlyLabel(lid);
+      return [{ ...del, label: "Delete label" }];
+    }
+    const jid = this.junctionHitTest(wx, wy);
+    if (jid !== null) {
+      this.selectOnlyJunction(jid);
+      return [{ ...del, label: "Delete junction" }];
+    }
+    const wireId = this.wireHitTest(wx, wy);
+    if (wireId !== null) {
+      this.selectOnlyWire(wireId);
+      return [{ ...del, label: "Delete wire" }];
+    }
+    // A cable: a click on an unzipped STRAND knows its bit (so "Tap bit N" is offered); else just the trunk.
+    const strand = this.cableStrandHitTest(wx, wy);
+    const cableId = strand ? strand.cableId : this.cableHitTest(wx, wy);
+    if (cableId !== null) {
+      const cid = cableId;
+      this.selectCable(cid, false);
+      const cell: Cell = { col: snap(wx, PITCH), row: snap(wy, PITCH) };
+      const items: ContextMenuItem[] = [];
+      if (strand) {
+        const bit = strand.bit;
+        const at = strand.cell;
+        items.push({
+          label: `Tap bit ${bit}`,
+          run: () => this.tapCableBit(cid, bit, at),
+        });
+      }
+      items.push({
+        label: "Fan out ▾ (forward)",
+        run: () => this.fanCable(cid, cell, false),
+      });
+      items.push({
+        label: "Fan out ▴ (reversed)",
+        run: () => this.fanCable(cid, cell, true),
+      });
+      items.push({ ...del, label: "Delete cable" });
+      return items;
+    }
+    const body = this.bodyHitTest(wx, wy);
+    if (body) {
+      this.selectOnlyComponent(body.id);
+      return [
+        { label: "Rotate", run: () => this.rotateSelection() },
+        { label: "Flip", run: () => this.flipSelection() },
+        del,
+      ];
+    }
+    return [];
+  }
+
+  private selectOnlyComponent(id: number): void {
+    this.clearSelection();
+    this.selected.add(id);
+    this.redrawSelection();
+    this.emitSelect();
+  }
+  private selectOnlyWire(id: number): void {
+    this.clearSelection();
+    this.selectedWires.add(id);
+    this.lastWireClick = null; // delete the whole wire, not a single clicked leg
+    this.redrawSelection();
+    this.emitSelect();
+  }
+  private selectOnlyJunction(id: number): void {
+    this.clearSelection();
+    this.selectedJunctions.add(id);
+    this.redrawSelection();
+    this.emitSelect();
+  }
+  private selectOnlyLabel(id: number): void {
+    this.clearSelection();
+    this.selectedLabels.add(id);
+    this.redrawSelection();
+    this.emitSelect();
+  }
+  private tapCableBit(cableId: number, bit: number, cell: Cell): void {
+    this.pushUndo(this.graph.serialize());
+    this.graph.addCableTap(cableId, bit, cell);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+  }
+  private fanCable(cableId: number, cell: Cell, reversed: boolean): void {
+    this.pushUndo(this.graph.serialize());
+    this.graph.addCableFanOut(cableId, cell, reversed);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+  }
 
   private cancelWiring(): void {
     this.wiring = null;

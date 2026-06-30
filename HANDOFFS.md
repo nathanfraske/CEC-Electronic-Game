@@ -5,6 +5,48 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (249) — Consistent right-click CONTEXT MENU (replaces per-target delete; cable fan-out forward/reverse → menu rows)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+`0xeaac_3764_99e4_fa24` byte-identical**, build:wasm, web check/lint/build, **398 web tests**). Web-only /
+render-only — nothing crosses the wasm boundary or the hash.
+
+**Why (owner):** "right-clicking [needs to be] consistent across the board. Right now it deletes elements for
+most things. And for the forward vs reverse [cable fan-out], none of those options are really great … they
+either sacrifice accessibility by adding excessive mouse precision, or they add more bloat to an already
+bloated menu and toolbar." The old right-click was a per-target *delete*, and whole-bus fan-out forward/reverse
+lived in fiddly junction-tool gestures (zoom-out-trunk-click = forward, **shift**+click = reverse).
+
+**What landed — ONE board-wide right-click affordance:**
+- **`board.ts`** — `ContextMenuItem`/`ContextMenuRequest` types + `onContextMenu?(menu|null)` callback.
+  `onRightDown` now: armed ⇒ disarm (no menu); else `buildContextMenu(wx,wy)` → if rows, emit them at PAGE
+  coords (`canvas rect + e.global`), else emit `null` (close). **`buildContextMenu`** hit-tests topmost-first
+  (label → junction → wire → cable[strand|trunk] → part), **selects** the target (so the highlight shows what
+  the menu acts on), and returns rows: label/junction/wire ⇒ *Delete X*; **cable** ⇒ *Tap bit N* (only when a
+  strand was hit) · *Fan out ▾ (forward)* · *Fan out ▴ (reversed)* · *Delete cable*; part ⇒ *Rotate · Flip ·
+  Delete*. New `selectOnly{Component,Wire,Junction,Label}` + `tapCableBit`/`fanCable` helpers (each does its
+  own undo). Junction-tool: kept the quick **tap-a-strand**, **removed** the fan-out gestures (+ the shift
+  branch + `placeCableFanOutAt`) — fan-out now lives only in the menu. `cableProbe` enriched with
+  `srcId`/`dstId` (harness).
+- **`graph.ts`** — `addCableFanOut(reversed)` now fans the stack the *other way*: forward = **down** + forward
+  bit order; reversed = **up** + reversed order (so the side you tapped is the side it breaks out toward).
+- **`App.svelte`** — `contextMenu` `$state`; the board callback **clamps** the popover into the viewport;
+  renders a `position:fixed` `.ctx-menu` with a row per item (`is-danger` for deletes); dismiss via
+  `<svelte:window onpointerdown>` (left/middle press outside closes; right-clicks are left to the board to
+  re-open elsewhere), **Escape** (added as the first, least-destructive branch of the universal-cancel), and
+  clicking a row. CSS on-brand (dark surface, small radii, uppercase tracked mono, danger = `--bad`).
+
+**Verified live (headless Playwright drive):** right-click on a strand OPENS the menu (does **not** delete);
+rows are Tap bit N / Fan out forward / Fan out reversed / Delete cable (danger); clicking *Fan out forward*
+fanned an 8-bit bus (taps 0→8) and closed the menu; Escape + left-click-away both dismiss; menu re-opens on
+right-click; right-click on a package body gives Rotate/Flip/Delete. Both menus shot + Read — on-brand.
+
+**Next (owner-directable):** the original width-badge (trace-count on a collapsed cable at a glance);
+vertical-approach unzip (still comb-fallback). The right-click menu is now the home for any future per-target
+actions (no more toolbar/precision bloat).
+
+---
+
 ## 2026-06-30 (248) — BUS-CABLE S2 belt-fan + S3 unzip (bent trunk + too-close run-through)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden

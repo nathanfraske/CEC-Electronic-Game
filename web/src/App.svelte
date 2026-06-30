@@ -39,6 +39,7 @@
     type Mode,
     type SelectedPart,
     type AnchorRect,
+    type ContextMenuRequest,
   } from "./lib/board";
   import {
     BoardGraph,
@@ -1199,6 +1200,11 @@
   let selPart = $state<SelectedPart | null>(null);
   let showMore = $state(false);
   let anchor = $state<AnchorRect | null>(null);
+  // The open right-click CONTEXT MENU (page coords + the board-built rows), or null
+  // when closed. The board hit-tests + selects the target and hands us the rows; we
+  // only render the popover and call each row's `run` on click. The ONE consistent
+  // right-click affordance board-wide (replaces the old per-target right-click delete).
+  let contextMenu = $state<ContextMenuRequest | null>(null);
   // The open net-label name editor: the request from the board (existing label id
   // or null for a new one, the endpoint, the seed text, and the on-canvas rect to
   // anchor the inline input over). Null when no editor is open.
@@ -2370,7 +2376,11 @@
         // open label editor / selection, then returns to Build (the default editing
         // tool) so Escape leaves you ready to build — never in the inert Pan tool
         // (Pan is opt-in: the only way in is to pick it with H or the toolbar).
-        if (codexOpen) {
+        if (contextMenu) {
+          // An open right-click context menu closes first — least destructive,
+          // and it sits in front of everything (a transient popover).
+          contextMenu = null;
+        } else if (codexOpen) {
           // The Codex is a full-screen modal — Escape closes it first, before any
           // board action (it sits in front of everything else).
           codexOpen = false;
@@ -2705,6 +2715,21 @@
           } else {
             pinNameEdit = null;
           }
+        },
+        onContextMenu: (menu) => {
+          // Clamp the popover inside the viewport so a right-click near the right/bottom
+          // edge doesn't push it off-screen. Estimate its box from the row count.
+          if (!menu) {
+            contextMenu = null;
+            return;
+          }
+          const w = 210;
+          const h = menu.items.length * 30 + 12;
+          contextMenu = {
+            items: menu.items,
+            x: Math.max(8, Math.min(menu.x, window.innerWidth - w - 8)),
+            y: Math.max(8, Math.min(menu.y, window.innerHeight - h - 8)),
+          };
         },
       });
       board = b;
@@ -3226,6 +3251,17 @@
       app?.destroy({ removeView: false });
     };
   });
+
+  // Click-away dismissal for the right-click context menu. Right-clicks (button 2)
+  // are left to the board — its onRightDown either opens a fresh menu at the new
+  // cursor or sends null — so here we only dismiss on a left/middle press OUTSIDE
+  // the menu; a press on a menu row is handled by the row's own click.
+  function onDocPointerDown(e: PointerEvent): void {
+    if (!contextMenu || e.button === 2) return;
+    const t = e.target as Element | null;
+    if (t?.closest(".ctx-menu")) return;
+    contextMenu = null;
+  }
 
   function syncRunning(): void {
     running = controls?.isRunning() ?? false;
@@ -4922,6 +4958,8 @@
   const barWidth = (v: number): number =>
     Math.max(2, Math.min(100, ((v + 1) / 2) * 100));
 </script>
+
+<svelte:window onpointerdown={onDocPointerDown} />
 
 <div class="hud-header">
   <div class="brand">
@@ -6786,6 +6824,36 @@
         </div>
       {/if}
 
+      <!-- The ONE consistent right-click affordance: a context menu the board builds
+           for whatever sits under the cursor (part → Rotate/Flip/Delete; cable →
+           Tap bit / Fan out forward / Fan out reversed / Delete; wire/junction/label →
+           Delete). Page-fixed at the clamped cursor coords; click a row to run it,
+           click away / Escape / right-click elsewhere to dismiss. Replaces the old
+           per-target right-click delete, and gives the cable fan-out direction a clean
+           home (no extra toolbar/precision). -->
+      {#if contextMenu}
+        <div
+          class="ctx-menu"
+          style="left: {contextMenu.x}px; top: {contextMenu.y}px;"
+          role="menu"
+          aria-label="Right-click actions"
+        >
+          {#each contextMenu.items as item, i (i)}
+            <button
+              type="button"
+              role="menuitem"
+              class="ctx-item mono {item.danger ? 'is-danger' : ''}"
+              onclick={() => {
+                item.run();
+                contextMenu = null;
+              }}
+            >
+              {item.label}
+            </button>
+          {/each}
+        </div>
+      {/if}
+
       {#if buildEx}
         {@const ex = buildEx}
         <div class="guided-overlay">
@@ -8342,6 +8410,54 @@
   .armed-x:hover {
     color: var(--text);
     border-color: var(--accent);
+  }
+
+  /* Right-click context menu: the ONE board-wide right-click affordance. A compact
+     dark popover pinned at the cursor — page-fixed so it never clips on the board
+     frame's overflow — with uppercase tracked mono rows like the rest of the HUD.
+     Danger rows (Delete) read in --bad. */
+  .ctx-menu {
+    position: fixed;
+    z-index: 60;
+    min-width: 168px;
+    display: flex;
+    flex-direction: column;
+    padding: 4px;
+    background: oklch(0.165 0.028 285 / 0.98);
+    border: 1px solid var(--accent-line);
+    border-radius: 4px;
+    box-shadow:
+      0 12px 30px -12px #000,
+      var(--glow-accent);
+  }
+  .ctx-item {
+    appearance: none;
+    text-align: left;
+    padding: 6px 10px;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    color: var(--text);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition:
+      background 0.1s ease,
+      color 0.1s ease;
+  }
+  .ctx-item:hover,
+  .ctx-item:focus-visible {
+    background: var(--accent-soft);
+    outline: none;
+  }
+  .ctx-item.is-danger {
+    color: var(--bad);
+  }
+  .ctx-item.is-danger:hover,
+  .ctx-item.is-danger:focus-visible {
+    background: color-mix(in oklch, var(--bad) 18%, transparent);
+    color: var(--text);
   }
 
   /* Inline net-label editor: a small name input + a colour-pin swatch row, floated

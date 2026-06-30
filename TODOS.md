@@ -46,9 +46,14 @@ Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to f
   ~~S1 lens-respect~~ (`6bd4a84`); ~~S2 belt-fan~~ (`84107ad`); ~~S3 zoom-unzip + per-strand colour + bent-trunk
   generalization (`offsetOrtho` follows the route's bends) + too-close→straight-run-through (owner ask)~~ (248,
   this batch — `buildCableTrunk`/`offsetOrtho`/`drawCableStrands`; `shoot --democable-mode straight|bend|close`;
-  horizontal-approach only so far). **NEXT (build order in the doc):** S4 drag-reroute (mirror
-  `beginWireSegmentDrag` onto `Cable.route`) → S5 junction/tap (forward + reversed, per the saved reference) →
-  vertical-approach unzip. Spans Cable P2 (#92) + P3 (#93).
+  horizontal-approach only so far). ~~S4 drag-reroute~~ (`0055b8c`); ~~S5 per-bit tap~~ (`3b4026f`) +
+  ~~whole-bus fan-out forward/reversed~~ (`198560b`) + ~~tap-visual polish (on-strand node + bit label)~~
+  (`5b052bf`/`a847a73`); ~~**consistent right-click CONTEXT MENU** — replaces the per-target right-click
+  delete board-wide; fan-out forward/reversed are now clean menu rows (no junction-tool gesture / shift /
+  toolbar bloat); part = Rotate/Flip/Delete; wire/junction/label = Delete; cable = Tap bit N / Fan out
+  forward / Fan out reversed / Delete cable~~ (249, this batch — `board.ts` `buildContextMenu`, `App.svelte`
+  `.ctx-menu` popover; web-only, gate green). **NEXT (owner-directable):** vertical-approach unzip (still
+  comb-fallback) + the original width-badge (trace-count on a collapsed cable). Spans Cable P2 (#92) + P3 (#93).
 
 ---
 

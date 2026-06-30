@@ -96,6 +96,26 @@ anchor (pooled `cableTapTexts`, resolution-tracked like the net labels). So a ta
 break-out sitting on the bus, and a whole-bus fan-out is the strands peeling off to `DATA0…DATA3` at
 staggered points. Render-only.
 
+**Consistent right-click CONTEXT MENU** (owner — "make right-clicking consistent across the board. Right now it
+deletes elements for most things. And for the forward vs reverse [fan-out], none of those options are really
+great … they either sacrifice accessibility by adding excessive mouse precision, or they add more bloat to an
+already bloated menu and toolbar"). Right-click was a per-target *delete*, and the whole-bus fan-out
+forward/reversed sat in fiddly junction-tool gestures (zoom-out-trunk-click = forward, **Shift**+click =
+reversed — exactly the "excessive precision" complaint). Now ONE affordance: `onRightDown` →
+`buildContextMenu(wx,wy)` hit-tests topmost-first (label → junction → wire → cable[strand|trunk] → part),
+**selects** the target (highlight shows what the menu acts on) and returns rows — label/junction/wire ⇒
+*Delete X*; **cable** ⇒ *Tap bit N* (only when a strand was hit, with that bit) · *Fan out ▾ (forward)* · *Fan
+out ▴ (reversed)* · *Delete cable*; part ⇒ *Rotate · Flip · Delete*. Each row's `run` does its own action +
+undo; the board emits a `ContextMenuRequest` (page coords + rows), the HUD renders a `position:fixed`
+`.ctx-menu` popover (clamped into the viewport, on-brand dark/uppercase/`--bad`-danger), dismissed by Escape,
+left-click-away (`<svelte:window onpointerdown>`; right-clicks pass through so the menu re-opens elsewhere), or
+clicking a row. The junction tool keeps its quick **tap-a-strand**, but its fan-out gestures (+ the Shift
+branch + `placeCableFanOutAt`) are **gone** — fan-out lives only in the menu, so no gesture precision and no
+toolbar bloat. `addCableFanOut(reversed)` now fans the stack the *side you tapped* (forward = down + forward
+order; reversed = up + reversed order). Web-only / render-only; verified by a headless Playwright drive (strand
+right-click opens the menu — does NOT delete; *Fan out forward* fanned an 8-bit bus, taps 0→8; Escape +
+click-away dismiss; package body gives Rotate/Flip/Delete) and on-brand menu screenshots.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in

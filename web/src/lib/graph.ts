@@ -2584,17 +2584,21 @@ export class BoardGraph {
     this.deriveCableLinks();
   }
 
-  /** Fan the WHOLE bus out at cell `at`: ONE break-out tap per bit, on a staggered down-right diagonal so the
-   *  break-out wires leave without colliding (one column each). `reversed` flips the bit order (forward
-   *  bit 0→N−1 vs reversed N−1→0 — the owner's "junction up" vs "sequential junction down"). Returns the tap
-   *  junction ids in placement order, or [] on an unknown cable. */
+  /** Fan the WHOLE bus out at cell `at`: ONE break-out tap per bit on a staggered diagonal so the wires leave
+   *  without colliding (one column each). `reversed` fans the stack the OTHER way — UP + reversed bit order
+   *  (the owner's "sequential junction down") vs the default DOWN + forward order — so the side you tapped is
+   *  the side it breaks out toward. Returns the tap junction ids in placement order, or [] on an unknown cable. */
   addCableFanOut(cableId: number, at: Cell, reversed = false): number[] {
     const c = this.cables.get(cableId);
     if (!c) return [];
     const ids: number[] = [];
+    const dir = reversed ? -1 : 1; // reversed fans UP, forward fans DOWN
     for (let k = 0; k < c.width; k++) {
       const bit = reversed ? c.width - 1 - k : k;
-      const j = this.addJunction({ col: at.col + k, row: at.row + k }, true);
+      const j = this.addJunction(
+        { col: at.col + k, row: at.row + k * dir },
+        true,
+      );
       (c.taps ??= []).push({ bit, junctionId: j.id });
       ids.push(j.id);
     }
