@@ -5,6 +5,42 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (247) — THERMAL fixes + BUS-CABLE first-class-trace (S0+S1 landed; S2/S3 next)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, all **committed + pushed** (head `ca85197`). Full gate green
+throughout. This session, after the dirty-set (246): two thermal fixes, then the bus-cable UX, all owner-
+driven + shoot-verified.
+
+**Thermal (both fixed + verified live):**
+- **Heat-overlay clipping** (`1d9a78c`): `updateHeatOverlay` sized the field/copper/sprite from the
+  part-CENTER bbox, so `buildCopperGrid`'s `toCol/toRow` clamped off-box traces onto the edge (heat smeared
+  on the boundary, not the trace). Fix: bbox = union of part worldBoxes + every wire route polyline.
+- **Heat timescale** (`6ff75f3`, owner-flagged): heat advanced by sim-time (Δticks·DT) so it only built at
+  ~500K ticks/s. Now `thermalDt = max(simDt, wall-clock floor)` while playing → warms over real seconds at
+  ANY slow speed, fast-forward still ages it, pause freezes. Golden-safe (web heat never enters the solve).
+  Verified: 12V/150Ω loop → 73 °C at the default 500/s.
+- Harness: extended `__cecView` + `shoot.mjs` with `--thermal/--real/--run/--tps` (thermal renders were
+  previously un-shoot-able — the gap that hid the clipping bug).
+
+**Bus cable → first-class trace** (owner expanded the ask repeatedly; **full design + build sequence in
+`docs/ui/bus-cable-first-class-trace.md`**, owner tap reference saved as `docs/ui/bus-tap-reference.ceccircuit.json`):
+- **DONE:** select + delete (`db2db96`); **S0** shoot-able demo fixture (`3393756`: `board.buildDemoCable`
+  + `__cecDemoCable` + `shoot --democable` — stands up a 4-bit bus cable between two registered bus ICs on
+  a cleared board); **S1** lens-respect (`6bd4a84`: the trunk skins via `drawConduitSkin` in analogy/reality,
+  flat trace in schematic — verified). The "ugly spike" the owner saw was just the demo's stray route
+  waypoint (fixed → `route: []`).
+- **MCP** (`ca85197`): `cec_screenshot` now takes `thermal/real/run/tps/democable` (the owner asked to add
+  useful harness hooks to the MCP library).
+- **NEXT (the visual headline, art-directed):** **S2 belt-fan** — replace the blocky pinch with the owner's
+  Factorio-balancer symmetric staggered convergence (nested right-angle bends); **S3 zoom-unzip** — N literal
+  strands each `voltageColor`'d by its bit's net, lens-skinned, gated on `Cable.collapsed`/zoom. Then **S4**
+  drag-reroute (mirror `beginWireSegmentDrag` onto `Cable.route`), **S5** junction/per-bit-tap (the saved
+  reference is the spec: forward A0→A3 + reversed A3→A0). Iterate each with `shoot --democable`.
+
+**Also queued:** bus-slice recognition (#148, `docs/ui/bus-slice-recognition.md`).
+
+---
+
 ## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: IMPLEMENTED, AUDITED (SHIP), pushed
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`, **committed + pushed** (`4317397`). The event-driven dirty-set
