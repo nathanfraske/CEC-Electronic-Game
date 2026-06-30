@@ -86,8 +86,15 @@ draws a thin, bit-coloured, lens-skinned Manhattan **stub** (`drawCableTapStubs`
 the point on its bit's strand (`cableStrandCache`; the collapsed trunk when zoomed out) to the junction — so
 a tap reads as ATTACHED to the bus and a whole-bus fan-out reads as the strands visibly dropping out at
 staggered points; and `drawJunctions` renders cable-tap junctions at a smaller `TAP_R` (the grab/hit range
-stays `JUNCTION_R`-based, so they're still easy to wire from). **Follow-up the owner can direct:** a bit
-label on the tap node.
+stays `JUNCTION_R`-based, so they're still easy to wire from).
+
+**Tap node sits ON the strand + a distinct bit label** (owner ask). `drawJunctions` now SKIPS cable-tap
+junctions entirely — `drawCableTapStubs` owns the whole tap visual: a haloed **on-strand node** at the
+break-out point on the bit's strand, the bit-coloured **stub** peeling out to the wire-anchor node at the
+junction cell, and a **bit tag** pill (`${cable.base}${bit}`, e.g. `DATA2`) in the net's colour just off the
+anchor (pooled `cableTapTexts`, resolution-tracked like the net labels). So a tap reads as a labelled
+break-out sitting on the bus, and a whole-bus fan-out is the strands peeling off to `DATA0…DATA3` at
+staggered points. Render-only.
 
 ## The five remaining asks (owner, verbatim intent)
 

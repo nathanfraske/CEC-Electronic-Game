@@ -727,6 +727,8 @@ export class Board {
   private readonly netLabelLayer = new Container();
   private readonly netLabelGfx = new Graphics();
   private readonly netLabelTexts: Text[] = [];
+  // Pooled per-cable-tap bit tags (their own pool so they don't clash with the net-label pool indices).
+  private readonly cableTapTexts: Text[] = [];
   private readonly probeLayer = new Graphics();
   private readonly probeText = new Text({
     text: "",
@@ -3579,6 +3581,7 @@ export class Board {
     this.ammText.resolution = rounded;
     for (const t of this.groundLabels) t.resolution = rounded;
     for (const t of this.netLabelTexts) t.resolution = rounded;
+    for (const t of this.cableTapTexts) t.resolution = rounded;
     for (const t of this.regionLabels) t.resolution = rounded;
     for (const node of this.nodes.values()) node.setTextRes(rounded);
   }
@@ -7326,28 +7329,32 @@ export class Board {
   }
 
   /**
-   * Draw each cable tap's BREAK-OUT STUB — a thin, bit-coloured, lens-skinned Manhattan leg from the point on
-   * that bit's strand (the per-frame {@link cableStrandCache}; the collapsed trunk when zoomed out) down to
-   * the tap junction. This is what makes a tap read as ATTACHED to the (thin) bus rather than a junction
-   * floating in space, and turns a whole-bus fan-out into the strands visibly dropping out at staggered points.
+   * Draw every cable tap: an on-strand NODE (the small break-out dot that sits ON the bit's strand), a thin
+   * bit-coloured Manhattan STUB peeling out to the wire-anchor junction, the anchor dot, and a distinct BIT
+   * TAG (the bus name + bit). Reads as a labelled tap on the (thin) bus rather than a junction floating in
+   * space; a whole-bus fan-out becomes the strands visibly dropping out at staggered, labelled points. The
+   * bit's strand comes from the per-frame {@link cableStrandCache} (the collapsed trunk when zoomed out).
    */
   private drawCableTapStubs(g: Graphics, conduit: BoardLens | null): void {
+    for (const t of this.cableTapTexts) t.visible = false;
+    let ti = 0;
     for (const c of this.graph.cables.values()) {
       if (!c.taps || c.taps.length === 0) continue;
       const strands = this.cableStrandCache.get(c.id);
       const trunk = this.cableTrunkRoutes.get(c.id);
-      for (const t of c.taps) {
-        const j = this.graph.junctions.get(t.junctionId);
+      for (const tap of c.taps) {
+        const j = this.graph.junctions.get(tap.junctionId);
         if (!j) continue;
-        const poly = strands?.[t.bit] ?? trunk;
+        const poly = strands?.[tap.bit] ?? trunk;
         if (!poly || poly.length < 2) continue;
         const jp = this.cellToWorld(j.cell);
-        const bp = this.nearestOnPolyline(jp, poly);
+        const bp = this.nearestOnPolyline(jp, poly); // the point ON the strand
         const col = this.endpointColor({
           componentId: c.src.componentId,
-          pinIndex: c.src.pinIndices[t.bit] ?? c.src.pinIndices[0]!,
+          pinIndex: c.src.pinIndices[tap.bit] ?? c.src.pinIndices[0]!,
         });
-        // Orthogonal leg: along the strand to the junction's column, then in to the junction.
+        const hot = this.selectedJunctions.has(j.id);
+        // Peel-out leg: along the strand to the junction's column, then in to the junction.
         const route = [bp, new Point(jp.x, bp.y), jp];
         if (conduit) {
           this.drawConduitSkin(g, route, col, 5, conduit);
@@ -7357,8 +7364,55 @@ export class Board {
             g.lineTo(route[k]!.x, route[k]!.y);
           g.stroke({ width: 2.5, color: col, alpha: 0.95 });
         }
+        // On-strand tap node + the wire-anchor node at the stub end (both haloed so they read on a thin trace).
+        g.circle(bp.x, bp.y, TAP_R + 2).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(bp.x, bp.y, TAP_R + 0.5).fill({ color: col });
+        g.circle(jp.x, jp.y, TAP_R + 1.5).fill({ color: 0x0d0b16, alpha: 1 });
+        g.circle(jp.x, jp.y, TAP_R).fill({ color: col });
+        if (hot)
+          g.circle(jp.x, jp.y, TAP_R + 3).stroke({
+            width: 1.5,
+            color: PALETTE.accent,
+            alpha: 0.9,
+          });
+        // Distinct bit tag (bus name + bit) just off the anchor, in the net's colour.
+        const text = this.cableTapText(ti++);
+        text.text = `${c.base}${tap.bit}`;
+        text.style.fill = col;
+        const lx = jp.x + 7;
+        const ly = jp.y - 7;
+        const w = text.width + 8;
+        const h = text.height + 3;
+        text.position.set(lx + 4, ly + 1.5);
+        text.visible = true;
+        g.roundRect(lx, ly, w, h, 3).fill({ color: 0x0d0b16, alpha: 0.92 });
+        g.roundRect(lx, ly, w, h, 3).stroke({
+          width: 1,
+          color: col,
+          alpha: 0.7,
+        });
       }
     }
+  }
+
+  /** Fetch (or lazily create) the pooled cable-tap bit tag Text at index `i`. */
+  private cableTapText(i: number): Text {
+    let t = this.cableTapTexts[i];
+    if (!t) {
+      t = new Text({
+        text: "",
+        style: {
+          fill: PALETTE.cyan,
+          fontFamily: "IBM Plex Mono, monospace",
+          fontSize: 10,
+          fontWeight: "700",
+        },
+      });
+      t.resolution = this.textRes;
+      this.cableTapTexts[i] = t;
+      this.netLabelLayer.addChild(t);
+    }
+    return t;
   }
 
   /**
@@ -8012,25 +8066,26 @@ export class Board {
     conduit: BoardLens | null,
     junctionPos: Map<number, Point>,
   ): void {
-    // Cable break-out taps render as smaller nodes (a thin bus strand, not a fat wire-tie).
+    // Cable break-out taps are drawn by the cable layer ({@link drawCableTapStubs}) — an on-strand node +
+    // a stub + a bit tag — so skip them here (no floating grid-cell dot).
     const tapJunctions = new Set<number>();
     for (const c of this.graph.cables.values())
       for (const t of c.taps ?? []) tapJunctions.add(t.junctionId);
     for (const j of this.graph.junctions.values()) {
+      if (tapJunctions.has(j.id)) continue;
       // Use the nudged hub position when its runs were fanned into lanes (so the hub
       // sits on its pipes), else the plain cell.
       const p = junctionPos.get(j.id) ?? this.cellToWorld(j.cell);
       const color = this.endpointColor({ junctionId: j.id });
       const hot = this.selectedJunctions.has(j.id);
-      const r = tapJunctions.has(j.id) ? TAP_R : JUNCTION_R;
       if (conduit) {
         this.drawJunctionConduit(g, p, color, conduit);
       } else {
-        g.circle(p.x, p.y, r + 1.5).fill({
+        g.circle(p.x, p.y, JUNCTION_R + 1.5).fill({
           color: 0x0d0b16,
           alpha: 1,
         });
-        g.circle(p.x, p.y, r).fill({ color });
+        g.circle(p.x, p.y, JUNCTION_R).fill({ color });
       }
       if (hot) {
         // Hug the conduit hub — its dark collar disc reads ~radius 6, so 6+3 clears it by 3px.
