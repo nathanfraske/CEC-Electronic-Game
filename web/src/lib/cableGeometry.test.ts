@@ -5,7 +5,11 @@
 // the width-agnostic claim the owner asked about (5-bit, 10-bit, 64-bit). Pure geometry, no browser.
 import { describe, it, expect } from "vitest";
 import { Point } from "pixi.js";
-import { buildCableTrunk, cableStrandRoutes } from "./cableGeometry";
+import {
+  buildCableTrunk,
+  cableStrandRoutes,
+  cableCornerRoutes,
+} from "./cableGeometry";
 
 const PITCH = 26;
 // Every width that matters: odd + even, tiny + huge. 64 is the "ridiculous" one.
@@ -253,5 +257,25 @@ describe("packed-ribbon belt-fan is crossing-free", () => {
     expect(
       crossings(cableStrandRoutes(srcW, dstW, trunk, PITCH, "v", RIBBON_PACK)),
     ).toBe(0);
+  });
+});
+
+// MIXED-AXIS CORNER (the bus "comes up short" + turns a sharp 90°): one end horizontal, the other vertical.
+// Each bit is a single staggered L. When the pin pairing matches the corner — top source ↔ far-side dest
+// (the owner's hand-wired reference) — the Ls nest without crossing at any width. A pairing that does NOT
+// match the corner genuinely crosses (the function does not reorder), which the negative case asserts.
+describe("mixed-axis corner cable is crossing-free when paired to the corner", () => {
+  it.each(WIDTHS)("┐ corner (h→v), matched pairing — width %i", (n) => {
+    const mid = (n - 1) / 2;
+    const below = (mid + 3) * PITCH; // dst row sits below EVERY source pin → every strand turns DOWN
+    const srcW = pinColumn(-SEP, 0, n); // vertical source column, top→bottom
+    const dstW = [...pinRow(SEP, below, n)].reverse(); // dst row right→left ⇒ src top ↔ rightmost dst
+    expect(crossings(cableCornerRoutes(srcW, dstW, "h"))).toBe(0);
+  });
+
+  it("a corner pairing that fights the geometry DOES cross (no silent reorder)", () => {
+    const srcW = pinColumn(-SEP, 0, 4);
+    const dstW = pinRow(SEP, 3 * PITCH, 4); // left→right ⇒ src top ↔ leftmost dst (wrong for a ┐) ⇒ crossings
+    expect(crossings(cableCornerRoutes(srcW, dstW, "h"))).toBeGreaterThan(0);
   });
 });

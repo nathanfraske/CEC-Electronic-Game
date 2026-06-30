@@ -5,6 +5,40 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (252) — Mixed-axis CORNER cable (sharp 90° turn) + copy-paste keeps traces
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+`0xeaac_3764_99e4_fa24` byte-identical**, build:wasm, web check/lint/build, **490 web tests** — +14 corner
+geometry cases). Web-only / render-only. Two owner asks from a hand-wired bus-corner reference.
+
+**(1) Mixed-axis CORNER cable ("comes up short on one side → sharp 90° turn").** The mixed-axis case (one end
+horizontal-approach, the other vertical) used to fall back to the comb. Now `cableGeometry.ts`
+**`cableCornerRoutes(srcW, dstW, srcAxis)`** lays each bit as a single **staggered L**: leave the source pin
+along its axis, turn ONCE at the dst pin's perpendicular coordinate, enter the dst along ITS axis (the owner's
+pattern — top source ↔ far-side dest). Turns stagger by pin position ⇒ a matched pairing nests crossing-free
+at any width; it does NOT reorder (an incompatible pairing genuinely crosses — both asserted in
+`cableGeometry.test.ts`, now **131 cases**). `board.ts` `drawCables` gained a `src.axis !== dst.axis` branch
+using the shared **`strokeStrands`** (extracted from `drawCableStrands`); the comb is now only the
+single-conductor / mismatched-count fallback. New `shoot --democable-mode corner` (source horizontal + dest
+rotated 90°, **dst pins reversed** to match the ┐). Verified live: 4 strands turn a clean staggered 90° onto
+the rotated bank, no crossings.
+
+**(2) Copy-paste keeps TRACES.** The clipboard carried only wire endpoints, so a pasted hand-routed trace
+auto-rerouted (lost its bends). `ClipboardSnippet.wires` now carries `waypoints`; `copySelection` captures
+them; **`placePaste`** (extracted from `commitPaste` — DRY) re-bases + rotates them with the group, so a
+pasted trace keeps its shape. Verified by a headless drive (`scripts/drive-copypaste.mjs` via the new
+`__cecDuplicateAll` / `wireWaypointTotal` harness hooks): duplicating the owner's L-turn fixture **doubled**
+the wire-waypoint total (4→8) — the routes survived (before the fix it stayed 4).
+
+**Files:** `cableGeometry.ts` (`cableCornerRoutes`), `cableGeometry.test.ts` (+corner block), `board.ts`
+(corner branch + `strokeStrands` extract + `corner` demo mode + `wireWaypointTotal`/`duplicateAllForTest`),
+`App.svelte` (clipboard `waypoints` + `placePaste` + `__cecSelInfo`/`__cecDuplicateAll` hooks + `corner`
+passthrough), `shoot.mjs` (comment), `scripts/drive-copypaste.mjs` (new regression drive). Render-only /
+golden-safe. **Follow-ups:** corner cable ignores route waypoints (direct L only) + doesn't pack/collapse;
+drag-reroute on a corner cable is a no-op (the Ls are direct, not trunk-following).
+
+---
+
 ## 2026-06-30 (251) — Bus-cable: collapsed view = PACKED RIBBON belt-fan (not comb + fat trunk)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden

@@ -3146,7 +3146,10 @@
         board?.buildDemoCable(
           "CBLDEMO",
           w,
-          mode === "bend" || mode === "close" || mode === "vertical"
+          mode === "bend" ||
+            mode === "close" ||
+            mode === "vertical" ||
+            mode === "corner"
             ? mode
             : "straight",
         );
@@ -3160,6 +3163,29 @@
       (
         window as unknown as { __cecSetMode?: (m: string) => void }
       ).__cecSetMode = (m) => setMode(m as Mode);
+      // Harness: the live tool + selected-component count + total wire-waypoint count — so a drive can confirm
+      // a marquee selected, and that a paste preserved the trace routes (waypoint total grows).
+      (
+        window as unknown as {
+          __cecSelInfo?: () => {
+            mode: string;
+            sel: number;
+            wireWps: number;
+          };
+        }
+      ).__cecSelInfo = () => ({
+        mode,
+        sel: selComponentCount,
+        wireWps: board?.wireWaypointTotal() ?? 0,
+      });
+      // Harness: select-all → copy → paste a duplicate offset by (dCol,dRow) without the marquee/keys/click,
+      // so a drive can verify copy-paste reproduces routed traces.
+      (
+        window as unknown as {
+          __cecDuplicateAll?: (dCol: number, dRow: number) => void;
+        }
+      ).__cecDuplicateAll = (dCol, dRow) =>
+        board?.duplicateAllForTest(dCol, dRow);
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now

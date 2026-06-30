@@ -160,6 +160,38 @@ export function offsetOrtho(pts: Point[], d: number): Point[] {
  * instead of a single fat trunk. The pin lead-out (`LEAD`) is unscaled, so the strands still leave their pins
  * cleanly before packing.
  */
+/**
+ * The per-bit strand routes for a MIXED-APPROACH bus — one end horizontal, the other vertical — i.e. a bus
+ * that "comes up short on one side and needs a sharp 90° turn" to drop onto a perpendicular pin bank. Each
+ * strand is a single clean L: it leaves its source pin along the SOURCE axis, turns ONCE at the destination
+ * pin's perpendicular coordinate, and enters the dest pin along the DEST axis (`srcAxis === "h"` ⇒ corner at
+ * `(dp.x, sp.y)` — run across to the dst column, then drop; `"v"` ⇒ corner at `(sp.x, dp.y)`). The turns
+ * stagger automatically (each strand turns at its own dst coordinate), so when the pin pairing matches the
+ * corner (top source ↔ far-side dest, the owner's reference) the Ls nest without crossing. Pure geometry; bit
+ * `i` plugs `srcW[i]`→`dstW[i]` by index (it does NOT reorder — an incompatible pairing genuinely crosses).
+ */
+export function cableCornerRoutes(
+  srcW: Point[],
+  dstW: Point[],
+  srcAxis: "h" | "v",
+): Point[][] {
+  const n = Math.min(srcW.length, dstW.length);
+  const routes: Point[][] = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const sp = srcW[i]!;
+    const dp = dstW[i]!;
+    const corner =
+      srcAxis === "h" ? new Point(dp.x, sp.y) : new Point(sp.x, dp.y);
+    // Drop a degenerate corner (already aligned) so a straight strand stays two points.
+    routes[i] =
+      (Math.abs(corner.x - sp.x) < 1e-6 && Math.abs(corner.y - sp.y) < 1e-6) ||
+      (Math.abs(corner.x - dp.x) < 1e-6 && Math.abs(corner.y - dp.y) < 1e-6)
+        ? [new Point(sp.x, sp.y), new Point(dp.x, dp.y)]
+        : [new Point(sp.x, sp.y), corner, new Point(dp.x, dp.y)];
+  }
+  return routes;
+}
+
 export function cableStrandRoutes(
   srcW: Point[],
   dstW: Point[],

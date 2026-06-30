@@ -66,7 +66,11 @@ import {
 } from "./userIc";
 import { DIE_INTERIOR_MARGIN, dieBounds, findDieFrameId } from "./dieEditor";
 import { planBusCable } from "./busWiring";
-import { buildCableTrunk, cableStrandRoutes } from "./cableGeometry";
+import {
+  buildCableTrunk,
+  cableStrandRoutes,
+  cableCornerRoutes,
+} from "./cableGeometry";
 import {
   drawGlyph,
   drawCellSymbol,
@@ -581,7 +585,15 @@ interface ClipboardSnippet {
     mode?: number;
     loadHz?: number;
   }[];
-  wires: { aId: number; aPin: number; bId: number; bPin: number }[];
+  wires: {
+    aId: number;
+    aPin: number;
+    bId: number;
+    bPin: number;
+    /** The wire's drawn route bends (absolute cells at copy time) — carried so paste reproduces the
+     *  TRACE shape (e.g. a hand-routed 90° turn), not just the connection (which would auto-reroute). */
+    waypoints?: { col: number; row: number }[];
+  }[];
   labels: { compId: number; pin: number; name: string }[];
 }
 
@@ -2454,12 +2466,13 @@ export class Board {
    *  already-registered bus IC `busTag`, so the cable render (lens skin / belt-fan / unzip) is
    *  screenshot-verifiable. `mode` picks the layout: `straight` (aligned, no route), `bend` (offset rows +
    *  a midline route → a Z-bent trunk), `close` (gathers nearly touching → the run-through fallback), or
-   *  `vertical` (both packages rotated 90° + stacked top/bottom → a vertical-APPROACH bus that unzips up↕down).
-   *  Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
+   *  `vertical` (both packages rotated 90° + stacked top/bottom → a vertical-APPROACH bus that unzips up↕down),
+   *  or `corner` (source horizontal + destination rotated 90° below-right → a MIXED-approach bus that turns a
+   *  sharp 90° into staggered Ls). Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
   buildDemoCable(
     busTag: string,
     width = 4,
-    mode: "straight" | "bend" | "close" | "vertical" = "straight",
+    mode: "straight" | "bend" | "close" | "vertical" | "corner" = "straight",
   ): void {
     this.graph.clear(); // start from an empty board so the demo cable reads cleanly
     const layout: { a: Cell; b: Cell; route: Cell[] } =
@@ -2476,7 +2489,9 @@ export class Board {
           ? { a: { col: -3, row: 0 }, b: { col: 3, row: 0 }, route: [] }
           : mode === "vertical"
             ? { a: { col: 0, row: -7 }, b: { col: 0, row: 7 }, route: [] }
-            : { a: { col: -7, row: 0 }, b: { col: 7, row: 0 }, route: [] };
+            : mode === "corner"
+              ? { a: { col: -8, row: -4 }, b: { col: 3, row: 5 }, route: [] }
+              : { a: { col: -7, row: 0 }, b: { col: 7, row: 0 }, route: [] };
     const a = this.graph.place(busTag, layout.a);
     const b = this.graph.place(busTag, layout.b);
     if (!a || !b) return;
@@ -2486,13 +2501,21 @@ export class Board {
       a.rot = 1;
       b.rot = 1;
     }
+    if (mode === "corner") {
+      // Source stays horizontal-approach; rotate the destination 90° so its bus pins form a horizontal ROW
+      // (vertical-approach) → a MIXED-axis bus that turns a sharp 90° (the owner's bus-corner pattern).
+      b.rot = 1;
+    }
     const pins = Array.from({ length: width }, (_, i) => i);
+    // Corner: pair top-source ↔ far-side-dest (reverse the dst order) so the staggered Ls nest crossing-free,
+    // exactly as the owner hand-wired the reference (top resistor → rightmost resistor).
+    const dstPins = mode === "corner" ? [...pins].reverse() : pins;
     this.graph.addCable({
       base: "DATA",
       width,
       route: layout.route,
       src: { componentId: a.id, pinIndices: pins },
-      dst: { componentId: b.id, pinIndices: pins },
+      dst: { componentId: b.id, pinIndices: dstPins },
     });
     this.rebuildNodes();
     this.redrawWires();
@@ -2511,6 +2534,14 @@ export class Board {
     this.viewportDirty = true;
     this.applyTextRes();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** TEST HARNESS ONLY: total manual-waypoint count across all wires — a drive asserts a paste PRESERVED
+   *  routed traces (the total grows by the pasted wires' waypoints) rather than auto-rerouting them. */
+  wireWaypointTotal(): number {
+    let n = 0;
+    for (const w of this.graph.wires.values()) n += w.waypoints?.length ?? 0;
+    return n;
   }
 
   /** TEST HARNESS ONLY (drag-reroute + tap drivers): the first cable's id, its drawn trunk + per-bit strands
@@ -5904,6 +5935,11 @@ export class Board {
           aPin: w.from.pinIndex,
           bId: w.to.componentId,
           bPin: w.to.pinIndex,
+          // Carry the drawn route so the paste keeps its trace shape (the hand-routed bends), not just
+          // the connection. Stored absolute; commitPaste re-bases + rotates them with the group.
+          ...(w.waypoints && w.waypoints.length
+            ? { waypoints: w.waypoints.map((c) => ({ ...c })) }
+            : {}),
         });
       }
     }
@@ -5949,9 +5985,7 @@ export class Board {
     this.updatePasteGhost();
   }
 
-  /** Drop the floating paste group at the cursor: place each component with fresh ids
-   * at its (group-rotated) offset, remap the internal wires + labels, select the new
-   * group, and leave paste mode. */
+  /** Drop the floating paste group at the cursor, then leave paste mode. */
   private commitPaste(): void {
     const p = this.pasting;
     if (!p) return;
@@ -5959,17 +5993,34 @@ export class Board {
       col: snap(this.pointer.x, PITCH),
       row: snap(this.pointer.y, PITCH),
     };
+    this.placePaste(p.snippet, p.refCol, p.refRow, anchor, p.rot);
+    this.pasting = null;
+    this.pasteGhostLayer.visible = false;
+    this.updateCursor();
+  }
+
+  /** Place a clipboard snippet at `anchor` (the group rotated by `rot` 90° steps): fresh-id components at
+   * their group-rotated offsets, the internal wires remapped WITH their routed waypoints (so a hand-routed
+   * trace keeps its shape — the same transform the components get), and the pinned net labels. Selects the
+   * new group + redraws. Shared by {@link commitPaste} (pointer anchor) and the duplicate test hook. */
+  private placePaste(
+    snippet: ClipboardSnippet,
+    refCol: number,
+    refRow: number,
+    anchor: Cell,
+    rot: number,
+  ): void {
     this.pushUndo(this.graph.serialize());
     const map = new Map<number, number>();
-    for (const cc of p.snippet.comps) {
-      const rel = rotateOffset(cc.col - p.refCol, cc.row - p.refRow, p.rot);
+    for (const cc of snippet.comps) {
+      const rel = rotateOffset(cc.col - refCol, cc.row - refRow, rot);
       const nc = this.graph.place(cc.kind, {
         col: anchor.col + rel.col,
         row: anchor.row + rel.row,
       });
       if (!nc) continue;
       nc.value = cc.value;
-      nc.rot = (cc.rot + p.rot) % 4;
+      nc.rot = (cc.rot + rot) % 4;
       // Carry each part's own horizontal flip (no group reflection — paste only rotates
       // the group). Pins keep their index, so the pasted netlist is unchanged.
       if (cc.mirror) nc.mirror = true;
@@ -5987,16 +6038,27 @@ export class Board {
       if (cc.loadHz !== undefined) nc.loadHz = cc.loadHz;
       map.set(cc.oldId, nc.id);
     }
-    for (const w of p.snippet.wires) {
+    for (const w of snippet.wires) {
       const na = map.get(w.aId);
       const nb = map.get(w.bId);
       if (na === undefined || nb === undefined) continue;
-      this.graph.connect(
+      const nw = this.graph.connect(
         { componentId: na, pinIndex: w.aPin },
         { componentId: nb, pinIndex: w.bPin },
       );
+      // Reproduce the drawn route: re-base each waypoint to the new anchor + rotate it with the group
+      // (the same transform the components got), so a hand-routed trace pastes with its shape intact.
+      if (nw && w.waypoints && w.waypoints.length) {
+        this.graph.setWireWaypoints(
+          nw.id,
+          w.waypoints.map((wp) => {
+            const rel = rotateOffset(wp.col - refCol, wp.row - refRow, rot);
+            return { col: anchor.col + rel.col, row: anchor.row + rel.row };
+          }),
+        );
+      }
     }
-    for (const l of p.snippet.labels) {
+    for (const l of snippet.labels) {
       const nid = map.get(l.compId);
       if (nid === undefined) continue;
       this.graph.addNetLabel({ componentId: nid, pinIndex: l.pin }, l.name);
@@ -6006,14 +6068,32 @@ export class Board {
     this.selectedJunctions.clear();
     this.selectedLabels.clear();
     for (const id of map.values()) this.selected.add(id);
-    this.pasting = null;
-    this.pasteGhostLayer.visible = false;
-    this.updateCursor();
     this.rebuildNodes();
     this.redrawWires();
     this.redrawSelection();
     this.emitSelect();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** TEST HARNESS ONLY: select every component, copy, and paste a duplicate offset by (dCol,dRow) — no
+   *  pointer/keys — so a headless drive can assert copy-paste reproduces routed traces (the wire-waypoint
+   *  total grows by the pasted wires' waypoints rather than auto-rerouting to zero). */
+  duplicateAllForTest(dCol: number, dRow: number): void {
+    if (this.graph.components.size === 0) return;
+    this.clearSelection();
+    for (const id of this.graph.components.keys()) this.selected.add(id);
+    this.copySelection();
+    const clip = this.clipboard;
+    if (!clip || clip.comps.length === 0) return;
+    const refCol = Math.min(...clip.comps.map((c) => c.col));
+    const refRow = Math.min(...clip.comps.map((c) => c.row));
+    this.placePaste(
+      clip,
+      refCol,
+      refRow,
+      { col: refCol + dCol, row: refRow + dRow },
+      0,
+    );
   }
 
   /** Rotate the floating paste group 90° CW. Returns true iff a paste was active
@@ -7381,8 +7461,32 @@ export class Board {
           this.drawCableWidthBadge(g, trunk, c.width, color, badgeIdx++);
         continue;
       }
-      // MIXED-AXIS (corner-turning) bus: can't lay one belt-fan, so fall back to the orthogonal comb at BOTH
-      // ends + a single fat trunk — every conductor on-grid, symmetric about the centre.
+      // MIXED-AXIS — the bus comes up SHORT on one side and needs a sharp 90° turn: one end approaches
+      // horizontally, the other vertically. Lay each bit as a single staggered L (leave the source pin along
+      // its axis, turn once at the dst pin's perpendicular coordinate, enter the dst pin along ITS axis — the
+      // owner's manual bus-corner pattern). Drawn at all zooms; the turns stagger by pin position so a matched
+      // pairing nests crossing-free. A width badge when collapsed (the Ls merge at low zoom).
+      if (
+        srcW.length >= 2 &&
+        srcW.length === dstW.length &&
+        src.axis !== dst.axis
+      ) {
+        const routes = cableCornerRoutes(srcW, dstW, src.axis);
+        this.strokeStrands(
+          g,
+          c.id,
+          routes,
+          c.src.componentId,
+          c.src.pinIndices,
+          conduit,
+          false,
+        );
+        if ((this.world.scale.x < TIER_ZOOM || c.collapsed) && c.width >= 2)
+          this.drawCableWidthBadge(g, trunk, c.width, color, badgeIdx++);
+        continue;
+      }
+      // FALLBACK (a single conductor, or mismatched pin counts): the orthogonal comb at BOTH ends + a single
+      // fat trunk — every conductor on-grid, symmetric about the centre.
       comb(srcW, src.pt, src.axis);
       comb(dstW, dst.pt, dst.axis);
       g.stroke({ width: 2, color, alpha: 0.75 });
@@ -7609,13 +7713,33 @@ export class Board {
     axis: "h" | "v",
     lanePack = 1,
   ): void {
-    // Geometry is pure ({@link cableStrandRoutes}, unit-tested for crossing-freeness at any width); here we
-    // just colour each bit by its signal and stroke it through the active lens. Cache the per-bit routes so
-    // a per-bit TAP can hit-test which strand was clicked.
+    // Geometry is pure ({@link cableStrandRoutes}, unit-tested for crossing-freeness at any width).
     const routes = cableStrandRoutes(srcW, dstW, trunk, PITCH, axis, lanePack);
+    this.strokeStrands(
+      g,
+      cableId,
+      routes,
+      srcComponentId,
+      srcPinIndices,
+      conduit,
+      lanePack < 1,
+    );
+  }
+
+  /** Cache + draw a cable's per-bit strand routes: colour each bit by its signal ({@link endpointColor}) and
+   *  stroke it through the active lens. `packed` thins the conductors (the tight collapsed ribbon). Shared by
+   *  the belt-fan ({@link drawCableStrands}) and the mixed-axis corner render. */
+  private strokeStrands(
+    g: Graphics,
+    cableId: number,
+    routes: Point[][],
+    srcComponentId: number,
+    srcPinIndices: number[],
+    conduit: BoardLens | null,
+    packed: boolean,
+  ): void {
+    // Cache the per-bit routes so a per-bit TAP can hit-test which strand was clicked.
     this.cableStrandCache.set(cableId, routes);
-    // Packed ribbon ⇒ thinner conductors so the tight lanes stay distinct (don't bleed into one slab).
-    const packed = lanePack < 1;
     const pipeW = packed ? 3 : 5;
     const lineW = packed ? 1.5 : 2.5;
     for (let i = 0; i < routes.length; i++) {

@@ -143,6 +143,25 @@ scale of the perpendicular offsets keeps the lanes monotonic in rank ⇒ still c
 straight), `--democable-mode bend --zoom 1.5` (packed ribbon nests through the Z-bend), `--democable-mode
 vertical --zoom 1.5` (packed + transposed) — and the zoomed-in spread is unchanged.
 
+**Mixed-axis CORNER (sharp 90° turn) + copy-paste keeps traces** (owner, from a hand-wired bus-corner
+reference). (1) **Corner cable:** the mixed-axis case (one end horizontal, the other vertical — "the bus comes
+up short on one side and needs a sharp 90° turn") no longer falls back to the comb. `cableGeometry.ts`
+`cableCornerRoutes(srcW, dstW, srcAxis)` lays each bit as a single **staggered L** — leave the source pin
+along its axis, turn ONCE at the destination pin's perpendicular coordinate, enter the dest pin along ITS axis
+(the owner's manual pattern: top source ↔ far-side dest). The turns stagger by pin position, so a matched
+pairing nests crossing-free at any width (`cableGeometry.test.ts` corner block; it does NOT reorder, so an
+incompatible pairing genuinely crosses — also asserted). `board.ts` `drawCables` now has a mixed-axis branch
+(`src.axis !== dst.axis`) using the shared `strokeStrands`; the comb is now only the single-conductor /
+mismatched-count fallback. New `shoot --democable-mode corner` (source horizontal + destination rotated 90°,
+dst pins reversed to match the corner). Verified live: 4 strands turn a clean staggered 90° onto the rotated
+bank, no crossings — matching the owner's reference. (2) **Copy-paste keeps traces:** the clipboard carried
+only wire ENDPOINTS, so a pasted hand-routed trace auto-rerouted (lost its bends). `ClipboardSnippet.wires`
+now carries `waypoints`; `copySelection` captures them and `placePaste` (extracted from `commitPaste`)
+re-bases + rotates them with the group — so a pasted trace keeps its shape. Verified by a headless drive
+(`scripts/drive-copypaste.mjs` via `__cecDuplicateAll`): duplicating the L-turn fixture doubled the
+wire-waypoint total (4→8) — the routes survived. Both render-only / golden-safe (gate green: 233 sim incl.
+golden, 490 web).
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in
