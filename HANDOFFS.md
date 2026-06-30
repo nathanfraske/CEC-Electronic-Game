@@ -5,6 +5,39 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (253) — Corner cable: AUTO-INVERT the pin pairing + a manual "Reverse pairing" override
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden
+`0xeaac_3764_99e4_fa24` byte-identical**, build:wasm, web check/lint/build, **503 web tests** — +13 auto-orient
+geometry cases). Web-only / render-only.
+
+**Why (owner):** "it should auto-invert, but there should be a way to do an intentional inversion." A corner's
+crossing-free routing needs the pairing **top-source ↔ far-dest** — the inverted pin numbering — so the cable
+should pick that automatically AND let the player flip it.
+
+**Key lever:** the pairing IS the order of `dst.pinIndices` — BOTH the render (`cableCornerRoutes` /
+belt-fan read `dstW[i]`) and connectivity (`deriveCableLinks` ties bit `i` to `dst.pinIndices[i]`) read it in
+order, so **reversing that one array flips the cable coherently** (no new field).
+
+**(1) Auto-invert at creation** — `board.ts` `autoOrientCablePairing`, run in the cable-create gesture (right
+after `planBusCable`): for a **mixed-approach** (corner) bus, route the name-aligned dst order AND its reverse,
+count crossings via new **`cableGeometry.ts` `strandCrossings`**, keep the cleaner (top-source ↔ far-dest). A
+same-axis bus keeps its order (the belt-fan handles it). The `corner` demo now goes through this (no hardcoded
+reverse) — verified 0 crossings.
+
+**(2) Manual override** — a **"Reverse pairing"** row in the cable's right-click menu →
+`graph.reverseCablePairing` reverses `dst.pinIndices` + re-derives; reversible, one undo step. Verified live
+(menu toggle flips strand crossings 0→6→0).
+
+**Note (connectivity):** auto-invert/reverse changes WHICH pin bit `i` lands on (the positional ribbon-around-
+a-corner). For a name-aligned bus that means A0-src can pair with A3-dst — intended for the corner case; the
+toggle lets the player put it back. **Files:** `cableGeometry.ts` (`strandCrossings`; test's `crossings` now
+aliases it — DRY), `cableGeometry.test.ts` (+auto-orient picker test, 144 cases), `board.ts`
+(`autoOrientCablePairing` at creation + in the demo, `reverseCablePairing` + menu row), `graph.ts`
+(`reverseCablePairing`). Render-only / golden-safe.
+
+---
+
 ## 2026-06-30 (252) — Mixed-axis CORNER cable (sharp 90° turn) + copy-paste keeps traces
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. Full gate green (cargo fmt/clippy, **233 sim tests incl. golden

@@ -162,6 +162,19 @@ re-bases + rotates them with the group — so a pasted trace keeps its shape. Ve
 wire-waypoint total (4→8) — the routes survived. Both render-only / golden-safe (gate green: 233 sim incl.
 golden, 490 web).
 
+**Corner pairing: AUTO-INVERT + a manual override** (owner: "it should auto-invert, but there should be a way
+to do an intentional inversion"). Because a corner's crossing-free routing requires pairing **top-source ↔
+far-dest** — the inverted pin numbering — the cable now picks that automatically AND lets the player flip it.
+The pairing IS the order of `dst.pinIndices` (both the render and `deriveCableLinks` read it in order), so
+reversing that one array flips the cable coherently. **Auto-invert at creation** (`board.ts`
+`autoOrientCablePairing`, run in the cable-create gesture): for a mixed-approach (corner) bus, route the
+name-aligned dst order AND its reverse, count crossings (`cableGeometry.ts` `strandCrossings`), and keep the
+cleaner — so a corner comes out crossing-free without the player thinking about it; a same-axis bus keeps its
+order. **Manual override**: a **"Reverse pairing"** row in the cable's right-click menu (`graph.reverseCablePairing`
+→ reverse `dst.pinIndices`, re-derive) flips any cable's pairing (the intentional inversion), reversible.
+`cableGeometry.test.ts` proves the picker prefers the crossing-free order (144 cases); verified live (the demo
+now goes through `autoOrientCablePairing`: 0 crossings; the menu toggle flips 0→6→0). Render-only / golden-safe.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in

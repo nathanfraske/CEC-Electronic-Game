@@ -2561,6 +2561,18 @@ export class BoardGraph {
     if (c) c.route = route.map((cell) => ({ ...cell }));
   }
 
+  /** Flip a cable's pin PAIRING: reverse `dst.pinIndices` so bit `i` now pairs with the OPPOSITE-end
+   *  destination pin (top-source ↔ far-dest). One coherent change — both the render (reads `dst.pinIndices`
+   *  in order) and connectivity ({@link deriveCableLinks} ties bit `i` to `dst.pinIndices[i]`) follow it — so
+   *  a corner bus turns crossing-free. The bit↔net mapping (`cbl<id>.<bit>`) is unchanged, so taps stay on
+   *  their bit. Re-derives links. No-op on an unknown cable. */
+  reverseCablePairing(id: number): void {
+    const c = this.cables.get(id);
+    if (!c) return;
+    c.dst.pinIndices = [...c.dst.pinIndices].reverse();
+    this.deriveCableLinks();
+  }
+
   /** Tap one bit of a cable at board cell `at`: drop a FREE junction there + record it, so a matched
    *  owner-label (added by {@link deriveCableLinks}) ties it to bit `bit`'s net and the player can wire off
    *  the junction. Returns the junction id, or undefined on an unknown cable / out-of-range bit. */

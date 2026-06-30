@@ -192,6 +192,38 @@ export function cableCornerRoutes(
   return routes;
 }
 
+/**
+ * Count proper inter-strand crossings across the per-bit routes — two DIFFERENT strands whose segments truly
+ * intersect (shared endpoints / collinear touches don't count). Used to AUTO-ORIENT a corner cable: route the
+ * pin pairing both ways (name-aligned and reversed) and keep whichever crosses less — the physical
+ * ribbon-around-a-corner (top-source ↔ far-dest).
+ */
+export function strandCrossings(routes: Point[][]): number {
+  const o = (a: Point, b: Point, c: Point): number =>
+    Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+  const cross = (p: Point, q: Point, r: Point, s: Point): boolean => {
+    const d1 = o(p, q, r);
+    const d2 = o(p, q, s);
+    const d3 = o(r, s, p);
+    const d4 = o(r, s, q);
+    return (
+      d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0
+    );
+  };
+  const segs: { ri: number; a: Point; b: Point }[] = [];
+  routes.forEach((r, ri) => {
+    for (let k = 1; k < r.length; k++)
+      segs.push({ ri, a: r[k - 1]!, b: r[k]! });
+  });
+  let n = 0;
+  for (let i = 0; i < segs.length; i++)
+    for (let j = i + 1; j < segs.length; j++) {
+      if (segs[i]!.ri === segs[j]!.ri) continue; // a strand's own corners are fine
+      if (cross(segs[i]!.a, segs[i]!.b, segs[j]!.a, segs[j]!.b)) n++;
+    }
+  return n;
+}
+
 export function cableStrandRoutes(
   srcW: Point[],
   dstW: Point[],

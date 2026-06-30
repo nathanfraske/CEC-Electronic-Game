@@ -9,6 +9,7 @@ import {
   buildCableTrunk,
   cableStrandRoutes,
   cableCornerRoutes,
+  strandCrossings,
 } from "./cableGeometry";
 
 const PITCH = 26;
@@ -60,33 +61,9 @@ function gatherV(pins: Point[], towardY: number): Point {
   return new Point(cx, cy + Math.sign(towardY - cy || 1) * d);
 }
 
-/** Strict proper-intersection (collinear / shared-endpoint touches don't count). Two DIFFERENT strands
- *  share no endpoint, so any true intersection here is a visible cable-over-cable cross. */
-function segsCross(p: Point, q: Point, r: Point, s: Point): boolean {
-  const o = (a: Point, b: Point, c: Point): number =>
-    Math.sign((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
-  const d1 = o(p, q, r);
-  const d2 = o(p, q, s);
-  const d3 = o(r, s, p);
-  const d4 = o(r, s, q);
-  return d1 !== d2 && d3 !== d4 && d1 !== 0 && d2 !== 0 && d3 !== 0 && d4 !== 0;
-}
-
-/** Count inter-strand crossings across all strand routes. */
-function crossings(routes: Point[][]): number {
-  const segs: { ri: number; a: Point; b: Point }[] = [];
-  routes.forEach((r, ri) => {
-    for (let k = 1; k < r.length; k++)
-      segs.push({ ri, a: r[k - 1]!, b: r[k]! });
-  });
-  let hits = 0;
-  for (let i = 0; i < segs.length; i++)
-    for (let j = i + 1; j < segs.length; j++) {
-      if (segs[i]!.ri === segs[j]!.ri) continue; // a strand's own corners are fine
-      if (segsCross(segs[i]!.a, segs[i]!.b, segs[j]!.a, segs[j]!.b)) hits++;
-    }
-  return hits;
-}
+/** Count inter-strand crossings — the same proper-intersection counter the board uses to auto-orient a
+ *  corner cable (shared endpoints / collinear touches don't count). */
+const crossings = strandCrossings;
 
 /** Every interior trunk vertex must be a genuine 90° turn — dir_in ⟂ dir_out. A collinear vertex (dot ±1)
  *  is redundant; a 180° reversal (dot −1) is a backtrack spur (the bowtie). Both must be gone. */
@@ -278,4 +255,20 @@ describe("mixed-axis corner cable is crossing-free when paired to the corner", (
     const dstW = pinRow(SEP, 3 * PITCH, 4); // left→right ⇒ src top ↔ leftmost dst (wrong for a ┐) ⇒ crossings
     expect(crossings(cableCornerRoutes(srcW, dstW, "h"))).toBeGreaterThan(0);
   });
+
+  // The board's auto-orient logic (board.ts `autoOrientCablePairing`): route the dst pins both ways and keep
+  // the order with fewer crossings. Here the natural (name-aligned, left→right) order crosses and the reverse
+  // is clean, so the picker must choose the reverse.
+  it.each(WIDTHS)(
+    "auto-orient picks the crossing-free dst order — width %i",
+    (n) => {
+      const srcW = pinColumn(-SEP, 0, n);
+      const natural = pinRow(SEP, ((n - 1) / 2 + 3) * PITCH, n); // left→right (crosses for a ┐)
+      const reversed = [...natural].reverse();
+      const cNat = crossings(cableCornerRoutes(srcW, natural, "h"));
+      const cRev = crossings(cableCornerRoutes(srcW, reversed, "h"));
+      expect(cRev).toBeLessThan(cNat); // the picker prefers `reversed`
+      expect(cRev).toBe(0); // …and it is crossing-free
+    },
+  );
 });

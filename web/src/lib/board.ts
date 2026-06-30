@@ -70,6 +70,7 @@ import {
   buildCableTrunk,
   cableStrandRoutes,
   cableCornerRoutes,
+  strandCrossings,
 } from "./cableGeometry";
 import {
   drawGlyph,
@@ -2507,9 +2508,9 @@ export class Board {
       b.rot = 1;
     }
     const pins = Array.from({ length: width }, (_, i) => i);
-    // Corner: pair top-source ↔ far-side-dest (reverse the dst order) so the staggered Ls nest crossing-free,
-    // exactly as the owner hand-wired the reference (top resistor → rightmost resistor).
-    const dstPins = mode === "corner" ? [...pins].reverse() : pins;
+    // Exercise the production auto-orient: for the corner (mixed-axis) it picks the crossing-free dst order
+    // (top-source ↔ far-dest); for the same-axis modes it returns the order unchanged.
+    const dstPins = this.autoOrientCablePairing(a.id, pins, b.id, pins);
     this.graph.addCable({
       base: "DATA",
       width,
@@ -6627,6 +6628,16 @@ export class Board {
           if (plan) {
             const route = (wire.waypoints ?? []).map((c) => ({ ...c }));
             this.graph.removeWire(wire.id);
+            // AUTO-ORIENT a corner: a mixed-approach (one end horizontal, the other vertical) bus can have its
+            // name-aligned pairing cross; pick the dst order that routes crossing-free (top-source ↔ far-dest,
+            // the physical ribbon-around-a-corner). Same-axis buses keep their order. "Reverse pairing"
+            // (right-click) overrides either way.
+            const dstPinIndices = this.autoOrientCablePairing(
+              from.componentId,
+              plan.srcPinIndices,
+              target.componentId,
+              plan.dstPinIndices,
+            );
             this.graph.addCable({
               base: plan.base,
               width: plan.width,
@@ -6637,7 +6648,7 @@ export class Board {
               },
               dst: {
                 componentId: target.componentId,
-                pinIndices: plan.dstPinIndices,
+                pinIndices: dstPinIndices,
               },
             });
           }
@@ -6783,6 +6794,10 @@ export class Board {
         label: "Fan out ▴ (reversed)",
         run: () => this.fanCable(cid, cell, true),
       });
+      items.push({
+        label: "Reverse pairing",
+        run: () => this.reverseCablePairing(cid),
+      });
       items.push({ ...del, label: "Delete cable" });
       return items;
     }
@@ -6838,6 +6853,57 @@ export class Board {
     this.redrawWires();
     this.redrawSelection();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** Flip a cable's pin pairing (the intentional inversion) — top-source ↔ far-dest vs near, so a corner bus
+   *  is the player's choice of which side maps to which. Reverses `dst.pinIndices`; one undo step. */
+  private reverseCablePairing(cableId: number): void {
+    this.pushUndo(this.graph.serialize());
+    this.graph.reverseCablePairing(cableId);
+    this.rebuildNodes();
+    this.redrawWires();
+    this.redrawSelection();
+    this.cb.onChange?.(this.graph);
+  }
+
+  /** Pick the crossing-free dst pin order for a freshly-planned cable. A MIXED-approach (corner) bus — one
+   *  end horizontal, the other vertical — can have its name-aligned pairing cross; route it both ways and keep
+   *  whichever has fewer strand crossings (top-source ↔ far-dest, the physical ribbon-around-a-corner). A
+   *  same-axis bus keeps its order (the belt-fan handles it). Falls back to the given order if a pin is
+   *  unresolved. */
+  private autoOrientCablePairing(
+    srcId: number,
+    srcPins: number[],
+    dstId: number,
+    dstPins: number[],
+  ): number[] {
+    const w = (id: number, i: number): Point | null => {
+      const cell = this.graph.pinRefCell({ componentId: id, pinIndex: i });
+      return cell ? this.cellToWorld(cell) : null;
+    };
+    const sw = srcPins.map((i) => w(srcId, i));
+    const dw = dstPins.map((i) => w(dstId, i));
+    if (sw.some((p) => !p) || dw.some((p) => !p)) return dstPins;
+    const swp = sw as Point[];
+    const dwp = dw as Point[];
+    // Approach axis ⟂ the dominant pin-array spread (mirrors gatherAxis): more Y-spread ⇒ horizontal approach.
+    const axisOf = (pins: Point[]): "h" | "v" => {
+      const cx = pins.reduce((s, p) => s + p.x, 0) / pins.length;
+      const cy = pins.reduce((s, p) => s + p.y, 0) / pins.length;
+      let sx = 0;
+      let sy = 0;
+      for (const p of pins) {
+        sx += Math.abs(p.x - cx);
+        sy += Math.abs(p.y - cy);
+      }
+      return sy >= sx ? "h" : "v";
+    };
+    if (axisOf(swp) === axisOf(dwp)) return dstPins; // same-axis ⇒ belt-fan, no corner inversion
+    const nat = strandCrossings(cableCornerRoutes(swp, dwp, axisOf(swp)));
+    const rev = strandCrossings(
+      cableCornerRoutes(swp, [...dwp].reverse(), axisOf(swp)),
+    );
+    return rev < nat ? [...dstPins].reverse() : dstPins;
   }
 
   private cancelWiring(): void {
