@@ -939,6 +939,17 @@ export class Board {
     moveJunctions: { end: "lo" | "hi"; id: number }[];
     moved: boolean;
   } | null = null;
+  // KiCad-style segment drag on a bus CABLE's trunk: same machinery as wireDrag, but the brackets edit the
+  // cable's `route` (its long-haul waypoints) instead of a wire's. `pts` is [srcGatherCell, ...interior,
+  // dstGatherCell] (the gathers are the fixed ends — they track the parts); the dragged segment is
+  // pts[bi]→pts[bi+1]. Render-only: a cable's connectivity is its per-bit net labels, untouched by routing.
+  private cableDrag: {
+    id: number;
+    pts: Cell[];
+    bi: number;
+    axis: "h" | "v";
+    moved: boolean;
+  } | null = null;
   // Dragging a junction (started by a double-click on it) to a new grid cell; its
   // incident wires follow because they reference it by id. `moved` gates the undo.
   private junctionDrag: { id: number; moved: boolean } | null = null;
@@ -2457,6 +2468,27 @@ export class Board {
     this.viewportDirty = true;
     this.applyTextRes();
     this.cb.onChange?.(this.graph);
+  }
+
+  /** TEST HARNESS ONLY (drag-reroute driver): the first cable's id, its drawn trunk in CANVAS-LOCAL screen
+   *  coords (so a headless pointer drive can grab a segment), and its stored route (to assert it bent). */
+  cableProbe(): {
+    id: number;
+    trunkScreen: { x: number; y: number }[];
+    route: Cell[];
+  } | null {
+    const first = this.graph.cables.values().next().value;
+    if (!first) return null;
+    const trunk = this.cableTrunkRoutes.get(first.id) ?? [];
+    const trunkScreen = trunk.map((p) => {
+      const g = this.world.toGlobal(new Point(p.x, p.y));
+      return { x: g.x, y: g.y };
+    });
+    return {
+      id: first.id,
+      trunkScreen,
+      route: first.route.map((c) => ({ ...c })),
+    };
   }
 
   /** Harness/test accessor (render tools): centre the camera on a placed component at a given zoom scale,
@@ -5438,10 +5470,25 @@ export class Board {
     }
 
     // A bus cable's trunk picks like a wire (select → highlight → Delete removes it). Tested after wires
-    // so a wire lying over the trunk still wins. (Drag-to-reroute + per-bit tap are follow-ups.)
+    // so a wire lying over the trunk still wins. A non-additive press also arms a trunk segment-drag —
+    // grab the segment and drag it perpendicular (KiCad-style), the gather ends tracking the parts — which
+    // edits the cable's route just like a wire's waypoints. (Per-bit tap is a follow-up.)
     const cableId = this.cableHitTest(wp.x, wp.y);
     if (cableId !== null) {
       this.selectCable(cableId, additive);
+      if (!additive) {
+        const begun = this.beginCableSegmentDrag(cableId, wp.x, wp.y);
+        if (begun) {
+          this.cableDrag = {
+            id: cableId,
+            pts: begun.pts,
+            bi: begun.bi,
+            axis: begun.axis,
+            moved: false,
+          };
+          this.pendingUndo = this.snapshotEntry();
+        }
+      }
       return;
     }
 
@@ -5998,6 +6045,16 @@ export class Board {
       return;
     }
 
+    if (this.cableDrag) {
+      const d = this.cableDrag;
+      const lo = d.pts[d.bi]!;
+      const target = d.axis === "h" ? snap(wp.y, PITCH) : snap(wp.x, PITCH);
+      const cur = d.axis === "h" ? lo.row : lo.col;
+      if (target !== cur) d.moved = true;
+      if (d.moved) this.updateCableSegmentDrag(wp.x, wp.y);
+      return;
+    }
+
     if (this.boxHandleDrag) {
       this.moveBoxHandleDrag(wp);
       return;
@@ -6148,6 +6205,27 @@ export class Board {
         this.cb.onChange?.(this.graph);
       }
       this.wireDrag = null;
+      this.pendingUndo = null;
+      return;
+    }
+    if (this.cableDrag) {
+      if (this.cableDrag.moved && this.pendingUndo) {
+        // Collapse any bends that ended up colinear with their neighbours (a segment dragged back in line,
+        // or the gather-end brackets left un-offset), against the cable's gather cells, so the route stays
+        // minimal — the same cleaner wires use.
+        const d = this.cableDrag;
+        const c = this.graph.cables.get(d.id);
+        if (c)
+          this.graph.setCableRoute(
+            d.id,
+            cleanRouteWaypoints(d.pts[0]!, c.route, d.pts[d.pts.length - 1]!),
+          );
+        this.commitUndo(this.pendingUndo);
+        this.redrawWires();
+        this.redrawSelection();
+        this.cb.onChange?.(this.graph);
+      }
+      this.cableDrag = null;
       this.pendingUndo = null;
       return;
     }
@@ -8013,6 +8091,56 @@ export class Board {
     }
     // Interior points are the waypoints; the two ends stay the pins/junctions.
     this.graph.setWireWaypoints(d.id, pts.slice(1, -1));
+    this.redrawWires();
+    this.redrawSelection();
+  }
+
+  /**
+   * Begin a KiCad-style segment drag on a bus cable's TRUNK at world (wx,wy). Reuses the wire planner
+   * ({@link planSegmentDrag}) on the DRAWN trunk polyline (cached this frame in {@link cableTrunkRoutes}):
+   * the trunk's first/last points are the gathers — held fixed (not junctions) so they keep tracking the
+   * parts — and the grabbed interior segment gets grid brackets. The interior brackets become the cable's
+   * route on update. Null if the cable has no drawn trunk (e.g. an unresolved pin group).
+   */
+  private beginCableSegmentDrag(
+    cableId: number,
+    wx: number,
+    wy: number,
+  ): { pts: Cell[]; bi: number; axis: "h" | "v" } | null {
+    const trunk = this.cableTrunkRoutes.get(cableId);
+    if (!trunk || trunk.length < 2) return null;
+    const a: Cell = {
+      col: snap(trunk[0]!.x, PITCH),
+      row: snap(trunk[0]!.y, PITCH),
+    };
+    const last = trunk[trunk.length - 1]!;
+    const b: Cell = { col: snap(last.x, PITCH), row: snap(last.y, PITCH) };
+    const plan = planSegmentDrag(trunk, a, b, false, false, wx, wy);
+    if (!plan) return null;
+    return { pts: plan.pts, bi: plan.bi, axis: plan.axis };
+  }
+
+  /**
+   * Translate the dragged trunk segment to the snapped pointer position along its perpendicular axis (both
+   * brackets move, the gather ends stay), and write the interior cells back as the cable's route. The trunk
+   * is rebuilt from the route on redraw (re-orthogonalized + spur-collapsed), so the bundle — and every
+   * unzipped strand — follows the new bend. Render-only; the cable's connectivity is untouched.
+   */
+  private updateCableSegmentDrag(wx: number, wy: number): void {
+    const d = this.cableDrag;
+    if (!d) return;
+    const lo = d.pts[d.bi]!;
+    const hi = d.pts[d.bi + 1]!;
+    if (d.axis === "h") {
+      const row = snap(wy, PITCH);
+      lo.row = row;
+      hi.row = row;
+    } else {
+      const col = snap(wx, PITCH);
+      lo.col = col;
+      hi.col = col;
+    }
+    this.graph.setCableRoute(d.id, d.pts.slice(1, -1));
     this.redrawWires();
     this.redrawSelection();
   }

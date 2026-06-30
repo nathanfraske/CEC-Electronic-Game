@@ -3124,6 +3124,11 @@
           mode === "bend" || mode === "close" ? mode : "straight",
         );
       };
+      // Render harness (drag-reroute driver): the first cable's trunk (canvas-local screen coords) + route,
+      // so a headless pointer drive can grab a trunk segment and assert the route bent.
+      (
+        window as unknown as { __cecCableProbe?: () => unknown }
+      ).__cecCableProbe = () => board?.cableProbe() ?? null;
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now

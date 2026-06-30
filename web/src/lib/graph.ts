@@ -2547,6 +2547,13 @@ export class BoardGraph {
     this.deriveCableLinks();
   }
 
+  /** Replace a cable's long-haul route waypoints (the interior cells its trunk bends through). RENDER-ONLY
+   *  — connectivity is the per-bit net labels (unchanged), so no `deriveCableLinks`. No-op on unknown id. */
+  setCableRoute(id: number, route: readonly Cell[]): void {
+    const c = this.cables.get(id);
+    if (c) c.route = route.map((cell) => ({ ...cell }));
+  }
+
   /**
    * Reconcile the auto-managed per-bit NetLabel pairs for every cable (idempotent; the SOLE author of
    * owner-tagged labels). For each cable + bit it ensures one owner-tagged label at each end's pin sharing

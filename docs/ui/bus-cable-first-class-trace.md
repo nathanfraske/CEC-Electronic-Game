@@ -51,6 +51,17 @@ pin→convergence lead) and then run as a long parallel bundle to the gather; an
 `STEP = LANE·1.2` (on par with the bundle's strand spacing, a touch bigger) so the nest packs at just over
 45°, matching the ribbon density.
 
+**S4 drag-reroute** (this change). Grab a trunk segment and drag it perpendicular (KiCad-style) to bend the
+cable, exactly like a wire's segment-drag — the gather ends stay put (they track the parts). Reuses the wire
+machinery: `beginCableSegmentDrag` runs the shared pure `planSegmentDrag` on the DRAWN trunk
+(`cableTrunkRoutes`, cached each frame) with the gathers as fixed endpoints; `updateCableSegmentDrag` writes
+the interior brackets back via `graph.setCableRoute` (render-only — connectivity is the per-bit labels,
+untouched); on drop `cleanRouteWaypoints` collapses redundant bends. The trunk is rebuilt from the route on
+redraw (re-orthogonalized + spur-collapsed), so the bundle AND every unzipped strand follow the new bend. One
+undo step; gated on actual movement (a bare click only selects). Verified by a headless pointer drive
+(`board.cableProbe` / `window.__cecCableProbe`): dragging a straight cable's trunk down turns its empty route
+into a clean Z-bend and the strands follow.
+
 ## The five remaining asks (owner, verbatim intent)
 
 1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in

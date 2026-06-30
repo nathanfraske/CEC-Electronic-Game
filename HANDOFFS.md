@@ -49,10 +49,23 @@ bent / too-close (39 cases, answers the owner's 5-/10-/64-bit questions). Demo w
 registers a DIP sized to the width on demand (`ensureFrameKind`), so `--democable-width` now goes to 16;
 shot 5- and 10-bit bends clean.
 
-**NEXT on the cable:** S4 drag-reroute (mirror `beginWireSegmentDrag` onto `Cable.route`), S5 junction /
-per-bit tap (the saved `docs/ui/bus-tap-reference.ceccircuit.json` is the spec: forward A0→A3 + reversed
-A3→A0). Then: vertical-approach unzip; the `cableTrunkRoutes` hit-test now follows the bent trunk so it's
-ready for drag. Design doc updated: `docs/ui/bus-cable-first-class-trace.md`.
+**Convergence tuning (owner art-direction, landed):** the nested chevron is now anchored at each end's
+FAN-START (pin lead-out), not the gather, so the strands converge right next to their pins and run a long
+clean bundle between; and `STEP = LANE·1.2` (was `pitch·0.5`) so the nest packs at just over 45°, matching
+the ribbon density. Still crossing-free (test green).
+
+**S4 drag-reroute (landed):** grab a trunk segment, drag it perpendicular (KiCad-style) to bend the cable —
+the gathers stay put. Reuses the wire machinery: `beginCableSegmentDrag` → shared `planSegmentDrag` on the
+drawn trunk (gathers as fixed ends) → `updateCableSegmentDrag` writes the brackets via new
+`graph.setCableRoute` (render-only) → `cleanRouteWaypoints` on drop. The trunk rebuilds from the route, so the
+bundle + every strand follow. One undo, movement-gated. New harness: `board.cableProbe` / `__cecCableProbe`
+(drove a headless drag: a straight cable's empty route → clean Z-bend, strands follow). `cableDrag` state +
+pointer-handler wiring mirror `wireDrag`.
+
+**NEXT on the cable:** S5 junction / per-bit tap (the saved `docs/ui/bus-tap-reference.ceccircuit.json` is
+the spec: forward A0→A3 + reversed A3→A0 — design the tap data model first, likely a net-label/wire anchored
+on bit i's net, NOT a new sim element). Then: vertical-approach unzip (currently the comb fallback). Design
+doc updated: `docs/ui/bus-cable-first-class-trace.md`.
 
 ---
 
