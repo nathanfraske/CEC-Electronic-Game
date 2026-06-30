@@ -2415,7 +2415,7 @@ export class Board {
     this.graph.addCable({
       base: "DATA",
       width: 4,
-      route: [{ col: 0, row: -3 }],
+      route: [],
       src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
       dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
     });
@@ -6968,7 +6968,7 @@ export class Board {
       }
     }
     // Bus cables overlay the wire layer: one trunk per cable, fanning to individual strands at each end.
-    this.drawCables(g);
+    this.drawCables(g, conduit);
     // Consumed: a same-frame redraw (e.g. mid-drag) must not advance the belt.
     this.flowDelta = 0;
   }
@@ -6980,7 +6980,7 @@ export class Board {
    * trunk), so "show the wires" holds. Connectivity is the cable's auto net-labels (deriveCableLinks), not
    * these strokes — this is pure presentation. (P2 adds the conduit skin + zoom LoD + ×N badge.)
    */
-  private drawCables(g: Graphics): void {
+  private drawCables(g: Graphics, conduit: BoardLens | null): void {
     // Refreshed every frame: the trunk hit-test geometry.
     this.cableTrunkRoutes.clear();
     if (this.graph.cables.size === 0) return;
@@ -7077,9 +7077,21 @@ export class Board {
         }
         trunk.push(b);
       }
-      g.moveTo(trunk[0].x, trunk[0].y);
-      for (let i = 1; i < trunk.length; i++) g.lineTo(trunk[i].x, trunk[i].y);
-      g.stroke({ width: 6, color, alpha: 0.9 });
+      if (conduit) {
+        // Respect the lens: the bundled trunk reads as one fat conduit (analogy pipe / reality
+        // conductor) — the same skin wires get — just wider, since it carries the whole bus.
+        this.drawConduitSkin(
+          g,
+          trunk.map((p) => new Point(p.x, p.y)),
+          color,
+          14,
+          conduit,
+        );
+      } else {
+        g.moveTo(trunk[0].x, trunk[0].y);
+        for (let i = 1; i < trunk.length; i++) g.lineTo(trunk[i].x, trunk[i].y);
+        g.stroke({ width: 6, color, alpha: 0.9 });
+      }
       // Cache the drawn trunk polyline so a click hit-tests exactly what's on screen.
       this.cableTrunkRoutes.set(
         c.id,
