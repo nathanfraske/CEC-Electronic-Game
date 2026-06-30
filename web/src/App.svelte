@@ -3090,23 +3090,41 @@
       // Render harness (scripts/shoot.mjs --democable): register a 4-bit bus IC and stand up a Cable between
       // two instances, so the bus-cable render (lens skin / belt-fan / unzip) is screenshot-verifiable
       // without hand-authoring a user-IC fixture. Mirrors cable.test.ts' registerBus8.
-      (window as unknown as { __cecDemoCable?: () => void }).__cecDemoCable =
-        () => {
-          const inner = new BoardGraph();
-          const frame = inner.place("DIP8", { col: 0, row: 0 });
-          if (!frame) return;
-          registerUserIc({
-            tag: "CBLDEMO",
-            name: "Bus",
-            package: { archetype: "DIP", pinCount: 8 },
-            frameId: frame.id,
-            graph: inner.serialize(),
-            pinNames: ["A0", "A1", "A2", "A3", "VCC", "GND", "EN", "CLK"],
-            pinRoles: ["in", "in", "in", "in", "vcc", "gnd", "in", "clk"],
-            role: "ic",
-          });
-          board?.buildDemoCable("CBLDEMO");
-        };
+      (
+        window as unknown as { __cecDemoCable?: (width?: number) => void }
+      ).__cecDemoCable = (width = 4) => {
+        const inner = new BoardGraph();
+        const frame = inner.place("DIP16", { col: 0, row: 0 });
+        if (!frame) return;
+        registerUserIc({
+          tag: "CBLDEMO",
+          name: "Bus",
+          package: { archetype: "DIP", pinCount: 16 },
+          frameId: frame.id,
+          graph: inner.serialize(),
+          // 8 bus bits on one side (a column) so the cable demo can be 2..8 wide off a single pin column.
+          pinNames: [
+            "A0",
+            "A1",
+            "A2",
+            "A3",
+            "A4",
+            "A5",
+            "A6",
+            "A7",
+            "VCC",
+            "GND",
+            "EN",
+            "CLK",
+            "B0",
+            "B1",
+            "B2",
+            "B3",
+          ],
+          role: "ic",
+        });
+        board?.buildDemoCable("CBLDEMO", Math.max(2, Math.min(8, width)));
+      };
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now

@@ -2407,17 +2407,18 @@ export class Board {
   /** TEST HARNESS ONLY (`scripts/shoot.mjs --democable`): stand up a 4-bit bus `Cable` between two
    *  instances of an already-registered bus IC `busTag`, so the cable render (lens skin / belt-fan / unzip)
    *  is screenshot-verifiable. Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
-  buildDemoCable(busTag: string): void {
+  buildDemoCable(busTag: string, width = 4): void {
     this.graph.clear(); // start from an empty board so the demo cable reads cleanly
-    const a = this.graph.place(busTag, { col: -6, row: 0 });
-    const b = this.graph.place(busTag, { col: 6, row: 0 });
+    const a = this.graph.place(busTag, { col: -7, row: 0 });
+    const b = this.graph.place(busTag, { col: 7, row: 0 });
     if (!a || !b) return;
+    const pins = Array.from({ length: width }, (_, i) => i);
     this.graph.addCable({
       base: "DATA",
-      width: 4,
+      width,
       route: [],
-      src: { componentId: a.id, pinIndices: [0, 1, 2, 3] },
-      dst: { componentId: b.id, pinIndices: [0, 1, 2, 3] },
+      src: { componentId: a.id, pinIndices: pins },
+      dst: { componentId: b.id, pinIndices: pins },
     });
     this.rebuildNodes();
     this.redrawWires();
@@ -7153,6 +7154,7 @@ export class Board {
     const dx = dstGather.x;
     const LANE = PITCH * 0.24; // perpendicular gap between adjacent strands — a dense ribbon
     const LEAD = PITCH * 0.8; // straight lead-out track off each pin BEFORE any turn (no harsh pin-bends)
+    const STEP = PITCH * 0.5; // tight x-spacing between adjacent convergence verticals (a compact chevron)
     // Fan zones run from each pin column's lead-out end IN to the gather. No strand may turn before its
     // lead-out, so the outermost (deepest) turn sits at the lead-out end and the rest stagger toward the
     // gather — every strand angling toward the central bundle in a nested funnel (not pinching at the pin).
@@ -7165,11 +7167,12 @@ export class Board {
       dx + PITCH * 0.3,
     );
     // Order strands top→bottom by their SOURCE pin so the lanes never cross, and place each on the lane at
-    // its sorted rank. The fan converges INWARD to the centre (the owner's Factorio 4-belt reference), but
-    // the OUTER strands converge LAST: the inner pair turns early (near the lead-out) into the central
-    // lanes, while the top + bottom run straight out longer and turn in late near the gather — so the
-    // outermost converge more gradually than the inner. This nests cleanly (an outer strand's late vertical
-    // stays outside every inner lane), so no two strands ever cross.
+    // its sorted rank. The fan converges INWARD to the centre (the owner's Factorio 4-belt reference) as a
+    // COMPACT NESTED CHEVRON: the outermost (top + bottom) strands run straight out longest and turn in
+    // last, just before the gather; each more-central pair turns one tight `STEP` further out — so the turn
+    // verticals sit right next to each other rather than spread across the fan. Keyed to each strand's rank
+    // FROM the centre (an integer for every N), it stays evenly spaced as the bus widens, and nests cleanly
+    // (an outer strand's late vertical stays outside every inner lane) so no two strands ever cross.
     const order = Array.from({ length: n }, (_, i) => i).sort(
       (a, b) => srcW[a]!.y - srcW[b]!.y,
     );
@@ -7179,9 +7182,9 @@ export class Board {
       const laneY = spineY + (p - mid) * LANE;
       const sp = srcW[i]!;
       const dp = dstW[i]!;
-      const depth = 1 - Math.abs(p - mid) / (mid + 0.5); // small at the edges (turn LATE) → large in middle
-      const sTurn = sx - (sx - srcFanStart) * depth;
-      const dTurn = dx + (dstFanStart - dx) * depth;
+      const rankOut = mid - Math.abs(p - mid); // 0 for the outermost strands, +1 per pair toward the centre
+      const sTurn = Math.max(srcFanStart, sx - (rankOut + 1) * STEP);
+      const dTurn = Math.min(dstFanStart, dx + (rankOut + 1) * STEP);
       const route: Point[] = [
         sp,
         new Point(sTurn, sp.y),

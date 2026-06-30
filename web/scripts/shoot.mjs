@@ -38,7 +38,8 @@ const thermal = flag("thermal");
 const real = flag("real");
 const run = flag("run");
 const tps = arg("tps", null); // ticks/sec while running — high values let game-scaled (seconds) heat build fast
-const democable = flag("democable"); // stand up a 4-bit bus cable (window.__cecDemoCable) before the shot
+const democable = flag("democable"); // stand up a bus cable (window.__cecDemoCable) before the shot
+const democableWidth = arg("democable-width", "4"); // strand count for the demo cable (2..8)
 
 const fixture = fixturePath ? readFileSync(fixturePath, "utf8") : null;
 
@@ -51,7 +52,10 @@ const { page, errors, cleanup } = await openApp({
 });
 try {
   if (democable) {
-    await page.evaluate(() => window.__cecDemoCable?.());
+    await page.evaluate(
+      (w) => window.__cecDemoCable?.(w),
+      Number(democableWidth),
+    );
     await page.waitForTimeout(400); // let the place + cable derive + redraw settle
   }
   if (zoom || lens || center || thermal || real || run || tps) {
