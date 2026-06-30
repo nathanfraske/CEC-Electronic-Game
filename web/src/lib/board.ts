@@ -2409,8 +2409,8 @@ export class Board {
    *  is screenshot-verifiable. Mirrors `cable.test.ts`. No-op if the tag can't be placed. */
   buildDemoCable(busTag: string): void {
     this.graph.clear(); // start from an empty board so the demo cable reads cleanly
-    const a = this.graph.place(busTag, { col: -10, row: 0 });
-    const b = this.graph.place(busTag, { col: 10, row: 0 });
+    const a = this.graph.place(busTag, { col: -6, row: 0 });
+    const b = this.graph.place(busTag, { col: 6, row: 0 });
     if (!a || !b) return;
     this.graph.addCable({
       base: "DATA",
@@ -7048,6 +7048,36 @@ export class Board {
       // both ends, no matter how the route jogs in between.
       const src = gatherAxis(sc, dc, srcW);
       const dst = gatherAxis(dc, sc, dstW);
+      // UNZIP (S2/S3): zoomed in past TIER_ZOOM, a straight horizontal bus with matched ends fans into its
+      // N literal signal-coloured strands via a symmetric staggered "belt" convergence (the owner's
+      // Factorio-balancer reference), each lens-skinned. Bent / vertical / zoomed-out / manually-collapsed
+      // cables fall back to the bundled comb + trunk below.
+      if (
+        this.world.scale.x >= TIER_ZOOM &&
+        !c.collapsed &&
+        c.route.length === 0 &&
+        srcW.length >= 2 &&
+        srcW.length === dstW.length &&
+        src.axis === "h" &&
+        dst.axis === "h" &&
+        Math.abs(src.pt.y - dst.pt.y) < 1
+      ) {
+        this.drawCableStrands(
+          g,
+          srcW,
+          dstW,
+          src.pt,
+          dst.pt,
+          c.src.componentId,
+          c.src.pinIndices,
+          conduit,
+        );
+        this.cableTrunkRoutes.set(c.id, [
+          { x: src.pt.x, y: src.pt.y },
+          { x: dst.pt.x, y: dst.pt.y },
+        ]);
+        continue;
+      }
       // End fans: an orthogonal comb at BOTH ends — every conductor on-grid, symmetric about the centre.
       comb(srcW, src.pt, src.axis);
       comb(dstW, dst.pt, dst.axis);
@@ -7097,6 +7127,73 @@ export class Board {
         c.id,
         trunk.map((p) => ({ x: p.x, y: p.y })),
       );
+    }
+  }
+
+  /**
+   * Draw a cable's N literal strands (the zoom-in UNZIP): each bit routes pin → a symmetric STAGGERED
+   * "belt" fan → its parallel bus lane → the mirrored fan → the partner pin, coloured by its bit's signal
+   * ({@link endpointColor}) and skinned through the active lens. The staggered turn-x (proportional across
+   * the fan zone) nests the perpendicular legs so the bundle reads like a Factorio balancer instead of a
+   * blocky pinch. Straight horizontal bus only (the caller gates); other cables use the collapsed render.
+   */
+  private drawCableStrands(
+    g: Graphics,
+    srcW: Point[],
+    dstW: Point[],
+    srcGather: { x: number; y: number },
+    dstGather: { x: number; y: number },
+    srcComponentId: number,
+    srcPinIndices: number[],
+    conduit: BoardLens | null,
+  ): void {
+    const n = srcW.length;
+    const spineY = (srcGather.y + dstGather.y) / 2;
+    const sx = srcGather.x;
+    const dx = dstGather.x;
+    const LANE = PITCH * 0.42; // perpendicular gap between adjacent strands in the bundle
+    // Fan zones: the span between each pin column and its gather, where the spread pins funnel into the
+    // tight lane bundle. Stagger the turn within it so no two strands share a vertical (the nested look).
+    const srcFanW = Math.max(PITCH, sx - Math.max(...srcW.map((p) => p.x)));
+    const dstFanW = Math.max(PITCH, Math.min(...dstW.map((p) => p.x)) - dx);
+    // Order strands top→bottom by their SOURCE pin so the lanes never cross, and place each on the lane at
+    // its sorted rank. The turn staggers SYMMETRICALLY about the centre — outer ranks turn furthest from the
+    // bus, inner ranks closest (mirror-pair verticals sit on opposite sides of the spine, so they never
+    // collide) — giving the nested Factorio-balancer convergence rather than a one-way staircase.
+    const order = Array.from({ length: n }, (_, i) => i).sort(
+      (a, b) => srcW[a]!.y - srcW[b]!.y,
+    );
+    const mid = (n - 1) / 2;
+    for (let p = 0; p < n; p++) {
+      const i = order[p]!;
+      const laneY = spineY + (p - mid) * LANE;
+      const sp = srcW[i]!;
+      const dp = dstW[i]!;
+      const depth = (Math.abs(p - mid) + 0.5) / (mid + 0.5); // 1 at the edges, smallest in the middle
+      const sTurn = sx - srcFanW * depth;
+      const dTurn = dx + dstFanW * depth;
+      const route: Point[] = [
+        sp,
+        new Point(sTurn, sp.y),
+        new Point(sTurn, laneY),
+        new Point(sx, laneY),
+        new Point(dx, laneY),
+        new Point(dTurn, laneY),
+        new Point(dTurn, dp.y),
+        dp,
+      ];
+      const col = this.endpointColor({
+        componentId: srcComponentId,
+        pinIndex: srcPinIndices[i]!,
+      });
+      if (conduit) {
+        this.drawConduitSkin(g, route, col, 5, conduit);
+      } else {
+        g.moveTo(route[0]!.x, route[0]!.y);
+        for (let k = 1; k < route.length; k++)
+          g.lineTo(route[k]!.x, route[k]!.y);
+        g.stroke({ width: 2.5, color: col, alpha: 0.95 });
+      }
     }
   }
 
