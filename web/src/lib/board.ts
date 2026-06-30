@@ -7165,10 +7165,11 @@ export class Board {
       dx + PITCH * 0.3,
     );
     // Order strands top→bottom by their SOURCE pin so the lanes never cross, and place each on the lane at
-    // its sorted rank. The fan converges INWARD to the centre (the owner's Factorio 4-belt reference): the
-    // turn staggers SYMMETRICALLY about the spine — the outermost (top + bottom) strands turn at the
-    // lead-out end (furthest from the gather) and angle in, each inner pair turning progressively nearer the
-    // gather, all funnelling into the central bundle. Not a one-way staircase.
+    // its sorted rank. The fan converges INWARD to the centre (the owner's Factorio 4-belt reference), but
+    // the OUTER strands converge LAST: the inner pair turns early (near the lead-out) into the central
+    // lanes, while the top + bottom run straight out longer and turn in late near the gather — so the
+    // outermost converge more gradually than the inner. This nests cleanly (an outer strand's late vertical
+    // stays outside every inner lane), so no two strands ever cross.
     const order = Array.from({ length: n }, (_, i) => i).sort(
       (a, b) => srcW[a]!.y - srcW[b]!.y,
     );
@@ -7178,7 +7179,7 @@ export class Board {
       const laneY = spineY + (p - mid) * LANE;
       const sp = srcW[i]!;
       const dp = dstW[i]!;
-      const depth = (Math.abs(p - mid) + 0.35) / (mid + 0.35); // ~1 at the edges → small in the middle
+      const depth = 1 - Math.abs(p - mid) / (mid + 0.5); // small at the edges (turn LATE) → large in middle
       const sTurn = sx - (sx - srcFanStart) * depth;
       const dTurn = dx + (dstFanStart - dx) * depth;
       const route: Point[] = [
