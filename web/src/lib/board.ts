@@ -2490,7 +2490,7 @@ export class Board {
           : mode === "vertical"
             ? { a: { col: 0, row: -7 }, b: { col: 0, row: 7 }, route: [] }
             : mode === "corner"
-              ? { a: { col: -8, row: -4 }, b: { col: 3, row: 5 }, route: [] }
+              ? { a: { col: -10, row: 1 }, b: { col: 8, row: 8 }, route: [] }
               : { a: { col: -7, row: 0 }, b: { col: 7, row: 0 }, route: [] };
     const a = this.graph.place(busTag, layout.a);
     const b = this.graph.place(busTag, layout.b);
