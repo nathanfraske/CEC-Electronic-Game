@@ -5,6 +5,132 @@ dated section so the next agent can pick up cleanly. Keep it concise and current
 
 ---
 
+## 2026-06-30 (247) — THERMAL fixes + BUS-CABLE first-class-trace (S0+S1 landed; S2/S3 next)
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, all **committed + pushed** (head `ca85197`). Full gate green
+throughout. This session, after the dirty-set (246): two thermal fixes, then the bus-cable UX, all owner-
+driven + shoot-verified.
+
+**Thermal (both fixed + verified live):**
+- **Heat-overlay clipping** (`1d9a78c`): `updateHeatOverlay` sized the field/copper/sprite from the
+  part-CENTER bbox, so `buildCopperGrid`'s `toCol/toRow` clamped off-box traces onto the edge (heat smeared
+  on the boundary, not the trace). Fix: bbox = union of part worldBoxes + every wire route polyline.
+- **Heat timescale** (`6ff75f3`, owner-flagged): heat advanced by sim-time (Δticks·DT) so it only built at
+  ~500K ticks/s. Now `thermalDt = max(simDt, wall-clock floor)` while playing → warms over real seconds at
+  ANY slow speed, fast-forward still ages it, pause freezes. Golden-safe (web heat never enters the solve).
+  Verified: 12V/150Ω loop → 73 °C at the default 500/s.
+- Harness: extended `__cecView` + `shoot.mjs` with `--thermal/--real/--run/--tps` (thermal renders were
+  previously un-shoot-able — the gap that hid the clipping bug).
+
+**Bus cable → first-class trace** (owner expanded the ask repeatedly; **full design + build sequence in
+`docs/ui/bus-cable-first-class-trace.md`**, owner tap reference saved as `docs/ui/bus-tap-reference.ceccircuit.json`):
+- **DONE:** select + delete (`db2db96`); **S0** shoot-able demo fixture (`3393756`: `board.buildDemoCable`
+  + `__cecDemoCable` + `shoot --democable` — stands up a 4-bit bus cable between two registered bus ICs on
+  a cleared board); **S1** lens-respect (`6bd4a84`: the trunk skins via `drawConduitSkin` in analogy/reality,
+  flat trace in schematic — verified). The "ugly spike" the owner saw was just the demo's stray route
+  waypoint (fixed → `route: []`).
+- **MCP** (`ca85197`): `cec_screenshot` now takes `thermal/real/run/tps/democable` (the owner asked to add
+  useful harness hooks to the MCP library).
+- **NEXT (the visual headline, art-directed):** **S2 belt-fan** — replace the blocky pinch with the owner's
+  Factorio-balancer symmetric staggered convergence (nested right-angle bends); **S3 zoom-unzip** — N literal
+  strands each `voltageColor`'d by its bit's net, lens-skinned, gated on `Cable.collapsed`/zoom. Then **S4**
+  drag-reroute (mirror `beginWireSegmentDrag` onto `Cable.route`), **S5** junction/per-bit-tap (the saved
+  reference is the spec: forward A0→A3 + reversed A3→A0). Iterate each with `shoot --democable`.
+
+**Also queued:** bus-slice recognition (#148, `docs/ui/bus-slice-recognition.md`).
+
+---
+
+## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: IMPLEMENTED, AUDITED (SHIP), pushed
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`, **committed + pushed** (`4317397`). The event-driven dirty-set
+is built, byte-identical, worst-case bounded, and **independently audited → SHIP** (no divergence found).
+
+**What shipped — a simpler architecture than the planned Pass L/Pass R.** One invariant subsumed both
+passes: `eval_one_digital(i)` is a pure function of `node_v` at element `i`'s read+rail pins + its committed
+sequential state, so re-run `i` iff one of those changed. Implementation (`crates/sim-core/src/lib.rs`):
+- `build_digital_fanout` (install/reclassify): `net_touchers[net]` = combinational `ELEM_GATE`s with pins
+  b/c/d/e on `net`; `net_drivers[net]` = all digital drivers; `elem_out_nets[i]`; `always_run_elems` = every
+  *non*-gate digital kind that drives something. Net 0 excluded everywhere. (Replaced the old `net_readers`/
+  `prev_eval_levels` fields with `net_touchers`/`always_run_elems`/`prev_node_v`/`net_in_affected`.)
+- `eval_digital_dirty`: O(nodes) `node_v.to_bits()` diff vs `prev_node_v` → dirty nodes; **worst-case guard**
+  falls back to `eval_digital_full` when ≥½ the nodes switch; else seed = always-run ∪ touchers(dirty), close
+  affected nets under multi-output drivers, Z-reset affected `digital_drive`, re-fold all their drivers
+  ascending. Main tick **and** sub-ticks flow through the one `eval_digital` (S4 free); `dirty_full` forces a
+  full eval on install/reclassify/reset.
+- **Why it beats Pass R:** a powered gate's stamp only changes when its rail `node_v` moves, and d/e are
+  touchers — a bit-stable DC rail correctly triggers no re-stamp (Pass R would re-stamp every tick).
+
+**Proven byte-identical 3 ways:** (1) S0 debug oracle (`debug_check_eval_digital`, now skips net 0) asserts
+`dirty == full` on all 6 eval arrays every (sub-)tick across **all 232 tests**; (2) release `cargo test` (231,
+oracle compiled out → dirty result is authoritative → golden hashes unchanged); (3) web vitest 356 (headless
+wasm determinism). Golden `0xeaac_3764_99e4_fa24` + `digital_determinism_golden` untouched.
+
+**Perf (release, N=4000):** quiescent fabric **168 µs/tick** (dirty-set, ~0 refolds) vs **284 µs/tick** full
+(the inverter chain, which correctly falls back) → ~41 % per-tick cut from eliminating the per-gate logic at
+quiescence. Residual = the lift's closed-form fill + the unconditional `commit_net_levels`/AC/clamp/seed
+scans (all still O(nodes)) — the doc's **S5** (defer to a profiled follow-up). New tests:
+`dirty_set_quiescent_fabric_is_cheap`; the worst case is `stress_large_inverter_chain`.
+
+**Full gate GREEN:** fmt, clippy (`-D warnings`), cargo test (sim-core 232 + sim-protocol), release cargo
+test (231), build:wasm, web check/lint/build, web test (356). Doc updated: `docs/sim/dirty-set-digital-eval.md`
+(added the "What shipped" section; kept the Pass L/Pass R history).
+
+**AUDIT (done, SHIP).** A self-audit found + fixed one latent bug: a non-gate digital kind (COMPARATOR/
+LEVELSHIFT/BEHAVIORAL) with an UNCONNECTED output (all outputs on net 0 → empty `out_nets`) was excluded
+from `always_run_elems`, so its element-indexed `gate_target[i]` went stale → `gate_target` divergence.
+Proved it (reverted the fix → oracle fired on `gate_target[6]`), fixed by classifying `always_run_elems`
+**by kind, unconditionally**, regression test `comparator_unconnected_output_gate_target_stays_fresh`. An
+independent adversarial audit agent then reviewed all 8 risk areas (toucher completeness, drive-pin
+completeness per kind, gate_target staleness, sub-tick `prev_node_v`, fallback, net-0, install/latch
+baseline) → **SHIP, no divergence**; it confirmed the fix and flagged only the LUT over-record (safe,
+perf-only) + one stale doc comment (fixed). **NEXT:** the queued **bus-slice recognition** (#148,
+`docs/ui/bus-slice-recognition.md`) — web-only, golden-safe, render+classification.
+
+---
+
+## 2026-06-29 (245) — DIRTY-SET DIGITAL EVAL: design done (owner picked it); ready to build S0→S4
+
+**State:** 🟢 On `claude/kind-turing-hdelb3`. **Docs-only so far** (`docs/sim/dirty-set-digital-eval.md`).
+Owner picked option **A** (event-driven dirty-set) off the post-lift engine agenda. A multi-agent design
+panel (3 proposals, 31 adversarial divergences, judge-scored) produced the design below.
+
+**The design (Proposal 3 + Proposal 2's tier-2).** Make `eval_digital` / `commit_sequential_digital_state`
+re-evaluate only the *active fanout* instead of every element each (sub-)tick. Two passes:
+- **Pass L** (event-driven, the win): the discrete LEVEL/`combine` resolution. Skip an element iff its
+  recomputed (input Levels at its own rail, powered bool, sequential state) tuple == its cache — **the skip
+  key IS the first half of `eval_digital`'s work, so skipped ⇒ bit-identical**. Verified fact: `eval_digital`
+  re-quantizes inputs from live `node_v` (NOT `net_level`) at each reader's own rail — the trap a naive
+  level-diff hits.
+- **Pass R** (always-on, scoped): the rail-dependent stamp (`gate_target/gout/digital_v*`), which moves
+  every tick — runs unconditionally for `analog_driving_gates` (small boundary set) + rail-bits-dirty
+  pure-digital drivers; legacy (constant-rail) folds into Pass L.
+
+**Fenced by a debug oracle** (run dirty-set + evaluate-all, assert bit-identical on
+drives/stamps/net_level/node_v/sequential state) — same discipline that proved the lift. **No golden moves**
+at any stage. Time-driven/analog-sense state (clocks, DRAM decay, comparator/SAR) is never event-gated.
+
+**Staged plan + progress:** **S0 DONE** (`cc4603d`): `eval_digital_full` + `eval_digital` wrapper +
+`debug_check_eval_digital` byte-identity oracle (re-runs full eval, asserts dirty==full; tautology now).
+**S1 DONE** (`c3ff0a7`): extracted `eval_one_digital(i)` — the per-element body of the eval loop, the
+dirty-set's building block (3 BEHAVIORAL `continue`→`return`). Both golden-safe + oracle-verified, 231 green.
+**REMAINING:** S2 install maps (`net_readers`/`net_drivers`/`analog_driving_gates`/`powered_digital_drivers`/
+`clocked_elements`) + Pass R stamp split → S3 Pass L dirty-set (main tick: persist drives, seed from
+level-diff + sequential mutation + rail-bits, refold_net, fixpoint, force-full on install/first-tick) → S4
+sub-ticks → S5 (optional v2). Note: the S2 maps are dead-code until S3 uses them, so S2/S3 land together (or
+S2 adds a debug refold==in-place assert to exercise them). Design: `docs/sim/dirty-set-digital-eval.md`.
+
+**NEXT:** S2–S4 (the actual event-driven win — a fresh-focus chunk; the S0 oracle fences it). Honest caveat:
+the win is on per-gate *logic* (2× quantize + truth table + combine + 4 writes), not the per-tick stamp;
+analog-solve-bound circuits see it as a near-no-op.
+
+**Also scoped + QUEUED:** **bus-slice recognition** (`docs/ui/bus-slice-recognition.md`, `1aade61`-area) —
+draw a bit-sliced user IC (N identical leaf slices on a bus, e.g. the owner's `4-INVERT` = 4 XOR slices on
+`Binv`) as N gate symbols on the sealed glyph. Render-only/golden-safe; bus-label-driven detection (not
+subgraph isomorphism). Queued after the dirty-set per owner.
+
+---
+
 ## 2026-06-29 (244) — DIGITAL-MATRIX LIFT FOLLOW-UP: direct compacted assembly (71× on a 4000-gate chain)
 
 **State:** 🟢 On `claude/kind-turing-hdelb3`. **sim-core**, **proven byte-identical** (golden + 4-circuit
@@ -31,9 +157,15 @@ parameterized helpers → byte-identical. `row_maps`/`solve_row`/`full_row` comp
   **16,784 µs/tick → 237 µs/tick (~71×)**. Cost is now the irreducible `O(gates)` digital eval → scales
   **linearly** in gate count, not quadratically. This IS the multi-thousand-node circuit the panel wanted.
 
-**NEXT:** commit + push once the web gate is green. **Stage B** (Z/X as propagating levels — the only
-deliberate golden regen) still optional. The whole digital-matrix-lift arc (242–244) awaits a PR (owner asked
-to PR/merge the prior batch; ask before opening this one).
+**LANDED:** the whole digital-matrix-lift arc (242–244) merged to `main` as **PR #316** (merge commit
+`f65b298`) — CI green, golden + digital golden untouched. Branch `claude/kind-turing-hdelb3` fully contained
+in `main`; continue from here.
+
+**NEXT (engine agenda):** the lift unlocked gate-level *scale*; candidate successors — (A) **event-driven
+dirty-set** digital eval (eval_digital currently re-runs every gate each sub-tick → make it O(active fanout);
+golden-safe vs evaluate-all, the doc §7.5 pre-blessed it); (B) **Stage B** Z/X as first-class propagating
+levels (high-Z/wired-AND/I²C; the one deliberate golden regen); (C) **sparse analog solver** (the analog-scale
+O(n³); higher determinism risk); (D) **sensor/transducer framework** (CCVS/VCVS, Rogowski). Owner to pick.
 
 ---
 

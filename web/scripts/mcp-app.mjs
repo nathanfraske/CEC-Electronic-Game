@@ -9,7 +9,9 @@
 //
 // Tools:
 //   cec_open      {fixture?, lens?}            — (re)boot the app; optional cec-circuit JSON + initial lens
-//   cec_screenshot{lens?, zoom?, center?, out?}— apply the LoD view, screenshot to a PNG, return its path
+//   cec_screenshot{lens?, zoom?, center?,      — apply the LoD view (+ thermal/real/run/tps overlays,
+//                  thermal?, real?, run?, tps?,   democable demo), screenshot to a PNG, return its path
+//                  democable?, out?}
 //   cec_eval      {js}                         — run JS in the page (drive UI / read window.__cec* / state)
 //   cec_close     {}                           — tear down the session
 //
@@ -65,13 +67,30 @@ const TOOLS = [
   {
     name: "cec_screenshot",
     description:
-      "Apply a level-of-detail view (lens / zoom in px-per-world-px / center on a component id) and screenshot the live canvas to a PNG. Returns the file path — Read it to SEE the render.",
+      "Apply a level-of-detail view and screenshot the live canvas to a PNG. Returns the file path — Read it to SEE the render. Beyond lens/zoom/center: `thermal` turns on the heat-field overlay, `real` flips Real-mode fidelity, `run` resumes the sim, `tps` sets ticks/sec (heat is wall-clock-paced so the default speed builds it; crank tps only to fast-forward), and `democable` stands up a 4-bit bus cable on a cleared board so the cable render is verifiable.",
     inputSchema: {
       type: "object",
       properties: {
         lens: { type: "string", enum: ["reality", "analogy", "schematic"] },
         zoom: { type: "number", description: "screen px per world px" },
         center: { type: "number", description: "component id to centre on" },
+        thermal: {
+          type: "boolean",
+          description: "turn on the thermal-lens heat overlay",
+        },
+        real: {
+          type: "boolean",
+          description: "Real-mode fidelity (heat needs it)",
+        },
+        run: {
+          type: "boolean",
+          description: "resume the sim so state advances",
+        },
+        tps: { type: "number", description: "ticks/sec while running" },
+        democable: {
+          type: "boolean",
+          description: "stand up a demo bus cable before the shot",
+        },
         out: { type: "string", description: "output PNG path (optional)" },
       },
     },
@@ -108,15 +127,32 @@ async function callTool(name, args) {
   }
   if (name === "cec_screenshot") {
     const s = await ensureOpen();
-    if (args.lens || args.zoom || args.center) {
+    if (args.democable) {
+      await s.page.evaluate(() => window.__cecDemoCable?.()).catch(() => {});
+      await s.page.waitForTimeout(400);
+    }
+    if (
+      args.lens ||
+      args.zoom ||
+      args.center ||
+      args.thermal ||
+      args.real ||
+      args.run ||
+      args.tps
+    ) {
       await s.page
         .evaluate((o) => window.__cecView?.(o), {
           ...(args.lens ? { lens: args.lens } : {}),
           ...(args.zoom ? { zoom: Number(args.zoom) } : {}),
           ...(args.center != null ? { centerId: Number(args.center) } : {}),
+          ...(args.thermal ? { thermal: true } : {}),
+          ...(args.real ? { real: true } : {}),
+          ...(args.run ? { run: true } : {}),
+          ...(args.tps ? { tps: Number(args.tps) } : {}),
         })
         .catch(() => {});
-      await s.page.waitForTimeout(1500);
+      // Longer settle when running so wall-clock heat / sim state builds before the shot.
+      await s.page.waitForTimeout(args.run ? 6000 : 1500);
     }
     const out = args.out || `${SCRATCH}/shot-${++shotN}.png`;
     await s.page.screenshot({ path: out, scale: "css" });

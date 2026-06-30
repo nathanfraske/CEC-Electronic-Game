@@ -6,6 +6,83 @@ use `[ ]`. This file is maintained by agents; see CLAUDE.md for the rule.
 
 ---
 
+## 2026-06-29 (247) — OWNER BUG REPORTS (queued): thermal-over-traces clipping + bus-cable UX
+
+Owner feedback (screenshot: AC+R+GND loop under the thermal lens). **Queued to fix, not yet started.**
+
+- ~~**Thermal overlay clips + doesn't follow the traces.**~~ FIXED (`1d9a78c`): bbox now unions part
+  worldBoxes + every wire route polyline, so off-box traces stay in the grid; verified live (heat follows
+  the full loop incl. the parts-exterior top run, no edge-clip). Also extended the shoot harness
+  (`__cecView` + `shoot.mjs` `--thermal/--real/--run/--tps`) so the thermal lens is screenshot-able.
+- ~~**Heat invisible at watchable playback speeds (timescale).**~~ FIXED (`6ff75f3`, owner-flagged): the
+  presentational heat advanced by sim-time only (Δticks·DT), so at the slow speeds the player uses it never
+  built (needed ~500K ticks/s). Now `thermalDt = max(simDt, wall-clock floor)` while playing — warms over a
+  few REAL seconds at any slow speed (watchable + realistic τ), fast-forward still ages it, pause freezes
+  it. Golden-safe (web heat never enters the solve/hash). Verified: 12V/150Ω loop → 73 °C at the default
+  500/s in 4.6 ms sim-time.
+- ~~ORIGINAL bug write-up (kept for reference):~~ Under the thermal lens the heat field was a rounded-rect
+  blob that got cut off at its edges and didn't track the rectangular trace loop. **Root
+  cause (CONFIRMED in code):** `updateHeatOverlay` (`board.ts:3266-3349`) sizes the field grid + copper
+  mask + sprite from the **part-CENTER bbox + only `PITCH*3` margin**, then stretches the `cols×rows`
+  sprite over exactly that bbox. But the trace loop routes OUTSIDE that box, and `buildCopperGrid`'s
+  `toCol`/`toRow` (`board.ts:3366-3368`) **clamp** out-of-box coordinates to the edge cells
+  (`Math.min(cols-1, Math.max(0, …))`) — so an off-box trace point isn't dropped, it's **smeared onto the
+  boundary row/col**. Net effect = heat piles up along the clipped sprite edge instead of following the
+  real trace (exactly the screenshot). **Fix:** derive the bbox from the **union of part `worldBox`es AND
+  every wire route polyline's bounds** (so the whole trace extent is inside the grid), keep the margin,
+  and the existing rasterizer then lands traces at their true cells. Secondary: re-check the dilation
+  keeps a thin run ≥1 cell wide, and whether the sprite's `linear` upscale over-blurs the on-copper field
+  into a blob. Repro: thermal lens + Real mode on any loop whose wires bow outside the part-center box —
+  the owner's AC+R+GND loop does. Web-only, golden-safe. Verify the fix via `shoot`/the `cec-app` MCP
+  (the live-session MCP is absent in headless runs, so this needs the in-app Real-mode heat build-up).
+- **Bus cable → FIRST-CLASS TRACE** (owner expanded the ask across 2026-06-29; full design +
+  implementation-ready sequence in **`docs/ui/bus-cable-first-class-trace.md`**). The owner wants the cable
+  to read + behave like any other trace, only bundled: **(1)** zoom-unzip into the N literal strands, each
+  coloured by its bit's signal (`voltageColor`); **(2)** a pretty symmetric "belt-fan" staggered
+  convergence (Factorio 4-belt ref — nested right-angle bends, not a blocky pinch); **(3)** respect the
+  lens (`drawConduitSkin` per strand: schematic trace / analogy pipe / reality conductor); **(4)** drag-
+  reroute the trunk (mirror `beginWireSegmentDrag` onto `Cable.route`); **(5)** junction off it + per-bit
+  tap (Cable P3). All web-only/golden-safe. **DONE:** select + delete (`db2db96`). **NEXT (build order in
+  the doc):** S0 cable fixture (so it's `shoot`-verifiable) → S1 lens-respect → S2 belt-fan → S3 unzip+colour
+  → S4 drag-reroute → S5 junction/tap. Spans Cable P2 (#92) + P3 (#93).
+
+---
+
+## 2026-06-29 (246) — DIRTY-SET DIGITAL EVAL: implemented (byte-identical, worst-case bounded)
+
+- ~~**S0 oracle harness**~~ DONE (`cc4603d`): `eval_digital_full` + `eval_digital` wrapper +
+  `debug_check_eval_digital` byte-identity oracle.
+- ~~**S1 extract `eval_one_digital(i)`**~~ DONE (`c3ff0a7`): per-element body of the eval loop.
+- ~~**S2–S4 the event-driven dirty-set**~~ DONE (this batch, uncommitted pending audit). Built a simpler
+  `node_v`-diff architecture instead of the planned Pass L/Pass R (one invariant: `eval_one_digital(i)` is a
+  pure function of `node_v` at i's read+rail pins + i's committed state). `build_digital_fanout`
+  (`net_touchers`/`net_drivers`/`elem_out_nets`/`always_run_elems`) + `eval_digital_dirty` (O(nodes) diff →
+  seed → close affected nets → Z-reset + re-fold ascending; worst-case guard falls back to full when ≥½ nodes
+  switch). Main tick + sub-ticks via the one `eval_digital`; `dirty_full` forces full on install/reclassify/
+  reset. **Proven byte-identical:** S0 oracle on all 232 debug tests + release 231 (golden hashes unchanged) +
+  web vitest 356. Perf: quiescent 4000-gate fabric 168 µs/tick vs 284 µs full (~41 % cut). New test:
+  `dirty_set_quiescent_fabric_is_cheap`. Doc: `docs/sim/dirty-set-digital-eval.md` ("What shipped").
+- [ ] **S5 (v2, optional, profiled)** — incrementalize the still-O(nodes) per-tick scans (`commit_net_levels`,
+  the closed-form digital fill, the sequential-commit scan, the seed scan) toward true O(active). Deferred.
+
+---
+
+## 2026-06-29 (246) — BUS-SLICE RECOGNITION (scoped; QUEUED after the dirty-set build)
+
+- [ ] **Bus-slice recognition** — draw a bit-sliced user IC (N identical leaf slices on an input+output bus
+  sharing control/power, e.g. the owner's `4-INVERT` = 4 XOR slices on `Binv`) as **N stacked gate symbols**
+  on the sealed/zoomed-out symbol instead of one opaque block. Scoped in `docs/ui/bus-slice-recognition.md`.
+  **Render + classification only — web-only, golden-safe, no sim change.** Pragmatic approach: drive detection
+  from the EXISTING bus-label parser (`busWiring.parseBusLabel`/`busOfPin`), NOT subgraph isomorphism — match
+  an input/output bus of equal width N where each bit routes through one same-kind leaf sharing the leftover
+  nets (correctly fails a ripple adder). Reuse `drawGateBodySymbol` ×N + the `cellSymbol` cascade
+  (`userIc.ts:282`) + `recognizeGate`. New: `busSlice.ts` recognizer + a cascade branch + multi-glyph layout
+  in `board.ts:8767`. Nuance: the `4-INVERT` slices are XOR (conditional invert), so draw faithful XOR (or a
+  NOT-with-invert-enable special case for an XOR slice on a whole-bus control). Verify via `shoot` + a
+  headless `busSlice.test.ts`.
+
+---
+
 ## 2026-06-29 (243) — DIGITAL-MATRIX LIFT (Stage A): pure-digital nets out of the dense factorisation
 
 - ~~**Stage A0 — closed-form == in-matrix invariant**~~ DONE (`e5e4d81`, debug-only, golden byte-identical).

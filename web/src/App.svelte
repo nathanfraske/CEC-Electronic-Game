@@ -3053,6 +3053,10 @@
             zoom?: number;
             lens?: string;
             centerId?: number;
+            thermal?: boolean;
+            real?: boolean;
+            run?: boolean;
+            tps?: number;
           }) => void;
         }
       ).__cecView = (o) => {
@@ -3064,12 +3068,45 @@
           boardLens = o.lens;
           board?.setLens(boardLens);
         }
+        // Thermal-lens / Real-mode / run harness hooks (scripts/shoot.mjs): the heat-field overlay only
+        // paints under the thermal lens AND Real mode AND with the sim running (parts must accumulate Tj),
+        // so a screenshot of it needs all three driven — otherwise the thermal render can't be SEEN.
+        if (o.real !== undefined) realModels = o.real;
+        if (o.thermal !== undefined) {
+          thermalLens = o.thermal;
+          board?.setLens(thermalLens ? "thermal" : boardLens);
+        }
+        if (o.tps !== undefined) controls?.setTicksPerSecond(o.tps);
+        if (o.run !== undefined) {
+          if (o.run) controls?.resume();
+          else controls?.pause();
+        }
         if (board && o.zoom !== undefined) {
           if (o.centerId !== undefined)
             board.centerOnComponent(o.centerId, o.zoom);
           else board.setCamera({ ...board.getCamera(), scale: o.zoom });
         }
       };
+      // Render harness (scripts/shoot.mjs --democable): register a 4-bit bus IC and stand up a Cable between
+      // two instances, so the bus-cable render (lens skin / belt-fan / unzip) is screenshot-verifiable
+      // without hand-authoring a user-IC fixture. Mirrors cable.test.ts' registerBus8.
+      (window as unknown as { __cecDemoCable?: () => void }).__cecDemoCable =
+        () => {
+          const inner = new BoardGraph();
+          const frame = inner.place("DIP8", { col: 0, row: 0 });
+          if (!frame) return;
+          registerUserIc({
+            tag: "CBLDEMO",
+            name: "Bus",
+            package: { archetype: "DIP", pinCount: 8 },
+            frameId: frame.id,
+            graph: inner.serialize(),
+            pinNames: ["A0", "A1", "A2", "A3", "VCC", "GND", "EN", "CLK"],
+            pinRoles: ["in", "in", "in", "in", "vcc", "gnd", "in", "clk"],
+            role: "ic",
+          });
+          board?.buildDemoCable("CBLDEMO");
+        };
       // Drive a characterization for the harness: open the Behavior panel and APPLY the fast model (the old
       // one-shot "characterize" semantics), reporting the resulting behavior (`mode`: 0 = combinational,
       // 1 = registered), the recognised gate, and any refusal — so a test can confirm e.g. a D-latch now

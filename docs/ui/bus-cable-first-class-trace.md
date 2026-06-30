@@ -1,0 +1,82 @@
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+
+# Bus cable as a first-class trace — design
+
+Status: **scoped (2026-06-29) from owner art-direction; build next.** The bus `Cable` (`graph.ts`
+`interface Cable`; rendered by `board.ts` `drawCables`) started as a render-only trunk. The owner wants it
+to behave and read like **any other trace** — only bundled. This note captures the full vision + the
+grounded implementation approach. **All of it is web-only / render+UX, golden-safe** (a cable lowers to N
+auto net-labels via `deriveCableLinks`; `sim-core` never sees it).
+
+## Landed already (`db2db96`)
+
+**Select + delete.** `cableHitTest` (vs the trunk polyline cached each frame in `cableTrunkRoutes`, the
+analogue of `conduitDrawRoutes`), `selectedCables` + `selectCable` (mirrors `selectWire`); accent halo in
+`redrawSelection`; `deleteSelection` → `graph.removeCable`; every selection reset clears cables; a selected
+cable counts as an edge in `emitSelect`.
+
+## The five remaining asks (owner, verbatim intent)
+
+1. **Zoom-unzip → see the literal traces + what they carry.** Zoomed out: the bundled trunk. Zoomed in
+   (past a scale threshold, e.g. reuse `TIER_ZOOM`, and `!cable.collapsed`): the **N literal strands**,
+   each **coloured by its bit's signal** (`voltageColor` of the net at `src.pinIndices[i]`). The
+   `Cable.collapsed` field already exists for the manual/LoD zip state.
+2. **Pretty symmetric "belt-fan" convergence** (owner ref: a Factorio 4-belt merge — 4 resistors → 4 teal
+   traces converging with clean **nested, staggered** right-angle bends → 4 dots; "looks super nice").
+   Replace the comb that pinches all teeth to one point: each conductor turns toward the bus centreline at
+   a **staggered offset** (outer conductors turn furthest out) so the perpendicular legs nest symmetrically,
+   run parallel through the bundle, then diverge identically at the far end.
+3. **Respect the lens.** A cable strand should look like the wire it stands for: **schematic** = thin
+   coloured trace; **analogy** = pipe; **reality** = metal conductor. Reuse `drawConduitSkin(g, route,
+   color, pw, lens)` exactly as `redrawWires` does, gated the same way (`conduit = effLens !== "schematic"
+   && world.scale.x >= TIER_ZOOM`, already computed in `redrawWires` right where `drawCables(g)` is
+   called — just thread it in). Collapsed trunk = one wide pipe; unzipped = each strand its own pipe.
+4. **Manipulate like any trace (drag-reroute).** Grab a trunk segment and drag it perpendicular
+   (KiCad-style), endpoints staying put — mirror `beginWireSegmentDrag`/the `wireDrag` machinery, but edit
+   the cable's `route: Cell[]` (its long-haul waypoints) instead of a wire's `waypoints`. The drawn trunk
+   inserts gather-elbows from the route, so the segment→route-waypoint mapping needs care (the drawn
+   `cableTrunkRoutes[id]` polyline ≠ the stored `route`; map the grabbed drawn-segment back to the nearest
+   route leg, like `wireLegIndexAt`).
+5. **Junction off it / tap a bit.** Drop a junction on the trunk to branch the **whole bus** onward, and a
+   **per-bit tap** to break ONE strand out of the bundle mid-run (Cable P3 fan-out-to-process). A bus
+   junction is a new concept (a junction today joins single wires); a per-bit tap creates a normal wire
+   from bit i's net at the tap point. Design the data model: likely a tap = a net-label/wire anchored at a
+   point on the trunk on bit i's net (reusing `deriveCableLinks`' per-bit nets), NOT a new sim element.
+   **Canonical owner reference: `docs/ui/bus-tap-reference.ceccircuit.json`** (2026-06-29) — the owner's
+   MANUAL implementation of exactly this: a 4-bit bus (`A0..A3`, four `R`s ↔ four `R`s) with two taps off
+   it — a **"junction up"** breaking the four bits out **forward** (A0→A3) and a **"sequential junction
+   down"** breaking them out **reversed** (A3→A0), each via a per-bit junction on the bus wire + a matched
+   net label. The native cable tap must reproduce this (forward AND reversed bit order), without the player
+   hand-placing 16 wires + 8 labels + 8 junctions. (It currently uses plain wires + labels, NOT a `Cable`
+   — it is the behavioural spec, not a cable fixture.)
+
+## Implementation order (each shoot-verifiable; build a reusable cable fixture first)
+
+**S0 — cable fixture + harness.** No cable is screenshot-able today (constructing one needs two
+same-width name-indexed bus pin groups). Build a saved-circuit fixture (e.g. two `GATE`s, a width-2 cable
+`src=g1.[1,2] dst=g2.[1,2]`, a source per bit) under `web/scripts/` or the examples, so `shoot --fixture
+… --lens analogy --zoom <>` can SEE the cable. Reusable for every slice below + a `busCable.test.ts`.
+
+**S1 — lens-respect (foundation).** Thread `conduit` into `drawCables`; render the trunk via
+`drawConduitSkin` when `conduit`, else the plain stroke (a wider `pw` than a wire — it's a bundle). Verify
+schematic vs analogy vs reality via shoot. (Smallest, lowest-risk; everything else layers on it.)
+
+**S2 — belt-fan geometry.** Replace the comb with the staggered symmetric convergence (ask #2). Pure
+`drawCables` geometry; verify the look against the owner ref.
+
+**S3 — zoom-unzip + per-strand signal colour.** Below the unzip threshold: trunk. Above (and
+`!collapsed`): N strands, each offset perpendicular along the trunk (write an ortho-offset helper, or
+route each `src.pin[i]→dst.pin[i]` as a wire-like path), each `voltageColor(netVOf(src.pinIndices[i]))`,
+each through the lens skin (S1). The belt-fan (S2) is the strands' end convergence. Verify zoomed in/out.
+
+**S4 — drag-reroute** (ask #4): mirror the wire segment-drag onto the cable `route`. **S5 — junction /
+per-bit tap** (ask #5): the new interactions + minimal data model. These are Cable P3 (#93) and the
+heaviest; design the tap data model before coding.
+
+## Risks / notes
+
+- **The ortho perpendicular-offset of a bent trunk** (S3 parallel strands) is the fiddliest geometry —
+  for a straight bus it's a trivial uniform offset; handle bends by offsetting per-segment and reconnecting
+  at the shifted corner. Start with the straight-bus common case looking great.
+- **Golden-safe throughout** — none of this crosses the wasm boundary or the snapshot hash.
+- **Verify every slice with `shoot`** on the S0 fixture (the owner is art-directing — show, don't guess).
